@@ -235,11 +235,23 @@ def _merge_records(args: argparse.Namespace, p: dict[str, Path], st: dict[str, A
     return [uid for uid, rec in results if rec["status"] != "merged"]
 
 
+def _require_base_branch(repo: Path, base: str = "main") -> None:
+    """Merges land on whatever the repo has checked out; refuse to run unless
+    that is the base branch, so units never merge into a stray feature branch."""
+    import subprocess
+
+    r = subprocess.run(["git", "branch", "--show-current"], cwd=repo, text=True, capture_output=True)
+    current = r.stdout.strip()
+    if r.returncode == 0 and current != base:
+        sys.exit(f"repo is on branch '{current}', not '{base}'; check out {base} before running (merges go to HEAD)")
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Re-run verification (build, ctest, report judgment, merge) on an existing
     worktree without re-spawning the agent. Recovery path after a router or
     toolchain failure."""
     p = _paths(args)
+    _require_base_branch(p["repo"])
     units = load_units(Path(args.units) if args.units else None)
     plan = _load_plan(p, units)
     brief = plan.briefs.get(args.unit) or sys.exit(f"unknown unit {args.unit!r}")
@@ -258,6 +270,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     p = _paths(args)
+    if not args.dry_run:
+        _require_base_branch(p["repo"])
     units = load_units(Path(args.units) if args.units else None)
     plan = _load_plan(p, units)
     st = _load_state(p)
