@@ -1,0 +1,32 @@
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H2 = 5.131
+H1 = 5.001
+AX = 4.874
+L1 = 4.750
+L2 = 4.628
+CDD = 4.505
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+H2 = 4.995
+H1 = 4.874
+AX = 4.750
+L1 = 4.628
+L2 = 4.505
+CDD = 4.383
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H2 = 4.622
+H1 = 4.505
+AX = 4.383
+L1 = 4.264
+L2 = 4.146
+CDD = 4.029

@@ -1,0 +1,9 @@
+# Isotope / species -> mass (amu). Entries extend or override the built-in
+# noble-gas table.
+Ar36 = 35.967545105
+Ar37 = 36.96677631
+Ar38 = 37.9627322
+Ar39 = 38.964313
+Ar40 = 39.9623831237
+Ar41 = 40.9645006
+HCl35 = 35.976678
