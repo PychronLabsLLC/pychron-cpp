@@ -31,6 +31,7 @@ Repository conventions (non-negotiable):
 - C++20, CMake >= 3.25, dependencies via vcpkg.json manifest. Presets live in CMakePresets.json.
 - libs/* must not depend on Qt. Dependency direction is strictly core <- transport <- codecs <- devices <- systems <- apps.
 - No exceptions across library boundaries: return Result<T> (std::expected<T, Error>).
+- Drivers hold no locks for bus sequencing: wrap any multi-exchange protocol step in transact(transport_, [&] { ... }) (see Transport::transaction).
 - Every new behavior gets a GoogleTest test under tests/<lib>/. Tests must not need hardware or network.
 - Test-first: write a failing test, make it pass, then refactor. Keep files focused.
 - Do not touch files outside your unit's target paths unless strictly required to build; if you must, list them in the report.
