@@ -33,9 +33,12 @@ SIZE_LEVELS: list[dict[str, Any]] = [
 ]
 
 # (max score exclusive, model alias, max_turns)
+# Calibrated on the extraction-line waves: sonnet units that had to port
+# algorithms or fixtures needed the whole budget; haiku is only for trivial
+# header/config work.
 TIER_TABLE: list[tuple[float, str, int]] = [
-    (1.5, "haiku", 30),
-    (2.5, "sonnet", 60),
+    (1.0, "haiku", 40),
+    (2.25, "sonnet", 80),
     (3.5, "opus", 100),
     (float("inf"), "opus", 150),
 ]

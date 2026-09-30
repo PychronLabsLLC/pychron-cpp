@@ -307,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--wave", type=int); s.add_argument("--unit")
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--no-merge", action="store_true")
     s.add_argument("--force", action="store_true"); s.add_argument("--parallel", type=int, default=3)
+    s.add_argument("--model", choices=["haiku", "sonnet", "opus"], help="override the sized model for the selected units")
+    s.add_argument("--max-turns", type=int, help="override the sized turn budget for the selected units")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("verify", help="re-verify an existing worktree without re-running the agent")
     s.add_argument("unit"); s.add_argument("--no-merge", action="store_true")

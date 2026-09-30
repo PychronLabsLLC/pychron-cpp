@@ -78,7 +78,7 @@ def test_size_maps_score_to_tier_and_split_flag():
     plan = route_sections(SECS, UNITS, FakeJudge(keyword_judge))
     plan = size_units(plan, FakeJudge(sizer))
     core, transport = plan.briefs["core"].sizing, plan.briefs["transport"].sizing
-    assert (core.model, core.max_turns, core.split) == ("haiku", 30, False)
+    assert (core.model, core.max_turns, core.split) == ("haiku", 40, False)
     assert (transport.model, transport.max_turns, transport.split) == ("opus", 150, True)
 
 
