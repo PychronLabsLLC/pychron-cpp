@@ -10,7 +10,7 @@ from typing import Any
 
 from typesafe_sdk import Choice, Noul
 
-from .dispatch import Runner, UnitResult, subprocess_runner
+from .dispatch import Runner, UnitResult, resolve_tool, subprocess_runner
 from .judge import Judge
 from .plan import UnitBrief
 
@@ -42,14 +42,15 @@ def build_and_test(worktree: Path, *, runner: Runner = subprocess_runner, build_
         log.append(f"$ {' '.join(cmd)}\n{r.stdout}\n{r.stderr}")
         return r.returncode == 0
 
-    cfg_cmd = ["cmake", "--preset", preset] if preset else ["cmake", "-S", ".", "-B", build_dir, "-DBUILD_UI=OFF", "-DBUILD_TESTS=ON"]
+    cmake, ctest = resolve_tool("cmake"), resolve_tool("ctest")
+    cfg_cmd = [cmake, "--preset", preset] if preset else [cmake, "-S", ".", "-B", build_dir, "-DBUILD_UI=OFF", "-DBUILD_TESTS=ON"]
     configured = step(cfg_cmd)
     if not configured:
         return BuildResult(True, False, False, None, _tail("\n".join(log)))
-    built = step(["cmake", "--build", build_dir, "--parallel"])
+    built = step([cmake, "--build", build_dir, "--parallel"])
     if not built:
         return BuildResult(True, True, False, None, _tail("\n".join(log)))
-    r = runner(["ctest", "--test-dir", build_dir, "--output-on-failure"], cwd=worktree, timeout=timeout)
+    r = runner([ctest, "--test-dir", build_dir, "--output-on-failure"], cwd=worktree, timeout=timeout)
     log.append(f"$ ctest\n{r.stdout}\n{r.stderr}")
     if "No tests were found" in r.stdout:
         return BuildResult(True, True, True, None, _tail("\n".join(log)))

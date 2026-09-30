@@ -82,8 +82,24 @@ class Runner(Protocol):
     def __call__(self, cmd: list[str], *, cwd: Path, stdin: str | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]: ...
 
 
+def resolve_tool(name: str) -> str:
+    """Prefer a tool installed next to this interpreter (the router venv), then PATH.
+    Returns the bare name if nothing is found so the caller gets a clean 'not found'."""
+    import shutil
+    import sys
+
+    local = Path(sys.executable).parent / name
+    if local.exists():
+        return str(local)
+    return shutil.which(name) or name
+
+
 def subprocess_runner(cmd: list[str], *, cwd: Path, stdin: str | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, input=stdin, text=True, capture_output=True, timeout=timeout)
+    try:
+        return subprocess.run(cmd, cwd=cwd, input=stdin, text=True, capture_output=True, timeout=timeout)
+    except FileNotFoundError as e:
+        # Missing executable: report as a failed process instead of crashing the wave.
+        return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=f"{cmd[0]}: not found ({e})")
 
 
 @dataclass

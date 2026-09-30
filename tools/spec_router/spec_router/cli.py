@@ -3,6 +3,7 @@
   spec-router plan                 route + size, write .spec_router/plan.json
   spec-router prompt <unit>        print the agent prompt for one unit
   spec-router run [--wave N|--unit U] [--dry-run] [--no-merge]
+  spec-router verify <unit> [--without-report]   re-verify existing worktree, no agent
   spec-router status
 """
 
@@ -95,19 +96,31 @@ def _done(st: dict[str, Any]) -> list[str]:
     return [u for u, s in st["units"].items() if s.get("status") == "merged"]
 
 
-def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, judge: Judge | None, runner: dispatch.Runner, log) -> dict[str, Any]:
-    cfg = dispatch.DispatchConfig(repo=p["repo"], claude_bin=args.claude_bin)
-    st = _load_state(p)
-    prompt = dispatch.build_prompt(brief, spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(st))
-    log(f"==> {brief.unit.id}: model={brief.sizing.model if brief.sizing else '?'} sections={[s.id for s in brief.sections]}")
-    result = dispatch.run_unit(cfg, brief, prompt, runner=runner)
+def _result_path(p: dict[str, Path], unit_id: str) -> Path:
+    return p["state_dir"] / "results" / f"{unit_id}.json"
+
+
+def _save_result(p: dict[str, Path], result: dispatch.UnitResult) -> None:
+    """Persist the agent's raw outcome the moment it returns, before any
+    verification step that could fail, so a router crash never loses a report."""
+    path = _result_path(p, result.unit_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(result), indent=1))
+
+
+def _load_result(p: dict[str, Path], unit_id: str) -> dispatch.UnitResult | None:
+    path = _result_path(p, unit_id)
+    return dispatch.UnitResult(**json.loads(path.read_text())) if path.exists() else None
+
+
+def _verify_one(p: dict[str, Path], brief: UnitBrief, result: dispatch.UnitResult, judge: Judge | None, runner: dispatch.Runner, log, *, without_report: bool = False) -> dict[str, Any]:
     wt = Path(result.worktree)
-    if args.dry_run:
-        return {"status": "dry-run", "unit": brief.unit.id}
     changed = verify.diff_is_nonempty(wt, runner=runner)
     build = verify.build_and_test(wt, runner=runner)
     judgment = verify.judge_report(brief, result.report, judge) if (result.report and judge) else None
     decision = verify.gate(result, build, judgment, changed=changed)
+    if without_report and result.report is None and changed and build.green and result.exit_code == 0:
+        decision = verify.Decision(True, "ACCEPTED WITHOUT AGENT REPORT (operator override): green build + tests", build, None, changed)
     rec: dict[str, Any] = {
         "status": "verified" if decision.merge else "failed", "reason": decision.reason,
         "branch": result.branch, "worktree": result.worktree, "exit_code": result.exit_code,
@@ -119,8 +132,58 @@ def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, jud
         rec["stdout_tail"] = result.raw_stdout[-2000:]
         log(f"    agent stdout: {result.raw_stdout[-600:].strip() or '<empty>'}")
         log(f"    agent stderr: {result.raw_stderr[-600:].strip() or '<empty>'}")
+    if not build.green:
+        log(f"    build log tail:\n{build.log_tail[-1500:]}")
     log(f"<== {brief.unit.id}: {rec['status']} - {decision.reason}")
     return rec
+
+
+def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, judge: Judge | None, runner: dispatch.Runner, log) -> dict[str, Any]:
+    cfg = dispatch.DispatchConfig(repo=p["repo"], claude_bin=args.claude_bin)
+    st = _load_state(p)
+    prompt = dispatch.build_prompt(brief, spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(st))
+    log(f"==> {brief.unit.id}: model={brief.sizing.model if brief.sizing else '?'} sections={[s.id for s in brief.sections]}")
+    result = dispatch.run_unit(cfg, brief, prompt, runner=runner)
+    if args.dry_run:
+        return {"status": "dry-run", "unit": brief.unit.id}
+    _save_result(p, result)
+    return _verify_one(p, brief, result, judge, runner, log)
+
+
+def _merge_records(args: argparse.Namespace, p: dict[str, Path], st: dict[str, Any], results: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    """Merge verified units sequentially; returns ids that did not end merged."""
+    for uid, rec in results:
+        if rec["status"] == "verified" and not args.no_merge:
+            ok, msg = verify.commit_and_merge(p["repo"], Path(rec["worktree"]), rec["branch"], uid)
+            rec["status"] = "merged" if ok else "failed"
+            rec["reason"] = msg if not ok else rec["reason"]
+            if ok:
+                dispatch.remove_worktree(dispatch.DispatchConfig(repo=p["repo"]), uid)
+                rec.pop("worktree", None)
+        st["units"][uid] = rec
+        _save_state(p, st)
+    return [uid for uid, rec in results if rec["status"] != "merged"]
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Re-run verification (build, ctest, report judgment, merge) on an existing
+    worktree without re-spawning the agent. Recovery path after a router or
+    toolchain failure."""
+    p = _paths(args)
+    units = load_units(Path(args.units) if args.units else None)
+    plan = _load_plan(p, units)
+    brief = plan.briefs.get(args.unit) or sys.exit(f"unknown unit {args.unit!r}")
+    result = _load_result(p, args.unit)
+    wt = p["repo"] / ".worktrees" / args.unit
+    if result is None:
+        if not wt.exists():
+            sys.exit(f"no saved result and no worktree for {args.unit}")
+        result = dispatch.UnitResult(args.unit, f"unit/{args.unit}", str(wt), 0, None, raw_stderr="(no saved agent result; pre-persistence run)")
+    judge = _judge(args, p)
+    rec = _verify_one(p, brief, result, judge, dispatch.subprocess_runner, print, without_report=args.without_report)
+    st = _load_state(p)
+    failed = _merge_records(args, p, st, [(args.unit, rec)])
+    return 1 if failed else 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -160,17 +223,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.dry_run:
             continue
         # Merge sequentially, in unit order, so the next wave sees all of this wave.
-        for uid, rec in results:
-            if rec["status"] == "verified" and not args.no_merge:
-                ok, msg = verify.commit_and_merge(p["repo"], Path(rec["worktree"]), rec["branch"], uid)
-                rec["status"] = "merged" if ok else "failed"
-                rec["reason"] = msg if not ok else rec["reason"]
-                if ok:
-                    dispatch.remove_worktree(dispatch.DispatchConfig(repo=p["repo"]), uid)
-                    rec.pop("worktree", None)
-            st["units"][uid] = rec
-            _save_state(p, st)
-        failed = [uid for uid, rec in results if rec["status"] != "merged"]
+        failed = _merge_records(args, p, st, results)
         if failed:
             log(f"\nwave {wave.number} incomplete: {failed}. Stopping; fix or re-run with --wave {wave.number}.")
             return 1
@@ -205,6 +258,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--no-merge", action="store_true")
     s.add_argument("--force", action="store_true"); s.add_argument("--parallel", type=int, default=3)
     s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("verify", help="re-verify an existing worktree without re-running the agent")
+    s.add_argument("unit"); s.add_argument("--no-merge", action="store_true")
+    s.add_argument("--without-report", action="store_true", help="accept on green build+tests when the agent report was lost (logged as operator override)")
+    s.set_defaults(fn=cmd_verify)
     s = sub.add_parser("status"); s.set_defaults(fn=cmd_status)
 
     args = ap.parse_args(argv)

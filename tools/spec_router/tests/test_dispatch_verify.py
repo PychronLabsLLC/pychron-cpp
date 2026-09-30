@@ -61,7 +61,7 @@ def test_build_and_test_green(tmp_path):
     calls = []
 
     def runner(cmd, *, cwd, stdin=None, timeout=None):
-        calls.append(cmd[0:2])
+        calls.append([Path(cmd[0]).name, *cmd[1:2]])
         return _cp(0, out="100% tests passed")
 
     b = verify.build_and_test(tmp_path, runner=runner)
@@ -73,8 +73,8 @@ def test_build_fail_stops_before_ctest(tmp_path):
     calls = []
 
     def runner(cmd, *, cwd, stdin=None, timeout=None):
-        calls.append(cmd[0])
-        return _cp(1 if cmd[:2] == ["cmake", "--build"] else 0, err="boom")
+        calls.append(Path(cmd[0]).name)
+        return _cp(1 if [Path(cmd[0]).name, *cmd[1:2]] == ["cmake", "--build"] else 0, err="boom")
 
     b = verify.build_and_test(tmp_path, runner=runner)
     assert b.configured and not b.built and b.tests_passed is None and "ctest" not in calls
@@ -128,3 +128,16 @@ def test_run_unit_surfaces_cli_error_envelope(tmp_path):
     res = dispatch.run_unit(cfg, BRIEF, "P", runner=runner)
     assert res.exit_code == 1 and res.report is None
     assert "Not logged in" in res.raw_stderr
+
+
+def test_subprocess_runner_reports_missing_tool_instead_of_raising(tmp_path):
+    r = dispatch.subprocess_runner(["definitely-not-a-real-tool-xyz"], cwd=tmp_path)
+    assert r.returncode == 127 and "not found" in r.stderr
+
+
+def test_resolve_tool_prefers_interpreter_sibling(monkeypatch, tmp_path):
+    import sys
+    fake = tmp_path / "bin"; fake.mkdir(); (fake / "cmake").write_text("")
+    monkeypatch.setattr(sys, "executable", str(fake / "python"))
+    assert dispatch.resolve_tool("cmake") == str(fake / "cmake")
+    assert dispatch.resolve_tool("no-such-tool-abc") == "no-such-tool-abc"
