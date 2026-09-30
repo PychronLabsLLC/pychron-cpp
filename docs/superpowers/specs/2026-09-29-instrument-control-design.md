@@ -244,6 +244,11 @@ address = "2"
 [[manual_valves]]
 name = "M1"
 
+[[switches]]                 # actuated on/off things that are not gas valves
+name = "pump_power"          # shares actuators + address space with valves; no interlocks
+actuator = "actuator1"
+address = "9"
+
 [[gauges]]
 name = "IG1"
 driver = "ig_controller"
@@ -413,7 +418,7 @@ Deferred to M2: `labjack_u3` (vendor SDK behind `Transport`).
 
 ### 9.2 Systems (`libs/systems`)
 
-- `SwitchManager`: owns valves, manual valves, switches.
+- `SwitchManager`: owns valves, manual valves, switches (`[[switches]]`).
   `actuate(name, Open|Close, actor)` checks software lock and owner, negative
   and positive interlocks, sends via `IValveActuator`, waits `settle_ms`,
   reads back, publishes `ValveChanged` or `ActuationFailed{Interlock}`.

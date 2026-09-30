@@ -61,7 +61,7 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::from_config(const config::
                                                                    const ActuatorLookup& lookup,
                                                                    Options options) {
   std::vector<SwitchSpec> specs;
-  specs.reserve(config.valves.size() + config.manual_valves.size());
+  specs.reserve(config.valves.size() + config.manual_valves.size() + config.switches.size());
   for (const auto& v : config.valves) {
     SwitchSpec s;
     s.name = v.name;
@@ -79,6 +79,16 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::from_config(const config::
     s.name = m.name;
     s.description = m.description;
     s.kind = SwitchKind::ManualValve;
+    specs.push_back(std::move(s));
+  }
+  for (const auto& w : config.switches) {
+    SwitchSpec s;
+    s.name = w.name;
+    s.description = w.description;
+    s.kind = SwitchKind::Switch;
+    s.actuator = w.actuator;
+    s.address = ValveAddress{w.address};
+    s.settle = std::chrono::milliseconds(w.settle_ms);
     specs.push_back(std::move(s));
   }
   return create(std::move(specs), lookup, options);

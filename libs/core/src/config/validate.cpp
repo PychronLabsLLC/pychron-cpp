@@ -40,6 +40,21 @@ class Validator {
     };
     for (const auto& v : c_.valves) claim(v, v.name);
     for (const auto& m : c_.manual_valves) claim(m, m.name);
+    for (const auto& s : c_.switches) claim(s, s.name);
+  }
+
+  // Switches share actuators and the (actuator, address) space with valves.
+  void check_switches(std::map<std::pair<std::string, std::string>, std::string>& addresses) {
+    for (const auto& s : c_.switches) {
+      if (!c_.drivers.contains(s.actuator)) {
+        report(s, "actuator", "unknown actuator '" + s.actuator + "'");
+      }
+      auto [it, inserted] = addresses.emplace(std::make_pair(s.actuator, s.address), s.name);
+      if (!inserted) {
+        report(s, "address",
+               "address '" + s.address + "' on actuator '" + s.actuator + "' already used by '" + it->second + "'");
+      }
+    }
   }
 
   void check_interlock_list(const ValveConfig& v, const std::vector<std::string>& list, const char* key) {
@@ -76,6 +91,7 @@ class Validator {
         }
       }
     }
+    check_switches(addresses);
   }
 
   // DFS over "must be open before" edges; reports each cycle once.

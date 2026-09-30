@@ -131,3 +131,46 @@ TEST(ConfigValidate, WorksOnHandBuiltConfig) {
   ASSERT_EQ(ds.size(), 1u);
   EXPECT_EQ(to_string(ds[0]), "mem:3:valves[0].actuator: unknown actuator 'missing'");
 }
+
+// ---- switches ----------------------------------------------------------------
+
+namespace {
+std::string sw(std::string_view name, std::string_view address, std::string_view actuator = "act") {
+  return "[[switches]]\nname = \"" + std::string(name) + "\"\nactuator = \"" + std::string(actuator) +
+         "\"\naddress = \"" + std::string(address) + "\"\n";
+}
+}  // namespace
+
+TEST(ConfigValidate, SwitchWithUnknownActuator) {
+  const auto body = sw("pump", "9", "nope");
+  auto rep = load(body);
+  ASSERT_EQ(rep.diagnostics.size(), 1u);
+  EXPECT_EQ(rep.diagnostics[0].field, "switches[0].actuator");
+}
+
+TEST(ConfigValidate, SwitchNameCollidesWithValve) {
+  const auto body = valve("A", "1") + sw("A", "9");
+  auto rep = load(body);
+  ASSERT_EQ(rep.diagnostics.size(), 1u);
+  EXPECT_EQ(rep.diagnostics[0].field, "switches[0].name");
+}
+
+TEST(ConfigValidate, SwitchAddressCollidesWithValveOnSameActuator) {
+  const auto body = valve("A", "1") + sw("pump", "1");
+  auto rep = load(body);
+  ASSERT_EQ(rep.diagnostics.size(), 1u);
+  EXPECT_EQ(rep.diagnostics[0].field, "switches[0].address");
+  EXPECT_NE(rep.diagnostics[0].message.find("already used by 'A'"), std::string::npos);
+}
+
+TEST(ConfigValidate, SwitchRejectsInterlockKeys) {
+  const auto body = sw("pump", "9") + "interlocks = [\"A\"]\n";
+  auto rep = load(body);
+  ASSERT_FALSE(rep.ok());
+  EXPECT_EQ(rep.diagnostics[0].field, "switches[0].interlocks");
+}
+
+TEST(ConfigValidate, ValidSwitchNextToValves) {
+  const auto body = valve("A", "1") + sw("pump", "9");
+  EXPECT_TRUE(load(body).ok());
+}

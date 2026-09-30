@@ -101,6 +101,17 @@ struct ManualValveConfig : Located {
   std::string description;
 };
 
+// An actuated on/off thing that is not a gas valve (pump power, heater relay,
+// shutter). Shares actuators and the address space with valves; never carries
+// interlocks.
+struct SwitchConfig : Located {
+  std::string name;
+  std::string description;
+  std::string actuator;  // name of a [drivers.*] entry
+  std::string address;
+  std::int64_t settle_ms = 0;
+};
+
 enum class PressureUnits { Torr, Mbar, Pa };
 
 struct GaugeConfig : Located {
@@ -125,6 +136,7 @@ struct SystemConfig {
   std::map<std::string, DriverConfig> drivers;
   std::vector<ValveConfig> valves;
   std::vector<ManualValveConfig> manual_valves;
+  std::vector<SwitchConfig> switches;
   std::vector<GaugeConfig> gauges;
   std::vector<PipetteConfig> pipettes;
 };

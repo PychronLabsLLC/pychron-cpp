@@ -62,6 +62,12 @@ interlocks = ["P1"]
 name = "M1"
 description = "Turbo to roughing pump"
 
+[[switches]]
+name = "pump_power"
+description = "Turbo pump controller enable"
+actuator = "actuator1"
+address = "9"
+
 [[gauges]]
 name = "IG1"
 driver = "ig_controller"

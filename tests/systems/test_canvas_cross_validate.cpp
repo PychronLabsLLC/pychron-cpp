@@ -38,6 +38,10 @@ actuator = "act"
 address = "3"
 [[manual_valves]]
 name = "M1"
+[[switches]]
+name = "pump_power"
+actuator = "act"
+address = "9"
 [[gauges]]
 name = "IG1"
 driver = "ig"
@@ -192,6 +196,23 @@ TEST(ExampleConfigs, LoadCrossValidateAndBuildGraph) {
   EXPECT_FALSE(g.connected_to("bone", open).contains("rough"));
   open["M1"] = ValveState::Open;
   EXPECT_EQ(g.connected_volumes(open).size(), 1u);
+}
+
+TEST(CanvasCrossValidate, CanvasSwitchMissingFromSystemIsError) {
+  constexpr std::string_view text = R"toml(
+[[switch]]
+name = "heater_relay"
+pos = [0, 0]
+)toml";
+  const auto r = cross_validate(canvas(text), system());
+  EXPECT_FALSE(r.ok());
+  EXPECT_TRUE(has(r.errors, "switch[0].name", "switch 'heater_relay' is not defined"));
+}
+
+TEST(CanvasCrossValidate, SystemSwitchNotDrawnIsWarning) {
+  const auto r = cross_validate(canvas("[[valve]]\nname = \"A\"\npos = [0, 0]\n"), system());
+  EXPECT_TRUE(r.ok());
+  EXPECT_TRUE(has(r.warnings, "switches[0]", "switch 'pump_power' is not drawn on the canvas"));
 }
 
 }  // namespace

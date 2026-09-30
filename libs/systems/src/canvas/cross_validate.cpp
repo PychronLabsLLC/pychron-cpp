@@ -23,6 +23,7 @@ CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& sys
   const auto system_file = std::filesystem::path(system.source_file).filename().generic_string();
   const auto valves = names_of(system.valves);
   const auto manual = names_of(system.manual_valves);
+  const auto switches = names_of(system.switches);
   const auto gauges = names_of(system.gauges);
   const auto pipettes = names_of(system.pipettes);
 
@@ -48,6 +49,9 @@ CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& sys
         }
         break;
       case ValveKind::Switch:
+        if (!switches.contains(v.name)) {
+          missing(v, "switch", v.name, valves.contains(v.name) ? "it is a valve; draw it as [[valve]]" : "");
+        }
         break;
     }
   }
@@ -68,6 +72,11 @@ CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& sys
     if (!drawn.contains(v.name)) {
       r.warnings.push_back(
           {v.loc, v.path, "manual valve '" + v.name + "' is not drawn on the canvas (" + canvas_file + ")"});
+    }
+  }
+  for (const auto& s : system.switches) {
+    if (!drawn.contains(s.name)) {
+      r.warnings.push_back({s.loc, s.path, "switch '" + s.name + "' is not drawn on the canvas (" + canvas_file + ")"});
     }
   }
   return r;

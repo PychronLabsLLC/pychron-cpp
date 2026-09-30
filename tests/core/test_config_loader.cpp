@@ -70,6 +70,12 @@ TEST(ConfigLoader, ParsesSpecExampleIntoTypedStructs) {
   ASSERT_EQ(c.manual_valves.size(), 1u);
   EXPECT_EQ(c.manual_valves[0].name, "M1");
 
+  ASSERT_EQ(c.switches.size(), 1u);
+  EXPECT_EQ(c.switches[0].name, "pump_power");
+  EXPECT_EQ(c.switches[0].actuator, "actuator1");
+  EXPECT_EQ(c.switches[0].address, "9");
+  EXPECT_EQ(c.switches[0].settle_ms, 0);
+
   ASSERT_EQ(c.gauges.size(), 1u);
   EXPECT_EQ(c.gauges[0].driver, "ig_controller");
   EXPECT_EQ(c.gauges[0].channel, 1);

@@ -219,7 +219,8 @@ class ConfigBuilder {
     p_.begin(root_loc, root, "");
     p_.reject_unknown(root,
                       root_loc,
-                      Keys{"system", "transports", "drivers", "valves", "manual_valves", "gauges", "pipettes"});
+                      Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
+                           "pipettes"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -243,6 +244,9 @@ class ConfigBuilder {
     });
     for_each_item(root, "manual_valves", [&](const std::string& path, const toml::table& t) {
       c.manual_valves.push_back(parse_manual_valve(path, t));
+    });
+    for_each_item(root, "switches", [&](const std::string& path, const toml::table& t) {
+      c.switches.push_back(parse_switch(path, t));
     });
     for_each_item(root, "gauges", [&](const std::string& path, const toml::table& t) {
       c.gauges.push_back(parse_gauge(path, t));
@@ -422,6 +426,24 @@ class ConfigBuilder {
     p_.read_array(get, v, "positive_interlocks", v.positive_interlocks);
     p_.read(get, v, "settle_ms", v.settle_ms, false, 0);
     return v;
+  }
+
+  SwitchConfig parse_switch(const std::string& path, const toml::table& t) {
+    SwitchConfig s;
+    p_.begin(s, t, path);
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, s, Keys{"name", "description", "actuator", "address", "settle_ms"});
+    p_.read(get, s, "name", s.name, true);
+    p_.read(get, s, "description", s.description, false);
+    p_.read(get, s, "actuator", s.actuator, true);
+    if (const auto* n = get("address"); n != nullptr && n->is_integer()) {
+      s.field_locs["address"] = p_.loc(*n);
+      s.address = std::to_string(n->as_integer()->get());
+    } else {
+      p_.read(get, s, "address", s.address, true);
+    }
+    p_.read(get, s, "settle_ms", s.settle_ms, false, 0);
+    return s;
   }
 
   ManualValveConfig parse_manual_valve(const std::string& path, const toml::table& t) {

@@ -435,6 +435,10 @@ positive_interlocks = ["M1"]
 [[manual_valves]]
 name = "M1"
 description = "hand valve"
+[[switches]]
+name = "pump_power"
+actuator = "act"
+address = "9"
 )",
                                                     "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;
@@ -443,10 +447,12 @@ description = "hand valve"
       *cfg, [&](const std::string& n) -> IValveActuator* { return n == "act" ? &act : nullptr; });
   ASSERT_TRUE(mgr) << mgr.error().what;
   auto list = (*mgr)->list();
-  ASSERT_EQ(list.size(), 3u);
+  ASSERT_EQ(list.size(), 4u);
   EXPECT_EQ(list[0].name, "A");
   EXPECT_EQ(list[2].kind, SwitchKind::ManualValve);
   EXPECT_EQ(list[2].description, "hand valve");
+  EXPECT_EQ(list[3].name, "pump_power");
+  EXPECT_EQ(list[3].kind, SwitchKind::Switch);
 
   auto missing = SwitchManager::from_config(*cfg, [](const std::string&) -> IValveActuator* { return nullptr; });
   ASSERT_FALSE(missing);

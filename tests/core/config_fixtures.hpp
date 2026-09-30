@@ -54,6 +54,12 @@ address = "2"
 [[manual_valves]]
 name = "M1"
 
+[[switches]]
+name = "pump_power"
+description = "Turbo pump controller enable"
+actuator = "actuator1"
+address = "9"
+
 [[gauges]]
 name = "IG1"
 driver = "ig_controller"
