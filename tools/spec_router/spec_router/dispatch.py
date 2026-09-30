@@ -94,9 +94,22 @@ def resolve_tool(name: str) -> str:
     return shutil.which(name) or name
 
 
+def tool_env() -> dict[str, str]:
+    """Child-process environment with the router venv's bin (cmake, ninja, ctest)
+    first on PATH, so agents and verification share one toolchain instead of
+    each agent pip-installing its own into /tmp."""
+    import os
+    import sys
+
+    env = dict(os.environ)
+    venv_bin = str(Path(sys.executable).parent)
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def subprocess_runner(cmd: list[str], *, cwd: Path, stdin: str | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(cmd, cwd=cwd, input=stdin, text=True, capture_output=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=cwd, input=stdin, text=True, capture_output=True, timeout=timeout, env=tool_env())
     except FileNotFoundError as e:
         # Missing executable: report as a failed process instead of crashing the wave.
         return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=f"{cmd[0]}: not found ({e})")

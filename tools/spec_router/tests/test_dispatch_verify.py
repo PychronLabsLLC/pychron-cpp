@@ -202,3 +202,10 @@ def test_build_and_test_uses_preset_build_dir(tmp_path):
     assert b.green
     assert calls[0][1:] == ["--preset", "dev-ui"]
     assert "build/dev-ui" in calls[1] and "build/dev-ui" in calls[2]
+
+
+def test_tool_env_puts_venv_bin_first_on_path():
+    import os
+    import sys
+    env = dispatch.tool_env()
+    assert env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).parent)
