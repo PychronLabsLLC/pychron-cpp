@@ -212,6 +212,11 @@ def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, jud
     _save_result(p, result)
     rec = _verify_one(p, brief, result, judge, runner, log)
     _record_unit(p, brief.unit.id, rec)  # verified/failed is durable before the wave's merge step
+    # The build tree served its purpose; merging is git-only. Parallel waves
+    # otherwise hold ~0.5 GB per unit until the wave ends.
+    import shutil
+
+    shutil.rmtree(Path(result.worktree) / "build", ignore_errors=True)
     return rec
 
 
