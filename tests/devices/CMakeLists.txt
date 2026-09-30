@@ -12,7 +12,13 @@ add_executable(pychron_devices_tests
   test_gp_microion.cpp
   test_proxr_relay.cpp
   test_proxr_board_sim.cpp
+  spectrometer/test_roles.cpp
+  spectrometer/test_params.cpp
+  spectrometer/test_detectors.cpp
+  spectrometer/test_conformance_fakes.cpp
 )
+# spectrometer/conformance.hpp and spectrometer/fakes.hpp
+target_include_directories(pychron_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtest_main)
 # Committed wire traces, replayed by driver tests.

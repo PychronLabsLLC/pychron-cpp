@@ -8,6 +8,10 @@ add_library(pychron_devices STATIC
   src/gp_microion.cpp
   src/proxr_relay.cpp
   src/proxr_board_sim.cpp
+  src/spectrometer/types.cpp
+  src/spectrometer/params.cpp
+  src/spectrometer/roles.cpp
+  src/spectrometer/detectors.cpp
 )
 
 target_include_directories(pychron_devices PUBLIC
