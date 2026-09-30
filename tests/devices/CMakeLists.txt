@@ -9,6 +9,7 @@ add_executable(pychron_devices_tests
   test_driver_registry.cpp
   test_codec_conventions.cpp
   test_pfeiffer_maxigauge.cpp
+  test_gp_microion.cpp
   test_proxr_relay.cpp
   test_proxr_board_sim.cpp
 )

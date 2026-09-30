@@ -6,7 +6,11 @@
 // encodes a command to a `Command` (bytes plus how the reply is framed) and
 // decodes reply bytes to a value or a Protocol error.
 
+#include <cmath>
+#include <cstddef>
+#include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,6 +56,42 @@ inline Result<std::string> strip_terminator(const Bytes& reply, std::string_view
   }
   text.resize(text.size() - terminator.size());
   return text;
+}
+
+// True for [+-]digits[.digits][(E|e)[+-]digits] with at least one mantissa
+// digit. Checked by hand so parsing never depends on the process locale.
+inline bool is_decimal_number(std::string_view s) noexcept {
+  auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  std::size_t i = 0;
+  auto digits = [&] {
+    std::size_t start = i;
+    while (i < s.size() && is_digit(s[i])) ++i;
+    return i - start;
+  };
+  if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+  std::size_t mantissa = digits();
+  if (i < s.size() && s[i] == '.') {
+    ++i;
+    mantissa += digits();
+  }
+  if (mantissa == 0) return false;
+  if (i < s.size() && (s[i] == 'E' || s[i] == 'e')) {
+    ++i;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+    if (digits() == 0) return false;
+  }
+  return i == s.size();
+}
+
+// A finite decimal number (is_decimal_number grammar), or nullopt.
+inline std::optional<double> parse_decimal(std::string_view s) {
+  if (!is_decimal_number(s)) return std::nullopt;
+  std::istringstream in{std::string(s)};
+  in.imbue(std::locale::classic());
+  double v = 0.0;
+  in >> v;
+  if (in.fail() || !std::isfinite(v)) return std::nullopt;
+  return v;
 }
 
 }  // namespace pychron::codec

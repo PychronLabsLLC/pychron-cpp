@@ -1,0 +1,12 @@
+# Granville-Phillips Micro-Ion at address 01: ion gauge on, read IG, CG1,
+# then CG2 with no Convectron fitted (reads 9.90E+09). Synthetic fixture built
+# from the vendor manual's byte grammar; replace with a lab capture during
+# hardware bring-up (spec 9.4 step 13).
+0 tx 233031494731204f4e0d
+6200 rx 2a30312050524f474d204f4b0d
+20000 tx 23303144532049470d
+26200 rx 2a303120322e3330452d30390d
+40000 tx 2330314453204347310d
+46200 rx 2a303120312e3130452d30330d
+60000 tx 2330314453204347320d
+66200 rx 2a303120392e3930452b30390d
