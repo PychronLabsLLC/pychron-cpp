@@ -1,0 +1,5 @@
+# expect: parse error
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+name = = 3

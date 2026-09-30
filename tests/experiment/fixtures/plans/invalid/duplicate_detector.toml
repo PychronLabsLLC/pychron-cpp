@@ -1,0 +1,12 @@
+# expect: main.hops[0].positions: detector 'H1' assigned to both
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "H1" }
+counts = 10

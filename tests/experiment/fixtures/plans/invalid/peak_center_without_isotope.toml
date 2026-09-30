@@ -1,0 +1,14 @@
+# expect: peak_center.isotope: required when before or after
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[peak_center]
+after = true
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

@@ -1,0 +1,12 @@
+# expect: main.hops[0].positions: at least one isotope required
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = {}
+counts = 10

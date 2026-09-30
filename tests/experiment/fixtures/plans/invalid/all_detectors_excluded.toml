@@ -1,0 +1,13 @@
+# expect: main.hops[0]: every detector excluded
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+exclude = ["H1"]
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

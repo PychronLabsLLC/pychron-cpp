@@ -1,0 +1,14 @@
+# expect: baseline.counts: must be >= 1 when before or after
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[baseline]
+after = true
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

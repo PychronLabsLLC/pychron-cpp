@@ -1,0 +1,11 @@
+# expect: plan.instrument_family: required
+[plan]
+name = "t"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

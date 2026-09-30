@@ -1,0 +1,9 @@
+# expect: main.hops: at least one hop required
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1

@@ -1,0 +1,67 @@
+hook = "scripts/measurement_hooks/whiff.py"
+
+[plan]
+name = "argus_multicollect"
+instrument_family = "thermo_argus"
+description = "Standard 6-collector static measurement"
+analysis_types = ["unknown", "air", "cocktail", "blank_unknown"]
+
+[detectors]
+reference = "H1"
+exclude = []
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+close_inlet = true
+
+[sniff]
+enabled = true
+counts = "@equilibration.time_s"
+integration_s = 1
+
+[peak_center]
+before = false
+after = true
+detector = "H1"
+isotope = "Ar40"
+config = "default"
+
+[baseline]
+before = false
+after = true
+counts = 120
+mass = 34.2
+detector = "H1"
+settle_s = 15
+integration_s = 1
+
+[main]
+cycles = 1
+integration_s = 1
+time_zero = "on_inlet_close"
+
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+counts = 400
+settle_s = 3
+
+[fits]
+signal = { default = "linear", Ar40 = "parabolic" }
+baseline = { default = "average" }
+error = "sem"
+outliers = { enabled = true, iterations = 1, std_devs = 2 }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+truncations = [{ check = "Ar40 > 8e5", start = 20 }]
+
+[whiff]
+enabled = false
+
+[parameters]
+expose = [{ path = "main.hops[0].counts", label = "Counts" }, "main.integration_s", "main.cycles",
+          "baseline.counts", "baseline.settle_s", "peak_center.before", "peak_center.after",
+          "detectors.exclude", "fits.signal"]

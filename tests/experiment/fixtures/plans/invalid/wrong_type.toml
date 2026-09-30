@@ -1,0 +1,11 @@
+# expect: main.cycles: expected an integer
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = "five"
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

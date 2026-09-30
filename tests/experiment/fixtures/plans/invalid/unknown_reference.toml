@@ -1,0 +1,13 @@
+# expect: detectors.reference: unknown detector 'X1'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "X1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+position = { isotope = "Ar40", detector = "H1" }
