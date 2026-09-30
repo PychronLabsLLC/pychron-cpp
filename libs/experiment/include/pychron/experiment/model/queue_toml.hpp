@@ -10,7 +10,8 @@ namespace pychron::experiment {
 // Parses experiment.toml text: a [queue] table plus [[runs]]. Pychron aliases
 // (e_value/extract_value, t_o, s_opt, truncate, flat extraction keys) are
 // normalized here, once. Unknown keys and wrong types are errors. The run's
-// AnalysisType is derived from its identifier through `ids`.
+// AnalysisType is derived from its identifier through `ids`. `conditionals`
+// entries are names (kind "action") or {name, kind} inline tables.
 Result<QueueSpec> parse_queue(std::string_view text, const IdentifierRules& ids,
                               std::string_view name = "experiment.toml");
 

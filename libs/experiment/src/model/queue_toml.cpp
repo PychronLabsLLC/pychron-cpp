@@ -235,8 +235,20 @@ void read_run(const toml::table& raw, const QueueSpec& q, const IdentifierRules&
 
   if (const auto* c = t["conditionals"].as_array()) {
     for (const auto& n : *c) {
-      if (auto s = n.value<std::string>()) run.conditionals.push_back({*s, "action"});
-      else err.add(where, "conditionals must be strings");
+      if (auto s = n.value<std::string>()) {
+        run.conditionals.push_back({*s, "action"});
+      } else if (const auto* ct = n.as_table()) {
+        const std::string cw = where + ".conditionals";
+        check_keys(*ct, {"name", "kind"}, cw, err);
+        ConditionalRef ref;
+        Reader cr(*ct, cw, err);
+        cr.str("name", ref.name);
+        cr.str("kind", ref.kind);
+        if (ref.name.empty()) err.add(cw, "conditional needs a name");
+        else run.conditionals.push_back(std::move(ref));
+      } else {
+        err.add(where, "conditionals must be strings or {name, kind} tables");
+      }
     }
   } else if (t.contains("conditionals")) {
     err.add(where, "'conditionals' must be an array");
