@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
@@ -69,6 +70,19 @@ def _load_plan(p: dict[str, Path], units: list[Unit]) -> Plan:
 
 def _load_state(p: dict[str, Path]) -> dict[str, Any]:
     return json.loads(p["state"].read_text()) if p["state"].exists() else {"units": {}}
+
+
+_STATE_LOCK = threading.Lock()
+
+
+def _record_unit(p: dict[str, Path], unit_id: str, rec: dict[str, Any]) -> None:
+    """Write one unit's record to state.json immediately (thread-safe).
+    Parallel agents finish at different times; a crash after one unit's
+    verification must not lose that unit's outcome."""
+    with _STATE_LOCK:
+        st = _load_state(p)
+        st["units"][unit_id] = rec
+        _save_state(p, st)
 
 
 def _save_state(p: dict[str, Path], st: dict[str, Any]) -> None:
@@ -196,7 +210,9 @@ def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, jud
     if args.dry_run:
         return {"status": "dry-run", "unit": brief.unit.id}
     _save_result(p, result)
-    return _verify_one(p, brief, result, judge, runner, log)
+    rec = _verify_one(p, brief, result, judge, runner, log)
+    _record_unit(p, brief.unit.id, rec)  # verified/failed is durable before the wave's merge step
+    return rec
 
 
 def _merge_records(args: argparse.Namespace, p: dict[str, Path], st: dict[str, Any], results: list[tuple[str, dict[str, Any]]]) -> list[str]:
@@ -209,8 +225,8 @@ def _merge_records(args: argparse.Namespace, p: dict[str, Path], st: dict[str, A
             if ok:
                 dispatch.remove_worktree(dispatch.DispatchConfig(repo=p["repo"]), uid)
                 rec.pop("worktree", None)
-        st["units"][uid] = rec
-        _save_state(p, st)
+        _record_unit(p, uid, rec)
+        st["units"][uid] = rec  # keep the caller's in-memory view current for dependency checks
     return [uid for uid, rec in results if rec["status"] != "merged"]
 
 
