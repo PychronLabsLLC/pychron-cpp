@@ -466,12 +466,18 @@ struct IAnalysisPersister {
 };
 ```
 
-Implementations later: `DvcPersister`, `SqlitePersister`, `FilePersister`
-(records directory; also the recovery spool). Spool-first: `SavePhase`
+Implementations follow `2026-09-29-persistence-adr.md` (ADR-0002: database
+authoritative, git as asynchronous mirror): `DbPersister` (SQLite for a
+single instrument or offline, PostgreSQL for a multi-instrument lab; one
+local transaction per save; raw series stored content-addressed by hash)
+and `FilePersister` (records directory; also the recovery spool). The git
+publisher and importer are background services fed from the database and
+are never persisters on the acquisition path. Spool-first: `SavePhase`
 always writes to the local spool, then hands the record to the configured
 persister on the Scheduler. Persister failure never blocks the next run; the
 UI shows pending records and `elctl exp flush` retries. Unspooled records
-are re-sent on startup.
+are re-sent on startup. `AnalysisRecord` is the unit both the DB schema
+and the mirrored JSON layout are derived from.
 
 Dropped: `PersistenceSpec`, HDF5/Excel persisters, multiple git commits per
 run inside the run thread, plot updates from the collector.
@@ -567,7 +573,7 @@ same queue runs on a real Argus and extraction line at bring-up.
 
 ### 10.5 Deferred
 
-DVC and SQL persisters; age display in evolutions; dashboard/labspy;
+`DbPersister` and the git publisher/importer (persistence spec per ADR-0002); age display in evolutions; dashboard/labspy;
 multi-queue scheduling; visual valve programmer; UV-specific extraction
 columns (as a device-specific `extra` table).
 
