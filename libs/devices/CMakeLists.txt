@@ -4,6 +4,7 @@ add_library(pychron_devices STATIC
   src/device.cpp
   src/types.cpp
   src/driver_registry.cpp
+  src/pfeiffer_maxigauge.cpp
 )
 
 target_include_directories(pychron_devices PUBLIC
