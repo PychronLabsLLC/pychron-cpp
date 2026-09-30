@@ -1,0 +1,167 @@
+#pragma once
+
+// Scriptable role fakes for Spectrometer / move protocol tests. Every call
+// that matters for ordering is appended to a shared log.
+
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "pychron/devices/spectrometer/roles.hpp"
+
+namespace pychron::spectrometer::testing {
+
+using CallLog = std::vector<std::string>;
+
+inline std::string fmt(double v) {
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%.3f", v);
+  return buf;
+}
+
+struct FakePositioner : IMassPositioner {
+  explicit FakePositioner(CallLog& log) : log(log) {}
+
+  Axis native_axis() const override { return axis; }
+  Result<void> set(double v) override {
+    ++set_calls;
+    if (fail_set_at && *fail_set_at == set_calls) {
+      log.push_back("set-fail:" + fmt(v));
+      return fail(ErrorKind::Io, "set failed", "magnet");
+    }
+    log.push_back("set:" + fmt(v));
+    sets.push_back(v);
+    value = v;
+    moving_left = moving_polls;
+    return {};
+  }
+  Result<double> read() override { return value; }
+  Result<bool> moving() override {
+    ++moving_calls;
+    if (moving_left > 0) {
+      --moving_left;
+      return true;
+    }
+    return false;
+  }
+  Limits limits() const override { return lim; }
+
+  CallLog& log;
+  Axis axis = Axis::Dac;
+  Limits lim{0.0, 10.0};
+  double value = 0.0;
+  int moving_polls = 0;  // moving() reports true this many times after each set()
+  int moving_left = 0;
+  int moving_calls = 0;
+  int set_calls = 0;
+  std::optional<int> fail_set_at;  // 1-based set() call that fails
+  std::vector<double> sets;
+};
+
+struct FakeControl : IDetectorControl {
+  explicit FakeControl(CallLog& log) : log(log) {}
+
+  Caps caps() const override { return caps_; }
+  Result<void> protect(const ChannelId& ch, bool on) override {
+    if ((on ? fail_protect : fail_unprotect).contains(ch)) {
+      log.push_back(std::string(on ? "protect-fail:" : "unprotect-fail:") + ch);
+      if (on) protected_[ch] = true;  // partially applied before the error
+      return fail(ErrorKind::Io, "protect failed", ch);
+    }
+    log.push_back(std::string(on ? "protect:" : "unprotect:") + ch);
+    protected_[ch] = on;
+    return {};
+  }
+  Result<void> set_deflection(const ChannelId& ch, double v) override {
+    if (!caps_.has(DetectorCap::Deflection)) return fail(unsupported(DetectorCap::Deflection));
+    deflection[ch] = v;
+    return {};
+  }
+  Result<double> read_deflection(const ChannelId& ch) override { return deflection[ch]; }
+  Result<void> set_gain(const ChannelId& ch, double v) override {
+    gain[ch] = v;
+    return {};
+  }
+  Result<double> read_gain(const ChannelId& ch) override { return gain.contains(ch) ? gain[ch] : 1.0; }
+  Result<void> set_cdd_voltage(const ChannelId& ch, double v) override {
+    cdd[ch] = v;
+    return {};
+  }
+
+  bool any_protected() const {
+    for (const auto& [ch, on] : protected_) {
+      if (on) return true;
+    }
+    return false;
+  }
+
+  CallLog& log;
+  Caps caps_ = DetectorCap::Protect | DetectorCap::Deflection | DetectorCap::Gain | DetectorCap::CddVoltage;
+  std::set<ChannelId> fail_protect, fail_unprotect;
+  std::map<ChannelId, bool> protected_;
+  std::map<ChannelId, double> deflection, gain, cdd;
+};
+
+struct FakeBlank : IBeamBlank {
+  explicit FakeBlank(CallLog& log) : log(log) {}
+  Result<void> blank(bool on) override {
+    if (on ? fail_on : fail_off) {
+      log.push_back(std::string(on ? "blank-fail" : "unblank-fail"));
+      return fail(ErrorKind::Io, "blank failed", "blank");
+    }
+    log.push_back(on ? "blank" : "unblank");
+    blanked = on;
+    return {};
+  }
+  CallLog& log;
+  bool blanked = false;
+  bool fail_on = false, fail_off = false;
+};
+
+struct FakeSource : IBeamSource {
+  FakeSource() {
+    specs.push_back(ParamSpec{SourceParam::HV, Unit::Volts, {0, 10000}, true, true, "HV"});
+    specs.push_back(ParamSpec{SourceParam::TrapCurrent, Unit::MicroAmps, {0, 1000}, true, true, "Trap"});
+  }
+  Result<void> set_hv(double v) override {
+    hv = v;
+    return {};
+  }
+  Result<double> read_hv() override {
+    ++hv_reads;
+    return hv;
+  }
+  std::span<const ParamSpec> params() const override { return specs; }
+  Result<void> set_param(const ParamId& id, double v) override {
+    if (std::get_if<SourceParam>(&id) && std::get<SourceParam>(id) == SourceParam::HV) {
+      hv = v;
+    } else {
+      trap = v;
+    }
+    return {};
+  }
+  Result<Readback> read_param(const ParamId& id) override {
+    if (std::get_if<SourceParam>(&id) && std::get<SourceParam>(id) == SourceParam::HV) return Readback{hv, hv};
+    return Readback{trap, std::nullopt};
+  }
+
+  std::vector<ParamSpec> specs;
+  double hv = 4500.0;
+  double trap = 100.0;
+  int hv_reads = 0;
+};
+
+struct FakeAcquirer : IIntensityAcquirer {
+  explicit FakeAcquirer(std::vector<ChannelId> chans) : chans(std::move(chans)) {}
+  std::vector<ChannelId> channels() const override { return chans; }
+  bool integrates() const override { return true; }
+  Result<void> configure(Duration) override { return {}; }
+  Result<void> start() override { return {}; }
+  Result<void> stop() override { return {}; }
+  Result<std::optional<Frame>> next(Duration) override { return std::optional<Frame>{}; }
+  std::vector<ChannelId> chans;
+};
+
+}  // namespace pychron::spectrometer::testing

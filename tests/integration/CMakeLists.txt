@@ -7,6 +7,8 @@ if(PYCHRON_INTEGRATION_TESTS)
   target_link_libraries(pychron_integration_tests PRIVATE pychron::systems GTest::gtest_main)
   target_compile_definitions(pychron_integration_tests PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+  # spectrometer sim drivers register from static initializers nothing references
+  pychron_link_drivers(pychron_integration_tests pychron_sim)
   pychron_set_warnings(pychron_integration_tests)
   gtest_discover_tests(pychron_integration_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()
