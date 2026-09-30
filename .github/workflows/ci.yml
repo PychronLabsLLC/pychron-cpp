@@ -1,0 +1,103 @@
+# Build and test on every push to main and every pull request.
+#
+# Core jobs use the `dev` configure preset: dependencies come from
+# find_package() or the pinned FetchContent fallbacks in
+# cmake/PychronDependencies.cmake and libs/transport, so no vcpkg bootstrap is
+# needed. The UI job builds apps/pychron-ui and runs tests/ui headless.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: core (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-clang-asan
+            os: macos-15
+            cc: clang
+            cxx: clang++
+            sanitize: address,undefined
+          - name: linux-gcc
+            os: ubuntu-24.04
+            cc: gcc-14
+            cxx: g++-14
+            sanitize: ""
+          - name: linux-clang-asan
+            os: ubuntu-24.04
+            cc: clang-18
+            cxx: clang++-18
+            sanitize: address,undefined
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        run: >
+          cmake --preset dev -G Ninja
+          -DPYCHRON_SANITIZE="${{ matrix.sanitize }}"
+
+      - name: Build
+        run: cmake --build --preset dev --parallel
+
+      - name: Test
+        run: ctest --preset dev --parallel 4
+
+  windows:
+    name: core (windows-msvc)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset dev -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build --preset dev --config Debug --parallel
+
+      - name: Test
+        run: ctest --preset dev -C Debug --parallel 4
+
+  ui:
+    name: ui (macos-qt6)
+    runs-on: macos-15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt and tools
+        run: brew install qt ninja
+
+      - name: Configure
+        run: cmake --preset dev-ui -G Ninja
+
+      - name: Build
+        run: cmake --build --preset dev-ui --parallel
+
+      - name: Test
+        run: ctest --preset dev-ui --parallel 4
