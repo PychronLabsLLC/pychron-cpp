@@ -169,7 +169,9 @@ def commit_and_merge(repo: Path, worktree: Path, branch: str, unit_id: str, *, r
         r = runner(["git", "commit", "-q", "-m", f"feat({unit_id}): implement unit via spec-router agent"], cwd=worktree)
         if r.returncode != 0:
             return False, r.stderr
-    r = runner(["git", "merge", "--no-ff", "-m", f"merge unit/{unit_id}", branch], cwd=repo)
+    from .dispatch import merge_subject
+
+    r = runner(["git", "merge", "--no-ff", "-m", merge_subject(unit_id), branch], cwd=repo)
     if r.returncode != 0:
         runner(["git", "merge", "--abort"], cwd=repo)
         return False, f"merge conflict: {r.stderr.strip() or r.stdout.strip()}"

@@ -168,12 +168,20 @@ def ensure_worktree(cfg: DispatchConfig, unit_id: str, *, base: str = "HEAD", ru
     return path, branch
 
 
+def merge_subject(unit_id: str) -> str:
+    return f"merge unit/{unit_id}"
+
+
 def branch_merged(repo: Path, unit_id: str, *, base: str = "main", runner: Runner = subprocess_runner) -> bool:
-    """True when unit/<id> exists and is an ancestor of `base` (its work is already on main)."""
-    branch = f"unit/{unit_id}"
-    if runner(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo).returncode != 0:
+    """True when the router's merge commit for this unit is on `base`.
+
+    Ancestry alone is not enough: a freshly created unit branch points at the
+    commit it was cut from, which is trivially an ancestor of main while the
+    agent's work still sits uncommitted in the worktree."""
+    r = runner(["git", "log", base, "--fixed-strings", f"--grep={merge_subject(unit_id)}", "--format=%s", "-n", "20"], cwd=repo)
+    if r.returncode != 0:
         return False
-    return runner(["git", "merge-base", "--is-ancestor", branch, base], cwd=repo).returncode == 0
+    return any(line.strip() == merge_subject(unit_id) for line in r.stdout.splitlines())
 
 
 def remove_worktree(cfg: DispatchConfig, unit_id: str, *, runner: Runner = subprocess_runner) -> None:

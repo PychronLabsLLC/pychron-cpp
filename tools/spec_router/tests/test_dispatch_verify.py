@@ -178,13 +178,13 @@ def test_ensure_worktree_creates_branch_when_missing(tmp_path):
     assert "-b" in add and "-B" not in add
 
 
-def test_branch_merged_uses_merge_base(tmp_path):
+def test_branch_merged_requires_router_merge_commit(tmp_path):
     def runner(cmd, *, cwd, stdin=None, timeout=None):
-        if cmd[:3] == ["git", "rev-parse", "--verify"]:
-            return _cp(0)
-        if cmd[:2] == ["git", "merge-base"]:
-            return _cp(0 if "unit/core" in cmd else 1)
+        if cmd[:2] == ["git", "log"]:
+            grep = next(a for a in cmd if a.startswith("--grep="))
+            return _cp(0, out="merge unit/core\n" if grep.endswith("unit/core") else "")
         return _cp(0)
 
     assert dispatch.branch_merged(tmp_path, "core", runner=runner)
+    # a fresh branch that is merely an ancestor of main is NOT merged
     assert not dispatch.branch_merged(tmp_path, "transport", runner=runner)
