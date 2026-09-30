@@ -62,7 +62,7 @@ Diagnostics check_roles(const SpectrometerConfig& c) {
   }
   for (const auto& [name, d] : c.drivers) {
     if (d.has_role(Role::Acquirer) && d.channels.empty())
-      add(out, d.loc, d.path + ".channels", "a driver with role 'acquirer' must declare its channels");
+      add(out, d.loc, d.path + ".channels", "an acquirer must declare its channels (driver has role 'acquirer')");
   }
   if (c.magnet.protection.beam_blank_threshold) {
     const bool any = std::any_of(c.drivers.begin(), c.drivers.end(),
