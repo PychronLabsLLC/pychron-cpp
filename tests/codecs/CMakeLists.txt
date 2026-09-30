@@ -1,5 +1,8 @@
-# One test_<vendor>.cpp per vendor codec (see libs/codecs/CONVENTIONS.md).
-file(GLOB PYCHRON_CODEC_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
+# One test_<vendor>.cpp per vendor codec (see libs/codecs/CONVENTIONS.md);
+# spectrometer codecs live under spectrometer/.
+file(GLOB PYCHRON_CODEC_TESTS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/spectrometer/test_*.cpp")
 
 add_executable(pychron_codecs_tests ${PYCHRON_CODEC_TESTS})
 

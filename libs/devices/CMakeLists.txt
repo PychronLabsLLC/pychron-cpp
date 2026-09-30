@@ -12,6 +12,12 @@ add_library(pychron_devices STATIC
   src/spectrometer/params.cpp
   src/spectrometer/roles.cpp
   src/spectrometer/detectors.cpp
+  src/spectrometer/legacy/polled_acquirer.cpp
+  src/spectrometer/legacy/dac_output.cpp
+  src/spectrometer/legacy/dac_positioner.cpp
+  src/spectrometer/legacy/adc_bank.cpp
+  src/spectrometer/legacy/pulse_counter.cpp
+  src/spectrometer/legacy/serial_hv.cpp
   src/extraction/capability.cpp
 )
 
