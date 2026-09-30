@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -134,6 +135,15 @@ kind = "pfeiffer_maxigauge"
 transport = "gnet"
 channels = [1, 2]
 
+[transports.rs485]
+kind = "sim"
+
+[drivers.mi]
+kind = "gp_microion"
+transport = "rs485"
+address = 7
+channels = [1, 2]
+
 [[valves]]
 name = "A"
 actuator = "relay"
@@ -147,6 +157,11 @@ address = "9"
 [[gauges]]
 name = "IG1"
 driver = "ig"
+channel = 1
+
+[[gauges]]
+name = "MI1"
+driver = "mi"
 channel = 1
 )";
 
@@ -202,6 +217,30 @@ TEST(SimSystem, GaugeNotInTopologyGetsItsOwnVolume) {
   auto p = gauge.read_pressure(1);
   ASSERT_TRUE(p) << p.error().what;
   EXPECT_NEAR(*p, 1e-8, 1e-8 * 1e-3);
+}
+
+TEST(SimSystem, MicroIonHookReportsGaugeVolumePressureAtItsAddress) {
+  auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  auto topo = three_volumes();
+  topo.volumes.push_back({"MI1", 1.0});
+  topo.edges.push_back({"MI1", "prep"});
+  auto settings = quiet();
+  settings.initial_pressures = {{"prep", 3e-7}, {"MI1", 3e-7}};
+  SimSystem sim(clock, topo, settings);
+
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("mi"), *cfg));
+  ASSERT_TRUE(transport->open());
+  GpMicroIon gauge("mi", *transport, 7, {1, 2});
+  auto p = gauge.read_pressure(1);
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_NEAR(*p, 3e-7, 3e-7 * 1e-3);
+  // Channel 2 has no configured gauge: no sensor.
+  EXPECT_FALSE(gauge.read_pressure(2));
+  // A driver at the wrong address gets no reply from the simulated slave.
+  GpMicroIon other("other", *transport, 8, {1});
+  EXPECT_FALSE(other.read_pressure(1));
 }
 
 TEST(SimSystem, UnknownDriverKindGetsSilentWire) {

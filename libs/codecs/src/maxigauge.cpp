@@ -19,40 +19,6 @@ const ReadSpec& line_reply() {
 
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
-// [+-]digits[.digits][(E|e)[+-]digits], at least one mantissa digit. The
-// grammar is checked here so parsing never depends on the process locale.
-bool is_decimal_number(std::string_view s) {
-  std::size_t i = 0;
-  auto digits = [&] {
-    std::size_t start = i;
-    while (i < s.size() && is_digit(s[i])) ++i;
-    return i - start;
-  };
-  if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-  std::size_t mantissa = digits();
-  if (i < s.size() && s[i] == '.') {
-    ++i;
-    mantissa += digits();
-  }
-  if (mantissa == 0) return false;
-  if (i < s.size() && (s[i] == 'E' || s[i] == 'e')) {
-    ++i;
-    if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-    if (digits() == 0) return false;
-  }
-  return i == s.size();
-}
-
-std::optional<double> parse_number(std::string_view s) {
-  if (!is_decimal_number(s)) return std::nullopt;
-  std::istringstream in{std::string(s)};
-  in.imbue(std::locale::classic());
-  double v = 0.0;
-  in >> v;
-  if (in.fail() || !std::isfinite(v)) return std::nullopt;
-  return v;
-}
-
 std::optional<Status> parse_status(std::string_view s) {
   if (s.size() != 1 || s[0] < '0' || s[0] > '6') return std::nullopt;
   return static_cast<Status>(s[0] - '0');
@@ -74,7 +40,7 @@ std::vector<std::string_view> split_fields(std::string_view s) {
 Result<Reading> parse_pair(std::string_view status, std::string_view value, const Bytes& reply) {
   auto st = parse_status(status);
   if (!st) return protocol_error("invalid status \"" + std::string(status) + "\"", reply);
-  auto v = parse_number(value);
+  auto v = parse_decimal(value);
   if (!v) return protocol_error("invalid pressure \"" + std::string(value) + "\"", reply);
   return Reading{*st, *v};
 }

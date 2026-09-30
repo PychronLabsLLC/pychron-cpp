@@ -5,6 +5,7 @@
 #include <deque>
 #include <limits>
 
+#include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/types.hpp"
 
@@ -184,6 +185,29 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       return p ? std::optional<double>(*p) : std::nullopt;
     };
     return maxigauge_sim_hook(std::move(model));
+  }
+
+  if (driver.kind == "gp_microion") {
+    std::map<int, std::string> by_channel;
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name) continue;
+        by_channel[static_cast<int>(g.channel)] = g.name;
+        add_volume_locked(g.name, 1.0);
+      }
+    }
+    MicroIonSimModel model;
+    // Same key the driver reads (see GpMicroIon::schema); default 1.
+    model.address = static_cast<int>(driver.options["address"].value<std::int64_t>().value_or(1));
+    model.pressure = [this, by_channel = std::move(by_channel)](int channel) -> std::optional<double> {
+      auto it = by_channel.find(channel);
+      if (it == by_channel.end()) return std::nullopt;
+      auto p = gauge_reading(it->second);
+      return p ? std::optional<double>(*p) : std::nullopt;
+    };
+    return microion_sim_hook(std::move(model));
   }
 
   return [](const Bytes&) { return Bytes{}; };

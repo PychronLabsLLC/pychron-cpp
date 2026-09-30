@@ -29,6 +29,16 @@ TEST(CodecConventions, ProtocolErrorKindAndEscapedReply) {
   EXPECT_EQ(protocol_error("empty reply").error().what, "empty reply");
 }
 
+TEST(CodecConventions, ParseDecimal) {
+  EXPECT_EQ(parse_decimal("1.23E-08"), 1.23e-8);
+  EXPECT_EQ(parse_decimal("+7.6e+02"), 760.0);
+  EXPECT_EQ(parse_decimal("-5"), -5.0);
+  EXPECT_EQ(parse_decimal(".5"), 0.5);
+  for (const char* bad : {"", ".", "E5", "1E", "1.0E-0x", "nan", "inf", "1,5", " 1", "1 ", "1e999"}) {
+    EXPECT_EQ(parse_decimal(bad), std::nullopt) << bad;
+  }
+}
+
 TEST(CodecConventions, StripTerminator) {
   auto ok = strip_terminator(to_bytes("1.0E-08\r\n"), "\r\n");
   ASSERT_TRUE(ok);
