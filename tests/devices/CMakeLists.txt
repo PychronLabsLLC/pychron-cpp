@@ -16,8 +16,10 @@ add_executable(pychron_devices_tests
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
   spectrometer/test_conformance_fakes.cpp
+  extraction/test_capability.cpp
+  extraction/test_conformance_fake.cpp
 )
-# spectrometer/conformance.hpp and spectrometer/fakes.hpp
+# spectrometer/ and extraction/ conformance.hpp and fakes
 target_include_directories(pychron_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtest_main)
