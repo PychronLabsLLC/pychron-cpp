@@ -4,6 +4,7 @@ add_library(pychron_devices STATIC
   src/device.cpp
   src/types.cpp
   src/driver_registry.cpp
+  src/pfeiffer_maxigauge.cpp
   src/proxr_relay.cpp
   src/proxr_board_sim.cpp
 )

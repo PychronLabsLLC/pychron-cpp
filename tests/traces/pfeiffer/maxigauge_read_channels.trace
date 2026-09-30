@@ -1,0 +1,19 @@
+# Pfeiffer MaxiGauge TPG 256 A: UNI, PR1, PR2, then PR3 on an unfitted
+# channel. Synthetic fixture built from the vendor manual's byte grammar;
+# replace with a lab capture during hardware bring-up (spec 9.4 step 13).
+0 tx 554e490d0a
+4100 rx 060d0a
+4300 tx 05
+9800 rx 310d0a
+20000 tx 5052310d0a
+24100 rx 060d0a
+24300 tx 05
+31000 rx 302c2b312e32333030452d30380d0a
+40000 tx 5052320d0a
+44100 rx 060d0a
+44300 tx 05
+51000 rx 302c2b342e35363030452d30370d0a
+60000 tx 5052330d0a
+64100 rx 060d0a
+64300 tx 05
+70900 rx 352c2b302e30303030452b30300d0a

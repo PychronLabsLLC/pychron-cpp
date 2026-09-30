@@ -1,8 +1,8 @@
-# Per-vendor byte codecs: pure functions, zero I/O. One src/<vendor>.cpp per
-# vendor (see CONVENTIONS.md).
-add_library(pychron_codecs STATIC
-  src/proxr.cpp
-)
+# Per-vendor byte codecs: pure functions, zero I/O. Each vendor adds
+# include/pychron/codecs/<vendor>.hpp and src/<vendor>.cpp (CONVENTIONS.md).
+file(GLOB PYCHRON_CODEC_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+
+add_library(pychron_codecs STATIC ${PYCHRON_CODEC_SOURCES})
 add_library(pychron::codecs ALIAS pychron_codecs)
 
 target_include_directories(pychron_codecs PUBLIC
