@@ -291,7 +291,7 @@ wave = 14
 layer = "systems"
 depends = ["spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
-goal = "SpectrometerProfile (profiles/<name>.toml): desired source params, per-detector deflection/gain, CDD voltage, magnet settings, tolerances; Spectrometer::apply with writable-only filtering, generic Ramper for ramped params, verify -> VerifyReport; detector control ops guarded by caps."
+goal = "SpectrometerProfile (profiles/<name>.toml): desired source params, per-detector deflection/gain, CDD voltage, magnet settings, tolerances; Spectrometer::apply with writable-only filtering, generic Ramper for ramped params, verify -> VerifyReport; detector control ops guarded by caps. ALSO (carried over from spectrometer_core): the saturation -> protect policy of spec section 3.2 -- Spectrometer subscribes to IntensityReading, protects a detector whose reading is flagged saturated when it has protection config and IDetectorControl has the protect cap, publishes an Alarm, and never unprotects automatically; tests on BeamModel with an unprotected counter under a large beam."
 targets = ["libs/systems", "tests/systems"]
 
 [[unit]]
@@ -372,7 +372,7 @@ wave = 15
 layer = "experiment"
 depends = ["plan_schema", "collector", "peak_center"]
 spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
-goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; a single HopRunner for main (cycles x hops, move+settle skipped when already positioned), sniff and baselines -- no separate multicollect path; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. Tests on BeamModel + SimSystem."
+goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; a single HopRunner for main (cycles x hops, move+settle skipped when already positioned), sniff and baselines -- no separate multicollect path; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. ALSO (carried over from plan_schema): the adapters from the loaded extraction_line.toml [aliases] and spectrometer.toml detector config to plan_schema's IAliasResolver / ISpectrometerCatalog, with a test that the shipped example configs resolve an example plan. Tests on BeamModel + SimSystem."
 targets = ["libs/experiment", "tests/experiment"]
 
 [[unit]]
