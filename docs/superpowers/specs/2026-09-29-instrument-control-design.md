@@ -437,16 +437,19 @@ Each step ends green in CI.
 
 1. `core`: Result, Clock, Scheduler, SignalBus, config loader + validation
 2. `transport`: Sim, Serial, Tcp, TraceRecorder
-3. `pfeiffer_maxigauge`: codec -> driver -> sim hook
-4. `proxr_relay`: same
-5. `SwitchManager` + interlock property tests
-6. `GaugeScanner`
-7. `NetworkGraph` + canvas loader
-8. `elctl`
-9. `ExtractionLine` facade + integration test
-10. Qt UI
-11. `gp_microion`
-12. Hardware bring-up, capture traces, commit as fixtures
+3. `device_kit`: Device base, capability interfaces, Sample/ValveState,
+   DriverRegistry, empty `codecs` target (single owner for everything the
+   vendor drivers share)
+4. `pfeiffer_maxigauge`: codec -> driver -> sim hook
+5. `proxr_relay`: same (parallel with 4)
+6. `SwitchManager` + interlock property tests
+7. `GaugeScanner` (parallel with 6, 8)
+8. `NetworkGraph` + canvas loader
+9. `elctl`
+10. `ExtractionLine` facade + `SimSystem` + integration test
+11. Qt UI
+12. `gp_microion` (parallel with 11)
+13. Hardware bring-up, capture traces, commit as fixtures (manual)
 
 ### 9.5 Explicitly deferred
 
