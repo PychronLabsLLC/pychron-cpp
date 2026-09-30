@@ -80,8 +80,8 @@ def test_build_fail_stops_before_ctest(tmp_path):
     assert b.configured and not b.built and b.tests_passed is None and "ctest" not in calls
 
 
-def _judgment(outcome="complete", conf=0.9, scope=0.9):
-    return verify.ReportJudgment(outcome, conf, 0.9, scope)
+def _judgment(outcome="complete", conf=0.9, scope=0.9, unfinished=0.05):
+    return verify.ReportJudgment(outcome, conf, 0.9, scope, unfinished)
 
 
 def _green():
@@ -101,14 +101,20 @@ def test_gate_policy():
     assert "ctest" in verify.gate(_result(report={}), red, _judgment(), changed=True).reason
     assert not verify.gate(_result(report={}), _green(), None, changed=True).merge
     assert not verify.gate(_result(report={}), _green(), _judgment("partial"), changed=True).merge
-    assert not verify.gate(_result(report={}), _green(), _judgment(conf=0.3), changed=True).merge
+    # uncertain complete (caveats) with no unfinished work is mergeable
+    assert verify.gate(_result(report={}), _green(), _judgment(conf=0.3), changed=True).merge
+    assert not verify.gate(_result(report={}), _green(), _judgment(conf=0.3, unfinished=0.7), changed=True).merge
+    assert not verify.gate(_result(report={}), _green(), _judgment("blocked", conf=0.4), changed=True).merge
+    assert not verify.gate(_result(report={}), _green(), _judgment("off_track", conf=0.4), changed=True).merge
+    # low-confidence partial with no unfinished work: allowed (tests are the ground truth)
+    assert verify.gate(_result(report={}), _green(), _judgment("partial", conf=0.3), changed=True).merge
     assert not verify.gate(_result(report={}), _green(), _judgment(scope=0.2), changed=True).merge
 
 
 def test_judge_report_builds_state_and_reads_answers():
     def fn(state, questions):
         assert state["unit"]["id"] == "core" and "report" in state
-        assert set(questions) == {"outcome", "evidence", "in_scope"}
+        assert set(questions) == {"outcome", "evidence", "in_scope", "unfinished"}
         a = Answers()
         a.choices["outcome"] = ChoiceAnswer("partial", 0.8, {"partial": 0.8})
         a.nouls = {"evidence": 0.3, "in_scope": 0.95}

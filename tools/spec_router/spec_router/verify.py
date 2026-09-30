@@ -57,9 +57,14 @@ def build_and_test(worktree: Path, *, runner: Runner = subprocess_runner, build_
     return BuildResult(True, True, True, r.returncode == 0, _tail("\n".join(log)))
 
 
-def diff_is_nonempty(worktree: Path, *, runner: Runner = subprocess_runner) -> bool:
+def diff_is_nonempty(worktree: Path, *, runner: Runner = subprocess_runner, base: str = "main") -> bool:
+    """True if the worktree has uncommitted changes or commits not yet on `base`
+    (an operator may have committed/merged in the worktree before verification)."""
     r = runner(["git", "status", "--porcelain"], cwd=worktree)
-    return bool(r.stdout.strip())
+    if r.stdout.strip():
+        return True
+    r = runner(["git", "rev-list", "--count", f"{base}..HEAD"], cwd=worktree)
+    return r.returncode == 0 and r.stdout.strip().isdigit() and int(r.stdout.strip()) > 0
 
 
 @dataclass
@@ -68,6 +73,7 @@ class ReportJudgment:
     outcome_confidence: float
     evidence: float
     in_scope: float
+    unfinished: float = 0.0  # P(required work left undone)
 
 
 REPORT_QUESTIONS = {
@@ -95,6 +101,14 @@ REPORT_QUESTIONS = {
             "such as the top-level CMakeLists), with any exceptions justified in `report.out_of_scope_changes`?"
         )
     ),
+    "unfinished": Noul(
+        instructions=(
+            "Does `report.blockers` (or `report.summary`) name any part of `unit.goal` that is NOT implemented and "
+            "would have to be written before the unit can be used as specified? Answer no for caveats that do not "
+            "leave required work undone: hand-made test fixtures awaiting hardware capture, design notes needing "
+            "review, predicted merge conflicts, environment/toolchain remarks, or deferred items the goal excludes."
+        )
+    ),
 }
 
 
@@ -105,7 +119,7 @@ def judge_report(brief: UnitBrief, report: dict[str, Any], judge: Judge) -> Repo
     }
     a = judge.ask(state, REPORT_QUESTIONS)
     c = a.choices["outcome"]
-    return ReportJudgment(c.choice, c.confidence, a.nouls["evidence"], a.nouls["in_scope"])
+    return ReportJudgment(c.choice, c.confidence, a.nouls["evidence"], a.nouls["in_scope"], a.nouls.get("unfinished", 0.0))
 
 
 @dataclass
@@ -133,8 +147,15 @@ def gate(result: UnitResult, build: BuildResult, judgment: ReportJudgment | None
         return Decision(False, f"router verification: {why}", build, judgment, changed)
     if judgment is None:
         return Decision(False, "agent emitted no structured report", build, judgment, changed)
-    if judgment.outcome != "complete" or judgment.outcome_confidence < min_confidence:
+    # Policy: the router's own green build+tests is the primary evidence. The report judgment
+    # must not indicate work left undone or a wrong direction. An uncertain complete/partial
+    # split caused by caveats is acceptable when `unfinished` is low.
+    if judgment.outcome in ("blocked", "off_track"):
         return Decision(False, f"report judged {judgment.outcome} (conf {judgment.outcome_confidence:.2f})", build, judgment, changed)
+    if judgment.unfinished >= 0.5:
+        return Decision(False, f"report indicates unfinished required work (P={judgment.unfinished:.2f})", build, judgment, changed)
+    if judgment.outcome == "partial" and judgment.outcome_confidence >= min_confidence:
+        return Decision(False, f"report judged partial (conf {judgment.outcome_confidence:.2f})", build, judgment, changed)
     if judgment.in_scope < min_scope:
         return Decision(False, f"report judged out of scope (P={judgment.in_scope:.2f})", build, judgment, changed)
     return Decision(True, "green build, tests pass, report complete and in scope", build, judgment, changed)
@@ -144,9 +165,10 @@ def commit_and_merge(repo: Path, worktree: Path, branch: str, unit_id: str, *, r
     r = runner(["git", "add", "-A"], cwd=worktree)
     if r.returncode != 0:
         return False, r.stderr
-    r = runner(["git", "commit", "-q", "-m", f"feat({unit_id}): implement unit via spec-router agent"], cwd=worktree)
-    if r.returncode != 0:
-        return False, r.stderr
+    if runner(["git", "status", "--porcelain"], cwd=worktree).stdout.strip():
+        r = runner(["git", "commit", "-q", "-m", f"feat({unit_id}): implement unit via spec-router agent"], cwd=worktree)
+        if r.returncode != 0:
+            return False, r.stderr
     r = runner(["git", "merge", "--no-ff", "-m", f"merge unit/{unit_id}", branch], cwd=repo)
     if r.returncode != 0:
         runner(["git", "merge", "--abort"], cwd=repo)
