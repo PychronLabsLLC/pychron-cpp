@@ -154,3 +154,7 @@ font = "Arial 12"
 
 [legend]
 pos = [20, 650]
+
+[[switch]]
+name = "pump_power"
+pos = [500, 100]

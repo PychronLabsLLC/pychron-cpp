@@ -157,14 +157,15 @@ pos = [0, 0]
   EXPECT_TRUE(has(r.warnings, "valves[1]", "valve 'B' is not drawn on the canvas"));
   EXPECT_TRUE(has(r.warnings, "valves[2]", "valve 'R1' is not drawn on the canvas"));
   EXPECT_TRUE(has(r.warnings, "manual_valves[0]", "manual valve 'M1' is not drawn on the canvas"));
-  ASSERT_EQ(r.warnings.size(), 3u);
+  EXPECT_TRUE(has(r.warnings, "switches[0]", "switch 'pump_power' is not drawn on the canvas"));
+  ASSERT_EQ(r.warnings.size(), 4u);
   EXPECT_EQ(r.warnings[0].loc.file, "extraction_line.toml");
 }
 
 TEST(CanvasCrossValidate, ResultFormFailsOnErrorsOnly) {
   auto ok = check_canvas(canvas("[[valve]]\nname = \"A\"\npos = [0, 0]\n"), system());
   ASSERT_TRUE(ok.has_value());
-  EXPECT_EQ(ok->size(), 3u);  // warnings returned on success
+  EXPECT_EQ(ok->size(), 4u);  // warnings returned on success
 
   auto bad = check_canvas(canvas("[[valve]]\nname = \"Q\"\npos = [0, 0]\n"), system());
   ASSERT_FALSE(bad.has_value());
