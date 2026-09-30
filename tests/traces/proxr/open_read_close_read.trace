@@ -1,0 +1,19 @@
+# NCD ProXR relay: open valve "9" (bank 2, relay 1), read it back, close it,
+# read it back. Hand-written from the ProXR command set until a bench trace
+# is captured (spec step 13); replace with the captured file, same name.
+0 tx fe3102
+1200 rx 55
+1500 tx fe09
+2700 rx 55
+3000 tx fe3102
+4200 rx 55
+4500 tx fe11
+5700 rx 01
+6000 tx fe3102
+7200 rx 55
+7500 tx fe01
+8700 rx 55
+9000 tx fe3102
+10200 rx 55
+10500 tx fe11
+11700 rx 00

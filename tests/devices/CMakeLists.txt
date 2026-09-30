@@ -8,9 +8,14 @@ add_executable(pychron_devices_tests
   test_capabilities.cpp
   test_driver_registry.cpp
   test_codec_conventions.cpp
+  test_proxr_relay.cpp
+  test_proxr_board_sim.cpp
 )
 
 target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtest_main)
+# Committed wire traces, replayed by driver tests.
+target_compile_definitions(pychron_devices_tests PRIVATE
+  PYCHRON_TRACES_DIR="${PROJECT_SOURCE_DIR}/tests/traces")
 pychron_link_drivers(pychron_devices_tests pychron_devices_test_drivers)
 pychron_set_warnings(pychron_devices_tests)
 
