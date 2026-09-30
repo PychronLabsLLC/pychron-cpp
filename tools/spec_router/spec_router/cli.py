@@ -36,16 +36,34 @@ def _judge(args: argparse.Namespace, p: dict[str, Path]) -> Judge:
     return TypeSafeJudge(p["cache"], model=args.jev_model)
 
 
+def _spec_path(p: dict[str, Path], unit: Unit) -> Path:
+    return (p["repo"] / unit.spec).resolve() if unit.spec else p["spec"]
+
+
+def _spec_rel(p: dict[str, Path], unit: Unit) -> str:
+    return str(_spec_path(p, unit).relative_to(p["repo"]))
+
+
 def _load_plan(p: dict[str, Path], units: list[Unit]) -> Plan:
     if not p["plan"].exists():
         sys.exit("no plan yet: run `spec-router plan` first")
     d = json.loads(p["plan"].read_text())
-    secs = {s.id: s for s in parse_sections(p["spec"].read_text())}
     by_id = {u.id: u for u in units}
+    sec_cache: dict[Path, dict[str, Any]] = {}
     briefs = {}
     for uid, b in d["briefs"].items():
+        if uid not in by_id:
+            continue  # unit removed from units.toml since planning
+        unit = by_id[uid]
+        sp = _spec_path(p, unit)
+        if sp not in sec_cache:
+            sec_cache[sp] = {s.id: s for s in parse_sections(sp.read_text())}
+        secs = sec_cache[sp]
         sizing = Sizing(**b["sizing"]) if b.get("sizing") else None
-        briefs[uid] = UnitBrief(by_id[uid], [secs[s] for s in b["sections"] if s in secs], sizing)
+        briefs[uid] = UnitBrief(unit, [secs[s] for s in b["sections"] if s in secs], sizing)
+    missing = [u.id for u in units if not u.manual and u.id not in briefs]
+    if missing:
+        sys.exit(f"plan is stale; units without a brief: {missing}. Run `spec-router plan`.")
     return Plan([], briefs, d.get("background", []))
 
 
@@ -61,18 +79,28 @@ def _save_state(p: dict[str, Path], st: dict[str, Any]) -> None:
 def cmd_plan(args: argparse.Namespace) -> int:
     p = _paths(args)
     units = load_units(Path(args.units) if args.units else None)
-    sections = parse_sections(p["spec"].read_text())
     judge = _judge(args, p)
-    plan = route_sections(sections, units, judge, attach_threshold=args.attach_threshold)
-    plan = size_units(plan, judge)
+    # Route each spec's sections only among the units that spec defines.
+    by_spec: dict[Path, list[Unit]] = {}
+    for u in units:
+        by_spec.setdefault(_spec_path(p, u), []).append(u)
+    plan = Plan([], {}, [])
+    total_sections = 0
+    for sp, us in by_spec.items():
+        sections = parse_sections(sp.read_text())
+        total_sections += len(sections)
+        sub = size_units(route_sections(sections, us, judge, attach_threshold=args.attach_threshold), judge)
+        plan.routings += sub.routings
+        plan.briefs.update(sub.briefs)
+        plan.background += [f"{sp.name}:{sid}" for sid in sub.background]
     p["state_dir"].mkdir(exist_ok=True)
     p["plan"].write_text(json.dumps(plan.to_dict(), indent=1))
-    print(f"{len(sections)} sections -> {len(plan.briefs)} units; background: {plan.background}")
+    print(f"{total_sections} sections across {len(by_spec)} specs -> {len(plan.briefs)} units; background: {plan.background}")
     print(f"jev calls: {judge.calls}, cache hits: {judge.hits}\n")
-    print(f"{'unit':24} {'wave':>4} {'#sec':>4} {'size':>5} {'conf':>5} {'model':7} {'turns':>5} split")
-    for uid, b in plan.briefs.items():
+    print(f"{'unit':26} {'wave':>4} {'#sec':>4} {'size':>5} {'conf':>5} {'model':7} {'turns':>5} split  spec")
+    for uid, b in sorted(plan.briefs.items(), key=lambda kv: (kv[1].unit.wave, kv[0])):
         s = b.sizing
-        print(f"{uid:24} {b.unit.wave:>4} {len(b.sections):>4} {s.score:>5.2f} {s.confidence:>5.2f} {s.model:7} {s.max_turns:>5} {'YES' if s.split else ''}")
+        print(f"{uid:26} {b.unit.wave:>4} {len(b.sections):>4} {s.score:>5.2f} {s.confidence:>5.2f} {s.model:7} {s.max_turns:>5} {'YES' if s.split else '   '}  {_spec_rel(p, b.unit).split('/')[-1]}")
     low = [r for r in plan.routings if r.confidence < 0.5 and r.primary != "background"]
     if low:
         print("\nlow-confidence routings (review):")
@@ -88,7 +116,8 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     plan = _load_plan(p, units)
     if args.unit not in plan.briefs:
         sys.exit(f"unknown unit {args.unit!r}; known: {sorted(plan.briefs)}")
-    print(dispatch.build_prompt(plan.briefs[args.unit], spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(_load_state(p))))
+    brief = plan.briefs[args.unit]
+    print(dispatch.build_prompt(brief, spec_path=_spec_rel(p, brief.unit), completed_units=_done(_load_state(p))))
     return 0
 
 
@@ -157,7 +186,7 @@ def _verify_one(p: dict[str, Path], brief: UnitBrief, result: dispatch.UnitResul
 def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, judge: Judge | None, runner: dispatch.Runner, log) -> dict[str, Any]:
     cfg = dispatch.DispatchConfig(repo=p["repo"], claude_bin=args.claude_bin)
     st = _load_state(p)
-    prompt = dispatch.build_prompt(brief, spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(st))
+    prompt = dispatch.build_prompt(brief, spec_path=_spec_rel(p, brief.unit), completed_units=_done(st))
     log(f"==> {brief.unit.id}: model={brief.sizing.model if brief.sizing else '?'} sections={[s.id for s in brief.sections]}")
     result = dispatch.run_unit(cfg, brief, prompt, runner=runner)
     if args.dry_run:

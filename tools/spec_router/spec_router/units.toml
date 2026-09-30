@@ -106,3 +106,435 @@ manual = true
 depends = ["qt_ui", "gp_microion"]
 goal = "Lab bring-up: elctl probe on real hardware, capture traces, commit under tests/traces/. Never delegated to an agent."
 targets = ["tests/traces"]
+
+# =====================================================================
+# Spectrometer control  (docs/superpowers/specs/2026-09-29-spectrometer-control-design.md)
+# Waves continue after the extraction-line M1 waves. hardware_bringup (wave 9)
+# is manual and nothing depends on it.
+# =====================================================================
+
+[[unit]]
+id = "spec_roles"
+wave = 10
+layer = "devices"
+depends = ["device_kit"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "libs/devices/spectrometer: role interfaces IMassPositioner, IBeamSource, IIntensityAcquirer, IDetectorControl, IBeamBlank; Frame, Readback, ParamSpec/ParamId (+Custom), Limits, Caps; canonical SourceParam registry; DetectorSet model + DetectorState event types. Headers, minimal .cpp, contract tests, conformance suite header (tests/devices/spectrometer/conformance.hpp)."
+targets = ["libs/devices", "tests/devices"]
+
+[[unit]]
+id = "spec_config"
+wave = 10
+layer = "systems"
+depends = ["core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "spectrometer.toml schema + loader + validation (section 7): transports/drivers with roles, [magnet], [source], [acquisition], [detector_control], [[detectors]], tables/profiles directory layout, molecular_weights.toml; assembler validation rules as pure functions over the parsed config with one failing fixture per rule; two example configs (sim-integrated, sim-legacy)."
+targets = ["libs/systems", "tests/systems", "configs/examples"]
+
+[[unit]]
+id = "field_table"
+wave = 10
+layer = "systems"
+depends = ["core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "FieldTable (pure): control points per detector, fit kinds discrete/linear/quadratic/cubic, value_for/mass_for (bracketed inverse), update with propagate, Config error on discrete miss; FieldTableStore with versioned tables/<name>/<timestamp>.toml + current pointer + restore; MolecularWeights table; pychron mftable.csv reader for the importer."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "exp_model"
+wave = 10
+layer = "experiment"
+depends = ["core"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "libs/experiment/model: RunIdentity/AnalysisType (identifiers.toml driven), ExtractionSpec, MeasurementRef, RunSpec, QueueSpec, Delays, Overlap, SampleInfo; alias normalization; per-analysis-type field rules; position-range parsing; identifier regexes. Pure data + validation, no I/O beyond identifiers.toml."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "fits"
+wave = 10
+layer = "reduction"
+depends = ["core"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "libs/reduction/fits (pure): FitSpec, fit(series, spec) -> Intercept for average/linear/parabolic/cubic/exponential/custom_poly with sem/sd errors and iterative outlier filtering; regression fixtures under tests/data/series with expected intercepts (port pychron algorithms; document any tolerance)."
+targets = ["libs/reduction", "tests/reduction", "tests/data"]
+
+[[unit]]
+id = "acquisition_engine"
+wave = 11
+layer = "systems"
+depends = ["spec_roles"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "AcquisitionEngine (section 3): one Scheduler job per acquirer; integrated pass-through; host integration binning with mean/sigma/n, dead-time correction, shared bin epoch; multi-acquirer merge by timestamp with nullopt for missing channels; Reading + IntensityReading event + IntensityStream (bounded queue, next(timeout)); acquire(n|duration) with trigger(); stale-frame guard; timeout -> Alarm; saturation flag. Tests with fake acquirers and ManualClock."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "sim_beam"
+wave = 11
+layer = "sim"
+depends = ["spec_roles"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "libs/sim/spectrometer: BeamModel (section 8.1) and the five sim drivers sim_integrated, sim_dac_positioner, sim_adc_bank, sim_pulse_counter, sim_hv_supply, all bound to one BeamModel, registered in DriverRegistry; deterministic RNG + injected Clock; tests that peaks, HV scaling, deflection shift, saturation and protection flags behave as specified."
+targets = ["libs/sim", "tests/sim"]
+
+[[unit]]
+id = "queue_file"
+wave = 11
+layer = "experiment"
+depends = ["exp_model"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "experiment.toml load/validate/dump round-trip; ExperimentQueue edit ops (move/copy/repeat block/randomize/group by extraction/toggle skip/end-after); frequency expansion at edit time; queue-level validation collecting diagnostics (references to plans/scripts/conditionals are checked via injected resolver interfaces)."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "run_factory"
+wave = 11
+layer = "experiment"
+depends = ["exp_model"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "RunFactory as pure functions: defaults.toml per (analysis_type, extract_device), block templates, position-range expansion, aliquot/step increment helpers, special-run insertion helpers. No UI."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "conditionals"
+wave = 11
+layer = "experiment"
+depends = ["exp_model"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Conditionals (section 7): grammar parser to AST, typed MetricContext interface, evaluator with window/$NAME/ntrips/frequency/start, kinds and enum actions, level merge with disable, evaluation order, Trip events; TOML load; parser round-trip on pychron conditionals.rst examples; validation error for series-vs-scalar without reducer."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "analysis_record"
+wave = 11
+layer = "experiment"
+depends = ["exp_model", "fits"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "AnalysisRecord v1 (section 8.3) types, RecordBuilder with per-phase completeness checks, deterministic JSON/TOML serialization + parse, record sha, schema version field and bump test."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "spectrometer_core"
+wave = 12
+layer = "systems"
+depends = ["spec_config", "field_table", "acquisition_engine", "sim_beam"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Spectrometer facade + SpectrometerAssembler (section 2.2, 7.3): role binding from config, DetectorSet runtime state, position pipeline with corrections + exact uncorrect, move protocol with protect/blank/AF-demag/settle and failure-safe unprotect, position_hv, with_table scope, snapshot() -> SpectrometerState (content hash), MagnetMoved/DetectorState events. Integration test against both sim example configs."
+targets = ["libs/systems", "tests/systems", "tests/integration"]
+
+[[unit]]
+id = "plan_schema"
+wave = 12
+layer = "experiment"
+depends = ["exp_model", "conditionals"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "MeasurementPlan schema (section 4.1): TOML parse + validation (one failing fixture per rule), '@' alias resolution against injected extraction-line/spectrometer resolvers, parameters.expose override enforcement, duration arithmetic, effective-plan rendering (template + overrides -> TOML text) for the record."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "extraction_device_ifaces"
+wave = 12
+layer = "devices"
+depends = ["switch_manager"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Typed extraction-device interfaces for the script host (section 6): IExtractionDevice plus optional ILaserDevice, IFurnaceDevice, IStage, IPatternRunner, IPipetteService, ICryo, IMotorService, IImaging, IPressureService, IValveService adapter over SwitchManager; capability query; SimExtractionDevice (power -> temperature -> gas release hook); conformance suite for device implementations."
+targets = ["libs/devices", "libs/sim", "tests/devices"]
+
+[[unit]]
+id = "legacy_kit"
+wave = 13
+layer = "devices"
+depends = ["spectrometer_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Legacy split-system role drivers: dac_positioner (write-only DAC with cached readback over a generic DAC transport interface), adc_bank (raw sampled IIntensityAcquirer over Modbus/serial ADC codec), pulse_counter (count frames), serial_hv (IBeamSource with HV only) including a MAP-215 style serial magnet codec ('B{range}.' / 'W{v}.'); all pass the conformance suite; sim-legacy example config drives them end to end."
+targets = ["libs/codecs", "libs/devices", "tests/codecs", "tests/devices"]
+
+[[unit]]
+id = "jobs_framework"
+wave = 13
+layer = "systems"
+depends = ["spectrometer_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "libs/systems/jobs: Job/JobSpec/JobRunner (queue depth 1 per spectrometer, Interlock error when busy, cancel, progress events, before/after SpectrometerState snapshots) and the shared Sweep runner over magnet/HV/param/CDD axes with settle and bidirectional options."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "scripting_host"
+wave = 13
+layer = "scripting"
+depends = ["extraction_device_ifaces"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "libs/scripting: embedded CPython via pybind11 (PYCHRON_SCRIPTING option with stub fallback), per-execution isolated namespace, full pyscript vocabulary bound to the typed interfaces, read-only context globals + opt.<key>, '#! pychron:' header parsing, static check (unknown command/arity/capability/valve name), estimate() with DurationAccumulator, CancelToken -> ScriptCancelled with finally semantics, abort interrupt, restricted builtins/import allowlist, gosub; same host for extraction/post_eq/post_meas/measurement hooks. Tests use the real interpreter and example scripts."
+targets = ["libs/scripting", "tests/scripting", "vcpkg.json", "cmake"]
+
+[[unit]]
+id = "peak_center"
+wave = 14
+layer = "systems"
+depends = ["jobs_framework"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Peak center job: pure find_peak_center(points, percent, min_height) -> PeakShape with resolution/resolving power (port pychron peak_detection with fixture scans under tests/data/scans), runner with start positioning, signal-settle wait, retry with scaled window, uncorrect + FieldTable::update + reposition, PeakCenterDone event with points retained on failure."
+targets = ["libs/systems", "tests/systems", "tests/data"]
+
+[[unit]]
+id = "hv_sweep"
+wave = 14
+layer = "systems"
+depends = ["jobs_framework"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "HV (accelerating voltage) sweep job reusing the peak fit; optional HV table writeback; tests on BeamModel."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "profiles_apply_verify"
+wave = 14
+layer = "systems"
+depends = ["spectrometer_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "SpectrometerProfile (profiles/<name>.toml): desired source params, per-detector deflection/gain, CDD voltage, magnet settings, tolerances; Spectrometer::apply with writable-only filtering, generic Ramper for ramped params, verify -> VerifyReport; detector control ops guarded by caps."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "collector"
+wave = 14
+layer = "experiment"
+depends = ["analysis_record", "acquisition_engine"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Collector (section 8.1): CollectionSpec, Series[iso,det,kind] keyed for multicollect and peak hop, per-reading conditional evaluation hook, SeriesUpdated events, set_target, truncate/cancel via token, RunData output."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "persister_boundary"
+wave = 14
+layer = "experiment"
+depends = ["analysis_record"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "IAnalysisPersister interface (next_aliquot, begin_run, save_extraction, save_analysis, save_artifact, flush), FilePersister records directory, spool-first SavePipeline with Scheduler hand-off, retry and startup recovery; AliquotAllocator. No DB or git."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "coincidence"
+wave = 15
+layer = "systems"
+depends = ["peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Coincidence job: peak-center reference then each active detector on the same isotope, convert deltas to deflection proposals via deflection.per_volt with clamp; separate explicit apply_deflections."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "deflection_cal"
+wave = 15
+layer = "systems"
+depends = ["peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Deflection calibration job: sweep a detector's deflection at fixed magnet, peak fit, linear slope -> dac_per_volt; optional write to config-backed detector settings."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "cdd_scan"
+wave = 15
+layer = "systems"
+depends = ["peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "CDD operating-voltage scan: Sweep over cdd_voltage on a counter at fixed isotope; pure plateau detection returning start/end/recommended; tests on synthetic and fixture plateaus."
+targets = ["libs/systems", "tests/systems", "tests/data"]
+
+[[unit]]
+id = "ic_table_gen"
+wave = 15
+layer = "systems"
+depends = ["peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "IC / peak-hop table generation: for a list of (isotope, detector) pairs run peak center under with_table(name) and write a named versioned field table."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "rise_rate"
+wave = 15
+layer = "systems"
+depends = ["peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Rise-rate / sensitivity job: acquire(n) at fixed position, linear slope per detector, result event."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "run_state_machine"
+wave = 15
+layer = "experiment"
+depends = ["collector", "scripting_host", "persister_boundary"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Run state machine + phases (section 3.1): Run::advance with typed events and RunStateChanged; IPhase objects Prepare/Extract/Equilibrate/Measure(placeholder hook to engine)/PostMeasure/Save; RunContext; CancelToken modes cancel/abort/truncate{quick}; post-measure failure still saves; save failure -> Failed(save_error) with spool. Every legal and illegal transition tested."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "measurement_engine"
+wave = 15
+layer = "experiment"
+depends = ["plan_schema", "collector", "peak_center"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; multicollect and peak_hop blocks; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. Tests on BeamModel + SimSystem."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "executor"
+wave = 16
+layer = "experiment"
+depends = ["run_state_machine", "measurement_engine"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Executor (section 3.2-3.3): state machine, queue loop with IPreRunCheck plugins, delay policy, serial and overlapped execution with Resource exclusivity, OverlapReady/min_pump_time waits, stop/cancel/abort/truncate, end_after, queue conditional actions, scheduled start/stop, executor_state.json persistence and resume."
+targets = ["libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "whole_lab_sim"
+wave = 16
+layer = "sim"
+depends = ["sim_beam", "extraction_line_facade", "extraction_device_ifaces"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Whole-lab simulation: compose SimSystem + BeamModel + SimExtractionDevice so released gas reaches the beam model when the inlet opens; deterministic clock; fast-clock runner; example lab config under configs/examples."
+targets = ["libs/sim", "tests/sim", "configs/examples"]
+
+[[unit]]
+id = "spec_importer"
+wave = 16
+layer = "tooling"
+depends = ["spec_config", "field_table"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "tools/pychron_spectrometer_import.py: one-shot converter from pychron detectors.yaml/.cfg, mftable.csv (+ic/av tables), config.cfg sections + readout.yaml, deflections/<det>, device .cfg [Communications], af_demagnetization.yaml into spectrometer.toml, tables/, profiles/; report of unmapped keys; pytest fixtures from pychron example files."
+targets = ["tools"]
+
+[[unit]]
+id = "integration_queue_tests"
+wave = 17
+layer = "experiment"
+depends = ["executor", "whole_lab_sim"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "6-run sim queue integration (blank, air, 3 unknowns with overlap, detector_ic): all Success, complete records, intercepts within tolerance of BeamModel truth, planted conditional trip, cancel mid-measure leaves line safe; golden-record determinism test; property-style cancel/abort/truncate injection invariants."
+targets = ["tests/integration", "tests/experiment"]
+
+[[unit]]
+id = "measurement_importer"
+wave = 17
+layer = "tooling"
+depends = ["plan_schema"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "tools/pychron_measurement_import.py: AST + docstring parse of pychron measurement scripts, classify standard/near-standard/exotic, emit template overrides or plan + hook stub, hops/fits conversion, per-script report; fixtures = the argus/helix example scripts with expected classification."
+targets = ["tools"]
+
+[[unit]]
+id = "template_library"
+wave = 17
+layer = "experiment"
+depends = ["plan_schema"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Shipped MeasurementPlan templates (thermo_argus, thermo_helix, isotopx_ngx, generic) with instrument_family/analysis_types/parameters.expose, lab defaults.toml format and resolver (lab then shipped), lab_profile.toml offline validation; every template validates against the matching sim spectrometer config."
+targets = ["templates", "libs/experiment", "tests/experiment"]
+
+[[unit]]
+id = "elctl_exp"
+wave = 17
+layer = "apps"
+depends = ["executor"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "elctl exp commands: validate, estimate, plan show/plan-diff, script check, run [--from N] [--dry-run], status, stop/cancel/abort/truncate, flush, sim queue; headless parity tests on the whole-lab sim."
+targets = ["apps/elctl", "tests/integration"]
+
+[[unit]]
+id = "exp_ui"
+wave = 19
+layer = "ui"
+depends = ["spec_ui_tuning", "elctl_exp", "template_library"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "apps/pychron-ui experiment views via CoreBridge: queue editor, measurement panel with generated parameter form and advanced structured editor, script editor with static-check diagnostics and live estimate, executor pane with phase timeline/overlap lanes/explained waits/conditionals view, evolutions plots sharing the spectrometer plot widget, notification subscriber; Qt Test smoke."
+targets = ["apps/pychron-ui", "tests/ui"]
+
+[[unit]]
+id = "spec_bringup"
+wave = 19
+layer = "manual"
+manual = true
+depends = ["spec_ui_tuning"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Lab bring-up on Argus and NGX: capture traces with elctl trace on, commit under tests/traces/thermo and tests/traces/isotopx, run every tuning job. Never delegated to an agent."
+targets = ["tests/traces"]
+
+[[unit]]
+id = "exp_bringup"
+wave = 20
+layer = "manual"
+manual = true
+depends = ["exp_ui", "integration_queue_tests"]
+spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
+goal = "Real queue on Argus + extraction line with FilePersister to a scratch directory. Never delegated to an agent."
+targets = ["tests/traces"]
+
+[[unit]]
+id = "thermo_qtegra_codec"
+wave = 13
+layer = "codecs"
+depends = ["spec_roles"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Thermo Qtegra RemoteControlServer ASCII line codec (pure): encode/decode for SetMagnetDAC/GetMagnetDAC/GetMagnetMoving/BlankBeam, ProtectDetector, Get/SetDeflection(s), Get/SetGain, SetIonCounterVoltage, Get/SetIntegrationTime with binary-series snapping helper, GetData tagged pair parsing, SetHV/GetHighVoltage, Set/GetParameter(s) with the canonical SourceParam <-> hardware-name map, Reset. Byte-fixture tests; hand-written replay trace marked synthetic."
+targets = ["libs/codecs", "tests/codecs", "tests/traces"]
+
+[[unit]]
+id = "thermo_qtegra_driver"
+wave = 14
+layer = "devices"
+depends = ["thermo_qtegra_codec", "spectrometer_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "QtegraSpectrometer driver implementing IMassPositioner(dac)/IBeamSource/IIntensityAcquirer(integrated, polled GetData)/IDetectorControl/IBeamBlank on one transport; registry entry with declared keys; scripted + replay tests; conformance suite instantiation; sim-integrated config parity test."
+targets = ["libs/devices", "tests/devices", "tests/traces"]
+
+[[unit]]
+id = "isotopx_ngx_codec"
+wave = 13
+layer = "codecs"
+depends = ["spec_roles"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "Isotopx NGX ASCII codec (pure): '#\r\n' framing, Login, SetMass/GETMASS, StartAcq/StopAcq/SetAcqPeriod/SAB, #EVENT:ACQ and ACQ.B line parsing into Frames with instrument timestamps (reverse detector order), SSO/GSO source params with setpoint+readback and mnemonic map, Exx error-code mapping, demultiplexer separating command replies from event lines. Byte-fixture tests."
+targets = ["libs/codecs", "tests/codecs", "tests/traces"]
+
+[[unit]]
+id = "isotopx_ngx_driver"
+wave = 14
+layer = "devices"
+depends = ["isotopx_ngx_codec", "spectrometer_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "NGXSpectrometer driver: IMassPositioner(native axis mass)/IBeamSource/IIntensityAcquirer(integrated, event-driven with trigger())/IDetectorControl(protect flag only); login + re-login on reconnect using credentials from *.local.toml; stale-event guard via seq/ts; scripted + replay tests; conformance."
+targets = ["libs/devices", "tests/devices", "tests/traces"]
+
+[[unit]]
+id = "elctl_spec_core"
+wave = 16
+layer = "apps"
+depends = ["profiles_apply_verify"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "elctl spec commands: validate, state, position <iso|mass> --on <det>, read --n --integration, params get/set, apply <profile> [--verify], table show/import/restore; headless tests against both sim configs."
+targets = ["apps/elctl", "tests/integration"]
+
+[[unit]]
+id = "elctl_spec_jobs"
+wave = 16
+layer = "apps"
+depends = ["coincidence", "deflection_cal", "cdd_scan", "ic_table_gen", "rise_rate", "hv_sweep"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "elctl spec job peak-center|coincidence|cdd-scan|hv-sweep|deflection-cal|rise-rate with progress output and cancel, plus 'spec sim' BeamModel REPL; headless tests on sim configs."
+targets = ["apps/elctl", "tests/integration"]
+
+[[unit]]
+id = "spec_ui_readout"
+wave = 17
+layer = "ui"
+depends = ["qt_ui", "elctl_spec_core"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "apps/pychron-ui spectrometer part 1 via CoreBridge: readout dock (live intensities, sigma, snapped integration selector, active toggles, protect badges, stale indicator) and magnet panel (position by isotope/mass/native, reference value, UI-side big-move confirmation, table selector); plotting widget choice recorded in an ADR; Qt Test smoke."
+targets = ["apps/pychron-ui", "tests/ui"]
+
+[[unit]]
+id = "spec_ui_tuning"
+wave = 18
+layer = "ui"
+depends = ["spec_ui_readout", "elctl_spec_jobs"]
+spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
+goal = "apps/pychron-ui spectrometer part 2: scan view with live sweep plot and peak-center overlay, generated parameters panel with profile apply/verify and mismatch list, detectors panel with deflection/gain/CDD editors and coincidence proposal table, jobs dock (queue, progress, cancel, results); Qt Test smoke."
+targets = ["apps/pychron-ui", "tests/ui"]
+

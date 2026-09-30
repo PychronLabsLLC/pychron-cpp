@@ -17,6 +17,7 @@ class Unit:
     targets: list[str] = field(default_factory=list)
     depends: list[str] = field(default_factory=list)
     manual: bool = False
+    spec: str | None = None  # spec file (repo-relative) this unit is routed from; None = CLI --spec
 
 
 @dataclass(frozen=True)
