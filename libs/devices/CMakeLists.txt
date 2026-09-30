@@ -5,6 +5,8 @@ add_library(pychron_devices STATIC
   src/types.cpp
   src/driver_registry.cpp
   src/pfeiffer_maxigauge.cpp
+  src/proxr_relay.cpp
+  src/proxr_board_sim.cpp
 )
 
 target_include_directories(pychron_devices PUBLIC
