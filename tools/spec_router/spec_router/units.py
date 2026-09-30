@@ -19,6 +19,10 @@ class Unit:
     manual: bool = False
     spec: str | None = None  # spec file (repo-relative) this unit is routed from; None = CLI --spec
     preset: str | None = None  # CMake configure preset the router verifies with (default: plain BUILD_UI=OFF)
+    # Read-only ground-truth sources outside the repo (e.g. the production
+    # Python pychron for a vendor wire protocol). Passed to the agent with
+    # --add-dir and listed in its prompt; "~" is expanded.
+    references: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

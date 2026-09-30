@@ -40,6 +40,30 @@ Repository conventions (non-negotiable):
 """
 
 
+def _expand(path: str) -> str:
+    import os
+
+    return os.path.expanduser(path)
+
+
+def _references_block(refs: list[str]) -> str:
+    if not refs:
+        return ""
+    lines = "\n".join(f"- `{_expand(r)}`" for r in refs)
+    return f"""
+## Ground-truth references (read-only)
+
+These directories hold production code that already talks to the real
+hardware or implements the real behaviour. Where they and the spec disagree
+on wire format, command spelling, units or reply layout, the reference wins:
+read the relevant files before writing encoders/decoders, cite file:line in
+code comments for each wire rule you take from them, and report anything you
+could not determine from them as a blocker. Never edit files there.
+
+{lines}
+"""
+
+
 def build_prompt(brief: UnitBrief, *, spec_path: str, completed_units: list[str]) -> str:
     sizing = brief.sizing
     sections = "\n\n".join(f"### [{s.id}] {s.title}\n\n{s.body.rstrip()}" for s in brief.sections)
@@ -54,7 +78,7 @@ Goal: {brief.unit.goal}
 Target paths: {", ".join(brief.unit.targets)}
 Units already merged on this branch: {done}
 {turns}
-
+{_references_block(brief.unit.references)}
 ## Spec sections that govern this unit
 
 The full spec is at `{spec_path}` if you need surrounding context, but the sections below are your requirements.
@@ -139,6 +163,8 @@ def claude_command(cfg: DispatchConfig, brief: UnitBrief) -> list[str]:
     ]
     if sizing:
         cmd += ["--model", sizing.model, "--max-turns", str(sizing.max_turns)]
+    for ref in brief.unit.references:
+        cmd += ["--add-dir", _expand(ref)]
     cmd += cfg.extra_args
     return cmd
 

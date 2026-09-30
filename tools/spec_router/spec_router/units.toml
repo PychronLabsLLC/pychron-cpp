@@ -275,6 +275,7 @@ depends = ["jobs_framework"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
 goal = "Peak center job: pure find_peak_center(points, percent, min_height) -> PeakShape with resolution/resolving power (port pychron peak_detection with fixture scans under tests/data/scans), runner with start positioning, signal-settle wait, retry with scaled window, uncorrect + FieldTable::update + reposition, PeakCenterDone event with points retained on failure."
 targets = ["libs/systems", "tests/systems", "tests/data"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "hv_sweep"
@@ -374,6 +375,7 @@ depends = ["plan_schema", "collector", "peak_center"]
 spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
 goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; a single HopRunner for main (cycles x hops, move+settle skipped when already positioned), sniff and baselines -- no separate multicollect path; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. ALSO (carried over from plan_schema): the adapters from the loaded extraction_line.toml [aliases] and spectrometer.toml detector config to plan_schema's IAliasResolver / ISpectrometerCatalog, with a test that the shipped example configs resolve an example plan. Tests on BeamModel + SimSystem."
 targets = ["libs/experiment", "tests/experiment"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "executor"
@@ -401,6 +403,7 @@ depends = ["spec_config", "field_table"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
 goal = "tools/pychron_spectrometer_import.py: one-shot converter from pychron detectors.yaml/.cfg, mftable.csv (+ic/av tables), config.cfg sections + readout.yaml, deflections/<det>, device .cfg [Communications], af_demagnetization.yaml into spectrometer.toml, tables/, profiles/; report of unmapped keys; pytest fixtures from pychron example files."
 targets = ["tools"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "integration_queue_tests"
@@ -419,6 +422,7 @@ depends = ["plan_schema"]
 spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
 goal = "tools/pychron_measurement_import.py: AST + docstring parse of pychron measurement scripts, classify standard/near-standard/exotic, emit template overrides or plan + hook stub, hops/fits conversion, per-script report; fixtures = the argus/helix example scripts with expected classification."
 targets = ["tools"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "template_library"
@@ -485,6 +489,7 @@ depends = ["thermo_qtegra_codec", "spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
 goal = "QtegraSpectrometer driver implementing IMassPositioner(dac)/IBeamSource/IIntensityAcquirer(integrated, polled GetData)/IDetectorControl/IBeamBlank on one transport; registry entry with declared keys; scripted + replay tests; conformance suite instantiation; sim-integrated config parity test."
 targets = ["libs/devices", "tests/devices", "tests/traces"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "isotopx_ngx_codec"
@@ -503,6 +508,7 @@ depends = ["isotopx_ngx_codec", "spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
 goal = "NGXSpectrometer driver: IMassPositioner(native axis mass)/IBeamSource/IIntensityAcquirer(integrated, event-driven with trigger())/IDetectorControl(protect flag only); login + re-login on reconnect using credentials from *.local.toml; stale-event guard via seq/ts; scripted + replay tests; conformance."
 targets = ["libs/devices", "tests/devices", "tests/traces"]
+references = ["~/Programming/pychron/pychron"]
 
 [[unit]]
 id = "elctl_spec_core"

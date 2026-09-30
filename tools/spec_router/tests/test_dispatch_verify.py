@@ -218,3 +218,19 @@ def test_gate_names_usage_limit_stops():
     assert not d.merge
     assert d.reason.startswith("usage limit reached")
     assert verify.gate(_result(rc=1), _green(), None, changed=True).reason == "agent exited 1"
+
+
+def test_references_become_add_dir_and_prompt_section():
+    import os
+    from spec_router.plan import UnitBrief
+    from spec_router.units import Unit
+    unit = Unit(id="drv", wave=1, layer="devices", goal="g", references=["~/ref/src"])
+    brief = UnitBrief(unit=unit, sections=[], sizing=None)
+    cmd = dispatch.claude_command(dispatch.DispatchConfig(repo=Path("/r")), brief)
+    expanded = os.path.expanduser("~/ref/src")
+    assert cmd[cmd.index("--add-dir") + 1] == expanded
+    prompt = dispatch.build_prompt(brief, spec_path="s.md", completed_units=[])
+    assert "Ground-truth references" in prompt and expanded in prompt
+    plain = UnitBrief(unit=Unit(id="x", wave=1, layer="core", goal="g"), sections=[], sizing=None)
+    assert "--add-dir" not in dispatch.claude_command(dispatch.DispatchConfig(repo=Path("/r")), plain)
+    assert "Ground-truth references" not in dispatch.build_prompt(plain, spec_path="s.md", completed_units=[])
