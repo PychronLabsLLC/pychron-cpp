@@ -228,7 +228,7 @@ wave = 12
 layer = "experiment"
 depends = ["exp_model", "conditionals"]
 spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
-goal = "MeasurementPlan schema (section 4.1): TOML parse + validation (one failing fixture per rule), '@' alias resolution against injected extraction-line/spectrometer resolvers, parameters.expose override enforcement, duration arithmetic, effective-plan rendering (template + overrides -> TOML text) for the record."
+goal = "MeasurementPlan schema (section 4.1) with the unified hop model ([main] cycles + [[main.hops]]; multicollect = one hop, one cycle; reference-detector / explicit position rule; baseline hops; detectors.exclude): TOML parse + validation (one failing fixture per rule), '@' alias resolution against injected extraction-line/spectrometer resolvers, parameters.expose override enforcement incl. indexed paths and {path,label} entries, duration arithmetic with skipped settles, effective-plan rendering (template + overrides -> TOML text) for the record."
 targets = ["libs/experiment", "tests/experiment"]
 
 [[unit]]
@@ -372,7 +372,7 @@ wave = 15
 layer = "experiment"
 depends = ["plan_schema", "collector", "peak_center"]
 spec = "docs/superpowers/specs/2026-09-29-experiment-system-design.md"
-goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; multicollect and peak_hop blocks; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. Tests on BeamModel + SimSystem."
+goal = "MeasurementEngine (section 4.2): block sequence over spectrometer primitives and extraction-line valves; equilibrate||sniff timing with OverlapReady; a single HopRunner for main (cycles x hops, move+settle skipped when already positioned), sniff and baselines -- no separate multicollect path; baseline/peak-center before/after; time-zero policies; truncate scaling; hook entry points with typed MeasurementAPI; typed progress events. Tests on BeamModel + SimSystem."
 targets = ["libs/experiment", "tests/experiment"]
 
 [[unit]]

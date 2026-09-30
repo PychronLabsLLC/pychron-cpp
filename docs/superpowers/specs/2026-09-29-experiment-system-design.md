@@ -179,9 +179,8 @@ instrument_family = "thermo_argus"
 description = "Standard 6-collector static measurement"
 
 [detectors]
-active = ["H2", "H1", "AX", "L1", "L2", "CDD"]
-assign = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
-reference = "H1"
+reference = "H1"                   # default magnet-positioning detector for every hop
+exclude = []                       # UI toggle: drop these detectors from every hop
 
 [equilibration]
 inlet  = "@valves.inlet"          # '@' = alias from extraction_line.toml [aliases]
@@ -194,15 +193,24 @@ close_inlet = true
 [peak_center]  before = false   after = true   detector = "H1"  isotope = "Ar40"  config = "default"
 [baseline]     before = false   after = true   counts = 120  mass = 34.2  detector = "H1"  settle_s = 15  integration_s = 1
 
+# A measurement is `cycles` repetitions of an ordered list of hops.
+# Multicollect is the degenerate case: one hop, one cycle.
 [main]
-kind = "multicollect"             # multicollect | peak_hop
-counts = 400
+cycles = 1
 integration_s = 1
 time_zero = "on_inlet_close"      # on_inlet_close | on_first_count | offset_s = N
 
-# [main] kind = "peak_hop"; cycles = 20
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+counts = 400
+settle_s = 3
+
+# Peak hop: same schema, more hops and cycles.
+# [main] cycles = 20
 # [[main.hops]] positions = { Ar40 = "H1", Ar36 = "CDD" }  counts = 10  settle_s = 3  protect = ["CDD"]
-# [[main.hops]] positions = { Ar39 = "CDD" }               counts = 10  settle_s = 3  baseline = false
+# [[main.hops]] positions = { Ar39 = "CDD" }               counts = 10  settle_s = 3
+#               position = { isotope = "Ar39", detector = "CDD" }   # reference detector not in this hop
+# [[main.hops]] positions = { Ar36 = "CDD" } counts = 10 settle_s = 3 baseline = true  mass = 34.2
 
 [fits]
 signal   = { default = "linear", Ar40 = "parabolic" }
@@ -216,9 +224,28 @@ truncations = [{ check = "Ar40 > 8e5", start = 20 }]
 [whiff]  enabled = false
 
 [parameters]
-expose = ["main.counts", "main.integration_s", "baseline.counts", "baseline.settle_s",
-          "peak_center.before", "peak_center.after", "detectors.active"]
+expose = [{ path = "main.hops[0].counts", label = "Counts" }, "main.integration_s", "main.cycles",
+          "baseline.counts", "baseline.settle_s", "peak_center.before", "peak_center.after",
+          "detectors.exclude"]
 ```
+
+Hop rules:
+
+- `positions` maps isotope -> detector for that hop; those detectors are
+  active while the hop collects (minus `detectors.exclude`).
+- The magnet positions the isotope assigned to `detectors.reference` in the
+  hop. If the reference detector is not in the hop, `position = { isotope,
+  detector }` is required; a hop with neither is a validation error.
+- `counts` per hop per cycle; `settle_s` after the move; `protect` detectors
+  are protected for the move; `baseline = true` marks a baseline hop (series
+  kind `baseline`), optionally at `mass` instead of an isotope position.
+- If a hop's target position equals the current position (single-hop
+  measurements after the first cycle), the move and settle are skipped, so
+  one hop x N cycles is identical to one hop with N x counts.
+- An isotope may appear in several hops on different detectors; series stay
+  keyed by (isotope, detector, kind).
+- `expose` entries are dotted paths (indexed paths allowed) or
+  `{ path, label }` tables for the run-editor form.
 
 Rules:
 
@@ -228,15 +255,16 @@ Rules:
 - Instrument coupling lives in aliases (`extraction_line.toml [aliases]`)
   and detector names validated against `spectrometer.toml`; one template
   serves every lab with the same instrument family.
-- Duration estimate is arithmetic over the plan; no execution.
+- Duration estimate is arithmetic over the plan (sum over cycles and hops of
+  settle + counts x integration, minus skipped settles); no execution.
 
 ### 4.2 MeasurementEngine (`libs/experiment/measurement/`)
 
 Fixed block sequence; each block is a small class with `run(ctx, token)`:
 
 ```
-[apply detectors/isotopes] -> [peak_center.before] -> [baseline.before] -> [position reference]
--> [equilibrate || sniff] -> [time zero] -> [main: multicollect | peak_hop] -> [baseline.after]
+[peak_center.before] -> [baseline.before] -> [position first hop]
+-> [equilibrate || sniff] -> [time zero] -> [main: cycles x hops] -> [baseline.after]
 -> [peak_center.after] -> [done]
 ```
 
@@ -245,9 +273,13 @@ Fixed block sequence; each block is a small class with `run(ctx, token)`:
 - The engine owns equilibrate/sniff timing; `OverlapReady` is published when
   the inlet closes.
 - Collection blocks drive the `Collector` (section 8).
-- `peak_hop`: per hop, protect set -> `position(iso on det)` -> settle ->
-  `acquire(counts)` -> unprotect; baseline hops are flagged; a named field
-  table is selected with `with_table`.
+- One `HopRunner` executes every collection: per hop, protect set ->
+  `position(iso on det)` (skipped with its settle when already there) ->
+  settle -> `acquire(counts)` with the hop's detector -> isotope map ->
+  unprotect. `main` runs it `cycles` times over the hop list; sniff and the
+  before/after baselines are single-hop runs of the same runner with kind
+  `sniff` / `baseline`. A named field table is selected with `with_table`.
+  There is no separate multicollect code path.
 - Truncate ends the current block at the next reading; remaining collection
   blocks scale counts by the ratio.
 - Typed progress events (`BlockStarted/Finished`, `CountsProgress{i, n}`).
@@ -301,7 +333,9 @@ templates/
 2. Classify: standard (values only) -> template overrides; near-standard ->
    plan plus notes; exotic -> plan for the recognizable part plus a hook
    stub containing the unmatched code as comments, flagged.
-3. Convert `hops.txt|.yaml` -> `[[main.hops]]`, fits yaml -> `[fits]`, and
+3. Convert `multicollect(ncounts)` + `activate_detectors`/`define_detectors`
+   -> one `[[main.hops]]` with `cycles = 1`; `peak_hop(ncycles, hops)` and
+   `hops.txt|.yaml` -> `[[main.hops]]` + `cycles`; fits yaml -> `[fits]`; and
    check detector literals against `lab_profile.toml`.
 4. Emit a per-script report; nothing is dropped silently.
 
@@ -502,7 +536,8 @@ tests/experiment/
   executor/       delay policy; end_after; stop-at-boundary; queue conditional actions;
                   overlap gating, min_pump_time, resource exclusivity; resume from executor_state.json
   measurement/    plan schema (one failing fixture per rule); alias resolution; duration arithmetic;
-                  block order for multicollect and peak_hop; equilibrate/sniff timing; truncate scaling; hooks
+                  block order; single-hop == multicollect equivalence (one hop x N cycles vs N x counts);
+                  multi-hop ordering, move/settle skipping, baseline hops; equilibrate/sniff timing; truncate scaling; hooks
   scripting/      vocabulary binding; static-check errors; estimate within 1% of sim duration;
                   cancel raises and finally runs; abort halts; sub-interpreter isolation
   conditionals/   parser round-trip on conditionals.rst examples; evaluator; order; ntrips/frequency/start;
