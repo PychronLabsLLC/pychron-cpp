@@ -1,0 +1,253 @@
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <future>
+#include <mutex>
+#include <optional>
+#include <thread>
+
+#include "pychron/core/events.hpp"
+#include "pychron/core/signal_bus.hpp"
+#include "pychron/transport/transport.hpp"
+
+namespace pychron {
+
+namespace {
+
+struct Job {
+  std::function<void()> run;
+  std::function<void()> cancel;
+};
+
+bool retryable(const Error& e) { return e.kind == ErrorKind::Timeout || e.kind == ErrorKind::Io; }
+
+}  // namespace
+
+struct QueuedTransport::Impl {
+  explicit Impl(TransportOptions o) : options(std::move(o)), clock(options.clock ? options.clock : &steady) {
+    if (options.retries < 0) options.retries = 0;
+  }
+
+  TransportOptions options;
+  SteadyClock steady;
+  const Clock* clock;
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::deque<Job> queue;
+  bool stopping = false;
+  std::thread worker;
+  std::thread::id worker_id;
+
+  bool open = false;  // worker thread only (or after the worker has stopped)
+
+  mutable std::mutex health_mutex;
+  Health health;
+
+  Error attribute(Error e) const {
+    if (e.device.empty()) e.device = options.name;
+    return e;
+  }
+
+  Error cancelled() const { return Error{ErrorKind::Cancelled, "transport shut down", options.name}; }
+  Error not_connected() const { return Error{ErrorKind::NotConnected, "transport is not open", options.name}; }
+
+  Duration effective(Duration timeout) const { return timeout > Duration::zero() ? timeout : options.timeout; }
+
+  // Applies `update` to the health snapshot and publishes a TransportHealth
+  // event (outside the lock) if the state changed.
+  template <class F>
+  void update_health(F&& update) {
+    std::optional<TransportHealth> event;
+    {
+      std::lock_guard lock(health_mutex);
+      const auto before = health.state;
+      update(health);
+      if (health.state != before && options.bus) {
+        event = TransportHealth{options.name, health.state != HealthState::Down, health.consecutive_failures,
+                                health.last_error, clock->now()};
+      }
+    }
+    if (event) options.bus->publish(*event);
+  }
+
+  void note_success() {
+    const auto now = clock->now();
+    update_health([now](Health& h) {
+      h.state = HealthState::Connected;
+      h.last_ok = now;
+      h.consecutive_failures = 0;
+    });
+  }
+
+  void note_failure(const Error& e) {
+    if (e.kind == ErrorKind::NotConnected || e.kind == ErrorKind::Cancelled) return;
+    const bool is_open = open;
+    const auto down_after = options.down_after;
+    update_health([&](Health& h) {
+      ++h.consecutive_failures;
+      h.last_error = to_string(e);
+      h.state = (!is_open || h.consecutive_failures >= down_after) ? HealthState::Down : HealthState::Degraded;
+    });
+  }
+
+  void note_closed() {
+    update_health([](Health& h) { h.state = HealthState::Down; });
+  }
+
+  template <class T>
+  Result<T> finish(Result<T> r) {
+    if (r) {
+      note_success();
+      return r;
+    }
+    Error e = attribute(std::move(r).error());
+    note_failure(e);
+    return fail(std::move(e));
+  }
+
+  // Runs `fn` on the worker and blocks until it completes. Calls made from
+  // the worker itself (re-entrancy) run inline to avoid self-deadlock.
+  template <class T>
+  Result<T> submit(std::function<Result<T>()> fn) {
+    auto promise = std::make_shared<std::promise<Result<T>>>();
+    auto future = promise->get_future();
+    {
+      std::unique_lock lock(mutex);
+      if (stopping) return fail(cancelled());
+      if (std::this_thread::get_id() == worker_id) {
+        lock.unlock();
+        return fn();
+      }
+      Error cancel_error = cancelled();
+      queue.push_back(Job{[promise, fn = std::move(fn)] { promise->set_value(fn()); },
+                          [promise, cancel_error] { promise->set_value(fail(cancel_error)); }});
+    }
+    cv.notify_one();
+    return future.get();
+  }
+
+  void run_worker() {
+    for (;;) {
+      Job job;
+      {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [this] { return stopping || !queue.empty(); });
+        if (queue.empty()) return;
+        job = std::move(queue.front());
+        queue.pop_front();
+      }
+      job.run();
+    }
+  }
+};
+
+QueuedTransport::QueuedTransport(TransportOptions options) : impl_(std::make_unique<Impl>(std::move(options))) {
+  impl_->worker = std::thread([impl = impl_.get()] { impl->run_worker(); });
+  std::lock_guard lock(impl_->mutex);
+  impl_->worker_id = impl_->worker.get_id();
+}
+
+QueuedTransport::~QueuedTransport() {
+  // Derived classes already called shutdown(); this only reaps the thread if
+  // one forgot, and cannot call the (now destroyed) primitives.
+  std::deque<Job> pending;
+  {
+    std::lock_guard lock(impl_->mutex);
+    impl_->stopping = true;
+    pending.swap(impl_->queue);
+  }
+  impl_->cv.notify_all();
+  for (auto& job : pending) job.cancel();
+  if (impl_->worker.joinable()) impl_->worker.join();
+}
+
+void QueuedTransport::shutdown() {
+  std::deque<Job> pending;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->stopping && !impl_->worker.joinable()) return;
+    impl_->stopping = true;
+    pending.swap(impl_->queue);
+  }
+  impl_->cv.notify_all();
+  for (auto& job : pending) job.cancel();
+  if (impl_->worker.joinable() && std::this_thread::get_id() != impl_->worker_id) impl_->worker.join();
+  if (impl_->open) {
+    impl_->open = false;
+    do_close();
+    impl_->note_closed();
+  }
+}
+
+const std::string& QueuedTransport::name() const { return impl_->options.name; }
+
+const TransportOptions& QueuedTransport::options() const noexcept { return impl_->options; }
+
+Health QueuedTransport::health() const {
+  std::lock_guard lock(impl_->health_mutex);
+  return impl_->health;
+}
+
+Result<void> QueuedTransport::open() {
+  return impl_->submit<void>([this]() -> Result<void> {
+    auto& impl = *impl_;
+    if (impl.open) return {};
+    auto r = do_open();
+    impl.open = static_cast<bool>(r);
+    return impl.finish(std::move(r));
+  });
+}
+
+void QueuedTransport::close() {
+  (void)impl_->submit<void>([this]() -> Result<void> {
+    auto& impl = *impl_;
+    if (!impl.open) return {};
+    impl.open = false;
+    do_close();
+    impl.note_closed();
+    return {};
+  });
+}
+
+Result<Bytes> QueuedTransport::exchange(Bytes tx, ReadSpec rs, Duration timeout) {
+  return impl_->submit<Bytes>([this, tx = std::move(tx), rs = std::move(rs), timeout]() -> Result<Bytes> {
+    auto& impl = *impl_;
+    if (!impl.open) return fail(impl.not_connected());
+    const auto t = impl.effective(timeout);
+    Result<Bytes> r = fail(ErrorKind::Io, "no attempt made");
+    for (int attempt = 0; attempt <= impl.options.retries; ++attempt) {
+      do_discard_input();
+      if (auto w = do_write(tx, t); !w) {
+        r = fail(w.error());
+      } else {
+        r = do_read(rs, t);
+      }
+      if (r || !retryable(r.error())) break;
+    }
+    return impl.finish(std::move(r));
+  });
+}
+
+Result<void> QueuedTransport::write(Bytes tx) {
+  return impl_->submit<void>([this, tx = std::move(tx)]() -> Result<void> {
+    auto& impl = *impl_;
+    if (!impl.open) return fail(impl.not_connected());
+    Result<void> r;
+    for (int attempt = 0; attempt <= impl.options.retries; ++attempt) {
+      r = do_write(tx, impl.options.timeout);
+      if (r || !retryable(r.error())) break;
+    }
+    return impl.finish(std::move(r));
+  });
+}
+
+Result<Bytes> QueuedTransport::read(ReadSpec rs, Duration timeout) {
+  return impl_->submit<Bytes>([this, rs = std::move(rs), timeout]() -> Result<Bytes> {
+    auto& impl = *impl_;
+    if (!impl.open) return fail(impl.not_connected());
+    return impl.finish(do_read(rs, impl.effective(timeout)));
+  });
+}
+
+}  // namespace pychron
