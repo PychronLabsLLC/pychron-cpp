@@ -1,0 +1,508 @@
+#include "cli.hpp"
+
+#include <chrono>
+#include <iomanip>
+#include <istream>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <ostream>
+#include <sstream>
+#include <thread>
+
+#include "duration.hpp"
+#include "line.hpp"
+#include "pychron/core/config/loader.hpp"
+#include "pychron/devices/capabilities.hpp"
+#include "pychron/devices/channel_gauge.hpp"
+#include "pychron/devices/driver_registry.hpp"
+#include "pychron/systems/canvas/cross_validate.hpp"
+#include "pychron/systems/canvas/loader.hpp"
+#include "trace_settings.hpp"
+
+namespace elctl {
+
+namespace fs = std::filesystem;
+using namespace pychron;
+
+namespace {
+
+constexpr const char* kUsageLine = "usage: elctl [-c <extraction_line.toml>] [--sim] <command> [args...]\n";
+
+constexpr const char* kUsageText =
+    "usage: elctl [-c <extraction_line.toml>] [--sim] <command> [args...]\n"
+    "\n"
+    "Offline:\n"
+    "  validate [file]             check a system config; print every error\n"
+    "  canvas-check [canvas.toml]  check a canvas and cross-check it against the config\n"
+    "  list-drivers                driver kinds and the keys each one reads\n"
+    "  list                        configured valves, manual valves, switches and gauges\n"
+    "\n"
+    "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
+    "  probe                       open every transport, ping every driver, print health\n"
+    "  state                       read back every switch and gauge\n"
+    "  open <valve>                actuate, enforcing locks and interlocks\n"
+    "  close <valve>\n"
+    "  read <gauge>                one pressure reading\n"
+    "  scan --for <dur> [--interval <dur>]\n"
+    "                              stream gauge samples and alarms (dur: 500ms, 10s, 2m)\n"
+    "  trace [on|off [transport...]]\n"
+    "                              record transport traffic to <config dir>/traces for replay\n"
+    "  sim                         interactive session against simulated hardware\n"
+    "\n"
+    "Options:\n"
+    "  -c, --config <file>         system config (default: extraction_line.toml)\n"
+    "  --sim                       run every transport as kind = \"sim\"\n";
+
+constexpr const char* kActor = "elctl";
+
+struct Globals {
+  fs::path config = "extraction_line.toml";
+  bool sim = false;
+};
+
+std::string_view units_name(config::PressureUnits u) {
+  switch (u) {
+    case config::PressureUnits::Torr:
+      return "torr";
+    case config::PressureUnits::Mbar:
+      return "mbar";
+    case config::PressureUnits::Pa:
+      return "pa";
+  }
+  return "?";
+}
+
+std::string_view kind_name(systems::SwitchKind k) {
+  switch (k) {
+    case systems::SwitchKind::Valve:
+      return "valve";
+    case systems::SwitchKind::ManualValve:
+      return "manual";
+    case systems::SwitchKind::Switch:
+      return "switch";
+  }
+  return "?";
+}
+
+std::string_view state_name(ValveState s) {
+  switch (s) {
+    case ValveState::Open:
+      return "open";
+    case ValveState::Closed:
+      return "closed";
+    case ValveState::Unknown:
+      return "unknown";
+  }
+  return "?";
+}
+
+std::string pressure(double value, config::PressureUnits units) {
+  std::ostringstream s;
+  s << std::scientific << std::setprecision(3) << value << ' ' << units_name(units);
+  return s.str();
+}
+
+std::string join(const std::vector<std::string>& items, std::string_view sep = ", ") {
+  std::string out;
+  for (const auto& i : items) {
+    if (!out.empty()) out += sep;
+    out += i;
+  }
+  return out;
+}
+
+// One CLI invocation, or one `sim` REPL. The line is built on first use and
+// kept, so REPL commands share simulated hardware state.
+class Session {
+ public:
+  Session(Globals globals, Io io) : g_(std::move(globals)), io_(io) {}
+
+  int execute(const std::vector<std::string>& argv) {
+    const std::string& cmd = argv.front();
+    const std::vector<std::string> args(argv.begin() + 1, argv.end());
+    if (cmd == "help") return help();
+    if (cmd == "validate") return validate(args);
+    if (cmd == "canvas-check") return canvas_check(args);
+    if (cmd == "list-drivers") return list_drivers();
+    if (cmd == "list") return list();
+    if (cmd == "probe") return probe();
+    if (cmd == "state") return state();
+    if (cmd == "open") return actuate(args, systems::SwitchOp::Open);
+    if (cmd == "close") return actuate(args, systems::SwitchOp::Close);
+    if (cmd == "read") return read(args);
+    if (cmd == "scan") return scan(args);
+    if (cmd == "trace") return trace(args);
+    if (cmd == "sim") return repl();
+    return usage("unknown command '" + cmd + "'");
+  }
+
+ private:
+  int usage(const std::string& message) {
+    io_.err << "elctl: " << message << '\n' << kUsageLine << "run 'elctl help' for commands\n";
+    return kUsage;
+  }
+
+  int failed(const Error& error) {
+    io_.err << "error: " << to_string(error) << '\n';
+    return kFailed;
+  }
+
+  int help() {
+    io_.out << kUsageText;
+    return kOk;
+  }
+
+  // --- offline --------------------------------------------------------------
+
+  Result<config::SystemConfig> load_config(const fs::path& path) {
+    auto report = config::load_report(path);
+    if (report.ok()) return std::move(*report.config);
+    for (const auto& d : report.diagnostics) io_.err << to_string(d) << '\n';
+    return fail(ErrorKind::Config, std::to_string(report.diagnostics.size()) + " error(s) in " + path.string());
+  }
+
+  int validate(const std::vector<std::string>& args) {
+    if (args.size() > 1) return usage("validate takes at most one file");
+    const fs::path path = args.empty() ? g_.config : fs::path(args[0]);
+    auto cfg = load_config(path);
+    if (!cfg) return failed(cfg.error());
+
+    int problems = 0;
+    for (const auto& [name, driver] : cfg->drivers) {
+      if (auto ok = DriverRegistry::global().validate(driver.kind, driver.options); !ok) {
+        io_.err << driver.path << ": " << ok.error().what << '\n';
+        ++problems;
+      }
+    }
+    if (problems > 0) {
+      io_.err << "error: " << problems << " driver error(s) in " << path.string() << '\n';
+      return kFailed;
+    }
+    io_.out << "ok: " << path.string() << '\n';
+    return kOk;
+  }
+
+  int canvas_check(const std::vector<std::string>& args) {
+    if (args.size() > 1) return usage("canvas-check takes at most one file");
+    const fs::path path = args.empty() ? g_.config.parent_path() / "canvas.toml" : fs::path(args[0]);
+    auto report = canvas::load_canvas_report(path);
+    if (!report.ok()) {
+      for (const auto& d : report.diagnostics) io_.err << to_string(d) << '\n';
+      io_.err << "error: " << report.diagnostics.size() << " error(s) in " << path.string() << '\n';
+      return kFailed;
+    }
+    auto cfg = load_config(g_.config);
+    if (!cfg) return failed(cfg.error());
+
+    auto cross = canvas::cross_validate(*report.canvas, *cfg);
+    for (const auto& d : cross.errors) io_.err << to_string(d) << '\n';
+    for (const auto& d : cross.warnings) io_.out << "warning: " << to_string(d) << '\n';
+    if (!cross.ok()) {
+      io_.err << "error: " << cross.errors.size() << " error(s) in " << path.string() << '\n';
+      return kFailed;
+    }
+    io_.out << "ok: " << path.string() << " (" << cross.warnings.size() << " warning(s))\n";
+    return kOk;
+  }
+
+  int list_drivers() {
+    for (const auto& schema : DriverRegistry::global().schemas()) io_.out << describe(schema) << '\n';
+    return kOk;
+  }
+
+  int list() {
+    auto cfg = load_config(g_.config);
+    if (!cfg) return failed(cfg.error());
+    for (const auto& v : cfg->valves) {
+      io_.out << "valve   " << v.name << "  " << v.actuator << ':' << v.address;
+      if (!v.interlocks.empty()) io_.out << "  interlocks=[" << join(v.interlocks) << ']';
+      if (!v.positive_interlocks.empty()) io_.out << "  requires=[" << join(v.positive_interlocks) << ']';
+      if (!v.description.empty()) io_.out << "  # " << v.description;
+      io_.out << '\n';
+    }
+    for (const auto& m : cfg->manual_valves) {
+      io_.out << "manual  " << m.name;
+      if (!m.description.empty()) io_.out << "  # " << m.description;
+      io_.out << '\n';
+    }
+    for (const auto& s : cfg->switches) {
+      io_.out << "switch  " << s.name << "  " << s.actuator << ':' << s.address;
+      if (!s.description.empty()) io_.out << "  # " << s.description;
+      io_.out << '\n';
+    }
+    for (const auto& gc : cfg->gauges) {
+      io_.out << "gauge   " << gc.name << "  " << gc.driver << " ch" << gc.channel << "  " << units_name(gc.units);
+      if (gc.alarm_high) io_.out << "  alarm_high=" << *gc.alarm_high;
+      if (gc.alarm_low) io_.out << "  alarm_low=" << *gc.alarm_low;
+      io_.out << '\n';
+    }
+    return kOk;
+  }
+
+  // --- line -----------------------------------------------------------------
+
+  Result<Line*> built() {
+    if (line_) return line_.get();
+    auto cfg = load_config(g_.config);
+    if (!cfg) return fail(cfg.error());
+    LineOptions options;
+    options.force_sim = g_.sim;
+    options.trace = load_trace_settings(g_.config);
+    options.trace_dir = trace_dir(g_.config);
+    auto line = Line::build(std::move(*cfg), options);
+    if (!line) return fail(line.error());
+    line_ = std::move(*line);
+    return line_.get();
+  }
+
+  // Built, transports opened and switch states read back, so interlocks see
+  // real hardware state instead of Unknown. Failures are warnings: a dead
+  // gauge link must not stop valve work.
+  Result<Line*> ready() {
+    auto line = built();
+    if (!line || opened_) return line;
+    for (const auto& o : (*line)->open_all()) {
+      if (!o.result) io_.err << "warning: transport " << o.transport << ": " << to_string(o.result.error()) << '\n';
+    }
+    if (auto r = (*line)->switches().refresh(); !r) io_.err << "warning: " << to_string(r.error()) << '\n';
+    opened_ = true;
+    return line;
+  }
+
+  int probe() {
+    auto built_line = built();
+    if (!built_line) return failed(built_line.error());
+    Line& line = **built_line;
+    bool ok = true;
+
+    io_.out << "TRANSPORT\n";
+    for (const auto& o : line.open_all()) {
+      ok = ok && o.result.has_value();
+      io_.out << "  " << std::left << std::setw(16) << o.transport
+              << (o.result ? std::string(to_string(line.transport(o.transport)->health().state))
+                           : "FAIL  " + to_string(o.result.error()))
+              << '\n';
+    }
+    opened_ = true;
+
+    io_.out << "DEVICE\n";
+    for (const auto& [name, dc] : line.config().drivers) {
+      auto pinged = ping(line, name);
+      ok = ok && pinged.has_value();
+      io_.out << "  " << std::left << std::setw(16) << name << std::setw(20) << dc.kind
+              << (pinged ? "ok  " + *pinged : "FAIL  " + to_string(pinged.error())) << '\n';
+    }
+    return ok ? kOk : kFailed;
+  }
+
+  // Exercises every configured use of one driver; returns what it did.
+  Result<std::string> ping(Line& line, const std::string& driver) {
+    Device* device = line.device(driver);
+    if (!device) return fail(ErrorKind::Config, "not built", driver);
+    int ops = 0;
+    if (auto* actuator = capability<IValveActuator>(*device)) {
+      for (const auto& v : line.config().valves) {
+        if (v.actuator != driver) continue;
+        if (auto r = actuator->read(ValveAddress{v.address}); !r) return fail(r.error());
+        ++ops;
+      }
+      for (const auto& s : line.config().switches) {
+        if (s.actuator != driver) continue;
+        if (auto r = actuator->read(ValveAddress{s.address}); !r) return fail(r.error());
+        ++ops;
+      }
+    }
+    for (const auto& gc : line.config().gauges) {
+      if (gc.driver != driver) continue;
+      auto p = line.read_gauge(gc.name);
+      if (!p) return fail(p.error());
+      ++ops;
+    }
+    if (ops == 0) return std::string("nothing configured to ping");
+    return std::to_string(ops) + " read(s), health " + std::string(to_string(device->health().state));
+  }
+
+  int state() {
+    auto line = ready();
+    if (!line) return failed(line.error());
+    int rc = kOk;
+    if (auto r = (*line)->switches().refresh(); !r) {
+      io_.err << "error: " << to_string(r.error()) << '\n';
+      rc = kFailed;
+    }
+    for (const auto& info : (*line)->switches().list()) {
+      io_.out << info.name << "  " << kind_name(info.kind) << "  " << state_name(info.state);
+      if (info.locked) io_.out << "  locked";
+      if (!info.owner.empty()) io_.out << "  owner=" << info.owner;
+      io_.out << '\n';
+    }
+    for (const auto& gc : (*line)->config().gauges) {
+      auto p = (*line)->read_gauge(gc.name);
+      io_.out << gc.name << "  gauge  " << (p ? pressure(*p, gc.units) : "FAIL " + to_string(p.error())) << '\n';
+      if (!p) rc = kFailed;
+    }
+    return rc;
+  }
+
+  int actuate(const std::vector<std::string>& args, systems::SwitchOp op) {
+    if (args.size() != 1) return usage(std::string(op == systems::SwitchOp::Open ? "open" : "close") + " takes one name");
+    auto line = ready();
+    if (!line) return failed(line.error());
+    if (auto r = (*line)->switches().actuate(args[0], op, kActor); !r) return failed(r.error());
+    io_.out << args[0] << ' ' << (op == systems::SwitchOp::Open ? "open" : "closed") << '\n';
+    return kOk;
+  }
+
+  int read(const std::vector<std::string>& args) {
+    if (args.size() != 1) return usage("read takes one gauge name");
+    auto line = ready();
+    if (!line) return failed(line.error());
+    const auto* gc = (*line)->gauge(args[0]);
+    if (!gc) return failed(Error{ErrorKind::Config, "unknown gauge '" + args[0] + "'", {}});
+    auto p = (*line)->read_gauge(args[0]);
+    if (!p) return failed(p.error());
+    io_.out << gc->name << "  " << pressure(*p, gc->units) << '\n';
+    return kOk;
+  }
+
+  int scan(const std::vector<std::string>& args) {
+    std::optional<Duration> duration;
+    std::optional<Duration> interval;
+    for (std::size_t i = 0; i < args.size(); i += 2) {
+      const bool is_for = args[i] == "--for";
+      if ((!is_for && args[i] != "--interval") || i + 1 >= args.size()) {
+        return usage("scan --for <dur> [--interval <dur>]");
+      }
+      auto d = parse_duration(args[i + 1]);
+      if (!d || *d <= Duration::zero()) return usage("scan: invalid duration '" + args[i + 1] + "'");
+      (is_for ? duration : interval) = *d;
+    }
+    if (!duration) return usage("scan needs --for <dur>");
+
+    auto line = ready();
+    if (!line) return failed(line.error());
+    Line& l = **line;
+    if (!interval) interval = std::chrono::milliseconds(l.config().system.scan_interval_ms);
+
+    std::map<std::string, config::PressureUnits> units;
+    for (const auto& gc : l.config().gauges) units[gc.name] = gc.units;
+    const TimePoint start = l.clock().now();
+    std::mutex out_mutex;
+    auto seconds = [&](TimePoint ts) {
+      std::ostringstream s;
+      s << std::fixed << std::setprecision(3) << std::chrono::duration<double>(ts - start).count() << 's';
+      return s.str();
+    };
+    auto samples = l.bus().subscribe<PressureSample>([&](const PressureSample& s) {
+      std::lock_guard lock(out_mutex);
+      io_.out << seconds(s.ts) << "  " << s.gauge << "  " << pressure(s.value, units[s.gauge]) << '\n';
+    });
+    auto alarms = l.bus().subscribe<Alarm>([&](const Alarm& a) {
+      std::lock_guard lock(out_mutex);
+      io_.out << seconds(a.ts) << "  ALARM " << a.source << "  " << a.message << '\n';
+    });
+
+    if (auto r = l.start_scan(*interval); !r) return failed(r.error());
+    std::this_thread::sleep_for(*duration);
+    l.stop_scan();
+    return kOk;
+  }
+
+  int trace(const std::vector<std::string>& args) {
+    TraceSettings settings = load_trace_settings(g_.config);
+    if (args.empty()) {
+      if (!settings.enabled()) {
+        io_.out << "trace: off\n";
+      } else {
+        io_.out << "trace: on ("
+                << (settings.all ? std::string("all transports")
+                                 : join({settings.transports.begin(), settings.transports.end()}))
+                << ") -> " << trace_dir(g_.config).string() << '\n';
+      }
+      return kOk;
+    }
+    const std::string& mode = args[0];
+    if (mode != "on" && mode != "off") return usage("trace on|off [transport...]");
+    const std::vector<std::string> names(args.begin() + 1, args.end());
+
+    auto cfg = load_config(g_.config);
+    if (!cfg) return failed(cfg.error());
+    for (const auto& n : names) {
+      if (!cfg->transports.contains(n)) return failed(Error{ErrorKind::Config, "unknown transport '" + n + "'", {}});
+    }
+
+    if (mode == "on") {
+      if (names.empty()) settings.all = true;
+      settings.transports.insert(names.begin(), names.end());
+    } else if (names.empty()) {
+      settings = {};
+    } else {
+      for (const auto& n : names) settings.transports.erase(n);
+    }
+    if (auto r = save_trace_settings(g_.config, settings); !r) return failed(r.error());
+    io_.out << "trace " << mode << (line_ ? " (takes effect on the next run)" : "") << '\n';
+    return kOk;
+  }
+
+  // --- sim REPL -------------------------------------------------------------
+
+  int repl() {
+    if (in_repl_) return usage("already in a sim session");
+    in_repl_ = true;
+    g_.sim = true;
+    io_.out << "elctl sim: every transport is simulated. 'help' lists commands, 'quit' exits.\n";
+    std::string text;
+    while (true) {
+      io_.out << "sim> " << std::flush;
+      if (!std::getline(io_.in, text)) break;
+      std::istringstream words(text);
+      std::vector<std::string> argv{std::istream_iterator<std::string>(words), std::istream_iterator<std::string>()};
+      if (argv.empty() || argv.front().starts_with('#')) continue;
+      if (argv.front() == "quit" || argv.front() == "exit") break;
+      execute(argv);
+    }
+    io_.out << '\n';
+    return kOk;
+  }
+
+  Globals g_;
+  Io io_;
+  std::unique_ptr<Line> line_;
+  bool opened_ = false;
+  bool in_repl_ = false;
+};
+
+}  // namespace
+
+int run(const std::vector<std::string>& args, Io io) {
+  Globals globals;
+  std::size_t i = 0;
+  for (; i < args.size(); ++i) {
+    const std::string& a = args[i];
+    if (a == "-c" || a == "--config") {
+      if (i + 1 >= args.size()) {
+        io.err << "elctl: " << a << " needs a file\n" << kUsageLine;
+        return kUsage;
+      }
+      globals.config = args[++i];
+    } else if (a == "--sim") {
+      globals.sim = true;
+    } else if (a == "-h" || a == "--help") {
+      io.out << kUsageText;
+      return kOk;
+    } else {
+      break;
+    }
+  }
+  if (i >= args.size()) {
+    io.err << kUsageText;
+    return kUsage;
+  }
+  Session session(std::move(globals), io);
+  return session.execute(std::vector<std::string>(args.begin() + static_cast<std::ptrdiff_t>(i), args.end()));
+}
+
+}  // namespace elctl
