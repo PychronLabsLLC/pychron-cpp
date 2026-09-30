@@ -60,6 +60,7 @@ struct QueueSpec {
   std::string queue_conditionals;
   std::string repository;
   std::vector<RunSpec> runs;
+  friend bool operator==(const QueueSpec&, const QueueSpec&) = default;
 };
 
 inline constexpr int kQueueSchemaVersion = 1;
