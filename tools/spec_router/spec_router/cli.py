@@ -252,6 +252,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         selected = [w for w in selected if w.units]
     if not selected:
         sys.exit("nothing selected")
+    if args.model or args.max_turns:
+        # Operator override of the Jev sizing for the selected units (re-running a unit that ran out of budget).
+        for wave in selected:
+            for u in wave.units:
+                s = plan.briefs[u.id].sizing
+                if s:
+                    s.model = args.model or s.model
+                    s.max_turns = args.max_turns or s.max_turns
+                    s.split = False
 
     _reconcile_with_git(p, st, [u.id for u in units], log)
     for wave in selected:
