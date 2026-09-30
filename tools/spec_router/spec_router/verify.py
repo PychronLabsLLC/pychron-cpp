@@ -143,6 +143,8 @@ def gate(result: UnitResult, build: BuildResult, judgment: ReportJudgment | None
     if not changed:
         return Decision(False, "agent produced no changes", build, judgment, changed)
     if result.exit_code != 0:
+        if "hit your session limit" in (result.raw_stderr or "") or "usage limit" in (result.raw_stderr or ""):
+            return Decision(False, "usage limit reached; worktree kept, re-run the wave to resume", build, judgment, changed)
         return Decision(False, f"agent exited {result.exit_code}", build, judgment, changed)
     if not build.green:
         why = "no CMakeLists" if not build.has_cmake else "configure failed" if not build.configured else "build failed" if not build.built else "ctest failed or no tests"

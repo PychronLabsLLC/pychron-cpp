@@ -209,3 +209,12 @@ def test_tool_env_puts_venv_bin_first_on_path():
     import sys
     env = dispatch.tool_env()
     assert env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).parent)
+
+
+def test_gate_names_usage_limit_stops():
+    r = dispatch.UnitResult("core", "unit/core", "/wt", 1, None,
+                            raw_stderr="claude cli error: You've hit your session limit · resets 11:50am\n")
+    d = verify.gate(r, _green(), None, changed=True)
+    assert not d.merge
+    assert d.reason.startswith("usage limit reached")
+    assert verify.gate(_result(rc=1), _green(), None, changed=True).reason == "agent exited 1"
