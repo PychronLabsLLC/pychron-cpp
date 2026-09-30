@@ -43,7 +43,7 @@ def test_run_unit_dry_run_creates_worktree_command_and_feeds_prompt(tmp_path):
     cfg = dispatch.DispatchConfig(repo=tmp_path, claude_bin="claude")
     res = dispatch.run_unit(cfg, BRIEF, "PROMPT", runner=runner)
     assert res.unit_id == "core" and res.branch == "unit/core"
-    assert any("git worktree add -B unit/core" in s for s in seen)
+    assert any("git worktree add" in s and "unit/core" in s and "-B" not in s for s in seen)
     assert any("stdin: 6 chars" in s for s in seen)
 
 
