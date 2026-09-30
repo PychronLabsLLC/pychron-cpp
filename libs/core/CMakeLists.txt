@@ -1,0 +1,27 @@
+find_package(Threads REQUIRED)
+
+add_library(pychron_core
+  src/error.cpp
+  src/clock.cpp
+  src/signal_bus.cpp
+  src/logger.cpp
+  src/scheduler.cpp
+  src/config/diagnostic.cpp
+  src/config/loader.cpp
+  src/config/validate.cpp
+)
+add_library(pychron::core ALIAS pychron_core)
+
+target_include_directories(pychron_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(pychron_core PUBLIC cxx_std_20)
+
+# toml::table appears in public config headers (DriverConfig::options), so the
+# toml++ configuration must match in every translation unit: no exceptions.
+target_compile_definitions(pychron_core PUBLIC TOML_EXCEPTIONS=0)
+target_link_libraries(pychron_core PUBLIC tomlplusplus::tomlplusplus Threads::Threads)
+
+pychron_set_warnings(pychron_core)

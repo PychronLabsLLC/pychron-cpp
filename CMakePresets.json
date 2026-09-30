@@ -1,0 +1,75 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTS": "ON",
+        "BUILD_UI": "OFF",
+        "PYCHRON_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+    {
+      "name": "mac-debug",
+      "inherits": "vcpkg",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PYCHRON_SANITIZE": "address,undefined"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "mac-release",
+      "inherits": "vcpkg",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "win-msvc-debug",
+      "inherits": "vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "win-msvc-release",
+      "inherits": "vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "dev",
+      "displayName": "Local dev without vcpkg (FetchContent fallback)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "mac-debug", "configurePreset": "mac-debug" },
+    { "name": "mac-release", "configurePreset": "mac-release" },
+    { "name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "configuration": "Debug" },
+    { "name": "win-msvc-release", "configurePreset": "win-msvc-release", "configuration": "Release" },
+    { "name": "dev", "configurePreset": "dev" }
+  ],
+  "testPresets": [
+    { "name": "mac-debug", "configurePreset": "mac-debug", "output": { "outputOnFailure": true } },
+    { "name": "mac-release", "configurePreset": "mac-release", "output": { "outputOnFailure": true } },
+    { "name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "configuration": "Debug", "output": { "outputOnFailure": true } },
+    { "name": "win-msvc-release", "configurePreset": "win-msvc-release", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } }
+  ]
+}

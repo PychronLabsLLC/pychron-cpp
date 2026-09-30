@@ -1,0 +1,75 @@
+#pragma once
+
+// Events published on the SignalBus. All are plain values: state leaves the
+// core only by copy, never by reference to a live object.
+
+#include <cstdint>
+#include <map>
+#include <string>
+
+#include "pychron/core/clock.hpp"
+#include "pychron/core/error.hpp"
+
+namespace pychron {
+
+enum class ValveState { Unknown, Open, Closed };
+
+enum class AlarmSeverity { Info, Warning, Critical };
+
+enum class LogLevel { Trace, Debug, Info, Warn, Error };
+
+// Emitted by the Scheduler for every successful periodic scan.
+struct Sample {
+  std::string device;
+  TimePoint ts{};
+  double value = 0.0;
+};
+
+struct ValveChanged {
+  std::string valve;
+  ValveState state = ValveState::Unknown;
+  TimePoint ts{};
+};
+
+struct PressureSample {
+  std::string gauge;
+  double value = 0.0;
+  std::string units;
+  TimePoint ts{};
+};
+
+struct Alarm {
+  std::string source;
+  AlarmSeverity severity = AlarmSeverity::Warning;
+  std::string message;
+  TimePoint ts{};
+};
+
+struct TransportHealth {
+  std::string transport;
+  bool connected = false;
+  std::uint64_t error_count = 0;
+  std::string last_error;
+  TimePoint ts{};
+};
+
+struct Log {
+  LogLevel level = LogLevel::Info;
+  std::string logger;
+  std::string message;
+  TimePoint ts{};
+};
+
+struct Snapshot {
+  std::map<std::string, ValveState> valves;
+  std::map<std::string, double> pressures;
+  TimePoint ts{};
+};
+
+struct ActuationFailed {
+  std::string valve;
+  Error error;
+  TimePoint ts{};
+};
+
+}  // namespace pychron
