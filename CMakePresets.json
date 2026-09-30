@@ -56,6 +56,15 @@
       "displayName": "Local dev without vcpkg (FetchContent fallback)",
       "inherits": "base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "dev-ui",
+      "displayName": "Local dev with the Qt6 UI (Homebrew Qt on macOS; set QT_PREFIX to override)",
+      "inherits": "dev",
+      "cacheVariables": {
+        "BUILD_UI": "ON",
+        "CMAKE_PREFIX_PATH": "$env{QT_PREFIX};/opt/homebrew/opt/qt;/usr/local/opt/qt"
+      }
     }
   ],
   "buildPresets": [
@@ -63,13 +72,15 @@
     { "name": "mac-release", "configurePreset": "mac-release" },
     { "name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "configuration": "Debug" },
     { "name": "win-msvc-release", "configurePreset": "win-msvc-release", "configuration": "Release" },
-    { "name": "dev", "configurePreset": "dev" }
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "dev-ui", "configurePreset": "dev-ui" }
   ],
   "testPresets": [
     { "name": "mac-debug", "configurePreset": "mac-debug", "output": { "outputOnFailure": true } },
     { "name": "mac-release", "configurePreset": "mac-release", "output": { "outputOnFailure": true } },
     { "name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "configuration": "Debug", "output": { "outputOnFailure": true } },
     { "name": "win-msvc-release", "configurePreset": "win-msvc-release", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } }
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "dev-ui", "configurePreset": "dev-ui", "output": { "outputOnFailure": true } }
   ]
 }
