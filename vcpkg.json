@@ -15,6 +15,13 @@
       "dependencies": [
         { "name": "qtbase", "default-features": false, "features": ["widgets", "gui"] }
       ]
+    },
+    "scripting": {
+      "description": "Embedded CPython >= 3.12 for libs/scripting (PYCHRON_SCRIPTING); without it CMake uses a system Python or builds the stub host",
+      "dependencies": [
+        "pybind11",
+        "python3"
+      ]
     }
   }
 }
