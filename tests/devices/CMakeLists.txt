@@ -16,6 +16,11 @@ add_executable(pychron_devices_tests
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
   spectrometer/test_conformance_fakes.cpp
+  spectrometer/legacy/test_dac_positioner.cpp
+  spectrometer/legacy/test_serial_hv.cpp
+  spectrometer/legacy/test_acquirers.cpp
+  spectrometer/legacy/test_legacy_conformance.cpp
+  spectrometer/legacy/test_sim_legacy_config.cpp
   extraction/test_capability.cpp
   extraction/test_conformance_fake.cpp
 )
@@ -27,6 +32,9 @@ target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtes
 target_compile_definitions(pychron_devices_tests PRIVATE
   PYCHRON_TRACES_DIR="${PROJECT_SOURCE_DIR}/tests/traces")
 pychron_link_drivers(pychron_devices_tests pychron_devices_test_drivers)
+# Example configs, driven end to end by spectrometer/legacy.
+target_compile_definitions(pychron_devices_tests PRIVATE
+  PYCHRON_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
 target_compile_definitions(pychron_devices_tests PRIVATE
   PYCHRON_TRACE_DIR="${PROJECT_SOURCE_DIR}/tests/traces")
 pychron_set_warnings(pychron_devices_tests)
