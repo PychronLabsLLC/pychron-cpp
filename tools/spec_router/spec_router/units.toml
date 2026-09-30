@@ -1,0 +1,108 @@
+# Work units for the instrument-control spec. Mirrors spec section 9.4.
+# Dependency and wave structure is a stated design rule, so it lives in code
+# (here), not in a model judgment. Jev decides which spec sections each unit
+# needs, how large each unit is, and whether an agent's report is credible.
+
+[[unit]]
+id = "core"
+wave = 1
+layer = "core"
+goal = "libs/core: Result/Error, injected Clock, Scheduler (periodic/one-shot/watchdog, per-job non-overlap), SignalBus (typed pub/sub), Logger, TOML config loader + validation with file:line:field errors."
+targets = ["libs/core", "tests/core", "CMakeLists.txt", "CMakePresets.json", "vcpkg.json", "cmake"]
+
+[[unit]]
+id = "transport"
+wave = 2
+layer = "transport"
+depends = ["core"]
+goal = "libs/transport: Transport interface with per-instance worker + FIFO queue, ReadSpec, Health; SimTransport (scripted/replay/hook + fault injection); SerialTransport and TcpTransport on standalone asio; TraceRecorder decorator."
+targets = ["libs/transport", "tests/transport"]
+
+[[unit]]
+id = "device_kit"
+wave = 3
+layer = "devices"
+depends = ["transport"]
+goal = "libs/devices foundation shared by every driver: Device base (identity + health), capability interfaces (IPressureGauge, IValveActuator, IScannable), Sample/ValveState types, DriverRegistry with REGISTER_DRIVER and declared config keys, codec conventions doc + empty libs/codecs target. No vendor code."
+targets = ["libs/devices", "libs/codecs", "tests/devices"]
+
+[[unit]]
+id = "pfeiffer_maxigauge"
+wave = 4
+layer = "devices"
+depends = ["device_kit"]
+goal = "Pfeiffer MaxiGauge: codec (PR/ENQ/ACK framing, decode), driver implementing IPressureGauge + IScannable, registry entry, scripted + replay tests, SimSystem hook contract."
+targets = ["libs/codecs", "libs/devices", "tests/codecs", "tests/devices"]
+
+[[unit]]
+id = "proxr_relay"
+wave = 4
+layer = "devices"
+depends = ["device_kit"]
+goal = "NCD ProXR relay: codec, driver implementing IValveActuator, registry entry, scripted + replay tests, SimSystem hook contract."
+targets = ["libs/codecs", "libs/devices", "tests/codecs", "tests/devices"]
+
+[[unit]]
+id = "switch_manager"
+wave = 5
+layer = "systems"
+depends = ["proxr_relay"]
+goal = "libs/systems SwitchManager: valves/manual valves/switches from config, actuate() with software lock, owner, negative + positive interlocks, settle, readback, SignalBus events; property-style interlock tests."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "gauge_scanner"
+wave = 5
+layer = "systems"
+depends = ["pfeiffer_maxigauge"]
+goal = "libs/systems GaugeScanner: register gauges with Scheduler, publish PressureSample, evaluate alarm_high/alarm_low, publish Alarm."
+targets = ["libs/systems", "tests/systems"]
+
+[[unit]]
+id = "canvas_network"
+wave = 5
+layer = "systems"
+depends = ["core"]
+goal = "libs/systems canvas model: canvas.toml loader (Qt-free geometry structs), cross-validation against system config, NetworkGraph with connected_volumes(valve_states)."
+targets = ["libs/systems", "tests/systems", "configs/examples"]
+
+[[unit]]
+id = "elctl"
+wave = 6
+layer = "apps"
+depends = ["switch_manager", "gauge_scanner", "canvas_network"]
+goal = "apps/elctl CLI: validate, canvas-check, list-drivers, probe, list, state, open/close, read, scan --for, trace on|off, sim REPL."
+targets = ["apps/elctl"]
+
+[[unit]]
+id = "extraction_line_facade"
+wave = 7
+layer = "systems"
+depends = ["elctl"]
+goal = "ExtractionLine facade: load both configs, build transports -> drivers -> managers, start()/stop(), Snapshot event, SimSystem (libs/sim) stateful model, end-to-end integration test under kind=sim."
+targets = ["libs/systems", "libs/sim", "tests/integration"]
+
+[[unit]]
+id = "qt_ui"
+wave = 8
+layer = "ui"
+depends = ["extraction_line_facade"]
+goal = "apps/pychron-ui: CoreBridge (SignalBus -> Qt main thread, command executor thread), QGraphicsView canvas items, LogDock, AlarmDock, HealthBar; Qt Test smoke under BUILD_UI."
+targets = ["apps/pychron-ui", "tests/ui"]
+
+[[unit]]
+id = "gp_microion"
+wave = 8
+layer = "devices"
+depends = ["extraction_line_facade"]
+goal = "Granville-Phillips Micro-Ion gauge: codec, driver, registry, tests, sim hook. Proves IPressureGauge is vendor-blind."
+targets = ["libs/codecs", "libs/devices", "tests/codecs", "tests/devices"]
+
+[[unit]]
+id = "hardware_bringup"
+wave = 9
+layer = "manual"
+manual = true
+depends = ["qt_ui", "gp_microion"]
+goal = "Lab bring-up: elctl probe on real hardware, capture traces, commit under tests/traces/. Never delegated to an agent."
+targets = ["tests/traces"]

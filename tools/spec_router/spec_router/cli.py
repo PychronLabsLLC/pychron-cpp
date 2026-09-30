@@ -1,0 +1,212 @@
+"""spec-router CLI.
+
+  spec-router plan                 route + size, write .spec_router/plan.json
+  spec-router prompt <unit>        print the agent prompt for one unit
+  spec-router run [--wave N|--unit U] [--dry-run] [--no-merge]
+  spec-router status
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from . import dispatch, verify
+from .judge import Judge, TypeSafeJudge
+from .plan import Plan, Sizing, UnitBrief, route_sections, size_units
+from .spec import parse_sections
+from .units import Unit, load_units, waves
+
+STATE_DIR = ".spec_router"
+
+
+def _paths(args: argparse.Namespace) -> dict[str, Path]:
+    repo = Path(args.repo).resolve()
+    sd = repo / STATE_DIR
+    return {"repo": repo, "state_dir": sd, "plan": sd / "plan.json", "state": sd / "state.json", "cache": sd / "judgments.json", "spec": (repo / args.spec).resolve()}
+
+
+def _judge(args: argparse.Namespace, p: dict[str, Path]) -> Judge:
+    return TypeSafeJudge(p["cache"], model=args.jev_model)
+
+
+def _load_plan(p: dict[str, Path], units: list[Unit]) -> Plan:
+    if not p["plan"].exists():
+        sys.exit("no plan yet: run `spec-router plan` first")
+    d = json.loads(p["plan"].read_text())
+    secs = {s.id: s for s in parse_sections(p["spec"].read_text())}
+    by_id = {u.id: u for u in units}
+    briefs = {}
+    for uid, b in d["briefs"].items():
+        sizing = Sizing(**b["sizing"]) if b.get("sizing") else None
+        briefs[uid] = UnitBrief(by_id[uid], [secs[s] for s in b["sections"] if s in secs], sizing)
+    return Plan([], briefs, d.get("background", []))
+
+
+def _load_state(p: dict[str, Path]) -> dict[str, Any]:
+    return json.loads(p["state"].read_text()) if p["state"].exists() else {"units": {}}
+
+
+def _save_state(p: dict[str, Path], st: dict[str, Any]) -> None:
+    p["state_dir"].mkdir(exist_ok=True)
+    p["state"].write_text(json.dumps(st, indent=1, sort_keys=True))
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    p = _paths(args)
+    units = load_units(Path(args.units) if args.units else None)
+    sections = parse_sections(p["spec"].read_text())
+    judge = _judge(args, p)
+    plan = route_sections(sections, units, judge, attach_threshold=args.attach_threshold)
+    plan = size_units(plan, judge)
+    p["state_dir"].mkdir(exist_ok=True)
+    p["plan"].write_text(json.dumps(plan.to_dict(), indent=1))
+    print(f"{len(sections)} sections -> {len(plan.briefs)} units; background: {plan.background}")
+    print(f"jev calls: {judge.calls}, cache hits: {judge.hits}\n")
+    print(f"{'unit':24} {'wave':>4} {'#sec':>4} {'size':>5} {'conf':>5} {'model':7} {'turns':>5} split")
+    for uid, b in plan.briefs.items():
+        s = b.sizing
+        print(f"{uid:24} {b.unit.wave:>4} {len(b.sections):>4} {s.score:>5.2f} {s.confidence:>5.2f} {s.model:7} {s.max_turns:>5} {'YES' if s.split else ''}")
+    low = [r for r in plan.routings if r.confidence < 0.5 and r.primary != "background"]
+    if low:
+        print("\nlow-confidence routings (review):")
+        for r in low:
+            top = sorted(r.probabilities.items(), key=lambda kv: -kv[1])[:3]
+            print(f"  [{r.section_id}] -> {r.primary} ({r.confidence:.2f}); top: {top}")
+    return 0
+
+
+def cmd_prompt(args: argparse.Namespace) -> int:
+    p = _paths(args)
+    units = load_units(Path(args.units) if args.units else None)
+    plan = _load_plan(p, units)
+    if args.unit not in plan.briefs:
+        sys.exit(f"unknown unit {args.unit!r}; known: {sorted(plan.briefs)}")
+    print(dispatch.build_prompt(plan.briefs[args.unit], spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(_load_state(p))))
+    return 0
+
+
+def _done(st: dict[str, Any]) -> list[str]:
+    return [u for u, s in st["units"].items() if s.get("status") == "merged"]
+
+
+def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, judge: Judge | None, runner: dispatch.Runner, log) -> dict[str, Any]:
+    cfg = dispatch.DispatchConfig(repo=p["repo"], claude_bin=args.claude_bin)
+    st = _load_state(p)
+    prompt = dispatch.build_prompt(brief, spec_path=str(p["spec"].relative_to(p["repo"])), completed_units=_done(st))
+    log(f"==> {brief.unit.id}: model={brief.sizing.model if brief.sizing else '?'} sections={[s.id for s in brief.sections]}")
+    result = dispatch.run_unit(cfg, brief, prompt, runner=runner)
+    wt = Path(result.worktree)
+    if args.dry_run:
+        return {"status": "dry-run", "unit": brief.unit.id}
+    changed = verify.diff_is_nonempty(wt, runner=runner)
+    build = verify.build_and_test(wt, runner=runner)
+    judgment = verify.judge_report(brief, result.report, judge) if (result.report and judge) else None
+    decision = verify.gate(result, build, judgment, changed=changed)
+    rec: dict[str, Any] = {
+        "status": "verified" if decision.merge else "failed", "reason": decision.reason,
+        "branch": result.branch, "worktree": result.worktree, "exit_code": result.exit_code,
+        "cost_usd": result.cost_usd, "duration_ms": result.duration_ms,
+        "report": result.report, "decision": decision.to_dict(),
+    }
+    if not result.report:
+        rec["stderr_tail"] = result.raw_stderr[-2000:]
+    log(f"<== {brief.unit.id}: {rec['status']} - {decision.reason}")
+    return rec
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    p = _paths(args)
+    units = load_units(Path(args.units) if args.units else None)
+    plan = _load_plan(p, units)
+    st = _load_state(p)
+    judge = None if args.dry_run else _judge(args, p)
+    runner: dispatch.Runner = dispatch.dry_runner_factory(print) if args.dry_run else dispatch.subprocess_runner
+    log = print
+
+    selected = waves(units)
+    if args.wave:
+        selected = [w for w in selected if w.number == args.wave]
+    if args.unit:
+        selected = [type(w)(w.number, [u for u in w.units if u.id == args.unit]) for w in selected]
+        selected = [w for w in selected if w.units]
+    if not selected:
+        sys.exit("nothing selected")
+
+    for wave in selected:
+        todo = [u for u in wave.units if st["units"].get(u.id, {}).get("status") != "merged"]
+        if not todo:
+            log(f"wave {wave.number}: already merged")
+            continue
+        missing = [d for u in todo for d in u.depends if st["units"].get(d, {}).get("status") != "merged"]
+        if missing and not args.dry_run and not args.force:
+            sys.exit(f"wave {wave.number}: dependencies not merged: {sorted(set(missing))} (use --force to override)")
+        split = [u.id for u in todo if plan.briefs[u.id].sizing and plan.briefs[u.id].sizing.split]
+        if split and not args.force:
+            sys.exit(f"wave {wave.number}: units flagged for manual split: {split} (edit units.toml or use --force)")
+
+        log(f"\n=== wave {wave.number}: {[u.id for u in todo]} ===")
+        with ThreadPoolExecutor(max_workers=args.parallel) as ex:
+            results = list(ex.map(lambda u: (u.id, _run_one(args, p, plan.briefs[u.id], judge, runner, log)), todo))
+
+        if args.dry_run:
+            continue
+        # Merge sequentially, in unit order, so the next wave sees all of this wave.
+        for uid, rec in results:
+            if rec["status"] == "verified" and not args.no_merge:
+                ok, msg = verify.commit_and_merge(p["repo"], Path(rec["worktree"]), rec["branch"], uid)
+                rec["status"] = "merged" if ok else "failed"
+                rec["reason"] = msg if not ok else rec["reason"]
+                if ok:
+                    dispatch.remove_worktree(dispatch.DispatchConfig(repo=p["repo"]), uid)
+                    rec.pop("worktree", None)
+            st["units"][uid] = rec
+            _save_state(p, st)
+        failed = [uid for uid, rec in results if rec["status"] != "merged"]
+        if failed:
+            log(f"\nwave {wave.number} incomplete: {failed}. Stopping; fix or re-run with --wave {wave.number}.")
+            return 1
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    p = _paths(args)
+    st = _load_state(p)
+    if not st["units"]:
+        print("no runs recorded")
+        return 0
+    for uid, rec in st["units"].items():
+        cost = f"${rec['cost_usd']:.2f}" if rec.get("cost_usd") else ""
+        print(f"{uid:24} {rec['status']:9} {cost:>8}  {rec.get('reason','')}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="spec-router", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--repo", default=".", help="repository root (default: cwd)")
+    ap.add_argument("--spec", default="docs/superpowers/specs/2026-09-29-instrument-control-design.md")
+    ap.add_argument("--units", default=None, help="units.toml override")
+    ap.add_argument("--jev-model", default="jev-latest")
+    ap.add_argument("--claude-bin", default="claude")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("plan"); s.add_argument("--attach-threshold", type=float, default=0.5); s.set_defaults(fn=cmd_plan)
+    s = sub.add_parser("prompt"); s.add_argument("unit"); s.set_defaults(fn=cmd_prompt)
+    s = sub.add_parser("run")
+    s.add_argument("--wave", type=int); s.add_argument("--unit")
+    s.add_argument("--dry-run", action="store_true"); s.add_argument("--no-merge", action="store_true")
+    s.add_argument("--force", action="store_true"); s.add_argument("--parallel", type=int, default=3)
+    s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("status"); s.set_defaults(fn=cmd_status)
+
+    args = ap.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
