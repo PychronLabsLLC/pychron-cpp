@@ -1,0 +1,11 @@
+# expect: main.integration_s: must be > 0
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+integration_s = 0
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

@@ -1,0 +1,14 @@
+# expect: fits.signal.Ar40: unknown fit 'quartic'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[fits]
+signal = { default = "linear", Ar40 = "quartic" }

@@ -1,0 +1,17 @@
+# expect: alias cycle
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[equilibration]
+time_s = "@sniff.counts"
+[sniff]
+enabled = true
+counts = "@equilibration.time_s"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

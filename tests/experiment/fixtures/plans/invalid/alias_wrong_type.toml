@@ -1,0 +1,17 @@
+# expect: sniff.counts: expected an integer
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[equilibration]
+inlet = "@valves.inlet"
+[sniff]
+enabled = true
+counts = "@valves.inlet"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

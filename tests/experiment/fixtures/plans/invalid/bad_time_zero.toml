@@ -1,0 +1,11 @@
+# expect: main.time_zero: expected
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+time_zero = "whenever"
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

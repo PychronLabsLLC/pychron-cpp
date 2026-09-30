@@ -1,0 +1,13 @@
+# expect: main.hops[0].position: needs 'isotope' unless the hop is a baseline hop at 'mass'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar36 = "CDD" }
+counts = 10
+position = { detector = "CDD" }

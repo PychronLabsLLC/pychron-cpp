@@ -1,0 +1,45 @@
+[plan]
+name = "argus_peak_hop_cdd"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = 15
+
+[baseline]
+after = true
+counts = 30
+mass = 34.2
+settle_s = 10
+
+[main]
+cycles = 20
+integration_s = 1
+time_zero = { offset_s = 5 }
+
+[[main.hops]]
+positions = { Ar40 = "H1", Ar36 = "CDD" }
+counts = 10
+settle_s = 3
+protect = ["CDD"]
+
+[[main.hops]]
+positions = { Ar39 = "CDD" }
+counts = 10
+settle_s = 3
+position = { isotope = "Ar39", detector = "CDD" }
+
+[[main.hops]]
+positions = { Ar36 = "CDD" }
+counts = 10
+settle_s = 3
+baseline = true
+mass = 34.2
+position = { detector = "CDD" }
+
+[parameters]
+expose = ["main.cycles", "main.hops[1].counts", "main.hops[0].protect"]

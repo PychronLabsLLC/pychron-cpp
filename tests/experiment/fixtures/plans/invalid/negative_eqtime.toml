@@ -1,0 +1,14 @@
+# expect: equilibration.time_s: must be >= 0
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[equilibration]
+time_s = -5
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10

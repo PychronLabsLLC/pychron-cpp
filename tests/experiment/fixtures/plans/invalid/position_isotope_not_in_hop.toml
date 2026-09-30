@@ -1,0 +1,13 @@
+# expect: main.hops[0].position.isotope: 'Ar39' not in hop positions
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar36 = "CDD" }
+counts = 10
+position = { isotope = "Ar39", detector = "CDD" }

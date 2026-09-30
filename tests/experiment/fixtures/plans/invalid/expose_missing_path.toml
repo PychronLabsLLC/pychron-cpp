@@ -1,0 +1,14 @@
+# expect: parameters.expose[0]: no such path 'main.hops[3].counts'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+integration_s = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[parameters]
+expose = ["main.hops[3].counts"]
