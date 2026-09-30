@@ -1,0 +1,219 @@
+#include "canvas_items.hpp"
+
+#include <QCursor>
+#include <QGraphicsSceneMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPen>
+#include <QStringList>
+
+namespace pychron::ui {
+
+namespace {
+
+constexpr int kFlashTicks = 6;
+constexpr int kFlashIntervalMs = 150;
+
+}  // namespace
+
+QPointF to_qpoint(const canvas::Point& p) { return {p.x, p.y}; }
+
+QColor valve_color(ValveState state) {
+  switch (state) {
+    case ValveState::Open:
+      return QColor(0x2e, 0xcc, 0x40);
+    case ValveState::Closed:
+      return QColor(0xe0, 0x3c, 0x31);
+    case ValveState::Unknown:
+      break;
+  }
+  return QColor(0x99, 0x99, 0x99);
+}
+
+// ---- ValveItem --------------------------------------------------------------
+
+ValveItem::ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent)
+    : QGraphicsObject(parent), name_(std::move(name)), kind_(kind) {
+  setZValue(2);
+  setCursor(Qt::PointingHandCursor);
+  setToolTip(QString::fromStdString(name_));
+  flash_timer_.setInterval(kFlashIntervalMs);
+  connect(&flash_timer_, &QTimer::timeout, this, [this] {
+    if (--flash_ticks_ <= 0) {
+      flash_ticks_ = 0;
+      flash_timer_.stop();
+    }
+    update();
+  });
+}
+
+QColor ValveItem::fill_color() const {
+  if (is_flashing() && flash_ticks_ % 2 == 0) {
+    return QColor(Qt::yellow);
+  }
+  return valve_color(state_);
+}
+
+void ValveItem::set_state(ValveState state) {
+  state_ = state;
+  update();
+}
+
+void ValveItem::set_locked(bool locked) {
+  locked_ = locked;
+  update();
+}
+
+void ValveItem::set_pending(bool pending) {
+  pending_ = pending;
+  update();
+}
+
+void ValveItem::flash(const QString& what) {
+  setToolTip(QStringLiteral("%1: %2").arg(QString::fromStdString(name_), what));
+  flash_ticks_ = kFlashTicks;
+  flash_timer_.start();
+  update();
+}
+
+QRectF ValveItem::boundingRect() const {
+  const double half = kSize / 2 + 4;  // room for the pending outline and badge
+  return {-half, -half, 2 * half, 2 * half};
+}
+
+void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
+  const QRectF body(-kSize / 2, -kSize / 2, kSize, kSize);
+  painter->setPen(QPen(Qt::black, 1));
+  painter->setBrush(fill_color());
+  if (kind_ == canvas::ValveKind::Switch) {
+    painter->drawEllipse(body);
+  } else {
+    painter->drawRect(body);
+  }
+  if (kind_ == canvas::ValveKind::Manual) {
+    painter->drawLine(body.topLeft(), body.bottomRight());
+  }
+  painter->drawText(body, Qt::AlignCenter, QString::fromStdString(name_));
+
+  if (pending_) {
+    painter->setBrush(Qt::NoBrush);
+    painter->setPen(QPen(Qt::black, 2, Qt::DashLine));
+    painter->drawRect(body.adjusted(-3, -3, 3, 3));
+  }
+  if (locked_) {
+    const QRectF badge(body.right() - 6, body.top() - 4, 10, 10);
+    painter->setPen(QPen(Qt::black, 1));
+    painter->setBrush(QColor(0xff, 0xa5, 0x00));
+    painter->drawRect(badge);
+  }
+}
+
+void ValveItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {
+  if (event->button() == Qt::LeftButton && on_click_) {
+    on_click_(name_);
+    event->accept();
+    return;
+  }
+  QGraphicsObject::mousePressEvent(event);
+}
+
+// ---- StageItem --------------------------------------------------------------
+
+StageItem::StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent)
+    : QGraphicsItem(parent),
+      name_(std::move(name)),
+      label_(std::move(label)),
+      rect_(-size.width / 2, -size.height / 2, size.width, size.height),
+      region_(base) {
+  setZValue(1);
+  setToolTip(QString::fromStdString(name_));
+}
+
+void StageItem::set_region_color(QColor color) {
+  if (color != region_) {
+    region_ = color;
+    update();
+  }
+}
+
+QRectF StageItem::boundingRect() const { return rect_.adjusted(-1, -1, 1, 1); }
+
+void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
+  painter->setPen(QPen(Qt::black, 1));
+  painter->setBrush(region_);
+  painter->drawRect(rect_);
+  painter->drawText(rect_, Qt::AlignCenter, label_);
+}
+
+// ---- ConnectionItem ---------------------------------------------------------
+
+ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width, QGraphicsItem* parent)
+    : QGraphicsPathItem(parent) {
+  QPainterPath path;
+  if (!points.empty()) {
+    path.moveTo(points.front());
+    for (std::size_t i = 1; i < points.size(); ++i) {
+      path.lineTo(points[i]);
+    }
+  }
+  setPath(path);
+  setPen(QPen(QColor(0x55, 0x55, 0x55), width, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+  setZValue(0);
+}
+
+// ---- LabelItem --------------------------------------------------------------
+
+LabelItem::LabelItem(const QString& text, const QString& font_spec, QGraphicsItem* parent)
+    : QGraphicsSimpleTextItem(text, parent) {
+  setFont(parse_font(font_spec));
+  setZValue(3);
+}
+
+QFont LabelItem::parse_font(const QString& spec) {
+  QFont font;
+  QStringList family;
+  for (const QString& part : spec.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+    bool is_size = false;
+    const int size = part.toInt(&is_size);
+    if (is_size && size > 0) {
+      font.setPointSize(size);
+    } else {
+      family << part;
+    }
+  }
+  if (!family.isEmpty()) {
+    font.setFamily(family.join(QLatin1Char(' ')));
+  }
+  return font;
+}
+
+// ---- GaugeLabelItem ---------------------------------------------------------
+
+GaugeLabelItem::GaugeLabelItem(std::string name, QGraphicsItem* parent)
+    : QGraphicsSimpleTextItem(parent), name_(std::move(name)) {
+  setZValue(3);
+  refresh();
+}
+
+void GaugeLabelItem::set_value(double value, const std::string& units) {
+  value_ = QString::number(value, 'e', 2);
+  if (!units.empty()) {
+    value_ += QLatin1Char(' ') + QString::fromStdString(units);
+  }
+  refresh();
+}
+
+void GaugeLabelItem::set_alarm(bool alarm) {
+  alarm_ = alarm;
+  refresh();
+}
+
+void GaugeLabelItem::refresh() {
+  setText(QStringLiteral("%1: %2").arg(QString::fromStdString(name_), value_));
+  setBrush(alarm_ ? QColor(Qt::red) : QColor(Qt::black));
+  // Centre on the element position the view assigns with setPos().
+  const QRectF r = QGraphicsSimpleTextItem::boundingRect();
+  setTransform(QTransform::fromTranslate(-r.width() / 2, -r.height() / 2));
+}
+
+}  // namespace pychron::ui
