@@ -15,6 +15,7 @@ target_include_directories(pychron_systems PUBLIC
 )
 
 target_compile_features(pychron_systems PUBLIC cxx_std_20)
-target_link_libraries(pychron_systems PUBLIC pychron::devices pychron::transport pychron::core)
+# pychron::sim backs `kind = "sim"` transports in the ExtractionLine facade.
+target_link_libraries(pychron_systems PUBLIC pychron::sim pychron::devices pychron::transport pychron::core)
 
 pychron_set_warnings(pychron_systems)

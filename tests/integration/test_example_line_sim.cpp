@@ -1,0 +1,233 @@
+// The M1 success criterion under simulation: the example extraction line
+// (every transport kind = "sim") runs from extraction_line.toml + canvas.toml
+// through the same facade, drivers and managers as hardware. Valves actuate
+// with interlocks enforced and gauges scan, with SimSystem standing in for
+// the physical lab.
+//
+// Example plumbing (canvas.toml):
+//   bone --A-- prep --B-- spec
+//               |  \
+//              P1   C --+-- turbo --+-- M1 -- rough
+//                       |           |
+//                      IG1         PG1
+// A and C interlock each other; IG1 has alarm_high = 1e-4.
+
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "pychron/core/config/loader.hpp"
+#include "pychron/systems/canvas/loader.hpp"
+#include "pychron/systems/extraction_line.hpp"
+
+namespace {
+
+using namespace pychron;
+using namespace pychron::systems;
+using namespace std::chrono_literals;
+
+const std::filesystem::path kDir = PYCHRON_EXAMPLE_CONFIGS_DIR;
+
+sim::SimSettings lab() {
+  sim::SimSettings s;
+  s.default_pressure = 1e-8;
+  s.initial_pressures = {{"bone", 1e-3}};  // gas released into the furnace
+  s.pumps = {{"turbo", {1e-9, 5s}}};
+  s.noise = 0.0;
+  return s;
+}
+
+// Every captured event, in order, across bus threads.
+struct Recorder {
+  explicit Recorder(SignalBus& bus) {
+    subs.push_back(bus.subscribe<ValveChanged>([this](const ValveChanged& e) { add(valves, e); }));
+    subs.push_back(bus.subscribe<ActuationFailed>([this](const ActuationFailed& e) { add(failures, e); }));
+    subs.push_back(bus.subscribe<PressureSample>([this](const PressureSample& e) { add(samples, e); }));
+    subs.push_back(bus.subscribe<Alarm>([this](const Alarm& e) { add(alarms, e); }));
+    subs.push_back(bus.subscribe<Snapshot>([this](const Snapshot& e) { add(snapshots, e); }));
+  }
+
+  template <class E>
+  void add(std::vector<E>& into, const E& e) {
+    std::lock_guard lock(mutex);
+    into.push_back(e);
+    changed.notify_all();
+  }
+
+  std::size_t samples_of(const std::string& gauge) {
+    std::lock_guard lock(mutex);
+    std::size_t n = 0;
+    for (const auto& s : samples) n += s.gauge == gauge ? 1 : 0;
+    return n;
+  }
+
+  std::mutex mutex;
+  std::condition_variable changed;
+  std::vector<ValveChanged> valves;
+  std::vector<ActuationFailed> failures;
+  std::vector<PressureSample> samples;
+  std::vector<Alarm> alarms;
+  std::vector<Snapshot> snapshots;
+  std::vector<SignalBus::Subscription> subs;
+};
+
+// Deterministic: ManualClock, scans dispatched inline by the test, and the
+// configured settle times zeroed so actuations do not wait on the clock.
+class ExampleLineSim : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    auto cfg = config::load_system_config(kDir / "extraction_line.toml");
+    ASSERT_TRUE(cfg) << cfg.error().what;
+    for (auto& v : cfg->valves) v.settle_ms = 0;
+    auto canvas = canvas::load_canvas(kDir / "canvas.toml");
+    ASSERT_TRUE(canvas) << canvas.error().what;
+
+    ExtractionLine::Options options;
+    options.clock = &clock;
+    options.scheduler.threads = 0;
+    options.run_scheduler = false;
+    options.sim = lab();
+    auto made = ExtractionLine::create(std::move(*cfg), std::move(*canvas), options);
+    ASSERT_TRUE(made) << made.error().what;
+    line = std::move(*made);
+    events = std::make_unique<Recorder>(line->bus());
+    ASSERT_TRUE(line->start());
+    // start() reads every switch back (Unknown -> Closed); keep only what
+    // the tests themselves cause.
+    std::lock_guard lock(events->mutex);
+    events->valves.clear();
+  }
+
+  void scan_after(Duration d) {
+    clock.advance(d);
+    line->scheduler().run_pending();
+    line->scheduler().wait_idle();
+  }
+
+  double latest(const std::string& gauge) {
+    std::lock_guard lock(events->mutex);
+    for (auto it = events->samples.rbegin(); it != events->samples.rend(); ++it) {
+      if (it->gauge == gauge) return it->value;
+    }
+    ADD_FAILURE() << "no sample for " << gauge;
+    return -1;
+  }
+
+  ManualClock clock;
+  std::unique_ptr<ExtractionLine> line;
+  std::unique_ptr<Recorder> events;
+};
+
+TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
+  const auto snap = line->snapshot();
+  for (const char* v : {"A", "B", "C", "P1", "P2", "pump_power"}) {
+    EXPECT_EQ(snap.valves.at(v), ValveState::Closed) << v;
+  }
+  EXPECT_EQ(snap.valves.at("M1"), ValveState::Unknown);
+  EXPECT_NEAR(snap.pressures.at("IG1"), 1e-8, 1e-12);
+  EXPECT_NEAR(snap.pressures.at("PG1"), 1e-8, 1e-12);
+
+  scan_after(1s);
+  EXPECT_EQ(events->samples_of("IG1"), 1u);
+  EXPECT_EQ(events->samples_of("PG1"), 1u);
+  EXPECT_TRUE(events->alarms.empty());
+}
+
+TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
+  // Expand furnace gas into prep: bone (12.5 cc) + prep (1 cc).
+  ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
+  const double expanded = (12.5 * 1e-3 + 1e-8) / 13.5;
+  EXPECT_NEAR(*line->sim()->pressure("prep"), expanded, expanded * 1e-9);
+  EXPECT_TRUE(line->sim()->valve_open("A"));
+
+  // C would expose the furnace to the turbo: refused, nothing sent.
+  auto refused = line->actuate("C", SwitchOp::Open, "test");
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Interlock);
+  ASSERT_EQ(events->failures.size(), 1u);
+  EXPECT_EQ(events->failures[0].valve, "C");
+  EXPECT_FALSE(line->sim()->valve_open("C"));
+  EXPECT_NEAR(*line->read_gauge("IG1"), 1e-8, 1e-12);
+
+  // Isolate the furnace, then pump prep through C. The turbo region
+  // (prep, turbo, IG1, PG1: 1 cc each) spikes above IG1's alarm_high.
+  ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "test"));
+  ASSERT_TRUE(line->actuate("C", SwitchOp::Open, "test"));
+  const double spike = (expanded + 3e-8) / 4;
+  // The MaxiGauge wire format carries five significant digits.
+  EXPECT_NEAR(*line->read_gauge("IG1"), spike, spike * 1e-4);
+  EXPECT_NEAR(*line->read_gauge("PG1"), spike, spike * 1e-4);
+
+  scan_after(1s);  // a fifth of the pump time constant: still above alarm_high
+  const double after_1s = 1e-9 + (spike - 1e-9) * std::exp(-0.2);
+  EXPECT_NEAR(latest("IG1"), after_1s, after_1s * 1e-4);
+  ASSERT_EQ(events->alarms.size(), 1u);
+  EXPECT_EQ(events->alarms[0].source, "IG1");
+
+  scan_after(60s);
+  EXPECT_LT(latest("IG1"), 1e-8);
+  // Isolated behind A at the expanded pressure.
+  EXPECT_NEAR(*line->sim()->pressure("bone"), expanded, expanded * 1e-9);
+
+  std::vector<std::string> changed;
+  for (const auto& e : events->valves) changed.push_back(e.valve);
+  EXPECT_EQ(changed, (std::vector<std::string>{"A", "A", "C"}));
+  const auto snap = line->snapshot();
+  EXPECT_EQ(snap.valves.at("A"), ValveState::Closed);
+  EXPECT_EQ(snap.valves.at("C"), ValveState::Open);
+}
+
+TEST_F(ExampleLineSim, SwitchesShareTheRelayBoard) {
+  ASSERT_TRUE(line->actuate("pump_power", SwitchOp::Open, "test"));
+  EXPECT_TRUE(line->sim()->valve_open("pump_power"));
+  EXPECT_FALSE(line->sim()->valve_open("A"));
+}
+
+TEST_F(ExampleLineSim, PipetteValvesNeverOpenTogether) {
+  ASSERT_TRUE(line->actuate("P1", SwitchOp::Open, "test"));
+  auto second = line->actuate("P2", SwitchOp::Open, "test");
+  ASSERT_FALSE(second);
+  EXPECT_EQ(second.error().kind, ErrorKind::Interlock);
+  EXPECT_FALSE(line->sim()->valve_open("P2"));
+}
+
+// Real time, real scheduler threads, the example files exactly as committed
+// (including A's 500 ms settle).
+TEST(ExampleLineSimRealTime, ScansAndActuatesOnSchedulerThreads) {
+  ExtractionLine::Options options;
+  options.sim = lab();
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  Recorder events(line.bus());
+  ASSERT_TRUE(line.start());
+  ASSERT_EQ(events.snapshots.size(), 1u);
+
+  ASSERT_TRUE(line.actuate("A", SwitchOp::Open, "test"));
+  EXPECT_EQ(line.snapshot().valves.at("A"), ValveState::Open);
+
+  {
+    std::unique_lock lock(events.mutex);
+    const bool scanned = events.changed.wait_for(lock, 5s, [&] {
+      std::size_t n = 0;
+      for (const auto& s : events.samples) n += s.gauge == "IG1" ? 1 : 0;
+      return n >= 1;
+    });
+    EXPECT_TRUE(scanned) << "no IG1 scan within 5 s";
+  }
+
+  line.stop();
+  EXPECT_FALSE(line.running());
+  const auto n = events.samples_of("IG1");
+  std::this_thread::sleep_for(1200ms);
+  EXPECT_EQ(events.samples_of("IG1"), n);
+}
+
+}  // namespace
