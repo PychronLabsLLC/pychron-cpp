@@ -1,0 +1,103 @@
+# Simulated integrated-vendor spectrometer (spectrometer spec sections 7.1, 8.2).
+# One `sim_integrated` driver plays all five roles on one transport, like a
+# Qtegra / NGX / Quadera box. Compare spectrometer.sim-legacy.toml: only the
+# bindings differ.
+
+[system]
+name = "sim-integrated"
+reference_detector = "H1"
+integration_time_s = 1.0
+
+[transports.sim]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers.sim]
+kind = "sim_integrated"
+transport = "sim"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+channels = ["H2", "H1", "AX", "L1", "L2", "CDD"]
+move_time_ms = 200
+
+[magnet]
+positioner = "sim"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "argon"
+hv_table = "argon_hv"
+propagate = false
+corrections = { deflection = true, hv = true }
+protection = { detectors = ["CDD"], beam_blank_threshold = 0.5 }
+af_demag = { enabled = false, period_s = 0.5, duration_s = 10, start_amplitude = 0.5, threshold = 0.5 }
+
+[source]
+driver = "sim"
+nominal_hv = 4500
+ramp = { TrapCurrent = 10.0, HV = 200.0 }
+
+[acquisition]
+acquirers = ["sim"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "sim"
+
+[[detectors]]
+name = "H2"
+kind = "faraday"
+channel = "sim:H2"
+units = "fA"
+deflection = { control = true, correction = [0.0, 0.0011], sign = 1, max = 800, per_volt = 0.0030 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "sim:H1"
+units = "fA"
+software_gain = 1.0
+isotope = "Ar40"
+active = true
+deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
+protection = { threshold = 5e5, on_move = true }
+saturation = 4.9e6
+
+[[detectors]]
+name = "AX"
+kind = "faraday"
+channel = "sim:AX"
+units = "fA"
+isotope = "Ar39"
+deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "L1"
+kind = "faraday"
+channel = "sim:L1"
+units = "fA"
+isotope = "Ar38"
+deflection = { control = true, correction = [0.0, 0.0012], sign = -1, max = 800, per_volt = 0.0031 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "L2"
+kind = "faraday"
+channel = "sim:L2"
+units = "fA"
+isotope = "Ar37"
+deflection = { control = true, correction = [0.0, 0.0011], sign = -1, max = 800, per_volt = 0.0030 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "CDD"
+kind = "cdd"
+channel = "sim:CDD"
+units = "cps"
+isotope = "Ar36"
+dead_time_ns = 25
+cdd_voltage = 1450
+deflection = { control = true, correction = [0.0, 0.0010], sign = -1, max = 800, per_volt = 0.0029 }
+protection = { threshold = 5e5, on_move = true }

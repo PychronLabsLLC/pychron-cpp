@@ -1,0 +1,93 @@
+# Simulated legacy split spectrometer (spectrometer spec sections 7.2, 8.2):
+# one driver per role, each on its own transport, host-side integration.
+# Compare spectrometer.sim-integrated.toml: only the bindings differ.
+
+[system]
+name = "sim-legacy"
+reference_detector = "H1"
+integration_time_s = 1.0
+
+[transports.dac]
+kind = "sim"
+
+[transports.adc]
+kind = "sim"
+
+[transports.counter]
+kind = "sim"
+
+[transports.hv]
+kind = "sim"
+
+[drivers.magnet_dac]
+kind = "sim_dac_positioner"
+transport = "dac"
+roles = ["positioner"]
+channel = 0
+
+[drivers.faradays]
+kind = "sim_adc_bank"
+transport = "adc"
+roles = ["acquirer"]
+channels = ["AX", "H1", "L1"]
+sample_hz = 100
+
+[drivers.multiplier]
+kind = "sim_pulse_counter"
+transport = "counter"
+roles = ["acquirer"]
+channels = ["EM"]
+
+[drivers.hv_supply]
+kind = "sim_hv_supply"
+transport = "hv"
+roles = ["source"]
+
+[magnet]
+positioner = "magnet_dac"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 250
+field_table = "argon_legacy"
+corrections = { deflection = false, hv = true }
+
+[source]
+driver = "hv_supply"
+nominal_hv = 4500
+ramp = { HV = 200.0 }
+
+[acquisition]
+acquirers = ["faradays", "multiplier"]
+host_integration = true
+bin_epoch = "shared"
+
+# no [detector_control]: UI hides deflection/gain/protect
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "faradays:H1"
+units = "fA"
+isotope = "Ar40"
+
+[[detectors]]
+name = "AX"
+kind = "faraday"
+channel = "faradays:AX"
+units = "fA"
+isotope = "Ar39"
+
+[[detectors]]
+name = "L1"
+kind = "faraday"
+channel = "faradays:L1"
+units = "fA"
+isotope = "Ar38"
+
+[[detectors]]
+name = "EM"
+kind = "counter"
+channel = "multiplier:EM"
+units = "cps"
+isotope = "Ar36"
+dead_time_ns = 20

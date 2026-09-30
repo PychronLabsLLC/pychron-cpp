@@ -1,0 +1,18 @@
+fit = "linear"
+axis = "dac"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H1 = 5.001
+AX = 4.874
+L1 = 4.750
+EM = 4.383
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H1 = 4.505
+AX = 4.383
+L1 = 4.264
+EM = 3.946
