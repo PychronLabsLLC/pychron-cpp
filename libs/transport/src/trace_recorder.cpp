@@ -26,44 +26,58 @@ void TraceRecorder::close() { inner_->close(); }
 
 Health TraceRecorder::health() const { return inner_->health(); }
 
+// Each call records inside the inner transport's own serialization (a
+// transaction), so the file order is the wire order and the sink lock is
+// never held while waiting for the bus. Holding a recorder-wide lock across
+// the inner call would deadlock against a transaction running on the bus.
+
 Result<Bytes> TraceRecorder::exchange(Bytes tx, ReadSpec rs, Duration timeout) {
-  std::lock_guard lock(mutex_);
-  record(TraceRecord::Dir::Tx, tx);
-  auto r = inner_->exchange(std::move(tx), std::move(rs), timeout);
-  if (r) {
-    record(TraceRecord::Dir::Rx, *r);
-  } else {
-    record_error(r.error());
-  }
-  return r;
+  return transact(*inner_, [&]() -> Result<Bytes> {
+    record(TraceRecord::Dir::Tx, tx);
+    auto r = inner_->exchange(std::move(tx), std::move(rs), timeout);
+    if (r) {
+      record(TraceRecord::Dir::Rx, *r);
+    } else {
+      record_error(r.error());
+    }
+    return r;
+  });
 }
 
 Result<void> TraceRecorder::write(Bytes tx) {
-  std::lock_guard lock(mutex_);
-  record(TraceRecord::Dir::Tx, tx);
-  auto r = inner_->write(std::move(tx));
-  if (!r) record_error(r.error());
-  return r;
+  return transact(*inner_, [&]() -> Result<void> {
+    record(TraceRecord::Dir::Tx, tx);
+    auto r = inner_->write(std::move(tx));
+    if (!r) record_error(r.error());
+    return r;
+  });
 }
 
 Result<Bytes> TraceRecorder::read(ReadSpec rs, Duration timeout) {
-  std::lock_guard lock(mutex_);
-  auto r = inner_->read(std::move(rs), timeout);
-  if (r) {
-    record(TraceRecord::Dir::Rx, *r);
-  } else {
-    record_error(r.error());
-  }
-  return r;
+  return transact(*inner_, [&]() -> Result<Bytes> {
+    auto r = inner_->read(std::move(rs), timeout);
+    if (r) {
+      record(TraceRecord::Dir::Rx, *r);
+    } else {
+      record_error(r.error());
+    }
+    return r;
+  });
+}
+
+Result<void> TraceRecorder::transaction(std::function<Result<void>()> body) {
+  return inner_->transaction(std::move(body));
 }
 
 void TraceRecorder::record(TraceRecord::Dir dir, const Bytes& data) {
+  std::lock_guard lock(mutex_);  // guards the sink only
   const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
   *sink_ << format_trace_record(TraceRecord{at, dir, data, {}}) << '\n';
   sink_->flush();
 }
 
 void TraceRecorder::record_error(const Error& error) {
+  std::lock_guard lock(mutex_);  // guards the sink only
   const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
   *sink_ << format_trace_record(TraceRecord{at, TraceRecord::Dir::Err, {}, std::string(to_string(error.kind)) + " " + error.what})
          << '\n';

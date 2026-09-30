@@ -62,13 +62,14 @@ Result<std::unique_ptr<PfeifferMaxiGauge>> PfeifferMaxiGauge::create(const Drive
 }
 
 Result<Bytes> PfeifferMaxiGauge::query(const codec::Command& mnemonic) {
-  std::lock_guard lock(query_mutex_);
-  auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply);
-  if (!ack) return fail(std::move(ack).error());
-  if (auto ok = mg::decode_ack(*ack); !ok) return fail(std::move(ok).error());
+  return transact(transport_, [&]() -> Result<Bytes> {
+    auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply);
+    if (!ack) return fail(std::move(ack).error());
+    if (auto ok = mg::decode_ack(*ack); !ok) return fail(std::move(ok).error());
 
-  const codec::Command enq = mg::enquiry();
-  return transport_.exchange(enq.tx, *enq.reply);
+    const codec::Command enq = mg::enquiry();
+    return transport_.exchange(enq.tx, *enq.reply);
+  });
 }
 
 Result<double> PfeifferMaxiGauge::read_pressure() { return read_pressure(channels_.front()); }

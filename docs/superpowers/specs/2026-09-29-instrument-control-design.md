@@ -134,6 +134,7 @@ public:
   virtual Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) = 0; // write then read, atomic on the bus
   virtual Result<void>  write(Bytes tx) = 0;
   virtual Result<Bytes> read(ReadSpec rs, Duration timeout) = 0;
+  virtual Result<void>  transaction(std::function<Result<void>()> body) = 0;  // exclusive multi-step sequence
   Health                health() const;   // Connected | Degraded | Down, last_ok, consecutive_failures
 };
 ```
@@ -141,6 +142,12 @@ public:
 - Each transport owns one worker and a FIFO queue. `exchange()` may be called
   from any thread; it enqueues and blocks the caller until completion.
 - Retries and timeouts are configured per transport and applied here, once.
+- `transaction(body)` gives a multi-exchange protocol (bank select then relay
+  command; mnemonic then ENQ) exclusive use of the bus: calls `body` makes run
+  back to back and no other caller's traffic interleaves. Drivers use the
+  typed `transact(transport, lambda)` helper and hold no locks of their own,
+  which also protects devices that share one bus from splitting each other's
+  sequences.
 - `TraceRecorder` is a decorator around any `Transport`; it logs tx/rx bytes
   with timestamps to a file that `SimTransport` can replay.
 - Implementations: `SerialTransport` (asio `serial_port`), `TcpTransport`,

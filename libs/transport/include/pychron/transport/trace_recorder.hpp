@@ -14,9 +14,8 @@ namespace pychron {
 // Decorator: forwards every call to `inner` and appends tx/rx/err records
 // with timestamps to `sink`, in a format SimTransport::replay() reads.
 //
-// Calls are held under the recorder's lock for their whole duration so the
-// file order is exactly the wire order. This costs nothing: the inner
-// transport already serializes all traffic.
+// Each call is recorded inside the inner transport's serialization (see
+// Transport::transaction), so the file order is exactly the wire order.
 class TraceRecorder final : public Transport {
  public:
   TraceRecorder(std::unique_ptr<Transport> inner, std::shared_ptr<std::ostream> sink,
@@ -30,6 +29,7 @@ class TraceRecorder final : public Transport {
   Result<void> open() override;
   void close() override;
   Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) override;
+  Result<void> transaction(std::function<Result<void>()> body) override;
   Result<void> write(Bytes tx) override;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) override;
   Health health() const override;

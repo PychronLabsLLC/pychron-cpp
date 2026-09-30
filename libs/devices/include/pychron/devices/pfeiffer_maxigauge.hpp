@@ -6,7 +6,6 @@
 
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -48,17 +47,14 @@ class PfeifferMaxiGauge final : public Device,
   Result<codec::maxigauge::Units> read_units();
 
  private:
-  // Mnemonic -> ACK, then ENQ -> data line.
+  // Mnemonic -> ACK, then ENQ -> data line, as one Transport transaction: the
+  // gauge answers ENQ with data for the last acknowledged mnemonic, so no
+  // other traffic on the bus may fall between the two exchanges.
   Result<Bytes> query(const codec::Command& mnemonic);
 
   Transport& transport_;
   std::vector<int> channels_;
   const Clock* clock_;
-  // The gauge answers ENQ with data for the last acknowledged mnemonic, so a
-  // query is two exchanges that must not interleave with another query from
-  // this driver. The transport keeps each exchange atomic on the bus; this
-  // keeps the pair atomic per device.
-  std::mutex query_mutex_;
 };
 
 // SimSystem hook contract. SimSystem owns the physics and answers

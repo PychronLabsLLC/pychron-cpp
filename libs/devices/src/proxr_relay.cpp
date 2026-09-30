@@ -24,27 +24,29 @@ Result<void> ProxrRelay::close(const ValveAddress& address) { return observe(act
 Result<ValveState> ProxrRelay::read(const ValveAddress& address) { return observe(query(address)); }
 
 Result<void> ProxrRelay::actuate(const ValveAddress& address, bool energize) {
-  std::lock_guard lock(sequence_);
-  auto relay = select(address);
-  if (!relay) return fail(relay.error());
-  auto cmd = energize ? proxr::relay_on(*relay) : proxr::relay_off(*relay);
-  if (!cmd) return fail(cmd.error());
-  auto reply = send(*cmd);
-  if (!reply) return fail(reply.error());
-  return proxr::decode_ack(*reply);
+  return transact(transport_, [&]() -> Result<void> {
+    auto relay = select(address);
+    if (!relay) return fail(relay.error());
+    auto cmd = energize ? proxr::relay_on(*relay) : proxr::relay_off(*relay);
+    if (!cmd) return fail(cmd.error());
+    auto reply = send(*cmd);
+    if (!reply) return fail(reply.error());
+    return proxr::decode_ack(*reply);
+  });
 }
 
 Result<ValveState> ProxrRelay::query(const ValveAddress& address) {
-  std::lock_guard lock(sequence_);
-  auto relay = select(address);
-  if (!relay) return fail(relay.error());
-  auto cmd = proxr::read_relay(*relay);
-  if (!cmd) return fail(cmd.error());
-  auto reply = send(*cmd);
-  if (!reply) return fail(reply.error());
-  auto on = proxr::decode_relay_state(*reply);
-  if (!on) return fail(on.error());
-  return *on ? ValveState::Open : ValveState::Closed;
+  return transact(transport_, [&]() -> Result<ValveState> {
+    auto relay = select(address);
+    if (!relay) return fail(relay.error());
+    auto cmd = proxr::read_relay(*relay);
+    if (!cmd) return fail(cmd.error());
+    auto reply = send(*cmd);
+    if (!reply) return fail(reply.error());
+    auto on = proxr::decode_relay_state(*reply);
+    if (!on) return fail(on.error());
+    return *on ? ValveState::Open : ValveState::Closed;
+  });
 }
 
 Result<int> ProxrRelay::select(const ValveAddress& address) {

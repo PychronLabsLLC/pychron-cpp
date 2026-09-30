@@ -242,6 +242,14 @@ Result<void> QueuedTransport::write(Bytes tx) {
   });
 }
 
+Result<void> QueuedTransport::transaction(std::function<Result<void>()> body) {
+  // submit() runs calls made from the worker thread inline, so every
+  // exchange/write/read that `body` makes executes immediately inside this
+  // job, and nothing else is dequeued until body returns. Health is updated
+  // by those inner calls, not by the transaction itself.
+  return impl_->submit<void>(std::move(body));
+}
+
 Result<Bytes> QueuedTransport::read(ReadSpec rs, Duration timeout) {
   return impl_->submit<Bytes>([this, rs = std::move(rs), timeout]() -> Result<Bytes> {
     auto& impl = *impl_;

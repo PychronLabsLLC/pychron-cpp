@@ -8,7 +8,6 @@
 // open. read() asks the board, it does not echo the last command.
 
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include "pychron/codecs/proxr.hpp"
@@ -37,11 +36,9 @@ class ProxrRelay final : public Device, public IValveActuator {
   Result<int> select(const ValveAddress& address);
   Result<Bytes> send(const codec::Command& command);
 
+  // Bank select and relay command run as one Transport transaction so no
+  // other traffic on the bus (from this or any other device) splits them.
   Transport& transport_;
-  // Bank select and relay command are two exchanges that must not be split
-  // by another caller of this driver. The transport serializes the bus; this
-  // serializes the two-step sequence.
-  std::mutex sequence_;
 };
 
 }  // namespace pychron

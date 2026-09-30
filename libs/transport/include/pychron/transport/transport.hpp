@@ -2,8 +2,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <type_traits>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
@@ -38,8 +41,33 @@ class Transport {
   virtual Result<void> write(Bytes tx) = 0;
   virtual Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) = 0;
 
+  // Runs `body` with exclusive use of the bus: exchange()/write()/read() calls
+  // it makes on this transport run back to back, and no other caller's
+  // traffic interleaves until it returns. For multi-step protocols ("select
+  // bank, then switch relay"; "send mnemonic, then ENQ") so drivers need no
+  // locks of their own. Each call inside keeps its own retry and health
+  // handling; the sequence as a whole is not retried. Nested transactions
+  // run inline. Returns body's result, or Cancelled if the transport shut
+  // down before body could run. Prefer the typed transact() helper.
+  virtual Result<void> transaction(std::function<Result<void>()> body) = 0;
+
   virtual Health health() const = 0;
 };
+
+// Typed wrapper over Transport::transaction: returns whatever `body`
+// returns (a Result<T>), unchanged, or the transport's error if body never ran.
+template <class F>
+auto transact(Transport& transport, F&& body) -> std::invoke_result_t<F&> {
+  using R = std::invoke_result_t<F&>;
+  std::optional<R> out;
+  auto r = transport.transaction([&]() -> Result<void> {
+    out.emplace(body());
+    if (!*out) return fail(out->error());
+    return {};
+  });
+  if (out) return std::move(*out);
+  return R(fail(std::move(r).error()));
+}
 
 struct TransportOptions {
   std::string name;
@@ -77,6 +105,8 @@ class QueuedTransport : public Transport {
   Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) final;
   Result<void> write(Bytes tx) final;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) final;
+  // One queued job that runs `body` on the worker; calls body makes run inline.
+  Result<void> transaction(std::function<Result<void>()> body) final;
   Health health() const final;
 
   const TransportOptions& options() const noexcept;

@@ -41,6 +41,40 @@ std::unique_ptr<SimTransport> open_scripted(std::vector<SimStep> steps) {
   return t;
 }
 
+
+// Two drivers sharing one bus, switching relays in different banks at the
+// same time. A per-driver lock cannot stop one driver's bank select landing
+// between the other's select and relay command; a bus transaction can.
+TEST(ProxrRelay, DriversSharingABusNeverSplitSelectAndSwitch) {
+  ProxrBoardSim board;
+  auto bus = SimTransport::hooked(board.hook());
+  ASSERT_TRUE(bus->open());
+  ProxrRelay first("first", *bus);
+  ProxrRelay second("second", *bus);
+
+  // Bank 1 holds addresses 0..7, bank 2 holds 8..15.
+  auto flip = [](ProxrRelay& relay, int base) {
+    for (int round = 0; round < 25; ++round) {
+      for (int r = 0; r < 8; ++r) {
+        const ValveAddress a{std::to_string(base + r)};
+        ASSERT_TRUE(relay.open(a));
+        ASSERT_EQ(*relay.read(a), ValveState::Open);
+        ASSERT_TRUE(relay.close(a));
+      }
+    }
+    for (int r = 0; r < 8; r += 2) ASSERT_TRUE(relay.open(ValveAddress{std::to_string(base + r)}));
+  };
+  std::thread a([&] { flip(first, 0); });
+  std::thread b([&] { flip(second, 8); });
+  a.join();
+  b.join();
+
+  for (int i = 0; i < 16; ++i) {
+    EXPECT_EQ(board.energized(i), i % 2 == 0) << "relay " << i;
+  }
+  for (int i = 16; i < 256; ++i) ASSERT_FALSE(board.energized(i)) << "stray relay " << i;
+}
+
 }  // namespace
 
 TEST(ProxrRelay, OpenSelectsBankThenEnergizesRelay) {
