@@ -12,6 +12,7 @@ add_library(pychron_devices STATIC
   src/spectrometer/params.cpp
   src/spectrometer/roles.cpp
   src/spectrometer/detectors.cpp
+  src/extraction/capability.cpp
 )
 
 target_include_directories(pychron_devices PUBLIC
