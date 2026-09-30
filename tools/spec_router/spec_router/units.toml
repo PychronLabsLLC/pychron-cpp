@@ -84,10 +84,11 @@ targets = ["libs/systems", "libs/sim", "tests/integration"]
 
 [[unit]]
 id = "qt_ui"
+preset = "dev-ui"
 wave = 8
 layer = "ui"
 depends = ["extraction_line_facade"]
-goal = "apps/pychron-ui: CoreBridge (SignalBus -> Qt main thread, command executor thread), QGraphicsView canvas items, LogDock, AlarmDock, HealthBar; Qt Test smoke under BUILD_UI."
+goal = "apps/pychron-ui (configure with `cmake --preset dev-ui`; Qt 6.12 is at $HOME/Qt/6.12.0/macos, components Widgets+Charts+Test available): CoreBridge (SignalBus -> Qt main thread, command executor thread), QGraphicsView canvas items, LogDock, AlarmDock, HealthBar; Qt Test smoke under BUILD_UI."
 targets = ["apps/pychron-ui", "tests/ui"]
 
 [[unit]]
@@ -439,6 +440,7 @@ targets = ["apps/elctl", "tests/integration"]
 
 [[unit]]
 id = "exp_ui"
+preset = "dev-ui"
 wave = 19
 layer = "ui"
 depends = ["spec_ui_tuning", "elctl_exp", "template_library"]
@@ -522,6 +524,7 @@ targets = ["apps/elctl", "tests/integration"]
 
 [[unit]]
 id = "spec_ui_readout"
+preset = "dev-ui"
 wave = 17
 layer = "ui"
 depends = ["qt_ui", "elctl_spec_core"]
@@ -531,6 +534,7 @@ targets = ["apps/pychron-ui", "tests/ui"]
 
 [[unit]]
 id = "spec_ui_tuning"
+preset = "dev-ui"
 wave = 18
 layer = "ui"
 depends = ["spec_ui_readout", "elctl_spec_jobs"]

@@ -43,6 +43,8 @@ def build_and_test(worktree: Path, *, runner: Runner = subprocess_runner, build_
         return r.returncode == 0
 
     cmake, ctest = resolve_tool("cmake"), resolve_tool("ctest")
+    if preset:
+        build_dir = f"build/{preset}"  # matches the presets' binaryDir
     cfg_cmd = [cmake, "--preset", preset] if preset else [cmake, "-S", ".", "-B", build_dir, "-DBUILD_UI=OFF", "-DBUILD_TESTS=ON"]
     configured = step(cfg_cmd)
     if not configured:

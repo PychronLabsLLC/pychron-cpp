@@ -18,6 +18,7 @@ class Unit:
     depends: list[str] = field(default_factory=list)
     manual: bool = False
     spec: str | None = None  # spec file (repo-relative) this unit is routed from; None = CLI --spec
+    preset: str | None = None  # CMake configure preset the router verifies with (default: plain BUILD_UI=OFF)
 
 
 @dataclass(frozen=True)

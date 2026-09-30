@@ -188,3 +188,17 @@ def test_branch_merged_requires_router_merge_commit(tmp_path):
     assert dispatch.branch_merged(tmp_path, "core", runner=runner)
     # a fresh branch that is merely an ancestor of main is NOT merged
     assert not dispatch.branch_merged(tmp_path, "transport", runner=runner)
+
+
+def test_build_and_test_uses_preset_build_dir(tmp_path):
+    (tmp_path / "CMakeLists.txt").write_text("")
+    calls = []
+
+    def runner(cmd, *, cwd, stdin=None, timeout=None):
+        calls.append(cmd)
+        return _cp(0, out="100% tests passed")
+
+    b = verify.build_and_test(tmp_path, runner=runner, preset="dev-ui")
+    assert b.green
+    assert calls[0][1:] == ["--preset", "dev-ui"]
+    assert "build/dev-ui" in calls[1] and "build/dev-ui" in calls[2]

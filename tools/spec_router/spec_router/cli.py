@@ -161,7 +161,7 @@ def _load_result(p: dict[str, Path], unit_id: str) -> dispatch.UnitResult | None
 def _verify_one(p: dict[str, Path], brief: UnitBrief, result: dispatch.UnitResult, judge: Judge | None, runner: dispatch.Runner, log, *, without_report: bool = False, accept_judgment: bool = False) -> dict[str, Any]:
     wt = Path(result.worktree)
     changed = verify.diff_is_nonempty(wt, runner=runner)
-    build = verify.build_and_test(wt, runner=runner)
+    build = verify.build_and_test(wt, runner=runner, preset=brief.unit.preset)
     judgment = verify.judge_report(brief, result.report, judge) if (result.report and judge) else None
     decision = verify.gate(result, build, judgment, changed=changed)
     hard_ok = changed and build.green and result.exit_code == 0
