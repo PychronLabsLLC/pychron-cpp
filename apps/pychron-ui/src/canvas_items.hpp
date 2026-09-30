@@ -14,6 +14,7 @@
 #include <QGraphicsObject>
 #include <QGraphicsPathItem>
 #include <QGraphicsSimpleTextItem>
+#include <QPen>
 #include <QPointF>
 #include <QTimer>
 
@@ -32,6 +33,7 @@ class ValveItem : public QGraphicsObject {
 
  public:
   static constexpr double kSize = 30.0;
+  static constexpr double kCornerRadius = 5.0;
 
   ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent = nullptr);
 
@@ -71,6 +73,8 @@ class ValveItem : public QGraphicsObject {
 // A stage or pipette volume; filled with its network region colour.
 class StageItem : public QGraphicsItem {
  public:
+  static constexpr double kCornerRadius = 8.0;
+
   StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent = nullptr);
 
   const std::string& name() const noexcept { return name_; }
@@ -87,10 +91,22 @@ class StageItem : public QGraphicsItem {
   QColor region_;
 };
 
-// Plumbing drawn as a polyline through element centres.
+// Plumbing drawn as a polyline through element centres. Remembers the names
+// of the elements it joins so the view can paint it in the colour of the
+// network region it belongs to.
 class ConnectionItem : public QGraphicsPathItem {
  public:
-  ConnectionItem(const std::vector<QPointF>& points, double width, QGraphicsItem* parent = nullptr);
+  ConnectionItem(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints,
+                 QGraphicsItem* parent = nullptr);
+
+  static QColor default_color();
+
+  const std::vector<std::string>& endpoints() const noexcept { return endpoints_; }
+  QColor region_color() const { return pen().color(); }
+  void set_region_color(QColor color);
+
+ private:
+  std::vector<std::string> endpoints_;
 };
 
 class LabelItem : public QGraphicsSimpleTextItem {

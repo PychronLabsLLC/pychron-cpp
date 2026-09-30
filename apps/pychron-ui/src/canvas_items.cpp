@@ -1,5 +1,7 @@
 #include "canvas_items.hpp"
 
+#include <algorithm>
+
 #include <QCursor>
 #include <QGraphicsSceneMouseEvent>
 #include <QPainter>
@@ -83,28 +85,29 @@ QRectF ValveItem::boundingRect() const {
 
 void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
   const QRectF body(-kSize / 2, -kSize / 2, kSize, kSize);
+  painter->setRenderHint(QPainter::Antialiasing, true);
   painter->setPen(QPen(Qt::black, 1));
   painter->setBrush(fill_color());
   if (kind_ == canvas::ValveKind::Switch) {
     painter->drawEllipse(body);
   } else {
-    painter->drawRect(body);
+    painter->drawRoundedRect(body, kCornerRadius, kCornerRadius);
   }
   if (kind_ == canvas::ValveKind::Manual) {
-    painter->drawLine(body.topLeft(), body.bottomRight());
+    painter->drawLine(body.topLeft() + QPointF(3, 3), body.bottomRight() - QPointF(3, 3));
   }
   painter->drawText(body, Qt::AlignCenter, QString::fromStdString(name_));
 
   if (pending_) {
     painter->setBrush(Qt::NoBrush);
     painter->setPen(QPen(Qt::black, 2, Qt::DashLine));
-    painter->drawRect(body.adjusted(-3, -3, 3, 3));
+    painter->drawRoundedRect(body.adjusted(-3, -3, 3, 3), kCornerRadius + 2, kCornerRadius + 2);
   }
   if (locked_) {
     const QRectF badge(body.right() - 6, body.top() - 4, 10, 10);
     painter->setPen(QPen(Qt::black, 1));
     painter->setBrush(QColor(0xff, 0xa5, 0x00));
-    painter->drawRect(badge);
+    painter->drawRoundedRect(badge, 2, 2);
   }
 }
 
@@ -139,16 +142,21 @@ void StageItem::set_region_color(QColor color) {
 QRectF StageItem::boundingRect() const { return rect_.adjusted(-1, -1, 1, 1); }
 
 void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
+  // Corner radius scales with the smaller side so thin volumes stay pill-like
+  // without swallowing the whole shape.
+  const double radius = std::min(kCornerRadius, std::min(rect_.width(), rect_.height()) / 4);
+  painter->setRenderHint(QPainter::Antialiasing, true);
   painter->setPen(QPen(Qt::black, 1));
   painter->setBrush(region_);
-  painter->drawRect(rect_);
+  painter->drawRoundedRect(rect_, radius, radius);
   painter->drawText(rect_, Qt::AlignCenter, label_);
 }
 
 // ---- ConnectionItem ---------------------------------------------------------
 
-ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width, QGraphicsItem* parent)
-    : QGraphicsPathItem(parent) {
+ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints,
+                               QGraphicsItem* parent)
+    : QGraphicsPathItem(parent), endpoints_(std::move(endpoints)) {
   QPainterPath path;
   if (!points.empty()) {
     path.moveTo(points.front());
@@ -157,8 +165,19 @@ ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width,
     }
   }
   setPath(path);
-  setPen(QPen(QColor(0x55, 0x55, 0x55), width, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+  setPen(QPen(default_color(), width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   setZValue(0);
+}
+
+QColor ConnectionItem::default_color() { return QColor(0x55, 0x55, 0x55); }
+
+void ConnectionItem::set_region_color(QColor color) {
+  if (color == pen().color()) {
+    return;
+  }
+  QPen p = pen();
+  p.setColor(color);
+  setPen(p);
 }
 
 // ---- LabelItem --------------------------------------------------------------

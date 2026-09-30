@@ -27,6 +27,7 @@ class CanvasView : public QGraphicsView {
   StageItem* stage(const std::string& name) const;  // stages and pipettes
   GaugeLabelItem* gauge(const std::string& name) const;
   int connection_count() const noexcept { return connections_; }
+  const std::vector<ConnectionItem*>& pipes() const noexcept { return pipes_; }
 
   // Colour of an isolated volume.
   static QColor isolated_color();
@@ -34,6 +35,7 @@ class CanvasView : public QGraphicsView {
  private:
   void build(const canvas::Canvas& canvas);
   void add_path(const std::vector<std::string>& names, double width);
+  ConnectionItem* add_pipe(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints);
   bool position(const std::string& name, QPointF& out) const;
 
   void on_click(const std::string& name);
@@ -49,6 +51,7 @@ class CanvasView : public QGraphicsView {
   std::map<std::string, ValveItem*> valves_;
   std::map<std::string, StageItem*> stages_;
   std::map<std::string, GaugeLabelItem*> gauges_;
+  std::vector<ConnectionItem*> pipes_;
   int connections_ = 0;
 };
 

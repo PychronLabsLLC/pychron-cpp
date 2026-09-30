@@ -2,6 +2,7 @@
 // click-to-actuate, interlock rejection feedback, network region colouring,
 // gauge values and alarm colouring.
 
+#include <algorithm>
 #include <thread>
 
 #include <QtTest/QtTest>
@@ -86,6 +87,36 @@ class TestCanvasView : public QObject {
     QVERIFY(bone->region_color() != CanvasView::isolated_color());
     QCOMPARE(bone->region_color(), prep->region_color());
     QVERIFY(view_->stage("spec")->region_color() != bone->region_color());
+  }
+
+  void pipesInheritRegionColour() {
+    auto touches = [](const ui::ConnectionItem* pipe, const char* name) {
+      const auto& ends = pipe->endpoints();
+      return std::find(ends.begin(), ends.end(), name) != ends.end();
+    };
+    // bone is isolated until A opens, so its pipes are neutral.
+    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
+    for (const ui::ConnectionItem* pipe : view_->pipes()) {
+      if (touches(pipe, "bone")) {
+        QCOMPARE(pipe->region_color(), ui::ConnectionItem::default_color());
+      }
+    }
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    const QColor region = view_->stage("bone")->region_color();
+    QVERIFY(region != CanvasView::isolated_color());
+    int coloured = 0;
+    for (const ui::ConnectionItem* pipe : view_->pipes()) {
+      if (touches(pipe, "bone") || touches(pipe, "A")) {
+        QCOMPARE(pipe->region_color(), region.darker(120));
+        ++coloured;
+      }
+      // A pipe on the far side of the closed valve B never takes bone's colour.
+      if (touches(pipe, "B") && touches(pipe, "spec")) {
+        QVERIFY(pipe->region_color() != region.darker(120));
+      }
+    }
+    QVERIFY(coloured >= 2);
   }
 
   void gaugeLabelTurnsRedOnAlarmAndClearsInLimits() {

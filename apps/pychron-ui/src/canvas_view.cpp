@@ -114,8 +114,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     const bool upper = e.corner == canvas::Corner::UpperLeft || e.corner == canvas::Corner::UpperRight;
     const QPointF corner(left ? std::min(a.x(), b.x()) : std::max(a.x(), b.x()),
                          upper ? std::min(a.y(), b.y()) : std::max(a.y(), b.y()));
-    scene_.addItem(new ConnectionItem({a, corner, b}, width));
-    ++connections_;
+    add_pipe({a, corner, b}, width, {e.start, e.end});
   }
   for (const auto& t : c.tees) {
     QPointF l;
@@ -124,9 +123,9 @@ void CanvasView::build(const canvas::Canvas& c) {
     if (!position(t.left, l) || !position(t.right, r) || !position(t.mid, m)) {
       continue;
     }
-    scene_.addItem(new ConnectionItem({l, r}, width));
-    scene_.addItem(new ConnectionItem({m, project(m, l, r)}, width));
-    ++connections_;
+    add_pipe({l, r}, width, {t.left, t.right, t.mid});
+    add_pipe({m, project(m, l, r)}, width, {t.mid, t.left, t.right});
+    --connections_;  // a tee counts once
   }
   for (const auto& x : c.crosses) {
     add_path({x.left, x.right}, width);
@@ -143,8 +142,16 @@ void CanvasView::add_path(const std::vector<std::string>& names, double width) {
     }
     points.push_back(p);
   }
-  scene_.addItem(new ConnectionItem(points, width));
+  add_pipe(points, width, names);
+}
+
+ConnectionItem* CanvasView::add_pipe(const std::vector<QPointF>& points, double width,
+                                     std::vector<std::string> endpoints) {
+  auto* item = new ConnectionItem(points, width, std::move(endpoints));
+  scene_.addItem(item);
+  pipes_.push_back(item);
   ++connections_;
+  return item;
 }
 
 bool CanvasView::position(const std::string& name, QPointF& out) const {
@@ -206,6 +213,8 @@ void CanvasView::apply_regions() {
     return;
   }
   const auto regions = network->connected_volumes(bridge_.state().valves);
+  // Volumes and the open valves joining them take the region colour; pipes
+  // inherit it from whichever element they touch.
   std::map<std::string, QColor> colors;
   std::size_t shared = 0;
   for (const auto& region : regions) {
@@ -216,10 +225,23 @@ void CanvasView::apply_regions() {
     for (const auto& volume : region.volumes) {
       colors[volume] = color;
     }
+    for (const auto& valve : region.valves) {
+      colors[valve] = color;
+    }
   }
   for (auto& [name, item] : stages_) {
     auto it = colors.find(name);
     item->set_region_color(it == colors.end() ? isolated_color() : it->second);
+  }
+  for (ConnectionItem* pipe : pipes_) {
+    QColor color = ConnectionItem::default_color();
+    for (const auto& endpoint : pipe->endpoints()) {
+      if (auto it = colors.find(endpoint); it != colors.end()) {
+        color = it->second.darker(120);  // a shade deeper than the volume fill so pipes read as pipes
+        break;
+      }
+    }
+    pipe->set_region_color(color);
   }
 }
 
