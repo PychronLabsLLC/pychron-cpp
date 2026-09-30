@@ -10,3 +10,6 @@ target_link_libraries(pychron_codecs_tests PRIVATE pychron::codecs GTest::gtest_
 pychron_set_warnings(pychron_codecs_tests)
 
 gtest_discover_tests(pychron_codecs_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+
+target_compile_definitions(pychron_codecs_tests PRIVATE
+  PYCHRON_TRACES_DIR="${PROJECT_SOURCE_DIR}/tests/traces")
