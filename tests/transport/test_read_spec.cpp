@@ -50,3 +50,25 @@ TEST(ReadSpec, ModbusTcpUsesMbapLength) {
   EXPECT_FALSE(frame_length(ReadSpec::modbus_tcp(), Bytes(frame.begin(), frame.begin() + 10)).has_value());
   EXPECT_FALSE(frame_length(ReadSpec::modbus_tcp(), Bytes{0x00, 0x01}).has_value());
 }
+
+TEST(ReadSpec, UntilAnyEndsAtFirstSetByte) {
+  const auto spec = ReadSpec::until_any("\r\n");
+  EXPECT_EQ(spec.kind, ReadSpec::Kind::AnyOf);
+  EXPECT_FALSE(frame_length(spec, to_bytes("OK")).has_value());
+  EXPECT_EQ(frame_length(spec, to_bytes("OK\r")), 3u);
+  EXPECT_EQ(frame_length(spec, to_bytes("OK\n")), 3u);
+  EXPECT_EQ(frame_length(spec, to_bytes("OK\r\n4.5\r\n")), 3u);
+}
+
+TEST(ReadSpec, UntilAnyAbsorbsLeadingSetBytes) {
+  const auto spec = ReadSpec::until_any("\r\n");
+  // The LF left over from a previous "\r\n" reply belongs to the next frame.
+  EXPECT_EQ(frame_length(spec, to_bytes("\n4.5\r\n")), 5u);
+  EXPECT_FALSE(frame_length(spec, to_bytes("\n")).has_value());
+  EXPECT_FALSE(frame_length(spec, to_bytes("\r\n\r")).has_value());
+  EXPECT_FALSE(frame_length(spec, Bytes{}).has_value());
+}
+
+TEST(ReadSpec, UntilAnyEmptySetIsImmediatelyComplete) {
+  EXPECT_EQ(frame_length(ReadSpec::until_any(Bytes{}), to_bytes("x")), 0u);
+}

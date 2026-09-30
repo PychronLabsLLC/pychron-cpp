@@ -14,6 +14,10 @@ struct ReadSpec {
     FixedLength,  // read exactly `length` bytes
     ModbusRtu,    // addr, fn, payload, CRC16; length derived from fn / byte count
     ModbusTcp,    // MBAP header; length derived from its length field
+    AnyOf,        // read up to and including the first byte found in `terminator`
+                  // (a byte set, e.g. "\r\n" = CR or LF); leading set bytes are
+                  // absorbed into the frame, so the LF left over from a "\r\n"
+                  // reply is consumed by the next frame instead of ending it
   };
 
   Kind kind = Kind::Terminator;
@@ -22,6 +26,9 @@ struct ReadSpec {
 
   static ReadSpec until(Bytes terminator);
   static ReadSpec until(std::string_view terminator);
+  // AnyOf: frame ends at the first byte from `bytes`.
+  static ReadSpec until_any(Bytes bytes);
+  static ReadSpec until_any(std::string_view bytes);
   static ReadSpec fixed(std::size_t length);
   static ReadSpec modbus_rtu();
   static ReadSpec modbus_tcp();
@@ -30,8 +37,9 @@ struct ReadSpec {
 };
 
 // If `buffer` begins with a complete frame per `spec`, its length in bytes;
-// otherwise nullopt (need more bytes). A Terminator spec with an empty
-// terminator, or FixedLength 0, is complete immediately with 0 bytes.
+// otherwise nullopt (need more bytes). A Terminator or AnyOf spec with an
+// empty terminator, or FixedLength 0, is complete immediately with 0 bytes.
+// An AnyOf buffer holding only set bytes is incomplete.
 std::optional<std::size_t> frame_length(const ReadSpec& spec, const Bytes& buffer);
 
 }  // namespace pychron

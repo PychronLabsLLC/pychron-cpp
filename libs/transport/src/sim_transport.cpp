@@ -29,6 +29,23 @@ void garble(const ReadSpec& spec, Bytes& data) {
       if (end && *end <= spec.terminator.size()) return;  // empty payload: nothing to corrupt
       break;
     }
+    case ReadSpec::Kind::AnyOf: {
+      // Corrupt the first payload byte; leading set bytes are framing.
+      for (auto& b : data) {
+        if (std::find(spec.terminator.begin(), spec.terminator.end(), b) != spec.terminator.end()) continue;
+        static constexpr std::uint8_t kAnyCandidates[] = {'?', '#', '~'};
+        for (const std::uint8_t candidate : kAnyCandidates) {
+          const bool in_set =
+              std::find(spec.terminator.begin(), spec.terminator.end(), candidate) != spec.terminator.end();
+          if (candidate != b && !in_set) {
+            b = candidate;
+            return;
+          }
+        }
+        return;
+      }
+      return;  // empty payload: nothing to corrupt
+    }
     case ReadSpec::Kind::FixedLength:
       break;
   }

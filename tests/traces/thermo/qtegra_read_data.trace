@@ -1,7 +1,8 @@
 # Thermo Qtegra RemoteControlServer: GetData then SetMagnetDAC 4.5.
-# SYNTHETIC: hand-written from the legacy pychron grammar, not a bench capture.
+# SYNTHETIC: hand-written from the pychron Python wire format (tx "\r",
+# replies "\r\n"), not a bench capture.
 # Replace with a lab capture at first Qtegra bring-up, same name.
-0 tx 476574446174610a
-40 rx 48322c302e303031322c48312c302e303033340a
-500 tx 5365744d61676e657444414320342e350a
-540 rx 4f4b0a
+0 tx 476574446174610d
+40 rx 48322c302e303031322c48312c302e303033340d0a
+500 tx 5365744d61676e657444414320342e350d
+540 rx 4f4b0d0a

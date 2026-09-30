@@ -134,6 +134,18 @@ TEST(SimTransportFaults, GarbleNextKeepsFramingButCorruptsPayload) {
   EXPECT_EQ(to_string(*t->exchange(to_bytes("a"), kCrLf)), "ok\r\n");
 }
 
+TEST(SimTransportFaults, GarbledAnyOfFrameKeepsDelimiters) {
+  auto t = SimTransport::hooked([](const Bytes&) { return to_bytes("\nok\r"); }, opts());
+  ASSERT_TRUE(t->open());
+  t->garble_next();
+  auto r = t->exchange(to_bytes("a"), ReadSpec::until_any("\r\n"));
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->size(), 4u);
+  EXPECT_EQ((*r)[0], '\n');
+  EXPECT_NE((*r)[1], 'o');
+  EXPECT_EQ((*r)[3], '\r');
+}
+
 TEST(SimTransportFaults, GarbledModbusFrameKeepsLengthButBreaksCrc) {
   const Bytes reply{0x01, 0x03, 0x02, 0x00, 0x07, 0xF9, 0x86};
   auto t = SimTransport::hooked([reply](const Bytes&) { return reply; }, opts());

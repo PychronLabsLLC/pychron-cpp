@@ -13,6 +13,15 @@ ReadSpec ReadSpec::until(Bytes terminator) {
 
 ReadSpec ReadSpec::until(std::string_view terminator) { return until(to_bytes(terminator)); }
 
+ReadSpec ReadSpec::until_any(Bytes bytes) {
+  ReadSpec s;
+  s.kind = Kind::AnyOf;
+  s.terminator = std::move(bytes);
+  return s;
+}
+
+ReadSpec ReadSpec::until_any(std::string_view bytes) { return until_any(to_bytes(bytes)); }
+
 ReadSpec ReadSpec::fixed(std::size_t length) {
   ReadSpec s;
   s.kind = Kind::FixedLength;
@@ -67,6 +76,17 @@ std::optional<std::size_t> frame_length(const ReadSpec& spec, const Bytes& buffe
       auto it = std::search(buffer.begin(), buffer.end(), spec.terminator.begin(), spec.terminator.end());
       if (it == buffer.end()) return std::nullopt;
       return static_cast<std::size_t>(it - buffer.begin()) + spec.terminator.size();
+    }
+    case ReadSpec::Kind::AnyOf: {
+      if (spec.terminator.empty()) return 0;
+      auto in_set = [&](std::uint8_t b) {
+        return std::find(spec.terminator.begin(), spec.terminator.end(), b) != spec.terminator.end();
+      };
+      auto body = std::find_if_not(buffer.begin(), buffer.end(), in_set);
+      if (body == buffer.end()) return std::nullopt;
+      auto it = std::find_if(body, buffer.end(), in_set);
+      if (it == buffer.end()) return std::nullopt;
+      return static_cast<std::size_t>(it - buffer.begin()) + 1;
     }
     case ReadSpec::Kind::FixedLength:
       return complete_if(spec.length, buffer.size());
