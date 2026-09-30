@@ -159,9 +159,14 @@ def run_unit(cfg: DispatchConfig, brief: UnitBrief, prompt: str, *, base: str = 
     except subprocess.TimeoutExpired as e:
         return UnitResult(brief.unit.id, branch, str(worktree), -1, None, raw_stdout=str(e.stdout or ""), raw_stderr="timeout")
     report, env = parse_agent_output(proc.stdout)
+    stderr = proc.stderr
+    if env.get("is_error"):
+        # CLI-level failure (auth, model, quota): surface its message as the error, drop any pseudo-report.
+        stderr = f"claude cli error: {env.get('result')}\n{stderr}"
+        report = None
     return UnitResult(
-        brief.unit.id, branch, str(worktree), proc.returncode, report,
-        raw_stdout=proc.stdout, raw_stderr=proc.stderr,
+        brief.unit.id, branch, str(worktree), proc.returncode or (1 if env.get("is_error") else 0), report,
+        raw_stdout=proc.stdout, raw_stderr=stderr,
         cost_usd=env.get("total_cost_usd"), duration_ms=env.get("duration_ms"),
     )
 

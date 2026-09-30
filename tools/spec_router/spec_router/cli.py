@@ -116,6 +116,9 @@ def _run_one(args: argparse.Namespace, p: dict[str, Path], brief: UnitBrief, jud
     }
     if not result.report:
         rec["stderr_tail"] = result.raw_stderr[-2000:]
+        rec["stdout_tail"] = result.raw_stdout[-2000:]
+        log(f"    agent stdout: {result.raw_stdout[-600:].strip() or '<empty>'}")
+        log(f"    agent stderr: {result.raw_stderr[-600:].strip() or '<empty>'}")
     log(f"<== {brief.unit.id}: {rec['status']} - {decision.reason}")
     return rec
 

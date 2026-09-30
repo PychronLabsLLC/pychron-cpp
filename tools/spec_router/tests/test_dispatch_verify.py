@@ -116,3 +116,15 @@ def test_judge_report_builds_state_and_reads_answers():
 
     j = verify.judge_report(BRIEF, {"summary": "did half"}, FakeJudge(fn))
     assert j.outcome == "partial" and j.evidence == 0.3 and j.in_scope == 0.95
+
+
+def test_run_unit_surfaces_cli_error_envelope(tmp_path):
+    env = {"is_error": True, "result": "Not logged in · Please run /login", "total_cost_usd": 0}
+
+    def runner(cmd, *, cwd, stdin=None, timeout=None):
+        return subprocess.CompletedProcess(cmd, 0 if cmd[0] == "git" else 1, stdout=json.dumps(env) if cmd[0] != "git" else "", stderr="")
+
+    cfg = dispatch.DispatchConfig(repo=tmp_path)
+    res = dispatch.run_unit(cfg, BRIEF, "P", runner=runner)
+    assert res.exit_code == 1 and res.report is None
+    assert "Not logged in" in res.raw_stderr
