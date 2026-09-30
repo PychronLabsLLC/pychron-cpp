@@ -156,10 +156,24 @@ def ensure_worktree(cfg: DispatchConfig, unit_id: str, *, base: str = "HEAD", ru
     if path.exists():
         return path, branch
     path.parent.mkdir(parents=True, exist_ok=True)
-    r = runner(["git", "worktree", "add", "-B", branch, str(path), base], cwd=cfg.repo)
+    exists = runner(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=cfg.repo).returncode == 0
+    if exists:
+        # Never reset an existing unit branch (-B would discard unmerged work); check it out as-is.
+        cmd = ["git", "worktree", "add", str(path), branch]
+    else:
+        cmd = ["git", "worktree", "add", "-b", branch, str(path), base]
+    r = runner(cmd, cwd=cfg.repo)
     if r.returncode != 0:
         raise RuntimeError(f"git worktree add failed for {unit_id}: {r.stderr.strip()}")
     return path, branch
+
+
+def branch_merged(repo: Path, unit_id: str, *, base: str = "main", runner: Runner = subprocess_runner) -> bool:
+    """True when unit/<id> exists and is an ancestor of `base` (its work is already on main)."""
+    branch = f"unit/{unit_id}"
+    if runner(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo).returncode != 0:
+        return False
+    return runner(["git", "merge-base", "--is-ancestor", branch, base], cwd=repo).returncode == 0
 
 
 def remove_worktree(cfg: DispatchConfig, unit_id: str, *, runner: Runner = subprocess_runner) -> None:

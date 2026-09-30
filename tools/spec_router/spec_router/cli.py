@@ -96,6 +96,22 @@ def _done(st: dict[str, Any]) -> list[str]:
     return [u for u, s in st["units"].items() if s.get("status") == "merged"]
 
 
+def _reconcile_with_git(p: dict[str, Path], st: dict[str, Any], unit_ids: list[str], log) -> None:
+    """Git is the source of truth for 'merged'. If a unit branch is already an
+    ancestor of main but state disagrees (crash, manual merge, stale rerun),
+    correct the state instead of re-running the agent."""
+    changed = False
+    for uid in unit_ids:
+        rec = st["units"].get(uid, {})
+        if rec.get("status") != "merged" and dispatch.branch_merged(p["repo"], uid):
+            note = f"reconciled from git: unit/{uid} already merged into main"
+            st["units"][uid] = {**rec, "status": "merged", "reason": note}
+            log(f"    {uid}: {note}")
+            changed = True
+    if changed:
+        _save_state(p, st)
+
+
 def _result_path(p: dict[str, Path], unit_id: str) -> Path:
     return p["state_dir"] / "results" / f"{unit_id}.json"
 
@@ -204,6 +220,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not selected:
         sys.exit("nothing selected")
 
+    _reconcile_with_git(p, st, [u.id for u in units], log)
     for wave in selected:
         todo = [u for u in wave.units if st["units"].get(u.id, {}).get("status") != "merged"]
         if not todo:
