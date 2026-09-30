@@ -1,0 +1,156 @@
+# Example canvas for extraction_line.toml (spec section 6). Presentation and
+# connectivity only; valve state and gauge readings arrive via the SignalBus.
+#
+#   bone --A-- prep --B-- spec
+#               |  \
+#              P1   C --+-- turbo --+-- M1 -- rough
+#               |       |           |
+#              air     IG1         PG1
+#               |
+#              P2
+#               |
+#            air_tank
+
+[canvas]
+origin = [0, 0]
+size = [1000, 700]
+connection_width = 6
+
+[colors]
+valve = "#1e90ff"
+pipette = "#cccccc"
+
+[[valve]]
+name = "A"
+pos = [250, 200]
+
+[[valve]]
+name = "B"
+pos = [550, 200]
+
+[[valve]]
+name = "C"
+pos = [500, 300]
+
+[[valve]]
+name = "P1"
+pos = [400, 330]
+
+[[valve]]
+name = "P2"
+pos = [400, 510]
+
+[[manual_valve]]
+name = "M1"
+pos = [750, 300]
+
+[[gauge]]
+name = "IG1"
+pos = [450, 380]
+
+[[gauge]]
+name = "PG1"
+pos = [650, 380]
+
+[[stage]]
+name = "bone"
+pos = [100, 200]
+size = [80, 40]
+volume = 12.5
+fill = true
+
+[[stage]]
+name = "prep"
+pos = [400, 200]
+size = [80, 40]
+display_name = "Prep"
+
+[[stage]]
+name = "spec"
+pos = [800, 200]
+size = [120, 60]
+display_name = "Spectrometer"
+use_symbol = true
+
+[[stage]]
+name = "turbo"
+pos = [650, 300]
+size = [60, 40]
+
+[[stage]]
+name = "rough"
+pos = [880, 300]
+size = [60, 40]
+
+[[stage]]
+name = "air_tank"
+pos = [400, 600]
+size = [80, 40]
+
+[[pipette]]
+name = "air"
+pos = [400, 420]
+vlabel = "Air Pipette"
+
+[[connection]]
+start = "bone"
+end = "A"
+
+[[connection]]
+start = "A"
+end = "prep"
+
+[[connection]]
+start = "prep"
+end = "B"
+
+[[connection]]
+start = "B"
+end = "spec"
+
+[[elbow]]
+start = "prep"
+end = "C"
+corner = "ll"
+
+[[tee]]
+left = "C"
+right = "turbo"
+mid = "IG1"
+
+[[tee]]
+left = "turbo"
+right = "M1"
+mid = "PG1"
+
+[[connection]]
+start = "M1"
+end = "rough"
+
+[[connection]]
+start = "prep"
+end = "P1"
+orientation = "v"
+
+[[connection]]
+start = "P1"
+end = "air"
+orientation = "v"
+
+[[connection]]
+start = "air"
+end = "P2"
+orientation = "v"
+
+[[connection]]
+start = "P2"
+end = "air_tank"
+orientation = "v"
+
+[[label]]
+text = "Furnace side"
+pos = [100, 50]
+font = "Arial 12"
+
+[legend]
+pos = [20, 650]

@@ -1,0 +1,135 @@
+#pragma once
+
+// Qt-free model of `canvas.toml` (spec section 6): pure presentation and
+// connectivity. No state lives here; valve state and gauge readings arrive via
+// the SignalBus. Domain objects are referenced by name from
+// `extraction_line.toml`.
+
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "pychron/core/config/system_config.hpp"
+
+namespace pychron::canvas {
+
+using config::Located;
+
+struct Point {
+  double x = 0;
+  double y = 0;
+  friend bool operator==(const Point&, const Point&) = default;
+};
+
+struct Size {
+  double width = 0;
+  double height = 0;
+  friend bool operator==(const Size&, const Size&) = default;
+};
+
+struct CanvasSection : Located {
+  Point origin{0, 0};
+  Size size{1000, 700};
+  std::int64_t connection_width = 5;
+};
+
+// Every switchable element shares one struct; `kind` records which array it
+// was declared in (`[[valve]]`, `[[manual_valve]]`, `[[rough_valve]]`,
+// `[[switch]]`).
+enum class ValveKind { Valve, Manual, Rough, Switch };
+
+struct ValveElement : Located {
+  std::string name;
+  ValveKind kind = ValveKind::Valve;
+  Point pos;
+};
+
+// A gauge readout placed on the plumbing; its value arrives as PressureSample.
+struct GaugeElement : Located {
+  std::string name;
+  Point pos;
+};
+
+struct StageElement : Located {
+  std::string name;
+  Point pos;
+  Size size{50, 50};
+  std::optional<double> volume;  // cc; used by later volume logic
+  bool fill = false;
+  std::string display_name;
+  bool use_symbol = false;
+};
+
+struct PipetteElement : Located {
+  std::string name;
+  Point pos;
+  Size size{50, 50};
+  std::string vlabel;
+};
+
+enum class Orientation { Auto, Horizontal, Vertical };
+
+struct Connection : Located {
+  std::string start;
+  std::string end;
+  Orientation orientation = Orientation::Auto;
+};
+
+enum class Corner { UpperLeft, UpperRight, LowerLeft, LowerRight };
+
+struct Elbow : Located {
+  std::string start;
+  std::string end;
+  Corner corner = Corner::UpperLeft;
+};
+
+// Junctions: every listed endpoint is joined to every other with no valve
+// in between.
+struct Tee : Located {
+  std::string left;
+  std::string right;
+  std::string mid;
+};
+
+struct Cross : Located {
+  std::string left;
+  std::string right;
+  std::string top;
+  std::string bottom;
+};
+
+struct Label : Located {
+  std::string text;
+  Point pos;
+  std::string font;
+};
+
+struct Image : Located {
+  std::string path;
+  Point pos;
+};
+
+struct Legend : Located {
+  Point pos;
+};
+
+struct Canvas {
+  std::string source_file;
+  CanvasSection canvas;
+  std::map<std::string, std::string> colors;
+  std::vector<ValveElement> valves;  // all ValveKinds, in declaration order per kind
+  std::vector<GaugeElement> gauges;
+  std::vector<StageElement> stages;
+  std::vector<PipetteElement> pipettes;
+  std::vector<Connection> connections;
+  std::vector<Elbow> elbows;
+  std::vector<Tee> tees;
+  std::vector<Cross> crosses;
+  std::vector<Label> labels;
+  std::vector<Image> images;
+  std::optional<Legend> legend;
+};
+
+}  // namespace pychron::canvas

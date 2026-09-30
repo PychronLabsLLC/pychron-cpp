@@ -1,0 +1,81 @@
+# Example extraction line (spec section 5.1). Every transport is `sim`, so the
+# identical binaries run with no hardware; switch `kind` (and add port/host)
+# to drive a real line. Drawn by canvas.toml in this directory.
+
+[system]
+name = "example"
+scan_interval_ms = 1000
+
+[transports.valve_bus]
+kind = "sim"
+timeout_ms = 500
+
+[transports.gauge_net]
+kind = "sim"
+timeout_ms = 500
+
+[drivers.actuator1]
+kind = "proxr_relay"
+transport = "valve_bus"
+
+[drivers.ig_controller]
+kind = "pfeiffer_maxigauge"
+transport = "gauge_net"
+channels = [1, 2]
+
+[[valves]]
+name = "A"
+description = "Furnace to prep"
+actuator = "actuator1"
+address = "1"
+interlocks = ["C"]           # never expose the furnace to an open turbo line
+settle_ms = 500
+
+[[valves]]
+name = "B"
+description = "Prep to spectrometer"
+actuator = "actuator1"
+address = "2"
+
+[[valves]]
+name = "C"
+description = "Prep to turbo"
+actuator = "actuator1"
+address = "3"
+interlocks = ["A"]
+
+[[valves]]
+name = "P1"
+description = "Air pipette inner"
+actuator = "actuator1"
+address = "4"
+interlocks = ["P2"]          # pipette: inner and outer never open together
+
+[[valves]]
+name = "P2"
+description = "Air pipette outer"
+actuator = "actuator1"
+address = "5"
+interlocks = ["P1"]
+
+[[manual_valves]]
+name = "M1"
+description = "Turbo to roughing pump"
+
+[[gauges]]
+name = "IG1"
+driver = "ig_controller"
+channel = 1
+units = "torr"
+alarm_high = 1e-4
+
+[[gauges]]
+name = "PG1"
+driver = "ig_controller"
+channel = 2
+units = "torr"
+
+[[pipettes]]
+name = "air"
+inner = "P1"
+outer = "P2"
