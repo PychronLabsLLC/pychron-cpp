@@ -158,14 +158,18 @@ def _load_result(p: dict[str, Path], unit_id: str) -> dispatch.UnitResult | None
     return dispatch.UnitResult(**json.loads(path.read_text())) if path.exists() else None
 
 
-def _verify_one(p: dict[str, Path], brief: UnitBrief, result: dispatch.UnitResult, judge: Judge | None, runner: dispatch.Runner, log, *, without_report: bool = False) -> dict[str, Any]:
+def _verify_one(p: dict[str, Path], brief: UnitBrief, result: dispatch.UnitResult, judge: Judge | None, runner: dispatch.Runner, log, *, without_report: bool = False, accept_judgment: bool = False) -> dict[str, Any]:
     wt = Path(result.worktree)
     changed = verify.diff_is_nonempty(wt, runner=runner)
     build = verify.build_and_test(wt, runner=runner)
     judgment = verify.judge_report(brief, result.report, judge) if (result.report and judge) else None
     decision = verify.gate(result, build, judgment, changed=changed)
-    if without_report and result.report is None and changed and build.green and result.exit_code == 0:
+    hard_ok = changed and build.green and result.exit_code == 0
+    if without_report and result.report is None and hard_ok:
         decision = verify.Decision(True, "ACCEPTED WITHOUT AGENT REPORT (operator override): green build + tests", build, None, changed)
+    elif accept_judgment and not decision.merge and hard_ok and judgment is not None and judgment.outcome not in ("blocked", "off_track"):
+        # Operator has read the report and accepts its caveats; the router's own build+ctest is green.
+        decision = verify.Decision(True, f"OPERATOR OVERRIDE (judgment accepted): {decision.reason}", build, judgment, changed)
     rec: dict[str, Any] = {
         "status": "verified" if decision.merge else "failed", "reason": decision.reason,
         "branch": result.branch, "worktree": result.worktree, "exit_code": result.exit_code,
@@ -225,7 +229,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             sys.exit(f"no saved result and no worktree for {args.unit}")
         result = dispatch.UnitResult(args.unit, f"unit/{args.unit}", str(wt), 0, None, raw_stderr="(no saved agent result; pre-persistence run)")
     judge = _judge(args, p)
-    rec = _verify_one(p, brief, result, judge, dispatch.subprocess_runner, print, without_report=args.without_report)
+    rec = _verify_one(p, brief, result, judge, dispatch.subprocess_runner, print, without_report=args.without_report, accept_judgment=args.accept_judgment)
     st = _load_state(p)
     failed = _merge_records(args, p, st, [(args.unit, rec)])
     return 1 if failed else 0
@@ -307,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("verify", help="re-verify an existing worktree without re-running the agent")
     s.add_argument("unit"); s.add_argument("--no-merge", action="store_true")
     s.add_argument("--without-report", action="store_true", help="accept on green build+tests when the agent report was lost (logged as operator override)")
+    s.add_argument("--accept-judgment", action="store_true", help="accept a partial/unfinished report judgment when the router's own build+ctest is green (logged as operator override)")
     s.set_defaults(fn=cmd_verify)
     s = sub.add_parser("status"); s.set_defaults(fn=cmd_status)
 
