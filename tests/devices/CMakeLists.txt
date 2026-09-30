@@ -1,0 +1,17 @@
+# A driver library nothing references by symbol, linked the way drivers are.
+add_library(pychron_devices_test_drivers STATIC archived_driver.cpp)
+target_link_libraries(pychron_devices_test_drivers PRIVATE pychron::devices)
+pychron_set_warnings(pychron_devices_test_drivers)
+
+add_executable(pychron_devices_tests
+  test_device.cpp
+  test_capabilities.cpp
+  test_driver_registry.cpp
+  test_codec_conventions.cpp
+)
+
+target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtest_main)
+pychron_link_drivers(pychron_devices_tests pychron_devices_test_drivers)
+pychron_set_warnings(pychron_devices_tests)
+
+gtest_discover_tests(pychron_devices_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
