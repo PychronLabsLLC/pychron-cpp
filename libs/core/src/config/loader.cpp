@@ -1,6 +1,7 @@
 #include "pychron/core/config/loader.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <set>
@@ -205,6 +206,26 @@ constexpr std::array kUnits{
     std::pair<std::string_view, PressureUnits>{"pa", PressureUnits::Pa},
 };
 
+constexpr std::array kLevels{
+    std::pair<std::string_view, LogLevel>{"trace", LogLevel::Trace},
+    std::pair<std::string_view, LogLevel>{"debug", LogLevel::Debug},
+    std::pair<std::string_view, LogLevel>{"info", LogLevel::Info},
+    std::pair<std::string_view, LogLevel>{"warn", LogLevel::Warn},
+    std::pair<std::string_view, LogLevel>{"error", LogLevel::Error},
+};
+
+// Expands a leading "~/" (or a bare "~") using $HOME, or %USERPROFILE% on Windows.
+std::string expand_home(const std::string& s) {
+  if (s != "~" && s.rfind("~/", 0) != 0) return s;
+#ifdef _WIN32
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  if (home == nullptr || *home == '\0') return s;
+  return std::string(home) + s.substr(1);
+}
+
 constexpr std::array<std::string_view, 6> kOverridableTransportKeys{"port",      "host",      "baud",
                                                                     "data_bits", "stop_bits", "parity"};
 
@@ -220,12 +241,16 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes"});
+                           "pipettes", "logging"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
     } else {
       p_.error(SourceLoc{file_, 1, 1}, "system", "missing required table [system]");
+    }
+
+    if (const auto* l = root.get("logging")) {
+      if (const auto* t = p_.as_table(*l, "logging")) parse_logging(*t, c.logging);
     }
 
     const toml::table* local_transports = local ? check_local(*local, root) : nullptr;
@@ -321,6 +346,46 @@ class ConfigBuilder {
     p_.reject_unknown(t, s, Keys{"name", "scan_interval_ms"});
     p_.read(get, s, "name", s.name, true);
     p_.read(get, s, "scan_interval_ms", s.scan_interval_ms, false, 1);
+  }
+
+  void parse_logging(const toml::table& t, LoggingConfig& l) {
+    p_.begin(l, t, "logging");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, l, Keys{"dir", "max_size_mb", "max_files", "default_level", "levels", "echo_stderr"});
+    std::string dir;
+    if (p_.read(get, l, "dir", dir, false)) l.dir = expand_home(dir);
+    p_.read(get, l, "max_size_mb", l.max_size_mb, false, 1);
+    p_.read(get, l, "max_files", l.max_files, false, 1);
+    p_.read_enum(get, l, "default_level", l.default_level, false, kLevels);
+    p_.read(get, l, "echo_stderr", l.echo_stderr);
+
+    const auto* n = p_.find(get, l, "levels", false);
+    if (n == nullptr) return;
+    const auto* lv = p_.as_table(*n, "logging.levels");
+    if (lv == nullptr) return;
+    for (auto&& [glob, node] : *lv) {
+      const auto key = std::string(glob.str());
+      const auto field = "logging.levels." + key;
+      const auto* s = node.as_string();
+      if (s == nullptr) {
+        p_.error(p_.loc(node), field, "expected string, got " + std::string(type_name(node.type())));
+        continue;
+      }
+      LogLevel level = LogLevel::Info;
+      bool found = false;
+      for (const auto& [name, value] : kLevels) {
+        if (name == s->get()) {
+          level = value;
+          found = true;
+        }
+      }
+      if (!found) {
+        p_.error(p_.loc(node), field,
+                 "invalid value '" + s->get() + "' (expected trace | debug | info | warn | error)");
+        continue;
+      }
+      l.levels.emplace_back(key, level);
+    }
   }
 
   TransportConfig parse_transport(const std::string& name, const toml::table& t, const toml::table* ovr) {

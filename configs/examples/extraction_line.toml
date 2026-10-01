@@ -6,6 +6,18 @@
 name = "example"
 scan_interval_ms = 1000
 
+# Optional. With no `dir` there is no file sink. Levels: trace|debug|info|warn|error.
+[logging]
+# dir = "~/pychron-logs"
+# max_size_mb = 10
+# max_files = 5
+default_level = "info"
+# echo_stderr = false
+
+# Per-logger overrides, by name glob.
+# [logging.levels]
+# "transport.serial.*" = "trace"
+
 [transports.valve_bus]
 kind = "sim"
 timeout_ms = 500

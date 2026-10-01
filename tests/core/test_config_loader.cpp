@@ -251,3 +251,81 @@ TEST(ConfigLoader, MissingFileIsConfigError) {
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
   EXPECT_NE(r.error().what.find("cannot read config file"), std::string::npos);
 }
+
+TEST(Logging, ParsesAllKeys) {
+  const std::string text = std::string(test::kPreamble) +
+                           "[logging]\ndir = \"/var/log/pychron\"\nmax_size_mb = 20\nmax_files = 3\n"
+                           "default_level = \"warn\"\necho_stderr = true\n"
+                           "[logging.levels]\n\"transport.serial.*\" = \"trace\"\nscheduler = \"debug\"\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  const auto& l = r->logging;
+  EXPECT_EQ(l.dir, std::filesystem::path("/var/log/pychron"));
+  EXPECT_EQ(l.max_size_mb, 20);
+  EXPECT_EQ(l.max_files, 3);
+  EXPECT_EQ(l.default_level, LogLevel::Warn);
+  EXPECT_TRUE(l.echo_stderr);
+  ASSERT_EQ(l.levels.size(), 2u);
+  bool serial = false, sched = false;
+  for (const auto& [glob, level] : l.levels) {
+    if (glob == "transport.serial.*" && level == LogLevel::Trace) serial = true;
+    if (glob == "scheduler" && level == LogLevel::Debug) sched = true;
+  }
+  EXPECT_TRUE(serial);
+  EXPECT_TRUE(sched);
+}
+
+TEST(Logging, ExpandsHomeInDir) {
+  const std::string text = std::string(test::kPreamble) + "[logging]\ndir = \"~/pychron-logs\"\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+#ifdef _WIN32
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  if (home != nullptr) {
+    EXPECT_EQ(r->logging.dir, std::filesystem::path(home) / "pychron-logs");
+  }
+}
+
+TEST(Logging, AbsentTableGivesDefaults) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble), "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->logging.max_size_mb, 10);
+  EXPECT_EQ(r->logging.max_files, 5);
+  EXPECT_EQ(r->logging.default_level, LogLevel::Info);
+  EXPECT_TRUE(r->logging.dir.empty());
+  EXPECT_TRUE(r->logging.levels.empty());
+  EXPECT_FALSE(r->logging.echo_stderr);
+}
+
+TEST(Logging, BadLevelIsDiagnosticWithLine) {
+  const std::string text = std::string(test::kPreamble) + "[logging]\ndefault_level = \"loud\"\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("logging.default_level"), std::string::npos) << r.error().what;
+  EXPECT_NE(r.error().what.find("f.toml:" + std::to_string(line_of(text, "default_level"))), std::string::npos)
+      << r.error().what;
+}
+
+TEST(Logging, BadGlobLevelIsDiagnostic) {
+  const std::string text = std::string(test::kPreamble) + "[logging.levels]\nscheduler = \"loud\"\nother = 3\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("logging.levels.scheduler"), std::string::npos) << r.error().what;
+  EXPECT_NE(r.error().what.find("logging.levels.other"), std::string::npos) << r.error().what;
+}
+
+TEST(Logging, NonTableIsDiagnostic) {
+  auto r = load_system_config_from_string("logging = 3\n" + std::string(test::kPreamble), "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("logging"), std::string::npos) << r.error().what;
+}
+
+TEST(Logging, RejectsUnknownKeyAndNonPositiveSizes) {
+  for (const char* body : {"bogus = 1", "max_files = 0", "max_size_mb = -1"}) {
+    const std::string text = std::string(test::kPreamble) + "[logging]\n" + body + "\n";
+    EXPECT_FALSE(load_system_config_from_string(text, "f.toml")) << body;
+  }
+}
