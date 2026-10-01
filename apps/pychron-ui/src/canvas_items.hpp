@@ -6,6 +6,7 @@
 // centres in canvas.toml coordinates.
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,9 @@ class ValveItem : public QGraphicsObject {
 
   void set_state(ValveState state);
   void set_locked(bool locked);
+  // Region colour an open valve shows instead of green (CanvasView sets it
+  // when canvas.toml says open_valve_color = "inherit"); nullopt = state colour.
+  void set_inherited_color(std::optional<QColor> color);
   void set_pending(bool pending);
   // Rejection feedback: blink for ~1 s and show `what` as the tooltip.
   void flash(const QString& what);
@@ -73,6 +77,7 @@ class ValveItem : public QGraphicsObject {
   canvas::ValveKind kind_;
   ValveState state_ = ValveState::Unknown;
   bool locked_ = false;
+  std::optional<QColor> inherited_;
   bool pending_ = false;
   int flash_ticks_ = 0;
   QTimer flash_timer_;

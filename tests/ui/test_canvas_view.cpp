@@ -165,6 +165,53 @@ class TestCanvasView : public QObject {
     QTRY_VERIFY(view_->valve("pump_power")->locked());
   }
 
+  void openValveStaysGreenByDefault() {
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    QCOMPARE(view_->valve("A")->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeColoursOpenValveWithItsRegion() {
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    ui::ValveItem* a = view_->valve("A");
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
+    const QColor region = view_->stage("bone")->region_color();
+    QVERIFY(region != CanvasView::isolated_color());
+    QCOMPARE(a->fill_color(), region);
+    QVERIFY(a->fill_color() != ui::valve_color(ValveState::Open));
+
+    bridge_->actuate("A", SwitchOp::Close);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Closed, 5000);
+    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Closed));
+
+    view_->set_open_valve_color(canvas::OpenValveColor::Green);
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
+    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeLeavesIsolatedOpenValveGreen() {
+    // pump_power is a switch outside every shared region: it joins no volumes.
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    bridge_->actuate("pump_power", SwitchOp::Open);
+    ui::ValveItem* p = view_->valve("pump_power");
+    QTRY_COMPARE_WITH_TIMEOUT(p->state(), ValveState::Open, 5000);
+    QCOMPARE(p->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeKeepsLockBorderAndFlash() {
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    view_->set_confirm_unlock([](const QString&) { return true; });
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    QVERIFY(view_->request_lock("A", true));
+    QTRY_VERIFY(view_->valve("A")->locked());
+    QVERIFY(hasLockBorder(view_->valve("A")));
+    view_->valve("A")->flash("x");
+    QVERIFY(view_->valve("A")->is_flashing());
+  }
+
   void openValveJoinsRegionColours() {
     ui::StageItem* bone = view_->stage("bone");
     ui::StageItem* prep = view_->stage("prep");

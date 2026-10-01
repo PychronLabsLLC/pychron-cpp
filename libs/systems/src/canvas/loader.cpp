@@ -44,6 +44,11 @@ constexpr std::array kCorners{
     std::pair<std::string_view, Corner>{"lr", Corner::LowerRight},
 };
 
+constexpr std::array kOpenValveColors{
+    std::pair<std::string_view, OpenValveColor>{"green", OpenValveColor::Green},
+    std::pair<std::string_view, OpenValveColor>{"inherit", OpenValveColor::Inherit},
+};
+
 constexpr std::array kValveSections{
     std::pair<std::string_view, ValveKind>{"valve", ValveKind::Valve},
     std::pair<std::string_view, ValveKind>{"manual_valve", ValveKind::Manual},
@@ -266,10 +271,11 @@ class CanvasBuilder {
 
   void parse_canvas_section(const toml::table& t, CanvasSection& s) {
     begin(s, t, "canvas");
-    reject_unknown(t, s, Keys{"origin", "size", "connection_width"});
+    reject_unknown(t, s, Keys{"origin", "size", "connection_width", "open_valve_color"});
     read(t, s, "origin", s.origin, false);
     read(t, s, "size", s.size);
     read(t, s, "connection_width", s.connection_width, 1);
+    read_enum(t, s, "open_valve_color", s.open_valve_color, kOpenValveColors);
   }
 
   void parse_colors(const toml::table& t, std::map<std::string, std::string>& colors) {

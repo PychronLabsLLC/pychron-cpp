@@ -56,7 +56,17 @@ QColor ValveItem::fill_color() const {
   if (is_flashing() && flash_ticks_ % 2 == 0) {
     return QColor(Qt::yellow);
   }
+  if (state_ == ValveState::Open && inherited_) {
+    return *inherited_;
+  }
   return valve_color(state_);
+}
+
+void ValveItem::set_inherited_color(std::optional<QColor> color) {
+  if (inherited_ != color) {
+    inherited_ = color;
+    update();
+  }
 }
 
 void ValveItem::set_state(ValveState state) {

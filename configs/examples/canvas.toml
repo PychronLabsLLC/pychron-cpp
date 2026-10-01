@@ -15,6 +15,8 @@
 origin = [0, 0]
 size = [1000, 700]
 connection_width = 6
+# open valves: "green" (default) or "inherit" the colour of the region they join
+# open_valve_color = "inherit"
 
 [colors]
 valve = "#1e90ff"

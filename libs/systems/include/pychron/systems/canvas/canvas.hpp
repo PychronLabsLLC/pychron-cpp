@@ -29,10 +29,15 @@ struct Size {
   friend bool operator==(const Size&, const Size&) = default;
 };
 
+// How an open valve is filled: the usual state green, or the colour of the
+// shared region it joins (a lone open valve joining nothing stays green).
+enum class OpenValveColor { Green, Inherit };
+
 struct CanvasSection : Located {
   Point origin{0, 0};
   Size size{1000, 700};
   std::int64_t connection_width = 5;
+  OpenValveColor open_valve_color = OpenValveColor::Green;
 };
 
 // Every switchable element shares one struct; `kind` records which array it

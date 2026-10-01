@@ -44,6 +44,7 @@ CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(pare
   setRenderHint(QPainter::Antialiasing);
   if (const canvas::Canvas* c = bridge_.canvas()) {
     build(*c);
+    open_valve_color_ = c->canvas.open_valve_color;
   }
 
   connect(&bridge_, &CoreBridge::snapshot, this, [this](const Snapshot&) { apply_state(); });
@@ -232,9 +233,17 @@ void CanvasView::apply_state() {
   apply_regions();
 }
 
+void CanvasView::set_open_valve_color(canvas::OpenValveColor mode) {
+  open_valve_color_ = mode;
+  apply_regions();
+}
+
 void CanvasView::apply_regions() {
   const systems::NetworkGraph* network = bridge_.network();
   if (!network) {
+    for (auto& [name, item] : valves_) {
+      item->set_inherited_color(std::nullopt);
+    }
     return;
   }
   const auto regions = network->connected_volumes(bridge_.state().valves);
@@ -253,6 +262,13 @@ void CanvasView::apply_regions() {
     for (const auto& valve : region.valves) {
       colors[valve] = color;
     }
+  }
+  // Open valves joining a shared region wear its colour when asked to; every
+  // other valve keeps its state colour.
+  for (auto& [name, item] : valves_) {
+    auto it = colors.find(name);
+    const bool inherit = open_valve_color_ == canvas::OpenValveColor::Inherit && it != colors.end();
+    item->set_inherited_color(inherit ? std::optional<QColor>(it->second) : std::nullopt);
   }
   for (auto& [name, item] : stages_) {
     auto it = colors.find(name);

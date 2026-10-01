@@ -37,6 +37,10 @@ class CanvasView : public QGraphicsView {
   bool request_lock(const std::string& name, bool locked);
   void set_confirm_unlock(std::function<bool(const QString& name)> confirm) { confirm_unlock_ = std::move(confirm); }
 
+  // Initialised from canvas.toml's open_valve_color; changing it repaints.
+  canvas::OpenValveColor open_valve_color() const noexcept { return open_valve_color_; }
+  void set_open_valve_color(canvas::OpenValveColor mode);
+
   // Colour of an isolated volume.
   static QColor isolated_color();
 
@@ -55,6 +59,7 @@ class CanvasView : public QGraphicsView {
 
   CoreBridge& bridge_;
   std::function<bool(const QString&)> confirm_unlock_;
+  canvas::OpenValveColor open_valve_color_ = canvas::OpenValveColor::Green;
   QGraphicsScene scene_;
   std::map<std::string, QPointF> positions_;
   std::map<std::string, ValveItem*> valves_;
