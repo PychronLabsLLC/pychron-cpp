@@ -6,6 +6,7 @@ add_library(pychron_core
   src/signal_bus.cpp
   src/logger.cpp
   src/log_match.cpp
+  src/log_hub.cpp
   src/scheduler.cpp
   src/config/diagnostic.cpp
   src/config/loader.cpp
@@ -24,5 +25,7 @@ target_compile_features(pychron_core PUBLIC cxx_std_20)
 # toml++ configuration must match in every translation unit: no exceptions.
 target_compile_definitions(pychron_core PUBLIC TOML_EXCEPTIONS=0)
 target_link_libraries(pychron_core PUBLIC tomlplusplus::tomlplusplus Threads::Threads)
+# spdlog is an implementation detail of LogHub: never exposed (spec 4.6).
+target_link_libraries(pychron_core PRIVATE spdlog::spdlog)
 
 pychron_set_warnings(pychron_core)

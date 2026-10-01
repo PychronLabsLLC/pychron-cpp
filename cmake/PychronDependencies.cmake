@@ -10,6 +10,18 @@ FetchContent_Declare(tomlplusplus
   FIND_PACKAGE_ARGS CONFIG)
 FetchContent_MakeAvailable(tomlplusplus)
 
+# Logging back end (spec 4.6). Bundled fmt keeps fmt out of every public
+# interface; pychron_core links spdlog PRIVATE.
+FetchContent_Declare(spdlog
+  URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.3.tar.gz
+  URL_HASH SHA256=15a04e69c222eb6c01094b5c7ff8a249b36bb22788d72519646fb85feb267e67
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  FIND_PACKAGE_ARGS CONFIG)
+set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+# Third-party headers must not trip PYCHRON_WARNINGS_AS_ERRORS.
+set(SPDLOG_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(spdlog)
+
 if(BUILD_TESTS)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)

@@ -6,7 +6,6 @@
     "asio",
     "tomlplusplus",
     "spdlog",
-    "fmt",
     "gtest"
   ],
   "features": {
