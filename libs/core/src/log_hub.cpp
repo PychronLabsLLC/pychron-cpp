@@ -10,10 +10,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <shared_mutex>
@@ -23,6 +25,19 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "log_hub_internal.hpp"
 #include "pychron/core/log_match.hpp"
@@ -37,6 +52,11 @@ constexpr std::size_t kWriterThreads = 1;
 constexpr auto kPeriodicFlush = std::chrono::seconds(1);
 constexpr auto kErrorReportInterval = std::chrono::seconds(10);
 constexpr std::size_t kSpdlogMaxRotated = 200000;  // spdlog's rotating_file_sink::MaxFiles
+constexpr auto kCrashFlushTimeout = std::chrono::seconds(2);
+
+// Set on the spdlog writer thread; the crash route must never wait on it from
+// that thread (it would be waiting on itself).
+thread_local bool t_is_log_writer = false;
 
 spdlog::level::level_enum to_spdlog(LogLevel level) noexcept {
   switch (level) {
@@ -85,6 +105,10 @@ class BarrierSink final : public spdlog::sinks::base_sink<std::mutex> {
     std::unique_lock lock(m_);
     cv_.wait(lock, [&] { return reached_ >= target; });
   }
+  bool wait_until(std::uint64_t target, std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock lock(m_);
+    return cv_.wait_until(lock, deadline, [&] { return reached_ >= target; });
+  }
 
  protected:
   void sink_it_(const spdlog::details::log_msg&) override {
@@ -125,6 +149,7 @@ struct LogHub::Impl {
 
   std::shared_ptr<spdlog::details::thread_pool> pool;
   std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> file_sink;  // null = no file
+  std::filesystem::path file_path;                                   // empty = no file
   std::shared_ptr<spdlog::async_logger> logger;
   std::shared_ptr<BarrierSink> barrier_sink;
   std::shared_ptr<spdlog::async_logger> barrier;
@@ -239,6 +264,41 @@ struct LogHub::Impl {
     if (file_sink) file_sink->flush();
   }
 
+  // Terminate route: enqueue `text` at error and flush, waiting at most
+  // kCrashFlushTimeout. Skipped on the writer thread, which cannot wait on
+  // itself. Never throws.
+  void crash_flush(std::string_view text) noexcept {
+    in_flight.fetch_add(1);
+    struct Leave {
+      std::atomic<int>& n;
+      ~Leave() { n.fetch_sub(1); }
+    } leave{in_flight};
+    if (!alive.load() || t_is_log_writer) return;
+
+    try {
+      std::string payload = "pychron: ";
+      payload.append(text);
+      logger->log(spdlog::level::err, spdlog::string_view_t(payload.data(), payload.size()));
+      if (echo_stderr) {
+        std::lock_guard lock(echo_mutex);
+        std::cerr << "[error] " << payload << '\n';
+      }
+
+      const auto deadline = std::chrono::steady_clock::now() + kCrashFlushTimeout;
+      std::unique_lock lock(barrier_mutex, std::defer_lock);
+      while (!lock.try_lock()) {  // the crashing thread may already hold it
+        if (std::chrono::steady_clock::now() >= deadline) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      const std::uint64_t target = ++barriers_posted;
+      barrier->log(spdlog::level::info, spdlog::string_view_t("barrier"));
+      lock.unlock();
+      if (!barrier_sink->wait_until(target, deadline)) return;
+      if (file_sink) file_sink->flush();
+    } catch (...) {
+    }
+  }
+
   void run_flusher() {
     std::unique_lock lock(flusher_mutex);
     while (!stopping) {
@@ -250,6 +310,198 @@ struct LogHub::Impl {
     }
   }
 };
+
+namespace {
+
+// ---- Crash handlers (spec 4.5) --------------------------------------------
+
+#ifdef _WIN32
+using CrashTarget = HANDLE;
+const CrashTarget kNoCrashTarget = INVALID_HANDLE_VALUE;
+#else
+using CrashTarget = int;
+constexpr CrashTarget kNoCrashTarget = -1;
+#endif
+
+// Descriptor on the registered hub's pychron.log; read lock-free by the
+// signal/exception handler.
+std::atomic<CrashTarget> g_crash_target{kNoCrashTarget};
+std::atomic<std::terminate_handler> g_previous_terminate{nullptr};
+
+// Normal-context state. Leaked so it survives static destruction.
+struct CrashState {
+  std::mutex mutex;
+  std::weak_ptr<LogHub::Impl> current;  // most recently created hub
+  bool installed = false;
+};
+CrashState& crash_state() {
+  static auto* state = new CrashState;
+  return *state;
+}
+
+CrashTarget open_crash_target(const std::filesystem::path& path) noexcept {
+#ifdef _WIN32
+  return CreateFileW(path.c_str(), FILE_APPEND_DATA,
+                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+                     FILE_ATTRIBUTE_NORMAL, nullptr);
+#else
+  return ::open(path.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
+#endif
+}
+
+void close_crash_target(CrashTarget target) noexcept {
+  if (target == kNoCrashTarget) return;
+#ifdef _WIN32
+  CloseHandle(target);
+#else
+  ::close(target);
+#endif
+}
+
+// Points the handler at `impl`'s log file. Caller holds CrashState::mutex.
+void retarget_crash_output(const LogHub::Impl& impl) noexcept {
+  if (impl.file_path.empty()) return;
+  const CrashTarget fresh = open_crash_target(impl.file_path);
+  if (fresh == kNoCrashTarget) return;
+  close_crash_target(g_crash_target.exchange(fresh));
+}
+
+// Async-signal-safe write of a whole buffer; errors are ignored.
+void write_all(CrashTarget target, const char* data, std::size_t size) noexcept {
+  if (target == kNoCrashTarget) return;
+#ifdef _WIN32
+  DWORD written = 0;
+  WriteFile(target, data, static_cast<DWORD>(size), &written, nullptr);
+#else
+  while (size > 0) {
+    const ssize_t n = ::write(target, data, size);
+    if (n <= 0) return;
+    data += n;
+    size -= static_cast<std::size_t>(n);
+  }
+#endif
+}
+
+// Appends the decimal (or, with base 16, hex) digits of `value` to buf at pos.
+std::size_t put_unsigned(char* buf, std::size_t pos, unsigned long value, unsigned base) noexcept {
+  char digits[24];
+  std::size_t n = 0;
+  do {
+    digits[n++] = "0123456789abcdef"[value % base];
+    value /= base;
+  } while (value != 0 && n < sizeof digits);
+  while (n > 0) buf[pos++] = digits[--n];
+  return pos;
+}
+
+std::string terminate_text() {
+  const auto active = std::current_exception();
+  if (!active) return "terminate called without an active exception";
+  try {
+    std::rethrow_exception(active);
+  } catch (const std::exception& e) {
+    return std::string("terminate called after throwing: ") + e.what();
+  } catch (...) {
+    return "terminate called after throwing a non-std::exception";
+  }
+}
+
+[[noreturn]] void on_terminate() noexcept {
+  std::shared_ptr<LogHub::Impl> hub;
+  {
+    // Bounded: terminate may fire on a thread that already holds the mutex.
+    auto& state = crash_state();
+    std::unique_lock lock(state.mutex, std::defer_lock);
+    for (int i = 0; i < 100 && !lock.try_lock(); ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (lock.owns_lock()) hub = state.current.lock();
+  }
+  if (hub) {
+    try {
+      hub->crash_flush(terminate_text());
+    } catch (...) {
+    }
+  }
+  hub.reset();
+  if (const auto previous = g_previous_terminate.load()) previous();
+  std::abort();
+}
+
+#ifdef _WIN32
+
+LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS* info) {
+  static const char kPrefix[] = "fatal exception 0x";
+  char line[64];
+  std::size_t pos = 0;
+  for (const char c : std::string_view(kPrefix)) line[pos++] = c;
+  const auto code = (info != nullptr && info->ExceptionRecord != nullptr)
+                        ? static_cast<unsigned long>(info->ExceptionRecord->ExceptionCode)
+                        : 0UL;
+  pos = put_unsigned(line, pos, code, 16);
+  line[pos++] = '\n';
+  write_all(GetStdHandle(STD_ERROR_HANDLE), line, pos);
+  write_all(g_crash_target.load(), line, pos);
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void install_fatal_handlers() noexcept { SetUnhandledExceptionFilter(&on_unhandled_exception); }
+
+#else
+
+// "fatal signal N\n", preformatted at install time so the handler only
+// copies bytes.
+struct SignalLine {
+  int signal = 0;
+  char text[32] = {};
+  std::size_t size = 0;
+};
+constexpr int kFatalSignals[] = {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL};
+SignalLine g_signal_lines[std::size(kFatalSignals)];
+
+void on_fatal_signal(int sig) {
+  for (const auto& line : g_signal_lines) {
+    if (line.signal != sig) continue;
+    write_all(STDERR_FILENO, line.text, line.size);
+    write_all(g_crash_target.load(), line.text, line.size);
+    break;
+  }
+  std::signal(sig, SIG_DFL);
+  std::raise(sig);  // delivered with the default action once this returns
+}
+
+void install_fatal_handlers() noexcept {
+  static constexpr std::string_view kPrefix = "fatal signal ";
+  for (std::size_t i = 0; i < std::size(kFatalSignals); ++i) {
+    auto& line = g_signal_lines[i];
+    line.signal = kFatalSignals[i];
+    std::size_t pos = 0;
+    for (const char c : kPrefix) line.text[pos++] = c;
+    pos = put_unsigned(line.text, pos, static_cast<unsigned long>(line.signal), 10);
+    line.text[pos++] = '\n';
+    line.size = pos;
+  }
+  for (const int sig : kFatalSignals) {
+    struct sigaction action {};
+    action.sa_handler = &on_fatal_signal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    sigaction(sig, &action, nullptr);
+  }
+}
+
+#endif
+
+}  // namespace
+
+void LogHub::install_crash_handlers() {
+  auto& state = crash_state();
+  std::lock_guard lock(state.mutex);
+  if (state.installed) return;
+  state.installed = true;
+  if (auto hub = state.current.lock()) retarget_crash_output(*hub);
+  install_fatal_handlers();
+  g_previous_terminate.store(std::set_terminate(&on_terminate));
+}
 
 Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& config,
                                                const Clock& clock, SignalBus* bus) {
@@ -275,6 +527,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
             (config.dir / "pychron.log").string(), size_mb * 1024 * 1024,
             std::min(files - 1, kSpdlogMaxRotated));
         impl->file_sink->set_formatter(make_file_formatter());
+        impl->file_path = config.dir / "pychron.log";
       } catch (const std::exception& e) {
         impl->file_sink.reset();
         impl->report_startup_error("cannot open log file in " + config.dir.string() + ": " +
@@ -284,7 +537,8 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   }
 
   try {
-    impl->pool = std::make_shared<spdlog::details::thread_pool>(kQueueSize, kWriterThreads);
+    impl->pool = std::make_shared<spdlog::details::thread_pool>(
+        kQueueSize, kWriterThreads, [] { t_is_log_writer = true; });
     std::vector<spdlog::sink_ptr> sinks;
     if (impl->file_sink) sinks.push_back(impl->file_sink);
     impl->logger = std::make_shared<spdlog::async_logger>(
@@ -309,6 +563,12 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
     return fail(ErrorKind::Io, std::string("cannot start logging: ") + e.what());
   }
 
+  {
+    auto& state = crash_state();
+    std::lock_guard lock(state.mutex);
+    state.current = impl;
+    if (state.installed) retarget_crash_output(*impl);
+  }
   return std::shared_ptr<LogHub>(new LogHub(std::move(impl)));
 }
 
@@ -334,6 +594,8 @@ LogHub::~LogHub() {
   impl_->logger.reset();
   impl_->barrier.reset();
   impl_->pool.reset();
+  impl_->file_sink.reset();
+  impl_->barrier_sink.reset();
 }
 
 void LogHub::flush() {

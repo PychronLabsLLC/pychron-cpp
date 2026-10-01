@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -12,6 +16,7 @@
 #include <random>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -482,4 +487,120 @@ TEST(LogHub, ConcurrentWriteAndSetLevel) {
     if (line.find("[error] core.w") != std::string::npos) ++file_errors;
   }
   EXPECT_EQ(file_errors, kThreads * kPerThread);
+}
+
+// --- Crash and terminate handlers (spec 4.5) -------------------------------
+//
+// Each death test forks a child ("fast" style, so the child shares the
+// parent's temp dir path) that builds its own hub, crashes, and dies; the
+// parent then inspects pychron.log.
+
+namespace {
+
+std::size_t count_lines_containing(const fs::path& p, const std::string& needle) {
+  const auto lines = read_lines(p);
+  return static_cast<std::size_t>(std::count_if(
+      lines.begin(), lines.end(), [&](const std::string& l) { return l.find(needle) != std::string::npos; }));
+}
+
+// Not inline-visible to the noexcept caller, so no "will always terminate"
+// warning; the throw escapes a noexcept frame and reaches std::terminate with
+// the exception active.
+[[noreturn]] void throw_boom() { throw std::runtime_error("boom"); }
+void (*volatile g_throw_boom)() = &throw_boom;
+void call_noexcept_throw() noexcept { g_throw_boom(); }
+
+int g_prev_terminate_calls = 0;
+[[noreturn]] void counting_terminate() {
+  ++g_prev_terminate_calls;
+  std::fprintf(stderr, "prev terminate calls=%d\n", g_prev_terminate_calls);
+  std::fflush(stderr);
+  std::_Exit(3);
+}
+
+}  // namespace
+
+TEST(LogHubCrash, TerminateFlushesQueuedRecordsAndExceptionText) {
+  GTEST_FLAG_SET(death_test_style, "fast");
+  TempDir tmp;
+  SteadyClock clock;
+  EXPECT_DEATH(
+      {
+        auto hub = LogHub::create(config_for(tmp.path()), clock);
+        if (!hub) std::_Exit(10);
+        LogHub::install_crash_handlers();
+        auto log = (*hub)->logger("crash.test");
+        for (int i = 0; i < 200; ++i) log.info("record " + std::to_string(i));
+        call_noexcept_throw();
+      },
+      "");
+  const auto file = tmp.path() / "pychron.log";
+  EXPECT_EQ(count_lines_containing(file, "[info] crash.test: record "), 200u);
+  EXPECT_GE(count_lines_containing(file, "boom"), 1u);
+}
+
+TEST(LogHubCrash, SigabrtLeavesFatalSignalLine) {
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX signal handlers";
+#else
+  GTEST_FLAG_SET(death_test_style, "fast");
+  TempDir tmp;
+  SteadyClock clock;
+  EXPECT_EXIT(
+      {
+        // Installed before the hub exists: create() opens the descriptor.
+        LogHub::install_crash_handlers();
+        auto hub = LogHub::create(config_for(tmp.path()), clock);
+        if (!hub) std::_Exit(10);
+        (*hub)->logger("crash.test").error("about to abort");
+        std::abort();
+      },
+      ::testing::KilledBySignal(SIGABRT), "fatal signal 6");
+  const auto file = tmp.path() / "pychron.log";
+  EXPECT_EQ(count_lines_containing(file, "[error] crash.test: about to abort"), 1u);
+  EXPECT_EQ(count_lines_containing(file, "fatal signal 6"), 1u);
+#endif
+}
+
+TEST(LogHubCrash, SignalGuaranteeIsBounded) {
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX signal handlers";
+#else
+  // Documents the 1 s periodic-flush bound only: an info record older than
+  // that survives a hard crash. Nothing asserts younger sub-error records do.
+  GTEST_FLAG_SET(death_test_style, "fast");
+  TempDir tmp;
+  SteadyClock clock;
+  EXPECT_EXIT(
+      {
+        auto hub = LogHub::create(config_for(tmp.path()), clock);
+        if (!hub) std::_Exit(10);
+        LogHub::install_crash_handlers();
+        (*hub)->logger("crash.test").info("old enough");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        std::abort();
+      },
+      ::testing::KilledBySignal(SIGABRT), "fatal signal 6");
+  const auto file = tmp.path() / "pychron.log";
+  EXPECT_EQ(count_lines_containing(file, "[info] crash.test: old enough"), 1u);
+  EXPECT_EQ(count_lines_containing(file, "fatal signal 6"), 1u);
+#endif
+}
+
+TEST(LogHubCrash, InstallIsIdempotent) {
+  GTEST_FLAG_SET(death_test_style, "fast");
+  TempDir tmp;
+  SteadyClock clock;
+  EXPECT_EXIT(
+      {
+        std::set_terminate(&counting_terminate);
+        LogHub::install_crash_handlers();
+        LogHub::install_crash_handlers();
+        auto hub = LogHub::create(config_for(tmp.path()), clock);
+        if (!hub) std::_Exit(10);
+        std::terminate();
+      },
+      ::testing::ExitedWithCode(3), "prev terminate calls=1\n");
+  // No active exception: the terminate route still logs a line.
+  EXPECT_EQ(count_lines_containing(tmp.path() / "pychron.log", "terminate"), 1u);
 }

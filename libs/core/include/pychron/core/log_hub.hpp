@@ -59,6 +59,20 @@ class LogHub {
   // verbatim (it is never interpreted as a format string).
   void write(LogLevel level, std::string_view logger, std::string_view message);
 
+  // Best-effort crash flush (spec 4.5). Static and idempotent, so main() may
+  // call it before any hub exists; it acts on whichever hub create() made
+  // most recently (held weakly, so a destroyed hub is simply skipped).
+  //
+  // - std::terminate: logs the active exception text at `error` on logger
+  //   `pychron`, flushes (bounded wait), then calls the previous handler.
+  // - POSIX SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL: writes `fatal signal N` with
+  //   write(2) to stderr and to a descriptor on that hub's pychron.log, then
+  //   restores the default action and re-raises. No flush (signal-unsafe):
+  //   records below `error` younger than about 1 s may be lost.
+  // - Windows: an unhandled-exception filter writing `fatal exception 0x..`
+  //   the same way, returning EXCEPTION_CONTINUE_SEARCH.
+  static void install_crash_handlers();
+
   struct Impl;
 
  private:
