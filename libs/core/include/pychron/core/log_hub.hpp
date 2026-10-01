@@ -4,6 +4,7 @@
 // thread. No spdlog type appears here; everything lives behind Impl.
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "pychron/core/clock.hpp"
@@ -25,6 +26,14 @@ class SignalBus;
 // A `dir` that cannot be created is not an error: the hub runs without a file
 // sink and reports one `error` Log on the bus (stderr if there is no bus).
 // An empty `dir` means no file sink, silently.
+//
+// Levels: a logger's level is the level of the most specific matching rule
+// (config `levels`, then set_level()); ties go to the longer pattern, then the
+// lexicographically greater one. No match uses `default_level`.
+//
+// Every record written also goes, on the calling thread, to stderr (when
+// `echo_stderr`) as `[level] name: message`, and to the bus (if any) as a
+// `Log` event stamped with `clock.now()`.
 class LogHub {
  public:
   // Fails (ErrorKind::Io) only if the logging back end itself cannot start.
@@ -34,6 +43,14 @@ class LogHub {
   ~LogHub();  // flushes, stops the writer
   LogHub(const LogHub&) = delete;
   LogHub& operator=(const LogHub&) = delete;
+
+  // A logger named `name` whose level follows the rules. It may outlive the
+  // hub; once the hub is destroyed it writes nothing.
+  Logger logger(std::string name);
+
+  // Adds or replaces the rule for `pattern` and re-resolves every existing
+  // hub logger whose level was not set explicitly. Thread-safe.
+  void set_level(std::string_view pattern, LogLevel level);
 
   // Blocks until every record written so far is on disk.
   void flush();
@@ -45,8 +62,8 @@ class LogHub {
   struct Impl;
 
  private:
-  explicit LogHub(std::unique_ptr<Impl> impl);
-  std::unique_ptr<Impl> impl_;
+  explicit LogHub(std::shared_ptr<Impl> impl);
+  std::shared_ptr<Impl> impl_;  // shared with hub loggers, which may outlive the hub
 };
 
 }  // namespace pychron

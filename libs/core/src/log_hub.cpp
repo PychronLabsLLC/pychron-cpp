@@ -16,11 +16,17 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <tuple>
+#include <utility>
 #include <vector>
 
+#include "log_hub_internal.hpp"
+#include "pychron/core/log_match.hpp"
+#include "pychron/core/logger.hpp"
 #include "pychron/core/signal_bus.hpp"
 
 namespace pychron {
@@ -101,6 +107,21 @@ class BarrierSink final : public spdlog::sinks::base_sink<std::mutex> {
 struct LogHub::Impl {
   const Clock* clock = nullptr;
   SignalBus* bus = nullptr;
+  bool echo_stderr = false;
+  std::mutex echo_mutex;
+
+  // Level rules. `epoch` is bumped (under the unique lock) on every change;
+  // hub loggers cache (level, epoch) and re-resolve when it moves.
+  mutable std::shared_mutex rules_mutex;
+  LogLevel default_level = LogLevel::Info;
+  std::vector<std::pair<std::string, LogLevel>> rules;
+  std::atomic<std::uint64_t> epoch{1};
+
+  // Liveness: loggers hold this Impl and may outlive the LogHub. The
+  // destructor clears `alive` and waits for in-flight writes to drain before
+  // tearing the back end down; later writes are no-ops.
+  std::atomic<bool> alive{true};
+  std::atomic<int> in_flight{0};
 
   std::shared_ptr<spdlog::details::thread_pool> pool;
   std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> file_sink;  // null = no file
@@ -134,11 +155,76 @@ struct LogHub::Impl {
     }
   }
 
-  void report_startup_error(const std::string& message) {
+  void report_startup_error(const std::string& message) noexcept {
+    try {
+      if (bus != nullptr) {
+        bus->publish(Log{LogLevel::Error, "logging", message, clock->now()});
+      } else {
+        std::cerr << "[error] logging: " << message << '\n';
+      }
+    } catch (...) {
+    }
+  }
+
+  void put_rule(std::string_view pattern, LogLevel level) {
+    for (auto& rule : rules) {
+      if (rule.first == pattern) {
+        rule.second = level;
+        return;
+      }
+    }
+    rules.emplace_back(std::string(pattern), level);
+  }
+
+  // Most specific matching rule; ties: longer pattern, then the
+  // lexicographically greater one. Caller holds rules_mutex.
+  LogLevel resolve_locked(std::string_view name) const noexcept {
+    const std::pair<std::string, LogLevel>* best = nullptr;
+    auto key = [](const std::string& p) {
+      return std::make_tuple(log_rule_specificity(p), p.size(), std::string_view(p));
+    };
+    for (const auto& rule : rules) {
+      if (!log_name_matches(rule.first, name)) continue;
+      if (best == nullptr || key(rule.first) > key(best->first)) best = &rule;
+    }
+    return best != nullptr ? best->second : default_level;
+  }
+
+  // Runs entirely on the calling thread apart from the file enqueue, so bus
+  // subscribers may log (even at error) without deadlocking the writer.
+  void write(LogLevel level, std::string_view name, std::string_view message) noexcept {
+    in_flight.fetch_add(1);
+    struct Leave {
+      std::atomic<int>& n;
+      ~Leave() { n.fetch_sub(1); }
+    } leave{in_flight};
+    if (!alive.load()) return;
+
+    try {
+      std::string payload;
+      payload.reserve(name.size() + 2 + message.size());
+      payload.append(name).append(": ").append(message);
+      // Raw string_view overload: the message is never a format string.
+      logger->log(to_spdlog(level), spdlog::string_view_t(payload.data(), payload.size()));
+      if (level >= LogLevel::Error) sync_flush();
+    } catch (const std::exception& e) {
+      report_spdlog_error(e.what());
+    } catch (...) {
+    }
+
+    if (echo_stderr) {
+      try {
+        std::lock_guard lock(echo_mutex);
+        std::cerr << '[' << to_string(level) << "] " << name << ": " << message << '\n';
+      } catch (...) {
+      }
+    }
+
     if (bus != nullptr) {
-      bus->publish(Log{LogLevel::Error, "logging", message, clock->now()});
-    } else {
-      std::cerr << "[error] logging: " << message << '\n';
+      try {
+        bus->publish(Log{level, std::string(name), std::string(message), clock->now()});
+      } catch (...) {
+      }
     }
   }
 
@@ -167,9 +253,12 @@ struct LogHub::Impl {
 
 Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& config,
                                                const Clock& clock, SignalBus* bus) {
-  auto impl = std::make_unique<Impl>();
+  auto impl = std::make_shared<Impl>();
   impl->clock = &clock;
   impl->bus = bus;
+  impl->echo_stderr = config.echo_stderr;
+  impl->default_level = config.default_level;
+  for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
 
   if (!config.dir.empty()) {
     std::error_code ec;
@@ -223,9 +312,13 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   return std::shared_ptr<LogHub>(new LogHub(std::move(impl)));
 }
 
-LogHub::LogHub(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+LogHub::LogHub(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 LogHub::~LogHub() {
+  // Hub loggers may still hold impl_: stop accepting writes and let the ones
+  // in progress finish before the back end goes away.
+  impl_->alive.store(false);
+  while (impl_->in_flight.load() != 0) std::this_thread::yield();
   {
     std::lock_guard lock(impl_->flusher_mutex);
     impl_->stopping = true;
@@ -253,17 +346,36 @@ void LogHub::flush() {
 }
 
 void LogHub::write(LogLevel level, std::string_view logger, std::string_view message) {
+  impl_->write(level, logger, message);
+}
+
+Logger LogHub::logger(std::string name) { return Logger(std::move(name), impl_); }
+
+void LogHub::set_level(std::string_view pattern, LogLevel level) {
+  std::unique_lock lock(impl_->rules_mutex);
+  impl_->put_rule(pattern, level);
+  impl_->epoch.fetch_add(1);
+}
+
+namespace detail {
+
+std::uint64_t hub_rule_epoch(const LogHub::Impl& hub) noexcept { return hub.epoch.load(); }
+
+ResolvedLevel hub_resolve_level(const LogHub::Impl& hub, std::string_view name) noexcept {
   try {
-    std::string payload;
-    payload.reserve(logger.size() + 2 + message.size());
-    payload.append(logger).append(": ").append(message);
-    // Raw string_view overload: the message is never a format string.
-    impl_->logger->log(to_spdlog(level), spdlog::string_view_t(payload.data(), payload.size()));
-    if (level >= LogLevel::Error) impl_->sync_flush();
-  } catch (const std::exception& e) {
-    impl_->report_spdlog_error(e.what());
+    std::shared_lock lock(hub.rules_mutex);
+    return {hub.resolve_locked(name), hub.epoch.load()};
   } catch (...) {
+    // Locking failed (system_error); fall back without caching a new epoch.
+    return {LogLevel::Error, 0};
   }
 }
+
+void hub_write(LogHub::Impl& hub, LogLevel level, std::string_view logger,
+               std::string_view message) noexcept {
+  hub.write(level, logger, message);
+}
+
+}  // namespace detail
 
 }  // namespace pychron
