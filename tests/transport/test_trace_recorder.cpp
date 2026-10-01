@@ -5,7 +5,13 @@
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
+#include <thread>
+#include <vector>
 
+#include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/log_hub.hpp"
+#include "pychron/core/logger.hpp"
+#include "pychron/core/signal_bus.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
 using namespace pychron;
@@ -104,4 +110,111 @@ TEST(TraceRecorder, ToFileUnwritablePathIsIoError) {
   auto rec = TraceRecorder::to_file(SimTransport::scripted({}, opts()), "/nonexistent/dir/trace.txt", clock);
   ASSERT_FALSE(rec);
   EXPECT_EQ(rec.error().kind, ErrorKind::Io);
+}
+
+namespace {
+
+struct WireCapture {
+  ManualClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  SignalBus::Subscription sub;
+  std::shared_ptr<LogHub> hub;
+
+  explicit WireCapture(LogLevel level = LogLevel::Trace) {
+    sub = bus.subscribe<Log>([this](const Log& e) { got.push_back(e); });
+    config::LoggingConfig cfg;
+    cfg.default_level = level;
+    auto h = LogHub::create(cfg, clock, &bus);
+    hub = *h;
+  }
+};
+
+}  // namespace
+
+TEST(TraceRecorder, MirrorsBytesToWireLogger) {
+  WireCapture cap;
+  auto sim = SimTransport::scripted({{to_bytes("PR1\r\n"), to_bytes("0,1E-8\r\n")}}, opts());
+  auto sink = std::make_shared<std::ostringstream>();
+  TraceRecorder rec(std::move(sim), sink, cap.clock, cap.hub->logger("rec.wire"));
+  ASSERT_TRUE(rec.open());
+  ASSERT_TRUE(rec.exchange(to_bytes("PR1\r\n"), ReadSpec::until("\r\n")));
+
+  ASSERT_EQ(cap.got.size(), 2u);
+  EXPECT_EQ(cap.got[0].logger, "rec.wire");
+  EXPECT_EQ(cap.got[0].level, LogLevel::Trace);
+  EXPECT_EQ(cap.got[0].message, "tx 5B 50 52 31 0D 0A |PR1..|");
+  EXPECT_EQ(cap.got[1].message, "rx 8B 30 2C 31 45 2D 38 0D 0A |0,1E-8..|");
+}
+
+TEST(TraceRecorder, WireErrorRecordsFollowTraceErrors) {
+  WireCapture cap;
+  auto sim = SimTransport::scripted({{to_bytes("PR2\r\n"), {}}}, opts());
+  auto sink = std::make_shared<std::ostringstream>();
+  TraceRecorder rec(std::move(sim), sink, cap.clock, cap.hub->logger("rec.wire"));
+  ASSERT_TRUE(rec.open());
+  EXPECT_FALSE(rec.exchange(to_bytes("PR2\r\n"), ReadSpec::until("\r\n")));
+
+  ASSERT_EQ(cap.got.size(), 2u);
+  EXPECT_EQ(cap.got[0].message, "tx 5B 50 52 32 0D 0A |PR2..|");
+  EXPECT_EQ(cap.got[1].message.rfind("err timeout", 0), 0u);
+}
+
+TEST(TraceRecorder, NoLoggerOutputIsByteIdentical) {
+  ManualClock clock;
+  auto run = [&](std::optional<Logger> wire) {
+    auto sim = SimTransport::scripted({{to_bytes("PR1\r\n"), to_bytes("0,1E-8\r\n")}}, opts());
+    auto sink = std::make_shared<std::ostringstream>();
+    TraceRecorder rec(std::move(sim), sink, clock, std::move(wire));
+    EXPECT_TRUE(rec.open());
+    EXPECT_TRUE(rec.exchange(to_bytes("PR1\r\n"), ReadSpec::until("\r\n")));
+    return sink->str();
+  };
+  WireCapture cap;
+  const std::string plain = run(std::nullopt);
+  EXPECT_EQ(plain, "# trace of transport 'rec'\n0 tx 5052310d0a\n0 rx 302c31452d380d0a\n");
+  EXPECT_EQ(run(cap.hub->logger("rec.wire")), plain);
+}
+
+TEST(TraceRecorder, WireDisabledBelowTraceLevel) {
+  WireCapture cap(LogLevel::Info);
+  auto sim = SimTransport::scripted({{to_bytes("a"), to_bytes("b")}}, opts());
+  auto sink = std::make_shared<std::ostringstream>();
+  TraceRecorder rec(std::move(sim), sink, cap.clock, cap.hub->logger("rec.wire"));
+  ASSERT_TRUE(rec.open());
+  ASSERT_TRUE(rec.exchange(to_bytes("a"), ReadSpec::fixed(1)));
+  EXPECT_TRUE(cap.got.empty());
+}
+
+TEST(TraceRecorder, WireOrderMatchesTraceOrder) {
+  WireCapture cap;
+  auto live = SimTransport::hooked([](const Bytes& tx) { return tx; }, opts());
+  auto sink = std::make_shared<std::ostringstream>();
+  std::mutex got_mutex;
+  std::vector<std::string> wire;
+  auto sub2 = cap.bus.subscribe<Log>([&](const Log& e) {
+    std::lock_guard l(got_mutex);
+    wire.push_back(e.message);
+  });
+  TraceRecorder rec(std::move(live), sink, cap.clock, cap.hub->logger("rec.wire"));
+  ASSERT_TRUE(rec.open());
+  auto work = [&](char c) {
+    for (int i = 0; i < 50; ++i) (void)rec.exchange(to_bytes(std::string(1, c) + "\n"), ReadSpec::until("\n"));
+  };
+  std::thread a(work, 'a'), b(work, 'b');
+  a.join();
+  b.join();
+
+  std::istringstream in(sink->str());
+  auto records = parse_trace(in);
+  ASSERT_TRUE(records);
+  ASSERT_EQ(records->size(), 200u);
+  ASSERT_EQ(wire.size(), 200u);
+  for (std::size_t i = 0; i < wire.size(); ++i) {
+    const auto& r = (*records)[i];
+    const char* dir = r.dir == TraceRecord::Dir::Tx ? "tx" : "rx";
+    EXPECT_EQ(wire[i].rfind(dir, 0), 0u) << i;
+    const char ch = static_cast<char>(r.data[0]);
+    EXPECT_NE(wire[i].find(std::string("|") + ch + ".|"), std::string::npos) << i;
+  }
 }

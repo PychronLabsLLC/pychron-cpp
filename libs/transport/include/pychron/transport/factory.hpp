@@ -4,6 +4,7 @@
 #include <string>
 
 #include "pychron/core/config/system_config.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -13,6 +14,7 @@ struct TransportContext {
   const Clock* clock = nullptr;    // health timestamps and trace times; SteadyClock if null
   SignalBus* bus = nullptr;        // TransportHealth events
   SimTransport::Hook sim_hook;     // reply source for kind = "sim"; silent wire if empty
+  std::shared_ptr<LogHub> log_hub;  // when set, traced transports also log bytes to "<name>.wire"
   std::string trace_dir = ".";     // `<trace_dir>/<name>.trace` when config.trace is set
 };
 

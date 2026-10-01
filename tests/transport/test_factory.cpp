@@ -3,7 +3,10 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <vector>
 
+#include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/signal_bus.hpp"
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
 #include "pychron/transport/trace.hpp"
@@ -96,4 +99,34 @@ TEST(TransportFactory, TraceFlagWrapsInRecorder) {
   ASSERT_TRUE(records);
   EXPECT_EQ(records->size(), 2u);
   std::filesystem::remove(path);
+}
+
+TEST(TransportFactory, TracedTransportMirrorsToWireLogger) {
+  ManualClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  config::LoggingConfig lc;
+  lc.default_level = LogLevel::Trace;
+  auto hub = LogHub::create(lc, clock, &bus);
+  ASSERT_TRUE(hub);
+
+  const auto dir = std::filesystem::temp_directory_path() / "pychron_factory_wire_test";
+  std::filesystem::create_directories(dir);
+  TransportContext ctx;
+  ctx.clock = &clock;
+  ctx.log_hub = *hub;
+  ctx.trace_dir = dir.string();
+  ctx.sim_hook = [](const Bytes&) { return to_bytes("ok\n"); };
+  auto c = cfg("wired", config::TransportKind::Sim, config::SimParams{});
+  c.trace = true;
+  auto t = make_transport(c, ctx);
+  ASSERT_TRUE(t) << to_string(t.error());
+  ASSERT_TRUE((*t)->open());
+  ASSERT_TRUE((*t)->exchange(to_bytes("q\n"), ReadSpec::until("\n")));
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].logger, "wired.wire");
+  EXPECT_EQ(got[0].message, "tx 2B 71 0A |q.|");
+  t->reset();
+  std::filesystem::remove_all(dir);
 }

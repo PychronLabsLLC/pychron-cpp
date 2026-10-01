@@ -4,18 +4,46 @@
 
 namespace pychron {
 
+namespace {
+
+// "5B 50 52 31 0D 0A |PR1..|": byte count, uppercase hex, printable ASCII.
+std::string wire_text(const Bytes& data) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out = std::to_string(data.size()) + "B";
+  for (const auto b : data) {
+    const auto v = static_cast<unsigned>(b);
+    out += ' ';
+    out += kHex[v >> 4];
+    out += kHex[v & 0xF];
+  }
+  out += " |";
+  for (const auto b : data) {
+    const auto v = static_cast<unsigned>(b);
+    out += (v >= 0x20 && v < 0x7F) ? static_cast<char>(v) : '.';
+  }
+  out += '|';
+  return out;
+}
+
+}  // namespace
+
 TraceRecorder::TraceRecorder(std::unique_ptr<Transport> inner, std::shared_ptr<std::ostream> sink,
-                             const Clock& clock)
-    : inner_(std::move(inner)), sink_(std::move(sink)), clock_(&clock), start_(clock.now()) {
+                             const Clock& clock, std::optional<Logger> wire_log)
+    : inner_(std::move(inner)),
+      sink_(std::move(sink)),
+      clock_(&clock),
+      start_(clock.now()),
+      wire_log_(std::move(wire_log)) {
   *sink_ << "# trace of transport '" << inner_->name() << "'\n";
   sink_->flush();
 }
 
 Result<std::unique_ptr<TraceRecorder>> TraceRecorder::to_file(std::unique_ptr<Transport> inner,
-                                                              const std::string& path, const Clock& clock) {
+                                                              const std::string& path, const Clock& clock,
+                                                              std::optional<Logger> wire_log) {
   auto file = std::make_shared<std::ofstream>(path, std::ios::out | std::ios::trunc);
   if (!*file) return fail(ErrorKind::Io, "cannot open trace file '" + path + "' for writing", inner->name());
-  return std::make_unique<TraceRecorder>(std::move(inner), std::move(file), clock);
+  return std::make_unique<TraceRecorder>(std::move(inner), std::move(file), clock, std::move(wire_log));
 }
 
 const std::string& TraceRecorder::name() const { return inner_->name(); }
@@ -74,6 +102,8 @@ void TraceRecorder::record(TraceRecord::Dir dir, const Bytes& data) {
   const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
   *sink_ << format_trace_record(TraceRecord{at, dir, data, {}}) << '\n';
   sink_->flush();
+  if (wire_log_ && wire_log_->enabled(LogLevel::Trace))
+    wire_log_->trace(std::string(dir == TraceRecord::Dir::Tx ? "tx " : "rx ") + wire_text(data));
 }
 
 void TraceRecorder::record_error(const Error& error) {
@@ -82,6 +112,8 @@ void TraceRecorder::record_error(const Error& error) {
   *sink_ << format_trace_record(TraceRecord{at, TraceRecord::Dir::Err, {}, std::string(to_string(error.kind)) + " " + error.what})
          << '\n';
   sink_->flush();
+  if (wire_log_ && wire_log_->enabled(LogLevel::Trace))
+    wire_log_->trace("err " + std::string(to_string(error.kind)) + " " + error.what);
 }
 
 }  // namespace pychron

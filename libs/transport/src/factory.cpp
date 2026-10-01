@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
@@ -64,7 +65,9 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
 
   if (config.trace) {
     const auto path = (std::filesystem::path(context.trace_dir) / (config.name + ".trace")).string();
-    auto recorder = TraceRecorder::to_file(std::move(transport), path, clock);
+    std::optional<Logger> wire;
+    if (context.log_hub) wire = context.log_hub->logger(config.name + ".wire");
+    auto recorder = TraceRecorder::to_file(std::move(transport), path, clock, std::move(wire));
     if (!recorder) return fail(recorder.error());
     return std::unique_ptr<Transport>(std::move(*recorder));
   }

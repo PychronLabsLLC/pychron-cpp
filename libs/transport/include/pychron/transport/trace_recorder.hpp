@@ -2,10 +2,12 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ostream>
 #include <string>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/logger.hpp"
 #include "pychron/transport/trace.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -14,16 +16,20 @@ namespace pychron {
 // Decorator: forwards every call to `inner` and appends tx/rx/err records
 // with timestamps to `sink`, in a format SimTransport::replay() reads.
 //
+// When `wire_log` is given, every record is also logged at Trace as
+// "tx 5B 50 52 31 0D 0A |PR1..|" (byte count, hex, printable ASCII).
+//
 // Each call is recorded inside the inner transport's serialization (see
 // Transport::transaction), so the file order is exactly the wire order.
 class TraceRecorder final : public Transport {
  public:
   TraceRecorder(std::unique_ptr<Transport> inner, std::shared_ptr<std::ostream> sink,
-                const Clock& clock);
+                const Clock& clock, std::optional<Logger> wire_log = std::nullopt);
 
   // Opens (truncates) `path` for writing; Io error if it cannot.
   static Result<std::unique_ptr<TraceRecorder>> to_file(std::unique_ptr<Transport> inner,
-                                                        const std::string& path, const Clock& clock);
+                                                        const std::string& path, const Clock& clock,
+                                                        std::optional<Logger> wire_log = std::nullopt);
 
   const std::string& name() const override;
   Result<void> open() override;
@@ -44,6 +50,7 @@ class TraceRecorder final : public Transport {
   std::shared_ptr<std::ostream> sink_;
   const Clock* clock_;
   TimePoint start_;
+  std::optional<Logger> wire_log_;
   std::mutex mutex_;
 };
 
