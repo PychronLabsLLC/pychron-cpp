@@ -5,6 +5,7 @@
 // CoreBridge::actuate; rejections flash the valve. Stages and pipettes are
 // coloured by NetworkGraph region (volumes sharing gas share a colour).
 
+#include <functional>
 #include <map>
 #include <string>
 
@@ -29,6 +30,13 @@ class CanvasView : public QGraphicsView {
   int connection_count() const noexcept { return connections_; }
   const std::vector<ConnectionItem*>& pipes() const noexcept { return pipes_; }
 
+  // Locks or unlocks a valve or switch through the bridge. Unlocking asks the
+  // confirmation callback first (default: a Yes/No dialog); declining, a
+  // manual valve or an unknown name returns false without touching the core.
+  // A core error flashes the valve with its reason.
+  bool request_lock(const std::string& name, bool locked);
+  void set_confirm_unlock(std::function<bool(const QString& name)> confirm) { confirm_unlock_ = std::move(confirm); }
+
   // Colour of an isolated volume.
   static QColor isolated_color();
 
@@ -46,6 +54,7 @@ class CanvasView : public QGraphicsView {
   void on_finished(const QString& name, const Result<void>& result);
 
   CoreBridge& bridge_;
+  std::function<bool(const QString&)> confirm_unlock_;
   QGraphicsScene scene_;
   std::map<std::string, QPointF> positions_;
   std::map<std::string, ValveItem*> valves_;

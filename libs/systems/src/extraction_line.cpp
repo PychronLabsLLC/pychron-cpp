@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+
+#include <toml++/toml.hpp>
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/capabilities.hpp"
@@ -58,6 +62,9 @@ Result<std::unique_ptr<ExtractionLine>> ExtractionLine::load(const std::filesyst
     auto loaded = canvas::load_canvas(*canvas_file);
     if (!loaded) return fail(loaded.error());
     canvas = std::move(*loaded);
+  }
+  if (options.state_file.empty()) {
+    options.state_file = std::filesystem::path(system_file).replace_extension(".state.toml");
   }
   return create(std::move(*config), std::move(canvas), std::move(options));
 }
@@ -132,6 +139,7 @@ Result<void> ExtractionLine::build() {
       SwitchManagerOptions{clock_, &bus_});
   if (!switches) return fail(switches.error());
   switches_ = std::move(*switches);
+  load_locks();
 
   scheduler_ = std::make_unique<Scheduler>(*clock_, &bus_, options_.scheduler);
 
@@ -235,6 +243,9 @@ Result<double> ExtractionLine::read_gauge(std::string_view name) {
 Snapshot ExtractionLine::snapshot() const {
   Snapshot s;
   s.valves = switches_->states();
+  for (const auto& info : switches_->list()) {
+    if (info.locked) s.locked.insert(info.name);
+  }
   {
     std::lock_guard lock(pressures_mutex_);
     s.pressures = pressures_;
@@ -268,6 +279,80 @@ void ExtractionLine::read_all_gauges() {
 void ExtractionLine::record_pressure(const std::string& gauge, double value) {
   std::lock_guard lock(pressures_mutex_);
   pressures_[gauge] = value;
+}
+
+Result<void> ExtractionLine::set_locked(std::string_view name, bool locked) {
+  auto info = switches_->info(name);
+  if (!info) return fail(info.error());
+  if (info->kind == SwitchKind::ManualValve) {
+    return fail(ErrorKind::Config, "manual valve '" + std::string(name) + "' cannot be locked", std::string(name));
+  }
+  {
+    std::lock_guard lock(locks_mutex_);
+    if (info->locked == locked) return {};
+    auto changed = locked ? switches_->lock(name) : switches_->unlock(name);
+    if (!changed) return changed;
+    save_locks();
+  }
+  bus_.publish(SwitchLockChanged{std::string(name), locked, clock_->now()});
+  return {};
+}
+
+bool ExtractionLine::is_locked(std::string_view name) const {
+  auto info = switches_->info(name);
+  return info && info->locked;
+}
+
+// The state file is `locked = ["A", "B"]`. A missing file means no locks; a
+// corrupt one or a name that no longer exists is reported in warnings() and
+// skipped, never fatal.
+void ExtractionLine::load_locks() {
+  if (options_.state_file.empty() || !std::filesystem::exists(options_.state_file)) return;
+  const std::string file = options_.state_file.string();
+  auto parsed = toml::parse_file(file);
+  if (!parsed) {
+    warnings_.push_back({config::SourceLoc{file, 0, 0}, "locked",
+                         "cannot read lock state, all valves start unlocked: " + std::string(parsed.error().description())});
+    return;
+  }
+  const auto* names = parsed.table()["locked"].as_array();
+  if (names == nullptr) return;
+  for (const auto& node : *names) {
+    const auto name = node.value<std::string>();
+    if (!name) continue;
+    if (auto info = switches_->info(*name); !info || info->kind == SwitchKind::ManualValve) {
+      warnings_.push_back({config::SourceLoc{file, 0, 0}, "locked", "saved lock for unknown valve '" + *name + "' ignored"});
+      continue;
+    }
+    (void)switches_->lock(*name);
+  }
+}
+
+void ExtractionLine::save_locks() {
+  if (options_.state_file.empty()) return;
+  toml::array names;
+  for (const auto& info : switches_->list()) {
+    if (info.locked) names.push_back(info.name);
+  }
+  toml::table table;
+  table.insert("locked", std::move(names));
+
+  // Write beside the target and rename so a crash never leaves a torn file.
+  const auto tmp = std::filesystem::path(options_.state_file).concat(".tmp");
+  std::error_code ec;
+  if (!options_.state_file.parent_path().empty()) {
+    std::filesystem::create_directories(options_.state_file.parent_path(), ec);
+  }
+  {
+    std::ofstream out(tmp, std::ios::out | std::ios::trunc);
+    if (out) out << table << '\n';
+    if (!out) {
+      log(LogLevel::Warn, "cannot persist valve locks to " + options_.state_file.string());
+      return;
+    }
+  }
+  std::filesystem::rename(tmp, options_.state_file, ec);
+  if (ec) log(LogLevel::Warn, "cannot persist valve locks to " + options_.state_file.string() + ": " + ec.message());
 }
 
 void ExtractionLine::log(LogLevel level, std::string message) {

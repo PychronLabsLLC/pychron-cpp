@@ -59,6 +59,10 @@ struct ExtractionLineOptions {
   std::filesystem::path trace_dir = "traces";
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
+  // Where software locks persist (`locked = ["A", ...]` TOML). Empty: locks
+  // live in memory only. load() defaults it to `<system file stem>.state.toml`
+  // beside the config.
+  std::filesystem::path state_file;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
 };
 
@@ -88,6 +92,13 @@ class ExtractionLine {
   bool running() const;
 
   Result<void> actuate(std::string_view name, SwitchOp op, std::string_view actor = {});
+  // Software lock on a valve or switch (manual valves cannot be locked; Config
+  // error for those and unknown names). A change is persisted to
+  // Options::state_file, published as SwitchLockChanged, and a locked switch
+  // refuses every actor. Setting the current state is a no-op. A failed write
+  // leaves the lock in force and logs a warning.
+  Result<void> set_locked(std::string_view name, bool locked);
+  bool is_locked(std::string_view name) const;
   // One reading, in the gauge's configured units. Config error if unknown.
   Result<double> read_gauge(std::string_view name);
   // Recorded valve states and the latest pressure of every gauge read so far.
@@ -115,6 +126,8 @@ class ExtractionLine {
   void read_all_gauges();
   void record_pressure(const std::string& gauge, double value);
   void log(LogLevel level, std::string message);
+  void load_locks();
+  void save_locks();
 
   config::SystemConfig config_;
   std::optional<canvas::Canvas> canvas_;
@@ -139,6 +152,7 @@ class ExtractionLine {
 
   mutable std::mutex lifecycle_;  // start()/stop()
   bool running_ = false;
+  mutable std::mutex locks_mutex_;  // serializes set_locked() and the state file
   mutable std::mutex pressures_mutex_;
   std::map<std::string, double> pressures_;
 };

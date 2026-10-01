@@ -66,6 +66,11 @@ class CoreBridge : public QObject {
   // at once with a Cancelled result.
   void actuate(const QString& name, systems::SwitchOp op);
 
+  // Software-locks or unlocks a valve or switch. In-memory plus one small
+  // state-file write, so it runs on the calling (main) thread. State follows
+  // through lockChanged once the core confirms.
+  Result<void> set_locked(const QString& name, bool locked);
+
   // Blocks until every queued command has finished.
   void drain();
 
@@ -76,6 +81,7 @@ class CoreBridge : public QObject {
   void transportHealth(const pychron::TransportHealth& event);
   void logLine(const pychron::Log& event);
   void snapshot(const pychron::Snapshot& event);
+  void lockChanged(const QString& name, bool locked);
   void actuationFailed(const pychron::ActuationFailed& event);
   void actuationStarted(const QString& name);
   void actuationFinished(const QString& name, const pychron::Result<void>& result);
@@ -92,6 +98,7 @@ class CoreBridge : public QObject {
   void on_health(const TransportHealth& e);
   void on_log(const Log& e);
   void on_snapshot(const Snapshot& e);
+  void on_lock(const SwitchLockChanged& e);
   void on_failed(const ActuationFailed& e);
   void on_finished(const std::string& name, const Result<void>& result,
                    const std::vector<systems::SwitchInfo>& switches);
