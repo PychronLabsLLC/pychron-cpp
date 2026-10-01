@@ -4,6 +4,7 @@ add_executable(pychron_core_tests
   test_clock.cpp
   test_signal_bus.cpp
   test_logger.cpp
+  test_log_match.cpp
   test_scheduler.cpp
   test_config_loader.cpp
   test_config_validate.cpp

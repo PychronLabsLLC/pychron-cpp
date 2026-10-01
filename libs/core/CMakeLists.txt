@@ -5,6 +5,7 @@ add_library(pychron_core
   src/clock.cpp
   src/signal_bus.cpp
   src/logger.cpp
+  src/log_match.cpp
   src/scheduler.cpp
   src/config/diagnostic.cpp
   src/config/loader.cpp
