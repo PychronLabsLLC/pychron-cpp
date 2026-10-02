@@ -1,7 +1,8 @@
 # Ar-Ar reduction: core age pipeline with error propagation
 
 Date: 2026-10-02
-Status: Draft for implementation (owner decisions D1-D6 recorded, section 13)
+Status: Implemented (owner decisions D1-D6 recorded, section 13; implementation
+notes and amendments in section 14)
 Owner: Jake Ross
 Depends on: `2026-09-29-persistence-adr.md` (reduction values are revisioned
 payloads), `2026-10-01-dvc-schema-design.md` sections 4 and 6 (payload and
@@ -198,7 +199,10 @@ Note `n40` is not decay corrected; `a38 = n38`, `a36 = n36`.
 ### 3.6 Age (`argon_calculations.py:603-630`, `arar_age.py:658-689`)
 
 ```
-E16 lambda_K = flux.lambda_k_total if present and nonzero          dvc/dvc.py:2303-2305
+E16 lambda_K = flux.lambda_k_total if present and not exactly 0 +- 0  dvc/dvc.py:2303-2305
+               (Python truthiness, `if lk:`; a 0 +- e override is used)
+               ONE variable tagged `lambda_k`: legacy lambda_b + lambda_e,
+               sigma in quadrature (no consumer queries the separate tags)
                else lambda_b + lambda_e                            arar_constants.py:263-267
     lambda   = include_decay_error ? lambda_K : nom(lambda_K)      :622-623
     t_years  = ln(1 + J F) / lambda                                 :626
@@ -339,6 +343,11 @@ zero error); callers compare `nominal()` explicitly. The one legacy use,
 | `pow(x, c)` | `x0^c` | `c x0^(c-1) dx`; `c == 0` gives exact 1; `x0 == 0` and `c > 1` gives derivative 0 |
 | `pow(x, y)` | `x0^y0` | `y0 x0^(y0-1) dx + ln(x0) x0^y0 dy`, with the `uncertainties` special cases at `x0 == 0` |
 
+`pow(x, y)` with `x0 == 0` follows `pow(x, c)` for the base partial: 0 for
+exponent > 1, IEEE inf/NaN otherwise. Legacy gives NaN for a non-integer
+exponent > 1; this documented divergence is pinned by the golden case
+`pow_at_zero_non_integer`.
+
 Terms are merged by id in one linear pass. A merged derivative that is exactly
 `0.0` is dropped (so `x - x` is exact zero, as `uncertainties` reports
 `0+/-0`). Arithmetic follows IEEE: division by an exact-zero nominal yields
@@ -379,7 +388,11 @@ when inputs are built, never inside arithmetic.
   dominating; the API does not expose the container.
 - Build flags: no `-ffast-math` (it breaks parity and NaN checks).
   `-ffp-contract` differences between compilers (FMA on arm64) are absorbed by
-  the tolerances in 4.7.
+  the tolerances in 4.7. Parity between `compute_arar` and `reduce` (8.2)
+  additionally requires `-ffp-contract=off` for the reduction library and its
+  tests, so both paths round identically.
+- Measured: `reduce()` takes 3.1-4.8 us per call on an M5 Pro (dev and Release
+  builds), against the 50 us target.
 
 ### 4.7 Numerical agreement with `uncertainties`
 
@@ -559,7 +572,7 @@ struct DecayFactors { double df37 = 1.0, df39 = 1.0; };
 struct Flux {                                   // flux_value (dvc schema 6.1)
   Measured j;
   double position_jerr = 0.0;
-  std::optional<Measured> lambda_k_total;       // overrides lambda_b + lambda_e when nonzero
+  std::optional<Measured> lambda_k_total;       // overrides lambda_b + lambda_e unless exactly 0 +- 0 (`if lk:`)
 };
 UFloat make_j(const Flux& f);                   // tag "J" (dvc/meta_repo.py:701)
 ```
@@ -575,15 +588,15 @@ struct ReductionInput {
   std::optional<UFloat> j;                      // absent: no ages (arar_age.py:659-660)
   double position_jerr = 0.0;
   std::optional<Measured> lambda_k_total;       // from Flux
-  std::optional<Measured> fixed_k3739;          // per-analysis override (arar_age.py:68)
+  std::optional<Measured> fixed_k3739;          // per-analysis override (arar_age.py:68); exactly 0 +- 0 is unset (`not fixed_k3739`)
 };
 
 enum class Diagnostic : std::uint8_t {
   FUndefined,            // k39 == 0; legacy F = 1 +- 0
   YieldUndefined,        // n40 == 0; legacy 0 +- 0
   AgeUndefined,          // 1 + J F <= 0; legacy 0 +- 0
-  KCaUndefined,          // ca37 == 0; legacy kca = 0
-  KClUndefined,          // cl38 == 0; legacy kcl = 0
+  KCaUndefined,          // ca37 == 0 (kca, cak absent), or ca37 != 0 but kca == 0 (kca kept, cak absent)
+  KClUndefined,          // cl38 == 0 (kcl, clk absent), or cl38 != 0 but kcl == 0 (kcl kept, clk absent)
   CaClampedToZero,       // E11 clamp applied
   FixedK3739ZeroCa3937,  // E10 y = 1 fallback
   NonFiniteResult,       // a computed value is NaN/inf
@@ -675,7 +688,8 @@ Result<ArArResult> reduce(const ReductionInput& in);
 `reduce` fails (`Result` error) only for invalid input (non-finite or
 negative sigma anywhere, non-finite value, negative `abundance_sensitivity`,
 deadtime `tau < 0`, a zero `lambda_b + lambda_e`) or a legacy crash case (E7 guard, E12 or E13 zero
-divisor). Undefined derived quantities (F, yield, age, ratios) are absent with
+divisor). The `lambda_b + lambda_e == 0` check is exempted when a truthy
+`lambda_k_total` override is present. Undefined derived quantities (F, yield, age, ratios) are absent with
 a `Diagnostic`, never errors, so the rest of the result is still usable.
 
 ## 7. Numerical policy
@@ -688,6 +702,7 @@ a `Diagnostic`, never errors, so the rest of the result is still usable.
 | `n40 == 0` | `yield = 0 +- 0` (`:554-557`) | **Fix**: absent; `YieldUndefined`. |
 | `1 + J F <= 0` | `age = 0 +- 0` (`:629-630`) | **Fix**: ages absent; `AgeUndefined`. |
 | `ca37 == 0` / `cl38 == 0` | ratio 0 (`arar_age.py:541-545`, `:555-558`) | **Fix**: absent; `KCaUndefined` / `KClUndefined`. |
+| `kca == 0` with `ca37 != 0` (likewise `kcl == 0` with `cl38 != 0`) | `cak = 1/kca` raises, caught at `:540` | `kca` kept as computed, `cak` absent, `KCaUndefined` (`kcl` kept, `clk` absent, `KClUndefined`): the legacy single-try path. |
 | `kca == 0` for `cak` | `ZeroDivisionError` caught at `:540` | covered by the row above |
 | Fixed mode, `Ca3937 == 0` | `y = 1` (`:387-390`) | Replicate; `FixedK3739ZeroCa3937`. |
 | `1 - m r3836 == 0`, cosmogenic `c36 == 0` or `rc == rs` | uncaught `ZeroDivisionError` | Error. |
@@ -697,7 +712,11 @@ a `Diagnostic`, never errors, so the rest of the result is still usable.
 | Huge input errors (sigma >> value) | linear propagation | Replicate; no clipping. Variances are summed without scaling, so `(d sigma)^2` overflows above ~1e154 exactly as legacy; documented, not guarded. |
 | Missing interference key | 0 (`:407-408`, `:420-424`) | Replicate via `ProductionRatios` defaults. |
 | Missing or zero `Ca_K` / `Cl_K` | factor 1 (`arar_age.py:560-566`) | Replicate. |
-| NaN/inf produced by valid inputs | propagates | Flag `NonFiniteResult`; value kept. |
+| NaN/inf produced by valid inputs | propagates | Flag `NonFiniteResult`; values kept; non-finite F yields no ages and no error. |
+
+Numerical policy: build with `-ffp-contract=off` (no FMA contraction) so the
+live and `reduce` paths agree to rtol 1e-12; never `-ffast-math`. Deadtime
+correction applies to the intercept before E1 (E5).
 
 Golden cases that hit a **Fix** row carry the legacy sentinel under
 `legacy_sentinel` and the expected diagnostic, and the C++ test asserts the
@@ -725,7 +744,10 @@ Contract kept: same signature, same keys, same omissions, existing tests in
   `k3739 = 0`, `k3839 = 0`, `ca3837 = 0`, `allow_negative_ca_correction = true`,
   and `std::optional<LiveChlorine> chlorine` (`cl3638`, `lambda_cl36`,
   `decay_days`, `atm4038`, `cl_k_factor`). With `chlorine` set and `Ar38`
-  present, `compute_arar` also emits `cl36`, `kcl`, `clk` (E12, E19).
+  present, `compute_arar` also emits `cl36`, `kcl`, `clk` (E12, E19). `Ar38`
+  is required only when the chlorine correction is not a no-op
+  (`m = Cl3638 * lambda_Cl36 * decay_days != 0`), so instant ages survive a
+  missing `Ar38` otherwise.
 - With `k3739 != 0`, `ca37`/`ca36`/`ca39` need `Ar39` and are omitted without it.
 - Defaults stay as they are; `atm4036 = 298.56` (Lee et al. 2006) already
   equals the `Default` preset (D5). A lab's live constants come
@@ -738,7 +760,11 @@ ArArConstants to_live_constants(const ReductionConstants& c, const ProductionRat
 ```
 
   `kca_factor = 1 / Ca_K` (1 when missing or zero), `lambda_total = nom(lambda_K)`.
-- Parity test: for complete inputs with no blanks, `compute_arar(to_live_constants(...))`
+  `chlorine` is set only when `decay_days` is given. A per-analysis
+  `fixed_k3739` of 0 (including 0 +- e) is unset on the live double path:
+  callers apply truthiness before setting `ArArConstants::analysis_fixed_k3739`.
+- Parity test: for complete inputs with no blanks (cosmogenic and nonzero
+  abundance-sensitivity cases are excluded: the live path does not model them), `compute_arar(to_live_constants(...))`
   equals the nominal values of `reduce` (rtol 1e-12) for `age`, `kca`, `cak`,
   `radiogenic_yield`, `rad40`, `atm40`, `k39`, `ca37`, `ca39`, `ca36`, and,
   with chlorine, `kcl`, `clk`, `cl36`.
@@ -963,7 +989,7 @@ These replace the open questions of the first draft.
 
 ### 13.1 Follow-up action items
 
-- **A1** Amend `2026-10-01-dvc-schema-design.md` section 6.1 (reference data)
+- **A1** (not approved; carried, DVC schema spec untouched) Amend `2026-10-01-dvc-schema-design.md` section 6.1 (reference data)
   with an `arar_constants` row: key `<lab>` (abundance sensitivity possibly
   per `<ms>`), payload = the `ReductionConstants` fields with value/error
   columns, head semantics and `refpins` pinning as for `production`; add it
@@ -973,3 +999,37 @@ These replace the open questions of the first draft.
   them. Not in `libs/reduction`.
 - **A3** Detector config gains an optional per-detector `deadtime_s`
   (`tau`) that the reduction client copies into `MeasuredSignal`.
+
+## 14. Implementation notes / amendments
+
+Status: Implemented. Controller rulings made during implementation, already
+folded into the sections above:
+
+- **Follow-ups.** A1 carried (not approved; the DVC schema spec is unchanged).
+  A2 and A3 are carried: neither belongs to `libs/reduction`.
+- **lambda_K (E16, 5.3).** One variable tagged `lambda_k`; legacy
+  `lambda_b + lambda_e`, sigma in quadrature. The override applies unless it is
+  exactly `0 +- 0` (`if lk:`); a `0 +- e` override is used and then fails as a
+  zero lambda_K (Config error). The zero `lambda_b + lambda_e` check is exempt
+  when a truthy override is present.
+- **Fixed K37/K39.** Per-analysis `fixed_k3739` exactly `0 +- 0` is unset. The
+  live double path treats any 0 as unset; callers apply truthiness before
+  setting `ArArConstants::analysis_fixed_k3739`.
+- **K/Ca, K/Cl.** `kca == 0` with `ca37 != 0` keeps `kca`, omits `cak`,
+  `KCaUndefined`; likewise `kcl`/`clk`/`KClUndefined` (section 7).
+- **Types.** `ArArResult` lives in `arar_reduction.hpp` beside `FResult` and
+  `AgeSet`, not in `arar_types.hpp`. `age_error_components` is a
+  `std::map<std::string, double, std::less<>>`.
+- **Non-finite F.** No ages and no error; `NonFiniteResult` raised; values
+  kept. `missing_isotope` is the caller's responsibility: `reduce` takes five
+  slots and the test harness uses a NaN intercept.
+- **pow at zero (4.3).** Base partial follows `pow(x, c)`; golden case
+  `pow_at_zero_non_integer` pins the divergence from legacy NaN.
+- **Parity (8.2).** Live-vs-`reduce` parity excludes cosmogenic and
+  nonzero-abundance-sensitivity cases. `to_live_constants` sets `chlorine` only
+  when `decay_days` is given, and `Ar38` is required only when `m != 0`.
+- **Single `atm3836` variable (3.4)**, `-ffp-contract=off` (section 7),
+  `LegacyPreferences` pane parity (5.3), and deadtime on the intercept before
+  E1 are as stated in those sections.
+- **Performance (4.6).** Measured `reduce()` 3.1-4.8 us per call on an M5 Pro
+  (dev and Release builds); target 50 us.

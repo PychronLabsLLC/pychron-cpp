@@ -187,21 +187,32 @@ level and location stamped on every conditional.
 3. **RecordMetrics** (post-run): the same names over a finished
    `AnalysisRecord` (intercepts, baselines, icfactors, computed values).
 
-Computed Ar-Ar values (`libs/reduction/arar`): from corrected 36-40 intercepts
-and `ArArConstants` (decay constants, atmospheric 40/36, production ratios,
-J, 37/39 decay factors, K/Ca factor):
+Computed Ar-Ar values (`libs/reduction/arar`, on the shared kernels of the
+reduction spec 8.1): from corrected 36-40 intercepts and `ArArConstants`
+(decay constants, atmospheric 40/36, production ratios including `K3739`,
+`K3839`, `Ca3837` and `Cl3638`, J, 37/39 decay factors, K/Ca factor):
 
 ```
-ca37 = Ar37 * df37;   ca36 = (36/37)Ca * ca37;   ca39 = (39/37)Ca * ca37
-k39  = Ar39 * df39 - ca39;   atm36 = Ar36 - ca36;   atm40 = atm36 * (40/36)atm
+k39  = (Ar39 df39 - Ca3937 Ar37 df37) / (1 - K3739 Ca3937)     (K3739 = 0: Ar39 df39 - ca39)
+ca37 = Ar37 df37 - K3739 k39;   ca36 = (36/37)Ca * ca37;   ca39 = (39/37)Ca * ca37
+                      (clamp: ca37 = 0 when allow_negative_ca_correction is false and ca37 <= 0)
+atm36 = Ar36 - ca36;   atm40 = atm36 * (40/36)atm
 rad40 = Ar40 - atm40 - (40/39)K * k39;   rad40_percent = radiogenic_yield = 100 rad40 / Ar40
 F = rad40 / k39;   age = ln(1 + J F) / lambda   (Ma)
 kca = kca_factor * k39 / ca37;   cak = 1 / kca
 ```
 
+With the chlorine inputs set (`ArArConstants::chlorine`: `cl3638`,
+`lambda_cl36`, `decay_days`, `atm4038`, `cl_k_factor`) and `Ar38` present,
+the atmospheric step is the chlorine-aware E12 and `cl36`, `kcl`, `clk` are
+also computed (`kcl = k39 / cl38 * cl_k_factor`, `clk = 1 / kcl`). A per-analysis
+or constants fixed `K3739` selects the fixed mode of the reduction spec E10.
+`MetricCatalog::chlorine` tells static validation that these keys are
+available to static validation.
+
 `instant_age` is `age` from the latest raw points rather than intercepts.
-`kcl`/`clk`/`cl36` need chlorine corrections and are unavailable until the
-reduction spec provides them (static validation reports them).
+`kcl`/`clk`/`cl36` need the chlorine inputs above; when `MetricCatalog::chlorine`
+is false (the default) static validation reports them as unavailable.
 
 ## 6. Runtime
 
@@ -274,5 +285,5 @@ errors[]:    { name, message }
 
 ## 9. Out of scope
 
-Chlorine-dependent values (`kcl`, `clk`, `cl36`), blank subtraction in-run,
+Blank subtraction in-run,
 the executor itself (it consumes 6.2), UI editors.

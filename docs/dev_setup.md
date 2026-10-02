@@ -88,6 +88,24 @@ spectrometer under the `PychronLabs` organization in `QSettings`.
 Build trees are 0.5-0.7 GB each; keep a few GB free, more when running
 parallel agent waves (each agent worktree builds its own tree).
 
+### Regenerating the Ar-Ar reduction golden vectors
+
+The JSON under `tests/reduction/golden/` is produced by calling the read-only
+legacy pychron checkout (`~/Programming/pychron`), never edited by hand. To
+regenerate it, run the spec 9.1 command from the repo root (see the docstring
+of `tools/reduction_golden/generate.py`):
+
+```bash
+uv run --no-project --python 3.12 \
+  --with numpy==2.4.4 --with scipy==1.17.1 --with statsmodels==0.14.6 \
+  --with uncertainties==3.2.3 --with traits==7.1.0 --with pyyaml==6.0.3 \
+  python tools/reduction_golden/generate.py \
+    --legacy ~/Programming/pychron --out tests/reduction/golden
+```
+
+Add `--check` to regenerate into a temporary directory and exit 1 if any
+committed file differs (drift detector); it writes nothing to `--out`.
+
 ## 4. spec-router (agent workflow)
 
 `tools/spec_router` splits the design specs into work units and runs each
