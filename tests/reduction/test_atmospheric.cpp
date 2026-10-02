@@ -54,7 +54,6 @@ double singular_cl3638(const ReductionConstants& c, double dd) {
   const double r = c.atm4036.value / c.atm4038.value;
   double cl = 1.0 / (lcl * dd * r);
   for (int i = 0; i < 64; ++i) {
-    // Separate statements: no FMA contraction of 1 - x * r (legacy rounds x).
     const double x = ((cl * lcl) * dd) * r;
     if (1.0 - x == 0.0) return cl;
     cl = std::nextafter(cl, x < 1.0 ? std::numeric_limits<double>::infinity()
@@ -104,28 +103,35 @@ TEST(Atmospheric, Atm38FollowsRatioWithError) {
   const double r3836 = c.atm4036.value / c.atm4038.value;
   EXPECT_DOUBLE_EQ(r->atm38.nominal(), r3836 * r->atm36.nominal());
 
-  const auto i4036 = ids_tagged(r->atm38, "atm4036");
-  const auto i4038 = ids_tagged(r->atm38, "atm4038");
-  ASSERT_EQ(i4036.size(), 1u);
-  ASSERT_EQ(i4038.size(), 1u);
-  EXPECT_NE(i4036[0], i4038[0]);
-  // d atm38 / d atm4036 = atm36 / atm4038; d / d atm4038 = -atm36 atm4036 / atm4038^2.
+  // Legacy parity (argon_calculations.py:470-479): one variable tagged
+  // "atm3836", no atm4036 / atm4038 terms.
+  EXPECT_TRUE(ids_tagged(r->atm38, "atm4036").empty());
+  EXPECT_TRUE(ids_tagged(r->atm38, "atm4038").empty());
+  ASSERT_EQ(r->atm38.terms().size(), 2u);  // Ar36 and atm3836
+  const auto i3836 = ids_tagged(r->atm38, "atm3836");
+  ASSERT_EQ(i3836.size(), 1u);
+  // Its sigma is the quadrature of the atm4036 and atm4038 errors.
+  const double a = c.atm4036.value, b = c.atm4038.value;
+  const double sigma = std::sqrt(std::pow(c.atm4036.error / b, 2) +
+                                 std::pow(a * c.atm4038.error / (b * b), 2));
+  const UFloat::Term& t = r->atm38.terms()[r->atm38.terms()[0].id == i3836[0] ? 0 : 1];
+  ASSERT_EQ(t.id, i3836[0]);
+  expect_rel(t.sigma, sigma, 1e-14, "atm3836 sigma");
+  // d atm38 / d atm3836 = atm36.
   const double atm36 = r->atm36.nominal();
-  expect_rel(r->atm38.derivative(i4036[0]), atm36 / c.atm4038.value, 1e-14, "d/d atm4036");
-  expect_rel(r->atm38.derivative(i4038[0]),
-             -atm36 * c.atm4036.value / (c.atm4038.value * c.atm4038.value), 1e-14,
-             "d/d atm4038");
+  EXPECT_EQ(r->atm38.derivative(i3836[0]), atm36);
   EXPECT_EQ(r->atm38.derivative(a36.variable_id()), r3836);
   EXPECT_GT(r->atm38.std_dev(), r3836 * r->atm36.std_dev());
   // Without chlorine atm36 does not depend on the ratio (m == 0 exactly).
-  EXPECT_TRUE(ids_tagged(r->atm36, "atm4036").empty());
-  EXPECT_TRUE(ids_tagged(r->atm36, "atm4038").empty());
+  EXPECT_TRUE(ids_tagged(r->atm36, "atm3836").empty());
   // cl38 = a38 - atm38 - k38 - ca38 carries the ratio with opposite sign.
-  EXPECT_EQ(r->cl38.derivative(i4036[0]), -r->atm38.derivative(i4036[0]));
+  EXPECT_EQ(r->cl38.derivative(i3836[0]), -atm36);
 }
 
-// Spec Q1 / Review Focus 1: every call mints its own lambda_Cl36, atm4036 and
-// atm4038, so two analyses are independent in their constants (D6).
+// Spec Q1 / Review Focus 1: every call mints its own lambda_Cl36 and atm3836,
+// so two analyses are independent in their constants (D6). The E12 path has
+// no atm4036-tagged term, so it cannot share a variable with E14's
+// trapped_4036 (the other legacy atm4036 copy).
 TEST(Atmospheric, FreshConstantVariablesPerCall) {
   const UFloat a38 = UFloat::variable(0.5, 0.005, "Ar38");
   const UFloat a36 = UFloat::variable(0.1, 0.001, "Ar36");
@@ -137,7 +143,12 @@ TEST(Atmospheric, FreshConstantVariablesPerCall) {
   const auto r2 = atmospheric_components(a38, a36, k38, UFloat(0.0), UFloat(0.0), 365.0,
                                          cl3638, c);
   ASSERT_TRUE(r1 && r2);
-  for (const char* tag : {"atm4036", "atm4038", "lambda_Cl36"}) {
+  for (const UFloat* x : {&r1->atm36, &r1->atm38, &r1->cl36, &r1->cl38}) {
+    EXPECT_TRUE(ids_tagged(*x, "atm4036").empty());
+    EXPECT_TRUE(ids_tagged(*x, "atm4038").empty());
+    EXPECT_TRUE(ids_tagged(*x, "trapped_4036").empty());
+  }
+  for (const char* tag : {"atm3836", "lambda_Cl36"}) {
     const auto ids1 = ids_tagged(r1->atm36, tag);
     const auto ids2 = ids_tagged(r2->atm36, tag);
     ASSERT_EQ(ids1.size(), 1u) << tag;
@@ -200,11 +211,13 @@ TEST(Atmospheric, ChlorineBranch) {
   ASSERT_EQ(il.size(), 1u);
   expect_rel(r->atm36.derivative(il[0]), 250.0 * dd * (rr * atm36 - B) / D, 1e-12,
              "datm36/dlambda_Cl36");
-  // The ratio enters atm36 through the denominator: datm36/dr = m atm36 / D.
-  const auto i4036 = ids_tagged(r->atm36, "atm4036");
-  ASSERT_EQ(i4036.size(), 1u);
-  expect_rel(r->atm36.derivative(i4036[0]), m * atm36 / D / c.atm4038.value, 1e-12,
-             "datm36/datm4036");
+  // The ratio enters atm36 through the denominator: datm36/dr = m atm36 / D;
+  // atm38 = r atm36 adds atm36 directly.
+  const auto i3836 = ids_tagged(r->atm36, "atm3836");
+  ASSERT_EQ(i3836.size(), 1u);
+  expect_rel(r->atm36.derivative(i3836[0]), m * atm36 / D, 1e-12, "datm36/datm3836");
+  expect_rel(r->atm38.derivative(i3836[0]), atm36 + rr * m * atm36 / D, 1e-12,
+             "datm38/datm3836");
 }
 
 // Spec Q16: legacy ZeroDivisionError becomes an error Result.

@@ -97,8 +97,9 @@ InterferenceComponents interference_corrections(const UFloat& a39, const UFloat&
 // ---- 3.4 Atmospheric, chlorine, cosmogenic ------------------------------
 
 // E12. Mints fresh variables from `c` on every call (spec Q1, D6):
-// lambda_Cl36 (tag "lambda_Cl36") and r3836 = atm4036 / atm4038 (tags
-// "atm4036", "atm4038"). These are distinct from E14's trapped_4036.
+// lambda_Cl36 (tag "lambda_Cl36") and r3836 (tag "atm3836"), one variable
+// with the nominal and std of atm4036 / atm4038 as legacy re-wraps it. It is
+// distinct from E14's trapped_4036.
 //   m = Cl3638 lCl decay_days
 //   atm36 = (a36 - ca36 - m (a38 - k38 - ca38)) / (1 - m r3836)
 //   atm38 = r3836 atm36;  cl38 = a38 - atm38 - k38 - ca38;  cl36 = m cl38

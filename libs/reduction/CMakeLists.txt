@@ -14,3 +14,10 @@ target_compile_features(pychron_reduction PUBLIC cxx_std_20)
 target_link_libraries(pychron_reduction PUBLIC pychron::core)
 
 pychron_set_warnings(pychron_reduction)
+
+# Parity with Python's per-operation rounding (spec 4.7): never fuse a * b + c
+# into an FMA. MSVC's default /fp:precise does not contract across statements
+# and needs nothing here.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(pychron_reduction PRIVATE -ffp-contract=off)
+endif()

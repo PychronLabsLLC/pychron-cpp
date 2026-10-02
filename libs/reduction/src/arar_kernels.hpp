@@ -7,7 +7,8 @@
 // Result, no diagnostics; callers check domains first. Branches and zero tests
 // inside a kernel go through nominal(), which drops the uncertainty and is the
 // identity for double. Arithmetic is written in the legacy operand order so
-// the UFloat path reproduces `uncertainties` to rounding (spec 4.7).
+// the UFloat path reproduces `uncertainties` to rounding (spec 4.7); the
+// library builds with -ffp-contract=off so the double path never fuses a * b + c.
 #pragma once
 
 #include <array>
@@ -119,19 +120,14 @@ template <class T>
 Atmospheric<T> atmospheric(const T& a38, const T& a36, const T& k38, const T& ca38, const T& ca36,
                            double decay_days, const T& cl3638, const T& lambda_cl36,
                            const T& r3836) {
-  // Products are named before they are subtracted so that, for T = double,
-  // the compiler cannot contract a * b - c into an FMA (-ffp-contract=on
-  // contracts only within one expression); legacy Python rounds each step.
   Atmospheric<T> out;
   const T m = cl3638 * lambda_cl36 * decay_days;
-  const T m_r = m * r3836;
-  const T denom = 1.0 - m_r;
+  const T denom = 1.0 - m * r3836;
   if (nominal(denom) == 0.0) {
     out.singular = true;
     return out;
   }
-  const T m_b = m * (a38 - k38 - ca38);
-  out.atm36 = (a36 - ca36 - m_b) / denom;
+  out.atm36 = (a36 - ca36 - m * (a38 - k38 - ca38)) / denom;
   out.atm38 = r3836 * out.atm36;
   out.cl38 = a38 - out.atm38 - k38 - ca38;
   out.cl36 = out.cl38 * m;

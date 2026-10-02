@@ -160,7 +160,10 @@ E11 k38 = K3839 k39                                                       :420
 ```
 E12 (argon_calculations.py:468-487)
       lCl   = fresh variable (lambda_Cl36, per day)
-      r3836 = fresh atm4036 / fresh atm4038                  (arar_constants.py:225-226)
+      r3836 = fresh variable (atm3836): nominal atm4036/atm4038, std the
+              quadrature of their errors; legacy re-wraps the ratio of two
+              fresh reads as one ufloat(nom, std, tag="atm3836")
+              (arar_constants.py:225-226, argon_calculations.py:470-479)
       m     = Cl3638 * lCl * decay_days
       atm36 = (a36 - ca36 - m (a38 - k38 - ca38)) / (1 - m r3836)
       atm38 = r3836 atm36
@@ -469,7 +472,7 @@ struct CosmogenicRatios { Measured solar3836, cosmo3836; };
 struct ReductionConstants {
   Measured lambda_b, lambda_e;                  // 1/a
   Measured lambda_cl36, lambda_ar37, lambda_ar39;  // 1/day
-  Measured atm4036, atm4038;
+  Measured atm4036, atm4038;                    // E12 reads them as one atm3836 variable
   K3739Mode k3739_mode = K3739Mode::Normal;
   Measured fixed_k3739;
   double abundance_sensitivity = 0.0;
@@ -515,7 +518,7 @@ Golden cases always pass every constant explicitly and never rely on a preset.
 `derived_value` rows (dvc schema 4.3); bump it whenever a golden vector
 changes for a reason other than a bug fix in the test.
 
-Tags used for constants: `trapped_4036`, `atm4036`, `atm4038`,
+Tags used for constants: `trapped_4036`, `atm3836`,
 `lambda_Cl36`, `k3739`, `solar3836`, `cosmo3836`, `lambda_k` (legacy tags,
 `argon_calculations.py:470-479`, `:530-531`, `arar_constants.py:228-231`).
 
@@ -895,7 +898,7 @@ divergence).
 
 | # | Legacy behaviour | Decision |
 |---|---|---|
-| Q1 | Every `ArArConstants` property access mints a fresh `ufloat` (`arar_constants.py:228-231`): the `atm4036` inside `atm3836` (E12) is a different variable from `trapped_4036` (E14), and constants are independent between analyses. | **Replicate**: `reduce` mints one variable per legacy access site. Not shared across analyses by default (D6); phase 2 adds an explicit shared-constants mode. |
+| Q1 | Every `ArArConstants` property access mints a fresh `ufloat` (`arar_constants.py:228-231`): `atm3836` (E12, the ratio of two fresh reads re-wrapped as one variable tagged `atm3836`) is independent of `trapped_4036` (E14), and constants are independent between analyses. | **Replicate**: `reduce` mints one variable per legacy access site. Not shared across analyses by default (D6); phase 2 adds an explicit shared-constants mode. |
 | Q2 | Stored intercepts, baselines, blanks and IC factors are fresh variables per isotope, even when two isotopes share a detector or two analyses share a blank (`isotope.py:600`, `dvc/dvc_analysis.py:759`). | **Replicate** in `make_signal`. Sharing is available by building `IsotopeSignal` from shared `UFloat`s (owner requirement), covered by `correlation.json`. |
 | Q3 | Baseline error excluded unless the intercept row says `include_baseline_error` (`isotope.py:728-736`). | **Replicate**. |
 | Q4 | `age_err` excludes J error; J error only in `uage_w_j_err` (`arar_age.py:680-686`). | **Replicate** with explicit names (`age`, `age_w_j_err`, `age_w_position_err`). |

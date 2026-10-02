@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "arar_kernels.hpp"
 
@@ -27,6 +28,33 @@ Result<UFloat> mint(const Measured& m, std::string_view tag) {
                                        fmt_g(m.value) + " +- " + fmt_g(m.error));
   }
   return UFloat::variable(m.value, m.error, tag);
+}
+
+// atm4036 / atm4038 as `uncertainties` evaluates it for two independent
+// variables: nominal a / b, std sqrt((sa / b)^2 + (a sb / b^2)^2), with the
+// partials formed exactly as UFloat::operator/ forms them.
+// legacy:processing/arar_constants.py:225-226
+Result<Measured> atm3836(const ReductionConstants& c) {
+  for (const auto& [m, name] : {std::pair{&c.atm4036, "atm4036"}, std::pair{&c.atm4038, "atm4038"}}) {
+    if (!std::isfinite(m->value) || !std::isfinite(m->error) || m->error < 0.0) {
+      return fail(ErrorKind::Config, "reduction: constant " + std::string(name) +
+                                         " must have a finite value and a finite sigma >= 0, got " +
+                                         fmt_g(m->value) + " +- " + fmt_g(m->error));
+    }
+  }
+  const double a = c.atm4036.value;
+  const double b = c.atm4038.value;
+  const double da = 1.0 / b;
+  const double db = -a / (b * b);
+  const double ca = da * c.atm4036.error;
+  const double cb = db * c.atm4038.error;
+  const double variance = ca * ca + cb * cb;
+  const double sigma = std::sqrt(variance);
+  if (!std::isfinite(a / b) || !std::isfinite(sigma)) {
+    return fail(ErrorKind::Config, "reduction: atm4036 / atm4038 is not finite (atm4038 = " +
+                                       fmt_g(b) + ")");
+  }
+  return Measured{a / b, sigma};
 }
 
 }  // namespace
@@ -116,11 +144,11 @@ InterferenceComponents interference_corrections(const UFloat& a39, const UFloat&
 
 // ---- 3.4 Atmospheric, chlorine, cosmogenic ------------------------------
 
-// E12. Spec Q1: lambda_Cl36 and the atm4036 / atm4038 inside atm3836 are
-// fresh variables per call, as each legacy ArArConstants property read is
-// (arar_constants.py:225-231). Legacy then re-wraps atm3836 as one variable
-// tagged "atm3836" (argon_calculations.py:470-479); the spec keeps the two
-// constituent variables instead, which gives the same sigma to rounding.
+// E12. Spec Q1: lambda_Cl36 and atm3836 are fresh variables per call. Legacy
+// reads atm3836 as atm4036 / atm4038 (two fresh property reads,
+// arar_constants.py:225-231) and re-wraps it as ONE fresh variable tagged
+// "atm3836" with that ratio's nominal and std (argon_calculations.py:470-479);
+// so does this. It is distinct from E14's trapped_4036.
 // legacy:processing/argon_calculations.py:468-487
 Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UFloat& a36,
                                                      const UFloat& k38, const UFloat& ca38,
@@ -133,11 +161,9 @@ Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UF
   }
   const Result<UFloat> lcl = mint(c.lambda_cl36, "lambda_Cl36");
   if (!lcl) return fail(lcl.error());
-  const Result<UFloat> atm4036 = mint(c.atm4036, "atm4036");
-  if (!atm4036) return fail(atm4036.error());
-  const Result<UFloat> atm4038 = mint(c.atm4038, "atm4038");
-  if (!atm4038) return fail(atm4038.error());
-  const UFloat r3836 = *atm4036 / *atm4038;
+  const Result<Measured> ratio = atm3836(c);
+  if (!ratio) return fail(ratio.error());
+  const UFloat r3836 = UFloat::variable(ratio->value, ratio->error, "atm3836");
   const kernels::Atmospheric<UFloat> a =
       kernels::atmospheric(a38, a36, k38, ca38, ca36, decay_days, cl3638, *lcl, r3836);
   if (a.singular) {

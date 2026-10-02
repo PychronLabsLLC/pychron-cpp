@@ -9,5 +9,9 @@ if(PYCHRON_REDUCTION_TESTS)
     PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
     PYCHRON_REDUCTION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
   pychron_set_warnings(pychron_reduction_tests)
+  # Test helpers recompute legacy arithmetic; keep it unfused like the library.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(pychron_reduction_tests PRIVATE -ffp-contract=off)
+  endif()
   gtest_discover_tests(pychron_reduction_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()
