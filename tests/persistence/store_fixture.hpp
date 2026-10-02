@@ -14,14 +14,14 @@
 #include <string>
 #include <vector>
 
+#include "pychron/core/env.hpp"
 #include "pychron/persistence/store.hpp"
 #include "tiny/db.hpp"
 
 namespace pychron::persistence::testing {
 
 inline std::string pg_url() {
-  const char* url = std::getenv("PYCHRON_TEST_PG_URL");
-  return url ? url : "";
+  return env_var("PYCHRON_TEST_PG_URL").value_or("");
 }
 
 // "sqlite" always; "pg" when PYCHRON_TEST_PG_URL is set.

@@ -165,8 +165,8 @@ TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
 
 INSTANTIATE_TEST_SUITE_P(BothConfigs, SpectrometerSim,
                          ::testing::Values("spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"),
-                         [](const auto& info) {
-                           return std::string(info.param).find("legacy") != std::string::npos ? "Legacy"
+                         [](const auto& test_info) {
+                           return std::string(test_info.param).find("legacy") != std::string::npos ? "Legacy"
                                                                                                : "Integrated";
                          });
 

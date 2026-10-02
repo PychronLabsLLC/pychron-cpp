@@ -20,7 +20,7 @@ namespace pychron::spectrometer::testing {
 struct BeamAcquirer : IIntensityAcquirer {
   using Signal = std::function<double(const ChannelId&)>;
 
-  BeamAcquirer(std::vector<ChannelId> chans, const Clock& clock) : chans(std::move(chans)), clock(clock) {}
+  BeamAcquirer(std::vector<ChannelId> channel_ids, const Clock& clk) : chans(std::move(channel_ids)), clock(clk) {}
 
   std::vector<ChannelId> channels() const override { return chans; }
   bool integrates() const override { return true; }

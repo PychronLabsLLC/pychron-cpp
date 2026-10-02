@@ -6,6 +6,7 @@
 
 #include "config_fixtures.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/env.hpp"
 
 using namespace pychron;
 using namespace pychron::config;
@@ -280,12 +281,12 @@ TEST(Logging, ExpandsHomeInDir) {
   auto r = load_system_config_from_string(text, "f.toml");
   ASSERT_TRUE(r) << r.error().what;
 #ifdef _WIN32
-  const char* home = std::getenv("USERPROFILE");
+  const auto home = pychron::env_var("USERPROFILE");
 #else
-  const char* home = std::getenv("HOME");
+  const auto home = pychron::env_var("HOME");
 #endif
-  if (home != nullptr) {
-    EXPECT_EQ(r->logging.dir, std::filesystem::path(home) / "pychron-logs");
+  if (home && !home->empty()) {
+    EXPECT_EQ(r->logging.dir, std::filesystem::path(*home) / "pychron-logs");
   }
 }
 

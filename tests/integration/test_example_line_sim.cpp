@@ -6,7 +6,7 @@
 //
 // Example plumbing (canvas.toml):
 //   bone --A-- prep --B-- spec
-//               |  \
+//               |   |
 //              P1   C --+-- turbo --+-- M1 -- rough
 //                       |           |
 //                      IG1         PG1

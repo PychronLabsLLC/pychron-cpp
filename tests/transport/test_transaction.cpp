@@ -159,7 +159,9 @@ TEST(TransportTransaction, TraceRecorderForwardsAndKeepsWireOrder) {
   }
   expect_pairs_adjacent(pairs);
   for (std::size_t i = 0; i + 1 < wire.order.size(); ++i) {
-    if (wire.order[i][0] == 'a') EXPECT_EQ(wire.order[i + 1][0], 'b') << "plain traffic split a pair at " << i;
+    if (wire.order[i][0] == 'a') {
+      EXPECT_EQ(wire.order[i + 1][0], 'b') << "plain traffic split a pair at " << i;
+    }
   }
 
   // Trace file order is wire order.

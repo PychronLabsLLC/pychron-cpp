@@ -24,7 +24,7 @@ inline std::string fmt(double v) {
 }
 
 struct FakePositioner : IMassPositioner {
-  explicit FakePositioner(CallLog& log) : log(log) {}
+  explicit FakePositioner(CallLog& call_log) : log(call_log) {}
 
   Axis native_axis() const override { return axis; }
   Result<void> set(double v) override {
@@ -63,7 +63,7 @@ struct FakePositioner : IMassPositioner {
 };
 
 struct FakeControl : IDetectorControl {
-  explicit FakeControl(CallLog& log) : log(log) {}
+  explicit FakeControl(CallLog& call_log) : log(call_log) {}
 
   Caps caps() const override { return caps_; }
   Result<void> protect(const ChannelId& ch, bool on) override {
@@ -107,7 +107,7 @@ struct FakeControl : IDetectorControl {
 };
 
 struct FakeBlank : IBeamBlank {
-  explicit FakeBlank(CallLog& log) : log(log) {}
+  explicit FakeBlank(CallLog& call_log) : log(call_log) {}
   Result<void> blank(bool on) override {
     if (on ? fail_on : fail_off) {
       log.push_back(std::string(on ? "blank-fail" : "unblank-fail"));
@@ -156,7 +156,7 @@ struct FakeSource : IBeamSource {
 };
 
 struct FakeAcquirer : IIntensityAcquirer {
-  explicit FakeAcquirer(std::vector<ChannelId> chans) : chans(std::move(chans)) {}
+  explicit FakeAcquirer(std::vector<ChannelId> channel_ids) : chans(std::move(channel_ids)) {}
   std::vector<ChannelId> channels() const override { return chans; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration d) override {

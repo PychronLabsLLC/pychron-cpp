@@ -283,7 +283,9 @@ TYPED_TEST_P(SourceConformance, WritableParamsReadBackSetpoint) {
     ASSERT_TRUE(rb.has_value()) << to_string(s.id);
     EXPECT_TRUE(conformance::near(rb->setpoint, target, conformance::tolerance(this->harness)))
         << to_string(s.id) << " setpoint " << rb->setpoint << " after set " << target;
-    if (rb->actual) EXPECT_TRUE(std::isfinite(*rb->actual)) << to_string(s.id);
+    if (rb->actual) {
+      EXPECT_TRUE(std::isfinite(*rb->actual)) << to_string(s.id);
+    }
   }
 }
 
@@ -378,7 +380,9 @@ TYPED_TEST_P(DetectorControlConformance, SupportedOpsRoundTrip) {
     EXPECT_TRUE(dc.protect(ch, true).has_value());
     EXPECT_TRUE(dc.protect(ch, false).has_value());
   }
-  if (caps.has(DetectorCap::CddVoltage)) EXPECT_TRUE(dc.set_cdd_voltage(ch, 1450.0).has_value());
+  if (caps.has(DetectorCap::CddVoltage)) {
+    EXPECT_TRUE(dc.set_cdd_voltage(ch, 1450.0).has_value());
+  }
 }
 
 REGISTER_TYPED_TEST_SUITE_P(DetectorControlConformance, OpsOutsideCapsFailWithConfig,

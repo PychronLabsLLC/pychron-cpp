@@ -71,7 +71,7 @@ std::string format_version(FieldTableStore::WallTime when) {
   const long long d = doy - (153 * mp + 2) / 5 + 1;
   const long long m = mp < 10 ? mp + 3 : mp - 9;
   const long long y = yoe + era * 400 + (m <= 2 ? 1 : 0);
-  char buf[32];
+  char buf[128];  // room for six full-width long longs: gcc checks the worst case
   std::snprintf(buf, sizeof buf, "%04lld%02lld%02lldT%02lld%02lld%02lldZ", y, m, d, sod / 3600, (sod / 60) % 60,
                 sod % 60);
   return buf;

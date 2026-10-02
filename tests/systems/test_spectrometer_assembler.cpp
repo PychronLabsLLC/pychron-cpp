@@ -23,11 +23,11 @@ cfg::SpectrometerData load(const char* file) {
 
 // A device that plays only the positioner role.
 struct PositionerOnly : Device, FakePositioner {
-  explicit PositionerOnly(CallLog& log) : Device("magnet"), FakePositioner(log) {}
+  explicit PositionerOnly(CallLog& call_log) : Device("magnet"), FakePositioner(call_log) {}
 };
 
 struct AcquirerOnly : Device, FakeAcquirer {
-  explicit AcquirerOnly(std::vector<ChannelId> chans) : Device("acq"), FakeAcquirer(std::move(chans)) {}
+  explicit AcquirerOnly(std::vector<ChannelId> channel_ids) : Device("acq"), FakeAcquirer(std::move(channel_ids)) {}
 };
 
 struct Env {

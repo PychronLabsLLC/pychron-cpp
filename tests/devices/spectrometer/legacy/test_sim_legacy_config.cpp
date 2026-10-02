@@ -179,9 +179,15 @@ TEST(SimLegacyConfig, EveryDriverBuildsAndPlaysItsConfiguredRoles) {
     for (const auto& r : *node.as_table()->get_as<toml::array>("roles")) {
       const std::string role = *r.value<std::string>();
       Device* dev = rig.drivers.at(std::string(name.str())).get();
-      if (role == "positioner") EXPECT_NE(dynamic_cast<IMassPositioner*>(dev), nullptr) << name;
-      if (role == "acquirer") EXPECT_NE(dynamic_cast<IIntensityAcquirer*>(dev), nullptr) << name;
-      if (role == "source") EXPECT_NE(dynamic_cast<IBeamSource*>(dev), nullptr) << name;
+      if (role == "positioner") {
+        EXPECT_NE(dynamic_cast<IMassPositioner*>(dev), nullptr) << name;
+      }
+      if (role == "acquirer") {
+        EXPECT_NE(dynamic_cast<IIntensityAcquirer*>(dev), nullptr) << name;
+      }
+      if (role == "source") {
+        EXPECT_NE(dynamic_cast<IBeamSource*>(dev), nullptr) << name;
+      }
     }
   }
   EXPECT_EQ(rig.positioner().native_axis(), IMassPositioner::Axis::Dac);
