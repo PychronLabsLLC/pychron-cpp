@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -175,6 +177,52 @@ TEST_F(ReconnectTest, VoidResultSupported) {
   };
   EXPECT_TRUE(reconnector.run<void>(op, on_connect));
   EXPECT_EQ(calls, 2);
+  EXPECT_EQ(reconnector.reconnects(), 1u);
+}
+
+TEST_F(ReconnectTest, CallerInFlightDuringAnotherReconnectOnlyRetries) {
+  std::mutex m;
+  std::condition_variable cv;
+  bool b_started = false;
+  bool b_release = false;
+  int b_calls = 0;
+  std::function<Result<int>()> b_op = [&]() -> Result<int> {
+    int call = ++b_calls;
+    if (call == 1) {
+      std::unique_lock lock(m);
+      b_started = true;
+      cv.notify_all();
+      cv.wait(lock, [&] { return b_release; });
+      return fail(ErrorKind::Io, "late drop", "dev");
+    }
+    return fail(ErrorKind::Timeout, "retry result", "dev");
+  };
+
+  Result<int> b_result = 0;
+  std::thread b([&] { b_result = reconnector.run<int>(b_op, on_connect); });
+  {
+    std::unique_lock lock(m);
+    cv.wait(lock, [&] { return b_started; });
+  }
+
+  // B is mid-op (generation snapshot 0); A runs to completion and reconnects.
+  int a_calls = 0;
+  ASSERT_TRUE(reconnector.run<int>(failing(ErrorKind::Io, 1, &a_calls), on_connect));
+  ASSERT_EQ(transport.opens, 1);
+
+  {
+    std::lock_guard lock(m);
+    b_release = true;
+  }
+  cv.notify_all();
+  b.join();
+
+  EXPECT_EQ(b_calls, 2);
+  ASSERT_FALSE(b_result);
+  EXPECT_EQ(b_result.error().what, "retry result");
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(transport.closes, 1);
+  EXPECT_EQ(connects, 1);
   EXPECT_EQ(reconnector.reconnects(), 1u);
 }
 
