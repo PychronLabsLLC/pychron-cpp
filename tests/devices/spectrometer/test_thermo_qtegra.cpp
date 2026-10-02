@@ -142,6 +142,13 @@ TEST(Qtegra, EmptyOrDuplicateChannelsRejected) {
   expect_config(create_from(*sim, "channels = [\"\"]"));
 }
 
+TEST(Qtegra, ChannelNameTheCodecCannotEncodeRejected) {
+  auto sim = open_scripted({});
+  expect_config(create_from(*sim, "channels = [\"H1,AX\"]"));
+  expect_config(create_from(*sim, "channels = [\"H1\\r\"]"));
+  EXPECT_TRUE(sim->written().empty());
+}
+
 TEST(Qtegra, NegativeSettlePeriodsRejected) {
   auto sim = open_scripted({});
   expect_config(create_from(*sim, "settle_periods = -1.0"));
@@ -186,12 +193,43 @@ TEST(Qtegra, SetSendsSetMagnetDac) {
   expect_verified(*sim);
 }
 
-TEST(Qtegra, SetIgnoresReplyText) {
-  // As pychron: the SetMagnetDAC reply is read and discarded.
-  auto sim = open_scripted({step("SetMagnetDAC 2\r", "whatever\r\n")});
+// pychron ignores the replies to these five setters, so anything that is not
+// an explicit ERROR is accepted.
+TEST(Qtegra, SettersAcceptAnyNonErrorReply) {
+  auto sim = open_scripted({step("SetMagnetDAC 2\r", "2\r\n"), step("BlankBeam True\r", "True\r\n"),
+                            step("ProtectDetector CDD,On\r", "CDD\r\n"), step("SetDeflection H1,12.5\r", "12.5\r\n"),
+                            step("SetGain AX,1.002\r", "done\r\n")});
   QtegraSpectrometer q("argus", *sim, {});
   EXPECT_TRUE(q.set(2.0));
+  EXPECT_TRUE(q.blank(true));
+  EXPECT_TRUE(q.protect("CDD", true));
+  EXPECT_TRUE(q.set_deflection("H1", 12.5));
+  EXPECT_TRUE(q.set_gain("AX", 1.002));
   expect_verified(*sim);
+  EXPECT_EQ(q.health().state, DeviceState::Ok);
+}
+
+TEST(Qtegra, SettersTreatErrorReplyAsProtocol) {
+  auto sim = open_scripted({step("SetMagnetDAC 2\r", "ERROR: magnet\r\n"), step("BlankBeam True\r", "ERROR: bad\r\n"),
+                            step("ProtectDetector CDD,On\r", "ERROR: no CDD\r\n"),
+                            step("SetDeflection H1,12.5\r", "ERROR\r\n"), step("SetGain AX,1.002\r", "ERROR: bad\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  for (const auto& r : {q.set(2.0), q.blank(true), q.protect("CDD", true), q.set_deflection("H1", 12.5),
+                        q.set_gain("AX", 1.002)}) {
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+    EXPECT_EQ(r.error().device, "argus");
+  }
+  expect_verified(*sim);
+  EXPECT_EQ(q.reconnects(), 0U);
+}
+
+TEST(Qtegra, SetterTimeoutIsStillAnError) {
+  auto sim = open_scripted({SimStep{to_bytes("BlankBeam True\r"), to_bytes("OK\r\n"), 1s}});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto r = q.blank(true);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
 }
 
 TEST(Qtegra, SetOutsideLimitsIsConfigAndWritesNothing) {
@@ -199,8 +237,19 @@ TEST(Qtegra, SetOutsideLimitsIsConfigAndWritesNothing) {
   QtegraOptions options;
   options.limits = {1.0, 9.0};
   QtegraSpectrometer q("argus", *sim, options);
-  for (double v : {0.999, 9.001, std::numeric_limits<double>::quiet_NaN()}) expect_config(q.set(v));
+  const double inf = std::numeric_limits<double>::infinity();
+  for (double v : {0.999, 9.001, std::numeric_limits<double>::quiet_NaN(), inf, -inf}) expect_config(q.set(v));
   EXPECT_TRUE(sim->written().empty());
+}
+
+TEST(Qtegra, SetAtExactLimitsIsAccepted) {
+  auto sim = open_scripted({step("SetMagnetDAC 1\r", "OK\r\n"), step("SetMagnetDAC 9\r", "OK\r\n")});
+  QtegraOptions options;
+  options.limits = {1.0, 9.0};
+  QtegraSpectrometer q("argus", *sim, options);
+  EXPECT_TRUE(q.set(1.0));
+  EXPECT_TRUE(q.set(9.0));
+  expect_verified(*sim);
 }
 
 TEST(Qtegra, ReadParsesGetMagnetDac) {

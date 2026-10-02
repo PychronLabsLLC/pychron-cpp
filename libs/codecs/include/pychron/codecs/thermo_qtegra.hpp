@@ -92,7 +92,10 @@ inline constexpr std::array<std::string_view, 6> kDefaultDetectorOrder{"H2", "H1
 // ',' and control characters; otherwise Config. Numeric arguments must be
 // finite. Every encoder appends `term`.
 
-Result<Command> set_magnet_dac(double dac, Terminator term = kDefaultTerminator);
+// The name rule above, for checking configured names before first use.
+Result<void> validate_name(std::string_view name);
+
+Result<Command> set_magnet_dac(double dac,Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_dac(Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_moving(Terminator term = kDefaultTerminator);
 Result<Command> blank_beam(bool blank, Terminator term = kDefaultTerminator);
@@ -138,6 +141,10 @@ Result<Command> reset(Terminator term = kDefaultTerminator);
 // starting with "ERROR" is a Protocol error (GetData: containing "ERROR").
 
 Result<void> decode_ok(const Bytes& reply);
+// Acknowledgement of a command whose reply pychron ignores (SetMagnetDAC,
+// BlankBeam, ProtectDetector, SetDeflection, SetGain): any reply, including
+// an empty line, is success; only "ERROR..." is a Protocol error.
+Result<void> decode_ack(const Bytes& reply);
 Result<double> decode_number(const Bytes& reply);
 // pychron to_bool, case-insensitive: true/t/yes/y/1/ok/open -> true,
 // false/f/no/n/0/closed -> false; anything else is a Protocol error.

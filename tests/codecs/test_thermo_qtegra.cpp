@@ -305,3 +305,20 @@ TEST(QtegraCodec, ServerRepliesRoundTripThroughDecoders) {
   EXPECT_TRUE(*q::decode_bool(q::encode_bool(true)));
   expect_protocol(q::decode_number(q::encode_error("bad")));
 }
+
+TEST(QtegraCodec, DecodeAckAcceptsAnythingButError) {
+  for (std::string_view reply : {"OK\r\n", "ok\r", "5.001\r\n", "True\n", "\r\n", "", "  \r"}) {
+    EXPECT_TRUE(q::decode_ack(to_bytes(reply))) << reply;
+  }
+  expect_protocol(q::decode_ack(to_bytes("ERROR: bad\r\n")));
+  expect_protocol(q::decode_ack(to_bytes("  ERROR\r")));
+  expect_protocol(q::decode_ack(q::encode_error("detector not found")));
+}
+
+TEST(QtegraCodec, ValidateNameMatchesEncoderRule) {
+  EXPECT_TRUE(q::validate_name("H1"));
+  EXPECT_TRUE(q::validate_name("Trap Voltage Set"));
+  expect_config(q::validate_name(""));
+  expect_config(q::validate_name("H1,AX"));
+  expect_config(q::validate_name("H1\r"));
+}

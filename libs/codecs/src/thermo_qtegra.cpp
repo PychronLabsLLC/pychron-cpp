@@ -211,6 +211,8 @@ std::optional<std::string_view> canonical_name(std::string_view hardware) noexce
   return std::nullopt;
 }
 
+Result<void> validate_name(std::string_view name) { return check_name(name); }
+
 Result<Command> set_magnet_dac(double dac, Terminator t) { return with_number("SetMagnetDAC", dac, t); }
 Result<Command> get_magnet_dac(Terminator t) { return simple("GetMagnetDAC", t); }
 Result<Command> get_magnet_moving(Terminator t) { return simple("GetMagnetMoving", t); }
@@ -263,6 +265,12 @@ Result<void> decode_ok(const Bytes& reply) {
   auto b = body(reply);
   if (!b) return fail(b.error());
   if (lower(*b) != "ok") return protocol_error("expected OK", reply);
+  return {};
+}
+
+Result<void> decode_ack(const Bytes& reply) {
+  auto b = body(reply);
+  if (!b) return fail(b.error());
   return {};
 }
 

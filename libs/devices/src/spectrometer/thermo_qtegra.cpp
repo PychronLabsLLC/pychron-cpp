@@ -55,6 +55,11 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
   if (o.contains("channels")) {
     auto channels = legacy::parse_channels(args);
     if (!channels) return fail(std::move(channels).error());
+    for (const auto& channel : *channels) {
+      if (auto ok = q::validate_name(channel); !ok) {
+        return fail(ErrorKind::Config, "channels: \"" + channel + "\": " + ok.error().what);
+      }
+    }
     options.channels = std::move(*channels);
   }
   options.limits = {o["limit_min"].value_or(options.limits.min), o["limit_max"].value_or(options.limits.max)};
@@ -89,10 +94,10 @@ Result<Bytes> QtegraSpectrometer::exchange(Result<codec::Command> cmd) {
                                  [this] { return handshake(); });
 }
 
-Result<void> QtegraSpectrometer::command_ok(Result<codec::Command> cmd) {
+Result<void> QtegraSpectrometer::command_ack(Result<codec::Command> cmd) {
   auto reply = exchange(std::move(cmd));
   if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(q::decode_ok(*reply));
+  return observe(q::decode_ack(*reply));
 }
 
 Result<double> QtegraSpectrometer::query_number(Result<codec::Command> cmd) {
@@ -115,9 +120,7 @@ Result<void> QtegraSpectrometer::set(double value) {
     return observe(Result<void>(fail(ErrorKind::Config, "dac " + std::to_string(value) + " is outside limits " +
                                                             format_range(options_.limits))));
   }
-  auto reply = exchange(q::set_magnet_dac(value, options_.terminator));
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(Result<void>{});
+  return command_ack(q::set_magnet_dac(value, options_.terminator));
 }
 
 Result<double> QtegraSpectrometer::read() { return query_number(q::get_magnet_dac(options_.terminator)); }
@@ -130,18 +133,18 @@ Result<bool> QtegraSpectrometer::moving() {
 
 // --- IBeamBlank ----------------------------------------------------------------
 
-Result<void> QtegraSpectrometer::blank(bool on) { return command_ok(q::blank_beam(on, options_.terminator)); }
+Result<void> QtegraSpectrometer::blank(bool on) { return command_ack(q::blank_beam(on, options_.terminator)); }
 
 // --- IDetectorControl ----------------------------------------------------------
 
 Result<void> QtegraSpectrometer::protect(const ChannelId& channel, bool on) {
   if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ok(q::protect_detector(channel, on, options_.terminator));
+  return command_ack(q::protect_detector(channel, on, options_.terminator));
 }
 
 Result<void> QtegraSpectrometer::set_deflection(const ChannelId& channel, double value) {
   if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ok(q::set_deflection(channel, value, options_.terminator));
+  return command_ack(q::set_deflection(channel, value, options_.terminator));
 }
 
 Result<double> QtegraSpectrometer::read_deflection(const ChannelId& channel) {
@@ -151,7 +154,7 @@ Result<double> QtegraSpectrometer::read_deflection(const ChannelId& channel) {
 
 Result<void> QtegraSpectrometer::set_gain(const ChannelId& channel, double value) {
   if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ok(q::set_gain(channel, value, options_.terminator));
+  return command_ack(q::set_gain(channel, value, options_.terminator));
 }
 
 Result<double> QtegraSpectrometer::read_gain(const ChannelId& channel) {

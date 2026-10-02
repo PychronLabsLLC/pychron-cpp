@@ -55,7 +55,8 @@ class QtegraSpectrometer final : public Device,
 
   // IMassPositioner (magnet DAC volts).
   Axis native_axis() const override { return Axis::Dac; }
-  // The SetMagnetDAC reply is read and ignored, as pychron does.
+  // Setters here and in the blank / detector roles accept any reply that is
+  // not an explicit ERROR (pychron ignores these replies).
   Result<void> set(double value) override;
   Result<double> read() override;
   Result<bool> moving() override;
@@ -93,7 +94,8 @@ class QtegraSpectrometer final : public Device,
   Result<void> handshake();
   // One command through the Reconnector; the raw reply is the caller's to decode.
   Result<Bytes> exchange(Result<codec::Command> cmd);
-  Result<void> command_ok(Result<codec::Command> cmd);
+  // For the setters whose reply pychron ignores: any reply but ERROR is success.
+  Result<void> command_ack(Result<codec::Command> cmd);
   Result<double> query_number(Result<codec::Command> cmd);
   // Config error unless `channel` is one of `channels`.
   Result<void> check_channel(const ChannelId& channel) const;
