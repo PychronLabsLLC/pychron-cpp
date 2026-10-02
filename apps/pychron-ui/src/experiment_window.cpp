@@ -204,6 +204,13 @@ void ExperimentWindow::build_actions() {
     if (r.size() == 1) model_.toggle_end_after(r.front());
   });
 
+  add_row_action(tr("Edit Extraction Script"), {}, [this] { edit_row_script(scripting::ScriptKind::Extraction); });
+  add_row_action(tr("Edit Post-Measurement Script"), {},
+                 [this] { edit_row_script(scripting::ScriptKind::PostMeasurement); });
+
+  auto* scripts = menuBar()->addMenu(tr("S&cripts"));
+  add(scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+
   auto* run = menuBar()->addMenu(tr("&Executor"));
   add(run, tr("Start"), [this] { pane_->request_start(); }, QKeySequence(Qt::Key_F5));
   add(run, tr("Stop"), [this] { pane_->request_stop(); });
@@ -227,6 +234,31 @@ void ExperimentWindow::select_rows(const std::vector<std::size_t>& rows) {
 }
 
 void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_t>(row)}); }
+
+ScriptEditorWindow* ExperimentWindow::open_script_editor() {
+  if (script_editor_ == nullptr) {
+    script_editor_ = new ScriptEditorWindow(bridge_.lab(), nullptr, this);
+    script_editor_->setWindowFlag(Qt::Window);
+    // A new or saved script may fix (or break) rows that name it.
+    connect(script_editor_, &ScriptEditorWindow::scriptsChanged, this, [this] { model_.revalidate(); });
+  }
+  script_editor_->show();
+  script_editor_->raise();
+  script_editor_->activateWindow();
+  return script_editor_;
+}
+
+bool ExperimentWindow::edit_row_script(scripting::ScriptKind kind) {
+  const auto rows = selected_rows();
+  if (rows.size() != 1 || rows.front() >= model_.queue().runs.size()) return false;
+  const auto& run = model_.queue().runs[rows.front()];
+  std::string name;
+  if (kind == scripting::ScriptKind::Extraction) name = run.extraction.script;
+  else if (kind == scripting::ScriptKind::PostMeasurement) name = run.post_measurement.value_or("");
+  else if (kind == scripting::ScriptKind::PostEquilibration) name = run.post_equilibration.value_or("");
+  if (name.empty()) return false;
+  return open_script_editor()->open(kind, QString::fromStdString(name));
+}
 
 void ExperimentWindow::set_confirm(ExecutorPane::Confirm confirm) { pane_->set_confirm(std::move(confirm)); }
 
@@ -350,7 +382,7 @@ void ExperimentWindow::update_state() {
 }
 
 void ExperimentWindow::closeEvent(QCloseEvent* event) {
-  if (!resolve_unsaved()) {
+  if (!resolve_unsaved() || (script_editor_ != nullptr && script_editor_->isVisible() && !script_editor_->close())) {
     event->ignore();
     return;
   }

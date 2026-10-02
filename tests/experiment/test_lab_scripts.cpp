@@ -103,7 +103,7 @@ TEST_F(LabScriptsTest, ChecksAndEstimatesWithoutHardware) {
   }
   EXPECT_TRUE(c.report.ok());
   ASSERT_TRUE(c.estimate.has_value()) << c.error;
-  EXPECT_GE(c.estimate->total.count(), 5.0);
+  EXPECT_DOUBLE_EQ(std::chrono::duration<double>(c.estimate->total).count(), 5.0);
 
   const std::string bad = "def main():\n    close('NOPE')\n    frobnicate(3)\n";
   c = check_script(*host, lab_, ScriptKind::Extraction, "bad", bad);

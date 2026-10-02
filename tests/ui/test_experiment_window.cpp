@@ -191,6 +191,35 @@ class TestExperimentWindow : public QObject {
     window.reset();
   }
 
+  void rowsOpenTheirScriptsInTheEditor() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.script_editor() == nullptr);
+    QVERIFY(!window.edit_row_script(pychron::scripting::ScriptKind::Extraction));  // nothing selected
+    window.select_row(1);
+    const bool has_script = !window.model().queue().runs[1].extraction.script.empty();
+    QCOMPARE(window.edit_row_script(pychron::scripting::ScriptKind::Extraction), has_script);
+    if (has_script) {
+      QVERIFY(window.script_editor() != nullptr);
+      QCOMPARE(window.script_editor()->current_name(), QStringLiteral("extraction/sim_extract"));
+      QVERIFY(window.edit_row_script(pychron::scripting::ScriptKind::PostMeasurement));
+      QCOMPARE(window.script_editor()->current_name(), QStringLiteral("post_measurement/sim_pump"));
+      QCOMPARE(window.script_editor()->document_count(), 2);
+    }
+    // A new script the queue names makes its row valid.
+    auto run = window.model().queue().runs[1];
+    run.extraction.script = "brand_new";
+    QVERIFY(window.model().replace_run(1, run));
+    QVERIFY(window.model().row_has_error(1));
+    QString error;
+    QVERIFY2(window.open_script_editor()->new_script(pychron::scripting::ScriptKind::Extraction,
+                                                    QStringLiteral("brand_new"), &error),
+             qPrintable(error));
+    QVERIFY(!window.model().row_has_error(1));
+  }
+
   void mainWindowOffersTheExperimentWindow() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

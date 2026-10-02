@@ -110,7 +110,9 @@ run per hole), check the preview, then Add (Ctrl+Return); new runs start from
 the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
 Measurement tab beside it edits the selected row's plan and its exposed
 parameters (overridden values are bold with a ● badge; Advanced allows any
-value of the plan). With `--sim`,
+value of the plan). Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
+scripts with highlighting, completion, the static check and estimate as you
+type, and Ctrl+click on a gosub to open it. With `--sim`,
 `--sim-speed <x>` runs the whole app on simulated time x times faster than
 real time:
 

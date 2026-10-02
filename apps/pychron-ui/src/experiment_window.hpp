@@ -26,6 +26,7 @@
 #include "queue_table_model.hpp"
 #include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
+#include "script_editor_window.hpp"
 
 class QAction;
 class QLabel;
@@ -50,6 +51,12 @@ class ExperimentWindow : public QMainWindow {
   EvolutionsView* evolutions() const noexcept { return evolutions_; }
   RunFactoryPanel* factory() const noexcept { return factory_; }
   MeasurementPanel* measurement() const noexcept { return measurement_; }
+  // Null until first opened.
+  ScriptEditorWindow* script_editor() const noexcept { return script_editor_; }
+  ScriptEditorWindow* open_script_editor();
+  // Opens the selected row's script of `kind` (extraction or post-measurement);
+  // false without one selected row or script.
+  bool edit_row_script(scripting::ScriptKind kind);
 
   // Replaces the queue; refused (false, with `error`) while running or when
   // the file does not parse. Asks about unsaved edits first.
@@ -93,6 +100,7 @@ class ExperimentWindow : public QMainWindow {
   EvolutionsView* evolutions_;
   RunFactoryPanel* factory_;
   MeasurementPanel* measurement_;
+  ScriptEditorWindow* script_editor_ = nullptr;
   std::optional<std::filesystem::path> path_;
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;

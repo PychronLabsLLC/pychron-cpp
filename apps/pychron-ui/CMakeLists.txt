@@ -31,6 +31,9 @@ add_library(pychron_ui_lib STATIC
   src/experiment_window.cpp
   src/run_factory_panel.cpp
   src/measurement_panel.cpp
+  src/script_highlighter.cpp
+  src/code_editor.cpp
+  src/script_editor_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -53,6 +56,9 @@ add_library(pychron_ui_lib STATIC
   src/experiment_window.hpp
   src/run_factory_panel.hpp
   src/measurement_panel.hpp
+  src/script_highlighter.hpp
+  src/code_editor.hpp
+  src/script_editor_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 

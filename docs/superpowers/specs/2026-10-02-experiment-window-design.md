@@ -36,9 +36,10 @@ Version 1 (this spec):
   operations, executor pane, evolutions view, `ExperimentWindow`, app wiring.
 
 Added after v1: the run factory side panel (section 5.6), with frequency
-insert and per-type field enabling; the measurement panel (section 5.7).
+insert and per-type field enabling; the measurement panel (section 5.7); the
+script editor (section 5.9).
 
-Deferred to later versions (from spec 10.4): script editor, phase timeline and overlap lanes, fit overlay and
+Deferred to later versions (from spec 10.4): phase timeline and overlap lanes, fit overlay and
 intercept display in the evolutions, notifications, editing a queue while it
 runs.
 
@@ -314,6 +315,38 @@ Qt-free rules in `pychron/experiment/plan/parameters.hpp`.
 - Every edit replaces the row in place (the selection stays) and is
   revalidated; locked while a queue runs. Edits made elsewhere (the table, a
   queue edit) refresh the panel.
+
+### 5.9 Script editor
+
+A separate window (Scripts > Script Editor..., Ctrl+Shift+K, or Rows > Edit
+Extraction/Post-Measurement Script for the selected row) over the lab's
+`scripts/` directory. Qt-free rules in `pychron/experiment/lab/scripts.hpp`.
+
+- Left: the lab's scripts by kind, plus `lib/`; double-click opens. Script >
+  New creates `<kind>/<name>.py` (`:` for subdirectories) with a `main()`
+  skeleton (a hook skeleton for measurement hooks).
+- Centre: one tab per script, `*` while modified. Python highlighting with
+  the host's commands for that kind, the run-context globals, the allowed
+  builtins, keywords, strings (triple-quoted across lines), numbers,
+  comments and the `#! pychron:` header each distinct. Completion
+  (Ctrl+Space, or after two letters) from the same words. Return keeps the
+  indentation (one level more after a `:`).
+- Checking: 600 ms after the text stops changing (or F7), the host's static
+  check and, when it passes, its estimate, in `lab::editor_environment`: every
+  capability, the extraction line's valve names, the default run context,
+  the lab's gosub resolver. No hardware is touched. Diagnostics are drawn on
+  their line (wavy underline, a gutter dot, the message as tooltip) and
+  listed in line order below (click to go to the line); diagnostics from a
+  gosub's script are listed after, named. The status line gives the estimate
+  ("Estimate 0:00:12", "at least" with the reason when a loop makes it a
+  lower bound), the error count, or why the script was not checked (no
+  embedded Python).
+- Gosubs: Ctrl+click (or F2) on `gosub('name')` opens the script it runs:
+  `<kind>/<name>.py`, then `lib/<name>.py`, as the host resolves it.
+- Saving writes through a temporary file and rename. Creating or saving a
+  script revalidates the queue (a row naming a new script becomes valid).
+  Closing a tab, the editor or the experiment window with unsaved scripts
+  asks Save / Discard / Cancel.
 
 ### 5.8 App wiring
 
