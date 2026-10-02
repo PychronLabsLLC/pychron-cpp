@@ -127,7 +127,26 @@ The router refuses to run unless the repo is on `main` (merges land on HEAD).
 A unit stopped by an account usage limit keeps its worktree; re-run the wave
 to resume it.
 
-## 5. Checklist
+## 5. Run the example experiment
+
+`configs/examples` doubles as an example lab: `plans/`, `scripts/`,
+`conditionals/` and a three-run `experiment.toml` for the simulated line and
+spectrometer.
+
+```bash
+cd configs/examples
+../../build/dev/apps/elctl/elctl -c extraction_line.toml exp validate experiment.toml \
+    --spectrometer spectrometer.sim-integrated.toml
+../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run experiment.toml \
+    --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
+```
+
+`--sim-speed` runs simulated time faster than real time. Records, the spool
+and `executor_state.json` go to `./data` (ignored by git); `--resume` continues
+after the last started run. Ctrl-C stops after the current run, a second
+Ctrl-C cancels it, a third aborts.
+
+## 6. Checklist
 
 - `ctest --preset dev` passes.
 - `spec-router status` lists the merged units and the next wave.

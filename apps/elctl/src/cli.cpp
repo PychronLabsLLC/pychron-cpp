@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "duration.hpp"
+#include "exp.hpp"
 #include "line.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/capabilities.hpp"
@@ -46,6 +47,13 @@ constexpr const char* kUsageText =
     "  conditionals-check <file> [--spectrometer <spectrometer.toml>]\n"
     "                              parse conditionals, print their canonical form, and check\n"
     "                              names against the config's gauges and the spectrometer\n"
+    "\n"
+    "Experiments:\n"
+    "  exp validate <experiment.toml> [--lab <dir>] [--spectrometer <file>]\n"
+    "                              check a queue against the lab's plans, scripts and conditionals\n"
+    "  exp run <experiment.toml> [--lab <dir>] [--data <dir>] [--spectrometer <file>]\n"
+    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
+    "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
@@ -134,6 +142,7 @@ class Session {
     if (cmd == "validate") return validate(args);
     if (cmd == "canvas-check") return canvas_check(args);
     if (cmd == "conditionals-check") return conditionals_check(args);
+    if (cmd == "exp") return exp_command(args, ExpGlobals{g_.config, g_.sim}, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();
