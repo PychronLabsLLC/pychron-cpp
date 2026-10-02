@@ -20,6 +20,8 @@ add_library(pychron_ui_lib STATIC
   src/strip_chart_model.cpp
   src/intensities_model.cpp
   src/spectrometer_bridge.cpp
+  src/strip_chart_view.cpp
+  src/spectrometer_window.cpp
   src/core_bridge.hpp
   src/canvas_items.hpp
   src/canvas_view.hpp
@@ -32,6 +34,8 @@ add_library(pychron_ui_lib STATIC
   src/strip_chart_model.hpp
   src/intensities_model.hpp
   src/spectrometer_bridge.hpp
+  src/strip_chart_view.hpp
+  src/spectrometer_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 

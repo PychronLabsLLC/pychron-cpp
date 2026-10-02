@@ -146,6 +146,37 @@ class TestSpectrometerBridge : public QObject {
     QVERIFY(!statuses.back().running);
   }
 
+  void startScanSeedsMagnetPosition() {
+    int reads = 0;
+    connect(bridge_.get(), &SpectrometerBridge::magnetRead, this, [&](double native, std::optional<double> mass) {
+      ++reads;
+      // The mirror is updated before the signal.
+      QCOMPARE(bridge_->state().magnet_native, std::optional<double>(native));
+      QCOMPARE(bridge_->state().mass_on_reference, mass);
+    });
+    QVERIFY(!bridge_->state().magnet_native.has_value());
+
+    bridge_->position("Ar40", "H1");
+    bridge_->drain();
+    const auto native = sim_->spec->magnet_native();
+    QVERIFY(native.has_value());
+
+    bridge_->start_scan(0.1);
+    QTRY_COMPARE_WITH_TIMEOUT(count("start"), 1, kWaitMs);
+    QVERIFY(last("start")->result.has_value());
+    QCOMPARE(reads, 1);
+    QCOMPARE(bridge_->state().magnet_native, std::optional<double>(*native));
+    QVERIFY(bridge_->state().mass_on_reference.has_value());
+    QVERIFY(std::abs(*bridge_->state().mass_on_reference - 39.962) < 0.05);
+
+    // What Ar39 on AX puts on the reference detector, from the table alone.
+    const auto on_reference = bridge_->mass_on_reference_for("Ar39", "AX");
+    QVERIFY(on_reference.has_value());
+    QVERIFY(std::abs(*on_reference - *bridge_->mass_of("Ar39")) > 0.5);
+    QCOMPARE(bridge_->mass_on_reference_for("Ar39", "H1"), bridge_->mass_of("Ar39"));
+    QVERIFY(!bridge_->mass_on_reference_for("Xx99", "AX").has_value());
+  }
+
   void staleScanStatusIsIgnored() {
     int emitted = 0;
     connect(bridge_.get(), &SpectrometerBridge::scanStatus, this, [&](const ScanStatus&) { ++emitted; });

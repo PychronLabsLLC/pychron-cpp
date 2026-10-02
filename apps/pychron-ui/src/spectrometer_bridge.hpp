@@ -43,7 +43,7 @@ class SpectrometerBridge : public QObject {
  public:
   // Main-thread mirror of what the core has told the UI.
   struct State {
-    std::optional<double> magnet_native;      // unknown until the first move
+    std::optional<double> magnet_native;      // unknown until start_scan's read or the first move
     std::optional<double> mass_on_reference;  // amu
     std::map<std::string, std::string> isotopes;  // detector -> isotope
     spectrometer::ScanStatus scan;
@@ -67,11 +67,18 @@ class SpectrometerBridge : public QObject {
   // table order. Empty for a detector the table does not know.
   QStringList isotopes_for(const QString& detector) const;
   std::optional<double> mass_of(const QString& isotope) const;  // amu; nullopt when unknown
+  // Mass (amu) the reference detector sees with `isotope` centred on
+  // `detector` (empty: the reference), from the field table alone: the
+  // deflection and HV corrections are left out, since applying them reads
+  // hardware. nullopt when the table cannot say.
+  std::optional<double> mass_on_reference_for(const QString& isotope, const QString& detector) const;
   QString reference_detector() const;
   double default_integration_s() const;  // config integration_time_s
 
   // Non-blocking; each reports once through commandFinished as "start",
-  // "stop", "integration" or "position".
+  // "stop", "integration" or "position". start_scan also reads the magnet
+  // position to seed State (announced through magnetRead); a failed read
+  // leaves it unset and does not fail the start.
   void start_scan(double integration_s);
   void stop_scan();
   void set_integration(double seconds);
@@ -85,6 +92,7 @@ class SpectrometerBridge : public QObject {
  signals:
   void readings(const std::vector<pychron::spectrometer::IntensityReading>& batch);
   void magnetMoved(const pychron::spectrometer::MagnetMoved& event);
+  void magnetRead(double native, std::optional<double> mass);  // mass on the reference detector
   void detectorChanged(const pychron::spectrometer::DetectorState& event);
   void scanStatus(const pychron::spectrometer::ScanStatus& status);
   void commandFinished(const QString& what, const pychron::Result<void>& result);
@@ -100,6 +108,7 @@ class SpectrometerBridge : public QObject {
 
   void flush_readings();
   void on_magnet(const spectrometer::MagnetMoved& e);
+  void on_magnet_read(double native, std::optional<double> mass);
   void on_detector(const spectrometer::DetectorState& e);
   void on_scan(const spectrometer::ScanStatus& e);
 

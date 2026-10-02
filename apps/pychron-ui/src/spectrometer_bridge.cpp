@@ -131,6 +131,24 @@ std::optional<double> SpectrometerBridge::mass_of(const QString& isotope) const 
   return *mass;
 }
 
+std::optional<double> SpectrometerBridge::mass_on_reference_for(const QString& isotope, const QString& detector) const {
+  const auto mass = mass_of(isotope);
+  const std::string det = detector.toStdString();
+  const std::string& reference = spec_.reference_detector();
+  if (!mass || det.empty() || det == reference) {
+    return mass;
+  }
+  auto value = table_.value_for(*mass, det);
+  if (!value) {
+    return std::nullopt;
+  }
+  auto on_reference = table_.mass_for(*value, reference);
+  if (!on_reference) {
+    return std::nullopt;
+  }
+  return *on_reference;
+}
+
 QString SpectrometerBridge::reference_detector() const { return QString::fromStdString(spec_.reference_detector()); }
 
 double SpectrometerBridge::default_integration_s() const { return spec_.config().system.integration_time_s; }
@@ -157,7 +175,26 @@ void SpectrometerBridge::run(const char* what, Command command) {
 }
 
 void SpectrometerBridge::start_scan(double integration_s) {
-  run("start", [scan = &scan_, integration = to_duration(integration_s)] { return scan->start(integration); });
+  QPointer<SpectrometerBridge> self(this);
+  run("start", [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)] {
+    // Posted before the command's own result, so the state is seeded by the
+    // time "start" is reported.
+    if (auto native = spec->magnet_native()) {
+      std::optional<double> mass;
+      if (auto m = spec->mass_at(*native, spec->reference_detector())) {
+        mass = *m;
+      }
+      QMetaObject::invokeMethod(
+          self.data(),
+          [self, native = *native, mass] {
+            if (self) {
+              self->on_magnet_read(native, mass);
+            }
+          },
+          Qt::QueuedConnection);
+    }
+    return scan->start(integration);
+  });
 }
 
 void SpectrometerBridge::stop_scan() {
@@ -206,6 +243,12 @@ void SpectrometerBridge::on_magnet(const MagnetMoved& e) {
   state_.magnet_native = e.to;
   state_.mass_on_reference = e.mass_on_reference;
   emit magnetMoved(e);
+}
+
+void SpectrometerBridge::on_magnet_read(double native, std::optional<double> mass) {
+  state_.magnet_native = native;
+  state_.mass_on_reference = mass;
+  emit magnetRead(native, mass);
 }
 
 void SpectrometerBridge::on_detector(const DetectorState& e) {
