@@ -7,7 +7,9 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <optional>
+#include <string>
 
 #include <QApplication>
 #include <QMessageBox>
@@ -56,6 +58,19 @@ int main(int argc, char** argv) {
     // start-up Snapshot paints the canvas before the first scan.
     pychron::ui::MainWindow window(**line);
     window.resize(1200, 850);
+
+    // Runtime level changes go to the line's LogHub; without one (creation
+    // failed) the "Set logger level..." action stays hidden.
+    if (const std::shared_ptr<pychron::LogHub> hub = (*line)->log_hub()) {
+      window.log_dock()->set_level_callback(
+          [weak = std::weak_ptr<pychron::LogHub>(hub)](std::string pattern, pychron::LogLevel level) {
+            if (auto h = weak.lock()) h->set_level(pattern, level);
+          });
+      hub->flush();  // records from load() are on disk before history is read
+    }
+    if (const auto& dir = (*line)->config().logging.dir; !dir.empty()) {
+      window.log_dock()->load_history(dir / "pychron.log");
+    }
     window.show();
     if (auto started = (*line)->start(); !started) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] start failed: ") +

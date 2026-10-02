@@ -1,7 +1,8 @@
 #pragma once
 
 // LogModel: bounded ring of log records (columns Time, Level, Logger,
-// Message) for the log view. Qt::UserRole on any cell yields the level (int).
+// Message) for the log view. Qt::UserRole on any cell yields the level (int);
+// history records (loaded from pychron.log at start-up) are drawn dimmed.
 
 #include <vector>
 
@@ -18,8 +19,10 @@ namespace pychron::ui {
 QString log_level_name(LogLevel level);
 
 // Maps a steady_clock TimePoint to local wall time using a steady->system
-// anchor captured once (on first use, at start-up).
+// anchor captured once (on first use; LogDock's constructor forces it).
 QDateTime log_wall_time(TimePoint ts);
+// Inverse of log_wall_time: the steady TimePoint that displays as `wall`.
+TimePoint log_steady_time(const QDateTime& wall);
 
 struct LogRecord {
   TimePoint ts;

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <chrono>
 
+#include <QBrush>
+#include <QColor>
+
 namespace pychron::ui {
 
 QString log_level_name(LogLevel level) {
@@ -21,16 +24,33 @@ QString log_level_name(LogLevel level) {
   return QStringLiteral("?");
 }
 
+namespace {
+
+struct WallAnchor {
+  std::chrono::steady_clock::time_point steady = std::chrono::steady_clock::now();
+  std::chrono::system_clock::time_point system = std::chrono::system_clock::now();
+};
+
+const WallAnchor& wall_anchor() {
+  static const WallAnchor anchor;
+  return anchor;
+}
+
+}  // namespace
+
 QDateTime log_wall_time(TimePoint ts) {
   using namespace std::chrono;
-  struct Anchor {
-    steady_clock::time_point steady = steady_clock::now();
-    system_clock::time_point system = system_clock::now();
-  };
-  static const Anchor anchor;
+  const WallAnchor& anchor = wall_anchor();
   const auto wall = anchor.system + duration_cast<system_clock::duration>(ts - anchor.steady);
   const auto ms = duration_cast<milliseconds>(wall.time_since_epoch()).count();
   return QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(ms));
+}
+
+TimePoint log_steady_time(const QDateTime& wall) {
+  using namespace std::chrono;
+  const WallAnchor& anchor = wall_anchor();
+  const system_clock::time_point sys{duration_cast<system_clock::duration>(milliseconds(wall.toMSecsSinceEpoch()))};
+  return anchor.steady + duration_cast<steady_clock::duration>(sys - anchor.system);
 }
 
 LogModel::LogModel(int capacity, QObject* parent)
@@ -72,6 +92,10 @@ QVariant LogModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() < 0 || index.row() >= rowCount()) return {};
   const LogRecord& r = records_[static_cast<std::size_t>(index.row())];
   if (role == Qt::UserRole) return static_cast<int>(r.level);
+  if (role == Qt::ForegroundRole) {
+    if (r.history) return QBrush(QColor(Qt::gray));
+    return {};
+  }
   if (role != Qt::DisplayRole) return {};
   switch (index.column()) {
     case TimeCol:
