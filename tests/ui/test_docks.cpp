@@ -214,7 +214,7 @@ class TestDocks : public QObject {
     QCOMPARE(last.message, QStringLiteral("line 1499"));
     // UTC in the file, shown as the same instant in local wall time.
     QCOMPARE(pychron::ui::log_wall_time(last.ts).toUTC(),
-             QDateTime(QDate(2026, 10, 1), QTime(14, 3, 22, 481), QTimeZone::UTC));
+             QDateTime(QDate(2026, 10, 1), QTime(14, 3, 22, 481), QTimeZone::utc()));
     const QModelIndex idx = dock.model()->index(999, LogModel::MessageCol);
     QVERIFY(dock.model()->data(idx, Qt::ForegroundRole).isValid());
     QCOMPARE(dock.load_history(path.toStdString(), 10), 10);
