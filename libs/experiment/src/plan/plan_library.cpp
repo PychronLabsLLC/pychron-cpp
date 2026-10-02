@@ -7,6 +7,12 @@ void PlanLibrary::add(PlanTemplate tmpl) {
   templates_.insert_or_assign(std::move(name), std::move(tmpl));
 }
 
+std::vector<std::string> PlanLibrary::names() const {
+  std::vector<std::string> out;
+  for (const auto& [name, t] : templates_) out.push_back(name);
+  return out;
+}
+
 const PlanTemplate* PlanLibrary::find(std::string_view name) const {
   auto it = templates_.find(name);
   return it == templates_.end() ? nullptr : &it->second;

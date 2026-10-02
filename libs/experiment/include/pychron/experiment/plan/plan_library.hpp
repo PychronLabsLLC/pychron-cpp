@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 // In-memory set of plan templates, exposed to queue validation as an IPlanResolver.
 
 #include <map>
@@ -19,6 +22,7 @@ class PlanLibrary : public IPlanResolver {
   // Keyed by PlanTemplate::name; a later template with the same name replaces the earlier.
   void add(PlanTemplate tmpl);
   const PlanTemplate* find(std::string_view name) const;
+  std::vector<std::string> names() const;  // sorted
 
   Result<LoadedPlan> load(std::string_view name, const ParamOverrides& overrides, const LoadOptions& options = {}) const;
 

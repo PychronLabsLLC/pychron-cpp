@@ -24,7 +24,25 @@ std::string read_text(const fs::path& p) {
 
 }  // namespace
 
-LabScripts::LabScripts(fs::path root) : resolver_(std::move(root)) {}
+LabScripts::LabScripts(fs::path root) : root_(root), resolver_(std::move(root)) {}
+
+std::vector<std::string> LabScripts::names(scripting::ScriptKind kind) const {
+  std::vector<std::string> out;
+  const fs::path dir = root_ / std::string(scripting::to_string(kind));
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) return out;
+  for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator();
+       it.increment(ec)) {
+    if (!it->is_regular_file(ec) || it->path().extension() != ".py") continue;
+    fs::path rel = fs::relative(it->path(), dir, ec);
+    rel.replace_extension();
+    std::string name;
+    for (const auto& part : rel) name += (name.empty() ? "" : ":") + part.string();
+    out.push_back(std::move(name));
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
 
 bool LabScripts::has_script(std::string_view name) const {
   using K = scripting::ScriptKind;
@@ -99,6 +117,22 @@ Lab load_lab(const LabPaths& paths) {
     auto pc = jobs::parse_peak_center_configs(read_text(dir / "peak_center.toml"), (dir / "peak_center.toml").string());
     if (pc) lab.peak_centers = std::move(*pc);
     else lab.problems.push_back(pc.error().what);
+  }
+  if (fs::exists(dir / "defaults.toml", ec)) {
+    auto d = DefaultsTable::load((dir / "defaults.toml").string());
+    if (d) lab.defaults = std::move(*d);
+    else lab.problems.push_back(d.error().what);
+  }
+  if (fs::is_directory(dir / "blocks", ec)) {
+    std::vector<fs::path> files;
+    for (const auto& e : fs::directory_iterator(dir / "blocks", ec))
+      if (e.path().extension() == ".toml") files.push_back(e.path());
+    std::sort(files.begin(), files.end());
+    for (const auto& f : files) {
+      auto b = load_block(f.string(), lab.ids);
+      if (b) lab.blocks[b->name.empty() ? f.stem().string() : b->name] = std::move(*b);
+      else lab.problems.push_back(b.error().what);
+    }
   }
   return lab;
 }

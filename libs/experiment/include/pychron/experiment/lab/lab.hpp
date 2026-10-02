@@ -10,6 +10,8 @@
 //   <lab>/conditionals/*.toml     named conditional sets
 //   <lab>/identifiers.toml        identifier rules (default rules if absent)
 //   <lab>/peak_center.toml        named peak-center configs (optional)
+//   <lab>/defaults.toml           run factory defaults per (analysis type, device) (optional)
+//   <lab>/blocks/*.toml           reusable run sequences for the run factory (optional)
 
 #include <filesystem>
 #include <map>
@@ -22,6 +24,8 @@
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/conditionals/validate.hpp"
+#include "pychron/experiment/factory/blocks.hpp"
+#include "pychron/experiment/factory/defaults.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
@@ -45,8 +49,12 @@ class LabScripts final : public IScriptResolver {
   explicit LabScripts(std::filesystem::path root);
   bool has_script(std::string_view name) const override;
   const scripting::DirectoryScriptResolver& resolver() const { return resolver_; }
+  // Scripts of `kind` (<root>/<kind>/**.py) by queue name: "sim_extract",
+  // "co2:degas" for co2/degas.py. Sorted; empty when the directory is missing.
+  std::vector<std::string> names(scripting::ScriptKind kind) const;
 
  private:
+  std::filesystem::path root_;
   scripting::DirectoryScriptResolver resolver_;
 };
 
@@ -73,6 +81,8 @@ struct Lab {
   std::unique_ptr<LabScripts> scripts;
   std::unique_ptr<LabConditionals> condition_names;
   std::map<std::string, jobs::PeakCenterConfig> peak_centers;
+  DefaultsTable defaults;               // <lab>/defaults.toml: what a new run starts with
+  std::map<std::string, Block> blocks;  // <lab>/blocks/*.toml by block name
   std::vector<std::string> problems;  // files that did not load
 
   QueueResolvers resolvers() const { return {plans.get(), scripts.get(), condition_names.get()}; }

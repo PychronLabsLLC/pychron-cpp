@@ -1,0 +1,16 @@
+# A reusable run sequence for the run factory: a blank before and after.
+[block]
+name = "blank_pair"
+description = "procedure blank, then a second blank to check memory"
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "sim_multicollect" }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "sim_multicollect" }
+post_measurement = "sim_pump"
