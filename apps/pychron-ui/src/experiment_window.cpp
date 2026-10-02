@@ -51,7 +51,8 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
       diagnostics_(new QLabel),
       pane_(new ExecutorPane(bridge)),
       evolutions_(new EvolutionsView(detector_colors(bridge.lab()))),
-      factory_(new RunFactoryPanel(bridge.lab(), model_, [this] { return selected_rows(); })) {
+      factory_(new RunFactoryPanel(bridge.lab(), model_, [this] { return selected_rows(); })),
+      measurement_(new MeasurementPanel(bridge.lab(), model_, [this] { return selected_rows(); })) {
   setObjectName(QStringLiteral("ExperimentWindow"));
   resize(1300, 850);
 
@@ -90,6 +91,11 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   factory_dock->setObjectName(QStringLiteral("ExperimentFactoryDock"));
   factory_dock->setWidget(factory_);
   addDockWidget(Qt::LeftDockWidgetArea, factory_dock);
+  auto* measurement_dock = new QDockWidget(tr("Measurement"), this);
+  measurement_dock->setObjectName(QStringLiteral("ExperimentMeasurementDock"));
+  measurement_dock->setWidget(measurement_);
+  tabifyDockWidget(factory_dock, measurement_dock);
+  factory_dock->raise();
   resizeDocks({evolutions_dock, factory_dock}, {500, 380}, Qt::Horizontal);  // saved state, if any, wins below
   resizeDocks({executor_dock}, {300}, Qt::Vertical);
 
@@ -110,6 +116,8 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
   connect(&model_, &QueueTableModel::validated, this, [this] { update_state(); });
   connect(pane_, &ExecutorPane::startRequested, this, [this] { start(); });
+  connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, measurement_,
+          [this] { measurement_->refresh(); });
   connect(factory_, &RunFactoryPanel::inserted, this, [this](const std::vector<std::size_t>& rows) {
     select_rows(rows);
     if (!rows.empty()) table_->scrollTo(model_.index(static_cast<int>(rows.back()), 0));
@@ -130,6 +138,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&bridge_, &ExperimentBridge::queueEnded, this, [this] {
     model_.set_locked(false);
     factory_->set_locked(false);
+    measurement_->set_locked(false);
     update_state();
   });
 
@@ -204,6 +213,7 @@ void ExperimentWindow::build_actions() {
 }
 
 std::vector<std::size_t> ExperimentWindow::selected_rows() const {
+  if (table_->selectionModel() == nullptr) return {};  // panels ask while the window is still being built
   std::set<std::size_t> rows;
   for (const auto& i : table_->selectionModel()->selectedIndexes()) rows.insert(static_cast<std::size_t>(i.row()));
   return {rows.begin(), rows.end()};
@@ -306,6 +316,7 @@ void ExperimentWindow::start() {
   model_.clear_status();
   model_.set_locked(true);
   factory_->set_locked(true);
+  measurement_->set_locked(true);
   evolutions_->clear();
   pane_->set_running(true);
   update_state();

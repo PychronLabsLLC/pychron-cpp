@@ -89,6 +89,22 @@ TEST_F(LabTest, ProblemsCarryTheirRow) {
   EXPECT_EQ(pc, 1);
 }
 
+TEST_F(LabTest, OverridesThePlanDoesNotAcceptAreErrors) {
+  const Lab lab = load_lab(paths());
+  auto q = example(lab);
+  q.runs[1].measurement.overrides["sniff.counts"] = std::int64_t{5};  // not exposed
+  q.runs[2].measurement.overrides["main.cycles"] = std::string("many");  // wrong type
+  auto check = check_lab_queue(lab, q);
+  EXPECT_FALSE(check.ok());
+  EXPECT_TRUE(has(check, 1, "measurement", "not exposed"));
+  EXPECT_TRUE(has(check, 2, "measurement", "main.cycles"));
+  // Advanced lets the run set any key.
+  q.runs[1].measurement.advanced = true;
+  q.runs[2].measurement.overrides.clear();
+  check = check_lab_queue(lab, q);
+  EXPECT_TRUE(check.ok());
+}
+
 TEST_F(LabTest, FilesThatDoNotLoadAreLabProblems) {
   std::ofstream(dir_ / "peak_center.toml") << "[default]\nno_such_key = 1\n";
   const Lab lab = load_lab(paths());

@@ -107,7 +107,10 @@ is `--lab <dir>` (default: the extraction line config's directory) and
 records go to `--data <dir>` (default: `<lab>/data`). The Run Factory dock
 adds runs: fill in an identifier and position (a range such as `1-4` gives one
 run per hole), check the preview, then Add (Ctrl+Return); new runs start from
-the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. With `--sim`,
+the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
+Measurement tab beside it edits the selected row's plan and its exposed
+parameters (overridden values are bold with a ● badge; Advanced allows any
+value of the plan). With `--sim`,
 `--sim-speed <x>` runs the whole app on simulated time x times faster than
 real time:
 

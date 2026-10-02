@@ -162,7 +162,12 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
     const int row = static_cast<int>(i);
     if (r.skip || r.measurement.plan.empty() || !lab.plans->find(r.measurement.plan)) continue;
     auto loaded = lab.plans->load(r.measurement.plan, r.measurement.overrides, plan::LoadOptions{r.measurement.advanced});
-    if (!loaded) continue;  // check_queue reported it
+    if (!loaded) {
+      // A known plan that does not load with this run's overrides (not
+      // exposed, wrong type, ...) would only fail when the run starts.
+      out.extra.push_back({Severity::Error, row, "measurement", loaded.error().what});
+      continue;
+    }
     const auto& pc = loaded->plan.peak_center;
     if ((pc.before || pc.after) && pc.config != "default" && !lab.peak_centers.contains(pc.config)) {
       if (reported.insert("peak_center:" + pc.config).second) {

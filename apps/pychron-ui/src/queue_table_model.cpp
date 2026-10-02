@@ -293,6 +293,15 @@ bool QueueTableModel::toggle_end_after(std::size_t row) {
   return apply([&](auto& qq) { return qq.toggle_end_after(row); });
 }
 
+bool QueueTableModel::replace_run(std::size_t row, experiment::RunSpec run) {
+  if (locked_ || row >= queue_.size()) return false;
+  if (run == queue_.runs()[row]) return true;
+  if (!queue_.replace(row, std::move(run))) return false;
+  revalidate();
+  emit edited();
+  return true;
+}
+
 bool QueueTableModel::insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs) {
   if (runs.empty() || at > queue_.size()) return false;
   return apply([&](auto& qq) -> Result<void> {

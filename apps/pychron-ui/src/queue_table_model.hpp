@@ -70,6 +70,8 @@ class QueueTableModel : public QAbstractTableModel {
   bool remove(std::vector<std::size_t> rows);
   bool toggle_skip(std::vector<std::size_t> rows);
   bool toggle_end_after(std::size_t row);
+  // Replaces one run in place (no model reset, so the selection stays).
+  bool replace_run(std::size_t row, experiment::RunSpec run);
   // Inserts `runs` before row `at` (size() appends).
   bool insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs);
   // Expands frequency runs into the queue; how many were inserted, nullopt

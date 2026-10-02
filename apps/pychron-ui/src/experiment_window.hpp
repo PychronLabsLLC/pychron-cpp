@@ -1,8 +1,8 @@
 #pragma once
 
 // ExperimentWindow (experiment-window design 5.5): the queue table in the
-// centre, the run factory on the left, the executor pane docked below and the
-// evolutions on the right.
+// centre, the run factory and the selected run's measurement on the left
+// (tabbed), the executor pane docked below and the evolutions on the right.
 //
 // The queue is edited in place and saved to its TOML file; every edit is
 // revalidated against the lab. While a queue runs the table is locked and
@@ -24,6 +24,7 @@
 #include "executor_pane.hpp"
 #include "experiment_bridge.hpp"
 #include "queue_table_model.hpp"
+#include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
 
 class QAction;
@@ -48,6 +49,7 @@ class ExperimentWindow : public QMainWindow {
   ExecutorPane* executor() const noexcept { return pane_; }
   EvolutionsView* evolutions() const noexcept { return evolutions_; }
   RunFactoryPanel* factory() const noexcept { return factory_; }
+  MeasurementPanel* measurement() const noexcept { return measurement_; }
 
   // Replaces the queue; refused (false, with `error`) while running or when
   // the file does not parse. Asks about unsaved edits first.
@@ -90,6 +92,7 @@ class ExperimentWindow : public QMainWindow {
   ExecutorPane* pane_;
   EvolutionsView* evolutions_;
   RunFactoryPanel* factory_;
+  MeasurementPanel* measurement_;
   std::optional<std::filesystem::path> path_;
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;

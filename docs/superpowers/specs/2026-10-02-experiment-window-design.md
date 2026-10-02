@@ -36,10 +36,9 @@ Version 1 (this spec):
   operations, executor pane, evolutions view, `ExperimentWindow`, app wiring.
 
 Added after v1: the run factory side panel (section 5.6), with frequency
-insert and per-type field enabling.
+insert and per-type field enabling; the measurement panel (section 5.7).
 
-Deferred to later versions (from spec 10.4): measurement panel (template picker, parameter form, override diff
-badges), script editor, phase timeline and overlap lanes, fit overlay and
+Deferred to later versions (from spec 10.4): script editor, phase timeline and overlap lanes, fit overlay and
 intercept display in the evolutions, notifications, editing a queue while it
 runs.
 
@@ -284,7 +283,39 @@ A left dock "Run Factory" over `experiment::FactoryForm`
 - Block: one of `<lab>/blocks/*.toml`, repeated N times, inserted like Add.
 - Locked (everything disabled) while a queue runs.
 
-### 5.7 App wiring
+### 5.7 Measurement panel
+
+A left dock "Measurement", tabbed with the run factory, editing the
+measurement of the one selected queue row (nothing for any other selection).
+Qt-free rules in `pychron/experiment/plan/parameters.hpp`.
+
+- Template: an instrument family filter (the families the lab's plans
+  declare) and the plans whose `analysis_types` take the row's type; the
+  row's own plan stays choosable when the filter hides it. Choosing a plan
+  moves the row to it and keeps the overrides that still apply
+  (`overrides_for`); "(no plan)" clears plan and overrides. The plan's
+  description and family are shown below.
+- Parameters: one editor per exposed parameter, in `parameters.expose`
+  order with its label (an exposed table lists every value under it): a check
+  box for booleans, a line edit otherwise, showing the effective value. Text
+  is parsed by the template value's type (an int may be typed for a float; an
+  `@alias` takes any scalar) and refused, reverting the editor, when it does
+  not fit. A value that differs from the template's is an override: bold
+  label, a ● badge whose tooltip gives the template's value, and Reset.
+  Typing the template's value back drops the override. Reset All clears them.
+- Advanced (`measurement.advanced = true` in the queue file): every editable
+  value of the template, grouped under its top-level table, may be
+  overridden. Overrides that no longer apply (Advanced turned off, a plan
+  changed) are listed as "(not a parameter)" so they can be seen and reset.
+- Status: "Measures h:mm:ss · n override(s)" from the plan as loaded with
+  the overrides, or why it does not load. The lab check reports the same
+  problem on the row (a run whose overrides the plan rejects would otherwise
+  only fail when it starts).
+- Every edit replaces the row in place (the selection stays) and is
+  revalidated; locked while a queue runs. Edits made elsewhere (the table, a
+  queue edit) refresh the panel.
+
+### 5.8 App wiring
 
 - `pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer
   <file>] [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>]`.
