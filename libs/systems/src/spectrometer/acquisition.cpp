@@ -186,7 +186,13 @@ void AcquisitionEngine::begin_request() {
 Result<void> AcquisitionEngine::start(Duration integration) {
   if (integration <= Duration::zero()) return fail(ErrorKind::Config, "integration must be positive");
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
+    if (polls_on_this_thread() > 0) {
+      // The stopper is waiting for this very poll: waiting for it would deadlock.
+      if (stopping_) return fail(ErrorKind::Config, "acquisition is stopping", "acquisition");
+    } else {
+      polls_cv_.wait(lock, [&] { return running_ || (!stopping_ && polling_.empty()); });
+    }
     if (running_) return fail(ErrorKind::Config, "acquisition already running");
     integration_ = integration;
   }
@@ -222,13 +228,25 @@ Result<void> AcquisitionEngine::start(Duration integration) {
   return {};
 }
 
+std::size_t AcquisitionEngine::polls_on_this_thread() const {
+  return static_cast<std::size_t>(
+      std::count(polling_.begin(), polling_.end(), std::this_thread::get_id()));
+}
+
 void AcquisitionEngine::stop() {
   std::vector<JobId> jobs;
-  bool was_running = false;
   {
-    std::lock_guard lock(mutex_);
-    was_running = running_;
+    std::unique_lock lock(mutex_);
+    const std::size_t own = polls_on_this_thread();
+    if (!running_) {
+      // Already stopped, perhaps by a stop() still in progress on another
+      // thread: return only once that one has stopped the acquirers. Not from
+      // inside a poll, though: that stopper may be waiting for this very poll.
+      if (own == 0) polls_cv_.wait(lock, [&] { return !stopping_ && polling_.empty(); });
+      return;
+    }
     running_ = false;
+    stopping_ = true;  // start() and other stoppers wait until the acquirers are stopped
     jobs.swap(jobs_);
   }
   for (auto j : jobs) scheduler_.cancel(j);
@@ -237,15 +255,14 @@ void AcquisitionEngine::stop() {
     // without the lock a poll needs to finish. Polls on this thread are our
     // own callers and cannot be waited for.
     std::unique_lock lock(mutex_);
-    const auto own = static_cast<std::size_t>(
-        std::count(polling_.begin(), polling_.end(), std::this_thread::get_id()));
-    // Inside a poll with the engine already stopped: whoever stopped it may be
-    // waiting for this very poll, so waiting here could deadlock.
-    if (!was_running && own > 0) return;
-    polls_cv_.wait(lock, [&] { return polling_.size() == own; });
+    polls_cv_.wait(lock, [&] { return polling_.size() == polls_on_this_thread(); });
   }
-  if (!was_running) return;
   for (auto* a : acquirers_) (void)a->stop();
+  {
+    std::lock_guard lock(mutex_);
+    stopping_ = false;
+    polls_cv_.notify_all();
+  }
 }
 
 void AcquisitionEngine::cancel() {

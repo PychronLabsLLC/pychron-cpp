@@ -105,11 +105,17 @@ class AcquisitionEngine {
   AcquisitionEngine& operator=(const AcquisitionEngine&) = delete;
 
   // Configures and starts every acquirer and registers one Scheduler job each.
-  // Bins align to the epoch taken here.
+  // Bins align to the epoch taken here. Waits for a stop() in progress on
+  // another thread to finish first; called from inside a poll while such a
+  // stop() is in progress (it is waiting for that poll) it fails with Config.
   Result<void> start(Duration integration);
-  // Returns only when no poll() is executing on another thread, so a start()
-  // that follows never overlaps a next() from this run. Called from inside a
-  // poll (a bus subscriber, say) it does not wait for that poll.
+  // Returns only when no poll() is executing on another thread and the
+  // acquirers are stopped, so a start() that follows never overlaps a next()
+  // from this run. Called from inside a poll (a bus subscriber, say) it does
+  // not wait for that poll, nor for a stop() already in progress elsewhere.
+  //
+  // Polls publish on the SignalBus synchronously, so do not hold, across
+  // stop(), a lock that a bus subscriber running on a poll thread may take.
   void stop();
   bool running() const;
 
@@ -128,7 +134,8 @@ class AcquisitionEngine {
   void cancel();
 
   // One iteration of acquirer `index`'s job: drain next(), bin, merge,
-  // publish, health check. Scheduler jobs call this; tests may too.
+  // publish, health check. Scheduler jobs call this; tests may too. A no-op
+  // when the engine is not running.
   void poll(std::size_t index);
 
   // Frames lost to seq gaps / discarded by the stale-frame guard.
@@ -158,6 +165,7 @@ class AcquisitionEngine {
                     const Clock& clock, Options options);
 
   void begin_request();
+  std::size_t polls_on_this_thread() const;  // caller holds mutex_
   void ingest(std::size_t i, const Frame& frame, TimePoint now);
   void ingest_integrated(std::size_t i, const Frame& frame);
   void ingest_raw(std::size_t i, const Frame& frame);
@@ -187,7 +195,8 @@ class AcquisitionEngine {
   TimePoint epoch_{};
   std::vector<JobId> jobs_;
   std::vector<std::thread::id> polling_;  // one entry per poll() in flight
-  std::condition_variable polls_cv_;      // polling_ shrank
+  std::condition_variable polls_cv_;      // polling_ shrank or stopping_ cleared
+  bool stopping_ = false;                 // a stop() has yet to stop the acquirers
   std::vector<Bin> bins_;
   std::vector<Partial> pending_;
   std::vector<bool> have_seq_;

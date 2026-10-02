@@ -169,12 +169,14 @@ struct FakeAcquirer : IIntensityAcquirer {
   Result<void> start() override {
     if (active_next > 0) ++overlaps;
     ++starts;
+    note("start");
     if (fail_start) return fail(ErrorKind::Io, "start failed", "acquirer");
     return {};
   }
   Result<void> stop() override {
     ++stops;
     note("stop");
+    if (on_stop) on_stop();
     return {};
   }
   Result<std::optional<Frame>> next(Duration) override {
@@ -205,9 +207,10 @@ struct FakeAcquirer : IIntensityAcquirer {
   int starts = 0, stops = 0;
   bool fail_start = false;
   std::function<void()> on_next;   // runs inside next(), outside `m`
+  std::function<void()> on_stop;   // runs inside stop(), after it is logged
   std::atomic<int> active_next{0};
   std::atomic<int> overlaps{0};    // configure()/start() seen while a next() was active
-  CallLog* log = nullptr;          // optional order log: next-enter, next-exit, stop
+  CallLog* log = nullptr;          // optional order log: start, next-enter, next-exit, stop
   std::mutex m;
   std::deque<Frame> frames;
 };

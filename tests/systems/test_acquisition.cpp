@@ -473,8 +473,14 @@ struct ThreadedFixture {
   Scheduler sched{clock, &bus, Scheduler::Options{2}};
   std::unique_ptr<AcquisitionEngine> engine;
 
-  void make(fakes::FakeAcquirer& a) {
-    auto r = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, sched, bus, clock);
+  void make(fakes::FakeAcquirer& a, fakes::FakeAcquirer* b = nullptr) {
+    std::vector<IIntensityAcquirer*> acq{&a};
+    std::vector<DetectorConfig> dets{faraday("H1", "H1")};
+    if (b != nullptr) {
+      acq.push_back(b);
+      dets.push_back(faraday("L1", "L1"));
+    }
+    auto r = AcquisitionEngine::create(std::move(acq), std::move(dets), sched, bus, clock);
     ASSERT_TRUE(r.has_value()) << to_string(r.error());
     engine = std::move(*r);
     sched.start();
@@ -505,7 +511,7 @@ TEST(AcquisitionEngine, StopWaitsForInFlightNext) {
   ASSERT_EQ(stopped.wait_for(2s), std::future_status::ready);
   stopped.get();
 
-  EXPECT_EQ(log, (fakes::CallLog{"next-enter", "next-exit", "stop"}));
+  EXPECT_EQ(log, (fakes::CallLog{"start", "next-enter", "next-exit", "stop"}));
   EXPECT_FALSE(f.engine->running());
 }
 
@@ -576,4 +582,98 @@ TEST(AcquisitionEngine, StopWithNothingRunningIsImmediate) {
   f.engine->stop();
   EXPECT_EQ(a.stops, 1);
   EXPECT_EQ(a.overlaps.load(), 0);
+}
+
+TEST(AcquisitionEngine, RestartByASecondCallerWaitsForTheFirstStopToFinish) {
+  fakes::CallLog log;
+  fakes::FakeAcquirer a({"H1"});
+  a.log = &log;
+  Gate entered, release, restarted_gate;
+  bool restarted_during_stop = false;
+  a.on_next = [&] {
+    entered.open();
+    release.wait();
+  };
+  // X's acquirer stop() lingers, giving Y every chance to restart under it.
+  a.on_stop = [&] { restarted_during_stop = restarted_gate.wait(50ms); };
+  ThreadedFixture f;
+  f.make(a);
+  ASSERT_TRUE(f.engine->start(1s).has_value());
+  f.tick();
+  ASSERT_TRUE(entered.wait());
+
+  // X stops and blocks behind the parked next(); Y then stops and restarts.
+  auto x = std::async(std::launch::async, [&] { f.engine->stop(); });
+  while (f.engine->running()) std::this_thread::yield();
+  auto y = std::async(std::launch::async, [&] {
+    f.engine->stop();
+    auto r = f.engine->start(1s);
+    restarted_gate.open();
+    return r;
+  });
+  release.open();
+  ASSERT_EQ(x.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(y.wait_for(2s), std::future_status::ready);
+  x.get();
+  auto restarted = y.get();
+  ASSERT_TRUE(restarted.has_value()) << to_string(restarted.error());
+
+  // X's acquirer stop() landed on the old run, not on the one Y started.
+  EXPECT_FALSE(restarted_during_stop);
+  EXPECT_EQ(log, (fakes::CallLog{"start", "next-enter", "next-exit", "stop", "start"}));
+  EXPECT_TRUE(f.engine->running());
+  EXPECT_EQ(a.starts, 2);
+  EXPECT_EQ(a.stops, 1);
+  EXPECT_EQ(a.overlaps.load(), 0);
+}
+
+TEST(AcquisitionEngine, TwoPollsStoppingAtOnceDoNotDeadlock) {
+  fakes::FakeAcquirer a({"H1"}), b({"L1"});
+  ThreadedFixture f;
+  std::atomic<int> arrived{0}, returned{0};
+  Gate both_in, done;
+  auto stop_from_next = [&] {
+    if (++arrived == 2) both_in.open();
+    both_in.wait();  // both workers are inside a poll before either stops
+    f.engine->stop();
+    if (++returned == 2) done.open();
+  };
+  a.on_next = stop_from_next;
+  b.on_next = stop_from_next;
+  f.make(a, &b);
+  ASSERT_TRUE(f.engine->start(1s).has_value());
+  f.tick();
+  ASSERT_TRUE(done.wait());
+  f.sched.wait_idle();
+  EXPECT_FALSE(f.engine->running());
+  EXPECT_EQ(f.sched.job_count(), 0U);
+  EXPECT_EQ(a.stops, 1);
+  EXPECT_EQ(b.stops, 1);
+}
+
+TEST(AcquisitionEngine, StartFromInsideAPollDuringAnotherThreadsStopFails) {
+  fakes::FakeAcquirer a({"H1"});
+  ThreadedFixture f;
+  Gate entered, release, done;
+  Result<void> restart;
+  a.on_next = [&] {
+    entered.open();
+    release.wait();
+    restart = f.engine->start(1s);  // the stopper is waiting for this poll
+    done.open();
+  };
+  f.make(a);
+  ASSERT_TRUE(f.engine->start(1s).has_value());
+  f.tick();
+  ASSERT_TRUE(entered.wait());
+  auto x = std::async(std::launch::async, [&] { f.engine->stop(); });
+  while (f.engine->running()) std::this_thread::yield();
+  release.open();
+  ASSERT_TRUE(done.wait());
+  ASSERT_EQ(x.wait_for(2s), std::future_status::ready);
+  ASSERT_FALSE(restart.has_value());
+  EXPECT_EQ(restart.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(f.engine->running());
+  EXPECT_EQ(a.starts, 1);
+  EXPECT_EQ(a.stops, 1);
 }
