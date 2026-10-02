@@ -387,6 +387,7 @@ class TinyStore final : public IStore {
 
   Result<std::optional<BlobData>> load_blob(const Sha256Digest& sha) override { return detail::load_blob(*db_, sha); }
 
+  Result<ChangeSeq> latest_change_seq() override { return detail::latest_change_seq(*db_); }
   Result<ChangePage> changes_since(ChangeSeq cursor, int limit) override {
     if (limit <= 0) return fail(ErrorKind::Protocol, "changes_since: limit must be positive");
     auto rows = db_->select(sql::kChangesSince.arg(sql::ts(dialect(), QStringLiteral("committed_utc"))),

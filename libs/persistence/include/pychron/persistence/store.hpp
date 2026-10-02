@@ -552,6 +552,9 @@ class IStore {
   // A content-addressed raw series; nullopt when not (yet) uploaded.
   virtual Result<std::optional<BlobData>> load_blob(const Sha256Digest& sha) = 0;
   virtual Result<ChangePage> changes_since(ChangeSeq cursor, int limit) = 0;
+  // The newest change_seq (0 for an empty log): a cursor for changes_since
+  // that skips the history.
+  virtual Result<ChangeSeq> latest_change_seq() = 0;
 };
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);

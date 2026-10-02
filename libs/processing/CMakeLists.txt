@@ -28,3 +28,17 @@ if(TARGET pychron_experiment)
   target_link_libraries(pychron_processing_records PUBLIC pychron::processing pychron::experiment)
   pychron_set_warnings(pychron_processing_records)
 endif()
+
+# The DVC store source links the persistence library (TinyORM on QtSql behind
+# a Qt-free interface); it exists only when persistence is built.
+if(TARGET pychron_persistence)
+  file(GLOB PYCHRON_PROCESSING_STORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/src/*.cpp")
+  add_library(pychron_processing_store STATIC ${PYCHRON_PROCESSING_STORE_SOURCES})
+  add_library(pychron::processing_store ALIAS pychron_processing_store)
+  target_include_directories(pychron_processing_store PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/include>
+    $<INSTALL_INTERFACE:include>
+  )
+  target_link_libraries(pychron_processing_store PUBLIC pychron::processing pychron::persistence)
+  pychron_set_warnings(pychron_processing_store)
+endif()

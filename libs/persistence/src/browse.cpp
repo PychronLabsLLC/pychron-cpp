@@ -270,4 +270,10 @@ Result<std::optional<BlobData>> load_blob(Db& db, const Sha256Digest& sha) {
   return std::optional<BlobData>{std::move(b)};
 }
 
+Result<ChangeSeq> latest_change_seq(Db& db) {
+  auto row = db.select_one(sql::kLatestChangeSeq, {});
+  if (!row) return fail(row.error());
+  return *row ? (*row)->value("n").toLongLong() : ChangeSeq{0};
+}
+
 }  // namespace pychron::persistence::detail

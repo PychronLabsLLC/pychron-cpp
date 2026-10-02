@@ -196,6 +196,19 @@ TEST_P(BrowseTest, DetailAndBlobs) {
   EXPECT_EQ((*blob)->n_points, 4);
 }
 
+TEST_P(BrowseTest, LatestChangeSeqIsTheEndOfTheLog) {
+  auto latest = store_->latest_change_seq();
+  ASSERT_TRUE(latest) << to_string(latest.error());
+  EXPECT_GT(*latest, 0);
+  auto page = store_->changes_since(*latest, 10);
+  ASSERT_TRUE(page);
+  EXPECT_TRUE(page->entries.empty());
+  auto before = store_->changes_since(*latest - 1, 10);
+  ASSERT_TRUE(before);
+  ASSERT_EQ(before->entries.size(), 1u);
+  EXPECT_EQ(before->entries[0].seq, *latest);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, BrowseTest, ::testing::ValuesIn(engines()), [](const auto& p) { return p.param; });
 
 }  // namespace

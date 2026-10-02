@@ -95,6 +95,7 @@ inline const QString kAnalysisPeakCenters = QStringLiteral(
     "SELECT detector, reference_detector, reference_isotope, interpolation, low_dac, center_dac, high_dac, "
     "low_signal, center_signal, high_signal, resolution, low_resolving_power, high_resolving_power, points_blob_sha "
     "FROM peak_center WHERE analysis_uuid = ? ORDER BY detector");
+inline const QString kLatestChangeSeq = QStringLiteral("SELECT COALESCE(MAX(change_seq), 0) AS n FROM change_log");
 inline const QString kBlobByShaFull =
     QStringLiteral("SELECT codec, n_points, bytes FROM signal_blob WHERE sha256 = ?");
 
