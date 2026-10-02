@@ -123,6 +123,11 @@ Lab load_lab(const LabPaths& paths) {
     if (d) lab.defaults = std::move(*d);
     else lab.problems.push_back(d.error().what);
   }
+  if (fs::exists(dir / "notifications.toml", ec)) {
+    auto n = NotificationConfig::load(dir / "notifications.toml");
+    if (n) lab.notifications = std::move(*n);
+    else lab.problems.push_back(n.error().what);
+  }
   if (fs::is_directory(dir / "blocks", ec)) {
     std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(dir / "blocks", ec))

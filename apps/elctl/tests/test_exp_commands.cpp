@@ -120,6 +120,31 @@ TEST_F(ElctlExpTest, InvalidQueueIsNotRun) {
   EXPECT_TRUE(contains(o.err, "nothing was run")) << o.err;
 }
 
+TEST_F(ElctlExpTest, NotifySendsATestOnEachChannel) {
+  auto none = exp({"notify", "--lab", (dir_ / "lab").string()});
+  EXPECT_EQ(none.code, 1);
+  EXPECT_TRUE(contains(none.err, "no notifications are configured")) << none.err;
+
+#ifdef _WIN32
+  const std::string ok = R"(["cmd", "/c", "exit 0"])", bad = R"(["cmd", "/c", "exit 3"])";
+#else
+  const std::string ok = R"(["true"])", bad = R"(["sh", "-c", "echo nope; exit 3"])";
+#endif
+  std::ofstream(dir_ / "lab" / "notifications.toml")
+      << "[[command]]\nname = \"log\"\nargv = " << ok << "\n[[command]]\nname = \"pager\"\nargv = " << bad << "\n";
+  auto o = exp({"notify", "--lab", (dir_ / "lab").string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_TRUE(contains(o.out, "sent: log")) << o.out;
+  EXPECT_TRUE(contains(o.err, "failed: pager: ")) << o.err;
+  EXPECT_TRUE(contains(o.err, "exited with 3")) << o.err;
+
+  std::ofstream(dir_ / "lab" / "notifications.toml") << "[[command]]\nargv = 3\n";
+  auto broken = exp({"notify", "--lab", (dir_ / "lab").string()});
+  EXPECT_EQ(broken.code, 1);
+  EXPECT_TRUE(contains(broken.err, "command[0].argv")) << broken.err;
+  EXPECT_EQ(exp({"notify", lab("experiment.toml")}).code, 2);
+}
+
 TEST_F(ElctlExpTest, UsageErrors) {
   EXPECT_EQ(exp({}).code, 2);
   EXPECT_EQ(exp({"launch", lab("experiment.toml")}).code, 2);

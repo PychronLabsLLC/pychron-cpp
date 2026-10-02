@@ -44,6 +44,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
       counts_(new QProgressBar),
       wait_(new QLabel),
       spool_(new QLabel),
+      notify_(new QLabel),
       start_(new QPushButton(tr("Start"))),
       stop_(new QPushButton(tr("Stop"))),
       cancel_(new QPushButton(tr("Cancel"))),
@@ -78,13 +79,21 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   status->addWidget(counts_, 1, 3);
   status->addWidget(new QLabel(tr("Waiting")), 2, 0);
   status->addWidget(wait_, 2, 1, 1, 3);
-  status->addWidget(spool_, 3, 0, 1, 4);
+  status->addWidget(new QLabel(tr("Notify")), 3, 0);
+  status->addWidget(notify_, 3, 1, 1, 3);
+  status->addWidget(spool_, 4, 0, 1, 4);
   status->setColumnStretch(3, 1);
   counts_->setFormat(QStringLiteral("%v/%m"));
   counts_->setRange(0, 1);
   counts_->setValue(0);
   progress_->setFormat(QStringLiteral("%v/%m"));
   spool_->hide();
+  {
+    QStringList channels;
+    for (const auto& c : bridge_.lab().notifications.channel_names()) channels.append(q(c));
+    notify_->setText(channels.isEmpty() ? tr("off (no notifications.toml in the lab)") : channels.join(QStringLiteral(", ")));
+    notify_->setToolTip(tr("Messages on a failed run and at the end of the queue (<lab>/notifications.toml)"));
+  }
 
   auto* lists = new QSplitter(Qt::Horizontal);
   auto* cond_box = new QWidget;
@@ -120,6 +129,11 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   connect(abort_, &QPushButton::clicked, this, [this] { request_abort(); });
   connect(truncate_, &QPushButton::clicked, this, [this] { request_truncate(); });
 
+  connect(&bridge_, &ExperimentBridge::notificationSent, this, [this](const experiment::lab::NotificationSent& e) {
+    if (e.ok) add_event(tr("notified %1: %2").arg(q(e.channel), q(e.subject)));
+    else if (e.channel.empty()) add_event(tr("notification: %1").arg(q(e.error)));
+    else add_event(tr("notification %1 failed: %2").arg(q(e.channel), q(e.error)));
+  });
   connect(&bridge_, &ExperimentBridge::executorStateChanged, this, [this](const exec::ExecutorStateChanged& e) {
     state_->setText(q(exec::to_string(e.to)));
     if (e.to != exec::ExecutorState::Preparing) wait_->clear();
@@ -297,6 +311,7 @@ QString ExecutorPane::run_text() const { return run_label_->text(); }
 QString ExecutorPane::wait_text() const { return wait_->text(); }
 QString ExecutorPane::error_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
 QString ExecutorPane::spool_text() const { return spool_->isHidden() ? QString() : spool_->text(); }
+QString ExecutorPane::notify_text() const { return notify_->text(); }
 int ExecutorPane::counts_value() const { return counts_->value(); }
 int ExecutorPane::counts_maximum() const { return counts_->maximum(); }
 

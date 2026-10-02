@@ -39,9 +39,9 @@ Added after v1: the run factory side panel (section 5.6), with frequency
 insert and per-type field enabling; the measurement panel (section 5.7); the
 script editor (section 5.8); the fit overlay in the evolutions (section 5.4);
 the phase timeline with overlap lanes (section 5.3); editing a queue while
-it runs (sections 4.3, 5.2).
+it runs (sections 4.3, 5.2); notifications (section 4.5).
 
-Deferred to later versions (from spec 10.4): notifications.
+Everything spec 10.4 listed for the experiment window is now in.
 
 ## 3. Decisions
 
@@ -165,6 +165,39 @@ What `elctl` does inline today, moved so the UI can use it. The driven
 scheduler must have `threads = 0` and no dispatcher, and must outlive the
 pump or be cleared with `drive(nullptr)` first (which waits for a step in
 progress).
+
+### 4.5 Notifications (`lab/notifications.hpp`, `lab/notifier.hpp`)
+
+A message when a run fails (state `failed`, or a save error) and when a
+queue ends, configured per lab in `<lab>/notifications.toml`
+(`configs/examples/notifications.toml.example`; loaded into
+`Lab::notifications`, a bad file is a lab problem). Three kinds of channel,
+any number of each, each with `on = ["run_failed", "queue_ended"]`:
+
+- `[[email]]`: SMTP through the `curl` program (`smtps://`, or `smtp://`
+  with STARTTLS required unless `tls = false`), to a fixed list plus the
+  queue's `email` (`queue_user`). The password is read from the environment
+  variable named by `password_env`, never stored in the file.
+- `[[webhook]]`: an HTTP POST through `curl`, either every field as JSON or
+  Slack's `{"text": ...}`.
+- `[[command]]`: a local program, the message on stdin and the fields as
+  `PYCHRON_*` environment variables.
+
+curl takes its options on stdin (`--config -`), so neither the password nor
+the webhook URL is on a command line; the payload is a temporary file
+readable only by the user, removed after the delivery. Programs run through
+`pychron::run_process` (`libs/core/process.hpp`: `posix_spawnp` or
+`CreateProcessW`, no shell, stdin from a string, output captured, the whole
+process tree killed at the timeout).
+
+`LabSession` owns a `Notifier`: it hears `RunFinished` on the bus, is told
+the queue's end by the session, and delivers on its own thread, so a slow
+server never holds up the executor. Each delivery is published as
+`NotificationSent{channel, event, subject, ok, error}`; the executor pane
+lists them with the events and shows the configured channels ("Notify");
+Executor > Send Test Notification and `elctl exp notify` send a test on
+every channel. The notifier's destructor finishes the deliveries already
+queued.
 
 ## 5. UI design (`apps/pychron-ui`)
 

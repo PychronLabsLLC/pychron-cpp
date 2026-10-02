@@ -12,6 +12,7 @@
 //   <lab>/peak_center.toml        named peak-center configs (optional)
 //   <lab>/defaults.toml           run factory defaults per (analysis type, device) (optional)
 //   <lab>/blocks/*.toml           reusable run sequences for the run factory (optional)
+//   <lab>/notifications.toml      email, webhook and command notifications (optional)
 
 #include <filesystem>
 #include <map>
@@ -26,6 +27,7 @@
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/factory/blocks.hpp"
 #include "pychron/experiment/factory/defaults.hpp"
+#include "pychron/experiment/lab/notifications.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
@@ -83,6 +85,7 @@ struct Lab {
   std::map<std::string, jobs::PeakCenterConfig> peak_centers;
   DefaultsTable defaults;               // <lab>/defaults.toml: what a new run starts with
   std::map<std::string, Block> blocks;  // <lab>/blocks/*.toml by block name
+  NotificationConfig notifications;     // <lab>/notifications.toml; no channels when absent
   std::vector<std::string> problems;  // files that did not load
 
   QueueResolvers resolvers() const { return {plans.get(), scripts.get(), condition_names.get()}; }

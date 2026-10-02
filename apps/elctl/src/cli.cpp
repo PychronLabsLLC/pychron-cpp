@@ -54,6 +54,7 @@ constexpr const char* kUsageText =
     "  exp run <experiment.toml> [--lab <dir>] [--data <dir>] [--spectrometer <file>]\n"
     "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
+    "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"

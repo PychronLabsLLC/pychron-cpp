@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 
 #include <QtTest/QtTest>
 
@@ -59,7 +60,9 @@ struct SimLab {
   experiment::lab::Lab lab;
   std::unique_ptr<experiment::lab::LabSession> session;
 
-  SimLab() {
+  // `notifications` replace the lab's; `notify` runs their programs.
+  explicit SimLab(std::optional<experiment::lab::NotificationConfig> notifications = std::nullopt,
+                  experiment::lab::ProcessRunner notify = {}) {
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
@@ -78,9 +81,10 @@ struct SimLab {
     spec = std::move(*loaded);
     scan = std::make_unique<spectrometer::ScanService>(*spec, line->bus(), clock);
     lab = experiment::lab::load_lab(lab_paths(dir));
+    if (notifications) lab.notifications = std::move(*notifications);
     session = std::make_unique<experiment::lab::LabSession>(
         lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get()},
-        experiment::lab::SessionOptions{dir / "data", {}});
+        experiment::lab::SessionOptions{dir / "data", {}, std::move(notify)});
   }
   SimLab(const SimLab&) = delete;
   SimLab& operator=(const SimLab&) = delete;

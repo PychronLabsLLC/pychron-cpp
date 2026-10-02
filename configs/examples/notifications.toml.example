@@ -1,0 +1,26 @@
+# Notifications for this lab: copy to notifications.toml and keep the
+# channels you want. Each sends a message when a run fails (run_failed) and
+# when the queue ends (queue_ended); `on` narrows that.
+# Test with:  elctl exp notify --lab <this directory>
+
+# curl = "curl"     # the curl program used for email and webhooks
+# timeout = 30      # seconds per delivery
+
+# [[email]]
+# url = "smtps://smtp.example.org:465"     # or smtp://host:587 (STARTTLS is required unless tls = false)
+# from = "pychron@example.org"
+# to = ["lab-manager@example.org"]
+# username = "pychron@example.org"
+# password_env = "PYCHRON_SMTP_PASSWORD"   # the password is read from this environment variable
+# queue_user = true                        # also mail the queue's `email`
+# on = ["run_failed", "queue_ended"]
+
+# [[webhook]]
+# name = "slack"
+# url = "https://hooks.slack.com/services/T000/B000/XXXX"
+# format = "slack"                         # {"text": ...}; "json" posts every field
+# on = ["queue_ended"]
+
+# [[command]]
+# name = "pager"
+# argv = ["/usr/local/bin/notify-lab"]     # message on stdin; PYCHRON_EVENT, PYCHRON_SUBJECT, PYCHRON_QUEUE, ...

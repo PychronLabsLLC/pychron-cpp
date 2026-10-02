@@ -13,6 +13,7 @@
 
 #include "pychron/core/clock_pump.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/process.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -41,7 +42,8 @@ namespace {
 constexpr const char* kExpUsage =
     "usage: elctl [-c <extraction_line.toml>] [--sim] exp <validate|run> <experiment.toml>\n"
     "         [--lab <dir>] [--data <dir>] [--spectrometer <file>] [--canvas <file>]\n"
-    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n";
+    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
+    "       elctl exp notify [--lab <dir>]   send a test notification (<lab>/notifications.toml)\n";
 
 std::string clock_text(experiment::Duration d) {
   const auto total = static_cast<long long>(std::llround(d.count()));
@@ -65,6 +67,7 @@ class Exp {
 
   int run() {
     lab_ = lab::load_lab({a_.lab, g_.config, a_.spectrometer});
+    if (a_.verb == "notify") return notify();
     auto q = load_queue_file(a_.queue_file.string(), lab_.ids);
     if (!q) {
       io_.err << "error: " << q.error().what << '\n';
@@ -101,6 +104,26 @@ class Exp {
     }
     if (check.ok()) io_.out << "ok: " << a_.queue_file.string() << '\n';
     return check.ok();
+  }
+
+  // Sends a test message on every configured channel and reports each.
+  int notify() {
+    for (const auto& p : lab_.problems)
+      if (p.find("notifications.toml") != std::string::npos) {
+        io_.err << "error: " << p << '\n';
+        return kFailed;
+      }
+    if (lab_.notifications.empty()) {
+      io_.err << "error: no notifications are configured (" << (a_.lab / "notifications.toml").string() << ")\n";
+      return kFailed;
+    }
+    const auto sent = lab::deliver(lab_.notifications, lab::test_notification(a_.lab.string()), pychron::run_process);
+    bool ok = true;
+    for (const auto& d : sent) {
+      ok = ok && d.ok;
+      (d.ok ? io_.out : io_.err) << (d.ok ? "sent: " : "failed: ") << d.channel << (d.ok ? "" : ": " + d.error) << '\n';
+    }
+    return ok ? kOk : kFailed;
   }
 
   void say(const std::string& line) {
@@ -188,7 +211,7 @@ class Exp {
       from = *row;
     }
     lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr},
-                            lab::SessionOptions{a_.data, options});
+                            lab::SessionOptions{a_.data, options, {}});
 
     // Progress.
     auto& bus = (*line)->bus();
@@ -225,6 +248,9 @@ class Exp {
     subs.push_back(bus.subscribe<measurement::ConditionalTripped>([&](const measurement::ConditionalTripped& e) {
       say("  conditional " + e.trip.name + " tripped: " + e.trip.check);
     }));
+    subs.push_back(bus.subscribe<lab::NotificationSent>([&](const lab::NotificationSent& e) {
+      say(e.ok ? "notified " + e.channel + ": " + e.subject : "notification " + e.channel + " failed: " + e.error);
+    }));
 
     interrupt_count() = 0;
     if (auto r = session.start(queue_, from); !r) {
@@ -249,6 +275,7 @@ class Exp {
       }
     }
     const executor::QueueResult result = *session.wait();
+    session.notifier().wait_idle();  // the queue-end message
     subs.clear();
     if (g_.sim) sim::BeamModelRegistry::global().clear();
 
@@ -274,7 +301,7 @@ class Exp {
 }  // namespace
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io) {
-  if (args.empty() || (args[0] != "run" && args[0] != "validate")) {
+  if (args.empty() || (args[0] != "run" && args[0] != "validate" && args[0] != "notify")) {
     io.err << kExpUsage;
     return kUsage;
   }
@@ -321,6 +348,11 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
     } else {
       return usage("unexpected '" + x + "'");
     }
+  }
+  if (a.verb == "notify") {
+    if (!a.queue_file.empty()) return usage("notify takes no experiment.toml");
+    if (a.lab.empty()) a.lab = ".";
+    return Exp(std::move(a), globals, io).run();
   }
   if (a.queue_file.empty()) return usage("needs an experiment.toml");
   if (a.resume && a.from) return usage("--from and --resume are exclusive");

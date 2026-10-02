@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -77,7 +78,7 @@ class LabSessionTest : public ::testing::Test {
       }
     }
     session_ = std::make_unique<LabSession>(lab_, SessionHardware{*line_, spec_.get(), scan_.get()},
-                                            SessionOptions{dir_ / "data", {}});
+                                            SessionOptions{dir_ / "data", {}, {}});
     subs_.push_back(line_->bus().subscribe<QueueEnded>([this](const QueueEnded& e) {
       std::lock_guard lock(mutex_);
       ended_.push_back(e);
@@ -185,6 +186,38 @@ TEST_F(LabSessionTest, ARunningQueueCanBeEdited) {
   ASSERT_TRUE(accepted && *accepted) << (accepted && !*accepted ? accepted->error().what : "");
   EXPECT_EQ(**accepted, 1u);
   EXPECT_EQ(result->runs.size(), 2u);
+}
+
+TEST_F(LabSessionTest, TheQueueEndIsNotified) {
+  lab_.notifications.commands.push_back({"log", {"notify-lab"}, {lab::NotifyEvent::QueueEnded}});
+  std::mutex m;
+  std::vector<std::string> inputs;
+  auto runner = [&](const ProcessSpec& spec) -> Result<ProcessResult> {
+    std::lock_guard lock(m);
+    inputs.push_back(spec.input);
+    return ProcessResult{};
+  };
+  std::vector<lab::NotificationSent> sent;
+  auto sub = line_->bus().subscribe<lab::NotificationSent>([&](const lab::NotificationSent& e) {
+    std::lock_guard lock(m);
+    sent.push_back(e);
+  });
+  session_.reset();
+  session_ = std::make_unique<LabSession>(lab_, SessionHardware{*line_, spec_.get(), scan_.get()},
+                                          SessionOptions{dir_ / "data", {}, runner});
+  queue_.name = "q-notify";
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  session_->notifier().wait_idle();
+  std::lock_guard lock(m);
+  ASSERT_EQ(sent.size(), 1u);
+  EXPECT_TRUE(sent[0].ok) << sent[0].error;
+  EXPECT_EQ(sent[0].channel, "log");
+  ASSERT_EQ(inputs.size(), 1u);
+  EXPECT_EQ(inputs[0].rfind("pychron: queue q-notify " + std::string(executor::to_string(result->end)), 0), 0u)
+      << inputs[0];
 }
 
 TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {

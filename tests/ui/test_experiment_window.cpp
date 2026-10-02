@@ -1,6 +1,7 @@
 // ExperimentWindow end to end on the sim lab (pumped 400x): open the example
 // queue, run it, follow it; confirmations, saving, and Window > Experiment.
 
+#include <atomic>
 #include <filesystem>
 #include <memory>
 
@@ -106,6 +107,36 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(measuring, 3);
     QVERIFY(waits >= 2);  // the delays before the runs
     QVERIFY(pane->start_enabled());
+  }
+
+  void notificationsShowInTheExecutorPane() {
+    pychron::experiment::lab::NotificationConfig config;
+    config.commands.push_back({"log", {"notify-lab"}, {pychron::experiment::lab::NotifyEvent::QueueEnded}});
+    std::atomic<int> calls{0};
+    pychron::ui::test::SimLab sim(config, [&](const pychron::ProcessSpec&) -> pychron::Result<pychron::ProcessResult> {
+      ++calls;
+      return pychron::ProcessResult{};
+    });
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    auto* pane = window.executor();
+    QCOMPARE(pane->notify_text(), QStringLiteral("log"));
+    pane->request_start();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    QTRY_VERIFY(contains(pane->events(), QStringLiteral("notified log: pychron: queue sim-example completed")));
+    sim.session->notify_test();
+    QTRY_VERIFY(contains(pane->events(), QStringLiteral("notified log: pychron: test notification")));
+    QCOMPARE(calls.load(), 2);
+  }
+
+  void withoutNotificationsATestSaysSo() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.executor()->notify_text().startsWith(QStringLiteral("off")));
+    sim.session->notify_test();
+    QTRY_VERIFY(contains(window.executor()->events(), QStringLiteral("no notifications are configured")));
   }
 
   void editsTheQueueWhileItRuns() {

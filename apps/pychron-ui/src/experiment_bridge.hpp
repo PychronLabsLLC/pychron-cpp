@@ -68,6 +68,7 @@ class ExperimentBridge : public QObject {
   void executorWaiting(const pychron::experiment::executor::ExecutorWaiting& event);
   void queueEdited(const pychron::experiment::executor::QueueEdited& event);
   void queueFrontier(const pychron::experiment::executor::QueueFrontier& event);
+  void notificationSent(const pychron::experiment::lab::NotificationSent& event);
   void queueEnded(const pychron::experiment::lab::QueueEnded& event);
   void runStateChanged(const pychron::experiment::run::RunStateChanged& event);
   void blockStarted(const pychron::experiment::measurement::BlockStarted& event);

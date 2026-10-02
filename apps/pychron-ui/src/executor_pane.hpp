@@ -65,6 +65,7 @@ class ExecutorPane : public QWidget {
   QString wait_text() const;
   QString error_text() const;
   QString spool_text() const;
+  QString notify_text() const;
   int counts_value() const;
   int counts_maximum() const;
   QStringList events() const;
@@ -95,6 +96,7 @@ class ExecutorPane : public QWidget {
   QProgressBar* counts_;
   QLabel* wait_;
   QLabel* spool_;
+  QLabel* notify_;
   QPushButton* start_;
   QPushButton* stop_;
   QPushButton* cancel_;

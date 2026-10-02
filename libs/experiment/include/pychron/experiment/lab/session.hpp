@@ -12,6 +12,10 @@
 //
 // Controls are thread-safe and non-blocking. The destructor aborts a running
 // queue and joins it.
+//
+// The lab's notifications (Lab::notifications) go out from a session-owned
+// Notifier: a failed run as it finishes, the queue's end after QueueEnded.
+// Each delivery is published as NotificationSent.
 
 #include <filesystem>
 #include <memory>
@@ -22,6 +26,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
+#include "pychron/experiment/lab/notifier.hpp"
 
 namespace pychron::systems {
 class ExtractionLine;
@@ -42,6 +47,7 @@ struct SessionHardware {
 struct SessionOptions {
   std::filesystem::path data;            // records/, spool/, executor_state.json
   executor::ExecutorOptions executor;    // state_file defaults to <data>/executor_state.json
+  ProcessRunner notify;                  // runs the notification programs; empty: run_process
 };
 
 // Published on the line's bus when a queue started by a session ends, after
@@ -79,6 +85,9 @@ class LabSession {
   std::optional<executor::QueueResult> wait();
   std::size_t pending_saves() const;  // records still in the spool
   TimePoint now() const;              // the line's clock (simulated or not)
+  // Sends a test message on every configured channel (non-blocking).
+  void notify_test();
+  Notifier& notifier() noexcept { return *notifier_; }
 
   const Lab& lab() const noexcept { return lab_; }
   const std::filesystem::path& data() const noexcept { return options_.data; }
@@ -95,6 +104,7 @@ class LabSession {
   SessionHardware hardware_;
   SessionOptions options_;
   std::unique_ptr<Services> services_;
+  std::unique_ptr<Notifier> notifier_;
 
   mutable std::mutex mutex_;
   // The current or last queue's. Controls call it outside mutex_, so a bus

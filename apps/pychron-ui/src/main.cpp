@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
       }
       session = std::make_unique<pychron::experiment::lab::LabSession>(
           *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get()},
-          pychron::experiment::lab::SessionOptions{data_dir, {}});
+          pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
       window.set_experiment(experiment_bridge.get(), cli->sim, cli->queue);
     } else {

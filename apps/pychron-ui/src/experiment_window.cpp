@@ -219,6 +219,8 @@ void ExperimentWindow::build_actions() {
   add(run, tr("Cancel..."), [this] { pane_->request_cancel(); });
   add(run, tr("Abort..."), [this] { pane_->request_abort(); });
   add(run, tr("Truncate"), [this] { pane_->request_truncate(); });
+  run->addSeparator();
+  add(run, tr("Send Test Notification"), [this] { bridge_.session().notify_test(); });
 }
 
 std::vector<std::size_t> ExperimentWindow::selected_rows() const {

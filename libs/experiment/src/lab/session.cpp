@@ -74,6 +74,7 @@ LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions 
     : lab_(lab), hardware_(hardware), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
   services_ = std::make_unique<Services>(lab_, hardware_, options_.data);
+  notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
 LabSession::~LabSession() {
@@ -99,6 +100,7 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
     running_ = true;
     result_.reset();
   }
+  notifier_->set_queue(queue.name, queue.email);
   thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
   return {};
 }
@@ -148,8 +150,11 @@ void LabSession::run(QueueSpec spec, std::size_t from_row) {
     result_ = result;
     running_ = false;
   }
+  notifier_->queue_ended(result);
   bus.publish(QueueEnded{std::move(result)});
 }
+
+void LabSession::notify_test() { notifier_->send_test(lab_.paths.dir.string()); }
 
 void LabSession::stop() {
   if (auto ex = active()) ex->stop();
