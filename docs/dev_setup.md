@@ -71,6 +71,20 @@ cmake --build --preset dev-ui --parallel
 ctest --preset dev-ui
 ```
 
+To try the spectrometer window in simulation, run the app with `--sim` and
+open Window > Spectrometer (Ctrl+Shift+S); the example
+`spectrometer.sim-integrated.toml` is loaded with a beam that follows its
+field table, and the window starts the scan when it opens:
+
+```bash
+build/dev-ui/apps/pychron-ui/pychron-ui --sim
+```
+
+Use `--spectrometer <file>` to load another spectrometer config (the menu
+item stays disabled when neither flag is given or the file fails to load; the
+error goes to the log dock). Window layout and graph settings are saved per
+spectrometer under the `PychronLabs` organization in `QSettings`.
+
 Build trees are 0.5-0.7 GB each; keep a few GB free, more when running
 parallel agent waves (each agent worktree builds its own tree).
 

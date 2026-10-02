@@ -9,11 +9,13 @@
 #include <QAction>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
 #include "main_window.hpp"
+#include "spectrometer_fixture.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -323,6 +325,59 @@ class TestDocks : public QObject {
       window.bridge().actuate("A", SwitchOp::Open);
       QTRY_VERIFY(window.log_dock()->text().contains(QStringLiteral("A rejected")));
       line->stop();
+    }
+  }
+
+  void spectrometerActionDisabledWithoutSpectrometer() {
+    auto line = pychron::ui::test::make_example_line();
+    pychron::ui::MainWindow window(*line);
+    QVERIFY(!window.spectrometer_action()->isEnabled());
+    QCOMPARE(window.spectrometer_action()->text(), QStringLiteral("Spectrometer"));
+    QCOMPARE(window.spectrometer_action()->shortcut(), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    QVERIFY(window.spectrometer_window() == nullptr);
+  }
+
+  void spectrometerActionOpensWindowOnce() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      QVERIFY(window.spectrometer_action()->isEnabled());
+
+      window.spectrometer_action()->trigger();
+      auto* first = window.spectrometer_window();
+      QVERIFY(first != nullptr);
+      QVERIFY(first->isVisible());
+      QTRY_VERIFY_WITH_TIMEOUT(sim->scan->running(), 10000);
+      window.spectrometer_action()->trigger();
+      QCOMPARE(window.spectrometer_window(), first);
+      QVERIFY(first->isVisible());
+    }
+  }
+
+  void closingMainWindowClosesSpectrometerWindowAndStopsScan() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      window.show();
+      window.spectrometer_action()->trigger();
+      QTRY_VERIFY_WITH_TIMEOUT(sim->scan->running(), 10000);
+
+      QVERIFY(window.close());
+      QVERIFY(!window.spectrometer_window()->isVisible());
+      bridge.drain();
+      QTRY_VERIFY_WITH_TIMEOUT(!sim->scan->running(), 10000);
     }
   }
 };
