@@ -77,4 +77,10 @@ Result<int> prune_derived(Db& db, Uuid analysis);
 
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject);
 
+// Browsing reads (browse.cpp).
+Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& request);
+Result<std::vector<std::string>> facet(Db& db, Dialect dialect, BrowseFacet facet, const BrowseFilter& filter);
+Result<std::optional<AnalysisDetail>> load_analysis_detail(Db& db, Dialect dialect, Uuid analysis);
+Result<std::optional<BlobData>> load_blob(Db& db, const Sha256Digest& sha);
+
 }  // namespace pychron::persistence::detail

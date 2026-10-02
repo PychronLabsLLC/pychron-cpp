@@ -8,6 +8,7 @@
 // No driver exception crosses this interface; failures are Result errors and a
 // lost compare-and-swap is a value (CommitOutcome holding conflicts).
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -94,6 +95,31 @@ struct IdentifierSpec {
   std::optional<std::string> analysis_type;  // required for special identifiers
   std::optional<Uuid> mass_spectrometer;
   std::optional<Uuid> position;              // irradiation_position (unknowns only)
+  std::optional<Uuid> sample;                // when there is no irradiation position
+};
+
+struct PrincipalInvestigatorSpec {
+  std::string last_name;
+  std::string first_initial;
+  std::optional<std::string> affiliation, email;
+};
+
+struct ProjectSpec {
+  std::string name;
+  std::optional<Uuid> principal_investigator;
+};
+
+struct MaterialSpec {
+  std::string name;
+  std::string grainsize;
+};
+
+struct SampleSpec {
+  std::string name;
+  Uuid project;
+  Uuid material;
+  std::optional<std::string> note, igsn;
+  std::optional<double> lat, lon;
 };
 
 struct LevelSpec {
@@ -107,6 +133,7 @@ struct LevelSpec {
 struct PositionSpec {
   Uuid level;
   int position = 0;
+  std::optional<Uuid> sample;
   std::optional<double> weight;
   std::optional<std::string> packet, note;
 };
@@ -375,6 +402,80 @@ struct AppliedMigration {
   std::string checksum_hex;
 };
 
+// ---------------------------------------------------------------- browsing
+// (data browsing and visualization design, section 9.2)
+
+// Every list is "any of"; empty lists do not filter. Sample, project, PI and
+// material come from the identifier's sample or its irradiation position's.
+struct BrowseFilter {
+  std::string text;  // case-insensitive prefix of run id, identifier or sample
+  std::vector<std::string> identifiers, samples, projects, principal_investigators, materials, analysis_types,
+      mass_spectrometers, extract_devices, loads, irradiations, levels, repositories;
+  std::optional<UtcTime> from, to;    // timestamp_utc, inclusive
+  std::optional<double> last_hours;   // relative to the newest analysis in the database
+  std::vector<std::string> exclude_tags;  // names of the head tag
+};
+
+struct BrowseCursorKey {
+  UtcTime timestamp;
+  Uuid uuid;
+  friend bool operator==(const BrowseCursorKey&, const BrowseCursorKey&) = default;
+};
+
+struct BrowseRequest {
+  BrowseFilter filter;
+  int limit = 200;
+  std::optional<BrowseCursorKey> after;  // rows strictly older than this
+  bool count_total = true;
+};
+
+struct BrowseRow {
+  AnalysisSummary summary;
+  std::string sample, project, material, principal_investigator, extract_device, load, irradiation, level,
+      repository, tag;
+  std::optional<int> position;
+  std::optional<double> extract_value;
+  std::string extract_units;
+};
+
+struct BrowseResult {
+  std::vector<BrowseRow> rows;  // newest first
+  std::optional<BrowseCursorKey> next;
+  std::optional<std::int64_t> total;
+};
+
+enum class BrowseFacet {
+  AnalysisType,
+  MassSpectrometer,
+  ExtractDevice,
+  Project,
+  PrincipalInvestigator,
+  Sample,
+  Material,
+  Identifier,
+  Irradiation,
+  Level,
+  Load,
+  Repository,
+};
+
+// What recall and reduction need beyond the head payloads.
+struct AnalysisDetail {
+  BrowseRow row;
+  ExtractionFields extraction;
+  std::vector<IsotopeRow> isotopes;
+  std::vector<DetectorRow> detectors;
+  std::vector<PeakCenterRow> peak_centers;
+  std::optional<std::string> analyst;
+  std::optional<std::string> environmental_json;  // analysis_meta.environmental
+};
+
+struct BlobData {
+  std::string codec;
+  Bytes bytes;
+  std::optional<int> n_points;
+};
+
 class IStore {
  public:
   virtual ~IStore() = default;
@@ -389,6 +490,11 @@ class IStore {
   virtual Result<Uuid> ensure_user(Uuid client, const std::string& name) = 0;
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
   virtual Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) = 0;
+  virtual Result<Uuid> add_extract_device(Uuid client, const std::string& name) = 0;
+  virtual Result<Uuid> add_principal_investigator(Uuid client, const PrincipalInvestigatorSpec& spec) = 0;
+  virtual Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) = 0;
+  virtual Result<Uuid> add_material(Uuid client, const MaterialSpec& spec) = 0;
+  virtual Result<Uuid> add_sample(Uuid client, const SampleSpec& spec) = 0;
   virtual Result<Uuid> add_irradiation(Uuid client, const std::string& name) = 0;
   virtual Result<Uuid> add_level(Uuid client, const LevelSpec& spec) = 0;
   virtual Result<Uuid> add_irradiation_position(Uuid client, const PositionSpec& spec) = 0;
@@ -437,6 +543,14 @@ class IStore {
   virtual Result<std::optional<RevisionPayload>> load_payload(Uuid revision) = 0;
   virtual Result<std::optional<AnalysisView>> load_analysis(Uuid analysis) = 0;
   virtual Result<std::vector<AnalysisSummary>> find_analyses(const AnalysisQuery& query) = 0;
+  // Newest first, keyset paged on (timestamp, uuid).
+  virtual Result<BrowseResult> browse(const BrowseRequest& request) = 0;
+  // Distinct non-empty values of `facet` among analyses matching every other
+  // filter of `filter`, sorted.
+  virtual Result<std::vector<std::string>> facet(BrowseFacet facet, const BrowseFilter& filter) = 0;
+  virtual Result<std::optional<AnalysisDetail>> load_analysis_detail(Uuid analysis) = 0;
+  // A content-addressed raw series; nullopt when not (yet) uploaded.
+  virtual Result<std::optional<BlobData>> load_blob(const Sha256Digest& sha) = 0;
   virtual Result<ChangePage> changes_since(ChangeSeq cursor, int limit) = 0;
 };
 

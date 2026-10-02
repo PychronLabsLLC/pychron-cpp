@@ -126,12 +126,56 @@ class TinyStore final : public IStore {
     row["analysis_type"] = qv(spec.analysis_type);
     row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
     row["position_uuid"] = qv(spec.position);
+    row["sample_uuid"] = qv(spec.sample);
     row["created_utc"] = qv(UtcTime::now());
     if (auto r = db_->insert("identifier", row); !r) return fail(r.error());
     const std::string detail =
         json_created({{"identifier", spec.identifier}, {"kind", spec.kind}, {"analysis_type", spec.analysis_type}});
     return finish_catalog(tx, client,
                           {ChangeEntityRow{QStringLiteral("identifier"), uuid, QStringLiteral("insert"), detail}}, uuid);
+  }
+
+  Result<Uuid> add_extract_device(Uuid client, const std::string& name) override {
+    Row row;
+    row["name"] = qv(name);
+    return add_catalog_row(client, "extract_device", row, json_created({{"name", name}}));
+  }
+
+  Result<Uuid> add_principal_investigator(Uuid client, const PrincipalInvestigatorSpec& spec) override {
+    Row row;
+    row["last_name"] = qv(spec.last_name);
+    row["first_initial"] = qv(spec.first_initial);
+    row["affiliation"] = qv(spec.affiliation);
+    row["email"] = qv(spec.email);
+    return add_catalog_row(client, "principal_investigator", row,
+                           json_created({{"last_name", spec.last_name}, {"first_initial", spec.first_initial}}));
+  }
+
+  Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["pi_uuid"] = qv(spec.principal_investigator);
+    return add_catalog_row(client, "project", row, json_created({{"name", spec.name}}));
+  }
+
+  Result<Uuid> add_material(Uuid client, const MaterialSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["grainsize"] = qv(spec.grainsize);
+    return add_catalog_row(client, "material", row, json_created({{"name", spec.name}, {"grainsize", spec.grainsize}}));
+  }
+
+  Result<Uuid> add_sample(Uuid client, const SampleSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["project_uuid"] = qv(spec.project);
+    row["material_uuid"] = qv(spec.material);
+    row["note"] = qv(spec.note);
+    row["igsn"] = qv(spec.igsn);
+    row["lat"] = qv(spec.lat);
+    row["lon"] = qv(spec.lon);
+    row["updated_utc"] = qv(UtcTime::now());
+    return add_catalog_row(client, "sample", row, json_created({{"name", spec.name}}));
   }
 
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override {
@@ -154,6 +198,7 @@ class TinyStore final : public IStore {
     Row row;
     row["level_uuid"] = qv(spec.level);
     row["position"] = spec.position;
+    row["sample_uuid"] = qv(spec.sample);
     row["weight"] = qv(spec.weight);
     row["packet"] = qv(spec.packet);
     row["note"] = qv(spec.note);
@@ -327,6 +372,20 @@ class TinyStore final : public IStore {
     for (const auto& r : *rows) out.push_back(summary_from(r));
     return out;
   }
+
+  Result<BrowseResult> browse(const BrowseRequest& request) override {
+    return detail::browse(*db_, dialect(), request);
+  }
+
+  Result<std::vector<std::string>> facet(BrowseFacet f, const BrowseFilter& filter) override {
+    return detail::facet(*db_, dialect(), f, filter);
+  }
+
+  Result<std::optional<AnalysisDetail>> load_analysis_detail(Uuid analysis) override {
+    return detail::load_analysis_detail(*db_, dialect(), analysis);
+  }
+
+  Result<std::optional<BlobData>> load_blob(const Sha256Digest& sha) override { return detail::load_blob(*db_, sha); }
 
   Result<ChangePage> changes_since(ChangeSeq cursor, int limit) override {
     if (limit <= 0) return fail(ErrorKind::Protocol, "changes_since: limit must be positive");

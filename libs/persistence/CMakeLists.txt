@@ -33,6 +33,7 @@ file(CONFIGURE OUTPUT "${_embedded_cpp}" CONTENT "${_embedded}" @ONLY)
 
 add_library(pychron_persistence STATIC
   src/blob.cpp
+  src/browse.cpp
   src/change.cpp
   src/collections.cpp
   src/ids.cpp
