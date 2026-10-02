@@ -124,7 +124,12 @@ class FakePeakCenter final : public IPeakCenterPort {
  public:
   Result<PeakCenterReport> peak_center(const PeakCenterRequest& req, scripting::CancelToken&) override {
     requests.push_back(req);
-    return PeakCenterReport{req, ok, ok ? std::optional<double>(8.0) : std::nullopt, ok ? "" : "no peak"};
+    PeakCenterReport report;
+    report.request = req;
+    report.ok = ok;
+    if (ok) report.center = 8.0;
+    else report.message = "no peak";
+    return report;
   }
   std::vector<PeakCenterRequest> requests;
   bool ok = true;
