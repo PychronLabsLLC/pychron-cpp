@@ -31,11 +31,13 @@ struct SimSpectrometer {
   SimSpectrometer& operator=(const SimSpectrometer&) = delete;
 
   // The scan stops while the scheduler still runs its jobs; the scheduler is
-  // idle before the spectrometer goes; the global beam registry refers to
-  // `clock`, so it is emptied before the members are destroyed.
+  // idle before the spectrometer goes (stop() only joins the dispatcher, so a
+  // poll already on a worker is waited for); the global beam registry refers
+  // to `clock`, so it is emptied before the members are destroyed.
   ~SimSpectrometer() {
     scan.reset();
     scheduler.stop();
+    scheduler.wait_idle();
     spec.reset();
     sim::BeamModelRegistry::global().clear();
   }

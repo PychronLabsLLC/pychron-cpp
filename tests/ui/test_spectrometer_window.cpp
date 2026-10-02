@@ -11,6 +11,7 @@
 #include <optional>
 #include <vector>
 
+#include <QDoubleSpinBox>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -147,6 +148,20 @@ class TestSpectrometerWindow : public QObject {
     window_->set_detector_shown("AX", true);
     window_->chart_view()->refresh();
     QVERIFY(window_->chart_view()->graph_visible(kAX));
+  }
+
+  // Typing "15" passes through "1": the width (and with it the history the
+  // ring keeps) must not change until the edit is committed.
+  void typedScanWidthAppliesOnCommitOnly() {
+    open();
+    auto* spin = window_->findChild<QDoubleSpinBox*>();
+    QVERIFY(spin != nullptr);
+    QCOMPARE(window_->chart_model().scan_width(), 60.0);
+    spin->selectAll();
+    QTest::keyClicks(spin, QStringLiteral("15"));
+    QCOMPARE(window_->chart_model().scan_width(), 60.0);
+    QTest::keyClick(spin, Qt::Key_Return);
+    QCOMPARE(window_->chart_model().scan_width(), 900.0);
   }
 
   void scanWidthAndRangesReachThePlot() {

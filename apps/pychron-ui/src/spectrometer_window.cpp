@@ -179,6 +179,9 @@ QWidget* SpectrometerWindow::build_controls() {
   auto* graph_form = new QFormLayout(graph_box);
   scan_width_ = new QDoubleSpinBox;
   scan_width_->setDecimals(3);
+  // Typing "15" passes through "1"; a narrower width trims the ring, so the
+  // value only applies once the edit is committed.
+  scan_width_->setKeyboardTracking(false);
   scan_width_->setRange(kMinScanWidthMinutes, kMaxScanWidthMinutes);
   scan_width_->setValue(model_.scan_width() / 60.0);
   scale_ = new QComboBox;

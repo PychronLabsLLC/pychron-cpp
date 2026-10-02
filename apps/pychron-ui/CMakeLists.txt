@@ -8,6 +8,7 @@ set(CMAKE_AUTOMOC ON)
 # Everything except main() lives in a static library so tests/ui can drive
 # the same widgets under Qt Test.
 add_library(pychron_ui_lib STATIC
+  src/command_line.cpp
   src/core_bridge.cpp
   src/canvas_items.cpp
   src/canvas_view.cpp
@@ -22,6 +23,7 @@ add_library(pychron_ui_lib STATIC
   src/spectrometer_bridge.cpp
   src/strip_chart_view.cpp
   src/spectrometer_window.cpp
+  src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
   src/canvas_view.hpp
