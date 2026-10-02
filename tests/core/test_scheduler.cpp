@@ -1,10 +1,17 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <mutex>
+#include <random>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
+#include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 
@@ -173,6 +180,95 @@ TEST(Scheduler, ScanErrorIsLoggedAndCounted) {
   EXPECT_EQ(logs[0].level, LogLevel::Warn);
   EXPECT_NE(logs[0].message.find("timeout"), std::string::npos);
   EXPECT_EQ(s.stats(*id)->failures, 1u);
+}
+
+namespace {
+
+std::filesystem::path unique_log_dir(const char* tag) {
+  std::random_device rd;
+  return std::filesystem::temp_directory_path() / (std::string(tag) + std::to_string(std::mt19937_64(rd())()));
+}
+
+std::size_t lines_containing(const std::filesystem::path& p, const std::string& needle) {
+  std::ifstream in(p);
+  std::size_t n = 0;
+  for (std::string line; std::getline(in, line);)
+    if (line.find(needle) != std::string::npos) ++n;
+  return n;
+}
+
+}  // namespace
+
+TEST(Scheduler, ScanErrorGoesThroughHubToFileAndBusOnce) {
+  ManualClock clock;
+  SignalBus bus;
+  std::vector<Log> logs;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { logs.push_back(e); });
+  const auto dir = unique_log_dir("pychron_sched_hub_");
+  config::LoggingConfig lc;
+  lc.dir = dir;
+  auto hub = LogHub::create(lc, clock, &bus);
+  ASSERT_TRUE(hub);
+  {
+    Scheduler s(clock, &bus, inline_pool(), *hub);
+    s.scan("IG1", 1s, []() -> Result<Sample> { return fail(ErrorKind::Timeout, "no reply", "IG1"); });
+    clock.advance(1s);
+    s.run_pending();
+  }
+  (*hub)->flush();
+  ASSERT_EQ(logs.size(), 1u);  // via the hub only, not also published directly
+  EXPECT_EQ(logs[0].logger, "scheduler");
+  EXPECT_EQ(logs[0].level, LogLevel::Warn);
+  EXPECT_EQ(lines_containing(dir / "pychron.log", "[warn] scheduler: scan IG1 failed"), 1u);
+  hub->reset();
+  std::filesystem::remove_all(dir);
+}
+
+TEST(Scheduler, SchedulerLevelRuleGatesItsRecords) {
+  ManualClock clock;
+  SignalBus bus;
+  std::vector<Log> logs;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { logs.push_back(e); });
+  const auto dir = unique_log_dir("pychron_sched_rule_");
+  config::LoggingConfig lc;
+  lc.dir = dir;
+  lc.default_level = LogLevel::Trace;
+  lc.levels.emplace_back("scheduler", LogLevel::Error);
+  auto hub = LogHub::create(lc, clock, &bus);
+  ASSERT_TRUE(hub);
+  {
+    Scheduler s(clock, &bus, inline_pool(), *hub);
+    s.scan("IG1", 1s, []() -> Result<Sample> { return fail(ErrorKind::Timeout, "no reply", "IG1"); });
+    s.after("boom", 1s, [] { throw std::runtime_error("x"); });
+    clock.advance(1s);
+    s.run_pending();
+  }
+  (*hub)->flush();
+  // The warn (failed scan) is below the rule; the error (throwing job) is not.
+  ASSERT_EQ(logs.size(), 1u);
+  EXPECT_EQ(logs[0].level, LogLevel::Error);
+  EXPECT_EQ(lines_containing(dir / "pychron.log", "scheduler: scan IG1 failed"), 0u);
+  EXPECT_EQ(lines_containing(dir / "pychron.log", "[error] scheduler: job boom threw"), 1u);
+  hub->reset();
+  std::filesystem::remove_all(dir);
+}
+
+TEST(Scheduler, HubOnAnotherBusAlsoPublishesOnSchedulerBus) {
+  ManualClock clock;
+  SignalBus bus;
+  SignalBus hub_bus;
+  int on_bus = 0;
+  int on_hub_bus = 0;
+  auto s1 = bus.subscribe<Log>([&](const Log&) { ++on_bus; });
+  auto s2 = hub_bus.subscribe<Log>([&](const Log&) { ++on_hub_bus; });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &hub_bus);
+  ASSERT_TRUE(hub);
+  Scheduler s(clock, &bus, inline_pool(), *hub);
+  s.scan("IG1", 1s, []() -> Result<Sample> { return fail(ErrorKind::Timeout, "no reply", "IG1"); });
+  clock.advance(1s);
+  s.run_pending();
+  EXPECT_EQ(on_bus, 1);
+  EXPECT_EQ(on_hub_bus, 1);
 }
 
 TEST(Scheduler, ThrowingTaskDoesNotKillScheduler) {

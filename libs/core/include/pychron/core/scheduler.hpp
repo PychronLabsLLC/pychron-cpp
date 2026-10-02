@@ -15,6 +15,8 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_hub.hpp"
+#include "pychron/core/logger.hpp"
 
 namespace pychron {
 
@@ -54,7 +56,12 @@ class Scheduler {
   using Sampler = std::function<Result<Sample>()>;
 
   explicit Scheduler(const Clock& clock, SignalBus* bus = nullptr);
-  Scheduler(const Clock& clock, SignalBus* bus, Options options);
+  // With `log_hub`, the scheduler's own records (failed scans, throwing jobs)
+  // go through the hub's "scheduler" logger: file, level rules, stderr echo
+  // and the hub's bus. They are also published on `bus` if that is a
+  // different bus. Without a hub they go straight to `bus`.
+  Scheduler(const Clock& clock, SignalBus* bus, Options options,
+            std::shared_ptr<LogHub> log_hub = nullptr);
   ~Scheduler();
   Scheduler(const Scheduler&) = delete;
   Scheduler& operator=(const Scheduler&) = delete;
@@ -101,6 +108,8 @@ class Scheduler {
   const Clock& clock_;
   SignalBus* bus_;
   Options options_;
+  std::shared_ptr<LogHub> log_hub_;
+  std::optional<Logger> logger_;  // "scheduler" on log_hub_
 
   mutable std::mutex mutex_;
   std::condition_variable wake_;       // dispatcher: jobs changed or stop requested

@@ -1,6 +1,7 @@
 #include "pychron/core/scheduler.hpp"
 
 #include <algorithm>
+#include <utility>
 
 #include "pychron/core/signal_bus.hpp"
 
@@ -19,8 +20,10 @@ struct Scheduler::Job {
 
 Scheduler::Scheduler(const Clock& clock, SignalBus* bus) : Scheduler(clock, bus, Options{}) {}
 
-Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options)
-    : clock_(clock), bus_(bus), options_(options) {
+Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
+                     std::shared_ptr<LogHub> log_hub)
+    : clock_(clock), bus_(bus), options_(options), log_hub_(std::move(log_hub)) {
+  if (log_hub_) logger_.emplace(log_hub_->logger("scheduler"));
   workers_.reserve(options_.threads);
   for (std::size_t i = 0; i < options_.threads; ++i) workers_.emplace_back([this] { worker_loop(); });
 }
@@ -183,6 +186,11 @@ void Scheduler::execute(const std::shared_ptr<Job>& job) {
 }
 
 void Scheduler::publish_log(LogLevel level, std::string message) const {
+  if (logger_) {
+    if (!logger_->enabled(level)) return;
+    logger_->log(level, message);  // publishes on the hub's bus
+    if (bus_ == nullptr || bus_ == log_hub_->bus()) return;
+  }
   if (bus_ == nullptr) return;
   bus_->publish(Log{level, "scheduler", std::move(message), clock_.now()});
 }

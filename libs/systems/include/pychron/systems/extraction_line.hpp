@@ -41,6 +41,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/logger.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
@@ -61,8 +62,9 @@ struct ExtractionLineOptions {
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
-  // Optional override. When null the line creates one from [logging]. Traced
-  // transports mirror their bytes to "<name>.wire" on it; the line shares
+  // Optional override. When null the line creates one from [logging]. Every
+  // transport mirrors its bytes to "<name>.wire" on it, and the line's own
+  // records go to "extraction_line" and "scheduler"; the line shares
   // ownership, so the hub outlives its transports.
   std::shared_ptr<LogHub> log_hub;
 };
@@ -138,6 +140,9 @@ class ExtractionLine {
   SignalBus bus_;
   // After the bus, before the transports: destroyed after them.
   std::shared_ptr<LogHub> log_hub_;
+  // "extraction_line" on log_hub_; null without a hub, when log() publishes
+  // straight on bus_.
+  std::optional<Logger> logger_;
   std::unique_ptr<sim::SimSystem> sim_;
   std::vector<std::pair<std::string, std::unique_ptr<Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<Device>>> devices_;

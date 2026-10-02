@@ -97,6 +97,7 @@ Result<void> ExtractionLine::build() {
       std::fprintf(stderr, "pychron: logging disabled: %s\n", hub.error().what.c_str());
     }
   }
+  if (log_hub_) logger_.emplace(log_hub_->logger("extraction_line"));
 
   bool tracing = false;
   for (auto [name, tc] : config_.transports) {
@@ -145,7 +146,7 @@ Result<void> ExtractionLine::build() {
   if (!switches) return fail(switches.error());
   switches_ = std::move(*switches);
 
-  scheduler_ = std::make_unique<Scheduler>(*clock_, &bus_, options_.scheduler);
+  scheduler_ = std::make_unique<Scheduler>(*clock_, &bus_, options_.scheduler, log_hub_);
 
   subscriptions_.push_back(bus_.subscribe<PressureSample>(
       [this](const PressureSample& s) { record_pressure(s.gauge, s.value); }));
@@ -283,6 +284,11 @@ void ExtractionLine::record_pressure(const std::string& gauge, double value) {
 }
 
 void ExtractionLine::log(LogLevel level, std::string message) {
+  if (logger_) {
+    if (!logger_->enabled(level)) return;
+    logger_->log(level, message);  // publishes on the hub's bus
+    if (log_hub_->bus() == &bus_) return;
+  }
   bus_.publish(Log{level, "extraction_line", std::move(message), clock_->now()});
 }
 

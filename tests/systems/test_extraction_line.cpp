@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include <unistd.h>
@@ -368,6 +370,73 @@ TEST(ExtractionLine, BuildsOwnHubFromLoggingConfigAndWireLogs) {
   }
   EXPECT_TRUE(std::filesystem::exists(dir / "logs" / "pychron.log"));
   std::filesystem::remove_all(dir);
+}
+
+// A gauge on a driver that is not a gauge: start() logs the failed initial
+// read (then fails to schedule it), which exercises ExtractionLine::log.
+constexpr const char* kBadGauge = R"(
+[[gauges]]
+name = "BAD"
+driver = "relay"
+channel = 1
+units = "torr"
+)";
+
+std::size_t lines_containing(const std::filesystem::path& p, const std::string& needle) {
+  std::ifstream in(p);
+  std::size_t n = 0;
+  for (std::string line; std::getline(in, line);)
+    if (line.find(needle) != std::string::npos) ++n;
+  return n;
+}
+
+TEST(ExtractionLine, LineWarningReachesLogFileAndBusOnce) {
+  ManualClock clock;
+  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_log_test_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+
+  auto cfg = system_config((std::string(kSystem) + kBadGauge).c_str());
+  cfg.logging.dir = dir;
+  {
+    auto line = ExtractionLine::create(std::move(cfg), std::nullopt, manual(clock));
+    ASSERT_TRUE(line) << line.error().what;
+    ASSERT_NE((*line)->log_hub(), nullptr);
+    std::vector<Log> got;
+    auto sub = (*line)->bus().subscribe<Log>([&](const Log& e) {
+      if (e.logger == "extraction_line") got.push_back(e);
+    });
+    (void)(*line)->start();
+    (*line)->log_hub()->flush();
+    ASSERT_EQ(got.size(), 1u);
+    EXPECT_EQ(got[0].level, LogLevel::Warn);
+    EXPECT_NE(got[0].message.find("initial read of gauge 'BAD' failed"), std::string::npos);
+    EXPECT_EQ(lines_containing(dir / "pychron.log", "[warn] extraction_line: initial read of gauge 'BAD' failed"),
+              1u);
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST(ExtractionLine, InjectedHubOnAnotherBusStillFeedsLineBus) {
+  ManualClock clock;
+  SignalBus hub_bus;
+  int on_hub_bus = 0;
+  auto hub_sub = hub_bus.subscribe<Log>([&](const Log& e) {
+    if (e.logger == "extraction_line") ++on_hub_bus;
+  });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &hub_bus);
+  ASSERT_TRUE(hub);
+  auto opts = manual(clock);
+  opts.log_hub = *hub;
+
+  auto line = ExtractionLine::create(system_config((std::string(kSystem) + kBadGauge).c_str()), std::nullopt, opts);
+  ASSERT_TRUE(line) << line.error().what;
+  int on_line_bus = 0;
+  auto sub = (*line)->bus().subscribe<Log>([&](const Log& e) {
+    if (e.logger == "extraction_line") ++on_line_bus;
+  });
+  (void)(*line)->start();
+  EXPECT_EQ(on_line_bus, 1);
+  EXPECT_EQ(on_hub_bus, 1);
 }
 
 }  // namespace
