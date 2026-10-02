@@ -7,7 +7,11 @@
 #
 # libs/persistence (TinyORM on QtSql) builds wherever Qt6 Core + Sql is found:
 # the Linux core jobs install Qt's SQL drivers, the macOS UI job has Qt, and the
-# persistence job adds a PostgreSQL 16 service. Windows has no Qt and skips it.
+# linux-gcc job also starts PostgreSQL 16 so the store tests run against both
+# engines. Windows has no Qt and skips it.
+#
+# Compiles go through ccache; the cache is restored from the newest run of the
+# same job and saved even when the job fails, so a red build still warms it.
 name: ci
 
 on:
@@ -41,6 +45,8 @@ jobs:
             cc: gcc-14
             cxx: g++-14
             sanitize: ""
+            postgres: true
+            pg_url: postgresql://pychron:pychron@localhost:5432/pychron_test
           - name: linux-clang-asan
             os: ubuntu-24.04
             cc: clang-18
@@ -49,18 +55,50 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
+      # Read when the store tests are discovered (build) and run; empty means SQLite only.
+      PYCHRON_TEST_PG_URL: ${{ matrix.pg_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generated SQLite DDL is up to date
+        if: matrix.postgres
+        run: python3 tools/ddl_sqlite.py --check
 
       - name: Install tools (Linux)
         if: runner.os == 'Linux'
         run: >
-          sudo apt-get update && sudo apt-get install -y ninja-build
+          sudo apt-get update && sudo apt-get install -y ninja-build ccache
           qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
 
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja ccache
+
+      # A step, not a `services:` block: services cannot be limited to one matrix entry.
+      - name: Start PostgreSQL 16
+        if: matrix.postgres
+        run: |
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=pychron -e POSTGRES_PASSWORD=pychron -e POSTGRES_DB=pychron_test \
+            postgres:16
+          for _ in $(seq 60); do
+            # The image restarts the server once during init; wait for the final one on TCP.
+            if docker exec postgres pg_isready -h localhost -U pychron -d pychron_test; then exit 0; fi
+            sleep 1
+          done
+          docker logs postgres
+          exit 1
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.name }}-
 
       - name: Configure
         run: >
@@ -70,47 +108,19 @@ jobs:
       - name: Build
         run: cmake --build --preset dev --parallel
 
+      - name: ccache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+
       - name: Test
         run: ctest --preset dev --parallel 4
-
-  persistence:
-    name: persistence (linux-gcc, postgres-16)
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: pychron
-          POSTGRES_PASSWORD: pychron
-          POSTGRES_DB: pychron_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U pychron"
-          --health-interval 5s --health-timeout 5s --health-retries 12
-    env:
-      CC: gcc-14
-      CXX: g++-14
-      PYCHRON_TEST_PG_URL: postgresql://pychron:pychron@localhost:5432/pychron_test
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generated SQLite DDL is up to date
-        run: python3 tools/ddl_sqlite.py --check
-
-      - name: Install tools
-        run: >
-          sudo apt-get update && sudo apt-get install -y ninja-build
-          qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
-
-      - name: Configure
-        run: cmake --preset dev -G Ninja
-
-      - name: Build
-        run: cmake --build --preset dev --parallel --target pychron_persistence_tests
-
-      - name: Test (SQLite and PostgreSQL)
-        run: build/dev/tests/persistence/pychron_persistence_tests
 
   windows:
     name: core (windows-msvc)
@@ -132,17 +142,39 @@ jobs:
     runs-on: macos-15
     env:
       QT_QPA_PLATFORM: offscreen
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Qt and tools
-        run: brew install qt ninja
+        run: brew install qt ninja ccache
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-macos-qt6-${{ github.sha }}
+          restore-keys: ccache-macos-qt6-
 
       - name: Configure
         run: cmake --preset dev-ui -G Ninja
 
       - name: Build
         run: cmake --build --preset dev-ui --parallel
+
+      - name: ccache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-macos-qt6-${{ github.sha }}
 
       - name: Test
         run: ctest --preset dev-ui --parallel 4
