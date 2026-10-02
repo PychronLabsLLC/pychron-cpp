@@ -55,6 +55,10 @@ class LogHub {
   // Blocks until every record written so far is on disk.
   void flush();
 
+  // The bus this hub publishes `Log` events on (null if none). Producers that
+  // own a bus use it to avoid delivering a record twice.
+  SignalBus* bus() const noexcept;
+
   // Used by Logger; not for callers. Never throws; `message` is written
   // verbatim (it is never interpreted as a format string).
   void write(LogLevel level, std::string_view logger, std::string_view message);
@@ -66,8 +70,9 @@ class LogHub {
   // - std::terminate: logs the active exception text at `error` on logger
   //   `pychron`, flushes (bounded wait), then calls the previous handler.
   // - POSIX SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL: writes `fatal signal N` with
-  //   write(2) to stderr and to a descriptor on that hub's pychron.log, then
-  //   restores the default action and re-raises. No flush (signal-unsafe):
+  //   write(2) to stderr and to a descriptor on that hub's pychron.log (moved
+  //   onto the live file within about 1 s of a rotation), then restores the
+  //   default action and re-raises. No flush (signal-unsafe):
   //   records below `error` younger than about 1 s may be lost.
   // - Windows: an unhandled-exception filter writing `fatal exception 0x..`
   //   the same way, returning EXCEPTION_CONTINUE_SEARCH.

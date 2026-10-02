@@ -36,6 +36,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -126,6 +127,11 @@ class BarrierSink final : public spdlog::sinks::base_sink<std::mutex> {
   std::uint64_t reached_ = 0;
 };
 
+}  // namespace
+
+namespace {
+// Defined with the crash handlers below; called from the flusher thread.
+void refresh_crash_output(const LogHub::Impl& impl) noexcept;
 }  // namespace
 
 struct LogHub::Impl {
@@ -306,6 +312,7 @@ struct LogHub::Impl {
       if (stopping) break;
       lock.unlock();
       logger->flush();  // asynchronous: queued behind pending records
+      refresh_crash_output(*this);  // follow pychron.log across rotation
       lock.lock();
     }
   }
@@ -359,11 +366,49 @@ void close_crash_target(CrashTarget target) noexcept {
 }
 
 // Points the handler at `impl`'s log file. Caller holds CrashState::mutex.
+//
+// POSIX: the handler's descriptor number never changes once set. A new file
+// is opened and dup2()ed onto it, which swaps the open file atomically with
+// respect to a handler running concurrently, so no descriptor the handler may
+// be using is ever closed.
 void retarget_crash_output(const LogHub::Impl& impl) noexcept {
   if (impl.file_path.empty()) return;
   const CrashTarget fresh = open_crash_target(impl.file_path);
   if (fresh == kNoCrashTarget) return;
+#ifdef _WIN32
   close_crash_target(g_crash_target.exchange(fresh));
+#else
+  const CrashTarget current = g_crash_target.load();
+  if (current == kNoCrashTarget) {
+    g_crash_target.store(fresh);
+    return;
+  }
+  ::dup2(fresh, current);  // dup2 clears FD_CLOEXEC on `current`; restore it
+  ::fcntl(current, F_SETFD, FD_CLOEXEC);
+  close_crash_target(fresh);
+#endif
+}
+
+// Flusher tick: if `impl` is the hub the handlers write to and its
+// pychron.log has been replaced (rotation), retarget onto the live file.
+void refresh_crash_output(const LogHub::Impl& impl) noexcept {
+#ifdef _WIN32
+  (void)impl;  // the handle is only (re)opened when a hub is created
+#else
+  if (impl.file_path.empty()) return;
+  auto& state = crash_state();
+  std::unique_lock lock(state.mutex, std::try_to_lock);
+  if (!lock.owns_lock() || !state.installed) return;
+  if (state.current.lock().get() != &impl) return;
+  const CrashTarget current = g_crash_target.load();
+  struct stat live {};
+  struct stat open_file {};
+  if (::stat(impl.file_path.c_str(), &live) != 0) return;  // mid-rotation; next tick
+  if (current != kNoCrashTarget && ::fstat(current, &open_file) == 0 &&
+      live.st_dev == open_file.st_dev && live.st_ino == open_file.st_ino)
+    return;
+  retarget_crash_output(impl);
+#endif
 }
 
 // Async-signal-safe write of a whole buffer; errors are ignored.
@@ -612,6 +657,8 @@ void LogHub::write(LogLevel level, std::string_view logger, std::string_view mes
 }
 
 Logger LogHub::logger(std::string name) { return Logger(std::move(name), impl_); }
+
+SignalBus* LogHub::bus() const noexcept { return impl_->bus; }
 
 void LogHub::set_level(std::string_view pattern, LogLevel level) {
   std::unique_lock lock(impl_->rules_mutex);

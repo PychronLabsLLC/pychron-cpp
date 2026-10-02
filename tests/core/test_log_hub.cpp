@@ -577,13 +577,44 @@ TEST(LogHubCrash, SignalGuaranteeIsBounded) {
         if (!hub) std::_Exit(10);
         LogHub::install_crash_handlers();
         (*hub)->logger("crash.test").info("old enough");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
         std::abort();
       },
       ::testing::KilledBySignal(SIGABRT), "fatal signal 6");
   const auto file = tmp.path() / "pychron.log";
   EXPECT_EQ(count_lines_containing(file, "[info] crash.test: old enough"), 1u);
   EXPECT_EQ(count_lines_containing(file, "fatal signal 6"), 1u);
+#endif
+}
+
+TEST(LogHubCrash, FatalSignalLineFollowsRotation) {
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX signal handlers";
+#else
+  // The crash descriptor is opened on the pychron.log of the moment; once the
+  // file rotates, the next flusher tick must move it onto the new live file.
+  GTEST_FLAG_SET(death_test_style, "fast");
+  TempDir tmp;
+  SteadyClock clock;
+  EXPECT_EXIT(
+      {
+        auto cfg = config_for(tmp.path());
+        cfg.max_size_mb = 1;
+        cfg.max_files = 3;
+        auto hub = LogHub::create(cfg, clock);
+        if (!hub) std::_Exit(10);
+        LogHub::install_crash_handlers();
+        auto log = (*hub)->logger("crash.test");
+        const std::string filler(1000, 'x');
+        for (int i = 0; i < 1500; ++i) log.info(filler);  // > 1 MiB: rotates
+        (*hub)->flush();
+        if (!fs::exists(tmp.path() / "pychron.1.log")) std::_Exit(11);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));  // >= 2 flusher ticks
+        std::abort();
+      },
+      ::testing::KilledBySignal(SIGABRT), "fatal signal 6");
+  EXPECT_EQ(count_lines_containing(tmp.path() / "pychron.log", "fatal signal 6"), 1u);
+  EXPECT_EQ(count_lines_containing(tmp.path() / "pychron.1.log", "fatal signal 6"), 0u);
 #endif
 }
 
