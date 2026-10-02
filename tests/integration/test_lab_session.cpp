@@ -181,6 +181,24 @@ TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
 }
 
+// A QueueEnded subscriber may call back into the session while the owner
+// starts the next queue (which joins the previous queue's thread).
+TEST_F(LabSessionTest, AQueueEndedSubscriberMayCallBackIn) {
+  std::atomic<int> called{0};
+  subs_.push_back(line_->bus().subscribe<QueueEnded>([this, &called](const QueueEnded&) {
+    std::this_thread::sleep_for(200ms);  // still publishing when the next start() comes
+    (void)session_->running();
+    (void)session_->state();
+    ++called;
+  }));
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(eventually([&] { return !session_->running(); }));
+  ASSERT_TRUE(session_->start(queue_));  // joins the first thread mid-publish
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_EQ(called.load(), 2);
+}
+
 TEST_F(LabSessionTest, DestroyingARunningSessionAbortsIt) {
   ASSERT_TRUE(session_->start(queue_));
   ASSERT_TRUE(eventually([&] { return started_ > 0; }));

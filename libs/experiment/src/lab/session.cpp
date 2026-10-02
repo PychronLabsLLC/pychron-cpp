@@ -84,8 +84,7 @@ LabSession::~LabSession() {
 bool LabSession::has_spectrometer() const noexcept { return hardware_.spectrometer != nullptr; }
 
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
-  std::lock_guard lock(mutex_);
-  if (running_) return fail(ErrorKind::Config, "a queue is already running", "experiment");
+  if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
   const auto check = check_lab_queue(lab_, queue);
   if (!check.ok()) {
     int errors = 0;
@@ -97,13 +96,19 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
     return fail(ErrorKind::Config,
                 "the queue has " + std::to_string(errors) + " error(s); first: " + first, "experiment");
   }
-  if (thread_.joinable()) thread_.join();  // the previous queue has ended
+  // The previous queue has ended but its thread may still be publishing
+  // QueueEnded; joined without mutex_ so a subscriber may call back in.
+  // Only the owner's thread touches thread_ (start and wait).
+  if (thread_.joinable()) thread_.join();
   auto ctx = services_->ctx;
   ctx.services.instrument.mass_spectrometer = queue.mass_spectrometer;
   ctx.services.instrument.analyst = queue.username;
-  executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
-  running_ = true;
-  result_.reset();
+  {
+    std::lock_guard lock(mutex_);
+    executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
+    running_ = true;
+    result_.reset();
+  }
   thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
   return {};
 }
