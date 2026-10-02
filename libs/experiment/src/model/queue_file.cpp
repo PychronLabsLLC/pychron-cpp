@@ -163,6 +163,7 @@ void emit_run(Emitter& o, const RunSpec& r, const QueueSpec& q) {
     o.header("[runs.measurement]");
     o.str("plan", m.plan);
     o.opt_str("hook", m.hook);
+    o.flag("advanced", m.advanced);
     if (!m.overrides.empty()) {
       o.header("[runs.measurement.overrides]");
       for (const auto& [k, v] : m.overrides) o.raw(k, param(v));

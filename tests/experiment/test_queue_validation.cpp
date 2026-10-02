@@ -12,7 +12,7 @@ const IdentifierRules kIds = IdentifierRules::defaults();
 struct Plans : IPlanResolver {
   std::set<std::string> names{"argon"};
   bool has_plan(std::string_view name) const override { return names.count(std::string(name)) > 0; }
-  std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& o) const override {
+  std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& o, bool) const override {
     if (!has_plan(name)) return std::nullopt;
     return Duration(o.count("counts") ? 200 : 100);
   }

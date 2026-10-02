@@ -28,7 +28,8 @@ class PlanLibrary : public IPlanResolver {
 
   bool has_plan(std::string_view name) const override;
   // nullopt when the plan is unknown or the overrides do not load.
-  std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides) const override;
+  std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides,
+                                        bool advanced = false) const override;
 
  private:
   PlanResolvers resolvers_;

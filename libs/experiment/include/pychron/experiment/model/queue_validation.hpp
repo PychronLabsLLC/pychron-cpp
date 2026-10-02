@@ -15,8 +15,10 @@ class IPlanResolver {
  public:
   virtual ~IPlanResolver() = default;
   virtual bool has_plan(std::string_view name) const = 0;
-  // Measurement duration with overrides applied; nullopt if unknown.
-  virtual std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides) const = 0;
+  // Measurement duration with overrides applied; nullopt if unknown or the
+  // overrides do not load (`advanced`: any key, not only exposed ones).
+  virtual std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides,
+                                                bool advanced) const = 0;
 };
 
 class IScriptResolver {

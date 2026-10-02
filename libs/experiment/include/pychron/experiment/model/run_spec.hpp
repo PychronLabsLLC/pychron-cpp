@@ -36,6 +36,9 @@ struct MeasurementRef {
   std::string plan;
   ParamOverrides overrides;
   std::optional<std::string> hook;
+  // Overrides may set any key of the template, not only its exposed
+  // parameters (the measurement panel's Advanced mode).
+  bool advanced = false;
   friend bool operator==(const MeasurementRef&, const MeasurementRef&) = default;
 };
 

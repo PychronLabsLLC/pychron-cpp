@@ -215,10 +215,11 @@ void read_run(const toml::table& raw, const QueueSpec& q, const IdentifierRules&
 
   if (const auto* m = t["measurement"].as_table()) {
     const std::string mw = where + ".measurement";
-    check_keys(*m, {"plan", "hook", "overrides"}, mw, err);
+    check_keys(*m, {"plan", "hook", "advanced", "overrides"}, mw, err);
     Reader mr(*m, mw, err);
     mr.str("plan", run.measurement.plan);
     mr.opt_str("hook", run.measurement.hook);
+    mr.boolean("advanced", run.measurement.advanced);
     if (const auto* o = (*m)["overrides"].as_table()) read_overrides(*o, run.measurement.overrides, mw + ".overrides", err);
   } else if (t.contains("measurement")) {
     err.add(where, "'measurement' must be a table");

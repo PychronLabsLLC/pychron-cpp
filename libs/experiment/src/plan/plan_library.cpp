@@ -27,8 +27,9 @@ Result<LoadedPlan> PlanLibrary::load(std::string_view name, const ParamOverrides
 
 bool PlanLibrary::has_plan(std::string_view name) const { return find(name) != nullptr; }
 
-std::optional<Duration> PlanLibrary::plan_duration(std::string_view name, const ParamOverrides& overrides) const {
-  auto loaded = load(name, overrides);
+std::optional<Duration> PlanLibrary::plan_duration(std::string_view name, const ParamOverrides& overrides,
+                                                   bool advanced) const {
+  auto loaded = load(name, overrides, LoadOptions{advanced});
   if (!loaded) return std::nullopt;
   return estimate_duration(loaded->plan, durations_);
 }

@@ -161,7 +161,7 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
     const auto& r = queue.runs[i];
     const int row = static_cast<int>(i);
     if (r.skip || r.measurement.plan.empty() || !lab.plans->find(r.measurement.plan)) continue;
-    auto loaded = lab.plans->load(r.measurement.plan, r.measurement.overrides);
+    auto loaded = lab.plans->load(r.measurement.plan, r.measurement.overrides, plan::LoadOptions{r.measurement.advanced});
     if (!loaded) continue;  // check_queue reported it
     const auto& pc = loaded->plan.peak_center;
     if ((pc.before || pc.after) && pc.config != "default" && !lab.peak_centers.contains(pc.config)) {

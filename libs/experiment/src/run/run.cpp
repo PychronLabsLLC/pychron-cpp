@@ -188,7 +188,8 @@ Result<void> Run::prepare() {
 
   if (!spec_.measurement.plan.empty()) {
     if (s_.plans == nullptr) return fail(ErrorKind::Config, "no plan library for '" + spec_.measurement.plan + "'");
-    auto loaded = s_.plans->load(spec_.measurement.plan, spec_.measurement.overrides);
+    auto loaded = s_.plans->load(spec_.measurement.plan, spec_.measurement.overrides,
+                                 plan::LoadOptions{spec_.measurement.advanced});
     if (!loaded) return fail(loaded.error());
     plan_ = std::move(*loaded);
     if (spec_.measurement.hook) plan_->plan.hook = spec_.measurement.hook;

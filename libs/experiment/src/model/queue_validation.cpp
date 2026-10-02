@@ -41,7 +41,7 @@ void check_references(const RunSpec& r, int i, const QueueResolvers& res, Collec
 
 Duration measurement_time(const RunSpec& r, const QueueResolvers& res) {
   if (!res.plans || r.measurement.plan.empty()) return Duration(0);
-  return res.plans->plan_duration(r.measurement.plan, r.measurement.overrides).value_or(Duration(0));
+  return res.plans->plan_duration(r.measurement.plan, r.measurement.overrides, r.measurement.advanced).value_or(Duration(0));
 }
 
 }  // namespace

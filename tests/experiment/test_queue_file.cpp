@@ -85,6 +85,23 @@ TEST(QueueFile, DumpParseRoundTrip) {
   EXPECT_EQ(dump_queue(*back), text);
 }
 
+TEST(QueueFile, AdvancedMeasurementRoundTrips) {
+  auto q = parse_queue(
+      "[queue]\n[[runs]]\nidentifier = \"1\"\n"
+      "measurement = { plan = \"p\", advanced = true, overrides = { \"sniff.counts\" = 5 } }\n",
+      kIds);
+  ASSERT_TRUE(q) << q.error().what;
+  EXPECT_TRUE(q->runs[0].measurement.advanced);
+  const std::string text = dump_queue(*q);
+  EXPECT_NE(text.find("advanced = true"), std::string::npos) << text;
+  auto back = parse_queue(text, kIds);
+  ASSERT_TRUE(back);
+  EXPECT_EQ(*back, *q);
+  // Not advanced: the key is left out.
+  q->runs[0].measurement.advanced = false;
+  EXPECT_EQ(dump_queue(*q).find("advanced"), std::string::npos);
+}
+
 TEST(QueueFile, DumpIsDiffFriendly) {
   const std::string text = dump_queue(sample_queue());
   EXPECT_NE(text.find("schema_version = 1"), std::string::npos);

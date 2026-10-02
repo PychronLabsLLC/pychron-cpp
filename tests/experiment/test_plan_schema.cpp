@@ -371,14 +371,15 @@ TEST(PlanLibrary, ResolvesPlansForQueueValidation) {
   EXPECT_TRUE(lib.has_plan("argus_multicollect"));
   EXPECT_FALSE(lib.has_plan("nope"));
   const IPlanResolver& r = lib;
-  auto d = r.plan_duration("argus_multicollect", {});
+  auto d = r.plan_duration("argus_multicollect", {}, false);
   ASSERT_TRUE(d);
   EXPECT_DOUBLE_EQ(d->count(), 588);
-  d = r.plan_duration("argus_multicollect", {{"main.hops[0].counts", std::int64_t{100}}});
+  d = r.plan_duration("argus_multicollect", {{"main.hops[0].counts", std::int64_t{100}}}, false);
   ASSERT_TRUE(d);
   EXPECT_DOUBLE_EQ(d->count(), 288);
-  EXPECT_FALSE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}));  // not exposed
-  EXPECT_FALSE(r.plan_duration("nope", {}));
+  EXPECT_FALSE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}, false));  // not exposed
+  EXPECT_TRUE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}, true));    // advanced: any key
+  EXPECT_FALSE(r.plan_duration("nope", {}, false));
   EXPECT_FALSE(lib.load("nope", {}));
 }
 
