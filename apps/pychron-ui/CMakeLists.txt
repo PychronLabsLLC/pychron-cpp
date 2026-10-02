@@ -1,7 +1,8 @@
 # Qt6 M1 status/control window (spec section 10). The UI never touches
 # drivers or transports: it links pychron::systems and pychron::experiment and
 # talks to the core through ExtractionLine, Spectrometer and LabSession
-# (commands in) and SignalBus (state out).
+# (commands in) and SignalBus (state out). Data windows use pychron::processing
+# (Qt-free) through ProcessingBridge.
 find_package(Qt6 REQUIRED COMPONENTS Widgets PrintSupport)
 
 set(CMAKE_AUTOMOC ON)
@@ -34,6 +35,13 @@ add_library(pychron_ui_lib STATIC
   src/script_highlighter.cpp
   src/code_editor.cpp
   src/script_editor_window.cpp
+  src/scene_view.cpp
+  src/options_editor.cpp
+  src/processing_bridge.cpp
+  src/analysis_table_model.cpp
+  src/data_browser_window.cpp
+  src/recall_window.cpp
+  src/figure_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -59,11 +67,19 @@ add_library(pychron_ui_lib STATIC
   src/script_highlighter.hpp
   src/code_editor.hpp
   src/script_editor_window.hpp
+  src/scene_view.hpp
+  src/options_editor.hpp
+  src/processing_bridge.hpp
+  src/analysis_table_model.hpp
+  src/data_browser_window.hpp
+  src/recall_window.hpp
+  src/figure_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
 target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment pychron::systems Qt6::Widgets qcustomplot)
+target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
+  qcustomplot)
 pychron_set_warnings(pychron_ui_lib)
 
 add_executable(pychron-ui src/main.cpp)

@@ -13,6 +13,10 @@
 // the line config's directory; records under --data, default <lab>/data).
 // --queue opens a queue there. --sim-speed (with --sim) puts the whole app on
 // simulated time running that many times faster than real time.
+//
+// Window > Data browses the records under the data directory
+// (<data>/records) and plots them; figure presets live in the user's config
+// directory, with lab presets under <lab>/figures.
 
 #include <chrono>
 #include <cstdio>
@@ -26,6 +30,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QMessageBox>
+#include <QStandardPaths>
 
 #include "command_line.hpp"
 #include "experiment_bridge.hpp"
@@ -33,6 +38,7 @@
 #include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/experiment/lab/session.hpp"
+#include "pychron/processing/record_source.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -122,6 +128,13 @@ int main(int argc, char** argv) {
   std::unique_ptr<pychron::experiment::lab::LabSession> session;
   std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
 
+  // Data browsing: the records the experiment writes, and figure presets.
+  const std::filesystem::path data_dir = cli->data ? *cli->data : lab_dir / "data";
+  pychron::processing::RecordDirectorySource records(data_dir / "records");
+  pychron::processing::PresetStore presets(
+      std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
+      lab_dir / "figures");
+
   int rc = 0;
   {
     // The window (and its CoreBridge) subscribes before start() so the
@@ -141,6 +154,7 @@ int main(int argc, char** argv) {
     if (const auto& dir = (*line)->config().logging.dir; !dir.empty()) {
       window.log_dock()->load_history(dir / "pychron.log");
     }
+    window.set_data(&records, &presets);
     window.show();
     if (spectrometer_error) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
@@ -173,7 +187,7 @@ int main(int argc, char** argv) {
       }
       session = std::make_unique<pychron::experiment::lab::LabSession>(
           *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get()},
-          pychron::experiment::lab::SessionOptions{cli->data ? *cli->data : lab_dir / "data", {}});
+          pychron::experiment::lab::SessionOptions{data_dir, {}});
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
       window.set_experiment(experiment_bridge.get(), cli->sim, cli->queue);
     } else {
@@ -181,6 +195,7 @@ int main(int argc, char** argv) {
           QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));
     }
     rc = QApplication::exec();
+    window.set_data(nullptr, nullptr);        // data windows go before the record source
     window.set_experiment(nullptr, false);    // the experiment window goes before its bridge
     window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }

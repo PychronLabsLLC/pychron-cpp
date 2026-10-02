@@ -10,16 +10,22 @@
 #include <optional>
 
 #include <QAction>
+#include <QList>
 #include <QMainWindow>
+#include <QPointer>
 #include <QSettings>
 
 #include "alarm_dock.hpp"
+#include "data_browser_window.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
 #include "log_dock.hpp"
+#include "processing_bridge.hpp"
 #include "spectrometer_window.hpp"
+#include "pychron/processing/options.hpp"
+#include "pychron/processing/source.hpp"
 
 namespace pychron::ui {
 
@@ -28,6 +34,8 @@ class MainWindow : public QMainWindow {
 
  public:
   explicit MainWindow(systems::ExtractionLine& line, QWidget* parent = nullptr);
+  // Closes the data windows before the processing bridge they use goes.
+  ~MainWindow() override;
 
   CoreBridge& bridge() noexcept { return bridge_; }
   CanvasView* canvas_view() const noexcept { return canvas_; }
@@ -53,6 +61,17 @@ class MainWindow : public QMainWindow {
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
 
+  // Enables Window > Data (browser, recall and figure windows) over `source`
+  // with figure presets from `presets` (null disables it and closes every data
+  // window). Both must outlive the main window or be cleared first.
+  void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);
+  QAction* data_action() const noexcept { return data_action_; }
+  DataBrowserWindow* data_window() const noexcept { return data_window_; }
+  ProcessingBridge* processing_bridge() const noexcept { return processing_.get(); }
+  // Opens a recall window / a time-series figure window (null without data).
+  QWidget* open_recall(const QString& uuid);
+  QWidget* open_time_series(const QStringList& uuids);
+
  protected:
   // Closes the experiment window (which may refuse, keeping everything open)
   // and the spectrometer window first.
@@ -75,6 +94,12 @@ class MainWindow : public QMainWindow {
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  QAction* data_action_;
+  processing::IAnalysisSource* data_source_ = nullptr;
+  processing::PresetStore* presets_ = nullptr;
+  std::unique_ptr<ProcessingBridge> processing_;
+  DataBrowserWindow* data_window_ = nullptr;
+  QList<QPointer<QWidget>> data_children_;  // recall and figure windows
 };
 
 }  // namespace pychron::ui

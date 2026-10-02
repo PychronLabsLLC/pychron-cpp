@@ -1,5 +1,8 @@
 #include "main_window.hpp"
 
+#include "figure_window.hpp"
+#include "recall_window.hpp"
+
 #include <utility>
 
 #include <QCloseEvent>
@@ -18,7 +21,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       alarms_(new AlarmDock(this)),
       health_(new HealthBar(this)),
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
-      experiment_action_(new QAction(QStringLiteral("Experiment"), this)) {
+      experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
+      data_action_(new QAction(QStringLiteral("Data"), this)) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   setCentralWidget(canvas_);
   addDockWidget(Qt::BottomDockWidgetArea, log_);
@@ -32,6 +36,21 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   QMenu* window_menu = menuBar()->addMenu(QStringLiteral("Window"));
   window_menu->addAction(spectrometer_action_);
   window_menu->addAction(experiment_action_);
+  data_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+  data_action_->setEnabled(false);
+  window_menu->addAction(data_action_);
+  connect(data_action_, &QAction::triggered, this, [this] {
+    if (data_source_ == nullptr) return;
+    if (data_window_ == nullptr) {
+      data_window_ = new DataBrowserWindow(*data_source_, this);
+      connect(data_window_, &DataBrowserWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
+      connect(data_window_, &DataBrowserWindow::time_series_requested, this,
+              [this](const QStringList& ids) { open_time_series(ids); });
+    }
+    data_window_->show();
+    data_window_->raise();
+    data_window_->activateWindow();
+  });
   connect(experiment_action_, &QAction::triggered, this, [this] {
     if (experiment_ == nullptr) {
       return;
@@ -112,6 +131,41 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
   experiment_queue_ = std::move(queue);
   experiment_settings_ = std::move(settings);
   experiment_action_->setEnabled(bridge != nullptr);
+}
+
+MainWindow::~MainWindow() { set_data(nullptr, nullptr); }
+
+void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets) {
+  for (auto& w : data_children_)
+    if (w) delete w.data();  // they hold the old bridge and source
+  data_children_.clear();
+  delete data_window_;
+  data_window_ = nullptr;
+  processing_.reset();
+  data_source_ = source;
+  presets_ = presets;
+  if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source);
+  data_action_->setEnabled(processing_ != nullptr);
+}
+
+QWidget* MainWindow::open_recall(const QString& uuid) {
+  if (data_source_ == nullptr) return nullptr;
+  auto* w = new RecallWindow(*data_source_, this);
+  w->setAttribute(Qt::WA_DeleteOnClose);
+  if (!w->show_analysis(uuid)) log_->append_line(QStringLiteral("ERROR [ui] recall failed: ") + uuid);
+  data_children_.append(w);
+  w->show();
+  return w;
+}
+
+QWidget* MainWindow::open_time_series(const QStringList& uuids) {
+  if (!processing_ || presets_ == nullptr) return nullptr;
+  auto* w = new FigureWindow(*processing_, *presets_, uuids, this);
+  w->setAttribute(Qt::WA_DeleteOnClose);
+  connect(w, &FigureWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
+  data_children_.append(w);
+  w->show();
+  return w;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

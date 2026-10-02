@@ -1,0 +1,78 @@
+#pragma once
+
+// DataBrowserWindow (data browsing and visualization design, section 11.2):
+// filter lists fed by the source's facets, a search box, a date preset, and
+// the analyses table, newest first, paged with "Load more".
+//
+//   double-click / Enter     recall_requested(uuid)
+//   Ctrl+N / Ctrl+B          select the next / previous row and recall it
+//   Time series              time_series_requested(selected uuids, or all shown)
+
+#include <map>
+#include <optional>
+
+#include <QStringList>
+#include <QWidget>
+
+#include "analysis_table_model.hpp"
+#include "pychron/processing/source.hpp"
+
+class QComboBox;
+class QCheckBox;
+class QLabel;
+class QLineEdit;
+class QListWidget;
+class QPushButton;
+class QTableView;
+
+namespace pychron::ui {
+
+class DataBrowserWindow : public QWidget {
+  Q_OBJECT
+
+ public:
+  // `source` must outlive the window.
+  explicit DataBrowserWindow(processing::IAnalysisSource& source, QWidget* parent = nullptr);
+
+  // Rescans the source and reloads the first page.
+  void refresh();
+  processing::BrowseQuery query() const;
+
+  // For tests.
+  AnalysisTableModel* model() const noexcept { return model_; }
+  QTableView* table() const noexcept { return table_; }
+  QLineEdit* search() const noexcept { return search_; }
+  QComboBox* date_preset() const noexcept { return dates_; }
+  QListWidget* facet_list(processing::Facet f) const;
+  QPushButton* load_more_button() const noexcept { return more_; }
+  QLabel* status() const noexcept { return status_; }
+  QStringList selected_uuids() const;
+  void select_rows(const QList<int>& rows);
+  void recall_step(int delta);  // Ctrl+N (+1) / Ctrl+B (-1)
+
+ signals:
+  void recall_requested(const QString& uuid);
+  void time_series_requested(const QStringList& uuids);
+
+ private:
+  void reload();     // first page for the current query
+  void load_more();  // next page
+  void update_facets();
+  void recall_current();
+  void request_time_series();
+
+  processing::IAnalysisSource& source_;
+  AnalysisTableModel* model_;
+  QTableView* table_;
+  QLineEdit* search_;
+  QComboBox* dates_;
+  QCheckBox* exclude_invalid_;
+  std::map<processing::Facet, QListWidget*> facets_;
+  QPushButton* more_;
+  QLabel* status_;
+  std::optional<processing::BrowseCursor> next_;
+  std::optional<std::size_t> total_;
+  bool updating_ = false;
+};
+
+}  // namespace pychron::ui

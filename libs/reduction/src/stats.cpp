@@ -237,12 +237,12 @@ bool is_excluded(std::span<const bool> excluded, std::size_t i) { return i < exc
 }  // namespace
 
 std::optional<StepRange> find_plateau(std::span<const double> ages, std::span<const double> errors,
-                                      std::span<const double> signals, std::span<const bool> excluded,
+                                      std::span<const double> gas, std::span<const bool> excluded,
                                       const PlateauCriteria& c) {
-  const std::size_t n = std::min({ages.size(), errors.size(), signals.size()});
+  const std::size_t n = std::min({ages.size(), errors.size(), gas.size()});
   double total = 0.0;
   for (std::size_t i = 0; i < n; ++i)
-    if (!is_excluded(excluded, i)) total += signals[i];
+    if (!is_excluded(excluded, i)) total += gas[i];
   if (n == 0 || total == 0.0) return std::nullopt;
 
   auto overlap = [&](std::size_t i, std::size_t j) {
@@ -266,7 +266,7 @@ std::optional<StepRange> find_plateau(std::span<const double> ages, std::span<co
         if (!ok) break;
       }
       included.push_back(i);
-      signal += signals[i];
+      signal += gas[i];
       if (static_cast<int>(included.size()) < c.nsteps) continue;
       if (c.method == PlateauMethod::Mahon) {
         std::vector<double> a, e;
@@ -286,20 +286,20 @@ std::optional<StepRange> find_plateau(std::span<const double> ages, std::span<co
 }
 
 Result<PlateauMean> plateau_mean(std::span<const double> ages, std::span<const double> errors,
-                                 std::span<const double> signals, std::span<const bool> excluded, StepRange range,
+                                 std::span<const double> gas, std::span<const bool> excluded, StepRange range,
                                  PlateauWeighting weighting, MeanErrorKind kind) {
-  const std::size_t n = std::min({ages.size(), errors.size(), signals.size()});
+  const std::size_t n = std::min({ages.size(), errors.size(), gas.size()});
   if (range.first > range.last || range.last >= n) return stats_fail("plateau: step range out of bounds");
   std::vector<double> a, e, w;
   double total = 0.0, in_range = 0.0;
   for (std::size_t i = 0; i < n; ++i) {
     if (is_excluded(excluded, i)) continue;
-    total += signals[i];
+    total += gas[i];
     if (i < range.first || i > range.last) continue;
-    in_range += signals[i];
+    in_range += gas[i];
     a.push_back(ages[i]);
     e.push_back(errors[i]);
-    w.push_back(signals[i]);
+    w.push_back(gas[i]);
   }
   if (a.empty()) return stats_fail("plateau: no included step in range");
   PlateauMean out;

@@ -1,0 +1,129 @@
+# Data Browsing and Visualization Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Find analyses, recall one in depth, and plot many with figures as
+customizable as legacy pychron's, built from composable reduction units.
+
+**Architecture:** group statistics in `libs/reduction`; a new Qt-free
+`libs/processing` (model, quantities, datasets, schema-described options and
+presets, units with a fingerprint-cached runner, scenes, recall model);
+source adapters as separate targets (`processing_records` now,
+`processing_store` next); the Qt UI only renders scenes and edits options.
+
+**Spec:** `docs/superpowers/specs/2026-10-02-data-browsing-visualization-design.md`.
+
+## Global constraints
+
+- `libs/processing` depends on `core` and `reduction` only. Adapters that
+  need the experiment or persistence libraries are separate targets.
+- No unit opens a dialog or keeps state between calls; user decisions are
+  options (the `edits` unit carries clicks).
+- Every schema default must validate, and every factory preset must load
+  without warnings (`Options.FactoryPresetsAreClean`).
+- Missing values are absent, never 0. A figure reports what it could not plot
+  as a scene warning.
+- Do not name a parameter `signals`, `slots` or `emit` in a public header:
+  the UI includes these headers with Qt's keyword macros active.
+
+## Done (2026-10-02, stage V1)
+
+### Statistics (`libs/reduction/stats.hpp`)
+
+- [x] Weighted and arithmetic means with SD/SEM/MSEM; MSWD; Mahon 1996
+      limits; MSWD probability; chi-squared without scipy.
+- [x] Cumulative probability curves.
+- [x] Fleck and Mahon plateaus; inverse-variance and volume-fraction plateau
+      means.
+- [x] York, NewYork (Mahon 1996) and Reed regressions with x-intercept.
+- [x] Tests against values from legacy pychron run on the same inputs.
+
+### Processing core (`libs/processing`)
+
+- [x] `Analysis`, `RawData`; `reduce_analysis` with every correction stage
+      as a UFloat.
+- [x] `Quantity` grammar, labels, units, `available_quantities`.
+- [x] `Dataset` with group paths and exclusion precedence.
+- [x] `Schema`/`Options`/`PresetStore`: validation, TOML round trip,
+      unknown keys kept, migrations, factory < lab < user.
+- [x] `Unit`, `UnitRegistry`, `Pipeline` (validate, order, TOML), `Runner`
+      (fingerprint cache, errors as values, cancel).
+- [x] Units: `select`, `reduce`, `filter`, `group`, `edits`, `group_stats`,
+      `time_series`.
+- [x] `Scene`; `build_time_series` (time/relative/index axes, fits with
+      envelopes, deviation, groups, statistics, warnings).
+- [x] `RecallModel`, `make_evolution_scene`.
+- [x] `MemorySource` (tests, previews).
+
+### Record source (`pychron::processing_records`)
+
+- [x] `RecordDirectorySource` over `<data>/records`: incremental rescan,
+      paging, facets, raw series, `references.toml` (flux, production,
+      chronology).
+
+### UI (`apps/pychron-ui`)
+
+- [x] `SceneView` (QCustomPlot): stacked panels, linked x, date axis, log
+      axes, error bars, bands, statistics text, legend; click, shift-drag,
+      hover, zoom/pan, reset, PNG/PDF.
+- [x] `OptionsEditor` generated from a schema, with row lists and
+      `enabled_when`.
+- [x] `ProcessingBridge`: worker thread, per-channel coalescing and cancel.
+- [x] `DataBrowserWindow`, `RecallWindow`, `FigureWindow`; Window > Data in
+      `MainWindow`; records and presets wired in `main.cpp`.
+- [x] Qt Test suite `test_data_windows`.
+
+## Remaining
+
+### V2 figures
+
+- [ ] Ideogram unit and scene: cumulative probability (and kernel density),
+      weighted mean indicator with MSWD/n/p, analysis-number aux panel, aux
+      panels from quantities, asymptotic limits.
+- [ ] Spectrum unit and scene: `StepLayer` (boxes at n sigma), plateau bar
+      and text, integrated age (needs UFloat integrated F in
+      `processing/figures/arar_groups.hpp`), fixed plateau steps per group,
+      aux spectra (K/Ca, %40Ar*).
+- [ ] Inverse isochron unit and scene: 39/40 vs 36/40 with UFloat
+      correlations, `EllipseLayer`, York fit with envelope, trapped 40/36 and
+      age text, exclude-non-plateau option.
+- [ ] XY scatter (any two quantities) and `subgroup`, `mswd_filter` units.
+- [ ] Movable annotations: dragged text offsets stored in figure options.
+- [ ] Figure documents (`*.pyfig.toml`: pipeline + options + view limits),
+      open question Q3.
+
+### V2 data
+
+- [ ] `IStore::browse(BrowseQuery)` and `facet` in SQL (joins over
+      identifier, sample, project, irradiation_position, level, load,
+      repository_member, head tag), keyset paged; `load_blob(sha)`.
+- [ ] `StoreSource` (`pychron::processing_store`): one connection per
+      thread, analysis loading with `resolve_refs` for flux/production/
+      chronology, raw series from blobs.
+- [ ] Recall History tab (`IStore::history` per kind) and revision diff.
+- [ ] Editing fits in the Evolutions tab: a pending intercepts revision,
+      committed through `IUnitOfWork`, conflicts shown.
+- [ ] Saved selections and named queries (spec 9.3).
+- [ ] Browser source picker when both a database and records exist (Q1).
+
+### V3 reduction workflows
+
+- [ ] Fit units with references: `fit_blanks`, `fit_icfactors`,
+      `fit_isotope_evolution` producing a `FitSet` port value; review flag;
+      `persist_fits` through revisions.
+- [ ] Tables and CSV export units.
+- [ ] Pipeline template editor (graph view of units, per-node options dock).
+- [ ] Listen/auto pipelines driven by `IAnalysisSource::generation()`.
+
+## Notes for implementers
+
+- A unit's options are part of its fingerprint through
+  `Options::canonical()`; anything that changes a result must be an option
+  or an input, never hidden state.
+- Units that read the source must return `reads_source() == true` so the
+  source generation enters their fingerprint.
+- `ProcessingBridge` evaluates several targets per job with one runner, so a
+  window can ask for its scene and the dataset behind it without computing
+  twice.
+- `SceneView` keeps the zoom when a new scene has the same panels (a
+  click-to-omit rerun); a different shape resets the view.

@@ -360,7 +360,11 @@ Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) 
     g.x.max = o.get_optional_double("x.max").value_or(x_hi + (x_hi == x_lo ? span / 2 : pad));
     g.x.format = x_kind == "time" ? AxisFormat::Time : AxisFormat::Number;
     const std::string tf = o.get_string("x.time_format");
-    g.x.time_format = tf == "auto" ? "" : tf;
+    // auto: precision follows the span (a queue of minutes needs seconds).
+    if (tf != "auto") g.x.time_format = tf;
+    else if (span < 2 * 3600.0) g.x.time_format = "%H:%M:%S";
+    else if (span < 3 * 86400.0) g.x.time_format = "%m-%d%n%H:%M";
+    else g.x.time_format = "%Y-%m-%d";
     g.x.title = o.get_string("x.title");
     if (g.x.title.empty())
       g.x.title = x_kind == "time" ? "Time (UTC)"
@@ -389,7 +393,11 @@ Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) 
         if (panel_color && d.groups_of_graph(graph_index).size() == 1) color = *panel_color;
         MarkerShape gshape = shape;
         if (grow && grow->get_string("marker") != "auto") gshape = parse_marker(grow->get_string("marker")).value_or(shape);
-        std::string label = grow && !grow->get_string("label").empty() ? grow->get_string("label") : d.group_name(group);
+        // An ungrouped figure has no legend entry ("Group 1" says nothing).
+        const bool named = static_cast<std::size_t>(group) < d.group_names.size() && !d.group_names[group].empty();
+        std::string label = grow && !grow->get_string("label").empty() ? grow->get_string("label")
+                            : named || d.groups_of_graph(graph_index).size() > 1 ? d.group_name(group)
+                                                                                : std::string();
 
         std::vector<Point> pts;
         for (const auto* it : items) {

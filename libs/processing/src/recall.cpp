@@ -240,6 +240,7 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
           std::snprintf(buf, sizeof buf, "stored %.6g ± %.3g", iso->intercept.value, iso->intercept.error);
           t.lines.push_back(buf);
         }
+        t.corner = Corner::TopRight;  // signals decay from the left: keep t = 0 clear
         p.layers.emplace_back(std::move(t));
       }
     }

@@ -104,14 +104,14 @@ struct StepRange {
 };
 
 // The longest plateau (by last - first; the earliest on a tie), searched from
-// every included start step as legacy Plateau.find_plateaus. `excluded` may be
+// every included start step as legacy Plateau.find_plateaus. `gas` is each step's signal (39ArK); `excluded` may be
 // empty (nothing excluded) or one flag per step. A one-step range is never a
 // plateau (legacy returns none when pidx[0] == pidx[1]).
 // Deviations (legacy bugs): excluded steps take part in neither the overlap
 // test nor the step count; the Mahon MSWD uses the steps in range (legacy
 // indexes ages[start, end + 1] and raises).
 std::optional<StepRange> find_plateau(std::span<const double> ages, std::span<const double> errors,
-                                      std::span<const double> signals, std::span<const bool> excluded,
+                                      std::span<const double> gas, std::span<const bool> excluded,
                                       const PlateauCriteria& criteria);
 
 struct PlateauMean {
@@ -124,7 +124,7 @@ struct PlateauMean {
 // by signal (sum(w a) / sum(w), sigma = sqrt(sum(w^2 s^2)) / sum(w)).
 // Deviation: legacy averages every step in range, excluded ones included.
 Result<PlateauMean> plateau_mean(std::span<const double> ages, std::span<const double> errors,
-                                 std::span<const double> signals, std::span<const bool> excluded,
+                                 std::span<const double> gas, std::span<const bool> excluded,
                                  StepRange range, PlateauWeighting weighting = PlateauWeighting::InverseVariance,
                                  MeanErrorKind kind = MeanErrorKind::Msem);
 
