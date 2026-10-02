@@ -303,7 +303,7 @@ TEST(Reduce, LambdaKOverrideSharedWithinAnalysis) {
     EXPECT_EQ(l_age[0], l_pos[0]);
     const auto other = ids_tagged(r2->ages->age, "lambda_k");
     EXPECT_EQ(other.size(), 1u);
-    if (!other.empty()) EXPECT_NE(other[0], l_age[0]);
+    if (!other.empty()) { EXPECT_NE(other[0], l_age[0]); }
   }
   EXPECT_EQ(seen, 2u);
 }

@@ -313,8 +313,8 @@ void OptionsEditor::rebuild() {
       lv->addWidget(new QLabel(qs(l.label)));
       ui.list = new QListWidget;
       ui.list->setMaximumHeight(140);
-      const auto rows = options_.rows(l.key);
-      for (std::size_t i = 0; i < rows.size(); ++i) ui.list->addItem(row_label(rows[i], static_cast<int>(i)));
+      const auto initial = options_.rows(l.key);
+      for (std::size_t i = 0; i < initial.size(); ++i) ui.list->addItem(row_label(initial[i], static_cast<int>(i)));
       lv->addWidget(ui.list);
       auto* buttons = new QHBoxLayout;
       auto* add = new QPushButton(tr("Add"));
@@ -401,9 +401,9 @@ void OptionsEditor::build_row_form(const QString& lkey) {
   ui.editors.clear();
   const int row = ui.list->currentRow();
   const std::string key = lkey.toStdString();
-  const auto rows = options_.rows(key);
-  if (row >= 0 && row < static_cast<int>(rows.size())) {
-    const pp::Options& r = rows[row];
+  const auto all = options_.rows(key);
+  if (row >= 0 && row < static_cast<int>(all.size())) {
+    const pp::Options& r = all[row];
     for (const auto& f : r.schema()->fields) {
       const std::string fkey = f.key;
       QWidget* e = make_editor(f, r, [this, key, row, fkey, lkey](pp::OptionValue value) -> Result<void> {

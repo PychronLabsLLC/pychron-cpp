@@ -532,7 +532,7 @@ TEST(CalculateF, Golden) {
         ADD_FAILURE() << name << ": unhandled expected key " << key;
       }
     }
-    if (!c["expected"].contains("cosmogenic")) EXPECT_FALSE(r->cosmogenic.has_value());
+    if (!c["expected"].contains("cosmogenic")) { EXPECT_FALSE(r->cosmogenic.has_value()); }
   }
   EXPECT_EQ(n_legacy, 12u);
   EXPECT_EQ(n_prefs, 12u);

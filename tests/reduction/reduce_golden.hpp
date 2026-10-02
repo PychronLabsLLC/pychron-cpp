@@ -198,9 +198,9 @@ inline void check_f(const Json& w, const FResult& r, const Tol& t) {
       ADD_FAILURE() << "unhandled expected key f." << key;
     }
   }
-  if (!w.contains("cosmogenic")) EXPECT_FALSE(r.cosmogenic.has_value());
-  if (!w.contains("f")) EXPECT_FALSE(r.f.has_value());
-  if (!w.contains("radiogenic_yield")) EXPECT_FALSE(r.radiogenic_yield.has_value());
+  if (!w.contains("cosmogenic")) { EXPECT_FALSE(r.cosmogenic.has_value()); }
+  if (!w.contains("f")) { EXPECT_FALSE(r.f.has_value()); }
+  if (!w.contains("radiogenic_yield")) { EXPECT_FALSE(r.radiogenic_yield.has_value()); }
 }
 
 // One reduce case (pipeline.json, chlorine.json "reduce"), every key checked;
@@ -341,12 +341,12 @@ inline void run_pipeline_case(const Json& c, PipelineCounts& n) {
       ADD_FAILURE() << name << ": unhandled expected key " << key;
     }
   }
-  if (!expected.contains("ages")) EXPECT_FALSE(r->ages.has_value());
-  if (!expected.contains("age_error_components")) EXPECT_TRUE(r->age_error_components.empty());
-  if (!expected.contains("kca")) EXPECT_FALSE(r->kca.has_value());
-  if (!expected.contains("cak")) EXPECT_FALSE(r->cak.has_value());
-  if (!expected.contains("kcl")) EXPECT_FALSE(r->kcl.has_value());
-  if (!expected.contains("clk")) EXPECT_FALSE(r->clk.has_value());
+  if (!expected.contains("ages")) { EXPECT_FALSE(r->ages.has_value()); }
+  if (!expected.contains("age_error_components")) { EXPECT_TRUE(r->age_error_components.empty()); }
+  if (!expected.contains("kca")) { EXPECT_FALSE(r->kca.has_value()); }
+  if (!expected.contains("cak")) { EXPECT_FALSE(r->cak.has_value()); }
+  if (!expected.contains("kcl")) { EXPECT_FALSE(r->kcl.has_value()); }
+  if (!expected.contains("clk")) { EXPECT_FALSE(r->clk.has_value()); }
   if (expected.contains("kcl") && expected.contains("clk")) ++n.kcl;
 }
 

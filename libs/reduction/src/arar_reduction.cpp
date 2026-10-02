@@ -653,8 +653,8 @@ Result<ArArResult> reduce(const ReductionInput& in) {
   const auto ratio = [&](const UFloat& y, const std::optional<UFloat>& per_k,
                          std::optional<UFloat>& r, std::optional<UFloat>& inverse,
                          Diagnostic undefined) {
-    const std::optional<UFloat> f = factor(per_k);
-    kernels::KRatio<UFloat> k = kernels::k_ratio(k39, y, f ? &*f : nullptr);
+    const std::optional<UFloat> conversion = factor(per_k);
+    kernels::KRatio<UFloat> k = kernels::k_ratio(k39, y, conversion ? &*conversion : nullptr);
     if (k.ratio_defined) r = std::move(k.ratio);
     if (k.inverse_defined) inverse = std::move(k.inverse);
     if (!k.inverse_defined) out.diagnostics.push_back(undefined);

@@ -200,7 +200,7 @@ TEST(Options, PresetStoreLayers) {
       EXPECT_EQ(p.origin, pp::PresetOrigin::User);
       EXPECT_TRUE(p.shadows);
     }
-    if (p.name == "Lab Air") EXPECT_EQ(p.origin, pp::PresetOrigin::Lab);
+    if (p.name == "Lab Air") { EXPECT_EQ(p.origin, pp::PresetOrigin::Lab); }
   }
   auto d = store.load(ts(), "default");  // names match case-insensitively
   ASSERT_TRUE(d);
