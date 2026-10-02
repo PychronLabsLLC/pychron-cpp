@@ -180,7 +180,9 @@ class Spectrometer {
 
   // ---- positioning ----
   Result<PositionResult> position(const PositionTarget& target, PositionOptions options = {});
-  // Move protocol only (section 4.4); `value` is native.
+  // Move protocol only (section 4.4); `value` is native. Like position(), a
+  // value outside the positioner's limits or [magnet].limits (the stricter
+  // bound on each side) is Config with nothing read or written.
   Result<MoveOutcome> move_native(double value, PositionOptions options = {});
   // HV table + IBeamSource::set_hv (section 4.5).
   Result<PositionResult> position_hv(double mass, const DetectorId& det, PositionOptions options = {});

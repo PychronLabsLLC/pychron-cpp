@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <thread>
 
@@ -60,8 +61,29 @@ class Pump {
 // What a test shares with the transport the Spectrometer owns.
 struct Link {
   std::atomic<bool> down{false};  // every exchange fails with Io (a dropped connection)
-  std::atomic<int> in_flight{0};  // exchanges between call and return
-  std::atomic<int> overlaps{0};   // exchanges begun while another was in flight
+  std::atomic<int> opens{0};      // open() calls, the assembler's included
+
+  // Gate: while `hold` is set a GetData exchange stops here, before the wire.
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool hold = false;
+  bool held = false;  // a GetData is waiting at the gate
+
+  void hold_get_data() {
+    std::lock_guard lock(mutex);
+    hold = true;
+  }
+  bool wait_held() {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 10s, [&] { return held; });
+  }
+  void release() {
+    {
+      std::lock_guard lock(mutex);
+      hold = false;
+    }
+    cv.notify_all();
+  }
 };
 
 // Owns the simulated wire. While the link is down an exchange fails before
@@ -72,14 +94,23 @@ class LinkTransport final : public Transport {
       : inner_(std::move(inner)), link_(std::move(link)) {}
 
   const std::string& name() const override { return inner_->name(); }
-  Result<void> open() override { return inner_->open(); }
+  Result<void> open() override {
+    ++link_->opens;
+    return inner_->open();
+  }
   void close() override { inner_->close(); }
   Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override {
     if (link_->down) return fail(ErrorKind::Io, "connection reset", inner_->name());
-    if (link_->in_flight.fetch_add(1) > 0) ++link_->overlaps;
-    auto reply = inner_->exchange(std::move(tx), std::move(rs), timeout);
-    --link_->in_flight;
-    return reply;
+    if (to_string(tx).starts_with("GetData")) {
+      std::unique_lock lock(link_->mutex);
+      if (link_->hold) {
+        link_->held = true;
+        link_->cv.notify_all();
+        link_->cv.wait(lock, [&] { return !link_->hold; });
+        link_->held = false;
+      }
+    }
+    return inner_->exchange(std::move(tx), std::move(rs), timeout);
   }
   Result<void> write(Bytes tx) override { return inner_->write(std::move(tx)); }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_->read(std::move(rs), timeout); }
@@ -92,6 +123,15 @@ class LinkTransport final : public Transport {
   std::unique_ptr<SimTransport> inner_;
   std::shared_ptr<Link> link_;
 };
+
+// Consecutive readings are one period apart. The poll that reads a frame runs
+// on the first pump tick (20 ms) at or after the frame is due, so each
+// timestamp is at most one tick late.
+void expect_cadence(const std::vector<IntensityReading>& readings, double period_s) {
+  for (std::size_t i = 1; i < readings.size(); ++i) {
+    EXPECT_NEAR(seconds(readings[i].reading.ts - readings[i - 1].reading.ts), period_s, 0.020 + 1e-9) << i;
+  }
+}
 
 // Bus events of one type, collected on whichever thread publishes them.
 template <class E>
@@ -137,6 +177,7 @@ class QtegraSystem : public ::testing::Test {
   }
 
   void TearDown() override {
+    link_->release();  // a failed test must not leave the pump at the gate
     pump_.reset();
     spec_.reset();
   }
@@ -200,6 +241,10 @@ TEST(QtegraExampleConfig, ExampleConfigLoadsAndValidates) {
   ASSERT_EQ(c.drivers.count("qtegra"), 1U);
   EXPECT_EQ(c.drivers.at("qtegra").kind, "thermo_qtegra");
   EXPECT_EQ(c.drivers.at("qtegra").transport, "qtegra");
+  // The limits the driver enforces are shown, and agree with [magnet].limits.
+  ASSERT_TRUE(c.magnet.limits.has_value());
+  EXPECT_EQ(c.drivers.at("qtegra").options["limit_min"].value<double>(), c.magnet.limits->min);
+  EXPECT_EQ(c.drivers.at("qtegra").options["limit_max"].value<double>(), c.magnet.limits->max);
   EXPECT_EQ(c.magnet.field_table, "argon");
 
   // Same detectors as the sim-integrated example, on this driver's channels.
@@ -305,20 +350,23 @@ TEST_F(QtegraSystem, ContinuousScanDeliversAtSnappedPeriod) {
   ScanService service(*spec_, bus_, clock_);
 
   ASSERT_TRUE(service.start(1s).has_value());
-  ASSERT_TRUE(readings_.wait([](const auto& rs) { return rs.size() >= 3; }));
+  ASSERT_TRUE(readings_.wait([](const auto& rs) { return rs.size() >= 4; }));
   const auto first = readings_.events();
   for (const auto& e : first) {
     EXPECT_NEAR(seconds(e.reading.integration), 1.048576, 1e-9);
     EXPECT_DOUBLE_EQ(e.reading.values.at("H1")->mean, 100.0);
   }
+  expect_cadence(first, 1.048576);
   EXPECT_NEAR(seconds(service.integration()), 1.048576, 1e-9);
 
   ASSERT_TRUE(service.set_integration(500ms).has_value());
   // set_integration returns with the old run fully stopped, so everything
   // from here on belongs to the new one.
   readings_.clear();
-  ASSERT_TRUE(readings_.wait([](const auto& rs) { return rs.size() >= 3; }));
-  for (const auto& e : readings_.events()) EXPECT_NEAR(seconds(e.reading.integration), 0.524288, 1e-9);
+  ASSERT_TRUE(readings_.wait([](const auto& rs) { return rs.size() >= 4; }));
+  const auto second = readings_.events();
+  for (const auto& e : second) EXPECT_NEAR(seconds(e.reading.integration), 0.524288, 1e-9);
+  expect_cadence(second, 0.524288);
   {
     std::lock_guard lock(model_->mutex);
     EXPECT_DOUBLE_EQ(model_->integration_s, 0.524288);
@@ -327,14 +375,41 @@ TEST_F(QtegraSystem, ContinuousScanDeliversAtSnappedPeriod) {
     return !ss.empty() && ss.back().running && std::abs(seconds(ss.back().integration) - 0.524288) < 1e-9;
   }));
   EXPECT_TRUE(service.status().error.empty()) << service.status().error;
-
-  service.stop();
-  // configure() (this thread) and next() (the pump thread) never had the wire
-  // at the same time.
-  EXPECT_EQ(link_->overlaps, 0);
 }
 
-TEST_F(QtegraSystem, ReconnectDuringScanSurfacesErrorAndRestartRecovers) {
+// configure() never overlaps a next() of the run it replaces: with a GetData
+// held on the wire, set_integration neither returns nor writes
+// SetIntegrationTime until that read has finished.
+TEST_F(QtegraSystem, SetIntegrationWaitsForAReadInFlight) {
+  assemble_example();
+  ASSERT_NE(spec_, nullptr);
+  ScanService service(*spec_, bus_, clock_);
+  ASSERT_TRUE(service.start(1s).has_value());
+  ASSERT_TRUE(readings_.wait([](const auto& rs) { return !rs.empty(); }));
+
+  link_->hold_get_data();
+  ASSERT_TRUE(link_->wait_held());  // the pump thread is inside next(), at the gate
+  clear_commands();
+  auto changed = std::async(std::launch::async, [&] { return service.set_integration(500ms); });
+  // Only EXPECTs until the gate is open: `changed` cannot finish before then.
+  // The bounded real-time wait is what gives an overlapping configure() the
+  // chance to show itself.
+  EXPECT_EQ(changed.wait_for(100ms), std::future_status::timeout);
+  EXPECT_TRUE(commands().empty());
+
+  link_->release();
+  auto result = changed.get();
+  ASSERT_TRUE(result.has_value()) << to_string(result.error());
+  const auto log = commands();
+  ASSERT_GE(log.size(), 2U);
+  EXPECT_EQ(log[0], "GetData");
+  EXPECT_TRUE(log[1].starts_with("SetIntegrationTime ")) << log[1];
+}
+
+// A dropped link shows as an error on the scan status. The engine keeps
+// polling, so readings resume by themselves once the link is back; the status
+// keeps the error until Restart (ScanService::start) clears it.
+TEST_F(QtegraSystem, LinkDropDuringScanSurfacesErrorResumesAndRestartClearsIt) {
   assemble_example();
   ASSERT_NE(spec_, nullptr);
   ScanService service(*spec_, bus_, clock_);
@@ -342,32 +417,45 @@ TEST_F(QtegraSystem, ReconnectDuringScanSurfacesErrorAndRestartRecovers) {
   ASSERT_TRUE(readings_.wait([](const auto& rs) { return !rs.empty(); }));
 
   // The connection drops and stays down: the driver's one reconnect attempt
-  // fails too, so next() returns the error and the scan status carries it.
+  // (reopen, then the connect step) fails too, so next() returns the error.
+  const int opens = link_->opens;
   link_->down = true;
   ASSERT_TRUE(statuses_.wait([](const auto& ss) { return !ss.empty() && !ss.back().error.empty(); }));
   EXPECT_TRUE(statuses_.events().back().running);
+  EXPECT_GT(link_->opens, opens);
+
+  // The link comes back: readings resume with no Restart, error still shown.
+  const TimePoint back = clock_.now();
+  link_->down = false;
+  auto after = [&](TimePoint t) {
+    return [&, t](const std::vector<IntensityReading>& rs) {
+      return std::ranges::count_if(rs, [&](const auto& e) { return e.reading.ts > t; }) >= 2;
+    };
+  };
+  ASSERT_TRUE(readings_.wait(after(back)));
+  EXPECT_TRUE(service.running());
   EXPECT_FALSE(service.status().error.empty());
 
-  // The link comes back; Restart is ScanService::start again.
-  link_->down = false;
+  // Restart clears it, and readings carry on.
   const TimePoint restarted = clock_.now();
   ASSERT_TRUE(service.start(1s).has_value());
-  ASSERT_TRUE(readings_.wait([&](const auto& rs) {
-    return std::ranges::count_if(rs, [&](const auto& e) { return e.reading.ts > restarted; }) >= 2;
-  }));
+  EXPECT_TRUE(service.status().error.empty()) << service.status().error;
+  ASSERT_TRUE(readings_.wait(after(restarted)));
   EXPECT_NEAR(seconds(readings_.events().back().reading.integration), 1.048576, 1e-9);
   EXPECT_TRUE(service.running());
   EXPECT_TRUE(service.status().error.empty()) << service.status().error;
 }
 
+// Two layers hold a magnet move inside limits. The facade
+// (Spectrometer::move_native / position) refuses a native value outside the
+// positioner's own limits (the driver's limit_min/limit_max) or outside
+// [magnet].limits, whichever bound is stricter, before it reads or writes
+// anything. The driver's set() checks its own limits again
+// (Qtegra.SetOutsideLimitsIsConfigAndWritesNothing). Nothing rejects a
+// disagreement between the two at load time.
+
+// [magnet].limits 0..20 V, driver 0..8 V: the driver's bound is the stricter.
 TEST_F(QtegraSystem, MagnetLimitsDisagreeWithDriverLimits) {
-  // [magnet].limits says 0..20 V; the driver is limited to 0..8 V. Nothing
-  // rejects the disagreement at load time. A move to 9 V is refused by the
-  // facade (Spectrometer::move_native), which checks the positioner's own
-  // limits(), that is the driver's limit_min/limit_max and not
-  // [magnet].limits, before it reads or writes anything. The driver's set()
-  // makes the same check again (Qtegra.SetOutsideLimitsIsConfigAndWritesNothing),
-  // so it is the driver's limits that guard the wire.
   auto data = cfg::load_spectrometer(kQtegra);
   ASSERT_TRUE(data.has_value()) << to_string(data.error());
   data->config.magnet.limits = cfg::Limits{0.0, 20.0};
@@ -385,11 +473,42 @@ TEST_F(QtegraSystem, MagnetLimitsDisagreeWithDriverLimits) {
     EXPECT_DOUBLE_EQ(model_->dac, 0.0);
   }
 
-  // Inside the driver's limits the same config moves.
+  // Inside both, the same config moves.
   auto moved = spec_->move_native(7.0);
   ASSERT_TRUE(moved.has_value()) << to_string(moved.error());
   std::lock_guard lock(model_->mutex);
   EXPECT_DOUBLE_EQ(model_->dac, 7.0);
+}
+
+// The mirror: [magnet].limits 0..6 V, driver 0..10 V. The driver would accept
+// 7 V; the facade refuses it on the config's bound.
+TEST_F(QtegraSystem, MagnetLimitsNarrowerThanDriverLimitsAreEnforced) {
+  auto data = cfg::load_spectrometer(kQtegra);
+  ASSERT_TRUE(data.has_value()) << to_string(data.error());
+  data->config.magnet.limits = cfg::Limits{0.0, 6.0};
+  data->config.drivers.at("qtegra").options.insert_or_assign("limit_max", 10.0);
+  assemble(std::move(*data));
+  ASSERT_NE(spec_, nullptr);
+  clear_commands();
+
+  for (const auto& target : {PositionTarget{NativeUnits{7.0}, ""}, PositionTarget{NativeUnits{-0.5}, ""}}) {
+    auto refused = spec_->position(target);
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  }
+  auto refused = spec_->move_native(7.0);
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_TRUE(commands().empty());
+  {
+    std::lock_guard lock(model_->mutex);
+    EXPECT_DOUBLE_EQ(model_->dac, 0.0);
+  }
+
+  auto moved = spec_->move_native(5.0);
+  ASSERT_TRUE(moved.has_value()) << to_string(moved.error());
+  std::lock_guard lock(model_->mutex);
+  EXPECT_DOUBLE_EQ(model_->dac, 5.0);
 }
 
 }  // namespace

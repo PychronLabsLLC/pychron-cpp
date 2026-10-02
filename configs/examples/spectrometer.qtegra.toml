@@ -7,6 +7,14 @@
 # a Thermo instrument" in docs/dev_setup.md before pointing this at one. The
 # host below is a placeholder: set the real address in
 # spectrometer.qtegra.local.toml (see spectrometer.qtegra.local.toml.example).
+#
+# SIMULATION PLACEHOLDERS: the field tables (tables/argon, tables/argon_hv),
+# every detector's deflection coefficients, cdd_voltage, nominal_hv, and the
+# protection and saturation thresholds are copied from the simulated example.
+# They describe no instrument. Replace them with the instrument's calibration
+# before any magnet move: detector protection on a move is planned from the
+# field table, so a wrong table can leave a detector unprotected while a
+# major beam crosses it.
 
 [system]
 name = "qtegra"
@@ -25,14 +33,19 @@ kind = "thermo_qtegra"
 transport = "qtegra"
 roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
 channels = ["H2", "H1", "AX", "L1", "L2", "CDD"]
+# Magnet DAC limits (volts) the driver enforces at the wire.
+limit_min = 0.0
+limit_max = 10.0
 
 [magnet]
 positioner = "qtegra"
 native_axis = "dac"
+# Enforced by the facade together with the driver's limit_min / limit_max: on
+# each side the stricter bound wins.
 limits = { min = 0.0, max = 10.0 }
 settle_ms = 500
-field_table = "argon"
-hv_table = "argon_hv"
+field_table = "argon"   # SIMULATION PLACEHOLDER table
+hv_table = "argon_hv"   # SIMULATION PLACEHOLDER table
 propagate = false
 corrections = { deflection = true, hv = true }
 protection = { detectors = ["CDD"], beam_blank_threshold = 0.5 }
@@ -40,7 +53,7 @@ af_demag = { enabled = false, period_s = 0.5, duration_s = 10, start_amplitude =
 
 [source]
 driver = "qtegra"
-nominal_hv = 4500
+nominal_hv = 4500  # SIMULATION PLACEHOLDER
 ramp = { TrapCurrent = 10.0, HV = 200.0 }
 
 [acquisition]
@@ -50,6 +63,9 @@ timeout_factor = 2.0
 
 [detector_control]
 driver = "qtegra"
+
+# SIMULATION PLACEHOLDERS below: deflection, cdd_voltage, dead_time_ns,
+# protection and saturation values are not an instrument's calibration.
 
 [[detectors]]
 name = "H2"

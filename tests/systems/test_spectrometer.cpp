@@ -34,9 +34,12 @@ struct Rig {
   SignalBus::Subscription s1, s2;
   std::unique_ptr<Spectrometer> spec;
 
+  std::optional<cfg::Limits> magnet_limits;  // replaces [magnet].limits when set
+
   cfg::SpectrometerData data() {
     auto d = cfg::load_spectrometer(kIntegrated);
     EXPECT_TRUE(d.has_value()) << (d ? "" : d.error().what);
+    if (magnet_limits) d->config.magnet.limits = magnet_limits;
     return std::move(*d);
   }
 
@@ -184,6 +187,62 @@ TEST(Spectrometer, MoveOutsideLimitsIsRejected) {
   auto moved = r.spec->move_native(12.0);
   ASSERT_FALSE(moved.has_value());
   EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  EXPECT_TRUE(r.log.empty());
+}
+
+// [magnet].limits and the positioner's limits (0..10 here) both apply; on
+// each side the stricter bound wins.
+TEST(Spectrometer, ConfigLimitsNarrowerThanPositionerRefuseTheMove) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{2.0, 6.0};
+  r.build();
+  for (double v : {7.0, 1.0}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+    auto positioned = r.spec->position(PositionTarget{NativeUnits{v}, ""});
+    ASSERT_FALSE(positioned.has_value()) << v;
+    EXPECT_EQ(positioned.error().kind, ErrorKind::Config);
+  }
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(6.0).has_value());
+  EXPECT_TRUE(r.spec->move_native(2.0).has_value());
+}
+
+TEST(Spectrometer, ConfigLimitsWiderThanPositionerDoNotWidenIt) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{-5.0, 20.0};
+  r.build();
+  for (double v : {12.0, -1.0}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  }
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(10.0).has_value());
+}
+
+TEST(Spectrometer, ConfigLimitsApplyWhenPositionerHasNone) {
+  Rig r;
+  r.positioner.lim = Limits{1.0, 0.0};  // invalid: the positioner declares no limits
+  r.magnet_limits = cfg::Limits{0.0, 6.0};
+  r.build();
+  auto moved = r.spec->move_native(7.0);
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(5.0).has_value());
+}
+
+TEST(Spectrometer, DisjointConfigAndPositionerLimitsRefuseEveryMove) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{11.0, 12.0};
+  r.build();
+  for (double v : {5.0, 11.5}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  }
   EXPECT_TRUE(r.log.empty());
 }
 

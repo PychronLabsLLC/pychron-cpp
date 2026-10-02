@@ -96,7 +96,7 @@ struct AfDemag {
 struct MagnetSection : Located {
   std::string positioner;  // driver name
   Axis native_axis = Axis::Dac;
-  std::optional<Limits> limits;
+  std::optional<Limits> limits;  // native units; enforced by Spectrometer on top of the positioner's own
   std::int64_t settle_ms = 0;
   std::string field_table;
   std::string hv_table;  // optional; empty when absent

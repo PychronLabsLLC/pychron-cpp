@@ -54,6 +54,7 @@ struct MovePlan {
   Duration max_wait = std::chrono::seconds(30);
   Duration poll_interval = std::chrono::milliseconds(50);
   double epsilon = 1e-6;           // |delta| below this skips the settle wait
+  Limits limits{1.0, 0.0};         // AF demag clamp; invalid (the default) = the positioner's limits
 };
 
 struct MoveDeps {

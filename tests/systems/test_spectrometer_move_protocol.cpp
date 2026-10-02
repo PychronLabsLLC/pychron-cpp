@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <random>
 
@@ -163,6 +164,18 @@ TEST(MoveProtocol, AfDemagSetsRunBeforeFinalSet) {
   ASSERT_EQ(r.positioner.sets.size(), out->demag.size() + 1);
   EXPECT_DOUBLE_EQ(r.positioner.sets.back(), 5.0);
   for (std::size_t i = 0; i < out->demag.size(); ++i) EXPECT_DOUBLE_EQ(r.positioner.sets[i], out->demag[i]);
+}
+
+TEST(MoveProtocol, AfDemagClampsToPlanLimitsWhenSet) {
+  Rig r;  // positioner limits 0..10
+  auto p = plan(3.0, 5.9);
+  p.af_demag = AfDemagSettings{true, 400ms, 400ms, 0.5, 0.5};
+  p.limits = Limits{0.0, 6.0};
+  auto out = execute_move(p, r.deps());
+  ASSERT_TRUE(out.has_value());
+  ASSERT_FALSE(r.positioner.sets.empty());
+  EXPECT_DOUBLE_EQ(*std::max_element(r.positioner.sets.begin(), r.positioner.sets.end()), 6.0);  // it swung past
+  for (double v : r.positioner.sets) EXPECT_LE(v, 6.0);
 }
 
 // Property: random protect/blank/failure combinations never leave a detector

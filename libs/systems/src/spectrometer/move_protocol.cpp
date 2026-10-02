@@ -82,7 +82,8 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
 
   // 2. AF demag, 3. set + wait.
   if (!first) {
-    out.demag = af_demag_trajectory(plan.from, plan.to, plan.af_demag, deps.positioner.limits());
+    out.demag = af_demag_trajectory(plan.from, plan.to, plan.af_demag,
+                                    plan.limits.valid() ? plan.limits : deps.positioner.limits());
     const Duration dt = plan.af_demag.period / kAfDemagStepsPerPeriod;
     for (double v : out.demag) {
       auto r = deps.positioner.set(v);

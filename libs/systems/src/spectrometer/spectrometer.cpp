@@ -396,7 +396,14 @@ std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, Pro
 }
 
 Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOptions& options) {
-  const Limits limits = roles_.positioner->limits();
+  // The positioner's own limits narrowed by [magnet].limits: on each side
+  // the stricter bound wins. Checked before anything is read or written.
+  Limits limits = roles_.positioner->limits();
+  if (const auto& configured = config_.magnet.limits) {
+    limits = limits.valid() ? Limits{std::max(limits.min, configured->min), std::min(limits.max, configured->max)}
+                            : Limits{configured->min, configured->max};
+    if (!limits.valid()) return config_error("[magnet].limits and the positioner's limits do not overlap");
+  }
   if (limits.valid() && !limits.contains(value)) {
     return config_error("magnet target " + std::to_string(value) + " is outside limits [" +
                         std::to_string(limits.min) + ", " + std::to_string(limits.max) + "]");
@@ -418,6 +425,7 @@ Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOption
   plan.max_wait = options_.max_wait;
   plan.poll_interval = options_.poll_interval;
   plan.epsilon = options_.epsilon;
+  plan.limits = limits;
 
   std::map<ChannelId, DetectorId> by_channel;
   for (const auto& [det, ch] : local_channel_) by_channel[ch] = det;
