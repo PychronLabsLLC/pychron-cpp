@@ -79,9 +79,11 @@ class QtegraSpectrometer final : public Device,
   // IBeamSource. params() is the codec's canonical map, one spec per canonical
   // name under its preferred hardware name: HV 0..10000 V, every other
   // parameter a nominal -1e6..1e6 with no unit (real ranges are unverified).
-  // Custom{name} is accepted when `name` is a hardware name the codec knows
-  // outside params() (an alias or a readback name); it is sent as given and
-  // not range-checked. SetHV and SetParameter must be answered "OK".
+  // Custom{name} is accepted when `name` is a hardware name the codec knows;
+  // it is sent as given and checked against its canonical parameter's range.
+  // A readback name is read-only. HV, however it is named, is written with
+  // SetHV and read with GetHighVoltage (reported as setpoint and actual).
+  // SetHV and SetParameter must be answered "OK".
   Result<void> set_hv(double volts) override;
   Result<double> read_hv() override;
   std::span<const ParamSpec> params() const override { return params_; }
@@ -95,7 +97,8 @@ class QtegraSpectrometer final : public Device,
   //
   // The wire read in next() runs without the acquirer mutex, so stop() never
   // waits for a transport timeout; a frame whose read was in flight when
-  // stop() was called is dropped (that next() returns nullopt).
+  // stop() was called, or when configure() changed the period, is dropped
+  // (that next() returns nullopt).
   std::vector<ChannelId> channels() const override { return options_.channels; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration integration) override;
@@ -114,11 +117,12 @@ class QtegraSpectrometer final : public Device,
   // For SetHV / SetParameter: the reply must be "OK".
   Result<void> command_ok(Result<codec::Command> cmd);
   Result<double> query_number(Result<codec::Command> cmd);
-  // The hardware name `id` is written and read under, with its spec when
-  // params() advertises it; Config when the id is not supported.
+  // How `id` is written and read; Config when the id is not supported.
   struct ParamTarget {
-    std::string hardware;
-    const ParamSpec* spec = nullptr;
+    std::string hardware;             // name sent with SetParameter / GetParameter
+    const ParamSpec* spec = nullptr;  // the canonical parameter's spec
+    bool hv = false;                  // SetHV / GetHighVoltage instead
+    bool readback = false;            // `hardware` is a readback name: read-only
   };
   Result<ParamTarget> param_target(const ParamId& id) const;
   // The cached integration time as a legal period.
@@ -141,7 +145,9 @@ class QtegraSpectrometer final : public Device,
   std::mutex mutex_;
   std::condition_variable cv_;
   bool running_ = false;
-  std::uint64_t run_ = 0;  // bumped by stop(); a read begun in an earlier run is dropped
+  // Bumped by stop() and by a configure() that changes the period; a read
+  // begun under an earlier value is dropped.
+  std::uint64_t run_ = 0;
   TimePoint due_{};
   std::uint64_t seq_ = 0;  // never reset
 };

@@ -530,6 +530,44 @@ TEST(Qtegra, CustomParamRoundTrip) {
   expect_verified(*sim);
 }
 
+// HV is written with SetHV and read with GetHighVoltage however it is named.
+TEST(Qtegra, HvParamUsesSetHvAndGetHighVoltage) {
+  auto sim = open_scripted({step("SetHV 4500\r", "OK\r\n"), step("GetHighVoltage\r", "4499.8\r\n"),
+                            step("SetHV 9900\r", "OK\r\n"), step("GetHighVoltage\r", "9899.5\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  ASSERT_TRUE(q.set_param(SourceParam::HV, 4500.0));
+  auto rb = q.read_param(SourceParam::HV);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{4499.8, 4499.8}));
+  ASSERT_TRUE(q.set_param(Custom{"HV"}, 9900.0));
+  rb = q.read_param(Custom{"HV"});
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{9899.5, 9899.5}));
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, CustomNameIsCheckedAgainstItsCanonicalRange) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  expect_config(q.set_param(Custom{"HV"}, 50000.0));
+  expect_config(q.set_param(Custom{"HV"}, -1.0));
+  expect_config(q.set_param(Custom{"Trap Current Set"}, 2e6));
+  expect_config(q.set_param(Custom{"Rotation Quad"}, -2e6));  // alias of rotation_quad
+  EXPECT_TRUE(sim->written().empty());
+}
+
+TEST(Qtegra, CustomReadbackNameIsReadOnly) {
+  auto sim = open_scripted({step("GetParameter Trap Current Readback\r", "198.7\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  const ParamId id{Custom{"Trap Current Readback"}};
+  expect_config(q.set_param(id, 200.0));
+  EXPECT_TRUE(sim->written().empty());
+  auto rb = q.read_param(id);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{198.7, 198.7}));
+  expect_verified(*sim);
+}
+
 TEST(Qtegra, UnadvertisedParamIsConfig) {
   auto sim = open_scripted({});
   QtegraSpectrometer q("argus", *sim, {});

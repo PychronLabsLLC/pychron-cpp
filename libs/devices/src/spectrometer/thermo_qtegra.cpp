@@ -194,9 +194,16 @@ Result<double> QtegraSpectrometer::read_gain(const ChannelId& channel) {
 
 Result<QtegraSpectrometer::ParamTarget> QtegraSpectrometer::param_target(const ParamId& id) const {
   if (const auto* custom = std::get_if<Custom>(&id)) {
-    if (q::canonical_name(custom->name)) return ParamTarget{custom->name, nullptr};
+    // A custom name stands for the canonical parameter the codec files it under.
+    if (const auto canonical = q::canonical_name(custom->name)) {
+      const auto param = parse_param_id(*canonical);
+      if (const ParamSpec* spec = param ? find_spec(params_, *param) : nullptr) {
+        return ParamTarget{custom->name, spec, *param == ParamId{SourceParam::HV},
+                           q::readback_name(*canonical) == std::string_view(custom->name)};
+      }
+    }
   } else if (const ParamSpec* spec = find_spec(params_, id)) {
-    return ParamTarget{spec->vendor_name, spec};
+    return ParamTarget{spec->vendor_name, spec, id == ParamId{SourceParam::HV}, false};
   }
   return fail(ErrorKind::Config, "thermo_qtegra: unsupported parameter \"" + to_string(id) + "\"");
 }
@@ -213,18 +220,29 @@ Result<double> QtegraSpectrometer::read_hv() { return query_number(q::get_high_v
 Result<void> QtegraSpectrometer::set_param(const ParamId& id, double value) {
   auto target = param_target(id);
   if (!target) return observe(Result<void>(fail(std::move(target).error())));
-  if (target->spec != nullptr && (!std::isfinite(value) || !target->spec->range.contains(value))) {
+  if (target->readback) {
+    return observe(Result<void>(fail(ErrorKind::Config, "thermo_qtegra: \"" + target->hardware + "\" is read-only")));
+  }
+  if (!std::isfinite(value) || !target->spec->range.contains(value)) {
     return observe(Result<void>(out_of_range(to_string(id), value, target->spec->range)));
   }
+  if (target->hv) return command_ok(q::set_hv(value, options_.terminator));
   return command_ok(q::set_parameter(target->hardware, value, options_.terminator));
 }
 
 Result<Readback> QtegraSpectrometer::read_param(const ParamId& id) {
   auto target = param_target(id);
   if (!target) return observe(Result<Readback>(fail(std::move(target).error())));
+  if (target->hv) {
+    // Qtegra has one HV read; it serves as both.
+    auto volts = read_hv();
+    if (!volts) return fail(std::move(volts).error());
+    return Readback{*volts, *volts};
+  }
   auto setpoint = query_number(q::get_parameter(target->hardware, options_.terminator));
   if (!setpoint) return fail(std::move(setpoint).error());
   Readback readback{*setpoint, std::nullopt};
+  if (target->readback) readback.actual = *setpoint;
   if (const auto* param = std::get_if<SourceParam>(&id)) {
     if (const auto name = q::readback_name(to_string(*param))) {
       auto actual = query_number(q::get_parameter(*name, options_.terminator));
@@ -245,11 +263,27 @@ Result<void> QtegraSpectrometer::configure(Duration integration) {
   }
   const double snapped = q::snap_integration_time(std::chrono::duration<double>(integration).count());
   if (snapped == integration_s_.load()) return {};
-  if (auto sent = command_ack(q::set_integration_time(snapped, options_.terminator)); !sent) return sent;
-  integration_s_.store(snapped);
-  std::lock_guard lock(mutex_);
-  due_ = clock_.now() + to_duration(options_.settle_periods * snapped);
-  return {};
+  // Before the instrument hears of the change: drop any read already in
+  // flight and hold frames back until the settle time is known.
+  TimePoint previous_due;
+  {
+    std::lock_guard lock(mutex_);
+    ++run_;
+    previous_due = due_;
+    due_ = TimePoint::max();
+  }
+  auto sent = command_ack(q::set_integration_time(snapped, options_.terminator));
+  {
+    std::lock_guard lock(mutex_);
+    if (sent) {
+      integration_s_.store(snapped);
+      due_ = clock_.now() + to_duration(options_.settle_periods * snapped);
+    } else {
+      due_ = previous_due;
+    }
+  }
+  cv_.notify_all();
+  return sent;
 }
 
 Result<void> QtegraSpectrometer::start() {
@@ -270,7 +304,7 @@ Result<void> QtegraSpectrometer::stop() {
 
 Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
   using Next = Result<std::optional<Frame>>;
-  const Duration span = period();
+  Duration span{};
   std::uint64_t seq = 0;
   std::uint64_t run = 0;
   {
@@ -284,11 +318,12 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
       if (clock_.now() >= deadline || std::chrono::steady_clock::now() >= real_deadline) {
         return std::optional<Frame>{};
       }
-      clock_.wait_until(cv_, lock, std::min(due_, deadline));
+      clock_.wait_until(cv_, lock, std::min(due_, deadline));  // configure() and stop() notify
     }
     if (!running_) return std::optional<Frame>{};
     seq = ++seq_;
     run = run_;
+    span = period();  // after the wait: configure() may have changed it meanwhile
     // One period on from the due time, not from now, so the cadence does not
     // drift; more than a period behind, it starts again from now.
     const TimePoint now = clock_.now();
@@ -313,7 +348,7 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
   }
   {
     std::lock_guard lock(mutex_);
-    if (run != run_) return observe(Next(std::optional<Frame>{}));  // stopped during the read
+    if (run != run_) return observe(Next(std::optional<Frame>{}));  // stopped or reconfigured during the read
   }
   return observe(Next(std::optional<Frame>{std::move(frame)}));
 }

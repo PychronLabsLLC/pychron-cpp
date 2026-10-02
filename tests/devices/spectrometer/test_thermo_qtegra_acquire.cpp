@@ -5,6 +5,8 @@
 
 #include <array>
 #include <condition_variable>
+#include <functional>
+#include <future>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -135,7 +137,13 @@ TEST_F(QtegraAcquire, NotDueWaitsNoLongerThanTimeoutOnAStoppedClock) {
   ASSERT_TRUE(q.configure(1s));
   ASSERT_TRUE(q.start());
   const auto before = sim->written().size();
-  auto r = q.next(5ms);  // nobody advances the ManualClock: bounded by real time
+  // Nobody advances the ManualClock: the wait is bounded by real time.
+  auto pending = std::async(std::launch::async, [this] { return q.next(5ms); });
+  if (pending.wait_for(10s) != std::future_status::ready) {
+    ADD_FAILURE() << "next(5ms) did not return";
+    q.stop();  // wakes it
+  }
+  auto r = pending.get();
   ASSERT_TRUE(r) << to_string(r.error());
   EXPECT_FALSE(r->has_value());
   EXPECT_EQ(sim->written().size(), before);
@@ -148,6 +156,43 @@ TEST_F(QtegraAcquire, FirstFrameAfterChangeWaitsSettlePeriods) {
   expect_not_due();
   clock.advance(kTick);
   EXPECT_EQ(frame().ts, TimePoint{} + 2 * kOne);
+}
+
+// A next() already waiting on the clock when configure() changes the period
+// wakes to the new due time and labels its frame with the new period.
+TEST_F(QtegraAcquire, NextWaitingAcrossConfigureUsesTheNewPeriod) {
+  ASSERT_TRUE(q.configure(1s));
+  ASSERT_TRUE(q.start());
+  auto pending = std::async(std::launch::async, [this] { return q.next(60s); });
+  const Duration two = 2 * kOne;  // the 2.097152 s period
+  ASSERT_TRUE(q.configure(2s));
+  clock.advance(2 * two - kTick);
+  EXPECT_EQ(pending.wait_for(20ms), std::future_status::timeout);  // old due time has passed; still held
+  clock.advance(kTick);
+  if (pending.wait_for(10s) != std::future_status::ready) {
+    ADD_FAILURE() << "next() did not wake";
+    q.stop();
+  }
+  auto r = pending.get();
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_TRUE(r->has_value());
+  EXPECT_EQ((*r)->span, two);
+  EXPECT_EQ((*r)->ts, TimePoint{} + 2 * two);
+  // The cadence continues on the new period.
+  clock.advance(two - kTick);
+  expect_not_due();
+  clock.advance(kTick);
+  EXPECT_EQ(frame().span, two);
+}
+
+// A failed period change restores the due time it held back.
+TEST_F(QtegraAcquire, FailedConfigureDoesNotHoldFramesBack) {
+  ASSERT_TRUE(q.start());
+  sim->drop_next();
+  auto r = q.configure(1s);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(frame().span, kHalf);
 }
 
 TEST_F(QtegraAcquire, SettlePeriodsComeFromOptions) {
@@ -365,6 +410,29 @@ struct Gate {
   }
 };
 
+// Forwards to a transport, calling `on_exchange` first on the caller's thread.
+class TapTransport final : public Transport {
+ public:
+  explicit TapTransport(Transport& inner) : inner_(inner) {}
+
+  const std::string& name() const override { return inner_.name(); }
+  Result<void> open() override { return inner_.open(); }
+  void close() override { inner_.close(); }
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override {
+    if (on_exchange) on_exchange(tx);
+    return inner_.exchange(std::move(tx), std::move(rs), timeout);
+  }
+  Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
+  Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_.read(std::move(rs), timeout); }
+  Result<void> transaction(std::function<Result<void>()> body) override { return inner_.transaction(std::move(body)); }
+  Health health() const override { return inner_.health(); }
+
+  std::function<void(const Bytes&)> on_exchange;  // set before any other thread runs
+
+ private:
+  Transport& inner_;
+};
+
 struct QtegraBlockedRead : ::testing::Test {
   ManualClock clock;
   std::shared_ptr<QtegraSimModel> model = make_model();
@@ -381,7 +449,8 @@ struct QtegraBlockedRead : ::testing::Test {
     }
     return inner(tx);
   });
-  QtegraSpectrometer q{"argus", *sim, {}, &clock};
+  TapTransport tap{*sim};
+  QtegraSpectrometer q{"argus", tap, {}, &clock};
 
   // Runs next() on another thread and returns once it is inside the read.
   std::thread blocked_next(Result<std::optional<Frame>>& out) {
@@ -432,6 +501,37 @@ TEST_F(QtegraBlockedRead, RestartDuringBlockedNextStillDropsTheOldFrame) {
   t.join();
   ASSERT_TRUE(blocked) << to_string(blocked.error());
   EXPECT_FALSE(blocked->has_value());
+}
+
+// The same for configure(): a GetData in flight when the period changes may be
+// sampled on either side of the change, so it is dropped, and frames stay held
+// back for the settle time.
+TEST_F(QtegraBlockedRead, ConfigureDuringBlockedNextDropsTheFrameAndSettles) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.start());
+  // The read is released only once configure() is about to send its command,
+  // which queues behind the read on the transport.
+  tap.on_exchange = [this](const Bytes& tx) {
+    if (to_string(tx) == "SetIntegrationTime 1.048576\r") gate.release();
+  };
+  Result<std::optional<Frame>> blocked = std::optional<Frame>{Frame{}};
+  std::thread t = blocked_next(blocked);
+  ASSERT_TRUE(q.configure(1s));
+  t.join();
+
+  ASSERT_TRUE(blocked) << to_string(blocked.error());
+  EXPECT_FALSE(blocked->has_value());
+  EXPECT_EQ(sim->written().size(), 3U);  // GetIntegrationTime, GetData, SetIntegrationTime
+  clock.advance(2 * kOne - kTick);
+  auto early = q.next(Duration::zero());
+  ASSERT_TRUE(early) << to_string(early.error());
+  EXPECT_FALSE(early->has_value());
+  EXPECT_EQ(sim->written().size(), 3U);
+  clock.advance(kTick);
+  auto settled = q.next(Duration::zero());
+  ASSERT_TRUE(settled && settled->has_value());
+  EXPECT_EQ((*settled)->span, kOne);
+  EXPECT_EQ((*settled)->ts, TimePoint{} + 2 * kOne);
 }
 
 // --- replay ----------------------------------------------------------------------
