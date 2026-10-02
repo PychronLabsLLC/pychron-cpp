@@ -13,6 +13,7 @@
 
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
+#include "pychron/systems/spectrometer/bringup.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -68,12 +69,7 @@ class SpectrometerSim : public ::testing::TestWithParam<const char*> {
 
     // The beam's true peak positions follow the config's field table, except
     // that H1 sits kOffset higher: the table is slightly wrong, as in life.
-    sim::BeamSettings settings;
-    settings.nominal_hv = *data->config.source.nominal_hv;
-    settings.table_value = [table = table_](double mass, const std::string& det) {
-      auto v = table.value_for(mass, det);
-      return v ? *v : mass / 8.0;
-    };
+    sim::BeamSettings settings = beam_settings_from_config(*data);
     beam_ = std::make_shared<sim::BeamModel>(clock_, settings);
     sim::BeamModelRegistry::global().set("default", beam_);
     sim::BeamDetector h1;
