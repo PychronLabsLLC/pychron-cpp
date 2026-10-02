@@ -14,7 +14,7 @@ using namespace pychron::reduction;
 
 namespace {
 
-Measured measured_of(const golden::Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
+using golden::measured_of;
 
 void expect_measured(const Measured& got, const Measured& want, const std::string& what) {
   EXPECT_EQ(got.value, want.value) << what;

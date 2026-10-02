@@ -62,7 +62,7 @@ double singular_cl3638(const ReductionConstants& c, double dd) {
   return std::numeric_limits<double>::quiet_NaN();
 }
 
-Measured measured_of(const g::Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
+using g::measured_of;
 
 }  // namespace
 

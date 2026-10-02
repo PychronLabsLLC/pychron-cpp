@@ -119,7 +119,7 @@ double std_without_interference_tags(const UFloat& x) {
   return std::sqrt(v);
 }
 
-Measured measured_of(const g::Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
+using g::measured_of;
 
 }  // namespace
 

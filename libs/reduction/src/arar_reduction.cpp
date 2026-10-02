@@ -20,14 +20,26 @@ std::string fmt_g(double v) {
   return buf;
 }
 
-// A constant read by a step function must be a valid variable (finite value,
-// finite sigma >= 0) before it is minted.
-Result<UFloat> mint(const Measured& m, std::string_view tag) {
+// The one Measured check: a finite value and a finite sigma >= 0, else
+// "reduction: <label> must have a finite value and a finite sigma >= 0, got
+// v +- e". Step functions pass "constant <name>"; validate() passes the field.
+Result<void> validate_constant(const Measured& m, std::string_view label) {
   if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
-    return fail(ErrorKind::Config, "reduction: constant " + std::string(tag) +
+    return fail(ErrorKind::Config, "reduction: " + std::string(label) +
                                        " must have a finite value and a finite sigma >= 0, got " +
                                        fmt_g(m.value) + " +- " + fmt_g(m.error));
   }
+  return {};
+}
+
+Result<void> check_constant(const Measured& m, std::string_view name) {
+  return validate_constant(m, "constant " + std::string(name));
+}
+
+// A constant read by a step function must be a valid variable (finite value,
+// finite sigma >= 0) before it is minted.
+Result<UFloat> mint(const Measured& m, std::string_view tag) {
+  if (auto ok = check_constant(m, tag); !ok) return fail(ok.error());
   return UFloat::variable(m.value, m.error, tag);
 }
 
@@ -36,13 +48,8 @@ Result<UFloat> mint(const Measured& m, std::string_view tag) {
 // partials formed exactly as UFloat::operator/ forms them.
 // legacy:processing/arar_constants.py:225-226
 Result<Measured> atm3836(const ReductionConstants& c) {
-  for (const auto& [m, name] : {std::pair{&c.atm4036, "atm4036"}, std::pair{&c.atm4038, "atm4038"}}) {
-    if (!std::isfinite(m->value) || !std::isfinite(m->error) || m->error < 0.0) {
-      return fail(ErrorKind::Config, "reduction: constant " + std::string(name) +
-                                         " must have a finite value and a finite sigma >= 0, got " +
-                                         fmt_g(m->value) + " +- " + fmt_g(m->error));
-    }
-  }
+  if (auto ok = check_constant(c.atm4036, "atm4036"); !ok) return fail(ok.error());
+  if (auto ok = check_constant(c.atm4038, "atm4038"); !ok) return fail(ok.error());
   const double a = c.atm4036.value;
   const double b = c.atm4038.value;
   const double da = 1.0 / b;
@@ -328,15 +335,6 @@ namespace {
 // Python truthiness of a ufloat (`if lk:`): false only for 0 +- 0.
 bool truthy(const Measured& m) noexcept { return !(m.value == 0.0 && m.error == 0.0); }
 
-Result<void> check_constant(const Measured& m, std::string_view name) {
-  if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
-    return fail(ErrorKind::Config, "reduction: constant " + std::string(name) +
-                                       " must have a finite value and a finite sigma >= 0, got " +
-                                       fmt_g(m.value) + " +- " + fmt_g(m.error));
-  }
-  return {};
-}
-
 // E16 lambda_K: the override when truthy (dvc/dvc.py:2303-2305,
 // argon_calculations.py:614), else lambda_b + lambda_e (arar_constants.py:263-267).
 // Returns its value and sigma; the caller mints the variable.
@@ -471,13 +469,6 @@ Result<void> check_ufloat(const UFloat& x, const std::string& name) {
   return {};
 }
 
-Result<void> check_measured(const Measured& m, const std::string& name) {
-  if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
-    return invalid(name + " must have a finite value and a finite sigma >= 0, got " +
-                   fmt_g(m.value) + " +- " + fmt_g(m.error));
-  }
-  return {};
-}
 
 // Spec 6 input policy: every field reduce() reads, before any arithmetic.
 Result<void> validate(const ReductionInput& in) {
@@ -504,7 +495,7 @@ Result<void> validate(const ReductionInput& in) {
   const bool lk_override =
       in.lambda_k_total && !(in.lambda_k_total->value == 0.0 && in.lambda_k_total->error == 0.0);
   if (in.lambda_k_total) {
-    if (auto ok = check_measured(*in.lambda_k_total, "lambda_k_total"); !ok) return ok;
+    if (auto ok = validate_constant(*in.lambda_k_total, "lambda_k_total"); !ok) return ok;
   }
   if (!lk_override && c.lambda_b.value + c.lambda_e.value == 0.0) {
     return invalid("constants lambda_b + lambda_e is zero (lambda_K must be nonzero)");
@@ -514,11 +505,11 @@ Result<void> validate(const ReductionInput& in) {
         std::pair{&c.lambda_cl36, "lambda_cl36"}, std::pair{&c.lambda_ar37, "lambda_ar37"},
         std::pair{&c.lambda_ar39, "lambda_ar39"}, std::pair{&c.atm4036, "atm4036"},
         std::pair{&c.atm4038, "atm4038"}, std::pair{&c.fixed_k3739, "fixed_k3739"}}) {
-    if (auto ok = check_measured(*m, std::string("constants ") + field); !ok) return ok;
+    if (auto ok = validate_constant(*m, std::string("constants ") + field); !ok) return ok;
   }
   if (c.cosmogenic) {
-    if (auto ok = check_measured(c.cosmogenic->solar3836, "constants solar3836"); !ok) return ok;
-    if (auto ok = check_measured(c.cosmogenic->cosmo3836, "constants cosmo3836"); !ok) return ok;
+    if (auto ok = validate_constant(c.cosmogenic->solar3836, "constants solar3836"); !ok) return ok;
+    if (auto ok = validate_constant(c.cosmogenic->cosmo3836, "constants cosmo3836"); !ok) return ok;
   }
   if (!std::isfinite(c.abundance_sensitivity) || c.abundance_sensitivity < 0.0) {
     return invalid("constants abundance_sensitivity must be finite and >= 0, got " +
@@ -559,7 +550,7 @@ Result<void> validate(const ReductionInput& in) {
     return invalid("position_jerr must be finite and >= 0, got " + fmt_g(in.position_jerr));
   }
   if (in.fixed_k3739) {
-    if (auto ok = check_measured(*in.fixed_k3739, "fixed_k3739"); !ok) return ok;
+    if (auto ok = validate_constant(*in.fixed_k3739, "fixed_k3739"); !ok) return ok;
   }
   return {};
 }
@@ -581,7 +572,7 @@ const std::array<TagId, 5>& isotope_tags() {
 }  // namespace
 
 // legacy:processing/arar_age.py:443-689 (calculate_age, _assemble_isotope_intensities,
-// _calculate_f, _set_age_values, _calculate_kca, get_error_component).
+// _calculate_f, _set_age_values, _calculate_kca, _calculate_kcl, get_error_component).
 Result<ArArResult> reduce(const ReductionInput& in) {
   if (auto ok = validate(in); !ok) return fail(ok.error());
   const ReductionConstants& c = in.constants;
@@ -659,6 +650,27 @@ Result<ArArResult> reduce(const ReductionInput& in) {
     out.kca = std::move(kca);
   }
 
+  // E19 K/Cl (arar_age.py:547-558, :560-566): k39 / cl38 * (1 / Cl_K), the
+  // factor 1 when Cl_K is missing or nominally 0. cl38 is E12's residual 38
+  // (also without Cl production, legacy behaviour). cl38 == 0 (legacy
+  // ZeroDivisionError -> kcl = 0) leaves both absent; kcl == 0 keeps kcl and
+  // leaves clk absent, as for K/Ca.
+  const UFloat& cl38 = out.f.atmospheric.cl38;
+  if (cl38.nominal() == 0.0) {
+    out.diagnostics.push_back(Diagnostic::KClUndefined);
+  } else {
+    UFloat kcl = k39 / cl38;
+    if (in.production.cl_k && in.production.cl_k->nominal() != 0.0) {
+      kcl = kcl * (1.0 / *in.production.cl_k);
+    }
+    if (kcl.nominal() == 0.0) {
+      out.diagnostics.push_back(Diagnostic::KClUndefined);
+    } else {
+      out.clk = 1.0 / kcl;
+    }
+    out.kcl = std::move(kcl);
+  }
+
   // E20 on age_w_j_err by isotope tag (arar_age.py:214-229).
   if (out.ages) {
     const std::array<TagId, 5>& tags = isotope_tags();
@@ -682,6 +694,8 @@ Result<ArArResult> reduce(const ReductionInput& in) {
     }
     if (out.kca) check(*out.kca);
     if (out.cak) check(*out.cak);
+    if (out.kcl) check(*out.kcl);
+    if (out.clk) check(*out.clk);
     for (const auto& [k, v] : out.age_error_components) all_finite = all_finite && std::isfinite(v);
     if (!all_finite) out.diagnostics.push_back(Diagnostic::NonFiniteResult);
   }

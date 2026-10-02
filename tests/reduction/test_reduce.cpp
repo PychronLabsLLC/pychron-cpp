@@ -17,18 +17,13 @@
 
 #include "golden.hpp"
 #include "pychron/reduction/arar_reduction.hpp"
+#include "reduce_golden.hpp"
 
 using namespace pychron::reduction;
 using pychron::Result;
 namespace g = pychron::reduction::golden;
 
 namespace {
-
-std::string fmt(const char* what, double v) {
-  char buf[64];
-  std::snprintf(buf, sizeof buf, "%g", v);
-  return std::string(what) + buf;
-}
 
 std::vector<std::string> names_of(const std::vector<Diagnostic>& d) {
   std::vector<std::string> out;
@@ -58,17 +53,7 @@ void expect_identical(const UFloat& got, const UFloat& want, const std::string& 
   }
 }
 
-void expect_config_error(const Result<ArArResult>& r, std::string_view needle,
-                         const std::string& what) {
-  if (r) {
-    ADD_FAILURE() << what << ": expected an error naming '" << needle << "'";
-    return;
-  }
-  EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config) << what;
-  EXPECT_TRUE(r.error().what.starts_with("reduction: ")) << what << ": " << r.error().what;
-  EXPECT_NE(r.error().what.find(needle), std::string::npos)
-      << what << ": '" << r.error().what << "' does not name '" << needle << "'";
-}
+using g::expect_config_error;
 
 // A valid analysis: legacy CalculateFTest-like intensities (Ar37 = 5, so ca37
 // is well away from 0), legacy constants, 5 years since irradiation.
@@ -102,378 +87,15 @@ ReductionInput base_input() {
 
 // ---- Golden input parsing ---------------------------------------------------
 
-Measured measured_of(const g::Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
-
-bool units_of(std::string_view s, AgeUnits& out) {
-  if (s == "a") out = AgeUnits::a;
-  else if (s == "ka") out = AgeUnits::ka;
-  else if (s == "Ma") out = AgeUnits::Ma;
-  else if (s == "Ga") out = AgeUnits::Ga;
-  else return false;
-  return true;
-}
-
-// Every constants key is read; an unknown key or value fails.
-bool constants_of(const g::Json& k, ReductionConstants& rc, const std::string& name) {
-  bool ok = true;
-  for (const auto& [key, v] : k.as_object()) {
-    if (key == "lambda_b") rc.lambda_b = measured_of(v);
-    else if (key == "lambda_e") rc.lambda_e = measured_of(v);
-    else if (key == "include_decay_error") rc.include_decay_error = v.as_bool();
-    else if (key == "age_units") {
-      if (!units_of(v.as_string(), rc.age_units)) {
-        ADD_FAILURE() << name << ": unknown age_units " << v.string;
-        ok = false;
-      }
-    } else if (key == "lambda_cl36") rc.lambda_cl36 = measured_of(v);
-    else if (key == "lambda_ar37") rc.lambda_ar37 = measured_of(v);
-    else if (key == "lambda_ar39") rc.lambda_ar39 = measured_of(v);
-    else if (key == "atm4036") rc.atm4036 = measured_of(v);
-    else if (key == "atm4038") rc.atm4038 = measured_of(v);
-    else if (key == "fixed_k3739") rc.fixed_k3739 = measured_of(v);
-    else if (key == "allow_negative_ca_correction") rc.allow_negative_ca_correction = v.as_bool();
-    else if (key == "abundance_sensitivity") rc.abundance_sensitivity = v.as_number();
-    else if (key == "use_irradiation_endtime") rc.use_irradiation_endtime = v.as_bool();
-    else if (key == "k3739_mode") {
-      if (v.as_string() == "Fixed") {
-        rc.k3739_mode = K3739Mode::Fixed;
-      } else if (v.as_string() != "Normal") {
-        ADD_FAILURE() << name << ": unknown k3739_mode " << v.string;
-        ok = false;
-      }
-    } else if (key == "cosmogenic") {
-      if (!v.is_null()) {
-        rc.cosmogenic = CosmogenicRatios{measured_of(v["solar3836"]), measured_of(v["cosmo3836"])};
-      }
-    } else {
-      ADD_FAILURE() << name << ": unhandled constants key " << key;
-      ok = false;
-    }
-  }
-  return ok;
-}
-
-bool known_keys(const g::Json& obj, std::initializer_list<std::string_view> keys,
-                const std::string& what) {
-  bool ok = true;
-  for (const auto& [key, v] : obj.as_object()) {
-    bool found = false;
-    for (const std::string_view k : keys) found = found || key == k;
-    if (!found) {
-      ADD_FAILURE() << what << ": unhandled key " << key;
-      ok = false;
-    }
-  }
-  return ok;
-}
-
-struct Built {
-  ReductionInput in;
-  std::string missing;  // first ARGON_KEYS slot absent from the JSON, "" if none
-  bool ok = true;
-};
-
-// Pipeline inputs (pipeline.json, correlation.json reduce_pair analyses) ->
-// ReductionInput. Isotopes go through make_signal (fresh variables, legacy
-// tags). The isotope key mapping is the caller's job (spec 5.2): a slot
-// missing from the JSON is reported in `missing` and left with a NaN
-// intercept, which reduce() must reject naming the slot.
-Built build_input(const g::Json& in, const ReductionConstants& c, const std::string& name) {
-  Built b;
-  b.ok = known_keys(in,
-                    {"function", "constants", "isotopes", "production", "irradiation", "j",
-                     "position_jerr", "lambda_k_total", "fixed_k3739"},
-                    name + " inputs");
-  b.in.constants = c;
-  for (const ArgonIsotope iso : kArgonKeys) {
-    const std::string key(to_string(iso));
-    const g::Json& j = in["isotopes"][key];
-    if (!j.is_object()) {
-      if (b.missing.empty()) b.missing = key;
-      b.in.isotopes[index(iso)].intercept = UFloat(std::nan(""));
-      continue;
-    }
-    b.ok = known_keys(j,
-                      {"intercept", "baseline", "blank", "ic_factor", "include_baseline_error",
-                       "correct_for_blank"},
-                      name + " isotope " + key) &&
-           b.ok;
-    MeasuredSignal m;
-    m.intercept = measured_of(j["intercept"]);
-    m.baseline = measured_of(j["baseline"]);
-    m.blank = measured_of(j["blank"]);
-    m.ic_factor = measured_of(j["ic_factor"]);
-    m.include_baseline_error = j["include_baseline_error"].as_bool();
-    m.correct_for_blank = j["correct_for_blank"].as_bool();
-    b.in.isotopes[index(iso)] = make_signal(iso, m);
-  }
-  std::map<std::string, Measured, std::less<>> rows;
-  for (const auto& [key, m] : in["production"].as_object()) rows[key] = measured_of(m);
-  auto pr = production_from_rows(rows);
-  if (!pr) {
-    ADD_FAILURE() << name << ": " << pr.error().what;
-    b.ok = false;
-  } else {
-    b.in.production = make_production_variables(*pr);
-  }
-  const g::Json& irr = in["irradiation"];
-  b.ok = known_keys(irr, {"decay_days", "segments"}, name + " irradiation") && b.ok;
-  b.in.irradiation.decay_days = irr["decay_days"].as_number();
-  for (const g::Json& s : irr["segments"].as_array()) {
-    b.ok = known_keys(s, {"power", "duration_days", "dt_days"}, name + " segment") && b.ok;
-    b.in.irradiation.segments.push_back(
-        {s["power"].as_number(), s["duration_days"].as_number(), s["dt_days"].as_number()});
-  }
-  if (!in["j"].is_null()) {
-    const Measured jm = measured_of(in["j"]);
-    b.in.j = make_j(Flux{jm, 0.0, std::nullopt});
-  }
-  b.in.position_jerr = in["position_jerr"].as_number();
-  if (!in["lambda_k_total"].is_null()) b.in.lambda_k_total = measured_of(in["lambda_k_total"]);
-  if (!in["fixed_k3739"].is_null()) b.in.fixed_k3739 = measured_of(in["fixed_k3739"]);
-  return b;
-}
-
-bool is_chlorine(const std::string& name) { return name.find("chlorine") != std::string::npos; }
-
-// ---- Golden comparison ------------------------------------------------------
-
-struct Counts {
-  std::size_t legacy = 0, prefs = 0, sentinel = 0, error = 0, diag = 0, cosmo = 0, no_j = 0,
-              lambda_override = 0, kcl_skipped = 0, kcl_diag_skipped = 0, components = 0;
-};
-
-void check_u(const UFloat& got, const g::Json& w, const g::Tol& t, const std::string& what) {
-  g::expect_close(got.nominal(), w["v"].as_number(), t.rtol, t.atol, what + ".v");
-  g::expect_close(got.std_dev(), w["e"].as_number(), t.rtol_err, t.atol_err, what + ".e");
-}
-
-void check_group(const g::Json& w, const std::map<std::string, const UFloat*>& got,
-                 const g::Tol& t, const std::string& group) {
-  if (w.size() != got.size()) {
-    ADD_FAILURE() << group << fmt(": expected key count ", static_cast<double>(w.size()));
-  }
-  for (const auto& [key, v] : w.as_object()) {
-    const auto it = got.find(key);
-    if (it == got.end()) {
-      ADD_FAILURE() << "unhandled key " << group << "." << key;
-      continue;
-    }
-    check_u(*it->second, v, t, group + "." + key);
-  }
-}
-
-std::map<std::string, const UFloat*> by_isotope(const std::array<UFloat, 5>& a) {
-  std::map<std::string, const UFloat*> out;
-  for (const ArgonIsotope iso : kArgonKeys) out[std::string(to_string(iso))] = &a[index(iso)];
-  return out;
-}
-
-// FResult as calculate_f.json writes it.
-void check_f(const g::Json& w, const FResult& r, const g::Tol& t) {
-  for (const auto& [key, v] : w.as_object()) {
-    if (key == "f") {
-      if (!r.f) {
-        ADD_FAILURE() << "f absent";
-        continue;
-      }
-      check_u(*r.f, v, t, "f.f");
-    } else if (key == "f_err_wo_irrad") {
-      g::expect_close(r.f_err_wo_irrad, v.as_number(), t.rtol_err, t.atol_err, "f." + key);
-    } else if (key == "radiogenic_yield") {
-      if (!r.radiogenic_yield) {
-        ADD_FAILURE() << "radiogenic_yield absent";
-        continue;
-      }
-      check_u(*r.radiogenic_yield, v, t, "f." + key);
-    } else if (key == "atm40") {
-      check_u(r.atm40, v, t, "f." + key);
-    } else if (key == "k40") {
-      check_u(r.k40, v, t, "f." + key);
-    } else if (key == "rad40") {
-      check_u(r.rad40, v, t, "f." + key);
-    } else if (key == "interference") {
-      const auto& x = r.interference;
-      check_group(v,
-                  {{"k37", &x.k37}, {"k38", &x.k38}, {"k39", &x.k39}, {"ca36", &x.ca36},
-                   {"ca37", &x.ca37}, {"ca38", &x.ca38}, {"ca39", &x.ca39}},
-                  t, "f." + key);
-    } else if (key == "atmospheric") {
-      const auto& x = r.atmospheric;
-      check_group(
-          v, {{"atm36", &x.atm36}, {"atm38", &x.atm38}, {"cl36", &x.cl36}, {"cl38", &x.cl38}},
-          t, "f." + key);
-    } else if (key == "cosmogenic") {
-      if (!r.cosmogenic) {
-        ADD_FAILURE() << "cosmogenic absent";
-        continue;
-      }
-      const auto& x = *r.cosmogenic;
-      check_group(v,
-                  {{"cosmo36", &x.cosmo36}, {"cosmo38", &x.cosmo38},
-                   {"noncosmo36", &x.noncosmo36}, {"noncosmo38", &x.noncosmo38}},
-                  t, "f." + key);
-    } else if (key == "interference_corrected") {
-      check_group(v, by_isotope(r.interference_corrected), t, "f." + key);
-    } else {
-      ADD_FAILURE() << "unhandled expected key f." << key;
-    }
-  }
-  if (!w.contains("cosmogenic")) EXPECT_FALSE(r.cosmogenic.has_value());
-  if (!w.contains("f")) EXPECT_FALSE(r.f.has_value());
-  if (!w.contains("radiogenic_yield")) EXPECT_FALSE(r.radiogenic_yield.has_value());
-}
-
-bool contains(const std::vector<std::string>& v, std::string_view x) {
-  return std::find(v.begin(), v.end(), x) != v.end();
-}
-
-// One non-chlorine pipeline.json case, every key checked; unhandled keys fail.
-// kcl / clk (and KClUndefined) are Task 12: skipped here for the non-chlorine
-// cases, which still carry legacy kcl/clk from the residual cl38.
-void run_pipeline_case(const g::Json& c, Counts& n) {
-  const std::string name = c["name"].string;
-  known_keys(c,
-             {"name", "source", "inputs", "expected", "tol", "legacy_sentinel",
-              "expect_diagnostics", "expect_error"},
-             name);
-  const g::Json& in = c["inputs"];
-  if (in["function"].as_string() != "reduce") {
-    ADD_FAILURE() << name << ": unhandled function";
-    return;
-  }
-  if (name.ends_with("@legacy")) ++n.legacy;
-  else if (name.ends_with("@legacy_preferences")) ++n.prefs;
-  else ADD_FAILURE() << name << ": no preset suffix";
-
-  ReductionConstants rc;
-  if (!constants_of(in["constants"], rc, name)) return;
-  if (rc.cosmogenic) ++n.cosmo;
-  Built b = build_input(in, rc, name);
-  if (!b.ok) return;
-  if (!b.in.j) ++n.no_j;
-  if (b.in.lambda_k_total) ++n.lambda_override;
-
-  const Result<ArArResult> r = reduce(b.in);
-  if (!c["expect_error"].is_null()) {
-    ++n.error;
-    // Legacy refuses a missing isotope (arar_age.py:568-581); the C++ caller
-    // maps keys to slots (spec 5.2) and reduce() rejects the unfilled slot.
-    const std::string want = c["expect_error"].as_string();
-    EXPECT_EQ(b.missing, want);
-    expect_config_error(r, want, name);
-    EXPECT_EQ(c["expected"].size(), 0u);
-    return;
-  }
-  EXPECT_TRUE(b.missing.empty());
-  if (!r) {
-    ADD_FAILURE() << name << ": " << r.error().what;
-    return;
-  }
-  const g::Tol t = g::tol_of(c);
-
-  std::vector<std::string> want_diags;
-  for (const g::Json& d : c["expect_diagnostics"].as_array()) {
-    if (d.as_string() == "KClUndefined") {
-      ++n.kcl_diag_skipped;  // Task 12
-      continue;
-    }
-    want_diags.push_back(d.as_string());
-  }
-  if (c["expect_diagnostics"].size() > 0) ++n.diag;
-  EXPECT_EQ(names_of(r->diagnostics), want_diags);
-
-  const g::Json& sentinel = c["legacy_sentinel"];
-  if (!sentinel.is_null()) {
-    ++n.sentinel;
-    for (const auto& [key, v] : sentinel.as_object()) {
-      // Sentinel "f" / "radiogenic_yield" are values inside expected.f.
-      const bool in_f = key == "f" || key == "radiogenic_yield";
-      if ((in_f ? c["expected"]["f"] : c["expected"]).contains(key)) {
-        ADD_FAILURE() << name << ": sentinel key also expected";
-      }
-      if (key == "f") {
-        EXPECT_FALSE(r->f.f.has_value()) << "legacy F sentinel " << v["v"].as_number();
-        EXPECT_TRUE(contains(want_diags, "FUndefined"));
-      } else if (key == "radiogenic_yield") {
-        EXPECT_FALSE(r->f.radiogenic_yield.has_value());
-        EXPECT_TRUE(contains(want_diags, "YieldUndefined"));
-      } else if (key == "ages") {
-        EXPECT_FALSE(r->ages.has_value()) << "legacy age sentinel " << v["age"]["v"].as_number();
-        EXPECT_TRUE(contains(want_diags, "AgeUndefined") || contains(want_diags, "FUndefined"));
-      } else if (key == "age_error_components") {
-        EXPECT_TRUE(r->age_error_components.empty());
-      } else if (key == "kca" || key == "cak") {
-        EXPECT_FALSE((key == "kca" ? r->kca : r->cak).has_value()) << key;
-        EXPECT_TRUE(contains(want_diags, "KCaUndefined"));
-      } else if (key == "kcl" || key == "clk") {
-        ++n.kcl_skipped;  // Task 12
-      } else {
-        ADD_FAILURE() << name << ": unhandled legacy_sentinel key " << key;
-      }
-    }
-  }
-
-  const g::Json& expected = c["expected"];
-  for (const auto& [key, w] : expected.as_object()) {
-    if (key == "decay") {
-      known_keys(w, {"df37", "df39"}, name + " decay");
-      // Spec 4.7: decay factors 1e-13.
-      g::expect_close(r->decay.df37, w["df37"].as_number(), 1e-13, 0.0, "decay.df37");
-      g::expect_close(r->decay.df39, w["df39"].as_number(), 1e-13, 0.0, "decay.df39");
-    } else if (key == "corrected") {
-      check_group(w, by_isotope(r->corrected), t, "corrected");
-    } else if (key == "f") {
-      check_f(w, r->f, t);
-    } else if (key == "ages") {
-      if (!r->ages) {
-        ADD_FAILURE() << name << ": ages absent";
-        continue;
-      }
-      const AgeSet& a = *r->ages;
-      for (const auto& [ak, av] : w.as_object()) {
-        if (ak == "age") check_u(a.age, av, t, "ages.age");
-        else if (ak == "age_w_j_err") check_u(a.age_w_j_err, av, t, "ages.age_w_j_err");
-        else if (ak == "age_w_position_err")
-          check_u(a.age_w_position_err, av, t, "ages.age_w_position_err");
-        else if (ak == "age_err_wo_irrad")
-          g::expect_close(a.age_err_wo_irrad, av.as_number(), t.rtol_err, t.atol_err, ak);
-        else if (ak == "age_err_wo_j_irrad")
-          g::expect_close(a.age_err_wo_j_irrad, av.as_number(), t.rtol_err, t.atol_err, ak);
-        else ADD_FAILURE() << name << ": unhandled ages key " << ak;
-      }
-      EXPECT_EQ(w.size(), 5u);
-    } else if (key == "kca" || key == "cak") {
-      const std::optional<UFloat>& got = key == "kca" ? r->kca : r->cak;
-      if (!got) {
-        ADD_FAILURE() << name << ": " << key << " absent";
-        continue;
-      }
-      check_u(*got, w, t, key);
-    } else if (key == "kcl" || key == "clk") {
-      ++n.kcl_skipped;  // Task 12
-    } else if (key == "age_error_components") {
-      ++n.components;
-      EXPECT_EQ(w.size(), 5u);
-      EXPECT_EQ(r->age_error_components.size(), 5u);
-      for (const auto& [iso, pct] : w.as_object()) {
-        const auto it = r->age_error_components.find(iso);
-        if (it == r->age_error_components.end()) {
-          ADD_FAILURE() << name << ": component " << iso << " absent";
-          continue;
-        }
-        // Spec 4.7: percentages atol 1e-8 percentage points.
-        g::expect_close(it->second, pct.as_number(), 0.0, 1e-8, "age_error_components." + iso);
-      }
-    } else {
-      ADD_FAILURE() << name << ": unhandled expected key " << key;
-    }
-  }
-  if (!expected.contains("ages")) EXPECT_FALSE(r->ages.has_value());
-  if (!expected.contains("age_error_components")) EXPECT_TRUE(r->age_error_components.empty());
-  if (!expected.contains("kca")) EXPECT_FALSE(r->kca.has_value());
-  if (!expected.contains("cak")) EXPECT_FALSE(r->cak.has_value());
-}
+using g::build_input;
+using g::Built;
+using g::by_isotope;
+using g::check_group;
+using g::check_u;
+using g::constants_of;
+using g::known_keys;
+using g::PipelineCounts;
+using g::run_pipeline_case;
 
 }  // namespace
 
@@ -609,15 +231,20 @@ TEST(Reduce, ConstantsNotSharedAcrossAnalyses) {
         std::tuple{&atm38a, &atm38b, std::string_view("atm3836")}}) {
     const auto ia = ids_tagged(*xa, tag);
     const auto ib = ids_tagged(*xb, tag);
-    ASSERT_EQ(ia.size(), 1u) << tag;
-    ASSERT_EQ(ib.size(), 1u) << tag;
+    EXPECT_EQ(ia.size(), 1u) << tag;
+    EXPECT_EQ(ib.size(), 1u) << tag;
+    if (ia.size() != 1u || ib.size() != 1u) continue;
     EXPECT_NE(ia[0], ib[0]) << tag;
     EXPECT_EQ(xb->derivative(ia[0]), 0.0) << tag;
   }
   // E14's trapped_4036 and E12's atm3836 are distinct variables, and no
   // atm4036/atm4038-tagged variable reaches F.
-  EXPECT_NE(ids_tagged(fa, "trapped_4036")[0], ids_tagged(atm38a, "atm3836")[0]);
-  EXPECT_EQ(fa.derivative(ids_tagged(atm38a, "atm3836")[0]), 0.0);
+  const auto trapped_a = ids_tagged(fa, "trapped_4036");
+  const auto atm3836_a = ids_tagged(atm38a, "atm3836");
+  ASSERT_EQ(trapped_a.size(), 1u);
+  ASSERT_EQ(atm3836_a.size(), 1u);
+  EXPECT_NE(trapped_a[0], atm3836_a[0]);
+  EXPECT_EQ(fa.derivative(atm3836_a[0]), 0.0);
   EXPECT_EQ(covariance(atm38a, atm38b), 0.0);
   EXPECT_TRUE(ids_tagged(fa, "atm4036").empty());
   EXPECT_TRUE(ids_tagged(fa, "atm4038").empty());
@@ -638,10 +265,12 @@ TEST(Reduce, ConstantsNotSharedAcrossAnalyses) {
 // The lambda_k_total override (pipeline.json lambda_k_override case,
 // dvc/dvc.py:2303-2305): legacy sets it once on the analysis' constants, so the
 // three J variants of one analysis share one lambda_k variable. Across
-// analyses legacy mints it per get_flux_from_positions call
-// (dvc/meta_repo.py:688-691), i.e. fresh per analysis; reduce() takes the
-// override as a Measured and mints it once per call, so it is never shared
-// between analyses (no caller-shared lambda_k UFloat in this API).
+// analyses legacy can share it: with frozen fluxes the flux dict, and its
+// lambda_k ufloat, is looked up per identifier (dvc/dvc.py:2270-2273), so
+// analyses of one identifier get the same variable. Here it is minted fresh
+// per reduce() call; ReductionInput takes it as a Measured, so a caller cannot
+// share a lambda_k UFloat between analyses. Sharing is the phase 2
+// shared-constants mode (spec Q1, D6).
 TEST(Reduce, LambdaKOverrideSharedWithinAnalysis) {
   const g::Json doc = g::load("pipeline.json");
   std::size_t seen = 0;
@@ -686,14 +315,16 @@ TEST(Reduce, BothLegacyPresetsGolden) {
   const ReductionConstants legacy = constants_preset(ConstantsPreset::Legacy);
   const ReductionConstants prefs = constants_preset(ConstantsPreset::LegacyPreferences);
   std::set<std::string> base_legacy, base_prefs;
-  Counts n;
+  PipelineCounts n;
   for (const g::Json& c : doc["cases"].as_array()) {
     const std::string name = c["name"].string;
-    if (is_chlorine(name)) continue;
     SCOPED_TRACE(name);
     const bool is_legacy = name.ends_with("@legacy");
     const bool is_prefs = name.ends_with("@legacy_preferences");
-    ASSERT_TRUE(is_legacy || is_prefs);
+    if (!is_legacy && !is_prefs) {
+      ADD_FAILURE() << name << ": no preset suffix";
+      continue;
+    }
     const std::string base = name.substr(0, name.rfind('@'));
     (is_legacy ? base_legacy : base_prefs).insert(base);
     // The fields in which the two legacy sets differ (spec 5.3 table, Q19)
@@ -710,9 +341,9 @@ TEST(Reduce, BothLegacyPresetsGolden) {
     run_pipeline_case(c, n);
   }
   EXPECT_EQ(base_legacy, base_prefs);
-  EXPECT_EQ(base_legacy.size(), 25u);
-  EXPECT_EQ(n.legacy, 25u);
-  EXPECT_EQ(n.prefs, 25u);
+  EXPECT_EQ(base_legacy.size(), 27u);
+  EXPECT_EQ(n.legacy, 27u);
+  EXPECT_EQ(n.prefs, 27u);
 }
 
 // ---- Step order (spec 3.1-3.2, arar_age.py:568-599) ------------------------
@@ -767,7 +398,7 @@ TEST(Reduce, StepOrder) {
   for (const g::Json& c : doc["cases"].as_array()) {
     const std::string name = c["name"].string;
     const g::Json& in_j = c["inputs"];
-    if (is_chlorine(name) || !c["expect_error"].is_null()) continue;
+    if (!c["expect_error"].is_null()) continue;
     if (in_j["irradiation"]["segments"].size() == 0 &&
         in_j["constants"]["abundance_sensitivity"].as_number() == 0.0) {
       continue;
@@ -784,7 +415,8 @@ TEST(Reduce, StepOrder) {
     ++checked;
     check_group(c["expected"]["corrected"], by_isotope(rr->corrected), g::tol_of(c), "corrected");
   }
-  EXPECT_EQ(checked, 6u);  // segments, multi_segments, abundance_sensitivity x 2 presets
+  // segments, multi_segments, abundance_sensitivity, chlorine_with_segments x 2 presets
+  EXPECT_EQ(checked, 8u);
 }
 
 // ---- Ages need J ---------------------------------------------------------
@@ -845,6 +477,34 @@ TEST(Reduce, KCaUsesClampedCa37AndCaK) {
     EXPECT_LT(rn->kca->nominal(), 0.0);
     EXPECT_TRUE(rn->diagnostics.empty());
   }
+}
+
+// kca == 0 with ca37 != 0 (k39 == 0, FUndefined). Legacy assigns kca, then
+// 1 / kca raises ZeroDivisionError and kca is reset to 0 +- 0 (arar_age.py:534-545).
+// Ruling (Task 11 review): kca kept as computed (0 +- e), cak absent,
+// KCaUndefined.
+TEST(Reduce, KCaZeroWithNonzeroCa37) {
+  ReductionInput in = base_input();
+  MeasuredSignal m;
+  m.intercept = {0.0, 0.5};  // no blank, no baseline: corrected Ar39 is exactly 0
+  in.isotopes[index(ArgonIsotope::Ar39)] = make_signal(ArgonIsotope::Ar39, m);
+  in.production.ca3937 = UFloat(0.0);  // ca39 = 0, so k39 = a39 - ca39 = 0 exactly
+  const auto r = reduce(in);
+  ASSERT_TRUE(r) << r.error().what;
+  const auto& ic = r->f.interference;
+  EXPECT_EQ(ic.k39.nominal(), 0.0);
+  EXPECT_NE(ic.ca37.nominal(), 0.0);
+  ASSERT_TRUE(r->kca.has_value());
+  ASSERT_TRUE(in.production.ca_k.has_value());
+  expect_identical(*r->kca, ic.k39 / ic.ca37 * (1.0 / *in.production.ca_k), "kca");
+  EXPECT_EQ(r->kca->nominal(), 0.0);
+  EXPECT_GT(r->kca->std_dev(), 0.0);
+  EXPECT_FALSE(r->cak.has_value());
+  EXPECT_FALSE(r->f.f.has_value());
+  EXPECT_TRUE(has(r->diagnostics, Diagnostic::FUndefined));
+  EXPECT_EQ(std::count(r->diagnostics.begin(), r->diagnostics.end(), Diagnostic::KCaUndefined),
+            1);
+  EXPECT_FALSE(has(r->diagnostics, Diagnostic::NonFiniteResult));
 }
 
 // ---- E20 error components ----------------------------------------------
@@ -908,7 +568,8 @@ TEST(Reduce, SharedBlankCorrelation) {
     for (const auto& [key, v] : shared.as_object()) {
       if (key == "j") {
         ++n_j;
-        ASSERT_TRUE(v.as_bool());
+        EXPECT_TRUE(v.as_bool()) << name << ": shared j";
+        if (!v.as_bool()) continue;
         b.in.j = a.in.j;  // one J UFloat for both
       } else if (key == "blank") {
         ++n_blank;
@@ -1002,33 +663,31 @@ TEST(Reduce, NonFiniteFlaggedOnce) {
   expect_config_error(reduce(bad), "zero divisor", "cosmogenic rc == rs");
 }
 
-// ---- Golden: every non-chlorine pipeline.json case -------------------------
+// ---- Golden: every pipeline.json case ----------------------------------------
+// The four chlorine cases are also run by Chlorine.Golden (test_chlorine.cpp).
 
 TEST(Reduce, Golden) {
   const g::Json doc = g::load("pipeline.json");
   const g::Json& cases = doc["cases"];
   ASSERT_EQ(cases.size(), 54u);
-  Counts n;
+  PipelineCounts n;
   std::size_t chlorine = 0;
   for (const g::Json& c : cases.as_array()) {
     const std::string name = c["name"].string;
-    if (is_chlorine(name)) {
-      ++chlorine;  // Task 12 (test_chlorine.cpp)
-      continue;
-    }
+    if (g::is_chlorine(name)) ++chlorine;
     SCOPED_TRACE(name);
     run_pipeline_case(c, n);
   }
-  EXPECT_EQ(chlorine, 4u);
-  EXPECT_EQ(n.legacy, 25u);
-  EXPECT_EQ(n.prefs, 25u);
+  EXPECT_EQ(chlorine, 4u);     // chlorine_cl3638, chlorine_with_segments
+  EXPECT_EQ(n.legacy, 27u);
+  EXPECT_EQ(n.prefs, 27u);
   EXPECT_EQ(n.error, 2u);      // missing_isotope
   EXPECT_EQ(n.sentinel, 8u);   // zero_ar37, zero_ar40, zero_k39, age_undefined
   EXPECT_EQ(n.diag, 8u);
   EXPECT_EQ(n.cosmo, 2u);
   EXPECT_EQ(n.no_j, 2u);
   EXPECT_EQ(n.lambda_override, 4u);  // lambda_k_override, lambda_k_zero_ignored
-  EXPECT_EQ(n.components, 42u);
-  EXPECT_EQ(n.kcl_diag_skipped, 2u);  // zero_k39: Task 12
-  EXPECT_GT(n.kcl_skipped, 0u);
+  EXPECT_EQ(n.components, 46u);
+  EXPECT_EQ(n.kcl, 50u);             // all but missing_isotope and zero_k39
+  EXPECT_EQ(n.kcl_undefined, 2u);    // zero_k39: cl38 == 0 exactly
 }

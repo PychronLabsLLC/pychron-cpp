@@ -44,71 +44,10 @@ ReductionConstants legacy_constants() { return constants_preset(ConstantsPreset:
 
 constexpr double kLambda = 4.962e-10 + 5.81e-11;
 
-Measured measured_of(const g::Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
-
-bool units_of(std::string_view s, AgeUnits& out) {
-  if (s == "a") out = AgeUnits::a;
-  else if (s == "ka") out = AgeUnits::ka;
-  else if (s == "Ma") out = AgeUnits::Ma;
-  else if (s == "Ga") out = AgeUnits::Ga;
-  else return false;
-  return true;
-}
-
-// Every constants key is read or explicitly irrelevant to the age; an unknown
-// key or value is a failure (returns false).
-bool constants_of(const g::Json& k, ReductionConstants& rc, const std::string& name) {
-  bool ok = true;
-  for (const auto& [key, v] : k.as_object()) {
-    if (key == "lambda_b") rc.lambda_b = measured_of(v);
-    else if (key == "lambda_e") rc.lambda_e = measured_of(v);
-    else if (key == "include_decay_error") rc.include_decay_error = v.as_bool();
-    else if (key == "age_units") {
-      if (!units_of(v.as_string(), rc.age_units)) {
-        ADD_FAILURE() << name << ": unknown age_units " << v.string;
-        ok = false;
-      }
-    } else if (key == "lambda_cl36") rc.lambda_cl36 = measured_of(v);
-    else if (key == "lambda_ar37") rc.lambda_ar37 = measured_of(v);
-    else if (key == "lambda_ar39") rc.lambda_ar39 = measured_of(v);
-    else if (key == "atm4036") rc.atm4036 = measured_of(v);
-    else if (key == "atm4038") rc.atm4038 = measured_of(v);
-    else if (key == "fixed_k3739") rc.fixed_k3739 = measured_of(v);
-    else if (key == "allow_negative_ca_correction") rc.allow_negative_ca_correction = v.as_bool();
-    else if (key == "abundance_sensitivity") rc.abundance_sensitivity = v.as_number();
-    else if (key == "use_irradiation_endtime") rc.use_irradiation_endtime = v.as_bool();
-    else if (key == "k3739_mode") {
-      if (v.as_string() == "Fixed") {
-        rc.k3739_mode = K3739Mode::Fixed;
-      } else if (v.as_string() != "Normal") {
-        ADD_FAILURE() << name << ": unknown k3739_mode " << v.string;
-        ok = false;
-      }
-    } else if (key == "cosmogenic") {
-      if (!v.is_null()) {
-        rc.cosmogenic = CosmogenicRatios{measured_of(v["solar3836"]), measured_of(v["cosmo3836"])};
-      }
-    } else {
-      ADD_FAILURE() << name << ": unhandled constants key " << key;
-      ok = false;
-    }
-  }
-  return ok;
-}
-
-bool known_keys(const g::Json& obj, std::initializer_list<std::string_view> keys,
-                const std::string& what) {
-  bool ok = true;
-  for (const auto& [key, v] : obj.as_object()) {
-    bool found = false;
-    for (const std::string_view k : keys) found = found || key == k;
-    if (!found) {
-      ADD_FAILURE() << what << ": unhandled key " << key;
-      ok = false;
-    }
-  }
-  return ok;
-}
+using g::constants_of;
+using g::known_keys;
+using g::measured_of;
+using g::units_of;
 
 }  // namespace
 

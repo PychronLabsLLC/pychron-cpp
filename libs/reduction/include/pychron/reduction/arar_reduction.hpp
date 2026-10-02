@@ -199,7 +199,11 @@ struct ArArResult {
   DecayFactors decay;
   std::array<UFloat, 5> corrected;  // E1-E5, E4, E8 ("corrected_intensities"), ARGON_KEYS order
   FResult f;
-  std::optional<AgeSet> ages;       // absent without J, without F, or when 1 + J F <= 0
+  // Absent without J, without F, when 1 + J F <= 0 (AgeUndefined), or when F
+  // is non-finite (NonFiniteResult raised).
+  std::optional<AgeSet> ages;
+  // E19. kca / kcl absent when ca37 / cl38 is exactly 0; cak / clk also absent
+  // when kca / kcl is exactly 0 (KCaUndefined / KClUndefined).
   std::optional<UFloat> kca, cak, kcl, clk;
   // E20 by isotope name ("Ar40".."Ar36"), percent of var(age_w_j_err); present
   // with ages.
@@ -213,18 +217,19 @@ struct ArArResult {
 //   deadtime_tau_s is set, D4), then E1-E3 corrected_intensity -> E4
 //   abundance sensitivity -> E7 decay factors -> E8 (Ar37, Ar39 only) ->
 //   calculate_f (E9-E15) -> ages (E16-E18, when j is set and F is finite) ->
-//   K/Ca (E19) -> error components (E20).
+//   K/Ca, K/Cl (E19) -> error components (E20).
 // Errors (Config, "reduction: "), naming the field: a non-finite value or a
 // non-finite or negative sigma anywhere in the input (spec Q7: a NaN
 // intercept is an error, never coerced to 0), a negative abundance
-// sensitivity or deadtime tau, a zero lambda_b + lambda_e (unless a truthy
-// lambda_k_total overrides it), a negative position_jerr, plus the step
-// errors (E5 saturation, E7 guard, E12/E13 zero divisors).
+// sensitivity or deadtime tau, a zero lambda_b + lambda_e (exempt when a
+// truthy lambda_k_total, i.e. not exactly 0 +- 0, is present: it replaces
+// lambda_K, E16), a negative position_jerr, plus the step errors (E5
+// saturation, E7 guard, E12/E13 zero divisors).
 // Diagnostics, in order: calculate_f's (FixedK3739ZeroCa3937,
 // CaClampedToZero, FUndefined, YieldUndefined, NonFiniteResult), then
-// AgeUndefined, KCaUndefined, and NonFiniteResult once at the end if a later
-// value (corrected, ages, kca, cak, components) is NaN/inf and calculate_f
-// did not already raise it. kcl/clk are Task 12 (left absent here).
+// AgeUndefined, KCaUndefined, KClUndefined, and NonFiniteResult once at the
+// end if a later value (corrected, ages, kca, cak, kcl, clk, components) is
+// NaN/inf and calculate_f did not already raise it.
 Result<ArArResult> reduce(const ReductionInput& in);
 
 namespace detail {

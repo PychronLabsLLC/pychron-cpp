@@ -164,7 +164,9 @@ struct ReductionInput {
   Irradiation irradiation;
   std::optional<UFloat> j;                 // absent: no ages (arar_age.py:659-660)
   double position_jerr = 0.0;
-  std::optional<Measured> lambda_k_total;  // from Flux; minted once per reduce() call
+  // From Flux; minted once per reduce() call. When truthy (not exactly
+  // 0 +- 0) it replaces lambda_b + lambda_e, which may then be zero.
+  std::optional<Measured> lambda_k_total;
   std::optional<Measured> fixed_k3739;     // per-analysis override (arar_age.py:68)
 };
 
