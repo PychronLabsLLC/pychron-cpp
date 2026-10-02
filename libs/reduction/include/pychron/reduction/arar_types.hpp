@@ -152,6 +152,22 @@ struct Flux {  // flux_value (dvc schema 6.1)
 };
 UFloat make_j(const Flux& f);  // tag "J" (dvc/meta_repo.py:701)
 
+// ---- 5.6 Reduction input --------------------------------------------------
+
+// One analysis for reduce() (arar_reduction.hpp). Correlation between
+// analyses arises only through UFloats the caller shares (a J, a blank);
+// constants are minted afresh inside every reduce() call (Q1, D6).
+struct ReductionInput {
+  std::array<IsotopeSignal, 5> isotopes;   // indexed by ArgonIsotope
+  ReductionConstants constants;
+  ProductionVariables production;
+  Irradiation irradiation;
+  std::optional<UFloat> j;                 // absent: no ages (arar_age.py:659-660)
+  double position_jerr = 0.0;
+  std::optional<Measured> lambda_k_total;  // from Flux; minted once per reduce() call
+  std::optional<Measured> fixed_k3739;     // per-analysis override (arar_age.py:68)
+};
+
 // ---- 5.6 Diagnostics ------------------------------------------------------
 
 // Raised when a legacy sentinel or quirk applies; the value stays usable

@@ -1,6 +1,7 @@
 // Ar-Ar reduction step functions (spec 6) on the shared kernels (spec 8.1).
 #include "pychron/reduction/arar_reduction.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -444,5 +445,247 @@ Result<std::optional<AgeSet>> make_age_set(const UFloat& j, double position_jerr
 }
 
 }  // namespace detail
+
+// ---- Whole pipeline ---------------------------------------------------------
+
+namespace {
+
+Result<void> invalid(std::string what) {
+  return fail(ErrorKind::Config, "reduction: " + std::move(what));
+}
+
+// A UFloat input: finite nominal, every variable's sigma finite and >= 0, and
+// a finite standard deviation.
+Result<void> check_ufloat(const UFloat& x, const std::string& name) {
+  if (!std::isfinite(x.nominal())) {
+    return invalid(name + " is not finite (" + fmt_g(x.nominal()) + ")");
+  }
+  for (const UFloat::Term& t : x.terms()) {
+    if (!std::isfinite(t.sigma) || t.sigma < 0.0 || !std::isfinite(t.deriv)) {
+      return invalid(name + " has a non-finite or negative sigma (" + fmt_g(t.sigma) + ")");
+    }
+  }
+  if (!std::isfinite(x.std_dev())) {
+    return invalid(name + " has a non-finite standard deviation");
+  }
+  return {};
+}
+
+Result<void> check_measured(const Measured& m, const std::string& name) {
+  if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
+    return invalid(name + " must have a finite value and a finite sigma >= 0, got " +
+                   fmt_g(m.value) + " +- " + fmt_g(m.error));
+  }
+  return {};
+}
+
+// Spec 6 input policy: every field reduce() reads, before any arithmetic.
+Result<void> validate(const ReductionInput& in) {
+  for (const ArgonIsotope iso : kArgonKeys) {
+    const IsotopeSignal& s = in.isotopes[index(iso)];
+    const std::string n(to_string(iso));
+    // Q7: a non-finite intercept is an error naming the slot (legacy coerced
+    // it to 0, isotope.py:465-468).
+    for (const auto& [x, field] : {std::pair{&s.intercept, "intercept"},
+                                   std::pair{&s.baseline, "baseline"},
+                                   std::pair{&s.blank, "blank"},
+                                   std::pair{&s.ic_factor, "ic_factor"},
+                                   std::pair{&s.discrimination, "discrimination"}}) {
+      if (auto ok = check_ufloat(*x, n + " " + field); !ok) return ok;
+    }
+    if (s.deadtime_tau_s && (!std::isfinite(*s.deadtime_tau_s) || *s.deadtime_tau_s < 0.0)) {
+      return invalid(n + " deadtime_tau_s must be finite and >= 0, got " +
+                     fmt_g(*s.deadtime_tau_s));
+    }
+  }
+
+  const ReductionConstants& c = in.constants;
+  // lambda_K first, so a value-initialised record (D1) names it.
+  const bool lk_override =
+      in.lambda_k_total && !(in.lambda_k_total->value == 0.0 && in.lambda_k_total->error == 0.0);
+  if (in.lambda_k_total) {
+    if (auto ok = check_measured(*in.lambda_k_total, "lambda_k_total"); !ok) return ok;
+  }
+  if (!lk_override && c.lambda_b.value + c.lambda_e.value == 0.0) {
+    return invalid("constants lambda_b + lambda_e is zero (lambda_K must be nonzero)");
+  }
+  for (const auto& [m, field] :
+       {std::pair{&c.lambda_b, "lambda_b"}, std::pair{&c.lambda_e, "lambda_e"},
+        std::pair{&c.lambda_cl36, "lambda_cl36"}, std::pair{&c.lambda_ar37, "lambda_ar37"},
+        std::pair{&c.lambda_ar39, "lambda_ar39"}, std::pair{&c.atm4036, "atm4036"},
+        std::pair{&c.atm4038, "atm4038"}, std::pair{&c.fixed_k3739, "fixed_k3739"}}) {
+    if (auto ok = check_measured(*m, std::string("constants ") + field); !ok) return ok;
+  }
+  if (c.cosmogenic) {
+    if (auto ok = check_measured(c.cosmogenic->solar3836, "constants solar3836"); !ok) return ok;
+    if (auto ok = check_measured(c.cosmogenic->cosmo3836, "constants cosmo3836"); !ok) return ok;
+  }
+  if (!std::isfinite(c.abundance_sensitivity) || c.abundance_sensitivity < 0.0) {
+    return invalid("constants abundance_sensitivity must be finite and >= 0, got " +
+                   fmt_g(c.abundance_sensitivity));
+  }
+
+  const ProductionVariables& p = in.production;
+  for (const auto& [x, field] :
+       {std::pair{&p.k4039, "K4039"}, std::pair{&p.k3839, "K3839"}, std::pair{&p.k3739, "K3739"},
+        std::pair{&p.ca3937, "Ca3937"}, std::pair{&p.ca3837, "Ca3837"},
+        std::pair{&p.ca3637, "Ca3637"}, std::pair{&p.cl3638, "Cl3638"}}) {
+    if (auto ok = check_ufloat(*x, std::string("production ") + field); !ok) return ok;
+  }
+  if (p.ca_k) {
+    if (auto ok = check_ufloat(*p.ca_k, "production Ca_K"); !ok) return ok;
+  }
+  if (p.cl_k) {
+    if (auto ok = check_ufloat(*p.cl_k, "production Cl_K"); !ok) return ok;
+  }
+
+  if (!std::isfinite(in.irradiation.decay_days)) {
+    return invalid("irradiation decay_days is not finite (" +
+                   fmt_g(in.irradiation.decay_days) + ")");
+  }
+  for (const DecaySegment& s : in.irradiation.segments) {
+    if (!std::isfinite(s.power) || !std::isfinite(s.duration_days) ||
+        !std::isfinite(s.dt_days)) {
+      return invalid("irradiation segment is not finite (power " + fmt_g(s.power) +
+                     ", duration_days " + fmt_g(s.duration_days) + ", dt_days " +
+                     fmt_g(s.dt_days) + ")");
+    }
+  }
+
+  if (in.j) {
+    if (auto ok = check_ufloat(*in.j, "J"); !ok) return ok;
+  }
+  if (!std::isfinite(in.position_jerr) || in.position_jerr < 0.0) {
+    return invalid("position_jerr must be finite and >= 0, got " + fmt_g(in.position_jerr));
+  }
+  if (in.fixed_k3739) {
+    if (auto ok = check_measured(*in.fixed_k3739, "fixed_k3739"); !ok) return ok;
+  }
+  return {};
+}
+
+std::string without_prefix(std::string_view what) {
+  constexpr std::string_view prefix = "reduction: ";
+  if (what.starts_with(prefix)) what.remove_prefix(prefix.size());
+  return std::string(what);
+}
+
+// The E20 tags, interned once.
+const std::array<TagId, 5>& isotope_tags() {
+  static const std::array<TagId, 5> tags{intern_tag("Ar40"), intern_tag("Ar39"),
+                                         intern_tag("Ar38"), intern_tag("Ar37"),
+                                         intern_tag("Ar36")};
+  return tags;
+}
+
+}  // namespace
+
+// legacy:processing/arar_age.py:443-689 (calculate_age, _assemble_isotope_intensities,
+// _calculate_f, _set_age_values, _calculate_kca, get_error_component).
+Result<ArArResult> reduce(const ReductionInput& in) {
+  if (auto ok = validate(in); !ok) return fail(ok.error());
+  const ReductionConstants& c = in.constants;
+  ArArResult out;
+
+  // E5 (D4) on the intercept, then E1-E3 (isotope.py:820-854).
+  std::array<UFloat, 5> s;
+  for (const ArgonIsotope iso : kArgonKeys) {
+    const IsotopeSignal& sig = in.isotopes[index(iso)];
+    if (!sig.deadtime_tau_s) {
+      s[index(iso)] = corrected_intensity(sig);
+      continue;
+    }
+    const Result<UFloat> intercept = deadtime_corrected_intercept(sig);
+    if (!intercept) {
+      return fail(ErrorKind::Config, "reduction: " + std::string(to_string(iso)) + " " +
+                                         without_prefix(intercept.error().what));
+    }
+    IsotopeSignal corrected = sig;
+    corrected.intercept = *intercept;
+    s[index(iso)] = corrected_intensity(corrected);
+  }
+
+  // E4, applied unconditionally as legacy does (arar_age.py:589-591).
+  s = abundance_sensitivity_correction(s, c.abundance_sensitivity);
+
+  // E7 on nominal per-day lambdas (arar_age.py:455-463), E8 on 37 and 39 by
+  // name (arar_age.py:596-599).
+  const Result<DecayFactors> df =
+      decay_factors(c.lambda_ar37.value, c.lambda_ar39.value, in.irradiation.segments);
+  if (!df) return fail(df.error());
+  out.decay = *df;
+  s[index(ArgonIsotope::Ar39)] = s[index(ArgonIsotope::Ar39)] * df->df39;
+  s[index(ArgonIsotope::Ar37)] = s[index(ArgonIsotope::Ar37)] * df->df37;
+  out.corrected = s;
+
+  // E9-E15.
+  Result<FResult> f = calculate_f(s, in.irradiation.decay_days, in.production, c, in.fixed_k3739);
+  if (!f) return fail(f.error());
+  out.f = std::move(*f);
+  out.diagnostics = out.f.diagnostics;
+
+  // E16-E18 (arar_age.py:658-689): only with J and a finite F. A non-finite F
+  // (NonFiniteResult already raised) gives no ages rather than an error.
+  if (in.j && out.f.f && std::isfinite(out.f.f->nominal())) {
+    const std::array<VariableId, 7> ids = in.production.interference_ids();
+    Result<std::optional<AgeSet>> ages = detail::make_age_set(
+        *in.j, in.position_jerr, *out.f.f, c, in.lambda_k_total, ids);
+    if (!ages) return fail(ages.error());
+    if (*ages) {
+      out.ages = std::move(**ages);
+    } else {
+      out.diagnostics.push_back(Diagnostic::AgeUndefined);  // spec Q6, D3
+    }
+  }
+
+  // E19 K/Ca (arar_age.py:534-545, :560-566): k39 / ca37 * (1 / Ca_K), the
+  // factor 1 when Ca_K is missing or nominally 0. ca37 is the E11-clamped
+  // value. ca37 == 0 (legacy ZeroDivisionError -> kca = 0) leaves both absent;
+  // so does kca == 0 for cak, keeping kca.
+  const UFloat& k39 = out.f.interference.k39;
+  const UFloat& ca37 = out.f.interference.ca37;
+  if (ca37.nominal() == 0.0) {
+    out.diagnostics.push_back(Diagnostic::KCaUndefined);
+  } else {
+    UFloat kca = k39 / ca37;
+    if (in.production.ca_k && in.production.ca_k->nominal() != 0.0) {
+      kca = kca * (1.0 / *in.production.ca_k);
+    }
+    if (kca.nominal() == 0.0) {
+      out.diagnostics.push_back(Diagnostic::KCaUndefined);
+    } else {
+      out.cak = 1.0 / kca;
+    }
+    out.kca = std::move(kca);
+  }
+
+  // E20 on age_w_j_err by isotope tag (arar_age.py:214-229).
+  if (out.ages) {
+    const std::array<TagId, 5>& tags = isotope_tags();
+    for (const ArgonIsotope iso : kArgonKeys) {
+      out.age_error_components.emplace(std::string(to_string(iso)),
+                                       variance_percent(out.ages->age_w_j_err, tags[index(iso)]));
+    }
+  }
+
+  // Spec 5.6 / 7: NaN or inf from valid inputs, flagged once, values kept.
+  if (std::find(out.diagnostics.begin(), out.diagnostics.end(), Diagnostic::NonFiniteResult) ==
+      out.diagnostics.end()) {
+    bool all_finite = true;
+    const auto check = [&all_finite](const UFloat& x) { all_finite = all_finite && finite(x); };
+    for (const UFloat& x : out.corrected) check(x);
+    if (out.ages) {
+      check(out.ages->age);
+      check(out.ages->age_w_j_err);
+      check(out.ages->age_w_position_err);
+      all_finite = all_finite && std::isfinite(out.ages->age_err_wo_irrad);
+    }
+    if (out.kca) check(*out.kca);
+    if (out.cak) check(*out.cak);
+    for (const auto& [k, v] : out.age_error_components) all_finite = all_finite && std::isfinite(v);
+    if (!all_finite) out.diagnostics.push_back(Diagnostic::NonFiniteResult);
+  }
+  return out;
+}
 
 }  // namespace pychron::reduction
