@@ -129,8 +129,11 @@ Behaviour:
   source `"acquisition"`) and republishes a
   `ScanStatus` with `error` set and `running` still true; the engine itself
   is left alone. `start` or `set_integration` clears the error.
-- All methods are thread-safe (one mutex) and block only as long as
-  `engine.start/stop` do; callers use a worker thread, never the GUI thread.
+- All methods are thread-safe and block only as long as `engine.start/stop`
+  do; callers use a worker thread, never the GUI thread. Two mutexes: one
+  serialises the engine start/stop sequences, the other guards the state the
+  bus handlers also touch. Rule: no publish while any service mutex is held,
+  so a subscriber may call back into the service.
 - Reading data is unchanged: consumers subscribe to `IntensityReading`.
 
 ### 4.3 Detector colour
@@ -150,10 +153,25 @@ links `pychron::sim` for the extraction line's sim transports):
 ```cpp
 struct SpectrometerBringup {
   bool sim_beam_from_table = false;   // register a BeamModel that follows the config's field table
+  bool require_sim = false;           // refuse a config that is not simulated
 };
+bool is_simulated(const cfg::SpectrometerData& data);
 Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(
     const std::filesystem::path& config, SpectrometerContext ctx, SpectrometerBringup options = {});
+Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(
+    cfg::SpectrometerData data, SpectrometerContext ctx, SpectrometerBringup options = {});
 ```
+
+`is_simulated` is true only when every transport the config declares has kind
+`sim` (or it declares none) and every driver's kind is a simulator kind, i.e.
+has the `sim_` prefix every `libs/sim` driver registers under. With
+`require_sim`, a config that is not simulated is a `Config` error naming the
+first non-simulated transport or driver, returned before anything is
+assembled, any transport opened or the beam registry touched. Simulation is
+never forced by rewriting transports: a spectrometer is simulated by a
+different set of driver kinds, so a real driver on a silent sim wire would
+only be a dead instrument. The second overload takes a config the caller has
+already loaded, so it can be inspected before the options are chosen.
 
 With `sim_beam_from_table`, it builds `BeamSettings::table_value` from the
 loaded field table and registers it as the `default` beam model before
@@ -183,14 +201,25 @@ A `QObject` built from `Spectrometer&`, `ScanService&` and the shared
 Gate and post queued calls; blocking commands run on one executor `QThread`;
 no core object holds a `QObject*`.
 
-- Signals: `reading(const IntensityReading&)`, `magnetMoved(const MagnetMoved&)`,
-  `detectorChanged(const DetectorState&)`, `scanStatus(const ScanStatus&)`,
+- Signals: `readings(const std::vector<IntensityReading>& batch)`,
+  `magnetMoved(const MagnetMoved&)`,
+  `magnetRead(double native, std::optional<double> mass)` (mass on the
+  reference detector), `detectorChanged(const DetectorState&)`,
+  `scanStatus(const ScanStatus&)`,
   `commandFinished(const QString& what, const Result<void>&)`.
 - State mirror (main thread): detector configs and colours, per-detector
   isotope, last `ScanStatus`, last magnet position and mass on reference.
-- Commands (non-blocking, result via `commandFinished`): `start_scan()`,
-  `stop_scan()`, `set_integration(double seconds)`,
+- Commands (non-blocking, result via `commandFinished`):
+  `start_scan(double integration_s)`, `stop_scan()`,
+  `set_integration(double seconds)`,
   `position(QString isotope, QString detector)`.
+- `start_scan` also reads the magnet position, so the mirror and the window's
+  Position and Mass labels are seeded before the first move; the value is
+  announced through `magnetRead`. A failed read leaves the position unknown
+  and does not fail the start.
+- `position` moves the magnet and, on success, calls `set_isotope` for the
+  positioned detector (the reference detector when none is named), announced
+  through `detectorChanged`. Other detectors keep their labels.
 - Readings are coalesced: if several arrive before the GUI thread runs, all
   are delivered in order in one batch, so a slow repaint never backs up the
   bus.
@@ -221,7 +250,8 @@ settings. Plain C++ plus Qt core types so it is testable without a window.
 
 ### 5.4 `SpectrometerWindow`
 
-- Title "Spectrometer" plus " (Simulation)" in sim mode.
+- Title "Spectrometer" plus " (Simulation)" when the loaded config is
+  simulated (`is_simulated`), whether or not `--sim` was given.
 - Centre: `StripChartView`, a thin QCustomPlot wrapper that draws the model:
   one graph per detector in its colour, axes labelled "Time (s)" and "Signal",
   no legend (the intensities table is the legend), light-yellow plot
@@ -235,7 +265,8 @@ settings. Plain C++ plus Qt core types so it is testable without a window.
     name.
   - Magnet: detector combo, isotope combo (the isotopes the active field
     table defines), Apply button, and read-only "Position" (native value) and
-    "Mass on <reference>" from `MagnetMoved`. Changing a combo moves nothing;
+    "Mass on <reference>" from `magnetRead` (scan start) and `MagnetMoved`.
+    Changing a combo moves nothing;
     Apply calls `position(isotope, detector)`. While a move is pending Apply
     is disabled.
   - Large-move confirmation: if the mass change on the reference detector
@@ -257,14 +288,30 @@ settings. Plain C++ plus Qt core types so it is testable without a window.
 
 - `pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer <file>]`.
   With `--sim` and no `--spectrometer`, the example
-  `spectrometer.sim-integrated.toml` is used with `sim_beam_from_table`.
-  Without either, no spectrometer is loaded.
+  `spectrometer.sim-integrated.toml` is used. Without either, no spectrometer
+  is loaded. `--spectrometer` followed by nothing, or by another option, is a
+  usage error (exit 2).
+- `--sim` forces the extraction line's transports to `sim` but never rewrites
+  a spectrometer config: any spectrometer file is loaded with `require_sim`,
+  so `--sim --spectrometer lab.toml` refuses a config that is not simulated
+  (section 4.4) instead of opening the instrument.
+- The window's simulation flag and `sim_beam_from_table` follow
+  `is_simulated` of the config that was loaded, not the command line: a
+  simulated file given without `--sim` is still titled "(Simulation)" and
+  gets the table-following beam.
 - The spectrometer shares the extraction line's clock, scheduler and bus.
-  Teardown order: window, bridge, scan service, spectrometer, then the line.
-- A spectrometer that fails to load is not fatal: the error goes to the log
-  dock and the menu item stays disabled.
+  Teardown order: spectrometer window, main window, bridge, scan service,
+  `ExtractionLine::stop()` (which halts the shared scheduler and waits for a
+  poll already on a worker), spectrometer, beam registry, then the line.
+- A spectrometer that fails to load (including one refused by `require_sim`)
+  is not fatal: the error goes to the log dock and the menu item stays
+  disabled.
+- The shared scheduler runs only once the extraction line has started. If the
+  line fails to start, the spectrometer is not offered: the menu item stays
+  disabled and the log dock gets `ERROR [ui] spectrometer unavailable:
+  extraction line did not start (shared scheduler not running)`.
 - `MainWindow` gains a "Window" menu with "Spectrometer" (Ctrl+Shift+S),
-  enabled only when a spectrometer was loaded.
+  enabled only when a spectrometer was loaded and the line started.
 
 ### 5.6 Persistence
 
