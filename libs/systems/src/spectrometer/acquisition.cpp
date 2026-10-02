@@ -224,13 +224,27 @@ Result<void> AcquisitionEngine::start(Duration integration) {
 
 void AcquisitionEngine::stop() {
   std::vector<JobId> jobs;
+  bool was_running = false;
   {
     std::lock_guard lock(mutex_);
-    if (!running_) return;
+    was_running = running_;
     running_ = false;
     jobs.swap(jobs_);
   }
   for (auto j : jobs) scheduler_.cancel(j);
+  {
+    // Scheduler::cancel() lets an execution in progress finish; wait for it,
+    // without the lock a poll needs to finish. Polls on this thread are our
+    // own callers and cannot be waited for.
+    std::unique_lock lock(mutex_);
+    const auto own = static_cast<std::size_t>(
+        std::count(polling_.begin(), polling_.end(), std::this_thread::get_id()));
+    // Inside a poll with the engine already stopped: whoever stopped it may be
+    // waiting for this very poll, so waiting here could deadlock.
+    if (!was_running && own > 0) return;
+    polls_cv_.wait(lock, [&] { return polling_.size() == own; });
+  }
+  if (!was_running) return;
   for (auto* a : acquirers_) (void)a->stop();
 }
 
@@ -449,6 +463,25 @@ void AcquisitionEngine::poll(std::size_t index) {
   if (index >= acquirers_.size()) return;
   std::vector<Reading> out;
   std::vector<Alarm> alarms;
+
+  // Registered for the whole poll so stop() can wait for it.
+  struct InFlight {
+    AcquisitionEngine& engine;
+    ~InFlight() {
+      // Notify under the lock: the waiter may destroy the engine once it wakes.
+      std::lock_guard lock(engine.mutex_);
+      auto& ids = engine.polling_;
+      ids.erase(std::find(ids.begin(), ids.end(), std::this_thread::get_id()));
+      engine.polls_cv_.notify_all();
+    }
+  };
+  {
+    std::lock_guard lock(mutex_);
+    // A tick dispatched before stop() cancelled its job must not reach next().
+    if (!running_) return;
+    polling_.push_back(std::this_thread::get_id());
+  }
+  const InFlight in_flight{*this};
 
   for (int k = 0; k < kMaxDrainPerPoll; ++k) {
     auto frame = acquirers_[index]->next(options_.poll_timeout);

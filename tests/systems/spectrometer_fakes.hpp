@@ -3,7 +3,9 @@
 // Scriptable role fakes for Spectrometer / move protocol tests. Every call
 // that matters for ordering is appended to a shared log.
 
+#include <atomic>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -160,19 +162,27 @@ struct FakeAcquirer : IIntensityAcquirer {
   std::vector<ChannelId> channels() const override { return chans; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration d) override {
+    if (active_next > 0) ++overlaps;
     configured = d;
     return {};
   }
   Result<void> start() override {
+    if (active_next > 0) ++overlaps;
     ++starts;
     if (fail_start) return fail(ErrorKind::Io, "start failed", "acquirer");
     return {};
   }
   Result<void> stop() override {
     ++stops;
+    note("stop");
     return {};
   }
   Result<std::optional<Frame>> next(Duration) override {
+    ++active_next;
+    note("next-enter");
+    if (on_next) on_next();  // may block, or call back into the engine
+    note("next-exit");
+    --active_next;
     std::lock_guard lock(m);
     if (frames.empty()) return std::optional<Frame>{};
     Frame f = frames.front();
@@ -184,10 +194,20 @@ struct FakeAcquirer : IIntensityAcquirer {
     frames.push_back(std::move(f));
   }
 
+  void note(const char* what) {
+    if (log == nullptr) return;
+    std::lock_guard lock(m);
+    log->push_back(what);
+  }
+
   std::vector<ChannelId> chans;
   Duration configured{};
   int starts = 0, stops = 0;
   bool fail_start = false;
+  std::function<void()> on_next;   // runs inside next(), outside `m`
+  std::atomic<int> active_next{0};
+  std::atomic<int> overlaps{0};    // configure()/start() seen while a next() was active
+  CallLog* log = nullptr;          // optional order log: next-enter, next-exit, stop
   std::mutex m;
   std::deque<Frame> frames;
 };

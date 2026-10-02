@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -106,6 +107,9 @@ class AcquisitionEngine {
   // Configures and starts every acquirer and registers one Scheduler job each.
   // Bins align to the epoch taken here.
   Result<void> start(Duration integration);
+  // Returns only when no poll() is executing on another thread, so a start()
+  // that follows never overlaps a next() from this run. Called from inside a
+  // poll (a bus subscriber, say) it does not wait for that poll.
   void stop();
   bool running() const;
 
@@ -182,6 +186,8 @@ class AcquisitionEngine {
   TimePoint request_start_{};
   TimePoint epoch_{};
   std::vector<JobId> jobs_;
+  std::vector<std::thread::id> polling_;  // one entry per poll() in flight
+  std::condition_variable polls_cv_;      // polling_ shrank
   std::vector<Bin> bins_;
   std::vector<Partial> pending_;
   std::vector<bool> have_seq_;
