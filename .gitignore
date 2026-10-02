@@ -20,3 +20,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
