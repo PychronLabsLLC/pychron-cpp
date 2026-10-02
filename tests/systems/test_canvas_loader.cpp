@@ -355,5 +355,32 @@ TEST(CanvasLoader, ResultFormCarriesConfigError) {
   EXPECT_EQ(good->valves.size(), 5u);
 }
 
+TEST(CanvasLoader, OpenValveColorDefaultsToGreen) {
+  auto r = load("[[stage]]\nname = \"bone\"\npos = [0, 0]\n");
+  ASSERT_TRUE(r.ok()) << config::to_error(r.diagnostics).what;
+  EXPECT_EQ(r.canvas->canvas.open_valve_color, OpenValveColor::Green);
+}
+
+TEST(CanvasLoader, OpenValveColorParsesInheritAndGreen) {
+  auto inherit = load("[canvas]\nopen_valve_color = \"inherit\"\n");
+  ASSERT_TRUE(inherit.ok()) << config::to_error(inherit.diagnostics).what;
+  EXPECT_EQ(inherit.canvas->canvas.open_valve_color, OpenValveColor::Inherit);
+  auto green = load("[canvas]\nopen_valve_color = \"green\"\n");
+  ASSERT_TRUE(green.ok());
+  EXPECT_EQ(green.canvas->canvas.open_valve_color, OpenValveColor::Green);
+}
+
+TEST(CanvasLoader, BadOpenValveColorIsDiagnosticWithLine) {
+  const std::string text = "[canvas]\nsize = [100, 100]\nopen_valve_color = \"blue\"\n";
+  auto r = load(text);
+  ASSERT_FALSE(r.ok());
+  ASSERT_TRUE(has_diag(r, "canvas.open_valve_color", "green | inherit"));
+  for (const auto& d : r.diagnostics) {
+    if (d.field == "canvas.open_valve_color") EXPECT_EQ(d.loc.line, line_of(text, "open_valve_color"));
+  }
+  auto wrong_type = load("[canvas]\nopen_valve_color = true\n");
+  EXPECT_FALSE(wrong_type.ok());
+}
+
 }  // namespace
 }  // namespace pychron::canvas

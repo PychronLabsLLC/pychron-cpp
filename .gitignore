@@ -7,6 +7,9 @@ cmake-build-*/
 .spec_router/
 .worktrees/
 
+# persisted runtime state (valve locks) written beside a config
+*.state.toml
+
 # python tooling
 .venv/
 __pycache__/

@@ -3,7 +3,10 @@
 #include <algorithm>
 
 #include <QCursor>
+#include <QAction>
+#include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneMouseEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -53,7 +56,17 @@ QColor ValveItem::fill_color() const {
   if (is_flashing() && flash_ticks_ % 2 == 0) {
     return QColor(Qt::yellow);
   }
+  if (state_ == ValveState::Open && inherited_) {
+    return *inherited_;
+  }
   return valve_color(state_);
+}
+
+void ValveItem::set_inherited_color(std::optional<QColor> color) {
+  if (inherited_ != color) {
+    inherited_ = color;
+    update();
+  }
 }
 
 void ValveItem::set_state(ValveState state) {
@@ -104,11 +117,27 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->drawRoundedRect(body.adjusted(-3, -3, 3, 3), kCornerRadius + 2, kCornerRadius + 2);
   }
   if (locked_) {
-    const QRectF badge(body.right() - 6, body.top() - 4, 10, 10);
-    painter->setPen(QPen(Qt::black, 1));
-    painter->setBrush(QColor(0xff, 0xa5, 0x00));
-    painter->drawRoundedRect(badge, 2, 2);
+    painter->setBrush(Qt::NoBrush);
+    painter->setPen(QPen(lock_color(), kLockBorderWidth));
+    if (kind_ == canvas::ValveKind::Switch) {
+      painter->drawEllipse(body);
+    } else {
+      painter->drawRoundedRect(body, kCornerRadius, kCornerRadius);
+    }
   }
+}
+
+void ValveItem::contextMenuEvent(QGraphicsSceneContextMenuEvent* event) {
+  if (kind_ == canvas::ValveKind::Manual || !on_lock_request_) {
+    event->ignore();
+    return;
+  }
+  QMenu menu;
+  QAction* toggle = menu.addAction(locked_ ? tr("Unlock valve") : tr("Lock valve"));
+  if (menu.exec(event->screenPos()) == toggle) {
+    on_lock_request_(name_, !locked_);
+  }
+  event->accept();
 }
 
 void ValveItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 
 #include "pychron/core/clock.hpp"
@@ -60,8 +61,16 @@ struct Log {
   TimePoint ts{};
 };
 
+// A valve or switch was software-locked or unlocked.
+struct SwitchLockChanged {
+  std::string name;
+  bool locked = false;
+  TimePoint ts{};
+};
+
 struct Snapshot {
   std::map<std::string, ValveState> valves;
+  std::set<std::string> locked;  // software-locked valves and switches
   std::map<std::string, double> pressures;
   TimePoint ts{};
 };

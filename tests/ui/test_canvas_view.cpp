@@ -3,6 +3,7 @@
 // gauge values and alarm colouring.
 
 #include <algorithm>
+#include <cstdlib>
 #include <thread>
 
 #include <QtTest/QtTest>
@@ -15,6 +16,25 @@ using namespace pychron;
 using pychron::systems::SwitchOp;
 using pychron::ui::CanvasView;
 using pychron::ui::CoreBridge;
+
+namespace {
+
+// True when the pixel just outside the left edge of the valve body, rendered
+// over white, is the lock colour (the border is 3 px wide, centred on the edge).
+bool hasLockBorder(ui::ValveItem* item) {
+  QImage image(60, 60, QImage::Format_ARGB32);
+  image.fill(Qt::white);
+  QPainter painter(&image);
+  painter.translate(30, 30);
+  item->paint(&painter, nullptr, nullptr);
+  painter.end();
+  const QColor px = image.pixelColor(30 - static_cast<int>(ui::ValveItem::kSize / 2) - 1, 30);
+  const QColor want = ui::ValveItem::lock_color();
+  return std::abs(px.red() - want.red()) < 8 && std::abs(px.green() - want.green()) < 8 &&
+         std::abs(px.blue() - want.blue()) < 8;
+}
+
+}  // namespace
 
 class TestCanvasView : public QObject {
   Q_OBJECT
@@ -76,6 +96,120 @@ class TestCanvasView : public QObject {
     QVERIFY(a->toolTip().contains(QStringLiteral("A: ")));
     QVERIFY(a->toolTip().size() > 3);
     QCOMPARE(a->state(), ValveState::Closed);
+  }
+
+  void lockedValveDrawsBlueBorderAndUnlockClearsIt() {
+    ui::ValveItem* a = view_->valve("A");
+    QVERIFY(!a->locked());
+    QVERIFY(!hasLockBorder(a));
+
+    view_->set_confirm_unlock([](const QString&) { return true; });
+    QVERIFY(view_->request_lock("A", true));
+    QTRY_VERIFY(a->locked());
+    QVERIFY(line_->is_locked("A"));
+    QVERIFY(hasLockBorder(a));
+
+    QVERIFY(view_->request_lock("A", false));
+    QTRY_VERIFY(!a->locked());
+    QVERIFY(!line_->is_locked("A"));
+    QVERIFY(!hasLockBorder(a));
+  }
+
+  void unlockAsksForConfirmationAndCanBeDeclined() {
+    view_->set_confirm_unlock([](const QString&) { return true; });
+    QVERIFY(view_->request_lock("A", true));
+    QTRY_VERIFY(view_->valve("A")->locked());
+
+    QStringList asked;
+    view_->set_confirm_unlock([&](const QString& name) {
+      asked << name;
+      return false;
+    });
+    QVERIFY(!view_->request_lock("A", false));
+    QCOMPARE(asked, QStringList{QStringLiteral("A")});
+    QVERIFY(line_->is_locked("A"));
+    QVERIFY(view_->valve("A")->locked());
+  }
+
+  void lockingNeverAsksForConfirmation() {
+    bool asked = false;
+    view_->set_confirm_unlock([&](const QString&) {
+      asked = true;
+      return true;
+    });
+    QVERIFY(view_->request_lock("B", true));
+    QVERIFY(!asked);
+  }
+
+  void lockedValveRefusesClicksAndFlashes() {
+    view_->set_confirm_unlock([](const QString&) { return true; });
+    QVERIFY(view_->request_lock("B", true));
+    QTRY_VERIFY(view_->valve("B")->locked());
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    ui::ValveItem* b = view_->valve("B");
+    QTest::mouseClick(view_->viewport(), Qt::LeftButton, {}, view_->mapFromScene(b->scenePos()));
+    QTRY_VERIFY(b->is_flashing());
+    QCOMPARE(b->state(), ValveState::Closed);
+    QVERIFY(b->locked());
+  }
+
+  void manualValvesCannotBeLocked() {
+    QVERIFY(!view_->request_lock("M1", true));
+    QVERIFY(!view_->valve("M1")->locked());
+    QVERIFY(!view_->request_lock("nope", true));
+  }
+
+  void switchesCanBeLocked() {
+    QVERIFY(view_->request_lock("pump_power", true));
+    QTRY_VERIFY(view_->valve("pump_power")->locked());
+  }
+
+  void openValveStaysGreenByDefault() {
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    QCOMPARE(view_->valve("A")->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeColoursOpenValveWithItsRegion() {
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    ui::ValveItem* a = view_->valve("A");
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
+    const QColor region = view_->stage("bone")->region_color();
+    QVERIFY(region != CanvasView::isolated_color());
+    QCOMPARE(a->fill_color(), region);
+    QVERIFY(a->fill_color() != ui::valve_color(ValveState::Open));
+
+    bridge_->actuate("A", SwitchOp::Close);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Closed, 5000);
+    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Closed));
+
+    view_->set_open_valve_color(canvas::OpenValveColor::Green);
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
+    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeLeavesIsolatedOpenValveGreen() {
+    // pump_power is a switch outside every shared region: it joins no volumes.
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    bridge_->actuate("pump_power", SwitchOp::Open);
+    ui::ValveItem* p = view_->valve("pump_power");
+    QTRY_COMPARE_WITH_TIMEOUT(p->state(), ValveState::Open, 5000);
+    QCOMPARE(p->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  void inheritModeKeepsLockBorderAndFlash() {
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    view_->set_confirm_unlock([](const QString&) { return true; });
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    QVERIFY(view_->request_lock("A", true));
+    QTRY_VERIFY(view_->valve("A")->locked());
+    QVERIFY(hasLockBorder(view_->valve("A")));
+    view_->valve("A")->flash("x");
+    QVERIFY(view_->valve("A")->is_flashing());
   }
 
   void openValveJoinsRegionColours() {

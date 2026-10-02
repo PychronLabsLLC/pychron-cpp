@@ -6,6 +6,7 @@
 // centres in canvas.toml coordinates.
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,7 +27,8 @@ namespace pychron::ui {
 QPointF to_qpoint(const canvas::Point& p);
 QColor valve_color(ValveState state);
 
-// Click -> actuate; colour by state; lock badge; pending indicator; flashes
+// Click -> actuate; colour by state; blue border when locked (context menu
+// locks/unlocks); pending indicator; flashes
 // and shows Error.what in its tooltip on rejection.
 class ValveItem : public QGraphicsObject {
   Q_OBJECT
@@ -34,6 +36,10 @@ class ValveItem : public QGraphicsObject {
  public:
   static constexpr double kSize = 30.0;
   static constexpr double kCornerRadius = 5.0;
+  static constexpr double kLockBorderWidth = 3.0;
+
+  // Border colour of a software-locked valve.
+  static QColor lock_color() { return QColor(0x1e, 0x6f, 0xe8); }
 
   ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent = nullptr);
 
@@ -47,27 +53,36 @@ class ValveItem : public QGraphicsObject {
 
   void set_state(ValveState state);
   void set_locked(bool locked);
+  // Region colour an open valve shows instead of green (CanvasView sets it
+  // when canvas.toml says open_valve_color = "inherit"); nullopt = state colour.
+  void set_inherited_color(std::optional<QColor> color);
   void set_pending(bool pending);
   // Rejection feedback: blink for ~1 s and show `what` as the tooltip.
   void flash(const QString& what);
 
   void set_on_click(std::function<void(const std::string&)> on_click) { on_click_ = std::move(on_click); }
+  // Called with the requested state when the user picks the context-menu
+  // lock/unlock action. Manual valves have no menu.
+  void set_on_lock_request(std::function<void(const std::string&, bool)> cb) { on_lock_request_ = std::move(cb); }
 
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
 
  protected:
   void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
+  void contextMenuEvent(QGraphicsSceneContextMenuEvent* event) override;
 
  private:
   std::string name_;
   canvas::ValveKind kind_;
   ValveState state_ = ValveState::Unknown;
   bool locked_ = false;
+  std::optional<QColor> inherited_;
   bool pending_ = false;
   int flash_ticks_ = 0;
   QTimer flash_timer_;
   std::function<void(const std::string&)> on_click_;
+  std::function<void(const std::string&, bool)> on_lock_request_;
 };
 
 // A stage or pipette volume; filled with its network region colour.

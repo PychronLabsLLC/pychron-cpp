@@ -55,6 +55,7 @@ CoreBridge::CoreBridge(systems::ExtractionLine& line, QObject* parent)
   relay<Log>(&CoreBridge::on_log);
   relay<Snapshot>(&CoreBridge::on_snapshot);
   relay<ActuationFailed>(&CoreBridge::on_failed);
+  relay<SwitchLockChanged>(&CoreBridge::on_lock);
 
   // Locks and owners are in-memory manager state (no device I/O); seed the
   // badges (and last recorded states) now and refresh them after every
@@ -113,6 +114,10 @@ void CoreBridge::actuate(const QString& qname, systems::SwitchOp op) {
       Qt::QueuedConnection);
 }
 
+Result<void> CoreBridge::set_locked(const QString& name, bool locked) {
+  return line_.set_locked(name.toStdString(), locked);
+}
+
 void CoreBridge::drain() {
   QSemaphore done;
   QMetaObject::invokeMethod(worker_, [&done] { done.release(); }, Qt::QueuedConnection);
@@ -152,7 +157,19 @@ void CoreBridge::on_snapshot(const Snapshot& e) {
   for (const auto& [name, value] : e.pressures) {
     state_.pressures[name] = value;
   }
+  for (auto& [name, info] : state_.switches) {
+    info.locked = e.locked.count(name) != 0;
+  }
   emit snapshot(e);
+}
+
+void CoreBridge::on_lock(const SwitchLockChanged& e) {
+  auto it = state_.switches.find(e.name);
+  if (it == state_.switches.end() || it->second.locked == e.locked) {
+    return;
+  }
+  it->second.locked = e.locked;
+  emit lockChanged(QString::fromStdString(e.name), e.locked);
 }
 
 void CoreBridge::on_failed(const ActuationFailed& e) { emit actuationFailed(e); }

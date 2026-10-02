@@ -109,6 +109,34 @@ class TestCoreBridge : public QObject {
     QVERIFY(results[1].has_value());
   }
 
+  void lockChangesAreRelayedAndMirrored() {
+    QVERIFY(line_->start().has_value());
+    std::vector<std::pair<QString, bool>> seen;
+    connect(bridge_.get(), &CoreBridge::lockChanged, this,
+            [&](const QString& name, bool locked) { seen.emplace_back(name, locked); });
+    QVERIFY(bridge_->set_locked("A", true).has_value());
+    QTRY_VERIFY(bridge_->state().switches.at("A").locked);
+    QCOMPARE(seen.size(), std::size_t{1});
+    QCOMPARE(seen[0].first, QStringLiteral("A"));
+    QVERIFY(seen[0].second);
+    QVERIFY(bridge_->set_locked("A", false).has_value());
+    QTRY_VERIFY(!bridge_->state().switches.at("A").locked);
+  }
+
+  void setLockedReportsErrors() {
+    auto r = bridge_->set_locked("M1", true);
+    QVERIFY(!r.has_value());
+    QCOMPARE(r.error().kind, ErrorKind::Config);
+  }
+
+  void snapshotSeedsLocksFromPersistedState() {
+    QVERIFY(line_->set_locked("B", true).has_value());
+    bridge_.reset();
+    bridge_ = std::make_unique<CoreBridge>(*line_);
+    QVERIFY(line_->start().has_value());
+    QTRY_VERIFY(bridge_->state().switches.at("B").locked);
+  }
+
  private:
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<CoreBridge> bridge_;

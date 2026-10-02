@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 
+#include <QMessageBox>
+
 #include "pychron/systems/network_graph.hpp"
 
 namespace pychron::ui {
@@ -42,10 +44,17 @@ CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(pare
   setRenderHint(QPainter::Antialiasing);
   if (const canvas::Canvas* c = bridge_.canvas()) {
     build(*c);
+    open_valve_color_ = c->canvas.open_valve_color;
   }
 
   connect(&bridge_, &CoreBridge::snapshot, this, [this](const Snapshot&) { apply_state(); });
   connect(&bridge_, &CoreBridge::valveChanged, this, [this](const ValveChanged&) { apply_state(); });
+  connect(&bridge_, &CoreBridge::lockChanged, this, [this](const QString&, bool) { apply_state(); });
+  confirm_unlock_ = [this](const QString& name) {
+    return QMessageBox::question(this, tr("Unlock valve"),
+                                 tr("Unlock %1? It will accept open and close commands again.").arg(name),
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+  };
   connect(&bridge_, &CoreBridge::pressureSample, this, &CanvasView::on_pressure);
   connect(&bridge_, &CoreBridge::alarm, this, &CanvasView::on_alarm);
   connect(&bridge_, &CoreBridge::actuationStarted, this, [this](const QString& name) {
@@ -65,6 +74,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     auto* item = new ValveItem(v.name, v.kind);
     item->setPos(to_qpoint(v.pos));
     item->set_on_click([this](const std::string& name) { on_click(name); });
+    item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
     scene_.addItem(item);
     valves_[v.name] = item;
     positions_[v.name] = item->pos();
@@ -187,6 +197,22 @@ void CanvasView::on_click(const std::string& name) {
   bridge_.actuate(QString::fromStdString(name), op);
 }
 
+bool CanvasView::request_lock(const std::string& name, bool locked) {
+  ValveItem* item = valve(name);
+  if (!item || item->kind() == canvas::ValveKind::Manual) {
+    return false;
+  }
+  const QString qname = QString::fromStdString(name);
+  if (!locked && !confirm_unlock_(qname)) {
+    return false;
+  }
+  if (auto result = bridge_.set_locked(qname, locked); !result) {
+    item->flash(QString::fromStdString(result.error().what));
+    return false;
+  }
+  return true;
+}
+
 void CanvasView::apply_state() {
   const auto& state = bridge_.state();
   for (auto& [name, item] : valves_) {
@@ -207,9 +233,17 @@ void CanvasView::apply_state() {
   apply_regions();
 }
 
+void CanvasView::set_open_valve_color(canvas::OpenValveColor mode) {
+  open_valve_color_ = mode;
+  apply_regions();
+}
+
 void CanvasView::apply_regions() {
   const systems::NetworkGraph* network = bridge_.network();
   if (!network) {
+    for (auto& [name, item] : valves_) {
+      item->set_inherited_color(std::nullopt);
+    }
     return;
   }
   const auto regions = network->connected_volumes(bridge_.state().valves);
@@ -228,6 +262,13 @@ void CanvasView::apply_regions() {
     for (const auto& valve : region.valves) {
       colors[valve] = color;
     }
+  }
+  // Open valves joining a shared region wear its colour when asked to; every
+  // other valve keeps its state colour.
+  for (auto& [name, item] : valves_) {
+    auto it = colors.find(name);
+    const bool inherit = open_valve_color_ == canvas::OpenValveColor::Inherit && it != colors.end();
+    item->set_inherited_color(inherit ? std::optional<QColor>(it->second) : std::nullopt);
   }
   for (auto& [name, item] : stages_) {
     auto it = colors.find(name);
