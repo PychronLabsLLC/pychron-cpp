@@ -425,7 +425,11 @@ Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOption
                                   std::chrono::duration_cast<Duration>(std::chrono::duration<double>(af.period_s)),
                                   std::chrono::duration_cast<Duration>(std::chrono::duration<double>(af.duration_s)),
                                   af.start_amplitude, af.threshold};
-  plan.settle = options.settle.value_or(std::chrono::milliseconds(config_.magnet.settle_ms));
+  const Duration configured_settle = std::chrono::milliseconds(config_.magnet.settle_ms);
+  plan.settle = options.settle.value_or(configured_settle);
+  // A caller that settles for itself (settle zero) still gets the configured
+  // wait before the cleanup of a failed move.
+  plan.failure_settle = configured_settle;
   plan.wait_moving = options.wait_moving;
   plan.max_wait = options_.max_wait;
   plan.poll_interval = options_.poll_interval;

@@ -175,9 +175,12 @@ All wire text comes from `pychron::codec::qtegra`.
   the blank or the detector control: an unplannable path is never treated as a
   clear one. During the move, if the first error comes at or after the first
   `SetMagnetDAC` (a set whose reply timed out was still delivered, a
-  `GetMagnetMoving` error, or `max_wait`), the protocol waits the settle time
-  (`[magnet].settle_ms`) before `BlankBeam False` and `ProtectDetector Off`. An
-  error before any set cleans up at once. The normal path is unchanged: poll
+  `GetMagnetMoving` error, or `max_wait`), the protocol waits the configured
+  settle time (`[magnet].settle_ms`), or the caller's settle if that is longer,
+  before `BlankBeam False` and `ProtectDetector Off`. This holds for every
+  move, including sweep steps and experiment peak hops, which pass a zero
+  settle because they settle themselves after a successful move. An error
+  before any set cleans up at once. The normal path is unchanged: poll
   `GetMagnetMoving`, and settle only if motion was never reported.
 - **Beam blank:** `BlankBeam True|False`.
 - **Detector control:** caps `Gain | Deflection | Protect`. `protect` sends
@@ -283,9 +286,11 @@ command it receives, in order, for tests that check a sequence.
 - A move whose detector protection cannot be planned (a failed correction,
   e.g. no reply to `GetHighVoltage`) fails with that error before anything is
   set, protected or blanked.
-- A move that fails at or after the first `SetMagnetDAC` waits the settle
-  time before unblanking and unprotecting, since the magnet may still be
-  moving. If the cleanup itself then fails, the first error is returned and
+- A move that fails at or after the first `SetMagnetDAC` waits the configured
+  settle time (`[magnet].settle_ms`), or the caller's settle if longer, before
+  unblanking and unprotecting, since the magnet may still be moving. Sweep
+  steps and peak hops are included: their zero settle override applies only
+  to a successful move. If the cleanup itself then fails, the first error is returned and
   the detector may be left protected or the beam blanked.
 - There is no source ramping: HV and trap current change in a single step.
 - Io / NotConnected: one reconnect attempt (4.2), then the error.

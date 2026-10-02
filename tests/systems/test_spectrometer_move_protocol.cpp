@@ -318,6 +318,88 @@ TEST(MoveProtocol, FailureBeforeAnySetCleansUpImmediately) {
   }
 }
 
+// ---- The failure wait has a floor of its own (`failure_settle`) -------------
+//
+// Callers that settle for themselves pass `settle` zero; the wait before the
+// cleanup of a failed move must not shrink with it.
+
+TEST(MoveProtocol, FailureSettleAppliesWhenTheCallerSettleIsZero) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(out.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 500ms);
+  EXPECT_FALSE(r.control.any_protected());
+  EXPECT_FALSE(r.blank.blanked);
+}
+
+// A plan built without `failure_settle` behaves as before: zero settle, no wait.
+TEST(MoveProtocol, ZeroSettleAndZeroFailureSettleCleanUpImmediately) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.protect = {"CDD"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:0", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
+TEST(MoveProtocol, LongerCallerSettleWinsOverFailureSettle) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = 800ms;
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:5.000", "sleep:800", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 800ms);
+}
+
+TEST(MoveProtocol, FailureSettleNotUsedWhenNoSetWasIssued) {
+  Rig r;
+  r.control.fail_protect = {"H1"};
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD", "H1"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "protect-fail:H1", "unprotect:H1", "unprotect:CDD"}));
+  EXPECT_TRUE(r.sleeps.empty());
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
+// `failure_settle` is for failures only: a successful move waits `settle`.
+TEST(MoveProtocol, FailureSettleDoesNotSlowASuccessfulMove) {
+  Rig r;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:5.000", "sleep:0", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
 // The successful path is unchanged: one settle, then the cleanup.
 TEST(MoveProtocol, SuccessfulMoveSettlesOnce) {
   Rig r;

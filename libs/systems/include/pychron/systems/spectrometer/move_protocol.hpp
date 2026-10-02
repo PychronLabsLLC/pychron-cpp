@@ -11,8 +11,8 @@
 //      still runs and the first error is returned: a detector is never left
 //      protected by accident. When the failure came at or after the first
 //      set() (the magnet may be moving: a set() whose reply timed out was
-//      still delivered), the cleanup waits `settle` first; a failure before
-//      any set() cleans up at once.
+//      still delivered), the cleanup first waits the longer of `settle` and
+//      `failure_settle`; a failure before any set() cleans up at once.
 //
 // The Spectrometer decides *what* to protect (MovePlan); this only runs it.
 // Waiting goes through an injected sleep so tests drive a ManualClock.
@@ -53,6 +53,7 @@ struct MovePlan {
   bool blank = false;              // blank the beam (needs an IBeamBlank)
   AfDemagSettings af_demag;
   Duration settle{};               // used when the positioner never reports motion
+  Duration failure_settle{};       // floor of the wait before cleanup after a failed move
   bool wait_moving = true;
   Duration max_wait = std::chrono::seconds(30);
   Duration poll_interval = std::chrono::milliseconds(50);

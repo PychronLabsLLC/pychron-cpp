@@ -37,6 +37,7 @@ struct Rig {
 
   std::optional<cfg::Limits> magnet_limits;  // replaces [magnet].limits when set
   bool af_demag = false;                     // enables [magnet].af_demag with a 0.5 swing
+  bool log_sleeps = false;                   // facade waits also go to `log`, to show their order
 
   cfg::SpectrometerData data() {
     auto d = cfg::load_spectrometer(kIntegrated);
@@ -60,6 +61,9 @@ struct Rig {
     Spectrometer::Options options;
     options.sleep = [this](Duration dt) {
       sleeps.push_back(dt);
+      if (log_sleeps) {
+        log.push_back("sleep:" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(dt).count()));
+      }
       clock.advance(dt);
     };
     return Spectrometer::create(d.config, MolecularWeights(d.weights), std::move(tables), std::move(roles),
@@ -237,6 +241,65 @@ TEST(Spectrometer, FailedMoveLeavesNothingProtected) {
   EXPECT_FALSE(r.blank.blanked);
   EXPECT_FALSE(r.spec->detector_state("CDD")->protected_);
   EXPECT_TRUE(r.moves.empty());
+}
+
+// Sweep steps and peak hops pass a zero settle because they settle for
+// themselves after a good move. When the move fails once the set went out, the
+// wait before unblank/unprotect is still [magnet].settle_ms (500 here).
+TEST(Spectrometer, FailedMoveWithZeroSettleOverrideStillWaitsTheConfiguredSettle) {
+  PositionOptions zero;
+  zero.settle = Duration::zero();
+  {
+    Rig r;
+    r.log_sleeps = true;
+    r.build();
+    r.positioner.timeout_set_at = 1;
+    const TimePoint start = r.clock.now();
+    auto moved = r.spec->move_native(5.0, zero);
+    ASSERT_FALSE(moved.has_value());
+    EXPECT_EQ(moved.error().kind, ErrorKind::Timeout);
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+    EXPECT_EQ(r.clock.now() - start, 500ms);
+    EXPECT_FALSE(r.control.any_protected());
+    EXPECT_FALSE(r.blank.blanked);
+  }
+  {
+    Rig r;
+    r.log_sleeps = true;
+    r.build();
+    r.positioner.timeout_set_at = 1;
+    const TimePoint start = r.clock.now();
+    auto positioned = r.spec->position(PositionTarget{NativeUnits{5.0}, ""}, zero);
+    ASSERT_FALSE(positioned.has_value());
+    EXPECT_EQ(positioned.error().kind, ErrorKind::Timeout);
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+    EXPECT_EQ(r.clock.now() - start, 500ms);
+  }
+}
+
+// A caller settle longer than the configured one is kept on the failure path.
+TEST(Spectrometer, FailedMoveWaitsTheLongerOfCallerAndConfiguredSettle) {
+  Rig r;
+  r.log_sleeps = true;
+  r.build();
+  r.positioner.timeout_set_at = 1;
+  PositionOptions slow;
+  slow.settle = 800ms;
+  ASSERT_FALSE(r.spec->move_native(5.0, slow).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:800", "unblank", "unprotect:CDD"}));
+}
+
+// The mirror: the same move succeeding is not slowed by the configured settle.
+TEST(Spectrometer, SuccessfulMoveWithZeroSettleOverrideDoesNotWait) {
+  Rig r;
+  r.log_sleeps = true;
+  r.build();
+  PositionOptions zero;
+  zero.settle = Duration::zero();
+  const TimePoint start = r.clock.now();
+  ASSERT_TRUE(r.spec->move_native(5.0, zero).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:0", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
 }
 
 TEST(Spectrometer, MoveOutsideLimitsIsRejected) {

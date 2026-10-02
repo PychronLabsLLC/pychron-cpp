@@ -1,5 +1,6 @@
 #include "pychron/systems/spectrometer/move_protocol.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <condition_variable>
 #include <mutex>
@@ -122,8 +123,9 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
 
   // A failure once a set() was issued does not mean the magnet is still: a
   // set() whose reply was lost was delivered all the same. Give it the settle
-  // time before the beam and the detectors are exposed again.
-  if (first && set_issued) sleep(plan.settle);
+  // time before the beam and the detectors are exposed again: never less than
+  // `failure_settle`, whatever the caller chose for a successful move.
+  if (first && set_issued) sleep(std::max(plan.settle, plan.failure_settle));
 
   // 4. cleanup in reverse order, always.
   if (blank_attempted) keep_first(first, deps.beam_blank->blank(false));

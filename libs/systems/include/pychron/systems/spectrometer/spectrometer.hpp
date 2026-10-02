@@ -66,7 +66,9 @@ struct PositionTarget {
 enum class ProtectPolicy { Auto, Always, Never };
 
 struct PositionOptions {
-  std::optional<Duration> settle;  // default [magnet].settle_ms
+  // Default [magnet].settle_ms. A move that fails once a set went out waits at
+  // least [magnet].settle_ms before its cleanup, whatever is given here.
+  std::optional<Duration> settle;
   ProtectPolicy protect = ProtectPolicy::Auto;
   bool wait_moving = true;
   // Large-move confirmation is a UI concern; the core never blocks on it.
