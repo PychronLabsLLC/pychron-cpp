@@ -345,7 +345,9 @@ TEST_F(QtegraAcquire, NoReplyIsTimeoutAndIsNotRetried) {
 // QtegraCodec.DecodeDataTagged): a reply the codec cannot pair up cleanly is a
 // Protocol error and delivers no frame; names are matched case-sensitively, so
 // a name in the wrong case is an unknown name and its channel is absent. No
-// value is ever assigned to a channel the reply did not name exactly.
+// value is ever assigned to a channel the reply did not name exactly. A reply
+// that names none of the configured channels is a Protocol error too, not an
+// empty frame: the operator must see an error, not a blank plot.
 TEST_F(QtegraAcquire, GetDataEdgeReplies) {
   using Values = std::vector<std::pair<ChannelId, double>>;
   struct Case {
@@ -365,8 +367,11 @@ TEST_F(QtegraAcquire, GetDataEdgeReplies) {
       {"negative infinity", "H1,-Infinity", std::nullopt},
       {"duplicate name", "H1,1.5,AX,2.5,H1,9", std::nullopt},
       {"duplicate unknown name", "PM,1,PM,2,H1,1.5", std::nullopt},
-      {"lower-case names", "h1,1.5,ax,2.5", Values{}},
+      {"lower-case names", "h1,1.5,ax,2.5", std::nullopt},
+      {"other detector names", "IC0,1.5,IC1,2.5", std::nullopt},
+      {"untagged values, even count", "1.5,2.5,3.5,4.5", std::nullopt},
       {"one lower-case name", "h1,1.5,AX,2.5", Values{{"AX", 2.5}}},
+      {"one known name among others", "IC0,1.5,CDD,2.5,IC1,3", Values{{"CDD", 2.5}}},
   };
   ASSERT_TRUE(q.start());
   for (const auto& c : cases) {
@@ -383,6 +388,37 @@ TEST_F(QtegraAcquire, GetDataEdgeReplies) {
     }
     clock.advance(kHalf);
   }
+}
+
+TEST_F(QtegraAcquire, ReplyNamingNoConfiguredChannelIsProtocolWithTheReplyText) {
+  ASSERT_TRUE(q.start());
+  const auto first = frame().seq;
+  override_data("h2,0.1,h1,0.2");
+  clock.advance(kHalf);
+  auto r = q.next(Duration::zero());
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(r.error().device, "argus");
+  EXPECT_NE(r.error().what.find("h2,0.1,h1,0.2"), std::string::npos) << r.error().what;
+  EXPECT_EQ(q.reconnects(), 0U);
+  // Like any failed read it used up its period and its seq.
+  expect_not_due();
+  override_data("");
+  clock.advance(kHalf);
+  EXPECT_EQ(frame().seq, first + 2);
+}
+
+TEST_F(QtegraAcquire, ReplyNamingNoConfiguredChannelIsQuotedTruncated) {
+  std::string reply;
+  for (int i = 0; i < 200; ++i) reply += (i ? ",D" : "D") + std::to_string(i) + ",1.5";
+  override_data(reply);
+  ASSERT_TRUE(q.start());
+  auto r = q.next(Duration::zero());
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_NE(r.error().what.find("D0,1.5,D1,1.5"), std::string::npos) << r.error().what;
+  EXPECT_EQ(r.error().what.find("D199"), std::string::npos) << r.error().what;
+  EXPECT_LT(r.error().what.size(), 300U);
 }
 
 // --- stop() against a next() blocked in the wire read -----------------------------

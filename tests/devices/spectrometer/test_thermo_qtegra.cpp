@@ -154,6 +154,17 @@ TEST(Qtegra, NegativeSettlePeriodsRejected) {
   expect_config(create_from(*sim, "settle_periods = -1.0"));
 }
 
+// A huge value would hold frames back for hours, or overflow the clock type.
+TEST(Qtegra, SettlePeriodsAboveOneHundredRejected) {
+  auto sim = open_scripted({});
+  expect_config(create_from(*sim, "settle_periods = 100.5"));
+  expect_config(create_from(*sim, "settle_periods = 1e300"));
+  expect_config(create_from(*sim, "settle_periods = inf"));
+  EXPECT_TRUE(create_from(*sim, "settle_periods = 100.0"));
+  EXPECT_TRUE(create_from(*sim, "settle_periods = 0.0"));
+  EXPECT_TRUE(sim->written().empty());
+}
+
 // --- connect -------------------------------------------------------------------
 
 TEST(Qtegra, ConnectSendsGetIntegrationTime) {
@@ -443,13 +454,18 @@ TEST(Qtegra, ParamsCoverCodecMapWithNominalRanges) {
   auto sim = open_scripted({});
   QtegraSpectrometer q("argus", *sim, {});
   const auto specs = q.params();
-  // One spec per canonical parameter, under the codec's preferred hardware name.
-  EXPECT_EQ(specs.size(), source_params().size());
+  // One spec per canonical parameter whose name pychron Python sends, under
+  // the codec's preferred hardware name. The exceptions are in
+  // UnverifiedCanonicalParamsAreNotWritable.
+  EXPECT_EQ(specs.size(), source_params().size() - 2);
   for (const auto& info : source_params()) {
+    if (info.param == SourceParam::ESAPlus || info.param == SourceParam::ESAMinus) continue;
     const ParamSpec* spec = find_spec(specs, ParamId{info.param});
     ASSERT_NE(spec, nullptr) << info.name;
-    EXPECT_EQ(spec->vendor_name, *codec::qtegra::hardware_name(info.name)) << info.name;
-    EXPECT_TRUE(spec->readable && spec->writable) << info.name;
+    if (info.param != SourceParam::Emission) {
+      EXPECT_EQ(spec->vendor_name, *codec::qtegra::hardware_name(info.name)) << info.name;
+      EXPECT_TRUE(spec->readable && spec->writable) << info.name;
+    }
     if (info.param == SourceParam::HV) {
       EXPECT_EQ(spec->range, (Range{0.0, 10000.0}));
       EXPECT_EQ(spec->unit, Unit::Volts);
@@ -458,6 +474,64 @@ TEST(Qtegra, ParamsCoverCodecMapWithNominalRanges) {
       EXPECT_EQ(spec->unit, Unit::None) << info.name;
     }
   }
+}
+
+// Names no reference implementation sends are never written. Emission's set
+// name is unverified but its readback is one pychron reads: read-only.
+// ESA+/ESA- have no verified name at all: not advertised.
+TEST(Qtegra, UnverifiedCanonicalParamsAreNotWritable) {
+  auto sim = open_scripted({step("GetParameter Source Current Readback\r", "0.42\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  const auto specs = q.params();
+  const ParamSpec* emission = find_spec(specs, ParamId{SourceParam::Emission});
+  ASSERT_NE(emission, nullptr);
+  EXPECT_TRUE(emission->readable);
+  EXPECT_FALSE(emission->writable);
+  EXPECT_EQ(emission->vendor_name, "Source Current Readback");
+  EXPECT_EQ(find_spec(specs, ParamId{SourceParam::ESAPlus}), nullptr);
+  EXPECT_EQ(find_spec(specs, ParamId{SourceParam::ESAMinus}), nullptr);
+  // Every advertised name is one pychron Python sends.
+  for (const auto& spec : specs) EXPECT_TRUE(codec::qtegra::verified_name(spec.vendor_name)) << spec.vendor_name;
+
+  expect_config(q.set_param(SourceParam::Emission, 1.0));
+  expect_config(q.set_param(SourceParam::ESAPlus, 1.0));
+  expect_config(q.set_param(SourceParam::ESAMinus, 1.0));
+  expect_config(q.read_param(SourceParam::ESAPlus));
+  expect_config(q.read_param(SourceParam::ESAMinus));
+  EXPECT_TRUE(sim->written().empty());
+
+  // Emission is read through its readback name only: one command.
+  auto rb = q.read_param(SourceParam::Emission);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{0.42, 0.42}));
+  expect_verified(*sim);
+}
+
+// An alias or set name pychron Python never sends is an unknown Custom name.
+TEST(Qtegra, UnverifiedCustomNamesAreRefused) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  for (const char* name : {"H-Symmetry Set", "Flatapole Set", "Rotation Quad Set", "Pole N Set", "Pole S Set",
+                           "Electron Emission Set", "ESA+ Set", "ESA- Set"}) {
+    SCOPED_TRACE(name);
+    const ParamId id{Custom{name}};
+    expect_config(q.set_param(id, 1.0));
+    expect_config(q.read_param(id));
+  }
+  EXPECT_TRUE(sim->written().empty());
+}
+
+// The readback of a read-only canonical parameter, named directly.
+TEST(Qtegra, CustomEmissionReadbackIsReadOnly) {
+  auto sim = open_scripted({step("GetParameter Source Current Readback\r", "0.42\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  const ParamId id{Custom{"Source Current Readback"}};
+  expect_config(q.set_param(id, 1.0));
+  EXPECT_TRUE(sim->written().empty());
+  auto rb = q.read_param(id);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{0.42, 0.42}));
+  expect_verified(*sim);
 }
 
 TEST(Qtegra, SetParamUsesHardwareName) {

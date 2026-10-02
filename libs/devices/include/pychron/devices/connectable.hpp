@@ -10,7 +10,8 @@ namespace pychron {
 
 struct IConnectable {
   virtual ~IConnectable() = default;
-  // Called once after every transport of the system is open; blocks until the
+  // Called after every transport open: at startup, once every transport of
+  // the system is open, and again after each reconnect. Blocks until the
   // device answers or the transport times out.
   virtual Result<void> connect() = 0;
 };

@@ -29,15 +29,31 @@ constexpr Range kNominalRange{-1e6, 1e6};
 
 Duration to_duration(double seconds) { return std::chrono::round<Duration>(std::chrono::duration<double>(seconds)); }
 
-// One spec per canonical name; the codec lists its preferred hardware name first.
+// settle_periods above this is a configuration mistake, not a settling time.
+constexpr double kMaxSettlePeriods = 100.0;
+// Bytes of a rejected reply quoted in an error.
+constexpr std::size_t kMaxQuotedReply = 120;
+
+// At most one spec per canonical name, from its preferred entry (the codec
+// lists it first). Only names pychron Python sends reach the wire: a preferred
+// name it does not send is not writable, and is advertised at all only when
+// the parameter has a readback name, which then serves as its read name.
 std::vector<ParamSpec> source_specs() {
   std::vector<ParamSpec> specs;
+  std::vector<std::string_view> seen;
   for (const auto& entry : q::param_names()) {
+    if (std::find(seen.begin(), seen.end(), entry.canonical) != seen.end()) continue;
+    seen.push_back(entry.canonical);
     const auto id = parse_param_id(entry.canonical);
-    if (!id || find_spec(specs, *id) != nullptr) continue;
+    if (!id) continue;
     const bool hv = *id == ParamId{SourceParam::HV};
-    specs.push_back({*id, hv ? Unit::Volts : Unit::None, hv ? kHvRange : kNominalRange, true, true,
-                     std::string(entry.hardware)});
+    const Unit unit = hv ? Unit::Volts : Unit::None;
+    const Range range = hv ? kHvRange : kNominalRange;
+    if (entry.verified) {
+      specs.push_back({*id, unit, range, true, true, std::string(entry.hardware)});
+    } else if (!entry.readback.empty()) {
+      specs.push_back({*id, unit, range, true, false, std::string(entry.readback)});
+    }
   }
   return specs;
 }
@@ -68,7 +84,7 @@ DriverSchema QtegraSpectrometer::schema() {
            {"limit_max", KeyType::Float, false, "upper magnet DAC limit in volts; default 10"},
            {"terminator", KeyType::String, false, "write terminator: cr (default), lf or crlf"},
            {"settle_periods", KeyType::Float, false,
-            "integration periods to wait after an integration change; default 2"}}};
+            "integration periods to wait after an integration change, 0 to 100; default 2"}}};
 }
 
 Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const DriverArgs& args) {
@@ -93,8 +109,9 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
   if (!terminator) return fail(std::move(terminator).error());
   options.terminator = *terminator;
   options.settle_periods = o["settle_periods"].value_or(options.settle_periods);
-  if (!std::isfinite(options.settle_periods) || options.settle_periods < 0.0) {
-    return fail(ErrorKind::Config, "settle_periods must be zero or positive");
+  if (!std::isfinite(options.settle_periods) || options.settle_periods < 0.0 ||
+      options.settle_periods > kMaxSettlePeriods) {
+    return fail(ErrorKind::Config, "settle_periods must be between 0 and 100");
   }
   return std::make_unique<QtegraSpectrometer>(args.name, args.transport, std::move(options), args.clock);
 }
@@ -194,8 +211,10 @@ Result<double> QtegraSpectrometer::read_gain(const ChannelId& channel) {
 
 Result<QtegraSpectrometer::ParamTarget> QtegraSpectrometer::param_target(const ParamId& id) const {
   if (const auto* custom = std::get_if<Custom>(&id)) {
-    // A custom name stands for the canonical parameter the codec files it under.
-    if (const auto canonical = q::canonical_name(custom->name)) {
+    // A custom name stands for the canonical parameter the codec files it
+    // under. A name pychron Python never sends is treated as unknown.
+    const auto canonical = q::verified_name(custom->name) ? q::canonical_name(custom->name) : std::nullopt;
+    if (canonical) {
       const auto param = parse_param_id(*canonical);
       if (const ParamSpec* spec = param ? find_spec(params_, *param) : nullptr) {
         return ParamTarget{custom->name, spec, *param == ParamId{SourceParam::HV},
@@ -203,7 +222,8 @@ Result<QtegraSpectrometer::ParamTarget> QtegraSpectrometer::param_target(const P
       }
     }
   } else if (const ParamSpec* spec = find_spec(params_, id)) {
-    return ParamTarget{spec->vendor_name, spec, id == ParamId{SourceParam::HV}, false};
+    // A spec that is not writable is advertised under its readback name.
+    return ParamTarget{spec->vendor_name, spec, id == ParamId{SourceParam::HV}, !spec->writable};
   }
   return fail(ErrorKind::Config, "thermo_qtegra: unsupported parameter \"" + to_string(id) + "\"");
 }
@@ -220,7 +240,7 @@ Result<double> QtegraSpectrometer::read_hv() { return query_number(q::get_high_v
 Result<void> QtegraSpectrometer::set_param(const ParamId& id, double value) {
   auto target = param_target(id);
   if (!target) return observe(Result<void>(fail(std::move(target).error())));
-  if (target->readback) {
+  if (target->readback || !target->spec->writable) {
     return observe(Result<void>(fail(ErrorKind::Config, "thermo_qtegra: \"" + target->hardware + "\" is read-only")));
   }
   if (!std::isfinite(value) || !target->spec->range.contains(value)) {
@@ -242,7 +262,7 @@ Result<Readback> QtegraSpectrometer::read_param(const ParamId& id) {
   auto setpoint = query_number(q::get_parameter(target->hardware, options_.terminator));
   if (!setpoint) return fail(std::move(setpoint).error());
   Readback readback{*setpoint, std::nullopt};
-  if (target->readback) readback.actual = *setpoint;
+  if (target->readback) return Readback{*setpoint, *setpoint};  // one read serves as both
   if (const auto* param = std::get_if<SourceParam>(&id)) {
     if (const auto name = q::readback_name(to_string(*param))) {
       auto actual = query_number(q::get_parameter(*name, options_.terminator));
@@ -349,6 +369,17 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
   {
     std::lock_guard lock(mutex_);
     if (run != run_) return observe(Next(std::optional<Frame>{}));  // stopped or reconfigured during the read
+  }
+  // A reply naming none of them (wrong case, other detector names, untagged
+  // values) is not an empty frame: the operator would see a blank plot and no
+  // error.
+  if (frame.values.empty() && !options_.channels.empty()) {
+    const bool truncated = reply->size() > kMaxQuotedReply;
+    const auto shown = static_cast<std::ptrdiff_t>(truncated ? kMaxQuotedReply : reply->size());
+    const Bytes quoted(reply->begin(), reply->begin() + shown);
+    return observe(Next(codec::protocol_error(
+        std::string("GetData reply names none of the configured channels") + (truncated ? " (reply truncated)" : ""),
+        quoted)));
   }
   return observe(Next(std::optional<Frame>{std::move(frame)}));
 }

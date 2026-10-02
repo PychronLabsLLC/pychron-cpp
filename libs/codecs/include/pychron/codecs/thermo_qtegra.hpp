@@ -71,12 +71,22 @@ std::string format_number(double v);
 // Canonical <-> hardware name entry. A canonical name may appear more than
 // once; the first entry is the preferred (pychron Python) name and later ones
 // are aliases accepted by canonical_name().
+//
+// `verified` is true only when the production pychron Python driver sends
+// `hardware` to an instrument (SetParameter / GetParameter / GetParameters).
+// An unverified name is a guess: it stays in the map so a reply or a config
+// naming it is recognised, but a driver must not send it. Every readback name
+// in the map is one pychron Python reads.
 struct ParamName {
   std::string_view canonical;  // "trap_voltage"
   std::string_view hardware;   // "Trap Voltage Set"   (SetParameter/GetParameter)
   std::string_view readback;   // "Trap Voltage Readback", empty if none known
+  bool verified = false;       // pychron Python sends `hardware`
 };
 std::span<const ParamName> param_names() noexcept;
+// True when `hardware` is a name pychron Python sends: the hardware name of a
+// verified entry, or a readback name.
+bool verified_name(std::string_view hardware) noexcept;
 std::optional<std::string_view> hardware_name(std::string_view canonical) noexcept;
 std::optional<std::string_view> readback_name(std::string_view canonical) noexcept;
 // Matches set names, readback names and aliases.
@@ -95,7 +105,7 @@ inline constexpr std::array<std::string_view, 6> kDefaultDetectorOrder{"H2", "H1
 // The name rule above, for checking configured names before first use.
 Result<void> validate_name(std::string_view name);
 
-Result<Command> set_magnet_dac(double dac,Terminator term = kDefaultTerminator);
+Result<Command> set_magnet_dac(double dac, Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_dac(Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_moving(Terminator term = kDefaultTerminator);
 Result<Command> blank_beam(bool blank, Terminator term = kDefaultTerminator);

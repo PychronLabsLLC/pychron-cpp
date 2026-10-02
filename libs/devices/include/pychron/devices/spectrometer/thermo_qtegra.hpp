@@ -32,7 +32,8 @@ struct QtegraOptions {
   // Magnet DAC limits in volts.
   Limits limits{0.0, 10.0};
   codec::qtegra::Terminator terminator = codec::qtegra::kDefaultTerminator;
-  // Integration periods to wait after an integration change.
+  // Integration periods to wait after an integration change; create()
+  // accepts 0..100.
   double settle_periods = 2.0;
 };
 
@@ -79,11 +80,19 @@ class QtegraSpectrometer final : public Device,
   // IBeamSource. params() is the codec's canonical map, one spec per canonical
   // name under its preferred hardware name: HV 0..10000 V, every other
   // parameter a nominal -1e6..1e6 with no unit (real ranges are unverified).
-  // Custom{name} is accepted when `name` is a hardware name the codec knows;
-  // it is sent as given and checked against its canonical parameter's range.
-  // A readback name is read-only. HV, however it is named, is written with
-  // SetHV and read with GetHighVoltage (reported as setpoint and actual).
-  // SetHV and SetParameter must be answered "OK".
+  //
+  // Only names the codec marks verified (pychron Python sends them) are ever
+  // sent. A canonical parameter whose set name is unverified is not writable:
+  // it is advertised read-only under its readback name when it has one
+  // (emission) and not advertised at all otherwise (ESA+, ESA-). set_param()
+  // on anything not writable is Config with nothing sent.
+  //
+  // Custom{name} is accepted when `name` is a verified hardware name the codec
+  // knows; it is sent as given and checked against its canonical parameter's
+  // range. An unverified name is refused like an unknown one. A readback name
+  // is read-only. HV, however it is named, is written with SetHV and read
+  // with GetHighVoltage (reported as setpoint and actual). SetHV and
+  // SetParameter must be answered "OK".
   Result<void> set_hv(double volts) override;
   Result<double> read_hv() override;
   std::span<const ParamSpec> params() const override { return params_; }
@@ -98,7 +107,9 @@ class QtegraSpectrometer final : public Device,
   // The wire read in next() runs without the acquirer mutex, so stop() never
   // waits for a transport timeout; a frame whose read was in flight when
   // stop() was called, or when configure() changed the period, is dropped
-  // (that next() returns nullopt).
+  // (that next() returns nullopt). A reply that names some of `channels`
+  // is a frame with the others absent; one that names none of them is
+  // Protocol, quoting the reply.
   std::vector<ChannelId> channels() const override { return options_.channels; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration integration) override;

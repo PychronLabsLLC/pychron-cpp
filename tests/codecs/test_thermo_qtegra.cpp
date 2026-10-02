@@ -4,7 +4,9 @@
 
 #include <cmath>
 #include <fstream>
+#include <set>
 #include <sstream>
+#include <string_view>
 
 using namespace pychron;
 namespace q = pychron::codec::qtegra;
@@ -158,6 +160,28 @@ TEST(QtegraCodec, ParamMapHasPychronNames) {
   EXPECT_EQ(q::canonical_name("Flatapole Set"), "flatapole");
   EXPECT_EQ(q::canonical_name("Pole N Set"), "pole_n");
   EXPECT_EQ(q::canonical_name("H-Symmetry Set"), "horizontal_symmetry");
+}
+
+// `verified` marks the names pychron Python sends. Everything else is known
+// to the map but must not be written by a driver.
+TEST(QtegraCodec, OnlyNamesPychronSendsAreVerified) {
+  const std::set<std::string_view> unverified{"Electron Emission Set", "ESA+ Set",          "ESA- Set",
+                                              "H-Symmetry Set",        "Flatapole Set",     "Rotation Quad Set",
+                                              "Pole N Set",            "Pole S Set"};
+  std::size_t seen = 0;
+  for (const auto& n : q::param_names()) {
+    EXPECT_EQ(n.verified, !unverified.contains(n.hardware)) << n.hardware;
+    EXPECT_EQ(q::verified_name(n.hardware), n.verified) << n.hardware;
+    if (!n.verified) ++seen;
+    // Every readback name is one Python reads.
+    if (!n.readback.empty()) EXPECT_TRUE(q::verified_name(n.readback)) << n.readback;
+  }
+  EXPECT_EQ(seen, unverified.size());
+  EXPECT_TRUE(q::verified_name("Rotation Quad"));  // alias, HelixSource._set_rotation_quad
+  EXPECT_TRUE(q::verified_name("Source Current Readback"));
+  EXPECT_TRUE(q::verified_name("HV"));
+  EXPECT_FALSE(q::verified_name("nope"));
+  EXPECT_FALSE(q::verified_name(""));
 }
 
 TEST(QtegraCodec, DecodeOk) {

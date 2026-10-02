@@ -10,36 +10,38 @@ namespace pychron::codec::qtegra {
 namespace {
 
 // Preferred (pychron Python) entries first; aliases after. Sources:
-// spectrometer/thermo/spectrometer/base.py and helix.py hardware_names,
-// source/base.py and source/helix.py read_* / _set_*.
+// spectrometer/thermo/spectrometer/base.py and helix.py hardware_names (sent
+// by set_parameter / GetParameters / _send_configuration), source/base.py and
+// source/helix.py read_* / _set_*. The last field is `verified`: true only
+// for a name found there.
 constexpr std::array<ParamName, 25> kNames{{
-    {"hv", "HV", ""},
-    {"trap_current", "Trap Current Set", "Trap Current Readback"},
-    {"trap_voltage", "Trap Voltage Set", "Trap Voltage Readback"},
+    {"hv", "HV", "", true},
+    {"trap_current", "Trap Current Set", "Trap Current Readback", true},
+    {"trap_voltage", "Trap Voltage Set", "Trap Voltage Readback", true},
     // Set name not seen in pychron Python; readback from ThermoSource.read_emission.
-    {"emission", "Electron Emission Set", "Source Current Readback"},
-    {"electron_energy", "Electron Energy Set", ""},
-    {"ion_repeller", "Ion Repeller Set", ""},
-    {"extraction_lens", "Extraction Lens Set", ""},
-    {"extraction_focus", "Extraction Focus Set", ""},        // Helix hardware_names
-    {"extraction_symmetry", "Extraction Symmetry Set", ""},  // Helix hardware_names
-    {"y_symmetry", "Y-Symmetry Set", ""},
-    {"z_symmetry", "Z-Symmetry Set", ""},
-    {"z_focus", "Z-Focus Set", ""},
-    {"horizontal_symmetry", "Horizontal Symmetry Set", ""},  // Helix hardware_names
-    {"flatapole", "DAC_1_0_(Flata-Pole)", ""},               // Helix
-    {"rotation_quad", "RotationQuad", ""},                   // Helix hardware_names, read
-    {"pole_n", "DAC_0_0_(Pole-N)", ""},                      // Helix
-    {"pole_s", "DAC_0_4_(Pole-S)", ""},                      // Helix
-    {"esa_plus", "ESA+ Set", ""},                            // not seen in pychron Python
-    {"esa_minus", "ESA- Set", ""},                           // not seen in pychron Python
+    {"emission", "Electron Emission Set", "Source Current Readback", false},
+    {"electron_energy", "Electron Energy Set", "", true},
+    {"ion_repeller", "Ion Repeller Set", "", true},
+    {"extraction_lens", "Extraction Lens Set", "", true},
+    {"extraction_focus", "Extraction Focus Set", "", true},        // Helix hardware_names
+    {"extraction_symmetry", "Extraction Symmetry Set", "", true},  // Helix hardware_names
+    {"y_symmetry", "Y-Symmetry Set", "", true},
+    {"z_symmetry", "Z-Symmetry Set", "", true},
+    {"z_focus", "Z-Focus Set", "", true},
+    {"horizontal_symmetry", "Horizontal Symmetry Set", "", true},  // Helix hardware_names
+    {"flatapole", "DAC_1_0_(Flata-Pole)", "", true},               // Helix
+    {"rotation_quad", "RotationQuad", "", true},                   // Helix hardware_names, read
+    {"pole_n", "DAC_0_0_(Pole-N)", "", true},                      // Helix
+    {"pole_s", "DAC_0_4_(Pole-S)", "", true},                      // Helix
+    {"esa_plus", "ESA+ Set", "", false},                           // not seen in pychron Python
+    {"esa_minus", "ESA- Set", "", false},                          // not seen in pychron Python
     // Aliases.
-    {"rotation_quad", "Rotation Quad", ""},         // HelixSource._set_rotation_quad
-    {"horizontal_symmetry", "H-Symmetry Set", ""},  // not seen in pychron Python
-    {"flatapole", "Flatapole Set", ""},             // not seen in pychron Python
-    {"rotation_quad", "Rotation Quad Set", ""},     // not seen in pychron Python
-    {"pole_n", "Pole N Set", ""},                   // not seen in pychron Python
-    {"pole_s", "Pole S Set", ""},                   // not seen in pychron Python
+    {"rotation_quad", "Rotation Quad", "", true},          // HelixSource._set_rotation_quad
+    {"horizontal_symmetry", "H-Symmetry Set", "", false},  // not seen in pychron Python
+    {"flatapole", "Flatapole Set", "", false},             // not seen in pychron Python
+    {"rotation_quad", "Rotation Quad Set", "", false},     // not seen in pychron Python
+    {"pole_n", "Pole N Set", "", false},                   // not seen in pychron Python
+    {"pole_s", "Pole S Set", "", false},                   // not seen in pychron Python
 }};
 
 Unexpected<Error> config_error(std::string what) { return fail(ErrorKind::Config, std::move(what)); }
@@ -209,6 +211,13 @@ std::optional<std::string_view> canonical_name(std::string_view hardware) noexce
   for (const auto& n : kNames)
     if (n.hardware == hardware || (!n.readback.empty() && n.readback == hardware)) return n.canonical;
   return std::nullopt;
+}
+
+bool verified_name(std::string_view hardware) noexcept {
+  if (hardware.empty()) return false;
+  for (const auto& n : kNames)
+    if ((n.verified && n.hardware == hardware) || n.readback == hardware) return true;
+  return false;
 }
 
 Result<void> validate_name(std::string_view name) { return check_name(name); }
