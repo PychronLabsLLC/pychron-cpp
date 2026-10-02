@@ -37,7 +37,7 @@ Version 1 (this spec):
 
 Added after v1: the run factory side panel (section 5.6), with frequency
 insert and per-type field enabling; the measurement panel (section 5.7); the
-script editor (section 5.9).
+script editor (section 5.8).
 
 Deferred to later versions (from spec 10.4): phase timeline and overlap lanes, fit overlay and
 intercept display in the evolutions, notifications, editing a queue while it
@@ -316,7 +316,7 @@ Qt-free rules in `pychron/experiment/plan/parameters.hpp`.
   revalidated; locked while a queue runs. Edits made elsewhere (the table, a
   queue edit) refresh the panel.
 
-### 5.9 Script editor
+### 5.8 Script editor
 
 A separate window (Scripts > Script Editor..., Ctrl+Shift+K, or Rows > Edit
 Extraction/Post-Measurement Script for the selected row) over the lab's
@@ -348,7 +348,7 @@ Extraction/Post-Measurement Script for the selected row) over the lab's
   Closing a tab, the editor or the experiment window with unsaved scripts
   asks Save / Discard / Cancel.
 
-### 5.8 App wiring
+### 5.9 App wiring
 
 - `pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer
   <file>] [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>]`.

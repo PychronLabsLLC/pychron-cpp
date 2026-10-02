@@ -1,6 +1,6 @@
 #pragma once
 
-// ScriptEditorWindow (experiment-window design 5.9): edits the lab's scripts.
+// ScriptEditorWindow (experiment-window design 5.8): edits the lab's scripts.
 //
 //   left    the lab's scripts by kind (double-click opens)
 //   centre  one tab per open script: highlighting, completion from the host's
