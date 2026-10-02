@@ -100,8 +100,45 @@ class TestExperimentWindow : public QObject {
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Baseline) > 0);
     QVERIFY(fs::exists(sim.dir / "data" / "records" / "66001" / "66001-2.json"));
+    // The timeline: a state segment per phase of each run, all closed.
+    const auto& tl = pane->timeline();
+    QCOMPARE(tl.run_lanes(), 1);  // no overlap in the example queue
+    int measuring = 0, waits = 0;
+    for (const auto& seg : tl.segments()) {
+      QVERIFY(seg.end.has_value());
+      measuring += seg.state == pychron::experiment::run::RunState::Measuring ? 1 : 0;
+      waits += seg.state ? 0 : 1;
+    }
+    QCOMPARE(measuring, 3);
+    QVERIFY(waits >= 2);  // the delays before the runs
     QVERIFY(pane->start_enabled());
     QVERIFY(window.factory()->add_enabled());  // unlocked again
+  }
+
+  void anOverlappedRunTakesASecondLane() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    auto queue = sim.queue();
+    // The first unknown lets the next run start 30 s before it ends.
+    queue.runs[1].overlap.duration = std::chrono::duration<double>(30);
+    const fs::path file = sim.dir / "overlap.toml";
+    QVERIFY(pychron::experiment::save_queue_file(file.string(), queue));
+    QVERIFY(window.load_queue(file));
+    window.executor()->request_start();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(contains(window.executor()->events(), QStringLiteral("queue completed")));
+    const auto& tl = window.executor()->timeline();
+    QCOMPARE(tl.run_lanes(), 2);
+    // Run 2 measured on lane 2 while run 1 (lane 1) was still in flight.
+    std::optional<double> run1_end, run2_start;
+    for (const auto& seg : tl.segments()) {
+      if (!seg.state) continue;
+      if (seg.lane == 1 && seg.label == QStringLiteral("66001")) run1_end = std::max(run1_end.value_or(0), *seg.end);
+      if (seg.lane == 2 && !run2_start) run2_start = seg.start;
+    }
+    QVERIFY(run1_end && run2_start);
+    QVERIFY2(*run2_start < *run1_end, qPrintable(QStringLiteral("%1 %2").arg(*run2_start).arg(*run1_end)));
   }
 
   void cancelAsksFirstAndStartsFromTheSelectedRow() {

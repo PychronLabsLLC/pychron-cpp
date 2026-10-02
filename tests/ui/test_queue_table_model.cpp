@@ -139,7 +139,7 @@ class TestQueueTableModel : public QObject {
 
   void statusFollowsRunEvents() {
     auto m = model();
-    m->on_run_started(exec::RunStarted{1, "uuid-1", "66001"});
+    m->on_run_started(exec::RunStarted{1, "uuid-1", "66001", {}});
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("preparing"));
     m->on_run_state(pychron::experiment::run::RunStateChanged{"uuid-1", RunState::Preparing, RunState::Measuring, {}, {}});
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("measuring"));

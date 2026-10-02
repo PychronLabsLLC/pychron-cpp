@@ -73,6 +73,7 @@ class LabSession {
   // start() and wait() are called from one thread (the owner's).
   std::optional<executor::QueueResult> wait();
   std::size_t pending_saves() const;  // records still in the spool
+  TimePoint now() const;              // the line's clock (simulated or not)
 
   const Lab& lab() const noexcept { return lab_; }
   const std::filesystem::path& data() const noexcept { return options_.data; }

@@ -37,10 +37,11 @@ Version 1 (this spec):
 
 Added after v1: the run factory side panel (section 5.6), with frequency
 insert and per-type field enabling; the measurement panel (section 5.7); the
-script editor (section 5.8); the fit overlay in the evolutions (section 5.4).
+script editor (section 5.8); the fit overlay in the evolutions (section 5.4);
+the phase timeline with overlap lanes (section 5.3).
 
-Deferred to later versions (from spec 10.4): phase timeline and overlap lanes, notifications, editing a queue while it
-runs.
+Deferred to later versions (from spec 10.4): notifications, editing a queue
+while it runs.
 
 ## 3. Decisions
 
@@ -219,6 +220,19 @@ A widget, docked at the bottom of the experiment window:
 - Event list: one line per run start/finish, queue edit, peak-center result
   and queue end (newest last).
 - Pending saves: "n record(s) in spool" when non-zero after the queue ends.
+- Phase timeline (`TimelineModel` / `TimelineView`, `timeline.hpp`): one
+  row for executor waits, then one lane per concurrently active run. A run
+  takes the first free lane when it starts (an overlapped run, started
+  while the previous one is still pumping, takes a second lane) and frees
+  it at a final state. Each run state is a segment coloured as in the
+  queue table; waits are grey-hatched and labelled with their reason (and
+  the run, for per-run waits such as overlap and the minimum pump time),
+  with their planned end drawn faded. Time is the session clock (simulated
+  time under `--sim-speed`): `RunStarted`, `RunStateChanged` and
+  `ExecutorWaiting` carry the executor clock's timestamp, and a
+  250 ms timer advances the open segments and the "now" line. The axis is
+  h:mm:ss since the first event; a tooltip gives the label and duration.
+  Cleared on Start.
 
 ### 5.4 `EvolutionsView`
 

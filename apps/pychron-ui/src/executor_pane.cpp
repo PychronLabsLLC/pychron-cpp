@@ -50,7 +50,8 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
       abort_(new QPushButton(tr("Abort"))),
       truncate_(new QPushButton(tr("Truncate"))),
       conditionals_(new QListWidget),
-      events_(new QListWidget) {
+      events_(new QListWidget),
+      timeline_view_(new TimelineView(timeline_)) {
   banner_->setObjectName(QStringLiteral("ExecutorBanner"));
   banner_->setStyleSheet(QStringLiteral("#ExecutorBanner { background: #f8d7da; } #ExecutorBanner QLabel { color: #721c24; }"));
   auto* banner_row = new QHBoxLayout(banner_);
@@ -105,6 +106,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   column->addWidget(banner_);
   column->addLayout(buttons);
   column->addLayout(status);
+  column->addWidget(timeline_view_);
   column->addWidget(lists, 1);
 
   confirm_ = [this](const QString& title, const QString& question) {
@@ -121,6 +123,20 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   connect(&bridge_, &ExperimentBridge::executorStateChanged, this, [this](const exec::ExecutorStateChanged& e) {
     state_->setText(q(exec::to_string(e.to)));
     if (e.to != exec::ExecutorState::Preparing) wait_->clear();
+  });
+  timeline_clock_.setInterval(250);
+  connect(&timeline_clock_, &QTimer::timeout, this, [this] {
+    timeline_.advance(bridge_.session().now());
+    timeline_view_->update();
+  });
+  connect(&bridge_, &ExperimentBridge::runStarted, this, [this](const exec::RunStarted& e) {
+    timeline_.on_run_started(e);
+    timeline_view_->updateGeometry();  // a new lane may have appeared
+    timeline_view_->update();
+  });
+  connect(&bridge_, &ExperimentBridge::runStateChanged, this, [this](const experiment::run::RunStateChanged& e) {
+    timeline_.on_state(e);
+    timeline_view_->update();
   });
   connect(&bridge_, &ExperimentBridge::runStarted, this, [this](const exec::RunStarted& e) {
     run_ = q(e.identifier);
@@ -149,6 +165,8 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     counts_->setValue(std::min(e.i, std::max(1, e.n)));
   });
   connect(&bridge_, &ExperimentBridge::executorWaiting, this, [this](const exec::ExecutorWaiting& e) {
+    timeline_.on_waiting(e);
+    timeline_view_->update();
     wait_->setText(e.duration > experiment::Duration::zero()
                        ? QStringLiteral("%1 (%2)").arg(q(e.reason), clock_text(e.duration))
                        : q(e.reason));
@@ -180,6 +198,9 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
                                : tr("peak center %1 on %2 failed: %3").arg(q(r.isotope), q(r.detector), q(r.message)));
   });
   connect(&bridge_, &ExperimentBridge::queueEnded, this, [this](const experiment::lab::QueueEnded& e) {
+    timeline_clock_.stop();
+    timeline_.on_queue_ended(bridge_.session().now());
+    timeline_view_->update();
     const auto& r = e.result;
     add_event(tr("queue %1%2").arg(q(exec::to_string(r.end)), r.reason.empty() ? QString() : QStringLiteral(": ") + q(r.reason)));
     wait_->clear();
@@ -205,6 +226,8 @@ void ExecutorPane::set_runnable(bool runnable, int rows) {
 void ExecutorPane::set_running(bool running) {
   running_ = running;
   if (running) {
+    timeline_.clear();
+    timeline_clock_.start();
     done_ = 0;
     conditionals_->clear();
     show_error({});

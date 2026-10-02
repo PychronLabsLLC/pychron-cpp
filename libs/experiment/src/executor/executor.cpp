@@ -185,9 +185,9 @@ bool Executor::ending() const {
   return stop_ || end_.has_value();
 }
 
-bool Executor::wait(Duration d, const std::string& reason) {
+bool Executor::wait(Duration d, const std::string& reason, const std::string& run_id) {
   if (d > Duration::zero()) {
-    if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ExecutorWaiting{reason, d});
+    if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ExecutorWaiting{reason, d, clock_.now(), run_id});
     if (options_.sleep) {
       options_.sleep(d);
     } else {
@@ -216,7 +216,8 @@ std::unique_ptr<Executor::Slot> Executor::launch(ExperimentQueue& queue, std::si
 
   run::RunHooks hooks;
   hooks.acquire_extraction = [this, s] {
-    if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ExecutorWaiting{"extraction device", {}});
+    if (ctx_.services.bus != nullptr)
+      ctx_.services.bus->publish(ExecutorWaiting{"extraction device", {}, clock_.now(), s->run->id()});
     return extraction_->acquire(s->control.token());
   };
   hooks.release_extraction = [this] { extraction_->release(); };
@@ -230,7 +231,7 @@ std::unique_ptr<Executor::Slot> Executor::launch(ExperimentQueue& queue, std::si
     const auto min = to_clock(s->spec.overlap.min_delay);
     if (pump && min > pychron::Duration::zero()) {
       const auto ready = *pump + min;
-      if (clock_.now() < ready) wait(std::chrono::duration<double>(ready - clock_.now()), "minimum pump time");
+      if (clock_.now() < ready) wait(std::chrono::duration<double>(ready - clock_.now()), "minimum pump time", s->run->id());
     }
     if (s->control.requested()) {
       spectrometer_->release();
@@ -257,7 +258,8 @@ std::unique_ptr<Executor::Slot> Executor::launch(ExperimentQueue& queue, std::si
     if (end_ == QueueEnd::Cancelled) s->control.cancel();
     if (end_ == QueueEnd::Aborted) s->control.abort();
   }
-  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(RunStarted{row, s->run->id(), s->spec.id.identifier});
+  if (ctx_.services.bus != nullptr)
+    ctx_.services.bus->publish(RunStarted{row, s->run->id(), s->spec.id.identifier, clock_.now()});
   s->thread = std::thread([this, s] {
     s->result = s->run->execute(s->control);
     s->done = true;

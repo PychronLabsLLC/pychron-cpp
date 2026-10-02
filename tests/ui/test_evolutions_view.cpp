@@ -30,7 +30,7 @@ class TestEvolutionsView : public QObject {
  private slots:
   void drawsFitsToTimeZeroAndListsIntercepts() {
     EvolutionsView view({{"H1", QColor(Qt::red)}});
-    view.on_run_started({0, "uuid", "66001"});
+    view.on_run_started({0, "uuid", "66001", {}});
     const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
     // y = 100 + 2 (t - 10), one outlier at t = 13.
     reduction::Series s;
@@ -87,7 +87,7 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(view.graph_count(), 2);
 
     // A new run clears the fits.
-    view.on_run_started({1, "uuid2", "66002"});
+    view.on_run_started({1, "uuid2", "66002", {}});
     QVERIFY(!view.fit_of(ar40).has_value());
     QCOMPARE(view.fit_curve_count(), 0);
   }

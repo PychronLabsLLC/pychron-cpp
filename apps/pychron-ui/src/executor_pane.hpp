@@ -18,9 +18,11 @@
 
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QWidget>
 
 #include "experiment_bridge.hpp"
+#include "timeline.hpp"
 
 class QFrame;
 class QLabel;
@@ -67,6 +69,8 @@ class ExecutorPane : public QWidget {
   int counts_maximum() const;
   QStringList events() const;
   QStringList conditionals() const;
+  const TimelineModel& timeline() const noexcept { return timeline_; }
+  TimelineView* timeline_view() const noexcept { return timeline_view_; }
 
  signals:
   void startRequested();
@@ -98,6 +102,9 @@ class ExecutorPane : public QWidget {
   QPushButton* truncate_;
   QListWidget* conditionals_;
   QListWidget* events_;
+  TimelineModel timeline_;
+  TimelineView* timeline_view_;
+  QTimer timeline_clock_;  // grows open segments with the line's clock while running
 };
 
 }  // namespace pychron::ui

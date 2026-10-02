@@ -71,6 +71,7 @@ struct ExecutorStateChanged {
 struct RunStarted {
   std::size_t row = 0;
   std::string run_id, identifier;
+  TimePoint ts{};  // the services clock when the run started
 };
 struct RunSummary {
   std::size_t row = 0;
@@ -94,7 +95,9 @@ struct QueueEdited {
 // The executor is waiting: a delay, a scheduled start, a resource, pump time.
 struct ExecutorWaiting {
   std::string reason;
-  Duration duration{};
+  Duration duration{};  // zero: until a resource is free (it ends when the run moves on)
+  TimePoint ts{};       // when the wait started
+  std::string run_id;   // the run waiting (extraction device, pump time); empty: the queue
 };
 
 enum class QueueEnd { Completed, Stopped, Cancelled, Aborted, Failed };
@@ -149,7 +152,7 @@ class Executor {
   class Resource;
 
   void set_state(ExecutorState to, std::string reason = {});
-  bool wait(Duration d, const std::string& reason);  // false when cancelled/aborted
+  bool wait(Duration d, const std::string& reason, const std::string& run_id = {});  // false when cancelled/aborted
   bool ending() const;
   bool overlaps(const ExperimentQueue& queue, std::size_t row) const;
   std::unique_ptr<Slot> launch(ExperimentQueue& queue, std::size_t row, int index);

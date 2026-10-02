@@ -184,6 +184,8 @@ std::optional<executor::QueueResult> LabSession::wait() {
 
 std::size_t LabSession::pending_saves() const { return services_->save.pending(); }
 
+TimePoint LabSession::now() const { return hardware_.line.clock().now(); }
+
 Result<std::size_t> LabSession::resume_row(const fs::path& data) {
   return executor::Executor::resume_row(data / "executor_state.json");
 }
