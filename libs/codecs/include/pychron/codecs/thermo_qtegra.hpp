@@ -152,7 +152,11 @@ Result<bool> decode_bool(const Bytes& reply);
 // Bare CSV of floats, one per requested name in the same order; returns the
 // values paired with `names`. Count mismatch is a Protocol error.
 Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::string> names);
-// GetData, tagged: "tag,value,tag,value,..."; an empty body is an empty list.
+// GetData, tagged: "tag,value,tag,value,...". Tags are returned exactly as
+// sent (case included). An empty body, an unpaired or empty field, a value
+// that is not a finite number and a repeated tag are each a Protocol error:
+// a ruling pending a bench capture, so that no value is ever attributed to a
+// detector by guesswork.
 Result<Pairs> decode_data(const Bytes& reply);
 // GetData, untagged: bare CSV paired with `order` (count must match); an empty
 // body is an empty list.
@@ -175,5 +179,9 @@ Bytes encode_ok();                             // "OK"
 Bytes encode_number(double v);                 // format_number(v)
 Bytes encode_bool(bool v);                     // "True" / "False"
 Bytes encode_error(std::string_view message);  // "ERROR: <message>"
+// Tagged GetData reply: "tag,value,tag,value,...".
+Bytes encode_data(std::span<const std::pair<std::string, double>> pairs);
+// `text` as a reply line, unchanged: for replies no encoder here would produce.
+Bytes encode_line(std::string_view text);
 
 }  // namespace pychron::codec::qtegra

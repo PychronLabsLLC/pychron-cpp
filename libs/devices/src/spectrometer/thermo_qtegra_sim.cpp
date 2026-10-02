@@ -22,7 +22,16 @@ std::optional<bool> parse_switch(const std::string& text, std::string_view on, s
   return std::nullopt;
 }
 
-// Source and acquirer commands are added in Task 6.
+// A parameter reads back what was set under that name; a readback name
+// nothing was stored under reports its set name's value.
+double parameter(const QtegraSimModel& m, const std::string& name) {
+  if (const auto it = m.params.find(name); it != m.params.end()) return it->second;
+  if (const auto canonical = q::canonical_name(name)) {
+    if (const auto set_name = q::hardware_name(*canonical)) return value_or_zero(m.params, std::string(*set_name));
+  }
+  return 0.0;
+}
+
 Bytes respond(QtegraSimModel& m, const Bytes& tx) {
   const auto request = q::decode_request(tx);
   if (!request) return q::encode_error("empty command");
@@ -64,6 +73,28 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx) {
   if (verb == "GetDeflection" || verb == "GetGain") {
     if (args.size() != 1) return bad_arguments;
     return q::encode_number(value_or_zero(verb == "GetDeflection" ? m.deflection : m.gain, args[0]));
+  }
+  if (verb == "GetHighVoltage" && args.empty()) return q::encode_number(m.hv);
+  if (verb == "SetHV" || verb == "SetIntegrationTime") {
+    const auto value = args.size() == 1 ? codec::parse_decimal(args[0]) : std::nullopt;
+    if (!value) return bad_arguments;
+    (verb == "SetHV" ? m.hv : m.integration_s) = *value;
+    return q::encode_ok();
+  }
+  if (verb == "SetParameter") {
+    const auto value = args.size() == 2 ? codec::parse_decimal(args[1]) : std::nullopt;
+    if (!value) return bad_arguments;
+    m.params[args[0]] = *value;
+    return q::encode_ok();
+  }
+  if (verb == "GetParameter") {
+    if (args.size() != 1) return bad_arguments;
+    return q::encode_number(parameter(m, args[0]));
+  }
+  if (verb == "GetData" && args.empty()) {
+    if (!m.data_override.empty()) return q::encode_line(m.data_override);
+    if (m.intensities.empty()) return q::encode_error("no data");
+    return q::encode_data(q::Pairs(m.intensities.begin(), m.intensities.end()));
   }
   return q::encode_error("unknown command " + verb);
 }

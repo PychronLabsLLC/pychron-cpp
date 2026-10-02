@@ -306,12 +306,15 @@ Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::strin
 Result<Pairs> decode_data(const Bytes& reply) {
   auto b = data_body(reply);
   if (!b) return fail(b.error());
+  if (b->empty()) return protocol_error("empty reply", reply);
   Pairs out;
-  if (b->empty()) return out;
   auto fields = split_csv(*b);
   if (fields.size() % 2 != 0) return protocol_error("unpaired tag", reply);
   for (std::size_t i = 0; i < fields.size(); i += 2) {
     if (fields[i].empty()) return protocol_error("empty tag", reply);
+    for (const auto& seen : out) {
+      if (seen.first == fields[i]) return protocol_error("tag \"" + fields[i] + "\" repeated", reply);
+    }
     auto v = field_number(fields[i + 1]);
     if (!v) return protocol_error("not a number", reply);
     out.emplace_back(std::move(fields[i]), *v);
@@ -342,5 +345,14 @@ Bytes encode_ok() { return to_bytes("OK\r\n"); }
 Bytes encode_number(double v) { return to_bytes(format_number(v) + "\r\n"); }
 Bytes encode_bool(bool v) { return to_bytes(v ? "True\r\n" : "False\r\n"); }
 Bytes encode_error(std::string_view message) { return to_bytes("ERROR: " + std::string(message) + "\r\n"); }
+Bytes encode_data(std::span<const std::pair<std::string, double>> pairs) {
+  std::string text;
+  for (const auto& [tag, value] : pairs) {
+    if (!text.empty()) text += ',';
+    text += tag + "," + format_number(value);
+  }
+  return to_bytes(text + "\r\n");
+}
+Bytes encode_line(std::string_view text) { return to_bytes(std::string(text) + "\r\n"); }
 
 }  // namespace pychron::codec::qtegra

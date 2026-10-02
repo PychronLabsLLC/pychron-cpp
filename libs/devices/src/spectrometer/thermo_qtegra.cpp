@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/thermo_qtegra.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"
@@ -20,9 +21,29 @@ Result<q::Terminator> parse_terminator(const std::string& text) {
   return fail(ErrorKind::Config, "terminator: \"" + text + "\" is not one of cr, lf, crlf");
 }
 
-// Task 6 replaces every use with the real source / acquirer role.
-Error not_implemented(std::string_view what) {
-  return Error{ErrorKind::Config, "thermo_qtegra: " + std::string(what) + " not implemented", {}};
+// Accelerating voltage range in volts.
+constexpr Range kHvRange{0.0, 10000.0};
+// Nominal range for every other source parameter: the real limits are not
+// known without an instrument.
+constexpr Range kNominalRange{-1e6, 1e6};
+
+Duration to_duration(double seconds) { return std::chrono::round<Duration>(std::chrono::duration<double>(seconds)); }
+
+// One spec per canonical name; the codec lists its preferred hardware name first.
+std::vector<ParamSpec> source_specs() {
+  std::vector<ParamSpec> specs;
+  for (const auto& entry : q::param_names()) {
+    const auto id = parse_param_id(entry.canonical);
+    if (!id || find_spec(specs, *id) != nullptr) continue;
+    const bool hv = *id == ParamId{SourceParam::HV};
+    specs.push_back({*id, hv ? Unit::Volts : Unit::None, hv ? kHvRange : kNominalRange, true, true,
+                     std::string(entry.hardware)});
+  }
+  return specs;
+}
+
+Unexpected<Error> out_of_range(std::string_view what, double value, const Range& range) {
+  return fail(ErrorKind::Config, std::string(what) + " " + std::to_string(value) + " is outside " + format_range(range));
 }
 
 }  // namespace
@@ -33,7 +54,8 @@ QtegraSpectrometer::QtegraSpectrometer(std::string name, Transport& transport, Q
       transport_(transport),
       options_(std::move(options)),
       clock_(clock != nullptr ? *clock : steady_),
-      reconnector_(transport_, clock_) {}
+      reconnector_(transport_, clock_),
+      params_(source_specs()) {}
 
 DriverSchema QtegraSpectrometer::schema() {
   return {"",
@@ -100,6 +122,12 @@ Result<void> QtegraSpectrometer::command_ack(Result<codec::Command> cmd) {
   return observe(q::decode_ack(*reply));
 }
 
+Result<void> QtegraSpectrometer::command_ok(Result<codec::Command> cmd) {
+  auto reply = exchange(std::move(cmd));
+  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
+  return observe(q::decode_ok(*reply));
+}
+
 Result<double> QtegraSpectrometer::query_number(Result<codec::Command> cmd) {
   auto reply = exchange(std::move(cmd));
   if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
@@ -162,40 +190,132 @@ Result<double> QtegraSpectrometer::read_gain(const ChannelId& channel) {
   return query_number(q::get_gain(channel, options_.terminator));
 }
 
-// --- IBeamSource (Task 6) ------------------------------------------------------
+// --- IBeamSource ---------------------------------------------------------------
 
-Result<void> QtegraSpectrometer::set_hv(double) {  // Task 6
-  return observe(Result<void>(fail(not_implemented("set_hv"))));
+Result<QtegraSpectrometer::ParamTarget> QtegraSpectrometer::param_target(const ParamId& id) const {
+  if (const auto* custom = std::get_if<Custom>(&id)) {
+    if (q::canonical_name(custom->name)) return ParamTarget{custom->name, nullptr};
+  } else if (const ParamSpec* spec = find_spec(params_, id)) {
+    return ParamTarget{spec->vendor_name, spec};
+  }
+  return fail(ErrorKind::Config, "thermo_qtegra: unsupported parameter \"" + to_string(id) + "\"");
 }
 
-Result<double> QtegraSpectrometer::read_hv() {  // Task 6
-  return observe(Result<double>(fail(not_implemented("read_hv"))));
+Result<void> QtegraSpectrometer::set_hv(double volts) {
+  if (!std::isfinite(volts) || !kHvRange.contains(volts)) {
+    return observe(Result<void>(out_of_range("hv", volts, kHvRange)));
+  }
+  return command_ok(q::set_hv(volts, options_.terminator));
 }
 
-Result<void> QtegraSpectrometer::set_param(const ParamId&, double) {  // Task 6
-  return observe(Result<void>(fail(not_implemented("set_param"))));
+Result<double> QtegraSpectrometer::read_hv() { return query_number(q::get_high_voltage(options_.terminator)); }
+
+Result<void> QtegraSpectrometer::set_param(const ParamId& id, double value) {
+  auto target = param_target(id);
+  if (!target) return observe(Result<void>(fail(std::move(target).error())));
+  if (target->spec != nullptr && (!std::isfinite(value) || !target->spec->range.contains(value))) {
+    return observe(Result<void>(out_of_range(to_string(id), value, target->spec->range)));
+  }
+  return command_ok(q::set_parameter(target->hardware, value, options_.terminator));
 }
 
-Result<Readback> QtegraSpectrometer::read_param(const ParamId&) {  // Task 6
-  return observe(Result<Readback>(fail(not_implemented("read_param"))));
+Result<Readback> QtegraSpectrometer::read_param(const ParamId& id) {
+  auto target = param_target(id);
+  if (!target) return observe(Result<Readback>(fail(std::move(target).error())));
+  auto setpoint = query_number(q::get_parameter(target->hardware, options_.terminator));
+  if (!setpoint) return fail(std::move(setpoint).error());
+  Readback readback{*setpoint, std::nullopt};
+  if (const auto* param = std::get_if<SourceParam>(&id)) {
+    if (const auto name = q::readback_name(to_string(*param))) {
+      auto actual = query_number(q::get_parameter(*name, options_.terminator));
+      if (!actual) return fail(std::move(actual).error());
+      readback.actual = *actual;
+    }
+  }
+  return readback;
 }
 
-// --- IIntensityAcquirer (Task 6) -----------------------------------------------
+// --- IIntensityAcquirer --------------------------------------------------------
 
-Result<void> QtegraSpectrometer::configure(Duration) {  // Task 6
-  return observe(Result<void>(fail(not_implemented("configure"))));
+Duration QtegraSpectrometer::period() const { return to_duration(q::snap_integration_time(integration_s_.load())); }
+
+Result<void> QtegraSpectrometer::configure(Duration integration) {
+  if (integration <= Duration::zero()) {
+    return observe(Result<void>(fail(ErrorKind::Config, "integration time must be positive")));
+  }
+  const double snapped = q::snap_integration_time(std::chrono::duration<double>(integration).count());
+  if (snapped == integration_s_.load()) return {};
+  if (auto sent = command_ack(q::set_integration_time(snapped, options_.terminator)); !sent) return sent;
+  integration_s_.store(snapped);
+  std::lock_guard lock(mutex_);
+  due_ = clock_.now() + to_duration(options_.settle_periods * snapped);
+  return {};
 }
 
-Result<void> QtegraSpectrometer::start() {  // Task 6
-  return observe(Result<void>(fail(not_implemented("start"))));
+Result<void> QtegraSpectrometer::start() {
+  std::lock_guard lock(mutex_);
+  running_ = true;
+  return {};
 }
 
-Result<void> QtegraSpectrometer::stop() {  // Task 6
-  return observe(Result<void>(fail(not_implemented("stop"))));
+Result<void> QtegraSpectrometer::stop() {
+  {
+    std::lock_guard lock(mutex_);
+    running_ = false;
+    ++run_;
+  }
+  cv_.notify_all();
+  return {};
 }
 
-Result<std::optional<Frame>> QtegraSpectrometer::next(Duration) {  // Task 6
-  return observe(Result<std::optional<Frame>>(fail(not_implemented("next"))));
+Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
+  using Next = Result<std::optional<Frame>>;
+  const Duration span = period();
+  std::uint64_t seq = 0;
+  std::uint64_t run = 0;
+  {
+    std::unique_lock lock(mutex_);
+    if (!running_) return observe(Next(fail(ErrorKind::Config, "acquirer not started")));
+    // Bounded by clock time and by real time, so a ManualClock nobody
+    // advances cannot hang the caller.
+    const TimePoint deadline = clock_.now() + timeout;
+    const auto real_deadline = std::chrono::steady_clock::now() + timeout;
+    while (running_ && clock_.now() < due_) {
+      if (clock_.now() >= deadline || std::chrono::steady_clock::now() >= real_deadline) {
+        return std::optional<Frame>{};
+      }
+      clock_.wait_until(cv_, lock, std::min(due_, deadline));
+    }
+    if (!running_) return std::optional<Frame>{};
+    seq = ++seq_;
+    run = run_;
+    // One period on from the due time, not from now, so the cadence does not
+    // drift; more than a period behind, it starts again from now.
+    const TimePoint now = clock_.now();
+    due_ = now - due_ > span ? now + span : due_ + span;
+  }
+
+  // Outside the mutex: stop() must not wait for a transport timeout.
+  auto reply = exchange(q::get_data(options_.terminator));
+  if (!reply) return observe(Next(fail(std::move(reply).error())));
+  auto data = q::decode_data(*reply);
+  if (!data) return observe(Next(fail(std::move(data).error())));
+
+  Frame frame;
+  frame.ts = clock_.now();
+  frame.seq = seq;
+  frame.integrated = true;
+  frame.span = span;
+  // Only the channels the reply names; one it omits is absent, never guessed.
+  for (const auto& channel : options_.channels) {
+    const auto it = std::find_if(data->begin(), data->end(), [&](const auto& pair) { return pair.first == channel; });
+    if (it != data->end()) frame.values.emplace_back(channel, it->second);
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (run != run_) return observe(Next(std::optional<Frame>{}));  // stopped during the read
+  }
+  return observe(Next(std::optional<Frame>{std::move(frame)}));
 }
 
 REGISTER_DRIVER("thermo_qtegra", QtegraSpectrometer);

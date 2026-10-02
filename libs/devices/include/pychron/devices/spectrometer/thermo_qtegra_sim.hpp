@@ -27,10 +27,14 @@ struct QtegraSimModel {
   std::map<std::string, bool> protect;  // by detector name
   std::map<std::string, double> deflection, gain;
   double hv = 0.0;
-  std::map<std::string, double> params;  // by hardware name
+  // By hardware name. GetParameter for a readback name absent here reports
+  // its set name's value.
+  std::map<std::string, double> params;
   double integration_s = 1.048576;
-  std::map<std::string, double> intensities;  // by detector name
-  std::string data_override;                  // when non-empty, GetData replies with this verbatim
+  // By detector name; GetData reports them tagged, in name order (an ERROR
+  // reply when empty).
+  std::map<std::string, double> intensities;
+  std::string data_override;  // when non-empty, GetData replies with this line verbatim
   const Clock* clock = nullptr;
 };
 

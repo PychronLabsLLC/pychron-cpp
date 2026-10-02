@@ -225,13 +225,48 @@ TEST(QtegraCodec, DecodeDataTagged) {
   EXPECT_DOUBLE_EQ((*p)[0].second, 0.0012);
   EXPECT_EQ((*p)[1].first, "H1");
   EXPECT_DOUBLE_EQ((*p)[1].second, -3.4e-3);
-  EXPECT_TRUE(q::decode_data(to_bytes("\r"))->empty());
   expect_protocol(q::decode_data(to_bytes("H2,1,H1\r")));
   expect_protocol(q::decode_data(to_bytes("H2,x\r")));
   expect_protocol(q::decode_data(to_bytes(",1\r")));
   expect_protocol(q::decode_data(to_bytes("ERROR: no data\r")));
   // pychron read_intensities: any reply containing "ERROR" is an error.
   expect_protocol(q::decode_data(to_bytes("H2,1,ERROR,2\r")));
+}
+
+// Tagged GetData replies no instrument capture covers. These outcomes are a
+// ruling pending a bench capture: anything that cannot be paired up cleanly is
+// a Protocol error rather than a guess, and names are kept exactly as sent
+// (matching is case-sensitive, left to the caller).
+TEST(QtegraCodec, DecodeDataTaggedEdgeReplies) {
+  for (std::string_view reply : {
+           "\r",                      // empty body
+           " \r\n",                   // blank body
+           "H2,1,H1,2,\r",            // trailing comma: odd field count
+           "H2,1,H1,\r",              // trailing comma: empty value
+           "H2,nan\r",                // not finite
+           "H2,NaN,H1,2\r",
+           "H2,inf\r",
+           "H2,1,H1,-Infinity\r",
+           "H2,1,H1,2,H2,3\r",        // duplicate name
+           "H2,1,H2,1\r",
+       }) {
+    SCOPED_TRACE(std::string(reply));
+    expect_protocol(q::decode_data(to_bytes(reply)));
+  }
+  auto lower = q::decode_data(to_bytes("h2,1,H2,2\r"));
+  ASSERT_TRUE(lower);
+  ASSERT_EQ(lower->size(), 2u);
+  EXPECT_EQ((*lower)[0].first, "h2");
+  EXPECT_EQ((*lower)[1].first, "H2");
+}
+
+TEST(QtegraCodec, EncodeDataAndLine) {
+  const q::Pairs pairs{{"H2", 0.0012}, {"H1", -3.4e-3}, {"CDD", 153.0}};
+  EXPECT_EQ(to_string(q::encode_data(pairs)), "H2,0.0012,H1,-0.0034,CDD,153\r\n");
+  auto back = q::decode_data(q::encode_data(pairs));
+  ASSERT_TRUE(back);
+  EXPECT_EQ(*back, pairs);
+  EXPECT_EQ(to_string(q::encode_line("H1,nan")), "H1,nan\r\n");
 }
 
 TEST(QtegraCodec, DecodeDataUntagged) {

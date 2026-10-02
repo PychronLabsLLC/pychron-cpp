@@ -397,7 +397,149 @@ TEST(Qtegra, ErrorReplyIsProtocol) {
   EXPECT_EQ(q.reconnects(), 0U);
 }
 
-// --- source / acquirer placeholders (Task 6) -------------------------------------
+// --- source --------------------------------------------------------------------
+
+TEST(Qtegra, SetHvExpectsOk) {
+  auto sim = open_scripted({step("SetHV 4500\r", "OK\r\n"), step("SetHV 9900.5\r", "ok\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  EXPECT_TRUE(q.set_hv(4500.0));
+  EXPECT_TRUE(q.set_hv(9900.5));
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, SetHvNonOkIsProtocol) {
+  auto sim = open_scripted({step("SetHV 4500\r", "4500\r\n"), step("SetHV 4500\r", "ERROR: interlock\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  for (int i = 0; i < 2; ++i) {
+    auto r = q.set_hv(4500.0);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+    EXPECT_EQ(r.error().device, "argus");
+  }
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, ReadHv) {
+  auto sim = open_scripted({step("GetHighVoltage\r", "4499.8\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto v = q.read_hv();
+  ASSERT_TRUE(v) << to_string(v.error());
+  EXPECT_DOUBLE_EQ(*v, 4499.8);
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, OutOfRangeHvIsConfigAndWritesNothing) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  const double inf = std::numeric_limits<double>::infinity();
+  for (double v : {-0.001, 10000.001, std::numeric_limits<double>::quiet_NaN(), inf, -inf}) {
+    expect_config(q.set_hv(v));
+    expect_config(q.set_param(SourceParam::HV, v));
+  }
+  EXPECT_TRUE(sim->written().empty());
+}
+
+TEST(Qtegra, ParamsCoverCodecMapWithNominalRanges) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  const auto specs = q.params();
+  // One spec per canonical parameter, under the codec's preferred hardware name.
+  EXPECT_EQ(specs.size(), source_params().size());
+  for (const auto& info : source_params()) {
+    const ParamSpec* spec = find_spec(specs, ParamId{info.param});
+    ASSERT_NE(spec, nullptr) << info.name;
+    EXPECT_EQ(spec->vendor_name, *codec::qtegra::hardware_name(info.name)) << info.name;
+    EXPECT_TRUE(spec->readable && spec->writable) << info.name;
+    if (info.param == SourceParam::HV) {
+      EXPECT_EQ(spec->range, (Range{0.0, 10000.0}));
+      EXPECT_EQ(spec->unit, Unit::Volts);
+    } else {
+      EXPECT_EQ(spec->range, (Range{-1e6, 1e6})) << info.name;
+      EXPECT_EQ(spec->unit, Unit::None) << info.name;
+    }
+  }
+}
+
+TEST(Qtegra, SetParamUsesHardwareName) {
+  auto sim = open_scripted({step("SetParameter Trap Current Set,200\r", "OK\r\n"),
+                            step("SetParameter Y-Symmetry Set,-12.5\r", "OK\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  EXPECT_TRUE(q.set_param(SourceParam::TrapCurrent, 200.0));
+  EXPECT_TRUE(q.set_param(SourceParam::YSymmetry, -12.5));
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, SetParamNonOkIsProtocol) {
+  auto sim = open_scripted({step("SetParameter Trap Current Set,200\r", "200\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto r = q.set_param(SourceParam::TrapCurrent, 200.0);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(r.error().device, "argus");
+}
+
+TEST(Qtegra, SetParamOutsideNominalRangeIsConfigAndWritesNothing) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  expect_config(q.set_param(SourceParam::TrapCurrent, 1.0000001e6));
+  expect_config(q.set_param(SourceParam::TrapCurrent, std::numeric_limits<double>::quiet_NaN()));
+  expect_config(q.set_param(Custom{"Rotation Quad"}, std::numeric_limits<double>::infinity()));
+  EXPECT_TRUE(sim->written().empty());
+}
+
+TEST(Qtegra, ReadParamWithReadbackName) {
+  auto sim = open_scripted({step("GetParameter Trap Current Set\r", "200\r\n"),
+                            step("GetParameter Trap Current Readback\r", "198.7\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto rb = q.read_param(SourceParam::TrapCurrent);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{200.0, 198.7}));
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, ReadParamReadbackFailureIsReturned) {
+  auto sim = open_scripted({step("GetParameter Trap Current Set\r", "200\r\n"),
+                            step("GetParameter Trap Current Readback\r", "ERROR: bad\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto rb = q.read_param(SourceParam::TrapCurrent);
+  ASSERT_FALSE(rb);
+  EXPECT_EQ(rb.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(rb.error().device, "argus");
+}
+
+TEST(Qtegra, ReadParamWithoutReadbackNameHasNoActual) {
+  auto sim = open_scripted({step("GetParameter Y-Symmetry Set\r", "-12.5\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  auto rb = q.read_param(SourceParam::YSymmetry);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{-12.5, std::nullopt}));
+  expect_verified(*sim);
+}
+
+// A Custom id names a hardware name the codec knows outside params(): here
+// the alias HelixSource writes the rotation quad under.
+TEST(Qtegra, CustomParamRoundTrip) {
+  auto sim = open_scripted({step("SetParameter Rotation Quad,1.5\r", "OK\r\n"),
+                            step("GetParameter Rotation Quad\r", "1.5\r\n")});
+  QtegraSpectrometer q("argus", *sim, {});
+  const ParamId id{Custom{"Rotation Quad"}};
+  ASSERT_TRUE(q.set_param(id, 1.5));
+  auto rb = q.read_param(id);
+  ASSERT_TRUE(rb) << to_string(rb.error());
+  EXPECT_EQ(*rb, (Readback{1.5, std::nullopt}));
+  expect_verified(*sim);
+}
+
+TEST(Qtegra, UnadvertisedParamIsConfig) {
+  auto sim = open_scripted({});
+  QtegraSpectrometer q("argus", *sim, {});
+  const ParamId id{Custom{"Filament Glow"}};
+  expect_config(q.set_param(id, 1.0));
+  expect_config(q.read_param(id));
+  EXPECT_TRUE(sim->written().empty());
+}
+
+// --- acquirer shape (behaviour is in test_thermo_qtegra_acquire.cpp) -----------
 
 TEST(Qtegra, ChannelsAndIntegratesAreReal) {
   auto sim = open_scripted({});
@@ -430,6 +572,27 @@ TEST_F(QtegraReconnect, IoErrorReconnectsRunsConnectAndRetries) {
   EXPECT_EQ(flaky.opens, 1);
   // The dropped exchange never reached the wire; connect ran before the retry.
   EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetMagnetDAC\r"}));
+}
+
+// The connect step runs inside next() here, so it must not need anything
+// next() holds; it also re-seeds the period from what the instrument reports.
+TEST_F(QtegraReconnect, ReconnectInsideNextDeliversTheFrame) {
+  {
+    std::lock_guard lock(model->mutex);
+    model->intensities = {{"H1", 1.5}};
+    model->integration_s = 2.097152;
+  }
+  ASSERT_TRUE(q.start());
+  flaky.fail_exchanges = 1;
+  auto frame = q.next(Duration::zero());
+  ASSERT_TRUE(frame) << to_string(frame.error());
+  ASSERT_TRUE(frame->has_value());
+  EXPECT_EQ((*frame)->values, (std::vector<std::pair<ChannelId, double>>{{"H1", 1.5}}));
+  EXPECT_EQ(q.reconnects(), 1U);
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetData\r"}));
+  // 2 s snaps to the re-seeded 2.097152 s: nothing is written.
+  ASSERT_TRUE(q.configure(2s));
+  EXPECT_EQ(sim->written().size(), 2U);
 }
 
 TEST_F(QtegraReconnect, ConnectIoErrorIsReturnedWithoutReconnecting) {
@@ -495,9 +658,38 @@ TEST(QtegraSimHook, SimHookAnswersPositionerBlankAndDetectorCommands) {
   EXPECT_FALSE(model->protect.at("CDD"));
 }
 
+TEST(QtegraSimHook, SimHookAnswersSourceAndAcquirerCommands) {
+  auto model = std::make_shared<QtegraSimModel>();
+  model->intensities = {{"H1", 1.5}, {"AX", -0.25}};
+  auto hook = qtegra_sim_hook(model);
+  auto ask = [&](std::string_view tx) { return to_string(hook(to_bytes(tx))); };
+
+  EXPECT_EQ(ask("SetHV 4500\r"), "OK\r\n");
+  EXPECT_EQ(ask("GetHighVoltage\r"), "4500\r\n");
+  EXPECT_EQ(ask("SetParameter Trap Current Set,200\r"), "OK\r\n");
+  EXPECT_EQ(ask("GetParameter Trap Current Set\r"), "200\r\n");
+  // A readback name reports its set name's value until the model holds one.
+  EXPECT_EQ(ask("GetParameter Trap Current Readback\r"), "200\r\n");
+  EXPECT_EQ(ask("GetParameter Never Set\r"), "0\r\n");
+  EXPECT_EQ(ask("SetIntegrationTime 2.097152\r"), "OK\r\n");
+  EXPECT_EQ(ask("GetIntegrationTime\r"), "2.097152\r\n");
+  EXPECT_EQ(ask("GetData\r"), "AX,-0.25,H1,1.5\r\n");
+  {
+    std::lock_guard lock(model->mutex);
+    EXPECT_DOUBLE_EQ(model->hv, 4500.0);
+    EXPECT_DOUBLE_EQ(model->params.at("Trap Current Set"), 200.0);
+    model->params["Trap Current Readback"] = 198.7;
+    model->data_override = "H1,nan";
+  }
+  EXPECT_EQ(ask("GetParameter Trap Current Readback\r"), "198.7\r\n");
+  EXPECT_EQ(ask("GetData\r"), "H1,nan\r\n");
+}
+
 TEST(QtegraSimHook, UnknownOrMalformedCommandAnswersError) {
   auto hook = qtegra_sim_hook(std::make_shared<QtegraSimModel>());
-  for (std::string_view tx : {"Reset\r", "SetMagnetDAC\r", "SetMagnetDAC x\r", "ProtectDetector CDD,Maybe\r", "\r"}) {
+  for (std::string_view tx : {"Reset\r", "SetMagnetDAC\r", "SetMagnetDAC x\r", "ProtectDetector CDD,Maybe\r", "\r",
+                              "SetHV\r", "SetParameter Trap Current Set\r", "SetIntegrationTime fast\r",
+                              "GetParameter\r", "GetData\r"}) {
     auto reply = codec::qtegra::decode_number(hook(to_bytes(tx)));
     ASSERT_FALSE(reply) << tx;
     EXPECT_EQ(reply.error().kind, ErrorKind::Protocol) << tx;

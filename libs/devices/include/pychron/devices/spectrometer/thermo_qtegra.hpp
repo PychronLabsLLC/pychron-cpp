@@ -9,8 +9,11 @@
 // reopen the transport, repeat the connect step, retry.
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "pychron/codecs/thermo_qtegra.hpp"
@@ -73,14 +76,26 @@ class QtegraSpectrometer final : public Device,
   Result<void> set_gain(const ChannelId& channel, double value) override;
   Result<double> read_gain(const ChannelId& channel) override;
 
-  // IBeamSource.
+  // IBeamSource. params() is the codec's canonical map, one spec per canonical
+  // name under its preferred hardware name: HV 0..10000 V, every other
+  // parameter a nominal -1e6..1e6 with no unit (real ranges are unverified).
+  // Custom{name} is accepted when `name` is a hardware name the codec knows
+  // outside params() (an alias or a readback name); it is sent as given and
+  // not range-checked. SetHV and SetParameter must be answered "OK".
   Result<void> set_hv(double volts) override;
   Result<double> read_hv() override;
   std::span<const ParamSpec> params() const override { return params_; }
   Result<void> set_param(const ParamId& id, double value) override;
   Result<Readback> read_param(const ParamId& id) override;
 
-  // IIntensityAcquirer.
+  // IIntensityAcquirer. Qtegra free-runs: start() and stop() are local, and
+  // next() polls GetData once per integration period on a fixed cadence.
+  // configure() snaps to a legal period and writes it only when it differs
+  // from the cached one, then holds frames back for settle_periods.
+  //
+  // The wire read in next() runs without the acquirer mutex, so stop() never
+  // waits for a transport timeout; a frame whose read was in flight when
+  // stop() was called is dropped (that next() returns nullopt).
   std::vector<ChannelId> channels() const override { return options_.channels; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration integration) override;
@@ -96,7 +111,18 @@ class QtegraSpectrometer final : public Device,
   Result<Bytes> exchange(Result<codec::Command> cmd);
   // For the setters whose reply pychron ignores: any reply but ERROR is success.
   Result<void> command_ack(Result<codec::Command> cmd);
+  // For SetHV / SetParameter: the reply must be "OK".
+  Result<void> command_ok(Result<codec::Command> cmd);
   Result<double> query_number(Result<codec::Command> cmd);
+  // The hardware name `id` is written and read under, with its spec when
+  // params() advertises it; Config when the id is not supported.
+  struct ParamTarget {
+    std::string hardware;
+    const ParamSpec* spec = nullptr;
+  };
+  Result<ParamTarget> param_target(const ParamId& id) const;
+  // The cached integration time as a legal period.
+  Duration period() const;
   // Config error unless `channel` is one of `channels`.
   Result<void> check_channel(const ChannelId& channel) const;
 
@@ -106,8 +132,18 @@ class QtegraSpectrometer final : public Device,
   const Clock& clock_;
   Reconnector reconnector_;
   std::vector<ParamSpec> params_;
-  // Seconds, as last reported by GetIntegrationTime; 0 until connected.
+  // Seconds, as last reported by GetIntegrationTime or written by
+  // configure(); 0 until connected. Atomic rather than under mutex_ because
+  // handshake() stores it from inside any command that reconnects.
   std::atomic<double> integration_s_{0.0};
+
+  // Acquirer state.
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool running_ = false;
+  std::uint64_t run_ = 0;  // bumped by stop(); a read begun in an earlier run is dropped
+  TimePoint due_{};
+  std::uint64_t seq_ = 0;  // never reset
 };
 
 }  // namespace pychron::spectrometer
