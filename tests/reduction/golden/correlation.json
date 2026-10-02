@@ -1,0 +1,1808 @@
+{
+ "cases": [
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age_a": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    },
+    "age_b": {
+     "e": 0.0687331389263246,
+     "v": 44.54737974088294
+    },
+    "cov": [
+     [
+      "f_a",
+      "f_a",
+      0.0001
+     ],
+     [
+      "f_a",
+      "f_b",
+      0.0
+     ],
+     [
+      "f_a",
+      "age_a",
+      0.00017862150638661196
+     ],
+     [
+      "f_a",
+      "age_b",
+      0.0
+     ],
+     [
+      "f_b",
+      "f_b",
+      0.0009
+     ],
+     [
+      "f_b",
+      "age_a",
+      0.0
+     ],
+     [
+      "f_b",
+      "age_b",
+      0.0015840677981017587
+     ],
+     [
+      "age_a",
+      "age_a",
+      0.000638112850876449
+     ],
+     [
+      "age_a",
+      "age_b",
+      0.0007859682675429434
+     ],
+     [
+      "age_b",
+      "age_b",
+      0.004724244386665438
+     ]
+    ],
+    "f_a": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "f_b": {
+     "e": 0.03,
+     "v": 25.0
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f_a": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "f_b": {
+     "e": 0.03,
+     "v": 25.0
+    },
+    "function": "age_equation_pair",
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "correlation/shared_j_age_equation",
+   "source": "argon_calculations.py:603-630 with one shared J ufloat",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age_a": {
+     "e": 0.12133961086158573,
+     "v": 35.72546869236826
+    },
+    "age_b": {
+     "e": 0.12202691901182393,
+     "v": 36.16759030088059
+    },
+    "cov": [
+     [
+      "f_a",
+      "f_a",
+      0.0004
+     ],
+     [
+      "f_a",
+      "f_b",
+      0.0
+     ],
+     [
+      "f_a",
+      "age_a",
+      0.001768703151475275
+     ],
+     [
+      "f_a",
+      "age_b",
+      0.0
+     ],
+     [
+      "f_b",
+      "f_b",
+      0.0004
+     ],
+     [
+      "f_b",
+      "age_a",
+      0.0
+     ],
+     [
+      "f_b",
+      "age_b",
+      0.001768269752026249
+     ],
+     [
+      "age_a",
+      "age_a",
+      0.014723301164041054
+     ],
+     [
+      "age_a",
+      "age_b",
+      0.0032426379126841032
+     ],
+     [
+      "age_b",
+      "age_b",
+      0.014890568963518234
+     ]
+    ],
+    "f_a": {
+     "e": 0.02,
+     "v": 8.0
+    },
+    "f_b": {
+     "e": 0.02,
+     "v": 8.1
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": true,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f_a": {
+     "e": 0.02,
+     "v": 8.0
+    },
+    "f_b": {
+     "e": 0.02,
+     "v": 8.1
+    },
+    "function": "age_equation_pair",
+    "j": {
+     "e": 4e-06,
+     "v": 0.0025
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "correlation/shared_j_age_equation_decay_error",
+   "source": "argon_calculations.py:603-630 with one shared J ufloat",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "A.age": {
+     "e": 0.029408973164355052,
+     "v": 7.102881626852909
+    },
+    "A.age_w_j_err": {
+     "e": 0.0302512884632095,
+     "v": 7.102881626852909
+    },
+    "A.f": {
+     "e": 0.016365700997118808,
+     "v": 3.9448879529658325
+    },
+    "B.age": {
+     "e": 0.03582063714770238,
+     "v": 12.762993172043622
+    },
+    "B.age_w_j_err": {
+     "e": 0.03801137176865771,
+     "v": 12.762993172043622
+    },
+    "B.f": {
+     "e": 0.019996344633362875,
+     "v": 7.099610698824541
+    },
+    "cov": [
+     [
+      "A.f",
+      "A.f",
+      0.0002678361691270955
+     ],
+     [
+      "A.f",
+      "B.f",
+      0.0
+     ],
+     [
+      "A.f",
+      "A.age",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age",
+      0.0
+     ],
+     [
+      "A.f",
+      "A.age_w_j_err",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.f",
+      0.00039985379869622025
+     ],
+     [
+      "B.f",
+      "A.age",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.age",
+      0.0007162818053920972
+     ],
+     [
+      "B.f",
+      "A.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.age_w_j_err",
+      0.0007162818053920972
+     ],
+     [
+      "A.age",
+      "A.age",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age",
+      0.0
+     ],
+     [
+      "A.age",
+      "A.age_w_j_err",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.age",
+      "B.age",
+      0.0012831180456673553
+     ],
+     [
+      "B.age",
+      "A.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.age",
+      "B.age_w_j_err",
+      0.0012831180456673553
+     ],
+     [
+      "A.age_w_j_err",
+      "A.age_w_j_err",
+      0.0009151404536843122
+     ],
+     [
+      "A.age_w_j_err",
+      "B.age_w_j_err",
+      9.01565220528653e-05
+     ],
+     [
+      "B.age_w_j_err",
+      "B.age_w_j_err",
+      0.0014448643837351083
+     ]
+    ]
+   },
+   "inputs": {
+    "analyses": {
+     "A": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.004,
+         "v": 2.05
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.04,
+         "v": 50.3
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 10.4
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.12,
+         "v": 101.7
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.31,
+         "v": 1003.2
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     },
+     "B": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.003,
+         "v": 1.21
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.03,
+         "v": 12.1
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 7.9
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.09,
+         "v": 64.2
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.27,
+         "v": 812.4
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     }
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "reduce_pair",
+    "shared": {
+     "j": true
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "correlation/shared_j_reduce",
+   "source": "arar_age.py:443-689 with one shared ufloat (spec Q2, owner requirement)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "A.age": {
+     "e": 0.029408973164355052,
+     "v": 7.102881626852909
+    },
+    "A.age_w_j_err": {
+     "e": 0.0302512884632095,
+     "v": 7.102881626852909
+    },
+    "A.f": {
+     "e": 0.016365700997118808,
+     "v": 3.9448879529658325
+    },
+    "B.age": {
+     "e": 0.03582063714770238,
+     "v": 12.762993172043622
+    },
+    "B.age_w_j_err": {
+     "e": 0.03801137176865771,
+     "v": 12.762993172043622
+    },
+    "B.f": {
+     "e": 0.019996344633362875,
+     "v": 7.099610698824541
+    },
+    "cov": [
+     [
+      "A.f",
+      "A.f",
+      0.0002678361691270955
+     ],
+     [
+      "A.f",
+      "B.f",
+      2.143543996452478e-06
+     ],
+     [
+      "A.f",
+      "A.age",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age",
+      3.8398573896826795e-06
+     ],
+     [
+      "A.f",
+      "A.age_w_j_err",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age_w_j_err",
+      3.8398573896826795e-06
+     ],
+     [
+      "B.f",
+      "B.f",
+      0.00039985379869622025
+     ],
+     [
+      "B.f",
+      "A.age",
+      3.851923475773108e-06
+     ],
+     [
+      "B.f",
+      "B.age",
+      0.0007162818053920972
+     ],
+     [
+      "B.f",
+      "A.age_w_j_err",
+      3.851923475773108e-06
+     ],
+     [
+      "B.f",
+      "B.age_w_j_err",
+      0.0007162818053920972
+     ],
+     [
+      "A.age",
+      "A.age",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age",
+      6.900178791486483e-06
+     ],
+     [
+      "A.age",
+      "A.age_w_j_err",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age_w_j_err",
+      6.900178791486483e-06
+     ],
+     [
+      "B.age",
+      "B.age",
+      0.0012831180456673553
+     ],
+     [
+      "B.age",
+      "A.age_w_j_err",
+      6.900178791486483e-06
+     ],
+     [
+      "B.age",
+      "B.age_w_j_err",
+      0.0012831180456673553
+     ],
+     [
+      "A.age_w_j_err",
+      "A.age_w_j_err",
+      0.0009151404536843122
+     ],
+     [
+      "A.age_w_j_err",
+      "B.age_w_j_err",
+      6.900178791486483e-06
+     ],
+     [
+      "B.age_w_j_err",
+      "B.age_w_j_err",
+      0.0014448643837351083
+     ]
+    ]
+   },
+   "inputs": {
+    "analyses": {
+     "A": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.004,
+         "v": 2.05
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.04,
+         "v": 50.3
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 10.4
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.12,
+         "v": 101.7
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.31,
+         "v": 1003.2
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     },
+     "B": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.003,
+         "v": 1.21
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.03,
+         "v": 12.1
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 7.9
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.09,
+         "v": 64.2
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.27,
+         "v": 812.4
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     }
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "reduce_pair",
+    "shared": {
+     "blank": "Ar36"
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "correlation/shared_blank_reduce",
+   "source": "arar_age.py:443-689 with one shared ufloat (spec Q2, owner requirement)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "A.age": {
+     "e": 0.029408973164355052,
+     "v": 7.102881626852909
+    },
+    "A.age_w_j_err": {
+     "e": 0.0302512884632095,
+     "v": 7.102881626852909
+    },
+    "A.f": {
+     "e": 0.016365700997118808,
+     "v": 3.9448879529658325
+    },
+    "B.age": {
+     "e": 0.03582063714770238,
+     "v": 12.762993172043622
+    },
+    "B.age_w_j_err": {
+     "e": 0.03801137176865771,
+     "v": 12.762993172043622
+    },
+    "B.f": {
+     "e": 0.019996344633362875,
+     "v": 7.099610698824541
+    },
+    "cov": [
+     [
+      "A.f",
+      "A.f",
+      0.0002678361691270955
+     ],
+     [
+      "A.f",
+      "B.f",
+      0.0
+     ],
+     [
+      "A.f",
+      "A.age",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age",
+      0.0
+     ],
+     [
+      "A.f",
+      "A.age_w_j_err",
+      0.0004812984614401257
+     ],
+     [
+      "A.f",
+      "B.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.f",
+      0.00039985379869622025
+     ],
+     [
+      "B.f",
+      "A.age",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.age",
+      0.0007162818053920972
+     ],
+     [
+      "B.f",
+      "A.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.f",
+      "B.age_w_j_err",
+      0.0007162818053920972
+     ],
+     [
+      "A.age",
+      "A.age",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age",
+      0.0
+     ],
+     [
+      "A.age",
+      "A.age_w_j_err",
+      0.0008648877025817555
+     ],
+     [
+      "A.age",
+      "B.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.age",
+      "B.age",
+      0.0012831180456673553
+     ],
+     [
+      "B.age",
+      "A.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.age",
+      "B.age_w_j_err",
+      0.0012831180456673553
+     ],
+     [
+      "A.age_w_j_err",
+      "A.age_w_j_err",
+      0.0009151404536843122
+     ],
+     [
+      "A.age_w_j_err",
+      "B.age_w_j_err",
+      0.0
+     ],
+     [
+      "B.age_w_j_err",
+      "B.age_w_j_err",
+      0.0014448643837351083
+     ]
+    ]
+   },
+   "inputs": {
+    "analyses": {
+     "A": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.004,
+         "v": 2.05
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.04,
+         "v": 50.3
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 10.4
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.12,
+         "v": 101.7
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.31,
+         "v": 1003.2
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     },
+     "B": {
+      "fixed_k3739": null,
+      "function": "reduce",
+      "irradiation": {
+       "decay_days": 1825.0,
+       "segments": []
+      },
+      "isotopes": {
+       "Ar36": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.0004,
+         "v": 0.006
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.003,
+         "v": 1.21
+        }
+       },
+       "Ar37": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.002,
+         "v": 0.03
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.03,
+         "v": 12.1
+        }
+       },
+       "Ar38": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.001,
+         "v": 0.01
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.02,
+         "v": 7.9
+        }
+       },
+       "Ar39": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.004,
+         "v": 0.05
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.09,
+         "v": 64.2
+        }
+       },
+       "Ar40": {
+        "baseline": {
+         "e": 0.0,
+         "v": 0.0
+        },
+        "blank": {
+         "e": 0.05,
+         "v": 2.1
+        },
+        "correct_for_blank": true,
+        "ic_factor": {
+         "e": 0.0,
+         "v": 1.0
+        },
+        "include_baseline_error": false,
+        "intercept": {
+         "e": 0.27,
+         "v": 812.4
+        }
+       }
+      },
+      "j": {
+       "e": 1e-06,
+       "v": 0.001
+      },
+      "lambda_k_total": null,
+      "position_jerr": 5e-07,
+      "production": {
+       "Ca3637": {
+        "e": 0.0,
+        "v": 0.00026
+       },
+       "Ca3837": {
+        "e": 0.0,
+        "v": 0.00019
+       },
+       "Ca3937": {
+        "e": 0.0,
+        "v": 0.0007
+       },
+       "Ca_K": {
+        "e": 0.0,
+        "v": 2.0
+       },
+       "Cl3638": {
+        "e": 0.0,
+        "v": 0.0
+       },
+       "Cl_K": {
+        "e": 0.0,
+        "v": 0.1
+       },
+       "K3739": {
+        "e": 0.0,
+        "v": 0.01
+       },
+       "K3839": {
+        "e": 0.0,
+        "v": 0.013
+       },
+       "K4039": {
+        "e": 0.0,
+        "v": 0.0002
+       }
+      }
+     }
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "reduce_pair",
+    "shared": {}
+   },
+   "legacy_sentinel": null,
+   "name": "correlation/independent_reduce",
+   "source": "arar_age.py:443-689 with one shared ufloat (spec Q2, owner requirement)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  }
+ ],
+ "legacy_commit": "26e77ad17d9e971093f0f82771047f2056cd92b4",
+ "legacy_dirty": false,
+ "packages": {
+  "numpy": "2.4.4",
+  "python": "3.12.14",
+  "pyyaml": "6.0.3",
+  "scipy": "1.17.1",
+  "statsmodels": "0.14.6",
+  "traits": "7.1.0",
+  "uncertainties": "3.2.3"
+ },
+ "schema": 1
+}

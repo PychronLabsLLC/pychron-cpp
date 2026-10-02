@@ -1,0 +1,2050 @@
+{
+ "cases": [
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/known_jf@legacy",
+   "source": "argon_calculations_test.py:AgeEquationTest:test_age_for_known_jf",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/zero_jf@legacy",
+   "source": "argon_calculations_test.py:AgeEquationTest:test_zero_jf_returns_zero",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.03964940579212487,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": true,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/include_decay_error@legacy",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_include_decay_error_increases_uncertainty",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.0,
+     "v": 9950330.853168089
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": 10.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 0.0,
+     "v": 1e-15
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/explicit_lambda_k@legacy",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_explicit_lambda_k_used",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.04383570648447531,
+     "v": 17.99173827532428
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": true,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 1.1e-12,
+     "v": 5.5305e-10
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/lambda_k_override_with_error@legacy",
+   "source": "dvc/dvc.py:2303-2305; argon_calculations.py:614",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/lambda_k_zero_ignored@legacy",
+   "source": "argon_calculations.py:614 (`if not lambda_k`)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "1 + J F",
+   "expected": {},
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": -2.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "name": "age/negative_argument@legacy",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_negative_argument_returns_zero (spec Q6)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "1 + J F",
+   "expected": {},
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": -1.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "name": "age/argument_exactly_zero@legacy",
+   "source": "argon_calculations.py:626-630 (log(0))",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 17951.23922442701,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 1000.0,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1.0,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/huge_errors@legacy",
+   "source": "spec 7 (huge input errors)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 3.092546017358711,
+     "v": 2556.4965177460654
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.4,
+     "v": 250.0
+    },
+    "j": {
+     "e": 2e-05,
+     "v": 0.0125
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/old_sample@legacy",
+   "source": "argon_calculations.py:603-630",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 25260.89568634591,
+     "v": 17951165.16898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "a",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_a@legacy",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 25.260895686345908,
+     "v": 17951.16516898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "ka",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_ka@legacy",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_Ma@legacy",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 2.526089568634591e-05,
+     "v": 0.01795116516898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ga",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_Ga@legacy",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/known_jf@legacy_preferences",
+   "source": "argon_calculations_test.py:AgeEquationTest:test_age_for_known_jf",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/zero_jf@legacy_preferences",
+   "source": "argon_calculations_test.py:AgeEquationTest:test_zero_jf_returns_zero",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025786863071461764,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": true,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/include_decay_error@legacy_preferences",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_include_decay_error_increases_uncertainty",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.0,
+     "v": 9950330.853168089
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": 10.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 0.0,
+     "v": 1e-15
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/explicit_lambda_k@legacy_preferences",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_explicit_lambda_k_used",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.04383570648447531,
+     "v": 17.99173827532428
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": true,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 1.1e-12,
+     "v": 5.5305e-10
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/lambda_k_override_with_error@legacy_preferences",
+   "source": "dvc/dvc.py:2303-2305; argon_calculations.py:614",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "age/lambda_k_zero_ignored@legacy_preferences",
+   "source": "argon_calculations.py:614 (`if not lambda_k`)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "1 + J F",
+   "expected": {},
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": -2.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "name": "age/negative_argument@legacy_preferences",
+   "source": "argon_calculations_test.py:AgeEquationEdgeCasesTest:test_negative_argument_returns_zero (spec Q6)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "1 + J F",
+   "expected": {},
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.0,
+     "v": -1.0
+    },
+    "j": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": {
+    "age": {
+     "e": 0.0,
+     "v": 0.0
+    }
+   },
+   "name": "age/argument_exactly_zero@legacy_preferences",
+   "source": "argon_calculations.py:626-630 (log(0))",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 17951.23922442701,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 1000.0,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1.0,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/huge_errors@legacy_preferences",
+   "source": "spec 7 (huge input errors)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 3.092546017358711,
+     "v": 2556.4965177460654
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.4,
+     "v": 250.0
+    },
+    "j": {
+     "e": 2e-05,
+     "v": 0.0125
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/old_sample@legacy_preferences",
+   "source": "argon_calculations.py:603-630",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 25260.89568634591,
+     "v": 17951165.16898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "a",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_a@legacy_preferences",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 25.260895686345908,
+     "v": 17951.16516898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "ka",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_ka@legacy_preferences",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 0.025260895686345902,
+     "v": 17.951165168984467
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_Ma@legacy_preferences",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "age": {
+     "e": 2.526089568634591e-05,
+     "v": 0.01795116516898447
+    }
+   },
+   "inputs": {
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ga",
+     "allow_negative_ca_correction": false,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.01,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 0.0,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "f": {
+     "e": 0.01,
+     "v": 10.0
+    },
+    "j": {
+     "e": 1e-06,
+     "v": 0.001
+    },
+    "lambda_k_total": null
+   },
+   "legacy_sentinel": null,
+   "name": "age/units_Ga@legacy_preferences",
+   "source": "arar_constants.py:143-170 (scale_age)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  }
+ ],
+ "legacy_commit": "26e77ad17d9e971093f0f82771047f2056cd92b4",
+ "legacy_dirty": false,
+ "packages": {
+  "numpy": "2.4.4",
+  "python": "3.12.14",
+  "pyyaml": "6.0.3",
+  "scipy": "1.17.1",
+  "statsmodels": "0.14.6",
+  "traits": "7.1.0",
+  "uncertainties": "3.2.3"
+ },
+ "schema": 1
+}

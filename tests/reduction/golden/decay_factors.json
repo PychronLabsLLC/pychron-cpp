@@ -1,0 +1,631 @@
+{
+ "cases": [
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1.022997480219743,
+    "df39": 1.0223515753822912
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 7.2e-10,
+    "lambda39": 7e-10,
+    "segments": [
+     {
+      "dt_days": 31536000.0,
+      "duration_days": 86400.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/known_single_segment",
+   "source": "argon_calculations_test.py:DecayFactorsTest:test_known_single_segment",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1.0000315796863324,
+    "df39": 1.0000315796863324
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 1e-12,
+    "lambda39": 1e-12,
+    "segments": [
+     {
+      "dt_days": 31536000.0,
+      "duration_days": 86400.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/near_zero_lambda",
+   "source": "argon_calculations_test.py:DecayFactorsTest:test_zero_decay_constants_approach_unity",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1.0,
+    "df39": 1.0
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 1e-10,
+    "lambda39": 1e-10,
+    "segments": []
+   },
+   "legacy_sentinel": null,
+   "name": "decay/no_segments",
+   "source": "argon_calculations_test.py:DecayFactorsTest:test_no_segments_returns_unity",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "same unit",
+   "expected": {},
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.02,
+    "lambda39": 7e-06,
+    "segments": [
+     {
+      "dt_days": 31536000.0,
+      "duration_days": 86400.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/unit_guard_seconds",
+   "source": "argon_calculations_test.py:DecayFactorsTest:test_unit_mismatch_raises",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1495.152269862354,
+    "df39": 1.0025617757572447
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.02,
+    "lambda39": 7e-06,
+    "segments": [
+     {
+      "dt_days": 365.0,
+      "duration_days": 1.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/days_one_year",
+   "source": "argon_calculations_test.py:DecayFactorsTest:test_days_units_pass_guard",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 7420.6579551288305,
+    "df39": 1.0004200677870652
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.5,
+    "lambda39": 7e-06,
+    "segments": [
+     {
+      "dt_days": 10.0,
+      "duration_days": 100.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/guard_exactly_50",
+   "source": "argon_calculations.py:260-279 (boundary passes)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "same unit",
+   "expected": {},
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.5,
+    "lambda39": 7e-06,
+    "segments": [
+     {
+      "dt_days": 10.0,
+      "duration_days": 100.000001,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/guard_just_above_50",
+   "source": "argon_calculations.py:260-279",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "same unit",
+   "expected": {},
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.02,
+    "lambda39": 7e-06,
+    "segments": [
+     {
+      "dt_days": 2600.0,
+      "duration_days": 1.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/guard_on_dt",
+   "source": "argon_calculations.py:260-279 (max(|t|, |dt|))",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1364.5892511800246,
+    "df39": 1.0025866937385401
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "segments": [
+     {
+      "dt_days": 365.0,
+      "duration_days": 1.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/arar_age_segment",
+   "source": "arar_age_test.py:167-175",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1856.0653035328473,
+    "df39": 1.0027124144373665
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "segments": [
+     {
+      "dt_days": 400.0,
+      "duration_days": 0.5,
+      "power": 1.0
+     },
+     {
+      "dt_days": 380.0,
+      "duration_days": 0.75,
+      "power": 0.8
+     },
+     {
+      "dt_days": 360.5,
+      "duration_days": 0.25,
+      "power": 1.2
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/multi_segment",
+   "source": "argon_calculations.py:349-360",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 1.0,
+    "df39": 1.0
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "segments": [
+     {
+      "dt_days": 10.0,
+      "duration_days": 1.0,
+      "power": 0.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/zero_power",
+   "source": "argon_calculations.py:358-359 (b == 0 -> 1)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "df37": 0.99993499254166,
+    "df39": 0.9999999999895239
+   },
+   "inputs": {
+    "function": "decay_factors",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "segments": [
+     {
+      "dt_days": -1.0,
+      "duration_days": 2.0,
+      "power": 1.0
+     }
+    ]
+   },
+   "legacy_sentinel": null,
+   "name": "decay/negative_dt",
+   "source": "argon_calculations.py:349-360 (dt < 0)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 198.23969907407408,
+    "df37": 49.36318828106533,
+    "df39": 1.0013964493983483,
+    "segments": [
+     {
+      "dt_days": 198.23969907407408,
+      "duration_days": 0.5,
+      "power": 1.0
+     },
+     {
+      "dt_days": 196.3230324074074,
+      "duration_days": 0.8541666666666666,
+      "power": 0.9
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1726407910,
+    "doses": [
+     {
+      "end_utc_s": 1709323200,
+      "power": 1.0,
+      "start_utc_s": 1709280000
+     },
+     {
+      "end_utc_s": 1709519400,
+      "power": 0.9,
+      "start_utc_s": 1709445600
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": false
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/two_doses_with_gap/starttime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 198.23969907407408,
+    "df37": 48.668342570628774,
+    "df39": 1.0013913916023622,
+    "segments": [
+     {
+      "dt_days": 197.73969907407408,
+      "duration_days": 0.5,
+      "power": 1.0
+     },
+     {
+      "dt_days": 195.46886574074074,
+      "duration_days": 0.8541666666666666,
+      "power": 0.9
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1726407910,
+    "doses": [
+     {
+      "end_utc_s": 1709323200,
+      "power": 1.0,
+      "start_utc_s": 1709280000
+     },
+     {
+      "end_utc_s": 1709519400,
+      "power": 0.9,
+      "start_utc_s": 1709445600
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": true
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/two_doses_with_gap/endtime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 22.5,
+    "df37": 1.5944222940593455,
+    "df39": 1.0001669954349848,
+    "segments": [
+     {
+      "dt_days": 22.5,
+      "duration_days": 2.25,
+      "power": 1.0
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1675252800,
+    "doses": [
+     {
+      "end_utc_s": 1673503200,
+      "power": 1.0,
+      "start_utc_s": 1673308800
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": false
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/single_dose/starttime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 22.5,
+    "df37": 1.5251213376179704,
+    "df39": 1.0001510899057293,
+    "segments": [
+     {
+      "dt_days": 20.25,
+      "duration_days": 2.25,
+      "power": 1.0
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1675252800,
+    "doses": [
+     {
+      "end_utc_s": 1673503200,
+      "power": 1.0,
+      "start_utc_s": 1673308800
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": true
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/single_dose/endtime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 1.5,
+    "df37": 1.0531245134423928,
+    "df39": 1.0000185536649164,
+    "segments": [
+     {
+      "dt_days": 1.5,
+      "duration_days": 2.25,
+      "power": 1.0
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1673438400,
+    "doses": [
+     {
+      "end_utc_s": 1673503200,
+      "power": 1.0,
+      "start_utc_s": 1673308800
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": false
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/analysis_before_end/starttime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "decay_days": 1.5,
+    "df37": 1.0073508584293256,
+    "df39": 1.000002650496312,
+    "segments": [
+     {
+      "dt_days": -0.75,
+      "duration_days": 2.25,
+      "power": 1.0
+     }
+    ]
+   },
+   "inputs": {
+    "analysis_utc_s": 1673438400,
+    "doses": [
+     {
+      "end_utc_s": 1673503200,
+      "power": 1.0,
+      "start_utc_s": 1673308800
+     }
+    ],
+    "function": "irradiation_from_doses",
+    "lambda37": 0.01975,
+    "lambda39": 7.068e-06,
+    "use_irradiation_endtime": true
+   },
+   "legacy_sentinel": null,
+   "name": "chronology/analysis_before_end/endtime",
+   "source": "dvc/dvc_analysis.py:370-395 set_chronology (UTC, spec Q11/Q12)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-13,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  }
+ ],
+ "legacy_commit": "26e77ad17d9e971093f0f82771047f2056cd92b4",
+ "legacy_dirty": false,
+ "packages": {
+  "numpy": "2.4.4",
+  "python": "3.12.14",
+  "pyyaml": "6.0.3",
+  "scipy": "1.17.1",
+  "statsmodels": "0.14.6",
+  "traits": "7.1.0",
+  "uncertainties": "3.2.3"
+ },
+ "schema": 1
+}

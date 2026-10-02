@@ -1,0 +1,1239 @@
+{
+ "cases": [
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.001,
+     "v": 0.09974000000000001
+    },
+    "atm38": {
+     "e": 0.00019175022691809586,
+     "v": 0.01871312380952381
+    },
+    "cl36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "cl38": {
+     "e": 0.0050046746297359975,
+     "v": 0.46809687619047613
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 0.0,
+     "v": 0.00026
+    },
+    "ca38": {
+     "e": 0.0,
+     "v": 0.00019
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 365.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0001,
+     "v": 0.013
+    },
+    "production": {
+     "Cl3638": {
+      "e": 0.0,
+      "v": 0.0
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/no_chlorine",
+   "source": "argon_calculations_test.py:AtmosphericTest:test_no_chlorine_atm36_is_nonradiogenic",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.0,
+     "v": 0.1
+    },
+    "atm38": {
+     "e": 3.969161181975664e-05,
+     "v": 0.018761904761904764
+    },
+    "cl36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "cl38": {
+     "e": 3.969161181975664e-05,
+     "v": 0.46823809523809523
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.0,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.0,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "ca38": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 365.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0,
+     "v": 0.013
+    },
+    "production": {
+     "Cl3638": {
+      "e": 0.0,
+      "v": 0.0
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/atm38_ratio",
+   "source": "argon_calculations_test.py:AtmosphericTest:test_atm38_proportional_to_atm36",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.0010001266827635868,
+     "v": 0.09973045070135902
+    },
+    "atm38": {
+     "e": 0.0001917735831024646,
+     "v": 0.01871133217920736
+    },
+    "cl36": {
+     "e": 6.113045375263036e-06,
+     "v": 0.0002695492986409874
+    },
+    "cl38": {
+     "e": 0.0050052152374894816,
+     "v": 0.46828866782079265
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "ca38": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 365.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0001,
+     "v": 0.013
+    },
+    "production": {
+     "Cl3638": {
+      "e": 5.0,
+      "v": 250.0
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/with_chlorine",
+   "source": "argon_calculations_test.py:CalculateAtmosphericChlorineTest:test_with_chlorine_yields_nonzero_cl",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.001000001999998,
+     "v": 0.0998
+    },
+    "atm38": {
+     "e": 0.00019175551227398291,
+     "v": 0.018724380952380954
+    },
+    "cl36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "cl38": {
+     "e": 0.005004674932149685,
+     "v": 0.46817561904761906
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 2e-06,
+     "v": 0.0002
+    },
+    "ca38": {
+     "e": 1e-06,
+     "v": 0.0001
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 0.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0001,
+     "v": 0.013
+    },
+    "production": {
+     "Cl3638": {
+      "e": 5.0,
+      "v": 250.0
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/chlorine_decay_days_0",
+   "source": "argon_calculations.py:468-487",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.0010029533040979998,
+     "v": 0.09710224430123056
+    },
+    "atm38": {
+     "e": 0.00019208796664357453,
+     "v": 0.018218230597468972
+    },
+    "cl36": {
+     "e": 6.12298720526395e-05,
+     "v": 0.002697755698769439
+    },
+    "cl38": {
+     "e": 0.005010087426318036,
+     "v": 0.46868176940253103
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 2e-06,
+     "v": 0.0002
+    },
+    "ca38": {
+     "e": 1e-06,
+     "v": 0.0001
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 3650.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0001,
+     "v": 0.013
+    },
+    "production": {
+     "Cl3638": {
+      "e": 5.0,
+      "v": 250.0
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/chlorine_decay_days_3650",
+   "source": "argon_calculations.py:468-487",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "atm36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "atm38": {
+     "e": 0.00019177155961802236,
+     "v": 0.018761904761904764
+    },
+    "cl36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "cl38": {
+     "e": 0.005004675447127249,
+     "v": 0.46823809523809523
+    }
+   },
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "ca38": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 365.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0001,
+     "v": 0.013
+    },
+    "production": {}
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/missing_cl3638",
+   "source": "argon_calculations.py:481 (missing = 0)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "zero divisor",
+   "expected": {},
+   "inputs": {
+    "a36": {
+     "e": 0.001,
+     "v": 0.1
+    },
+    "a38": {
+     "e": 0.005,
+     "v": 0.5
+    },
+    "ca36": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "ca38": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": null,
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "decay_days": 365.0,
+    "function": "atmospheric_components",
+    "k38": {
+     "e": 0.0,
+     "v": 0.0
+    },
+    "production": {
+     "Cl3638": {
+      "e": 0.0,
+      "v": 2314933.5215028883
+     }
+    }
+   },
+   "legacy_sentinel": null,
+   "name": "atmospheric/singular_denominator",
+   "source": "argon_calculations.py:482 (spec Q16); Cl3638 chosen so that 1 - ((Cl3638 * lambda_Cl36) * decay_days) * (atm4036 / atm4038) == 0",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "cosmo36": {
+     "e": 0.0021593608291945584,
+     "v": 0.0
+    },
+    "cosmo38": {
+     "e": 0.000403584538976463,
+     "v": 0.0
+    },
+    "noncosmo36": {
+     "e": 0.0021593608291945584,
+     "v": 1.0
+    },
+    "noncosmo38": {
+     "e": 0.000403584538976463,
+     "v": 0.1869
+    }
+   },
+   "inputs": {
+    "c36": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "c38": {
+     "e": 0.0,
+     "v": 0.1869
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.65
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.1869
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/pure_solar",
+   "source": "argon_calculations_test.py:CosmogenicComponentsTest:test_pure_solar_returns_all_solar",
+   "tol": {
+    "atol": 1e-12,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": "pure end-member: fs is exactly 1 or 0, so one pair of components is an exact cancellation (expected 0)"
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "cosmo36": {
+     "e": 0.021593608291945583,
+     "v": 1.0
+    },
+    "cosmo38": {
+     "e": 0.01403584538976463,
+     "v": 0.65
+    },
+    "noncosmo36": {
+     "e": 0.021593608291945583,
+     "v": 0.0
+    },
+    "noncosmo38": {
+     "e": 0.01403584538976463,
+     "v": 0.0
+    }
+   },
+   "inputs": {
+    "c36": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "c38": {
+     "e": 0.0,
+     "v": 0.65
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.65
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.1869
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/pure_cosmo",
+   "source": "argon_calculations_test.py:CosmogenicComponentsTest:test_pure_cosmogenic_returns_all_cosmo",
+   "tol": {
+    "atol": 1e-12,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": "pure end-member: fs is exactly 1 or 0, so one pair of components is an exact cancellation (expected 0)"
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "cosmo36": {
+     "e": 0.0055204176130317665,
+     "v": 0.24422370978190455
+    },
+    "cosmo38": {
+     "e": 0.0016561252839095303,
+     "v": 0.07326711293457136
+    },
+    "noncosmo36": {
+     "e": 0.0055204176130317665,
+     "v": 0.7557762902180954
+    },
+    "noncosmo38": {
+     "e": 0.0016561252839095303,
+     "v": 0.22673288706542863
+    }
+   },
+   "inputs": {
+    "c36": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "c38": {
+     "e": 0.0,
+     "v": 0.3
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.65
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.1869
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/mixed",
+   "source": "argon_calculations_test.py:CosmogenicComponentsTest:test_components_sum_to_total",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": null,
+   "expected": {
+    "cosmo36": {
+     "e": 0.01372224178846906,
+     "v": 0.27251133664435323
+    },
+    "cosmo38": {
+     "e": 0.004199198751196959,
+     "v": 0.06812783416108831
+    },
+    "noncosmo36": {
+     "e": 0.030185552022157502,
+     "v": 1.7274886633556468
+    },
+    "noncosmo38": {
+     "e": 0.0034638421055509993,
+     "v": 0.4318721658389117
+    }
+   },
+   "inputs": {
+    "c36": {
+     "e": 0.02,
+     "v": 2.0
+    },
+    "c38": {
+     "e": 0.004,
+     "v": 0.5
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.65
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.1869
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/mixed_with_errors",
+   "source": "argon_calculations.py:490-513",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "zero divisor",
+   "expected": {},
+   "inputs": {
+    "c36": {
+     "e": 0.01,
+     "v": 0.0
+    },
+    "c38": {
+     "e": 0.0,
+     "v": 0.3
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.65
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.1869
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/zero_c36",
+   "source": "argon_calculations.py:501 (spec Q16)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  },
+  {
+   "expect_diagnostics": [],
+   "expect_error": "zero divisor",
+   "expected": {},
+   "inputs": {
+    "c36": {
+     "e": 0.0,
+     "v": 1.0
+    },
+    "c38": {
+     "e": 0.0,
+     "v": 0.3
+    },
+    "constants": {
+     "abundance_sensitivity": 0.0,
+     "age_units": "Ma",
+     "allow_negative_ca_correction": true,
+     "atm4036": {
+      "e": 0.5,
+      "v": 295.5
+     },
+     "atm4038": {
+      "e": 2.0,
+      "v": 1575.0
+     },
+     "cosmogenic": {
+      "cosmo3836": {
+       "e": 0.01,
+       "v": 0.4
+      },
+      "solar3836": {
+       "e": 0.001,
+       "v": 0.4
+      }
+     },
+     "fixed_k3739": {
+      "e": 0.0001,
+      "v": 0.01
+     },
+     "include_decay_error": false,
+     "k3739_mode": "Normal",
+     "lambda_ar37": {
+      "e": 0.0,
+      "v": 0.01975
+     },
+     "lambda_ar39": {
+      "e": 0.0,
+      "v": 7.068e-06
+     },
+     "lambda_b": {
+      "e": 9.3e-13,
+      "v": 4.962e-10
+     },
+     "lambda_cl36": {
+      "e": 0.0,
+      "v": 6.308e-09
+     },
+     "lambda_e": {
+      "e": 1.6e-13,
+      "v": 5.81e-11
+     },
+     "use_irradiation_endtime": false
+    },
+    "function": "cosmogenic_components"
+   },
+   "legacy_sentinel": null,
+   "name": "cosmogenic/rc_equals_rs",
+   "source": "argon_calculations.py:505 (spec Q16)",
+   "tol": {
+    "atol": 0.0,
+    "atol_err": 0.0,
+    "rtol": 1e-12,
+    "rtol_err": 1e-10,
+    "why": ""
+   }
+  }
+ ],
+ "legacy_commit": "26e77ad17d9e971093f0f82771047f2056cd92b4",
+ "legacy_dirty": false,
+ "packages": {
+  "numpy": "2.4.4",
+  "python": "3.12.14",
+  "pyyaml": "6.0.3",
+  "scipy": "1.17.1",
+  "statsmodels": "0.14.6",
+  "traits": "7.1.0",
+  "uncertainties": "3.2.3"
+ },
+ "schema": 1
+}
