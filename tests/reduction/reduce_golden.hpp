@@ -128,7 +128,7 @@ inline void check_u(const UFloat& got, const Json& w, const Tol& t, const std::s
 }
 
 inline void check_group(const Json& w, const std::map<std::string, const UFloat*>& got,
-                 const Tol& t, const std::string& group) {
+                        const Tol& t, const std::string& group) {
   if (w.size() != got.size()) {
     ADD_FAILURE() << group << ": expected key count " << w.size() << ", got " << got.size();
   }

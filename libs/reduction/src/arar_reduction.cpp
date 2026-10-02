@@ -465,7 +465,6 @@ Result<void> check_ufloat(const UFloat& x, const std::string& name) {
   return {};
 }
 
-
 // Spec 6 input policy: every field reduce() reads, before any arithmetic.
 Result<void> validate(const ReductionInput& in) {
   for (const ArgonIsotope iso : kArgonKeys) {

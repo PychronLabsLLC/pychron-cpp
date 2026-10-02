@@ -178,8 +178,8 @@ enum class Diagnostic : std::uint8_t {
   FUndefined,            // k39 == 0; legacy F = 1 +- 0
   YieldUndefined,        // n40 == 0; legacy 0 +- 0
   AgeUndefined,          // 1 + J F <= 0; legacy 0 +- 0
-  KCaUndefined,          // ca37 == 0; legacy kca = 0
-  KClUndefined,          // cl38 == 0; legacy kcl = 0
+  KCaUndefined,          // ca37 == 0 (kca, cak absent), or ca37 != 0 but kca == 0 (kca kept, cak absent)
+  KClUndefined,          // cl38 == 0 (kcl, clk absent), or cl38 != 0 but kcl == 0 (kcl kept, clk absent)
   CaClampedToZero,       // E11 clamp applied
   FixedK3739ZeroCa3937,  // E10 y = 1 fallback
   NonFiniteResult,       // a computed value is NaN/inf

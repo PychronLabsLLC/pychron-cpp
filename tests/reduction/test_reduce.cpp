@@ -25,12 +25,6 @@ namespace g = pychron::reduction::golden;
 
 namespace {
 
-std::vector<std::string> names_of(const std::vector<Diagnostic>& d) {
-  std::vector<std::string> out;
-  for (const Diagnostic x : d) out.emplace_back(to_string(x));
-  return out;
-}
-
 bool has(const std::vector<Diagnostic>& d, Diagnostic x) {
   return std::find(d.begin(), d.end(), x) != d.end();
 }
@@ -468,7 +462,7 @@ TEST(Reduce, KCaUsesClampedCa37AndCaK) {
     EXPECT_EQ(r->f.interference.ca37.nominal(), 0.0);
     EXPECT_FALSE(r->kca.has_value());
     EXPECT_FALSE(r->cak.has_value());
-    EXPECT_EQ(names_of(r->diagnostics),
+    EXPECT_EQ(g::diagnostic_names(r->diagnostics),
               (std::vector<std::string>{"CaClampedToZero", "KCaUndefined"}));
     // Without the clamp the negative ca37 is used as is.
     in.constants.allow_negative_ca_correction = true;

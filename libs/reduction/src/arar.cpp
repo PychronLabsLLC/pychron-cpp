@@ -42,7 +42,10 @@ std::map<std::string, double> compute_arar(const ArArIntensities& in, const ArAr
   if (h39) out["k39"] = k39;
 
   // E12. Without chlorine m = 0 and Ar38, k38, ca38 do not enter.
-  const LiveChlorine* cl = c.chlorine ? &*c.chlorine : nullptr;
+  // Ar38 is required only when the correction is not a no-op (m != 0).
+  const bool m_nonzero =
+      c.chlorine && c.chlorine->cl3638 * c.chlorine->lambda_cl36 * c.chlorine->decay_days != 0.0;
+  const LiveChlorine* cl = c.chlorine && (h38 || m_nonzero) ? &*c.chlorine : nullptr;
   if (!h36 || (cl != nullptr && !h38)) return out;
   const kernels::Atmospheric<double> atm =
       cl != nullptr ? kernels::atmospheric(*in.ar38, *in.ar36, k38, ca38, ca36, cl->decay_days,

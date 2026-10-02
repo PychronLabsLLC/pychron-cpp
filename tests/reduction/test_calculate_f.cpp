@@ -397,43 +397,10 @@ TEST(CalculateF, Golden) {
     else if (name.ends_with("@legacy_preferences")) ++n_prefs;
     const g::Tol t = g::tol_of(c);
 
-    // Constants: every key is read or explicitly irrelevant to calculate_f.
-    const g::Json& k = in["constants"];
+    // Constants: every key is read by the shared parser (unknown keys fail).
     ReductionConstants rc;
-    bool ok = true;
-    for (const auto& [key, v] : k.as_object()) {
-      if (key == "lambda_cl36") rc.lambda_cl36 = measured_of(v);
-      else if (key == "atm4036") rc.atm4036 = measured_of(v);
-      else if (key == "atm4038") rc.atm4038 = measured_of(v);
-      else if (key == "fixed_k3739") rc.fixed_k3739 = measured_of(v);
-      else if (key == "allow_negative_ca_correction") rc.allow_negative_ca_correction = v.as_bool();
-      else if (key == "k3739_mode") {
-        if (v.as_string() == "Fixed") {
-          rc.k3739_mode = K3739Mode::Fixed;
-        } else if (v.as_string() != "Normal") {
-          ADD_FAILURE() << name << ": unknown k3739_mode " << v.string;
-          ok = false;
-        }
-      } else if (key == "cosmogenic") {
-        if (!v.is_null()) {
-          rc.cosmogenic =
-              CosmogenicRatios{measured_of(v["solar3836"]), measured_of(v["cosmo3836"])};
-        }
-      } else if (key == "lambda_b") rc.lambda_b = measured_of(v);
-      else if (key == "lambda_e") rc.lambda_e = measured_of(v);
-      else if (key == "lambda_ar37") rc.lambda_ar37 = measured_of(v);
-      else if (key == "lambda_ar39") rc.lambda_ar39 = measured_of(v);
-      else if (key == "abundance_sensitivity") rc.abundance_sensitivity = v.as_number();
-      else if (key == "include_decay_error") rc.include_decay_error = v.as_bool();
-      else if (key == "use_irradiation_endtime") rc.use_irradiation_endtime = v.as_bool();
-      else if (key == "age_units") {
-        if (v.as_string() != "Ma") ADD_FAILURE() << name << ": unhandled age_units " << v.string;
-      } else {
-        ADD_FAILURE() << name << ": unhandled constants key " << key;
-        ok = false;
-      }
-    }
-    if (!ok) continue;
+    if (!g::constants_of(in["constants"], rc, name)) continue;
+    EXPECT_EQ(rc.age_units, AgeUnits::Ma) << name;  // calculate_f cases are age-unit free
     if (rc.cosmogenic) ++n_cosmo;
 
     std::map<std::string, Measured, std::less<>> rows;
@@ -445,6 +412,7 @@ TEST(CalculateF, Golden) {
     }
     const ProductionVariables pv = make_production_variables(*pr);
 
+    bool ok = true;
     std::array<UFloat, 5> n;
     for (const ArgonIsotope iso : kArgonKeys) {
       const std::string key(to_string(iso));

@@ -213,6 +213,43 @@ TEST(ArAr, ChlorineKeysOnlyWhenConfigured) {
   EXPECT_TRUE(v.contains("k39"));
 }
 
+TEST(ArAr, ChlorineNoOpDoesNotRequireAr38) {
+  ArArConstants c;
+  c.ca3637 = 2.7e-4;
+  c.ca3937 = 7.0e-4;
+  c.k4039 = 1e-3;
+  c.j = 0.01;
+  c.lambda_total = 5.543e-4;
+  c.chlorine = LiveChlorine{};
+  c.chlorine->atm4038 = 1575.0;
+  const ArArIntensities no38{1.0, 10.0, std::nullopt, 1000.0, 50000.0};
+  const ArArIntensities with38{1.0, 10.0, 5.0, 1000.0, 50000.0};
+
+  // Cl3638 == 0 (m == 0): chlorine is a no-op, so the ages survive without Ar38.
+  c.chlorine->cl3638 = 0.0;
+  c.chlorine->lambda_cl36 = 6.308e-9;
+  c.chlorine->decay_days = 365.0;
+  auto v = compute_arar(no38, c);
+  for (const char* key : {"atm40", "rad40", "age"}) EXPECT_TRUE(v.contains(key)) << key;
+  for (const char* key : {"kcl", "clk", "cl36"}) EXPECT_FALSE(v.contains(key)) << key;
+  // Same nominal age as the chlorine-free path.
+  ArArConstants plain = c;
+  plain.chlorine.reset();
+  EXPECT_DOUBLE_EQ(v.at("age"), compute_arar(no38, plain).at("age"));
+
+  // decay_days == 0 (instant age): also a no-op.
+  c.chlorine->cl3638 = 250.0;
+  c.chlorine->decay_days = 0.0;
+  v = compute_arar(no38, c);
+  EXPECT_TRUE(v.contains("age"));
+
+  // m != 0 still needs Ar38.
+  c.chlorine->decay_days = 365.0;
+  v = compute_arar(no38, c);
+  EXPECT_FALSE(v.contains("age"));
+  EXPECT_TRUE(compute_arar(with38, c).contains("age"));
+}
+
 TEST(ArAr, LiveDefaultsEqualDefaultPreset) {
   EXPECT_EQ(ArArConstants{}.atm4036, constants_preset(ConstantsPreset::Default).atm4036.value);
   const ArArConstants c;
