@@ -1,0 +1,10 @@
+# LeakSanitizer suppressions, applied by the dev test presets (LSAN_OPTIONS).
+#
+# The embedded CPython interpreter lives for the whole process and is never
+# finalized (libs/scripting/src/python/runtime.cpp), and CPython itself keeps
+# interned strings, code objects and static types until exit. Everything it
+# allocated is therefore "leaked" at exit by design.
+leak:libpython
+# pybind11's records for the bindings registered when the interpreter starts;
+# they belong to the interpreter and go when it would.
+leak:pychron::scripting::python::ensure_interpreter

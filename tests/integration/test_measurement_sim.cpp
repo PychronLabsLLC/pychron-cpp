@@ -19,6 +19,7 @@
 #include <set>
 #include <thread>
 
+#include "sim_pump.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/executor/executor.hpp"
@@ -60,28 +61,7 @@ MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, Conditiona
   return in;
 }
 
-class Pump {
- public:
-  Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
-    thread_ = std::thread([this] {
-      while (!done_) {
-        clock_.advance(20ms);
-        scheduler_.run_pending();
-        std::this_thread::sleep_for(200us);
-      }
-    });
-  }
-  ~Pump() {
-    done_ = true;
-    thread_.join();
-  }
-
- private:
-  ManualClock& clock_;
-  Scheduler& scheduler_;
-  std::atomic<bool> done_{false};
-  std::thread thread_;
-};
+using pychron::testing::Pump;
 
 // No peak-center job yet in this test: centring is covered by the spectrometer
 // sim test and the peak_center unit.
