@@ -144,9 +144,15 @@ All wire text comes from `pychron::codec::qtegra`.
 - **connect():** `GetIntegrationTime`; a numeric reply is success and seeds the
   cached integration period.
 - **Every command** is one `exchange(cmd.tx, *cmd.reply)` wrapped in the
-  `Reconnector` and `observe(...)`. Multi-step sequences use `transact`.
+  `Reconnector` and `observe(...)`.
+- **Setter replies:** `SetMagnetDAC`, `BlankBeam`, `ProtectDetector`,
+  `SetDeflection`, `SetGain` and `SetIntegrationTime` accept any reply that is
+  not an explicit `ERROR` (pychron ignores these replies); an `ERROR` reply is
+  `Protocol`. `SetHV` and `SetParameter` expect `ok`. A setter that gets no
+  reply is a `Timeout`: the driver cannot tell a silent success from a dead
+  link.
 - **Positioner (axis Dac):** `set(v)` outside limits is `Config` with nothing
-  sent; else `SetMagnetDAC v` (reply ignored, as pychron). `read()` is
+  sent; else `SetMagnetDAC v`. `read()` is
   `GetMagnetDAC`. `moving()` is `GetMagnetMoving` decoded with the codec's bool
   vocabulary.
 - **Beam blank:** `BlankBeam True|False`.
@@ -160,11 +166,16 @@ All wire text comes from `pychron::codec::qtegra`.
   each entry writable through `SetParameter <hardware name>,v` (reply `ok`) and
   readable through `GetParameter`. `read_param` returns
   `Readback{setpoint = GetParameter <hardware name>, actual = GetParameter
-  <readback name>}` when the map has a readback name, else `actual` unset.
+  <readback name>}` when the map has a readback name, else `actual` unset; the
+  two reads are separate exchanges, not one transaction, so another caller's
+  command may fall between them. HV is always `SetHV` / `GetHighVoltage`,
+  however it is addressed (`set_hv`, the HV parameter id or a custom name), and
+  reads back as both setpoint and actual.
   Ranges: HV 0..10000 V; every other parameter a wide nominal range
   (`-1e6..1e6`, `Unit::None`) documented as unverified. `Custom(name)` ids are
-  accepted for hardware names not in the map (Helix DAC names), read/write
-  through the same two commands.
+  accepted only for hardware names the codec's map knows; the name is sent as
+  given and range-checked through its canonical parameter's spec, and a
+  readback name is read-only. Any other name is `Config` with nothing sent.
 - **Acquirer:** `integrates() == true`. `channels()` is the `channels` key.
   - `configure(t)`: non-positive is `Config`. Snap with
     `qtegra::snap_integration_time`. If the snapped value differs from the
@@ -183,9 +194,14 @@ All wire text comes from `pychron::codec::qtegra`.
     `span = snapped period`, one value per configured channel that the reply
     names; channels the reply omits are simply absent (the engine reports them
     as no data). Names in the reply that are not configured channels are
-    ignored. A reply containing `ERROR`, or non-numeric, is `Protocol`.
+    ignored; names match case-sensitively. A reply containing `ERROR`, an
+    empty reply, an odd field count, a non-numeric, `nan` or `inf` value, or
+    a duplicate name is `Protocol`.
+  - The wire read runs outside the acquirer mutex, so `stop()` never waits
+    for a transport timeout. A read in flight when the integration changes or
+    the acquirer stops is dropped (that `next()` returns nullopt).
   - `trigger()`: the interface default (no-op).
-- All acquirer state is guarded by one mutex; `next()` is safe against a
+- Acquirer state is guarded by one mutex; `next()` is safe against a
   concurrent `stop()`/`configure()`/`start()`.
 
 ### 5.3 Sim hook
@@ -194,7 +210,8 @@ All wire text comes from `pychron::codec::qtegra`.
 `SimTransport::Hook` that answers every command in 5.2 from a small in-memory
 model (DAC, moving-until time, blank, per-detector protect/deflection/gain, HV,
 named parameters, integration time, per-channel intensities), so conformance
-and parity tests run against the real driver.
+and parity tests run against the real driver. The model also logs every
+command it receives, in order, for tests that check a sequence.
 
 ## 6. Config and examples
 
@@ -231,11 +248,17 @@ and parity tests run against the real driver.
 3. pychron's default transport is UDP; only TCP is supported.
 4. Source parameter units and ranges are unknown; ranges are nominal.
 
-Bring-up checklist (manual, first contact with the instrument): record a
-trace with `trace = true`; confirm the terminator; confirm the `GetData`
-layout and detector names; confirm one integration change and one magnet
-move; commit the trace under `tests/traces/thermo/` and replace the synthetic
-one.
+Bring-up checklist (manual, first contact with the instrument):
+
+1. Confirm what Qtegra replies to each setter (a setter that gets no reply
+   fails with a timeout).
+2. Record a trace with `trace = true`.
+3. Confirm the terminator.
+4. Confirm whether RemoteControlServer accepts one persistent connection.
+5. Confirm the `GetData` layout and detector names.
+6. Confirm one integration change and one magnet move.
+7. Commit the trace under `tests/traces/thermo/` and replace the synthetic
+   one.
 
 ## 9. Testing
 

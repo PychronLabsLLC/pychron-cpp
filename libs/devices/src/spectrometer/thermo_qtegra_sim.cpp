@@ -40,6 +40,9 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx) {
   const Bytes bad_arguments = q::encode_error("bad arguments for " + verb);
 
   std::lock_guard lock(m.mutex);
+  std::string line = verb;
+  for (std::size_t i = 0; i < args.size(); ++i) line += (i == 0 ? " " : ",") + args[i];
+  m.commands.push_back(std::move(line));
   if (verb == "GetIntegrationTime" && args.empty()) return q::encode_number(m.integration_s);
   if (verb == "GetMagnetDAC" && args.empty()) return q::encode_number(m.dac);
   if (verb == "GetMagnetMoving" && args.empty()) {

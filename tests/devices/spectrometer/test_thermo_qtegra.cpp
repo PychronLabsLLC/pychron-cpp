@@ -696,6 +696,20 @@ TEST(QtegraSimHook, SimHookAnswersPositionerBlankAndDetectorCommands) {
   EXPECT_FALSE(model->protect.at("CDD"));
 }
 
+TEST(QtegraSimHook, SimHookLogsEveryCommandInOrder) {
+  auto model = std::make_shared<QtegraSimModel>();
+  auto hook = qtegra_sim_hook(model);
+  // Unknown and malformed commands are logged too; an empty line is not.
+  for (std::string_view tx : {"GetIntegrationTime\r", "ProtectDetector CDD,On\r", "BlankBeam True\r",
+                              "SetParameter Trap Voltage Set, 5\r\n", "Reset\r", "SetMagnetDAC x\r", "\r"}) {
+    (void)hook(to_bytes(tx));
+  }
+  std::lock_guard lock(model->mutex);
+  EXPECT_EQ(model->commands,
+            (std::vector<std::string>{"GetIntegrationTime", "ProtectDetector CDD,On", "BlankBeam True",
+                                      "SetParameter Trap Voltage Set,5", "Reset", "SetMagnetDAC x"}));
+}
+
 TEST(QtegraSimHook, SimHookAnswersSourceAndAcquirerCommands) {
   auto model = std::make_shared<QtegraSimModel>();
   model->intensities = {{"H1", 1.5}, {"AX", -0.25}};

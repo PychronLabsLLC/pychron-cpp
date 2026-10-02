@@ -487,7 +487,7 @@ wave = 14
 layer = "devices"
 depends = ["thermo_qtegra_codec", "spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
-goal = "QtegraSpectrometer driver implementing IMassPositioner(dac)/IBeamSource/IIntensityAcquirer(integrated, polled GetData)/IDetectorControl/IBeamBlank on one transport; registry entry with declared keys; scripted + replay tests; conformance suite instantiation; sim-integrated config parity test."
+goal = "Delivered outside the router by docs/superpowers/specs/2026-10-01-qtegra-driver-design.md (driver, sim hook, system tests, example config): nothing left to build here. Was: QtegraSpectrometer driver implementing IMassPositioner(dac)/IBeamSource/IIntensityAcquirer(integrated, polled GetData)/IDetectorControl/IBeamBlank on one transport; registry entry with declared keys; scripted + replay tests; conformance suite instantiation; sim-integrated config parity test."
 targets = ["libs/devices", "tests/devices", "tests/traces"]
 references = ["~/Programming/pychron/pychron"]
 
@@ -506,7 +506,7 @@ wave = 14
 layer = "devices"
 depends = ["isotopx_ngx_codec", "spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
-goal = "NGXSpectrometer driver: IMassPositioner(native axis mass)/IBeamSource/IIntensityAcquirer(integrated, event-driven with trigger())/IDetectorControl(protect flag only); login + re-login on reconnect using credentials from *.local.toml; stale-event guard via seq/ts; scripted + replay tests; conformance."
+goal = "NGXSpectrometer driver: IMassPositioner(native axis mass)/IBeamSource/IIntensityAcquirer(integrated, event-driven with trigger())/IDetectorControl(protect flag only); login + re-login on reconnect using credentials from *.local.toml; stale-event guard via seq/ts; scripted + replay tests; conformance. See docs/superpowers/specs/2026-10-01-ngx-driver-notes.md before starting."
 targets = ["libs/devices", "tests/devices", "tests/traces"]
 references = ["~/Programming/pychron/pychron"]
 

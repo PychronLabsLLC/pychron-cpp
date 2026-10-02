@@ -85,6 +85,41 @@ item stays disabled when neither flag is given or the file fails to load; the
 error goes to the log dock). Window layout and graph settings are saved per
 spectrometer under the `PychronLabs` organization in `QSettings`.
 
+### Running against a Thermo instrument
+
+The `thermo_qtegra` driver (Argus, Helix, through Qtegra's
+RemoteControlServer) has never been run against an instrument. Every wire
+detail comes from reading pychron's Python, and the tests run against a
+simulated wire only. Expect the first contact to find differences, and treat
+magnet moves, HV and detector protection as untested until you have watched
+them work.
+
+1. Copy `configs/examples/spectrometer.qtegra.toml`, `molecular_weights.toml`
+   and `tables/` into a directory of your own, and copy
+   `spectrometer.qtegra.local.toml.example` there as
+   `spectrometer.qtegra.local.toml`.
+2. Set `host` and `port` of the PC running Qtegra under `[transports.qtegra]`
+   in the `.local.toml` (it may override only `host`, `port`, `baud` and
+   `timeout_ms`).
+3. Set `trace = true` under `[transports.qtegra]` in the main config. The
+   wire is recorded to `traces/qtegra.trace` under the directory the app is
+   started from (`traces/<transport name>.trace`; the directory is created on
+   demand).
+4. Run the app on that config and open Window > Spectrometer:
+
+   ```bash
+   build/dev-ui/apps/pychron-ui/pychron-ui --spectrometer <dir>/spectrometer.qtegra.toml
+   ```
+
+   Do not add `--sim`: it refuses a spectrometer config that is not
+   simulated, and this one is not. The connection is opened when the config
+   loads, so an instrument that cannot be reached is a load failure (the
+   error goes to the log dock).
+5. Work through the bring-up checklist in section 8 of
+   `docs/superpowers/specs/2026-10-01-qtegra-driver-design.md`. Its first
+   item is what Qtegra replies to each setter: a setter that gets no reply
+   fails with a timeout.
+
 Build trees are 0.5-0.7 GB each; keep a few GB free, more when running
 parallel agent waves (each agent worktree builds its own tree).
 

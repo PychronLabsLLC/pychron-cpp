@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -36,6 +37,9 @@ struct QtegraSimModel {
   std::map<std::string, double> intensities;
   std::string data_override;  // when non-empty, GetData replies with this line verbatim
   const Clock* clock = nullptr;
+  // Every command received, in order, as "Verb" or "Verb arg,arg" (arguments
+  // trimmed, no terminator).
+  std::vector<std::string> commands;
 };
 
 // Commands it does not know, or cannot parse, answer "ERROR: ...".

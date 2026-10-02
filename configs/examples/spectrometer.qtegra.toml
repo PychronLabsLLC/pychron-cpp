@@ -1,0 +1,116 @@
+# Thermo Qtegra spectrometer (Argus, Helix) over RemoteControlServer (Qtegra
+# driver spec section 6). One `thermo_qtegra` driver plays all five roles on
+# one TCP connection. Same detectors and field table as
+# spectrometer.sim-integrated.toml: only the transport and driver differ.
+#
+# The driver has never been run against an instrument. Read "Running against
+# a Thermo instrument" in docs/dev_setup.md before pointing this at one. The
+# host below is a placeholder: set the real address in
+# spectrometer.qtegra.local.toml (see spectrometer.qtegra.local.toml.example).
+
+[system]
+name = "qtegra"
+reference_detector = "H1"
+integration_time_s = 1.0
+
+[transports.qtegra]
+kind = "tcp"
+host = "192.168.0.10"
+port = 1069
+timeout_ms = 2000
+# trace = true  # record the wire to traces/qtegra.trace
+
+[drivers.qtegra]
+kind = "thermo_qtegra"
+transport = "qtegra"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+channels = ["H2", "H1", "AX", "L1", "L2", "CDD"]
+
+[magnet]
+positioner = "qtegra"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "argon"
+hv_table = "argon_hv"
+propagate = false
+corrections = { deflection = true, hv = true }
+protection = { detectors = ["CDD"], beam_blank_threshold = 0.5 }
+af_demag = { enabled = false, period_s = 0.5, duration_s = 10, start_amplitude = 0.5, threshold = 0.5 }
+
+[source]
+driver = "qtegra"
+nominal_hv = 4500
+ramp = { TrapCurrent = 10.0, HV = 200.0 }
+
+[acquisition]
+acquirers = ["qtegra"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "qtegra"
+
+[[detectors]]
+name = "H2"
+kind = "faraday"
+channel = "qtegra:H2"
+units = "fA"
+color = "#1f77b4"
+deflection = { control = true, correction = [0.0, 0.0011], sign = 1, max = 800, per_volt = 0.0030 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "qtegra:H1"
+units = "fA"
+software_gain = 1.0
+isotope = "Ar40"
+color = "#ff7f0e"
+active = true
+deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
+protection = { threshold = 5e5, on_move = true }
+saturation = 4.9e6
+
+[[detectors]]
+name = "AX"
+kind = "faraday"
+channel = "qtegra:AX"
+units = "fA"
+isotope = "Ar39"
+color = "#2ca02c"
+deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "L1"
+kind = "faraday"
+channel = "qtegra:L1"
+units = "fA"
+isotope = "Ar38"
+color = "#d62728"
+deflection = { control = true, correction = [0.0, 0.0012], sign = -1, max = 800, per_volt = 0.0031 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "L2"
+kind = "faraday"
+channel = "qtegra:L2"
+units = "fA"
+isotope = "Ar37"
+color = "#9467bd"
+deflection = { control = true, correction = [0.0, 0.0011], sign = -1, max = 800, per_volt = 0.0030 }
+saturation = 4.9e6
+
+[[detectors]]
+name = "CDD"
+kind = "cdd"
+channel = "qtegra:CDD"
+units = "cps"
+isotope = "Ar36"
+color = "#8c564b"
+dead_time_ns = 25
+cdd_voltage = 1450
+deflection = { control = true, correction = [0.0, 0.0010], sign = -1, max = 800, per_volt = 0.0029 }
+protection = { threshold = 5e5, on_move = true }
