@@ -125,8 +125,8 @@ Behaviour:
   stays stopped and publishes a `ScanStatus` carrying the error.
 - Every state change publishes `ScanStatus`. The first `IntensityReading`
   after a start publishes one more with the snapped integration.
-- The service subscribes to `Alarm` from the engine's stall detector (source
-  is the engine's alarm source for this spectrometer) and republishes a
+- The service subscribes to `Alarm` from the engine's stall detector (alarm
+  source `"acquisition"`) and republishes a
   `ScanStatus` with `error` set and `running` still true; the engine itself
   is left alone. `start` or `set_integration` clears the error.
 - All methods are thread-safe (one mutex) and block only as long as
@@ -135,7 +135,8 @@ Behaviour:
 
 ### 4.3 Detector colour
 
-`DetectorConfig` gains `std::string color` (empty = unset). The spectrometer
+The config-layer `cfg::DetectorConfig` (what `Spectrometer::config()` exposes) gains
+`std::string color` (empty = unset). The spectrometer
 config loader accepts an optional `color = "#rrggbb"` per `[[detectors]]`
 entry and reports a diagnostic for anything that is not `#` plus six hex
 digits. The UI falls back to a fixed eight-colour palette by detector index.
@@ -202,7 +203,8 @@ settings. Plain C++ plus Qt core types so it is testable without a window.
 - `append(const IntensityReading&)`: x = seconds from the first reading's
   `ts` since the last clear, shared by every detector in the row. A
   `nullopt` value appends nothing for that detector (the line shows a gap,
-  not a zero). Values are multiplied by the detector's `software_gain`.
+  not a zero). Values are used as delivered: the engine has already applied
+  `software_gain`.
 - Scan width `w` in seconds (UI shows minutes; default 1 min; minimum 1 s).
   Ring span = `1.8 * w`.
 - X range: `[0, 1.05 w]` while `x < w`, else `[x - w, x + 0.05 w]`.
@@ -288,7 +290,7 @@ ignored. Tests use a temporary settings file.
 |---|---|
 | `libs/core/include/pychron/core/time_series_ring.hpp`, `src/time_series_ring.cpp` | New |
 | `libs/systems/.../spectrometer/scan_service.{hpp,cpp}` | New |
-| `libs/devices/.../spectrometer/detectors.hpp`, spectrometer config loader | `color` field |
+| `libs/systems/.../spectrometer/config.hpp`, `config_loader.cpp` | `color` field |
 | `libs/systems/.../spectrometer/bringup.{hpp,cpp}` | New; integration test refactored onto it |
 | `cmake/PychronDependencies.cmake`, `apps/pychron-ui/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `vcpkg.json` | QCustomPlot, PrintSupport, sim drivers |
 | `apps/pychron-ui/src/spectrometer_bridge.*`, `strip_chart_model.*`, `strip_chart_view.*`, `intensities_model.*`, `spectrometer_window.*` | New |
