@@ -15,7 +15,7 @@ void LogFilterProxy::set_min_level(LogLevel level) {
 
 void LogFilterProxy::set_logger_pattern(const QString& pattern) {
   beginFilterChange();
-  logger_pattern_ = pattern;
+  logger_pattern_ = pattern.toStdString();
   endFilterChange(QSortFilterProxyModel::Direction::Rows);
 }
 
@@ -30,9 +30,7 @@ bool LogFilterProxy::filterAcceptsRow(int source_row, const QModelIndex& source_
   if (model == nullptr || source_parent.isValid()) return true;
   const LogRecord& r = model->record(source_row);
   if (static_cast<int>(r.level) < static_cast<int>(min_level_)) return false;
-  if (!logger_pattern_.isEmpty() &&
-      !log_name_matches(logger_pattern_.toStdString(), r.logger.toStdString()))
-    return false;
+  if (!logger_pattern_.empty() && !log_name_matches(logger_pattern_, r.logger.toStdString())) return false;
   if (!text_.isEmpty() && !r.message.contains(text_, Qt::CaseInsensitive)) return false;
   return true;
 }

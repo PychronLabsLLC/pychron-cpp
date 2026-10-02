@@ -2,6 +2,8 @@
 
 // LogFilterProxy: level / logger-pattern / message-text filter over LogModel.
 
+#include <string>
+
 #include <QSortFilterProxyModel>
 #include <QString>
 
@@ -27,7 +29,7 @@ class LogFilterProxy : public QSortFilterProxyModel {
 
  private:
   LogLevel min_level_ = LogLevel::Trace;
-  QString logger_pattern_;
+  std::string logger_pattern_;  // cached UTF-8 so filterAcceptsRow does not convert per row
   QString text_;
 };
 

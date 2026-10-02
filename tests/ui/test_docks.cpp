@@ -3,6 +3,9 @@
 #include <chrono>
 #include <thread>
 
+#include <QElapsedTimer>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "main_window.hpp"
@@ -14,6 +17,7 @@ using namespace std::chrono_literals;
 using pychron::ui::AlarmDock;
 using pychron::ui::HealthBar;
 using pychron::ui::LogDock;
+using pychron::ui::LogModel;
 
 class TestDocks : public QObject {
   Q_OBJECT
@@ -25,6 +29,117 @@ class TestDocks : public QObject {
     dock.append_log(Log{LogLevel::Warn, "scanner", "IG1 read failed", {}});
     QCOMPARE(dock.line_count(), 1);
     QVERIFY(dock.text().contains(QStringLiteral("WARN [scanner] IG1 read failed")));
+  }
+
+  void pauseBuffersAndReleases() {
+    LogDock dock;
+    dock.append_log(Log{LogLevel::Info, "a", "before", {}});
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_paused(true);
+    for (int i = 0; i < 5; ++i) dock.append_log(Log{LogLevel::Info, "a", "during", {}});
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 1);
+    QCOMPARE(dock.pending_count(), 5);
+    dock.set_paused(false);
+    dock.flush_pending();
+    QCOMPARE(dock.pending_count(), 0);
+    QCOMPARE(dock.line_count(), 6);
+  }
+
+  void filtersByLevelPrefixAndText() {
+    LogDock dock;
+    dock.append_log(Log{LogLevel::Debug, "hw.valve", "opened A", {}});
+    dock.append_log(Log{LogLevel::Warn, "hw.valve", "slow close B", {}});
+    dock.append_log(Log{LogLevel::Error, "scanner", "IG1 failed", {}});
+    dock.append_log(Log{LogLevel::Info, "hwx", "other", {}});
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 4);
+
+    dock.set_min_level(LogLevel::Warn);
+    QCOMPARE(dock.line_count(), 2);
+    dock.set_min_level(LogLevel::Trace);
+
+    dock.set_logger_filter(QStringLiteral("hw"));  // includes hw.valve, not hwx
+    QCOMPARE(dock.line_count(), 2);
+    dock.set_logger_filter(QStringLiteral("scanner"));
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_logger_filter(QStringLiteral("hw.valve"));
+    QCOMPARE(dock.line_count(), 2);
+
+    dock.set_text_filter(QStringLiteral("CLOSE"));
+    QCOMPARE(dock.line_count(), 1);
+    QVERIFY(dock.text().contains(QStringLiteral("WARN [hw.valve] slow close B")));
+    QVERIFY(!dock.text().contains(QStringLiteral("opened A")));
+
+    dock.set_logger_filter({});
+    dock.set_text_filter({});
+    QCOMPARE(dock.line_count(), 4);
+  }
+
+  void appendLineParsesPrefix() {
+    LogDock dock;
+    dock.append_line(QStringLiteral("WARN [canvas] x"));
+    dock.append_line(QStringLiteral("hello"));
+    dock.append_line(QStringLiteral("ERROR [ui] A rejected: busy"));
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 3);
+    dock.set_logger_filter(QStringLiteral("canvas"));
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_min_level(LogLevel::Warn);
+    QCOMPARE(dock.line_count(), 1);
+    QVERIFY(dock.text().contains(QStringLiteral("WARN [canvas] x")));
+    dock.set_min_level(LogLevel::Trace);
+    dock.set_logger_filter(QStringLiteral("ui"));
+    QCOMPARE(dock.line_count(), 2);
+    QVERIFY(dock.text().contains(QStringLiteral("INFO [ui] hello")));
+    QVERIFY(dock.text().contains(QStringLiteral("ERROR [ui] A rejected: busy")));
+  }
+
+  void ringEvictsAtCapacity() {
+    LogDock dock;
+    QCOMPARE(LogDock::kMaxLines, LogModel::kCapacity);
+    for (int i = 0; i < LogModel::kCapacity + 10; ++i)
+      dock.append_log(Log{LogLevel::Info, "a", "m" + std::to_string(i), {}});
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), LogModel::kCapacity);
+    QVERIFY(!dock.text().contains(QStringLiteral("] m9\n")));
+    QVERIFY(dock.text().contains(QStringLiteral("] m10\n")));
+    dock.clear();
+    QCOMPARE(dock.line_count(), 0);
+  }
+
+  void saveVisibleWritesOnlyFilteredRows() {
+    LogDock dock;
+    dock.append_log(Log{LogLevel::Info, "a", "keep me", {}});
+    dock.append_log(Log{LogLevel::Debug, "a", "drop me", {}});
+    dock.append_log(Log{LogLevel::Error, "b", "keep too", {}});
+    dock.flush_pending();
+    dock.set_min_level(LogLevel::Info);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("log.txt"));
+    QVERIFY(dock.save_visible(path));
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString content = QString::fromUtf8(f.readAll());
+    QVERIFY(content.contains(QStringLiteral("INFO [a] keep me")));
+    QVERIFY(content.contains(QStringLiteral("ERROR [b] keep too")));
+    QVERIFY(!content.contains(QStringLiteral("drop me")));
+    QCOMPARE(content.count(QLatin1Char('\n')), 2);
+    QVERIFY(!dock.save_visible(dir.filePath(QStringLiteral("no/such/dir/x.txt"))));
+  }
+
+  void floodDoesNotBlock() {
+    LogDock dock;
+    dock.resize(800, 400);
+    dock.show();
+    QElapsedTimer timer;
+    timer.start();
+    for (int i = 0; i < 50000; ++i) dock.append_log(Log{LogLevel::Trace, "flood", "line " + std::to_string(i), {}});
+    dock.flush_pending();
+    QVERIFY2(timer.elapsed() < 2000, qPrintable(QStringLiteral("took %1 ms").arg(timer.elapsed())));
+    QCOMPARE(dock.line_count(), LogModel::kCapacity);
   }
 
   void alarmDockKeepsOneRowPerSourceAndAcks() {

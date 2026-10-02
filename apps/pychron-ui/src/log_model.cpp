@@ -5,9 +5,7 @@
 
 namespace pychron::ui {
 
-namespace {
-
-QString level_name(LogLevel level) {
+QString log_level_name(LogLevel level) {
   switch (level) {
     case LogLevel::Trace:
       return QStringLiteral("TRACE");
@@ -23,7 +21,17 @@ QString level_name(LogLevel level) {
   return QStringLiteral("?");
 }
 
-}  // namespace
+QDateTime log_wall_time(TimePoint ts) {
+  using namespace std::chrono;
+  struct Anchor {
+    steady_clock::time_point steady = steady_clock::now();
+    system_clock::time_point system = system_clock::now();
+  };
+  static const Anchor anchor;
+  const auto wall = anchor.system + duration_cast<system_clock::duration>(ts - anchor.steady);
+  const auto ms = duration_cast<milliseconds>(wall.time_since_epoch()).count();
+  return QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(ms));
+}
 
 LogModel::LogModel(int capacity, QObject* parent)
     : QAbstractTableModel(parent), capacity_(std::max(1, capacity)) {}
@@ -66,12 +74,10 @@ QVariant LogModel::data(const QModelIndex& index, int role) const {
   if (role == Qt::UserRole) return static_cast<int>(r.level);
   if (role != Qt::DisplayRole) return {};
   switch (index.column()) {
-    case TimeCol: {
-      const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(r.ts.time_since_epoch()).count();
-      return QStringLiteral("%1").arg(static_cast<double>(ms) / 1000.0, 0, 'f', 3);
-    }
+    case TimeCol:
+      return log_wall_time(r.ts).toString(QStringLiteral("HH:mm:ss.zzz"));
     case LevelCol:
-      return level_name(r.level);
+      return log_level_name(r.level);
     case LoggerCol:
       return r.logger;
     case MessageCol:

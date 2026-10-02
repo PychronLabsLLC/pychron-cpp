@@ -6,12 +6,20 @@
 #include <vector>
 
 #include <QAbstractTableModel>
+#include <QDateTime>
 #include <QString>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/events.hpp"
 
 namespace pychron::ui {
+
+// "TRACE" .. "ERROR".
+QString log_level_name(LogLevel level);
+
+// Maps a steady_clock TimePoint to local wall time using a steady->system
+// anchor captured once (on first use, at start-up).
+QDateTime log_wall_time(TimePoint ts);
 
 struct LogRecord {
   TimePoint ts;
