@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <istream>
 #include <iterator>
@@ -18,6 +19,9 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
+#include "pychron/experiment/conditionals/conditional.hpp"
+#include "pychron/experiment/conditionals/validate.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "trace_settings.hpp"
@@ -39,6 +43,9 @@ constexpr const char* kUsageText =
     "  canvas-check [canvas.toml]  check a canvas and cross-check it against the config\n"
     "  list-drivers                driver kinds and the keys each one reads\n"
     "  list                        configured valves, manual valves, switches and gauges\n"
+    "  conditionals-check <file> [--spectrometer <spectrometer.toml>]\n"
+    "                              parse conditionals, print their canonical form, and check\n"
+    "                              names against the config's gauges and the spectrometer\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
@@ -126,6 +133,7 @@ class Session {
     if (cmd == "help") return help();
     if (cmd == "validate") return validate(args);
     if (cmd == "canvas-check") return canvas_check(args);
+    if (cmd == "conditionals-check") return conditionals_check(args);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();
@@ -205,6 +213,61 @@ class Session {
       return kFailed;
     }
     io_.out << "ok: " << path.string() << " (" << cross.warnings.size() << " warning(s))\n";
+    return kOk;
+  }
+
+  int conditionals_check(const std::vector<std::string>& args) {
+    std::optional<fs::path> file, spectrometer;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+      if (args[i] == "--spectrometer" && i + 1 < args.size()) {
+        spectrometer = args[++i];
+      } else if (!file && !args[i].starts_with("-")) {
+        file = args[i];
+      } else {
+        return usage("conditionals-check <file> [--spectrometer <spectrometer.toml>]");
+      }
+    }
+    if (!file) return usage("conditionals-check needs a file");
+    std::ifstream in(*file);
+    if (!in) return failed(Error{ErrorKind::Io, "cannot read " + file->string(), {}});
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto set = experiment::parse_conditionals(text, file->string());
+    if (!set) return failed(set.error());
+
+    // Names to check against: the config's gauges (when it loads) and the
+    // spectrometer's detectors and table isotopes.
+    experiment::MetricCatalog catalog;
+    std::error_code ec;
+    if (fs::exists(g_.config, ec)) {
+      if (auto report = config::load_report(g_.config); report.ok())
+        for (const auto& gauge : report.config->gauges) catalog.gauges.insert(gauge.name);
+    }
+    if (spectrometer) {
+      auto data = spectrometer::cfg::load_spectrometer(*spectrometer);
+      if (!data) return failed(data.error());
+      for (const auto& d : data->config.detectors) catalog.detectors.insert(d.name);
+      for (const auto& [name, table] : data->tables)
+        for (const auto& point : table.points) catalog.isotopes.insert(point.isotope);
+    }
+
+    for (const auto& c : set->items) {
+      io_.out << experiment::to_string(c.kind) << ' ' << c.name << ": " << c.effective_check() << "  [start="
+              << c.start << " frequency=" << c.frequency << " ntrips=" << c.ntrips;
+      if (const auto a = experiment::to_string(c.action); !a.empty()) io_.out << " action=" << a;
+      if (!c.analysis_types.empty()) io_.out << " analysis_types=" << join(c.analysis_types, ",");
+      io_.out << "]\n";
+    }
+    int errors = 0;
+    for (const auto& d : experiment::validate_conditionals(*set, catalog)) {
+      (d.error ? io_.err : io_.out) << (d.error ? "error: " : "warning: ") << d.conditional << ": " << d.message
+                                    << '\n';
+      errors += d.error ? 1 : 0;
+    }
+    if (errors > 0) {
+      io_.err << "error: " << errors << " error(s) in " << file->string() << '\n';
+      return kFailed;
+    }
+    io_.out << "ok: " << file->string() << " (" << set->items.size() << " conditional(s))\n";
     return kOk;
   }
 

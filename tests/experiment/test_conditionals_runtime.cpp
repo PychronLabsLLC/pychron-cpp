@@ -6,6 +6,7 @@
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/conditionals/metrics.hpp"
 #include "pychron/experiment/conditionals/queue_actions.hpp"
+#include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/measurement/results.hpp"
 
 using namespace pychron;
@@ -309,6 +310,64 @@ analysis_types = ["unknown"]
   EXPECT_EQ(rec.tripped[0].context.at("Ar40"), 950);
   ASSERT_EQ(rec.errors.size(), 1u);
   EXPECT_EQ(rec.errors[0].count, 3);
+}
+
+}  // namespace
+
+namespace {
+
+TEST(ConditionalValidation, ChecksNamesAgainstTheLab) {
+  auto set = parse_conditionals(R"(
+[[truncations]]
+name = "ok"
+check = "Ar40 > 1 and H1.deflection < 10 and gauge.IG1.pressure < 1e-8 and Ar40/Ar36 > 1"
+[[terminations]]
+name = "bad-names"
+check = "Ar99 > 1 or IC9.inactive or gauge.nope.pressure > 1 or device.chiller > 1 or Ar40/Ar98 > 1"
+[[actions]]
+name = "computed"
+check = "age > 1 or kcl > 2"
+action = "notify"
+[[pre_run]]
+name = "pre"
+check = "Ar40 < 1 or CDD.inactive"
+[[post_run]]
+name = "var"
+check = "Ar40 < $MIN"
+)");
+  ASSERT_TRUE(set) << set.error().what;
+  MetricCatalog cat;
+  cat.isotopes = {"Ar36", "Ar37", "Ar38", "Ar39", "Ar40"};
+  cat.detectors = {"H1", "CDD"};
+  cat.gauges = {"IG1"};
+  cat.devices = {"pump"};
+  cat.variables = {"MAX"};
+  auto d = validate_conditionals(*set, cat);
+  auto messages = [&](const std::string& name) {
+    std::vector<std::string> out;
+    for (const auto& x : d)
+      if (x.conditional == name) out.push_back(x.message);
+    return out;
+  };
+  EXPECT_TRUE(messages("ok").empty()) << testing::PrintToString(messages("ok"));
+  EXPECT_EQ(messages("bad-names").size(), 5u) << testing::PrintToString(messages("bad-names"));
+  const auto computed = messages("computed");
+  ASSERT_EQ(computed.size(), 2u);
+  EXPECT_NE(computed[0].find("Ar-Ar constants"), std::string::npos);
+  EXPECT_NE(computed[1].find("chlorine"), std::string::npos);
+  ASSERT_EQ(messages("pre").size(), 1u);
+  EXPECT_NE(messages("pre")[0].find("pre-run"), std::string::npos);
+  ASSERT_EQ(messages("var").size(), 1u);
+  for (const auto& x : d)
+    if (x.conditional == "var") EXPECT_FALSE(x.error);  // a warning
+
+  cat.computed = true;
+  d = validate_conditionals(*set, cat);
+  EXPECT_EQ(messages("computed").size(), 1u);  // kcl still unavailable
+
+  // An empty catalog checks no names: only kcl and the pre-run isotope remain.
+  d = validate_conditionals(*set, MetricCatalog{.computed = true});
+  EXPECT_EQ(d.size(), 2u) << testing::PrintToString(d.size());
 }
 
 }  // namespace

@@ -176,5 +176,28 @@ TEST_F(ElctlTest, MissingArgumentIsUsageError) {
   EXPECT_EQ(run_raw({"-c"}).code, 2);
 }
 
+TEST_F(ElctlTest, ConditionalsCheckExampleSystemFile) {
+  const auto examples = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR);
+  auto o = run({"conditionals-check", (examples / "conditionals" / "system.toml").string(), "--spectrometer",
+                (examples / "spectrometer.sim-integrated.toml").string()});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "truncation huge_signal: Ar40.cur > 4000000")) << o.out;
+  EXPECT_TRUE(contains(o.out, "ok: ")) << o.out;
+}
+
+TEST_F(ElctlTest, ConditionalsCheckReportsUnknownNamesAndBadSyntax) {
+  const auto examples = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR);
+  write("bad.toml", "[[terminations]]\ncheck = \"gauge.nope.pressure > 1 or IC9.inactive or Ar99 > 1\"\n");
+  auto o = run({"conditionals-check", path("bad.toml").string(), "--spectrometer",
+                (examples / "spectrometer.sim-integrated.toml").string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_TRUE(contains(o.err, "unknown gauge 'nope'")) << o.err;
+  EXPECT_TRUE(contains(o.err, "unknown detector 'IC9'")) << o.err;
+  EXPECT_TRUE(contains(o.err, "unknown isotope 'Ar99'")) << o.err;
+  write("syntax.toml", "[[terminations]]\ncheck = \"Ar40 >\"\n");
+  EXPECT_EQ(run({"conditionals-check", path("syntax.toml").string()}).code, 1);
+  EXPECT_EQ(run({"conditionals-check"}).code, 2);
+}
+
 }  // namespace
 }  // namespace elctl::testing
