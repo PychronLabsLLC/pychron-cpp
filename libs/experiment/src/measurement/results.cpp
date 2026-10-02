@@ -66,4 +66,50 @@ FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits) {
   return out;
 }
 
+record::InstalledConditional to_record(const Conditional& c) {
+  record::InstalledConditional r;
+  r.id = c.id();
+  r.name = c.name;
+  r.kind = std::string(to_string(c.kind));
+  r.level = std::string(to_string(c.level));
+  r.location = c.location;
+  r.check = c.effective_check();
+  r.start = c.start;
+  r.frequency = c.frequency;
+  r.ntrips = c.ntrips;
+  r.window = c.window.value_or(0);
+  r.mapper = c.mapper;
+  r.analysis_types = c.analysis_types;
+  r.abbreviated_count_ratio = c.abbreviated_count_ratio;
+  r.action = to_string(c.action);
+  r.resume = c.resume;
+  r.truncate = c.truncate;
+  r.terminate = c.terminate;
+  return r;
+}
+
+record::TrippedConditional to_record(const Trip& t) {
+  record::TrippedConditional r;
+  r.id = t.id;
+  r.name = t.name;
+  r.kind = std::string(to_string(t.kind));
+  r.check = t.check;
+  r.action = to_string(t.action);
+  r.reading = t.reading;
+  r.count = t.count;
+  r.t = t.ts;
+  r.value = t.value;
+  for (const auto& m : t.context) r.context[m.metric] = m.value;
+  return r;
+}
+
+record::Conditionals to_record_conditionals(const std::vector<Conditional>& installed, const std::vector<Trip>& trips,
+                                            const std::vector<ConditionalError>& errors) {
+  record::Conditionals out;
+  for (const auto& c : installed) out.installed.push_back(to_record(c));
+  for (const auto& t : trips) out.tripped.push_back(to_record(t));
+  for (const auto& e : errors) out.errors.push_back({e.name, e.message, e.count});
+  return out;
+}
+
 }  // namespace pychron::experiment::measurement

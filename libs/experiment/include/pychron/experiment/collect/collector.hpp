@@ -29,6 +29,8 @@
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/conditionals/evaluator.hpp"
+#include "pychron/experiment/plan/plan.hpp"
+#include "pychron/reduction/arar.hpp"
 #include "pychron/reduction/fits.hpp"
 #include "pychron/systems/spectrometer/acquisition.hpp"
 
@@ -143,18 +145,30 @@ class Collector {
   // x = t - time_zero (or t if time zero is unset).
   std::optional<reduction::Series> fit_series(const SeriesKey& key) const;
 
-  // Conditionals view of the collected data.
-  //   Ar40           latest signal value of Ar40 (series: all signal values)
-  //   Ar40/Ar39      ratio of the latest values (series: point-wise over the shorter tail)
-  //   Ar40.cur       latest signal value
-  //   Ar40.bs        baseline series of Ar40's detector
-  //   Ar40.bs_corrected / .ic_corrected
-  //                  latest signal minus the mean baseline of its detector (icfactor 1)
-  //   H1.intensity   latest value on H1, any kind
-  //   elapsed()      seconds since time zero (since the epoch before it is set)
-  // Every other metric is asked of `fallback` (spectrometer, line, reduction).
+  // Conditionals view of the collected data (conditionals spec section 5, L9).
+  //   Ar40              live corrected value: (intercept - mean baseline) * icfactor
+  //                     (series: raw signal points; sniff points before any signal)
+  //   Ar40.intercept    raw intercept at time zero, fitted with the plan's fit
+  //   Ar40.std_dev      the intercept's error
+  //   Ar40.bs_corrected intercept - mean baseline of its detector
+  //   Ar40.ic_corrected same as Ar40
+  //   Ar40.cur          latest raw point
+  //   Ar40.bs           baseline series of Ar40's detector
+  //   Ar40/Ar39         ratio of the corrected values (series: raw point-wise)
+  //   H1.intensity      latest value on H1, any kind
+  //   age, kca, ...     reduction::compute_arar over the corrected values
+  //                     (instant_age: over the latest baseline-corrected points)
+  //   elapsed()         seconds since time zero (since the epoch before it is set)
+  // A fit with fewer points than its parameters falls back to the average.
+  // Every other metric is asked of `fallback` (spectrometer, line, devices).
   const MetricContext& metrics() const noexcept { return metrics_; }
   void set_fallback(const MetricContext* fallback) { metrics_.fallback = fallback; }
+  void set_fits(plan::Fits fits);
+  void set_icfactors(std::map<std::string, double> icfactors);  // by detector; 1.0 when absent
+  void set_arar(std::optional<reduction::ArArConstants> constants);
+
+  // Live intercept of an isotope (its most recently measured detector).
+  std::optional<reduction::Intercept> intercept(const std::string& isotope) const;
 
  private:
   class Metrics final : public MetricContext {
@@ -174,6 +188,12 @@ class Collector {
   std::optional<std::vector<double>> isotope_values_locked(const std::string& iso, SeriesKind kind) const;
   std::optional<std::string> detector_of_locked(const std::string& iso) const;
   std::optional<std::vector<double>> baseline_values_locked(const std::string& det) const;
+  const Series* isotope_series_locked(const std::string& iso, SeriesKind kind, std::string* det = nullptr) const;
+  std::optional<reduction::Intercept> intercept_locked(const std::string& iso, std::string* det = nullptr) const;
+  double baseline_mean_locked(const std::string& det) const;
+  double icfactor_locked(const std::string& det) const;
+  std::optional<double> corrected_locked(const std::string& iso) const;
+  std::optional<double> computed_locked(const std::string& name) const;
 
   const Clock& clock_;
   SignalBus* bus_;
@@ -183,6 +203,9 @@ class Collector {
   RunData data_;
   CollectionSpec spec_;
   ReadingHook hook_;
+  plan::Fits fits_;
+  std::map<std::string, double> icfactors_;
+  std::optional<reduction::ArArConstants> arar_;
   int count_ = 0;
   std::atomic<int> target_{0};
   std::atomic<bool> truncate_{false};

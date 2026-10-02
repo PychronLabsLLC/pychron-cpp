@@ -16,9 +16,11 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <set>
 #include <thread>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/experiment/measurement/results.hpp"
@@ -44,6 +46,14 @@ std::string read_file(const std::filesystem::path& p) {
   std::stringstream ss;
   ss << in.rdbuf();
   return ss.str();
+}
+
+MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, ConditionalSet conditionals = {}) {
+  MeasurementInputs in;
+  in.plan = std::move(p);
+  in.conditionals = std::move(conditionals);
+  in.run_id = std::move(run_id);
+  return in;
 }
 
 class Pump {
@@ -218,7 +228,7 @@ TEST_F(MeasurementSim, MeasuresThroughTheRealFacades) {
   int overlap = 0;
   auto sub = bus_.subscribe<OverlapReady>([&](const OverlapReady&) { ++overlap; });
   EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, nullptr};
-  MeasurementEngine engine(ctx, MeasurementInputs{loaded->plan, {}, {}, "sim-1"});
+  MeasurementEngine engine(ctx, inputs(loaded->plan, "sim-1"));
   scripting::CancelToken token;
   auto r = engine.run(token);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
@@ -271,7 +281,7 @@ TEST_F(MeasurementSim, CancelMidMeasurementLeavesTheLineSafe) {
   SpectrometerPort port(*spec_);
   ExtractionLineValves valves(*line_);
   EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, nullptr};
-  MeasurementEngine engine(ctx, MeasurementInputs{loaded->plan, {}, {}, "sim-2"});
+  MeasurementEngine engine(ctx, inputs(loaded->plan, "sim-2"));
   scripting::CancelToken token;
   int seen = 0;
   auto sub = bus_.subscribe<collect::SeriesUpdated>([&](const collect::SeriesUpdated& e) {
@@ -282,6 +292,72 @@ TEST_F(MeasurementSim, CancelMidMeasurementLeavesTheLineSafe) {
   EXPECT_EQ(line_->snapshot().valves.at("B"), ValveState::Closed);
   EXPECT_FALSE(spec_->acquisition().running());
   for (const auto& d : spec_->detectors().states()) EXPECT_FALSE(d.protected_) << d.detector;
+}
+
+TEST_F(MeasurementSim, InstrumentMetricsAnswerConditionals) {
+  ASSERT_TRUE(spec_->set_deflection("H1", 120).has_value());
+  ASSERT_TRUE(spec_->set_active("L1", false).has_value());
+  InstrumentMetrics metrics(spec_.get(), line_.get(), [](std::string_view name) -> Result<double> {
+    if (name == "chiller") return 12.5;
+    return fail(ErrorKind::Config, "no device");
+  });
+  auto check = [&](const std::string& text) {
+    auto e = parse_expression(text);
+    EXPECT_TRUE(e) << text;
+    auto r = evaluate_check(**e, metrics, {});
+    EXPECT_TRUE(r) << text << ": " << (r ? "" : r.error().what);
+    return r && r->tripped;
+  };
+  EXPECT_TRUE(check("H1.deflection == 120"));
+  EXPECT_TRUE(check("L1.inactive and not H1.inactive"));
+  EXPECT_TRUE(check("gauge.IG1.pressure > 0"));
+  EXPECT_TRUE(check("device.chiller < 15"));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Device, "pump", "", ""}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Gauge, "nope", "", "pressure"}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""}));
+}
+
+TEST_F(MeasurementSim, LabConditionalsActOnLiveData) {
+  // The example lab's conditionals directory plus a plan truncation that the
+  // sim beam (Ar40 ~ 1e6 fA on H1) trips.
+  DirectoryConditionalSource source(kDir / "conditionals");
+  ConditionalLibrary library(source);
+  auto tmpl = plan::parse_plan_template(kPlan, "sim.toml");
+  ASSERT_TRUE(tmpl);
+  auto loaded = plan::load_plan(*tmpl, {}, resolvers());
+  ASSERT_TRUE(loaded) << loaded.error().what;
+  loaded->plan.conditionals.include = {"@conditionals.default_unknown"};
+  loaded->plan.conditionals.truncations = {{"Ar40.cur > 5e5", 3}};
+  RunSpec run;
+  run.id.identifier = "12345";
+  run.measurement.plan = "sim_multicollect";
+  auto set = library.for_run(QueueSpec{}, run, loaded->plan);
+  ASSERT_TRUE(set) << set.error().what;
+
+  SpectrometerPort port(*spec_);
+  ExtractionLineValves valves(*line_);
+  InstrumentMetrics instrument(spec_.get(), line_.get());
+  EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, &instrument};
+  MeasurementInputs in = inputs(loaded->plan, "sim-3", *set);
+  in.analysis_type = "unknown";
+  MeasurementEngine engine(ctx, in);
+  scripting::CancelToken token;
+  auto r = engine.run(token);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Truncated) << (r.error ? r.error->what : "");
+  // Installed: system (minus pre_run, which is not in-run but still listed), plan include, plan inline.
+  std::set<std::string> names;
+  for (const auto& c : r.installed) names.insert(c.name);
+  for (const char* n : {"vacuum_excursion", "huge_signal", "no_gas", "plan.truncation[0]"})
+    EXPECT_TRUE(names.contains(n)) << n;
+  ASSERT_EQ(r.data.trips.size(), 1u);
+  EXPECT_EQ(r.data.trips[0].name, "plan.truncation[0]");
+  EXPECT_EQ(r.data.trips[0].reading, 4);
+  EXPECT_EQ(r.data.series.at({"Ar40", "H1", SeriesKind::Signal}).v.size(), 4u);
+  // The vacuum check read the live gauge through InstrumentMetrics without errors.
+  for (const auto& e : r.conditional_errors) EXPECT_NE(e.name, "vacuum_excursion") << e.message;
+  const auto rec = to_record_conditionals(r.installed, r.data.trips, r.conditional_errors);
+  EXPECT_EQ(rec.tripped.size(), 1u);
+  EXPECT_GT(rec.tripped[0].context.at("Ar40.cur"), 5e5);
 }
 
 }  // namespace

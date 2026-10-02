@@ -43,10 +43,10 @@ Result<void> ExtractionLineValves::close(const std::string& valve) {
 }
 
 Result<void> ScriptMeasurementHook::call(std::string_view entry, scripting::IMeasurementApi& api,
-                                         scripting::CancelToken& token) {
+                                         scripting::CancelToken& token, const scripting::ValueMap& args) {
   scripting::ScriptEnvironment env = env_;
   env.measurement = &api;
-  auto r = host_.call_hook(script_, entry, {}, env, token);
+  auto r = host_.call_hook(script_, entry, args, env, token);
   if (!r) return fail(r.error());
   return {};
 }
@@ -68,5 +68,38 @@ SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerCo
 }
 
 bool SpectrometerCatalog::has_detector(std::string_view name) const { return detectors_.contains(name); }
+
+std::optional<std::vector<double>> InstrumentMetrics::series(const MetricRef& m) const {
+  if (auto v = scalar(m)) return std::vector<double>{*v};
+  return std::nullopt;
+}
+
+std::optional<double> InstrumentMetrics::scalar(const MetricRef& m) const {
+  using K = MetricRef::Kind;
+  switch (m.kind) {
+    case K::DetectorField: {
+      if (spec_ == nullptr || m.field == "intensity") return std::nullopt;
+      auto st = spec_->detector_state(m.a);
+      if (!st) return std::nullopt;
+      if (m.field == "inactive") return st->active ? 0.0 : 1.0;
+      return st->deflection;
+    }
+    case K::Gauge: {
+      if (line_ == nullptr) return std::nullopt;
+      const auto snap = line_->snapshot();
+      if (auto it = snap.pressures.find(m.a); it != snap.pressures.end()) return it->second;
+      auto r = line_->read_gauge(m.a);
+      if (!r) return std::nullopt;
+      return *r;
+    }
+    case K::Device: {
+      if (!devices_) return std::nullopt;
+      auto r = devices_(m.a);
+      if (!r) return std::nullopt;
+      return *r;
+    }
+    default: return std::nullopt;
+  }
+}
 
 }  // namespace pychron::experiment::measurement

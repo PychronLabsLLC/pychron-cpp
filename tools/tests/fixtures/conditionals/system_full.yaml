@@ -1,0 +1,43 @@
+# A system file exercising every legacy key the importer handles.
+truncations:
+  - teststr: Ar40.current>8e5
+    start: 20
+    abbreviated_count_ratio: 0.5
+    analysis_types: [Unknown, Blank Air]
+  - comp: average(Ar40)>1e6
+    check: ignored-because-comp-wins
+    window: 10
+    frequency: 5
+terminations:
+  - check: L2(CDD).deflection==3250
+    start_count: 5
+    frequency: 10
+  - check: Ar36<0
+    ntrips: 3
+    mapper: x+1000
+  - check: Ar36<0
+cancelations:
+  - check: Ar40bs>100
+actions:
+  - check: slope(Ar40)>100
+    action: sleep(10)
+    resume: true
+  - check: Ar40>1
+modifications:
+  - check: Ar40<1000
+    action: Skip N Runs
+    nskip: 2
+    use_truncation: true
+    abbreviated_count_ratio: 0.25
+  - check: Ar40<10
+    action: Set Extract
+    extraction_str: 10%,20%
+  - check: Ar40<5
+    action: Explode
+post_run_actions:
+  - check: Ar40<100
+    action: repeat
+  - check: Ar40<50
+    action: notify_lab()
+bogus_kind:
+  - check: Ar40>1

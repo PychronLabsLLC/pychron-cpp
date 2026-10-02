@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "pychron/experiment/collect/collector.hpp"
+#include "pychron/reduction/arar.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -142,39 +143,87 @@ TEST_F(CollectorTest, FitSeriesIsRelativeToTimeZero) {
 TEST_F(CollectorTest, MetricsDriveConditionals) {
   collector_.begin(spec(SeriesKind::Baseline, 2, {{"", "H1"}}, "baseline.before"));
   collector_.add(reading(t0_ + 1s, {{"H1", 1}}));
-  collector_.add(reading(t0_ + 2s, {{"H1", 3}}));
+  collector_.add(reading(t0_ + 2s, {{"H1", 3}}));  // H1 baseline mean 2
   collector_.set_time_zero(5);
   collector_.begin(spec(SeriesKind::Signal, 3, {{"Ar40", "H1"}, {"Ar39", "AX"}}));
-  collector_.add(reading(t0_ + 6s, {{"H1", 100}, {"AX", 10}}));
+  // Linear in x = t - time zero (1, 2, 3): Ar40 = 100 + 50x, Ar39 = 10 + 5x.
+  collector_.add(reading(t0_ + 6s, {{"H1", 150}, {"AX", 15}}));
   collector_.add(reading(t0_ + 7s, {{"H1", 200}, {"AX", 20}}));
-  collector_.add(reading(t0_ + 8s, {{"H1", 400}, {"AX", 40}}));
+  collector_.add(reading(t0_ + 8s, {{"H1", 250}, {"AX", 25}}));
   clock_.set(t0_ + 9s);
 
   const auto& m = collector_.metrics();
   Variables vars;
-  auto check = [&](const std::string& text) {
+  auto value = [&](const std::string& text) {
     auto e = parse_expression(text);
     EXPECT_TRUE(e) << text;
-    auto r = evaluate_check(**e, m, vars);
+    auto r = evaluate(**e, m, vars);
     EXPECT_TRUE(r) << text << ": " << (r ? "" : r.error().what);
-    return r && r->tripped;
+    return r ? *r : -1e300;
   };
-  EXPECT_TRUE(check("Ar40 == 400"));
-  EXPECT_TRUE(check("Ar40/Ar39 == 10"));
-  EXPECT_TRUE(check("Ar40.cur == 400"));
-  EXPECT_TRUE(check("average(Ar40.bs) == 2"));
-  EXPECT_TRUE(check("Ar40.bs_corrected == 398"));
-  EXPECT_TRUE(check("H1.intensity == 400"));
-  EXPECT_TRUE(check("count(Ar40) == 3"));
-  EXPECT_TRUE(check("slope(Ar40) > 0"));
-  EXPECT_TRUE(check("elapsed() == 4"));
+  EXPECT_NEAR(value("Ar40.intercept"), 100, 1e-9);
+  EXPECT_NEAR(value("Ar40.std_dev"), 0, 1e-9);  // a perfect line
+  EXPECT_NEAR(value("Ar40.bs_corrected"), 98, 1e-9);
+  EXPECT_NEAR(value("Ar40"), 98, 1e-9);         // icfactor 1
+  EXPECT_NEAR(value("Ar39"), 10, 1e-9);         // AX has no baseline
+  EXPECT_NEAR(value("Ar40/Ar39"), 9.8, 1e-9);
+  EXPECT_EQ(value("Ar40.cur"), 250);
+  EXPECT_EQ(value("average(Ar40.bs)"), 2);
+  EXPECT_EQ(value("H1.intensity"), 250);
+  EXPECT_EQ(value("count(Ar40)"), 3);
+  EXPECT_EQ(value("slope(Ar40)"), 50);           // raw points, per reading
+  EXPECT_EQ(value("max(Ar40.bs_corrected)"), 248);
+  EXPECT_EQ(value("elapsed()"), 4);
   EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Gauge, "ion_pump", "", "pressure"}));
+  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "age", "", ""}));  // no constants
+
+  collector_.set_icfactors({{"H1", 2.0}});
+  EXPECT_NEAR(value("Ar40"), 196, 1e-9);
+  EXPECT_NEAR(value("Ar40.ic_corrected"), 196, 1e-9);
+  EXPECT_NEAR(value("Ar40.bs_corrected"), 98, 1e-9);
 
   // Unknown metrics go to the fallback context.
   MapContext fallback;
   fallback.series_data["gauge.ion_pump.pressure"] = {2e-6};
   collector_.set_fallback(&fallback);
-  EXPECT_TRUE(check("gauge.ion_pump.pressure > 1e-6"));
+  EXPECT_EQ(value("gauge.ion_pump.pressure > 1e-6"), 1);
+}
+
+TEST_F(CollectorTest, FitFollowsThePlanAndFallsBackToAverage) {
+  collector_.set_time_zero(0);
+  collector_.begin(spec(SeriesKind::Signal, 3, {{"Ar40", "H1"}}));
+  collector_.add(reading(t0_ + 1s, {{"H1", 10}}));
+  EXPECT_NEAR(*collector_.metrics().scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""}), 10, 1e-12);  // 1 point
+  collector_.add(reading(t0_ + 2s, {{"H1", 20}}));
+  collector_.add(reading(t0_ + 3s, {{"H1", 30}}));
+  EXPECT_NEAR(collector_.intercept("Ar40")->value, 0, 1e-9);  // linear default
+  plan::Fits fits;
+  fits.signal["Ar40"] = reduction::FitKind::Average;
+  collector_.set_fits(fits);
+  EXPECT_NEAR(collector_.intercept("Ar40")->value, 20, 1e-9);
+  EXPECT_FALSE(collector_.intercept("Ar39"));
+}
+
+TEST_F(CollectorTest, ComputedArArValues) {
+  plan::Fits fits;
+  fits.signal["default"] = reduction::FitKind::Average;
+  collector_.set_fits(fits);
+  reduction::ArArConstants c;
+  c.j = 0.01;
+  collector_.set_arar(c);
+  collector_.set_time_zero(0);
+  collector_.begin(spec(SeriesKind::Signal, 2, {{"Ar40", "H1"}, {"Ar39", "AX"}, {"Ar36", "CDD"}}));
+  collector_.add(reading(t0_ + 1s, {{"H1", 1000}, {"AX", 100}, {"CDD", 1}}));
+  collector_.add(reading(t0_ + 2s, {{"H1", 1000}, {"AX", 100}, {"CDD", 1}}));
+  const auto& m = collector_.metrics();
+  const auto expected = reduction::compute_arar({1.0, std::nullopt, std::nullopt, 100.0, 1000.0}, c);
+  for (const char* name : {"radiogenic_yield", "rad40", "atm40", "age"}) {
+    auto v = m.scalar(MetricRef{MetricRef::Kind::Computed, name, "", ""});
+    ASSERT_TRUE(v) << name;
+    EXPECT_DOUBLE_EQ(*v, expected.at(name)) << name;
+  }
+  EXPECT_DOUBLE_EQ(*m.scalar(MetricRef{MetricRef::Kind::Computed, "instant_age", "", ""}), expected.at("age"));
+  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "kca", "", ""}));  // no Ar37
 }
 
 TEST_F(CollectorTest, IsotopeOnTwoDetectorsResolvesToTheLatest) {
@@ -188,7 +237,12 @@ TEST_F(CollectorTest, IsotopeOnTwoDetectorsResolvesToTheLatest) {
 TEST_F(CollectorTest, TripsAndTimingAreRecorded) {
   collector_.set_inlet_open(3);
   collector_.set_inlet_close(18);
-  collector_.add_trips({Trip{"t", ConditionalKind::Truncation, 9e5, 1, 2.0, {}}});
+  Trip trip;
+  trip.name = "t";
+  trip.value = 9e5;
+  trip.count = 1;
+  trip.ts = 2.0;
+  collector_.add_trips({trip});
   auto d = collector_.data();
   EXPECT_EQ(d.timing.epoch, t0_);
   EXPECT_EQ(*d.timing.inlet_open, 3);

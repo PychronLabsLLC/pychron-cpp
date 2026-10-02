@@ -1,0 +1,27 @@
+# System-level conditionals for the example lab (conditionals spec section 4).
+# Checked for every run; queue, plan and run levels add to or disable these.
+
+# Before extraction and before measurement: stop the queue if the ion
+# counter is off or the spectrometer vacuum is poor.
+[[pre_run]]
+name = "cdd_off"
+check = "CDD.inactive"
+
+[[pre_run]]
+name = "spec_vacuum"
+check = "gauge.IG1.pressure > 1e-6"
+
+# During measurement: cancel the queue on a vacuum excursion.
+[[cancelations]]
+name = "vacuum_excursion"
+check = "gauge.IG1.pressure > 1e-5"
+start = 5
+frequency = 5
+ntrips = 2
+
+# Protect the Faradays from a run that is far too big.
+[[truncations]]
+name = "huge_signal"
+check = "Ar40.cur > 4e6"
+start = 3
+abbreviated_count_ratio = 0.5

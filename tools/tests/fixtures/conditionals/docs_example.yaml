@@ -1,0 +1,15 @@
+# docs/user_guide/operation/conditionals.rst:68-83 (legacy pychron)
+actions: []
+pre_run_terminations:
+ - check: CDD.inactive
+ - check: CDD.deflection==2000
+ - check: bone.ig.pressure > 1e-8
+ - check: microbone.ig.pressure > 1e-8
+ - check: device.pneumatics < 10
+post_run_terminations:
+ - check: Ar40 < $MIN_INTENSITY
+   analysis_types:
+    - air
+    - cocktail
+terminations: []
+truncations: []

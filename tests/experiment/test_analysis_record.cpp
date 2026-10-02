@@ -48,8 +48,38 @@ RecordBuilder full_builder() {
   BaselineResult br;
   br.value = 0.1;
   b.set_baseline("H1", br);
-  b.set_whiff(0.25);
-  b.set_conditionals({{"c1"}, {}});
+  b.set_whiff("run_remainder");
+  Conditionals cond;
+  InstalledConditional ic;
+  ic.id = "abc";
+  ic.name = "big";
+  ic.kind = "truncation";
+  ic.level = "queue";
+  ic.location = "conditionals/q.toml";
+  ic.check = "average(Ar40, window=5) > 800000";
+  ic.start = 20;
+  ic.frequency = 2;
+  ic.ntrips = 3;
+  ic.window = 5;
+  ic.mapper = "x + 1";
+  ic.analysis_types = {"unknown", "blank"};
+  ic.abbreviated_count_ratio = 0.5;
+  ic.action = "truncate";
+  cond.installed.push_back(ic);
+  TrippedConditional tc;
+  tc.id = "abc";
+  tc.name = "big";
+  tc.kind = "truncation";
+  tc.check = ic.check;
+  tc.action = "truncate";
+  tc.reading = 26;
+  tc.count = 3;
+  tc.t = 41.5;
+  tc.value = 812345.5;
+  tc.context = {{"Ar40", 812345.5}, {"Ar39", 1.25}};
+  cond.tripped.push_back(tc);
+  cond.errors.push_back({"other", "metric 'gauge.x.pressure' unavailable", 4});
+  b.set_conditionals(cond);
   b.add_event({1.0, "state", "measuring"});
   b.add_persister_ref("db:1");
   return b;
@@ -147,7 +177,7 @@ TEST(RecordSerialize, ShaChangesWithContent) {
 
 TEST(RecordSerialize, SchemaVersionBumpIsRejected) {
   auto rec = full_builder().finalize().value();
-  EXPECT_EQ(rec.provenance.schema_version, 1);  // bump kRecordSchemaVersion deliberately, with a migration
+  EXPECT_EQ(rec.provenance.schema_version, 2);  // bump kRecordSchemaVersion deliberately, with a migration
   rec.provenance.schema_version = kRecordSchemaVersion + 1;
   auto r = from_toml(to_toml(rec));
   ASSERT_FALSE(r.has_value());

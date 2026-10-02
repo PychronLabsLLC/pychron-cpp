@@ -131,12 +131,15 @@ class FakePeakCenter final : public IPeakCenterPort {
 
 class FakeHook final : public IMeasurementHook {
  public:
-  Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken&) override {
+  Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken&,
+                    const scripting::ValueMap& args) override {
     entries.emplace_back(entry);
+    if (auto it = args.find("result"); it != args.end()) whiff_result = std::get<std::string>(it->second);
     if (auto it = actions.find(std::string(entry)); it != actions.end()) return it->second(api);
     return {};
   }
   std::vector<std::string> entries;
+  std::string whiff_result;
   std::map<std::string, std::function<Result<void>(scripting::IMeasurementApi&)>> actions;
 };
 
@@ -162,6 +165,21 @@ plan::MeasurementPlan multicollect(int counts = 10, int cycles = 1) {
   return p;
 }
 
+ActionSpec action(ActionSpec::Type type, std::string name = {}) {
+  ActionSpec a;
+  a.type = type;
+  a.name = std::move(name);
+  return a;
+}
+
+MeasurementInputs inputs(plan::MeasurementPlan p, ConditionalSet conditionals = {}) {
+  MeasurementInputs in;
+  in.plan = std::move(p);
+  in.conditionals = std::move(conditionals);
+  in.run_id = "run-1";
+  return in;
+}
+
 Conditional conditional(ConditionalKind kind, std::string name, std::string check, int start = 0,
                         ActionSpec action = {}) {
   Conditional c;
@@ -183,7 +201,7 @@ class EngineTest : public ::testing::Test {
   EngineTest() { valves_.t0 = t0_; }
 
   MeasurementResult run(plan::MeasurementPlan p, ConditionalSet conditionals = {}, EngineOptions options = {}) {
-    MeasurementInputs in{std::move(p), std::move(conditionals), {}, "run-1"};
+    MeasurementInputs in = inputs(std::move(p), std::move(conditionals));
     if (!options.sleep) options.sleep = [this](pychron::Duration d) { clock_.advance(d); };
     engine_ = std::make_unique<MeasurementEngine>(context(), std::move(in), std::move(options));
     return engine_->run(token_);
@@ -372,12 +390,13 @@ TEST_F(EngineTest, TruncationScalesLaterCollections) {
   p.baseline.after = true;
   p.baseline.counts = 30;
   ConditionalSet set;
-  set.items.push_back(conditional(ConditionalKind::Truncation, "big", "Ar40 > 0", 10));
+  set.items.push_back(conditional(ConditionalKind::Truncation, "big", "Ar40.cur > 0", 10));
+  set.items.back().abbreviated_count_ratio = 0.3;
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 10);
-  EXPECT_DOUBLE_EQ(r.count_scale, 0.25);
-  EXPECT_EQ(r.data.counts.at("baseline.after"), 8);  // ceil(30 * 10/40)
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 11);  // first check after reading start + 1
+  EXPECT_DOUBLE_EQ(r.count_scale, 0.3);                         // the conditional's ratio (pychron)
+  EXPECT_EQ(r.data.counts.at("baseline.after"), 9);  // ceil(30 * 0.3)
   ASSERT_EQ(r.data.trips.size(), 1u);
   EXPECT_EQ(r.data.trips[0].name, "big");
 }
@@ -416,24 +435,165 @@ TEST_F(EngineTest, TerminationKeepsDataAndSkipsLaterBlocks) {
 TEST_F(EngineTest, ActionsAndModifications) {
   auto p = multicollect(10);
   p.sniff.enabled = false;
+  p.baseline.after = true;
+  p.baseline.counts = 30;
   p.hook = "h.py";
   ConditionalSet set;
-  set.items.push_back(conditional(ConditionalKind::Modification, "skip", "Ar40 > 0", 2,
-                                  ActionSpec{ActionSpec::Type::SkipAliquot, false, "", 0}));
-  set.items.push_back(conditional(ConditionalKind::Action, "note", "Ar40 > 0", 3,
-                                  ActionSpec{ActionSpec::Type::Notify, false, "", 0}));
-  set.items.push_back(conditional(ConditionalKind::Action, "hook", "Ar40 > 0", 4,
-                                  ActionSpec{ActionSpec::Type::RunHook, false, "on_big", 0}));
-  set.items.push_back(conditional(ConditionalKind::Action, "cut", "Ar40 > 0", 6,
-                                  ActionSpec{ActionSpec::Type::Truncate, false, "", 0}));
+  set.items.push_back(conditional(ConditionalKind::Modification, "skip", "Ar40.cur > 0", 2,
+                                  action(ActionSpec::Type::SkipAliquot)));
+  // First trip wins: a resuming action that stays true would starve the
+  // actions after it, so this one is true at reading 4 only.
+  set.items.push_back(conditional(ConditionalKind::Action, "note", "count(Ar40) == 4", 3,
+                                  action(ActionSpec::Type::Notify)));
+  set.items.back().resume = true;
+  set.items.push_back(conditional(ConditionalKind::Action, "hook", "count(Ar40) == 5", 4,
+                                  action(ActionSpec::Type::RunHook, "on_big")));
+  set.items.back().resume = true;
+  set.items.push_back(conditional(ConditionalKind::Action, "cut", "Ar40.cur > 0", 6,
+                                  action(ActionSpec::Type::Truncate)));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
   ASSERT_EQ(r.modifications.size(), 1u);
-  EXPECT_EQ(r.modifications[0].type, ActionSpec::Type::SkipAliquot);
+  EXPECT_EQ(r.modifications[0].action.type, ActionSpec::Type::SkipAliquot);
+  EXPECT_EQ(r.modifications[0].name, "skip");
   EXPECT_EQ(r.notes, (std::vector<std::string>{"notify: note"}));
   EXPECT_EQ(hook_.entries, (std::vector<std::string>{"before_main", "on_big", "after_main"}));
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 6);
-  EXPECT_DOUBLE_EQ(r.count_scale, 0.6);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 7);
+  EXPECT_DOUBLE_EQ(r.count_scale, 1.0);  // a user/action truncate keeps later counts
+  EXPECT_EQ(r.data.counts.at("baseline.after"), 30);
+  EXPECT_FALSE(r.cancel_queue);
+  EXPECT_EQ(r.installed.size(), 4u);
+}
+
+TEST_F(EngineTest, NonResumingActionEndsMainWithoutTruncating) {
+  auto p = multicollect(10, 3);
+  p.sniff.enabled = false;
+  p.baseline.after = true;
+  p.baseline.counts = 30;
+  ConditionalSet set;
+  set.items.push_back(conditional(ConditionalKind::Action, "note", "Ar40.cur > 0", 3,
+                                  action(ActionSpec::Type::Notify)));
+  auto r = run(p, set);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 4);  // later cycles skipped
+  EXPECT_EQ(r.data.counts.at("baseline.after"), 30);
+  EXPECT_EQ(r.notes, (std::vector<std::string>{"notify: note"}));
+}
+
+TEST_F(EngineTest, ModificationFlagsActInRun) {
+  auto p = multicollect(20);
+  p.sniff.enabled = false;
+  p.baseline.after = true;
+  p.baseline.counts = 20;
+  ConditionalSet set;
+  set.items.push_back(conditional(ConditionalKind::Modification, "low", "Ar40.cur > 0", 4,
+                                  action(ActionSpec::Type::RunBlank)));
+  set.items.back().truncate = true;
+  set.items.back().abbreviated_count_ratio = 0.5;
+  auto r = run(p, set);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 5);
+  EXPECT_EQ(r.data.counts.at("baseline.after"), 10);
+  ASSERT_EQ(r.modifications.size(), 1u);
+  EXPECT_TRUE(r.modifications[0].truncate);
+
+  set.items.back().truncate = false;
+  set.items.back().terminate = true;
+  r = run(p, set);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Terminated);
+  EXPECT_EQ(r.blocks.back(), Block::Main);
+}
+
+TEST_F(EngineTest, AnalysisTypeFiltersConditionals) {
+  auto p = multicollect(10);
+  p.sniff.enabled = false;
+  ConditionalSet set;
+  set.items.push_back(conditional(ConditionalKind::Termination, "blanks_only", "Ar40.cur > 0", 2));
+  set.items.back().analysis_types = {"blank"};
+  MeasurementInputs in = inputs(p, set);
+  in.analysis_type = "unknown";
+  EngineOptions options;
+  options.sleep = [this](pychron::Duration d) { clock_.advance(d); };
+  MeasurementEngine e(context(), in, options);
+  auto r = e.run(token_);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed);
+  EXPECT_TRUE(r.installed.empty());
+  in.analysis_type = "blank_unknown";
+  MeasurementEngine e2(context(), in, options);
+  EXPECT_EQ(e2.run(token_).outcome, MeasurementOutcome::Terminated);
+}
+
+TEST_F(EngineTest, TripsCarryProvenance) {
+  auto p = multicollect(10);
+  p.sniff.enabled = false;
+  ConditionalSet set;
+  set.items.push_back(conditional(ConditionalKind::Termination, "t", "Ar40.cur > 0 and Ar39.cur > 0", 4));
+  set.stamp(ConditionalLevel::Queue, "q.toml");
+  std::vector<ConditionalTripped> events;
+  auto sub = bus_.subscribe<ConditionalTripped>([&](const ConditionalTripped& e) { events.push_back(e); });
+  auto r = run(p, set);
+  ASSERT_EQ(r.data.trips.size(), 1u);
+  const auto& t = r.data.trips[0];
+  EXPECT_EQ(t.reading, 5);
+  EXPECT_EQ(t.level, ConditionalLevel::Queue);
+  EXPECT_EQ(t.id, set.items[0].id());
+  ASSERT_EQ(t.context.size(), 2u);
+  EXPECT_EQ(t.context[0].metric, "Ar40.cur");
+  EXPECT_GT(t.context[0].value, 0);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].run_id, "run-1");
+  ASSERT_EQ(r.installed.size(), 1u);
+  EXPECT_EQ(r.installed[0].location, "q.toml");
+}
+
+TEST_F(EngineTest, CancelationAsksToCancelTheQueue) {
+  auto p = multicollect(10);
+  p.sniff.enabled = false;
+  ConditionalSet set;
+  set.items.push_back(conditional(ConditionalKind::Cancelation, "bad", "Ar40.cur > 0", 1));
+  auto r = run(p, set);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
+  EXPECT_TRUE(r.cancel_queue);
+  token_.reset();
+  auto user = multicollect(40);
+  spec_.on_reading = [&](int n) {
+    if (n == 20) token_.cancel();
+  };
+  r = run(user);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
+  EXPECT_FALSE(r.cancel_queue);  // a user cancel is the executor's call
+}
+
+TEST_F(EngineTest, WhiffRunRemainderPumpAbort) {
+  auto p = multicollect(5);
+  p.hook = "h.py";
+  // The fake's Ar40 is ~1000 * (1 + 0.01 t) with t ~ 1000 s, i.e. ~1.1e4.
+  p.whiff = {true, 3, 1, {{"Ar40.cur > 1e9", "abort"}, {"Ar40.cur > 1e6", "pump"}}};
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed)
+      << to_string(r.outcome) << " " << (r.error ? r.error->what : "") << " blocks=" << r.blocks.size()
+      << " notes=" << testing::PrintToString(r.notes);
+  EXPECT_EQ(r.whiff, WhiffCheck::Action::RunRemainder);  // nothing matched
+  EXPECT_EQ(hook_.whiff_result, "run_remainder");
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Whiff}), 3);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Sniff}), 7);  // the rest of the 10 s equilibration
+  // The whiff happens after the inlet opens.
+  EXPECT_GT(r.data.series.at({"Ar40", "H1", SeriesKind::Whiff}).t.front(), *r.data.timing.inlet_open);
+
+  p.whiff.checks = {{"Ar40.cur > 500", "pump"}};
+  valves_.log.clear();
+  r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Terminated);
+  EXPECT_EQ(r.whiff, WhiffCheck::Action::Pump);
+  EXPECT_FALSE(valves_.state["B"]);
+  EXPECT_TRUE(valves_.state["C"]);  // outlet opened to pump the gas away
+  EXPECT_EQ(r.blocks.back(), Block::Equilibrate);
+  EXPECT_FALSE(r.data.series.contains({"Ar40", "H1", SeriesKind::Signal}));
+
+  p.whiff.checks = {{"Ar40.cur > 500", "abort"}};
+  r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Aborted);
+  EXPECT_FALSE(valves_.state["B"]);
 }
 
 TEST_F(EngineTest, EquilibrationConditionalClosesTheInletEarly) {
@@ -484,7 +644,7 @@ TEST_F(EngineTest, CancelationConditionalCancels) {
   set.items.push_back(conditional(ConditionalKind::Cancelation, "bad", "Ar40 > 0", 2));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 2);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 3);
 }
 
 TEST_F(EngineTest, AcquisitionFailureFailsAndCleansUp) {
@@ -529,15 +689,13 @@ TEST_F(EngineTest, ValidateNamesMissingServices) {
   auto p = multicollect();
   p.peak_center.after = true;
   p.hook = "h.py";
-  p.whiff.enabled = true;
   EngineContext ctx{spec_, clock_};
-  MeasurementEngine e(ctx, MeasurementInputs{p, {}, {}, "r"});
+  MeasurementEngine e(ctx, inputs(p));
   auto v = e.validate();
   ASSERT_FALSE(v);
   EXPECT_NE(v.error().what.find("valve service"), std::string::npos);
   EXPECT_NE(v.error().what.find("peak-center"), std::string::npos);
   EXPECT_NE(v.error().what.find("hook 'h.py'"), std::string::npos);
-  EXPECT_NE(v.error().what.find("whiff"), std::string::npos);
   auto r = e.run(token_);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
   EXPECT_TRUE(r.blocks.empty());
@@ -551,7 +709,8 @@ TEST_F(EngineTest, HookUsesTheMeasurementApi) {
     if (auto r = api.position("Ar39", "CDD"); !r) return r;
     if (auto r = api.acquire(2, 1.0); !r) return r;
     if (auto r = api.open("X"); !r) return r;
-    if (auto r = api.add_conditional("Ar40 > 0 -> truncate"); !r) return r;
+    if (auto r = api.add_conditional("Ar40.cur > 0 -> truncate"); !r) return r;
+    if (api.add_conditional("Ar40 > 0 -> run_blank")) return fail(ErrorKind::Config, "queue action accepted");
     api.log("hello");
     return {};
   };

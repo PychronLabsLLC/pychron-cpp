@@ -1,0 +1,16 @@
+# expect: whiff.checks[0].check:
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[whiff]
+enabled = true
+counts = 3
+[[whiff.checks]]
+check = "Ar40.cur >"
+action = "pump"

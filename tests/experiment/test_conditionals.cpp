@@ -120,8 +120,11 @@ TEST(ConditionalsEval, MissingMetricIsErrorNotTrip) {
   auto e = parse_expression("Ar40 > 1");
   EXPECT_FALSE(evaluate(**e, empty, {}));
   ConditionalEngine eng(ConditionalSet{{item(ConditionalKind::Truncation, "t", "Ar40 > 1")}, {}});
-  EXPECT_TRUE(eng.evaluate(empty, {}, 1, 0).empty());
-  EXPECT_EQ(eng.errors().size(), 1u);
+  EXPECT_FALSE(eng.evaluate(ConditionalKind::Truncation, empty, {}, 1, 0));
+  EXPECT_FALSE(eng.evaluate(ConditionalKind::Truncation, empty, {}, 2, 0));
+  ASSERT_EQ(eng.errors().size(), 1u);  // deduplicated per conditional
+  EXPECT_EQ(eng.errors()[0].count, 2);
+  EXPECT_EQ(eng.errors()[0].name, "t");
 }
 
 TEST(ConditionalsActions, ParseEnumActions) {
@@ -136,32 +139,53 @@ TEST(ConditionalsActions, ParseEnumActions) {
   EXPECT_EQ(sp->value, 1.5);
   EXPECT_EQ(parse_action("run_hook warm")->name, "warm");
   EXPECT_EQ(parse_action("notify")->type, T::Notify);
-  for (const char* k : {"skip_n", "skip_aliquot", "repeat", "run_blank"}) EXPECT_TRUE(parse_action(k)) << k;
-  EXPECT_EQ(parse_action("set_extract=2.5")->value, 2.5);
-  for (const char* bad : {"", "os.system('x')", "truncate:slow", "set_param x", "run_hook", "cancel now", "set_extract=abc"})
+  for (const char* k : {"skip_next", "skip_n", "skip_aliquot", "skip_to_last_in_aliquot", "repeat", "run_blank"})
+    EXPECT_TRUE(parse_action(k)) << k;
+  EXPECT_EQ(parse_action("skip_n")->count, 1);
+  EXPECT_EQ(parse_action("skip_n 3")->count, 3);
+  EXPECT_EQ(parse_action("skip_n=2")->count, 2);
+  auto se = parse_action("set_extract=2.5");
+  ASSERT_TRUE(se);
+  EXPECT_EQ(se->steps, std::vector<double>{2.5});
+  auto pct = parse_action("set_extract 10%, 20%");
+  ASSERT_TRUE(pct);
+  EXPECT_TRUE(pct->percent);
+  EXPECT_EQ(pct->steps, (std::vector<double>{10, 20}));
+  EXPECT_EQ(to_string(*pct), "set_extract 10%,20%");
+  EXPECT_EQ(to_string(*parse_action("set_extract 1,2.5")), "set_extract 1,2.5");
+  EXPECT_EQ(to_string(*parse_action("skip_n 4")), "skip_n 4");
+  for (const char* bad : {"", "os.system('x')", "truncate:slow", "set_param x", "run_hook", "cancel now",
+                          "set_extract=abc", "set_extract", "set_extract 1,10%", "skip_n 0", "skip_n 1.5",
+                          "skip_next 2"})
     EXPECT_FALSE(parse_action(bad)) << bad;
   EXPECT_EQ(to_string(*parse_action("truncate:quick")), "truncate:quick");
 }
 
-TEST(ConditionalsEngine, StartFrequencyNtrips) {
+TEST(ConditionalsEngine, StartFrequencyNtripsFollowLegacyGating) {
+  // Evaluated after reading n when n > start and (n - start) % frequency == 0.
   auto ctx = make_ctx();
   Conditional c = item(ConditionalKind::Truncation, "t", "Ar40 > 8e5");
   c.start = 3;
   c.frequency = 2;
   c.ntrips = 2;
   ConditionalEngine eng(ConditionalSet{{c}, {}});
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 1, 1).empty());  // before start
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 2, 2).empty());
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 3, 3).empty());  // true, count 1 of 2
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 4, 4).empty());  // skipped by frequency
-  auto trips = eng.evaluate(ctx, {}, 5, 5);          // count 2 -> trip
-  ASSERT_EQ(trips.size(), 1u);
-  EXPECT_EQ(trips[0].name, "t");
-  EXPECT_EQ(trips[0].kind, ConditionalKind::Truncation);
-  EXPECT_EQ(trips[0].count, 2);
-  EXPECT_EQ(trips[0].value, 9e5);
-  EXPECT_EQ(trips[0].ts, 5);
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 7, 7).empty());  // fires once
+  constexpr auto K = ConditionalKind::Truncation;
+  for (int n = 1; n <= 4; ++n) EXPECT_FALSE(eng.evaluate(K, ctx, {}, n, n)) << n;  // n=5 is the first check
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 5, 5));  // true, 1 of 2
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 6, 6));  // skipped by frequency
+  auto trip = eng.evaluate(K, ctx, {}, 7, 7);   // 2 of 2
+  ASSERT_TRUE(trip);
+  EXPECT_EQ(trip->name, "t");
+  EXPECT_EQ(trip->kind, ConditionalKind::Truncation);
+  EXPECT_EQ(trip->count, 2);
+  EXPECT_EQ(trip->value, 9e5);
+  EXPECT_EQ(trip->ts, 7);
+  EXPECT_EQ(trip->reading, 7);
+  EXPECT_EQ(trip->check, "Ar40 > 800000");
+  EXPECT_EQ(trip->id, c.id());
+  ASSERT_EQ(trip->context.size(), 1u);
+  EXPECT_EQ(trip->context[0], (MetricValue{"Ar40", 9e5}));
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 9, 9));  // fires once
   EXPECT_EQ(eng.trips().size(), 1u);
   eng.reset();
   EXPECT_TRUE(eng.trips().empty());
@@ -172,16 +196,17 @@ TEST(ConditionalsEngine, NtripsRequiresConsecutive) {
   Conditional c = item(ConditionalKind::Termination, "t", "Ar40 > 10");
   c.ntrips = 2;
   ConditionalEngine eng(ConditionalSet{{c}, {}});
+  constexpr auto K = ConditionalKind::Termination;
   ctx.series_data["Ar40"] = {20};
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 1, 1).empty());
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 1, 1));
   ctx.series_data["Ar40"] = {0};
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 2, 2).empty());  // resets
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 2, 2));  // resets
   ctx.series_data["Ar40"] = {20};
-  EXPECT_TRUE(eng.evaluate(ctx, {}, 3, 3).empty());
-  EXPECT_EQ(eng.evaluate(ctx, {}, 4, 4).size(), 1u);
+  EXPECT_FALSE(eng.evaluate(K, ctx, {}, 3, 3));
+  EXPECT_TRUE(eng.evaluate(K, ctx, {}, 4, 4));
 }
 
-TEST(ConditionalsEngine, EvaluationOrder) {
+TEST(ConditionalsEngine, FirstTripWinsInMeasurementOrder) {
   auto ctx = make_ctx();
   ConditionalSet s;
   for (auto k : {ConditionalKind::Equilibration, ConditionalKind::Cancelation, ConditionalKind::Termination,
@@ -189,13 +214,83 @@ TEST(ConditionalsEngine, EvaluationOrder) {
     s.items.push_back(item(k, std::string(to_string(k)), "Ar40 > 1"));
   s.items.push_back(item(ConditionalKind::PreRun, "pre", "Ar40 > 1"));
   ConditionalEngine eng(std::move(s));
-  auto trips = eng.evaluate(ctx, {}, 1, 0);
-  ASSERT_EQ(trips.size(), 6u);  // pre_run excluded
   std::vector<std::string> order;
-  for (auto& t : trips) order.push_back(t.name);
-  EXPECT_EQ(order, (std::vector<std::string>{"modification", "truncation", "action", "termination", "cancelation",
-                                             "equilibration"}));
-  EXPECT_EQ(eng.evaluate_kind(ConditionalKind::PreRun, ctx, {}, 1, 0).size(), 1u);
+  for (int n = 1; n <= 8; ++n)
+    if (auto t = eng.evaluate(kMeasurementOrder, ctx, {}, n, 0)) order.push_back(t->name);
+  // One trip per reading; equilibration and pre_run are not in the measurement order.
+  EXPECT_EQ(order, (std::vector<std::string>{"modification", "truncation", "action", "termination", "cancelation"}));
+  EXPECT_TRUE(eng.evaluate(ConditionalKind::Equilibration, ctx, {}, 1, 0));
+  EXPECT_TRUE(eng.check_now(ConditionalKind::PreRun, ctx, {}));
+}
+
+TEST(ConditionalsEngine, LaterKindsAreNotEvaluatedOnATrippedReading) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {5};
+  Conditional mod = item(ConditionalKind::Modification, "mod", "Ar40 > 1");
+  mod.action.type = ActionSpec::Type::SkipNext;
+  Conditional term = item(ConditionalKind::Termination, "term", "Ar40 > 1");
+  term.ntrips = 2;
+  ConditionalEngine eng(ConditionalSet{{mod, term}, {}});
+  EXPECT_EQ(eng.evaluate(kMeasurementOrder, ctx, {}, 1, 0)->name, "mod");  // term not counted
+  EXPECT_FALSE(eng.evaluate(kMeasurementOrder, ctx, {}, 2, 0));            // term 1 of 2
+  EXPECT_EQ(eng.evaluate(kMeasurementOrder, ctx, {}, 3, 0)->name, "term");
+}
+
+TEST(ConditionalsEngine, ResumingActionsReArm) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {5};
+  Conditional a = item(ConditionalKind::Action, "a", "Ar40 > 1");
+  a.action.type = ActionSpec::Type::Notify;
+  a.resume = true;
+  a.ntrips = 2;
+  Conditional once = item(ConditionalKind::Action, "once", "Ar40 > 100");
+  once.action.type = ActionSpec::Type::Notify;
+  ConditionalEngine eng(ConditionalSet{{a, once}, {}});
+  int fired = 0;
+  for (int n = 1; n <= 6; ++n) fired += eng.evaluate(ConditionalKind::Action, ctx, {}, n, 0) ? 1 : 0;
+  EXPECT_EQ(fired, 3);  // every second reading
+}
+
+TEST(ConditionalsEngine, AnalysisTypeFilter) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {5};
+  Conditional blanks = item(ConditionalKind::Termination, "blanks", "Ar40 > 1");
+  blanks.analysis_types = {"blank"};
+  Conditional air = item(ConditionalKind::Termination, "air", "Ar40 > 1");
+  air.analysis_types = {"air", "cocktail"};
+  EXPECT_TRUE(blanks.applies_to("blank_unknown"));
+  EXPECT_TRUE(blanks.applies_to("Blank_Air"));
+  EXPECT_FALSE(blanks.applies_to("unknown"));
+  EXPECT_TRUE(air.applies_to("air"));
+  EXPECT_TRUE(air.applies_to(""));  // unknown type: everything applies
+  ConditionalEngine eng(ConditionalSet{{blanks, air}, {}}, "unknown");
+  EXPECT_TRUE(eng.installed().empty());
+  EXPECT_FALSE(eng.evaluate(ConditionalKind::Termination, ctx, {}, 1, 0));
+  ConditionalEngine eng2(ConditionalSet{{blanks, air}, {}}, "blank_cocktail");
+  ASSERT_EQ(eng2.installed().size(), 1u);
+  EXPECT_EQ(eng2.evaluate(ConditionalKind::Termination, ctx, {}, 1, 0)->name, "blanks");
+}
+
+TEST(ConditionalsEngine, CheckNowCountsNtripsAcrossCalls) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {5};
+  Conditional c = item(ConditionalKind::PostRun, "low", "Ar40 > 1");
+  c.ntrips = 2;
+  c.action.type = ActionSpec::Type::RunBlank;
+  ConditionalEngine eng(ConditionalSet{{c}, {}});
+  EXPECT_FALSE(eng.check_now(ConditionalKind::PostRun, ctx, {}));
+  EXPECT_TRUE(eng.check_now(ConditionalKind::PostRun, ctx, {}));
+  EXPECT_FALSE(eng.check_now(ConditionalKind::PostRun, ctx, {}));  // counting again
+  EXPECT_TRUE(eng.check_now(ConditionalKind::PostRun, ctx, {}));
+}
+
+TEST(ConditionalsModel, IdIsStableAndDefinitionSensitive) {
+  Conditional a = item(ConditionalKind::Truncation, "a", "Ar40 > 8e5");
+  Conditional b = item(ConditionalKind::Truncation, "b", "Ar40>800000");  // same canonical check
+  EXPECT_EQ(a.id(), b.id());
+  EXPECT_EQ(a.id().size(), 64u);
+  b.start = 5;
+  EXPECT_NE(a.id(), b.id());
 }
 
 TEST(ConditionalsMerge, LaterLevelsAddAndRunDisables) {
@@ -291,4 +386,89 @@ action = "pump"
   EXPECT_EQ(evaluate_whiff(*w, ctx, {}), WhiffCheck::Action::Pump);
   EXPECT_FALSE(parse_whiff("[whiff]\n[[whiff.checks]]\ncheck = \"Ar40 > 1\"\naction = \"explode\"\n"));
   EXPECT_FALSE(parse_whiff("x = 1"));
+}
+
+TEST(ConditionalsToml, LegacyFields) {
+  const char* text = R"(
+[[truncations]]
+name = "big"
+check = "Ar40 > 900"
+window = 5
+mapper = "x + 1000"
+abbreviated_count_ratio = 0.5
+analysis_types = ["Unknown", "blank air"]
+
+[[actions]]
+check = "slope(Ar40) > 100"
+action = "run_hook warn"
+resume = true
+
+[[modifications]]
+check = "Ar40 < 1e3"
+action = "set_extract 10%,20%"
+truncate = true
+abbreviated_count_ratio = 0.25
+
+[[modifications]]
+name = "default-skip"
+check = "Ar40 < 1"
+
+[[pre_run]]
+check = "CDD.inactive"
+
+[[post_run]]
+check = "Ar40 < $MIN_INTENSITY"
+analysis_types = ["air"]
+)";
+  auto set = parse_conditionals(text, "lab.toml");
+  ASSERT_TRUE(set) << set.error().what;
+  ASSERT_EQ(set->items.size(), 6u);
+  auto find = [&](ConditionalKind k, int nth = 0) -> const Conditional& {
+    for (const auto& c : set->items)
+      if (c.kind == k && nth-- == 0) return c;
+    ADD_FAILURE() << "missing " << to_string(k);
+    return set->items[0];
+  };
+  const auto& big = find(ConditionalKind::Truncation);
+  EXPECT_EQ(big.check, "Ar40 > 900");
+  EXPECT_EQ(big.effective_check(), "average(Ar40, window=5) + 1000 > 900");
+  EXPECT_EQ(big.window, 5);
+  EXPECT_DOUBLE_EQ(big.abbreviated_count_ratio, 0.5);
+  EXPECT_EQ(big.analysis_types, (std::vector<std::string>{"unknown", "blank_air"}));
+  EXPECT_EQ(big.location, "lab.toml");
+  EXPECT_TRUE(find(ConditionalKind::Action).resume);
+  EXPECT_EQ(find(ConditionalKind::Action).action.type, ActionSpec::Type::RunHook);
+  EXPECT_TRUE(find(ConditionalKind::Modification, 0).truncate);
+  EXPECT_TRUE(find(ConditionalKind::Modification, 0).action.percent);
+  EXPECT_EQ(find(ConditionalKind::Modification, 1).action.type, ActionSpec::Type::SkipNext);  // default
+  EXPECT_EQ(find(ConditionalKind::PreRun).action.type, ActionSpec::Type::Cancel);             // default
+  EXPECT_EQ(find(ConditionalKind::PostRun).action.type, ActionSpec::Type::Cancel);            // default
+  set->stamp(ConditionalLevel::Queue, "queue/q1.toml");
+  for (const auto& c : set->items) {
+    EXPECT_EQ(c.level, ConditionalLevel::Queue);
+    EXPECT_EQ(c.location, "queue/q1.toml");
+  }
+}
+
+TEST(ConditionalsToml, PerKindRules) {
+  auto bad = [](const std::string& body) {
+    auto r = parse_conditionals(body);
+    return r ? std::string() : r.error().what;
+  };
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\naction = \"cancel\"\n"), "");
+  EXPECT_NE(bad("[[terminations]]\ncheck = \"Ar40 > 1\"\naction = \"cancel\"\n"), "");
+  EXPECT_NE(bad("[[actions]]\ncheck = \"Ar40 > 1\"\n"), "");                            // needs action
+  EXPECT_NE(bad("[[actions]]\ncheck = \"Ar40 > 1\"\naction = \"run_blank\"\n"), "");    // queue action
+  EXPECT_NE(bad("[[modifications]]\ncheck = \"Ar40 > 1\"\naction = \"notify\"\n"), "");
+  EXPECT_NE(bad("[[modifications]]\ncheck = \"Ar40 > 1\"\ntruncate = true\nterminate = true\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nresume = true\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nterminate = true\n"), "");
+  EXPECT_NE(bad("[[terminations]]\ncheck = \"Ar40 > 1\"\nabbreviated_count_ratio = 0.5\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nabbreviated_count_ratio = 1.5\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nwindow = 0\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nmapper = \"y\"\n"), "");
+  EXPECT_NE(bad("[[pre_run]]\ncheck = \"Ar40 > 1\"\naction = \"run_blank\"\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nanalysis_types = \"air\"\n"), "");
+  EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nstart = 1.5\n"), "");
+  EXPECT_EQ(bad("[[post_run]]\ncheck = \"Ar40 > 1\"\naction = \"skip_n 2\"\n"), "");
 }

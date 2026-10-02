@@ -16,7 +16,8 @@
 namespace pychron::experiment::record {
 
 // Bump when the serialized layout changes; parse rejects other versions.
-inline constexpr int kRecordSchemaVersion = 1;
+// v2: typed conditionals provenance (conditionals spec 6.3), whiff result string.
+inline constexpr int kRecordSchemaVersion = 2;
 
 struct Identity {
   std::string uuid, identifier;
@@ -141,12 +142,39 @@ struct Results {
   std::map<std::string, BaselineResult> baselines;    // by detector
   std::string blanks_ref;
   std::map<std::string, double> icfactors;  // by detector; 1.0 when absent
-  std::optional<double> whiff;
+  std::string whiff;  // run_remainder | pump | abort; empty without a whiff
   friend bool operator==(const Results&, const Results&) = default;
 };
 
+struct InstalledConditional {
+  std::string id, name, kind, level, location, check;  // check: canonical, after window/mapper
+  int start = 0, frequency = 1, ntrips = 1, window = 0;  // window 0 = none
+  std::string mapper;
+  std::vector<std::string> analysis_types;
+  double abbreviated_count_ratio = 1.0;
+  std::string action;
+  bool resume = false, truncate = false, terminate = false;
+  friend bool operator==(const InstalledConditional&, const InstalledConditional&) = default;
+};
+
+struct TrippedConditional {
+  std::string id, name, kind, check, action;
+  int reading = 0, count = 0;
+  double t = 0, value = 0;
+  std::map<std::string, double> context;  // every metric the check read
+  friend bool operator==(const TrippedConditional&, const TrippedConditional&) = default;
+};
+
+struct ConditionalErrorRec {
+  std::string name, message;
+  int count = 0;
+  friend bool operator==(const ConditionalErrorRec&, const ConditionalErrorRec&) = default;
+};
+
 struct Conditionals {
-  std::vector<std::string> installed, tripped;
+  std::vector<InstalledConditional> installed;
+  std::vector<TrippedConditional> tripped;
+  std::vector<ConditionalErrorRec> errors;
   friend bool operator==(const Conditionals&, const Conditionals&) = default;
 };
 
