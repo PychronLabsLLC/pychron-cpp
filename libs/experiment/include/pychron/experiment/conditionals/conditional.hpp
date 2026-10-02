@@ -151,7 +151,10 @@ class ConditionalEngine {
   }
   // Ungated evaluation (pre-run, post-run, whiff): every applicable
   // conditional of `kind` is evaluated once; ntrips still counts calls.
-  std::optional<Trip> check_now(ConditionalKind kind, const MetricContext& ctx, const Variables& vars, double ts = 0);
+  // Conditionals that do not apply to `analysis_type` are skipped and keep
+  // their trip count.
+  std::optional<Trip> check_now(ConditionalKind kind, const MetricContext& ctx, const Variables& vars, double ts = 0,
+                                std::string_view analysis_type = {});
 
   const ConditionalSet& set() const noexcept { return set_; }
   std::vector<const Conditional*> installed() const;  // applicable to the analysis type

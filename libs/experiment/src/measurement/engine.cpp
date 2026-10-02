@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "pychron/core/events.hpp"
+#include "pychron/experiment/conditionals/library.hpp"
 
 namespace pychron::experiment::measurement {
 
@@ -48,23 +49,7 @@ std::string_view to_string(MeasurementOutcome outcome) noexcept {
   return "failed";
 }
 
-Result<ConditionalSet> plan_conditionals(const plan::MeasurementPlan& plan) {
-  ConditionalSet set;
-  for (std::size_t i = 0; i < plan.conditionals.truncations.size(); ++i) {
-    const auto& t = plan.conditionals.truncations[i];
-    auto expr = parse_expression(t.check);
-    if (!expr) return fail(ErrorKind::Config, "conditionals.truncations[" + std::to_string(i) + "]: " + expr.error().what);
-    Conditional c;
-    c.name = "plan.truncation[" + std::to_string(i) + "]";
-    c.kind = ConditionalKind::Truncation;
-    c.check = t.check;
-    c.expr = std::shared_ptr<const Expr>(std::move(*expr));
-    c.start = t.start;
-    c.action.type = ActionSpec::Type::Truncate;
-    set.items.push_back(std::move(c));
-  }
-  return set;
-}
+Result<ConditionalSet> plan_conditionals(const plan::MeasurementPlan& plan) { return plan_truncations(plan); }
 
 // ---- hook API ----------------------------------------------------------------
 

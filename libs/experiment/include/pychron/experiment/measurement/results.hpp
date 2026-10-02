@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "pychron/experiment/collect/collector.hpp"
+#include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/plan/plan.hpp"
 #include "pychron/experiment/record/types.hpp"
 
@@ -27,5 +28,11 @@ struct FitOutput {
 // detector over every baseline point on it (block and baseline hops),
 // fitted with plan.fits.baseline; value and error are the intercept's.
 FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits);
+
+// Record provenance of the conditionals that applied, tripped and failed.
+record::InstalledConditional to_record(const Conditional& c);
+record::TrippedConditional to_record(const Trip& t);
+record::Conditionals to_record_conditionals(const std::vector<Conditional>& installed, const std::vector<Trip>& trips,
+                                            const std::vector<ConditionalError>& errors);
 
 }  // namespace pychron::experiment::measurement

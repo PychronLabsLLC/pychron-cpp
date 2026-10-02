@@ -345,10 +345,10 @@ std::optional<Trip> ConditionalEngine::evaluate(std::span<const ConditionalKind>
 }
 
 std::optional<Trip> ConditionalEngine::check_now(ConditionalKind kind, const MetricContext& ctx, const Variables& vars,
-                                                 double ts) {
+                                                 double ts, std::string_view analysis_type) {
   for (size_t i = 0; i < set_.items.size(); ++i) {
     const Conditional& c = set_.items[i];
-    if (c.kind != kind || !c.expr || !states_[i].applicable) continue;
+    if (c.kind != kind || !c.expr || !states_[i].applicable || !c.applies_to(analysis_type)) continue;
     states_[i].fired = false;  // between-run checks may fire on every run
     if (auto t = step(i, ctx, vars, 0, ts)) return t;
   }
