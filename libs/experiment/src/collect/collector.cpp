@@ -93,7 +93,7 @@ CollectStatus Collector::add(const spectrometer::Reading& reading) {
       update.values.emplace_back(std::move(key), value.mean);
     }
     count = ++count_;
-    data_.counts[spec_.label] = count_;
+    ++data_.counts[spec_.label];
     update.label = spec_.label;
     update.kind = spec_.kind;
     update.count = count;

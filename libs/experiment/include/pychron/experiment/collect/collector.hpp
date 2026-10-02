@@ -90,7 +90,7 @@ struct RunData {
   std::map<SeriesKey, Series> series;
   std::vector<Trip> trips;
   Timing timing;
-  std::map<std::string, int> counts;  // readings per collection label
+  std::map<std::string, int> counts;  // readings per collection label, summed over its collections
 };
 
 // Why a collection stopped.
