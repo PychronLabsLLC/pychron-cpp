@@ -284,4 +284,27 @@ TEST_F(MeasurementSim, CancelMidMeasurementLeavesTheLineSafe) {
   for (const auto& d : spec_->detectors().states()) EXPECT_FALSE(d.protected_) << d.detector;
 }
 
+TEST_F(MeasurementSim, InstrumentMetricsAnswerConditionals) {
+  ASSERT_TRUE(spec_->set_deflection("H1", 120).has_value());
+  ASSERT_TRUE(spec_->set_active("L1", false).has_value());
+  InstrumentMetrics metrics(spec_.get(), line_.get(), [](std::string_view name) -> Result<double> {
+    if (name == "chiller") return 12.5;
+    return fail(ErrorKind::Config, "no device");
+  });
+  auto check = [&](const std::string& text) {
+    auto e = parse_expression(text);
+    EXPECT_TRUE(e) << text;
+    auto r = evaluate_check(**e, metrics, {});
+    EXPECT_TRUE(r) << text << ": " << (r ? "" : r.error().what);
+    return r && r->tripped;
+  };
+  EXPECT_TRUE(check("H1.deflection == 120"));
+  EXPECT_TRUE(check("L1.inactive and not H1.inactive"));
+  EXPECT_TRUE(check("gauge.IG1.pressure > 0"));
+  EXPECT_TRUE(check("device.chiller < 15"));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Device, "pump", "", ""}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Gauge, "nope", "", "pressure"}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""}));
+}
+
 }  // namespace

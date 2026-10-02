@@ -8,13 +8,16 @@
 //   ScriptMeasurementHook   scripting::IScriptHost     -> IMeasurementHook
 //   SystemConfigAliases     extraction_line.toml [aliases] -> plan::IAliasResolver
 //   SpectrometerCatalog     spectrometer.toml detectors    -> plan::ISpectrometerCatalog
+//   InstrumentMetrics       spectrometer + line + devices  -> MetricContext for conditionals
 
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
 #include <string_view>
 
 #include "pychron/core/config/system_config.hpp"
+#include "pychron/experiment/conditionals/evaluator.hpp"
 #include "pychron/experiment/measurement/ports.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/scripting/script.hpp"
@@ -88,6 +91,28 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
 
  private:
   std::set<std::string, std::less<>> detectors_;
+};
+
+// Instrument metrics for conditionals (conditionals spec section 5):
+//   DET.deflection   Spectrometer::detector_state(DET).deflection
+//   DET.inactive     1 when the detector is not active, else 0
+//   gauge.G.pressure the line's latest recorded pressure of G, else a fresh read
+//   device.NAME      the injected device reader (motors, resources, ...)
+// Any pointer may be null; those metrics are then unavailable.
+class InstrumentMetrics final : public MetricContext {
+ public:
+  using DeviceReader = std::function<Result<double>(std::string_view)>;
+  InstrumentMetrics(spectrometer::Spectrometer* spectrometer, systems::ExtractionLine* line, DeviceReader devices = {})
+      : spec_(spectrometer), line_(line), devices_(std::move(devices)) {}
+
+  std::optional<std::vector<double>> series(const MetricRef& m) const override;
+  std::optional<double> scalar(const MetricRef& m) const override;
+  std::optional<double> elapsed() const override { return std::nullopt; }
+
+ private:
+  spectrometer::Spectrometer* spec_;
+  systems::ExtractionLine* line_;
+  DeviceReader devices_;
 };
 
 }  // namespace pychron::experiment::measurement

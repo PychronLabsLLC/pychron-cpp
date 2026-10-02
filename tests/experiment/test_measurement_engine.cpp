@@ -551,7 +551,7 @@ TEST_F(EngineTest, HookUsesTheMeasurementApi) {
     if (auto r = api.position("Ar39", "CDD"); !r) return r;
     if (auto r = api.acquire(2, 1.0); !r) return r;
     if (auto r = api.open("X"); !r) return r;
-    if (auto r = api.add_conditional("Ar40 > 0 -> truncate"); !r) return r;
+    if (auto r = api.add_conditional("Ar40.cur > 0 -> truncate"); !r) return r;
     api.log("hello");
     return {};
   };
