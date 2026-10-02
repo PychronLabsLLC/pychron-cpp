@@ -15,6 +15,8 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+  # spectrometer sim drivers register from static initializers nothing references
+  pychron_link_drivers(${target} pychron_sim)
   pychron_set_warnings(${target})
   add_test(NAME ui.${name} COMMAND ${target})
   set_tests_properties(ui.${name} PROPERTIES

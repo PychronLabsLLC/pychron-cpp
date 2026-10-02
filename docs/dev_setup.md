@@ -32,6 +32,10 @@ known to work.
 brew install qt
 ```
 
+Qt's PrintSupport module (needed by QCustomPlot) ships with `brew install qt`;
+no extra package is required. QCustomPlot itself is downloaded at configure
+time (UI builds only).
+
 The `dev-ui` preset searches `$QT_PREFIX`, `~/Qt/6.12.0/macos`,
 `/opt/homebrew/opt/qt` and `/usr/local/opt/qt`. To use an official Qt build
 instead, install it under `~/Qt` (for example with `uvx aqtinstall`) or set
