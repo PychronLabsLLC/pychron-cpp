@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <variant>
 
 namespace pychron::config {
 namespace {
@@ -18,6 +19,7 @@ class Validator {
     check_positive_cycles();
     check_gauges();
     check_pipettes();
+    check_aliases();
     return std::move(out_);
   }
 
@@ -159,6 +161,19 @@ class Validator {
       if (!real_valves.contains(p.inner)) report(p, "inner", "unknown valve '" + p.inner + "'");
       if (!real_valves.contains(p.outer)) report(p, "outer", "unknown valve '" + p.outer + "'");
       if (p.inner == p.outer) report(p, "outer", "inner and outer must be different valves");
+    }
+  }
+
+  // valves.* aliases are what plans open and close; they must name a valve.
+  void check_aliases() {
+    for (const auto& [key, a] : c_.aliases) {
+      if (!key.starts_with("valves.")) continue;
+      const auto* name = std::get_if<std::string>(&a.value);
+      if (name == nullptr) {
+        out_.push_back({a.loc, a.path, "valve alias must be a valve name (string)"});
+      } else if (!all_valves_.contains(*name)) {
+        out_.push_back({a.loc, a.path, "unknown valve '" + *name + "'"});
+      }
     }
   }
 
