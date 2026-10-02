@@ -20,6 +20,16 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - gcc 13 (the Ubuntu 24.04 default `g++`) warns where the CI compilers do not;
   build it with `-DPYCHRON_WARNINGS_AS_ERRORS=OFF`.
 - `-DPYCHRON_SCRIPTING=OFF` drops the embedded CPython dependency.
+- `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
+  and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
+  `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
+  appear in its public headers or in any other `libs/` library.
+- Persistence tests always run on SQLite. Set
+  `PYCHRON_TEST_PG_URL=postgresql://user:pw@host/db` to run them on
+  PostgreSQL as well (each test uses a throwaway schema).
+- The schema source is `libs/persistence/migrations/pg/`. After editing it,
+  run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
+  Never edit an applied migration; add `NNNN_<name>.sql`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

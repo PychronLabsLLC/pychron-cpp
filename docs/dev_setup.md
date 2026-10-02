@@ -26,7 +26,7 @@ Without a suitable Python, CMake builds the stub host instead.
 The python.org 3.14 installer (`/Library/Frameworks/Python.framework`) is
 known to work.
 
-### Qt 6 (only for `apps/pychron-ui`)
+### Qt 6 (`apps/pychron-ui` and `libs/persistence`)
 
 ```bash
 brew install qt
@@ -40,6 +40,20 @@ The `dev-ui` preset searches `$QT_PREFIX`, `~/Qt/6.12.0/macos`,
 `/opt/homebrew/opt/qt` and `/usr/local/opt/qt`. To use an official Qt build
 instead, install it under `~/Qt` (for example with `uvx aqtinstall`) or set
 `QT_PREFIX`.
+
+`libs/persistence` (the DVC store) uses TinyORM on QtSql: Qt Core and Sql
+only, no GUI. TinyORM and range-v3 are fetched from git at configure time.
+The library is skipped when CMake finds no Qt. The plain `dev` preset does
+not search Homebrew's Qt, so use `dev-ui` or pass
+`-DCMAKE_PREFIX_PATH=$(brew --prefix qt)`. Persistence tests always run on
+SQLite. To also run them on PostgreSQL (this needs Qt's QPSQL driver plugin),
+point `PYCHRON_TEST_PG_URL` at an empty database:
+
+```bash
+brew install postgresql@16 && brew services start postgresql@16
+createdb pychron_test
+export PYCHRON_TEST_PG_URL=postgresql://$USER@localhost/pychron_test
+```
 
 ## 2. Code
 
