@@ -250,6 +250,7 @@ Result<void> MeasurementEngine::peak_center(Block block) {
   }
   if (!rep->ok)
     publish_log(LogLevel::Warn, std::string(to_string(block)) + " failed: " + rep->message + "; continuing");
+  rep->finished = ctx_.clock.now();
   result_.peak_centers.push_back(*rep);
   return {};
 }

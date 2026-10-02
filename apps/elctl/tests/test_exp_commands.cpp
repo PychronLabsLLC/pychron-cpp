@@ -3,6 +3,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <string>
 
 #include "elctl_fixture.hpp"
 
@@ -69,6 +71,13 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   EXPECT_TRUE(contains(o.out, "queue completed")) << o.out;
   EXPECT_TRUE(fs::exists(dir_ / "out" / "records" / "66001" / "66001-1.json"));
   EXPECT_TRUE(fs::exists(dir_ / "out" / "records" / "bu" / "bu-1.json"));
+  // The example plan peak-centers after each run (peak_center.toml [default]).
+  {
+    std::ifstream in(dir_ / "out" / "records" / "66001" / "66001-1.json");
+    const std::string record((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_TRUE(contains(record, "Ar40 on H1 (default): center")) << record.substr(0, 2000);
+    EXPECT_TRUE(contains(record, "table updated")) << record.substr(0, 2000);
+  }
 
   // Everything ran, so a resume has nothing left to do.
   auto again = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),

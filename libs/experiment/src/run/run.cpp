@@ -441,6 +441,23 @@ Result<void> Run::save() {
     b.add_event(record::Event{std::chrono::duration<double>(h.ts - t0).count(), "state",
                               std::string(to_string(h.from)) + " -> " + std::string(to_string(h.to)) +
                                   (h.reason.empty() ? "" : ": " + h.reason)});
+  for (const auto& pc : meas.peak_centers) {
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%s on %s (%s): ", pc.request.isotope.c_str(), pc.request.detector.c_str(),
+                  pc.request.config.c_str());
+    std::string detail = buf;
+    if (pc.ok && pc.center) {
+      std::snprintf(buf, sizeof buf, "center %.6f%s", *pc.center, pc.table_updated ? ", table updated" : "");
+      detail += buf;
+      if (pc.table_value) {
+        std::snprintf(buf, sizeof buf, ", table value %.6f", *pc.table_value);
+        detail += buf;
+      }
+    } else {
+      detail += "failed: " + pc.message;
+    }
+    b.add_event(record::Event{std::chrono::duration<double>(pc.finished - t0).count(), "peak_center", detail});
+  }
 
   auto finalized = b.finalize();
   result_.record = finalized ? *finalized : b.draft();

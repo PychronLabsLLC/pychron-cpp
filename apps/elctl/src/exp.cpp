@@ -1,5 +1,6 @@
 #include "exp.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -113,6 +114,7 @@ struct Lab {
   std::unique_ptr<ConditionalLibrary> conditionals;
   std::unique_ptr<LabScripts> scripts;
   std::unique_ptr<LabConditionals> condition_names;
+  std::map<std::string, jobs::PeakCenterConfig> peak_centers;  // <lab>/peak_center.toml
   std::vector<std::string> problems;
 };
 
@@ -154,6 +156,12 @@ Lab load_lab(const ExpArgs& a, const ExpGlobals& g) {
   lab.conditionals = std::make_unique<ConditionalLibrary>(*lab.condition_source);
   lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
   lab.scripts = std::make_unique<LabScripts>(lab.dir / "scripts");
+  if (fs::exists(lab.dir / "peak_center.toml")) {
+    auto pc = jobs::parse_peak_center_configs(read_text(lab.dir / "peak_center.toml"),
+                                              (lab.dir / "peak_center.toml").string());
+    if (pc) lab.peak_centers = std::move(*pc);
+    else lab.problems.push_back(pc.error().what);
+  }
   return lab;
 }
 
@@ -222,6 +230,14 @@ class Exp {
       if (r.skip || r.measurement.plan.empty() || !lab_.plans->find(r.measurement.plan)) continue;
       auto loaded = lab_.plans->load(r.measurement.plan, r.measurement.overrides);
       if (!loaded) continue;  // check_queue reported it
+      const auto& pc = loaded->plan.peak_center;
+      if ((pc.before || pc.after) && pc.config != "default" && !lab_.peak_centers.contains(pc.config)) {
+        if (reported.insert("peak_center:" + pc.config).second) {
+          io_.err << "error: runs[" << i << "]: plan " << r.measurement.plan << " uses peak center config '"
+                  << pc.config << "', which is not in " << (lab_.dir / "peak_center.toml").string() << '\n';
+          ++errors;
+        }
+      }
       auto set = lab_.conditionals->for_run(queue_, r, loaded->plan);
       if (!set) {
         io_.err << "error: runs[" << i << "].conditionals: " << set.error().what << '\n';
@@ -251,9 +267,14 @@ class Exp {
       return kFailed;
     }
     // Clock: real time, or simulated time running sim_speed times faster.
+    // Simulated time runs the line's scheduler inline after each step, so
+    // polling keeps pace with the clock however the threads are scheduled
+    // (a dispatcher thread starved for a few real milliseconds would miss
+    // whole integrations at high speeds).
     std::unique_ptr<ManualClock> manual;
     std::thread pump;
     std::atomic<bool> pumping{true};
+    std::atomic<Scheduler*> driven{nullptr};
     if (a_.sim_speed > 0) {
       manual = std::make_unique<ManualClock>(TimePoint{} + std::chrono::hours(1));
       pump = std::thread([&] {
@@ -261,6 +282,7 @@ class Exp {
         while (pumping) {
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
           manual->advance(step);
+          if (auto* scheduler = driven.load()) scheduler->run_pending();
         }
       });
     }
@@ -276,6 +298,10 @@ class Exp {
     systems::ExtractionLine::Options line_options;
     line_options.clock = manual.get();
     line_options.force_sim = g_.sim;
+    if (manual) {
+      line_options.scheduler.threads = 0;
+      line_options.run_scheduler = false;
+    }
     std::optional<fs::path> canvas;
     if (!a_.canvas.empty()) canvas = a_.canvas;
     else if (fs::exists(g_.config.parent_path() / "canvas.toml")) canvas = g_.config.parent_path() / "canvas.toml";
@@ -284,6 +310,9 @@ class Exp {
       io_.err << "error: " << line.error().what << '\n';
       return kFailed;
     }
+    // Declared after the line, so the pump stops before the line goes.
+    PumpGuard driving_guard{pumping, pump};
+    if (manual) driven = &(*line)->scheduler();
     if (auto r = (*line)->start(); !r) {
       io_.err << "error: " << r.error().what << '\n';
       return kFailed;
@@ -322,6 +351,8 @@ class Exp {
     if (spec) port.emplace(*spec);
     measurement::ExtractionLineValves valves(**line, "measurement");
     measurement::InstrumentMetrics instrument(spec.get(), line->get());
+    std::optional<measurement::SpectrometerPeakCenter> peak_center;
+    if (spec) peak_center.emplace(*spec, lab_.peak_centers);
     persist::FilePersister files(lab_.data / "records");
     persist::Spool spool(lab_.data / "spool");
     persist::SavePipeline save(spool, files);
@@ -336,6 +367,7 @@ class Exp {
     s.line.valves = &script_valves;
     s.spectrometer = port ? &*port : nullptr;
     s.valves = &valves;
+    s.peak_center = peak_center ? &*peak_center : nullptr;
     s.instrument_metrics = &instrument;
     if (spec) {
       s.spectrometer_info = [&spec] {

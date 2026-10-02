@@ -1,6 +1,8 @@
 #include "pychron/experiment/measurement/adapters.hpp"
 
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <variant>
 
 namespace pychron::experiment::measurement {
@@ -68,6 +70,76 @@ SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerCo
 }
 
 bool SpectrometerCatalog::has_detector(std::string_view name) const { return detectors_.contains(name); }
+
+Result<jobs::PeakCenterConfig> SpectrometerPeakCenter::config_for(const PeakCenterRequest& request) const {
+  const std::string name = request.config.empty() ? "default" : request.config;
+  jobs::PeakCenterConfig cfg;
+  if (auto it = configs_.find(name); it != configs_.end()) {
+    cfg = it->second;
+  } else if (name != "default") {
+    return fail(ErrorKind::Config, "unknown peak center config '" + name + "'");
+  }
+  if (!request.isotope.empty()) cfg.isotope = request.isotope;
+  if (!request.detector.empty()) cfg.detector = request.detector;
+  return cfg;
+}
+
+Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterRequest& request,
+                                                            scripting::CancelToken& token) {
+  auto cfg = config_for(request);
+  if (!cfg) return fail(cfg.error());
+
+  // Bridge the run's token to the job's: poll it while the job runs.
+  jobs::CancelToken job_token;
+  std::atomic<bool> running{true};
+  std::thread bridge([&] {
+    while (running) {
+      if (token.requested()) {
+        // Repeated until the job ends: it may not be registered with the runner yet.
+        job_token.cancel();
+        if (runner_ != nullptr)
+          if (auto id = runner_->current()) (void)runner_->cancel(*id);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  });
+  Result<jobs::PeakCenterResult> result = fail(ErrorKind::Config, "peak center did not run");
+  if (runner_ != nullptr) {
+    auto job = runner_->run(jobs::peak_center_job(*cfg, options_));
+    if (!job) {
+      result = fail(job.error());
+    } else if (job->state != jobs::JobState::Succeeded) {
+      result = fail(job->error.value_or(Error{ErrorKind::Io, "peak center job failed", {}}));
+    } else if (const auto* r = std::any_cast<jobs::PeakCenterResult>(&job->result)) {
+      result = *r;
+    }
+  } else {
+    jobs::Progress progress;
+    result = jobs::run_peak_center(spec_, *cfg, progress, job_token, options_);
+  }
+  running = false;
+  bridge.join();
+  if (!result) return fail(result.error());
+
+  {
+    std::lock_guard lock(mutex_);
+    last_ = *result;
+  }
+  PeakCenterReport report;
+  report.request = request;
+  report.ok = result->ok;
+  report.center = result->center;
+  report.message = result->ok ? "" : result->message;
+  report.table_value = result->table_value;
+  report.table_updated = result->table_updated;
+  if (result->shape) report.resolution = result->shape->resolution;
+  return report;
+}
+
+std::optional<jobs::PeakCenterResult> SpectrometerPeakCenter::last() const {
+  std::lock_guard lock(mutex_);
+  return last_;
+}
 
 std::optional<std::vector<double>> InstrumentMetrics::series(const MetricRef& m) const {
   if (auto v = scalar(m)) return std::vector<double>{*v};

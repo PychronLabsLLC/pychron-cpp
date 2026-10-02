@@ -9,9 +9,11 @@
 //   SystemConfigAliases     extraction_line.toml [aliases] -> plan::IAliasResolver
 //   SpectrometerCatalog     spectrometer.toml detectors    -> plan::ISpectrometerCatalog
 //   InstrumentMetrics       spectrometer + line + devices  -> MetricContext for conditionals
+//   SpectrometerPeakCenter  jobs::run_peak_center          -> IPeakCenterPort
 
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -23,6 +25,8 @@
 #include "pychron/scripting/script.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "pychron/systems/jobs/job_runner.hpp"
+#include "pychron/systems/jobs/peak_center.hpp"
 #include "pychron/systems/spectrometer/config.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 
@@ -92,6 +96,35 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
 
  private:
   std::set<std::string, std::less<>> detectors_;
+};
+
+// The peak-center job for the MeasurementEngine. The request's config name
+// selects one of `configs` ("default" falls back to the built-in defaults);
+// the request's isotope and detector override the config's. With a JobRunner
+// the job goes through it (the one-job-per-spectrometer interlock, JobStarted
+// / JobFinished events); otherwise it runs directly. A cancel of the run's
+// token cancels the job.
+class SpectrometerPeakCenter final : public IPeakCenterPort {
+ public:
+  SpectrometerPeakCenter(spectrometer::Spectrometer& spectrometer,
+                         std::map<std::string, jobs::PeakCenterConfig> configs = {}, jobs::JobRunner* runner = nullptr,
+                         jobs::PeakCenterOptions options = {})
+      : spec_(spectrometer), configs_(std::move(configs)), runner_(runner), options_(std::move(options)) {}
+
+  Result<PeakCenterReport> peak_center(const PeakCenterRequest& request, scripting::CancelToken& token) override;
+
+  // Full result of the last peak center (points, shapes), for display.
+  std::optional<jobs::PeakCenterResult> last() const;
+
+ private:
+  Result<jobs::PeakCenterConfig> config_for(const PeakCenterRequest& request) const;
+
+  spectrometer::Spectrometer& spec_;
+  std::map<std::string, jobs::PeakCenterConfig> configs_;
+  jobs::JobRunner* runner_;
+  jobs::PeakCenterOptions options_;
+  mutable std::mutex mutex_;
+  std::optional<jobs::PeakCenterResult> last_;
 };
 
 // Instrument metrics for conditionals (conditionals spec section 5):

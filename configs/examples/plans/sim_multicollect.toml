@@ -22,6 +22,12 @@ enabled = true
 counts = 10
 integration_s = 1
 
+[peak_center]
+after = true
+detector = "H1"
+isotope = "Ar40"
+config = "default"
+
 [baseline]
 after = true
 counts = 10

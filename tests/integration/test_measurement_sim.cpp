@@ -462,4 +462,50 @@ TEST_F(MeasurementSim, ExecutorRunsAQueueOnTheSimLab) {
   std::filesystem::remove_all(scratch, ec);
 }
 
+TEST_F(MeasurementSim, PeakCenterFindsAnOffsetPeakAndTheNextRunMeasuresOnIt) {
+  // H1's true peak sits 0.025 above the field table: off the flat top.
+  sim::BeamDetector h1;
+  h1.name = "H1";
+  h1.offset = 0.025;
+  beam_->add_detector(h1);
+
+  auto text = std::string(kPlan);
+  text.replace(text.find("[baseline]"), 10,
+               "[peak_center]\nbefore = true\nisotope = \"Ar40\"\ndetector = \"H1\"\nconfig = \"wide\"\n\n[baseline]");
+  auto tmpl = plan::parse_plan_template(text, "sim.toml");
+  ASSERT_TRUE(tmpl) << tmpl.error().what;
+  auto loaded = plan::load_plan(*tmpl, {}, resolvers());
+  ASSERT_TRUE(loaded) << loaded.error().what;
+
+  jobs::PeakCenterConfig wide;
+  wide.name = "wide";
+  wide.window = 0.08;
+  wide.step = 0.002;
+  wide.integration = std::chrono::seconds(1);
+  SpectrometerPort port(*spec_);
+  ExtractionLineValves valves(*line_);
+  SpectrometerPeakCenter peak_center(*spec_, {{"wide", wide}});
+  EngineContext ctx{port, clock_, &valves, &peak_center, nullptr, &bus_, nullptr};
+
+  const double table_before =
+      *spec_->native_for(*spec_->mass_of(spectrometer::PositionTarget{spectrometer::Isotope{"Ar40"}, "H1"}), "H1");
+  for (int run = 0; run < 2; ++run) {
+    SCOPED_TRACE(run);
+    MeasurementEngine engine(ctx, inputs(loaded->plan, "pc-" + std::to_string(run)));
+    scripting::CancelToken token;
+    auto r = engine.run(token);
+    ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+    ASSERT_EQ(r.peak_centers.size(), 1u);
+    const auto& pc = r.peak_centers[0];
+    ASSERT_TRUE(pc.ok) << pc.message;
+    EXPECT_TRUE(pc.table_updated);
+    EXPECT_NEAR(*pc.center, table_before + 0.025, 0.004);
+    // Measured on the peak: the full Ar40 signal.
+    auto fits = fit_results(r.data, loaded->plan.fits);
+    EXPECT_NEAR(fits.results.intercepts.at("Ar40").intercept.value, 1e6, 1e4);
+  }
+  ASSERT_TRUE(peak_center.last());
+  EXPECT_FALSE(peak_center.last()->tries.empty());
+}
+
 }  // namespace
