@@ -380,6 +380,27 @@ class TestDocks : public QObject {
       QTRY_VERIFY_WITH_TIMEOUT(!sim->scan->running(), 10000);
     }
   }
+  void clearingSpectrometerSavesSettingsAndDisablesAction() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      window.spectrometer_action()->trigger();
+      QTRY_VERIFY_WITH_TIMEOUT(sim->scan->running(), 10000);
+
+      window.set_spectrometer(nullptr, false);
+      QVERIFY(window.spectrometer_window() == nullptr);
+      QVERIFY(!window.spectrometer_action()->isEnabled());
+      QSettings saved(path, QSettings::IniFormat);
+      saved.beginGroup(QStringLiteral("spectrometer_window"));
+      QVERIFY(!saved.childGroups().isEmpty());
+    }
+  }
 };
 
 QTEST_MAIN(TestDocks)

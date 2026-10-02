@@ -63,7 +63,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
 void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
                                   std::function<std::unique_ptr<QSettings>()> settings) {
   if (spectrometer_window_ != nullptr) {
-    delete spectrometer_window_;  // it holds the old bridge
+    spectrometer_window_->close();  // saves settings and queues the scan stop
+    delete spectrometer_window_;    // it holds the old bridge
     spectrometer_window_ = nullptr;
   }
   spectrometer_ = bridge;
