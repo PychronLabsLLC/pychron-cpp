@@ -339,9 +339,9 @@ Result<Quantity> Quantity::parse(std::string_view text) {
   return q;
 }
 
-std::string Quantity::label() const {
+std::string Quantity::label(bool with_units) const {
   if (denominator_) return term_label(numerator_) + "/" + term_label(*denominator_);
-  const std::string u = units();
+  const std::string u = with_units ? units() : std::string();
   return u.empty() ? term_label(numerator_) : term_label(numerator_) + " (" + u + ")";
 }
 

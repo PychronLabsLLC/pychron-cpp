@@ -1,7 +1,8 @@
 #pragma once
 
 // FigureWindow (data browsing and visualization design, section 11.4): a
-// figure pipeline for a set of analyses,
+// figure pipeline (time series, ideogram, spectrum, inverse isochron) for a
+// set of analyses,
 //
 //   select(uuids) -> reduce -> group -> edits -> figure
 //
@@ -35,10 +36,18 @@ class FigureWindow : public QMainWindow {
   Q_OBJECT
 
  public:
-  // `bridge` and `presets` must outlive the window. The figure kind is the
-  // time series (V1).
+  // `bridge` and `presets` must outlive the window. `kind` is a figure unit
+  // kind: time_series, ideogram, spectrum or inverse_isochron.
+  FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, std::string kind, QStringList uuids,
+               QWidget* parent = nullptr);
+  // A time series.
   FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, QStringList uuids,
                QWidget* parent = nullptr);
+
+  const std::string& kind() const noexcept { return kind_; }
+  // Group key a new window of `kind` starts with (aliquot for spectra and
+  // isochrons, identifier for ideograms, none for time series).
+  static QString default_group_key(const std::string& kind);
   ~FigureWindow() override;
 
   const processing::Pipeline& pipeline() const noexcept { return pipeline_; }
@@ -78,6 +87,8 @@ class FigureWindow : public QMainWindow {
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
+  std::string kind_;
+  processing::SchemaPtr schema_;
   int channel_;
   processing::Pipeline pipeline_;
   processing::DatasetPtr dataset_;

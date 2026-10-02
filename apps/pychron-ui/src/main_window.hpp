@@ -71,6 +71,9 @@ class MainWindow : public QMainWindow {
   // Opens a recall window / a time-series figure window (null without data).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_time_series(const QStringList& uuids);
+  // A figure window of a figure unit kind (time_series, ideogram, spectrum,
+  // inverse_isochron); null without data or for an unknown kind.
+  QWidget* open_figure(const QString& kind, const QStringList& uuids);
 
  protected:
   // Closes the experiment window (which may refuse, keeping everything open)

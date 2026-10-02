@@ -18,7 +18,6 @@
 
 #include "options_editor.hpp"
 #include "pychron/processing/quantity.hpp"
-#include "pychron/processing/time_series.hpp"
 #include "scene_view.hpp"
 
 namespace pychron::ui {
@@ -40,9 +39,25 @@ constexpr const char* kEdits = "edits";
 
 }  // namespace
 
+QString FigureWindow::default_group_key(const std::string& kind) {
+  if (kind == "ideogram") return QStringLiteral("identifier");
+  if (kind == "spectrum" || kind == "inverse_isochron") return QStringLiteral("aliquot");
+  return QStringLiteral("none");
+}
+
 FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, QStringList uuids, QWidget* parent)
-    : QMainWindow(parent), bridge_(bridge), store_(presets), channel_(bridge.new_channel()) {
-  setWindowTitle(tr("Time series — %n analyses", nullptr, static_cast<int>(uuids.size())));
+    : FigureWindow(bridge, presets, "time_series", std::move(uuids), parent) {}
+
+FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, std::string kind, QStringList uuids,
+                           QWidget* parent)
+    : QMainWindow(parent),
+      bridge_(bridge),
+      store_(presets),
+      kind_(std::move(kind)),
+      schema_(pp::UnitRegistry::builtin().find(kind_)->schema()),
+      channel_(bridge.new_channel()) {
+  const auto* unit = pp::UnitRegistry::builtin().find(kind_);
+  setWindowTitle(tr("%1 — %n analyses", nullptr, static_cast<int>(uuids.size())).arg(qs(std::string(unit->title()))));
   resize(1200, 800);
   ask_preset_name = [this] {
     bool ok = false;
@@ -57,8 +72,9 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, Q
   pipeline_.add(reg, "reduce", "reduce", {"select"});
   pipeline_.add(reg, "group", "group", {"reduce"});
   pipeline_.add(reg, kEdits, "edits", {"group"});
-  auto& fig = pipeline_.add(reg, kFigure, "time_series", {kEdits});
-  fig.options = store_.defaults(pp::time_series_schema());
+  (void)pipeline_.find("group")->options.set("key", default_group_key(kind_).toStdString());
+  auto& fig = pipeline_.add(reg, kFigure, kind_, {kEdits});
+  fig.options = store_.defaults(schema_);
   fig.preset = "Default";
 
   view_ = new SceneView;
@@ -71,7 +87,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, Q
   tools->addWidget(new QLabel(tr(" Group by ")));
   group_ = new QComboBox;
   for (const auto& c : reg.find("group")->schema()->field("key")->choices) group_->addItem(qs(c));
-  group_->setCurrentText(QStringLiteral("none"));
+  group_->setCurrentText(default_group_key(kind_));
   tools->addWidget(group_);
   connect(group_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_group_key(k); });
   tools->addSeparator();
@@ -254,7 +270,7 @@ void FigureWindow::set_group_key(const QString& key) {
 
 void FigureWindow::reload_preset_list(const QString& select) {
   presets_combo_->clear();
-  for (const auto& p : store_.list(pp::time_series_schema())) {
+  for (const auto& p : store_.list(schema_)) {
     QString label = qs(p.name);
     presets_combo_->addItem(label);
     const int i = presets_combo_->count() - 1;
@@ -267,7 +283,7 @@ void FigureWindow::reload_preset_list(const QString& select) {
 }
 
 void FigureWindow::select_preset(const QString& name) {
-  auto loaded = store_.load(pp::time_series_schema(), name.toStdString());
+  auto loaded = store_.load(schema_, name.toStdString());
   if (!loaded) {
     status_->setText(tr("Preset: %1").arg(qs(loaded.error().what)));
     return;
@@ -297,7 +313,7 @@ void FigureWindow::save_preset(bool as) {
 
 void FigureWindow::delete_preset() {
   const QString name = presets_combo_->currentText();
-  if (auto ok = store_.remove(pp::time_series_schema(), name.toStdString()); !ok) {
+  if (auto ok = store_.remove(schema_, name.toStdString()); !ok) {
     status_->setText(qs(ok.error().what));
     return;
   }
@@ -307,7 +323,7 @@ void FigureWindow::delete_preset() {
 
 void FigureWindow::factory_reset() {
   const QString name = presets_combo_->currentText();
-  auto f = store_.factory(pp::time_series_schema(), name.toStdString());
+  auto f = store_.factory(schema_, name.toStdString());
   if (!f) {
     status_->setText(tr("No factory preset named \"%1\"").arg(name));
     return;

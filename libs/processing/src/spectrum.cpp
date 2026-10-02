@@ -131,7 +131,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
     const std::string gname = d.graph_name(graph);
     if (auto p = title.find("{graph}"); p != std::string::npos) title.replace(p, 7, gname);
     g.title = title.empty() ? gname : title;
-    g.x.title = o.get_string("x.title").empty() ? "Cumulative % " + gq->label() : o.get_string("x.title");
+    g.x.title = o.get_string("x.title").empty() ? "Cumulative % " + gq->label(false) : o.get_string("x.title");
     g.x.min = 0.0;
     g.x.max = 100.0;
 

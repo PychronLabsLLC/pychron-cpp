@@ -6,7 +6,8 @@
 //
 //   double-click / Enter     recall_requested(uuid)
 //   Ctrl+N / Ctrl+B          select the next / previous row and recall it
-//   Time series              time_series_requested(selected uuids, or all shown)
+//   Plot > kind              figure_requested(kind, selected uuids or all shown);
+//                            kind: time_series, ideogram, spectrum, inverse_isochron
 
 #include <map>
 #include <optional>
@@ -24,6 +25,7 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QTableView;
+class QToolButton;
 
 namespace pychron::ui {
 
@@ -45,6 +47,7 @@ class DataBrowserWindow : public QWidget {
   QComboBox* date_preset() const noexcept { return dates_; }
   QListWidget* facet_list(processing::Facet f) const;
   QPushButton* load_more_button() const noexcept { return more_; }
+  QToolButton* plot_button() const noexcept { return plot_; }
   QLabel* status() const noexcept { return status_; }
   QStringList selected_uuids() const;
   void select_rows(const QList<int>& rows);
@@ -52,14 +55,14 @@ class DataBrowserWindow : public QWidget {
 
  signals:
   void recall_requested(const QString& uuid);
-  void time_series_requested(const QStringList& uuids);
+  void figure_requested(const QString& kind, const QStringList& uuids);
 
  private:
   void reload();     // first page for the current query
   void load_more();  // next page
   void update_facets();
   void recall_current();
-  void request_time_series();
+  void request_figure(const QString& kind);
 
   processing::IAnalysisSource& source_;
   AnalysisTableModel* model_;
@@ -69,6 +72,7 @@ class DataBrowserWindow : public QWidget {
   QCheckBox* exclude_invalid_;
   std::map<processing::Facet, QListWidget*> facets_;
   QPushButton* more_;
+  QToolButton* plot_;
   QLabel* status_;
   std::optional<processing::BrowseCursor> next_;
   std::optional<std::size_t> total_;

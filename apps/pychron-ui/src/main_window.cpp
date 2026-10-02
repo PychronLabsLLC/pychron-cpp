@@ -44,8 +44,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
     if (data_window_ == nullptr) {
       data_window_ = new DataBrowserWindow(*data_source_, this);
       connect(data_window_, &DataBrowserWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
-      connect(data_window_, &DataBrowserWindow::time_series_requested, this,
-              [this](const QStringList& ids) { open_time_series(ids); });
+      connect(data_window_, &DataBrowserWindow::figure_requested, this,
+              [this](const QString& kind, const QStringList& ids) { open_figure(kind, ids); });
     }
     data_window_->show();
     data_window_->raise();
@@ -158,9 +158,12 @@ QWidget* MainWindow::open_recall(const QString& uuid) {
   return w;
 }
 
-QWidget* MainWindow::open_time_series(const QStringList& uuids) {
+QWidget* MainWindow::open_time_series(const QStringList& uuids) { return open_figure(QStringLiteral("time_series"), uuids); }
+
+QWidget* MainWindow::open_figure(const QString& kind, const QStringList& uuids) {
   if (!processing_ || presets_ == nullptr) return nullptr;
-  auto* w = new FigureWindow(*processing_, *presets_, uuids, this);
+  if (processing::UnitRegistry::builtin().find(kind.toStdString()) == nullptr) return nullptr;
+  auto* w = new FigureWindow(*processing_, *presets_, kind.toStdString(), uuids, this);
   w->setAttribute(Qt::WA_DeleteOnClose);
   connect(w, &FigureWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
   data_children_.append(w);

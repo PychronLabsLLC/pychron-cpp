@@ -62,7 +62,8 @@ class Quantity {
   static Result<Quantity> parse(std::string_view text);
 
   const std::string& text() const noexcept { return text_; }  // canonical form
-  std::string label() const;   // "40Ar/36Ar", "Age (Ma)", "Ar40 intercept"
+  // "Ar40/Ar36", "Age (Ma)", "Ar40 intercept (fA)"; without units: "Age".
+  std::string label(bool with_units = true) const;
   std::string units() const;   // "fA", "Ma", "" for ratios
   bool is_ratio() const noexcept { return denominator_.has_value(); }
   bool needs_reduction() const;  // uses decay/interference stages or reduced values

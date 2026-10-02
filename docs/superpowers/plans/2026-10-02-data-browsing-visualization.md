@@ -75,22 +75,34 @@ source adapters as separate targets (`processing_records` now,
 
 ## Remaining
 
-### V2 figures
+### V2 figures (done 2026-10-02)
 
-- [ ] Ideogram unit and scene: cumulative probability (and kernel density),
-      weighted mean indicator with MSWD/n/p, analysis-number aux panel, aux
-      panels from quantities, asymptotic limits.
-- [ ] Spectrum unit and scene: `StepLayer` (boxes at n sigma), plateau bar
-      and text, integrated age (needs UFloat integrated F in
-      `processing/figures/arar_groups.hpp`), fixed plateau steps per group,
-      aux spectra (K/Ca, %40Ar*).
-- [ ] Inverse isochron unit and scene: 39/40 vs 36/40 with UFloat
-      correlations, `EllipseLayer`, York fit with envelope, trapped 40/36 and
-      age text, exclude-non-plateau option.
+- [x] `arar_groups`: integrated (total-gas) age, J error in means,
+      inverse-isochron points with exact UFloat correlations, isochron age
+      (York fit of x on y, legacy calculate_isochron); kernel density.
+- [x] Ideogram unit and scene: cumulative or kernel curve, dashed curve with
+      excluded analyses, weighted-mean indicator with MSWD/n/p, J error in
+      the mean, analysis-number (sorted, by time) and value panels,
+      auto/asymptotic/centered limits.
+- [x] Spectrum unit and scene: `StepLayer` boxes at n sigma, Fleck/Mahon
+      plateau or fixed steps per group, plateau bar and text, integrated
+      age, weighted mean when there is no plateau, value spectra.
+- [x] Inverse isochron unit and scene: `EllipseLayer` (1, 2 sigma, 95%),
+      York/NewYork/Reed fit with envelope, trapped 40/36 and age,
+      exclude-non-plateau, atmospheric marker.
+- [x] Figure window for any figure kind (default grouping per kind);
+      browser Plot menu; step boxes clickable; x error bars.
+
+### V2 figures remaining
+
 - [ ] XY scatter (any two quantities) and `subgroup`, `mswd_filter` units.
 - [ ] Movable annotations: dragged text offsets stored in figure options.
 - [ ] Figure documents (`*.pyfig.toml`: pipeline + options + view limits),
       open question Q3.
+- [ ] Ideogram: peak labels, Schaen 2020 / Deino outlier filters, inset;
+      spectrum: integrated weighting by volume or variance, isochron-trapped
+      spectrum ages; isochron: inset, normal isochron.
+- [ ] Composite figure (spectrum and isochron side by side).
 
 ### V2 data
 

@@ -69,9 +69,14 @@ class SceneView : public QWidget {
     std::string uuid;
     std::string tooltip;
   };
+  struct HitBox {  // a spectrum step: a click anywhere inside selects it
+    double x0, x1, y0, y1;
+    HitPoint point;  // the box centre
+  };
   struct RectInfo {
     QCPAxisRect* rect = nullptr;
     std::vector<HitPoint> points;
+    std::vector<HitBox> boxes;
     std::vector<QString> texts;
     std::optional<double> x_min, x_max, y_min, y_max;  // scene limits
     bool log = false;

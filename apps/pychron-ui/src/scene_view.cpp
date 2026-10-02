@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -271,13 +272,14 @@ void SceneView::rebuild() {
           std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return pts->x[a] < pts->x[b]; });
           for (const bool excluded : {false, true}) {
             if (excluded && !pts->show_excluded) continue;
-            QVector<double> gx, gy, ge;
+            QVector<double> gx, gy, ge, gxe;
             for (std::size_t i : order) {
               const bool ex = i < pts->excluded.size() && pts->excluded[i];
               if (ex != excluded) continue;
               gx << pts->x[i];
               gy << pts->y[i];
               if (!pts->y_err.empty()) ge << pts->y_err[i];
+              if (!pts->x_err.empty()) gxe << pts->x_err[i];
               info.points.push_back({pts->x[i], pts->y[i], i < pts->refs.size() ? pts->refs[i].analysis : std::string(),
                                      i < pts->tooltips.size() ? pts->tooltips[i] : std::string()});
             }
@@ -294,7 +296,66 @@ void SceneView::rebuild() {
               eb->setPen(QPen(excluded ? qcolor(pts->excluded_marker.color) : qcolor(pts->marker.color), 1));
               eb->setWhiskerWidth(0);
             }
+            if (!gxe.isEmpty()) {
+              auto* eb = new QCPErrorBars(x, y);
+              eb->setErrorType(QCPErrorBars::etKeyError);
+              eb->setDataPlottable(gp);
+              eb->setData(gxe);
+              eb->setPen(QPen(excluded ? qcolor(pts->excluded_marker.color) : qcolor(pts->marker.color), 1));
+              eb->setWhiskerWidth(0);
+            }
             if (legend && !excluded && !pts->label.empty()) legend->addItem(new QCPPlottableLegendItem(legend, gp));
+          }
+        } else if (const auto* steps = std::get_if<pp::StepLayer>(&layer)) {
+          for (std::size_t i = 0; i < steps->x0.size(); ++i) {
+            const double e = i < steps->y_err.size() ? steps->y_err[i] : 0.0;
+            const bool ex = i < steps->excluded.size() && steps->excluded[i];
+            const bool hl = i < steps->highlighted.size() && steps->highlighted[i];
+            auto* box = new QCPItemRect(plot_);
+            box->setClipAxisRect(rect);
+            for (auto* pos : {box->topLeft, box->bottomRight}) {
+              pos->setAxisRect(rect);
+              pos->setAxes(x, y);
+            }
+            box->topLeft->setCoords(steps->x0[i], steps->y[i] + e);
+            box->bottomRight->setCoords(steps->x1[i], steps->y[i] - e);
+            QColor fill = qcolor(ex ? steps->excluded_fill : steps->fill);
+            if (!ex && steps->dim_others && !hl) fill.setAlpha(fill.alpha() / 3);
+            box->setBrush(QBrush(fill));
+            box->setPen(QPen(ex ? qcolor(steps->excluded_fill).darker(150) : qcolor(steps->line), ex ? 0.8 : 1.0,
+                             ex ? Qt::DashLine : Qt::SolidLine));
+            HitBox hb{steps->x0[i], steps->x1[i], steps->y[i] - e, steps->y[i] + e,
+                      {0.5 * (steps->x0[i] + steps->x1[i]), steps->y[i],
+                       i < steps->refs.size() ? steps->refs[i].analysis : std::string(),
+                       i < steps->tooltips.size() ? steps->tooltips[i] : std::string()}};
+            info.boxes.push_back(std::move(hb));
+            if (i < steps->labels.size() && !steps->labels[i].empty()) {
+              auto* t = new QCPItemText(plot_);
+              t->setClipAxisRect(rect);
+              t->position->setAxisRect(rect);
+              t->position->setAxes(x, y);
+              t->position->setCoords(0.5 * (steps->x0[i] + steps->x1[i]), steps->y[i] + e);
+              t->setPositionAlignment(Qt::AlignBottom | Qt::AlignHCenter);
+              t->setText(QString::fromStdString(steps->labels[i]));
+              t->setFont(scene_font(s.style, s.style.fonts.annotation));
+            }
+          }
+        } else if (const auto* el = std::get_if<pp::EllipseLayer>(&layer)) {
+          constexpr int kSegments = 72;
+          for (std::size_t i = 0; i < el->x.size(); ++i) {
+            const bool ex = i < el->excluded.size() && el->excluded[i];
+            const double rho = std::clamp(el->rho[i], -0.999999, 0.999999);
+            QVector<double> ex_x, ex_y, t;
+            for (int k = 0; k <= kSegments; ++k) {
+              const double a = 2.0 * std::numbers::pi * k / kSegments;
+              ex_x << el->x[i] + el->scale * el->sx[i] * std::cos(a);
+              ex_y << el->y[i] + el->scale * el->sy[i] * (rho * std::cos(a) + std::sqrt(1 - rho * rho) * std::sin(a));
+              t << k;
+            }
+            auto* curve = new QCPCurve(x, y);
+            curve->setData(t, ex_x, ex_y, true);
+            curve->setPen(QPen(ex ? QColor(150, 150, 150) : qcolor(el->line), 1.0, ex ? Qt::DashLine : Qt::SolidLine));
+            if (el->filled && !ex) curve->setBrush(QBrush(qcolor(el->fill)));
           }
         } else if (const auto* text = std::get_if<pp::TextLayer>(&layer)) {
           for (const auto& l : text->lines) corner_text[text->corner] << QString::fromStdString(l);
@@ -398,6 +459,19 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
         if (where) *where = &info;
       }
     }
+    if (best) continue;
+    // Steps: inside the box (at least a few pixels tall, so a tiny error still hits).
+    const double px = x->pixelToCoord(pos.x());
+    for (const auto& b : info.boxes) {
+      if (px < b.x0 || px > b.x1) continue;
+      const double top = std::min(y->coordToPixel(b.y1), y->coordToPixel(b.point.y) - 3);
+      const double bottom = std::max(y->coordToPixel(b.y0), y->coordToPixel(b.point.y) + 3);
+      if (pos.y() >= top && pos.y() <= bottom) {
+        best = &b.point;
+        if (where) *where = &info;
+        break;
+      }
+    }
   }
   return best;
 }
@@ -405,7 +479,9 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
 std::optional<QPoint> SceneView::point_position(const std::string& uuid, int panel) const {
   if (panel < 0 || panel >= static_cast<int>(rects_.size())) return std::nullopt;
   const auto& info = rects_[panel];
-  for (const auto& p : info.points)
+  std::vector<HitPoint> candidates = info.points;
+  for (const auto& b : info.boxes) candidates.push_back(b.point);
+  for (const auto& p : candidates)
     if (p.uuid == uuid) {
       const QPoint local(static_cast<int>(std::lround(info.rect->axis(QCPAxis::atBottom)->coordToPixel(p.x))),
                          static_cast<int>(std::lround(info.rect->axis(QCPAxis::atLeft)->coordToPixel(p.y))));
@@ -421,7 +497,9 @@ QStringList SceneView::points_in(const QRect& area) const {
   for (const auto& info : rects_) {
     QCPAxis* x = info.rect->axis(QCPAxis::atBottom);
     QCPAxis* y = info.rect->axis(QCPAxis::atLeft);
-    for (const auto& p : info.points) {
+    std::vector<HitPoint> candidates = info.points;
+    for (const auto& b : info.boxes) candidates.push_back(b.point);
+    for (const auto& p : candidates) {
       const QPoint px(static_cast<int>(x->coordToPixel(p.x)), static_cast<int>(y->coordToPixel(p.y)));
       if (r.contains(px) && info.rect->rect().contains(px)) {
         const QString id = QString::fromStdString(p.uuid);

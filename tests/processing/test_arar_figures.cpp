@@ -215,6 +215,7 @@ TEST(Spectrum, StepsPlateauAndIntegrated) {
   ASSERT_EQ(g.panels.size(), 1u);
   EXPECT_EQ(*g.x.min, 0.0);
   EXPECT_EQ(*g.x.max, 100.0);
+  EXPECT_EQ(g.x.title, "Cumulative % 39ArK");
   const auto st = layers<pp::StepLayer>(g.panels[0]);
   ASSERT_EQ(st.size(), 1u);
   ASSERT_EQ(st[0]->x0.size(), 8u);

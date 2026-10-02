@@ -14,6 +14,8 @@
 #include <QPushButton>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QMenu>
+#include <QToolButton>
 #include <QTableView>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -102,6 +104,38 @@ std::unique_ptr<pp::MemorySource> make_source(int n) {
   return src;
 }
 
+// Eight concordant heating steps (Ar40 = 10 Ar39 + 298.56 Ar36) with a J.
+std::unique_ptr<pp::MemorySource> make_steps() {
+  auto src = std::make_unique<pp::MemorySource>();
+  const double ar39[] = {5, 20, 40, 60, 50, 30, 15, 5};
+  const double ar36[] = {0.5, 0.3, 0.2, 0.1, 0.08, 0.06, 0.1, 0.2};
+  for (int i = 0; i < 8; ++i) {
+    auto a = std::make_shared<pp::Analysis>();
+    a->uuid = "step-" + std::to_string(i);
+    a->identifier = "S1";
+    a->aliquot = 1;
+    a->increment = i;
+    a->runid = pp::make_runid("S1", 1, i);
+    a->analysis_type = "unknown";
+    a->timestamp = 1'700'000'000.0 + 1800.0 * i;
+    auto iso = [&](const char* name, double v, double e) {
+      pp::IsotopeData d;
+      d.key = name;
+      d.isotope = name;
+      d.intercept = {v, e};
+      a->isotopes.push_back(d);
+    };
+    iso("Ar40", 10 * ar39[i] + 298.56 * ar36[i], 0.3);
+    iso("Ar39", ar39[i], 0.05);
+    iso("Ar38", 0.05, 0.005);
+    iso("Ar37", 0.1, 0.005);
+    iso("Ar36", ar36[i], 0.003);
+    a->context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
+    src->add(a);
+  }
+  return src;
+}
+
 QListWidgetItem* find_item(QListWidget* list, const QString& text) {
   for (int i = 0; i < list->count(); ++i)
     if (list->item(i)->text() == text) return list->item(i);
@@ -159,7 +193,7 @@ class TestDataWindows : public QObject {
     auto src = make_source(10);
     DataBrowserWindow w(*src);
     QSignalSpy recall(&w, &DataBrowserWindow::recall_requested);
-    QSignalSpy series(&w, &DataBrowserWindow::time_series_requested);
+    QSignalSpy series(&w, &DataBrowserWindow::figure_requested);
     w.recall_step(1);
     QCOMPARE(recall.count(), 1);
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-9"));
@@ -167,10 +201,13 @@ class TestDataWindows : public QObject {
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-8"));
     w.select_rows({0, 2});
     QCOMPARE(w.selected_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
-    for (auto* b : w.findChildren<QPushButton*>())
-      if (b->text().startsWith(QStringLiteral("Time series"))) QTest::mouseClick(b, Qt::LeftButton);
+    const auto actions = w.plot_button()->menu()->actions();
+    QCOMPARE(actions.size(), 4);
+    actions[2]->trigger();  // Age spectrum
     QCOMPARE(series.count(), 1);
-    QCOMPARE(series.takeFirst().at(0).toStringList().size(), 2);
+    const auto args = series.takeFirst();
+    QCOMPARE(args.at(0).toString(), QStringLiteral("spectrum"));
+    QCOMPARE(args.at(1).toStringList().size(), 2);
   }
 
   void recall_shows_every_tab() {
@@ -278,6 +315,43 @@ class TestDataWindows : public QObject {
     QVERIFY(QFileInfo(pdf).size() > 0);
   }
 
+  void arar_figures_open_and_steps_are_clickable() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
+    for (const char* kind : {"ideogram", "inverse_isochron"}) {
+      FigureWindow w(bridge, presets, kind, ids);
+      w.resize(900, 700);
+      w.show();
+      QVERIFY(wait_runs(w, bridge, 1));
+      QVERIFY2(w.view()->scene(), qPrintable(w.status_label()->text()));
+      QCOMPARE(QString::fromStdString(w.view()->scene()->kind), QString::fromLatin1(kind));
+      QVERIFY(w.view()->scene()->warnings.empty());
+      QCOMPARE(w.group_combo()->currentText(), FigureWindow::default_group_key(kind));
+    }
+
+    FigureWindow w(bridge, presets, "spectrum", ids);
+    w.resize(1000, 700);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QVERIFY(wait_runs(w, bridge, 1));
+    QCOMPARE(w.group_combo()->currentText(), QStringLiteral("aliquot"));
+    QVERIFY(w.preset_combo()->findText(QStringLiteral("With K/Ca")) >= 0);
+    const QStringList before = w.view()->texts(0);
+    QVERIFY(before.join(QLatin1Char('\n')).contains(QStringLiteral("plateau A-H")));
+    w.view()->plot()->replot();
+    const auto pos = w.view()->point_position("step-3", 0);  // the box centre
+    QVERIFY(pos);
+    QVERIFY(w.view()->tooltip_at(w.view()->plot()->mapFrom(w.view(), *pos)).contains(QStringLiteral("S1-01D")));
+    QTest::mouseClick(w.view()->plot(), Qt::LeftButton, Qt::NoModifier, w.view()->plot()->mapFrom(w.view(), *pos));
+    QVERIFY(wait_runs(w, bridge, 2));
+    QCOMPARE(w.pipeline().find("edits")->options.get_strings("exclude"), std::vector<std::string>{"step-3"});
+    QVERIFY(w.view()->texts(0) != before);  // D left the plateau
+  }
+
   void options_editor_rows() {
     OptionsEditor e;
     e.set_options(pp::Options(pp::time_series_schema()));
@@ -316,6 +390,8 @@ class TestDataWindows : public QObject {
       QCOMPARE(window.data_window()->model()->rowCount(), 6);
       QVERIFY(window.open_recall(QStringLiteral("uuid-0")));
       QVERIFY(window.open_time_series({QStringLiteral("uuid-0"), QStringLiteral("uuid-1")}));
+      QVERIFY(window.open_figure(QStringLiteral("ideogram"), {QStringLiteral("uuid-0")}));
+      QVERIFY(!window.open_figure(QStringLiteral("no_such_figure"), {QStringLiteral("uuid-0")}));
       // Destroyed with a figure window open: data windows go before the bridge.
     }
   }

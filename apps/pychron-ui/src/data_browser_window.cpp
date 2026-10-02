@@ -17,6 +17,7 @@
 #include <QShortcut>
 #include <QSplitter>
 #include <QTableView>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace pychron::ui {
@@ -106,11 +107,21 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   status_ = new QLabel;
   more_ = new QPushButton(tr("Load more"));
   auto* recall = new QPushButton(tr("Recall"));
-  auto* series = new QPushButton(tr("Time series..."));
+  plot_ = new QToolButton;
+  plot_->setText(tr("Plot"));
+  plot_->setPopupMode(QToolButton::InstantPopup);
+  auto* plot_menu = new QMenu(plot_);
+  for (const auto& [kind, label] : {std::pair{"time_series", "Time series"}, {"ideogram", "Ideogram"},
+                                    {"spectrum", "Age spectrum"}, {"inverse_isochron", "Inverse isochron"}}) {
+    QAction* a = plot_menu->addAction(tr(label));
+    a->setData(QString::fromLatin1(kind));
+    connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
+  }
+  plot_->setMenu(plot_menu);
   bar->addWidget(status_, 1);
   bar->addWidget(more_);
   bar->addWidget(recall);
-  bar->addWidget(series);
+  bar->addWidget(plot_);
   rl->addLayout(bar);
 
   auto* split = new QSplitter;
@@ -127,7 +138,6 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(refresh_button, &QPushButton::clicked, this, &DataBrowserWindow::refresh);
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
   connect(recall, &QPushButton::clicked, this, &DataBrowserWindow::recall_current);
-  connect(series, &QPushButton::clicked, this, &DataBrowserWindow::request_time_series);
   connect(table_, &QTableView::activated, this, [this](const QModelIndex&) { recall_current(); });
   auto* next = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_N), this);
   auto* prev = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_B), this);
@@ -267,11 +277,11 @@ void DataBrowserWindow::recall_step(int delta) {
   recall_current();
 }
 
-void DataBrowserWindow::request_time_series() {
+void DataBrowserWindow::request_figure(const QString& kind) {
   QStringList ids = selected_uuids();
   if (ids.isEmpty())
     for (const auto& r : model_->rows()) ids << qs(r.uuid);
-  if (!ids.isEmpty()) emit time_series_requested(ids);
+  if (!ids.isEmpty()) emit figure_requested(kind, ids);
 }
 
 }  // namespace pychron::ui

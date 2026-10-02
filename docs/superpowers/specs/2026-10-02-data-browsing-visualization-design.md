@@ -1,7 +1,7 @@
 # Data browsing, recall and visualization
 
 Date: 2026-10-02
-Status: V1 implemented (section 14); V2 and V3 proposed
+Status: V1 and the V2 figures implemented (section 14); V2 data and V3 proposed
 Owner: Jake Ross
 Depends on: `2026-10-02-arar-reduction-design.md` (UFloat, `reduce()`, fits),
 `2026-10-01-dvc-schema-design.md` (store, revisions, reference resolution),
@@ -701,7 +701,8 @@ through `IUnitOfWork`).
 | Stage | Content | Status |
 |---|---|---|
 | V1 | stats; processing core (model, quantities, dataset, options + presets, units + runner, scene, time series, recall model); record source; UI browser, recall, figure window + options dock | Done (plan: `docs/superpowers/plans/2026-10-02-data-browsing-visualization.md`) |
-| V2 | ideogram, spectrum, inverse isochron (scenes, stats annotations, plateau and isochron options), XY scatter; `StoreSource` with `IStore::browse/facet/load_blob`; recall History + diff; editing fits in recall | Next |
+| V2 | ideogram, spectrum, inverse isochron (scenes, stats annotations, plateau and isochron options) | Done |
+| V2 (rest) | XY scatter; `StoreSource` with `IStore::browse/facet/load_blob`; recall History + diff; editing fits in recall | Next |
 | V3 | fit units (blanks, IC factors, isotope evolution) with references, review flag and persist through revisions; tables and CSV export; pipeline template editor; listen/auto pipelines | Later |
 
 ## 15. Open questions
