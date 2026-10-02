@@ -20,6 +20,15 @@ class ElctlExpTest : public ElctlTest {
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_ / "lab",
              fs::copy_options::recursive | fs::copy_options::overwrite_existing);
     fs::remove_all(dir_ / "lab" / "data");
+    // Runtime state a local session left beside the examples (a locked valve,
+    // say) is not part of them.
+    std::vector<fs::path> state;
+    for (const auto& entry : fs::recursive_directory_iterator(dir_ / "lab")) {
+      if (entry.is_regular_file() && entry.path().filename().string().ends_with(".state.toml")) {
+        state.push_back(entry.path());
+      }
+    }
+    for (const auto& file : state) fs::remove(file);
   }
   std::string lab(const std::string& f) const { return (dir_ / "lab" / f).string(); }
 
