@@ -40,6 +40,14 @@ sim::SimTopology topology_of(const NetworkGraph& graph, const canvas::Canvas& ca
   return t;
 }
 
+const char* state_name(ValveState s) {
+  switch (s) {
+    case ValveState::Open: return "open";
+    case ValveState::Closed: return "closed";
+    default: return "unknown";
+  }
+}
+
 }  // namespace
 
 ExtractionLine::ExtractionLine(config::SystemConfig config, std::optional<canvas::Canvas> canvas, Options options)
@@ -104,7 +112,10 @@ Result<void> ExtractionLine::build() {
       std::fprintf(stderr, "pychron: logging disabled: %s\n", hub.error().what.c_str());
     }
   }
-  if (log_hub_) logger_.emplace(log_hub_->logger("extraction_line"));
+  if (log_hub_) {
+    logger_.emplace(log_hub_->logger("extraction_line"));
+    switches_logger_.emplace(log_hub_->logger("switches"));
+  }
 
   bool tracing = false;
   for (auto [name, tc] : config_.transports) {
@@ -158,6 +169,19 @@ Result<void> ExtractionLine::build() {
 
   subscriptions_.push_back(bus_.subscribe<PressureSample>(
       [this](const PressureSample& s) { record_pressure(s.gauge, s.value); }));
+  // Every actuation path (operator, scheduler, protocols) goes through
+  // SwitchManager, which reports outcomes as events: log them all here.
+  // The hub publishes Log from inside these handlers; the bus allows that.
+  subscriptions_.push_back(bus_.subscribe<ValveChanged>([this](const ValveChanged& e) {
+    log_to(switches_logger_, "switches", LogLevel::Info, "valve " + e.valve + " " + state_name(e.state));
+  }));
+  subscriptions_.push_back(bus_.subscribe<ActuationFailed>([this](const ActuationFailed& e) {
+    log_to(switches_logger_, "switches", LogLevel::Warn,
+           "actuate '" + e.valve + "' failed: " + std::string(to_string(e.error.kind)) + ": " + e.error.what);
+  }));
+  subscriptions_.push_back(bus_.subscribe<SwitchLockChanged>([this](const SwitchLockChanged& e) {
+    log_to(switches_logger_, "switches", LogLevel::Info, "valve " + e.name + (e.locked ? " locked" : " unlocked"));
+  }));
   if (sim_) {
     // Manual valves have no actuator: the operator's report is the only
     // thing that can move them in the model.
@@ -211,6 +235,8 @@ Result<void> ExtractionLine::start() {
   }
 
   running_ = true;
+  log(LogLevel::Info, "extraction line started: " + std::to_string(config_.valves.size() + config_.manual_valves.size()) +
+                          " valves, " + std::to_string(config_.gauges.size()) + " gauges");
   bus_.publish(snapshot());
   if (options_.run_scheduler) scheduler_->start();
   return {};
@@ -227,6 +253,7 @@ void ExtractionLine::stop() {
   scanner_.reset();
   for (auto& [name, t] : transports_) t->close();
   running_ = false;
+  log(LogLevel::Info, "extraction line stopped");
 }
 
 bool ExtractionLine::running() const {
@@ -369,12 +396,17 @@ void ExtractionLine::save_locks() {
 }
 
 void ExtractionLine::log(LogLevel level, std::string message) {
-  if (logger_) {
-    if (!logger_->enabled(level)) return;
-    logger_->log(level, message);  // publishes on the hub's bus
+  log_to(logger_, "extraction_line", level, std::move(message));
+}
+
+void ExtractionLine::log_to(const std::optional<Logger>& logger, std::string_view name, LogLevel level,
+                            std::string message) {
+  if (logger) {
+    if (!logger->enabled(level)) return;
+    logger->log(level, message);  // publishes on the hub's bus
     if (log_hub_->bus() == &bus_) return;
   }
-  bus_.publish(Log{level, "extraction_line", std::move(message), clock_->now()});
+  bus_.publish(Log{level, std::string(name), std::move(message), clock_->now()});
 }
 
 }  // namespace pychron::systems

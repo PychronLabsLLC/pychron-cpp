@@ -416,6 +416,45 @@ TEST(ExtractionLine, LineWarningReachesLogFileAndBusOnce) {
   std::filesystem::remove_all(dir);
 }
 
+TEST(ExtractionLine, ActuationAndFailureAreLoggedOnceToBusAndFile) {
+  ManualClock clock;
+  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_act_log_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  auto cfg = system_config();
+  cfg.logging.dir = dir;
+  {
+    auto line = ExtractionLine::create(std::move(cfg), std::nullopt, manual(clock));
+    ASSERT_TRUE(line) << line.error().what;
+    std::vector<Log> got;
+    auto sub = (*line)->bus().subscribe<Log>([&](const Log& e) {
+      if (e.logger == "switches") got.push_back(e);
+    });
+    ASSERT_TRUE((*line)->start());
+    (*line)->log_hub()->flush();
+    got.clear();  // start-up read-back reports initial states
+    ASSERT_TRUE((*line)->actuate("A", SwitchOp::Open, "test"));
+    (*line)->log_hub()->flush();
+    ASSERT_EQ(got.size(), 1u);
+    EXPECT_EQ(got[0].level, LogLevel::Info);
+    EXPECT_EQ(got[0].message, "valve A open");
+    EXPECT_EQ(lines_containing(dir / "pychron.log", "[info] switches: valve A open"), 1u);
+
+    got.clear();
+    ASSERT_TRUE((*line)->set_locked("A", true));
+    EXPECT_FALSE((*line)->actuate("A", SwitchOp::Close, "test"));
+    (*line)->log_hub()->flush();
+    bool locked_info = false, failed_warn = false;
+    for (const auto& r : got) {
+      if (r.level == LogLevel::Info && r.message == "valve A locked") locked_info = true;
+      if (r.level == LogLevel::Warn && r.message.find("actuate 'A' failed") != std::string::npos) failed_warn = true;
+    }
+    EXPECT_TRUE(locked_info);
+    EXPECT_TRUE(failed_warn);
+    EXPECT_EQ(lines_containing(dir / "pychron.log", "[warn] switches: actuate 'A' failed"), 1u);
+  }
+  std::filesystem::remove_all(dir);
+}
+
 TEST(ExtractionLine, InjectedHubOnAnotherBusStillFeedsLineBus) {
   ManualClock clock;
   SignalBus hub_bus;

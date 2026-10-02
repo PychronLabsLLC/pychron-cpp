@@ -135,6 +135,7 @@ class ExtractionLine {
   void read_all_gauges();
   void record_pressure(const std::string& gauge, double value);
   void log(LogLevel level, std::string message);
+  void log_to(const std::optional<Logger>& logger, std::string_view name, LogLevel level, std::string message);
   void load_locks();
   void save_locks();
 
@@ -156,6 +157,8 @@ class ExtractionLine {
   // "extraction_line" on log_hub_; null without a hub, when log() publishes
   // straight on bus_.
   std::optional<Logger> logger_;
+  // "switches": valve actuations, failures and lock changes.
+  std::optional<Logger> switches_logger_;
   std::unique_ptr<sim::SimSystem> sim_;
   std::vector<std::pair<std::string, std::unique_ptr<Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<Device>>> devices_;
