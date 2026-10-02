@@ -191,4 +191,114 @@ Result<CosmogenicComponents> cosmogenic_components(const UFloat& c36, const UFlo
   return CosmogenicComponents{k.cosmo36, k.cosmo38, k.noncosmo36, k.noncosmo38};
 }
 
+// ---- 3.5 F and radiogenic yield -------------------------------------------
+
+namespace {
+
+bool finite(const UFloat& x) noexcept {
+  return std::isfinite(x.nominal()) && std::isfinite(x.std_dev());
+}
+
+}  // namespace
+
+// E9-E15. legacy:processing/argon_calculations.py:516-591 (calculate_f), one
+// pass: the legacy second calc_f with zero-error ratios (:585-589) is replaced
+// by std_dev_excluding over the interference-ratio ids (spec E15).
+Result<FResult> calculate_f(const std::array<UFloat, 5>& n, double decay_days,
+                            const ProductionVariables& p, const ReductionConstants& c,
+                            std::optional<Measured> fixed_k3739) {
+  for (const ArgonIsotope iso : kArgonKeys) {
+    if (!std::isfinite(n[index(iso)].nominal())) {
+      return fail(ErrorKind::Config, "reduction: calculate_f " + std::string(to_string(iso)) +
+                                         " is not finite (" + fmt_g(n[index(iso)].nominal()) +
+                                         ")");
+    }
+  }
+  const UFloat& n40 = n[index(ArgonIsotope::Ar40)];
+  const UFloat& a39 = n[index(ArgonIsotope::Ar39)];
+  const UFloat& a38 = n[index(ArgonIsotope::Ar38)];
+  const UFloat& a37 = n[index(ArgonIsotope::Ar37)];
+  const UFloat& a36 = n[index(ArgonIsotope::Ar36)];
+
+  // :529-531: trapped 40/36, minted once per call, distinct from E12's atm3836.
+  const Result<UFloat> trapped = mint(c.atm4036, "trapped_4036");
+  if (!trapped) return fail(trapped.error());
+
+  InterferenceOptions o;
+  o.mode = c.k3739_mode;
+  o.allow_negative_ca_correction = c.allow_negative_ca_correction;
+  if (fixed_k3739) {
+    const Result<UFloat> fk = mint(*fixed_k3739, "k3739");
+    if (!fk) return fail(fk.error());
+    o.fixed_k3739 = *fk;
+  }
+  if (c.k3739_mode == K3739Mode::Fixed) {
+    const Result<UFloat> ck = mint(c.fixed_k3739, "k3739");
+    if (!ck) return fail(ck.error());
+    o.constants_fixed_k3739 = *ck;
+  }
+
+  FResult out;
+  out.interference = interference_corrections(a39, a37, p, o, &out.diagnostics);
+  const InterferenceComponents& ic = out.interference;
+
+  const Result<AtmosphericComponents> atm =
+      atmospheric_components(a38, a36, ic.k38, ic.ca38, ic.ca36, decay_days, p.cl3638, c);
+  if (!atm) return fail(atm.error());
+  out.atmospheric = *atm;
+
+  // :542-545: the cosmogenic split replaces atm36 / atm38.
+  if (c.cosmogenic) {
+    const Result<CosmogenicComponents> cos =
+        cosmogenic_components(out.atmospheric.atm36, out.atmospheric.atm38, *c.cosmogenic);
+    if (!cos) return fail(cos.error());
+    out.cosmogenic = *cos;
+    out.atmospheric.atm36 = cos->noncosmo36;
+    out.atmospheric.atm38 = cos->noncosmo38;
+  }
+
+  const kernels::FValues<UFloat> fv =
+      kernels::f_and_yield(n40, ic.k39, out.atmospheric.atm36, *trapped, p.k4039);
+  out.atm40 = fv.atm40;
+  out.k40 = fv.k40;
+  out.rad40 = fv.rad40;
+  if (fv.f_defined) {
+    out.f = fv.f;
+    const std::array<VariableId, 7> ids = p.interference_ids();
+    out.f_err_wo_irrad = std_dev_excluding(fv.f, ids);
+  } else {
+    out.diagnostics.push_back(Diagnostic::FUndefined);
+  }
+  if (fv.yield_defined) {
+    out.radiogenic_yield = fv.yield;
+  } else {
+    out.diagnostics.push_back(Diagnostic::YieldUndefined);
+  }
+  // :582
+  out.interference_corrected = {n40 - out.k40, ic.k39, a38, a37, out.atmospheric.atm36};
+
+  // Spec 5.6 / 7: NaN or inf from valid inputs (e.g. an exactly singular E9 or
+  // E10 divisor) is flagged once; the values are kept.
+  bool all_finite = true;
+  const auto check = [&all_finite](const UFloat& x) { all_finite = all_finite && finite(x); };
+  if (out.f) {
+    check(*out.f);
+    all_finite = all_finite && std::isfinite(out.f_err_wo_irrad);
+  }
+  if (out.radiogenic_yield) check(*out.radiogenic_yield);
+  for (const UFloat* x : {&out.atm40, &out.k40, &out.rad40}) check(*x);
+  for (const UFloat* x : {&ic.k37, &ic.k38, &ic.k39, &ic.ca36, &ic.ca37, &ic.ca38, &ic.ca39}) {
+    check(*x);
+  }
+  const AtmosphericComponents& am = out.atmospheric;
+  for (const UFloat* x : {&am.atm36, &am.atm38, &am.cl36, &am.cl38}) check(*x);
+  for (const UFloat& x : out.interference_corrected) check(x);
+  if (out.cosmogenic) {
+    const CosmogenicComponents& cm = *out.cosmogenic;
+    for (const UFloat* x : {&cm.cosmo36, &cm.cosmo38, &cm.noncosmo36, &cm.noncosmo38}) check(*x);
+  }
+  if (!all_finite) out.diagnostics.push_back(Diagnostic::NonFiniteResult);
+  return out;
+}
+
 }  // namespace pychron::reduction

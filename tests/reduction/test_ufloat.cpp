@@ -307,6 +307,12 @@ TEST(UFloat, ExclusionAndComponents) {
   const UFloat rebuilt = x * UFloat(3.0) + z;
   EXPECT_DOUBLE_EQ(std_dev_excluding(f, drop_y), rebuilt.std_dev());
   EXPECT_DOUBLE_EQ(std_dev_excluding(f, std::vector<VariableId>{}), f.std_dev());
+  // Exact values report variable id 0 and have no terms; an id 0 in the
+  // exclusion list (E15 with zero-error ratios) excludes nothing.
+  EXPECT_EQ(UFloat::variable(0.5, 0.0).variable_id(), VariableId{0});
+  EXPECT_EQ(std_dev_excluding(f, std::vector<VariableId>{0}), f.std_dev());
+  EXPECT_EQ(std_dev_excluding(f, std::vector<VariableId>{0, y.variable_id(), 0}),
+            std_dev_excluding(f, drop_y));
 
   const std::vector<TagId> drop_tx{tx};
   EXPECT_DOUBLE_EQ(std_dev_excluding_tags(f, drop_tx), 2.0 * 0.2);

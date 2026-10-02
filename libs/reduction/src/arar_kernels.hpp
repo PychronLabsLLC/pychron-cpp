@@ -165,4 +165,34 @@ Cosmogenic<T> cosmogenic(const T& c36, const T& c38, const T& rs, const T& rc) {
   return out;
 }
 
+// E14 outputs. `f` and `yield` are meaningful only when the matching flag is
+// set (legacy ZeroDivisionError sentinels become absent values, D3).
+template <class T>
+struct FValues {
+  T atm40, k40, rad40, f, yield;
+  bool f_defined = false;      // nom(k39) != 0
+  bool yield_defined = false;  // nom(n40) != 0
+};
+
+// E14 with the legacy operand order: atm40 = atm36 * T, k40 = k39 * K4039,
+// rad40 = (n40 - atm40) - k40, F = rad40 / k39, yield = (rad40 / n40) * 100.
+// legacy:processing/argon_calculations.py:547-557
+template <class T>
+FValues<T> f_and_yield(const T& n40, const T& k39, const T& atm36, const T& trapped_4036,
+                       const T& k4039) {
+  FValues<T> out;
+  out.atm40 = atm36 * trapped_4036;
+  out.k40 = k39 * k4039;
+  out.rad40 = n40 - out.atm40 - out.k40;
+  if (nominal(k39) != 0.0) {
+    out.f = out.rad40 / k39;
+    out.f_defined = true;
+  }
+  if (nominal(n40) != 0.0) {
+    out.yield = out.rad40 / n40 * 100.0;
+    out.yield_defined = true;
+  }
+  return out;
+}
+
 }  // namespace pychron::reduction::kernels

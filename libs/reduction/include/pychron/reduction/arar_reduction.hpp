@@ -123,4 +123,41 @@ Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UF
 Result<CosmogenicComponents> cosmogenic_components(const UFloat& c36, const UFloat& c38,
                                                    const CosmogenicRatios& r);
 
+// ---- 3.5 F and radiogenic yield -------------------------------------------
+
+struct FResult {
+  std::optional<UFloat> f;                       // absent when nom(k39) == 0 (FUndefined)
+  double f_err_wo_irrad = 0.0;                   // E15; 0 when f absent
+  UFloat atm40, k40, rad40;
+  std::optional<UFloat> radiogenic_yield;        // percent; absent when nom(n40) == 0
+  InterferenceComponents interference;
+  AtmosphericComponents atmospheric;             // after the cosmogenic split when enabled
+  std::optional<CosmogenicComponents> cosmogenic;  // present when constants.cosmogenic
+  std::array<UFloat, 5> interference_corrected;  // E14, ARGON_KEYS order
+  std::vector<Diagnostic> diagnostics;
+};
+
+// E9-E15 in one pass. `n` is in ARGON_KEYS order with Ar37 and Ar39 already
+// decay corrected (a37, a39); Ar40, Ar38 and Ar36 are not (spec 3.5 note).
+// Mints fresh constant variables on every call (spec Q1): trapped_4036 (E14,
+// from constants.atm4036), plus those of E10 (k3739), E12 (lambda_Cl36,
+// atm3836) and E13 (solar3836, cosmo3836). `fixed_k3739` is the per-analysis
+// override (E10; 0 +- 0 counts as unset, as legacy).
+//   atm40 = atm36 T;  k40 = k39 K4039;  rad40 = n40 - atm40 - k40
+//   F = rad40 / k39;  yield = rad40 / n40 * 100
+//   interference_corrected = {n40 - k40, k39, n38, a37, atm36}
+// f_err_wo_irrad is std(F) with the seven interference-ratio variables
+// (p.interference_ids()) treated as exact; legacy's second calc_f pass with
+// zero-error ratios is identical by linearity (E15).
+// Diagnostics, in order: those of E9-E11 (FixedK3739ZeroCa3937,
+// CaClampedToZero), FUndefined (nom(k39) == 0, no F = 1 sentinel, D3),
+// YieldUndefined (nom(n40) == 0), then NonFiniteResult once when any computed
+// nominal or standard deviation is NaN/inf (e.g. the E9 divisor
+// 1 - K3739 Ca3937 or the E10 divisor x + y is exactly 0); values are kept.
+// Errors (Config, "reduction: "): a non-finite isotope nominal, an invalid
+// constant or fixed_k3739, and the E12/E13 zero divisors.
+Result<FResult> calculate_f(const std::array<UFloat, 5>& n, double decay_days,
+                            const ProductionVariables& p, const ReductionConstants& c,
+                            std::optional<Measured> fixed_k3739 = std::nullopt);
+
 }  // namespace pychron::reduction
