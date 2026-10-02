@@ -31,10 +31,10 @@ record::AnalysisRecord finished_run() {
   series("Ar36", "L2", "signal", {2, 2});
   series("", "H1", "baseline", {9, 11});
   pychron::reduction::FitSpec lin;
-  r.results.intercepts["Ar40"] = {pychron::reduction::Intercept{1000, 2, 3, {}, 0}, lin};
-  r.results.intercepts["Ar39"] = {pychron::reduction::Intercept{100, 1, 3, {}, 0}, lin};
-  r.results.intercepts["Ar36:CDD"] = {pychron::reduction::Intercept{1, 0.1, 3, {}, 0}, lin};
-  r.results.intercepts["Ar36:L2"] = {pychron::reduction::Intercept{2, 0.1, 2, {}, 0}, lin};
+  r.results.intercepts["Ar40"] = {pychron::reduction::Intercept{1000, 2, 3, {}, 0, pychron::reduction::FitKind::Linear, {}}, lin};
+  r.results.intercepts["Ar39"] = {pychron::reduction::Intercept{100, 1, 3, {}, 0, pychron::reduction::FitKind::Linear, {}}, lin};
+  r.results.intercepts["Ar36:CDD"] = {pychron::reduction::Intercept{1, 0.1, 3, {}, 0, pychron::reduction::FitKind::Linear, {}}, lin};
+  r.results.intercepts["Ar36:L2"] = {pychron::reduction::Intercept{2, 0.1, 2, {}, 0, pychron::reduction::FitKind::Linear, {}}, lin};
   r.results.baselines["H1"] = {10, 1, {}};
   r.results.icfactors["H1"] = 1.5;
   return r;

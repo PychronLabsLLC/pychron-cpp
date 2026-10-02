@@ -242,7 +242,7 @@ TEST(RunChecks, PostRunAppliesQueueActionsAndCancel) {
   s.trace.t = {1, 2};
   s.trace.v = {50, 50};
   low.data.series.push_back(s);
-  low.results.intercepts["Ar40"] = {reduction::Intercept{50, 1, 2, {}, 0}, {}};
+  low.results.intercepts["Ar40"] = {reduction::Intercept{50, 1, 2, {}, 0, pychron::reduction::FitKind::Linear, {}}, {}};
   RecordMetrics metrics(low);
 
   auto out = checks.post_run(q.runs()[0], metrics, q, 0);

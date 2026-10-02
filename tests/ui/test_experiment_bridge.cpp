@@ -2,6 +2,7 @@
 // event reaches the GUI thread, in order.
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,17 @@ class TestExperimentBridge : public QObject {
               multi += batch.size() > 1 ? 1 : 0;
               for (const auto& u : batch) points += u.values.size();
             });
+    std::set<double> ar40_values;  // distinct live Ar40 intercepts seen
+    int fit_batches = 0;
+    connect(bridge.get(), &ExperimentBridge::fitsUpdated, this,
+            [&](const std::vector<pychron::experiment::collect::FitsUpdated>& batch) {
+              on_gui();
+              ++fit_batches;
+              for (const auto& f : batch)
+                for (const auto& sf : f.fits)
+                  if (sf.key.isotope == "Ar40" && sf.key.kind == pychron::experiment::collect::SeriesKind::Signal)
+                    ar40_values.insert(sf.fit.value);
+            });
     connect(bridge.get(), &ExperimentBridge::queueEnded, this, [&](const pychron::experiment::lab::QueueEnded& e) {
       on_gui();
       ended = e.result;
@@ -80,6 +92,8 @@ class TestExperimentBridge : public QObject {
     QCOMPARE(peak_centers, 3);
     QVERIFY(points > 0);
     QVERIFY(batches > 0);
+    QVERIFY(fit_batches > 0);
+    QVERIFY2(ar40_values.size() > 10, qPrintable(QString::number(ar40_values.size())));  // it moves with each reading
     QVERIFY(!bridge->running());
     bridge.reset();
   }

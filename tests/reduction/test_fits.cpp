@@ -206,3 +206,39 @@ TEST(Fits, KindNamesRoundTrip) {
   }
   EXPECT_FALSE(pr::parse_fit_kind("weighted_mean").has_value());
 }
+
+namespace pychron::reduction {
+namespace {
+
+TEST(Fits, TheCurveIsKeptForDrawing) {
+  Series s;
+  for (int i = 0; i < 10; ++i) {
+    s.x.push_back(i);
+    s.y.push_back(3.0 + 2.0 * i + 0.5 * i * i);
+  }
+  auto quad = fit(s, FitSpec{FitKind::Parabolic});
+  ASSERT_TRUE(quad);
+  EXPECT_EQ(quad->kind, FitKind::Parabolic);
+  ASSERT_EQ(quad->params.size(), 3u);
+  EXPECT_NEAR(predict(*quad, 0.0), quad->value, 1e-9);
+  EXPECT_NEAR(predict(*quad, 4.0), 3.0 + 8.0 + 8.0, 1e-9);
+
+  auto avg = fit(s, FitSpec{FitKind::Average});
+  ASSERT_TRUE(avg);
+  EXPECT_NEAR(predict(*avg, 123.0), avg->value, 1e-12);
+
+  Series e;
+  for (int i = 0; i < 20; ++i) {
+    e.x.push_back(i);
+    e.y.push_back(100.0 * std::exp(-0.1 * i) + 10.0);
+  }
+  auto ex = fit(e, FitSpec{FitKind::Exponential});
+  ASSERT_TRUE(ex) << ex.error().what;
+  EXPECT_EQ(ex->params.size(), 3u);
+  EXPECT_NEAR(predict(*ex, 5.0), 100.0 * std::exp(-0.5) + 10.0, 1e-6);
+
+  EXPECT_TRUE(std::isnan(predict(Intercept{}, 1.0)));
+}
+
+}  // namespace
+}  // namespace pychron::reduction

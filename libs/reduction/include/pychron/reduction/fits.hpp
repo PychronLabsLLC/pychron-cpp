@@ -55,7 +55,14 @@ struct Intercept {
   std::size_t n_used = 0;                // points in the final fit
   std::vector<std::size_t> filtered_idx; // ascending indices removed as outliers
   double residual_sd = 0.0;              // sqrt(SSR / (n_used - n_params)); 0 if n_used <= n_params
+  // The fitted curve, for drawing it (predict): polynomial c0..cn (Average: c0),
+  // exponential a, b, c of a exp(-b x) + c.
+  FitKind kind = FitKind::Average;
+  std::vector<double> params;
 };
+
+// The fitted curve at x (seconds since time zero); NaN without parameters.
+double predict(const Intercept& fit, double x) noexcept;
 
 // Number of free parameters for a spec (Average=1, Linear=2, ..., Exponential=3).
 std::size_t parameter_count(const FitSpec& spec) noexcept;

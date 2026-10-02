@@ -130,6 +130,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&bridge_, &ExperimentBridge::runStateChanged, &model_, &QueueTableModel::on_run_state);
   connect(&bridge_, &ExperimentBridge::runFinished, &model_, &QueueTableModel::on_run_finished);
   connect(&bridge_, &ExperimentBridge::seriesUpdated, evolutions_, &EvolutionsView::on_series);
+  connect(&bridge_, &ExperimentBridge::fitsUpdated, evolutions_, &EvolutionsView::on_fits);
   connect(&bridge_, &ExperimentBridge::peakCenterDone, evolutions_, &EvolutionsView::on_peak_center);
   connect(&bridge_, &ExperimentBridge::queueEdited, this, [this](const exec::QueueEdited& e) {
     model_.set_queue(e.queue, true);

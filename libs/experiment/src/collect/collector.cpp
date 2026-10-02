@@ -101,7 +101,10 @@ CollectStatus Collector::add(const spectrometer::Reading& reading) {
     update.t = t;
     hook = hook_;
   }
-  if (bus_ != nullptr) bus_->publish(update);
+  if (bus_ != nullptr) {
+    bus_->publish(update);
+    if (update.kind == SeriesKind::Signal || update.kind == SeriesKind::Baseline) publish_fits(update);
+  }
   if (hook && hook(count, t)) truncate();
 
   std::lock_guard lock(mutex_);
@@ -110,6 +113,35 @@ CollectStatus Collector::add(const spectrometer::Reading& reading) {
     return CollectStatus::Truncated;
   }
   return count_ >= target_ ? CollectStatus::Complete : CollectStatus::Running;
+}
+
+void Collector::publish_fits(const SeriesUpdated& update) {
+  FitsUpdated out;
+  out.label = update.label;
+  out.kind = update.kind;
+  std::vector<std::pair<SeriesKey, reduction::Series>> work;
+  plan::Fits fits;
+  {
+    std::lock_guard lock(mutex_);
+    out.time_zero = data_.timing.time_zero.value_or(0.0);
+    fits = fits_;
+    for (const auto& [key, value] : update.values) {
+      auto it = data_.series.find(key);
+      if (it == data_.series.end()) continue;
+      reduction::Series s;
+      s.y = it->second.v;
+      for (double t : it->second.t) s.x.push_back(t - out.time_zero);
+      work.emplace_back(key, std::move(s));
+    }
+  }
+  // Fitted outside the lock: readers (conditionals, the engine) are not held up.
+  for (auto& [key, series] : work) {
+    auto spec = key.kind == SeriesKind::Baseline ? plan::baseline_fit(fits, key.detector)
+                                                 : plan::signal_fit(fits, key.isotope);
+    if (series.x.size() < reduction::parameter_count(spec)) spec = reduction::FitSpec{reduction::FitKind::Average};
+    if (auto r = reduction::fit(series, spec)) out.fits.push_back({key, std::move(*r)});
+  }
+  if (!out.fits.empty()) bus_->publish(out);
 }
 
 int Collector::finish() {

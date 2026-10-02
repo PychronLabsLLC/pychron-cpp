@@ -252,3 +252,51 @@ TEST_F(CollectorTest, TripsAndTimingAreRecorded) {
 }
 
 }  // namespace
+
+namespace {
+
+TEST_F(CollectorTest, PublishesTheLiveFitOfEachTouchedSeries) {
+  std::vector<FitsUpdated> fits;
+  auto sub = bus_.subscribe<FitsUpdated>([&](const FitsUpdated& e) { fits.push_back(e); });
+  plan::Fits f;
+  f.signal = {{"default", reduction::FitKind::Linear}};
+  collector_.set_fits(f);
+  collector_.set_time_zero(10.0);
+
+  // Sniff readings are not fitted.
+  collector_.begin(spec(SeriesKind::Sniff, 1, {{"Ar40", "H1"}}, "sniff"));
+  collector_.add(reading(t0_ + 1s, {{"H1", 1}}));
+  EXPECT_TRUE(fits.empty());
+
+  // One point: averaged until the linear fit has enough.
+  collector_.begin(spec(SeriesKind::Signal, 3, {{"Ar40", "H1"}, {"Ar36", "CDD"}}));
+  collector_.add(reading(t0_ + 11s, {{"H1", 102}, {"CDD", 5}}));
+  ASSERT_EQ(fits.size(), 1u);
+  EXPECT_EQ(fits[0].label, "main");
+  EXPECT_DOUBLE_EQ(fits[0].time_zero, 10.0);
+  ASSERT_EQ(fits[0].fits.size(), 2u);
+  EXPECT_EQ(fits[0].fits[0].fit.kind, reduction::FitKind::Average);
+
+  // y = 100 + 2 x with x = t - time zero: the intercept is at time zero.
+  collector_.add(reading(t0_ + 12s, {{"H1", 104}, {"CDD", 5}}));
+  collector_.add(reading(t0_ + 13s, {{"H1", 106}}));
+  ASSERT_EQ(fits.size(), 3u);
+  ASSERT_EQ(fits[2].fits.size(), 1u);  // CDD had no value in the last reading
+  const auto& ar40 = fits[2].fits[0];
+  EXPECT_EQ(ar40.key, (SeriesKey{"Ar40", "H1", SeriesKind::Signal}));
+  EXPECT_EQ(ar40.fit.kind, reduction::FitKind::Linear);
+  EXPECT_NEAR(ar40.fit.value, 100.0, 1e-9);
+  EXPECT_NEAR(reduction::predict(ar40.fit, 3.0), 106.0, 1e-9);
+  // The same number the conditionals see.
+  EXPECT_NEAR(collector_.intercept("Ar40")->value, ar40.fit.value, 1e-12);
+
+  // Baselines use the plan's baseline fit (average by default).
+  collector_.begin(spec(SeriesKind::Baseline, 1, {{"", "H1"}}, "baseline.after"));
+  collector_.add(reading(t0_ + 20s, {{"H1", 0.25}}));
+  ASSERT_EQ(fits.size(), 4u);
+  EXPECT_EQ(fits[3].kind, SeriesKind::Baseline);
+  EXPECT_EQ(fits[3].fits[0].fit.kind, reduction::FitKind::Average);
+  EXPECT_DOUBLE_EQ(fits[3].fits[0].fit.value, 0.25);
+}
+
+}  // namespace

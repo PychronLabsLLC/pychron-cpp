@@ -18,6 +18,7 @@ struct ExperimentBridge::Gate {
   std::mutex mutex;
   ExperimentBridge* target = nullptr;
   std::vector<SeriesUpdated> series;  // waiting for the main thread, oldest first
+  std::vector<experiment::collect::FitsUpdated> fits;
   bool flush_posted = false;
 };
 
@@ -46,16 +47,20 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<meas::CountsProgress>(&ExperimentBridge::countsProgress);
   relay<meas::ConditionalTripped>(&ExperimentBridge::conditionalTripped);
   relay<jobs::PeakCenterDone>(&ExperimentBridge::peakCenterDone);
-  subscriptions_.push_back(bus_.subscribe<SeriesUpdated>([gate = gate_](const SeriesUpdated& event) {
+  auto queue = [gate = gate_](auto&& add) {
     std::lock_guard lock(gate->mutex);
     ExperimentBridge* self = gate->target;
     if (self == nullptr) return;
-    gate->series.push_back(event);
+    add(*gate);
     if (!gate->flush_posted) {
       gate->flush_posted = true;
       QMetaObject::invokeMethod(self, [self] { self->flush_series(); }, Qt::QueuedConnection);
     }
-  }));
+  };
+  subscriptions_.push_back(bus_.subscribe<SeriesUpdated>(
+      [queue](const SeriesUpdated& event) { queue([&](Gate& g) { g.series.push_back(event); }); }));
+  subscriptions_.push_back(bus_.subscribe<experiment::collect::FitsUpdated>(
+      [queue](const experiment::collect::FitsUpdated& event) { queue([&](Gate& g) { g.fits.push_back(event); }); }));
 }
 
 ExperimentBridge::~ExperimentBridge() {
@@ -82,12 +87,15 @@ bool ExperimentBridge::running() const { return session_.running(); }
 
 void ExperimentBridge::flush_series() {
   std::vector<SeriesUpdated> batch;
+  std::vector<experiment::collect::FitsUpdated> fits;
   {
     std::lock_guard lock(gate_->mutex);
     batch.swap(gate_->series);
+    fits.swap(gate_->fits);
     gate_->flush_posted = false;
   }
   if (!batch.empty()) emit seriesUpdated(batch);
+  if (!fits.empty()) emit fitsUpdated(fits);
 }
 
 }  // namespace pychron::ui

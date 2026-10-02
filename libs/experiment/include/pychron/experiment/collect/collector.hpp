@@ -81,6 +81,23 @@ struct SeriesUpdated {
   double t = 0;
 };
 
+// Published after each signal or baseline reading (after its SeriesUpdated):
+// the live fit of every series the reading touched, with the plan's fit, the
+// same computation as the conditionals' intercept and the record's. x is
+// seconds since time zero (the epoch until it is set). A series with fewer
+// points than its fit's parameters is averaged; one that cannot be fitted is
+// left out.
+struct SeriesFit {
+  SeriesKey key;
+  reduction::Intercept fit;
+};
+struct FitsUpdated {
+  std::string label;
+  SeriesKind kind = SeriesKind::Signal;
+  double time_zero = 0;  // seconds since the measurement epoch
+  std::vector<SeriesFit> fits;
+};
+
 struct Timing {
   TimePoint epoch{};                // measurement start
   std::optional<double> time_zero;  // seconds since epoch
@@ -194,6 +211,8 @@ class Collector {
   double icfactor_locked(const std::string& det) const;
   std::optional<double> corrected_locked(const std::string& iso) const;
   std::optional<double> computed_locked(const std::string& name) const;
+
+  void publish_fits(const SeriesUpdated& update);  // FitsUpdated for the series `update` touched
 
   const Clock& clock_;
   SignalBus* bus_;

@@ -348,6 +348,8 @@ Result<Intercept> fit(const Series& series, const FitSpec& spec) {
   out.residual_sd = m->sef;
   out.n_used = x.size();
   out.filtered_idx.assign(excluded.begin(), excluded.end());
+  out.kind = spec.kind;
+  out.params = m->params;
   if (spec.error == ErrorType::Sem)
     out.error = m->sef * std::sqrt(m->var_hat);
   else if (spec.kind == FitKind::Average)
@@ -355,6 +357,17 @@ Result<Intercept> fit(const Series& series, const FitSpec& spec) {
   else
     out.error = m->sef * std::sqrt(1.0 + m->var_hat);
   return out;
+}
+
+double predict(const Intercept& fit, double x) noexcept {
+  if (fit.params.empty()) return std::numeric_limits<double>::quiet_NaN();
+  if (fit.kind == FitKind::Exponential) {
+    if (fit.params.size() < 3) return std::numeric_limits<double>::quiet_NaN();
+    return fit.params[0] * std::exp(-fit.params[1] * x) + fit.params[2];
+  }
+  double r = 0.0;
+  for (std::size_t i = fit.params.size(); i-- > 0;) r = r * x + fit.params[i];
+  return r;
 }
 
 std::string_view to_string(FitKind kind) noexcept {

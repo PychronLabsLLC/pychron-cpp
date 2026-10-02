@@ -6,9 +6,9 @@
 //
 // State out: executor, run, measurement and peak-center events, whatever
 // thread published them, are marshalled to the bridge's (main) thread with a
-// queued call and re-emitted as signals of the same name. SeriesUpdated
-// arrives once per reading, so it is queued under a mutex and delivered as
-// one in-order batch per queued call.
+// queued call and re-emitted as signals of the same name. SeriesUpdated and
+// FitsUpdated arrive once per reading, so they are queued under a mutex and
+// delivered as in-order batches per queued call.
 //
 // Commands in: start/stop/cancel/abort/truncate forward to the session, which
 // never blocks (the executor has its own thread). check() validates a queue
@@ -71,6 +71,8 @@ class ExperimentBridge : public QObject {
   void conditionalTripped(const pychron::experiment::measurement::ConditionalTripped& event);
   void peakCenterDone(const pychron::jobs::PeakCenterDone& event);
   void seriesUpdated(const std::vector<pychron::experiment::collect::SeriesUpdated>& batch);
+  // Live fits, coalesced like seriesUpdated and delivered right after it.
+  void fitsUpdated(const std::vector<pychron::experiment::collect::FitsUpdated>& batch);
 
  private:
   struct Gate;

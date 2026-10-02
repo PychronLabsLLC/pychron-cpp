@@ -37,10 +37,9 @@ Version 1 (this spec):
 
 Added after v1: the run factory side panel (section 5.6), with frequency
 insert and per-type field enabling; the measurement panel (section 5.7); the
-script editor (section 5.8).
+script editor (section 5.8); the fit overlay in the evolutions (section 5.4).
 
-Deferred to later versions (from spec 10.4): phase timeline and overlap lanes, fit overlay and
-intercept display in the evolutions, notifications, editing a queue while it
+Deferred to later versions (from spec 10.4): phase timeline and overlap lanes, notifications, editing a queue while it
 runs.
 
 ## 3. Decisions
@@ -233,6 +232,17 @@ A QCustomPlot widget showing the run being measured:
 - A title line: run identifier, block label and `count/target`.
 - Peak-center results of the current run below the plot: detector, isotope,
   center or failure message.
+
+Fit overlay: after each signal or baseline reading the collector publishes
+`collect::FitsUpdated`, the live fit of every series the reading touched
+with the plan's fit, the same computation as the conditionals' intercept
+(`reduction::Intercept` carries the curve's parameters; `reduction::predict`
+evaluates it). The view draws each fit as a curve in the series' colour from
+time zero to its last point, a diamond at the intercept, grey crosses on
+points the fit excluded as outliers, and lists the intercepts under the plot
+(`Ar40 H1  linear  1000052 ± 379  (0.038%)`). A series selector shows all
+series of the kind or one, with the axes scaled to it (isotopes differ by
+orders of magnitude).
 
 ### 5.5 `ExperimentWindow`
 

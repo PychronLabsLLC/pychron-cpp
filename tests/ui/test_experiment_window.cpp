@@ -89,6 +89,12 @@ class TestExperimentWindow : public QObject {
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Signal) > 0);
     QVERIFY(evo->graph_count() > 0);
     QVERIFY(evo->title_text().startsWith(QStringLiteral("66001")));
+    // The live fits: a curve per signal series and its intercept listed.
+    QVERIFY(evo->fit_curve_count() > 0);
+    QVERIFY(!evo->intercept_lines().isEmpty());
+    const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
+    QVERIFY(ar40.has_value());
+    QVERIFY(ar40->value > 1e5);  // the sim's Ar40 beam is ~1e6
     QCOMPARE(evo->peak_centers().size(), 1);
     QVERIFY(evo->peak_centers().front().contains(QStringLiteral("table updated")));
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
