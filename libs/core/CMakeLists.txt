@@ -3,6 +3,7 @@ find_package(Threads REQUIRED)
 add_library(pychron_core
   src/error.cpp
   src/clock.cpp
+  src/time_series_ring.cpp
   src/signal_bus.cpp
   src/logger.cpp
   src/log_match.cpp
