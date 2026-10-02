@@ -67,7 +67,8 @@ class ScriptMeasurementHook final : public IMeasurementHook {
   ScriptMeasurementHook(scripting::IScriptHost& host, scripting::Script script, scripting::ScriptEnvironment env = {})
       : host_(host), script_(std::move(script)), env_(std::move(env)) {}
 
-  Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken& token) override;
+  Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken& token,
+                    const scripting::ValueMap& args = {}) override;
 
  private:
   scripting::IScriptHost& host_;

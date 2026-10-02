@@ -43,10 +43,10 @@ Result<void> ExtractionLineValves::close(const std::string& valve) {
 }
 
 Result<void> ScriptMeasurementHook::call(std::string_view entry, scripting::IMeasurementApi& api,
-                                         scripting::CancelToken& token) {
+                                         scripting::CancelToken& token, const scripting::ValueMap& args) {
   scripting::ScriptEnvironment env = env_;
   env.measurement = &api;
-  auto r = host_.call_hook(script_, entry, {}, env, token);
+  auto r = host_.call_hook(script_, entry, args, env, token);
   if (!r) return fail(r.error());
   return {};
 }

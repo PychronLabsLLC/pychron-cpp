@@ -13,6 +13,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/plan/plan.hpp"
 #include "pychron/scripting/cancel_token.hpp"
+#include "pychron/scripting/script.hpp"
 #include "pychron/scripting/services.hpp"
 #include "pychron/systems/spectrometer/acquisition.hpp"
 
@@ -67,8 +68,8 @@ class IPeakCenterPort {
 class IMeasurementHook {
  public:
   virtual ~IMeasurementHook() = default;
-  virtual Result<void> call(std::string_view entry, scripting::IMeasurementApi& api,
-                            scripting::CancelToken& token) = 0;
+  virtual Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken& token,
+                            const scripting::ValueMap& args = {}) = 0;
 };
 
 }  // namespace pychron::experiment::measurement

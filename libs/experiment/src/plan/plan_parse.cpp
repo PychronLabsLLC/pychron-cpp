@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <set>
 
+#include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "plan_toml.hpp"
 
@@ -411,6 +412,41 @@ void read_conditionals(const Section& s, PlanConditionals& out) {
   }
 }
 
+void read_whiff(const Section& s, Whiff& out) {
+  s.keys({"enabled", "counts", "integration_s", "checks"});
+  s.get("enabled", out.enabled);
+  s.get("counts", out.counts);
+  s.get("integration_s", out.integration_s);
+  s.above("integration_s", out.integration_s, 0);
+  if (const auto* n = s.node("checks")) {
+    const auto* arr = n->as_array();
+    if (!arr) return s.problems().add(s.at("checks"), "expected an array of tables");
+    for (std::size_t i = 0; i < arr->size(); ++i) {
+      const auto where = join(s.at("checks"), i);
+      const auto* t = arr->get(i)->as_table();
+      if (!t) {
+        s.problems().add(where, "expected a table");
+        continue;
+      }
+      Section cs(t, where, s.problems());
+      cs.keys({"check", "action"});
+      auto& c = out.checks.emplace_back();
+      cs.get("check", c.check);
+      cs.get("action", c.action);
+      if (c.check.empty()) {
+        s.problems().add(cs.at("check"), "required");
+      } else if (auto e = parse_expression(c.check); !e) {
+        s.problems().add(cs.at("check"), e.error().what);
+      }
+      if (!parse_whiff_action(c.action)) s.problems().add(cs.at("action"), "expected run_remainder, pump or abort");
+    }
+  }
+  if (out.enabled) {
+    if (out.counts < 1) s.problems().add(s.at("counts"), "an enabled whiff needs counts >= 1");
+    if (out.checks.empty()) s.problems().add(s.at("checks"), "an enabled whiff needs at least one check");
+  }
+}
+
 void check_detectors(const MeasurementPlan& plan, const ISpectrometerCatalog& spec, Problems& p) {
   const auto check = [&](const std::string& det, const std::string& where) {
     if (!det.empty() && !spec.has_detector(det)) p.add(where, "unknown detector '" + det + "'");
@@ -458,9 +494,7 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
   read_main(top.sub("main"), plan.detectors, plan.main);
   read_fits(top.sub("fits"), plan.fits);
   read_conditionals(top.sub("conditionals"), plan.conditionals);
-  const auto whiff = top.sub("whiff");
-  whiff.keys({"enabled"});
-  whiff.get("enabled", plan.whiff.enabled);
+  read_whiff(top.sub("whiff"), plan.whiff);
   plan.expose = detail::read_expose(root, p);
   if (resolvers.spectrometer) check_detectors(plan, *resolvers.spectrometer, p);
 

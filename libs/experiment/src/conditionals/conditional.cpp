@@ -318,6 +318,10 @@ std::optional<Trip> ConditionalEngine::step(size_t i, const MetricContext& ctx, 
   t.check = c.effective_check();
   t.level = c.level;
   t.context = metric_context(*c.expr, ctx);
+  t.abbreviated_count_ratio = c.abbreviated_count_ratio;
+  t.resume = c.resume;
+  t.truncate = c.truncate;
+  t.terminate = c.terminate;
   // Fires once, except a resuming action, which re-arms.
   st.consecutive = 0;
   st.fired = !(c.kind == ConditionalKind::Action && c.resume);

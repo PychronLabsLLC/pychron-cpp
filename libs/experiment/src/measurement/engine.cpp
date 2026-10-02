@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include "pychron/core/events.hpp"
 
@@ -101,23 +102,25 @@ class MeasurementEngine::Api final : public scripting::IMeasurementApi {
     const auto arrow = spec.find("->");
     std::string check(spec.substr(0, arrow));
     std::string action = arrow == std::string_view::npos ? "truncate" : std::string(spec.substr(arrow + 2));
-    auto expr = parse_expression(check);
+    auto expr = compile_check(check, std::nullopt, "");
     if (!expr) return fail(expr.error());
     auto a = parse_action(action);
     if (!a) return fail(a.error());
+    if (is_queue_action(a->type)) return fail(ErrorKind::Config, "queue actions are not allowed in add_conditional");
     Conditional c;
     c.name = "hook:" + std::string(spec);
     c.kind = ConditionalKind::Action;
     c.check = std::move(check);
-    c.expr = std::shared_ptr<const Expr>(std::move(*expr));
+    c.expr = *expr;
     c.action = *a;
+    c.level = ConditionalLevel::Hook;
     e_.in_.conditionals.items.push_back(std::move(c));
     e_.rebuild_conditionals();
     return {};
   }
 
   Result<void> truncate(bool quick) override {
-    e_.request_truncate(quick);
+    e_.request_truncate(quick ? 0.25 : 1.0);
     return {};
   }
 
@@ -152,14 +155,15 @@ Result<void> MeasurementEngine::validate() const {
   if ((p.peak_center.before || p.peak_center.after) && ctx_.peak_center == nullptr)
     problems.emplace_back("plan enables peak centering but no peak-center service is configured");
   if (p.hook && ctx_.hook == nullptr) problems.push_back("plan names hook '" + *p.hook + "' but no hook runner is configured");
-  if (p.whiff.enabled) problems.emplace_back("whiff is not supported by this engine yet");
   if (problems.empty()) return {};
   std::string what;
   for (const auto& s : problems) what += (what.empty() ? "" : "\n") + s;
   return fail(ErrorKind::Config, what);
 }
 
-void MeasurementEngine::rebuild_conditionals() { conditionals_ = std::make_unique<ConditionalEngine>(in_.conditionals); }
+void MeasurementEngine::rebuild_conditionals() {
+  conditionals_ = std::make_unique<ConditionalEngine>(in_.conditionals, in_.analysis_type);
+}
 
 MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   token_ = &token;
@@ -172,23 +176,28 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   main_count_ = 0;
   stop_ = Stop::None;
   main_truncated_ = false;
+  break_main_ = false;
   {
     std::lock_guard lock(truncate_mutex_);
     truncate_request_.reset();
   }
   collector_.start(ctx_.clock.now());
   collector_.set_fallback(ctx_.metrics);
+  collector_.set_fits(in_.plan.fits);
+  collector_.set_icfactors(in_.icfactors);
+  collector_.set_arar(in_.arar);
   rebuild_conditionals();
+  for (const auto* c : conditionals_->installed()) result_.installed.push_back(*c);
 
   Result<void> r = validate();
   if (r) r = run_blocks();
 
-  const bool abnormal = !r || token.requested() || stop_ == Stop::Cancel;
+  const bool abnormal = !r || token.requested() || stop_ == Stop::Cancel || stop_ == Stop::Abort;
   cleanup(abnormal);
 
   result_.data = collector_.data();
   result_.conditional_errors = conditionals_->errors();
-  if (token.mode() == scripting::CancelMode::Abort) {
+  if (token.mode() == scripting::CancelMode::Abort || stop_ == Stop::Abort) {
     result_.outcome = MeasurementOutcome::Aborted;
   } else if (token.mode() == scripting::CancelMode::Cancel || stop_ == Stop::Cancel) {
     result_.outcome = MeasurementOutcome::Cancelled;
@@ -293,7 +302,7 @@ Result<void> MeasurementEngine::equilibrate() {
     if (auto r = ctx_.valves->close(eq.outlet); !r) return r;
   }
 
-  bool sniffing = p.sniff.enabled && p.sniff.counts > 0;
+  bool sniffing = false;
   int sniffed = 0;
   const auto sniff_integration = seconds_to(p.sniff.integration_s);
   const auto timeout = std::chrono::duration_cast<pychron::Duration>(sniff_integration * options_.timeout_factor) +
@@ -306,7 +315,8 @@ Result<void> MeasurementEngine::equilibrate() {
     ctx_.spectrometer.stop_acquisition();
     acquiring_ = false;
   };
-  if (sniffing) {
+  auto start_sniff = [&]() -> Result<void> {
+    if (!p.sniff.enabled || p.sniff.counts <= 0) return {};
     auto channels = channels_of(p, p.main.hops.front());
     last_channels_ = channels;
     if (auto r = ctx_.spectrometer.start_acquisition(sniff_integration); !r) return r;
@@ -314,6 +324,12 @@ Result<void> MeasurementEngine::equilibrate() {
     collector_.begin({collect::SeriesKind::Sniff, p.sniff.counts, std::move(channels), "sniff"},
                      [this](int, double) { return sniff_reading(); });
     collecting_ = true;
+    sniffing = true;
+    return {};
+  };
+  // With a whiff, sniffing starts once the whiff has decided.
+  if (!p.whiff.enabled) {
+    if (auto r = start_sniff(); !r) return r;
   }
 
   const double open_at = now_s() + eq.inlet_delay_s;
@@ -332,6 +348,18 @@ Result<void> MeasurementEngine::equilibrate() {
       collector_.set_inlet_open(now);
       close_at = now + eq.time_s;
       if (p.main.time_zero.kind == plan::TimeZeroKind::Offset) collector_.set_time_zero(now + p.main.time_zero.offset_s);
+      if (p.whiff.enabled) {
+        if (auto r = whiff(); !r) {
+          out = r;
+          break;
+        }
+        if (stopping()) break;
+        if (auto r = start_sniff(); !r) {
+          out = r;
+          break;
+        }
+        continue;  // the whiff took time: re-read the clock
+      }
     }
     if (close_at && (now >= *close_at || close_inlet_now_)) {
       if (eq.close_inlet) {
@@ -371,6 +399,43 @@ Result<void> MeasurementEngine::equilibrate() {
   return out;
 }
 
+Result<void> MeasurementEngine::whiff() {
+  const auto& p = in_.plan;
+  Whiff w;
+  w.sniff = p.whiff.counts;
+  for (const auto& c : p.whiff.checks) {
+    auto expr = parse_expression(c.check);
+    auto action = parse_whiff_action(c.action);
+    if (!expr || !action) return fail(ErrorKind::Config, "whiff check '" + c.check + "' is invalid");
+    w.checks.push_back({c.check, std::shared_ptr<const Expr>(std::move(*expr)), *action});
+  }
+  auto r = collect(Block::Equilibrate, {collect::SeriesKind::Whiff, p.whiff.counts, channels_of(p, p.main.hops.front()), "whiff"},
+                   p.whiff.integration_s, {});
+  if (!r) return fail(r.error());
+  if (stopping()) return {};
+  const auto action = evaluate_whiff(w, collector_.metrics(), in_.variables).value_or(WhiffCheck::Action::RunRemainder);
+  result_.whiff = action;
+  publish_log(LogLevel::Info, "whiff: " + std::string(to_string(action)));
+  if (auto h = call_hook("on_whiff_result", {{"result", std::string(to_string(action))}}); !h) return h;
+  switch (action) {
+    case WhiffCheck::Action::RunRemainder: break;
+    case WhiffCheck::Action::Pump: {
+      const auto& eq = p.equilibration;
+      if (!eq.inlet.empty()) {
+        if (auto c = ctx_.valves->close(eq.inlet); !c) return c;
+        inlet_open_ = false;
+      }
+      if (!eq.outlet.empty()) {
+        if (auto o = ctx_.valves->open(eq.outlet); !o) return o;
+      }
+      stop_ = Stop::Terminate;
+      break;
+    }
+    case WhiffCheck::Action::Abort: stop_ = Stop::Abort; break;
+  }
+  return {};
+}
+
 Result<void> MeasurementEngine::main() {
   const auto& p = in_.plan;
   for (int cycle = 0; cycle < p.main.cycles; ++cycle) {
@@ -392,10 +457,10 @@ Result<void> MeasurementEngine::main() {
   return {};
 }
 
-Result<void> MeasurementEngine::call_hook(std::string_view entry) {
+Result<void> MeasurementEngine::call_hook(std::string_view entry, const scripting::ValueMap& args) {
   if (!in_.plan.hook || ctx_.hook == nullptr) return {};
   Api api(*this);
-  auto r = ctx_.hook->call(entry, api, *token_);
+  auto r = ctx_.hook->call(entry, api, *token_, args);
   if (!r && token_->requested()) return {};
   return r;
 }
@@ -439,7 +504,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
   while (status == collect::CollectStatus::Running && !stopping()) {
     {
       std::lock_guard lock(truncate_mutex_);
-      if (truncate_request_) collector_.truncate();
+      if (truncate_request_ && block != Block::Equilibrate) collector_.truncate();
     }
     auto r = ctx_.spectrometer.next_reading(timeout);
     if (!r) {
@@ -455,23 +520,22 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
       ctx_.bus->publish(CountsProgress{in_.run_id, block, collector_.count(), collector_.target()});
   }
   collecting_ = false;
-  const int collected = collector_.finish();
-  const int target = collector_.target();
+  collector_.finish();
   ctx_.spectrometer.stop_acquisition();
   acquiring_ = false;
   if (error) return fail(*error);
 
   if (status == collect::CollectStatus::Truncated && stop_ == Stop::None) {
-    bool quick = false;
+    std::optional<double> ratio;
     {
       std::lock_guard lock(truncate_mutex_);
-      quick = truncate_request_.value_or(false);
-      truncate_request_.reset();
+      if (block != Block::Equilibrate) ratio = std::exchange(truncate_request_, std::nullopt);
     }
-    if (block == Block::Main) {
+    if (block == Block::Main && ratio) {
       main_truncated_ = true;
-      result_.count_scale = quick ? 0.25 : static_cast<double>(collected) / std::max(target, 1);
+      result_.count_scale = *ratio;
     }
+    if (block == Block::Main) break_main_ = false;  // a non-resuming action ended main
   }
   return status;
 }
@@ -484,7 +548,7 @@ bool MeasurementEngine::main_reading(int /*count*/, double t) {
     collector_.add_trips({*trip});
     handle_trip(*trip);
   }
-  return stop_ != Stop::None;
+  return stop_ != Stop::None || break_main_;
 }
 
 bool MeasurementEngine::sniff_reading() {
@@ -500,36 +564,53 @@ bool MeasurementEngine::sniff_reading() {
 void MeasurementEngine::handle_trip(const Trip& trip) {
   using T = ActionSpec::Type;
   if (ctx_.bus != nullptr) ctx_.bus->publish(ConditionalTripped{in_.run_id, trip});
-  publish_log(LogLevel::Info, "conditional '" + trip.name + "' tripped (" + std::string(to_string(trip.kind)) + ")");
+  publish_log(LogLevel::Info, "conditional '" + trip.name + "' tripped (" + std::string(to_string(trip.kind)) + "): " +
+                                  trip.check);
   switch (trip.kind) {
-    case ConditionalKind::Truncation: request_truncate(trip.action.quick); return;
+    case ConditionalKind::Truncation:
+      request_truncate(trip.action.quick ? 0.25 : trip.abbreviated_count_ratio);
+      return;
     case ConditionalKind::Termination: stop_ = Stop::Terminate; return;
-    case ConditionalKind::Cancelation: stop_ = Stop::Cancel; return;
+    case ConditionalKind::Cancelation:
+      stop_ = Stop::Cancel;
+      result_.cancel_queue = true;
+      return;
     case ConditionalKind::Equilibration: close_inlet_now_ = true; return;
     case ConditionalKind::Modification:
+      result_.modifications.push_back(trip);
+      if (trip.truncate) request_truncate(trip.abbreviated_count_ratio);
+      if (trip.terminate) stop_ = Stop::Terminate;
+      return;
     case ConditionalKind::PreRun:
-    case ConditionalKind::PostRun: result_.modifications.push_back(trip.action); return;
+    case ConditionalKind::PostRun: return;  // between-run checks; not evaluated in-run
     case ConditionalKind::Action: break;
   }
   switch (trip.action.type) {
-    case T::Truncate: request_truncate(trip.action.quick); break;
-    case T::Terminate: stop_ = Stop::Terminate; break;
-    case T::Cancel: stop_ = Stop::Cancel; break;
+    case T::Truncate: request_truncate(trip.action.quick ? 0.25 : 1.0); return;
+    case T::Terminate: stop_ = Stop::Terminate; return;
+    case T::Cancel:
+      stop_ = Stop::Cancel;
+      result_.cancel_queue = true;
+      return;
     case T::SetParam: in_.variables.params[trip.action.name] = trip.action.value; break;
     case T::RunHook:
       if (auto r = call_hook(trip.action.name); !r)
         result_.notes.push_back("hook '" + trip.action.name + "' failed: " + r.error().what);
       break;
-    case T::Notify: result_.notes.push_back("notify: " + trip.name); break;
-    default: result_.modifications.push_back(trip.action); break;
+    case T::Notify:
+      result_.notes.push_back("notify: " + trip.name);
+      publish_log(LogLevel::Warn, "notify: conditional '" + trip.name + "' (" + trip.check + ")");
+      break;
+    default: break;
   }
+  if (!trip.resume) break_main_ = true;  // pychron: a non-resuming action ends the block
 }
 
-void MeasurementEngine::truncate(bool quick) { request_truncate(quick); }
+void MeasurementEngine::truncate(bool quick) { request_truncate(quick ? 0.25 : 1.0); }
 
-void MeasurementEngine::request_truncate(bool quick) {
+void MeasurementEngine::request_truncate(double ratio) {
   std::lock_guard lock(truncate_mutex_);
-  truncate_request_ = truncate_request_.value_or(false) || quick;
+  truncate_request_ = ratio;
   if (collecting_) collector_.truncate();
 }
 

@@ -1,0 +1,13 @@
+# expect: whiff.checks: an enabled whiff needs at least one check
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+[detectors]
+reference = "H1"
+[main]
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[whiff]
+enabled = true
+counts = 3

@@ -29,16 +29,30 @@
 // is false), on_first_count (first main reading), offset_s (inlet open +
 // offset_s).
 //
-// Conditionals are evaluated after every main reading in pychron's order
-// (modification, truncation, action, termination, cancelation) with the
-// main-wide reading count, and equilibration conditionals after every sniff
-// reading. Modification trips are reported for the executor and do not stop
-// the measurement.
+// Conditionals (conditionals spec section 6.1) are evaluated after every main
+// signal reading in pychron's order (modification, truncation, action,
+// termination, cancelation) with the main-wide reading count, and
+// equilibration conditionals after every sniff reading; the first trip ends
+// the reading's evaluation. What a trip does:
+//   truncation     truncate main with the conditional's abbreviated_count_ratio
+//   termination    end the measurement, data kept (outcome Terminated)
+//   cancelation    end it, outcome Cancelled with cancel_queue
+//   action         truncate / terminate / cancel / set_param / run_hook /
+//                  notify; without `resume` the action also ends main
+//   modification   reported for the executor; `truncate` / `terminate` act now
+//   equilibration  close the inlet now
 //
 // Truncate (truncate(), a truncation trip, or a truncate action) ends the
 // current collection at the next reading. Truncating main skips its remaining
-// hops and cycles, and later collections scale their counts by the fraction
-// collected (quick: 0.25), rounded up, at least 1.
+// hops and cycles, and later collections scale their counts by the ratio in
+// effect (the conditional's abbreviated_count_ratio; a user truncate 1.0;
+// quick 0.25), rounded up, at least 1.
+//
+// Whiff (plan [whiff]): once the inlet opens, `counts` readings of kind whiff
+// on the first hop's detectors (sniff starts after them), then the first
+// matching check decides: run_remainder continues; pump closes the inlet,
+// opens the outlet and ends the measurement (Terminated); abort ends it
+// (Aborted). The hook's on_whiff_result receives the result.
 //
 // Safety, on every exit including cancel, abort and failure: acquisition is
 // stopped, detectors the engine protected are unprotected, and an inlet the
@@ -140,6 +154,9 @@ struct MeasurementInputs {
   ConditionalSet conditionals;
   Variables variables;
   std::string run_id;
+  std::string analysis_type;  // filters conditionals by analysis_types
+  std::map<std::string, double> icfactors;              // by detector, for live corrected values
+  std::optional<reduction::ArArConstants> arar;         // enables age, kca, ... in checks
 };
 
 struct MeasurementResult {
@@ -147,7 +164,10 @@ struct MeasurementResult {
   std::optional<Error> error;  // Failed only
   collect::RunData data;
   std::vector<PeakCenterReport> peak_centers;
-  std::vector<ActionSpec> modifications;  // for the executor (skip, repeat, run blank, ...)
+  std::vector<Trip> modifications;        // for the executor (skip, repeat, run blank, ...)
+  bool cancel_queue = false;              // a cancelation (conditional) asks to stop the queue
+  std::optional<WhiffCheck::Action> whiff;  // when the plan whiffs
+  std::vector<Conditional> installed;     // conditionals that applied to this run
   std::vector<std::string> notes;         // notify actions, hook log lines
   std::vector<ConditionalError> conditional_errors;  // checks that could not be evaluated
   double count_scale = 1.0;               // after a truncation of main
@@ -180,7 +200,7 @@ class MeasurementEngine {
 
  private:
   class Api;
-  enum class Stop { None, Terminate, Cancel };
+  enum class Stop { None, Terminate, Cancel, Abort };
 
   // Block steps. A non-ok result is a Failed measurement; a Stop is read from
   // stop_ after each step.
@@ -188,8 +208,9 @@ class MeasurementEngine {
   Result<void> peak_center(Block block);
   Result<void> baseline(Block block);
   Result<void> equilibrate();
+  Result<void> whiff();
   Result<void> main();
-  Result<void> call_hook(std::string_view entry);
+  Result<void> call_hook(std::string_view entry, const scripting::ValueMap& args = {});
 
   Result<void> move_to(const std::optional<plan::HopTarget>& target, double settle_s,
                        const std::vector<std::string>& protect);
@@ -198,7 +219,7 @@ class MeasurementEngine {
   bool main_reading(int count, double t);
   bool sniff_reading();
   void handle_trip(const Trip& trip);
-  void request_truncate(bool quick);
+  void request_truncate(double ratio);
   bool wait(double seconds);  // false when cancelled
   bool stopping() const;
   void publish_log(LogLevel level, std::string message);
@@ -224,9 +245,10 @@ class MeasurementEngine {
   int main_count_ = 0;
   Stop stop_ = Stop::None;
   bool main_truncated_ = false;
+  bool break_main_ = false;  // a non-resuming action ended main
 
   std::mutex truncate_mutex_;
-  std::optional<bool> truncate_request_;  // quick?
+  std::optional<double> truncate_request_;  // count ratio for later collections
   std::atomic<bool> collecting_{false};
 };
 

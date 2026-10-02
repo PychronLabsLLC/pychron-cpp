@@ -114,6 +114,9 @@ struct Trip {
   std::string id, check;
   ConditionalLevel level = ConditionalLevel::Run;
   std::vector<MetricValue> context;
+  // Copied from the conditional so the run layer can act on the trip alone.
+  double abbreviated_count_ratio = 1.0;
+  bool resume = false, truncate = false, terminate = false;
 };
 
 // A check that could not be evaluated; recorded once per conditional.

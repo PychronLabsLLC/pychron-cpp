@@ -205,7 +205,8 @@ std::optional<std::vector<double>> Collector::isotope_values_locked(const std::s
 
 std::optional<std::string> Collector::detector_of_locked(const std::string& iso) const {
   std::string det;
-  if (isotope_series_locked(iso, SeriesKind::Signal, &det) || isotope_series_locked(iso, SeriesKind::Sniff, &det))
+  if (isotope_series_locked(iso, SeriesKind::Signal, &det) || isotope_series_locked(iso, SeriesKind::Sniff, &det) ||
+      isotope_series_locked(iso, SeriesKind::Whiff, &det))
     return det;
   return std::nullopt;
 }
@@ -233,6 +234,7 @@ double Collector::icfactor_locked(const std::string& det) const {
 std::optional<reduction::Intercept> Collector::intercept_locked(const std::string& iso, std::string* det) const {
   const Series* s = isotope_series_locked(iso, SeriesKind::Signal, det);
   if (s == nullptr) s = isotope_series_locked(iso, SeriesKind::Sniff, det);
+  if (s == nullptr) s = isotope_series_locked(iso, SeriesKind::Whiff, det);
   if (s == nullptr) return std::nullopt;
   const double t0 = data_.timing.time_zero.value_or(0.0);
   reduction::Series series;
@@ -281,6 +283,7 @@ std::optional<std::vector<double>> Collector::Metrics::series(const MetricRef& m
       case K::Isotope:
         if (auto v = c_.isotope_values_locked(m.a, SeriesKind::Signal)) return v;
         if (auto v = c_.isotope_values_locked(m.a, SeriesKind::Sniff)) return v;
+        if (auto v = c_.isotope_values_locked(m.a, SeriesKind::Whiff)) return v;
         break;
       case K::Ratio: {
         auto a = c_.isotope_values_locked(m.a, SeriesKind::Signal);
@@ -302,6 +305,7 @@ std::optional<std::vector<double>> Collector::Metrics::series(const MetricRef& m
         if (m.field == "bs") return c_.baseline_values_locked(*det);
         auto v = c_.isotope_values_locked(m.a, SeriesKind::Signal);
         if (!v) v = c_.isotope_values_locked(m.a, SeriesKind::Sniff);
+        if (!v) v = c_.isotope_values_locked(m.a, SeriesKind::Whiff);
         if (!v) break;
         if (m.field == "bs_corrected" || m.field == "ic_corrected") {
           const double bs = c_.baseline_mean_locked(*det);
@@ -336,6 +340,7 @@ std::optional<double> Collector::Metrics::scalar(const MetricRef& m) const {
         if (m.field == "cur") {
           const Series* s = c_.isotope_series_locked(m.a, SeriesKind::Signal);
           if (s == nullptr) s = c_.isotope_series_locked(m.a, SeriesKind::Sniff);
+          if (s == nullptr) s = c_.isotope_series_locked(m.a, SeriesKind::Whiff);
           if (s != nullptr) return s->v.back();
           break;
         }

@@ -392,3 +392,13 @@ TEST(PlanDuration, BaselineAtSamePositionSkipsSettle) {
   p.baseline.mass.reset();
   EXPECT_DOUBLE_EQ(estimate_duration(p).count(), 13 + 5);
 }
+
+TEST(PlanSchema, WhiffBlock) {
+  const auto p = load_fixture("peak_hop_cdd.toml");
+  EXPECT_TRUE(p.whiff.enabled);
+  EXPECT_EQ(p.whiff.counts, 4);
+  EXPECT_DOUBLE_EQ(p.whiff.integration_s, 0.5);
+  ASSERT_EQ(p.whiff.checks.size(), 2u);
+  EXPECT_EQ(p.whiff.checks[0], (WhiffCheck{"Ar40.cur > 5e6", "abort"}));
+  EXPECT_EQ(p.whiff.checks[1].action, "pump");
+}
