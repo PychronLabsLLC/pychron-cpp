@@ -228,6 +228,33 @@ Curve cumulative_probability(std::span<const double> values, std::span<const dou
   return c;
 }
 
+Curve kernel_density(std::span<const double> values, double xmin, double xmax, std::size_t n) {
+  Curve c;
+  std::vector<double> v;
+  for (double x : values)
+    if (std::isfinite(x)) v.push_back(x);
+  if (v.size() < 2 || n == 0) return c;
+  double mean = 0;
+  for (double x : v) mean += x;
+  mean /= static_cast<double>(v.size());
+  double ss = 0;
+  for (double x : v) ss += (x - mean) * (x - mean);
+  const double sd = std::sqrt(ss / static_cast<double>(v.size() - 1));
+  if (!(sd > 0)) return c;
+  const double bw = std::pow(static_cast<double>(v.size()), -0.2) * sd;
+  const double norm = 1.0 / (static_cast<double>(v.size()) * bw * std::sqrt(2.0 * std::numbers::pi));
+  c.x.resize(n);
+  c.y.assign(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    c.x[i] = n == 1 ? xmin : xmin + (xmax - xmin) * static_cast<double>(i) / static_cast<double>(n - 1);
+    for (double x : v) {
+      const double z = (c.x[i] - x) / bw;
+      c.y[i] += norm * std::exp(-0.5 * z * z);
+    }
+  }
+  return c;
+}
+
 // ---------------------------------------------------------------- plateaus
 
 namespace {

@@ -11,6 +11,7 @@
 #include "pychron/processing/units.hpp"
 #include "pychron/reduction/fits.hpp"
 #include "pychron/reduction/stats.hpp"
+#include "figure_common.hpp"
 #include "schema_builder.hpp"
 
 namespace pychron::processing {
@@ -20,7 +21,6 @@ namespace {
 using namespace detail;
 namespace r = pychron::reduction;
 
-const std::vector<std::string> kCorners{"top_left", "top_right", "bottom_left", "bottom_right"};
 const std::vector<std::string> kMarkers{"circle", "square", "diamond", "triangle", "cross", "plus", "star"};
 const std::vector<std::string> kFits{"none", "average", "weighted_mean", "linear", "parabolic", "cubic", "exponential"};
 
@@ -47,14 +47,6 @@ SchemaPtr panel_schema() {
   return s;
 }
 
-SchemaPtr group_schema() {
-  static const SchemaPtr s = make_schema("figure.time_series.group", "Group",
-                                         {optional_color("color", "Colour", "Group"),
-                                          choice("marker", "Marker", "Group", {"auto", "circle", "square", "diamond",
-                                                                               "triangle", "cross", "plus", "star"}),
-                                          text("label", "Legend label", "Group")});
-  return s;
-}
 
 SchemaPtr build_schema() {
   auto s = std::make_shared<Schema>();
@@ -69,24 +61,8 @@ SchemaPtr build_schema() {
       optional_number("x.max", "X max", "Axes"),
       number("x.padding_percent", "X padding (%)", "Axes", 2.0, 0.0, 50.0, 0.5),
       text("x.title", "X title", "Axes", "", "Empty: automatic"),
-      text("title", "Title", "Layout", "", "Placeholders: {graph}"),
-      integer("graph_columns", "Graphs per row", "Layout", 1, 1, 6),
-      integer("panel_spacing", "Panel spacing (px)", "Layout", 4, 0, 40),
-      text("font.family", "Font", "Appearance", ""),
-      number("font.title", "Title size", "Appearance", 12, 4, 72, 1),
-      number("font.axis", "Axis title size", "Appearance", 10, 4, 72, 1),
-      number("font.tick", "Tick label size", "Appearance", 9, 4, 72, 1),
-      number("font.annotation", "Annotation size", "Appearance", 9, 4, 72, 1),
-      color("background", "Background", "Appearance", "#ffffff"),
-      color("plot_background", "Plot background", "Appearance", "#ffffff"),
-      boolean("show_grid", "Grid", "Appearance", true),
-      integer("error_bar_nsigma", "Error bars (sigma)", "Appearance", 1, 0, 3),
-      choice("excluded_style", "Excluded analyses", "Appearance", {"ghost", "hidden"}),
-      boolean("show_legend", "Legend", "Legend", true),
-      choice("legend_location", "Legend location", "Legend", kCorners, "top_right"),
-      choice("statistics_location", "Statistics location", "Statistics", kCorners, "top_left"),
-      integer("statistics_sig_figs", "Significant figures", "Statistics", 4, 1, 10),
   };
+  for (auto& f : common_figure_fields()) s->fields.push_back(std::move(f));
   ListSpec panels;
   panels.key = "panels";
   panels.label = "Panels";
@@ -95,13 +71,7 @@ SchemaPtr build_schema() {
   panels.min_rows = 1;
   panels.max_rows = 12;
   panels.default_rows_toml = {"quantity = \"Ar40\""};
-  ListSpec groups;
-  groups.key = "groups";
-  groups.label = "Groups";
-  groups.section = "Groups";
-  groups.row = group_schema();
-  groups.max_rows = 32;
-  s->lists = {panels, groups};
+  s->lists = {panels, groups_list()};
   s->factory_presets = {
       {"Default",
        "[[panels]]\nquantity = \"Ar40\"\n[[panels]]\nquantity = \"Ar40/Ar36\"\nfit = \"weighted_mean\"\n"},
@@ -124,29 +94,8 @@ SchemaPtr build_schema() {
   return s;
 }
 
-std::string format_sig(double v, int sig) {
-  char buf[64];
-  std::snprintf(buf, sizeof buf, "%.*g", std::max(1, sig), v);
-  return buf;
-}
 
-std::string format_utc(double t) {
-  const auto tt = static_cast<std::time_t>(std::llround(t));
-  std::tm tm{};
-#if defined(_WIN32)
-  gmtime_s(&tm, &tt);
-#else
-  gmtime_r(&tt, &tm);
-#endif
-  char buf[32];
-  std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &tm);
-  return std::string(buf) + "Z";
-}
 
-Color with_alpha(Color c, std::uint8_t a) {
-  c.a = a;
-  return c;
-}
 
 r::FitKind fit_kind(const std::string& f) {
   if (f == "parabolic") return r::FitKind::Parabolic;
@@ -270,18 +219,7 @@ const SchemaPtr& time_series_schema() {
 Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) {
   Scene scene;
   scene.kind = "time_series";
-  scene.columns = static_cast<int>(o.get_int("graph_columns"));
-  scene.style.background = parse_color(o.get_string("background")).value_or(Color{255, 255, 255, 255});
-  scene.style.plot_background = parse_color(o.get_string("plot_background")).value_or(Color{255, 255, 255, 255});
-  scene.style.grid = o.get_bool("show_grid");
-  scene.style.fonts.family = o.get_string("font.family");
-  scene.style.fonts.title = o.get_double("font.title");
-  scene.style.fonts.axis_title = o.get_double("font.axis");
-  scene.style.fonts.tick = o.get_double("font.tick");
-  scene.style.fonts.annotation = o.get_double("font.annotation");
-  scene.style.legend = o.get_bool("show_legend");
-  scene.style.legend_corner = parse_corner(o.get_string("legend_location")).value_or(Corner::TopRight);
-  scene.style.panel_spacing = static_cast<int>(o.get_int("panel_spacing"));
+  apply_common_style(o, scene);
 
   const std::string x_kind = o.get_string("x.kind");
   const std::string origin = o.get_string("x.origin");
@@ -386,18 +324,13 @@ Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) 
       std::vector<std::string> stat_lines;
 
       for (const auto& [group, items] : d.groups_of_graph(graph_index)) {
-        const Options* grow = group >= 0 && static_cast<std::size_t>(group) < group_rows.size() ? &group_rows[group] : nullptr;
-        Color color = palette_color(group);
-        if (grow)
-          if (auto c = parse_color(grow->get_string("color"))) color = *c;
-        if (panel_color && d.groups_of_graph(graph_index).size() == 1) color = *panel_color;
-        MarkerShape gshape = shape;
-        if (grow && grow->get_string("marker") != "auto") gshape = parse_marker(grow->get_string("marker")).value_or(shape);
-        // An ungrouped figure has no legend entry ("Group 1" says nothing).
-        const bool named = static_cast<std::size_t>(group) < d.group_names.size() && !d.group_names[group].empty();
-        std::string label = grow && !grow->get_string("label").empty() ? grow->get_string("label")
-                            : named || d.groups_of_graph(graph_index).size() > 1 ? d.group_name(group)
-                                                                                : std::string();
+        const GroupStyle gs = group_style(d, graph_index, group, group_rows, shape);
+        Color color = gs.color;
+        const bool group_colored = group >= 0 && static_cast<std::size_t>(group) < group_rows.size() &&
+                                   parse_color(group_rows[group].get_string("color"));
+        if (panel_color && !group_colored && d.groups_of_graph(graph_index).size() == 1) color = *panel_color;
+        const MarkerShape gshape = gs.marker;
+        const std::string label = gs.label;
 
         std::vector<Point> pts;
         for (const auto* it : items) {

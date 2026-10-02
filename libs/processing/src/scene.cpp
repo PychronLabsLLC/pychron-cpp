@@ -115,7 +115,10 @@ std::size_t Scene::point_count() const {
   for (const auto& g : graphs)
     for (const auto& p : g.panels)
       for (const auto& l : p.layers)
-        if (const auto* pts = std::get_if<PointLayer>(&l)) n += pts->x.size();
+        if (const auto* pts = std::get_if<PointLayer>(&l))
+          n += pts->x.size();
+        else if (const auto* steps = std::get_if<StepLayer>(&l))
+          n += steps->x0.size();
   return n;
 }
 

@@ -86,6 +86,12 @@ struct Curve {
 Curve cumulative_probability(std::span<const double> values, std::span<const double> errors, double xmin,
                              double xmax, std::size_t n = 500);
 
+// Gaussian kernel density of the values (errors ignored), bandwidth by Scott's
+// rule n^(-1/5) * sd, normalized to unit area like scipy's gaussian_kde
+// (legacy probability_curves.kernel_density). Empty when fewer than two finite
+// values or zero spread.
+Curve kernel_density(std::span<const double> values, double xmin, double xmax, std::size_t n = 500);
+
 // ---- Plateaus ---------------------------------------------------------------
 
 enum class PlateauMethod { Fleck, Mahon };  // Fleck 1977 overlap, Mahon 1996 MSWD

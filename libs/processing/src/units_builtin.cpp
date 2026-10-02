@@ -5,6 +5,7 @@
 #include <cmath>
 #include <map>
 
+#include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "pychron/processing/units.hpp"
@@ -443,6 +444,9 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(std::make_unique<EditsUnit>());
     r.add(std::make_unique<GroupStatsUnit>());
     r.add(make_time_series_unit());
+    r.add(make_ideogram_unit());
+    r.add(make_spectrum_unit());
+    r.add(make_isochron_unit());
     return r;
   }();
   return registry;

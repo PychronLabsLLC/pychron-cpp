@@ -49,6 +49,12 @@ struct ReducedAnalysis {
   // Present when the five argon isotopes reduced (missing ones enter as 0).
   std::optional<reduction::ArArResult> arar;
   std::string reduction_error;  // why `arar` is absent, if it failed
+  // What reduce() was given, for group ages (integrated, isochron) that run
+  // the age equation again: the constants, J (the same variable the ages
+  // used) and the flux's lambda_k_total override.
+  std::optional<reduction::ReductionConstants> constants;
+  std::optional<reduction::UFloat> j;
+  std::optional<reduction::Measured> lambda_k_total;
 
   const IsotopeStages* find(std::string_view key) const;
   // Stage of an isotope key, or of the first isotope with that name.

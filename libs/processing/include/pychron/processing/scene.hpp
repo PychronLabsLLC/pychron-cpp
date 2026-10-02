@@ -93,7 +93,32 @@ struct GuideLayer {
   std::string label;
 };
 
-using Layer = std::variant<PointLayer, LineLayer, BandLayer, TextLayer, GuideLayer>;
+// Age-spectrum steps: one box per step from x0 to x1, y +- y_err (already
+// scaled by nsigma). Plateau steps are `highlighted`; with `dim_others` the
+// rest are drawn faded. A click inside a box selects its analysis.
+struct StepLayer {
+  std::vector<double> x0, x1, y, y_err;
+  std::vector<PointRef> refs;
+  std::vector<bool> excluded, highlighted;
+  std::vector<std::string> labels, tooltips;  // labels drawn above each box (may be empty)
+  Color fill, line, excluded_fill{200, 200, 200, 120};
+  bool dim_others = false;
+  std::string label;
+  int group = 0;
+};
+
+// Error ellipses of correlated (x, y) points at `scale` sigma (2.4477 for 95%).
+struct EllipseLayer {
+  std::vector<double> x, y, sx, sy, rho;
+  std::vector<PointRef> refs;
+  std::vector<bool> excluded;
+  double scale = 1.0;
+  Color line, fill;
+  bool filled = false;
+  int group = 0;
+};
+
+using Layer = std::variant<PointLayer, LineLayer, BandLayer, TextLayer, GuideLayer, StepLayer, EllipseLayer>;
 
 enum class AxisScale { Linear, Log };
 enum class AxisFormat { Number, Time, Category };

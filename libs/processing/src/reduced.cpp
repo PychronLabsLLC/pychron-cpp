@@ -129,6 +129,9 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
   }
   in.fixed_k3739 = a.context.fixed_k3739;
 
+  out->constants = in.constants;
+  out->j = in.j;
+  out->lambda_k_total = in.lambda_k_total;
   auto result = r::reduce(in);
   if (!result) {
     out->reduction_error = result.error().what;
