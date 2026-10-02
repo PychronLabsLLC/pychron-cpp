@@ -152,4 +152,21 @@ struct Flux {  // flux_value (dvc schema 6.1)
 };
 UFloat make_j(const Flux& f);  // tag "J" (dvc/meta_repo.py:701)
 
+// ---- 5.6 Diagnostics ------------------------------------------------------
+
+// Raised when a legacy sentinel or quirk applies; the value stays usable
+// (spec 5.6, section 7). Never an error.
+enum class Diagnostic : std::uint8_t {
+  FUndefined,            // k39 == 0; legacy F = 1 +- 0
+  YieldUndefined,        // n40 == 0; legacy 0 +- 0
+  AgeUndefined,          // 1 + J F <= 0; legacy 0 +- 0
+  KCaUndefined,          // ca37 == 0; legacy kca = 0
+  KClUndefined,          // cl38 == 0; legacy kcl = 0
+  CaClampedToZero,       // E11 clamp applied
+  FixedK3739ZeroCa3937,  // E10 y = 1 fallback
+  NonFiniteResult,       // a computed value is NaN/inf
+};
+// The enumerator name, e.g. "CaClampedToZero" (golden expect_diagnostics).
+std::string_view to_string(Diagnostic d) noexcept;
+
 }  // namespace pychron::reduction

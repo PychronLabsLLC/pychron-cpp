@@ -2,25 +2,34 @@
 #include "pychron/reduction/arar_reduction.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <string>
+#include <string_view>
 
 #include "arar_kernels.hpp"
 
 namespace pychron::reduction {
 
-std::string_view to_string(Diagnostic d) noexcept {
-  switch (d) {
-    case Diagnostic::FUndefined: return "FUndefined";
-    case Diagnostic::YieldUndefined: return "YieldUndefined";
-    case Diagnostic::AgeUndefined: return "AgeUndefined";
-    case Diagnostic::KCaUndefined: return "KCaUndefined";
-    case Diagnostic::KClUndefined: return "KClUndefined";
-    case Diagnostic::CaClampedToZero: return "CaClampedToZero";
-    case Diagnostic::FixedK3739ZeroCa3937: return "FixedK3739ZeroCa3937";
-    case Diagnostic::NonFiniteResult: return "NonFiniteResult";
-  }
-  return "";
+namespace {
+
+std::string fmt_g(double v) {
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%g", v);
+  return buf;
 }
+
+// A constant read by a step function must be a valid variable (finite value,
+// finite sigma >= 0) before it is minted.
+Result<UFloat> mint(const Measured& m, std::string_view tag) {
+  if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
+    return fail(ErrorKind::Config, "reduction: constant " + std::string(tag) +
+                                       " must have a finite value and a finite sigma >= 0, got " +
+                                       fmt_g(m.value) + " +- " + fmt_g(m.error));
+  }
+  return UFloat::variable(m.value, m.error, tag);
+}
+
+}  // namespace
 
 // ---- 3.1 Isotope arithmetic -----------------------------------------------
 
@@ -103,6 +112,57 @@ InterferenceComponents interference_corrections(const UFloat& a39, const UFloat&
     if (k.ca_clamped) diagnostics->push_back(Diagnostic::CaClampedToZero);
   }
   return {k.k37, k.k38, k.k39, k.ca36, k.ca37, k.ca38, k.ca39};
+}
+
+// ---- 3.4 Atmospheric, chlorine, cosmogenic ------------------------------
+
+// E12. Spec Q1: lambda_Cl36 and the atm4036 / atm4038 inside atm3836 are
+// fresh variables per call, as each legacy ArArConstants property read is
+// (arar_constants.py:225-231). Legacy then re-wraps atm3836 as one variable
+// tagged "atm3836" (argon_calculations.py:470-479); the spec keeps the two
+// constituent variables instead, which gives the same sigma to rounding.
+// legacy:processing/argon_calculations.py:468-487
+Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UFloat& a36,
+                                                     const UFloat& k38, const UFloat& ca38,
+                                                     const UFloat& ca36, double decay_days,
+                                                     const UFloat& cl3638,
+                                                     const ReductionConstants& c) {
+  if (!std::isfinite(decay_days)) {
+    return fail(ErrorKind::Config,
+                "reduction: atmospheric decay_days must be finite, got " + fmt_g(decay_days));
+  }
+  const Result<UFloat> lcl = mint(c.lambda_cl36, "lambda_Cl36");
+  if (!lcl) return fail(lcl.error());
+  const Result<UFloat> atm4036 = mint(c.atm4036, "atm4036");
+  if (!atm4036) return fail(atm4036.error());
+  const Result<UFloat> atm4038 = mint(c.atm4038, "atm4038");
+  if (!atm4038) return fail(atm4038.error());
+  const UFloat r3836 = *atm4036 / *atm4038;
+  const kernels::Atmospheric<UFloat> a =
+      kernels::atmospheric(a38, a36, k38, ca38, ca36, decay_days, cl3638, *lcl, r3836);
+  if (a.singular) {
+    return fail(ErrorKind::Config,
+                "reduction: atmospheric zero divisor, 1 - m*atm3836 == 0 (Cl3638 = " +
+                    fmt_g(cl3638.nominal()) + ", decay_days = " + fmt_g(decay_days) + ")");
+  }
+  return AtmosphericComponents{a.atm36, a.atm38, a.cl36, a.cl38};
+}
+
+// E13. rs and rc are fresh variables per call (arar_constants.py:242-246).
+// legacy:processing/argon_calculations.py:490-513
+Result<CosmogenicComponents> cosmogenic_components(const UFloat& c36, const UFloat& c38,
+                                                   const CosmogenicRatios& r) {
+  const Result<UFloat> rs = mint(r.solar3836, "solar3836");
+  if (!rs) return fail(rs.error());
+  const Result<UFloat> rc = mint(r.cosmo3836, "cosmo3836");
+  if (!rc) return fail(rc.error());
+  const kernels::Cosmogenic<UFloat> k = kernels::cosmogenic(c36, c38, *rs, *rc);
+  if (k.singular) {
+    return fail(ErrorKind::Config,
+                "reduction: cosmogenic zero divisor (c36 = " + fmt_g(c36.nominal()) +
+                    ", cosmo3836 - solar3836 = " + fmt_g(rc->nominal() - rs->nominal()) + ")");
+  }
+  return CosmogenicComponents{k.cosmo36, k.cosmo38, k.noncosmo36, k.noncosmo38};
 }
 
 }  // namespace pychron::reduction

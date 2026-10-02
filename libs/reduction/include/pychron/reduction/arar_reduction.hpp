@@ -17,25 +17,14 @@
 
 namespace pychron::reduction {
 
-// ---- 5.6 Diagnostics ------------------------------------------------------
-
-// Raised when a legacy sentinel or quirk applies; the value stays usable
-// (spec 5.6, section 7). Never an error.
-enum class Diagnostic : std::uint8_t {
-  FUndefined,            // k39 == 0; legacy F = 1 +- 0
-  YieldUndefined,        // n40 == 0; legacy 0 +- 0
-  AgeUndefined,          // 1 + J F <= 0; legacy 0 +- 0
-  KCaUndefined,          // ca37 == 0; legacy kca = 0
-  KClUndefined,          // cl38 == 0; legacy kcl = 0
-  CaClampedToZero,       // E11 clamp applied
-  FixedK3739ZeroCa3937,  // E10 y = 1 fallback
-  NonFiniteResult,       // a computed value is NaN/inf
-};
-// The enumerator name, e.g. "CaClampedToZero" (golden expect_diagnostics).
-std::string_view to_string(Diagnostic d) noexcept;
-
 struct InterferenceComponents {
   UFloat k37, k38, k39, ca36, ca37, ca38, ca39;
+};
+struct AtmosphericComponents {
+  UFloat atm36, atm38, cl36, cl38;
+};
+struct CosmogenicComponents {
+  UFloat cosmo36, cosmo38, noncosmo36, noncosmo38;
 };
 
 // ---- 3.1 Isotope arithmetic (per isotope) ---------------------------------
@@ -104,5 +93,33 @@ InterferenceComponents interference_corrections(const UFloat& a39, const UFloat&
                                                 const ProductionVariables& p,
                                                 const InterferenceOptions& o,
                                                 std::vector<Diagnostic>* diagnostics = nullptr);
+
+// ---- 3.4 Atmospheric, chlorine, cosmogenic ------------------------------
+
+// E12. Mints fresh variables from `c` on every call (spec Q1, D6):
+// lambda_Cl36 (tag "lambda_Cl36") and r3836 = atm4036 / atm4038 (tags
+// "atm4036", "atm4038"). These are distinct from E14's trapped_4036.
+//   m = Cl3638 lCl decay_days
+//   atm36 = (a36 - ca36 - m (a38 - k38 - ca38)) / (1 - m r3836)
+//   atm38 = r3836 atm36;  cl38 = a38 - atm38 - k38 - ca38;  cl36 = m cl38
+// A missing Cl3638 is exact 0 (atm36 = a36 - ca36, cl36 exact 0). Error
+// (Config, "reduction: ... zero divisor") when nom(1 - m r3836) == 0 exactly
+// (spec Q16), or when a constant E12 reads is not finite or has a negative
+// sigma.
+Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UFloat& a36,
+                                                     const UFloat& k38, const UFloat& ca38,
+                                                     const UFloat& ca36, double decay_days,
+                                                     const UFloat& cl3638,
+                                                     const ReductionConstants& c);
+
+// E13 two-component solar/cosmogenic split of (c36, c38). Mints fresh
+// variables "solar3836" (rs) and "cosmo3836" (rc) on every call.
+//   rm = c38 / c36;  fs = (rc - rm) / (rc - rs);  fc = 1 - fs
+//   noncosmo38 = fs c38;  cosmo38 = c38 - noncosmo38
+//   cosmo36 = fc c36;     noncosmo36 = c36 - cosmo36
+// Error (Config, "reduction: ... zero divisor") when nom(c36) == 0 or
+// nom(rc - rs) == 0 exactly (spec Q16), or when a ratio is invalid.
+Result<CosmogenicComponents> cosmogenic_components(const UFloat& c36, const UFloat& c38,
+                                                   const CosmogenicRatios& r);
 
 }  // namespace pychron::reduction

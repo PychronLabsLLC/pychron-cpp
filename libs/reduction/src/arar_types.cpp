@@ -132,4 +132,18 @@ ProductionVariables make_production_variables(const ProductionRatios& p) {
 
 UFloat make_j(const Flux& f) { return UFloat::variable(f.j.value, f.j.error, "J"); }
 
+std::string_view to_string(Diagnostic d) noexcept {
+  switch (d) {
+    case Diagnostic::FUndefined: return "FUndefined";
+    case Diagnostic::YieldUndefined: return "YieldUndefined";
+    case Diagnostic::AgeUndefined: return "AgeUndefined";
+    case Diagnostic::KCaUndefined: return "KCaUndefined";
+    case Diagnostic::KClUndefined: return "KClUndefined";
+    case Diagnostic::CaClampedToZero: return "CaClampedToZero";
+    case Diagnostic::FixedK3739ZeroCa3937: return "FixedK3739ZeroCa3937";
+    case Diagnostic::NonFiniteResult: return "NonFiniteResult";
+  }
+  return "";
+}
+
 }  // namespace pychron::reduction

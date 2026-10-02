@@ -103,4 +103,70 @@ Interference<T> interference(const T& a39, const T& a37, const InterferenceRatio
   return out;
 }
 
+// E12 outputs. `singular` means nom(1 - m r3836) == 0 (legacy
+// ZeroDivisionError); the components are then left default (exact 0).
+template <class T>
+struct Atmospheric {
+  T atm36, atm38, cl36, cl38;
+  bool singular = false;
+};
+
+// E12 with the legacy operand order: m = (Cl3638 * lCl) * dd, then
+// atm36 = ((a36 - ca36) - m ((a38 - k38) - ca38)) / (1 - m r3836),
+// atm38 = r3836 atm36, cl38 = ((a38 - atm38) - k38) - ca38, cl36 = cl38 m.
+// legacy:processing/argon_calculations.py:481-485
+template <class T>
+Atmospheric<T> atmospheric(const T& a38, const T& a36, const T& k38, const T& ca38, const T& ca36,
+                           double decay_days, const T& cl3638, const T& lambda_cl36,
+                           const T& r3836) {
+  // Products are named before they are subtracted so that, for T = double,
+  // the compiler cannot contract a * b - c into an FMA (-ffp-contract=on
+  // contracts only within one expression); legacy Python rounds each step.
+  Atmospheric<T> out;
+  const T m = cl3638 * lambda_cl36 * decay_days;
+  const T m_r = m * r3836;
+  const T denom = 1.0 - m_r;
+  if (nominal(denom) == 0.0) {
+    out.singular = true;
+    return out;
+  }
+  const T m_b = m * (a38 - k38 - ca38);
+  out.atm36 = (a36 - ca36 - m_b) / denom;
+  out.atm38 = r3836 * out.atm36;
+  out.cl38 = a38 - out.atm38 - k38 - ca38;
+  out.cl36 = out.cl38 * m;
+  return out;
+}
+
+// E13 outputs. `singular` means nom(c36) == 0 or nom(rc - rs) == 0 (legacy
+// ZeroDivisionError); the components are then left default (exact 0).
+template <class T>
+struct Cosmogenic {
+  T cosmo36, cosmo38, noncosmo36, noncosmo38;
+  bool singular = false;
+};
+
+// E13. legacy:processing/argon_calculations.py:501-511
+template <class T>
+Cosmogenic<T> cosmogenic(const T& c36, const T& c38, const T& rs, const T& rc) {
+  Cosmogenic<T> out;
+  if (nominal(c36) == 0.0) {
+    out.singular = true;
+    return out;
+  }
+  const T rm = c38 / c36;
+  const T spread = rc - rs;
+  if (nominal(spread) == 0.0) {
+    out.singular = true;
+    return out;
+  }
+  const T fs = (rc - rm) / spread;
+  const T fc = 1.0 - fs;
+  out.noncosmo38 = fs * c38;
+  out.cosmo38 = c38 - out.noncosmo38;
+  out.cosmo36 = fc * c36;
+  out.noncosmo36 = c36 - out.cosmo36;
+  return out;
+}
+
 }  // namespace pychron::reduction::kernels
