@@ -151,4 +151,22 @@ Result<Pairs> decode_data(const Bytes& reply);
 // body is an empty list.
 Result<Pairs> decode_data(const Bytes& reply, std::span<const std::string_view> order);
 
+// --- server side (simulators) -------------------------------------------------
+
+// One host command split the way the server reads it: the verb up to the
+// first space, then comma-separated arguments ("SetParameter Trap Voltage
+// Set,5" -> {"SetParameter", {"Trap Voltage Set", "5"}}). Trailing CR/LF is
+// stripped; arguments are trimmed. An empty line is a Protocol error.
+struct Request {
+  std::string verb;
+  std::vector<std::string> args;
+};
+Result<Request> decode_request(const Bytes& tx);
+
+// Replies end with "\r\n".
+Bytes encode_ok();                             // "OK"
+Bytes encode_number(double v);                 // format_number(v)
+Bytes encode_bool(bool v);                     // "True" / "False"
+Bytes encode_error(std::string_view message);  // "ERROR: <message>"
+
 }  // namespace pychron::codec::qtegra

@@ -277,3 +277,31 @@ TEST(QtegraCodec, SyntheticTraceReplays) {
   EXPECT_EQ(frames[2].second, to_string(q::set_magnet_dac(4.5)->tx));
   EXPECT_TRUE(q::decode_ok(to_bytes(frames[3].second)));
 }
+
+TEST(QtegraCodec, DecodeRequestSplitsVerbAndArguments) {
+  auto bare = q::decode_request(to_bytes("GetMagnetDAC\r"));
+  ASSERT_TRUE(bare);
+  EXPECT_EQ(bare->verb, "GetMagnetDAC");
+  EXPECT_TRUE(bare->args.empty());
+  auto one = q::decode_request(to_bytes("SetMagnetDAC 5.001\r\n"));
+  ASSERT_TRUE(one);
+  EXPECT_EQ(one->verb, "SetMagnetDAC");
+  EXPECT_EQ(one->args, (std::vector<std::string>{"5.001"}));
+  auto named = q::decode_request(to_bytes("SetParameter Trap Voltage Set, 5\n"));
+  ASSERT_TRUE(named);
+  EXPECT_EQ(named->verb, "SetParameter");
+  EXPECT_EQ(named->args, (std::vector<std::string>{"Trap Voltage Set", "5"}));
+  expect_protocol(q::decode_request(to_bytes("\r")));
+}
+
+TEST(QtegraCodec, ServerRepliesRoundTripThroughDecoders) {
+  EXPECT_EQ(q::encode_ok(), to_bytes("OK\r\n"));
+  EXPECT_EQ(q::encode_number(4.5), to_bytes("4.5\r\n"));
+  EXPECT_EQ(q::encode_bool(true), to_bytes("True\r\n"));
+  EXPECT_EQ(q::encode_bool(false), to_bytes("False\r\n"));
+  EXPECT_EQ(q::encode_error("bad"), to_bytes("ERROR: bad\r\n"));
+  EXPECT_TRUE(q::decode_ok(q::encode_ok()));
+  EXPECT_DOUBLE_EQ(*q::decode_number(q::encode_number(1.048576)), 1.048576);
+  EXPECT_TRUE(*q::decode_bool(q::encode_bool(true)));
+  expect_protocol(q::decode_number(q::encode_error("bad")));
+}

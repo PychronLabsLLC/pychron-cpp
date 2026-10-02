@@ -19,6 +19,8 @@ add_library(pychron_devices STATIC
   src/spectrometer/legacy/adc_bank.cpp
   src/spectrometer/legacy/pulse_counter.cpp
   src/spectrometer/legacy/serial_hv.cpp
+  src/spectrometer/thermo_qtegra.cpp
+  src/spectrometer/thermo_qtegra_sim.cpp
   src/extraction/capability.cpp
 )
 

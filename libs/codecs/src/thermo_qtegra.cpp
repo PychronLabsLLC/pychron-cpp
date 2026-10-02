@@ -318,4 +318,21 @@ Result<Pairs> decode_data(const Bytes& reply, std::span<const std::string_view> 
   return pair_values(*b, order, reply);
 }
 
+Result<Request> decode_request(const Bytes& tx) {
+  const std::string raw = to_string(tx);
+  const std::string_view line = trim(raw);
+  if (line.empty()) return protocol_error("empty command", tx);
+  Request request;
+  const auto space = line.find(' ');
+  request.verb = std::string(line.substr(0, space));
+  if (space == std::string_view::npos) return request;
+  for (auto& field : split_csv(std::string(line.substr(space + 1)))) request.args.emplace_back(trim(field));
+  return request;
+}
+
+Bytes encode_ok() { return to_bytes("OK\r\n"); }
+Bytes encode_number(double v) { return to_bytes(format_number(v) + "\r\n"); }
+Bytes encode_bool(bool v) { return to_bytes(v ? "True\r\n" : "False\r\n"); }
+Bytes encode_error(std::string_view message) { return to_bytes("ERROR: " + std::string(message) + "\r\n"); }
+
 }  // namespace pychron::codec::qtegra
