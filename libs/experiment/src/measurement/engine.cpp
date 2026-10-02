@@ -162,10 +162,7 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   stop_ = Stop::None;
   main_truncated_ = false;
   break_main_ = false;
-  {
-    std::lock_guard lock(truncate_mutex_);
-    truncate_request_.reset();
-  }
+  // A truncate requested before run() (e.g. during extraction) is kept.
   collector_.start(ctx_.clock.now());
   collector_.set_fallback(ctx_.metrics);
   collector_.set_fits(in_.plan.fits);

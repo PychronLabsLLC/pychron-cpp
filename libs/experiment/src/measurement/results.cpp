@@ -38,7 +38,13 @@ FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits) {
     reduction::Series series;
     series.y = s.v;
     for (double t : s.t) series.x.push_back(t - t0);
-    const auto spec = plan::signal_fit(fits, key.isotope);
+    auto spec = plan::signal_fit(fits, key.isotope);
+    // Too few points for the plan's fit (e.g. truncated early): average them;
+    // the recorded fit says so.
+    if (!series.x.empty() && series.x.size() < reduction::parameter_count(spec)) {
+      spec.kind = reduction::FitKind::Average;
+      spec.degree = 0;
+    }
     auto r = reduction::fit(series, spec);
     if (!r) {
       out.errors.push_back(name + ": " + r.error().what);
