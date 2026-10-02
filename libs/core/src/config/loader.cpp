@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "pychron/core/config/validate.hpp"
+#include "pychron/core/env.hpp"
 
 namespace pychron::config {
 namespace {
@@ -218,12 +219,12 @@ constexpr std::array kLevels{
 std::string expand_home(const std::string& s) {
   if (s != "~" && s.rfind("~/", 0) != 0) return s;
 #ifdef _WIN32
-  const char* home = std::getenv("USERPROFILE");
+  const auto home = env_var("USERPROFILE");
 #else
-  const char* home = std::getenv("HOME");
+  const auto home = env_var("HOME");
 #endif
-  if (home == nullptr || *home == '\0') return s;
-  return std::string(home) + s.substr(1);
+  if (!home || home->empty()) return s;
+  return *home + s.substr(1);
 }
 
 constexpr std::array<std::string_view, 6> kOverridableTransportKeys{"port",      "host",      "baud",

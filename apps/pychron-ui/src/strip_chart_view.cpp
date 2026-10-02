@@ -45,6 +45,10 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
   plot_->xAxis->setLabel(tr("Time (s)"));
   plot_->yAxis->setLabel(tr("Signal"));
   plot_->legend->setVisible(false);  // the intensities table is the legend
+  // Stroking a wide antialiased polyline as one path costs far more than its
+  // segments drawn one by one, and grows with every point: a few hundred
+  // points per trace stalled the event loop for over a second.
+  plot_->setPlottingHint(QCP::phFastPolylines, true);
   for (const auto& detector : model_.detectors()) {
     QCPGraph* graph = plot_->addGraph();
     graph->setPen(QPen(detector.color, 1.5));

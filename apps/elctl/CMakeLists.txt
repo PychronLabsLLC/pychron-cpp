@@ -13,6 +13,8 @@ pychron_set_warnings(pychron_elctl_lib)
 
 add_executable(elctl src/main.cpp)
 target_link_libraries(elctl PRIVATE pychron_elctl_lib)
+# sim spectrometer drivers register from static initializers nothing references
+pychron_link_drivers(elctl pychron_sim)
 pychron_set_warnings(elctl)
 
 # App tests live beside the app: the top-level tests/ loop only covers libs/.

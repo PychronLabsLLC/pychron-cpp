@@ -41,6 +41,14 @@ class TempDir {
     path_ = fs::temp_directory_path() / ("pychron_log_hub_" + std::to_string(gen()));
     fs::create_directories(path_);
   }
+  // Fixed name, emptied first. For death tests: on Windows the child is a fresh
+  // run of the test rather than a fork, so a random name would give it a
+  // different directory from the one the parent inspects.
+  explicit TempDir(const std::string& name) : path_(fs::temp_directory_path() / ("pychron_log_hub_" + name)) {
+    std::error_code ec;
+    fs::remove_all(path_, ec);
+    fs::create_directories(path_);
+  }
   ~TempDir() {
     std::error_code ec;
     fs::remove_all(path_, ec);
@@ -522,7 +530,7 @@ int g_prev_terminate_calls = 0;
 
 TEST(LogHubCrash, TerminateFlushesQueuedRecordsAndExceptionText) {
   GTEST_FLAG_SET(death_test_style, "fast");
-  TempDir tmp;
+  TempDir tmp("TerminateFlushesQueuedRecordsAndExceptionText");
   SteadyClock clock;
   EXPECT_DEATH(
       {
@@ -544,7 +552,7 @@ TEST(LogHubCrash, SigabrtLeavesFatalSignalLine) {
   GTEST_SKIP() << "POSIX signal handlers";
 #else
   GTEST_FLAG_SET(death_test_style, "fast");
-  TempDir tmp;
+  TempDir tmp("SigabrtLeavesFatalSignalLine");
   SteadyClock clock;
   EXPECT_EXIT(
       {
@@ -569,7 +577,7 @@ TEST(LogHubCrash, SignalGuaranteeIsBounded) {
   // Documents the 1 s periodic-flush bound only: an info record older than
   // that survives a hard crash. Nothing asserts younger sub-error records do.
   GTEST_FLAG_SET(death_test_style, "fast");
-  TempDir tmp;
+  TempDir tmp("SignalGuaranteeIsBounded");
   SteadyClock clock;
   EXPECT_EXIT(
       {
@@ -594,7 +602,7 @@ TEST(LogHubCrash, FatalSignalLineFollowsRotation) {
   // The crash descriptor is opened on the pychron.log of the moment; once the
   // file rotates, the next flusher tick must move it onto the new live file.
   GTEST_FLAG_SET(death_test_style, "fast");
-  TempDir tmp;
+  TempDir tmp("FatalSignalLineFollowsRotation");
   SteadyClock clock;
   EXPECT_EXIT(
       {
@@ -620,7 +628,7 @@ TEST(LogHubCrash, FatalSignalLineFollowsRotation) {
 
 TEST(LogHubCrash, InstallIsIdempotent) {
   GTEST_FLAG_SET(death_test_style, "fast");
-  TempDir tmp;
+  TempDir tmp("InstallIsIdempotent");
   SteadyClock clock;
   EXPECT_EXIT(
       {

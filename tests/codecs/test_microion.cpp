@@ -12,7 +12,9 @@ const ReadSpec kLine = ReadSpec::until("\r");
 void expect_protocol(const Error& e, std::string_view fragment = {}) {
   EXPECT_EQ(e.kind, ErrorKind::Protocol) << to_string(e);
   EXPECT_TRUE(e.device.empty());
-  if (!fragment.empty()) EXPECT_NE(e.what.find(fragment), std::string::npos) << e.what;
+  if (!fragment.empty()) {
+    EXPECT_NE(e.what.find(fragment), std::string::npos) << e.what;
+  }
 }
 
 }  // namespace

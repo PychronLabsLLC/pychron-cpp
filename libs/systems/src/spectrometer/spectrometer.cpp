@@ -199,6 +199,8 @@ Spectrometer::Spectrometer(cfg::SpectrometerConfig config, MolecularWeights weig
 Spectrometer::~Spectrometer() {
   if (engine_) engine_->stop();
   engine_.reset();
+  // Stopped engine first: an in-flight poll may be using a transport.
+  for (auto& t : roles_.transports) t->close();
   adapters_.clear();
   roles_.devices.clear();
   roles_.transports.clear();
@@ -359,9 +361,10 @@ Result<double> Spectrometer::mass_at(double native, const DetectorId& det) {
   return table_locked().mass_for(*value, det);
 }
 
-std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, ProtectPolicy policy, bool& blank) {
+Result<std::vector<ChannelId>> Spectrometer::plan_protection(double from, double to, ProtectPolicy policy,
+                                                             bool& blank) {
   blank = false;
-  if (policy == ProtectPolicy::Never) return {};
+  if (policy == ProtectPolicy::Never) return std::vector<ChannelId>{};
   const auto& mp = config_.magnet.protection;
   const bool large = mp.beam_blank_threshold && std::abs(to - from) > *mp.beam_blank_threshold;
   blank = policy == ProtectPolicy::Always || large;
@@ -381,8 +384,10 @@ std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, Pro
       for (const auto& p : table.points()) {
         auto v = p.values.find(name);
         if (v == p.values.end()) continue;
+        // Fail closed: a peak that cannot be placed might be on the path.
         auto native = correct(v->second, name);
-        if (native && *native >= lo && *native <= hi) {
+        if (!native) return fail(native.error());
+        if (*native >= lo && *native <= hi) {
           on_path = true;
           break;
         }
@@ -394,7 +399,14 @@ std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, Pro
 }
 
 Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOptions& options) {
-  const Limits limits = roles_.positioner->limits();
+  // The positioner's own limits narrowed by [magnet].limits: on each side
+  // the stricter bound wins. Checked before anything is read or written.
+  Limits limits = roles_.positioner->limits();
+  if (const auto& configured = config_.magnet.limits) {
+    limits = limits.valid() ? Limits{std::max(limits.min, configured->min), std::min(limits.max, configured->max)}
+                            : Limits{configured->min, configured->max};
+    if (!limits.valid()) return config_error("[magnet].limits and the positioner's limits do not overlap");
+  }
   if (limits.valid() && !limits.contains(value)) {
     return config_error("magnet target " + std::to_string(value) + " is outside limits [" +
                         std::to_string(limits.min) + ", " + std::to_string(limits.max) + "]");
@@ -405,17 +417,24 @@ Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOption
   MovePlan plan;
   plan.from = *from;
   plan.to = value;
-  plan.protect = plan_protection(plan.from, plan.to, options.protect, plan.blank);
+  auto protect = plan_protection(plan.from, plan.to, options.protect, plan.blank);
+  if (!protect) return fail(protect.error());
+  plan.protect = std::move(*protect);
   const auto& af = config_.magnet.af_demag;
   plan.af_demag = AfDemagSettings{af.enabled,
                                   std::chrono::duration_cast<Duration>(std::chrono::duration<double>(af.period_s)),
                                   std::chrono::duration_cast<Duration>(std::chrono::duration<double>(af.duration_s)),
                                   af.start_amplitude, af.threshold};
-  plan.settle = options.settle.value_or(std::chrono::milliseconds(config_.magnet.settle_ms));
+  const Duration configured_settle = std::chrono::milliseconds(config_.magnet.settle_ms);
+  plan.settle = options.settle.value_or(configured_settle);
+  // A caller that settles for itself (settle zero) still gets the configured
+  // wait before the cleanup of a failed move.
+  plan.failure_settle = configured_settle;
   plan.wait_moving = options.wait_moving;
   plan.max_wait = options_.max_wait;
   plan.poll_interval = options_.poll_interval;
   plan.epsilon = options_.epsilon;
+  plan.limits = limits;
 
   std::map<ChannelId, DetectorId> by_channel;
   for (const auto& [det, ch] : local_channel_) by_channel[ch] = det;

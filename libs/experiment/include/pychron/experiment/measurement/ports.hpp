@@ -51,6 +51,10 @@ struct PeakCenterReport {
   bool ok = false;
   std::optional<double> center;  // native magnet value when ok
   std::string message;
+  std::optional<double> table_value;  // the uncorrected center written to the field table
+  bool table_updated = false;
+  std::optional<double> resolution;
+  TimePoint finished{};  // set by the MeasurementEngine
 };
 
 // The peak-center job (spectrometer spec, peak_center unit). A failed peak

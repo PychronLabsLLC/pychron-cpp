@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -34,9 +35,15 @@ struct Rig {
   SignalBus::Subscription s1, s2;
   std::unique_ptr<Spectrometer> spec;
 
+  std::optional<cfg::Limits> magnet_limits;  // replaces [magnet].limits when set
+  bool af_demag = false;                     // enables [magnet].af_demag with a 0.5 swing
+  bool log_sleeps = false;                   // facade waits also go to `log`, to show their order
+
   cfg::SpectrometerData data() {
     auto d = cfg::load_spectrometer(kIntegrated);
     EXPECT_TRUE(d.has_value()) << (d ? "" : d.error().what);
+    if (magnet_limits) d->config.magnet.limits = magnet_limits;
+    if (af_demag) d->config.magnet.af_demag = cfg::AfDemag{true, 0.4, 0.4, 0.5, 0.5};
     return std::move(*d);
   }
 
@@ -54,6 +61,9 @@ struct Rig {
     Spectrometer::Options options;
     options.sleep = [this](Duration dt) {
       sleeps.push_back(dt);
+      if (log_sleeps) {
+        log.push_back("sleep:" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(dt).count()));
+      }
       clock.advance(dt);
     };
     return Spectrometer::create(d.config, MolecularWeights(d.weights), std::move(tables), std::move(roles),
@@ -166,6 +176,61 @@ TEST(Spectrometer, SmallMoveProtectsOnlyWhenPeakOnPath) {
   EXPECT_EQ(r.log, (CallLog{"set:4.900"}));
 }
 
+// A correction that cannot be computed (here the HV read behind it times out)
+// leaves protection unplannable: the move is refused before anything is sent.
+TEST(Spectrometer, FailedCorrectionWhilePlanningProtectionAbortsTheMove) {
+  Rig r;
+  r.build();
+  r.positioner.value = 4.9;
+  r.source.fail_read_hv = true;
+  auto moved = r.spec->move_native(4.52);  // CDD Ar40 peak at 4.505 is on the path
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(r.log.empty());  // no protect, no blank, no set
+  EXPECT_TRUE(r.positioner.sets.empty());
+  EXPECT_FALSE(r.blank.blanked);
+  EXPECT_TRUE(r.moves.empty());
+
+  auto positioned = r.spec->position(PositionTarget{NativeUnits{4.52}, ""});
+  ASSERT_FALSE(positioned.has_value());
+  EXPECT_EQ(positioned.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(r.log.empty());
+
+  // Once HV reads again the same move is planned and protected as usual.
+  r.source.fail_read_hv = false;
+  ASSERT_TRUE(r.spec->move_native(4.52).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:4.520", "unprotect:CDD"}));
+}
+
+// Nothing is planned from the table for these moves, so no correction is
+// needed and a failing HV read does not stop them.
+TEST(Spectrometer, MovesThatNeedNoCorrectionIgnoreAFailingHvRead) {
+  Rig r;
+  r.build();
+  r.source.fail_read_hv = true;
+  PositionOptions never;
+  never.protect = ProtectPolicy::Never;
+  ASSERT_TRUE(r.spec->move_native(4.52, never).has_value());
+  r.log.clear();
+  ASSERT_TRUE(r.spec->move_native(9.0).has_value());  // large: protected and blanked without the table
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:9.000", "unblank", "unprotect:CDD"}));
+}
+
+// The AF demag swing is clamped to the facade's effective limits
+// ([magnet].limits narrowing the positioner's 0..10), not the positioner's.
+TEST(Spectrometer, AfDemagSwingIsClampedToConfigLimits) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{0.0, 6.0};
+  r.af_demag = true;
+  r.build();
+  r.positioner.value = 3.0;
+  ASSERT_TRUE(r.spec->move_native(5.9).has_value());
+  ASSERT_GT(r.positioner.sets.size(), 1U);  // demag steps, then the target
+  EXPECT_DOUBLE_EQ(*std::max_element(r.positioner.sets.begin(), r.positioner.sets.end()), 6.0);  // it swung past
+  for (double v : r.positioner.sets) EXPECT_LE(v, 6.0);
+  EXPECT_DOUBLE_EQ(r.positioner.sets.back(), 5.9);
+}
+
 TEST(Spectrometer, FailedMoveLeavesNothingProtected) {
   Rig r;
   r.build();
@@ -178,12 +243,127 @@ TEST(Spectrometer, FailedMoveLeavesNothingProtected) {
   EXPECT_TRUE(r.moves.empty());
 }
 
+// Sweep steps and peak hops pass a zero settle because they settle for
+// themselves after a good move. When the move fails once the set went out, the
+// wait before unblank/unprotect is still [magnet].settle_ms (500 here).
+TEST(Spectrometer, FailedMoveWithZeroSettleOverrideStillWaitsTheConfiguredSettle) {
+  PositionOptions zero;
+  zero.settle = Duration::zero();
+  {
+    Rig r;
+    r.log_sleeps = true;
+    r.build();
+    r.positioner.timeout_set_at = 1;
+    const TimePoint start = r.clock.now();
+    auto moved = r.spec->move_native(5.0, zero);
+    ASSERT_FALSE(moved.has_value());
+    EXPECT_EQ(moved.error().kind, ErrorKind::Timeout);
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+    EXPECT_EQ(r.clock.now() - start, 500ms);
+    EXPECT_FALSE(r.control.any_protected());
+    EXPECT_FALSE(r.blank.blanked);
+  }
+  {
+    Rig r;
+    r.log_sleeps = true;
+    r.build();
+    r.positioner.timeout_set_at = 1;
+    const TimePoint start = r.clock.now();
+    auto positioned = r.spec->position(PositionTarget{NativeUnits{5.0}, ""}, zero);
+    ASSERT_FALSE(positioned.has_value());
+    EXPECT_EQ(positioned.error().kind, ErrorKind::Timeout);
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+    EXPECT_EQ(r.clock.now() - start, 500ms);
+  }
+}
+
+// A caller settle longer than the configured one is kept on the failure path.
+TEST(Spectrometer, FailedMoveWaitsTheLongerOfCallerAndConfiguredSettle) {
+  Rig r;
+  r.log_sleeps = true;
+  r.build();
+  r.positioner.timeout_set_at = 1;
+  PositionOptions slow;
+  slow.settle = 800ms;
+  ASSERT_FALSE(r.spec->move_native(5.0, slow).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:800", "unblank", "unprotect:CDD"}));
+}
+
+// The mirror: the same move succeeding is not slowed by the configured settle.
+TEST(Spectrometer, SuccessfulMoveWithZeroSettleOverrideDoesNotWait) {
+  Rig r;
+  r.log_sleeps = true;
+  r.build();
+  PositionOptions zero;
+  zero.settle = Duration::zero();
+  const TimePoint start = r.clock.now();
+  ASSERT_TRUE(r.spec->move_native(5.0, zero).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:0", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
 TEST(Spectrometer, MoveOutsideLimitsIsRejected) {
   Rig r;
   r.build();
   auto moved = r.spec->move_native(12.0);
   ASSERT_FALSE(moved.has_value());
   EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  EXPECT_TRUE(r.log.empty());
+}
+
+// [magnet].limits and the positioner's limits (0..10 here) both apply; on
+// each side the stricter bound wins.
+TEST(Spectrometer, ConfigLimitsNarrowerThanPositionerRefuseTheMove) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{2.0, 6.0};
+  r.build();
+  for (double v : {7.0, 1.0}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+    auto positioned = r.spec->position(PositionTarget{NativeUnits{v}, ""});
+    ASSERT_FALSE(positioned.has_value()) << v;
+    EXPECT_EQ(positioned.error().kind, ErrorKind::Config);
+  }
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(6.0).has_value());
+  EXPECT_TRUE(r.spec->move_native(2.0).has_value());
+}
+
+TEST(Spectrometer, ConfigLimitsWiderThanPositionerDoNotWidenIt) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{-5.0, 20.0};
+  r.build();
+  for (double v : {12.0, -1.0}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  }
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(10.0).has_value());
+}
+
+TEST(Spectrometer, ConfigLimitsApplyWhenPositionerHasNone) {
+  Rig r;
+  r.positioner.lim = Limits{1.0, 0.0};  // invalid: the positioner declares no limits
+  r.magnet_limits = cfg::Limits{0.0, 6.0};
+  r.build();
+  auto moved = r.spec->move_native(7.0);
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  EXPECT_TRUE(r.log.empty());
+  EXPECT_TRUE(r.spec->move_native(5.0).has_value());
+}
+
+TEST(Spectrometer, DisjointConfigAndPositionerLimitsRefuseEveryMove) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{11.0, 12.0};
+  r.build();
+  for (double v : {5.0, 11.5}) {
+    auto moved = r.spec->move_native(v);
+    ASSERT_FALSE(moved.has_value()) << v;
+    EXPECT_EQ(moved.error().kind, ErrorKind::Config);
+  }
   EXPECT_TRUE(r.log.empty());
 }
 

@@ -71,12 +71,22 @@ std::string format_number(double v);
 // Canonical <-> hardware name entry. A canonical name may appear more than
 // once; the first entry is the preferred (pychron Python) name and later ones
 // are aliases accepted by canonical_name().
+//
+// `verified` is true only when the production pychron Python driver sends
+// `hardware` to an instrument (SetParameter / GetParameter / GetParameters).
+// An unverified name is a guess: it stays in the map so a reply or a config
+// naming it is recognised, but a driver must not send it. Every readback name
+// in the map is one pychron Python reads.
 struct ParamName {
   std::string_view canonical;  // "trap_voltage"
   std::string_view hardware;   // "Trap Voltage Set"   (SetParameter/GetParameter)
   std::string_view readback;   // "Trap Voltage Readback", empty if none known
+  bool verified = false;       // pychron Python sends `hardware`
 };
 std::span<const ParamName> param_names() noexcept;
+// True when `hardware` is a name pychron Python sends: the hardware name of a
+// verified entry, or a readback name.
+bool verified_name(std::string_view hardware) noexcept;
 std::optional<std::string_view> hardware_name(std::string_view canonical) noexcept;
 std::optional<std::string_view> readback_name(std::string_view canonical) noexcept;
 // Matches set names, readback names and aliases.
@@ -91,6 +101,9 @@ inline constexpr std::array<std::string_view, 6> kDefaultDetectorOrder{"H2", "H1
 // Names (detectors, parameters, configurations) must be non-empty and free of
 // ',' and control characters; otherwise Config. Numeric arguments must be
 // finite. Every encoder appends `term`.
+
+// The name rule above, for checking configured names before first use.
+Result<void> validate_name(std::string_view name);
 
 Result<Command> set_magnet_dac(double dac, Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_dac(Terminator term = kDefaultTerminator);
@@ -138,6 +151,10 @@ Result<Command> reset(Terminator term = kDefaultTerminator);
 // starting with "ERROR" is a Protocol error (GetData: containing "ERROR").
 
 Result<void> decode_ok(const Bytes& reply);
+// Acknowledgement of a command whose reply pychron ignores (SetMagnetDAC,
+// BlankBeam, ProtectDetector, SetDeflection, SetGain): any reply, including
+// an empty line, is success; only "ERROR..." is a Protocol error.
+Result<void> decode_ack(const Bytes& reply);
 Result<double> decode_number(const Bytes& reply);
 // pychron to_bool, case-insensitive: true/t/yes/y/1/ok/open -> true,
 // false/f/no/n/0/closed -> false; anything else is a Protocol error.
@@ -145,10 +162,36 @@ Result<bool> decode_bool(const Bytes& reply);
 // Bare CSV of floats, one per requested name in the same order; returns the
 // values paired with `names`. Count mismatch is a Protocol error.
 Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::string> names);
-// GetData, tagged: "tag,value,tag,value,..."; an empty body is an empty list.
+// GetData, tagged: "tag,value,tag,value,...". Tags are returned exactly as
+// sent (case included). An empty body, an unpaired or empty field, a value
+// that is not a finite number and a repeated tag are each a Protocol error:
+// a ruling pending a bench capture, so that no value is ever attributed to a
+// detector by guesswork.
 Result<Pairs> decode_data(const Bytes& reply);
 // GetData, untagged: bare CSV paired with `order` (count must match); an empty
 // body is an empty list.
 Result<Pairs> decode_data(const Bytes& reply, std::span<const std::string_view> order);
+
+// --- server side (simulators) -------------------------------------------------
+
+// One host command split the way the server reads it: the verb up to the
+// first space, then comma-separated arguments ("SetParameter Trap Voltage
+// Set,5" -> {"SetParameter", {"Trap Voltage Set", "5"}}). Trailing CR/LF is
+// stripped; arguments are trimmed. An empty line is a Protocol error.
+struct Request {
+  std::string verb;
+  std::vector<std::string> args;
+};
+Result<Request> decode_request(const Bytes& tx);
+
+// Replies end with "\r\n".
+Bytes encode_ok();                             // "OK"
+Bytes encode_number(double v);                 // format_number(v)
+Bytes encode_bool(bool v);                     // "True" / "False"
+Bytes encode_error(std::string_view message);  // "ERROR: <message>"
+// Tagged GetData reply: "tag,value,tag,value,...".
+Bytes encode_data(std::span<const std::pair<std::string, double>> pairs);
+// `text` as a reply line, unchanged: for replies no encoder here would produce.
+Bytes encode_line(std::string_view text);
 
 }  // namespace pychron::codec::qtegra

@@ -1,0 +1,130 @@
+# Produced by generate.py from legacy pychron's peak_detection.py. Do not edit.
+
+[asymmetric_shoulder]
+resolution = 714.285714285657
+resolving_power_low = 4996.999999998331
+resolving_power_high = 5002.999999998329
+peak.center_x = 5.0
+peak.center_y = 800.0
+peak.high_x = 5.003500000000001
+peak.high_y = 0.0
+peak.low_x = 4.9965
+peak.low_y = 1.2025935802739696e-10
+peak.max_x = 4.998
+peak.max_y = 800.0
+
+[counter_poisson]
+resolution = 714.4285714286049
+resolving_power_low = 4998.00000000277
+resolving_power_high = 5004.000000002774
+peak.center_x = 5.001
+peak.center_y = 3025.0
+peak.high_x = 5.0045
+peak.high_y = 6.0
+peak.low_x = 4.9975000000000005
+peak.low_y = 6.0
+peak.max_x = 4.9990000000000006
+peak.max_y = 3025.0
+
+[descending_order]
+resolution = 714.285714285657
+resolving_power_low = 4996.999999998331
+resolving_power_high = 5002.999999998329
+peak.center_x = 5.0
+peak.center_y = 1000.0
+peak.high_x = 5.003500000000001
+peak.high_y = 0.0
+peak.low_x = 4.9965
+peak.low_y = 1.0902390101819037e-10
+peak.max_x = 4.998
+peak.max_y = 1000.0
+
+[double_peak]
+resolution = 1665.8333333332703
+peak.center_x = 4.9975000000000005
+peak.center_y = 1000.0
+peak.high_x = 4.9990000000000006
+peak.high_y = 0.0
+peak.low_x = 4.996
+peak.low_y = 1.662781023981097e-09
+peak.max_x = 4.9965
+peak.max_y = 1000.0
+
+[edge_peak]
+error = "PeakCenterError: peak not well centered. Max intensity too close to scan limits"
+
+[flat_top]
+resolution = 714.285714285657
+resolving_power_low = 4996.999999998331
+resolving_power_high = 5002.999999998329
+peak.center_x = 5.0
+peak.center_y = 1000.0
+peak.high_x = 5.003500000000001
+peak.high_y = 0.0
+peak.low_x = 4.9965
+peak.low_y = 1.0902390101819037e-10
+peak.max_x = 4.998
+peak.max_y = 1000.0
+
+[gaussian_no_plateau]
+resolution = 333.3333333333404
+resolving_power_low = 768.5769230769291
+resolving_power_high = 769.8846153846214
+peak.center_x = 5.0
+peak.center_y = 1000000.0
+peak.high_x = 5.0055000000000005
+peak.high_y = 186270.4636976435
+peak.low_x = 4.9945
+peak.low_y = 186270.46369774462
+peak.max_x = 5.0
+peak.max_y = 1000000.0
+
+[high_left_background]
+resolution = 277.4722222222117
+resolving_power_low = 415.95833333331757
+resolving_power_high = 5002.999999998329
+peak.center_x = 4.9945
+peak.center_y = 1000.0
+peak.high_x = 5.003500000000001
+peak.high_y = 0.0
+peak.low_x = 4.9855
+peak.low_y = 900.0
+peak.max_x = 4.998
+peak.max_y = 1000.0
+
+[noisy_flat_top]
+resolution = 714.285714285657
+resolving_power_low = 4996.999999998331
+resolving_power_high = 5002.999999998329
+peak.center_x = 5.0
+peak.center_y = 1006.9851822166274
+peak.high_x = 5.003500000000001
+peak.high_y = 0.4322848512698026
+peak.low_x = 4.9965
+peak.low_y = -0.8578089396625015
+peak.max_x = 5.0015
+peak.max_y = 1006.9851822166274
+
+[notched_plateau]
+error = "No peak plateau std = 200.0 (>5) slope = -2.059428521200692e-13 (<1)"
+resolving_power_low = 4996.999999998331
+resolving_power_high = 1250.3749999998602
+
+[shifted]
+resolution = 715.1428571428905
+resolving_power_low = 5002.999999998329
+resolving_power_high = 5009.000000002777
+peak.center_x = 5.006
+peak.center_y = 250020.0
+peak.high_x = 5.0095
+peak.high_y = 20.000000027255975
+peak.low_x = 5.0025
+peak.low_y = 20.000000027255975
+peak.max_x = 5.0040000000000004
+peak.max_y = 250020.0
+
+[too_small]
+error = "No peak greater than 1.0. max = 0.5"
+resolution = 714.285714285657
+resolving_power_low = 4996.999999998331
+resolving_power_high = 5002.999999998329

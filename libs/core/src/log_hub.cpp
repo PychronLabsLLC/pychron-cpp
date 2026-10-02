@@ -93,7 +93,8 @@ class LevelFlag final : public spdlog::custom_flag_formatter {
 // `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`; the payload
 // already carries "<logger>: <message>".
 std::unique_ptr<spdlog::formatter> make_file_formatter() {
-  auto f = std::make_unique<spdlog::pattern_formatter>(spdlog::pattern_time_type::utc);
+  // Explicit "\n": spdlog's default end of line is "\r\n" on Windows.
+  auto f = std::make_unique<spdlog::pattern_formatter>(spdlog::pattern_time_type::utc, "\n");
   f->add_flag<LevelFlag>('*').set_pattern("%Y-%m-%dT%H:%M:%S.%eZ [%*] %v");
   return f;
 }

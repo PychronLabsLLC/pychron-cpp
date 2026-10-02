@@ -20,9 +20,10 @@ include(PychronSanitizers)
 include(PychronDependencies)
 
 # Libraries in dependency order: core <- transport <- codecs <- devices <- systems.
+# persistence depends on core only (DVC schema spec, section 12.1).
 # sim depends on transport and devices only. A library is added once its
 # directory exists so each unit can land independently.
-set(PYCHRON_LIBS core transport codecs devices sim systems reduction scripting experiment)
+set(PYCHRON_LIBS core persistence transport codecs devices sim systems reduction scripting experiment)
 
 foreach(lib IN LISTS PYCHRON_LIBS)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/${lib}/CMakeLists.txt")

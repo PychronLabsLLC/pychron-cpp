@@ -30,7 +30,7 @@ library decisions each depends on.
 | 5 | RPC service | High | L | Not started | Other pychrons must query and actuate valves. Speak the legacy `pychron/tx` wire protocol first so existing Python pychrons can drive the C++ one during migration. New `libs/rpc` on asio; commands dispatch to `SwitchManager` / `ExtractionLine` via the scheduler. Step 1: short spec of the legacy command set (GetValveState, Open, Close, ...). Security: bind to localhost or an allowlist; read-only by default; actuation opt-in. |
 | 6 | Plotting (Hardware-plugin style) | Med-High | M | Partly done | Core ring and spectrometer strip chart delivered (see `2026-10-01-spectrometer-window-design.md`); gauge plot dock remains (ring fed by the gauge scanner, QCustomPlot dock in the UI). |
 | 7 | Preferences window | Medium | M | Not started | Typed preferences model in core first (TOML, schema, defaults, overrides per instrument-control design section 5.4); UI dialog generated from the schema. The same model feeds the wizard. |
-| 8 | Sample/irradiation persistence | High (long term) | L | Blocked | Needs ADR-0002 action items 1-2 (accept ADR, write schema spec). Then catalog tables: sample, project, PI, material, irradiation, level, position. |
+| 8 | Sample/irradiation persistence | High (long term) | L | In progress | Schema spec written (`2026-10-01-dvc-schema-design.md`). D1 (schema) and D2 (store core) landed on TinyORM; see `2026-10-02-dvc-persistence.md` for what remains. |
 | 9 | Installation wizard | Medium | M | Blocked | Config schema still moving. Start as `elctl init` (scaffold config, device check); Qt wizard later. |
 
 ## Library decisions
@@ -38,7 +38,7 @@ library decisions each depends on.
 | Library | Decision | Reason |
 |---|---|---|
 | QCustomPlot | **Accepted** for `apps/pychron-ui` | Project licensed GPLv3, so QCustomPlot's GPL terms are compatible. |
-| TinyORM | Not recommended | Depends on QtSql, which cannot enter the Qt-free core; persistence must also run headless under `elctl`. Prefer sqlite3 + libpq behind a thin repository layer, or sqlpp11 for type-safe queries. Settle in the persistence schema spec. |
+| TinyORM | **Accepted** for `libs/persistence` only (owner, 2026-10-02) | Earlier "not recommended" because it depends on QtSql. Resolved by keeping Qt PRIVATE to `libs/persistence`: its public headers are std-only, and QtCore/QtSql run headless, so `elctl` is unaffected. Every other library stays Qt-free. See DVC schema spec section 12.4.1. |
 | QSerialPort | Rejected | Core is Qt-free; transport already uses asio `serial_port`. |
 | libmodbus | Reference and test oracle only | It owns its socket I/O, which conflicts with the per-transport queue, retries and health, `TraceRecorder`, and `SimTransport` replay (instrument-control design, section 4.2). Hand-roll RTU/TCP framing (~300 lines) as a codec. |
 

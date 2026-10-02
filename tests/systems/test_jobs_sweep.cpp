@@ -346,3 +346,25 @@ TEST(Sweep, HardwareErrorAbortsSweep) {
   EXPECT_EQ(result.error().kind, ErrorKind::Io);
   EXPECT_EQ(sweep.points().size(), 1U);
 }
+
+// A sweep step moves with a zero settle (the sweep settles itself). When the
+// step fails after the set went out, the facade still holds the protection and
+// the blank for [magnet].settle_ms (500 in the example config) before cleanup.
+TEST(Sweep, FailedMagnetStepWaitsTheConfiguredSettleBeforeCleanup) {
+  JobRig r;
+  ASSERT_TRUE(r.spec);
+  r.positioner.timeout_set_at = 1;  // written, then no reply
+  auto s = magnet_sweep(5.0, 6.0, 0.5);
+  s.settle = 50ms;
+  Sweep sweep(Sweep::Options{r.sweep_sleep(), spectrometer::ProtectPolicy::Auto});
+  Progress progress;
+  CancelToken cancel;
+  const TimePoint start = r.clock.now();
+  auto result = sweep.run(*r.spec, s, progress, cancel);  // fails before any acquisition: no driving needed
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 500ms);  // the facade's wait; the sweep's own settle never ran
+  EXPECT_TRUE(r.sleeps.empty());
+  EXPECT_TRUE(sweep.points().empty());
+}

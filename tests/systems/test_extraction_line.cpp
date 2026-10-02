@@ -6,8 +6,6 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
-
 #include <gtest/gtest.h>
 
 #include "pychron/core/config/loader.hpp"
@@ -311,7 +309,7 @@ TEST(ExtractionLine, LoadReportsMissingFile) {
 
 TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
   ManualClock clock;
-  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_wire_test_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / "pychron_line_wire_test";
   std::filesystem::create_directories(dir);
 
   auto cfg = system_config();
@@ -345,7 +343,7 @@ TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
 
 TEST(ExtractionLine, BuildsOwnHubFromLoggingConfigAndWireLogs) {
   ManualClock clock;
-  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_ownhub_test_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / "pychron_line_ownhub_test";
   std::filesystem::create_directories(dir);
 
   auto cfg = system_config();
@@ -392,7 +390,7 @@ std::size_t lines_containing(const std::filesystem::path& p, const std::string& 
 
 TEST(ExtractionLine, LineWarningReachesLogFileAndBusOnce) {
   ManualClock clock;
-  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_log_test_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / "pychron_line_log_test";
   std::filesystem::remove_all(dir);
 
   auto cfg = system_config((std::string(kSystem) + kBadGauge).c_str());
@@ -418,7 +416,7 @@ TEST(ExtractionLine, LineWarningReachesLogFileAndBusOnce) {
 
 TEST(ExtractionLine, ActuationAndFailureAreLoggedOnceToBusAndFile) {
   ManualClock clock;
-  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_act_log_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / "pychron_line_act_log";
   std::filesystem::remove_all(dir);
   auto cfg = system_config();
   cfg.logging.dir = dir;

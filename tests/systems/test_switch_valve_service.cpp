@@ -33,10 +33,21 @@ class MemoryActuator final : public IValveActuator {
 
 class SwitchValveServiceTest : public ::testing::Test {
  protected:
+  // Not a designated initializer: clang 18 warns about every field one omits.
+  static SwitchSpec spec(std::string name, std::string address) {
+    SwitchSpec s;
+    s.name = std::move(name);
+    s.actuator = "relay";
+    s.address = {std::move(address)};
+    return s;
+  }
+
   void SetUp() override {
-    SwitchSpec a{.name = "A", .actuator = "relay", .address = {"1"}, .interlocks = {"B"}};
-    SwitchSpec b{.name = "B", .actuator = "relay", .address = {"2"}};
-    SwitchSpec pump{.name = "pump", .kind = SwitchKind::Switch, .actuator = "relay", .address = {"3"}};
+    SwitchSpec a = spec("A", "1");
+    a.interlocks = {"B"};
+    SwitchSpec b = spec("B", "2");
+    SwitchSpec pump = spec("pump", "3");
+    pump.kind = SwitchKind::Switch;
     auto m = SwitchManager::create({a, b, pump}, [this](const std::string&) { return &relay; });
     ASSERT_TRUE(m) << to_string(m.error());
     manager = std::move(*m);

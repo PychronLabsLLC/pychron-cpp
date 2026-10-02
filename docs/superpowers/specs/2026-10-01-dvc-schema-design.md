@@ -1421,6 +1421,45 @@ The access layer is small and SQL-heavy, and the engines' differences
 (section 11.3) are exactly the kind of thing an abstraction library hides
 badly.
 
+#### 12.4.1 Amendment 2026-10-02: TinyORM (owner decision)
+
+The owner chose **TinyORM** (v0.38.1, query builder and ORM, no `tom` CLI)
+over option A. TinyORM runs on QtSql (`QSQLITE`, `QPSQL`), so this amends
+the "Qt SQL is excluded" rule for this one library, with these constraints:
+
+- Qt stays behind the library boundary. `Qt6::Core`, `Qt6::Sql` and
+  TinyORM are PRIVATE dependencies of `pychron::persistence`. Public headers
+  under `include/pychron/persistence/` use only the standard library and
+  core types, so no consumer sees Qt. QtCore/QtSql need no GUI, so `elctl`
+  stays headless.
+- `src/pg/` and `src/sqlite/` become one `src/tiny/` backend. Driver
+  exceptions (`Orm::Exceptions::SqlError`) are caught there; SQLSTATE and
+  SQLite result codes are mapped in `src/sql/errors.cpp` as before.
+- The SQL-first design is unchanged. The schema is still the hand-written
+  PostgreSQL migration plus the generated SQLite DDL (section 11.3). The
+  compare-and-swap, the change-cursor statements and engine introspection
+  stay explicit SQL in `src/sql/statements.hpp`. Simple inserts use the
+  TinyORM query builder. TinyORM models (`Orm::Tiny::Model`) are not used:
+  they need a single-column primary key, and most tables here have
+  composite keys.
+- Transactions are opened with explicit `BEGIN IMMEDIATE` (SQLite) and
+  `BEGIN` (PostgreSQL). TinyORM's `beginTransaction()` issues a deferred
+  `BEGIN` on SQLite, which deadlocks under concurrent writers.
+- QtSql returns PostgreSQL `timestamptz` as `QDateTime`, which keeps only
+  milliseconds. Timestamps are therefore read back as text through
+  `to_char(... 'US')` so the microsecond UTC values (P4) survive.
+- `LISTEN`/`NOTIFY` (section 9.3) will use
+  `QSqlDriver::subscribeToNotification` when D6 lands. `pg_notify` is
+  already sent on every write.
+- Platforms: the library is built when `find_package(Qt6 COMPONENTS Core
+  Sql)` succeeds (`PYCHRON_PERSISTENCE`, default ON). It is skipped, with a
+  warning, elsewhere. CI builds it on Linux (apt Qt 6.4 SQL drivers), macOS
+  (Homebrew Qt, UI job) and against a `postgres:16` service. Windows CI has
+  no Qt yet and skips it.
+- vcpkg: TinyORM and range-v3 are fetched from git at pinned release
+  commits (FetchContent with `FIND_PACKAGE_ARGS`, so a vcpkg `tinyorm` port
+  is used when present). Action item 9 is superseded.
+
 ### 12.5 Stages
 
 | Stage | Units | Depends on |
@@ -1592,4 +1631,7 @@ The nine review questions, numbered as asked (D1-D9).
        (ADR-0002 action items 3 and 4).
 8. [ ] D7: writable offline export with changeset upload and
        `sync_conflict` handling (D3).
-9. [ ] Add libpqxx and sqlite3 to `vcpkg.json` only when D2 starts.
+9. [x] ~~Add libpqxx and sqlite3 to `vcpkg.json` only when D2 starts.~~
+       Superseded by section 12.4.1 (TinyORM, fetched at a pinned commit).
+10. Progress against items 4 and 5 is tracked in
+    `docs/superpowers/plans/2026-10-02-dvc-persistence.md`.

@@ -19,11 +19,16 @@
 #include <set>
 #include <thread>
 
+#include "sim_pump.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
+#include "pychron/experiment/executor/executor.hpp"
+#include "pychron/experiment/plan/plan_library.hpp"
+#include "pychron/scripting/script_host.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/experiment/measurement/results.hpp"
+#include "pychron/experiment/record/serialize.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/canvas/loader.hpp"
@@ -56,28 +61,7 @@ MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, Conditiona
   return in;
 }
 
-class Pump {
- public:
-  Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
-    thread_ = std::thread([this] {
-      while (!done_) {
-        clock_.advance(20ms);
-        scheduler_.run_pending();
-        std::this_thread::sleep_for(200us);
-      }
-    });
-  }
-  ~Pump() {
-    done_ = true;
-    thread_.join();
-  }
-
- private:
-  ManualClock& clock_;
-  Scheduler& scheduler_;
-  std::atomic<bool> done_{false};
-  std::thread thread_;
-};
+using pychron::testing::Pump;
 
 // No peak-center job yet in this test: centring is covered by the spectrometer
 // sim test and the peak_center unit.
@@ -358,6 +342,150 @@ TEST_F(MeasurementSim, LabConditionalsActOnLiveData) {
   const auto rec = to_record_conditionals(r.installed, r.data.trips, r.conditional_errors);
   EXPECT_EQ(rec.tripped.size(), 1u);
   EXPECT_GT(rec.tripped[0].context.at("Ar40.cur"), 5e5);
+}
+
+TEST_F(MeasurementSim, ExecutorRunsAQueueOnTheSimLab) {
+  // Plans, conditionals and records as a lab would have them.
+  plan::PlanLibrary plans(resolvers());
+  auto tmpl = plan::parse_plan_template(kPlan, "sim_multicollect.toml");
+  ASSERT_TRUE(tmpl) << tmpl.error().what;
+  plans.add(*tmpl);
+  DirectoryConditionalSource source(kDir / "conditionals");
+  ConditionalLibrary library(source);
+  const auto scratch = std::filesystem::temp_directory_path() /
+                       ("executor_sim_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  persist::FilePersister files(scratch / "records");
+  persist::Spool spool(scratch / "spool");
+  persist::SavePipeline save(spool, files);
+  persist::AliquotAllocator aliquots(files);
+
+  // Real embedded Python when built with it; otherwise the runs have no scripts.
+  auto host = scripting::make_script_host();
+  scripting::MapScriptResolver scripts;
+  scripts.add("extraction/sim_extract", "def main():\n    info('extracting ' + run_identifier)\n    sleep(2)\n");
+  scripts.add("post_measurement/sim_pump", "def main():\n    signal_pump_time_start()\n    info('pumping')\n");
+
+  SpectrometerPort port(*spec_);
+  ExtractionLineValves valves(*line_);
+  InstrumentMetrics instrument(spec_.get(), line_.get());
+
+  executor::ExecutorContext ctx;
+  auto& s = ctx.services;
+  s.clock = &clock_;
+  s.bus = &bus_;
+  s.scripts = host.get();
+  s.resolver = &scripts;
+  s.spectrometer = &port;
+  s.valves = &valves;
+  s.instrument_metrics = &instrument;
+  s.spectrometer_info = [this] {
+    const auto st = spec_->snapshot();
+    return run::SpectrometerInfo{st.hash_hex(), st.field_table, 1.0};
+  };
+  s.plans = &plans;
+  s.conditionals = &library;
+  s.aliquots = &aliquots;
+  s.persister = &files;
+  s.save = &save;
+  s.instrument.mass_spectrometer = "sim";
+  ctx.pre_run_metrics = &instrument;
+
+  auto make = [&](const std::string& id, AnalysisType type) {
+    RunSpec r;
+    r.id.identifier = id;
+    r.id.type = type;
+    r.measurement.plan = "sim_multicollect";
+    if (host->available()) {
+      r.extraction.script = "extraction/sim_extract";
+      r.post_measurement = "post_measurement/sim_pump";
+    }
+    return r;
+  };
+  QueueSpec q;
+  q.name = "sim-queue";
+  q.mass_spectrometer = "sim";
+  q.delays = {};
+  q.delays.before_analyses = q.delays.between_analyses = q.delays.after_blank = experiment::Duration{1};
+  q.runs = {make("bu", AnalysisType::BlankUnknown), make("66001", AnalysisType::Unknown),
+            make("66001", AnalysisType::Unknown)};
+  ExperimentQueue queue(q);
+
+  executor::ExecutorOptions opts;
+  opts.state_file = scratch / "executor_state.json";
+  executor::Executor ex(ctx, opts);
+  auto r = ex.execute(queue);
+  ASSERT_EQ(r.end, executor::QueueEnd::Completed) << r.reason;
+  ASSERT_EQ(r.runs.size(), 3u);
+  for (const auto& run : r.runs) EXPECT_EQ(run.state, run::RunState::Success) << run.identifier << " " << run.error.value_or("");
+  EXPECT_EQ(r.runs[1].aliquot, 1);
+  EXPECT_EQ(r.runs[2].aliquot, 2);
+
+  // The records on disk carry the sim beam's argon and the run's provenance.
+  for (int aliquot : {1, 2}) {
+    const auto path = scratch / "records" / "66001" / ("66001-" + std::to_string(aliquot) + ".json");
+    ASSERT_TRUE(std::filesystem::exists(path)) << path;
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto rec = record::from_json(text);
+    ASSERT_TRUE(rec) << rec.error().what;
+    EXPECT_NEAR(rec->results.intercepts.at("Ar40").intercept.value, 1e6, 1e4);
+    EXPECT_FALSE(rec->spectrometer.state_hash.empty());
+    EXPECT_FALSE(rec->conditionals.installed.empty());
+    if (host->available()) {
+      EXPECT_FALSE(rec->measurement.scripts.at("extraction").sha.empty());
+    }
+  }
+  EXPECT_EQ(save.pending(), 0u);
+  EXPECT_EQ(*executor::Executor::resume_row(scratch / "executor_state.json"), 3u);
+  EXPECT_EQ(line_->snapshot().valves.at("B"), ValveState::Closed);
+  std::error_code ec;
+  std::filesystem::remove_all(scratch, ec);
+}
+
+TEST_F(MeasurementSim, PeakCenterFindsAnOffsetPeakAndTheNextRunMeasuresOnIt) {
+  // H1's true peak sits 0.025 above the field table: off the flat top.
+  sim::BeamDetector h1;
+  h1.name = "H1";
+  h1.offset = 0.025;
+  beam_->add_detector(h1);
+
+  auto text = std::string(kPlan);
+  text.replace(text.find("[baseline]"), 10,
+               "[peak_center]\nbefore = true\nisotope = \"Ar40\"\ndetector = \"H1\"\nconfig = \"wide\"\n\n[baseline]");
+  auto tmpl = plan::parse_plan_template(text, "sim.toml");
+  ASSERT_TRUE(tmpl) << tmpl.error().what;
+  auto loaded = plan::load_plan(*tmpl, {}, resolvers());
+  ASSERT_TRUE(loaded) << loaded.error().what;
+
+  jobs::PeakCenterConfig wide;
+  wide.name = "wide";
+  wide.window = 0.08;
+  wide.step = 0.002;
+  wide.integration = std::chrono::seconds(1);
+  SpectrometerPort port(*spec_);
+  ExtractionLineValves valves(*line_);
+  SpectrometerPeakCenter peak_center(*spec_, {{"wide", wide}});
+  EngineContext ctx{port, clock_, &valves, &peak_center, nullptr, &bus_, nullptr};
+
+  const double table_before =
+      *spec_->native_for(*spec_->mass_of(spectrometer::PositionTarget{spectrometer::Isotope{"Ar40"}, "H1"}), "H1");
+  for (int run = 0; run < 2; ++run) {
+    SCOPED_TRACE(run);
+    MeasurementEngine engine(ctx, inputs(loaded->plan, "pc-" + std::to_string(run)));
+    scripting::CancelToken token;
+    auto r = engine.run(token);
+    ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+    ASSERT_EQ(r.peak_centers.size(), 1u);
+    const auto& pc = r.peak_centers[0];
+    ASSERT_TRUE(pc.ok) << pc.message;
+    EXPECT_TRUE(pc.table_updated);
+    EXPECT_NEAR(*pc.center, table_before + 0.025, 0.004);
+    // Measured on the peak: the full Ar40 signal.
+    auto fits = fit_results(r.data, loaded->plan.fits);
+    EXPECT_NEAR(fits.results.intercepts.at("Ar40").intercept.value, 1e6, 1e4);
+  }
+  ASSERT_TRUE(peak_center.last());
+  EXPECT_FALSE(peak_center.last()->tries.empty());
 }
 
 }  // namespace

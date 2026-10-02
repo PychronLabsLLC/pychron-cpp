@@ -376,7 +376,9 @@ TEST(CanvasLoader, BadOpenValveColorIsDiagnosticWithLine) {
   ASSERT_FALSE(r.ok());
   ASSERT_TRUE(has_diag(r, "canvas.open_valve_color", "green | inherit"));
   for (const auto& d : r.diagnostics) {
-    if (d.field == "canvas.open_valve_color") EXPECT_EQ(d.loc.line, line_of(text, "open_valve_color"));
+    if (d.field == "canvas.open_valve_color") {
+      EXPECT_EQ(d.loc.line, line_of(text, "open_valve_color"));
+    }
   }
   auto wrong_type = load("[canvas]\nopen_valve_color = true\n");
   EXPECT_FALSE(wrong_type.ok());

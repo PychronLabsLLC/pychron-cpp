@@ -117,8 +117,11 @@ TEST(RunDefaults, SchemaErrors) {
 
 TEST(RunDefaults, SetAndReplace) {
   DefaultsTable t;
-  t.set(AnalysisType::Degas, "co2", RunDefaults{.template_name = "a"});
-  t.set(AnalysisType::Degas, "co2", RunDefaults{.template_name = "b"});
+  RunDefaults d;
+  d.template_name = "a";
+  t.set(AnalysisType::Degas, "co2", d);
+  d.template_name = "b";
+  t.set(AnalysisType::Degas, "co2", d);
   ASSERT_NE(t.find(AnalysisType::Degas, "co2"), nullptr);
   EXPECT_EQ(t.find(AnalysisType::Degas, "co2")->template_name, "b");
 }
@@ -366,7 +369,7 @@ TEST(Blocks, InstantiateFillsDeviceAndDefaults) {
 
 TEST(Blocks, InsertBlockAtIndex) {
   std::vector<RunSpec> q{unknown_run("1"), unknown_run("2")};
-  Block b{.name = "x", .runs = {special(AnalysisType::BlankUnknown, "bu"), special(AnalysisType::Air, "a")}};
+  Block b{"x", "", {special(AnalysisType::BlankUnknown, "bu"), special(AnalysisType::Air, "a")}};
   auto out = insert_runs(q, 1, instantiate_block(b, {}));
   EXPECT_EQ(ids_of(out), (std::vector<std::string>{"1", "bu", "a", "2"}));
   auto end = insert_runs(q, 99, b.runs);
@@ -374,7 +377,7 @@ TEST(Blocks, InsertBlockAtIndex) {
 }
 
 TEST(Blocks, RepeatBlock) {
-  Block b{.name = "x", .runs = {unknown_run("1"), special(AnalysisType::BlankUnknown, "bu")}};
+  Block b{"x", "", {unknown_run("1"), special(AnalysisType::BlankUnknown, "bu")}};
   auto out = repeat_block(b.runs, 3);
   EXPECT_EQ(ids_of(out), (std::vector<std::string>{"1", "bu", "1", "bu", "1", "bu"}));
   EXPECT_TRUE(repeat_block(b.runs, 0).empty());

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <thread>
 
+#include "sim_pump.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -24,28 +25,7 @@ namespace {
 const std::filesystem::path kDir(PYCHRON_EXAMPLE_CONFIGS_DIR);
 constexpr double kAr40 = 39.9623831237;
 
-class Pump {
- public:
-  Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
-    thread_ = std::thread([this] {
-      while (!done_) {
-        clock_.advance(20ms);
-        scheduler_.run_pending();
-        std::this_thread::sleep_for(200us);
-      }
-    });
-  }
-  ~Pump() {
-    done_ = true;
-    thread_.join();
-  }
-
- private:
-  ManualClock& clock_;
-  Scheduler& scheduler_;
-  std::atomic<bool> done_{false};
-  std::thread thread_;
-};
+using pychron::testing::Pump;
 
 double mean_on(const std::vector<Reading>& readings, const DetectorId& det) {
   double sum = 0.0;
@@ -165,8 +145,8 @@ TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
 
 INSTANTIATE_TEST_SUITE_P(BothConfigs, SpectrometerSim,
                          ::testing::Values("spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"),
-                         [](const auto& info) {
-                           return std::string(info.param).find("legacy") != std::string::npos ? "Legacy"
+                         [](const auto& test_info) {
+                           return std::string(test_info.param).find("legacy") != std::string::npos ? "Legacy"
                                                                                                : "Integrated";
                          });
 

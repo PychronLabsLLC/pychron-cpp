@@ -3,7 +3,9 @@
 // Scriptable role fakes for Spectrometer / move protocol tests. Every call
 // that matters for ordering is appended to a shared log.
 
+#include <atomic>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -24,7 +26,7 @@ inline std::string fmt(double v) {
 }
 
 struct FakePositioner : IMassPositioner {
-  explicit FakePositioner(CallLog& log) : log(log) {}
+  explicit FakePositioner(CallLog& call_log) : log(call_log) {}
 
   Axis native_axis() const override { return axis; }
   Result<void> set(double v) override {
@@ -37,11 +39,16 @@ struct FakePositioner : IMassPositioner {
     sets.push_back(v);
     value = v;
     moving_left = moving_polls;
+    if (timeout_set_at && *timeout_set_at == set_calls) return fail(ErrorKind::Timeout, "no reply to set", "magnet");
     return {};
   }
   Result<double> read() override { return value; }
   Result<bool> moving() override {
     ++moving_calls;
+    if (fail_moving) {
+      log.push_back("moving-fail");
+      return fail(ErrorKind::Io, "moving failed", "magnet");
+    }
     if (moving_left > 0) {
       --moving_left;
       return true;
@@ -58,12 +65,14 @@ struct FakePositioner : IMassPositioner {
   int moving_left = 0;
   int moving_calls = 0;
   int set_calls = 0;
-  std::optional<int> fail_set_at;  // 1-based set() call that fails
+  std::optional<int> fail_set_at;     // 1-based set() call that fails with nothing written
+  std::optional<int> timeout_set_at;  // 1-based set() call that is written, then reports Timeout
+  bool fail_moving = false;
   std::vector<double> sets;
 };
 
 struct FakeControl : IDetectorControl {
-  explicit FakeControl(CallLog& log) : log(log) {}
+  explicit FakeControl(CallLog& call_log) : log(call_log) {}
 
   Caps caps() const override { return caps_; }
   Result<void> protect(const ChannelId& ch, bool on) override {
@@ -107,7 +116,7 @@ struct FakeControl : IDetectorControl {
 };
 
 struct FakeBlank : IBeamBlank {
-  explicit FakeBlank(CallLog& log) : log(log) {}
+  explicit FakeBlank(CallLog& call_log) : log(call_log) {}
   Result<void> blank(bool on) override {
     if (on ? fail_on : fail_off) {
       log.push_back(std::string(on ? "blank-fail" : "unblank-fail"));
@@ -133,6 +142,7 @@ struct FakeSource : IBeamSource {
   }
   Result<double> read_hv() override {
     ++hv_reads;
+    if (fail_read_hv) return fail(ErrorKind::Timeout, "no reply to GetHighVoltage", "source");
     return hv;
   }
   std::span<const ParamSpec> params() const override { return specs; }
@@ -153,26 +163,39 @@ struct FakeSource : IBeamSource {
   double hv = 4500.0;
   double trap = 100.0;
   int hv_reads = 0;
+  bool fail_read_hv = false;
 };
 
 struct FakeAcquirer : IIntensityAcquirer {
-  explicit FakeAcquirer(std::vector<ChannelId> chans) : chans(std::move(chans)) {}
+  explicit FakeAcquirer(std::vector<ChannelId> channel_ids) : chans(std::move(channel_ids)) {}
   std::vector<ChannelId> channels() const override { return chans; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration d) override {
+    if (active_next > 0) ++overlaps;
+    ++configures;
     configured = d;
+    if (on_configure) on_configure();
     return {};
   }
   Result<void> start() override {
+    if (active_next > 0) ++overlaps;
     ++starts;
+    note("start");
     if (fail_start) return fail(ErrorKind::Io, "start failed", "acquirer");
     return {};
   }
   Result<void> stop() override {
     ++stops;
+    note("stop");
+    if (on_stop) on_stop();
     return {};
   }
   Result<std::optional<Frame>> next(Duration) override {
+    ++active_next;
+    note("next-enter");
+    if (on_next) on_next();  // may block, or call back into the engine
+    note("next-exit");
+    --active_next;
     std::lock_guard lock(m);
     if (frames.empty()) return std::optional<Frame>{};
     Frame f = frames.front();
@@ -184,10 +207,23 @@ struct FakeAcquirer : IIntensityAcquirer {
     frames.push_back(std::move(f));
   }
 
+  void note(const char* what) {
+    if (log == nullptr) return;
+    std::lock_guard lock(m);
+    log->push_back(what);
+  }
+
   std::vector<ChannelId> chans;
   Duration configured{};
   int starts = 0, stops = 0;
   bool fail_start = false;
+  std::atomic<int> configures{0};
+  std::function<void()> on_configure;  // runs inside configure(); may block
+  std::function<void()> on_next;   // runs inside next(), outside `m`
+  std::function<void()> on_stop;   // runs inside stop(), after it is logged
+  std::atomic<int> active_next{0};
+  std::atomic<int> overlaps{0};    // configure()/start() seen while a next() was active
+  CallLog* log = nullptr;          // optional order log: start, next-enter, next-exit, stop
   std::mutex m;
   std::deque<Frame> frames;
 };

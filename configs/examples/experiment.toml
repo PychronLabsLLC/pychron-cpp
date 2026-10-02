@@ -1,0 +1,35 @@
+# Example queue for the simulated lab:
+#   elctl -c extraction_line.toml --sim exp run experiment.toml \
+#         --spectrometer spectrometer.sim-integrated.toml
+# Plans, scripts and conditionals are found under this directory (the lab);
+# records, the spool and executor_state.json go to ./data.
+
+[queue]
+name = "sim-example"
+mass_spectrometer = "sim"
+username = "example"
+
+[queue.delays]
+before_analyses = 5
+between_analyses = 10
+after_blank = 10
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "sim_multicollect" }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "66001"
+extraction = { script = "sim_extract", value = 5, units = "w", duration = 10 }
+measurement = { plan = "sim_multicollect" }
+post_measurement = "sim_pump"
+sample = { sample = "FC-2", material = "sanidine", project = "examples" }
+
+[[runs]]
+identifier = "66001"
+extraction = { script = "sim_extract", value = 8, units = "w", duration = 10 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 1 } }
+post_measurement = "sim_pump"
+sample = { sample = "FC-2", material = "sanidine", project = "examples" }

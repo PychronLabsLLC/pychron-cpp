@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -227,6 +228,27 @@ class TestSpectrometerWindow : public QObject {
     window_->set_scale(YScale::Linear);
     view->refresh();
     QVERIFY(std::isfinite(view->shown_y().lo) && view->shown_y().lo < view->shown_y().hi);
+  }
+
+  // A minute of 0.1 s readings on every trace: the repaint runs on the GUI
+  // thread, so one that takes long freezes the window.
+  void repaintOfFullChartStaysShort() {
+    ui::StripChartModel model(bridge_->detectors());
+    ui::StripChartView view(model);
+    view.resize(800, 500);
+    view.show();  // the plot gets its size from the layout
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    for (int i = 0; i < 600; ++i) {
+      const double noise = (i * 7919 % 100) / 100.0;  // zigzag, like detector noise
+      model.append(row(0.1 * i, 10.0 + noise, {"H2", "H1", "AX", "L1", "L2", "CDD"}));
+    }
+    QTest::qWait(600);  // past the repaint cap and the autoscale interval: refresh() rescales and draws at once
+    QElapsedTimer timer;
+    timer.start();
+    view.refresh();
+    const qint64 elapsed = timer.elapsed();
+    QCOMPARE(view.point_count(kH1), 600);
+    QVERIFY2(elapsed < 250, qPrintable(QStringLiteral("repaint took %1 ms").arg(elapsed)));
   }
 
   void clearEmptiesChart() {

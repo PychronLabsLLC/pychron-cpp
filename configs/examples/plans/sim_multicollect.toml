@@ -1,0 +1,61 @@
+# Multicollection on the example sim spectrometer (spectrometer.sim-integrated.toml).
+# Its field table puts Ar39 on H2 while Ar40 is on H1; Ar36 is hopped onto CDD.
+# Valves and the equilibration time come from extraction_line.toml [aliases].
+
+[plan]
+name = "sim_multicollect"
+instrument_family = "sim"
+description = "Example two-hop measurement for the simulated lab"
+analysis_types = ["unknown", "blank_unknown", "air"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+
+[sniff]
+enabled = true
+counts = 10
+integration_s = 1
+
+[peak_center]
+after = true
+detector = "H1"
+isotope = "Ar40"
+config = "default"
+
+[baseline]
+after = true
+counts = 10
+mass = 34.2
+settle_s = 5
+integration_s = 1
+
+[main]
+cycles = 2
+integration_s = 1
+
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "H2" }
+counts = 15
+settle_s = 2
+
+[[main.hops]]
+positions = { Ar36 = "CDD" }
+counts = 15
+settle_s = 2
+position = { isotope = "Ar36", detector = "CDD" }
+
+[fits]
+signal = { default = "linear" }
+baseline = { default = "average" }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+
+[parameters]
+expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts"]

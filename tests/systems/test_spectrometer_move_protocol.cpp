@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <random>
 
@@ -165,6 +166,18 @@ TEST(MoveProtocol, AfDemagSetsRunBeforeFinalSet) {
   for (std::size_t i = 0; i < out->demag.size(); ++i) EXPECT_DOUBLE_EQ(r.positioner.sets[i], out->demag[i]);
 }
 
+TEST(MoveProtocol, AfDemagClampsToPlanLimitsWhenSet) {
+  Rig r;  // positioner limits 0..10
+  auto p = plan(3.0, 5.9);
+  p.af_demag = AfDemagSettings{true, 400ms, 400ms, 0.5, 0.5};
+  p.limits = Limits{0.0, 6.0};
+  auto out = execute_move(p, r.deps());
+  ASSERT_TRUE(out.has_value());
+  ASSERT_FALSE(r.positioner.sets.empty());
+  EXPECT_DOUBLE_EQ(*std::max_element(r.positioner.sets.begin(), r.positioner.sets.end()), 6.0);  // it swung past
+  for (double v : r.positioner.sets) EXPECT_LE(v, 6.0);
+}
+
 // Property: random protect/blank/failure combinations never leave a detector
 // protected or the beam blanked, as long as the unprotect calls themselves
 // succeed.
@@ -187,4 +200,212 @@ TEST(MoveProtocol, RandomFailuresNeverLeaveDetectorsProtected) {
     EXPECT_FALSE(r.blank.blanked) << "trial " << trial;
     (void)out;
   }
+}
+
+// ---- A failure once the magnet may be moving: settle before the cleanup ------
+
+namespace {
+
+// Deps whose sleep is also written to the call log, so the order of the
+// settle wait and the cleanup is visible.
+MoveDeps logging_deps(Rig& r) {
+  auto deps = r.deps();
+  deps.sleep = [&r](Duration d) {
+    r.sleeps.push_back(d);
+    r.log.push_back("sleep:" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(d).count()));
+    r.clock.advance(d);
+  };
+  return deps;
+}
+
+CallLog tail(const CallLog& log, std::size_t n) {
+  return log.size() < n ? log : CallLog(log.end() - static_cast<std::ptrdiff_t>(n), log.end());
+}
+
+}  // namespace
+
+// The write went out but its reply did not arrive: the magnet is probably
+// slewing, so the detectors stay protected and the beam blanked for `settle`.
+TEST(MoveProtocol, SetTimeoutAfterTheWriteSettlesBeforeCleanup) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.protect = {"CDD"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(out.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 500ms);
+  EXPECT_FALSE(r.control.any_protected());
+  EXPECT_FALSE(r.blank.blanked);
+}
+
+// A set() that reports an outright failure still counts: the protocol cannot
+// tell whether the command reached the instrument.
+TEST(MoveProtocol, SetFailureSettlesBeforeCleanup) {
+  Rig r;
+  r.positioner.fail_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.protect = {"CDD"};
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set-fail:5.000", "sleep:500", "unprotect:CDD"}));
+}
+
+TEST(MoveProtocol, MovingErrorSettlesBeforeCleanup) {
+  Rig r;
+  r.positioner.fail_moving = true;
+  auto p = plan(4.0, 5.0);
+  p.protect = {"CDD"};
+  p.blank = true;
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(out.error().what, "moving failed");
+  EXPECT_EQ(r.log,
+            (CallLog{"protect:CDD", "blank", "set:5.000", "moving-fail", "sleep:500", "unblank", "unprotect:CDD"}));
+}
+
+TEST(MoveProtocol, MaxWaitTimeoutSettlesBeforeCleanup) {
+  Rig r;
+  r.positioner.moving_polls = 1000;
+  auto p = plan(4.0, 5.0);
+  p.protect = {"CDD"};
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(out.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(tail(r.log, 2), (CallLog{"sleep:500", "unprotect:CDD"}));
+  EXPECT_EQ(std::count(r.log.begin(), r.log.end(), "sleep:500"), 1);
+}
+
+TEST(MoveProtocol, AfDemagSetFailureSettlesBeforeCleanup) {
+  Rig r;
+  r.positioner.fail_set_at = 3;  // two demag steps written, the third fails
+  auto p = plan(3.0, 5.0);
+  p.af_demag = AfDemagSettings{true, 400ms, 400ms, 0.5, 0.5};
+  p.protect = {"CDD"};
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.positioner.sets.size(), 2U);
+  EXPECT_EQ(tail(r.log, 2), (CallLog{"sleep:500", "unprotect:CDD"}));
+}
+
+// Nothing was sent to the magnet: there is nothing to wait for.
+TEST(MoveProtocol, FailureBeforeAnySetCleansUpImmediately) {
+  {
+    Rig r;
+    r.control.fail_protect = {"H1"};
+    auto p = plan(4.0, 5.0);
+    p.protect = {"CDD", "H1"};
+    p.blank = true;
+    auto out = execute_move(p, logging_deps(r));
+    ASSERT_FALSE(out.has_value());
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "protect-fail:H1", "unprotect:H1", "unprotect:CDD"}));
+    EXPECT_TRUE(r.sleeps.empty());
+  }
+  {
+    Rig r;
+    r.blank.fail_on = true;
+    auto p = plan(4.0, 5.0);
+    p.protect = {"CDD"};
+    p.blank = true;
+    auto out = execute_move(p, logging_deps(r));
+    ASSERT_FALSE(out.has_value());
+    EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank-fail", "unblank", "unprotect:CDD"}));
+    EXPECT_TRUE(r.sleeps.empty());
+    EXPECT_TRUE(r.positioner.sets.empty());
+  }
+}
+
+// ---- The failure wait has a floor of its own (`failure_settle`) -------------
+//
+// Callers that settle for themselves pass `settle` zero; the wait before the
+// cleanup of a failed move must not shrink with it.
+
+TEST(MoveProtocol, FailureSettleAppliesWhenTheCallerSettleIsZero) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(out.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:500", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 500ms);
+  EXPECT_FALSE(r.control.any_protected());
+  EXPECT_FALSE(r.blank.blanked);
+}
+
+// A plan built without `failure_settle` behaves as before: zero settle, no wait.
+TEST(MoveProtocol, ZeroSettleAndZeroFailureSettleCleanUpImmediately) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.protect = {"CDD"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:5.000", "sleep:0", "unblank", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
+TEST(MoveProtocol, LongerCallerSettleWinsOverFailureSettle) {
+  Rig r;
+  r.positioner.timeout_set_at = 1;
+  auto p = plan(4.0, 5.0);
+  p.settle = 800ms;
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:5.000", "sleep:800", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 800ms);
+}
+
+TEST(MoveProtocol, FailureSettleNotUsedWhenNoSetWasIssued) {
+  Rig r;
+  r.control.fail_protect = {"H1"};
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD", "H1"};
+  p.blank = true;
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_FALSE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "protect-fail:H1", "unprotect:H1", "unprotect:CDD"}));
+  EXPECT_TRUE(r.sleeps.empty());
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
+// `failure_settle` is for failures only: a successful move waits `settle`.
+TEST(MoveProtocol, FailureSettleDoesNotSlowASuccessfulMove) {
+  Rig r;
+  auto p = plan(4.0, 5.0);
+  p.settle = Duration::zero();
+  p.failure_settle = 500ms;
+  p.protect = {"CDD"};
+  const TimePoint start = r.clock.now();
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:5.000", "sleep:0", "unprotect:CDD"}));
+  EXPECT_EQ(r.clock.now() - start, 0ms);
+}
+
+// The successful path is unchanged: one settle, then the cleanup.
+TEST(MoveProtocol, SuccessfulMoveSettlesOnce) {
+  Rig r;
+  auto p = plan(4.0, 5.0);
+  p.protect = {"CDD"};
+  auto out = execute_move(p, logging_deps(r));
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:5.000", "sleep:500", "unprotect:CDD"}));
 }

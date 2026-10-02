@@ -7,6 +7,7 @@ FetchContent_Declare(tomlplusplus
   URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz
   URL_HASH SHA256=8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/tomlplusplus_float_columns.cmake
   FIND_PACKAGE_ARGS CONFIG)
 FetchContent_MakeAvailable(tomlplusplus)
 
@@ -74,4 +75,74 @@ if(BUILD_UI)
   target_link_libraries(qcustomplot PUBLIC Qt6::Widgets Qt6::PrintSupport)
   # Third-party code: not ours to keep warning-clean.
   target_compile_options(qcustomplot PRIVATE -w)
+endif()
+
+# DVC persistence (libs/persistence) on TinyORM over QtSql (QSQLITE, QPSQL).
+# Qt stays behind the library boundary: TinyORM and Qt are PRIVATE
+# dependencies and no public persistence header includes them. The library is
+# built only when Qt6 Core and Sql are found; elsewhere it is skipped.
+option(PYCHRON_PERSISTENCE "Build libs/persistence (needs Qt6 Core + Sql; TinyORM is fetched)" ON)
+set(PYCHRON_PERSISTENCE_ENABLED OFF)
+if(PYCHRON_PERSISTENCE)
+  find_package(Qt6 6.2 QUIET COMPONENTS Core Sql)
+  if(Qt6Sql_FOUND)
+    # TinyORM's own CMake calls find_package(range-v3 CONFIG REQUIRED);
+    # OVERRIDE_FIND_PACKAGE lets the fetched copy satisfy it. Git sources are
+    # pinned to the release commit.
+    FetchContent_Declare(range-v3
+      GIT_REPOSITORY https://github.com/ericniebler/range-v3.git
+      GIT_TAG 8c88f7174bcc71e525015430282cd7b984f8be47  # 0.12.0
+      SYSTEM
+      OVERRIDE_FIND_PACKAGE)
+    set(RANGE_V3_TESTS OFF CACHE BOOL "" FORCE)
+    set(RANGE_V3_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(RANGE_V3_PERF OFF CACHE BOOL "" FORCE)
+    set(RANGE_V3_DOCS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(range-v3)
+
+    # Query builder + ORM only: no tom CLI (would pull in tabulate), no
+    # TinyDrivers (QtSql drivers are used), static library.
+    set(TOM OFF CACHE BOOL "" FORCE)
+    set(TOM_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(BUILD_DRIVERS OFF CACHE BOOL "" FORCE)
+    # TinyORM's BUILD_TESTS option shares our cache variable's name: shadow it
+    # with a normal variable (CMP0077) so its own test suite is not built.
+    set(_pychron_shared ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    set(BUILD_TESTS OFF)
+    FetchContent_Declare(TinyOrm
+      GIT_REPOSITORY https://github.com/silverqx/TinyORM.git
+      GIT_TAG d568759812199c095f5a7c96d5111264a8f1ac83  # v0.38.1
+      SYSTEM
+      FIND_PACKAGE_ARGS CONFIG)
+    FetchContent_MakeAvailable(TinyOrm)
+    set(BUILD_SHARED_LIBS ${_pychron_shared})
+    unset(BUILD_TESTS)
+
+    # Third-party build policy is not ours: TinyORM adds -Werror (Debug) and
+    # logs every query to qDebug in Debug builds. Drop both.
+    if(TARGET CommonConfig)
+      get_target_property(_tiny_opts CommonConfig INTERFACE_COMPILE_OPTIONS)
+      if(_tiny_opts)
+        list(TRANSFORM _tiny_opts REPLACE "-Werror|-Wfatal-errors|-pedantic-errors|/WX" "")
+        set_target_properties(CommonConfig PROPERTIES INTERFACE_COMPILE_OPTIONS "${_tiny_opts}")
+      endif()
+      get_target_property(_tiny_link CommonConfig INTERFACE_LINK_OPTIONS)
+      if(_tiny_link)
+        list(TRANSFORM _tiny_link REPLACE "/WX" "")
+        set_target_properties(CommonConfig PROPERTIES INTERFACE_LINK_OPTIONS "${_tiny_link}")
+      endif()
+    endif()
+    if(TARGET TinyOrm)
+      get_target_property(_tiny_defs TinyOrm INTERFACE_COMPILE_DEFINITIONS)
+      list(TRANSFORM _tiny_defs REPLACE "TINYORM_DEBUG_SQL" "TINYORM_NO_DEBUG_SQL")
+      set_target_properties(TinyOrm PROPERTIES INTERFACE_COMPILE_DEFINITIONS "${_tiny_defs}")
+      get_target_property(_tiny_defs TinyOrm COMPILE_DEFINITIONS)
+      list(TRANSFORM _tiny_defs REPLACE "TINYORM_DEBUG_SQL" "TINYORM_NO_DEBUG_SQL")
+      set_target_properties(TinyOrm PROPERTIES COMPILE_DEFINITIONS "${_tiny_defs}")
+    endif()
+    set(PYCHRON_PERSISTENCE_ENABLED ON)
+  else()
+    message(WARNING "PYCHRON_PERSISTENCE: Qt6 Core/Sql not found; libs/persistence is not built")
+  endif()
 endif()

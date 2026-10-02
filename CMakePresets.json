@@ -163,6 +163,9 @@
     {
       "name": "dev",
       "configurePreset": "dev",
+      "environment": {
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0"
+      },
       "output": {
         "outputOnFailure": true
       }
@@ -170,6 +173,9 @@
     {
       "name": "dev-ui",
       "configurePreset": "dev-ui",
+      "environment": {
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0"
+      },
       "output": {
         "outputOnFailure": true
       }

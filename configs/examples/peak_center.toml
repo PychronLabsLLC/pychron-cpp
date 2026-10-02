@@ -1,0 +1,18 @@
+# Peak-center configs for the example lab (spectrometer spec section 6).
+# Plans pick one by name: [peak_center] config = "default".
+#
+# The simulated beam's peaks are wide (flat top +-0.02, edges to +-0.03 in
+# field-table units), so the window is wider than pychron's 0.015 default.
+
+[default]
+isotope = "Ar40"
+detector = "H1"
+window = 0.06
+step = 0.002
+percent = 80
+min_peak_height = 1.0
+n_tries = 2
+integration_s = 1.0
+baseline_timeout_s = 10
+update_table = true
+propagate = true

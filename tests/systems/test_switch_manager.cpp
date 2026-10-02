@@ -149,7 +149,9 @@ struct Fixture {
         {&clock, &bus});
     EXPECT_TRUE(made) << (made ? "" : made.error().what);
     if (made) mgr = std::move(*made);
-    if (mgr && refresh) EXPECT_TRUE(mgr->refresh());
+    if (mgr && refresh) {
+      EXPECT_TRUE(mgr->refresh());
+    }
   }
 
   ManualClock clock;

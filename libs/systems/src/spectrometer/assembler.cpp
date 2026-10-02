@@ -1,8 +1,10 @@
 #include "pychron/systems/spectrometer/assembler.hpp"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "pychron/devices/capabilities.hpp"
+#include "pychron/devices/connectable.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/systems/spectrometer/config_validate.hpp"
 #include "pychron/transport/factory.hpp"
@@ -33,6 +35,27 @@ std::string join(const std::vector<std::string>& lines) {
   std::string out;
   for (const auto& l : lines) out += (out.empty() ? "" : "\n") + l;
   return out;
+}
+
+// Opens every transport, then connects every IConnectable driver, in the order
+// given. On the first failure closes whatever was opened and returns the error,
+// naming the transport or driver when the error does not.
+Result<void> open_and_connect(const std::vector<std::pair<std::string, Transport*>>& transports,
+                              const std::vector<std::pair<std::string, Device*>>& devices) {
+  auto fail_with = [&](Error e, const std::string& name) -> Unexpected<Error> {
+    if (e.device.empty()) e.device = name;
+    for (const auto& [n, t] : transports) t->close();
+    return fail(std::move(e));
+  };
+  for (const auto& [name, t] : transports) {
+    if (auto r = t->open(); !r) return fail_with(r.error(), name);
+  }
+  for (const auto& [name, d] : devices) {
+    auto* c = capability<IConnectable>(*d);
+    if (c == nullptr) continue;
+    if (auto r = c->connect(); !r) return fail_with(r.error(), name);
+  }
+  return {};
 }
 
 }  // namespace
@@ -91,11 +114,14 @@ Result<SpectrometerRoles> SpectrometerAssembler::bind(const cfg::SpectrometerCon
 }
 
 Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(const cfg::TransportConfig& c,
-                                                                            const SpectrometerContext& context) {
+                                                                            const SpectrometerContext& context,
+                                                                            const std::filesystem::path& trace_dir) {
   config::TransportConfig tc;
   tc.name = c.name;
   tc.loc = c.loc;
   tc.timeout_ms = c.timeout_ms;
+  tc.retries = c.retries;
+  tc.trace = c.trace;
   switch (c.kind) {
     case cfg::TransportKind::Tcp:
       tc.kind = config::TransportKind::Tcp;
@@ -123,6 +149,12 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
   TransportContext tctx;
   tctx.clock = &context.clock;
   tctx.bus = &context.bus;
+  tctx.trace_dir = trace_dir.string();
+  if (c.trace) {
+    std::error_code ec;
+    std::filesystem::create_directories(trace_dir, ec);
+    if (ec) return fail(ErrorKind::Io, "cannot create trace directory " + trace_dir.string(), c.name);
+  }
   return make_transport(tc, tctx);
 }
 
@@ -148,12 +180,18 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::load(const std::fil
 Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::SpectrometerData data,
                                                                       SpectrometerContext context, Options options) {
   if (auto diags = cfg::validate(data.config, data.tables); !diags.empty()) return fail(config::to_error(diags));
-  if (!options.make_transport) options.make_transport = default_transport;
+  if (!options.make_transport) {
+    options.make_transport = [dir = options.spectrometer.trace_dir](const cfg::TransportConfig& tc,
+                                                                    const SpectrometerContext& ctx) {
+      return default_transport(tc, ctx, dir);
+    };
+  }
   if (!options.make_driver) options.make_driver = default_driver;
 
   std::vector<std::string> problems;
   std::vector<std::unique_ptr<Transport>> transports;
   std::map<std::string, Transport*> by_name;
+  std::vector<std::pair<std::string, Transport*>> transport_ptrs;  // config order
   for (const auto& [name, tc] : data.config.transports) {
     auto t = options.make_transport(tc, context);
     if (!t) {
@@ -161,6 +199,7 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
       continue;
     }
     by_name[name] = t->get();
+    transport_ptrs.emplace_back(name, t->get());
     transports.push_back(std::move(*t));
   }
   std::vector<std::unique_ptr<Device>> devices;
@@ -186,8 +225,14 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
   std::map<std::string, FieldTable> tables;
   for (const auto& [name, tf] : data.tables) tables.emplace(name, to_field_table(tf));
   if (options.spectrometer.data_root.empty()) options.spectrometer.data_root = data.root;
-  return Spectrometer::create(std::move(data.config), MolecularWeights(std::move(data.weights)), std::move(tables),
-                              std::move(*roles), context, std::move(options.spectrometer));
+  auto spectrometer = Spectrometer::create(std::move(data.config), MolecularWeights(std::move(data.weights)),
+                                           std::move(tables), std::move(*roles), context,
+                                           std::move(options.spectrometer));
+  if (!spectrometer) return spectrometer;
+  // Last step: nothing above touches the wire. On failure the spectrometer
+  // (and with it the transports) is destroyed on return.
+  if (auto up = open_and_connect(transport_ptrs, device_ptrs); !up) return fail(up.error());
+  return spectrometer;
 }
 
 }  // namespace pychron::spectrometer

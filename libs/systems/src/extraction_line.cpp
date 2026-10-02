@@ -266,7 +266,7 @@ Result<void> ExtractionLine::actuate(std::string_view name, SwitchOp op, std::st
 }
 
 Result<double> ExtractionLine::read_gauge(std::string_view name) {
-  auto g = std::find_if(config_.gauges.begin(), config_.gauges.end(), [&](const auto& g) { return g.name == name; });
+  auto g = std::find_if(config_.gauges.begin(), config_.gauges.end(), [&](const auto& x) { return x.name == name; });
   if (g == config_.gauges.end()) return fail(ErrorKind::Config, "unknown gauge '" + std::string(name) + "'");
   Device* d = device(g->driver);
   if (!d) return fail(ErrorKind::Config, "gauge driver '" + g->driver + "' not built", g->name);
