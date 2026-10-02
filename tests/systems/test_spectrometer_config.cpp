@@ -269,6 +269,37 @@ TEST(SpectrometerConfig, LocalOverrideMayOnlyTouchTransportConnectionKeys) {
   EXPECT_TRUE(mentions(r, "transports.ghost", "unknown transport")) << dump(r);
 }
 
+TEST(SpectrometerConfig, TransportRetriesAndTraceParsed) {
+  auto r = parse(with("port = 1069", "port = 1069\nretries = 3\ntrace = true"));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.config->transports.at("qtegra").retries, 3);
+  EXPECT_TRUE(r.config->transports.at("qtegra").trace);
+}
+
+TEST(SpectrometerConfig, TransportRetriesDefaultZeroTraceFalse) {
+  auto r = parse(kIntegrated);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.config->transports.at("qtegra").retries, 0);
+  EXPECT_FALSE(r.config->transports.at("qtegra").trace);
+}
+
+TEST(SpectrometerConfig, NegativeRetriesIsDiagnostic) {
+  auto r = parse(with("port = 1069", "port = 1069\nretries = -1"));
+  EXPECT_TRUE(mentions(r, "transports.qtegra.retries", "out of range")) << dump(r);
+}
+
+TEST(SpectrometerConfig, TraceMustBeBoolean) {
+  auto r = parse(with("port = 1069", "port = 1069\ntrace = \"yes\""));
+  EXPECT_TRUE(mentions(r, "transports.qtegra.trace", "boolean")) << dump(r);
+}
+
+TEST(SpectrometerConfig, LocalFileCannotSetRetriesOrTrace) {
+  auto r = parse_config_from_string(kIntegrated, "spectrometer.toml",
+                                    "[transports.qtegra]\nretries = 2\ntrace = true\n", "spectrometer.local.toml");
+  EXPECT_TRUE(mentions(r, "transports.qtegra.retries", "may not be overridden")) << dump(r);
+  EXPECT_TRUE(mentions(r, "transports.qtegra.trace", "may not be overridden")) << dump(r);
+}
+
 TEST(SpectrometerConfig, ParseChannelRef) {
   auto ref = parse_channel_ref("faradays:H1");
   ASSERT_TRUE(ref);

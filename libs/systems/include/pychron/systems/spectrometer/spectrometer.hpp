@@ -149,6 +149,8 @@ struct SpectrometerOptions {
   // Data directory root; enables save_table() and with_table() of tables
   // not loaded at startup.
   std::filesystem::path data_root;
+  // Where transports with `trace = true` write <name>.trace; created on demand.
+  std::filesystem::path trace_dir = "traces";
 };
 
 class Spectrometer {

@@ -140,11 +140,13 @@ class Builder {
   void parse_transport(Obj o, TransportConfig& t) {
     record(o, t);
     o.rec = &t;
-    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms"});
+    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms", "retries", "trace"});
     const bool kind_ok = r_.choice(o, "kind", t.kind, choices(kTransportKinds), true) && o.t.get("kind") != nullptr;
     r_.str(o, "host", t.host, false);
     r_.integer(o, "baud", t.baud, false, 1);
     r_.integer(o, "timeout_ms", t.timeout_ms, false, 1);
+    r_.integer(o, "retries", t.retries, false, 0);
+    r_.boolean(o, "trace", t.trace);
     if (!kind_ok) return;
 
     const bool network = t.kind == TransportKind::Tcp || t.kind == TransportKind::ModbusTcp;

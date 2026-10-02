@@ -53,6 +53,8 @@ struct TransportConfig : Located {
   std::string serial_port;
   std::int64_t baud = 9600;
   std::int64_t timeout_ms = 1000;
+  std::int64_t retries = 0;  // extra attempts per request; 0 = none
+  bool trace = false;        // record the wire to <trace_dir>/<name>.trace
 };
 
 // `[drivers.<name>]`. Keys other than kind/transport/roles/channels are kept

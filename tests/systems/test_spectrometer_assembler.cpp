@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
@@ -117,4 +118,35 @@ TEST(SpectrometerAssembler, AssemblesBothSimConfigsFromRegistry) {
     EXPECT_EQ((*spec)->active_table(), (*spec)->config().magnet.field_table);
     EXPECT_EQ((*spec)->detectors().size(), (*spec)->config().detectors.size());
   }
+}
+
+TEST(SpectrometerAssembler, TraceKeyWritesTraceFile) {
+  auto data = load("spectrometer.sim-legacy.toml");
+  const auto dir = std::filesystem::temp_directory_path() / "pychron_spec_trace_test" / "nested";
+  std::filesystem::remove_all(dir.parent_path());
+  const std::string name = data.config.transports.begin()->first;
+  data.config.transports.begin()->second.trace = true;
+  Env env;
+  AssemblerOptions options;
+  options.spectrometer.trace_dir = dir;
+  auto spec = SpectrometerAssembler::assemble(std::move(data), env.ctx(), options);
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  EXPECT_TRUE(std::filesystem::exists(dir / (name + ".trace")));
+  spec->reset();
+  std::filesystem::remove_all(dir.parent_path());
+}
+
+TEST(SpectrometerAssembler, TraceDirCreationFailureIsIoError) {
+  auto data = load("spectrometer.sim-legacy.toml");
+  const auto blocker = std::filesystem::temp_directory_path() / "pychron_spec_trace_blocker";
+  std::filesystem::remove_all(blocker);
+  { std::ofstream(blocker) << "x"; }
+  data.config.transports.begin()->second.trace = true;
+  Env env;
+  AssemblerOptions options;
+  options.spectrometer.trace_dir = blocker / "traces";  // parent is a regular file
+  auto spec = SpectrometerAssembler::assemble(std::move(data), env.ctx(), options);
+  std::filesystem::remove(blocker);
+  ASSERT_FALSE(spec.has_value());
+  EXPECT_NE(spec.error().what.find("cannot create trace directory"), std::string::npos) << spec.error().what;
 }

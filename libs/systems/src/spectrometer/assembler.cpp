@@ -1,6 +1,7 @@
 #include "pychron/systems/spectrometer/assembler.hpp"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/driver_registry.hpp"
@@ -91,11 +92,14 @@ Result<SpectrometerRoles> SpectrometerAssembler::bind(const cfg::SpectrometerCon
 }
 
 Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(const cfg::TransportConfig& c,
-                                                                            const SpectrometerContext& context) {
+                                                                            const SpectrometerContext& context,
+                                                                            const std::filesystem::path& trace_dir) {
   config::TransportConfig tc;
   tc.name = c.name;
   tc.loc = c.loc;
   tc.timeout_ms = c.timeout_ms;
+  tc.retries = c.retries;
+  tc.trace = c.trace;
   switch (c.kind) {
     case cfg::TransportKind::Tcp:
       tc.kind = config::TransportKind::Tcp;
@@ -123,6 +127,12 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
   TransportContext tctx;
   tctx.clock = &context.clock;
   tctx.bus = &context.bus;
+  tctx.trace_dir = trace_dir.string();
+  if (c.trace) {
+    std::error_code ec;
+    std::filesystem::create_directories(trace_dir, ec);
+    if (ec) return fail(ErrorKind::Io, "cannot create trace directory " + trace_dir.string(), c.name);
+  }
   return make_transport(tc, tctx);
 }
 
@@ -148,7 +158,12 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::load(const std::fil
 Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::SpectrometerData data,
                                                                       SpectrometerContext context, Options options) {
   if (auto diags = cfg::validate(data.config, data.tables); !diags.empty()) return fail(config::to_error(diags));
-  if (!options.make_transport) options.make_transport = default_transport;
+  if (!options.make_transport) {
+    options.make_transport = [dir = options.spectrometer.trace_dir](const cfg::TransportConfig& tc,
+                                                                    const SpectrometerContext& ctx) {
+      return default_transport(tc, ctx, dir);
+    };
+  }
   if (!options.make_driver) options.make_driver = default_driver;
 
   std::vector<std::string> problems;

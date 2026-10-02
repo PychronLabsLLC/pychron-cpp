@@ -52,7 +52,8 @@ class SpectrometerAssembler {
                                         const std::vector<std::pair<std::string, Device*>>& devices);
 
   static Result<std::unique_ptr<Transport>> default_transport(const cfg::TransportConfig& config,
-                                                              const SpectrometerContext& context);
+                                                              const SpectrometerContext& context,
+                                                              const std::filesystem::path& trace_dir = "traces");
   static Result<std::unique_ptr<Device>> default_driver(const cfg::DriverConfig& config, Transport& transport,
                                                         const SpectrometerContext& context);
 };
