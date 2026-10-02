@@ -50,15 +50,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Created after load because the config is not known earlier, so the line's
-  // transports do not get it (no <name>.wire logging yet). Declared after the
-  // line, so it is destroyed first and its bus pointer never dangles; it is
-  // still alive across stop().
-  auto hub = pychron::LogHub::create((*line)->config().logging, (*line)->clock(), &(*line)->bus());
-  if (!hub) {
-    std::fprintf(stderr, "pychron-ui: %s\n", pychron::to_string(hub.error()).c_str());
-  }
-
   int rc = 0;
   {
     // The window (and its CoreBridge) subscribes before start() so the

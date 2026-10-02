@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <vector>
 
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 
 #include "pychron/core/config/loader.hpp"
@@ -305,11 +307,9 @@ TEST(ExtractionLine, LoadReportsMissingFile) {
   EXPECT_EQ(line.error().kind, ErrorKind::Config);
 }
 
-}  // namespace
-
 TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
   ManualClock clock;
-  auto dir = std::filesystem::temp_directory_path() / "pychron_line_wire_test";
+  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_wire_test_" + std::to_string(::getpid()));
   std::filesystem::create_directories(dir);
 
   auto cfg = system_config();
@@ -340,3 +340,34 @@ TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
   EXPECT_FALSE(wire.empty());
   std::filesystem::remove_all(dir);
 }
+
+TEST(ExtractionLine, BuildsOwnHubFromLoggingConfigAndWireLogs) {
+  ManualClock clock;
+  auto dir = std::filesystem::temp_directory_path() / ("pychron_line_ownhub_test_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+
+  auto cfg = system_config();
+  cfg.transports["gnet"].trace = true;
+  cfg.logging.dir = dir / "logs";
+  cfg.logging.default_level = LogLevel::Trace;
+
+  auto opts = manual(clock);
+  opts.trace_dir = dir;
+  {
+    auto line = ExtractionLine::create(std::move(cfg), canvas_model(), opts);
+    ASSERT_TRUE(line) << line.error().what;
+    ASSERT_NE((*line)->log_hub(), nullptr);
+    std::vector<Log> wire;
+    auto sub = (*line)->bus().subscribe<Log>([&](const Log& e) {
+      if (e.logger == "gnet.wire") wire.push_back(e);
+    });
+    ASSERT_TRUE((*line)->start());
+    ASSERT_TRUE((*line)->read_gauge("IG1"));
+    (*line)->stop();
+    EXPECT_FALSE(wire.empty());
+  }
+  EXPECT_TRUE(std::filesystem::exists(dir / "logs" / "pychron.log"));
+  std::filesystem::remove_all(dir);
+}
+
+}  // namespace

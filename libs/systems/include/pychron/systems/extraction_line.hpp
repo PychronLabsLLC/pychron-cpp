@@ -61,8 +61,9 @@ struct ExtractionLineOptions {
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
-  // Optional; traced transports mirror their bytes to "<name>.wire" on it. The
-  // line shares ownership, so the hub outlives its transports.
+  // Optional override. When null the line creates one from [logging]. Traced
+  // transports mirror their bytes to "<name>.wire" on it; the line shares
+  // ownership, so the hub outlives its transports.
   std::shared_ptr<LogHub> log_hub;
 };
 
@@ -98,6 +99,8 @@ class ExtractionLine {
   Snapshot snapshot() const;
 
   SignalBus& bus() noexcept { return bus_; }
+  // Options::log_hub, or the hub built from [logging]; null only if that failed.
+  std::shared_ptr<LogHub> log_hub() const noexcept { return log_hub_; }
   const Clock& clock() const noexcept { return *clock_; }
   Scheduler& scheduler() noexcept { return *scheduler_; }
   SwitchManager& switches() noexcept { return *switches_; }
@@ -133,6 +136,8 @@ class ExtractionLine {
   SteadyClock steady_clock_;
   const Clock* clock_;
   SignalBus bus_;
+  // After the bus, before the transports: destroyed after them.
+  std::shared_ptr<LogHub> log_hub_;
   std::unique_ptr<sim::SimSystem> sim_;
   std::vector<std::pair<std::string, std::unique_ptr<Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<Device>>> devices_;

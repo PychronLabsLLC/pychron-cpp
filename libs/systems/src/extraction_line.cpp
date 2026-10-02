@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/capabilities.hpp"
@@ -87,6 +88,16 @@ Result<void> ExtractionLine::build() {
                                             options_.sim);
   }
 
+  log_hub_ = options_.log_hub;
+  if (!log_hub_) {
+    // Logging must never stop the line: warn and carry on without a hub.
+    if (auto hub = LogHub::create(config_.logging, *clock_, &bus_)) {
+      log_hub_ = std::move(*hub);
+    } else {
+      std::fprintf(stderr, "pychron: logging disabled: %s\n", hub.error().what.c_str());
+    }
+  }
+
   bool tracing = false;
   for (auto [name, tc] : config_.transports) {
     if (options_.force_sim) {
@@ -105,7 +116,7 @@ Result<void> ExtractionLine::build() {
     context.clock = clock_;
     context.bus = &bus_;
     context.trace_dir = options_.trace_dir.string();
-    context.log_hub = options_.log_hub;
+    context.log_hub = log_hub_;
     if (tc.kind == config::TransportKind::Sim) {
       auto driver = std::find_if(config_.drivers.begin(), config_.drivers.end(),
                                  [&](const auto& d) { return d.second.transport == name; });

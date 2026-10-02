@@ -1,6 +1,7 @@
 #include "line.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <deque>
 
 #include "pychron/devices/capabilities.hpp"
@@ -45,9 +46,12 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
   std::unique_ptr<Line> line(new Line(std::move(config)));
   const auto& cfg = line->config_;
 
-  auto hub = LogHub::create(cfg.logging, line->clock_, &line->bus_);
-  if (!hub) return fail(hub.error());
-  line->log_hub_ = std::move(*hub);
+  // Logging must never stop start-up: warn and carry on without a hub.
+  if (auto hub = LogHub::create(cfg.logging, line->clock_, &line->bus_)) {
+    line->log_hub_ = std::move(*hub);
+  } else {
+    std::fprintf(stderr, "elctl: logging disabled: %s\n", hub.error().what.c_str());
+  }
 
   if (options.trace.enabled()) {
     std::error_code ec;
