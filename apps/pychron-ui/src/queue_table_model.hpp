@@ -70,6 +70,11 @@ class QueueTableModel : public QAbstractTableModel {
   bool remove(std::vector<std::size_t> rows);
   bool toggle_skip(std::vector<std::size_t> rows);
   bool toggle_end_after(std::size_t row);
+  // Inserts `runs` before row `at` (size() appends).
+  bool insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs);
+  // Expands frequency runs into the queue; how many were inserted, nullopt
+  // when locked or the spec is bad.
+  std::optional<std::size_t> add_frequency(const experiment::FrequencySpec& spec);
 
   void set_locked(bool locked);
   bool locked() const noexcept { return locked_; }

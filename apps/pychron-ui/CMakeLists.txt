@@ -29,6 +29,7 @@ add_library(pychron_ui_lib STATIC
   src/executor_pane.cpp
   src/evolutions_view.cpp
   src/experiment_window.cpp
+  src/run_factory_panel.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -49,6 +50,7 @@ add_library(pychron_ui_lib STATIC
   src/executor_pane.hpp
   src/evolutions_view.hpp
   src/experiment_window.hpp
+  src/run_factory_panel.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 

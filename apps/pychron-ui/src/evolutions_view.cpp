@@ -56,7 +56,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   plot_->axisRect()->setBackground(QBrush(QColor(0xfa, 0xfa, 0xd2)));
   plot_->xAxis->setLabel(tr("Time (s)"));
   plot_->yAxis->setLabel(tr("Intensity"));
-  plot_->legend->setVisible(true);
+  plot_->legend->setVisible(false);  // shown once there are graphs
   plot_->setPlottingHint(QCP::phFastPolylines, true);
 
   connect(tabs_, &QTabBar::currentChanged, this, [this](int i) {
@@ -153,6 +153,7 @@ void EvolutionsView::rebuild() {
     g->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, line.color, line.color, 4));
     graphs_.emplace_back(key, g);
   }
+  plot_->legend->setVisible(!graphs_.empty());  // an empty legend draws a stray box
   dirty_ = true;
 }
 

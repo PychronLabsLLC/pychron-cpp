@@ -293,6 +293,27 @@ bool QueueTableModel::toggle_end_after(std::size_t row) {
   return apply([&](auto& qq) { return qq.toggle_end_after(row); });
 }
 
+bool QueueTableModel::insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs) {
+  if (runs.empty() || at > queue_.size()) return false;
+  return apply([&](auto& qq) -> Result<void> {
+    for (std::size_t i = 0; i < runs.size(); ++i)
+      if (auto r = qq.insert(at + i, runs[i]); !r) return r;
+    return {};
+  });
+}
+
+std::optional<std::size_t> QueueTableModel::add_frequency(const experiment::FrequencySpec& spec) {
+  std::size_t added = 0;
+  const bool ok = apply([&](auto& qq) -> Result<void> {
+    auto n = qq.add_frequency_runs(spec);
+    if (!n) return fail(n.error());
+    added = *n;
+    return {};
+  });
+  if (!ok) return std::nullopt;
+  return added;
+}
+
 void QueueTableModel::set_locked(bool locked) {
   if (locked_ == locked) return;
   locked_ = locked;

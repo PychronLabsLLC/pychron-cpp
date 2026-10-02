@@ -104,7 +104,10 @@ directory, as `elctl exp run` does: open a queue (Queue > Open, or
 `--queue <file>`), edit it (rows revalidate as you type; red rows have
 errors, see their tooltips), then Start (F5) from the selected row. The lab
 is `--lab <dir>` (default: the extraction line config's directory) and
-records go to `--data <dir>` (default: `<lab>/data`). With `--sim`,
+records go to `--data <dir>` (default: `<lab>/data`). The Run Factory dock
+adds runs: fill in an identifier and position (a range such as `1-4` gives one
+run per hole), check the preview, then Add (Ctrl+Return); new runs start from
+the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. With `--sim`,
 `--sim-speed <x>` runs the whole app on simulated time x times faster than
 real time:
 

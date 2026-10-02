@@ -64,6 +64,12 @@ class TestExperimentWindow : public QObject {
     QVERIFY(pane->running());
     QVERIFY(window.model().locked());
     QVERIFY(!pane->start_enabled());
+    // The run factory adds nothing while the queue runs.
+    auto form = window.factory()->form();
+    form.identifier = "20001";
+    window.factory()->set_form(form);
+    QVERIFY(!window.factory()->add_enabled());
+    QVERIFY(!window.factory()->add());
     QVERIFY(!window.load_queue(queue_file(sim, "other.toml"), &error));
     QCOMPARE(error, QStringLiteral("a queue is running"));
 
@@ -89,6 +95,7 @@ class TestExperimentWindow : public QObject {
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Baseline) > 0);
     QVERIFY(fs::exists(sim.dir / "data" / "records" / "66001" / "66001-2.json"));
     QVERIFY(pane->start_enabled());
+    QVERIFY(window.factory()->add_enabled());  // unlocked again
   }
 
   void cancelAsksFirstAndStartsFromTheSelectedRow() {

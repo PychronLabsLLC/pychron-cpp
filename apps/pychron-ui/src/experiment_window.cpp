@@ -50,7 +50,8 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
       table_(new QTableView),
       diagnostics_(new QLabel),
       pane_(new ExecutorPane(bridge)),
-      evolutions_(new EvolutionsView(detector_colors(bridge.lab()))) {
+      evolutions_(new EvolutionsView(detector_colors(bridge.lab()))),
+      factory_(new RunFactoryPanel(bridge.lab(), model_, [this] { return selected_rows(); })) {
   setObjectName(QStringLiteral("ExperimentWindow"));
   resize(1300, 850);
 
@@ -85,7 +86,11 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   evolutions_dock->setObjectName(QStringLiteral("ExperimentEvolutionsDock"));
   evolutions_dock->setWidget(evolutions_);
   addDockWidget(Qt::RightDockWidgetArea, evolutions_dock);
-  resizeDocks({evolutions_dock}, {520}, Qt::Horizontal);  // saved state, if any, wins below
+  auto* factory_dock = new QDockWidget(tr("Run Factory"), this);
+  factory_dock->setObjectName(QStringLiteral("ExperimentFactoryDock"));
+  factory_dock->setWidget(factory_);
+  addDockWidget(Qt::LeftDockWidgetArea, factory_dock);
+  resizeDocks({evolutions_dock, factory_dock}, {500, 380}, Qt::Horizontal);  // saved state, if any, wins below
   resizeDocks({executor_dock}, {300}, Qt::Vertical);
 
   ask_unsaved_ = [this] {
@@ -105,6 +110,10 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
   connect(&model_, &QueueTableModel::validated, this, [this] { update_state(); });
   connect(pane_, &ExecutorPane::startRequested, this, [this] { start(); });
+  connect(factory_, &RunFactoryPanel::inserted, this, [this](const std::vector<std::size_t>& rows) {
+    select_rows(rows);
+    if (!rows.empty()) table_->scrollTo(model_.index(static_cast<int>(rows.back()), 0));
+  });
 
   connect(&bridge_, &ExperimentBridge::runStarted, this, [this](const exec::RunStarted& e) {
     model_.on_run_started(e);
@@ -120,6 +129,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   });
   connect(&bridge_, &ExperimentBridge::queueEnded, this, [this] {
     model_.set_locked(false);
+    factory_->set_locked(false);
     update_state();
   });
 
@@ -295,6 +305,7 @@ void ExperimentWindow::start() {
   }
   model_.clear_status();
   model_.set_locked(true);
+  factory_->set_locked(true);
   evolutions_->clear();
   pane_->set_running(true);
   update_state();

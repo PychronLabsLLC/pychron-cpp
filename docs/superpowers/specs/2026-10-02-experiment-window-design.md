@@ -35,9 +35,10 @@ Version 1 (this spec):
 - UI: `ExperimentBridge`, queue table model with inline validation and row
   operations, executor pane, evolutions view, `ExperimentWindow`, app wiring.
 
-Deferred to later versions (from spec 10.4): run-factory side panel and
-frequency insert, per-type field enabling beyond the editable columns listed
-below, measurement panel (template picker, parameter form, override diff
+Added after v1: the run factory side panel (section 5.6), with frequency
+insert and per-type field enabling.
+
+Deferred to later versions (from spec 10.4): measurement panel (template picker, parameter form, override diff
 badges), script editor, phase timeline and overlap lanes, fit overlay and
 intercept display in the evolutions, notifications, editing a queue while it
 runs.
@@ -251,7 +252,39 @@ A QCustomPlot widget showing the run being measured:
 - Settings (`QSettings`, group `experiment_window`): geometry, dock state,
   last queue path, column widths.
 
-### 5.6 App wiring
+### 5.6 Run factory panel
+
+A left dock "Run Factory" over `experiment::FactoryForm`
+(`pychron/experiment/factory/form.hpp`, Qt-free and unit-tested):
+
+- Run: type (unknown or a special; picking a special fills its identifier),
+  identifier, aliquot (blank: assigned at run start), step.
+- Extraction: device, position (`4`, `1-6`, `1,3,5`; "one run per hole" with
+  an optional identifier step per run), value and units, duration, cleanup,
+  script (the lab's extraction scripts), step heat (`5, 10, 15` or
+  `start:increment:count`; one run per value, steps A, B, C ...).
+- Measurement: plan (the lab's plans), post-equilibration and
+  post-measurement scripts, comment. Overrides come along from defaults or a
+  row; the form does not edit them.
+- Fields the analysis type does not use (`rules_for`) are disabled, and what
+  they hold is stripped from the runs. A change of type applies the lab's
+  `defaults.toml` entry for (type, device) when there is one; Defaults applies
+  it on demand.
+- A preview line says what Add inserts ("Adds 4 run(s): 20001 @1 … 20001 @4")
+  or why it cannot (bad input, or the new runs failing the lab check: unknown
+  plan or script, ...); Add is disabled then. The preview and Add stay in view
+  below the scrolling form.
+- Add (Ctrl+Return) inserts after the selected rows (or appends) and selects
+  the new rows; then the identifier and/or position advance by the
+  auto-increment settings, past what was just added. From Row fills the form
+  from the first selected row.
+- Frequency: a special run (from the lab's defaults) after every N unknowns,
+  and/or before the first and after the last; with several rows selected,
+  only that range counts.
+- Block: one of `<lab>/blocks/*.toml`, repeated N times, inserted like Add.
+- Locked (everything disabled) while a queue runs.
+
+### 5.7 App wiring
 
 - `pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer
   <file>] [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>]`.
