@@ -4,6 +4,10 @@
 # find_package() or the pinned FetchContent fallbacks in
 # cmake/PychronDependencies.cmake and libs/transport, so no vcpkg bootstrap is
 # needed. The UI job builds apps/pychron-ui and runs tests/ui headless.
+#
+# libs/persistence (TinyORM on QtSql) builds wherever Qt6 Core + Sql is found:
+# the Linux core jobs install Qt's SQL drivers, the macOS UI job has Qt, and the
+# persistence job adds a PostgreSQL 16 service. Windows has no Qt and skips it.
 name: ci
 
 on:
@@ -50,7 +54,9 @@ jobs:
 
       - name: Install tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
 
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
@@ -66,6 +72,45 @@ jobs:
 
       - name: Test
         run: ctest --preset dev --parallel 4
+
+  persistence:
+    name: persistence (linux-gcc, postgres-16)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pychron
+          POSTGRES_PASSWORD: pychron
+          POSTGRES_DB: pychron_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pychron"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      CC: gcc-14
+      CXX: g++-14
+      PYCHRON_TEST_PG_URL: postgresql://pychron:pychron@localhost:5432/pychron_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generated SQLite DDL is up to date
+        run: python3 tools/ddl_sqlite.py --check
+
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
+
+      - name: Configure
+        run: cmake --preset dev -G Ninja
+
+      - name: Build
+        run: cmake --build --preset dev --parallel --target pychron_persistence_tests
+
+      - name: Test (SQLite and PostgreSQL)
+        run: build/dev/tests/persistence/pychron_persistence_tests
 
   windows:
     name: core (windows-msvc)

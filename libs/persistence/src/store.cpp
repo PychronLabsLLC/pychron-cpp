@@ -1,0 +1,319 @@
+#include "pychron/persistence/store.hpp"
+
+#include <cstdio>
+
+#include "migrate.hpp"
+#include "sql/statements.hpp"
+#include "store_impl.hpp"
+
+namespace pychron::persistence {
+
+std::string make_runid(const std::string& identifier, int aliquot, int increment) {
+  char buf[16];
+  std::snprintf(buf, sizeof buf, "%02d", aliquot);
+  std::string out = identifier + "-" + buf;
+  if (increment >= 0) {
+    // 0 -> A, 25 -> Z, 26 -> AA (legacy alphas()).
+    std::string letters;
+    for (int n = increment + 1; n > 0; n = (n - 1) / 26) letters.insert(letters.begin(), static_cast<char>('A' + (n - 1) % 26));
+    out += letters;
+  }
+  return out;
+}
+
+namespace detail {
+namespace {
+
+QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
+
+AnalysisSummary summary_from(const Row& r) {
+  AnalysisSummary s;
+  s.uuid = to_uuid(r.value("uuid"));
+  s.runid = to_std(r.value("runid_text"));
+  s.identifier = to_std(r.value("identifier"));
+  s.aliquot = r.value("aliquot").toInt();
+  s.increment = r.value("increment").toInt();
+  s.provisional = r.value("provisional").toBool();
+  s.analysis_type = to_std(r.value("analysis_type"));
+  s.timestamp = to_time(r.value("ts"));
+  s.mass_spectrometer = to_std(r.value("mass_spectrometer"));
+  s.signals_state = to_std(r.value("signals_state"));
+  return s;
+}
+
+class TinyStore final : public IStore {
+ public:
+  explicit TinyStore(std::unique_ptr<Db> db) : db_(std::move(db)) {}
+
+  Dialect dialect() const noexcept override { return db_->dialect(); }
+
+  Result<std::vector<AppliedMigration>> schema_status() override { return migrate(*db_, false); }
+
+  Result<std::unique_ptr<IUnitOfWork>> begin(const Actor& actor) override {
+    if (actor.user.is_nil() || actor.client.is_nil()) return fail(ErrorKind::Protocol, "actor needs a user and a client");
+    return make_unit_of_work(*db_, actor);
+  }
+
+  // ------------------------------------------------------------ catalog
+
+  Result<Uuid> register_client(const ClientRegistration& reg) override {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    auto existing = db_->select_one(sql::kClientByHost, {qv(reg.hostname), qv(reg.role)});
+    if (!existing) return fail(existing.error());
+    if (*existing) return to_uuid((*existing)->value("uuid"));
+    const Uuid uuid = Uuid::v7();
+    Row row;
+    row["uuid"] = qv(uuid);
+    row["hostname"] = qv(reg.hostname);
+    row["role"] = qv(reg.role);
+    row["mass_spectrometer_uuid"] = qv(reg.mass_spectrometer);
+    row["software_version"] = qv(reg.software_version);
+    row["created_utc"] = qv(UtcTime::now());
+    if (auto r = db_->insert("client", row); !r) return fail(r.error());
+    const std::string detail = json_created({{"hostname", reg.hostname}, {"role", reg.role}});
+    return finish_catalog(tx, uuid, {ChangeEntityRow{QStringLiteral("client"), uuid, QStringLiteral("insert"), detail}});
+  }
+
+  Result<Uuid> ensure_user(Uuid client, const std::string& name) override {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    std::vector<ChangeEntityRow> created;
+    auto uuid = ensure_user_row(*db_, name, created);
+    if (!uuid) return fail(uuid.error());
+    if (created.empty()) return *uuid;
+    return finish_catalog(tx, client, created, *uuid);
+  }
+
+  Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) override {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    const Uuid uuid = Uuid::v7();
+    Row row;
+    row["uuid"] = qv(uuid);
+    row["name"] = qv(spec.name);
+    row["kind"] = qv(spec.kind);
+    row["code"] = qv(spec.code);
+    row["created_utc"] = qv(UtcTime::now());
+    if (auto r = db_->insert("mass_spectrometer", row); !r) return fail(r.error());
+    const std::string detail = json_created({{"name", spec.name}, {"kind", spec.kind}, {"code", spec.code}});
+    return finish_catalog(tx, client,
+                          {ChangeEntityRow{QStringLiteral("mass_spectrometer"), uuid, QStringLiteral("insert"), detail}},
+                          uuid);
+  }
+
+  Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) override {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    const Uuid uuid = Uuid::v7();
+    Row row;
+    row["uuid"] = qv(uuid);
+    row["identifier"] = qv(spec.identifier);
+    row["kind"] = qv(spec.kind);
+    row["analysis_type"] = qv(spec.analysis_type);
+    row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
+    row["created_utc"] = qv(UtcTime::now());
+    if (auto r = db_->insert("identifier", row); !r) return fail(r.error());
+    const std::string detail =
+        json_created({{"identifier", spec.identifier}, {"kind", spec.kind}, {"analysis_type", spec.analysis_type}});
+    return finish_catalog(tx, client,
+                          {ChangeEntityRow{QStringLiteral("identifier"), uuid, QStringLiteral("insert"), detail}}, uuid);
+  }
+
+  // ------------------------------------------------------------ ingest
+
+  Result<IngestAck> ingest(const IngestItem& item) override { return ingest_item(*db_, item); }
+
+  // ------------------------------------------------------------ reads
+
+  Result<std::optional<Uuid>> head(Uuid subject, Kind kind) override {
+    auto row = db_->select_one(sql::kSelectHead, {qv(subject), qstr(to_string(kind))});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<Uuid>{};
+    return std::optional<Uuid>{to_uuid((*row)->value("revision_uuid"))};
+  }
+
+  Result<std::vector<HeadInfo>> heads(Uuid subject) override {
+    auto rows = db_->select(sql::kSelectHeads, {qv(subject)});
+    if (!rows) return fail(rows.error());
+    std::vector<HeadInfo> out;
+    for (const auto& r : *rows) {
+      const auto kind = parse_kind(to_std(r.value("kind")));
+      if (!kind) return fail(ErrorKind::Protocol, "unknown head kind '" + to_std(r.value("kind")) + "'");
+      out.push_back(HeadInfo{subject, *kind, to_uuid(r.value("revision_uuid")), r.value("head_version").toInt()});
+    }
+    return out;
+  }
+
+  Result<std::vector<RevisionInfo>> history(Uuid subject, Kind kind) override {
+    auto rows = db_->select(sql::kHistory.arg(sql::ts(dialect(), QStringLiteral("c.created_utc"))),
+                            {qv(subject), qstr(to_string(kind))});
+    if (!rows) return fail(rows.error());
+    std::vector<RevisionInfo> out;
+    for (const auto& r : *rows) {
+      RevisionInfo info;
+      info.uuid = to_uuid(r.value("uuid"));
+      info.subject = subject;
+      info.kind = kind;
+      info.parent = opt_uuid(r.value("parent_uuid"));
+      info.changeset.uuid = to_uuid(r.value("cs_uuid"));
+      info.changeset.kind = parse_changeset_kind(to_std(r.value("cs_kind"))).value_or(ChangesetKind::Reduction);
+      info.changeset.author_user = to_uuid(r.value("author_user_uuid"));
+      info.changeset.client = to_uuid(r.value("client_uuid"));
+      info.changeset.created = to_time(r.value("cs_created"));
+      info.changeset.message = to_std(r.value("message"));
+      info.change_seq = r.value("change_seq").toLongLong();
+      out.push_back(std::move(info));
+    }
+    return out;
+  }
+
+  Result<std::optional<RevisionPayload>> load_payload(Uuid revision) override {
+    auto row = db_->select_one(sql::kRevisionKind, {qv(revision)});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<RevisionPayload>{};
+    const auto kind = parse_kind(to_std((*row)->value("kind")));
+    if (!kind) return fail(ErrorKind::Protocol, "unknown revision kind");
+    auto payload = read_payload(*db_, revision, *kind);
+    if (!payload) return fail(payload.error());
+    return std::optional<RevisionPayload>{std::move(*payload)};
+  }
+
+  Result<std::optional<AnalysisView>> load_analysis(Uuid analysis) override {
+    auto row = db_->select_one(summary_select() + QStringLiteral(" WHERE a.uuid = ?"), {qv(analysis)});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<AnalysisView>{};
+    AnalysisView view;
+    view.summary = summary_from(**row);
+    auto hs = heads(analysis);
+    if (!hs) return fail(hs.error());
+    view.heads = std::move(*hs);
+    for (const auto& h : view.heads) {
+      auto payload = read_payload(*db_, h.revision, h.kind);
+      if (!payload) return fail(payload.error());
+      view.payloads.emplace(h.kind, std::move(*payload));
+    }
+    return std::optional<AnalysisView>{std::move(view)};
+  }
+
+  Result<std::vector<AnalysisSummary>> find_analyses(const AnalysisQuery& q) override {
+    QStringList where;
+    Bindings b;
+    if (q.identifier) {
+      where << QStringLiteral("i.identifier = ?");
+      b << qv(*q.identifier);
+    }
+    if (q.mass_spectrometer) {
+      where << QStringLiteral("m.name = ?");
+      b << qv(*q.mass_spectrometer);
+    }
+    if (q.analysis_type) {
+      where << QStringLiteral("a.analysis_type = ?");
+      b << qv(*q.analysis_type);
+    }
+    // ISO-8601 UTC strings compare correctly as text on SQLite and as
+    // timestamptz literals on PostgreSQL.
+    if (q.from) {
+      where << QStringLiteral("a.timestamp_utc >= ?");
+      b << qv(*q.from);
+    }
+    if (q.to) {
+      where << QStringLiteral("a.timestamp_utc <= ?");
+      b << qv(*q.to);
+    }
+    QString sql = summary_select();
+    if (!where.isEmpty()) sql += QStringLiteral(" WHERE ") + where.join(QStringLiteral(" AND "));
+    sql += QStringLiteral(" ORDER BY a.timestamp_utc, a.uuid LIMIT ?");
+    b << q.limit;
+    auto rows = db_->select(sql, b);
+    if (!rows) return fail(rows.error());
+    std::vector<AnalysisSummary> out;
+    for (const auto& r : *rows) out.push_back(summary_from(r));
+    return out;
+  }
+
+  Result<ChangePage> changes_since(ChangeSeq cursor, int limit) override {
+    if (limit <= 0) return fail(ErrorKind::Protocol, "changes_since: limit must be positive");
+    auto rows = db_->select(sql::kChangesSince.arg(sql::ts(dialect(), QStringLiteral("committed_utc"))),
+                            {static_cast<qlonglong>(cursor), limit + 1});
+    if (!rows) return fail(rows.error());
+    ChangePage page;
+    page.cursor = cursor;
+    page.more = static_cast<int>(rows->size()) > limit;
+    if (page.more) rows->pop_back();
+    for (const auto& r : *rows) {
+      ChangeEntry e;
+      e.seq = r.value("change_seq").toLongLong();
+      e.committed = to_time(r.value("committed"));
+      e.changeset = opt_uuid(r.value("changeset_uuid"));
+      e.client = to_uuid(r.value("client_uuid"));
+      e.kind = to_std(r.value("kind"));
+      page.entries.push_back(std::move(e));
+    }
+    if (page.entries.empty()) return page;
+    page.cursor = page.entries.back().seq;
+    auto ents = db_->select(sql::kChangeEntitiesBetween,
+                            {static_cast<qlonglong>(cursor), static_cast<qlonglong>(page.cursor)});
+    if (!ents) return fail(ents.error());
+    std::size_t i = 0;
+    for (const auto& r : *ents) {
+      const ChangeSeq seq = r.value("change_seq").toLongLong();
+      while (i < page.entries.size() && page.entries[i].seq < seq) ++i;
+      if (i == page.entries.size()) break;
+      page.entries[i].entities.push_back(
+          ChangeEntity{to_std(r.value("entity_type")), to_uuid(r.value("entity_uuid")), to_std(r.value("op"))});
+    }
+    return page;
+  }
+
+  Db& db() { return *db_; }
+
+ private:
+  QString summary_select() const {
+    return sql::kAnalysisSummarySelect.arg(sql::ts(dialect(), QStringLiteral("a.timestamp_utc")));
+  }
+
+  Result<Uuid> finish_catalog(WriteTx& tx, Uuid client, const std::vector<ChangeEntityRow>& entities,
+                              std::optional<Uuid> result = std::nullopt) {
+    auto seq = take_change(*db_, QStringLiteral("catalog"), std::nullopt, client, entities);
+    if (!seq) return fail(seq.error());
+    if (auto r = tx.commit(); !r) return fail(r.error());
+    return result.value_or(entities.front().entity);
+  }
+
+  std::unique_ptr<Db> db_;
+};
+
+Result<void> check_sqlite(Db& db, bool file_backed) {
+  auto version = db.select_one(sql::kSqliteVersion);
+  if (!version) return fail(version.error());
+  int major = 0, minor = 0;
+  std::sscanf(to_std((*version)->value("v")).c_str(), "%d.%d", &major, &minor);
+  if (major < 3 || (major == 3 && minor < 37))
+    return fail(ErrorKind::Config, "SQLite >= 3.37 is required (STRICT tables); found " + to_std((*version)->value("v")));
+  // Asserted, not assumed (section 11.3): FK enforcement is per connection.
+  if (auto r = db.unprepared(sql::kSqliteForeignKeysOn); !r) return fail(r.error());
+  auto fk = db.select_one(sql::kSqliteForeignKeys);
+  if (!fk) return fail(fk.error());
+  if (!*fk || (*fk)->value("foreign_keys").toInt() != 1)
+    return fail(ErrorKind::Config, "SQLite foreign key enforcement is off");
+  if (file_backed) {
+    if (auto r = db.select(sql::kSqliteWal); !r) return fail(r.error());
+    if (auto r = db.unprepared(sql::kSqliteSynchronousFull); !r) return fail(r.error());
+  }
+  return {};
+}
+
+}  // namespace
+}  // namespace detail
+
+Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config) {
+  auto db = detail::Db::open(config);
+  if (!db) return fail(db.error());
+  if ((*db)->dialect() == Dialect::Sqlite)
+    if (auto r = detail::check_sqlite(**db, config.url != "sqlite::memory:"); !r) return fail(r.error());
+  if (auto r = detail::migrate(**db, config.migrate); !r) return fail(r.error());
+  return std::unique_ptr<IStore>(std::make_unique<detail::TinyStore>(std::move(*db)));
+}
+
+}  // namespace pychron::persistence
