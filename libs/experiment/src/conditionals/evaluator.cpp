@@ -79,6 +79,11 @@ Result<double> evaluate(const Expr& e, const MetricContext& ctx, const Variables
         if (auto v = ctx.elapsed()) return *v;
         return eval_fail("elapsed time unavailable");
       }
+      if (e.func == Func::Abs) {
+        auto v = evaluate(*e.children[0], ctx, vars);
+        if (!v) return v;
+        return std::fabs(*v);
+      }
       if (e.func == Func::Between) {
         double v[3];
         for (int i = 0; i < 3; ++i) {
@@ -133,6 +138,25 @@ Result<double> evaluate(const Expr& e, const MetricContext& ctx, const Variables
       auto x = evaluate(*e.children[0], ctx, vars);
       if (!x) return x;
       return *x == 0 ? 1.0 : 0.0;
+    }
+    case K::Neg: {
+      auto x = evaluate(*e.children[0], ctx, vars);
+      if (!x) return x;
+      return -*x;
+    }
+    case K::Add:
+    case K::Sub:
+    case K::Mul:
+    case K::Div: {
+      auto l = evaluate(*e.children[0], ctx, vars);
+      if (!l) return l;
+      auto r = evaluate(*e.children[1], ctx, vars);
+      if (!r) return r;
+      if (e.kind == K::Add) return *l + *r;
+      if (e.kind == K::Sub) return *l - *r;
+      if (e.kind == K::Mul) return *l * *r;
+      if (*r == 0) return eval_fail("division by zero");
+      return *l / *r;
     }
   }
   return eval_fail("bad expression");
