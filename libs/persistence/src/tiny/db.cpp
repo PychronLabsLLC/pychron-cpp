@@ -6,6 +6,7 @@
 #include <orm/exceptions/sqlerror.hpp>
 #include <orm/query/querybuilder.hpp>
 
+#include <QCoreApplication>
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QUrl>
@@ -29,6 +30,22 @@ std::shared_ptr<Orm::DatabaseManager> manager() {
   } catch (const std::exception&) {
     return Orm::DatabaseManager::create();
   }
+}
+
+// QtSql loads its drivers through the plugin loader, which needs a
+// QCoreApplication: without one, newer Qt (6.5+) hands back a driverless
+// QSqlDatabase and opening it dereferences null. Hosts that are not Qt
+// applications (elctl, the tests) get a private instance here; a Qt host's
+// own instance is left alone. Never destroyed: connections may outlive main().
+void ensure_qt_application() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    if (QCoreApplication::instance() != nullptr) return;
+    static int argc = 1;
+    static char name[] = "pychron";
+    static char* argv[] = {name, nullptr};
+    new QCoreApplication(argc, argv);
+  });
 }
 
 QString next_connection_name() {
@@ -124,6 +141,7 @@ Result<std::unique_ptr<Db>> Db::open(const StoreConfig& config) {
   Dialect dialect = Dialect::Sqlite;
   auto cfg = parse_config(config, dialect);
   if (!cfg) return fail(cfg.error());
+  ensure_qt_application();
   const QString name = next_connection_name();
   auto added = guarded(dialect, [&] { manager()->addConnection(*cfg, name); });
   if (!added) return fail(added.error());
