@@ -3,7 +3,9 @@
 #include <filesystem>
 #include <fstream>
 
+#include "pychron/devices/connectable.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
+#include "pychron/transport/sim_transport.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "spectrometer_fakes.hpp"
 
@@ -149,4 +151,169 @@ TEST(SpectrometerAssembler, TraceDirCreationFailureIsIoError) {
   std::filesystem::remove(blocker);
   ASSERT_FALSE(spec.has_value());
   EXPECT_NE(spec.error().what.find("cannot create trace directory"), std::string::npos) << spec.error().what;
+}
+
+// ---- opening and connecting ---------------------------------------------------
+
+namespace {
+
+using Events = std::vector<std::string>;
+
+// Forwards to a SimTransport and records open/close in `events`.
+class ProbeTransport final : public Transport {
+ public:
+  ProbeTransport(std::string name, Events& events)
+      : name_(std::move(name)), events_(events), inner_(SimTransport::hooked([](const Bytes&) { return Bytes{}; })) {}
+
+  const std::string& name() const override { return name_; }
+  Result<void> open() override {
+    auto r = inner_->open();
+    events_.push_back((r ? "open:" : "open-failed:") + name_);
+    return r;
+  }
+  void close() override {
+    if (is_open()) events_.push_back("close:" + name_);
+    inner_->close();
+  }
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration t = kDefaultTimeout) override {
+    return inner_->exchange(std::move(tx), std::move(rs), t);
+  }
+  Result<void> write(Bytes tx) override { return inner_->write(std::move(tx)); }
+  Result<Bytes> read(ReadSpec rs, Duration t = kDefaultTimeout) override { return inner_->read(std::move(rs), t); }
+  Result<void> transaction(std::function<Result<void>()> body) override {
+    return inner_->transaction(std::move(body));
+  }
+  Health health() const override { return inner_->health(); }
+
+  bool is_open() const { return health().state != HealthState::Down; }
+  SimTransport& sim() { return *inner_; }
+
+ private:
+  std::string name_;
+  Events& events_;
+  std::unique_ptr<SimTransport> inner_;
+};
+
+// Role fake that also connects, recording whether its transport was open.
+template <class Role>
+struct ConnectingDriver : Device, Role, IConnectable {
+  template <class... A>
+  ConnectingDriver(std::string name, ProbeTransport& transport, Events& events, A&&... a)
+      : Device(name), Role(std::forward<A>(a)...), transport_(transport), events_(events) {}
+  Result<void> connect() override {
+    events_.push_back(std::string(transport_.is_open() ? "connect:" : "connect-closed:") + name());
+    if (fail_connect) return fail(ErrorKind::Timeout, "no answer");
+    return {};
+  }
+  ProbeTransport& transport_;
+  Events& events_;
+  bool fail_connect = false;
+};
+
+struct Rig {
+  Env env;
+  Events events;
+  CallLog log;
+  std::map<std::string, ProbeTransport*> probes;  // valid until the spectrometer is gone
+  std::string fail_connect_driver;
+  std::string fail_open_transport;
+  bool connecting = true;
+
+  AssemblerOptions options() {
+    AssemblerOptions o;
+    o.make_transport = [this](const cfg::TransportConfig& tc,
+                              const SpectrometerContext&) -> Result<std::unique_ptr<Transport>> {
+      auto t = std::make_unique<ProbeTransport>(tc.name, events);
+      if (tc.name == fail_open_transport) t->sim().fail_open_next();
+      probes[tc.name] = t.get();
+      return std::unique_ptr<Transport>(std::move(t));
+    };
+    o.make_driver = [this](const cfg::DriverConfig& dc, Transport& t,
+                           const SpectrometerContext&) -> Result<std::unique_ptr<Device>> {
+      auto& probe = static_cast<ProbeTransport&>(t);
+      std::unique_ptr<Device> d;
+      auto make = [&](auto driver) {
+        driver->fail_connect = dc.name == fail_connect_driver;
+        d = std::move(driver);
+      };
+      if (dc.name == "magnet_dac") {
+        make(std::make_unique<ConnectingDriver<FakePositioner>>(dc.name, probe, events, log));
+      } else if (dc.name == "faradays") {
+        make(std::make_unique<ConnectingDriver<FakeAcquirer>>(dc.name, probe, events,
+                                                              std::vector<ChannelId>{"AX", "H1", "L1"}));
+      } else if (dc.name == "multiplier") {
+        make(std::make_unique<ConnectingDriver<FakeAcquirer>>(dc.name, probe, events,
+                                                              std::vector<ChannelId>{"EM"}));
+      } else {
+        make(std::make_unique<ConnectingDriver<FakeSource>>(dc.name, probe, events));
+      }
+      return d;
+    };
+    return o;
+  }
+};
+
+}  // namespace
+
+TEST(SpectrometerAssembler, AssembleOpensEveryTransport) {
+  Rig rig;
+  auto spec = SpectrometerAssembler::assemble(load("spectrometer.sim-legacy.toml"), rig.env.ctx(), rig.options());
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  ASSERT_EQ(rig.probes.size(), 4U);
+  for (const auto& [name, probe] : rig.probes) {
+    EXPECT_EQ(probe->health().state, HealthState::Connected) << name;
+  }
+  // Config (map) order.
+  EXPECT_EQ((Events{rig.events.begin(), rig.events.begin() + 4}),
+            (Events{"open:adc", "open:counter", "open:dac", "open:hv"}));
+}
+
+TEST(SpectrometerAssembler, OpenFailureClosesOpenedTransportsAndReturnsError) {
+  Rig rig;
+  rig.fail_open_transport = "counter";  // second in config order
+  auto spec = SpectrometerAssembler::assemble(load("spectrometer.sim-legacy.toml"), rig.env.ctx(), rig.options());
+  ASSERT_FALSE(spec.has_value());
+  EXPECT_EQ(spec.error().kind, ErrorKind::Io);
+  EXPECT_EQ(spec.error().device, "counter");
+  EXPECT_EQ(rig.events, (Events{"open:adc", "open-failed:counter", "close:adc"}));
+}
+
+TEST(SpectrometerAssembler, ConnectCalledAfterOpenInDriverOrder) {
+  Rig rig;
+  auto spec = SpectrometerAssembler::assemble(load("spectrometer.sim-legacy.toml"), rig.env.ctx(), rig.options());
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  // Every transport opens before the first connect; drivers connect in config order,
+  // each seeing its transport open.
+  EXPECT_EQ(rig.events, (Events{"open:adc", "open:counter", "open:dac", "open:hv", "connect:faradays",
+                                "connect:hv_supply", "connect:magnet_dac", "connect:multiplier"}));
+}
+
+TEST(SpectrometerAssembler, ConnectFailureClosesTransportsAndReturnsError) {
+  Rig rig;
+  rig.fail_connect_driver = "hv_supply";
+  auto spec = SpectrometerAssembler::assemble(load("spectrometer.sim-legacy.toml"), rig.env.ctx(), rig.options());
+  ASSERT_FALSE(spec.has_value());
+  EXPECT_EQ(spec.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(spec.error().device, "hv_supply");
+  const Events tail(rig.events.begin() + 4, rig.events.end());
+  EXPECT_EQ(tail, (Events{"connect:faradays", "connect:hv_supply", "close:adc", "close:counter", "close:dac",
+                          "close:hv"}));
+}
+
+TEST(SpectrometerAssembler, DestructorClosesTransports) {
+  Rig rig;
+  auto spec = SpectrometerAssembler::assemble(load("spectrometer.sim-legacy.toml"), rig.env.ctx(), rig.options());
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  const auto before = rig.events.size();
+  spec->reset();
+  const Events closed(rig.events.begin() + before, rig.events.end());
+  EXPECT_EQ(closed, (Events{"close:adc", "close:counter", "close:dac", "close:hv"}));
+}
+
+TEST(SpectrometerAssembler, ExistingSimConfigsStillAssemble) {
+  for (const char* file : {"spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"}) {
+    Env env;
+    auto spec = SpectrometerAssembler::load(kDir / file, env.ctx());
+    ASSERT_TRUE(spec.has_value()) << file << ": " << spec.error().what;
+  }
 }

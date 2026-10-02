@@ -199,6 +199,8 @@ Spectrometer::Spectrometer(cfg::SpectrometerConfig config, MolecularWeights weig
 Spectrometer::~Spectrometer() {
   if (engine_) engine_->stop();
   engine_.reset();
+  // Stopped engine first: an in-flight poll may be using a transport.
+  for (auto& t : roles_.transports) t->close();
   adapters_.clear();
   roles_.devices.clear();
   roles_.transports.clear();
