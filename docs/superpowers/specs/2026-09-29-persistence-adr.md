@@ -148,10 +148,13 @@ the correct move for the Python codebase while it remains in service.
 
 ### 4.1 Store
 
-- Engine: SQLite for single-instrument and offline use; PostgreSQL for a
-  multi-instrument lab. Same schema, one access layer. MySQL is already a
-  hard requirement of the Python system, so requiring a server for the
-  multi-instrument case is not a regression.
+- Engine: PostgreSQL is always the shared lab database, including in a lab
+  with one spectrometer, because reduction and visualization clients on
+  other desktops must reach the data. SQLite is used only for the
+  acquisition outbox, the portable offline export, and tests (Amendment
+  2026-10-01). Same schema, one access layer. MySQL is already a hard
+  requirement of the Python system, so requiring a server is not a
+  regression.
 - Catalog tables carry over conceptually from `dvc_orm.py`: principal
   investigator, project, sample, material, irradiation, level, position,
   identifier, load, analysis, analysis group, user, mass spectrometer,
@@ -198,9 +201,14 @@ the correct move for the Python codebase while it remains in service.
 
 ### 4.4 Offline
 
-Offline work is a SQLite copy of the relevant projects, produced by the
-application, with local signal files. No git clone is required to read data
-offline, although a clone still works through the importer.
+Offline work is a SQLite export of the relevant projects, produced by the
+application from the PostgreSQL server, with the signal blobs included. No
+git clone is required to read data offline, although a clone still works
+through the importer. The export is never a shared lab database. It
+accepts edits, which upload later as changesets with compare-and-swap
+conflict reporting. An
+acquisition PC that loses the server keeps running from its local outbox
+(Amendment 2026-10-01).
 
 ## 5. Trade-offs and consequences
 
@@ -224,22 +232,25 @@ Harder:
 - Meta repo workflow. Editing flux or productions becomes a database edit
   that appears in the meta mirror on the next publish, rather than a commit
   to a shared repo.
-- Infrastructure. A multi-instrument lab needs PostgreSQL rather than MySQL.
-  Same class of dependency as today.
+- Infrastructure. Every lab needs a PostgreSQL server rather than MySQL (it
+  may run on the acquisition PC in a small lab). Same class of dependency
+  as today.
 
 Revisit later:
 
 - Signal blob format (DB blob vs Arrow files) once real volumes are measured.
 - Whether the mirrored JSON layout should be frozen as a versioned exchange
   format with a schema, independent of pychron.
-- Whether reference-data edits need a review or approval step before they
-  publish.
+- ~~Whether reference-data edits need a review or approval step before they
+  publish.~~ Decided 2026-10-01: no approval step and no separate role
+  (Amendment G).
 
 ## 6. Action items
 
 1. [ ] Accept or amend this ADR before the DVC phase begins.
 2. [ ] Write the schema spec: catalog, values, revision tables, reference
-       data, signal store. Immutable revisions first.
+       data, signal store. Immutable revisions first. Drafted as
+       `2026-10-01-dvc-schema-design.md` (Proposed).
 3. [ ] Build the importer against real NMGRLData repos and prove a full
        project round-trips into the database with identical derived values.
 4. [ ] Build the publisher and prove the exported repo is byte-comparable
@@ -248,3 +259,65 @@ Revisit later:
 6. [ ] Python pychron, in parallel and independent of the rewrite: apply
        option E (one commit per analysis, background push, meta repo out of
        the save path, remove `CurrentTbl`).
+
+## 7. Amendment 2026-10-01
+
+Decided by the owner. Where this section conflicts with sections 2-6, this
+section wins. Details are in `2026-10-01-dvc-schema-design.md`.
+
+A. **The engine split depends on how many machines touch the data, not how
+   many instruments the lab has.** Many labs have one spectrometer but share
+   data with reduction and visualization clients on other desktops, so data
+   must never be siloed on the acquisition computer. The shared lab
+   database is always a network-reachable PostgreSQL server, on a lab
+   server or on the acquisition PC in a small lab. Reduction and
+   visualization clients connect directly and are concurrent writers
+   (blanks, fits, tags, flux, interpreted ages) alongside acquisition. Every
+   revision carries a user and client identity, and head-pointer moves use
+   optimistic compare-and-swap.
+B. **Topology: PostgreSQL server plus a local durable outbox on the
+   acquisition PC.** Acquisition saves each analysis to a local SQLite
+   spool (WAL) in one local transaction. A background uploader pushes it to
+   the server with idempotency keys (client-generated UUIDv7 ids). A
+   network or server outage never blocks or fails a run. The operator sees
+   status, never a prompt. Aliquots are reserved per instrument in advance
+   (leases), with a flagged provisional fallback for runs added while
+   offline.
+C. **SQLite's role is limited** to the acquisition outbox/spool, the
+   portable offline export, and the test engine. It is never the shared lab
+   database. PostgreSQL is the only production shared engine. The DDL stays
+   portable to SQLite for those three uses.
+D. **Raw signal blobs must be reachable by every client.** They are stored
+   content-addressed in PostgreSQL (`bytea`) until a measured trigger
+   (database size, restore time or blob size) says otherwise. Blob uploads
+   are part of the outbox, and content addressing makes them idempotent.
+E. **Live visualization** uses an optional PostgreSQL `LISTEN`/`NOTIFY`
+   hint. The required mechanism is polling by a server-assigned monotonic
+   change cursor (`change_seq`, assigned in commit order), which is
+   distinct from client-generated ids.
+F. **Security and operations:** client database roles are acquisition
+   writer, reduction writer and read-only viewer, plus publisher and admin
+   service roles. TLS is required. Client and user identity go on every
+   changeset. The server is backed up by WAL archiving plus base backups.
+   The outbox lives on durable local disk with periodic snapshots.
+G. **Schema-spec review decisions** (recorded in the schema spec, section
+   13.2):
+   - Provisional renumbering of runs added during an outage is accepted.
+   - Aliquot gaps are accepted.
+   - The offline export accepts edits, uploaded later with CAS and a
+     conflict report.
+   - Reference-data edits need no lab-manager role and no approval step.
+     They remain revisioned and audited.
+   - Sensitivity and gains use legacy "latest" (no valid time). Analyses
+     still pin the revision used.
+   - Catalog edits are audited by the change log only, not revisioned.
+   - User identity is asserted by the application; there are no per-person
+     database logins.
+   - The round-trip fixture is `github.com/NMGRLData/MetaData`. A
+     project-repo fixture is still to be chosen.
+   - The importer brings in the full git history as revision chains.
+
+Superseded wording: section 4.1 (SQLite for single-instrument use), section
+4.4 (offline as the primary SQLite use) and section 5 "Infrastructure" have
+been edited to match. The experiment spec section 8.4 still says "SQLite
+for a single instrument" and is to be amended (schema spec action item 2).
