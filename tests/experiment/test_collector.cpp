@@ -237,7 +237,12 @@ TEST_F(CollectorTest, IsotopeOnTwoDetectorsResolvesToTheLatest) {
 TEST_F(CollectorTest, TripsAndTimingAreRecorded) {
   collector_.set_inlet_open(3);
   collector_.set_inlet_close(18);
-  collector_.add_trips({Trip{"t", ConditionalKind::Truncation, 9e5, 1, 2.0, {}}});
+  Trip trip;
+  trip.name = "t";
+  trip.value = 9e5;
+  trip.count = 1;
+  trip.ts = 2.0;
+  collector_.add_trips({trip});
   auto d = collector_.data();
   EXPECT_EQ(d.timing.epoch, t0_);
   EXPECT_EQ(*d.timing.inlet_open, 3);

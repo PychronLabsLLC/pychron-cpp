@@ -358,15 +358,20 @@ check = "Ar40 < $MIN"
   ASSERT_EQ(messages("pre").size(), 1u);
   EXPECT_NE(messages("pre")[0].find("pre-run"), std::string::npos);
   ASSERT_EQ(messages("var").size(), 1u);
-  for (const auto& x : d)
-    if (x.conditional == "var") EXPECT_FALSE(x.error);  // a warning
+  for (const auto& x : d) {
+    if (x.conditional == "var") {
+      EXPECT_FALSE(x.error);  // a warning
+    }
+  }
 
   cat.computed = true;
   d = validate_conditionals(*set, cat);
   EXPECT_EQ(messages("computed").size(), 1u);  // kcl still unavailable
 
   // An empty catalog checks no names: only kcl and the pre-run isotope remain.
-  d = validate_conditionals(*set, MetricCatalog{.computed = true});
+  MetricCatalog unchecked;
+  unchecked.computed = true;
+  d = validate_conditionals(*set, unchecked);
   EXPECT_EQ(d.size(), 2u) << testing::PrintToString(d.size());
 }
 

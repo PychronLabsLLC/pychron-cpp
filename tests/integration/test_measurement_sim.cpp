@@ -48,6 +48,14 @@ std::string read_file(const std::filesystem::path& p) {
   return ss.str();
 }
 
+MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, ConditionalSet conditionals = {}) {
+  MeasurementInputs in;
+  in.plan = std::move(p);
+  in.conditionals = std::move(conditionals);
+  in.run_id = std::move(run_id);
+  return in;
+}
+
 class Pump {
  public:
   Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
@@ -220,7 +228,7 @@ TEST_F(MeasurementSim, MeasuresThroughTheRealFacades) {
   int overlap = 0;
   auto sub = bus_.subscribe<OverlapReady>([&](const OverlapReady&) { ++overlap; });
   EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, nullptr};
-  MeasurementEngine engine(ctx, MeasurementInputs{loaded->plan, {}, {}, "sim-1"});
+  MeasurementEngine engine(ctx, inputs(loaded->plan, "sim-1"));
   scripting::CancelToken token;
   auto r = engine.run(token);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
@@ -273,7 +281,7 @@ TEST_F(MeasurementSim, CancelMidMeasurementLeavesTheLineSafe) {
   SpectrometerPort port(*spec_);
   ExtractionLineValves valves(*line_);
   EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, nullptr};
-  MeasurementEngine engine(ctx, MeasurementInputs{loaded->plan, {}, {}, "sim-2"});
+  MeasurementEngine engine(ctx, inputs(loaded->plan, "sim-2"));
   scripting::CancelToken token;
   int seen = 0;
   auto sub = bus_.subscribe<collect::SeriesUpdated>([&](const collect::SeriesUpdated& e) {
@@ -330,7 +338,7 @@ TEST_F(MeasurementSim, LabConditionalsActOnLiveData) {
   ExtractionLineValves valves(*line_);
   InstrumentMetrics instrument(spec_.get(), line_.get());
   EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, &instrument};
-  MeasurementInputs in{loaded->plan, *set, {}, "sim-3"};
+  MeasurementInputs in = inputs(loaded->plan, "sim-3", *set);
   in.analysis_type = "unknown";
   MeasurementEngine engine(ctx, in);
   scripting::CancelToken token;

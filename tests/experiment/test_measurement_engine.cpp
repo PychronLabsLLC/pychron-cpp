@@ -165,6 +165,21 @@ plan::MeasurementPlan multicollect(int counts = 10, int cycles = 1) {
   return p;
 }
 
+ActionSpec action(ActionSpec::Type type, std::string name = {}) {
+  ActionSpec a;
+  a.type = type;
+  a.name = std::move(name);
+  return a;
+}
+
+MeasurementInputs inputs(plan::MeasurementPlan p, ConditionalSet conditionals = {}) {
+  MeasurementInputs in;
+  in.plan = std::move(p);
+  in.conditionals = std::move(conditionals);
+  in.run_id = "run-1";
+  return in;
+}
+
 Conditional conditional(ConditionalKind kind, std::string name, std::string check, int start = 0,
                         ActionSpec action = {}) {
   Conditional c;
@@ -186,7 +201,7 @@ class EngineTest : public ::testing::Test {
   EngineTest() { valves_.t0 = t0_; }
 
   MeasurementResult run(plan::MeasurementPlan p, ConditionalSet conditionals = {}, EngineOptions options = {}) {
-    MeasurementInputs in{std::move(p), std::move(conditionals), {}, "run-1"};
+    MeasurementInputs in = inputs(std::move(p), std::move(conditionals));
     if (!options.sleep) options.sleep = [this](pychron::Duration d) { clock_.advance(d); };
     engine_ = std::make_unique<MeasurementEngine>(context(), std::move(in), std::move(options));
     return engine_->run(token_);
@@ -425,17 +440,17 @@ TEST_F(EngineTest, ActionsAndModifications) {
   p.hook = "h.py";
   ConditionalSet set;
   set.items.push_back(conditional(ConditionalKind::Modification, "skip", "Ar40.cur > 0", 2,
-                                  ActionSpec{ActionSpec::Type::SkipAliquot}));
+                                  action(ActionSpec::Type::SkipAliquot)));
   // First trip wins: a resuming action that stays true would starve the
   // actions after it, so this one is true at reading 4 only.
   set.items.push_back(conditional(ConditionalKind::Action, "note", "count(Ar40) == 4", 3,
-                                  ActionSpec{ActionSpec::Type::Notify}));
+                                  action(ActionSpec::Type::Notify)));
   set.items.back().resume = true;
   set.items.push_back(conditional(ConditionalKind::Action, "hook", "count(Ar40) == 5", 4,
-                                  ActionSpec{ActionSpec::Type::RunHook, false, "on_big"}));
+                                  action(ActionSpec::Type::RunHook, "on_big")));
   set.items.back().resume = true;
   set.items.push_back(conditional(ConditionalKind::Action, "cut", "Ar40.cur > 0", 6,
-                                  ActionSpec{ActionSpec::Type::Truncate}));
+                                  action(ActionSpec::Type::Truncate)));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
   ASSERT_EQ(r.modifications.size(), 1u);
@@ -457,7 +472,7 @@ TEST_F(EngineTest, NonResumingActionEndsMainWithoutTruncating) {
   p.baseline.counts = 30;
   ConditionalSet set;
   set.items.push_back(conditional(ConditionalKind::Action, "note", "Ar40.cur > 0", 3,
-                                  ActionSpec{ActionSpec::Type::Notify}));
+                                  action(ActionSpec::Type::Notify)));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Completed);
   EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 4);  // later cycles skipped
@@ -472,7 +487,7 @@ TEST_F(EngineTest, ModificationFlagsActInRun) {
   p.baseline.counts = 20;
   ConditionalSet set;
   set.items.push_back(conditional(ConditionalKind::Modification, "low", "Ar40.cur > 0", 4,
-                                  ActionSpec{ActionSpec::Type::RunBlank}));
+                                  action(ActionSpec::Type::RunBlank)));
   set.items.back().truncate = true;
   set.items.back().abbreviated_count_ratio = 0.5;
   auto r = run(p, set);
@@ -495,7 +510,7 @@ TEST_F(EngineTest, AnalysisTypeFiltersConditionals) {
   ConditionalSet set;
   set.items.push_back(conditional(ConditionalKind::Termination, "blanks_only", "Ar40.cur > 0", 2));
   set.items.back().analysis_types = {"blank"};
-  MeasurementInputs in{p, set, {}, "run-1"};
+  MeasurementInputs in = inputs(p, set);
   in.analysis_type = "unknown";
   EngineOptions options;
   options.sleep = [this](pychron::Duration d) { clock_.advance(d); };
@@ -675,7 +690,7 @@ TEST_F(EngineTest, ValidateNamesMissingServices) {
   p.peak_center.after = true;
   p.hook = "h.py";
   EngineContext ctx{spec_, clock_};
-  MeasurementEngine e(ctx, MeasurementInputs{p, {}, {}, "r"});
+  MeasurementEngine e(ctx, inputs(p));
   auto v = e.validate();
   ASSERT_FALSE(v);
   EXPECT_NE(v.error().what.find("valve service"), std::string::npos);

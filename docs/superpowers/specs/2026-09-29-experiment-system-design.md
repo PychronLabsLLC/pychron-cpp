@@ -393,6 +393,10 @@ decorator-based dry-run re-execution, vendor-specific script subclasses.
 
 ## 7. Conditionals
 
+The full port (legacy behaviour inventory, decisions, metrics, runtime,
+record provenance, importer) is specified in
+`2026-10-02-conditionals-design.md`; this section is the original outline.
+
 Grammar preserved, `eval` removed. `libs/experiment/conditionals/` parses
 each check once into an AST evaluated against a typed `MetricContext`.
 
