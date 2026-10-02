@@ -15,6 +15,10 @@
 # before any magnet move: detector protection on a move is planned from the
 # field table, so a wrong table can leave a detector unprotected while a
 # major beam crosses it.
+#
+# NO SOURCE RAMPING: it is not implemented. HV and trap current change in a
+# single step to the value written; nothing limits the rate of change. Step
+# large changes by hand.
 
 [system]
 name = "qtegra"
@@ -54,7 +58,7 @@ af_demag = { enabled = false, period_s = 0.5, duration_s = 10, start_amplitude =
 [source]
 driver = "qtegra"
 nominal_hv = 4500  # SIMULATION PLACEHOLDER
-ramp = { TrapCurrent = 10.0, HV = 200.0 }
+# No `ramp`: source ramping is not implemented (see the header).
 
 [acquisition]
 acquirers = ["qtegra"]

@@ -109,13 +109,19 @@ them work.
    both `limit_min` / `limit_max` under `[drivers.qtegra]` (enforced by the
    driver) and `[magnet].limits` (enforced by the facade; the stricter bound
    wins).
+
+   Source ramping is not implemented: HV and trap current change in a single
+   step, exactly as written (`SetHV v`, `SetParameter Trap Current Set,v`).
+   The Qtegra example therefore has no `ramp` under `[source]`; adding one
+   changes nothing. Step large changes by hand.
 2. Set `host` and `port` of the PC running Qtegra under `[transports.qtegra]`
    in the `.local.toml` (it may override only `host`, `port`, `baud` and
    `timeout_ms`).
 3. Set `trace = true` under `[transports.qtegra]` in the main config. The
    wire is recorded to `traces/qtegra.trace` under the directory the app is
    started from (`traces/<transport name>.trace`; the directory is created on
-   demand).
+   demand). The trace file is truncated every time the app starts, so copy a
+   capture you want to keep somewhere else before restarting.
 4. Run the app on that config and open Window > Spectrometer:
 
    ```bash

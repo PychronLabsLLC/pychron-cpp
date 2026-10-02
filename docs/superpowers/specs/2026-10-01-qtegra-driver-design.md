@@ -123,6 +123,13 @@ then waits until the count is zero, then calls each acquirer's `stop()`. A
 `start()` after `stop()` therefore never overlaps a `next()` from the previous
 run. The wait is bounded by the acquirer's own transport timeout.
 
+`start()` is serialised with itself and with `stop()`: a second `start()`
+waits for the first and then fails with "already running" (nothing is
+configured or registered twice), and a `stop()` that arrives while a
+`start()` is in progress waits for it and then stops it. Neither waits when
+called from inside a poll while another thread's `start()` or `stop()` is in
+progress: `start()` fails with `Config`, `stop()` returns.
+
 ## 5. `thermo_qtegra` driver
 
 `libs/devices/include/pychron/devices/spectrometer/thermo_qtegra.hpp`, `.cpp`;
@@ -139,7 +146,7 @@ All wire text comes from `pychron::codec::qtegra`.
 | `channels` | string array | `H2 H1 AX L1 L2 CDD` | detector names as Qtegra reports them in `GetData` |
 | `limit_min`, `limit_max` | float | 0, 10 | magnet DAC limits (volts) |
 | `terminator` | string | `cr` | write terminator: `cr`, `lf`, `crlf` |
-| `settle_periods` | float | 2.0 | integration periods to wait after an integration change |
+| `settle_periods` | float | 2.0 | integration periods to wait after an integration change; 0..100, anything else is `Config` at `create()` |
 
 ### 5.2 Behaviour
 
@@ -160,6 +167,18 @@ All wire text comes from `pychron::codec::qtegra`.
   nothing read or written, so both layers enforce limits. `read()` is
   `GetMagnetDAC`. `moving()` is `GetMagnetMoving` decoded with the codec's bool
   vocabulary.
+- **Magnet move (facade and move protocol, vendor-blind):** detector
+  protection for a move below the beam-blank threshold is planned from the
+  field table, which needs each table point corrected (deflection, and HV when
+  `corrections.hv` is on: a `GetHighVoltage`). If any such correction fails,
+  the move is aborted with that error and nothing is sent to the positioner,
+  the blank or the detector control: an unplannable path is never treated as a
+  clear one. During the move, if the first error comes at or after the first
+  `SetMagnetDAC` (a set whose reply timed out was still delivered, a
+  `GetMagnetMoving` error, or `max_wait`), the protocol waits the settle time
+  (`[magnet].settle_ms`) before `BlankBeam False` and `ProtectDetector Off`. An
+  error before any set cleans up at once. The normal path is unchanged: poll
+  `GetMagnetMoving`, and settle only if motion was never reported.
 - **Beam blank:** `BlankBeam True|False`.
 - **Detector control:** caps `Gain | Deflection | Protect`. `protect` sends
   `ProtectDetector <det>,On|Off` (the magnet-move form). `set_deflection` /
@@ -167,9 +186,18 @@ All wire text comes from `pychron::codec::qtegra`.
   An unknown channel is `Config`. `set_cdd_voltage` is the interface default
   (`Config`, unsupported).
 - **Source:** `set_hv` is `SetHV v` expecting `ok`; `read_hv` is
-  `GetHighVoltage`. `params()` advertises the codec's canonical parameter map:
-  each entry writable through `SetParameter <hardware name>,v` (reply `ok`) and
-  readable through `GetParameter`. `read_param` returns
+  `GetHighVoltage`. Source ramping is not implemented: `set_hv` and
+  `set_param` write the value in a single step. `params()` advertises the
+  codec's canonical parameter map, restricted to verified names. The codec
+  marks each name `verified` when legacy pychron's Python sends it; only
+  verified names are ever sent. A verified entry is writable through
+  `SetParameter <hardware name>,v` (reply `ok`) and readable through
+  `GetParameter`. An entry whose set name is unverified is not writable: it is
+  advertised read-only under its readback name when that is verified
+  (`emission`, read as `Source Current Readback`; `Electron Emission Set` is
+  never sent) and not advertised at all otherwise (`esa_plus`, `esa_minus`).
+  `set_param` on anything not writable is `Config` with nothing sent.
+  `read_param` returns
   `Readback{setpoint = GetParameter <hardware name>, actual = GetParameter
   <readback name>}` when the map has a readback name, else `actual` unset. A
   `Custom` id is one exchange: a custom set name returns `actual` unset, and a
@@ -180,9 +208,12 @@ All wire text comes from `pychron::codec::qtegra`.
   reads back as both setpoint and actual.
   Ranges: HV 0..10000 V; every other parameter a wide nominal range
   (`-1e6..1e6`, `Unit::None`) documented as unverified. `Custom(name)` ids are
-  accepted only for hardware names the codec's map knows; the name is sent as
-  given and range-checked through its canonical parameter's spec, and a
-  readback name is read-only. Any other name is `Config` with nothing sent.
+  accepted only for verified hardware names the codec's map knows; the name is
+  sent as given and range-checked through its canonical parameter's spec, and
+  a readback name is read-only. Any other name is `Config` with nothing sent,
+  including the unverified names in the map (`Electron Emission Set`,
+  `ESA+ Set`, `ESA- Set`, and the aliases `H-Symmetry Set`, `Flatapole Set`,
+  `Rotation Quad Set`, `Pole N Set`, `Pole S Set`).
 - **Acquirer:** `integrates() == true`. `channels()` is the `channels` key.
   - `configure(t)`: non-positive is `Config`. Snap with
     `qtegra::snap_integration_time`. If the snapped value differs from the
@@ -203,7 +234,10 @@ All wire text comes from `pychron::codec::qtegra`.
     as no data). Names in the reply that are not configured channels are
     ignored; names match case-sensitively. A reply containing `ERROR`, an
     empty reply, an odd field count, a non-numeric, `nan` or `inf` value, or
-    a duplicate name is `Protocol`.
+    a duplicate name is `Protocol`. So is a well-formed reply that names none
+    of the configured channels (wrong case, other detector names, untagged
+    values with an even field count): it is never delivered as an empty
+    frame, and the error carries the reply text (first 120 bytes).
   - The wire read runs outside the acquirer mutex, so `stop()` never waits
     for a transport timeout. A read in flight when the integration changes or
     the acquirer stops is dropped (that `next()` returns nullopt).
@@ -224,7 +258,8 @@ command it receives, in order, for tests that check a sequence.
 
 - `configs/examples/spectrometer.qtegra.toml`: a complete config in the shape
   of `spectrometer.sim-integrated.toml` (same detectors and field table), with
-  a placeholder host and `port = 1069`.
+  a placeholder host and `port = 1069`. It has no `[source].ramp`: ramping is
+  not implemented, and the example and `docs/dev_setup.md` say so.
 - `configs/examples/spectrometer.qtegra.local.toml.example`: host and port.
 - The example config loads and validates in a test (no transport opened).
 - `bringup.cpp`'s `is_simulated` already classifies `thermo_qtegra` as real,
@@ -241,7 +276,18 @@ command it receives, in order, for tests that check a sequence.
   integration) never touch the wire. Magnet limits are enforced twice: by the
   facade (positioner limits and `[magnet].limits`, stricter bound wins) and
   again by the driver's own `limit_min`/`limit_max`.
-- Protocol errors (bad reply, `ERROR`) are returned with the reply text.
+- Protocol errors (bad reply, `ERROR`) are returned with the reply text. A
+  `GetData` reply that matches no configured channel is one of them.
+- Only verified parameter names are writable; a write to an unverified or
+  read-only parameter is `Config` and never touches the wire.
+- A move whose detector protection cannot be planned (a failed correction,
+  e.g. no reply to `GetHighVoltage`) fails with that error before anything is
+  set, protected or blanked.
+- A move that fails at or after the first `SetMagnetDAC` waits the settle
+  time before unblanking and unprotecting, since the magnet may still be
+  moving. If the cleanup itself then fails, the first error is returned and
+  the detector may be left protected or the beam blanked.
+- There is no source ramping: HV and trap current change in a single step.
 - Io / NotConnected: one reconnect attempt (4.2), then the error.
 - `next()` errors reach the engine, which raises its existing alarm and keeps
   polling; the scan status shows the error until Restart clears it, and
@@ -267,7 +313,10 @@ Bring-up checklist (manual, first contact with the instrument):
 4. Confirm whether RemoteControlServer accepts one persistent connection.
 5. Confirm the `GetData` layout and detector names.
 6. Confirm one integration change and one magnet move.
-7. Commit the trace under `tests/traces/thermo/` and replace the synthetic
+7. Confirm how soon `GetMagnetMoving` reports motion after `SetMagnetDAC`
+   (the move protocol polls it immediately and settles only if motion was
+   never reported; legacy pychron settles first).
+8. Commit the trace under `tests/traces/thermo/` and replace the synthetic
    one.
 
 ## 9. Testing
