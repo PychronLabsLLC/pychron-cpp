@@ -535,7 +535,7 @@ wave = 17
 layer = "ui"
 depends = ["qt_ui", "elctl_spec_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
-goal = "apps/pychron-ui spectrometer part 1 via CoreBridge: readout dock (live intensities, sigma, snapped integration selector, active toggles, protect badges, stale indicator) and magnet panel (position by isotope/mass/native, reference value, UI-side big-move confirmation, table selector); plotting widget choice recorded in an ADR; Qt Test smoke."
+goal = "apps/pychron-ui spectrometer part 1 via CoreBridge: readout dock (sigma from the host, active toggles on hardware, protect badges, stale indicator) and magnet panel (position by mass/native, reusing the spectrometer window's large-move confirmation for mass/native moves, table selector); live intensities, the integration selector, the current-position display, the large-move confirmation and position-by-isotope are delivered by the spectrometer window, see docs/superpowers/specs/2026-10-01-spectrometer-window-design.md; Qt Test smoke."
 targets = ["apps/pychron-ui", "tests/ui"]
 
 [[unit]]

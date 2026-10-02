@@ -119,8 +119,21 @@ struct PlanConditionals {
   friend bool operator==(const PlanConditionals&, const PlanConditionals&) = default;
 };
 
+// Whiff (conditionals spec L26): after the inlet opens, `counts` readings on
+// the first hop's detectors, then the first matching check decides:
+// run_remainder (continue), pump (close the inlet, pump the gas away, end the
+// measurement) or abort. No match = run_remainder.
+struct WhiffCheck {
+  std::string check;
+  std::string action;  // run_remainder | pump | abort
+  friend bool operator==(const WhiffCheck&, const WhiffCheck&) = default;
+};
+
 struct Whiff {
   bool enabled = false;
+  int counts = 0;
+  double integration_s = 1;
+  std::vector<WhiffCheck> checks;
   friend bool operator==(const Whiff&, const Whiff&) = default;
 };
 

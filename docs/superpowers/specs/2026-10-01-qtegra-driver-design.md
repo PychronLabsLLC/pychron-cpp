@@ -1,0 +1,285 @@
+# Thermo Qtegra spectrometer driver
+
+Date: 2026-10-01
+Status: Draft
+Owner: Jake Ross
+Depends on: `2026-09-29-spectrometer-control-design.md` (roles, Frame, acquisition
+engine, assembler, config), `2026-09-29-instrument-control-design.md` (transport,
+driver registry, declared keys), `2026-10-01-spectrometer-window-design.md`
+(ScanService, continuous scans).
+Implements unit `thermo_qtegra_driver` from
+`tools/spec_router/spec_router/units.toml`, plus the infrastructure it needs.
+The Isotopx NGX driver is deliberately not here: it shares one socket between
+acquisition events, magnet commands and valve actuation, and gets its own spec
+(see `2026-10-01-ngx-driver-notes.md`).
+Wire ground truth: legacy pychron Python (`~/Programming/pychron/pychron`):
+`spectrometer/thermo/**`, `hardware/thermo_spectrometer_controller.py`,
+`hardware/core/communicators/ethernet_communicator.py`.
+
+## 1. Goal
+
+A driver that can run a real Thermo instrument (Argus, Helix) through the
+existing `Spectrometer` facade and the spectrometer window, and the missing
+plumbing that makes that possible: opening and reconnecting transports, and an
+acquisition engine that is safe to restart.
+
+Success: with a config naming `kind = "thermo_qtegra"` and a simulated wire
+that speaks the Qtegra protocol, `Spectrometer` positions, reads and sets
+source parameters, and a `ScanService` scan delivers readings at the snapped
+integration period; every role passes the conformance suite.
+
+## 2. Scope
+
+In scope:
+
+- Infrastructure: spectrometer transports opened and closed; `IConnectable`;
+  reconnect on demand; `retries`/`trace` transport keys;
+  `AcquisitionEngine::stop()` quiescence.
+- `thermo_qtegra` driver and its stateful sim hook.
+- Scripted, replay, conformance and config-parity tests; example config.
+
+Out of scope: the Isotopx NGX driver and everything only it needs (secret
+config keys, trace redaction, non-blocking transport reads, valve actuation
+over the spectrometer link); UDP transport; reconnect-per-command;
+`SetIonCounterVoltage`, `Reset`, sub-cup configuration and any other command
+pychron's Python never sends on the paths below; the `NoIntensityChange`
+heuristic; AF demagnetisation; trap-current ramping; `elctl` spectrometer
+commands; a general transport-level reconnect.
+
+## 3. Decisions
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Split | Qtegra now; NGX in its own spec | Qtegra is plain request/reply; NGX's shared event stream is a separate design problem. |
+| Scope | Driver plus what it needs to run | A driver that cannot be opened or safely restarted is not usable. |
+| Unverified commands | Left out | Never send an instrument a command no reference implementation sends. |
+| Frame timestamps | Host monotonic time at reply | `GetData` carries no time; the engine's stale guard uses its own clock. |
+| Connection | One persistent TCP connection | The C++ transport is persistent. pychron reconnects per command by default; see Risks. |
+| Wire terminator | Config key defaulting to what pychron sends (`\r`) | No bench capture exists. |
+
+## 4. Infrastructure
+
+### 4.1 Opening transports; `IConnectable`
+
+`libs/devices/include/pychron/devices/connectable.hpp`:
+
+```cpp
+// Optional driver capability: work that must follow every transport open
+// (login, handshake, connection test). Blocking; scheduler/manager threads only.
+struct IConnectable {
+  virtual ~IConnectable() = default;
+  virtual Result<void> connect() = 0;
+};
+```
+
+`SpectrometerAssembler::assemble` gains a final step: for each transport, in
+config order, `open()`; then for each device that is `IConnectable`,
+`connect()`. The first failure closes every transport already opened and is
+returned (kind unchanged, `Error::device` naming the transport or driver).
+`Spectrometer`'s destructor closes its transports after its engine and devices
+have stopped. Sim transports open trivially, so existing configs are unaffected.
+
+### 4.2 Reconnect on demand
+
+`libs/devices/include/pychron/devices/reconnect.hpp`: a small helper for drivers (Qtegra
+now, NGX later).
+
+```cpp
+class Reconnector {
+ public:
+  Reconnector(Transport& transport, const Clock& clock, Duration min_interval = std::chrono::seconds(1));
+  // Runs `op`. If it fails with Io or NotConnected and at least `min_interval`
+  // has passed since the last attempt, closes and reopens the transport, runs
+  // `on_connect`, and runs `op` once more. Any other error is returned as is.
+  template <class T> Result<T> run(const std::function<Result<T>()>& op,
+                                   const std::function<Result<void>()>& on_connect);
+  std::uint64_t reconnects() const noexcept;
+};
+```
+
+Rules: at most one reconnect attempt per call; a failed reopen or failed
+`on_connect` returns that error; within `min_interval` of the previous attempt
+the original error is returned without touching the transport. A reconnect
+publishes nothing itself; the transport's own health events already report the
+state change. Acquisition does not resume by itself after a reconnect: the
+acquirer returns the error from `next()`, and `ScanService`'s Restart recovers.
+
+### 4.3 Transport keys
+
+Spectrometer `[transports.<name>]` additionally accepts `retries` (integer >= 0,
+default 0) and `trace` (boolean, default false), passed to `make_transport`.
+Traces are written under `SpectrometerOptions::trace_dir` (default `traces`),
+created on demand. `*.local.toml` may still override only `host`, `port`,
+`baud`, `timeout_ms` on transports.
+
+### 4.4 Acquisition engine quiescence
+
+`AcquisitionEngine::stop()` returns only when no `poll()` is executing: each
+poll registers itself for its duration; `stop()` cancels the scheduler jobs,
+then waits until the count is zero, then calls each acquirer's `stop()`. A
+`stop()` called from inside a poll (same thread) does not wait for itself.
+`start()` after `stop()` therefore never overlaps a `next()` from the previous
+run. The wait is bounded by the acquirer's own transport timeout.
+
+## 5. `thermo_qtegra` driver
+
+`libs/devices/include/pychron/devices/spectrometer/thermo_qtegra.hpp`, `.cpp`;
+class `QtegraSpectrometer final : public Device, public IConnectable,
+public IMassPositioner, public IBeamSource, public IIntensityAcquirer,
+public IDetectorControl, public IBeamBlank`. Registered as `thermo_qtegra`.
+All wire text comes from `pychron::codec::qtegra`.
+
+### 5.1 Declared keys
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `roles` | string array | - | informational (`legacy::kRolesKey`) |
+| `channels` | string array | `H2 H1 AX L1 L2 CDD` | detector names as Qtegra reports them in `GetData` |
+| `limit_min`, `limit_max` | float | 0, 10 | magnet DAC limits (volts) |
+| `terminator` | string | `cr` | write terminator: `cr`, `lf`, `crlf` |
+| `settle_periods` | float | 2.0 | integration periods to wait after an integration change |
+
+### 5.2 Behaviour
+
+- **connect():** `GetIntegrationTime`; a numeric reply is success and seeds the
+  cached integration period.
+- **Every command** is one `exchange(cmd.tx, *cmd.reply)` wrapped in the
+  `Reconnector` and `observe(...)`. Multi-step sequences use `transact`.
+- **Positioner (axis Dac):** `set(v)` outside limits is `Config` with nothing
+  sent; else `SetMagnetDAC v` (reply ignored, as pychron). `read()` is
+  `GetMagnetDAC`. `moving()` is `GetMagnetMoving` decoded with the codec's bool
+  vocabulary.
+- **Beam blank:** `BlankBeam True|False`.
+- **Detector control:** caps `Gain | Deflection | Protect`. `protect` sends
+  `ProtectDetector <det>,On|Off` (the magnet-move form). `set_deflection` /
+  `read_deflection` and `set_gain` / `read_gain` use the per-detector commands.
+  An unknown channel is `Config`. `set_cdd_voltage` is the interface default
+  (`Config`, unsupported).
+- **Source:** `set_hv` is `SetHV v` expecting `ok`; `read_hv` is
+  `GetHighVoltage`. `params()` advertises the codec's canonical parameter map:
+  each entry writable through `SetParameter <hardware name>,v` (reply `ok`) and
+  readable through `GetParameter`. `read_param` returns
+  `Readback{setpoint = GetParameter <hardware name>, actual = GetParameter
+  <readback name>}` when the map has a readback name, else `actual` unset.
+  Ranges: HV 0..10000 V; every other parameter a wide nominal range
+  (`-1e6..1e6`, `Unit::None`) documented as unverified. `Custom(name)` ids are
+  accepted for hardware names not in the map (Helix DAC names), read/write
+  through the same two commands.
+- **Acquirer:** `integrates() == true`. `channels()` is the `channels` key.
+  - `configure(t)`: non-positive is `Config`. Snap with
+    `qtegra::snap_integration_time`. If the snapped value differs from the
+    cached one, send `SetIntegrationTime` and set the next-due time to
+    `now + settle_periods * snapped`; otherwise send nothing.
+  - `start()` / `stop()`: local state only (Qtegra free-runs). `seq` is never
+    reset.
+  - `next(timeout)`: when not started, `Config`. If the next frame is not due,
+    wait on the injected clock up to `timeout` and return nullopt (a zero
+    timeout returns at once, with no wire traffic). When due: `GetData`,
+    decoded tagged (`name,value,...`); next-due advances by one period (not by
+    wall time elapsed, so the cadence does not drift; if more than one period
+    behind, it resets to `now + period`).
+  - Frame: `ts` = host clock at reply, `seq` incremented per attempt (a failed
+    read consumes a number, as `PolledAcquirer`), `integrated = true`,
+    `span = snapped period`, one value per configured channel that the reply
+    names; channels the reply omits are simply absent (the engine reports them
+    as no data). Names in the reply that are not configured channels are
+    ignored. A reply containing `ERROR`, or non-numeric, is `Protocol`.
+  - `trigger()`: the interface default (no-op).
+- All acquirer state is guarded by one mutex; `next()` is safe against a
+  concurrent `stop()`/`configure()`/`start()`.
+
+### 5.3 Sim hook
+
+`qtegra_sim_hook(std::shared_ptr<QtegraSimModel>)` returns a
+`SimTransport::Hook` that answers every command in 5.2 from a small in-memory
+model (DAC, moving-until time, blank, per-detector protect/deflection/gain, HV,
+named parameters, integration time, per-channel intensities), so conformance
+and parity tests run against the real driver.
+
+## 6. Config and examples
+
+- `configs/examples/spectrometer.qtegra.toml`: a complete config in the shape
+  of `spectrometer.sim-integrated.toml` (same detectors and field table), with
+  a placeholder host and `port = 1069`.
+- `configs/examples/spectrometer.qtegra.local.toml.example`: host and port.
+- The example config loads and validates in a test (no transport opened).
+- `bringup.cpp`'s `is_simulated` already classifies `thermo_qtegra` as real,
+  so `pychron-ui --sim` refuses it.
+- `docs/dev_setup.md`: how to point the config at an instrument and record a
+  trace; the bring-up checklist in section 8.
+- `tools/spec_router/spec_router/units.toml`: mark `thermo_qtegra_driver` as
+  delivered here (goal text points at this spec), so the router does not
+  rebuild it; `isotopx_ngx_driver`'s goal gains a pointer to the NGX notes.
+
+## 7. Error handling
+
+- Config errors (limits, unknown channel or parameter, non-positive
+  integration) never touch the wire.
+- Protocol errors (bad reply, `ERROR`) are returned with the reply text.
+- Io / NotConnected: one reconnect attempt (4.2), then the error.
+- `next()` errors reach the engine, which raises its existing alarm; the scan
+  status shows the error and Restart recovers.
+- A `reconnects()` counter is exposed for tests and logging.
+
+## 8. Risks (cannot be removed without an instrument)
+
+1. No hardware capture exists; every wire detail is from reading pychron's
+   Python. Synthetic traces are marked SYNTHETIC.
+2. pychron reconnects per Qtegra command by default; this driver keeps one
+   connection. If RemoteControlServer requires a fresh connection per command,
+   a `reconnect_per_command` key is the follow-up.
+3. pychron's default transport is UDP; only TCP is supported.
+4. Source parameter units and ranges are unknown; ranges are nominal.
+
+Bring-up checklist (manual, first contact with the instrument): record a
+trace with `trace = true`; confirm the terminator; confirm the `GetData`
+layout and detector names; confirm one integration change and one magnet
+move; commit the trace under `tests/traces/thermo/` and replace the synthetic
+one.
+
+## 9. Testing
+
+Infrastructure:
+
+- Assembler opens transports and calls `connect()`; an open failure and a
+  connect failure each close what was opened and return the error; destructor
+  closes.
+- `Reconnector`: Io triggers one reopen + on_connect + retry; rate limit;
+  non-Io errors untouched; failed reopen returns its error.
+- Loader: `retries`/`trace` accepted and passed through; bad types are
+  diagnostics.
+- Engine: `stop()` returns only after an in-flight `next()` finished (blocking
+  fake acquirer on a threaded scheduler); `start()` after `stop()` never
+  overlaps the previous `next()`.
+
+Driver:
+
+- Scripted tests, one per behaviour in section 5.2, including every error
+  path, and that Config errors write nothing.
+- Registry: `create` from a TOML table; undeclared key rejected; schema lists
+  the keys in 5.1.
+- Conformance: `PositionerConformance`, `AcquirerConformance`,
+  `SourceConformance`, `DetectorControlConformance` instantiated on the sim
+  hook with a `ManualClock`.
+- Replay of a synthetic trace under `tests/traces/thermo/`.
+- Cadence without drift; settle after an integration change; missing and
+  extra names in `GetData`; `ERROR` reply; reconnect then `connect()`.
+
+System:
+
+- Config parity: the sim-integrated example with its driver kind swapped for
+  `thermo_qtegra` on the Qtegra sim hook assembles and positions, sets HV and
+  acquires through `Spectrometer`.
+- `ScanService` continuous scan on the driver over its sim hook delivers
+  readings at the snapped period, and survives `set_integration`.
+- The example config loads and validates.
+
+## 10. Rollout
+
+1. Engine quiescence.
+2. `retries`/`trace` transport keys.
+3. `IConnectable`, assembler open/connect/close, `Reconnector`.
+4. Qtegra driver, sim hook, tests.
+5. System tests, example config, docs, units.toml.
+
+Each step builds and passes `ctest --preset dev` and `dev-ui` on its own.

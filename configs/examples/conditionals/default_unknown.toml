@@ -1,0 +1,13 @@
+# Included by plans as "@conditionals.default_unknown".
+
+[[terminations]]
+name = "no_gas"
+check = "average(Ar40, window=10) < 100"
+start = 20
+analysis_types = ["unknown"]
+
+[[post_run]]
+name = "blank_after_small"
+check = "Ar40 < 1000"
+action = "run_blank"
+analysis_types = ["unknown"]

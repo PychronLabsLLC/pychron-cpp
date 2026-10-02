@@ -3,7 +3,9 @@
 // Scriptable role fakes for Spectrometer / move protocol tests. Every call
 // that matters for ordering is appended to a shared log.
 
+#include <deque>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -157,11 +159,37 @@ struct FakeAcquirer : IIntensityAcquirer {
   explicit FakeAcquirer(std::vector<ChannelId> chans) : chans(std::move(chans)) {}
   std::vector<ChannelId> channels() const override { return chans; }
   bool integrates() const override { return true; }
-  Result<void> configure(Duration) override { return {}; }
-  Result<void> start() override { return {}; }
-  Result<void> stop() override { return {}; }
-  Result<std::optional<Frame>> next(Duration) override { return std::optional<Frame>{}; }
+  Result<void> configure(Duration d) override {
+    configured = d;
+    return {};
+  }
+  Result<void> start() override {
+    ++starts;
+    if (fail_start) return fail(ErrorKind::Io, "start failed", "acquirer");
+    return {};
+  }
+  Result<void> stop() override {
+    ++stops;
+    return {};
+  }
+  Result<std::optional<Frame>> next(Duration) override {
+    std::lock_guard lock(m);
+    if (frames.empty()) return std::optional<Frame>{};
+    Frame f = frames.front();
+    frames.pop_front();
+    return std::optional<Frame>(f);
+  }
+  void push(Frame f) {
+    std::lock_guard lock(m);
+    frames.push_back(std::move(f));
+  }
+
   std::vector<ChannelId> chans;
+  Duration configured{};
+  int starts = 0, stops = 0;
+  bool fail_start = false;
+  std::mutex m;
+  std::deque<Frame> frames;
 };
 
 }  // namespace pychron::spectrometer::testing

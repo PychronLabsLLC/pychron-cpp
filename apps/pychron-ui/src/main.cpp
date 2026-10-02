@@ -1,39 +1,49 @@
 // pychron-ui: M1 status/control window.
 //
-//   pychron-ui [extraction_line.toml [canvas.toml]] [--sim]
+//   pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer <file>]
 //
 // With no files it opens the example line in configs/examples. --sim forces
-// every transport to kind = "sim".
+// every extraction-line transport to kind = "sim". --spectrometer loads that
+// spectrometer config for Window > Spectrometer; with --sim and no file the
+// example sim-integrated spectrometer is used. --sim never rewrites a
+// spectrometer config: one that is not simulated is refused.
 
 #include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QMessageBox>
-#include <QStringList>
 
+#include "command_line.hpp"
 #include "main_window.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "pychron/systems/spectrometer/bringup.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
+#include "pychron/systems/spectrometer/scan_service.hpp"
+#include "spectrometer_bridge.hpp"
 
 int main(int argc, char** argv) {
   pychron::LogHub::install_crash_handlers();
   QApplication app(argc, argv);
+  QCoreApplication::setOrganizationName(QStringLiteral("PychronLabs"));
   QApplication::setApplicationName(QStringLiteral("pychron-ui"));
 
-  pychron::systems::ExtractionLine::Options options;
-  std::vector<std::filesystem::path> files;
-  const QStringList args = QApplication::arguments().mid(1);
-  for (const QString& arg : args) {
-    if (arg == QStringLiteral("--sim")) {
-      options.force_sim = true;
-    } else {
-      files.emplace_back(arg.toStdString());
-    }
+  const auto cli = pychron::ui::parse_command_line(QApplication::arguments().mid(1));
+  if (!cli) {
+    std::fprintf(stderr, "pychron-ui: %s\n", cli.error().what.c_str());
+    return 2;
   }
+  pychron::systems::ExtractionLine::Options options;
+  options.force_sim = cli->sim;
+  const std::vector<std::filesystem::path>& files = cli->files;
 
   const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
   const std::filesystem::path system_file = files.empty() ? examples / "extraction_line.toml" : files[0];
@@ -50,6 +60,37 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: %s\n", qPrintable(what));
     QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), what);
     return 1;
+  }
+
+  // The spectrometer shares the line's clock, scheduler and bus. None of these
+  // is left to declaration order: the teardown after the event loop resets
+  // each one explicitly, and that order is the one that matters.
+  std::unique_ptr<pychron::spectrometer::Spectrometer> spectrometer;
+  std::unique_ptr<pychron::spectrometer::ScanService> scan;
+  std::unique_ptr<pychron::ui::SpectrometerBridge> spectrometer_bridge;
+  std::optional<std::string> spectrometer_error;
+  // What was actually loaded decides the window's "(Simulation)" title and the
+  // table-following sim beam; --sim only demands it (require_sim).
+  bool simulation = false;
+  if (cli->spectrometer_file || cli->sim) {
+    const std::filesystem::path file =
+        cli->spectrometer_file ? *cli->spectrometer_file : examples / "spectrometer.sim-integrated.toml";
+    auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
+      auto data = pychron::spectrometer::cfg::load_spectrometer(file);
+      if (!data) return pychron::fail(data.error());
+      simulation = pychron::spectrometer::is_simulated(*data);
+      return pychron::spectrometer::load_spectrometer_for_app(
+          std::move(*data),
+          pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
+          pychron::spectrometer::SpectrometerBringup{.sim_beam_from_table = simulation, .require_sim = cli->sim});
+    }();
+    if (loaded) {
+      spectrometer = std::move(*loaded);
+      scan = std::make_unique<pychron::spectrometer::ScanService>(*spectrometer, (*line)->bus(), (*line)->clock());
+      spectrometer_bridge = std::make_unique<pychron::ui::SpectrometerBridge>(*spectrometer, *scan, (*line)->bus());
+    } else {
+      spectrometer_error = pychron::to_string(loaded.error());
+    }
   }
 
   int rc = 0;
@@ -72,12 +113,46 @@ int main(int argc, char** argv) {
       window.log_dock()->load_history(dir / "pychron.log");
     }
     window.show();
-    if (auto started = (*line)->start(); !started) {
+    if (spectrometer_error) {
+      window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
+                                     QString::fromStdString(*spectrometer_error));
+    }
+    const auto started = (*line)->start();
+    if (!started) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] start failed: ") +
                                      QString::fromStdString(pychron::to_string(started.error())));
     }
+    // The spectrometer polls on the line's scheduler, which only runs once the
+    // line has started. Without it a scan would report success and never
+    // produce a reading, so the window is not offered at all.
+    if (spectrometer_bridge) {
+      if (started) {
+        window.set_spectrometer(spectrometer_bridge.get(), simulation);
+      } else {
+        window.log_dock()->append_line(QStringLiteral(
+            "ERROR [ui] spectrometer unavailable: extraction line did not start (shared scheduler not running)"));
+      }
+    }
     rc = QApplication::exec();
-    (*line)->stop();
+    window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }
+  // Teardown order (explicit; not the reverse of declaration):
+  //   1. the spectrometer window, then the main window (the block above);
+  //   2. the bridge, whose executor first finishes the commands it was given,
+  //      including the scan stop the closing window asked for;
+  //   3. the scan service, which stops the acquisition if it is still running;
+  //   4. the line: stop() halts the shared scheduler and waits for a poll
+  //      already on a worker, so nothing is still using the spectrometer;
+  //   5. the spectrometer;
+  //   6. the beam registry, whose models refer to the line's clock, before
+  //      the line itself is destroyed on return.
+  // When the line never started, step 4 does nothing: the scheduler never ran
+  // and the spectrometer was never offered, so no poll or command has touched
+  // it and the same order is safe.
+  spectrometer_bridge.reset();
+  scan.reset();
+  (*line)->stop();
+  spectrometer.reset();
+  pychron::sim::BeamModelRegistry::global().clear();
   return rc;
 }

@@ -36,7 +36,7 @@ RecordBuilder& RecordBuilder::set_baseline(const std::string& det, BaselineResul
 }
 RecordBuilder& RecordBuilder::set_blanks_ref(std::string ref) { rec_.results.blanks_ref = std::move(ref); return *this; }
 RecordBuilder& RecordBuilder::set_icfactor(const std::string& det, double v) { rec_.results.icfactors[det] = v; return *this; }
-RecordBuilder& RecordBuilder::set_whiff(double v) { rec_.results.whiff = v; return *this; }
+RecordBuilder& RecordBuilder::set_whiff(std::string result) { rec_.results.whiff = std::move(result); return *this; }
 RecordBuilder& RecordBuilder::set_conditionals(Conditionals v) { rec_.conditionals = std::move(v); return *this; }
 RecordBuilder& RecordBuilder::add_event(Event v) { rec_.events.push_back(std::move(v)); return *this; }
 RecordBuilder& RecordBuilder::add_persister_ref(std::string ref) {

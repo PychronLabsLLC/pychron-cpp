@@ -205,12 +205,56 @@ toml::table to_table(const AnalysisRecord& r) {
   res.insert_or_assign("baselines", std::move(bases));
   res.insert_or_assign("blanks_ref", r.results.blanks_ref);
   res.insert_or_assign("icfactors", dmap(r.results.icfactors));
-  if (r.results.whiff) res.insert_or_assign("whiff", *r.results.whiff);
+  res.insert_or_assign("whiff", r.results.whiff);
   root.insert_or_assign("results", std::move(res));
 
   toml::table cond;
-  cond.insert_or_assign("installed", str_array(r.conditionals.installed));
-  cond.insert_or_assign("tripped", str_array(r.conditionals.tripped));
+  toml::array installed, tripped, errors;
+  for (const auto& c : r.conditionals.installed) {
+    toml::table t;
+    t.insert_or_assign("id", c.id);
+    t.insert_or_assign("name", c.name);
+    t.insert_or_assign("kind", c.kind);
+    t.insert_or_assign("level", c.level);
+    t.insert_or_assign("location", c.location);
+    t.insert_or_assign("check", c.check);
+    t.insert_or_assign("start", c.start);
+    t.insert_or_assign("frequency", c.frequency);
+    t.insert_or_assign("ntrips", c.ntrips);
+    t.insert_or_assign("window", c.window);
+    t.insert_or_assign("mapper", c.mapper);
+    t.insert_or_assign("analysis_types", str_array(c.analysis_types));
+    t.insert_or_assign("abbreviated_count_ratio", c.abbreviated_count_ratio);
+    t.insert_or_assign("action", c.action);
+    t.insert_or_assign("resume", c.resume);
+    t.insert_or_assign("truncate", c.truncate);
+    t.insert_or_assign("terminate", c.terminate);
+    installed.push_back(std::move(t));
+  }
+  for (const auto& c : r.conditionals.tripped) {
+    toml::table t;
+    t.insert_or_assign("id", c.id);
+    t.insert_or_assign("name", c.name);
+    t.insert_or_assign("kind", c.kind);
+    t.insert_or_assign("check", c.check);
+    t.insert_or_assign("action", c.action);
+    t.insert_or_assign("reading", c.reading);
+    t.insert_or_assign("count", c.count);
+    t.insert_or_assign("t", c.t);
+    t.insert_or_assign("value", c.value);
+    t.insert_or_assign("context", dmap(c.context));
+    tripped.push_back(std::move(t));
+  }
+  for (const auto& e : r.conditionals.errors) {
+    toml::table t;
+    t.insert_or_assign("name", e.name);
+    t.insert_or_assign("message", e.message);
+    t.insert_or_assign("count", e.count);
+    errors.push_back(std::move(t));
+  }
+  cond.insert_or_assign("installed", std::move(installed));
+  cond.insert_or_assign("tripped", std::move(tripped));
+  cond.insert_or_assign("errors", std::move(errors));
   root.insert_or_assign("conditionals", std::move(cond));
 
   toml::array ev;
@@ -322,6 +366,20 @@ struct Rd {
     for (const auto& [k, v] : *s.t) {
       if (!v.is_table()) return s.fail(std::string(k.str()), "table");
       f(std::string(k.str()), Rd{v.as_table(), s.where + "." + std::string(k.str()), err});
+    }
+  }
+  // Each table of array `key` -> f(Rd-of-entry).
+  template <class F>
+  void each_entry(const std::string& key, F&& f) const {
+    const auto* n = find(key);
+    if (!n) return;
+    const auto* a = n->as_array();
+    if (!a) return fail(key, "array of tables");
+    int i = 0;
+    for (const auto& e : *a) {
+      const auto* et = e.as_table();
+      if (!et) return fail(key, "array of tables");
+      f(Rd{et, where + "." + key + "[" + std::to_string(i++) + "]", err});
     }
   }
   void dmap(const std::string& key, std::map<std::string, double>& out) const {
@@ -527,11 +585,48 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   });
   res.str("blanks_ref", r.results.blanks_ref);
   res.dmap("icfactors", r.results.icfactors);
-  res.opt_num("whiff", r.results.whiff);
+  res.str("whiff", r.results.whiff);
 
   const auto cond = top.sub("conditionals");
-  cond.strs("installed", r.conditionals.installed);
-  cond.strs("tripped", r.conditionals.tripped);
+  cond.each_entry("installed", [&](const Rd& e) {
+    auto& c = r.conditionals.installed.emplace_back();
+    e.str("id", c.id);
+    e.str("name", c.name);
+    e.str("kind", c.kind);
+    e.str("level", c.level);
+    e.str("location", c.location);
+    e.str("check", c.check);
+    e.integer("start", c.start);
+    e.integer("frequency", c.frequency);
+    e.integer("ntrips", c.ntrips);
+    e.integer("window", c.window);
+    e.str("mapper", c.mapper);
+    e.strs("analysis_types", c.analysis_types);
+    e.num("abbreviated_count_ratio", c.abbreviated_count_ratio);
+    e.str("action", c.action);
+    e.boolean("resume", c.resume);
+    e.boolean("truncate", c.truncate);
+    e.boolean("terminate", c.terminate);
+  });
+  cond.each_entry("tripped", [&](const Rd& e) {
+    auto& c = r.conditionals.tripped.emplace_back();
+    e.str("id", c.id);
+    e.str("name", c.name);
+    e.str("kind", c.kind);
+    e.str("check", c.check);
+    e.str("action", c.action);
+    e.integer("reading", c.reading);
+    e.integer("count", c.count);
+    e.num("t", c.t);
+    e.num("value", c.value);
+    e.dmap("context", c.context);
+  });
+  cond.each_entry("errors", [&](const Rd& e) {
+    auto& c = r.conditionals.errors.emplace_back();
+    e.str("name", c.name);
+    e.str("message", c.message);
+    e.integer("count", c.count);
+  });
 
   if (const auto* ea = root.get("events")) {
     if (const auto* arr = ea->as_array()) {

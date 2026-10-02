@@ -1,6 +1,8 @@
 #include "pychron/systems/spectrometer/config_loader.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <utility>
 
 #include "pychron/core/config/loader.hpp"
@@ -59,6 +61,11 @@ bool contains(const Arr& arr, std::string_view s) {
 template <class E, std::size_t N>
 detail::Choices<E> choices(const Table<E, N>& t) {
   return {t.data(), t.size()};
+}
+
+bool is_hex_color(const std::string& s) {
+  return s.size() == 7 && s[0] == '#' &&
+         std::all_of(s.begin() + 1, s.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
 }
 
 class Builder {
@@ -289,7 +296,7 @@ class Builder {
   }
 
   void parse_detector(const Obj& o, DetectorConfig& d) {
-    r_.only(o, {"name", "kind", "channel", "units", "software_gain", "isotope", "active", "deflection", "protection",
+    r_.only(o, {"name", "kind", "channel", "units", "software_gain", "isotope", "color", "active", "deflection", "protection",
                 "saturation", "dead_time_ns", "cdd_voltage"});
     r_.str(o, "name", d.name, true);
     r_.choice(o, "kind", d.kind, choices(kDetectorKinds), true);
@@ -301,6 +308,10 @@ class Builder {
     if (r_.number(o, "software_gain", d.software_gain, false))
       r_.require(d.software_gain > 0.0, o, "software_gain", "must be > 0");
     r_.str(o, "isotope", d.isotope, false);
+    if (r_.str(o, "color", d.color, false) && !d.color.empty()) {
+      r_.require(is_hex_color(d.color), o, "color", "expected \"#rrggbb\"");
+      for (auto& c : d.color) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
     r_.boolean(o, "active", d.active);
 
     if (auto s = r_.sub(o, "deflection", false)) {

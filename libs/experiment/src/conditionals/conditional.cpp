@@ -1,10 +1,14 @@
 #include "pychron/experiment/conditionals/conditional.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <set>
 
 #include <toml++/toml.hpp>
+
+#include "pychron/experiment/record/sha256.hpp"
 
 namespace pychron::experiment {
 namespace {
@@ -23,10 +27,6 @@ constexpr KindName kKinds[] = {
     {ConditionalKind::PreRun, "pre_run", "pre_run"},
     {ConditionalKind::PostRun, "post_run", "post_run"},
 };
-// pychron evaluation order: modification, truncation, action, termination, cancelation, equilibration.
-constexpr ConditionalKind kOrder[] = {ConditionalKind::Modification, ConditionalKind::Truncation,
-                                      ConditionalKind::Action,       ConditionalKind::Termination,
-                                      ConditionalKind::Cancelation,  ConditionalKind::Equilibration};
 
 std::string trim(std::string_view s) {
   size_t b = s.find_first_not_of(" \t"), e = s.find_last_not_of(" \t");
@@ -41,12 +41,40 @@ bool parse_double(const std::string& s, double& out) {
   return !s.empty() && end == s.c_str() + s.size();
 }
 
+std::string num(double v) {
+  char b[40];
+  std::snprintf(b, sizeof b, "%.15g", v);
+  return b;
+}
+
 // "NAME=v"
 Result<ActionSpec> name_value(ActionSpec a, const std::string& arg, const std::string& what) {
   auto eq = arg.find('=');
   if (eq == std::string::npos || eq == 0 || !parse_double(trim(arg.substr(eq + 1)), a.value))
     return cfg(what + " needs NAME=value, got '" + arg + "'");
   a.name = trim(arg.substr(0, eq));
+  return a;
+}
+
+// "1,2,3" or "10%,20%"; all steps the same flavour.
+Result<ActionSpec> extract_steps(ActionSpec a, const std::string& arg) {
+  if (arg.empty()) return cfg("set_extract needs steps, e.g. '1,2' or '10%,20%'");
+  size_t b = 0;
+  int percents = 0, plain = 0;
+  while (b <= arg.size()) {
+    size_t e = arg.find(',', b);
+    if (e == std::string::npos) e = arg.size();
+    std::string item = trim(arg.substr(b, e - b));
+    bool pct = !item.empty() && item.back() == '%';
+    if (pct) item.pop_back();
+    double v = 0;
+    if (!parse_double(trim(item), v)) return cfg("set_extract step '" + item + "' is not a number");
+    (pct ? percents : plain) += 1;
+    a.steps.push_back(v);
+    b = e + 1;
+  }
+  if (percents > 0 && plain > 0) return cfg("set_extract steps must be all absolute or all percentages");
+  a.percent = percents > 0;
   return a;
 }
 
@@ -64,12 +92,30 @@ std::optional<ConditionalKind> parse_conditional_kind(std::string_view table_nam
   return std::nullopt;
 }
 
+std::string_view to_string(ConditionalLevel l) noexcept {
+  switch (l) {
+    case ConditionalLevel::System: return "system";
+    case ConditionalLevel::Queue: return "queue";
+    case ConditionalLevel::Plan: return "plan";
+    case ConditionalLevel::Run: return "run";
+    case ConditionalLevel::Hook: return "hook";
+  }
+  return "run";
+}
+
+bool is_queue_action(ActionSpec::Type t) noexcept {
+  using T = ActionSpec::Type;
+  return t == T::SkipNext || t == T::SkipN || t == T::SkipAliquot || t == T::SkipToLastInAliquot ||
+         t == T::SetExtract || t == T::Repeat || t == T::RunBlank;
+}
+
 Result<ActionSpec> parse_action(std::string_view text_in) {
   const std::string text = trim(text_in);
   ActionSpec a;
   auto word_end = text.find_first_of(" =:");
   const std::string word = text.substr(0, word_end);
-  const std::string rest = word_end == std::string::npos ? "" : trim(text.substr(word_end + (text[word_end] == ' ' ? 0 : 1)));
+  const std::string rest =
+      word_end == std::string::npos ? "" : trim(text.substr(word_end + (text[word_end] == ' ' ? 0 : 1)));
   using T = ActionSpec::Type;
   auto no_arg = [&](T t) -> Result<ActionSpec> {
     if (!rest.empty()) return cfg("action '" + text + "' takes no argument");
@@ -85,10 +131,19 @@ Result<ActionSpec> parse_action(std::string_view text_in) {
   if (word == "terminate") return no_arg(T::Terminate);
   if (word == "cancel") return no_arg(T::Cancel);
   if (word == "notify") return no_arg(T::Notify);
-  if (word == "skip_n") return no_arg(T::SkipN);
+  if (word == "skip_next") return no_arg(T::SkipNext);
   if (word == "skip_aliquot") return no_arg(T::SkipAliquot);
+  if (word == "skip_to_last_in_aliquot") return no_arg(T::SkipToLastInAliquot);
   if (word == "repeat") return no_arg(T::Repeat);
   if (word == "run_blank") return no_arg(T::RunBlank);
+  if (word == "skip_n") {
+    a.type = T::SkipN;
+    if (rest.empty()) return a;
+    double n = 0;
+    if (!parse_double(rest, n) || n < 1 || n != static_cast<int>(n)) return cfg("skip_n needs a count >= 1");
+    a.count = static_cast<int>(n);
+    return a;
+  }
   if (word == "set_param") {
     a.type = T::SetParam;
     return name_value(a, rest, "set_param");
@@ -101,19 +156,13 @@ Result<ActionSpec> parse_action(std::string_view text_in) {
   }
   if (word == "set_extract") {
     a.type = T::SetExtract;
-    if (!parse_double(rest, a.value)) return cfg("set_extract needs a numeric value, got '" + rest + "'");
-    return a;
+    return extract_steps(a, rest);
   }
   return cfg("unknown action '" + text + "'");
 }
 
 std::string to_string(const ActionSpec& a) {
   using T = ActionSpec::Type;
-  auto num = [](double v) {
-    char b[40];
-    std::snprintf(b, sizeof b, "%.15g", v);
-    return std::string(b);
-  };
   switch (a.type) {
     case T::None: return "";
     case T::Truncate: return a.quick ? "truncate:quick" : "truncate";
@@ -122,20 +171,71 @@ std::string to_string(const ActionSpec& a) {
     case T::SetParam: return "set_param " + a.name + "=" + num(a.value);
     case T::RunHook: return "run_hook " + a.name;
     case T::Notify: return "notify";
-    case T::SkipN: return "skip_n";
+    case T::SkipNext: return "skip_next";
+    case T::SkipN: return "skip_n " + std::to_string(a.count);
     case T::SkipAliquot: return "skip_aliquot";
+    case T::SkipToLastInAliquot: return "skip_to_last_in_aliquot";
+    case T::SetExtract: {
+      std::string s = "set_extract ";
+      for (size_t i = 0; i < a.steps.size(); ++i) s += (i ? "," : "") + num(a.steps[i]) + (a.percent ? "%" : "");
+      return s;
+    }
     case T::Repeat: return "repeat";
     case T::RunBlank: return "run_blank";
-    case T::SetExtract: return "set_extract=" + num(a.value);
   }
   return "";
+}
+
+Result<std::shared_ptr<const Expr>> compile_check(const std::string& check, std::optional<int> window,
+                                                  const std::string& mapper) {
+  auto expr = parse_expression(check);
+  if (!expr) return fail(expr.error());
+  ExprPtr e = std::move(*expr);
+  if (window) e = apply_window(*e, *window);
+  if (!mapper.empty()) {
+    auto m = apply_mapper(*e, mapper);
+    if (!m) return fail(m.error());
+    e = std::move(*m);
+  }
+  return std::shared_ptr<const Expr>(std::move(e));
+}
+
+std::string Conditional::effective_check() const { return expr ? to_string(*expr) : check; }
+
+std::string Conditional::id() const {
+  std::string d = std::string(to_string(kind)) + "|" + effective_check() + "|" + std::to_string(start) + "|" +
+                  std::to_string(frequency) + "|" + std::to_string(ntrips) + "|" + num(abbreviated_count_ratio) +
+                  "|" + to_string(action) + "|" + (resume ? "r" : "") + (truncate ? "t" : "") +
+                  (terminate ? "T" : "") + "|";
+  for (const auto& t : analysis_types) d += t + ",";
+  return record::sha256_hex(d);
+}
+
+bool Conditional::applies_to(std::string_view analysis_type) const {
+  if (analysis_types.empty() || analysis_type.empty()) return true;
+  std::string at(analysis_type);
+  std::transform(at.begin(), at.end(), at.begin(), [](unsigned char c) { return std::tolower(c); });
+  for (const auto& t : analysis_types) {
+    if (t == at) return true;
+    if (t == "blank" && at.starts_with("blank")) return true;
+  }
+  return false;
+}
+
+ConditionalSet& ConditionalSet::stamp(ConditionalLevel level, const std::string& location) {
+  for (auto& c : items) {
+    c.level = level;
+    c.location = location;
+  }
+  return *this;
 }
 
 ConditionalSet merge_levels(const std::vector<ConditionalSet>& levels) {
   ConditionalSet out;
   for (const auto& level : levels) {
     for (const auto& name : level.disable)
-      out.items.erase(std::remove_if(out.items.begin(), out.items.end(), [&](const Conditional& c) { return c.name == name; }),
+      out.items.erase(std::remove_if(out.items.begin(), out.items.end(),
+                                     [&](const Conditional& c) { return c.name == name; }),
                       out.items.end());
     for (const auto& c : level.items) {
       auto it = std::find_if(out.items.begin(), out.items.end(), [&](const Conditional& x) { return x.name == c.name; });
@@ -146,47 +246,131 @@ ConditionalSet merge_levels(const std::vector<ConditionalSet>& levels) {
   return out;
 }
 
+std::vector<MetricValue> metric_context(const Expr& e, const MetricContext& ctx) {
+  std::vector<MetricValue> out;
+  for (const auto& m : metrics_of(e)) {
+    if (auto v = ctx.scalar(m)) {
+      out.push_back({to_string(m), *v});
+    } else if (auto s = ctx.series(m); s && !s->empty()) {
+      out.push_back({to_string(m), s->back()});
+    }
+  }
+  return out;
+}
+
+// ---- engine -----------------------------------------------------------------
+
+ConditionalEngine::ConditionalEngine(ConditionalSet set, std::string analysis_type) : set_(std::move(set)) {
+  states_.resize(set_.items.size());
+  for (size_t i = 0; i < set_.items.size(); ++i) states_[i].applicable = set_.items[i].applies_to(analysis_type);
+}
+
 void ConditionalEngine::reset() {
-  for (auto& s : states_) s = State{};
+  for (auto& s : states_) {
+    s.consecutive = 0;
+    s.fired = false;
+  }
   trips_.clear();
   errors_.clear();
 }
 
-std::vector<Trip> ConditionalEngine::evaluate(const MetricContext& ctx, const Variables& vars, int reading, double ts) {
-  std::vector<Trip> out;
-  for (auto kind : kOrder) {
-    auto t = evaluate_kind(kind, ctx, vars, reading, ts);
-    out.insert(out.end(), t.begin(), t.end());
-  }
+std::vector<const Conditional*> ConditionalEngine::installed() const {
+  std::vector<const Conditional*> out;
+  for (size_t i = 0; i < set_.items.size(); ++i)
+    if (states_[i].applicable) out.push_back(&set_.items[i]);
   return out;
 }
 
-std::vector<Trip> ConditionalEngine::evaluate_kind(ConditionalKind kind, const MetricContext& ctx, const Variables& vars,
-                                                   int reading, double ts) {
-  std::vector<Trip> out;
+void ConditionalEngine::record_error(const Conditional& c, const std::string& message) {
+  for (auto& e : errors_) {
+    if (e.name == c.name) {
+      ++e.count;
+      return;
+    }
+  }
+  errors_.push_back({c.name, message, 1});
+}
+
+std::optional<Trip> ConditionalEngine::step(size_t i, const MetricContext& ctx, const Variables& vars, int reading,
+                                            double ts) {
+  const Conditional& c = set_.items[i];
+  State& st = states_[i];
+  auto r = evaluate_check(*c.expr, ctx, vars);
+  if (!r) {
+    record_error(c, r.error().what);
+    st.consecutive = 0;
+    return std::nullopt;
+  }
+  if (!r->tripped) {
+    st.consecutive = 0;
+    return std::nullopt;
+  }
+  if (++st.consecutive < c.ntrips) return std::nullopt;
+  Trip t;
+  t.name = c.name;
+  t.kind = c.kind;
+  t.value = r->value;
+  t.count = st.consecutive;
+  t.ts = ts;
+  t.action = c.action;
+  t.reading = reading;
+  t.id = c.id();
+  t.check = c.effective_check();
+  t.level = c.level;
+  t.context = metric_context(*c.expr, ctx);
+  t.abbreviated_count_ratio = c.abbreviated_count_ratio;
+  t.resume = c.resume;
+  t.truncate = c.truncate;
+  t.terminate = c.terminate;
+  // Fires once, except a resuming action, which re-arms.
+  st.consecutive = 0;
+  st.fired = !(c.kind == ConditionalKind::Action && c.resume);
+  trips_.push_back(t);
+  return t;
+}
+
+std::optional<Trip> ConditionalEngine::evaluate(std::span<const ConditionalKind> kinds, const MetricContext& ctx,
+                                                const Variables& vars, int reading, double ts) {
+  for (auto kind : kinds) {
+    for (size_t i = 0; i < set_.items.size(); ++i) {
+      const Conditional& c = set_.items[i];
+      const State& st = states_[i];
+      if (c.kind != kind || !c.expr || st.fired || !st.applicable) continue;
+      const int after = reading - c.start;
+      if (after <= 0 || after % std::max(c.frequency, 1) != 0) continue;
+      if (auto t = step(i, ctx, vars, reading, ts)) return t;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Trip> ConditionalEngine::check_now(ConditionalKind kind, const MetricContext& ctx, const Variables& vars,
+                                                 double ts, std::string_view analysis_type) {
   for (size_t i = 0; i < set_.items.size(); ++i) {
     const Conditional& c = set_.items[i];
-    State& st = states_[i];
-    if (c.kind != kind || !c.expr || st.fired) continue;
-    if (reading < c.start) continue;
-    if (c.frequency > 1 && (reading - c.start) % c.frequency != 0) continue;
-    auto r = evaluate_check(*c.expr, ctx, vars);
-    if (!r) {
-      errors_.push_back(c.name + ": " + r.error().what);
-      st.consecutive = 0;
-      continue;
-    }
-    if (!r->tripped) {
-      st.consecutive = 0;
-      continue;
-    }
-    if (++st.consecutive < c.ntrips) continue;
-    st.fired = true;
-    Trip t{c.name, c.kind, r->value, st.consecutive, ts, c.action};
-    trips_.push_back(t);
-    out.push_back(std::move(t));
+    if (c.kind != kind || !c.expr || !states_[i].applicable || !c.applies_to(analysis_type)) continue;
+    states_[i].fired = false;  // between-run checks may fire on every run
+    if (auto t = step(i, ctx, vars, 0, ts)) return t;
   }
-  return out;
+  return std::nullopt;
+}
+
+// ---- whiff --------------------------------------------------------------------
+
+std::string_view to_string(WhiffCheck::Action a) noexcept {
+  switch (a) {
+    case WhiffCheck::Action::RunRemainder: return "run_remainder";
+    case WhiffCheck::Action::Pump: return "pump";
+    case WhiffCheck::Action::Abort: return "abort";
+  }
+  return "run_remainder";
+}
+
+std::optional<WhiffCheck::Action> parse_whiff_action(std::string_view s) noexcept {
+  if (s == "run_remainder") return WhiffCheck::Action::RunRemainder;
+  if (s == "pump") return WhiffCheck::Action::Pump;
+  if (s == "abort") return WhiffCheck::Action::Abort;
+  return std::nullopt;
 }
 
 std::optional<WhiffCheck::Action> evaluate_whiff(const Whiff& w, const MetricContext& ctx, const Variables& vars) {
@@ -198,13 +382,16 @@ std::optional<WhiffCheck::Action> evaluate_whiff(const Whiff& w, const MetricCon
   return std::nullopt;
 }
 
+// ---- TOML ---------------------------------------------------------------------
+
 namespace {
 
 Result<int> int_key(const toml::table& t, std::string_view key, int def, int min) {
   auto n = t.get(key);
   if (!n) return def;
   auto v = n->value<int64_t>();
-  if (!v || *v < min) return cfg("'" + std::string(key) + "' must be an integer >= " + std::to_string(min));
+  if (!v || !n->is_integer() || *v < min)
+    return cfg("'" + std::string(key) + "' must be an integer >= " + std::to_string(min));
   return static_cast<int>(*v);
 }
 
@@ -212,12 +399,23 @@ Result<std::string> str_key(const toml::table& t, std::string_view key) {
   auto n = t.get(key);
   if (!n) return std::string();
   auto v = n->value<std::string>();
-  if (!v) return cfg("'" + std::string(key) + "' must be a string");
+  if (!v || !n->is_string()) return cfg("'" + std::string(key) + "' must be a string");
   return *v;
 }
 
-Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind, size_t index) {
-  static const std::set<std::string_view> known{"check", "name", "start", "frequency", "ntrips", "action", "resume"};
+Result<bool> bool_key(const toml::table& t, std::string_view key) {
+  auto n = t.get(key);
+  if (!n) return false;
+  if (!n->is_boolean()) return cfg("'" + std::string(key) + "' must be a boolean");
+  return *n->value<bool>();
+}
+
+Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
+  using K = ConditionalKind;
+  using T = ActionSpec::Type;
+  static const std::set<std::string_view> known{"check",  "name",  "start",  "frequency", "ntrips",
+                                                "action", "resume", "window", "mapper",    "analysis_types",
+                                                "abbreviated_count_ratio", "truncate", "terminate"};
   for (const auto& [k, v] : t)
     if (!known.count(k.str())) return cfg("unknown key '" + std::string(k.str()) + "'");
   Conditional c;
@@ -226,13 +424,7 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind, size_
   if (!check) return fail(check.error());
   if (check->empty()) return cfg("missing 'check'");
   c.check = *check;
-  auto expr = parse_expression(c.check);
-  if (!expr) return fail(expr.error());
-  c.expr = std::shared_ptr<const Expr>(std::move(*expr));
-  auto name = str_key(t, "name");
-  if (!name) return fail(name.error());
-  c.name = name->empty() ? std::string(to_string(kind)) + ":" + c.check : *name;
-  (void)index;
+
   auto start = int_key(t, "start", 0, 0), freq = int_key(t, "frequency", 1, 1), nt = int_key(t, "ntrips", 1, 1);
   if (!start) return fail(start.error());
   if (!freq) return fail(freq.error());
@@ -240,24 +432,93 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind, size_
   c.start = *start;
   c.frequency = *freq;
   c.ntrips = *nt;
-  auto act = str_key(t, "action");
-  if (!act) return fail(act.error());
-  using T = ActionSpec::Type;
+  if (t.contains("window")) {
+    auto w = int_key(t, "window", 0, 1);
+    if (!w) return fail(w.error());
+    c.window = *w;
+  }
+  auto mapper = str_key(t, "mapper");
+  if (!mapper) return fail(mapper.error());
+  c.mapper = *mapper;
+  auto expr = compile_check(c.check, c.window, c.mapper);
+  if (!expr) return fail(expr.error());
+  c.expr = *expr;
+
+  auto name = str_key(t, "name");
+  if (!name) return fail(name.error());
+  c.name = name->empty() ? std::string(to_string(kind)) + ":" + c.check : *name;
+
+  if (auto* n = t.get("analysis_types")) {
+    auto* arr = n->as_array();
+    if (!arr) return cfg("'analysis_types' must be an array of strings");
+    for (const auto& e : *arr) {
+      auto s = e.value<std::string>();
+      if (!s) return cfg("'analysis_types' must be an array of strings");
+      std::string v = trim(*s);
+      std::transform(v.begin(), v.end(), v.begin(), [](unsigned char ch) { return ch == ' ' ? '_' : std::tolower(ch); });
+      c.analysis_types.push_back(v);
+    }
+  }
+  if (auto* n = t.get("abbreviated_count_ratio")) {
+    auto v = n->value<double>();
+    if (!v || *v <= 0 || *v > 1) return cfg("'abbreviated_count_ratio' must be a number in (0, 1]");
+    if (kind != K::Truncation && kind != K::Modification && kind != K::Equilibration)
+      return cfg("'abbreviated_count_ratio' applies to truncations, modifications and equilibrations");
+    c.abbreviated_count_ratio = *v;
+  }
+
+  auto resume = bool_key(t, "resume"), trunc = bool_key(t, "truncate"), term = bool_key(t, "terminate");
+  if (!resume) return fail(resume.error());
+  if (!trunc) return fail(trunc.error());
+  if (!term) return fail(term.error());
+  if (*resume && kind != K::Action) return cfg("'resume' applies to actions only");
+  if ((*trunc || *term) && kind != K::Modification) return cfg("'truncate'/'terminate' apply to modifications only");
+  if (*trunc && *term) return cfg("a modification may truncate or terminate, not both");
+  c.resume = *resume;
+  c.truncate = *trunc;
+  c.terminate = *term;
+
+  // Default action per kind.
   switch (kind) {
-    case ConditionalKind::Truncation: c.action.type = T::Truncate; break;
-    case ConditionalKind::Termination: c.action.type = T::Terminate; break;
-    case ConditionalKind::Cancelation: c.action.type = T::Cancel; break;
+    case K::Truncation: c.action.type = T::Truncate; break;
+    case K::Termination: c.action.type = T::Terminate; break;
+    case K::Cancelation: c.action.type = T::Cancel; break;
+    case K::Modification: c.action.type = T::SkipNext; break;
+    case K::PreRun:
+    case K::PostRun: c.action.type = T::Cancel; break;
     default: break;
   }
+  auto act = str_key(t, "action");
+  if (!act) return fail(act.error());
   if (!act->empty()) {
     auto a = parse_action(*act);
     if (!a) return fail(a.error());
     c.action = *a;
   }
-  if (auto r = t.get("resume")) {
-    auto b = r->value<bool>();
-    if (!b) return cfg("'resume' must be a boolean");
-    c.resume = *b;
+  // Which actions each kind may take.
+  const T at = c.action.type;
+  switch (kind) {
+    case K::Truncation:
+      if (at != T::Truncate) return cfg("a truncation's action must be truncate or truncate:quick");
+      break;
+    case K::Termination:
+    case K::Cancelation:
+    case K::Equilibration:
+      if (t.contains("action")) return cfg("'action' is not allowed on " + std::string(to_string(kind)) + "s");
+      break;
+    case K::Action:
+      if (at == T::None) return cfg("an action conditional needs 'action'");
+      if (is_queue_action(at)) return cfg("queue actions belong in [[modifications]] or [[post_run]]");
+      break;
+    case K::Modification:
+      if (!is_queue_action(at)) return cfg("a modification's action must be a queue action (skip_next, run_blank, ...)");
+      break;
+    case K::PreRun:
+      if (at != T::Cancel) return cfg("a pre_run conditional's action must be cancel");
+      break;
+    case K::PostRun:
+      if (at != T::Cancel && !is_queue_action(at)) return cfg("a post_run action must be cancel or a queue action");
+      break;
   }
   return c;
 }
@@ -294,10 +555,12 @@ Result<ConditionalSet> parse_conditionals(std::string_view text, std::string_vie
     size_t idx = 0;
     for (const auto& e : *arr) {
       auto* t = e.as_table();
+      ++idx;
       if (!t) return cfg(std::string(file) + ": '" + k + "' entries must be tables");
-      auto c = parse_item(*t, *kind, idx++);
+      auto c = parse_item(*t, *kind);
       if (!c) return cfg(std::string(file) + ": [[" + k + "]] #" + std::to_string(idx) + ": " + c.error().what);
       if (!names.insert(c->name).second) return cfg(std::string(file) + ": duplicate conditional name '" + c->name + "'");
+      c->location = std::string(file);
       set.items.push_back(std::move(*c));
     }
   }
@@ -323,10 +586,9 @@ Result<Whiff> parse_whiff(std::string_view text, std::string_view file) {
       if (!act) return fail(act.error());
       WhiffCheck wc;
       wc.check = *check;
-      if (*act == "run_remainder") wc.action = WhiffCheck::Action::RunRemainder;
-      else if (*act == "pump") wc.action = WhiffCheck::Action::Pump;
-      else if (*act == "abort") wc.action = WhiffCheck::Action::Abort;
-      else return cfg(std::string(file) + ": whiff action must be run_remainder|pump|abort, got '" + *act + "'");
+      auto a = parse_whiff_action(*act);
+      if (!a) return cfg(std::string(file) + ": whiff action must be run_remainder|pump|abort, got '" + *act + "'");
+      wc.action = *a;
       auto expr = parse_expression(wc.check);
       if (!expr) return fail(expr.error());
       wc.expr = std::shared_ptr<const Expr>(std::move(*expr));

@@ -100,3 +100,10 @@ units = "torr"
 name = "air"
 inner = "P1"
 outer = "P2"
+
+# Lab-specific names measurement plans reference as '@key' (experiment spec
+# 4.1), so one shipped template serves every line of an instrument family.
+[aliases]
+valves.inlet = "B"           # prep -> spectrometer
+valves.outlet = "C"          # prep -> turbo
+extraction.eqtime = 20       # seconds of equilibration

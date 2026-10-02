@@ -55,3 +55,23 @@ if(PYCHRON_SCRIPTING)
     message(WARNING "PYCHRON_SCRIPTING: Python >= 3.12 (Development.Embed) not found; building the stub script host")
   endif()
 endif()
+
+# QCustomPlot (GPL) for the UI strip charts. Ships no CMake project, so the
+# static library is defined here. UI only: Qt must already be found.
+if(BUILD_UI)
+  find_package(Qt6 REQUIRED COMPONENTS Widgets PrintSupport)
+  FetchContent_Declare(qcustomplot
+    URL https://www.qcustomplot.com/release/2.1.1/QCustomPlot-source.tar.gz
+    URL_HASH SHA256=5e2d22dec779db8f01f357cbdb25e54fbcf971adaee75eae8d7ad2444487182f
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(qcustomplot)
+
+  add_library(qcustomplot STATIC
+    "${qcustomplot_SOURCE_DIR}/qcustomplot.cpp"
+    "${qcustomplot_SOURCE_DIR}/qcustomplot.h")
+  set_target_properties(qcustomplot PROPERTIES AUTOMOC ON)
+  target_include_directories(qcustomplot SYSTEM PUBLIC "${qcustomplot_SOURCE_DIR}")
+  target_link_libraries(qcustomplot PUBLIC Qt6::Widgets Qt6::PrintSupport)
+  # Third-party code: not ours to keep warning-clean.
+  target_compile_options(qcustomplot PRIVATE -w)
+endif()

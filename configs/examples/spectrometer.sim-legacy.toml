@@ -69,6 +69,7 @@ kind = "faraday"
 channel = "faradays:H1"
 units = "fA"
 isotope = "Ar40"
+color = "#1f77b4"
 
 [[detectors]]
 name = "AX"
@@ -76,6 +77,7 @@ kind = "faraday"
 channel = "faradays:AX"
 units = "fA"
 isotope = "Ar39"
+color = "#2ca02c"
 
 [[detectors]]
 name = "L1"
@@ -83,6 +85,7 @@ kind = "faraday"
 channel = "faradays:L1"
 units = "fA"
 isotope = "Ar38"
+color = "#d62728"
 
 [[detectors]]
 name = "EM"
@@ -90,4 +93,5 @@ kind = "counter"
 channel = "multiplier:EM"
 units = "cps"
 isotope = "Ar36"
+color = "#9467bd"
 dead_time_ns = 20

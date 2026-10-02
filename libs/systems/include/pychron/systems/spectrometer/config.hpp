@@ -147,6 +147,7 @@ struct DetectorConfig : Located {
   std::string units;
   double software_gain = 1.0;
   std::string isotope;
+  std::string color;  // "#rrggbb" lower-case; empty = unset
   bool active = true;
   std::optional<Deflection> deflection;
   std::optional<DetectorProtection> protection;

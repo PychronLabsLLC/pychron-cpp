@@ -49,6 +49,7 @@ name = "H2"
 kind = "faraday"
 channel = "sim:H2"
 units = "fA"
+color = "#1f77b4"
 deflection = { control = true, correction = [0.0, 0.0011], sign = 1, max = 800, per_volt = 0.0030 }
 saturation = 4.9e6
 
@@ -59,6 +60,7 @@ channel = "sim:H1"
 units = "fA"
 software_gain = 1.0
 isotope = "Ar40"
+color = "#ff7f0e"
 active = true
 deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
 protection = { threshold = 5e5, on_move = true }
@@ -70,6 +72,7 @@ kind = "faraday"
 channel = "sim:AX"
 units = "fA"
 isotope = "Ar39"
+color = "#2ca02c"
 deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
 saturation = 4.9e6
 
@@ -79,6 +82,7 @@ kind = "faraday"
 channel = "sim:L1"
 units = "fA"
 isotope = "Ar38"
+color = "#d62728"
 deflection = { control = true, correction = [0.0, 0.0012], sign = -1, max = 800, per_volt = 0.0031 }
 saturation = 4.9e6
 
@@ -88,6 +92,7 @@ kind = "faraday"
 channel = "sim:L2"
 units = "fA"
 isotope = "Ar37"
+color = "#9467bd"
 deflection = { control = true, correction = [0.0, 0.0011], sign = -1, max = 800, per_volt = 0.0030 }
 saturation = 4.9e6
 
@@ -97,6 +102,7 @@ kind = "cdd"
 channel = "sim:CDD"
 units = "cps"
 isotope = "Ar36"
+color = "#8c564b"
 dead_time_ns = 25
 cdd_voltage = 1450
 deflection = { control = true, correction = [0.0, 0.0010], sign = -1, max = 800, per_volt = 0.0029 }

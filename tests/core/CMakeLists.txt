@@ -2,6 +2,7 @@ add_executable(pychron_core_tests
   test_expected.cpp
   test_error.cpp
   test_clock.cpp
+  test_time_series_ring.cpp
   test_signal_bus.cpp
   test_logger.cpp
   test_log_match.cpp

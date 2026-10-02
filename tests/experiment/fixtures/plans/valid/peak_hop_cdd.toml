@@ -43,3 +43,14 @@ position = { detector = "CDD" }
 
 [parameters]
 expose = ["main.cycles", "main.hops[1].counts", "main.hops[0].protect"]
+
+[whiff]
+enabled = true
+counts = 4
+integration_s = 0.5
+[[whiff.checks]]
+check = "Ar40.cur > 5e6"
+action = "abort"
+[[whiff.checks]]
+check = "Ar40.cur > 1e6"
+action = "pump"

@@ -8,7 +8,7 @@ list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
 target_include_directories(pychron_elctl_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(pychron_elctl_lib PUBLIC cxx_std_20)
-target_link_libraries(pychron_elctl_lib PUBLIC pychron::systems pychron::devices pychron::transport pychron::core)
+target_link_libraries(pychron_elctl_lib PUBLIC pychron::experiment pychron::systems pychron::devices pychron::transport pychron::core)
 pychron_set_warnings(pychron_elctl_lib)
 
 add_executable(elctl src/main.cpp)

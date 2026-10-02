@@ -110,6 +110,17 @@ struct PipetteConfig : Located {
   std::string outer;
 };
 
+// [aliases]: lab-specific names that measurement plans reference as
+// '@key' (experiment spec 4.1), e.g. `valves.inlet = "B"` or
+// `extraction.eqtime = 20`. Nested tables flatten to dotted keys.
+// Aliases under `valves.` must name a configured valve or manual valve.
+using AliasValue = std::variant<bool, std::int64_t, double, std::string>;
+
+struct AliasConfig : Located {
+  std::string key;  // dotted, e.g. "valves.inlet"
+  AliasValue value;
+};
+
 struct SystemConfig {
   std::string source_file;
   SystemSection system;
@@ -121,6 +132,7 @@ struct SystemConfig {
   std::vector<GaugeConfig> gauges;
   std::vector<PipetteConfig> pipettes;
   LoggingConfig logging;
+  std::map<std::string, AliasConfig> aliases;  // by key
 };
 
 }  // namespace pychron::config

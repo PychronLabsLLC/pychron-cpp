@@ -1,0 +1,7 @@
+# experiment/tests/conditionals_configuration.py:63-70 (legacy pychron)
+modifications:
+  - check: device.pneumatics<80
+    action: Run Blank
+equilibrations:
+  - check: device.pneumatics<80
+    abbreviated_count_ratio: 0.5

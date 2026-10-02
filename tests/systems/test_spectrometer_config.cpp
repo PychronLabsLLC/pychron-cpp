@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -274,6 +277,49 @@ TEST(SpectrometerConfig, ParseChannelRef) {
   EXPECT_FALSE(parse_channel_ref("H1"));
   EXPECT_FALSE(parse_channel_ref(":H1"));
   EXPECT_FALSE(parse_channel_ref("x:"));
+}
+
+std::string with_color(std::string_view value) { return with("isotope = \"Ar40\"", "isotope = \"Ar40\"\ncolor = " + std::string(value)); }
+
+TEST(DetectorColor, DetectorColorParsed) {
+  auto r = parse(with_color("\"#1E90ff\""));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.config->detectors[0].color, "#1e90ff");
+}
+
+TEST(DetectorColor, DetectorColorDefaultsEmpty) {
+  auto r = parse(std::string(kIntegrated));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_TRUE(r.config->detectors[0].color.empty());
+}
+
+TEST(DetectorColor, BadDetectorColorIsDiagnosticWithLine) {
+  for (const char* bad : {"\"red\"", "\"#12345\"", "\"#12345g\"", "42"}) {
+    const auto text = with_color(bad);
+    const auto r = parse(text);
+    ASSERT_FALSE(r.ok()) << bad;
+    const auto key_line = 1u + static_cast<unsigned>(std::count(text.begin(), text.begin() + text.find("\ncolor ") + 1, '\n'));
+    bool found = false;
+    for (const auto& d : r.diagnostics) {
+      if (d.field.size() >= 6 && d.field.compare(d.field.size() - 6, 6, ".color") == 0) {
+        found = true;
+        EXPECT_EQ(d.loc.line, key_line) << bad;
+      }
+    }
+    EXPECT_TRUE(found) << bad << "\n" << dump(r);
+  }
+}
+
+TEST(DetectorColor, ExampleConfigsHaveDistinctColors) {
+  for (const char* name : {"spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"}) {
+    const auto r = parse_config(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / name);
+    ASSERT_TRUE(r.ok()) << name << "\n" << dump(r);
+    std::set<std::string> seen;
+    for (const auto& d : r.config->detectors) {
+      EXPECT_FALSE(d.color.empty()) << name << " " << d.name;
+      EXPECT_TRUE(seen.insert(d.color).second) << name << " duplicate colour on " << d.name;
+    }
+  }
 }
 
 }  // namespace

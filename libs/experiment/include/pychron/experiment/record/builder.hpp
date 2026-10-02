@@ -34,7 +34,7 @@ class RecordBuilder {
   RecordBuilder& set_baseline(const std::string& det, BaselineResult v);
   RecordBuilder& set_blanks_ref(std::string ref);
   RecordBuilder& set_icfactor(const std::string& det, double v);
-  RecordBuilder& set_whiff(double v);
+  RecordBuilder& set_whiff(std::string result);  // run_remainder | pump | abort
   RecordBuilder& set_conditionals(Conditionals v);
   RecordBuilder& add_event(Event v);
   RecordBuilder& add_persister_ref(std::string ref);
