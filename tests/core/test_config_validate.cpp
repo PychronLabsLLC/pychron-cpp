@@ -174,3 +174,28 @@ TEST(ConfigValidate, ValidSwitchNextToValves) {
   const auto body = valve("A", "1") + sw("pump", "9");
   EXPECT_TRUE(load(body).ok());
 }
+
+TEST(ConfigValidate, AliasesFlattenToDottedKeys) {
+  auto rep = load(valve("A", "1") + "[aliases]\nextraction.eqtime = 20\nfactor = 1.5\n[aliases.valves]\ninlet = \"A\"\n");
+  ASSERT_TRUE(rep.ok()) << testing::PrintToString(test::formatted(rep.diagnostics));
+  const auto& aliases = rep.config->aliases;
+  ASSERT_EQ(aliases.size(), 3u);
+  EXPECT_EQ(std::get<std::int64_t>(aliases.at("extraction.eqtime").value), 20);
+  EXPECT_DOUBLE_EQ(std::get<double>(aliases.at("factor").value), 1.5);
+  EXPECT_EQ(std::get<std::string>(aliases.at("valves.inlet").value), "A");
+}
+
+TEST(ConfigValidate, ValveAliasesMustNameValves) {
+  const auto body = valve("A", "1") + "[aliases.valves]\ninlet = \"A\"\noutlet = \"ghost\"\npump = 3\n";
+  auto rep = load(body);
+  ASSERT_EQ(rep.diagnostics.size(), 2u) << testing::PrintToString(test::formatted(rep.diagnostics));
+  EXPECT_TRUE(has(rep.diagnostics, at(body, "outlet = \"ghost\"", "aliases.valves.outlet: unknown valve 'ghost'")));
+  EXPECT_TRUE(has(rep.diagnostics,
+                  at(body, "pump = 3", "aliases.valves.pump: valve alias must be a valve name (string)")));
+}
+
+TEST(ConfigValidate, AliasLeavesMustBeScalars) {
+  const auto body = std::string("[aliases]\nlist = [1, 2]\n");
+  auto rep = load(body);
+  EXPECT_TRUE(has(rep.diagnostics, at(body, "list = [1, 2]", "aliases.list: expected string, number or boolean, got array")));
+}

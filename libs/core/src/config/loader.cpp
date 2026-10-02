@@ -241,7 +241,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "logging"});
+                           "pipettes", "logging", "aliases"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -279,6 +279,9 @@ class ConfigBuilder {
     for_each_item(root, "pipettes", [&](const std::string& path, const toml::table& t) {
       c.pipettes.push_back(parse_pipette(path, t));
     });
+    if (const auto* n = root.get("aliases")) {
+      if (const auto* t = p_.as_table(*n, "aliases")) parse_aliases(*t, "", c.aliases);
+    }
     return c;
   }
 
@@ -338,6 +341,35 @@ class ConfigBuilder {
       }
     }
     return transports;
+  }
+
+  // Flattens nested tables to dotted keys; leaves are scalars.
+  void parse_aliases(const toml::table& t, const std::string& prefix, std::map<std::string, AliasConfig>& out) {
+    for (auto&& [k, v] : t) {
+      const std::string key = prefix.empty() ? std::string(k.str()) : prefix + "." + std::string(k.str());
+      if (const auto* sub = v.as_table()) {
+        parse_aliases(*sub, key, out);
+        continue;
+      }
+      AliasConfig a;
+      a.key = key;
+      a.path = "aliases." + key;
+      a.loc = p_.loc(v);
+      if (const auto* s = v.as_string()) {
+        a.value = s->get();
+      } else if (const auto* i = v.as_integer()) {
+        a.value = i->get();
+      } else if (const auto* f = v.as_floating_point()) {
+        a.value = f->get();
+      } else if (const auto* b = v.as_boolean()) {
+        a.value = b->get();
+      } else {
+        p_.error(a.loc, a.path,
+                 "expected string, number or boolean, got " + std::string(type_name(v.type())));
+        continue;
+      }
+      out.emplace(key, std::move(a));
+    }
   }
 
   void parse_system(const toml::table& t, SystemSection& s) {
