@@ -40,6 +40,7 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   Result<void> protect(const std::string&, bool) override { return {}; }
   Result<void> start_acquisition(pychron::Duration integration) override {
     std::lock_guard lock(mutex_);
+    if (acquiring) ++overlapping;  // two runs measuring at once
     integration_ = integration;
     acquiring = true;
     return {};
@@ -64,7 +65,7 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   void stop_acquisition() override { acquiring = false; }
 
   std::function<void(int)> on_reading;
-  std::atomic<int> readings{0}, moves{0};
+  std::atomic<int> readings{0}, moves{0}, overlapping{0};
   std::atomic<bool> acquiring{false};
 
  private:
