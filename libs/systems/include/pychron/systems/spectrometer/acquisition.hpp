@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -104,8 +105,26 @@ class AcquisitionEngine {
   AcquisitionEngine& operator=(const AcquisitionEngine&) = delete;
 
   // Configures and starts every acquirer and registers one Scheduler job each.
-  // Bins align to the epoch taken here.
+  // Bins align to the epoch taken here. Calls are serialised: it waits for a
+  // start() or stop() in progress on another thread to finish first, so a
+  // second start() racing the first fails with "already running" and never
+  // configures or registers anything. Called from inside a poll while another
+  // thread's stop() or start() is in progress it does not wait (that would
+  // deadlock) and fails with Config.
+  //
+  // Like stop(), it can wait for polls in flight, and polls publish on the
+  // SignalBus synchronously: do not hold, across start(), a lock that a bus
+  // subscriber running on a poll thread may take.
   Result<void> start(Duration integration);
+  // Returns only when no poll() is executing on another thread and the
+  // acquirers are stopped, so a start() that follows never overlaps a next()
+  // from this run. A start() in progress on another thread is waited for and
+  // then stopped. Called from inside a poll (a bus subscriber, say) it does
+  // not wait for that poll, nor for a stop() or start() already in progress
+  // elsewhere.
+  //
+  // Polls publish on the SignalBus synchronously, so do not hold, across
+  // stop(), a lock that a bus subscriber running on a poll thread may take.
   void stop();
   bool running() const;
 
@@ -124,7 +143,8 @@ class AcquisitionEngine {
   void cancel();
 
   // One iteration of acquirer `index`'s job: drain next(), bin, merge,
-  // publish, health check. Scheduler jobs call this; tests may too.
+  // publish, health check. Scheduler jobs call this; tests may too. A no-op
+  // when the engine is not running.
   void poll(std::size_t index);
 
   // Frames lost to seq gaps / discarded by the stale-frame guard.
@@ -154,6 +174,11 @@ class AcquisitionEngine {
                     const Clock& clock, Options options);
 
   void begin_request();
+  std::size_t polls_on_this_thread() const;  // caller holds mutex_
+  // Neither starting nor stopping: running, or stopped with no poll in
+  // flight. What start() and an already-stopped stop() wait for. Caller holds
+  // mutex_.
+  bool settled() const;
   void ingest(std::size_t i, const Frame& frame, TimePoint now);
   void ingest_integrated(std::size_t i, const Frame& frame);
   void ingest_raw(std::size_t i, const Frame& frame);
@@ -182,6 +207,10 @@ class AcquisitionEngine {
   TimePoint request_start_{};
   TimePoint epoch_{};
   std::vector<JobId> jobs_;
+  std::vector<std::thread::id> polling_;  // one entry per poll() in flight
+  std::condition_variable polls_cv_;      // polling_ shrank, or stopping_ or starting_ cleared
+  bool stopping_ = false;                 // a stop() has yet to stop the acquirers
+  bool starting_ = false;                 // a start() is between its check and its result
   std::vector<Bin> bins_;
   std::vector<Partial> pending_;
   std::vector<bool> have_seq_;

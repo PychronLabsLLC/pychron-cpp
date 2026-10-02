@@ -1,0 +1,8 @@
+# Machine-local overrides for spectrometer.qtegra.toml. Copy to
+# spectrometer.qtegra.local.toml next to it and set the address of the PC
+# running Qtegra's RemoteControlServer. On a transport only host, port, baud
+# and timeout_ms may be overridden here.
+
+[transports.qtegra]
+host = "192.168.0.10"
+port = 1069

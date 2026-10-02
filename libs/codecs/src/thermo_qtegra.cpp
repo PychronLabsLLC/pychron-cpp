@@ -10,36 +10,38 @@ namespace pychron::codec::qtegra {
 namespace {
 
 // Preferred (pychron Python) entries first; aliases after. Sources:
-// spectrometer/thermo/spectrometer/base.py and helix.py hardware_names,
-// source/base.py and source/helix.py read_* / _set_*.
+// spectrometer/thermo/spectrometer/base.py and helix.py hardware_names (sent
+// by set_parameter / GetParameters / _send_configuration), source/base.py and
+// source/helix.py read_* / _set_*. The last field is `verified`: true only
+// for a name found there.
 constexpr std::array<ParamName, 25> kNames{{
-    {"hv", "HV", ""},
-    {"trap_current", "Trap Current Set", "Trap Current Readback"},
-    {"trap_voltage", "Trap Voltage Set", "Trap Voltage Readback"},
+    {"hv", "HV", "", true},
+    {"trap_current", "Trap Current Set", "Trap Current Readback", true},
+    {"trap_voltage", "Trap Voltage Set", "Trap Voltage Readback", true},
     // Set name not seen in pychron Python; readback from ThermoSource.read_emission.
-    {"emission", "Electron Emission Set", "Source Current Readback"},
-    {"electron_energy", "Electron Energy Set", ""},
-    {"ion_repeller", "Ion Repeller Set", ""},
-    {"extraction_lens", "Extraction Lens Set", ""},
-    {"extraction_focus", "Extraction Focus Set", ""},        // Helix hardware_names
-    {"extraction_symmetry", "Extraction Symmetry Set", ""},  // Helix hardware_names
-    {"y_symmetry", "Y-Symmetry Set", ""},
-    {"z_symmetry", "Z-Symmetry Set", ""},
-    {"z_focus", "Z-Focus Set", ""},
-    {"horizontal_symmetry", "Horizontal Symmetry Set", ""},  // Helix hardware_names
-    {"flatapole", "DAC_1_0_(Flata-Pole)", ""},               // Helix
-    {"rotation_quad", "RotationQuad", ""},                   // Helix hardware_names, read
-    {"pole_n", "DAC_0_0_(Pole-N)", ""},                      // Helix
-    {"pole_s", "DAC_0_4_(Pole-S)", ""},                      // Helix
-    {"esa_plus", "ESA+ Set", ""},                            // not seen in pychron Python
-    {"esa_minus", "ESA- Set", ""},                           // not seen in pychron Python
+    {"emission", "Electron Emission Set", "Source Current Readback", false},
+    {"electron_energy", "Electron Energy Set", "", true},
+    {"ion_repeller", "Ion Repeller Set", "", true},
+    {"extraction_lens", "Extraction Lens Set", "", true},
+    {"extraction_focus", "Extraction Focus Set", "", true},        // Helix hardware_names
+    {"extraction_symmetry", "Extraction Symmetry Set", "", true},  // Helix hardware_names
+    {"y_symmetry", "Y-Symmetry Set", "", true},
+    {"z_symmetry", "Z-Symmetry Set", "", true},
+    {"z_focus", "Z-Focus Set", "", true},
+    {"horizontal_symmetry", "Horizontal Symmetry Set", "", true},  // Helix hardware_names
+    {"flatapole", "DAC_1_0_(Flata-Pole)", "", true},               // Helix
+    {"rotation_quad", "RotationQuad", "", true},                   // Helix hardware_names, read
+    {"pole_n", "DAC_0_0_(Pole-N)", "", true},                      // Helix
+    {"pole_s", "DAC_0_4_(Pole-S)", "", true},                      // Helix
+    {"esa_plus", "ESA+ Set", "", false},                           // not seen in pychron Python
+    {"esa_minus", "ESA- Set", "", false},                          // not seen in pychron Python
     // Aliases.
-    {"rotation_quad", "Rotation Quad", ""},         // HelixSource._set_rotation_quad
-    {"horizontal_symmetry", "H-Symmetry Set", ""},  // not seen in pychron Python
-    {"flatapole", "Flatapole Set", ""},             // not seen in pychron Python
-    {"rotation_quad", "Rotation Quad Set", ""},     // not seen in pychron Python
-    {"pole_n", "Pole N Set", ""},                   // not seen in pychron Python
-    {"pole_s", "Pole S Set", ""},                   // not seen in pychron Python
+    {"rotation_quad", "Rotation Quad", "", true},          // HelixSource._set_rotation_quad
+    {"horizontal_symmetry", "H-Symmetry Set", "", false},  // not seen in pychron Python
+    {"flatapole", "Flatapole Set", "", false},             // not seen in pychron Python
+    {"rotation_quad", "Rotation Quad Set", "", false},     // not seen in pychron Python
+    {"pole_n", "Pole N Set", "", false},                   // not seen in pychron Python
+    {"pole_s", "Pole S Set", "", false},                   // not seen in pychron Python
 }};
 
 Unexpected<Error> config_error(std::string what) { return fail(ErrorKind::Config, std::move(what)); }
@@ -211,6 +213,15 @@ std::optional<std::string_view> canonical_name(std::string_view hardware) noexce
   return std::nullopt;
 }
 
+bool verified_name(std::string_view hardware) noexcept {
+  if (hardware.empty()) return false;
+  for (const auto& n : kNames)
+    if ((n.verified && n.hardware == hardware) || n.readback == hardware) return true;
+  return false;
+}
+
+Result<void> validate_name(std::string_view name) { return check_name(name); }
+
 Result<Command> set_magnet_dac(double dac, Terminator t) { return with_number("SetMagnetDAC", dac, t); }
 Result<Command> get_magnet_dac(Terminator t) { return simple("GetMagnetDAC", t); }
 Result<Command> get_magnet_moving(Terminator t) { return simple("GetMagnetMoving", t); }
@@ -266,6 +277,12 @@ Result<void> decode_ok(const Bytes& reply) {
   return {};
 }
 
+Result<void> decode_ack(const Bytes& reply) {
+  auto b = body(reply);
+  if (!b) return fail(b.error());
+  return {};
+}
+
 Result<double> decode_number(const Bytes& reply) {
   auto b = body(reply);
   if (!b) return fail(b.error());
@@ -298,12 +315,15 @@ Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::strin
 Result<Pairs> decode_data(const Bytes& reply) {
   auto b = data_body(reply);
   if (!b) return fail(b.error());
+  if (b->empty()) return protocol_error("empty reply", reply);
   Pairs out;
-  if (b->empty()) return out;
   auto fields = split_csv(*b);
   if (fields.size() % 2 != 0) return protocol_error("unpaired tag", reply);
   for (std::size_t i = 0; i < fields.size(); i += 2) {
     if (fields[i].empty()) return protocol_error("empty tag", reply);
+    for (const auto& seen : out) {
+      if (seen.first == fields[i]) return protocol_error("tag \"" + fields[i] + "\" repeated", reply);
+    }
     auto v = field_number(fields[i + 1]);
     if (!v) return protocol_error("not a number", reply);
     out.emplace_back(std::move(fields[i]), *v);
@@ -317,5 +337,31 @@ Result<Pairs> decode_data(const Bytes& reply, std::span<const std::string_view> 
   if (b->empty()) return Pairs{};
   return pair_values(*b, order, reply);
 }
+
+Result<Request> decode_request(const Bytes& tx) {
+  const std::string raw = to_string(tx);
+  const std::string_view line = trim(raw);
+  if (line.empty()) return protocol_error("empty command", tx);
+  Request request;
+  const auto space = line.find(' ');
+  request.verb = std::string(line.substr(0, space));
+  if (space == std::string_view::npos) return request;
+  for (auto& field : split_csv(std::string(line.substr(space + 1)))) request.args.emplace_back(trim(field));
+  return request;
+}
+
+Bytes encode_ok() { return to_bytes("OK\r\n"); }
+Bytes encode_number(double v) { return to_bytes(format_number(v) + "\r\n"); }
+Bytes encode_bool(bool v) { return to_bytes(v ? "True\r\n" : "False\r\n"); }
+Bytes encode_error(std::string_view message) { return to_bytes("ERROR: " + std::string(message) + "\r\n"); }
+Bytes encode_data(std::span<const std::pair<std::string, double>> pairs) {
+  std::string text;
+  for (const auto& [tag, value] : pairs) {
+    if (!text.empty()) text += ',';
+    text += tag + "," + format_number(value);
+  }
+  return to_bytes(text + "\r\n");
+}
+Bytes encode_line(std::string_view text) { return to_bytes(std::string(text) + "\r\n"); }
 
 }  // namespace pychron::codec::qtegra
