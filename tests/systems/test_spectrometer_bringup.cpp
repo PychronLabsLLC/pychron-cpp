@@ -41,8 +41,11 @@ class SpectrometerBringupSim : public ::testing::TestWithParam<const char*> {
     scheduler_.start();
   }
   void TearDown() override {
-    spec_.reset();
+    // stop() only joins the dispatcher: a poll already on a worker must finish
+    // before the spectrometer it uses goes.
     scheduler_.stop();
+    scheduler_.wait_idle();
+    spec_.reset();
     sim::BeamModelRegistry::global().clear();
   }
 
@@ -57,14 +60,14 @@ class SpectrometerBringupSim : public ::testing::TestWithParam<const char*> {
 };
 
 TEST_P(SpectrometerBringupSim, LoadsBothSimConfigs) {
-  auto spec = load(kDir / GetParam(), SpectrometerBringup{true});
+  auto spec = load(kDir / GetParam(), SpectrometerBringup{.sim_beam_from_table = true});
   ASSERT_TRUE(spec.has_value()) << spec.error().what;
   spec_ = std::move(*spec);
   EXPECT_FALSE(spec_->config().detectors.empty());
 }
 
 TEST_P(SpectrometerBringupSim, PositionedIsotopeGivesSignalOnChosenDetector) {
-  auto spec = load(kDir / GetParam(), SpectrometerBringup{true});
+  auto spec = load(kDir / GetParam(), SpectrometerBringup{.sim_beam_from_table = true});
   ASSERT_TRUE(spec.has_value()) << spec.error().what;
   spec_ = std::move(*spec);
   ASSERT_TRUE(spec_->acquisition().start(100ms).has_value());
@@ -83,6 +86,18 @@ TEST_P(SpectrometerBringupSim, PositionedIsotopeGivesSignalOnChosenDetector) {
   EXPECT_GT(mean_on(*on_peak, "H1"), 10.0 * std::max(mean_on(*off_peak, "H1"), 1.0));
 }
 
+TEST_P(SpectrometerBringupSim, ExampleConfigIsSimulated) {
+  auto data = cfg::load_spectrometer(kDir / GetParam());
+  ASSERT_TRUE(data.has_value()) << data.error().what;
+  EXPECT_TRUE(is_simulated(*data));
+}
+
+TEST_P(SpectrometerBringupSim, RequireSimAcceptsSimConfig) {
+  auto spec = load(kDir / GetParam(), SpectrometerBringup{.sim_beam_from_table = true, .require_sim = true});
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  spec_ = std::move(*spec);
+}
+
 INSTANTIATE_TEST_SUITE_P(SimConfigs, SpectrometerBringupSim,
                          ::testing::Values("spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"));
 
@@ -96,7 +111,7 @@ class SpectrometerBringupMisc : public ::testing::Test {
 
 TEST_F(SpectrometerBringupMisc, MissingFileIsError) {
   auto spec = load_spectrometer_for_app(kDir / "no-such-spectrometer.toml",
-                                        SpectrometerContext{clock_, scheduler_, bus_}, SpectrometerBringup{true});
+                                        SpectrometerContext{clock_, scheduler_, bus_}, SpectrometerBringup{.sim_beam_from_table = true});
   EXPECT_FALSE(spec.has_value());
 }
 
@@ -106,6 +121,57 @@ TEST_F(SpectrometerBringupMisc, WithoutSimFlagRegistryUntouched) {
   auto spec = load_spectrometer_for_app(kDir / "spectrometer.sim-integrated.toml",
                                         SpectrometerContext{clock_, scheduler_, bus_});
   ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  EXPECT_EQ(sim::BeamModelRegistry::global().acquire("default", clock_), sentinel);
+}
+
+cfg::SpectrometerData example_data() {
+  auto data = cfg::load_spectrometer(kDir / "spectrometer.sim-legacy.toml");
+  if (!data) ADD_FAILURE() << data.error().what;
+  return std::move(*data);
+}
+
+TEST_F(SpectrometerBringupMisc, RealTransportKindIsNotSimulated) {
+  auto data = example_data();
+  data.config.transports.at("adc").kind = cfg::TransportKind::Tcp;
+  EXPECT_FALSE(is_simulated(data));
+}
+
+TEST_F(SpectrometerBringupMisc, RealDriverKindIsNotSimulated) {
+  auto data = example_data();
+  data.config.drivers.at("faradays").kind = "adc_bank";
+  EXPECT_FALSE(is_simulated(data));
+}
+
+TEST_F(SpectrometerBringupMisc, NoTransportsAndSimDriversIsSimulated) {
+  auto data = example_data();
+  data.config.transports.clear();
+  EXPECT_TRUE(is_simulated(data));
+}
+
+TEST_F(SpectrometerBringupMisc, RequireSimRefusesRealTransportAndLeavesRegistry) {
+  auto sentinel = std::make_shared<sim::BeamModel>(clock_);
+  sim::BeamModelRegistry::global().set("default", sentinel);
+  auto data = example_data();
+  data.config.transports.at("adc").kind = cfg::TransportKind::Tcp;
+  auto spec = load_spectrometer_for_app(std::move(data), SpectrometerContext{clock_, scheduler_, bus_},
+                                        SpectrometerBringup{.sim_beam_from_table = true, .require_sim = true});
+  ASSERT_FALSE(spec.has_value());
+  EXPECT_EQ(spec.error().kind, ErrorKind::Config);
+  EXPECT_NE(spec.error().what.find("transport 'adc'"), std::string::npos) << spec.error().what;
+  EXPECT_EQ(sim::BeamModelRegistry::global().acquire("default", clock_), sentinel);
+}
+
+TEST_F(SpectrometerBringupMisc, RequireSimRefusesRealDriverKindAndLeavesRegistry) {
+  auto sentinel = std::make_shared<sim::BeamModel>(clock_);
+  sim::BeamModelRegistry::global().set("default", sentinel);
+  auto data = example_data();
+  data.config.drivers.at("faradays").kind = "adc_bank";
+  auto spec = load_spectrometer_for_app(std::move(data), SpectrometerContext{clock_, scheduler_, bus_},
+                                        SpectrometerBringup{.sim_beam_from_table = true, .require_sim = true});
+  ASSERT_FALSE(spec.has_value());
+  EXPECT_EQ(spec.error().kind, ErrorKind::Config);
+  EXPECT_NE(spec.error().what.find("driver 'faradays'"), std::string::npos) << spec.error().what;
+  EXPECT_NE(spec.error().what.find("adc_bank"), std::string::npos) << spec.error().what;
   EXPECT_EQ(sim::BeamModelRegistry::global().acquire("default", clock_), sentinel);
 }
 
