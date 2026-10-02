@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -790,12 +791,19 @@ TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
   d.series[{"Ar36", "CDD", SeriesKind::Signal}] = collect::Series{{1, 2, 3}, {1, 2, 3}, {}, {}};
   d.series[{"Ar36", "L2", SeriesKind::Signal}] = collect::Series{{1, 2, 3}, {2, 4, 6}, {}, {}};
   d.series[{"Ar40", "H1", SeriesKind::Signal}] = collect::Series{{1}, {5}, {}, {}};  // too few for linear
+  d.series[{"Ar39", "AX", SeriesKind::Signal}] =
+      collect::Series{{1, 2}, {1, std::numeric_limits<double>::quiet_NaN()}, {}, {}};
   auto out = fit_results(d, plan::Fits{});
   EXPECT_TRUE(out.results.intercepts.contains("Ar36:CDD"));
   EXPECT_TRUE(out.results.intercepts.contains("Ar36:L2"));
-  EXPECT_FALSE(out.results.intercepts.contains("Ar40"));
+  // One point: averaged, and the record says which fit was used.
+  ASSERT_TRUE(out.results.intercepts.contains("Ar40"));
+  EXPECT_EQ(out.results.intercepts.at("Ar40").fit.kind, reduction::FitKind::Average);
+  EXPECT_DOUBLE_EQ(out.results.intercepts.at("Ar40").intercept.value, 5);
+  // Non-finite data cannot be fitted.
+  EXPECT_FALSE(out.results.intercepts.contains("Ar39"));
   ASSERT_EQ(out.errors.size(), 1u);
-  EXPECT_EQ(out.errors[0].substr(0, 5), "Ar40:");
+  EXPECT_EQ(out.errors[0].substr(0, 5), "Ar39:");
 }
 
 }  // namespace

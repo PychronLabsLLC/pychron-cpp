@@ -24,7 +24,8 @@ struct FitOutput {
 
 // Intercepts: one per signal series, fitted with plan.fits.signal on
 // x = t - time_zero, keyed by isotope ("Ar40"), or "Ar36:CDD" when the
-// isotope was measured on more than one detector. Baselines: one per
+// isotope was measured on more than one detector. A series with fewer points
+// than the fit's parameters is averaged (the recorded fit is "average"). Baselines: one per
 // detector over every baseline point on it (block and baseline hops),
 // fitted with plan.fits.baseline; value and error are the intercept's.
 FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits);
