@@ -141,5 +141,23 @@ TEST_F(ElctlTest, ManualValveRecordsOperatorReport) {
   EXPECT_TRUE(contains(o.out, "M1  manual  open")) << o.out;
 }
 
+TEST_F(ElctlTest, LoggingConfigCreatesLogFile) {
+  const auto logs = path("logs");
+  std::string text;
+  {
+    std::ifstream f(path("extraction_line.toml"));
+    text.assign(std::istreambuf_iterator<char>(f), {});
+  }
+  const std::string table = "[logging]\n";
+  auto at = text.find(table);
+  ASSERT_NE(at, std::string::npos);
+  text.insert(at + table.size(), "dir = '" + logs.string() + "'\n");
+  write("extraction_line.toml", text);
+
+  auto o = run({"--sim", "probe"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(std::filesystem::exists(logs / "pychron.log")) << o.err;
+}
+
 }  // namespace
 }  // namespace elctl::testing

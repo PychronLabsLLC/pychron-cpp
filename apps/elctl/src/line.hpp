@@ -20,6 +20,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
@@ -79,6 +80,9 @@ class Line {
   // transports, and transports before the sim models their hooks borrow.
   pychron::SteadyClock clock_;
   pychron::SignalBus bus_;
+  // After the bus and before the transports: destroyed after the transports
+  // that log through it. No [logging].dir means no file sink.
+  std::shared_ptr<pychron::LogHub> log_hub_;
   std::unique_ptr<Sims> sims_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Device>>> devices_;

@@ -14,9 +14,11 @@
 #include <QStringList>
 
 #include "main_window.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
 int main(int argc, char** argv) {
+  pychron::LogHub::install_crash_handlers();
   QApplication app(argc, argv);
   QApplication::setApplicationName(QStringLiteral("pychron-ui"));
 
@@ -46,6 +48,15 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: %s\n", qPrintable(what));
     QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), what);
     return 1;
+  }
+
+  // Created after load because the config is not known earlier, so the line's
+  // transports do not get it (no <name>.wire logging yet). Declared after the
+  // line, so it is destroyed first and its bus pointer never dangles; it is
+  // still alive across stop().
+  auto hub = pychron::LogHub::create((*line)->config().logging, (*line)->clock(), &(*line)->bus());
+  if (!hub) {
+    std::fprintf(stderr, "pychron-ui: %s\n", pychron::to_string(hub.error()).c_str());
   }
 
   int rc = 0;

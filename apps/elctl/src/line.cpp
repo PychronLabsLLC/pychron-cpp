@@ -45,6 +45,10 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
   std::unique_ptr<Line> line(new Line(std::move(config)));
   const auto& cfg = line->config_;
 
+  auto hub = LogHub::create(cfg.logging, line->clock_, &line->bus_);
+  if (!hub) return fail(hub.error());
+  line->log_hub_ = std::move(*hub);
+
   if (options.trace.enabled()) {
     std::error_code ec;
     std::filesystem::create_directories(options.trace_dir, ec);
@@ -62,6 +66,7 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
     context.clock = &line->clock_;
     context.bus = &line->bus_;
     context.trace_dir = options.trace_dir.string();
+    context.log_hub = line->log_hub_;
     if (tc.kind == config::TransportKind::Sim) {
       // The first driver on the wire decides which device model answers.
       auto driver = std::find_if(cfg.drivers.begin(), cfg.drivers.end(),

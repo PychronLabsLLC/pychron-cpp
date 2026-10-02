@@ -105,6 +105,7 @@ Result<void> ExtractionLine::build() {
     context.clock = clock_;
     context.bus = &bus_;
     context.trace_dir = options_.trace_dir.string();
+    context.log_hub = options_.log_hub;
     if (tc.kind == config::TransportKind::Sim) {
       auto driver = std::find_if(config_.drivers.begin(), config_.drivers.end(),
                                  [&](const auto& d) { return d.second.transport == name; });

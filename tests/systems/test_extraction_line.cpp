@@ -306,3 +306,37 @@ TEST(ExtractionLine, LoadReportsMissingFile) {
 }
 
 }  // namespace
+
+TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
+  ManualClock clock;
+  auto dir = std::filesystem::temp_directory_path() / "pychron_line_wire_test";
+  std::filesystem::create_directories(dir);
+
+  auto cfg = system_config();
+  cfg.transports["gnet"].trace = true;
+
+  auto opts = manual(clock);
+  opts.trace_dir = dir;
+  config::LoggingConfig lc;
+  lc.default_level = LogLevel::Trace;
+
+  // The hub logs to its own bus so the test can observe the wire records.
+  SignalBus hub_bus;
+  std::vector<Log> wire;
+  auto sub = hub_bus.subscribe<Log>([&](const Log& e) {
+    if (e.logger == "gnet.wire") wire.push_back(e);
+  });
+  auto hub = LogHub::create(lc, clock, &hub_bus);
+  ASSERT_TRUE(hub);
+  opts.log_hub = *hub;
+
+  {
+    auto line = ExtractionLine::create(std::move(cfg), canvas_model(), opts);
+    ASSERT_TRUE(line) << line.error().what;
+    ASSERT_TRUE((*line)->start());
+    ASSERT_TRUE((*line)->read_gauge("IG1"));
+    (*line)->stop();
+  }
+  EXPECT_FALSE(wire.empty());
+  std::filesystem::remove_all(dir);
+}

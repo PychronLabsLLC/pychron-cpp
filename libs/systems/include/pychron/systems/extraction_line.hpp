@@ -40,6 +40,7 @@
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
@@ -60,6 +61,9 @@ struct ExtractionLineOptions {
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
+  // Optional; traced transports mirror their bytes to "<name>.wire" on it. The
+  // line shares ownership, so the hub outlives its transports.
+  std::shared_ptr<LogHub> log_hub;
 };
 
 class ExtractionLine {
