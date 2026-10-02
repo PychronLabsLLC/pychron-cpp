@@ -8,6 +8,20 @@
 
 namespace pychron::reduction {
 
+std::string_view to_string(Diagnostic d) noexcept {
+  switch (d) {
+    case Diagnostic::FUndefined: return "FUndefined";
+    case Diagnostic::YieldUndefined: return "YieldUndefined";
+    case Diagnostic::AgeUndefined: return "AgeUndefined";
+    case Diagnostic::KCaUndefined: return "KCaUndefined";
+    case Diagnostic::KClUndefined: return "KClUndefined";
+    case Diagnostic::CaClampedToZero: return "CaClampedToZero";
+    case Diagnostic::FixedK3739ZeroCa3937: return "FixedK3739ZeroCa3937";
+    case Diagnostic::NonFiniteResult: return "NonFiniteResult";
+  }
+  return "";
+}
+
 // ---- 3.1 Isotope arithmetic -----------------------------------------------
 
 // E1. Without include_baseline_error legacy subtracts nominal_value(baseline),
@@ -64,6 +78,31 @@ Result<UFloat> deadtime_correct(const UFloat& signal_fa, double tau_s, double fa
 Result<UFloat> deadtime_corrected_intercept(const IsotopeSignal& s, double fa_to_cps) {
   if (!s.deadtime_tau_s) return s.intercept;
   return deadtime_correct(s.intercept, *s.deadtime_tau_s, fa_to_cps);
+}
+
+// ---- 3.3 Interference corrections -----------------------------------------
+
+// E9-E11. legacy:processing/argon_calculations.py:375-426
+InterferenceComponents interference_corrections(const UFloat& a39, const UFloat& a37,
+                                                const ProductionVariables& p,
+                                                const InterferenceOptions& o,
+                                                std::vector<Diagnostic>* diagnostics) {
+  const kernels::InterferenceRatios<UFloat> r{p.k3739, p.k3839, p.ca3937, p.ca3837, p.ca3637};
+  // :410, :416-417: a per-analysis value wins when truthy; otherwise Fixed mode
+  // takes the constants value and Normal mode runs E9.
+  const UFloat* fixed = nullptr;
+  if (o.fixed_k3739 && kernels::truthy(*o.fixed_k3739)) {
+    fixed = &*o.fixed_k3739;
+  } else if (o.mode == K3739Mode::Fixed) {
+    fixed = &o.constants_fixed_k3739;
+  }
+  const kernels::Interference<UFloat> k =
+      kernels::interference(a39, a37, r, fixed, o.allow_negative_ca_correction);
+  if (diagnostics != nullptr) {
+    if (k.fixed_zero_ca3937) diagnostics->push_back(Diagnostic::FixedK3739ZeroCa3937);
+    if (k.ca_clamped) diagnostics->push_back(Diagnostic::CaClampedToZero);
+  }
+  return {k.k37, k.k38, k.k39, k.ca36, k.ca37, k.ca38, k.ca39};
 }
 
 }  // namespace pychron::reduction
