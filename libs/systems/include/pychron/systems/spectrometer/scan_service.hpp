@@ -5,10 +5,13 @@
 // published as ScanStatus on the SignalBus. The service only stops an engine
 // it started itself.
 //
-// Thread-safe. Mutating calls are serialised; engine calls and bus publishes
-// happen outside the state mutex, so bus handlers (including this service's
-// own) never wait on a call that is publishing.
+// Thread-safe. Mutating calls are serialised on one mutex; no ScanStatus is
+// ever published while a service mutex is held, so subscribers may call back
+// into the service. Bus handlers share a state block that outlives the
+// service, so an event still in flight on a scheduler thread when the
+// service is destroyed is dropped safely.
 
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -56,22 +59,17 @@ class ScanService {
   ScanStatus status() const;
 
  private:
-  Result<void> start_engine(Duration integration);  // caller holds op_mutex_
-  ScanStatus status_locked() const;
-  void on_reading();
-  void on_alarm(const Alarm& alarm);
+  struct State;
+
+  // Callers hold op_mutex_ and publish the returned status after releasing it.
+  Result<void> start_engine(Duration integration, ScanStatus& out);
 
   Spectrometer& spectrometer_;
   SignalBus& bus_;
   const Clock& clock_;
 
-  std::recursive_mutex op_mutex_;  // serialises start/stop/pause/resume/set_integration
-  mutable std::mutex mutex_;       // guards the state below
-  bool started_ = false;           // this service started the engine and it is running
-  bool paused_ = false;
-  bool snap_pending_ = false;  // next reading reports the engine's snapped integration
-  Duration integration_{};
-  std::string error_;
+  std::mutex op_mutex_;  // serialises the engine start/stop sequences
+  std::shared_ptr<State> state_;
 
   SignalBus::Subscription readings_;
   SignalBus::Subscription alarms_;
