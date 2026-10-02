@@ -10,6 +10,9 @@ cmake-build-*/
 # persisted runtime state (valve locks) written beside a config
 *.state.toml
 
+# machine-local config overrides (site hosts and ports)
+*.local.toml
+
 # python tooling
 .venv/
 __pycache__/

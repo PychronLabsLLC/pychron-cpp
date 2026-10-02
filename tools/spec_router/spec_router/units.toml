@@ -485,6 +485,7 @@ targets = ["libs/codecs", "tests/codecs", "tests/traces"]
 id = "thermo_qtegra_driver"
 wave = 14
 layer = "devices"
+manual = true
 depends = ["thermo_qtegra_codec", "spectrometer_core"]
 spec = "docs/superpowers/specs/2026-09-29-spectrometer-control-design.md"
 goal = "Delivered outside the router by docs/superpowers/specs/2026-10-01-qtegra-driver-design.md (driver, sim hook, system tests, example config): nothing left to build here. Was: QtegraSpectrometer driver implementing IMassPositioner(dac)/IBeamSource/IIntensityAcquirer(integrated, polled GetData)/IDetectorControl/IBeamBlank on one transport; registry entry with declared keys; scripted + replay tests; conformance suite instantiation; sim-integrated config parity test."

@@ -97,7 +97,18 @@ them work.
 1. Copy `configs/examples/spectrometer.qtegra.toml`, `molecular_weights.toml`
    and `tables/` into a directory of your own, and copy
    `spectrometer.qtegra.local.toml.example` there as
-   `spectrometer.qtegra.local.toml`.
+   `spectrometer.qtegra.local.toml` (`*.local.toml` is git-ignored).
+
+   The copied field tables, the detectors' deflection coefficients,
+   `cdd_voltage`, `nominal_hv` and the protection and saturation thresholds
+   are SIMULATION PLACEHOLDERS. Replace them with the instrument's
+   calibration before any magnet move. Detector protection on a move is
+   planned from the field table: with a table that does not describe the
+   instrument, a move below the beam-blank threshold can leave the CDD
+   unprotected while a major beam crosses it. Set the magnet's real range in
+   both `limit_min` / `limit_max` under `[drivers.qtegra]` (enforced by the
+   driver) and `[magnet].limits` (enforced by the facade; the stricter bound
+   wins).
 2. Set `host` and `port` of the PC running Qtegra under `[transports.qtegra]`
    in the `.local.toml` (it may override only `host`, `port`, `baud` and
    `timeout_ms`).
@@ -111,7 +122,9 @@ them work.
    build/dev-ui/apps/pychron-ui/pychron-ui --spectrometer <dir>/spectrometer.qtegra.toml
    ```
 
-   Do not add `--sim`: it refuses a spectrometer config that is not
+   Opening the spectrometer window starts a scan, which sends
+   `SetIntegrationTime` if Qtegra's current period differs from the requested
+   one. Do not add `--sim`: it refuses a spectrometer config that is not
    simulated, and this one is not. The connection is opened when the config
    loads, so an instrument that cannot be reached is a load failure (the
    error goes to the log dock).

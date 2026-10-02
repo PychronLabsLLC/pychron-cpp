@@ -101,8 +101,10 @@ Rules: at most one reconnect attempt per call; a failed reopen or failed
 `on_connect` returns that error; within `min_interval` of the previous attempt
 the original error is returned without touching the transport. A reconnect
 publishes nothing itself; the transport's own health events already report the
-state change. Acquisition does not resume by itself after a reconnect: the
-acquirer returns the error from `next()`, and `ScanService`'s Restart recovers.
+state change. While the link is down the acquirer returns the error from
+`next()`. The engine keeps polling, so readings resume by themselves once a
+reconnect succeeds; the scan status keeps showing the error until
+`ScanService`'s Restart clears it.
 
 ### 4.3 Transport keys
 
@@ -151,8 +153,11 @@ All wire text comes from `pychron::codec::qtegra`.
   `Protocol`. `SetHV` and `SetParameter` expect `ok`. A setter that gets no
   reply is a `Timeout`: the driver cannot tell a silent success from a dead
   link.
-- **Positioner (axis Dac):** `set(v)` outside limits is `Config` with nothing
-  sent; else `SetMagnetDAC v`. `read()` is
+- **Positioner (axis Dac):** `set(v)` outside `limit_min`..`limit_max` is
+  `Config` with nothing sent; else `SetMagnetDAC v`. The `Spectrometer` facade
+  checks first: a native value outside the positioner's limits or outside
+  `[magnet].limits` (on each side the stricter bound wins) is `Config` with
+  nothing read or written, so both layers enforce limits. `read()` is
   `GetMagnetDAC`. `moving()` is `GetMagnetMoving` decoded with the codec's bool
   vocabulary.
 - **Beam blank:** `BlankBeam True|False`.
@@ -166,7 +171,9 @@ All wire text comes from `pychron::codec::qtegra`.
   each entry writable through `SetParameter <hardware name>,v` (reply `ok`) and
   readable through `GetParameter`. `read_param` returns
   `Readback{setpoint = GetParameter <hardware name>, actual = GetParameter
-  <readback name>}` when the map has a readback name, else `actual` unset; the
+  <readback name>}` when the map has a readback name, else `actual` unset. A
+  `Custom` id is one exchange: a custom set name returns `actual` unset, and a
+  custom readback name returns the same value as setpoint and actual. The
   two reads are separate exchanges, not one transaction, so another caller's
   command may fall between them. HV is always `SetHV` / `GetHighVoltage`,
   however it is addressed (`set_hv`, the HV parameter id or a custom name), and
@@ -225,17 +232,20 @@ command it receives, in order, for tests that check a sequence.
 - `docs/dev_setup.md`: how to point the config at an instrument and record a
   trace; the bring-up checklist in section 8.
 - `tools/spec_router/spec_router/units.toml`: mark `thermo_qtegra_driver` as
-  delivered here (goal text points at this spec), so the router does not
-  rebuild it; `isotopx_ngx_driver`'s goal gains a pointer to the NGX notes.
+  delivered here (goal text points at this spec) and exclude it from the
+  router with `manual = true`, so the router does not rebuild it; `isotopx_ngx_driver`'s goal gains a pointer to the NGX notes.
 
 ## 7. Error handling
 
 - Config errors (limits, unknown channel or parameter, non-positive
-  integration) never touch the wire.
+  integration) never touch the wire. Magnet limits are enforced twice: by the
+  facade (positioner limits and `[magnet].limits`, stricter bound wins) and
+  again by the driver's own `limit_min`/`limit_max`.
 - Protocol errors (bad reply, `ERROR`) are returned with the reply text.
 - Io / NotConnected: one reconnect attempt (4.2), then the error.
-- `next()` errors reach the engine, which raises its existing alarm; the scan
-  status shows the error and Restart recovers.
+- `next()` errors reach the engine, which raises its existing alarm and keeps
+  polling; the scan status shows the error until Restart clears it, and
+  readings resume without a Restart once the link is back.
 - A `reconnects()` counter is exposed for tests and logging.
 
 ## 8. Risks (cannot be removed without an instrument)
@@ -294,7 +304,8 @@ System:
   `thermo_qtegra` on the Qtegra sim hook assembles and positions, sets HV and
   acquires through `Spectrometer`.
 - `ScanService` continuous scan on the driver over its sim hook delivers
-  readings at the snapped period, and survives `set_integration`.
+  readings at the snapped period, and survives `set_integration` and a
+  dropped link.
 - The example config loads and validates.
 
 ## 10. Rollout
