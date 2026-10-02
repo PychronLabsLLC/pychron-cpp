@@ -145,31 +145,29 @@ void Executor::stop() {
 }
 
 void Executor::cancel() {
-  std::vector<Slot*> slots;
   {
     std::lock_guard lock(mutex_);
     if (!end_) {
       end_ = QueueEnd::Cancelled;
       end_reason_ = "cancelled by the operator";
     }
-    slots = active_;
+    // Signalled under the lock: finish() erases a slot from active_ under it
+    // and then destroys the slot, so a copied pointer could dangle.
+    for (auto* s : active_) s->control.cancel();
   }
   set_state(ExecutorState::Cancelling, "cancel requested");
-  for (auto* s : slots) s->control.cancel();
   queue_token_.cancel();
   cv_.notify_all();
 }
 
 void Executor::abort() {
-  std::vector<Slot*> slots;
   {
     std::lock_guard lock(mutex_);
     end_ = QueueEnd::Aborted;
     end_reason_ = "aborted by the operator";
-    slots = active_;
+    for (auto* s : active_) s->control.abort();  // under the lock, as in cancel()
   }
   set_state(ExecutorState::Aborting, "abort requested");
-  for (auto* s : slots) s->control.abort();
   queue_token_.abort();
   cv_.notify_all();
 }
@@ -300,6 +298,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     at = last_started_row_;
   }
 
+  const QueueSpec before = queue.spec();
   if (r.state == run::RunState::Success) {
     for (const auto& trip : r.measurement.modifications) {
       if (!is_queue_action(trip.action.type)) continue;
@@ -341,7 +340,10 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
   }
   previous_spec_ = slot.spec;
   out.runs.push_back(sum);
-  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(RunFinished{sum});
+  if (ctx_.services.bus != nullptr) {
+    if (!(queue.spec() == before)) ctx_.services.bus->publish(QueueEdited{queue.spec(), sum.queue_changes});
+    ctx_.services.bus->publish(RunFinished{sum});
+  }
   write_state(queue, at + 1, out);
 }
 

@@ -1,0 +1,26 @@
+# Run factory defaults for the example lab: what a new run of
+# [<analysis_type>.<extract_device>] starts with ("*" matches any device).
+# pychron-ui's run factory applies them when the identifier's type changes
+# (or on Defaults).
+
+[unknown."*"]
+template = "sim_multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[unknown."*".extraction]
+units = "w"
+value = 5
+duration = 10
+
+[blank_unknown."*"]
+template = "sim_multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[blank_unknown."*".extraction]
+duration = 2
+
+[air."*"]
+template = "sim_multicollect"
+post_measurement = "sim_pump"

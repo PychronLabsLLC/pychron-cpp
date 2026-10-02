@@ -209,6 +209,10 @@ class Spectrometer {
   // Saves the active table as a new version under <data_root>/tables.
   Result<std::string> save_table(std::chrono::system_clock::time_point when);
 
+  // Waits `d` on the context clock (simulated time under a ManualClock), or
+  // through SpectrometerOptions::sleep when injected. Jobs settle with it.
+  void sleep(Duration d) const;
+
   // RAII: selects table `name` (loaded or read from data_root) for the
   // lifetime of the scope, then restores the previous one.
   class TableScope {
@@ -273,7 +277,6 @@ class Spectrometer {
   // correction it needs cannot be computed (an HV read that fails, say): the
   // caller must then not move, since the path cannot be judged.
   Result<std::vector<ChannelId>> plan_protection(double from, double to, ProtectPolicy policy, bool& blank);
-  void sleep(Duration d) const;
   void restore_table(const std::string& name);
 
   cfg::SpectrometerConfig config_;

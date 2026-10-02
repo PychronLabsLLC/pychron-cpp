@@ -30,12 +30,12 @@ Result<std::vector<double>> sweep_positions(const SweepSpec& spec) {
   return xs;
 }
 
-void Sweep::sleep(Duration d) const {
+void Sweep::sleep(Spectrometer& spec, Duration d) const {
   if (d <= Duration::zero()) return;
   if (options_.sleep) {
     options_.sleep(d);
   } else {
-    std::this_thread::sleep_for(d);
+    spec.sleep(d);
   }
 }
 
@@ -122,7 +122,7 @@ Result<std::vector<SweepPoint>> Sweep::run(Spectrometer& spec, const SweepSpec& 
     if (cancel.cancelled()) return fail(ErrorKind::Cancelled, "sweep cancelled", "sweep");
     auto x = apply(spec, sweep.axis, (*positions)[i], i == 0);
     if (!x) return fail(x.error());
-    sleep(sweep.settle);
+    sleep(spec, sweep.settle);
 
     if (cancel.cancelled()) return fail(ErrorKind::Cancelled, "sweep cancelled", "sweep");
     auto readings = engine.acquire(std::size_t{1});

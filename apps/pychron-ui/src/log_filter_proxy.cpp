@@ -5,24 +5,35 @@
 
 namespace pychron::ui {
 
+// begin/endFilterChange arrived in Qt 6.10 (and deprecate invalidateRowsFilter);
+// Ubuntu 24.04 ships 6.4.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+#define PYCHRON_FILTER_CHANGE(...)                          \
+  do {                                                       \
+    beginFilterChange();                                     \
+    __VA_ARGS__;                                             \
+    endFilterChange(QSortFilterProxyModel::Direction::Rows); \
+  } while (0)
+#else
+#define PYCHRON_FILTER_CHANGE(...) \
+  do {                             \
+    __VA_ARGS__;                   \
+    invalidateRowsFilter();        \
+  } while (0)
+#endif
+
 LogFilterProxy::LogFilterProxy(QObject* parent) : QSortFilterProxyModel(parent) {}
 
 void LogFilterProxy::set_min_level(LogLevel level) {
-  beginFilterChange();
-  min_level_ = level;
-  endFilterChange(QSortFilterProxyModel::Direction::Rows);
+  PYCHRON_FILTER_CHANGE(min_level_ = level);
 }
 
 void LogFilterProxy::set_logger_pattern(const QString& pattern) {
-  beginFilterChange();
-  logger_pattern_ = pattern.toStdString();
-  endFilterChange(QSortFilterProxyModel::Direction::Rows);
+  PYCHRON_FILTER_CHANGE(logger_pattern_ = pattern.toStdString());
 }
 
 void LogFilterProxy::set_text(const QString& text) {
-  beginFilterChange();
-  text_ = text;
-  endFilterChange(QSortFilterProxyModel::Direction::Rows);
+  PYCHRON_FILTER_CHANGE(text_ = text);
 }
 
 bool LogFilterProxy::filterAcceptsRow(int source_row, const QModelIndex& source_parent) const {

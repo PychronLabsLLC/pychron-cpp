@@ -9,6 +9,7 @@ add_library(pychron_core
   src/log_match.cpp
   src/log_hub.cpp
   src/scheduler.cpp
+  src/clock_pump.cpp
   src/sha256.cpp
   src/config/diagnostic.cpp
   src/config/loader.cpp

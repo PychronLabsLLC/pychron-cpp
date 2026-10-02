@@ -1,13 +1,20 @@
 // pychron-ui: M1 status/control window.
 //
 //   pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer <file>]
+//              [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>]
 //
 // With no files it opens the example line in configs/examples. --sim forces
 // every extraction-line transport to kind = "sim". --spectrometer loads that
 // spectrometer config for Window > Spectrometer; with --sim and no file the
 // example sim-integrated spectrometer is used. --sim never rewrites a
 // spectrometer config: one that is not simulated is refused.
+//
+// Window > Experiment runs queues against the lab directory (--lab, default
+// the line config's directory; records under --data, default <lab>/data).
+// --queue opens a queue there. --sim-speed (with --sim) puts the whole app on
+// simulated time running that many times faster than real time.
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -21,8 +28,11 @@
 #include <QMessageBox>
 
 #include "command_line.hpp"
+#include "experiment_bridge.hpp"
 #include "main_window.hpp"
+#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/experiment/lab/session.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -43,6 +53,17 @@ int main(int argc, char** argv) {
   }
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = cli->sim;
+  // Simulated time: the pump advances the clock and runs the line's scheduler
+  // inline (no dispatcher), so polling keeps pace however fast time runs.
+  std::unique_ptr<pychron::ManualClock> sim_clock;
+  std::unique_ptr<pychron::ClockPump> pump;
+  if (cli->sim_speed > 0) {
+    sim_clock = std::make_unique<pychron::ManualClock>(pychron::TimePoint{} + std::chrono::hours(1));
+    pump = std::make_unique<pychron::ClockPump>(*sim_clock, cli->sim_speed);
+    options.clock = sim_clock.get();
+    options.scheduler.threads = 0;
+    options.run_scheduler = false;
+  }
   const std::vector<std::filesystem::path>& files = cli->files;
 
   const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
@@ -61,6 +82,8 @@ int main(int argc, char** argv) {
     QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), what);
     return 1;
   }
+
+  if (pump) pump->drive(&(*line)->scheduler());
 
   // The spectrometer shares the line's clock, scheduler and bus. None of these
   // is left to declaration order: the teardown after the event loop resets
@@ -92,6 +115,12 @@ int main(int argc, char** argv) {
       spectrometer_error = pychron::to_string(loaded.error());
     }
   }
+
+  // The experiment session is built once the line has started (below).
+  const std::filesystem::path lab_dir = cli->lab ? *cli->lab : system_file.parent_path();
+  std::unique_ptr<pychron::experiment::lab::Lab> lab;
+  std::unique_ptr<pychron::experiment::lab::LabSession> session;
+  std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
 
   int rc = 0;
   {
@@ -133,10 +162,31 @@ int main(int argc, char** argv) {
             "ERROR [ui] spectrometer unavailable: extraction line did not start (shared scheduler not running)"));
       }
     }
+    if (started) {
+      const std::filesystem::path spectrometer_config =
+          spectrometer ? (cli->spectrometer_file ? *cli->spectrometer_file : examples / "spectrometer.sim-integrated.toml")
+                       : std::filesystem::path();
+      lab = std::make_unique<pychron::experiment::lab::Lab>(
+          pychron::experiment::lab::load_lab({lab_dir, system_file, spectrometer_config}));
+      for (const auto& problem : lab->problems) {
+        window.log_dock()->append_line(QStringLiteral("WARN [ui] lab: ") + QString::fromStdString(problem));
+      }
+      session = std::make_unique<pychron::experiment::lab::LabSession>(
+          *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get()},
+          pychron::experiment::lab::SessionOptions{cli->data ? *cli->data : lab_dir / "data", {}});
+      experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
+      window.set_experiment(experiment_bridge.get(), cli->sim, cli->queue);
+    } else {
+      window.log_dock()->append_line(
+          QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));
+    }
     rc = QApplication::exec();
+    window.set_experiment(nullptr, false);    // the experiment window goes before its bridge
     window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }
   // Teardown order (explicit; not the reverse of declaration):
+  //   0. the experiment window (above), its bridge, then the session, which
+  //      aborts and joins a running queue before anything it uses goes;
   //   1. the spectrometer window, then the main window (the block above);
   //   2. the bridge, whose executor first finishes the commands it was given,
   //      including the scan stop the closing window asked for;
@@ -149,10 +199,14 @@ int main(int argc, char** argv) {
   // When the line never started, step 4 does nothing: the scheduler never ran
   // and the spectrometer was never offered, so no poll or command has touched
   // it and the same order is safe.
+  experiment_bridge.reset();
+  session.reset();
   spectrometer_bridge.reset();
   scan.reset();
+  if (pump) pump->drive(nullptr);  // waits for a step in progress
   (*line)->stop();
   spectrometer.reset();
   pychron::sim::BeamModelRegistry::global().clear();
+  if (pump) pump->stop();
   return rc;
 }

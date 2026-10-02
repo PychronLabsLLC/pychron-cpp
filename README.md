@@ -24,7 +24,7 @@ spectrometers, runs automated experiment queues, and stores the results.
 | `libs/reduction` | Fits and data reduction |
 | `libs/persistence` | Database-backed store for analyses (TinyORM on QtSql) |
 | `apps/elctl` | Command-line tool: validate configs, drive the line, run experiments |
-| `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window |
+| `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window |
 | `configs/examples` | An example lab: line, canvas, spectrometers, plans, scripts, a three-run queue |
 | `docs/superpowers/specs` | Design specs; `docs/superpowers/plans` holds implementation plans |
 | `tools/spec_router` | Splits the specs into work units and runs them through coding agents |
@@ -62,6 +62,13 @@ Open the extraction-line window and the spectrometer strip chart
 
 ```bash
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
+```
+
+Run the example experiment queue in the experiment window (Window >
+Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
+
+```bash
+build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
 ```
 
 Run the example experiment queue from the command line:

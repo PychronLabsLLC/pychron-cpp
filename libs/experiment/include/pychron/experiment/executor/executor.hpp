@@ -85,6 +85,12 @@ struct RunSummary {
 struct RunFinished {
   RunSummary summary;
 };
+// A run's queue actions or post-run conditionals changed the queue.
+// Published before that run's RunFinished, with a copy of the whole queue.
+struct QueueEdited {
+  QueueSpec queue;
+  std::vector<std::string> changes;  // as RunSummary::queue_changes
+};
 // The executor is waiting: a delay, a scheduled start, a resource, pump time.
 struct ExecutorWaiting {
   std::string reason;

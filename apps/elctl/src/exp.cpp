@@ -1,35 +1,29 @@
 #include "exp.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <iomanip>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <ostream>
-#include <set>
 #include <sstream>
 #include <thread>
 
+#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/config/loader.hpp"
-#include "pychron/experiment/conditionals/library.hpp"
-#include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/executor/executor.hpp"
+#include "pychron/experiment/lab/lab.hpp"
+#include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
-#include "pychron/experiment/persist/persister.hpp"
-#include "pychron/experiment/plan/plan_library.hpp"
-#include "pychron/scripting/script_host.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
-#include "pychron/systems/switch_valve_service.hpp"
 
 namespace elctl {
 
@@ -57,13 +51,6 @@ std::string clock_text(experiment::Duration d) {
   return s.str();
 }
 
-std::string read_text(const fs::path& p) {
-  std::ifstream in(p);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
-}
-
 struct ExpArgs {
   std::string verb;
   fs::path queue_file, lab, data, spectrometer, canvas;
@@ -72,117 +59,12 @@ struct ExpArgs {
   double sim_speed = 0;
 };
 
-// Script names exist in any script directory (validation does not know the kind).
-class LabScripts final : public experiment::IScriptResolver {
- public:
-  explicit LabScripts(fs::path root) : resolver_(std::move(root)) {}
-  bool has_script(std::string_view name) const override {
-    using K = scripting::ScriptKind;
-    for (auto kind : {K::Extraction, K::PostEquilibration, K::PostMeasurement, K::MeasurementHook})
-      if (resolver_.resolve(name, kind)) return true;
-    return false;
-  }
-  const scripting::DirectoryScriptResolver& resolver() const { return resolver_; }
-
- private:
-  scripting::DirectoryScriptResolver resolver_;
-};
-
-class LabConditionals final : public experiment::IConditionalResolver {
- public:
-  explicit LabConditionals(const IConditionalSource& source) : source_(source) {}
-  bool has_conditional(std::string_view name, std::string_view) const override { return has_conditional_set(name); }
-  bool has_conditional_set(std::string_view name) const override {
-    auto t = source_.text(name);
-    return t && t->has_value();
-  }
-
- private:
-  const IConditionalSource& source_;
-};
-
-// Everything that comes from the lab directory, loaded without hardware.
-struct Lab {
-  fs::path dir, data;
-  IdentifierRules ids = IdentifierRules::defaults();
-  std::optional<config::SystemConfig> line;
-  std::optional<spectrometer::cfg::SpectrometerData> spectrometer;
-  std::unique_ptr<measurement::SystemConfigAliases> aliases;
-  std::unique_ptr<measurement::SpectrometerCatalog> catalog;
-  std::unique_ptr<plan::PlanLibrary> plans;
-  std::unique_ptr<DirectoryConditionalSource> condition_source;
-  std::unique_ptr<ConditionalLibrary> conditionals;
-  std::unique_ptr<LabScripts> scripts;
-  std::unique_ptr<LabConditionals> condition_names;
-  std::map<std::string, jobs::PeakCenterConfig> peak_centers;  // <lab>/peak_center.toml
-  std::vector<std::string> problems;
-};
-
-Lab load_lab(const ExpArgs& a, const ExpGlobals& g) {
-  Lab lab;
-  lab.dir = a.lab;
-  lab.data = a.data;
-  if (fs::exists(lab.dir / "identifiers.toml")) {
-    auto ids = IdentifierRules::load((lab.dir / "identifiers.toml").string());
-    if (ids) lab.ids = *ids;
-    else lab.problems.push_back(ids.error().what);
-  }
-  std::error_code ec;
-  if (fs::exists(g.config, ec)) {
-    auto report = config::load_report(g.config);
-    if (report.ok()) {
-      lab.line = std::move(*report.config);
-    } else {
-      for (const auto& d : report.diagnostics) lab.problems.push_back(config::to_string(d));
-    }
-  }
-  if (!a.spectrometer.empty()) {
-    auto data = spectrometer::cfg::load_spectrometer(a.spectrometer);
-    if (data) lab.spectrometer = std::move(*data);
-    else lab.problems.push_back(data.error().what);
-  }
-  if (lab.line) lab.aliases = std::make_unique<measurement::SystemConfigAliases>(*lab.line);
-  if (lab.spectrometer) lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(lab.spectrometer->config);
-  lab.plans = std::make_unique<plan::PlanLibrary>(plan::PlanResolvers{lab.aliases.get(), lab.catalog.get()});
-  if (fs::is_directory(lab.dir / "plans", ec)) {
-    for (const auto& e : fs::directory_iterator(lab.dir / "plans", ec)) {
-      if (e.path().extension() != ".toml") continue;
-      auto t = plan::parse_plan_template(read_text(e.path()), e.path().filename().string());
-      if (t) lab.plans->add(std::move(*t));
-      else lab.problems.push_back(t.error().what);
-    }
-  }
-  lab.condition_source = std::make_unique<DirectoryConditionalSource>(lab.dir / "conditionals");
-  lab.conditionals = std::make_unique<ConditionalLibrary>(*lab.condition_source);
-  lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
-  lab.scripts = std::make_unique<LabScripts>(lab.dir / "scripts");
-  if (fs::exists(lab.dir / "peak_center.toml")) {
-    auto pc = jobs::parse_peak_center_configs(read_text(lab.dir / "peak_center.toml"),
-                                              (lab.dir / "peak_center.toml").string());
-    if (pc) lab.peak_centers = std::move(*pc);
-    else lab.problems.push_back(pc.error().what);
-  }
-  return lab;
-}
-
-MetricCatalog catalog_for(const Lab& lab) {
-  MetricCatalog c;
-  if (lab.line)
-    for (const auto& g : lab.line->gauges) c.gauges.insert(g.name);
-  if (lab.spectrometer) {
-    for (const auto& d : lab.spectrometer->config.detectors) c.detectors.insert(d.name);
-    for (const auto& [name, table] : lab.spectrometer->tables)
-      for (const auto& p : table.points) c.isotopes.insert(p.isotope);
-  }
-  return c;
-}
-
 class Exp {
  public:
   Exp(ExpArgs args, ExpGlobals globals, Io io) : a_(std::move(args)), g_(std::move(globals)), io_(io) {}
 
   int run() {
-    lab_ = load_lab(a_, g_);
+    lab_ = lab::load_lab({a_.lab, g_.config, a_.spectrometer});
     auto q = load_queue_file(a_.queue_file.string(), lab_.ids);
     if (!q) {
       io_.err << "error: " << q.error().what << '\n';
@@ -201,9 +83,8 @@ class Exp {
  private:
   // Prints the queue, its estimates and every problem. True when runnable.
   bool report() {
-    for (const auto& p : lab_.problems) io_.err << "error: " << p << '\n';
-    QueueResolvers resolvers{lab_.plans.get(), lab_.scripts.get(), lab_.condition_names.get()};
-    auto rep = check_queue(queue_, lab_.ids, resolvers);
+    const auto check = lab::check_lab_queue(lab_, queue_);
+    const auto& rep = check.report;
     io_.out << "queue " << (queue_.name.empty() ? a_.queue_file.filename().string() : queue_.name) << ": "
             << queue_.runs.size() << " run(s), ETA " << clock_text(rep.eta) << '\n';
     for (std::size_t i = 0; i < queue_.runs.size(); ++i) {
@@ -214,45 +95,12 @@ class Exp {
                                                                                           : experiment::Duration{}))
               << '\n';
     }
-    int errors = static_cast<int>(lab_.problems.size());
-    for (const auto& d : rep.diagnostics) {
+    for (const auto& d : check.all()) {
       const bool error = d.severity == Severity::Error;
-      errors += error ? 1 : 0;
-      (error ? io_.err : io_.out) << (error ? "error: " : "warning: ")
-                                  << (d.run >= 0 ? "runs[" + std::to_string(d.run) + "]." : std::string("queue."))
-                                  << d.field << ": " << d.message << '\n';
+      (error ? io_.err : io_.out) << (error ? "error: " : "warning: ") << lab::describe(d) << '\n';
     }
-    // Conditionals that will apply, checked against the lab's names.
-    const auto catalog = catalog_for(lab_);
-    std::set<std::string> reported;
-    for (std::size_t i = 0; i < queue_.runs.size(); ++i) {
-      const auto& r = queue_.runs[i];
-      if (r.skip || r.measurement.plan.empty() || !lab_.plans->find(r.measurement.plan)) continue;
-      auto loaded = lab_.plans->load(r.measurement.plan, r.measurement.overrides);
-      if (!loaded) continue;  // check_queue reported it
-      const auto& pc = loaded->plan.peak_center;
-      if ((pc.before || pc.after) && pc.config != "default" && !lab_.peak_centers.contains(pc.config)) {
-        if (reported.insert("peak_center:" + pc.config).second) {
-          io_.err << "error: runs[" << i << "]: plan " << r.measurement.plan << " uses peak center config '"
-                  << pc.config << "', which is not in " << (lab_.dir / "peak_center.toml").string() << '\n';
-          ++errors;
-        }
-      }
-      auto set = lab_.conditionals->for_run(queue_, r, loaded->plan);
-      if (!set) {
-        io_.err << "error: runs[" << i << "].conditionals: " << set.error().what << '\n';
-        ++errors;
-        continue;
-      }
-      for (const auto& d : validate_conditionals(*set, catalog)) {
-        if (!reported.insert(d.conditional + d.message).second) continue;
-        (d.error ? io_.err : io_.out) << (d.error ? "error: " : "warning: ") << "conditional " << d.conditional
-                                      << ": " << d.message << '\n';
-        errors += d.error ? 1 : 0;
-      }
-    }
-    if (errors == 0) io_.out << "ok: " << a_.queue_file.string() << '\n';
-    return errors == 0;
+    if (check.ok()) io_.out << "ok: " << a_.queue_file.string() << '\n';
+    return check.ok();
   }
 
   void say(const std::string& line) {
@@ -266,34 +114,14 @@ class Exp {
       io_.err << "error: no extraction line config at " << g_.config.string() << '\n';
       return kFailed;
     }
-    // Clock: real time, or simulated time running sim_speed times faster.
-    // Simulated time runs the line's scheduler inline after each step, so
-    // polling keeps pace with the clock however the threads are scheduled
-    // (a dispatcher thread starved for a few real milliseconds would miss
-    // whole integrations at high speeds).
+    // Clock: real time, or simulated time running sim_speed times faster,
+    // with the line's scheduler driven by the pump (see ClockPump).
     std::unique_ptr<ManualClock> manual;
-    std::thread pump;
-    std::atomic<bool> pumping{true};
-    std::atomic<Scheduler*> driven{nullptr};
+    std::unique_ptr<ClockPump> pump;
     if (a_.sim_speed > 0) {
       manual = std::make_unique<ManualClock>(TimePoint{} + std::chrono::hours(1));
-      pump = std::thread([&] {
-        const auto step = std::chrono::duration_cast<pychron::Duration>(std::chrono::duration<double>(0.001 * a_.sim_speed));
-        while (pumping) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          manual->advance(step);
-          if (auto* scheduler = driven.load()) scheduler->run_pending();
-        }
-      });
+      pump = std::make_unique<ClockPump>(*manual, a_.sim_speed);
     }
-    struct PumpGuard {
-      std::atomic<bool>& on;
-      std::thread& t;
-      ~PumpGuard() {
-        on = false;
-        if (t.joinable()) t.join();
-      }
-    } pump_guard{pumping, pump};
 
     systems::ExtractionLine::Options line_options;
     line_options.clock = manual.get();
@@ -311,8 +139,13 @@ class Exp {
       return kFailed;
     }
     // Declared after the line, so the pump stops before the line goes.
-    PumpGuard driving_guard{pumping, pump};
-    if (manual) driven = &(*line)->scheduler();
+    struct PumpGuard {
+      ClockPump* pump;
+      ~PumpGuard() {
+        if (pump) pump->stop();
+      }
+    } pump_guard{pump.get()};
+    if (pump) pump->drive(&(*line)->scheduler());
     if (auto r = (*line)->start(); !r) {
       io_.err << "error: " << r.error().what << '\n';
       return kFailed;
@@ -344,59 +177,18 @@ class Exp {
       spec = std::move(*assembled);
     }
 
-    // Services.
-    auto host = scripting::make_script_host();
-    systems::SwitchValveService script_valves((*line)->switches(), "script");
-    std::optional<measurement::SpectrometerPort> port;
-    if (spec) port.emplace(*spec);
-    measurement::ExtractionLineValves valves(**line, "measurement");
-    measurement::InstrumentMetrics instrument(spec.get(), line->get());
-    std::optional<measurement::SpectrometerPeakCenter> peak_center;
-    if (spec) peak_center.emplace(*spec, lab_.peak_centers);
-    persist::FilePersister files(lab_.data / "records");
-    persist::Spool spool(lab_.data / "spool");
-    persist::SavePipeline save(spool, files);
-    persist::AliquotAllocator aliquots(files);
-
-    executor::ExecutorContext ctx;
-    auto& s = ctx.services;
-    s.clock = &clock;
-    s.bus = &(*line)->bus();
-    s.scripts = host.get();
-    s.resolver = &lab_.scripts->resolver();
-    s.line.valves = &script_valves;
-    s.spectrometer = port ? &*port : nullptr;
-    s.valves = &valves;
-    s.peak_center = peak_center ? &*peak_center : nullptr;
-    s.instrument_metrics = &instrument;
-    if (spec) {
-      s.spectrometer_info = [&spec] {
-        const auto st = spec->snapshot();
-        return run::SpectrometerInfo{st.hash_hex(), st.field_table,
-                                     std::chrono::duration<double>(st.integration).count()};
-      };
-    }
-    s.plans = lab_.plans.get();
-    s.conditionals = lab_.conditionals.get();
-    s.aliquots = &aliquots;
-    s.persister = &files;
-    s.save = &save;
-    s.instrument.mass_spectrometer = queue_.mass_spectrometer;
-    s.instrument.analyst = queue_.username;
-    ctx.pre_run_metrics = &instrument;
-    ctx.blank = default_blank_factory(lab_.ids);
-
     executor::ExecutorOptions options;
-    options.state_file = lab_.data / "executor_state.json";
     std::size_t from = a_.from.value_or(0);
     if (a_.resume) {
-      auto row = executor::Executor::resume_row(options.state_file);
+      auto row = lab::LabSession::resume_row(a_.data);
       if (!row) {
         io_.err << "error: --resume: " << row.error().what << '\n';
         return kFailed;
       }
       from = *row;
     }
+    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr},
+                            lab::SessionOptions{a_.data, options});
 
     // Progress.
     auto& bus = (*line)->bus();
@@ -434,32 +226,29 @@ class Exp {
       say("  conditional " + e.trip.name + " tripped: " + e.trip.check);
     }));
 
-    executor::Executor ex(ctx, options);
-    executor::QueueResult result;
-    std::atomic<bool> finished{false};
     interrupt_count() = 0;
-    std::thread worker([&] {
-      result = ex.execute(queue_object(), from);
-      finished = true;
-    });
+    if (auto r = session.start(queue_, from); !r) {
+      io_.err << "error: " << r.error().what << '\n';
+      return kFailed;
+    }
     int handled = 0;
-    while (!finished) {
+    while (session.running()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       const int n = interrupt_count();
       for (; handled < n; ++handled) {
         if (handled == 0) {
           say("interrupt: stopping after the current run (again to cancel it)");
-          ex.stop();
+          session.stop();
         } else if (handled == 1) {
           say("interrupt: cancelling (again to abort)");
-          ex.cancel();
+          session.cancel();
         } else {
           say("interrupt: aborting");
-          ex.abort();
+          session.abort();
         }
       }
     }
-    worker.join();
+    const executor::QueueResult result = *session.wait();
     subs.clear();
     if (g_.sim) sim::BeamModelRegistry::global().clear();
 
@@ -467,24 +256,18 @@ class Exp {
     int ok_runs = 0;
     for (const auto& r : result.runs) ok_runs += r.state == run::RunState::Success ? 1 : 0;
     say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; records in " +
-        (lab_.data / "records").string());
-    if (save.pending() > 0) say("warning: " + std::to_string(save.pending()) + " record(s) still in the spool");
+        (a_.data / "records").string());
+    if (session.pending_saves() > 0) say("warning: " + std::to_string(session.pending_saves()) + " record(s) still in the spool");
     (*line)->stop();
     const bool good = result.end == executor::QueueEnd::Completed || result.end == executor::QueueEnd::Stopped;
     return good ? kOk : kFailed;
   }
 
-  ExperimentQueue& queue_object() {
-    if (!queue_model_) queue_model_.emplace(queue_);
-    return *queue_model_;
-  }
-
   ExpArgs a_;
   ExpGlobals g_;
   Io io_;
-  Lab lab_;
+  lab::Lab lab_;
   QueueSpec queue_;
-  std::optional<ExperimentQueue> queue_model_;
   std::mutex out_mutex_;
 };
 
