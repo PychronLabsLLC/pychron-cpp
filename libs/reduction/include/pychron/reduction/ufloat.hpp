@@ -104,6 +104,8 @@ class UFloat {
   }
 
   double nominal() const noexcept { return nominal_; }
+  // Plain unscaled sum of squares, deliberately: parity with `uncertainties`
+  // (spec 4.7); do not switch to hypot-style scaling.
   double variance() const noexcept {
     double v = 0.0;
     for (const Term& t : terms_) {
@@ -165,6 +167,15 @@ class UFloat {
   }
 
  private:
+  friend UFloat exp(const UFloat& x);
+  friend UFloat log(const UFloat& x);
+  friend UFloat log10(const UFloat& x);
+  friend UFloat sqrt(const UFloat& x);
+  friend UFloat abs(const UFloat& x);
+  friend UFloat pow(const UFloat& x, double c);
+  friend UFloat pow(double c, const UFloat& y);
+  friend UFloat pow(const UFloat& x, const UFloat& y);
+
   // The one merge routine: a UFloat with nominal `nominal` and derivatives
   // ca * da + cb * db, merged by id in one pass. A derivative present on only
   // one side is scaled by that side's coefficient alone (never multiplied
@@ -201,5 +212,157 @@ class UFloat {
   double nominal_ = 0.0;
   std::vector<Term> terms_;  // ascending id, no zero derivatives
 };
+
+namespace detail {
+
+// d(x^c)/dx at x0 (spec 4.3): c == 0 gives 0 (so pow(x, 0) is exact 1), and
+// x0 == 0 with c > 1 gives 0. `uncertainties` 3.2.3 agrees except for a
+// non-integer c > 1 at x0 == 0, where it reports NaN; spec 4.3 defines 0.
+// Otherwise c x0^(c-1), IEEE (inf/NaN) at the remaining singular points.
+inline double pow_deriv_base(double x0, double c) noexcept {
+  if (c == 0.0) return 0.0;
+  if (x0 == 0.0 && c > 1.0) return 0.0;
+  return c * std::pow(x0, c - 1.0);
+}
+
+// d(b^y)/dy at (b, y0): ln(b) b^y0, and 0 when b == 0 and y0 > 0 (the
+// `uncertainties` 3.2.3 special case; avoids ln(0) * 0 = NaN).
+inline double pow_deriv_exponent(double b, double y0) noexcept {
+  if (b == 0.0 && y0 > 0.0) return 0.0;
+  return std::log(b) * std::pow(b, y0);
+}
+
+}  // namespace detail
+
+// Functions (spec 4.3). Domain errors follow IEEE (NaN/inf); never throw.
+inline UFloat exp(const UFloat& x) {
+  const double e = std::exp(x.nominal_);
+  return UFloat::combine(e, x, e, {}, 0.0);
+}
+inline UFloat log(const UFloat& x) {
+  return UFloat::combine(std::log(x.nominal_), x, 1.0 / x.nominal_, {}, 0.0);
+}
+inline UFloat log10(const UFloat& x) {
+  return UFloat::combine(std::log10(x.nominal_), x, 1.0 / (x.nominal_ * std::log(10.0)), {},
+                         0.0);
+}
+inline UFloat sqrt(const UFloat& x) {
+  const double r = std::sqrt(x.nominal_);
+  return UFloat::combine(r, x, 0.5 / r, {}, 0.0);
+}
+// Derivative 1 for x0 >= 0, else -1 (as `uncertainties`).
+inline UFloat abs(const UFloat& x) {
+  return UFloat::combine(std::fabs(x.nominal_), x, x.nominal_ >= 0.0 ? 1.0 : -1.0, {}, 0.0);
+}
+inline UFloat pow(const UFloat& x, double c) {
+  return UFloat::combine(std::pow(x.nominal_, c), x, detail::pow_deriv_base(x.nominal_, c), {},
+                         0.0);
+}
+inline UFloat pow(double c, const UFloat& y) {
+  return UFloat::combine(std::pow(c, y.nominal_), y, detail::pow_deriv_exponent(c, y.nominal_),
+                         {}, 0.0);
+}
+inline UFloat pow(const UFloat& x, const UFloat& y) {
+  const double x0 = x.nominal_;
+  const double y0 = y.nominal_;
+  return UFloat::combine(std::pow(x0, y0), x, detail::pow_deriv_base(x0, y0), y,
+                         detail::pow_deriv_exponent(x0, y0));
+}
+
+// sum over shared variables of d_a d_b sigma^2 (spec 4.1), one merge pass.
+inline double covariance(const UFloat& a, const UFloat& b) noexcept {
+  const auto ta = a.terms();
+  const auto tb = b.terms();
+  double cov = 0.0;
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < ta.size() && j < tb.size()) {
+    if (ta[i].id < tb[j].id) {
+      ++i;
+    } else if (tb[j].id < ta[i].id) {
+      ++j;
+    } else {
+      cov += ta[i].deriv * tb[j].deriv * ta[i].sigma * ta[i].sigma;
+      ++i;
+      ++j;
+    }
+  }
+  return cov;
+}
+
+// 0 if either standard deviation is 0.
+inline double correlation(const UFloat& a, const UFloat& b) noexcept {
+  const double sa = a.std_dev();
+  const double sb = b.std_dev();
+  if (sa == 0.0 || sb == 0.0) return 0.0;
+  return covariance(a, b) / (sa * sb);
+}
+
+// Row-major n*n, symmetric (each pair computed once).
+inline std::vector<double> covariance_matrix(std::span<const UFloat> xs) {
+  const std::size_t n = xs.size();
+  std::vector<double> m(n * n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    m[i * n + i] = xs[i].variance();
+    for (std::size_t j = i + 1; j < n; ++j) {
+      const double c = covariance(xs[i], xs[j]);
+      m[i * n + j] = c;
+      m[j * n + i] = c;
+    }
+  }
+  return m;
+}
+
+// Error budget helpers. The std of x with the listed variables treated as exact.
+inline double std_dev_excluding(const UFloat& x, std::span<const VariableId> ids) {
+  double v = 0.0;
+  for (const UFloat::Term& t : x.terms()) {
+    if (std::find(ids.begin(), ids.end(), t.id) != ids.end()) continue;
+    const double c = t.deriv * t.sigma;
+    v += c * c;
+  }
+  return std::sqrt(v);
+}
+
+inline double std_dev_excluding_tags(const UFloat& x, std::span<const TagId> tags) {
+  double v = 0.0;
+  for (const UFloat::Term& t : x.terms()) {
+    if (std::find(tags.begin(), tags.end(), t.tag) != tags.end()) continue;
+    const double c = t.deriv * t.sigma;
+    v += c * c;
+  }
+  return std::sqrt(v);
+}
+
+// Per tag (0 = untagged included): sqrt(sum (d sigma)^2), ascending TagId.
+inline std::vector<std::pair<TagId, double>> error_components(const UFloat& x) {
+  std::vector<std::pair<TagId, double>> out;  // (tag, variance) until the end
+  for (const UFloat::Term& t : x.terms()) {
+    const double c = t.deriv * t.sigma;
+    auto it = std::lower_bound(out.begin(), out.end(), t.tag,
+                               [](const auto& p, TagId tag) { return p.first < tag; });
+    if (it != out.end() && it->first == t.tag) {
+      it->second += c * c;
+    } else {
+      out.insert(it, {t.tag, c * c});
+    }
+  }
+  for (auto& p : out) p.second = std::sqrt(p.second);
+  return out;
+}
+
+// E20: 100 * (variance from variables tagged `tag`) / variance; 0 when the
+// variance is 0.
+inline double variance_percent(const UFloat& x, TagId tag) noexcept {
+  const double total = x.variance();
+  if (total == 0.0) return 0.0;
+  double v = 0.0;
+  for (const UFloat::Term& t : x.terms()) {
+    if (t.tag != tag) continue;
+    const double c = t.deriv * t.sigma;
+    v += c * c;
+  }
+  return 100.0 * v / total;
+}
 
 }  // namespace pychron::reduction
