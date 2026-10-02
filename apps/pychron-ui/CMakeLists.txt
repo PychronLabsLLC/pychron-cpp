@@ -12,6 +12,8 @@ add_library(pychron_ui_lib STATIC
   src/canvas_items.cpp
   src/canvas_view.cpp
   src/log_dock.cpp
+  src/log_model.cpp
+  src/log_filter_proxy.cpp
   src/alarm_dock.cpp
   src/health_bar.cpp
   src/main_window.cpp
@@ -19,6 +21,8 @@ add_library(pychron_ui_lib STATIC
   src/canvas_items.hpp
   src/canvas_view.hpp
   src/log_dock.hpp
+  src/log_model.hpp
+  src/log_filter_proxy.hpp
   src/alarm_dock.hpp
   src/health_bar.hpp
   src/main_window.hpp
