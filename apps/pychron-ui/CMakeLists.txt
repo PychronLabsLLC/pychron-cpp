@@ -17,6 +17,8 @@ add_library(pychron_ui_lib STATIC
   src/alarm_dock.cpp
   src/health_bar.cpp
   src/main_window.cpp
+  src/strip_chart_model.cpp
+  src/intensities_model.cpp
   src/core_bridge.hpp
   src/canvas_items.hpp
   src/canvas_view.hpp
@@ -26,6 +28,8 @@ add_library(pychron_ui_lib STATIC
   src/alarm_dock.hpp
   src/health_bar.hpp
   src/main_window.hpp
+  src/strip_chart_model.hpp
+  src/intensities_model.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
