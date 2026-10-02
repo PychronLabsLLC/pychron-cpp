@@ -27,7 +27,9 @@ struct LabSession::Services {
         aliquots(files) {
     if (hw.spectrometer != nullptr) {
       port.emplace(*hw.spectrometer);
-      peak_center.emplace(*hw.spectrometer, lab.peak_centers);
+      jobs::PeakCenterOptions pc;
+      pc.bus = &hw.line.bus();  // PeakCenterDone for the UI
+      peak_center.emplace(*hw.spectrometer, lab.peak_centers, nullptr, pc);
     }
     auto& s = ctx.services;
     s.clock = &hw.line.clock();
