@@ -110,6 +110,8 @@ DetectorConfig counter(std::string name, std::string channel, double dead_time_n
   return d;
 }
 
+// Declare acquirers before the Fixture: the engine does not own them and its
+// destructor calls stop() on each, so they must outlive it.
 struct Fixture {
   ManualClock clock{kT0};
   SignalBus bus;
@@ -137,8 +139,8 @@ struct Fixture {
 }  // namespace
 
 TEST(AcquisitionEngine, RejectsDetectorWithoutExactlyOneChannelCarrier) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true), b({"H1"}, true);
+  Fixture f;
   auto missing = AcquisitionEngine::create({&a}, {faraday("L1", "L1")}, f.sched, f.bus, f.clock);
   ASSERT_FALSE(missing.has_value());
   EXPECT_EQ(missing.error().kind, ErrorKind::Config);
@@ -148,8 +150,8 @@ TEST(AcquisitionEngine, RejectsDetectorWithoutExactlyOneChannelCarrier) {
 }
 
 TEST(AcquisitionEngine, IntegratedFramePassesThroughWithGainAndSnappedIntegration) {
-  Fixture f;
   FakeAcquirer a({"H1", "AX"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1", 2.0), faraday("AX", "AX")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   EXPECT_EQ(a.configured, 1s);
@@ -171,8 +173,8 @@ TEST(AcquisitionEngine, IntegratedFramePassesThroughWithGainAndSnappedIntegratio
 }
 
 TEST(AcquisitionEngine, HostIntegrationBinsFaradaySamplesToMeanSigmaN) {
-  Fixture f;
   FakeAcquirer a({"H1"}, false);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1", 2.0)});
   ASSERT_TRUE(f.engine->start(1s).has_value());
 
@@ -191,8 +193,8 @@ TEST(AcquisitionEngine, HostIntegrationBinsFaradaySamplesToMeanSigmaN) {
 }
 
 TEST(AcquisitionEngine, NextBinClosesPreviousWhenFrameArrives) {
-  Fixture f;
   FakeAcquirer a({"H1"}, false);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   a.push(raw(kT0 + 100ms, 1, {{"H1", 1.0}}));
@@ -205,8 +207,8 @@ TEST(AcquisitionEngine, NextBinClosesPreviousWhenFrameArrives) {
 }
 
 TEST(AcquisitionEngine, CounterSumsCountsAndAppliesDeadTime) {
-  Fixture f;
   FakeAcquirer a({"counter:0"}, false);
+  Fixture f;
   f.make({&a}, {counter("CDD", "counter:0", 1e5)});  // tau = 100 us
   ASSERT_TRUE(f.engine->start(1s).has_value());
   for (int k = 0; k < 10; ++k) a.push(raw(kT0 + k * 100ms, static_cast<std::uint64_t>(k + 1), {{"counter:0", 100.0}}));
@@ -221,8 +223,8 @@ TEST(AcquisitionEngine, CounterSumsCountsAndAppliesDeadTime) {
 }
 
 TEST(AcquisitionEngine, FaradayAndCounterBinsShareEpochAndMergeIntoOneRow) {
-  Fixture f;
   FakeAcquirer adc({"H1"}, false), pc({"counter:0"}, false);
+  Fixture f;
   f.make({&adc, &pc}, {faraday("H1", "H1"), counter("CDD", "counter:0", 0.0)});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   for (int k = 0; k < 10; ++k) {
@@ -242,8 +244,8 @@ TEST(AcquisitionEngine, FaradayAndCounterBinsShareEpochAndMergeIntoOneRow) {
 }
 
 TEST(AcquisitionEngine, LaggingAcquirerYieldsNulloptButRowIsStillEmitted) {
-  Fixture f;
   FakeAcquirer adc({"H1"}, false), pc({"counter:0"}, false);
+  Fixture f;
   f.make({&adc, &pc}, {faraday("H1", "H1"), counter("CDD", "counter:0", 0.0)});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   adc.push(raw(kT0 + 100ms, 1, {{"H1", 4.0}}));
@@ -259,8 +261,8 @@ TEST(AcquisitionEngine, LaggingAcquirerYieldsNulloptButRowIsStillEmitted) {
 }
 
 TEST(AcquisitionEngine, MissingChannelInFrameIsNullopt) {
-  Fixture f;
   FakeAcquirer a({"H1", "AX"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1"), faraday("AX", "AX")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   a.push(integrated(kT0 + 1s, 1, {{"H1", 1.0}}));
@@ -271,8 +273,8 @@ TEST(AcquisitionEngine, MissingChannelInFrameIsNullopt) {
 }
 
 TEST(AcquisitionEngine, StaleFramesBeforeRequestStartAreDiscarded) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   a.push(integrated(kT0 - 1s, 1, {{"H1", 1.0}}));
@@ -284,8 +286,8 @@ TEST(AcquisitionEngine, StaleFramesBeforeRequestStartAreDiscarded) {
 }
 
 TEST(AcquisitionEngine, SeqGapsCountAsDroppedFrames) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   a.push(integrated(kT0 + 1s, 1, {{"H1", 1.0}}));
@@ -295,8 +297,8 @@ TEST(AcquisitionEngine, SeqGapsCountAsDroppedFrames) {
 }
 
 TEST(AcquisitionEngine, SaturationFlagSetWhenValueExceedsConfig) {
-  Fixture f;
   FakeAcquirer a({"H1", "AX"}, true);
+  Fixture f;
   auto h1 = faraday("H1", "H1");
   h1.saturation = 10.0;
   auto ax = faraday("AX", "AX");
@@ -311,8 +313,8 @@ TEST(AcquisitionEngine, SaturationFlagSetWhenValueExceedsConfig) {
 }
 
 TEST(AcquisitionEngine, StallRaisesAlarmAndStreamTimeoutOnce) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   f.clock.advance(5s);  // limit = 3 * 1 s + 3 s
@@ -337,8 +339,8 @@ TEST(AcquisitionEngine, StallRaisesAlarmAndStreamTimeoutOnce) {
 }
 
 TEST(IntensityStream, IsBoundedAndDropsOldest) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   AcquisitionEngine::Options o;
   o.queue_capacity = 2;
   auto e = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, f.sched, f.bus, f.clock, o);
@@ -361,8 +363,8 @@ TEST(IntensityStream, NextReturnsNulloptAfterTimeoutOnManualClock) {
 }
 
 TEST(AcquisitionEngine, SchedulerJobPollsAcquirer) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   ASSERT_TRUE(f.engine->start(1s).has_value());
   EXPECT_EQ(f.sched.job_count(), 1U);
@@ -420,8 +422,8 @@ TEST(AcquisitionEngine, CancelStopsAcquire) {
 }
 
 TEST(AcquisitionEngine, AcquireFailsWithTimeoutWhenAcquirerStalls) {
-  Fixture f;
   FakeAcquirer a({"H1"}, true);
+  Fixture f;
   f.make({&a}, {faraday("H1", "H1")});
   auto fut = std::async(std::launch::async, [&] { return f.engine->acquire(1); });
   while (fut.wait_for(1ms) != std::future_status::ready) {
