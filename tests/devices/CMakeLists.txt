@@ -7,6 +7,7 @@ add_executable(pychron_devices_tests
   test_device.cpp
   test_capabilities.cpp
   test_driver_registry.cpp
+  test_reconnect.cpp
   test_codec_conventions.cpp
   test_pfeiffer_maxigauge.cpp
   test_gp_microion.cpp
