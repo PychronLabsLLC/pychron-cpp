@@ -11,7 +11,7 @@ TraceRecorder), `2026-09-30-implementation-priorities.md` (item 4).
 Make a lab machine diagnosable after the fact and while it runs:
 
 - Persistent, rotated log files.
-- Per-subsystem verbosity from config (`transport.serial.*=trace`) and at
+- Per-subsystem verbosity from config (`*.wire=trace`) and at
   runtime.
 - Wire bytes visible in the debug log.
 - No lost tail on a crash or fatal error.
@@ -105,7 +105,7 @@ default_level = "info"
 echo_stderr = false
 
 [logging.levels]
-"transport.serial.*" = "trace"
+"*.wire"             = "trace"   # every transport's bytes ("<name>.wire")
 "scheduler"          = "debug"
 ```
 
@@ -128,6 +128,9 @@ echo_stderr = false
 `TraceRecorder` gets an optional `Logger` (constructor argument, default
 none). When set it logs each tx/rx/err at `trace` under
 `<transport name>.wire`: direction, byte count, hex, and printable ASCII.
+The factory attaches this logger to every transport whenever a hub exists,
+even with `trace = false` (then without a trace file; nothing is formatted
+unless a rule enables `trace` on the logger).
 The existing trace sink and record format are untouched, and the logger call
 happens inside the same per-transport serialization, so log order matches
 wire order. With a null logger, behaviour is identical to today.

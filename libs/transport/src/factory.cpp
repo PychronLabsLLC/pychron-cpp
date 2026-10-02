@@ -63,13 +63,19 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
   }
   if (!transport) return fail(ErrorKind::Config, "transport parameters do not match its kind", config.name);
 
+  std::optional<Logger> wire;
+  if (context.log_hub) wire = context.log_hub->logger(config.name + ".wire");
   if (config.trace) {
     const auto path = (std::filesystem::path(context.trace_dir) / (config.name + ".trace")).string();
-    std::optional<Logger> wire;
-    if (context.log_hub) wire = context.log_hub->logger(config.name + ".wire");
     auto recorder = TraceRecorder::to_file(std::move(transport), path, clock, std::move(wire));
     if (!recorder) return fail(recorder.error());
     return std::unique_ptr<Transport>(std::move(*recorder));
+  }
+  if (wire) {
+    // No trace file: the recorder only mirrors bytes to "<name>.wire", and
+    // formats nothing unless a rule enables Trace on it.
+    return std::unique_ptr<Transport>(
+        std::make_unique<TraceRecorder>(std::move(transport), nullptr, clock, std::move(wire)));
   }
   return transport;
 }

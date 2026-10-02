@@ -17,7 +17,9 @@ namespace pychron {
 // with timestamps to `sink`, in a format SimTransport::replay() reads.
 //
 // When `wire_log` is given, every record is also logged at Trace as
-// "tx 5B 50 52 31 0D 0A |PR1..|" (byte count, hex, printable ASCII).
+// "tx 5B 50 52 31 0D 0A |PR1..|" (byte count, hex, printable ASCII); nothing
+// is formatted unless that logger has Trace enabled. A null `sink` records no
+// file at all, leaving only the wire log.
 //
 // Each call is recorded inside the inner transport's serialization (see
 // Transport::transaction), so the file order is exactly the wire order.

@@ -130,3 +130,72 @@ TEST(TransportFactory, TracedTransportMirrorsToWireLogger) {
   t->reset();
   std::filesystem::remove_all(dir);
 }
+
+namespace {
+
+// Untraced sim transport "plain" built with a hub whose rules are `lc`;
+// returns the wire records seen on the bus and whether a trace file appeared.
+struct UntracedRun {
+  std::vector<Log> wire;
+  bool trace_file = false;
+};
+
+UntracedRun run_untraced(config::LoggingConfig lc) {
+  ManualClock clock;
+  SignalBus bus;
+  UntracedRun out;
+  auto sub = bus.subscribe<Log>([&](const Log& e) {
+    if (e.logger == "plain.wire") out.wire.push_back(e);
+  });
+  auto hub = LogHub::create(lc, clock, &bus);
+  EXPECT_TRUE(hub);
+  if (!hub) return out;
+
+  const auto dir = std::filesystem::temp_directory_path() / "pychron_factory_untraced_test";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  TransportContext ctx;
+  ctx.clock = &clock;
+  ctx.log_hub = *hub;
+  ctx.trace_dir = dir.string();
+  ctx.sim_hook = [](const Bytes&) { return to_bytes("ok\n"); };
+  auto c = cfg("plain", config::TransportKind::Sim, config::SimParams{});
+  c.trace = false;
+  auto t = make_transport(c, ctx);
+  EXPECT_TRUE(t);
+  if (t) {
+    EXPECT_TRUE((*t)->open());
+    EXPECT_TRUE((*t)->exchange(to_bytes("q\n"), ReadSpec::until("\n")));
+    t->reset();
+  }
+  out.trace_file = std::filesystem::exists(dir / "plain.trace");
+  std::filesystem::remove_all(dir);
+  return out;
+}
+
+}  // namespace
+
+TEST(TransportFactory, UntracedTransportWireLogsWhenRuleEnablesTrace) {
+  config::LoggingConfig lc;  // default level info
+  lc.levels.emplace_back("*.wire", LogLevel::Trace);
+  const auto run = run_untraced(lc);
+  ASSERT_EQ(run.wire.size(), 2u);
+  EXPECT_EQ(run.wire[0].message, "tx 2B 71 0A |q.|");
+  EXPECT_EQ(run.wire[1].message, "rx 3B 6F 6B 0A |ok.|");
+  EXPECT_FALSE(run.trace_file);
+}
+
+TEST(TransportFactory, UntracedTransportIsSilentAtDefaultLevel) {
+  const auto run = run_untraced(config::LoggingConfig{});
+  EXPECT_TRUE(run.wire.empty());
+  EXPECT_FALSE(run.trace_file);
+}
+
+TEST(TransportFactory, UntracedTransportWithoutHubIsNotWrapped) {
+  ManualClock clock;
+  TransportContext ctx;
+  ctx.clock = &clock;
+  auto t = make_transport(cfg("bare", config::TransportKind::Sim, config::SimParams{}), ctx);
+  ASSERT_TRUE(t);
+  EXPECT_EQ(dynamic_cast<TraceRecorder*>(t->get()), nullptr);
+}

@@ -34,6 +34,7 @@ TraceRecorder::TraceRecorder(std::unique_ptr<Transport> inner, std::shared_ptr<s
       clock_(&clock),
       start_(clock.now()),
       wire_log_(std::move(wire_log)) {
+  if (!sink_) return;
   *sink_ << "# trace of transport '" << inner_->name() << "'\n";
   sink_->flush();
 }
@@ -99,19 +100,24 @@ Result<void> TraceRecorder::transaction(std::function<Result<void>()> body) {
 
 void TraceRecorder::record(TraceRecord::Dir dir, const Bytes& data) {
   std::lock_guard lock(mutex_);  // guards the sink only
-  const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
-  *sink_ << format_trace_record(TraceRecord{at, dir, data, {}}) << '\n';
-  sink_->flush();
+  if (sink_) {
+    const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
+    *sink_ << format_trace_record(TraceRecord{at, dir, data, {}}) << '\n';
+    sink_->flush();
+  }
   if (wire_log_ && wire_log_->enabled(LogLevel::Trace))
     wire_log_->trace(std::string(dir == TraceRecord::Dir::Tx ? "tx " : "rx ") + wire_text(data));
 }
 
 void TraceRecorder::record_error(const Error& error) {
   std::lock_guard lock(mutex_);  // guards the sink only
-  const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
-  *sink_ << format_trace_record(TraceRecord{at, TraceRecord::Dir::Err, {}, std::string(to_string(error.kind)) + " " + error.what})
-         << '\n';
-  sink_->flush();
+  if (sink_) {
+    const auto at = std::chrono::duration_cast<std::chrono::microseconds>(clock_->now() - start_);
+    *sink_ << format_trace_record(
+                  TraceRecord{at, TraceRecord::Dir::Err, {}, std::string(to_string(error.kind)) + " " + error.what})
+           << '\n';
+    sink_->flush();
+  }
   if (wire_log_ && wire_log_->enabled(LogLevel::Trace))
     wire_log_->trace("err " + std::string(to_string(error.kind)) + " " + error.what);
 }
