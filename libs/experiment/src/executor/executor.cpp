@@ -145,31 +145,29 @@ void Executor::stop() {
 }
 
 void Executor::cancel() {
-  std::vector<Slot*> slots;
   {
     std::lock_guard lock(mutex_);
     if (!end_) {
       end_ = QueueEnd::Cancelled;
       end_reason_ = "cancelled by the operator";
     }
-    slots = active_;
+    // Signalled under the lock: finish() erases a slot from active_ under it
+    // and then destroys the slot, so a copied pointer could dangle.
+    for (auto* s : active_) s->control.cancel();
   }
   set_state(ExecutorState::Cancelling, "cancel requested");
-  for (auto* s : slots) s->control.cancel();
   queue_token_.cancel();
   cv_.notify_all();
 }
 
 void Executor::abort() {
-  std::vector<Slot*> slots;
   {
     std::lock_guard lock(mutex_);
     end_ = QueueEnd::Aborted;
     end_reason_ = "aborted by the operator";
-    slots = active_;
+    for (auto* s : active_) s->control.abort();  // under the lock, as in cancel()
   }
   set_state(ExecutorState::Aborting, "abort requested");
-  for (auto* s : slots) s->control.abort();
   queue_token_.abort();
   cv_.notify_all();
 }
