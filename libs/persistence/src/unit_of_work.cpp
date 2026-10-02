@@ -73,7 +73,7 @@ class TinyUnitOfWork final : public IUnitOfWork {
       if (auto r = insert_revision(db_, rev.uuid, changeset.uuid, rev.subject, rev.kind, rev.parent, changeset.created);
           !r)
         return fail(r.error());
-      if (auto r = write_payload(db_, rev.uuid, rev.payload); !r) return fail(r.error());
+      if (auto r = write_payload(db_, rev.uuid, rev.subject, rev.payload); !r) return fail(r.error());
     }
 
     std::vector<Conflict> conflicts;
@@ -101,6 +101,10 @@ class TinyUnitOfWork final : public IUnitOfWork {
       return CommitOutcome{std::move(conflicts)};
     }
 
+    for (const auto& m : moves_)
+      if (m.kind == Kind::Identity)
+        if (auto r = apply_identity(m); !r) return fail(r.error());
+
     std::vector<ChangeEntityRow> entities;
     std::set<std::pair<std::string, Uuid>> seen;
     for (const auto& m : moves_) {
@@ -121,6 +125,28 @@ class TinyUnitOfWork final : public IUnitOfWork {
     for (const auto& m : moves_)
       if (m.subject == subject && m.kind == kind)
         return fail(ErrorKind::Protocol, "subject/kind staged twice in one unit of work");
+    return {};
+  }
+
+  // The analysis row mirrors its identity head: rewrite the identity columns
+  // and runid_text in the same transaction (UNIQUE keeps holding, I9).
+  Result<void> apply_identity(const StagedMove& m) {
+    std::optional<IdentityValue> value;
+    for (const auto& rev : revisions_)
+      if (rev.uuid == m.to) value = std::get<IdentityValue>(rev.payload);
+    if (!value) {
+      auto stored = read_payload(db_, m.to, Kind::Identity);
+      if (!stored) return fail(stored.error());
+      value = std::get<IdentityValue>(*stored);
+    }
+    auto text = db_.select_one(sql::kIdentifierText, {qv(value->identifier)});
+    if (!text) return fail(text.error());
+    if (!*text) return fail(ErrorKind::Protocol, "identity revision names an unknown identifier");
+    const std::string runid = make_runid(to_std((*text)->value("identifier")), value->aliquot, value->increment);
+    auto updated = db_.affecting(sql::kApplyIdentity, {qv(value->identifier), value->aliquot, value->increment,
+                                                       qv(runid), qv(m.subject)});
+    if (!updated) return fail(updated.error());
+    if (*updated != 1) return fail(ErrorKind::Protocol, "identity revision for a subject that is not an analysis");
     return {};
   }
 

@@ -109,9 +109,57 @@ bool payload_kind_matches(Kind kind, const RevisionPayload& payload) noexcept {
     case Kind::Cosmogenic:
       return std::holds_alternative<CosmogenicValue>(payload);
     case Kind::Identity:
+      return std::holds_alternative<IdentityValue>(payload);
     case Kind::InterpretedAge:
+      return std::holds_alternative<InterpretedAgeValue>(payload);
     case Kind::RefValue:
-      return false;
+      return std::holds_alternative<RefPayload>(payload);
+  }
+  return false;
+}
+
+namespace {
+constexpr std::array<std::pair<RefType, std::string_view>, 11> kRefTypes = {{
+    {RefType::FluxPosition, "flux_position"},
+    {RefType::LevelGeometry, "level_geometry"},
+    {RefType::Production, "production"},
+    {RefType::LevelProduction, "level_production"},
+    {RefType::Chronology, "chronology"},
+    {RefType::Gains, "gains"},
+    {RefType::Sensitivity, "sensitivity"},
+    {RefType::IrradiationHolder, "irradiation_holder"},
+    {RefType::LoadHolder, "load_holder"},
+    {RefType::Script, "script"},
+    {RefType::Document, "document"},
+}};
+}  // namespace
+
+std::string_view to_string(RefType type) noexcept { return name_of(kRefTypes, type); }
+std::optional<RefType> parse_ref_type(std::string_view text) noexcept { return value_of(kRefTypes, text); }
+
+bool ref_payload_matches(RefType type, const RefPayload& payload) noexcept {
+  switch (type) {
+    case RefType::FluxPosition:
+      return std::holds_alternative<FluxValue>(payload);
+    case RefType::LevelGeometry:
+      return std::holds_alternative<LevelZValue>(payload);
+    case RefType::Production:
+      return std::holds_alternative<ProductionValue>(payload);
+    case RefType::LevelProduction:
+      return std::holds_alternative<LevelProductionValue>(payload);
+    case RefType::Chronology:
+      return std::holds_alternative<ChronologyValue>(payload);
+    case RefType::Gains:
+      return std::holds_alternative<GainsValue>(payload);
+    case RefType::Sensitivity:
+      return std::holds_alternative<SensitivityValue>(payload);
+    case RefType::IrradiationHolder:
+    case RefType::LoadHolder:
+      return std::holds_alternative<HolderValue>(payload);
+    case RefType::Script:
+      return std::holds_alternative<ScriptValue>(payload);
+    case RefType::Document:
+      return std::holds_alternative<DocumentValue>(payload);
   }
   return false;
 }

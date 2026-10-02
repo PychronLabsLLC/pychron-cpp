@@ -8,6 +8,7 @@
 using namespace pychron;
 using namespace pychron::persistence;
 using namespace pychron::persistence::testing;
+namespace pd = pychron::persistence::detail;
 
 namespace {
 
@@ -146,6 +147,70 @@ TEST_P(IngestTest, CreatesMissingUserAndLoadByNaturalKey) {
   std::set<std::string> types;
   for (const auto& e : page->entries[0].entities) types.insert(e.entity_type);
   EXPECT_EQ(types, (std::set<std::string>{"analysis", "app_user", "load"}));
+}
+
+TEST_P(IngestTest, SatellitesAreStoredAndTheirBlobsGateCompletion) {
+  // Raw rows are checked through a second connection: file-backed database.
+  TestDatabase shared(GetParam(), true);
+  auto store = open_or_die(shared.url());
+  ASSERT_TRUE(store);
+  const Lab lab = seed_lab(*store);
+  const Bytes signal = series(1), baseline = series(0), peak = series(7, 20);
+  auto item = analysis_item(lab, 1, signal, baseline);
+  auto& a = std::get<AnalysisIngest>(item.body);
+  a.meta = AnalysisMetaRow{};
+  a.meta->source_json = R"({"emission": 200})";
+  a.meta->intensity_scalar = 1.0;
+  PeakCenterRow pc;
+  pc.detector = "H1";
+  pc.center_dac = 5.432;
+  pc.points_blob_sha = blob_sha256(kCodecTv, peak);
+  a.peak_centers = {pc};
+  MonitorCheckRow mc;
+  mc.ordinal = 0;
+  mc.name = "AxialCheck";
+  mc.tripped = false;
+  a.monitor_checks = {mc};
+  a.artifacts = {{"run.log", "log", std::nullopt, "https://logs.example/run.log"}};
+  a.measured_positions = {{"load-1", 3, 1.5, -2.0, 0.0, false}};
+  a.spectrometer_snapshot = SpectrometerSnapshot{"abc123", R"({"magnet": 1})", R"({"H1": 1.0})", "{}", "{}"};
+  a.scripts.measurement = "def main():\n    multicollect()\n";
+  a.scripts.extraction = "def main():\n    extract()\n";
+  a.queue = QueueRow{Uuid::v7(), "queue-1", "jross", std::nullopt, 1};
+  ASSERT_TRUE(store->ingest(item));
+
+  // Same scripts and queue in a second analysis are stored once.
+  auto item2 = analysis_item(lab, 2, signal, baseline);
+  auto& a2 = std::get<AnalysisIngest>(item2.body);
+  a2.scripts = a.scripts;
+  a2.queue = a.queue;
+  a2.spectrometer_snapshot = a.spectrometer_snapshot;
+  ASSERT_TRUE(store->ingest(item2));
+
+  auto db = std::move(*pd::Db::open(StoreConfig{shared.url(), false}));
+  auto count = [&](const char* sql) { return (*db->select_one(sql))->value("n").toInt(); };
+  EXPECT_EQ(count("SELECT count(*) AS n FROM script_text"), 2);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM experiment_queue"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM spectrometer_snapshot"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM analysis WHERE measurement_script_sha IS NOT NULL "
+                  "AND spectrometer_snapshot_sha IS NOT NULL AND queue_uuid IS NOT NULL"),
+            2);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM analysis_meta"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM peak_center"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM monitor_check"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM analysis_artifact"), 1);
+  EXPECT_EQ(count("SELECT count(*) AS n FROM measured_position WHERE position = 3"), 1);
+  auto snap = db->select_one("SELECT sha256 FROM spectrometer_snapshot");
+  EXPECT_EQ(pd::to_digest((*snap)->value("sha256")), snapshot_sha256(*a.spectrometer_snapshot));
+
+  // Signal and baseline blobs alone do not complete the first analysis: its
+  // peak-center points are referenced too (I13). The second has no peak center.
+  for (const Bytes* b : {&signal, &baseline})
+    ASSERT_TRUE(store->ingest(IngestItem{Uuid::v7(), {}, lab.acquisition_client, BlobIngest{"f32le-tv/1", *b, 4}}));
+  EXPECT_EQ((*store->load_analysis(a.analysis))->summary.signals_state, "pending");
+  EXPECT_EQ((*store->load_analysis(a2.analysis))->summary.signals_state, "complete");
+  ASSERT_TRUE(store->ingest(IngestItem{Uuid::v7(), {}, lab.acquisition_client, BlobIngest{"f32le-tv/1", peak, 20}}));
+  EXPECT_EQ((*store->load_analysis(a.analysis))->summary.signals_state, "complete");
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, IngestTest, ::testing::ValuesIn(engines()),

@@ -20,10 +20,9 @@ class CursorTest : public StoreTest {};
 }  // namespace
 
 TEST_P(CursorTest, EveryWriteGetsTheNextSeqAndPagesInOrder) {
-  // seed_lab wrote 6 catalog changes (2 clients, 2 users, 1 ms, 1 identifier).
   auto all = store_->changes_since(0, 1000);
   ASSERT_TRUE(all) << to_string(all.error());
-  ASSERT_EQ(all->entries.size(), 6u);
+  ASSERT_EQ(all->entries.size(), static_cast<std::size_t>(kSeedLabChanges));
   for (std::size_t i = 0; i < all->entries.size(); ++i) {
     EXPECT_EQ(all->entries[i].seq, static_cast<ChangeSeq>(i + 1));
     EXPECT_EQ(all->entries[i].kind, "catalog");
@@ -43,11 +42,13 @@ TEST_P(CursorTest, EveryWriteGetsTheNextSeqAndPagesInOrder) {
     cursor = page->cursor;
     if (!page->more) break;
   }
-  EXPECT_EQ(seen, (std::vector<ChangeSeq>{1, 2, 3, 4, 5, 6, 7}));
-  EXPECT_EQ(cursor, 7);
-  auto empty = store_->changes_since(7, 10);
+  std::vector<ChangeSeq> expected;
+  for (ChangeSeq i = 1; i <= kSeedLabChanges + 1; ++i) expected.push_back(i);
+  EXPECT_EQ(seen, expected);
+  EXPECT_EQ(cursor, kSeedLabChanges + 1);
+  auto empty = store_->changes_since(cursor, 10);
   EXPECT_TRUE(empty->entries.empty());
-  EXPECT_EQ(empty->cursor, 7);
+  EXPECT_EQ(empty->cursor, cursor);
 }
 
 TEST_P(CursorTest, CatalogChangesCarryAFieldDiff) {

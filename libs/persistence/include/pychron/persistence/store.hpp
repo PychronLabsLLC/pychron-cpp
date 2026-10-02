@@ -93,6 +93,45 @@ struct IdentifierSpec {
   std::string kind = "unknown";               // unknown | special
   std::optional<std::string> analysis_type;  // required for special identifiers
   std::optional<Uuid> mass_spectrometer;
+  std::optional<Uuid> position;              // irradiation_position (unknowns only)
+};
+
+struct LevelSpec {
+  Uuid irradiation;
+  std::string name;
+  std::optional<Uuid> holder;  // ref_object of type irradiation_holder
+  std::optional<double> z;
+  std::optional<std::string> note;
+};
+
+struct PositionSpec {
+  Uuid level;
+  int position = 0;
+  std::optional<double> weight;
+  std::optional<std::string> packet, note;
+};
+
+// A reference object (section 6.1). `key` is unique per ref_type; the scope
+// columns are what resolve_refs() matches an analysis against.
+struct RefObjectSpec {
+  RefType type = RefType::Document;
+  std::string key;  // "<irrad>/<level>/<pos>", "<irrad>", "<ms>", ...
+  std::optional<Uuid> irradiation, level, position, mass_spectrometer;
+};
+
+struct InterpretedAgeSpec {
+  std::string name;
+  std::optional<Uuid> identifier;
+  std::optional<Uuid> repository;
+};
+
+// Bookmarks capture the heads of every analysis in a repository or a group
+// (section 5.5). Exactly one scope must be set.
+struct BookmarkSpec {
+  std::string name;
+  std::optional<std::string> message;
+  std::optional<Uuid> repository;
+  std::optional<Uuid> group;
 };
 
 // ---------------------------------------------------------------- ingest (5.3, 8.3)
@@ -117,6 +156,65 @@ struct ExtractionFields {
   std::optional<std::string> pattern;
   std::optional<double> ramp_duration, ramp_rate, light_value;
   std::optional<std::string> tray;
+};
+
+// analysis_meta: JSON columns that are never filtered on.
+struct AnalysisMetaRow {
+  std::optional<std::string> source_json, environmental_json, conditionals_json, tripped_conditional_json,
+      whiff_result_json;
+  std::optional<double> intensity_scalar;
+  std::optional<std::string> baseline_modifiers_json, arar_mapping_json, extraction_context_json, pid_json,
+      snapshots_json, videos_json, grain_polygons_json, pipette_counts_json, software_json, queue_names_json,
+      legacy_json;
+};
+
+struct PeakCenterRow {
+  std::string detector;
+  std::optional<std::string> reference_detector, reference_isotope, interpolation;
+  std::optional<double> low_dac, center_dac, high_dac, low_signal, center_signal, high_signal, resolution,
+      low_resolving_power, high_resolving_power;
+  std::optional<Sha256Digest> points_blob_sha;
+};
+
+struct MonitorCheckRow {
+  int ordinal = 0;
+  std::optional<std::string> name, parameter, criterion, comparator;
+  std::optional<bool> tripped;
+  std::optional<Sha256Digest> data_blob_sha;
+};
+
+struct ArtifactRow {
+  std::string name;
+  std::string kind;  // log | snapshot | video | stream | other
+  std::optional<Sha256Digest> blob_sha;
+  std::optional<std::string> url;  // blob_sha or url is required
+};
+
+struct MeasuredPositionRow {
+  std::optional<std::string> load_name;
+  std::optional<int> position;
+  std::optional<double> x, y, z;
+  bool is_degas = false;
+};
+
+// Content-addressed: sha256 = SHA-256 of the four JSON texts joined by NUL.
+struct SpectrometerSnapshot {
+  std::optional<std::string> legacy_sha1;
+  std::string spectrometer_json = "{}", gains_json = "{}", deflections_json = "{}", settings_json = "{}";
+};
+Sha256Digest snapshot_sha256(const SpectrometerSnapshot& snapshot);
+
+// Script texts used by the run, stored once in script_text by SHA-256.
+struct ScriptBodies {
+  std::optional<std::string> measurement, extraction, post_equilibration, post_measurement, hops;
+};
+
+struct QueueRow {
+  Uuid uuid;
+  std::string name;
+  std::optional<std::string> creator;  // app_user name
+  std::optional<Sha256Digest> text_blob_sha;
+  std::optional<int> schema_version;
 };
 
 // The root revisions of a new analysis, one per collection kind (I3).
@@ -158,6 +256,17 @@ struct AnalysisIngest {
   std::vector<IsotopeRow> isotopes;
   std::vector<DetectorRow> detectors;
   CollectionRoots roots;
+
+  // Satellites (section 3.5). Blob references in peak centers, monitor checks
+  // and artifacts count towards signals_state like signal refs (I13).
+  std::optional<AnalysisMetaRow> meta;
+  std::vector<PeakCenterRow> peak_centers;
+  std::vector<MonitorCheckRow> monitor_checks;
+  std::vector<ArtifactRow> artifacts;
+  std::vector<MeasuredPositionRow> measured_positions;
+  std::optional<SpectrometerSnapshot> spectrometer_snapshot;
+  ScriptBodies scripts;
+  std::optional<QueueRow> queue;
 };
 
 // One content-addressed raw series.
@@ -229,6 +338,37 @@ struct ChangePage {
   bool more = false;
 };
 
+// ---------------------------------------------------------------- reference resolution (6.2)
+
+struct RefPolicy {
+  bool honour_pins = true;  // false: every reference at head
+};
+
+struct ResolvedRef {
+  Uuid ref_object;
+  RefType type = RefType::Document;
+  std::string key;
+  Uuid revision;
+  bool pinned = false;
+};
+
+// The reference revisions a reduction of one analysis uses: flux of its
+// irradiation position, level geometry, level production and the production
+// it names, the irradiation chronology, and the spectrometer's gains and
+// sensitivity. A reference that does not exist yet is simply absent.
+struct RefResolution {
+  std::vector<ResolvedRef> refs;  // ordered by ref_object
+};
+
+// ---------------------------------------------------------------- derived cache (4.3)
+
+struct DerivedRow {
+  std::string name;  // e.g. "age", "kca"
+  std::optional<double> value, error;
+  std::optional<std::string> units;
+  friend bool operator==(const DerivedRow&, const DerivedRow&) = default;
+};
+
 struct AppliedMigration {
   int version = 0;
   std::string description;
@@ -249,6 +389,43 @@ class IStore {
   virtual Result<Uuid> ensure_user(Uuid client, const std::string& name) = 0;
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
   virtual Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) = 0;
+  virtual Result<Uuid> add_irradiation(Uuid client, const std::string& name) = 0;
+  virtual Result<Uuid> add_level(Uuid client, const LevelSpec& spec) = 0;
+  virtual Result<Uuid> add_irradiation_position(Uuid client, const PositionSpec& spec) = 0;
+  // A reference object; its values are `value` revisions staged through a unit
+  // of work with Kind::RefValue and a RefPayload matching its type.
+  virtual Result<Uuid> add_ref_object(Uuid client, const RefObjectSpec& spec) = 0;
+  // An interpreted age; its values are Kind::InterpretedAge revisions.
+  virtual Result<Uuid> add_interpreted_age(Uuid client, const InterpretedAgeSpec& spec) = 0;
+
+  // Groups, repositories, bookmarks (sections 3.6, 5.5).
+  virtual Result<Uuid> add_repository(Uuid client, const std::string& name) = 0;
+  virtual Result<void> add_repository_members(const Actor& actor, Uuid repository,
+                                              const std::vector<Uuid>& analyses) = 0;
+  virtual Result<Uuid> create_group(const Actor& actor, const std::string& name,
+                                    const std::vector<Uuid>& analyses) = 0;
+  virtual Result<Uuid> create_bookmark(const Actor& actor, const BookmarkSpec& spec) = 0;
+  virtual Result<std::vector<HeadInfo>> bookmark_heads(Uuid bookmark) = 0;
+  // CAS moves of every head in the bookmark that differs from it, as one
+  // bookmark_restore changeset. Committed{nil, 0} when nothing differs.
+  virtual Result<CommitOutcome> restore_bookmark(const Actor& actor, Uuid bookmark, std::string message) = 0;
+  // Moves the given kinds' heads (default: the six collection kinds) back to
+  // the analysis's collection revisions, as one rollback changeset.
+  virtual Result<CommitOutcome> rollback_to_collection(const Actor& actor, Uuid analysis, std::string message,
+                                                       std::vector<Kind> kinds = {}) = 0;
+
+  // Reference resolution and the derived cache.
+  virtual Result<RefResolution> resolve_refs(Uuid analysis, const RefPolicy& policy) = 0;
+  // SHA-256 over the analysis's head revisions, its resolved reference
+  // revisions and the reduction version (section 4.3).
+  virtual Result<Sha256Digest> input_fingerprint(Uuid analysis, const std::string& reduction_version) = 0;
+  virtual Result<void> put_derived(Uuid analysis, const Sha256Digest& fingerprint,
+                                   const std::string& reduction_version, const std::vector<DerivedRow>& rows) = 0;
+  // Cached rows only if computed from the current inputs (I14); else nullopt.
+  virtual Result<std::optional<std::vector<DerivedRow>>> get_derived(Uuid analysis,
+                                                                    const std::string& reduction_version) = 0;
+  // Deletes cache rows whose inputs are no longer current. Returns rows removed.
+  virtual Result<int> prune_derived(Uuid analysis) = 0;
 
   // Idempotent ingest of one outbox item (I7). Used by the uploader.
   virtual Result<IngestAck> ingest(const IngestItem& item) = 0;

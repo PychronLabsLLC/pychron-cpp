@@ -22,6 +22,19 @@ std::string make_runid(const std::string& identifier, int aliquot, int increment
 }
 
 namespace detail {
+
+Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject) {
+  auto rows = db.select(sql::kSelectHeads, {qv(subject)});
+  if (!rows) return fail(rows.error());
+  std::vector<HeadInfo> out;
+  for (const auto& r : *rows) {
+    const auto kind = parse_kind(to_std(r.value("kind")));
+    if (!kind) return fail(ErrorKind::Protocol, "unknown head kind '" + to_std(r.value("kind")) + "'");
+    out.push_back(HeadInfo{subject, *kind, to_uuid(r.value("revision_uuid")), r.value("head_version").toInt()});
+  }
+  return out;
+}
+
 namespace {
 
 QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
@@ -112,6 +125,7 @@ class TinyStore final : public IStore {
     row["kind"] = qv(spec.kind);
     row["analysis_type"] = qv(spec.analysis_type);
     row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
+    row["position_uuid"] = qv(spec.position);
     row["created_utc"] = qv(UtcTime::now());
     if (auto r = db_->insert("identifier", row); !r) return fail(r.error());
     const std::string detail =
@@ -119,6 +133,98 @@ class TinyStore final : public IStore {
     return finish_catalog(tx, client,
                           {ChangeEntityRow{QStringLiteral("identifier"), uuid, QStringLiteral("insert"), detail}}, uuid);
   }
+
+  Result<Uuid> add_irradiation(Uuid client, const std::string& name) override {
+    Row row;
+    row["name"] = qv(name);
+    return add_catalog_row(client, "irradiation", row, json_created({{"name", name}}));
+  }
+
+  Result<Uuid> add_level(Uuid client, const LevelSpec& spec) override {
+    Row row;
+    row["irradiation_uuid"] = qv(spec.irradiation);
+    row["name"] = qv(spec.name);
+    row["holder_ref_uuid"] = qv(spec.holder);
+    row["z"] = qv(spec.z);
+    row["note"] = qv(spec.note);
+    return add_catalog_row(client, "level", row, json_created({{"name", spec.name}}));
+  }
+
+  Result<Uuid> add_irradiation_position(Uuid client, const PositionSpec& spec) override {
+    Row row;
+    row["level_uuid"] = qv(spec.level);
+    row["position"] = spec.position;
+    row["weight"] = qv(spec.weight);
+    row["packet"] = qv(spec.packet);
+    row["note"] = qv(spec.note);
+    return add_catalog_row(client, "irradiation_position", row,
+                           json_created({{"position", std::to_string(spec.position)}}));
+  }
+
+  Result<Uuid> add_ref_object(Uuid client, const RefObjectSpec& spec) override {
+    Row row;
+    row["ref_type"] = qstr(to_string(spec.type));
+    row["key"] = qv(spec.key);
+    row["irradiation_uuid"] = qv(spec.irradiation);
+    row["level_uuid"] = qv(spec.level);
+    row["position_uuid"] = qv(spec.position);
+    row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
+    return add_catalog_row(client, "ref_object", row,
+                           json_created({{"ref_type", std::string(to_string(spec.type))}, {"key", spec.key}}));
+  }
+
+  Result<Uuid> add_interpreted_age(Uuid client, const InterpretedAgeSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["identifier_uuid"] = qv(spec.identifier);
+    row["repository_uuid"] = qv(spec.repository);
+    return add_catalog_row(client, "interpreted_age", row, json_created({{"name", spec.name}}));
+  }
+
+  Result<Uuid> add_repository(Uuid client, const std::string& name) override {
+    Row row;
+    row["name"] = qv(name);
+    return add_catalog_row(client, "repository", row, json_created({{"name", name}}));
+  }
+
+  // ------------------------------------------------------------ groups, bookmarks
+
+  Result<void> add_repository_members(const Actor& actor, Uuid repository,
+                                      const std::vector<Uuid>& analyses) override {
+    return detail::add_repository_members(*db_, actor, repository, analyses);
+  }
+  Result<Uuid> create_group(const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses) override {
+    return detail::create_group(*db_, actor, name, analyses);
+  }
+  Result<Uuid> create_bookmark(const Actor& actor, const BookmarkSpec& spec) override {
+    return detail::create_bookmark(*db_, actor, spec);
+  }
+  Result<std::vector<HeadInfo>> bookmark_heads(Uuid bookmark) override { return detail::bookmark_heads(*db_, bookmark); }
+  Result<CommitOutcome> restore_bookmark(const Actor& actor, Uuid bookmark, std::string message) override {
+    return detail::restore_bookmark(*db_, actor, bookmark, std::move(message));
+  }
+  Result<CommitOutcome> rollback_to_collection(const Actor& actor, Uuid analysis, std::string message,
+                                               std::vector<Kind> kinds) override {
+    return detail::rollback_to_collection(*db_, actor, analysis, std::move(message), std::move(kinds));
+  }
+
+  // ------------------------------------------------------------ references, derived cache
+
+  Result<RefResolution> resolve_refs(Uuid analysis, const RefPolicy& policy) override {
+    return detail::resolve_refs(*db_, analysis, policy);
+  }
+  Result<Sha256Digest> input_fingerprint(Uuid analysis, const std::string& reduction_version) override {
+    return detail::input_fingerprint(*db_, analysis, reduction_version);
+  }
+  Result<void> put_derived(Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version,
+                           const std::vector<DerivedRow>& rows) override {
+    return detail::put_derived(*db_, analysis, fingerprint, reduction_version, rows);
+  }
+  Result<std::optional<std::vector<DerivedRow>>> get_derived(Uuid analysis,
+                                                            const std::string& reduction_version) override {
+    return detail::get_derived(*db_, analysis, reduction_version);
+  }
+  Result<int> prune_derived(Uuid analysis) override { return detail::prune_derived(*db_, analysis); }
 
   // ------------------------------------------------------------ ingest
 
@@ -133,17 +239,7 @@ class TinyStore final : public IStore {
     return std::optional<Uuid>{to_uuid((*row)->value("revision_uuid"))};
   }
 
-  Result<std::vector<HeadInfo>> heads(Uuid subject) override {
-    auto rows = db_->select(sql::kSelectHeads, {qv(subject)});
-    if (!rows) return fail(rows.error());
-    std::vector<HeadInfo> out;
-    for (const auto& r : *rows) {
-      const auto kind = parse_kind(to_std(r.value("kind")));
-      if (!kind) return fail(ErrorKind::Protocol, "unknown head kind '" + to_std(r.value("kind")) + "'");
-      out.push_back(HeadInfo{subject, *kind, to_uuid(r.value("revision_uuid")), r.value("head_version").toInt()});
-    }
-    return out;
-  }
+  Result<std::vector<HeadInfo>> heads(Uuid subject) override { return read_heads(*db_, subject); }
 
   Result<std::vector<RevisionInfo>> history(Uuid subject, Kind kind) override {
     auto rows = db_->select(sql::kHistory.arg(sql::ts(dialect(), QStringLiteral("c.created_utc"))),
@@ -271,6 +367,18 @@ class TinyStore final : public IStore {
  private:
   QString summary_select() const {
     return sql::kAnalysisSummarySelect.arg(sql::ts(dialect(), QStringLiteral("a.timestamp_utc")));
+  }
+
+  // Inserts one catalog row with a fresh uuid and created_utc, audited (D6).
+  Result<Uuid> add_catalog_row(Uuid client, const char* table, Row row, const std::string& detail) {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    const Uuid uuid = Uuid::v7();
+    row["uuid"] = qv(uuid);
+    row["created_utc"] = qv(UtcTime::now());
+    if (auto r = db_->insert(table, row); !r) return fail(r.error());
+    return finish_catalog(
+        tx, client, {ChangeEntityRow{QString::fromUtf8(table), uuid, QStringLiteral("insert"), detail}}, uuid);
   }
 
   Result<Uuid> finish_catalog(WriteTx& tx, Uuid client, const std::vector<ChangeEntityRow>& entities,

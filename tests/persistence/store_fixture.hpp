@@ -87,8 +87,15 @@ struct Lab {
   Uuid analyst;
   Uuid reducer;
   Uuid mass_spectrometer;
+  Uuid irradiation;
+  Uuid level;
+  Uuid position;
   Uuid identifier;
+  Uuid identifier2;  // "66574", no irradiation position
 };
+
+// Catalog writes made by seed_lab (each is one change_log entry).
+inline constexpr int kSeedLabChanges = 10;
 
 inline Lab seed_lab(IStore& store) {
   Lab lab;
@@ -97,7 +104,13 @@ inline Lab seed_lab(IStore& store) {
   lab.analyst = *store.ensure_user(lab.acquisition_client, "jross");
   lab.reducer = *store.ensure_user(lab.reduction_client, "jsmith");
   lab.mass_spectrometer = *store.add_mass_spectrometer(lab.acquisition_client, {"jan", "argus", "j"});
-  lab.identifier = *store.add_identifier(lab.acquisition_client, {"66573", "unknown", std::nullopt, std::nullopt});
+  lab.irradiation = *store.add_irradiation(lab.acquisition_client, "NM-300");
+  lab.level = *store.add_level(lab.acquisition_client, {lab.irradiation, "A", std::nullopt, 0.5, std::nullopt});
+  lab.position = *store.add_irradiation_position(lab.acquisition_client, {lab.level, 1, std::nullopt, {}, {}});
+  lab.identifier =
+      *store.add_identifier(lab.acquisition_client, {"66573", "unknown", std::nullopt, std::nullopt, lab.position});
+  lab.identifier2 =
+      *store.add_identifier(lab.acquisition_client, {"66574", "unknown", std::nullopt, std::nullopt, std::nullopt});
   return lab;
 }
 
@@ -108,12 +121,13 @@ inline Bytes series(float offset, int n = 4) {
 }
 
 // A complete analysis ingest with one signal and one baseline series.
-inline IngestItem analysis_item(const Lab& lab, int aliquot, const Bytes& signal, const Bytes& baseline) {
+inline IngestItem analysis_item(const Lab& lab, int aliquot, const Bytes& signal, const Bytes& baseline,
+                                const std::string& identifier = "66573") {
   AnalysisIngest a;
   a.analysis = Uuid::v7();
   a.changeset = Uuid::v7();
   a.created = UtcTime::now();
-  a.identifier = "66573";
+  a.identifier = identifier;
   a.aliquot = aliquot;
   a.analysis_type = "unknown";
   a.timestamp = *UtcTime::parse("2026-10-02T12:00:00.000001Z");

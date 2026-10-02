@@ -168,11 +168,173 @@ using IcFactors = std::vector<IcFactorRow>;
 using SignalRefs = std::vector<SignalRefRow>;
 using RefPins = std::vector<RefPinRow>;
 
+// An (identifier, aliquot, increment) change (section 5.6). Committing it
+// also rewrites the analysis row's identity columns and runid_text in the
+// same transaction.
+struct IdentityValue {
+  Uuid identifier;
+  int aliquot = 0;
+  int increment = -1;
+  std::string reason;  // e.g. "admin_repair", "provisional_renumber"
+  friend bool operator==(const IdentityValue&, const IdentityValue&) = default;
+};
+
+// ---------------------------------------------------------------- interpreted ages (5.7)
+
+struct InterpretedAgeMember {
+  Uuid analysis;
+  std::optional<std::string> record_id;
+  std::optional<bool> plateau_step;
+  std::optional<std::string> tag;
+  friend bool operator==(const InterpretedAgeMember&, const InterpretedAgeMember&) = default;
+};
+
+struct InterpretedAgeValue {
+  std::optional<double> age, age_err;
+  std::optional<std::string> age_kind;
+  std::optional<double> kca, kca_err, mswd;
+  std::optional<int> nanalyses;
+  std::string doc_json = "{}";  // the full legacy dict
+  std::vector<InterpretedAgeMember> members;
+  friend bool operator==(const InterpretedAgeValue&, const InterpretedAgeValue&) = default;
+};
+
+// ---------------------------------------------------------------- reference data (6)
+
+enum class RefType {
+  FluxPosition,
+  LevelGeometry,
+  Production,
+  LevelProduction,
+  Chronology,
+  Gains,
+  Sensitivity,
+  IrradiationHolder,
+  LoadHolder,
+  Script,
+  Document
+};
+
+std::string_view to_string(RefType type) noexcept;
+std::optional<RefType> parse_ref_type(std::string_view text) noexcept;
+
+struct FluxAnalysis {
+  std::optional<Uuid> analysis;
+  std::string record_id;
+  bool is_omitted = false;
+  friend bool operator==(const FluxAnalysis&, const FluxAnalysis&) = default;
+};
+
+// flux_position: `<irrad>/<level>.json` positions entry.
+struct FluxValue {
+  std::optional<double> j, j_err, mean_j, mean_j_err, mean_j_mswd, position_jerr, lambda_k_total, lambda_k_total_err;
+  std::optional<std::string> monitor_name, monitor_material;
+  std::optional<double> monitor_age, monitor_age_err;
+  std::optional<std::string> options_json, extra_json;
+  std::vector<FluxAnalysis> analyses;  // keyed by record_id
+  friend bool operator==(const FluxValue&, const FluxValue&) = default;
+};
+
+// level_geometry
+struct LevelZValue {
+  std::optional<double> z;
+  friend bool operator==(const LevelZValue&, const LevelZValue&) = default;
+};
+
+struct ProductionRatio {
+  std::string key;  // INTERFERENCE_KEYS + RATIO_KEYS
+  double value = 0;
+  double error = 0;
+  friend bool operator==(const ProductionRatio&, const ProductionRatio&) = default;
+};
+
+// production
+struct ProductionValue {
+  std::optional<std::string> reactor, note;
+  std::vector<ProductionRatio> ratios;  // keyed by key
+  friend bool operator==(const ProductionValue&, const ProductionValue&) = default;
+};
+
+// level_production: which production a level uses.
+struct LevelProductionValue {
+  Uuid production;  // a ref_object of type production
+  std::optional<std::string> note;
+  friend bool operator==(const LevelProductionValue&, const LevelProductionValue&) = default;
+};
+
+struct Dose {
+  int ordinal = 0;
+  double power = 0;
+  UtcTime start, end;
+  friend bool operator==(const Dose&, const Dose&) = default;
+};
+
+// chronology
+struct ChronologyValue {
+  std::vector<Dose> doses;  // keyed by ordinal
+  friend bool operator==(const ChronologyValue&, const ChronologyValue&) = default;
+};
+
+struct DetectorGain {
+  std::string detector;
+  double gain = 1;
+  friend bool operator==(const DetectorGain&, const DetectorGain&) = default;
+};
+
+// gains
+struct GainsValue {
+  std::vector<DetectorGain> gains;  // keyed by detector
+  friend bool operator==(const GainsValue&, const GainsValue&) = default;
+};
+
+// sensitivity: one revision per legacy record.
+struct SensitivityValue {
+  double sensitivity = 0;
+  std::optional<UtcTime> create_date;
+  std::optional<std::string> extra_json;
+  friend bool operator==(const SensitivityValue&, const SensitivityValue&) = default;
+};
+
+struct HolderHole {
+  int ordinal = 0;
+  std::string hole_id;
+  double x = 0, y = 0;
+  std::optional<double> radius;
+  friend bool operator==(const HolderHole&, const HolderHole&) = default;
+};
+
+// irradiation_holder, load_holder
+struct HolderValue {
+  std::optional<std::string> shape;
+  std::optional<double> radius;
+  bool has_hole_numbers = false;
+  std::vector<HolderHole> holes;  // keyed by ordinal
+  friend bool operator==(const HolderValue&, const HolderValue&) = default;
+};
+
+// script: the text is stored once in script_text, keyed by SHA-256 of the body.
+struct ScriptValue {
+  std::string body;
+  friend bool operator==(const ScriptValue&, const ScriptValue&) = default;
+};
+
+// document: an opaque meta-repo file (reactors.json, ...).
+struct DocumentValue {
+  std::optional<std::string> content_text, content_json;
+  friend bool operator==(const DocumentValue&, const DocumentValue&) = default;
+};
+
+// The payload of a `value` revision of a ref_object. The alternative must
+// match the object's ref_type (ref_payload_matches); that is checked at commit.
+using RefPayload = std::variant<FluxValue, LevelZValue, ProductionValue, LevelProductionValue, ChronologyValue,
+                                GainsValue, SensitivityValue, HolderValue, ScriptValue, DocumentValue>;
+
+bool ref_payload_matches(RefType type, const RefPayload& payload) noexcept;
+
 // The payload of one revision. The alternative must match the revision kind
-// (payload_kind_matches). Identity, interpreted-age and reference payloads are
-// not modelled yet; revisions of those kinds cannot be staged.
-using RevisionPayload =
-    std::variant<Intercepts, Baselines, Blanks, IcFactors, SignalRefs, TagValue, AnnotationValue, RefPins, CosmogenicValue>;
+// (payload_kind_matches).
+using RevisionPayload = std::variant<Intercepts, Baselines, Blanks, IcFactors, SignalRefs, TagValue, AnnotationValue,
+                                     RefPins, CosmogenicValue, IdentityValue, InterpretedAgeValue, RefPayload>;
 
 bool payload_kind_matches(Kind kind, const RevisionPayload& payload) noexcept;
 

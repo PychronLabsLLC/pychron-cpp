@@ -82,23 +82,53 @@ to `libs/persistence`.
 
 ## Remaining
 
-### D2 completion
+### D2 completion (done 2026-10-02)
 
-- [ ] Identity revisions (5.6): `identity_value` plus the same-transaction
-      update of `analysis` identity columns and `runid_text`.
-- [ ] Bookmarks (5.5): create from repository or group scope; restore as a
-      `bookmark_restore` changeset.
-- [ ] Reference data (6): `ref_object` create, `value` revisions with the
-      per-type payloads; `resolve_refs(analysis, policy)` honouring
-      `refpins`.
-- [ ] Interpreted ages (5.7): `ia_value` and `ia_member` payloads.
-- [ ] `derived_value` cache with fingerprint (4.3, I14).
-- [ ] Remaining ingest satellites: `analysis_meta`, `peak_center`,
-      `monitor_check`, `analysis_artifact`, `measured_position`,
-      `spectrometer_snapshot`, `script_text`, `experiment_queue`; extend I13
-      to their blobs.
-- [ ] Property test: random commit/rollback/restore sequences keep I1-I6
-      and I12 (12.6 `property/`).
+- [x] Identity revisions (5.6): `IdentityValue`; any head move of kind
+      `identity` (new revision or rollback) rewrites the analysis identity
+      columns and `runid_text` in the same transaction. A clash with an
+      existing run id fails the commit (I9).
+- [x] Bookmarks (5.5): repository or group scope, captured inside one
+      transaction; restore is one `bookmark_restore` changeset of CAS moves
+      (nothing to move: `Committed{nil, 0}`). Repositories, repository
+      members and analysis groups.
+- [x] `rollback_to_collection(analysis, kinds)`: moves heads to the
+      revisions of the analysis's ingest changeset.
+- [x] Reference data (6): `add_ref_object` (catalog) plus `value`
+      revisions with typed payloads for all 11 ref types. The payload type
+      is checked against the object's `ref_type` at commit. Script bodies go
+      to `script_text` once by SHA-256.
+- [x] `resolve_refs(analysis, policy)`: flux by irradiation position,
+      level geometry and level production by level, the production the level
+      names, chronology by irradiation, gains and sensitivity by
+      spectrometer; `refpins` override heads unless `honour_pins = false`.
+- [x] Interpreted ages (5.7): `add_interpreted_age` plus `interpreted_age`
+      revisions with `ia_value` and `ia_member`.
+- [x] `derived_value` cache (4.3, I14): `input_fingerprint`,
+      `put_derived`, `get_derived` (served only for the current fingerprint),
+      `prune_derived`.
+- [x] Ingest satellites: `analysis_meta`, `peak_center`, `monitor_check`,
+      `analysis_artifact`, `measured_position`, `spectrometer_snapshot`,
+      `script_text` (five script columns), `experiment_queue`. I13 now covers
+      peak-center, monitor and artifact blobs.
+- [x] Property test: seeded sequences of commits, stale commits, rollbacks,
+      collection restores, bookmarks and restores against a model (I2, I4,
+      I5, I6), with a coverage check that every operation occurred.
+
+Definitions fixed by this stage (the spec leaves them open):
+
+- Input fingerprint: SHA-256 of the text
+  `pychron-derived-fingerprint/1\n`, then `head <kind> <revision>\n` for
+  every head of the analysis sorted by kind name, then
+  `ref <ref_object> <revision>\n` for every resolved reference (pins
+  honoured) sorted by ref_object, then `reduction_version <v>\n`.
+- Spectrometer snapshot address: SHA-256 of the spectrometer, gains,
+  deflections and settings JSON texts, each followed by one NUL byte.
+- Derived-cache writes are not changes: no revision and no `change_log`
+  entry.
+
+Not done in D2 (moved to later stages): the aliquot-lease check at ingest
+(I10, D3); loading an analysis "as of" a bookmark without restoring it.
 
 ### D3 outbox (needs experiment E4 `IAnalysisPersister`)
 
