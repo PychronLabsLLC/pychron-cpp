@@ -138,7 +138,7 @@ QVariant QueueTableModel::headerData(int section, Qt::Orientation orientation, i
 Qt::ItemFlags QueueTableModel::flags(const QModelIndex& index) const {
   if (!index.isValid()) return Qt::NoItemFlags;
   Qt::ItemFlags f = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
-  if (locked_) return f;
+  if (!row_editable(static_cast<std::size_t>(index.row()))) return f;
   switch (index.column()) {
     case Identifier:
     case Position:
@@ -183,10 +183,9 @@ bool QueueTableModel::setData(const QModelIndex& index, const QVariant& value, i
     default: return false;
   }
   if (r == queue_.runs()[row]) return true;
-  if (!queue_.replace(row, std::move(r))) return false;
-  revalidate();
-  emit edited();
-  return true;
+  experiment::ExperimentQueue next = queue_;
+  if (!next.replace(row, std::move(r))) return false;
+  return adopt(std::move(next), false, index.row());
 }
 
 void QueueTableModel::set_queue(QueueSpec spec, bool keep_status) {
@@ -236,10 +235,32 @@ bool QueueTableModel::apply(const std::function<Result<void>(experiment::Experim
   if (locked_) return false;
   experiment::ExperimentQueue copy = queue_;
   if (!op(copy)) return false;
-  beginResetModel();
-  queue_ = std::move(copy);
-  endResetModel();
+  return adopt(std::move(copy), true);
+}
+
+bool QueueTableModel::adopt(experiment::ExperimentQueue next, bool reset, int row) {
+  if (locked_) return false;
+  if (live()) {
+    // Checked here too so a plainly bad edit never reaches the executor.
+    const auto& now = queue_.runs();
+    bool kept = next.size() >= frozen_;
+    for (std::size_t i = 0; kept && i < frozen_; ++i) kept = next.runs()[i] == now[i];
+    if (!kept) {
+      emit editRefused(tr("rows the executor has reached cannot change"));
+      return false;
+    }
+    auto v = commit_(version_, next.spec());
+    if (!v) {
+      emit editRefused(QString::fromStdString(v.error().what));
+      return false;
+    }
+    version_ = *v;
+  }
+  if (reset) beginResetModel();
+  queue_ = std::move(next);
+  if (reset) endResetModel();
   revalidate();
+  if (!reset) row_changed(row);
   emit edited();
   return true;
 }
@@ -294,12 +315,11 @@ bool QueueTableModel::toggle_end_after(std::size_t row) {
 }
 
 bool QueueTableModel::replace_run(std::size_t row, experiment::RunSpec run) {
-  if (locked_ || row >= queue_.size()) return false;
+  if (!row_editable(row) || row >= queue_.size()) return false;
   if (run == queue_.runs()[row]) return true;
-  if (!queue_.replace(row, std::move(run))) return false;
-  revalidate();
-  emit edited();
-  return true;
+  experiment::ExperimentQueue next = queue_;
+  if (!next.replace(row, std::move(run))) return false;
+  return adopt(std::move(next), false, static_cast<int>(row));
 }
 
 bool QueueTableModel::insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs) {
@@ -327,6 +347,36 @@ void QueueTableModel::set_locked(bool locked) {
   if (locked_ == locked) return;
   locked_ = locked;
   if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+}
+
+void QueueTableModel::set_live(std::size_t frozen, Committer commit) {
+  commit_ = std::move(commit);
+  frozen_ = frozen;
+  version_ = 0;
+  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+  emit frozenChanged();
+}
+
+void QueueTableModel::end_live() {
+  commit_ = nullptr;
+  frozen_ = 0;
+  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+  emit frozenChanged();
+}
+
+void QueueTableModel::set_frozen(std::size_t rows) {
+  if (!live() || rows <= frozen_) return;
+  frozen_ = rows;
+  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+  emit frozenChanged();
+}
+
+bool QueueTableModel::on_queue_edited(const experiment::executor::QueueEdited& e) {
+  if (live() && e.version <= version_) return false;  // already have it (our own accepted edit)
+  version_ = e.version;
+  set_queue(e.queue, true);
+  set_frozen(e.frozen);
+  return true;
 }
 
 void QueueTableModel::clear_status() {

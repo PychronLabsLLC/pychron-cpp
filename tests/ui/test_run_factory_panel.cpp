@@ -212,6 +212,21 @@ class TestRunFactoryPanel : public QObject {
     QVERIFY(!panel_->add());
     QCOMPARE(model_->rowCount(), 3);
   }
+
+  // While a queue runs, runs go after the rows the executor has reached even
+  // when an earlier row is selected.
+  void aRunningQueueTakesRunsAfterTheReachedRows() {
+    model_->set_live(2, [](std::uint64_t base, const auto&) -> pychron::Result<std::uint64_t> { return base + 1; });
+    panel_->set_insert_after_selection(true);
+    selection_ = {0};
+    panel_->set_form(with_identifier("20001", "1"));
+    QVERIFY(panel_->add_enabled());
+    QVERIFY(panel_->add());
+    QCOMPARE(model_->rowCount(), 4);
+    QCOMPARE(inserted_.back(), std::vector<std::size_t>{2});
+    QCOMPARE(identifier(2), QStringLiteral("20001"));
+    QCOMPARE(model_->version(), 1u);
+  }
 };
 
 QTEST_MAIN(TestRunFactoryPanel)

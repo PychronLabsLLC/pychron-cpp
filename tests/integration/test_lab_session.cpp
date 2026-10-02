@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -158,6 +159,32 @@ TEST_F(LabSessionTest, AQueueThatDoesNotCheckIsRefused) {
   EXPECT_NE(r.error().what.find("runs[1].measurement.plan"), std::string::npos) << r.error().what;
   EXPECT_FALSE(session_->running());
   EXPECT_FALSE(session_->wait().has_value());
+}
+
+TEST_F(LabSessionTest, ARunningQueueCanBeEdited) {
+  EXPECT_FALSE(session_->edit(0, queue_));  // nothing running
+  std::vector<std::string> errors;
+  std::optional<Result<std::uint64_t>> accepted;
+  // Edited as the first run starts (on the executor thread, so the rows
+  // after it are not yet reached).
+  auto sub = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted& e) {
+    if (e.row != 0) return;
+    auto bad = queue_;
+    bad.runs[2].measurement.plan = "no_such_plan";
+    if (auto r = session_->edit(0, bad); !r) errors.push_back(r.error().what);
+    auto shorter = queue_;
+    shorter.runs.resize(2);
+    accepted = session_->edit(0, shorter);
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(errors.size(), 1u);
+  EXPECT_NE(errors[0].find("runs[2].measurement.plan"), std::string::npos) << errors[0];
+  ASSERT_TRUE(accepted && *accepted) << (accepted && !*accepted ? accepted->error().what : "");
+  EXPECT_EQ(**accepted, 1u);
+  EXPECT_EQ(result->runs.size(), 2u);
 }
 
 TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {

@@ -5,9 +5,10 @@
 // (tabbed), the executor pane docked below and the evolutions on the right.
 //
 // The queue is edited in place and saved to its TOML file; every edit is
-// revalidated against the lab. While a queue runs the table is locked and
-// follows the executor (run status per row, and the executor's own queue
-// edits). Closing asks about unsaved edits (Cancel keeps the window open)
+// revalidated against the lab. While a queue runs the rows the executor has
+// not reached stay editable (each change goes to the executor first) and the
+// table follows the executor (run status per row, and the executor's own
+// queue edits). Closing asks about unsaved edits (Cancel keeps the window open)
 // and, while running, whether to stop the queue; the queue keeps running if
 // the window is only hidden.
 

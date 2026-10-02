@@ -52,6 +52,13 @@ Result<void> ExperimentQueue::replace(std::size_t row, RunSpec run) {
   return {};
 }
 
+Result<void> ExperimentQueue::replace_from(std::size_t from, std::vector<RunSpec> runs) {
+  if (from > size()) return bad("row " + std::to_string(from) + " out of range");
+  spec_.runs.resize(from);
+  for (auto& r : runs) spec_.runs.push_back(std::move(r));
+  return {};
+}
+
 Result<void> ExperimentQueue::move(std::vector<std::size_t> rows, std::size_t to) {
   if (to > size()) return bad("move target " + std::to_string(to) + " out of range");
   auto sel = check_rows(std::move(rows));

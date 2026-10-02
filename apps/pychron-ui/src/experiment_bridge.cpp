@@ -40,6 +40,7 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<exec::RunFinished>(&ExperimentBridge::runFinished);
   relay<exec::ExecutorWaiting>(&ExperimentBridge::executorWaiting);
   relay<exec::QueueEdited>(&ExperimentBridge::queueEdited);
+  relay<exec::QueueFrontier>(&ExperimentBridge::queueFrontier);
   relay<experiment::lab::QueueEnded>(&ExperimentBridge::queueEnded);
   relay<experiment::run::RunStateChanged>(&ExperimentBridge::runStateChanged);
   relay<meas::BlockStarted>(&ExperimentBridge::blockStarted);
@@ -77,6 +78,10 @@ experiment::lab::LabCheck ExperimentBridge::check(const experiment::QueueSpec& q
 
 Result<void> ExperimentBridge::start(const experiment::QueueSpec& queue, std::size_t from_row) {
   return session_.start(queue, from_row);
+}
+
+Result<std::uint64_t> ExperimentBridge::edit(std::uint64_t base, const experiment::QueueSpec& queue) {
+  return session_.edit(base, queue);
 }
 
 void ExperimentBridge::stop() { session_.stop(); }

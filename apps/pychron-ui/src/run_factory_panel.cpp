@@ -413,7 +413,8 @@ void RunFactoryPanel::refresh() {
 std::size_t RunFactoryPanel::insert_at() const {
   const auto rows = selection_ ? selection_() : std::vector<std::size_t>{};
   if (!after_selection_->isChecked() || rows.empty()) return model_.queue().runs.size();
-  return *std::max_element(rows.begin(), rows.end()) + 1;
+  // While a queue runs, never among the rows the executor has reached.
+  return model_.insert_position(*std::max_element(rows.begin(), rows.end()) + 1);
 }
 
 void RunFactoryPanel::report_inserted(std::size_t at, std::size_t count) {
@@ -480,6 +481,9 @@ bool RunFactoryPanel::insert_frequency() {
     spec.first = rows.front();
     spec.last = rows.back() + 1;
   }
+  // While a queue runs, only the rows the executor has not reached.
+  spec.first = model_.insert_position(spec.first);
+  if (spec.last && *spec.last < spec.first) return false;
   auto added = model_.add_frequency(spec);
   return added && *added > 0;
 }

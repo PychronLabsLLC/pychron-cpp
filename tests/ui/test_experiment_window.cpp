@@ -62,20 +62,14 @@ class TestExperimentWindow : public QObject {
             [&] { counts_max = std::max(counts_max, pane->counts_maximum()); });
     pane->request_start();
     QVERIFY(pane->running());
-    QVERIFY(window.model().locked());
+    QVERIFY(window.model().live());  // editable after the rows the executor reached
     QVERIFY(!pane->start_enabled());
-    // The run factory adds nothing while the queue runs.
-    auto form = window.factory()->form();
-    form.identifier = "20001";
-    window.factory()->set_form(form);
-    QVERIFY(!window.factory()->add_enabled());
-    QVERIFY(!window.factory()->add());
     QVERIFY(!window.load_queue(queue_file(sim, "other.toml"), &error));
     QCOMPARE(error, QStringLiteral("a queue is running"));
 
     QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
     for (int row = 0; row < 3; ++row) QCOMPARE(window.model().status(row), std::optional<RunState>(RunState::Success));
-    QVERIFY(!window.model().locked());
+    QVERIFY(!window.model().live());
     QCOMPARE(pane->progress_text(), QStringLiteral("3/3 run(s)"));
     QVERIFY(contains(pane->events(), QStringLiteral("queue completed")));
     QVERIFY(contains(pane->events(), QStringLiteral("run 1 66001")));
@@ -112,7 +106,39 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(measuring, 3);
     QVERIFY(waits >= 2);  // the delays before the runs
     QVERIFY(pane->start_enabled());
-    QVERIFY(window.factory()->add_enabled());  // unlocked again
+  }
+
+  void editsTheQueueWhileItRuns() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    auto& model = window.model();
+    QStringList refused;
+    connect(&model, &QueueTableModel::editRefused, this, [&](const QString& why) { refused.append(why); });
+    bool skipped = false, moved = true;
+    // As the first run starts (it runs for a while yet), the rows after it are open.
+    connect(&bridge, &ExperimentBridge::runStarted, this, [&](const pychron::experiment::executor::RunStarted& e) {
+      if (e.row != 0) return;
+      model.set_frozen(1);  // the frontier event may not have arrived yet
+      QVERIFY(!(model.flags(model.index(0, QueueTableModel::Identifier)) & Qt::ItemIsEditable));
+      QVERIFY(model.flags(model.index(2, QueueTableModel::Identifier)) & Qt::ItemIsEditable);
+      moved = model.move_up({1});  // would change the started row
+      skipped = model.toggle_skip({2});
+    });
+    window.executor()->request_start();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(!moved);
+    QCOMPARE(refused.size(), 1);
+    QVERIFY2(refused.front().contains(QStringLiteral("reached")), qPrintable(refused.front()));
+    QVERIFY(skipped);
+    QVERIFY(model.queue().runs[2].skip);  // the executor's echo did not undo it
+    QVERIFY(model.version() >= 1);
+    QVERIFY(window.modified());
+    QCOMPARE(model.status(1), std::optional<RunState>(RunState::Success));
+    QVERIFY(!model.status(2).has_value());
+    QVERIFY(contains(window.executor()->events(), QStringLiteral("queue completed")));
+    QCOMPARE(window.executor()->progress_text(), QStringLiteral("2/2 run(s)"));
   }
 
   void anOverlappedRunTakesASecondLane() {

@@ -137,6 +137,76 @@ class TestQueueTableModel : public QObject {
     QVERIFY(m->toggle_skip({1}));
   }
 
+  // While a queue runs: rows the executor reached are read-only, and every
+  // change goes through the committer first.
+  void liveEditsGoThroughTheCommitter() {
+    auto m = model();
+    std::vector<std::pair<std::uint64_t, std::size_t>> offered;  // (base, rows)
+    bool accept = true;
+    m->set_live(0, [&](std::uint64_t base, const QueueSpec& q) -> pychron::Result<std::uint64_t> {
+      offered.emplace_back(base, q.runs.size());
+      if (!accept) return pychron::fail(pychron::ErrorKind::Config, "the queue changed");
+      return base + 1;
+    });
+    QVERIFY(m->live());
+    QSignalSpy refused(m.get(), &QueueTableModel::editRefused);
+    QSignalSpy frozen(m.get(), &QueueTableModel::frozenChanged);
+    m->set_frozen(1);
+    QCOMPARE(frozen.count(), 1);
+    m->set_frozen(0);  // never shrinks
+    QCOMPARE(m->frozen_rows(), 1u);
+    QVERIFY(!m->row_editable(0));
+    QVERIFY(m->row_editable(1));
+    QCOMPARE(m->insert_position(0), 1u);
+    QVERIFY(!(m->flags(m->index(0, QueueTableModel::Plan)) & Qt::ItemIsEditable));
+    QVERIFY(m->flags(m->index(1, QueueTableModel::Plan)) & Qt::ItemIsEditable);
+
+    // Rows the executor reached: refused here, never offered.
+    QVERIFY(!m->setData(m->index(0, QueueTableModel::Comment), QStringLiteral("x")));
+    QVERIFY(!m->remove({0}));
+    QVERIFY(!m->move_up({1}));
+    QCOMPARE(refused.count(), 2);  // setData on a read-only cell does not get that far
+    QVERIFY(offered.empty());
+
+    // Accepted: kept, and the version moves on.
+    QVERIFY(m->setData(m->index(2, QueueTableModel::Comment), QStringLiteral("late")));
+    QVERIFY(m->remove({1}));
+    QCOMPARE(offered, (std::vector<std::pair<std::uint64_t, std::size_t>>{{0, 3}, {1, 2}}));
+    QCOMPARE(m->version(), 2u);
+    QCOMPARE(m->rowCount(), 2);
+    QCOMPARE(m->queue().runs[1].comment, std::string("late"));
+
+    // Refused by the executor: nothing changes.
+    accept = false;
+    QVERIFY(!m->toggle_skip({1}));
+    QCOMPARE(refused.count(), 3);
+    QCOMPARE(refused.last().front().toString(), QStringLiteral("the queue changed"));
+    QVERIFY(!m->queue().runs[1].skip);
+    QCOMPARE(m->version(), 2u);
+
+    // The executor's events: the echo of an accepted edit is ignored, a newer
+    // change (a conditional's) is adopted with its frontier.
+    exec::QueueEdited echo;
+    echo.queue = m->queue();
+    echo.queue.runs[1].comment = "stale";
+    echo.version = 2;
+    QVERIFY(!m->on_queue_edited(echo));
+    QCOMPARE(m->queue().runs[1].comment, std::string("late"));
+    exec::QueueEdited newer = echo;
+    newer.version = 3;
+    newer.frozen = 2;
+    QVERIFY(m->on_queue_edited(newer));
+    QCOMPARE(m->queue().runs[1].comment, std::string("stale"));
+    QCOMPARE(m->version(), 3u);
+    QCOMPARE(m->frozen_rows(), 2u);
+
+    m->end_live();
+    QVERIFY(!m->live());
+    QVERIFY(m->row_editable(0));
+    QVERIFY(m->toggle_skip({0}));
+    QCOMPARE(offered.size(), 3u);  // not offered once the queue ended
+  }
+
   void statusFollowsRunEvents() {
     auto m = model();
     m->on_run_started(exec::RunStarted{1, "uuid-1", "66001", {}});

@@ -39,6 +39,8 @@ class ExperimentQueue {
   Result<void> insert(std::size_t at, RunSpec run);
   Result<void> remove(std::vector<std::size_t> rows);
   Result<void> replace(std::size_t row, RunSpec run);
+  // Replaces rows [from, size()) with `runs` (from == size() appends).
+  Result<void> replace_from(std::size_t from, std::vector<RunSpec> runs);
 
   // Moves the selected rows, in queue order, to sit before row `to` (== size() appends).
   Result<void> move(std::vector<std::size_t> rows, std::size_t to);

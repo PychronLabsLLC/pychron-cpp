@@ -17,6 +17,7 @@
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -51,6 +52,9 @@ class ExperimentBridge : public QObject {
   // Non-blocking. start() fails at once (Config) when a queue is running or
   // `queue` does not check.
   Result<void> start(const experiment::QueueSpec& queue, std::size_t from_row);
+  // LabSession::edit: the running queue's rows after those the executor has
+  // reached; returns the new queue version.
+  Result<std::uint64_t> edit(std::uint64_t base, const experiment::QueueSpec& queue);
   void stop();
   void cancel();
   void abort();
@@ -63,6 +67,7 @@ class ExperimentBridge : public QObject {
   void runFinished(const pychron::experiment::executor::RunFinished& event);
   void executorWaiting(const pychron::experiment::executor::ExecutorWaiting& event);
   void queueEdited(const pychron::experiment::executor::QueueEdited& event);
+  void queueFrontier(const pychron::experiment::executor::QueueFrontier& event);
   void queueEnded(const pychron::experiment::lab::QueueEnded& event);
   void runStateChanged(const pychron::experiment::run::RunStateChanged& event);
   void blockStarted(const pychron::experiment::measurement::BlockStarted& event);

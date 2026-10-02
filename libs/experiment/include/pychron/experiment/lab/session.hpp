@@ -66,6 +66,11 @@ class LabSession {
   void cancel();
   void abort();
   void truncate(bool quick = false);
+  // Replaces the running queue's runs with `queue.runs` (Executor::edit:
+  // rows the executor has reached must be unchanged, `base` is the version
+  // the edit was made against). The whole queue must check against the lab.
+  // Queue-level fields are not editable while running and are ignored.
+  Result<std::uint64_t> edit(std::uint64_t base, const QueueSpec& queue);
 
   bool running() const;
   executor::ExecutorState state() const;
@@ -84,6 +89,7 @@ class LabSession {
   struct Services;
 
   void run(QueueSpec queue, std::size_t from_row);
+  Result<void> check(const QueueSpec& queue) const;  // against the lab; names the first error
 
   const Lab& lab_;
   SessionHardware hardware_;

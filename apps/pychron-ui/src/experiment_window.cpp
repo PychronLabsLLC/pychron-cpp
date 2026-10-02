@@ -133,13 +133,14 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&bridge_, &ExperimentBridge::fitsUpdated, evolutions_, &EvolutionsView::on_fits);
   connect(&bridge_, &ExperimentBridge::peakCenterDone, evolutions_, &EvolutionsView::on_peak_center);
   connect(&bridge_, &ExperimentBridge::queueEdited, this, [this](const exec::QueueEdited& e) {
-    model_.set_queue(e.queue, true);
-    set_modified(true);  // the file no longer matches the queue
+    if (model_.on_queue_edited(e)) set_modified(true);  // the file no longer matches the queue
   });
+  connect(&bridge_, &ExperimentBridge::queueFrontier, this,
+          [this](const exec::QueueFrontier& e) { model_.set_frozen(e.frozen); });
+  connect(&model_, &QueueTableModel::editRefused, this,
+          [this](const QString& why) { pane_->show_error(tr("Edit refused: %1").arg(why)); });
   connect(&bridge_, &ExperimentBridge::queueEnded, this, [this] {
-    model_.set_locked(false);
-    factory_->set_locked(false);
-    measurement_->set_locked(false);
+    model_.end_live();
     update_state();
   });
 
@@ -347,9 +348,9 @@ void ExperimentWindow::start() {
     return;
   }
   model_.clear_status();
-  model_.set_locked(true);
-  factory_->set_locked(true);
-  measurement_->set_locked(true);
+  // Rows after those the executor has reached stay editable; each change
+  // goes to the running executor first.
+  model_.set_live(from, [this](std::uint64_t base, const experiment::QueueSpec& q) { return bridge_.edit(base, q); });
   evolutions_->clear();
   pane_->set_running(true);
   update_state();
@@ -379,7 +380,6 @@ void ExperimentWindow::update_state() {
   pane_->set_runnable(model_.runnable(), runnable_rows);
   const bool running = bridge_.running() || pane_->running();
   open_->setEnabled(!running);
-  for (auto* a : row_actions_) a->setEnabled(!running);
 }
 
 void ExperimentWindow::closeEvent(QCloseEvent* event) {

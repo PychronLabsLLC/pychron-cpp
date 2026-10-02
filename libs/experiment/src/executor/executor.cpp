@@ -206,12 +206,12 @@ bool Executor::overlaps(const ExperimentQueue& queue, std::size_t row) const {
   return false;  // the last runnable row never overlaps
 }
 
-std::unique_ptr<Executor::Slot> Executor::launch(ExperimentQueue& queue, std::size_t row, int index) {
+std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, QueueSpec header, int index) {
   auto slot = std::make_unique<Slot>();
   Slot* s = slot.get();
   s->row = row;
-  s->spec = queue.runs()[row];
-  s->header = queue.spec();
+  s->spec = std::move(spec);
+  s->header = std::move(header);
   s->header.runs.clear();
 
   run::RunHooks hooks;
@@ -300,8 +300,10 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     at = last_started_row_;
   }
 
-  const QueueSpec before = queue.spec();
+  std::optional<QueueEdited> edited;
   if (r.state == run::RunState::Success) {
+    std::lock_guard queue_lock(queue_mutex_);
+    const QueueSpec before = queue.spec();
     for (const auto& trip : r.measurement.modifications) {
       if (!is_queue_action(trip.action.type)) continue;
       if (auto change = apply_queue_action(queue, at, trip.action, ctx_.blank); change) {
@@ -320,6 +322,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
         if ((*post)->change) sum.queue_changes.push_back((*post)->trip.name + ": " + (*post)->change->description);
       }
     }
+    if (!(queue.spec() == before)) edited = QueueEdited{queue.spec(), sum.queue_changes, ++version_, frozen_};
   }
   if (r.measurement.cancel_queue) {
     std::string name = "cancelation";
@@ -343,10 +346,42 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
   previous_spec_ = slot.spec;
   out.runs.push_back(sum);
   if (ctx_.services.bus != nullptr) {
-    if (!(queue.spec() == before)) ctx_.services.bus->publish(QueueEdited{queue.spec(), sum.queue_changes});
+    if (edited) ctx_.services.bus->publish(*edited);
     ctx_.services.bus->publish(RunFinished{sum});
   }
   write_state(queue, at + 1, out);
+}
+
+Result<std::uint64_t> Executor::edit(std::uint64_t base, std::vector<RunSpec> runs, std::string description) {
+  QueueEdited e;
+  {
+    std::lock_guard lock(queue_mutex_);
+    if (queue_ == nullptr) return fail(ErrorKind::Config, "no queue is running");
+    if (base != version_)
+      return fail(ErrorKind::Config, "the queue changed while it was being edited (version " + std::to_string(base) +
+                                         ", now " + std::to_string(version_) + ")");
+    if (runs.size() < frozen_)
+      return fail(ErrorKind::Config, "the edit removes rows the executor has already reached");
+    for (std::size_t i = 0; i < frozen_; ++i)
+      if (!(runs[i] == queue_->runs()[i]))
+        return fail(ErrorKind::Config, "row " + std::to_string(i) + " has already been reached and cannot change");
+    std::vector<RunSpec> tail(std::make_move_iterator(runs.begin() + static_cast<std::ptrdiff_t>(frozen_)),
+                              std::make_move_iterator(runs.end()));
+    if (auto r = queue_->replace_from(frozen_, std::move(tail)); !r) return fail(r.error());
+    e = QueueEdited{queue_->spec(), {std::move(description)}, ++version_, frozen_};
+  }
+  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(e);
+  return e.version;
+}
+
+std::uint64_t Executor::queue_version() const {
+  std::lock_guard lock(queue_mutex_);
+  return version_;
+}
+
+std::size_t Executor::frozen_rows() const {
+  std::lock_guard lock(queue_mutex_);
+  return frozen_;
 }
 
 void Executor::write_state(const ExperimentQueue& queue, std::size_t next_row, const QueueResult& out) {
@@ -410,6 +445,12 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     queue_level = std::move(*set);
   }
   run_checks_.emplace(std::move(queue_level));
+  {
+    std::lock_guard lock(queue_mutex_);
+    queue_ = &queue;
+    frozen_ = std::min(from_row, queue.size());
+    version_ = 0;
+  }
 
   if (options_.start_at && clock_.now() < *options_.start_at)
     wait(std::chrono::duration<double>(*options_.start_at - clock_.now()), "scheduled start");
@@ -428,14 +469,31 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
 
   int index = 0;
   std::size_t row = from_row;
+  bool delayed = false;  // the delay before the next run has been waited
   write_state(queue, row, out);
-  while (row < queue.size()) {
+  while (true) {
     if (ending()) break;
     if (options_.stop_at && clock_.now() >= *options_.stop_at) {
       stop();
       break;
     }
-    const RunSpec spec = queue.runs()[row];
+    RunSpec spec;
+    Delays delays;
+    std::optional<QueueFrontier> advanced;
+    {
+      std::lock_guard lock(queue_mutex_);
+      if (row >= queue.size()) break;
+      spec = queue.runs()[row];
+      delays = queue.spec().delays;
+      // The executor acts on this row now (a run once its delay is over):
+      // from here on an edit may not change it.
+      const bool acting = spec.skip || spec.id.type == AnalysisType::Pause || in_flight || delayed;
+      if (acting && row + 1 > frozen_) {
+        frozen_ = row + 1;
+        advanced = QueueFrontier{frozen_, version_};
+      }
+    }
+    if (advanced && ctx_.services.bus != nullptr) ctx_.services.bus->publish(*advanced);
     if (spec.skip) {
       ++row;
       continue;
@@ -443,11 +501,11 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     if (spec.id.type == AnalysisType::Pause) {
       settle(in_flight);
       if (!wait(spec.extraction.duration, "pause")) break;
+      delayed = false;
       ++row;
       continue;
     }
-    if (!in_flight) {
-      const auto& delays = queue.spec().delays;
+    if (!in_flight && !delayed) {
       Duration d = delays.before_analyses;
       if (previous_spec_) {
         if (previous_spec_->delay_after > Duration::zero()) d = previous_spec_->delay_after;
@@ -455,8 +513,10 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
         else d = delays.between_analyses;
       }
       if (!wait(d, "delay before " + spec.id.identifier)) break;
-      if (ending()) break;
+      delayed = true;
+      continue;  // the row may have been edited during the delay: read it again
     }
+    delayed = false;
 
     bool blocked = false;
     for (auto* check : ctx_.checks) {
@@ -479,9 +539,16 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     if (blocked) break;
 
     write_state(queue, row + 1, out);  // consumed from here on
-    auto slot = launch(queue, row, index++);
+    QueueSpec header;
+    bool overlapped;
+    {
+      std::lock_guard lock(queue_mutex_);
+      header = queue.spec();
+      overlapped = overlaps(queue, row);
+    }
+    auto slot = launch(row, spec, std::move(header), index++);
     Slot* s = slot.get();
-    if (overlaps(queue, row)) {
+    if (overlapped) {
       wait_until([&] { return s->done.load() || s->overlap_ready.load() || end_.has_value(); });
       if (!s->done && s->overlap_ready && !ending()) {
         settle(in_flight);  // at most two runs in flight
@@ -498,6 +565,10 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     ++row;
   }
   settle(in_flight);
+  {
+    std::lock_guard lock(queue_mutex_);
+    queue_ = nullptr;
+  }
 
   set_state(ExecutorState::Finalizing);
   {

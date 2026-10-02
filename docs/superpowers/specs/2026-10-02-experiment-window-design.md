@@ -38,10 +38,10 @@ Version 1 (this spec):
 Added after v1: the run factory side panel (section 5.6), with frequency
 insert and per-type field enabling; the measurement panel (section 5.7); the
 script editor (section 5.8); the fit overlay in the evolutions (section 5.4);
-the phase timeline with overlap lanes (section 5.3).
+the phase timeline with overlap lanes (section 5.3); editing a queue while
+it runs (sections 4.3, 5.2).
 
-Deferred to later versions (from spec 10.4): notifications, editing a queue
-while it runs.
+Deferred to later versions (from spec 10.4): notifications.
 
 ## 3. Decisions
 
@@ -49,7 +49,7 @@ while it runs.
 |---|---|---|
 | Where lab loading lives | `libs/experiment` `lab/` (Qt-free) | `elctl` and the UI must agree on what a lab directory is and on what makes a queue runnable; one implementation. |
 | Who owns the executor thread | `LabSession` (core) | The UI must not own hardware lifecycle (same rule as `ScanService`). `elctl` uses it too. |
-| Queue edits during a run | Not allowed in v1; the table is read-only while running | The executor mutates the queue (conditional queue actions) on its thread. Editing both sides needs an executor-side edit API; deferred. |
+| Queue edits during a run | Rows the executor has not reached stay editable; each change goes through `Executor::edit` (versioned) before the table keeps it | The executor also changes the queue (conditional queue actions) on its thread. A version check refuses an edit made against an older queue, so neither side silently drops the other's change. |
 | Seeing executor-side queue edits | Executor publishes `QueueEdited{QueueSpec}` (a copy) after applying them | A copy published on the bus is race-free; the UI replaces its table from it. |
 | Spectrometer window scanning while a queue runs | `LabSession` pauses the `ScanService` for the queue and resumes it after | Measurement needs the acquisition engine; `start_acquisition` fails while a free-running scan holds it. |
 | Simulated time in the UI | `--sim-speed` with the same `ClockPump` as `elctl` | Example runs take minutes of instrument time; the pump runs the scheduler inline so polling keeps pace with the clock. |
@@ -133,7 +133,21 @@ struct QueueEdited {
 ```
 
 Published by `Executor::finish` after a run's queue actions or post-run
-conditionals changed the queue, before `RunFinished`.
+conditionals changed the queue, before `RunFinished`, and by
+`Executor::edit` after an accepted edit. It also carries the queue
+`version` after the change and the number of `frozen` rows.
+
+Editing while running. The executor guards the queue with its own mutex
+and freezes rows as it reaches them: a skipped row passed over, a pause
+being waited, a run once its delay is over (a row whose delay is still
+running stays editable and is read again when the delay ends). Each
+advance publishes `QueueFrontier{frozen, version}`.
+`Executor::edit(base, runs, description)` replaces the rows after the
+frozen ones; it is refused (Config) when no queue runs, `base` is not the
+current version, or a frozen row would change. Every change (an edit, a
+queue action, a post-run conditional) bumps the version.
+`LabSession::edit(base, queue)` first checks the whole queue against the
+lab; queue-level fields are not editable while running.
 
 ### 4.4 `ClockPump` (`libs/core`, `pychron/core/clock_pump.hpp`)
 
@@ -197,8 +211,18 @@ beside the Evolutions dock).
   red, cancelled/aborted orange, skipped rows grey. A truncated run shows
   "success (truncated)".
 - Est. shows the per-run estimate (`h:mm:ss`) from the last check.
-- `set_locked(bool)` makes every cell and operation read-only (while
-  running).
+- `set_locked(bool)` makes every cell and operation read-only.
+- Live mode (`set_live(frozen, committer)` on Start, `end_live()` at
+  `QueueEnded`): rows before the frontier (`set_frozen`, from
+  `QueueFrontier`) are read-only and an operation that would change them is
+  refused. Every other change is offered to the committer
+  (`ExperimentBridge::edit`, so `LabSession::edit`) with the model's version
+  and kept only if accepted; otherwise `editRefused(why)` (shown in the
+  executor pane) and nothing changes. `on_queue_edited` adopts a
+  `QueueEdited` newer than the model's version (a conditional's change) and
+  ignores the echo of its own accepted edit. The run factory inserts after
+  the frontier even when an earlier row is selected; the measurement panel
+  is read-only on frozen rows.
 
 ### 5.3 `ExecutorPane`
 
@@ -268,7 +292,8 @@ orders of magnitude).
 - Menus: Queue (Open..., Save, Save As..., Revalidate), Rows (Move Up,
   Move Down, Duplicate, Delete, Toggle Skip, End After; also the table's
   context menu), Executor (Start (F5), Stop, Cancel..., Abort...,
-  Truncate). Opening while running is refused. Unsaved edits mark the title
+  Truncate). Opening while running is refused; the Rows operations stay
+  available and act on the rows not yet reached (5.2). Unsaved edits mark the title
   with `*`; closing or opening another queue with unsaved edits asks (Save /
   Discard / Cancel; Cancel keeps the window open, and quitting the app with
   it). Closing while a queue runs asks whether to stop it after the current
@@ -306,7 +331,9 @@ A left dock "Run Factory" over `experiment::FactoryForm`
   and/or before the first and after the last; with several rows selected,
   only that range counts.
 - Block: one of `<lab>/blocks/*.toml`, repeated N times, inserted like Add.
-- Locked (everything disabled) while a queue runs.
+- While a queue runs, Add, Frequency and Block insert only after the rows
+  the executor has reached (5.2); a refused edit is reported in the
+  executor pane.
 
 ### 5.7 Measurement panel
 
@@ -337,7 +364,8 @@ Qt-free rules in `pychron/experiment/plan/parameters.hpp`.
   problem on the row (a run whose overrides the plan rejects would otherwise
   only fail when it starts).
 - Every edit replaces the row in place (the selection stays) and is
-  revalidated; locked while a queue runs. Edits made elsewhere (the table, a
+  revalidated; read-only on rows a running queue has reached (5.2). Edits
+  made elsewhere (the table, a
   queue edit) refresh the panel.
 
 ### 5.8 Script editor

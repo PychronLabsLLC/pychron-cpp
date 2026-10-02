@@ -28,11 +28,20 @@
 // device, its measurement for the spectrometer and for overlap.min_delay of
 // pump time since the previous run's post-measurement started.
 //
+// Editing a running queue: rows the executor has reached are frozen (a run
+// that started, a pause being waited, a skipped row passed over); edit()
+// replaces the rows after them. A row whose delay is still running is not
+// yet frozen: the executor re-reads it when the delay ends. Every change to
+// the queue (an edit, a queue action, a post-run conditional) bumps the
+// queue version; an edit made against an older version is refused, so it
+// never silently drops a conditional's insertion.
+//
 // executor_state.json is rewritten on every transition and run start; a row
 // counts as consumed when its run starts, so resume_row() never re-runs a
 // partially measured run.
 
 #include <atomic>
+#include <cstdint>
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
@@ -88,9 +97,17 @@ struct RunFinished {
 };
 // A run's queue actions or post-run conditionals changed the queue.
 // Published before that run's RunFinished, with a copy of the whole queue.
+// Also published after an accepted edit().
 struct QueueEdited {
   QueueSpec queue;
   std::vector<std::string> changes;  // as RunSummary::queue_changes
+  std::uint64_t version = 0;         // the queue version after the change
+  std::size_t frozen = 0;            // rows an edit may no longer change
+};
+// More rows are frozen (the executor reached them).
+struct QueueFrontier {
+  std::size_t frozen = 0;
+  std::uint64_t version = 0;
 };
 // The executor is waiting: a delay, a scheduled start, a resource, pump time.
 struct ExecutorWaiting {
@@ -144,6 +161,15 @@ class Executor {
   void truncate(bool quick = false); // the run currently measuring
   ExecutorState state() const;
 
+  // Replaces the running queue's rows with `runs`, which must keep the
+  // frozen rows unchanged; `base` is the version the edit was made against
+  // (0 when execute() starts). Returns the new version. Config error when no
+  // queue is running, the version is stale or a frozen row would change.
+  // Thread-safe; publishes QueueEdited{..., {description}}.
+  Result<std::uint64_t> edit(std::uint64_t base, std::vector<RunSpec> runs, std::string description = "edited");
+  std::uint64_t queue_version() const;
+  std::size_t frozen_rows() const;
+
   // The row to resume from after a restart (one past the last started run).
   static Result<std::size_t> resume_row(const std::filesystem::path& state_file);
 
@@ -155,7 +181,8 @@ class Executor {
   bool wait(Duration d, const std::string& reason, const std::string& run_id = {});  // false when cancelled/aborted
   bool ending() const;
   bool overlaps(const ExperimentQueue& queue, std::size_t row) const;
-  std::unique_ptr<Slot> launch(ExperimentQueue& queue, std::size_t row, int index);
+  std::unique_ptr<Slot> launch(std::size_t row, RunSpec spec, QueueSpec header, int index);
+  void freeze(std::size_t rows);  // caller holds queue_mutex_
   void finish(ExperimentQueue& queue, Slot& slot, QueueResult& out);
   void write_state(const ExperimentQueue& queue, std::size_t next_row, const QueueResult& out);
 
@@ -177,6 +204,13 @@ class Executor {
   std::optional<RunChecks> run_checks_;
   std::size_t last_started_row_ = 0;
   std::optional<RunSpec> previous_spec_;  // last run that ran (for the delay policy)
+
+  // The queue being executed. The executor thread reads and changes it only
+  // under queue_mutex_ (taken before mutex_ when both are held).
+  mutable std::mutex queue_mutex_;
+  ExperimentQueue* queue_ = nullptr;
+  std::size_t frozen_ = 0;
+  std::uint64_t version_ = 0;
 };
 
 }  // namespace pychron::experiment::executor

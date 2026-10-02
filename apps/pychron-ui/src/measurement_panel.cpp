@@ -98,6 +98,7 @@ MeasurementPanel::MeasurementPanel(const experiment::lab::Lab& lab, QueueTableMo
   connect(reset_all_, &QPushButton::clicked, this, [this] { reset_all(); });
   connect(&model_, &QueueTableModel::validated, this, [this] { sync(); });
   connect(&model_, &QAbstractItemModel::modelReset, this, [this] { refresh(); });
+  connect(&model_, &QueueTableModel::frozenChanged, this, [this] { update_marks(); });
   refresh();
 }
 
@@ -261,7 +262,7 @@ void MeasurementPanel::build_parameters() {
 }
 
 void MeasurementPanel::update_marks() {
-  const bool editable = run() != nullptr && !locked_ && !model_.locked();
+  const bool editable = run() != nullptr && !locked_ && model_.row_editable(*row_);
   family_->setEnabled(run() != nullptr);
   plan_->setEnabled(editable);
   advanced_->setEnabled(editable && !shown_.plan.empty());
@@ -306,7 +307,7 @@ void MeasurementPanel::update_marks() {
 
 bool MeasurementPanel::store(MeasurementRef measurement) {
   const experiment::RunSpec* r = run();
-  if (r == nullptr || locked_ || model_.locked()) return false;
+  if (r == nullptr || locked_ || !model_.row_editable(*row_)) return false;
   experiment::RunSpec next = *r;
   next.measurement = std::move(measurement);
   const MeasurementRef before = shown_;
@@ -421,7 +422,7 @@ bool MeasurementPanel::overridden(const QString& path) const { return shown_.ove
 
 bool MeasurementPanel::set_parameter(const QString& path, const QString& text) {
   auto it = editors_.find(path.toStdString());
-  if (it == editors_.end() || run() == nullptr || locked_ || model_.locked()) return false;
+  if (it == editors_.end() || run() == nullptr || locked_ || !model_.row_editable(*row_)) return false;
   Editor& e = it->second;
   const auto value = plan::parse_param(e.check ? plan::ParamKind::Bool : e.param.kind, text.toStdString());
   if (!value) return false;

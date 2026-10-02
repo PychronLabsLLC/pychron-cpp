@@ -1,6 +1,7 @@
 // Executor (experiment spec 3.2, 3.3) over fakes: queue loop, delay policy,
 // stop/cancel/abort/truncate, end_after, conditionals acting on the queue,
-// pre-run checks, failures, resume, pause, scheduled start and overlap.
+// pre-run checks, failures, resume, pause, scheduled start, overlap and
+// editing the queue while it runs.
 
 #include <gtest/gtest.h>
 
@@ -246,6 +247,10 @@ analysis_types = ["blank_unknown"]
   EXPECT_EQ(edits[0].queue.runs[1].id.identifier, "bu");
   EXPECT_TRUE(edits[1].queue.runs[2].skip);
   EXPECT_EQ(edits.back().queue, q.spec());
+  // Every change bumps the version an operator edit is checked against.
+  EXPECT_EQ(edits[0].version, 1u);
+  EXPECT_EQ(edits[2].version, 3u);
+  EXPECT_EQ(ex.queue_version(), 3u);
   // 12345 inserts a blank; the blank's post-run check skips 12346; 12347 inserts
   // another blank, whose post-run check has nothing left to skip.
   EXPECT_EQ(states(r),
@@ -255,6 +260,93 @@ analysis_types = ["blank_unknown"]
   EXPECT_EQ(r.runs[1].queue_changes, std::vector<std::string>{"skip_after_blank: skip_next"});
   EXPECT_TRUE(q.runs()[2].skip);
   EXPECT_EQ(q.runs()[2].id.identifier, "12346");
+}
+
+TEST_F(ExecutorTest, AnEditChangesTheRowsAfterTheRunningOne) {
+  auto q = queue({unknown_run("12345"), unknown_run("12346"), unknown_run("12347")});
+  std::vector<QueueEdited> edits;
+  std::vector<std::size_t> frontier;
+  auto sub = bus_.subscribe<QueueEdited>([&](const QueueEdited& e) { edits.push_back(e); });
+  auto sub2 = bus_.subscribe<QueueFrontier>([&](const QueueFrontier& e) { frontier.push_back(e.frozen); });
+  Executor ex(context(), options());
+  EXPECT_FALSE(ex.edit(0, {}));  // nothing running
+  std::optional<Result<std::uint64_t>> result;
+  std::size_t frozen = 0;
+  spec_.on_reading = [&](int n) {
+    if (n != 3) return;
+    frozen = ex.frozen_rows();
+    std::vector<RunSpec> runs = q.spec().runs;  // the measuring thread may read it: the executor is waiting
+    runs[1].id.identifier = "22346";
+    runs[2] = unknown_run("22347");
+    runs.push_back(unknown_run("22348"));
+    result = ex.edit(ex.queue_version(), runs, "operator");
+  };
+  auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(frozen, 1u);
+  ASSERT_TRUE(result && *result) << (result && !*result ? result->error().what : "");
+  EXPECT_EQ(**result, 1u);
+  EXPECT_EQ(states(r), (std::vector<std::string>{"12345:success", "22346:success", "22347:success",
+                                                 "22348:success"}));
+  ASSERT_EQ(edits.size(), 1u);
+  EXPECT_EQ(edits[0].changes, std::vector<std::string>{"operator"});
+  EXPECT_EQ(edits[0].version, 1u);
+  EXPECT_EQ(edits[0].frozen, 1u);
+  EXPECT_EQ(edits[0].queue.runs.size(), 4u);
+  EXPECT_EQ(frontier, (std::vector<std::size_t>{1, 2, 3, 4}));
+  EXPECT_FALSE(ex.edit(1, q.spec().runs));  // finished
+}
+
+TEST_F(ExecutorTest, AnEditMayNotChangeReachedRowsOrUseAStaleVersion) {
+  auto q = queue({unknown_run("12345"), unknown_run("12346")});
+  Executor ex(context(), options());
+  std::vector<std::string> errors;
+  spec_.on_reading = [&](int n) {
+    if (n != 3) return;
+    auto runs = q.spec().runs;
+    runs[0].comment = "changed";
+    if (auto e = ex.edit(0, runs); !e) errors.push_back(e.error().what);
+    if (auto e = ex.edit(0, {}); !e) errors.push_back(e.error().what);
+    if (auto e = ex.edit(7, q.spec().runs); !e) errors.push_back(e.error().what);
+  };
+  auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  ASSERT_EQ(errors.size(), 3u);
+  EXPECT_NE(errors[0].find("row 0 has already been reached"), std::string::npos) << errors[0];
+  EXPECT_NE(errors[1].find("removes rows"), std::string::npos) << errors[1];
+  EXPECT_NE(errors[2].find("changed while it was being edited"), std::string::npos) << errors[2];
+  EXPECT_EQ(states(r), (std::vector<std::string>{"12345:success", "12346:success"}));
+  EXPECT_EQ(ex.queue_version(), 0u);
+}
+
+TEST_F(ExecutorTest, ARowEditedDuringItsDelayIsReadAgain) {
+  auto q = queue({unknown_run("12345"), unknown_run("12346"), unknown_run("12347")});
+  auto o = options();
+  Executor* ex = nullptr;
+  std::optional<Result<std::uint64_t>> result;
+  std::size_t frozen = 0;
+  o.sleep = [&](Seconds d) {
+    // The delay before 12346 (between_analyses): that row is not reached yet.
+    if (d == Seconds{20} && !result) {
+      frozen = ex->frozen_rows();
+      auto runs = q.spec().runs;
+      runs[1].skip = true;
+      result = ex->edit(ex->queue_version(), runs);
+    }
+    clock_.advance(std::chrono::duration_cast<pychron::Duration>(d));
+  };
+  Executor executor(context(), o);
+  ex = &executor;
+  auto r = executor.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(frozen, 1u);
+  ASSERT_TRUE(result && *result);
+  EXPECT_EQ(states(r), (std::vector<std::string>{"12345:success", "12347:success"}));
+  // 12347 starts after the delay already waited, not after a second one.
+  std::vector<double> delays;
+  for (const auto& [reason, d] : waits())
+    if (reason.starts_with("delay")) delays.push_back(d);
+  EXPECT_EQ(delays, (std::vector<double>{10, 20}));
 }
 
 TEST_F(ExecutorTest, PreRunChecksAndConditionalsBlockTheQueue) {

@@ -85,17 +85,7 @@ bool LabSession::has_spectrometer() const noexcept { return hardware_.spectromet
 
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
-  const auto check = check_lab_queue(lab_, queue);
-  if (!check.ok()) {
-    int errors = 0;
-    std::string first;
-    for (const auto& d : check.all()) {
-      if (d.severity != Severity::Error) continue;
-      if (errors++ == 0) first = describe(d);
-    }
-    return fail(ErrorKind::Config,
-                "the queue has " + std::to_string(errors) + " error(s); first: " + first, "experiment");
-  }
+  if (auto ok = check(queue); !ok) return ok;
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).
@@ -111,6 +101,26 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   }
   thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
   return {};
+}
+
+Result<void> LabSession::check(const QueueSpec& queue) const {
+  const auto c = check_lab_queue(lab_, queue);
+  if (c.ok()) return {};
+  int errors = 0;
+  std::string first;
+  for (const auto& d : c.all()) {
+    if (d.severity != Severity::Error) continue;
+    if (errors++ == 0) first = describe(d);
+  }
+  return fail(ErrorKind::Config, "the queue has " + std::to_string(errors) + " error(s); first: " + first,
+              "experiment");
+}
+
+Result<std::uint64_t> LabSession::edit(std::uint64_t base, const QueueSpec& queue) {
+  auto ex = active();
+  if (!ex) return fail(ErrorKind::Config, "no queue is running", "experiment");
+  if (auto ok = check(queue); !ok) return fail(ok.error());
+  return ex->edit(base, queue.runs, "edited by the operator");
 }
 
 void LabSession::run(QueueSpec spec, std::size_t from_row) {
