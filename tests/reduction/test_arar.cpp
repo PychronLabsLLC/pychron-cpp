@@ -332,3 +332,25 @@ TEST(ArAr, ToLiveConstantsFromReductionInputs) {
   EXPECT_EQ(c.chlorine->atm4038, rc.atm4038.value);
   EXPECT_EQ(c.chlorine->cl_k_factor, 1.0);  // Cl_K == 0: factor 1
 }
+
+// E10 takes ca37 from Ar39 alone, so with a fixed K3739 and no Ar37 the Ca
+// components are still live and k39 / atm40 use them consistently.
+TEST(ArAr, FixedK3739WithoutAr37) {
+  ArArConstants c;
+  c.ca3637 = 2.7e-4;
+  c.ca3937 = 7.0e-4;
+  c.analysis_fixed_k3739 = 0.05;
+  const auto v = compute_arar(ArArIntensities{1.0, std::nullopt, std::nullopt, 1000.0, 400.0}, c);
+  const double x = 0.05, y = 1.0 / 7.0e-4;
+  const double ca37 = (1000.0 * x * y) / (x + y);
+  const double ca39 = 7.0e-4 * ca37, ca36 = 2.7e-4 * ca37;
+  EXPECT_EQ(v.at("ca37"), ca37);
+  EXPECT_EQ(v.at("ca39"), ca39);
+  EXPECT_EQ(v.at("ca36"), ca36);
+  EXPECT_EQ(v.at("k39"), 1000.0 - ca39);
+  EXPECT_EQ(v.at("atm40"), (1.0 - ca36 - 0.0 * (0.0 - 0.0 - 0.0)) / 1.0 * 298.56);
+  EXPECT_TRUE(v.contains("kca"));
+  // Without Ar39 nothing Ca-derived is live.
+  const auto w = compute_arar(ArArIntensities{1.0, 10.0, std::nullopt, std::nullopt, 400.0}, c);
+  for (const char* key : {"ca37", "ca36", "ca39", "k39", "kca"}) EXPECT_FALSE(w.contains(key)) << key;
+}

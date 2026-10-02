@@ -233,4 +233,33 @@ Age<T> age(const T& j, const T& f, const L& lambda, double scale) {
   return out;
 }
 
+// E19 outputs. `ratio` is meaningful only when ratio_defined (nom(y) != 0,
+// legacy ZeroDivisionError -> 0 sentinel, D3 makes it absent); `inverse` only
+// when inverse_defined (the ratio is defined and nom(ratio) != 0; the ratio
+// itself is kept, spec 7).
+template <class T>
+struct KRatio {
+  T ratio{}, inverse{};
+  bool ratio_defined = false;
+  bool inverse_defined = false;
+};
+
+// E19 K/Ca and K/Cl with the legacy operand order: ratio = x / y, then times
+// `factor` (1 / Ca_K or 1 / Cl_K) when non-null; inverse = 1 / ratio. The
+// caller passes null for the factor-1 case (ratio missing or nominally 0).
+// legacy:processing/arar_age.py:534-566
+template <class T>
+KRatio<T> k_ratio(const T& x, const T& y, const T* factor) {
+  KRatio<T> out;
+  if (nominal(y) == 0.0) return out;
+  out.ratio = x / y;
+  if (factor != nullptr) out.ratio = out.ratio * *factor;
+  out.ratio_defined = true;
+  if (nominal(out.ratio) != 0.0) {
+    out.inverse = 1.0 / out.ratio;
+    out.inverse_defined = true;
+  }
+  return out;
+}
+
 }  // namespace pychron::reduction::kernels

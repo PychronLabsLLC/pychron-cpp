@@ -169,6 +169,12 @@ TEST(Reduce, ValidatesInputs) {
     in.irradiation.segments.push_back({1.0, HUGE_VAL, 10.0});
     expect_config_error(reduce(in), "segment", "inf segment");
   }
+  {  // A zero decay constant with segments would make E7 0/0.
+    ReductionInput in = base_input();
+    in.irradiation.segments.push_back({1.0, 1.0, 10.0});
+    in.constants.lambda_ar39 = {0.0, 0.0};
+    expect_config_error(reduce(in), "lambda_ar39", "zero lambda_ar39 with segments");
+  }
   {
     ReductionInput in = base_input();
     in.production.k4039 = UFloat(std::nan(""));

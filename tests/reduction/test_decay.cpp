@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "golden.hpp"
@@ -50,6 +51,23 @@ TEST(Decay, UnitGuardErrors) {
   EXPECT_NE(bad.error().what.find("same unit"), std::string::npos);
   EXPECT_TRUE(decay_factors(1.0, 1.0, std::vector<DecaySegment>{{1.0, 50.0, 1.0}}));
   EXPECT_FALSE(decay_factors(1.0, 1.0, std::vector<DecaySegment>{{1.0, 50.0001, 1.0}}));
+}
+
+TEST(Decay, ZeroLambdaWithSegmentsErrors) {
+  const std::vector<DecaySegment> seg{{1.0, 1.0, 10.0}};
+  for (const auto& [l37, l39, field] :
+       {std::tuple{0.0, 7e-6, "lambda_ar37"}, std::tuple{0.01975, 0.0, "lambda_ar39"}}) {
+    auto r = decay_factors(l37, l39, seg);
+    if (r) {
+      ADD_FAILURE() << field << ": expected an error";
+      continue;
+    }
+    EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config);
+    EXPECT_TRUE(r.error().what.starts_with("reduction: ")) << r.error().what;
+    EXPECT_NE(r.error().what.find(field), std::string::npos) << r.error().what;
+  }
+  // Without segments the lambdas are not read.
+  EXPECT_TRUE(decay_factors(0.0, 0.0, std::vector<DecaySegment>{}));
 }
 
 TEST(Decay, ZeroDenominatorIsUnity) {

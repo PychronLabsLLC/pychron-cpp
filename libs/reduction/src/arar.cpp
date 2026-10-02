@@ -28,8 +28,9 @@ std::map<std::string, double> compute_arar(const ArArIntensities& in, const ArAr
   const kernels::Interference<double> ik =
       kernels::interference(a39, a37, r, fixed, c.allow_negative_ca_correction);
 
-  // ca37 depends on Ar39 through K3739 (E9) or entirely (E10).
-  const bool ca_ok = h37 && (h39 || (fixed == nullptr && c.k3739 == 0.0));
+  // E10 derives ca37 from Ar39 alone; E9 needs Ar37, and Ar39 too when
+  // K3739 != 0.
+  const bool ca_ok = fixed != nullptr ? h39 : h37 && (h39 || c.k3739 == 0.0);
   if (ca_ok) {
     out["ca37"] = ik.ca37;
     out["ca36"] = ik.ca36;
@@ -66,18 +67,18 @@ std::map<std::string, double> compute_arar(const ArArIntensities& in, const ArAr
     }
   }
 
-  // E19.
-  if (h39 && ca_ok && ik.ca37 != 0.0 && k39 != 0.0) {
-    const double kca = k39 / ik.ca37 * c.kca_factor;
-    out["kca"] = kca;
-    if (kca != 0.0) out["cak"] = 1.0 / kca;
+  // E19 (kernels::k_ratio). Live rule: no K/Ca or K/Cl when k39 == 0.
+  if (h39 && ca_ok && k39 != 0.0) {
+    const kernels::KRatio<double> k = kernels::k_ratio(k39, ik.ca37, &c.kca_factor);
+    if (k.ratio_defined) out["kca"] = k.ratio;
+    if (k.inverse_defined) out["cak"] = k.inverse;
   }
   if (cl != nullptr) {
     out["cl36"] = atm.cl36;
-    if (h39 && atm.cl38 != 0.0 && k39 != 0.0) {
-      const double kcl = k39 / atm.cl38 * cl->cl_k_factor;
-      out["kcl"] = kcl;
-      if (kcl != 0.0) out["clk"] = 1.0 / kcl;
+    if (h39 && k39 != 0.0) {
+      const kernels::KRatio<double> k = kernels::k_ratio(k39, atm.cl38, &cl->cl_k_factor);
+      if (k.ratio_defined) out["kcl"] = k.ratio;
+      if (k.inverse_defined) out["clk"] = k.inverse;
     }
   }
   return out;

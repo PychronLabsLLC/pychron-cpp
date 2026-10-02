@@ -69,10 +69,14 @@ struct ArArIntensities {
 // Every quantity computable from what is present, keyed by its conditional
 // name (age, kca, cak, radiogenic_yield, rad40, rad40_percent, atm40, k39,
 // ca37, ca39, ca36, and with chlorine kcl, clk, cl36). Omissions:
-//   - ca37/ca36/ca39 need Ar37, and Ar39 too when K3739 != 0 or a fixed
-//     K3739 is selected; k39 needs Ar39. An absent Ar37 or Ar39 enters the
-//     other quantities as 0 (ca36 = 0, k39 = 0).
-//   - atm40 needs Ar36 (and Ar38 with chlorine); rad40 needs atm40 and Ar40.
+//   - With a fixed K3739 selected (E10) ca37/ca36/ca39 need Ar39 only (ca37
+//     comes from Ar39 alone); otherwise (E9) they need Ar37, and Ar39 too when
+//     K3739 != 0. k39 needs Ar39. An absent Ar37 or Ar39 enters the other
+//     quantities as 0, and Ca components that cannot be computed enter as 0
+//     (ca36 = ca38 = 0, k39 = k38 = 0).
+//   - atm40 needs Ar36, and Ar38 too when chlorine is set and its correction
+//     is not a no-op (m = Cl3638 lambda_Cl36 decay_days != 0); rad40 needs
+//     atm40 and Ar40.
 //   - radiogenic_yield needs Ar40 != 0; age needs k39 != 0, J > 0,
 //     lambda_total > 0 and 1 + J F > 0; kca needs ca37 != 0 and k39 != 0,
 //     cak kca != 0; kcl needs cl38 != 0 and k39 != 0, clk kcl != 0.

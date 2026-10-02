@@ -38,9 +38,24 @@ Result<void> check_constant(const Measured& m, std::string_view name) {
 
 // A constant read by a step function must be a valid variable (finite value,
 // finite sigma >= 0) before it is minted.
-Result<UFloat> mint(const Measured& m, std::string_view tag) {
-  if (auto ok = check_constant(m, tag); !ok) return fail(ok.error());
+Result<UFloat> mint(const Measured& m, std::string_view name, TagId tag) {
+  if (auto ok = check_constant(m, name); !ok) return fail(ok.error());
   return UFloat::variable(m.value, m.error, tag);
+}
+
+// The legacy tags of the variables minted per call, interned once
+// (intern_tag takes the global tag-table mutex).
+struct LegacyTags {
+  TagId lambda_cl36, atm3836, solar3836, cosmo3836, trapped_4036, k3739, lambda_k, position,
+      j_no_err;
+};
+const LegacyTags& legacy_tags() {
+  static const LegacyTags tags{intern_tag("lambda_Cl36"), intern_tag("atm3836"),
+                               intern_tag("solar3836"),   intern_tag("cosmo3836"),
+                               intern_tag("trapped_4036"), intern_tag("k3739"),
+                               intern_tag("lambda_k"),    intern_tag("Position"),
+                               intern_tag("J_no_err")};
+  return tags;
 }
 
 // atm4036 / atm4038 as `uncertainties` evaluates it for two independent
@@ -163,11 +178,11 @@ Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UF
     return fail(ErrorKind::Config,
                 "reduction: atmospheric decay_days must be finite, got " + fmt_g(decay_days));
   }
-  const Result<UFloat> lcl = mint(c.lambda_cl36, "lambda_Cl36");
+  const Result<UFloat> lcl = mint(c.lambda_cl36, "lambda_Cl36", legacy_tags().lambda_cl36);
   if (!lcl) return fail(lcl.error());
   const Result<Measured> ratio = atm3836(c);
   if (!ratio) return fail(ratio.error());
-  const UFloat r3836 = UFloat::variable(ratio->value, ratio->error, "atm3836");
+  const UFloat r3836 = UFloat::variable(ratio->value, ratio->error, legacy_tags().atm3836);
   const kernels::Atmospheric<UFloat> a =
       kernels::atmospheric(a38, a36, k38, ca38, ca36, decay_days, cl3638, *lcl, r3836);
   if (a.singular) {
@@ -182,9 +197,9 @@ Result<AtmosphericComponents> atmospheric_components(const UFloat& a38, const UF
 // legacy:processing/argon_calculations.py:490-513
 Result<CosmogenicComponents> cosmogenic_components(const UFloat& c36, const UFloat& c38,
                                                    const CosmogenicRatios& r) {
-  const Result<UFloat> rs = mint(r.solar3836, "solar3836");
+  const Result<UFloat> rs = mint(r.solar3836, "solar3836", legacy_tags().solar3836);
   if (!rs) return fail(rs.error());
-  const Result<UFloat> rc = mint(r.cosmo3836, "cosmo3836");
+  const Result<UFloat> rc = mint(r.cosmo3836, "cosmo3836", legacy_tags().cosmo3836);
   if (!rc) return fail(rc.error());
   const kernels::Cosmogenic<UFloat> k = kernels::cosmogenic(c36, c38, *rs, *rc);
   if (k.singular) {
@@ -225,19 +240,19 @@ Result<FResult> calculate_f(const std::array<UFloat, 5>& n, double decay_days,
   const UFloat& a36 = n[index(ArgonIsotope::Ar36)];
 
   // :529-531: trapped 40/36, minted once per call, distinct from E12's atm3836.
-  const Result<UFloat> trapped = mint(c.atm4036, "trapped_4036");
+  const Result<UFloat> trapped = mint(c.atm4036, "trapped_4036", legacy_tags().trapped_4036);
   if (!trapped) return fail(trapped.error());
 
   InterferenceOptions o;
   o.mode = c.k3739_mode;
   o.allow_negative_ca_correction = c.allow_negative_ca_correction;
   if (fixed_k3739) {
-    const Result<UFloat> fk = mint(*fixed_k3739, "k3739");
+    const Result<UFloat> fk = mint(*fixed_k3739, "k3739", legacy_tags().k3739);
     if (!fk) return fail(fk.error());
     o.fixed_k3739 = *fk;
   }
   if (c.k3739_mode == K3739Mode::Fixed) {
-    const Result<UFloat> ck = mint(c.fixed_k3739, "k3739");
+    const Result<UFloat> ck = mint(c.fixed_k3739, "k3739", legacy_tags().k3739);
     if (!ck) return fail(ck.error());
     o.constants_fixed_k3739 = *ck;
   }
@@ -360,7 +375,7 @@ Result<Measured> resolve_lambda_k(const ReductionConstants& c,
 // nominal only (include_decay_error false, argon_calculations.py:622-623).
 std::optional<UFloat> lambda_variable(const ReductionConstants& c, const Measured& m) {
   if (!c.include_decay_error) return std::nullopt;
-  return UFloat::variable(m.value, m.error, "lambda_k");
+  return UFloat::variable(m.value, m.error, legacy_tags().lambda_k);
 }
 
 // E16 on resolved inputs; `lambda` null means nominal lambda_K.
@@ -418,9 +433,9 @@ Result<std::optional<AgeSet>> make_age_set(const UFloat& j, double position_jerr
 
   const double j_nominal = j.nominal();
   // :678 J'' = ufloat(nom(J), position_jerr, tag="Position")
-  const UFloat j_position = UFloat::variable(j_nominal, position_jerr, "Position");
+  const UFloat j_position = UFloat::variable(j_nominal, position_jerr, legacy_tags().position);
   // :689 J' = ufloat(nom(J), 0, tag="J_no_err"): exact, so no term.
-  const UFloat j_no_err = UFloat::variable(j_nominal, 0.0, "J_no_err");
+  const UFloat j_no_err = UFloat::variable(j_nominal, 0.0, legacy_tags().j_no_err);
 
   const kernels::Age<UFloat> pos = age_of(j_position, f, *lk, lambda(), c.age_units);
   const kernels::Age<UFloat> w_j = age_of(j, f, *lk, lambda(), c.age_units);
@@ -624,47 +639,28 @@ Result<ArArResult> reduce(const ReductionInput& in) {
     }
   }
 
-  // E19 K/Ca (arar_age.py:534-545, :560-566): k39 / ca37 * (1 / Ca_K), the
-  // factor 1 when Ca_K is missing or nominally 0. ca37 is the E11-clamped
-  // value. ca37 == 0 (legacy ZeroDivisionError -> kca = 0) leaves both absent;
-  // so does kca == 0 for cak, keeping kca.
+  // E19 K/Ca and K/Cl (arar_age.py:534-566; kernels::k_ratio): k39 / ca37 *
+  // (1 / Ca_K) and k39 / cl38 * (1 / Cl_K), the factor 1 when the ratio is
+  // missing or nominally 0. ca37 is the E11-clamped value; cl38 is E12's
+  // residual 38 (also without Cl production, legacy behaviour). A zero divisor
+  // (legacy ZeroDivisionError -> 0) leaves both absent; a zero ratio keeps the
+  // ratio and leaves the inverse absent. Each raises its diagnostic once.
   const UFloat& k39 = out.f.interference.k39;
-  const UFloat& ca37 = out.f.interference.ca37;
-  if (ca37.nominal() == 0.0) {
-    out.diagnostics.push_back(Diagnostic::KCaUndefined);
-  } else {
-    UFloat kca = k39 / ca37;
-    if (in.production.ca_k && in.production.ca_k->nominal() != 0.0) {
-      kca = kca * (1.0 / *in.production.ca_k);
-    }
-    if (kca.nominal() == 0.0) {
-      out.diagnostics.push_back(Diagnostic::KCaUndefined);
-    } else {
-      out.cak = 1.0 / kca;
-    }
-    out.kca = std::move(kca);
-  }
-
-  // E19 K/Cl (arar_age.py:547-558, :560-566): k39 / cl38 * (1 / Cl_K), the
-  // factor 1 when Cl_K is missing or nominally 0. cl38 is E12's residual 38
-  // (also without Cl production, legacy behaviour). cl38 == 0 (legacy
-  // ZeroDivisionError -> kcl = 0) leaves both absent; kcl == 0 keeps kcl and
-  // leaves clk absent, as for K/Ca.
-  const UFloat& cl38 = out.f.atmospheric.cl38;
-  if (cl38.nominal() == 0.0) {
-    out.diagnostics.push_back(Diagnostic::KClUndefined);
-  } else {
-    UFloat kcl = k39 / cl38;
-    if (in.production.cl_k && in.production.cl_k->nominal() != 0.0) {
-      kcl = kcl * (1.0 / *in.production.cl_k);
-    }
-    if (kcl.nominal() == 0.0) {
-      out.diagnostics.push_back(Diagnostic::KClUndefined);
-    } else {
-      out.clk = 1.0 / kcl;
-    }
-    out.kcl = std::move(kcl);
-  }
+  const auto factor = [](const std::optional<UFloat>& per_k) -> std::optional<UFloat> {
+    if (per_k && per_k->nominal() != 0.0) return 1.0 / *per_k;
+    return std::nullopt;
+  };
+  const auto ratio = [&](const UFloat& y, const std::optional<UFloat>& per_k,
+                         std::optional<UFloat>& r, std::optional<UFloat>& inverse,
+                         Diagnostic undefined) {
+    const std::optional<UFloat> f = factor(per_k);
+    kernels::KRatio<UFloat> k = kernels::k_ratio(k39, y, f ? &*f : nullptr);
+    if (k.ratio_defined) r = std::move(k.ratio);
+    if (k.inverse_defined) inverse = std::move(k.inverse);
+    if (!k.inverse_defined) out.diagnostics.push_back(undefined);
+  };
+  ratio(out.f.interference.ca37, in.production.ca_k, out.kca, out.cak, Diagnostic::KCaUndefined);
+  ratio(out.f.atmospheric.cl38, in.production.cl_k, out.kcl, out.clk, Diagnostic::KClUndefined);
 
   // E20 on age_w_j_err by isotope tag (arar_age.py:214-229).
   if (out.ages) {

@@ -122,7 +122,11 @@ Result<ProductionRatios> production_from_rows(
 struct ProductionVariables {
   UFloat k4039, k3839, k3739, ca3937, ca3837, ca3637, cl3638;  // tags = key names
   std::optional<UFloat> ca_k, cl_k;
-  std::array<VariableId, 7> interference_ids() const;  // for E15/E18 exclusion
+  // For E15/E18 exclusion: each ratio's variable_id(). The seven ratios must
+  // be single-variable UFloats (as make_production_variables mints them);
+  // variable_id() is 0 for a derived, multi-term value, which then excludes
+  // nothing.
+  std::array<VariableId, 7> interference_ids() const;
 };
 // One fresh variable per ratio, once per analysis (meta_object.py:239-243).
 ProductionVariables make_production_variables(const ProductionRatios& p);
@@ -148,7 +152,7 @@ struct DecayFactors {
 struct Flux {  // flux_value (dvc schema 6.1)
   Measured j;
   double position_jerr = 0.0;
-  std::optional<Measured> lambda_k_total;  // overrides lambda_b + lambda_e when nonzero
+  std::optional<Measured> lambda_k_total;  // overrides lambda_b + lambda_e unless exactly 0 +- 0
 };
 UFloat make_j(const Flux& f);  // tag "J" (dvc/meta_repo.py:701)
 

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 #include "pychron/reduction/arar_reduction.hpp"
 
@@ -33,6 +34,14 @@ Result<DecayFactors> decay_factors(double lambda37_per_day, double lambda39_per_
                                    std::span<const DecaySegment> segments) {
   DecayFactors out;
   if (segments.empty()) return out;
+  // E7 divides by lambda: a zero decay constant would give 0/0.
+  for (const auto& [l, field] : {std::pair{lambda37_per_day, "lambda_ar37"},
+                                 std::pair{lambda39_per_day, "lambda_ar39"}}) {
+    if (l == 0.0) {
+      return fail(ErrorKind::Config, std::string("reduction: decay constant ") + field +
+                                         " must be nonzero when irradiation segments exist");
+    }
+  }
   for (const DecaySegment& s : segments) {
     const double span = std::max(std::fabs(s.duration_days), std::fabs(s.dt_days));
     for (double l : {lambda37_per_day, lambda39_per_day}) {

@@ -70,7 +70,8 @@ Irradiation irradiation_from_doses(std::span<const Dose> doses, std::int64_t ana
                                    bool use_irradiation_endtime);
 
 // E7 (McDougall & Harrison 3.22). Lambdas per day. Error (Config, "reduction: "
-// ... "same unit") when |l * max(|t_k|, |dt_k|)| > 50. No segments: {1, 1}.
+// ... "same unit") when |l * max(|t_k|, |dt_k|)| > 50, or naming lambda_ar37 /
+// lambda_ar39 when that lambda is 0 with segments present. No segments: {1, 1}.
 Result<DecayFactors> decay_factors(double lambda37_per_day, double lambda39_per_day,
                                    std::span<const DecaySegment> segments);
 
