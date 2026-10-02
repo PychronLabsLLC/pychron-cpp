@@ -1870,6 +1870,7 @@
     ]
    },
    "inputs": {
+    "note": "legacy NaN derivative: uncertainties 3.2.3 gives d(z**2.5)/dz = nan at z = 0; spec 4.3 defines it as 0, so Task 3 treats this case per spec 4.3 (derivative 0) and asserts the divergence",
     "ops": [
      "pow"
     ],
@@ -2170,7 +2171,7 @@
  "legacy_dirty": false,
  "packages": {
   "numpy": "2.4.4",
-  "python": "3.12.14",
+  "python": "3.12",
   "pyyaml": "6.0.3",
   "scipy": "1.17.1",
   "statsmodels": "0.14.6",

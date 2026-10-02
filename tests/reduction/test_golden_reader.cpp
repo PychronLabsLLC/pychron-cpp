@@ -192,10 +192,17 @@ TEST(GoldenReader, ConstantsAlwaysExplicitAndBothLegacySetsPresent) {
         EXPECT_FALSE(k["allow_negative_ca_correction"].as_bool()) << name;
         EXPECT_EQ(k["lambda_b"]["e"].as_number(), 0.0) << name;
         EXPECT_EQ(k["fixed_k3739"]["e"].as_number(), 0.01) << name;
+        // Pane defaults (arar_constants_preferences.py:144-149) zero these errors.
+        EXPECT_EQ(k["atm4036"]["v"].as_number(), 295.5) << name;
+        EXPECT_EQ(k["atm4036"]["e"].as_number(), 0.0) << name;
+        EXPECT_EQ(k["lambda_e"]["v"].as_number(), 5.81e-11) << name;
+        EXPECT_EQ(k["lambda_e"]["e"].as_number(), 0.0) << name;
       } else {
         EXPECT_TRUE(k["allow_negative_ca_correction"].as_bool()) << name;
         EXPECT_EQ(k["lambda_b"]["e"].as_number(), 9.3e-13) << name;
         EXPECT_EQ(k["fixed_k3739"]["e"].as_number(), 0.0001) << name;
+        EXPECT_EQ(k["atm4036"]["e"].as_number(), 0.5) << name;
+        EXPECT_EQ(k["lambda_e"]["e"].as_number(), 1.6e-13) << name;
       }
     }
     if (preset_sensitive) {

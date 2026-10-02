@@ -493,15 +493,15 @@ Measured lambda_k(const ReductionConstants& c) noexcept;
 inline constexpr std::string_view kReductionVersion = "arar-1";
 ```
 
-Preset values (fields not listed are equal across presets: `lambda_e`
-5.81e-11 +- 1.6e-13, `lambda_cl36` 6.308e-9 +- 0, `lambda_ar37` 0.01975 +- 0,
+Preset values (fields not listed are equal across presets: `lambda_cl36` 6.308e-9 +- 0, `lambda_ar37` 0.01975 +- 0,
 `lambda_ar39` 7.068e-6 +- 0, `atm4038` 1575 +- 2, `fixed_k3739` value 0.01,
 `k3739_mode` Normal, `abundance_sensitivity` 0, no cosmogenic,
 `include_decay_error` false, `age_units` Ma):
 
 | Field | `Default` | `Legacy` | `LegacyPreferences` |
 |---|---|---|---|
-| `atm4036` | 298.56 +- 0.31 (Lee et al. 2006) | 295.5 +- 0.5 | 295.5 +- 0.5 |
+| `atm4036` | 298.56 +- 0.31 (Lee et al. 2006) | 295.5 +- 0.5 | 295.5 +- 0 |
+| `lambda_e` | 5.81e-11 +- 1.6e-13 | 5.81e-11 +- 1.6e-13 | 5.81e-11 +- 0 |
 | `lambda_b` | 4.962e-10 +- 9.3e-13 | 4.962e-10 +- 9.3e-13 | 4.962e-10 +- 0 |
 | `fixed_k3739` error | 0.01 | 0.0001 | 0.01 |
 | `allow_negative_ca_correction` | false | true | false |
@@ -913,7 +913,7 @@ divergence).
 | Q16 | `1 - m atm3836 = 0`, `c36 = 0` or `rc = rs` crash the legacy calculation. | Error `Result`. |
 | Q17 | Deadtime is not applied anywhere in the legacy age path (only the calibration tool `deadtime.py` and a MassSpec column). | New, optional, off by default, applied to intercepts with per-detector `tau` and 6241.509 (D4, E5). |
 | Q18 | IC factor with nominal 0 is honoured (`isotope_arithmetic_test.py:226-233`). | **Replicate**. |
-| Q19 | Trait defaults and preference defaults disagree: `allow_negative_ca_correction` True vs False (`constants/tasks/arar_constants_preferences.py:161`), `lambda_b` error 9.3e-13 vs 0, `k3739` error 1e-4 vs 1e-2. | No hidden defaults: explicit fields, named presets `Default` (D2), `Legacy` (traits), `LegacyPreferences` (pane). Parity is shown against both legacy sets. |
+| Q19 | Trait defaults and preference defaults disagree: `allow_negative_ca_correction` True vs False (`constants/tasks/arar_constants_preferences.py:161`), `lambda_b` error 9.3e-13 vs 0, `k3739` error 1e-4 vs 1e-2, `atm4036` error 0.5 vs 0, `lambda_e` error 1.6e-13 vs 0 (`:144-149`). | No hidden defaults: explicit fields, named presets `Default` (D2), `Legacy` (traits), `LegacyPreferences` (pane). Parity is shown against both legacy sets. |
 | Q20 | `compute_arar` default `atm4036 = 298.56` vs legacy 295.5. | `Default` preset is 298.56 (D5), matching `compute_arar`; `Legacy` presets keep 295.5; `to_live_constants` always sets it. |
 
 ## 11. Risks

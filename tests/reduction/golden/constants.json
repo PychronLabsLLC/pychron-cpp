@@ -131,7 +131,7 @@
    "expect_error": null,
    "expected": {
     "atm3836": {
-     "e": 0.00039691611819756635,
+     "e": 0.0002382464096749811,
      "v": 0.18761904761904763
     },
     "constants": {
@@ -139,7 +139,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -170,19 +170,19 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
     },
     "lambda_k": {
-     "e": 1.6e-13,
+     "e": 0.0,
      "v": 5.543e-10
     },
     "to_dict": {
      "abundance_sensitivity": 0.0,
      "atm4036": 295.5,
-     "atm4036_err": 0.5,
+     "atm4036_err": 0.0,
      "atm4038": 1575.0,
      "atm4038_err": 2.0,
      "fixed_k3739": 0.01,
@@ -194,7 +194,7 @@
      "lambda_Cl36": 6.308e-09,
      "lambda_Cl36_err": 0.0,
      "lambda_k": 5.543e-10,
-     "lambda_k_err": 1.6e-13
+     "lambda_k_err": 0.0
     }
    },
    "inputs": {
@@ -203,7 +203,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -234,7 +234,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -262,10 +262,6 @@
      "lambda_e_error": 0.0,
      "use_irradiation_endtime": false
     },
-    "pane_differs_from_preset": [
-     "lambda_e.e",
-     "atm4036.e"
-    ],
     "preset": "legacy_preferences"
    },
    "legacy_sentinel": null,
@@ -1397,7 +1393,7 @@
  "legacy_dirty": false,
  "packages": {
   "numpy": "2.4.4",
-  "python": "3.12.14",
+  "python": "3.12",
   "pyyaml": "6.0.3",
   "scipy": "1.17.1",
   "statsmodels": "0.14.6",

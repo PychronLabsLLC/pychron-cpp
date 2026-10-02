@@ -82,9 +82,11 @@ use_irradiation_endtime, include_decay_error (bool); cosmogenic (null or
 "Ga"). The legacy ArArConstants traits are set from these values; no case
 relies on a legacy default. Preset-sensitive files (interference, calculate_f,
 age, pipeline, chlorine) emit every case twice, named "<name>@legacy" (trait
-defaults, arar_constants.py:28-94) and "<name>@legacy_preferences" (brief /
-spec 5.3: trait defaults with allow_negative_ca_correction = false, lambda_b
-error 0 and fixed_k3739 error 0.01); per-case overrides are applied on top.
+defaults, arar_constants.py:28-94) and "<name>@legacy_preferences" (spec 5.3:
+the preference-pane defaults, constants/tasks/arar_constants_preferences.py:
+144-167 = trait defaults with allow_negative_ca_correction = false, atm4036,
+lambda_e and lambda_b errors 0 and fixed_k3739 error 0.01); per-case
+overrides are applied on top.
 
 Production (`inputs.production`): the production_value rows as given, key ->
 {v, e}; missing keys are absent (spec 5.4 `production_from_rows`). Legacy
@@ -106,9 +108,8 @@ constants.json: "preset/<default|legacy|legacy_preferences>": expected =
   {"constants": table, "lambda_k": {v, e}} (+ "atm3836", "to_dict" from
   legacy for the two legacy tables). "preset/legacy_preferences" also records
   `inputs.pane_defaults` (raw defaults parsed from
-  constants/tasks/arar_constants_preferences.py) and
-  `inputs.pane_differs_from_preset` (fields where the pane default differs
-  from the preset). "scale_age/<from>_to_<to>": inputs {value, current,
+  constants/tasks/arar_constants_preferences.py); the generator
+  hard-fails if they differ from the preset. "scale_age/<from>_to_<to>": inputs {value, current,
   target}, expected {"value"}.
 
 isotope_arithmetic.json: inputs.function is
@@ -193,13 +194,18 @@ Deliberate departures from the harvested legacy test inputs
 * Ca_K/Cl_K are passed as `production_ratios` (dvc_analysis.set_production),
   not inside the interference dict as arar_age_test._build_age does.
 * `ufloat/func/pow_at_zero_non_integer` records uncertainties' NaN
-  derivative for pow(x, 2.5) at x = 0 (spec 4.3 says 0; Task 3 decides).
+  derivative for pow(x, 2.5) at x = 0; its `inputs.note` says so. Spec 4.3
+  defines that derivative as 0, so C++ is expected to diverge there (Task 3).
+* The header records Python as major.minor only, so --check does not drift
+  across 3.12.x patch releases. Legacy stdout chatter is discarded.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import atexit
+import contextlib
 import copy
 import importlib.metadata
 import json
@@ -277,7 +283,9 @@ L = _Legacy()
 
 
 def bootstrap(legacy):
-    os.environ["HOME"] = tempfile.mkdtemp(prefix="reduction-golden-home-")
+    home = tempfile.mkdtemp(prefix="reduction-golden-home-")
+    atexit.register(shutil.rmtree, home, True)
+    os.environ["HOME"] = home
     sys.dont_write_bytecode = True
     sys.path.insert(0, legacy)
     warnings.filterwarnings("ignore", message="Using UFloat objects with std_dev==0")
@@ -410,9 +418,13 @@ SPEC_LEGACY = {
     "atm4038": (1575.0, 2.0),
     "fixed_k3739": (0.01, 0.0001),
 }
-# Brief / spec 5.3: `@legacy_preferences` = trait defaults with these changes.
+# Spec 5.3: `@legacy_preferences` = trait defaults with these changes, i.e. the
+# preference-pane defaults (constants/tasks/arar_constants_preferences.py:144-167).
+# gen_constants hard-fails if the parsed pane defaults differ from the result.
 LEGACY_PREFERENCES_OVERRIDES = {
     "allow_negative_ca_correction": False,
+    "atm4036": (295.5, 0.0),
+    "lambda_e": (5.81e-11, 0.0),
     "lambda_b": (4.962e-10, 0.0),
     "fixed_k3739": (0.01, 0.01),
 }
@@ -941,6 +953,10 @@ def gen_ufloat():
             "steps": [[s if isinstance(s, str) else num(s) for s in step] for step in steps],
             "ops": sorted(ops),
         }
+        if name == "func/pow_at_zero_non_integer":
+            inputs["note"] = ("legacy NaN derivative: uncertainties 3.2.3 gives d(z**2.5)/dz = nan "
+                              "at z = 0; spec 4.3 defines it as 0, so Task 3 treats this case per "
+                              "spec 4.3 (derivative 0) and asserts the divergence")
         tol = None
         if name == "arith/self_cancellation":
             tol = {"atol": 1e-12 * 2.0, "atol_err": 1e-12 * 0.1,
@@ -976,7 +992,9 @@ def gen_constants(legacy):
             expected["to_dict"] = {k: num(v) for k, v in ac.to_dict().items()}
         if key == "legacy_preferences":
             inputs["pane_defaults"] = pane
-            inputs["pane_differs_from_preset"] = pane_differences(pane, table)
+            diffs = pane_differences(pane, table)
+            if diffs:
+                raise SystemExit("legacy_preferences preset differs from the pane: {}".format(diffs))
         cases.append(case("preset/" + key, source, inputs, expected))
     ac = make_constants(pr["legacy"])
     for cur in ("a", "ka", "Ma", "Ga"):
@@ -1774,8 +1792,7 @@ def pipeline_case(name, source, spec, base, why=None):
     if missing:
         if age.uF is not None:
             raise RuntimeError("legacy computed F with a missing isotope")
-        return case(name, source, inputs, {}, sentinel={"f": None, "ages": None},
-                    error=missing[0])
+        return case(name, source, inputs, {}, error=missing[0])
     expected, sentinel, diags = pipeline_result(age, cap, spec, c)
     tol = cancellation_tol(inputs, why) if why else None
     return case(name, source, inputs, expected, tol=tol, sentinel=sentinel, diagnostics=diags)
@@ -2038,7 +2055,7 @@ def legacy_header(legacy):
                             capture_output=True, text=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "-C", legacy, "status", "--porcelain"], check=True,
                                 capture_output=True, text=True).stdout.strip())
-    packages = {"python": platform.python_version()}
+    packages = {"python": "{}.{}".format(*platform.python_version_tuple()[:2])}
     for key, dist in LEGACY_PACKAGES:
         packages[key] = importlib.metadata.version(dist)
     return {"schema": SCHEMA, "legacy_commit": commit, "legacy_dirty": dirty,
@@ -2095,6 +2112,31 @@ def walk_numbers(o):
         yield o
 
 
+@contextlib.contextmanager
+def quiet_stdout():
+    """Discard legacy logging chatter on stdout and stderr.
+
+    Legacy logger handlers hold the file descriptors, so redirect fds 1 and 2.
+    Exceptions propagate and print after the descriptors are restored; the
+    generator's own warnings are emitted outside this block.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = (os.dup(1), os.dup(2))
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in (*saved, devnull):
+            os.close(fd)
+
+
 def generate(legacy, out_dir):
     header = legacy_header(legacy)
     generators = {
@@ -2112,7 +2154,8 @@ def generate(legacy, out_dir):
     }
     os.makedirs(out_dir, exist_ok=True)
     for fname in FILES:
-        cases = generators[fname]()
+        with quiet_stdout():
+            cases = generators[fname]()
         check_case_set(fname, cases)
         doc = dict(header)
         doc["cases"] = cases
@@ -2129,7 +2172,8 @@ def main(argv=None):
                    help="regenerate into a temporary directory; exit 1 if --out differs")
     args = p.parse_args(argv)
     legacy = os.path.abspath(args.legacy)
-    bootstrap(legacy)
+    with quiet_stdout():
+        bootstrap(legacy)
     if not args.check:
         generate(legacy, args.out)
         return 0

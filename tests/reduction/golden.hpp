@@ -6,17 +6,16 @@
 // objects, arrays, strings with escapes and \u surrogate pairs, numbers,
 // true/false/null) plus the comparison helpers the golden tests share. It does
 // not reuse libs/experiment's parser: pychron_reduction_tests must not link
-// experiment. Numbers are converted with std::strtod; the tests never change
-// the C locale, so the decimal separator is '.'.
+// experiment. Numbers are converted with std::from_chars (locale independent,
+// correctly rounded).
 #pragma once
 
 #include <gtest/gtest.h>
 
-#include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -337,14 +336,11 @@ class Parser {
       while (digit(peek())) ++pos_;
     }
     if (digit(peek())) return fail("leading zero");
-    const std::string token(text_.substr(start, pos_ - start));
-    errno = 0;
-    char* end = nullptr;
-    const double v = std::strtod(token.c_str(), &end);
-    if (end != token.c_str() + token.size()) return fail("bad number");
-    // ERANGE on underflow still yields the correctly rounded subnormal/zero;
-    // overflow is not produced by the generator (allow_nan=False).
-    if (errno == ERANGE && std::isinf(v)) return fail("number out of range");
+    const char* first = text_.data() + start;
+    const char* last = text_.data() + pos_;
+    double v = 0.0;
+    const auto [end, ec] = std::from_chars(first, last, v);
+    if (ec != std::errc{} || end != last) return fail("bad or out-of-range number");
     out.type = Json::Type::Number;
     out.number = v;
     return true;

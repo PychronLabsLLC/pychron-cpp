@@ -1516,7 +1516,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -1547,7 +1547,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -1634,7 +1634,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -1665,7 +1665,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -1752,7 +1752,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -1783,7 +1783,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -1872,7 +1872,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -1903,7 +1903,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -1992,7 +1992,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2023,7 +2023,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2110,7 +2110,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2141,7 +2141,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2227,7 +2227,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2258,7 +2258,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2329,7 +2329,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2360,7 +2360,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2449,7 +2449,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2480,7 +2480,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2560,7 +2560,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2591,7 +2591,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2662,7 +2662,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2693,7 +2693,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2767,7 +2767,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2798,7 +2798,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2869,7 +2869,7 @@
      "age_units": "Ma",
      "allow_negative_ca_correction": false,
      "atm4036": {
-      "e": 0.5,
+      "e": 0.0,
       "v": 295.5
      },
      "atm4038": {
@@ -2900,7 +2900,7 @@
       "v": 6.308e-09
      },
      "lambda_e": {
-      "e": 1.6e-13,
+      "e": 0.0,
       "v": 5.81e-11
      },
      "use_irradiation_endtime": false
@@ -2945,7 +2945,7 @@
  "legacy_dirty": false,
  "packages": {
   "numpy": "2.4.4",
-  "python": "3.12.14",
+  "python": "3.12",
   "pyyaml": "6.0.3",
   "scipy": "1.17.1",
   "statsmodels": "0.14.6",
