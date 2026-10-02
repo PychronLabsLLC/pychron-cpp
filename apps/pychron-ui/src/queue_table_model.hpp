@@ -33,7 +33,8 @@ class QueueTableModel : public QAbstractTableModel {
   Q_OBJECT
 
  public:
-  enum Column { Row, Identifier, Aliquot, Step, Type, Position, Extract, Script, Plan, Comment, Estimate, Status, Count };
+  // Status sits next to # so it stays in view on narrow windows.
+  enum Column { Row, Status, Identifier, Aliquot, Step, Type, Position, Extract, Script, Plan, Comment, Estimate, Count };
 
   using Checker = std::function<experiment::lab::LabCheck(const experiment::QueueSpec&)>;
 

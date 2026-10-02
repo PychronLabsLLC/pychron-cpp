@@ -4,8 +4,10 @@
 // alarm docks, per-transport health chips in the status bar. Owns the
 // CoreBridge; the ExtractionLine must outlive the window.
 
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include <QAction>
 #include <QMainWindow>
@@ -14,6 +16,7 @@
 #include "alarm_dock.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "experiment_window.hpp"
 #include "health_bar.hpp"
 #include "log_dock.hpp"
 #include "spectrometer_window.hpp"
@@ -42,8 +45,18 @@ class MainWindow : public QMainWindow {
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
 
+  // Enables Window > Experiment for `bridge` (null disables it and closes the
+  // window). `queue` is opened the first time the window shows. Same
+  // lifetime and settings rules as set_spectrometer.
+  void set_experiment(ExperimentBridge* bridge, bool simulation, std::optional<std::filesystem::path> queue = {},
+                      std::function<std::unique_ptr<QSettings>()> settings = {});
+  QAction* experiment_action() const noexcept { return experiment_action_; }
+  ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
+
  protected:
-  void closeEvent(QCloseEvent* event) override;  // closes the spectrometer window first
+  // Closes the experiment window (which may refuse, keeping everything open)
+  // and the spectrometer window first.
+  void closeEvent(QCloseEvent* event) override;
 
  private:
   CoreBridge bridge_;
@@ -56,6 +69,12 @@ class MainWindow : public QMainWindow {
   bool simulation_ = false;
   std::function<std::unique_ptr<QSettings>()> settings_factory_;
   SpectrometerWindow* spectrometer_window_ = nullptr;
+  QAction* experiment_action_;
+  ExperimentBridge* experiment_ = nullptr;
+  bool experiment_simulation_ = false;
+  std::optional<std::filesystem::path> experiment_queue_;
+  std::function<std::unique_ptr<QSettings>()> experiment_settings_;
+  ExperimentWindow* experiment_window_ = nullptr;
 };
 
 }  // namespace pychron::ui

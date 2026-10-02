@@ -103,6 +103,7 @@ TEST_F(LabTest, FilesThatDoNotLoadAreLabProblems) {
 TEST(LabDescribe, NamesTheRunOrTheQueue) {
   EXPECT_EQ(describe({Severity::Error, 3, "plan", "unknown"}), "runs[3].plan: unknown");
   EXPECT_EQ(describe({Severity::Warning, -1, "delays", "long"}), "queue.delays: long");
+  EXPECT_EQ(describe({Severity::Error, -1, "queue.queue_conditionals", "unknown"}), "queue.queue_conditionals: unknown");
 }
 
 }  // namespace

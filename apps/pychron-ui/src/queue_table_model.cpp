@@ -130,8 +130,8 @@ QVariant QueueTableModel::data(const QModelIndex& index, int role) const {
 
 QVariant QueueTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
   if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-  static const char* names[Count] = {"#",      "Identifier", "Aliquot", "Step",    "Type", "Position",
-                                     "Extract", "Script",    "Plan",    "Comment", "Est.", "Status"};
+  static const char* names[Count] = {"#",        "Status",  "Identifier", "Aliquot", "Step",    "Type",
+                                     "Position", "Extract", "Script",     "Plan",    "Comment", "Est."};
   return section >= 0 && section < Count ? tr(names[section]) : QVariant();
 }
 

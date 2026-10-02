@@ -99,6 +99,24 @@ item stays disabled when neither flag is given or the file fails to load; the
 error goes to the log dock). Window layout and graph settings are saved per
 spectrometer under the `PychronLabs` organization in `QSettings`.
 
+Window > Experiment (Ctrl+Shift+E) runs experiment queues against a lab
+directory, as `elctl exp run` does: open a queue (Queue > Open, or
+`--queue <file>`), edit it (rows revalidate as you type; red rows have
+errors, see their tooltips), then Start (F5) from the selected row. The lab
+is `--lab <dir>` (default: the extraction line config's directory) and
+records go to `--data <dir>` (default: `<lab>/data`). With `--sim`,
+`--sim-speed <x>` runs the whole app on simulated time x times faster than
+real time:
+
+```bash
+build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
+```
+
+On Ubuntu 24.04, `apt install qt6-base-dev libqt6sql6-sqlite` is enough for
+the UI (Qt 6.4). If qcustomplot.com is unreachable, point
+`FETCHCONTENT_SOURCE_DIR_QCUSTOMPLOT` at an unpacked QCustomPlot 2.1.1 source
+(Debian's `qcustomplot_2.1.1+dfsg1.orig.tar.xz` has the same two files).
+
 ### Running against a Thermo instrument
 
 The `thermo_qtegra` driver (Argus, Helix, through Qtegra's

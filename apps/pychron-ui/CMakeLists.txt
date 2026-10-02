@@ -26,6 +26,9 @@ add_library(pychron_ui_lib STATIC
   src/spectrometer_window.cpp
   src/experiment_bridge.cpp
   src/queue_table_model.cpp
+  src/executor_pane.cpp
+  src/evolutions_view.cpp
+  src/experiment_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -43,6 +46,9 @@ add_library(pychron_ui_lib STATIC
   src/spectrometer_window.hpp
   src/experiment_bridge.hpp
   src/queue_table_model.hpp
+  src/executor_pane.hpp
+  src/evolutions_view.hpp
+  src/experiment_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 

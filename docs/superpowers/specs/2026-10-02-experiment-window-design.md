@@ -1,7 +1,7 @@
 # Experiment window (queue, executor, evolutions)
 
 Date: 2026-10-02
-Status: Draft
+Status: Implemented (v1)
 Owner: Jake Ross
 Depends on: `2026-09-29-experiment-system-design.md` (section 10.4, stage E7),
 `2026-10-01-spectrometer-window-design.md` (bridge pattern, QCustomPlot,
@@ -173,8 +173,9 @@ post queued calls; no core object holds a `QObject*`.
 
 ### 5.2 `QueueTableModel` (`QAbstractTableModel`)
 
-Columns: `#`, Identifier, Aliquot, Step, Type, Position, Extract, Script,
-Plan, Comment, Est., Status.
+Columns: `#`, Status, Identifier, Aliquot, Step, Type, Position, Extract,
+Script, Plan, Comment, Est. (Status sits next to `#` so it stays in view
+beside the Evolutions dock).
 
 - Rows mirror a `QueueSpec`. `set_queue(spec)` replaces it (from a file or a
   `QueueEdited`) and revalidates.
@@ -206,8 +207,9 @@ A widget, docked at the bottom of the experiment window:
   over the non-skipped rows, ETA of the remaining rows.
 - Current run: identifier, run state, block, and a counts bar
   (`CountsProgress` i/n).
-- Wait line: `ExecutorWaiting` reason and a countdown from its duration,
-  cleared when a run starts or the state changes.
+- Wait line: `ExecutorWaiting` reason and its duration (simulated time
+  makes a wall-clock countdown wrong), cleared when a run starts, its state
+  changes or a block starts.
 - Buttons: Start (from the selected row, or row 0), Stop, Cancel, Abort,
   Truncate. Enabled by state: Start only when idle and the queue checks;
   the others only while running. Cancel and Abort ask first (default No);
@@ -238,12 +240,14 @@ A QCustomPlot widget showing the run being measured:
 - Centre: the queue table (row selection, context menu with the row
   operations), queue-level diagnostics in a strip above it.
 - Bottom dock "Executor" (`ExecutorPane`), right dock "Evolutions".
-- Toolbar/menu: Open..., Save, Save As..., Revalidate, Start, Stop,
-  Cancel, Abort, Truncate. Opening while running is refused. Unsaved edits
-  mark the title with `*`; closing or opening another queue with unsaved
-  edits asks (Save / Discard / Cancel). Closing while a queue runs asks
-  whether to stop it first; the queue keeps running if the window just
-  hides.
+- Menus: Queue (Open..., Save, Save As..., Revalidate), Rows (Move Up,
+  Move Down, Duplicate, Delete, Toggle Skip, End After; also the table's
+  context menu), Executor (Start (F5), Stop, Cancel..., Abort...,
+  Truncate). Opening while running is refused. Unsaved edits mark the title
+  with `*`; closing or opening another queue with unsaved edits asks (Save /
+  Discard / Cancel; Cancel keeps the window open, and quitting the app with
+  it). Closing while a queue runs asks whether to stop it after the current
+  run; the queue keeps running if the window just hides.
 - Settings (`QSettings`, group `experiment_window`): geometry, dock state,
   last queue path, column widths.
 

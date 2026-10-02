@@ -1,4 +1,5 @@
-// pychron-ui argument parsing: positional files, --sim and --spectrometer.
+// pychron-ui argument parsing: positional files, --sim, --spectrometer and the
+// experiment options.
 
 #include <filesystem>
 
@@ -50,6 +51,36 @@ class TestCommandLine : public QObject {
     QVERIFY(cli->files[0] == Path("line.toml"));
     QVERIFY(cli->files[1] == Path("canvas.toml"));
     QVERIFY(cli->spectrometer_file == Path("spec.toml"));
+  }
+
+  void experimentOptions() {
+    auto cli = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--lab"), QStringLiteral("lab"),
+                                   QStringLiteral("--data"), QStringLiteral("out"), QStringLiteral("--queue"),
+                                   QStringLiteral("q.toml"), QStringLiteral("--sim-speed"), QStringLiteral("400")});
+    QVERIFY(cli.has_value());
+    QVERIFY(cli->lab == Path("lab"));
+    QVERIFY(cli->data == Path("out"));
+    QVERIFY(cli->queue == Path("q.toml"));
+    QCOMPARE(cli->sim_speed, 400.0);
+    QVERIFY(cli->files.empty());
+    auto defaults = parse_command_line({});
+    QVERIFY(!defaults->lab && !defaults->data && !defaults->queue);
+    QCOMPARE(defaults->sim_speed, 0.0);
+  }
+
+  void experimentUsageErrors() {
+    QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--lab")}).error().what),
+             QStringLiteral("--lab needs a directory"));
+    QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--queue"), QStringLiteral("--sim")}).error().what),
+             QStringLiteral("--queue needs a file"));
+    for (const char* bad : {"0", "-2", "fast", "inf"}) {
+      auto cli = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QString::fromLatin1(bad)});
+      QVERIFY2(!cli.has_value(), bad);
+    }
+    QVERIFY(!parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed")}).has_value());
+    auto no_sim = parse_command_line({QStringLiteral("--sim-speed"), QStringLiteral("10")});
+    QVERIFY(!no_sim.has_value());
+    QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));
   }
 };
 

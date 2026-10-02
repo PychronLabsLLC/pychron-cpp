@@ -154,7 +154,7 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
 std::string describe(const Diagnostic& d) {
   std::string where;
   if (d.run >= 0) where = "runs[" + std::to_string(d.run) + "]." + d.field;
-  else if (d.field == "lab") where = "lab";
+  else if (d.field == "lab" || d.field.starts_with("queue.")) where = d.field;
   else where = "queue." + d.field;
   return where + ": " + d.message;
 }
