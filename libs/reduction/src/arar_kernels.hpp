@@ -13,7 +13,9 @@
 
 #include <array>
 #include <cmath>
+#include <optional>
 
+#include "pychron/reduction/arar_types.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::reduction::kernels {
@@ -64,6 +66,17 @@ struct Interference {
 // argon_calculations.py:410, :416): false only for 0 +- 0.
 inline bool truthy(double x) noexcept { return x != 0.0; }
 inline bool truthy(const UFloat& x) noexcept { return !(x.nominal() == 0.0 && x.std_dev() == 0.0); }
+
+// The E9/E10 mode selection (argon_calculations.py:410, :416-417): a truthy
+// per-analysis value wins; otherwise Fixed mode takes the constants value and
+// Normal mode returns null (E9). The pointer refers into the arguments.
+template <class T>
+const T* select_fixed_k3739(const std::optional<T>& per_analysis, K3739Mode mode,
+                            const T& constants_value) {
+  if (per_analysis && truthy(*per_analysis)) return &*per_analysis;
+  if (mode == K3739Mode::Fixed) return &constants_value;
+  return nullptr;
+}
 
 // E9-E11. `fixed_k3739` null selects normal mode (E9); otherwise E10 with that
 // x. The E11 clamp runs after ca39 and k39 were computed from the unclamped

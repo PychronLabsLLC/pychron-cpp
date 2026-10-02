@@ -20,6 +20,7 @@ struct MetricCatalog {
   std::set<std::string> devices;    // device readers the lab provides
   std::set<std::string> variables;  // $NAMEs that will be defined
   bool computed = false;            // Ar-Ar constants are configured (age, kca, ...)
+  bool chlorine = false;            // live chlorine corrections are configured (kcl, clk, cl36)
 };
 
 struct ConditionalDiagnostic {

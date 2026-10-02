@@ -42,7 +42,7 @@ std::vector<ConditionalDiagnostic> validate_conditionals(const ConditionalSet& s
           if (!known(catalog.devices, m.a)) add("unknown device '" + m.a + "' in " + text);
           break;
         case K::Computed:
-          if (m.a == "kcl" || m.a == "clk" || m.a == "cl36") {
+          if (!catalog.chlorine && (m.a == "kcl" || m.a == "clk" || m.a == "cl36")) {
             add("'" + m.a + "' needs chlorine corrections, which are not available");
           } else if (!catalog.computed) {
             add("'" + m.a + "' needs Ar-Ar constants (J, production ratios); none are configured");

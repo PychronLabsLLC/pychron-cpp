@@ -375,4 +375,29 @@ check = "Ar40 < $MIN"
   EXPECT_EQ(d.size(), 2u) << testing::PrintToString(d.size());
 }
 
+TEST(ConditionalsValidate, ChlorineCatalogAllowsKcl) {
+  auto set = parse_conditionals(R"(
+[[actions]]
+name = "computed"
+check = "kcl > 2 or clk < 1 or cl36 > 0"
+action = "notify"
+)");
+  ASSERT_TRUE(set) << set.error().what;
+  MetricCatalog cat;
+  cat.computed = true;
+  auto d = validate_conditionals(*set, cat);
+  ASSERT_EQ(d.size(), 3u);  // default: no chlorine
+  for (const auto& x : d) EXPECT_NE(x.message.find("chlorine"), std::string::npos) << x.message;
+
+  cat.chlorine = true;
+  d = validate_conditionals(*set, cat);
+  EXPECT_TRUE(d.empty()) << testing::PrintToString(d.size());
+
+  // Chlorine alone still needs the Ar-Ar constants.
+  cat.computed = false;
+  d = validate_conditionals(*set, cat);
+  ASSERT_EQ(d.size(), 3u);
+  for (const auto& x : d) EXPECT_NE(x.message.find("Ar-Ar constants"), std::string::npos) << x.message;
+}
+
 }  // namespace

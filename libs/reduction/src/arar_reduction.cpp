@@ -135,12 +135,8 @@ InterferenceComponents interference_corrections(const UFloat& a39, const UFloat&
   const kernels::InterferenceRatios<UFloat> r{p.k3739, p.k3839, p.ca3937, p.ca3837, p.ca3637};
   // :410, :416-417: a per-analysis value wins when truthy; otherwise Fixed mode
   // takes the constants value and Normal mode runs E9.
-  const UFloat* fixed = nullptr;
-  if (o.fixed_k3739 && kernels::truthy(*o.fixed_k3739)) {
-    fixed = &*o.fixed_k3739;
-  } else if (o.mode == K3739Mode::Fixed) {
-    fixed = &o.constants_fixed_k3739;
-  }
+  const UFloat* fixed =
+      kernels::select_fixed_k3739(o.fixed_k3739, o.mode, o.constants_fixed_k3739);
   const kernels::Interference<UFloat> k =
       kernels::interference(a39, a37, r, fixed, o.allow_negative_ca_correction);
   if (diagnostics != nullptr) {
