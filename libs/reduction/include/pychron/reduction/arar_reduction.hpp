@@ -160,4 +160,51 @@ Result<FResult> calculate_f(const std::array<UFloat, 5>& n, double decay_days,
                             const ProductionVariables& p, const ReductionConstants& c,
                             std::optional<Measured> fixed_k3739 = std::nullopt);
 
+// ---- 3.6 Age ----------------------------------------------------------------
+
+// Factor converting an age in `from` units to `to` units: legacy scale_age's
+// scalar(current) * targetscalar(target) (a 1, ka 1e3, Ma 1e6, Ga 1e9).
+// legacy:processing/arar_constants.py:143-170
+double age_scale(AgeUnits from, AgeUnits to) noexcept;
+
+// E16: t = lambda**-1 * ln(1 + J F) * age_scale(a, c.age_units).
+// lambda_K is lambda_k_total when it is set and not exactly 0 +- 0 (legacy
+// truthiness, `if not lambda_k` / `if lk:`), else lambda_b + lambda_e. It is
+// minted afresh on every call as one variable tagged "lambda_k" (sigma of the
+// override, or lambda_b and lambda_e in quadrature, which is equivalent for
+// every variance and covariance because the two only ever enter as a sum), and
+// enters as its nominal only unless c.include_decay_error (spec Q5).
+// Errors (Config, "reduction: "): 1 + J F <= 0 or NaN ("1 + J F", spec Q6:
+// legacy returns 0 +- 0; reduce() maps it to AgeUndefined), a non-finite J or
+// F nominal, a lambda constant that is not finite or has a negative sigma, or
+// a zero lambda_K.
+Result<UFloat> age_equation(const UFloat& j, const UFloat& f, const ReductionConstants& c,
+                            std::optional<Measured> lambda_k_total = std::nullopt);
+
+// E17-E18. All three ages use the same F and are in c.age_units.
+struct AgeSet {
+  UFloat age;                 // J' = fresh(nom(J), 0) "J_no_err": analytical error only (Q4)
+  UFloat age_w_j_err;         // J as supplied ("J"); share one J UFloat to correlate analyses
+  UFloat age_w_position_err;  // J'' = fresh(nom(J), position_jerr) "Position"
+  double age_err_wo_irrad = 0.0;    // std(age) without the interference-ratio variables (Q13)
+  double age_err_wo_j_irrad = 0.0;  // == age_err_wo_irrad: age already has no J error
+};
+
+namespace detail {
+
+// Internal to reduce() (Task 11); public only so tests can reach it.
+// legacy:processing/arar_age.py:658-686 (_set_age_values). Without
+// lambda_k_total each variant reads lambda_K afresh, as each legacy
+// age_equation call reads arar_constants.lambda_k; with it, the three share
+// one "lambda_k" variable (legacy sets it once on the constants,
+// dvc/dvc.py:2303-2305). Returns nullopt when 1 + J F <= 0 (reduce raises
+// AgeUndefined, spec Q6/D3). Errors as age_equation, plus a negative or
+// non-finite position_jerr.
+Result<std::optional<AgeSet>> make_age_set(const UFloat& j, double position_jerr,
+                                           const UFloat& f, const ReductionConstants& c,
+                                           std::optional<Measured> lambda_k_total,
+                                           std::span<const VariableId> interference_ids);
+
+}  // namespace detail
+
 }  // namespace pychron::reduction

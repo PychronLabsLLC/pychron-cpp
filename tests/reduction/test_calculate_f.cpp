@@ -374,6 +374,20 @@ TEST(CalculateF, Golden) {
     const std::string name = c["name"].string;
     SCOPED_TRACE(name);
     const g::Json& in = c["inputs"];
+    // Every case and input key is consumed below; a new generator key fails.
+    for (const auto& [key, v] : c.as_object()) {
+      if (key != "name" && key != "source" && key != "inputs" && key != "expected" &&
+          key != "tol" && key != "legacy_sentinel" && key != "expect_diagnostics" &&
+          key != "expect_error") {
+        ADD_FAILURE() << name << ": unhandled case key " << key;
+      }
+    }
+    for (const auto& [key, v] : in.as_object()) {
+      if (key != "function" && key != "constants" && key != "production" && key != "isotopes" &&
+          key != "decay_days" && key != "fixed_k3739") {
+        ADD_FAILURE() << name << ": unhandled inputs key " << key;
+      }
+    }
     if (in["function"].as_string() != "calculate_f") {
       ADD_FAILURE() << name << ": unhandled function";
       continue;

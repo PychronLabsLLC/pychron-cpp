@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 
 #include "pychron/reduction/ufloat.hpp"
 
@@ -47,14 +48,14 @@ T deadtime(const T& signal_fa, double tau_s, double fa_to_cps) {
 // The interference ratios E9-E11 read (missing = exact 0).
 template <class T>
 struct InterferenceRatios {
-  T k3739, k3839, ca3937, ca3837, ca3637;
+  T k3739{}, k3839{}, ca3937{}, ca3837{}, ca3637{};
 };
 
 // E9-E11 outputs plus the branches taken, so callers can raise diagnostics
 // (the kernel itself emits none).
 template <class T>
 struct Interference {
-  T k37, k38, k39, ca36, ca37, ca38, ca39;
+  T k37{}, k38{}, k39{}, ca36{}, ca37{}, ca38{}, ca39{};
   bool fixed_zero_ca3937 = false;  // E10 took y = 1
   bool ca_clamped = false;         // E11 set ca37 to exact 0
 };
@@ -108,7 +109,7 @@ Interference<T> interference(const T& a39, const T& a37, const InterferenceRatio
 // ZeroDivisionError); the components are then left default (exact 0).
 template <class T>
 struct Atmospheric {
-  T atm36, atm38, cl36, cl38;
+  T atm36{}, atm38{}, cl36{}, cl38{};
   bool singular = false;
 };
 
@@ -138,7 +139,7 @@ Atmospheric<T> atmospheric(const T& a38, const T& a36, const T& k38, const T& ca
 // ZeroDivisionError); the components are then left default (exact 0).
 template <class T>
 struct Cosmogenic {
-  T cosmo36, cosmo38, noncosmo36, noncosmo38;
+  T cosmo36{}, cosmo38{}, noncosmo36{}, noncosmo38{};
   bool singular = false;
 };
 
@@ -169,7 +170,7 @@ Cosmogenic<T> cosmogenic(const T& c36, const T& c38, const T& rs, const T& rc) {
 // set (legacy ZeroDivisionError sentinels become absent values, D3).
 template <class T>
 struct FValues {
-  T atm40, k40, rad40, f, yield;
+  T atm40{}, k40{}, rad40{}, f{}, yield{};
   bool f_defined = false;      // nom(k39) != 0
   bool yield_defined = false;  // nom(n40) != 0
 };
@@ -192,6 +193,30 @@ FValues<T> f_and_yield(const T& n40, const T& k39, const T& atm36, const T& trap
     out.yield = out.rad40 / n40 * 100.0;
     out.yield_defined = true;
   }
+  return out;
+}
+
+// E16 output. `age` is meaningful only when `defined` (nom(1 + J F) > 0;
+// legacy catches the log ValueError and returns 0 +- 0, D3 makes it absent).
+template <class T>
+struct Age {
+  T age{};
+  bool defined = false;
+};
+
+// E16 with the legacy operand order: lambda**-1 * log(1 + J F), then times the
+// unit scale (scale_age(age, current="a") multiplies by 1, then by the target
+// factor). `lambda` is a T (include_decay_error) or its nominal as a double.
+// legacy:processing/argon_calculations.py:622-627, arar_constants.py:143-170
+template <class T, class L>
+Age<T> age(const T& j, const T& f, const L& lambda, double scale) {
+  using std::log;
+  using std::pow;
+  Age<T> out;
+  const T arg = 1.0 + j * f;
+  if (!(nominal(arg) > 0.0)) return out;
+  out.age = pow(lambda, -1.0) * log(arg) * scale;
+  out.defined = true;
   return out;
 }
 

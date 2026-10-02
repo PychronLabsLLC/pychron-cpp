@@ -301,4 +301,148 @@ Result<FResult> calculate_f(const std::array<UFloat, 5>& n, double decay_days,
   return out;
 }
 
+// ---- 3.6 Age ----------------------------------------------------------------
+
+// legacy:processing/arar_constants.py:143-170 (scale_age).
+double age_scale(AgeUnits from, AgeUnits to) noexcept {
+  double scalar = 1.0;
+  switch (from) {
+    case AgeUnits::a: scalar = 1.0; break;
+    case AgeUnits::ka: scalar = 1e3; break;
+    case AgeUnits::Ma: scalar = 1e6; break;
+    case AgeUnits::Ga: scalar = 1e9; break;
+  }
+  double target = 1.0;
+  switch (to) {
+    case AgeUnits::a: target = 1.0; break;
+    case AgeUnits::ka: target = 1e-3; break;
+    case AgeUnits::Ma: target = 1e-6; break;
+    case AgeUnits::Ga: target = 1e-9; break;
+  }
+  return scalar * target;
+}
+
+namespace {
+
+// Python truthiness of a ufloat (`if lk:`): false only for 0 +- 0.
+bool truthy(const Measured& m) noexcept { return !(m.value == 0.0 && m.error == 0.0); }
+
+Result<void> check_constant(const Measured& m, std::string_view name) {
+  if (!std::isfinite(m.value) || !std::isfinite(m.error) || m.error < 0.0) {
+    return fail(ErrorKind::Config, "reduction: constant " + std::string(name) +
+                                       " must have a finite value and a finite sigma >= 0, got " +
+                                       fmt_g(m.value) + " +- " + fmt_g(m.error));
+  }
+  return {};
+}
+
+// E16 lambda_K: the override when truthy (dvc/dvc.py:2303-2305,
+// argon_calculations.py:614), else lambda_b + lambda_e (arar_constants.py:263-267).
+// Returns its value and sigma; the caller mints the variable.
+Result<Measured> resolve_lambda_k(const ReductionConstants& c,
+                                  const std::optional<Measured>& lambda_k_total) {
+  Measured m;
+  if (lambda_k_total && truthy(*lambda_k_total)) {
+    if (auto ok = check_constant(*lambda_k_total, "lambda_k_total"); !ok) return fail(ok.error());
+    m = *lambda_k_total;
+  } else {
+    if (auto ok = check_constant(c.lambda_b, "lambda_b"); !ok) return fail(ok.error());
+    if (auto ok = check_constant(c.lambda_e, "lambda_e"); !ok) return fail(ok.error());
+    m = lambda_k(c);
+  }
+  if (!std::isfinite(m.value) || !std::isfinite(m.error)) {
+    return fail(ErrorKind::Config, "reduction: lambda_K is not finite (" + fmt_g(m.value) +
+                                       " +- " + fmt_g(m.error) + ")");
+  }
+  if (m.value == 0.0) {
+    return fail(ErrorKind::Config,
+                "reduction: lambda_K (lambda_k_total or lambda_b + lambda_e) is zero");
+  }
+  return m;
+}
+
+// A fresh lambda_K variable, or nullopt when the decay constant enters as its
+// nominal only (include_decay_error false, argon_calculations.py:622-623).
+std::optional<UFloat> lambda_variable(const ReductionConstants& c, const Measured& m) {
+  if (!c.include_decay_error) return std::nullopt;
+  return UFloat::variable(m.value, m.error, "lambda_k");
+}
+
+// E16 on resolved inputs; `lambda` null means nominal lambda_K.
+kernels::Age<UFloat> age_of(const UFloat& j, const UFloat& f, const Measured& lk,
+                            const std::optional<UFloat>& lambda, AgeUnits units) {
+  const double scale = age_scale(AgeUnits::a, units);
+  if (lambda) return kernels::age(j, f, *lambda, scale);
+  return kernels::age(j, f, lk.value, scale);
+}
+
+Result<void> check_j_f(const UFloat& j, const UFloat& f) {
+  if (!std::isfinite(j.nominal()) || !std::isfinite(f.nominal())) {
+    return fail(ErrorKind::Config, "reduction: age J and F must be finite (J = " +
+                                       fmt_g(j.nominal()) + ", F = " + fmt_g(f.nominal()) + ")");
+  }
+  return {};
+}
+
+}  // namespace
+
+// E16. legacy:processing/argon_calculations.py:603-630 (age_equation).
+Result<UFloat> age_equation(const UFloat& j, const UFloat& f, const ReductionConstants& c,
+                            std::optional<Measured> lambda_k_total) {
+  if (auto ok = check_j_f(j, f); !ok) return fail(ok.error());
+  const Result<Measured> lk = resolve_lambda_k(c, lambda_k_total);
+  if (!lk) return fail(lk.error());
+  const kernels::Age<UFloat> a = age_of(j, f, *lk, lambda_variable(c, *lk), c.age_units);
+  if (!a.defined) {
+    return fail(ErrorKind::Config, "reduction: age undefined, 1 + J F <= 0 (J = " +
+                                       fmt_g(j.nominal()) + ", F = " + fmt_g(f.nominal()) + ")");
+  }
+  return a.age;
+}
+
+namespace detail {
+
+// E17-E18. legacy:processing/arar_age.py:658-686 (_set_age_values).
+Result<std::optional<AgeSet>> make_age_set(const UFloat& j, double position_jerr,
+                                           const UFloat& f, const ReductionConstants& c,
+                                           std::optional<Measured> lambda_k_total,
+                                           std::span<const VariableId> interference_ids) {
+  if (!std::isfinite(position_jerr) || position_jerr < 0.0) {
+    return fail(ErrorKind::Config, "reduction: position_jerr must be finite and >= 0, got " +
+                                       fmt_g(position_jerr));
+  }
+  if (auto ok = check_j_f(j, f); !ok) return fail(ok.error());
+  const Result<Measured> lk = resolve_lambda_k(c, lambda_k_total);
+  if (!lk) return fail(lk.error());
+  // An override is one variable on the constants, shared by the three
+  // variants; otherwise each legacy age_equation call reads lambda_K afresh.
+  const bool shared = lambda_k_total && truthy(*lambda_k_total);
+  const std::optional<UFloat> shared_lambda =
+      shared ? lambda_variable(c, *lk) : std::optional<UFloat>{};
+  const auto lambda = [&]() { return shared ? shared_lambda : lambda_variable(c, *lk); };
+
+  const double j_nominal = j.nominal();
+  // :678 J'' = ufloat(nom(J), position_jerr, tag="Position")
+  const UFloat j_position = UFloat::variable(j_nominal, position_jerr, "Position");
+  // :689 J' = ufloat(nom(J), 0, tag="J_no_err"): exact, so no term.
+  const UFloat j_no_err = UFloat::variable(j_nominal, 0.0, "J_no_err");
+
+  const kernels::Age<UFloat> pos = age_of(j_position, f, *lk, lambda(), c.age_units);
+  const kernels::Age<UFloat> w_j = age_of(j, f, *lk, lambda(), c.age_units);
+  const kernels::Age<UFloat> plain = age_of(j_no_err, f, *lk, lambda(), c.age_units);
+  // Same nominal 1 + J F in all three, so all are defined or none is.
+  if (!plain.defined || !w_j.defined || !pos.defined) return std::optional<AgeSet>{};
+
+  AgeSet out;
+  out.age = plain.age;
+  out.age_w_j_err = w_j.age;
+  out.age_w_position_err = pos.age;
+  // E18 (spec Q13): legacy declares these but never assigns them.
+  out.age_err_wo_irrad = std_dev_excluding(out.age, interference_ids);
+  out.age_err_wo_j_irrad = out.age_err_wo_irrad;
+  return std::optional<AgeSet>{std::move(out)};
+}
+
+}  // namespace detail
+
 }  // namespace pychron::reduction
