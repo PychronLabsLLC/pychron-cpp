@@ -28,6 +28,10 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       else if (arg == QStringLiteral("--lab")) cli.lab = p;
       else if (arg == QStringLiteral("--data")) cli.data = p;
       else cli.queue = p;
+    } else if (arg == QStringLiteral("--db")) {
+      auto v = value();
+      if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--db needs a database url");
+      cli.db = v->toStdString();
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
       bool ok = false;

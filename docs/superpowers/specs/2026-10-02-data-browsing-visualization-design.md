@@ -568,11 +568,19 @@ class IAnalysisSource {
   flux or production in a record: ages are absent unless a reference file is
   configured (`references.toml`: J per identifier, production ratios and
   chronology per irradiation; V1 keeps this minimal).
-- `StoreSource(config)` (V2): `IStore` gains `browse(BrowseQuery)` (SQL over
-  `analysis`, `identifier`, `sample`, `project`, `irradiation_position`,
-  `level`, `load`, `repository_member`, head tag), `facet`, `load_blob(sha)`,
-  and `load_analysis` returns the reduction context through
-  `resolve_refs`.
+- `StoreSource(config)` (V2): `IStore` gains `browse(BrowseRequest)` (SQL
+  over `analysis`, `identifier`, `sample`, `project`,
+  `principal_investigator`, `material`, `irradiation_position`, `level`,
+  `load`, `extract_device`, `repository_member`, head tag), `facet`,
+  `load_analysis_detail`, `load_blob(sha)` and `latest_change_seq`. An
+  analysis' sample is its identifier's, else its irradiation position's.
+  `load` combines the detail, the head payloads (manual overrides applied)
+  and the reference payloads `resolve_refs` picks (flux, production,
+  chronology, gains; acquisition gains win over the reference) into one
+  `Analysis`. Calls run on a small pool of worker threads that each own a
+  connection; `refresh` reads the change log from where the source opened
+  and drops cached analyses when anything changed. `pychron-ui --db <url>`
+  selects it at start-up.
 
 ### 9.3 Saved selections
 

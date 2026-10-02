@@ -120,6 +120,16 @@ real time:
 build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
 ```
 
+Window > Data browses the records under `<data>/records`. With
+`--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
+`postgresql://user:pw@host/db`; the schema must already be current, since
+the UI never migrates it). Rescan picks up new analyses and revisions from
+the store's change log:
+
+```bash
+build/dev-ui/apps/pychron-ui/pychron-ui --sim --db postgresql://me@labdb/pychron
+```
+
 On Ubuntu 24.04, `apt install qt6-base-dev libqt6sql6-sqlite` is enough for
 the UI (Qt 6.4). If qcustomplot.com is unreachable, point
 `FETCHCONTENT_SOURCE_DIR_QCUSTOMPLOT` at an unpacked QCustomPlot 2.1.1 source

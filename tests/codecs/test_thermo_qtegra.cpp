@@ -174,7 +174,9 @@ TEST(QtegraCodec, OnlyNamesPychronSendsAreVerified) {
     EXPECT_EQ(q::verified_name(n.hardware), n.verified) << n.hardware;
     if (!n.verified) ++seen;
     // Every readback name is one Python reads.
-    if (!n.readback.empty()) EXPECT_TRUE(q::verified_name(n.readback)) << n.readback;
+    if (!n.readback.empty()) {
+      EXPECT_TRUE(q::verified_name(n.readback)) << n.readback;
+    }
   }
   EXPECT_EQ(seen, unverified.size());
   EXPECT_TRUE(q::verified_name("Rotation Quad"));  // alias, HelixSource._set_rotation_quad

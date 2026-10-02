@@ -83,6 +83,11 @@ target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
   qcustomplot)
 pychron_set_warnings(pychron_ui_lib)
+# --db browses the DVC store; it needs the persistence library.
+if(TARGET pychron_processing_store)
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::processing_store)
+  target_compile_definitions(pychron_ui_lib PUBLIC PYCHRON_UI_HAS_STORE=1)
+endif()
 
 add_executable(pychron-ui src/main.cpp)
 target_link_libraries(pychron-ui PRIVATE pychron_ui_lib)

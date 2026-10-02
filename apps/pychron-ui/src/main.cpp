@@ -1,7 +1,7 @@
 // pychron-ui: M1 status/control window.
 //
 //   pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer <file>]
-//              [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>]
+//              [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>] [--db <url>]
 //
 // With no files it opens the example line in configs/examples. --sim forces
 // every extraction-line transport to kind = "sim". --spectrometer loads that
@@ -15,8 +15,10 @@
 // simulated time running that many times faster than real time.
 //
 // Window > Data browses the records under the data directory
-// (<data>/records) and plots them; figure presets live in the user's config
-// directory, with lab presets under <lab>/figures.
+// (<data>/records) and plots them; with --db it browses that DVC store
+// instead ("postgresql://user:pw@host/db" or "sqlite:/path/to/file.db"; the
+// schema must be current, it is never migrated from here). Figure presets
+// live in the user's config directory, with lab presets under <lab>/figures.
 
 #include <chrono>
 #include <cstdio>
@@ -39,6 +41,13 @@
 #include "pychron/core/log_hub.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/processing/record_source.hpp"
+#ifdef PYCHRON_UI_HAS_STORE
+// Qt's `signals` keyword macro would rewrite CollectionRoots::signals.
+#pragma push_macro("signals")
+#undef signals
+#include "pychron/processing/store_source.hpp"
+#pragma pop_macro("signals")
+#endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -131,6 +140,22 @@ int main(int argc, char** argv) {
   // Data browsing: the records the experiment writes, and figure presets.
   const std::filesystem::path data_dir = cli->data ? *cli->data : lab_dir / "data";
   pychron::processing::RecordDirectorySource records(data_dir / "records");
+  std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
+  if (cli->db) {
+#ifdef PYCHRON_UI_HAS_STORE
+    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{*cli->db, false});
+    if (!opened) {
+      std::fprintf(stderr, "pychron-ui: --db: %s\n", pychron::to_string(opened.error()).c_str());
+      return 2;
+    }
+    store_source = std::move(*opened);
+#else
+    std::fprintf(stderr, "pychron-ui: --db: built without the DVC store (PYCHRON_PERSISTENCE=OFF or no Qt Sql)\n");
+    return 2;
+#endif
+  }
+  pychron::processing::IAnalysisSource& data_source =
+      store_source ? *store_source : static_cast<pychron::processing::IAnalysisSource&>(records);
   pychron::processing::PresetStore presets(
       std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
       lab_dir / "figures");
@@ -154,7 +179,7 @@ int main(int argc, char** argv) {
     if (const auto& dir = (*line)->config().logging.dir; !dir.empty()) {
       window.log_dock()->load_history(dir / "pychron.log");
     }
-    window.set_data(&records, &presets);
+    window.set_data(&data_source, &presets);
     window.show();
     if (spectrometer_error) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
@@ -195,7 +220,7 @@ int main(int argc, char** argv) {
           QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));
     }
     rc = QApplication::exec();
-    window.set_data(nullptr, nullptr);        // data windows go before the record source
+    window.set_data(nullptr, nullptr);        // data windows go before the data source
     window.set_experiment(nullptr, false);    // the experiment window goes before its bridge
     window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }

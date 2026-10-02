@@ -8,8 +8,8 @@ customizable as legacy pychron's, built from composable reduction units.
 **Architecture:** group statistics in `libs/reduction`; a new Qt-free
 `libs/processing` (model, quantities, datasets, schema-described options and
 presets, units with a fingerprint-cached runner, scenes, recall model);
-source adapters as separate targets (`processing_records` now,
-`processing_store` next); the Qt UI only renders scenes and edits options.
+source adapters as separate targets (`processing_records`,
+`processing_store`); the Qt UI only renders scenes and edits options.
 
 **Spec:** `docs/superpowers/specs/2026-10-02-data-browsing-visualization-design.md`.
 
@@ -104,19 +104,31 @@ source adapters as separate targets (`processing_records` now,
       spectrum ages; isochron: inset, normal isochron.
 - [ ] Composite figure (spectrum and isochron side by side).
 
-### V2 data
+### V2 data (store source done 2026-10-02)
 
-- [ ] `IStore::browse(BrowseQuery)` and `facet` in SQL (joins over
-      identifier, sample, project, irradiation_position, level, load,
-      repository_member, head tag), keyset paged; `load_blob(sha)`.
-- [ ] `StoreSource` (`pychron::processing_store`): one connection per
-      thread, analysis loading with `resolve_refs` for flux/production/
-      chronology, raw series from blobs.
+- [x] `IStore::browse(BrowseRequest)` and `facet` in SQL (joins over
+      identifier, sample, project, PI, material, irradiation_position, level,
+      load, extract device, repository_member, head tag), keyset paged on
+      (timestamp, uuid), totals on request, facets ignoring their own filter;
+      `load_analysis_detail`, `load_blob(sha)`, `latest_change_seq`.
+      Tested on SQLite and PostgreSQL (`tests/persistence/test_browse.cpp`).
+- [x] Catalog writes for principal investigators, projects, materials,
+      samples, extract devices; identifiers and irradiation positions carry
+      a sample (the browse sample is the identifier's, else its position's).
+- [x] `StoreSource` (`pychron::processing_store`): a pool of worker threads
+      each owning a connection; load assembles detail + head payloads
+      (manual overrides, fit and outlier settings) + `resolve_refs`
+      (flux, production, chronology, gains); raw series from blobs with
+      start/end windows; `refresh()` follows the change log and drops the
+      load cache (`tests/processing/test_store_source.cpp`).
+- [x] `pychron-ui --db <url>` browses a store instead of the records
+      directory (the schema must be current; it is not migrated).
 - [ ] Recall History tab (`IStore::history` per kind) and revision diff.
 - [ ] Editing fits in the Evolutions tab: a pending intercepts revision,
       committed through `IUnitOfWork`, conflicts shown.
 - [ ] Saved selections and named queries (spec 9.3).
-- [ ] Browser source picker when both a database and records exist (Q1).
+- [ ] Browser source picker in the UI when both a database and records
+      exist (Q1); today `--db` chooses at start-up.
 
 ### V3 reduction workflows
 

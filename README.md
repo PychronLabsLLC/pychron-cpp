@@ -23,7 +23,7 @@ spectrometers, runs automated experiment queues, and stores the results.
 | `libs/scripting` | Embedded CPython host for extraction scripts |
 | `libs/reduction` | Fits and data reduction |
 | `libs/persistence` | Database-backed store for analyses (TinyORM on QtSql) |
-| `libs/processing` | Browsing, recall and figures: analysis sources, quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures |
+| `libs/processing` | Browsing, recall and figures: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures |
 | `apps/elctl` | Command-line tool: validate configs, drive the line, run experiments |
 | `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window, data browser, recall and figure windows |
 | `configs/examples` | An example lab: line, canvas, spectrometers, plans, scripts, a three-run queue |
