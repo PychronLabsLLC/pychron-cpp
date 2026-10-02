@@ -188,8 +188,9 @@ int main(int argc, char** argv) {
   //   0. the experiment window (above), its bridge, then the session, which
   //      aborts and joins a running queue before anything it uses goes;
   //   1. the spectrometer window, then the main window (the block above);
-  //   2. the bridge, whose executor first finishes the commands it was given,
-  //      including the scan stop the closing window asked for;
+  //   2. the bridge, whose executor finishes the command in flight; the scan
+  //      stop the closing window asked for happens even if it was queued
+  //      behind it;
   //   3. the scan service, which stops the acquisition if it is still running;
   //   4. the line: stop() halts the shared scheduler and waits for a poll
   //      already on a worker, so nothing is still using the spectrometer;

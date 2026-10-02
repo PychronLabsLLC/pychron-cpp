@@ -90,6 +90,9 @@ SpectrometerBridge::~SpectrometerBridge() {
   subscriptions_.clear();
   executor_.quit();  // finishes the command in flight; queued ones are dropped
   executor_.wait();
+  // A stop asked for after the last start is never dropped: a magnet move
+  // still in flight would otherwise leave the scan running with no window.
+  if (stop_requested_) scan_.stop();
 }
 
 QString SpectrometerBridge::name() const { return QString::fromStdString(spec_.name()); }
@@ -175,6 +178,7 @@ void SpectrometerBridge::run(const char* what, Command command) {
 }
 
 void SpectrometerBridge::start_scan(double integration_s) {
+  stop_requested_ = false;
   QPointer<SpectrometerBridge> self(this);
   run("start", [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)] {
     // Posted before the command's own result, so the state is seeded by the
@@ -198,6 +202,7 @@ void SpectrometerBridge::start_scan(double integration_s) {
 }
 
 void SpectrometerBridge::stop_scan() {
+  stop_requested_ = true;
   run("stop", [scan = &scan_] {
     scan->stop();
     return Result<void>{};

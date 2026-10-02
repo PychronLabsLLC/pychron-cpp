@@ -13,7 +13,9 @@
 //
 // Commands in: start_scan / stop_scan / set_integration / position return
 // immediately; the blocking core call runs on one executor QThread, in the
-// order issued, and its Result is posted back as commandFinished.
+// order issued, and its Result is posted back as commandFinished. Destruction
+// finishes the command in flight and drops queued ones, except that a stop
+// asked for after the last start always happens.
 //
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
@@ -121,6 +123,7 @@ class SpectrometerBridge : public QObject {
   std::vector<SignalBus::Subscription> subscriptions_;
   QThread executor_;
   QObject* worker_ = nullptr;  // lives on executor_
+  bool stop_requested_ = false;  // stop_scan since the last start_scan (main thread)
 };
 
 }  // namespace pychron::ui
