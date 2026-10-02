@@ -375,9 +375,9 @@ TEST_F(EngineTest, TruncationScalesLaterCollections) {
   set.items.push_back(conditional(ConditionalKind::Truncation, "big", "Ar40 > 0", 10));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 10);
-  EXPECT_DOUBLE_EQ(r.count_scale, 0.25);
-  EXPECT_EQ(r.data.counts.at("baseline.after"), 8);  // ceil(30 * 10/40)
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 11);  // first check after reading start + 1
+  EXPECT_DOUBLE_EQ(r.count_scale, 11.0 / 40);
+  EXPECT_EQ(r.data.counts.at("baseline.after"), 9);  // ceil(30 * 11/40)
   ASSERT_EQ(r.data.trips.size(), 1u);
   EXPECT_EQ(r.data.trips[0].name, "big");
 }
@@ -432,8 +432,8 @@ TEST_F(EngineTest, ActionsAndModifications) {
   EXPECT_EQ(r.modifications[0].type, ActionSpec::Type::SkipAliquot);
   EXPECT_EQ(r.notes, (std::vector<std::string>{"notify: note"}));
   EXPECT_EQ(hook_.entries, (std::vector<std::string>{"before_main", "on_big", "after_main"}));
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 6);
-  EXPECT_DOUBLE_EQ(r.count_scale, 0.6);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 7);
+  EXPECT_DOUBLE_EQ(r.count_scale, 0.7);
 }
 
 TEST_F(EngineTest, EquilibrationConditionalClosesTheInletEarly) {
@@ -484,7 +484,7 @@ TEST_F(EngineTest, CancelationConditionalCancels) {
   set.items.push_back(conditional(ConditionalKind::Cancelation, "bad", "Ar40 > 0", 2));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 2);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 3);
 }
 
 TEST_F(EngineTest, AcquisitionFailureFailsAndCleansUp) {

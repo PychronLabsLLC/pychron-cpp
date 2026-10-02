@@ -480,24 +480,20 @@ bool MeasurementEngine::main_reading(int /*count*/, double t) {
   ++main_count_;
   if (in_.plan.main.time_zero.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero())
     collector_.set_time_zero(t);
-  static constexpr ConditionalKind kOrder[] = {ConditionalKind::Modification, ConditionalKind::Truncation,
-                                               ConditionalKind::Action, ConditionalKind::Termination,
-                                               ConditionalKind::Cancelation};
-  for (auto kind : kOrder) {
-    auto trips = conditionals_->evaluate_kind(kind, collector_.metrics(), in_.variables, main_count_, t);
-    collector_.add_trips(trips);
-    for (const auto& trip : trips) handle_trip(trip);
-    if (stop_ != Stop::None) break;
+  if (auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t)) {
+    collector_.add_trips({*trip});
+    handle_trip(*trip);
   }
   return stop_ != Stop::None;
 }
 
 bool MeasurementEngine::sniff_reading() {
   const double t = collector_.seconds(ctx_.clock.now());
-  auto trips = conditionals_->evaluate_kind(ConditionalKind::Equilibration, collector_.metrics(), in_.variables,
-                                            collector_.count(), t);
-  collector_.add_trips(trips);
-  for (const auto& trip : trips) handle_trip(trip);
+  if (auto trip = conditionals_->evaluate(ConditionalKind::Equilibration, collector_.metrics(), in_.variables,
+                                          collector_.count(), t)) {
+    collector_.add_trips({*trip});
+    handle_trip(*trip);
+  }
   return false;
 }
 

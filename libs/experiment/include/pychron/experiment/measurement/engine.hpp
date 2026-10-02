@@ -149,7 +149,7 @@ struct MeasurementResult {
   std::vector<PeakCenterReport> peak_centers;
   std::vector<ActionSpec> modifications;  // for the executor (skip, repeat, run blank, ...)
   std::vector<std::string> notes;         // notify actions, hook log lines
-  std::vector<std::string> conditional_errors;  // checks that could not be evaluated
+  std::vector<ConditionalError> conditional_errors;  // checks that could not be evaluated
   double count_scale = 1.0;               // after a truncation of main
   std::vector<Block> blocks;              // blocks that ran, in order
 };
