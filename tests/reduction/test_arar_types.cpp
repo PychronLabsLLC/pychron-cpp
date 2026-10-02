@@ -59,6 +59,10 @@ TEST(ArArTypes, ConstantsHaveNoHiddenDefaults) {
   EXPECT_FALSE(c.allow_negative_ca_correction);
   EXPECT_EQ(c.abundance_sensitivity, 0.0);
   EXPECT_FALSE(c.cosmogenic.has_value());
+  EXPECT_EQ(c.k3739_mode, K3739Mode::Normal);
+  EXPECT_EQ(c.age_units, AgeUnits::Ma);  // the documented record default (D1)
+  EXPECT_FALSE(c.use_irradiation_endtime);
+  EXPECT_FALSE(c.include_decay_error);
 }
 
 TEST(ArArTypes, LegacyPresetsMatchLegacy) {

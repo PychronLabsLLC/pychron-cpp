@@ -389,8 +389,9 @@ when inputs are built, never inside arithmetic.
 - Build flags: no `-ffast-math` (it breaks parity and NaN checks).
   `-ffp-contract` differences between compilers (FMA on arm64) are absorbed by
   the tolerances in 4.7. Parity between `compute_arar` and `reduce` (8.2)
-  additionally requires `-ffp-contract=off` for the reduction library and its
-  tests, so both paths round identically.
+  additionally requires `-ffp-contract=off` for the reduction library and
+  everything that links it (a PUBLIC option, section 7), so both paths round
+  identically.
 - Measured: `reduce()` takes 3.1-4.8 us per call on an M5 Pro (dev and Release
   builds), against the 50 us target.
 
@@ -715,7 +716,11 @@ a `Diagnostic`, never errors, so the rest of the result is still usable.
 | NaN/inf produced by valid inputs | propagates | Flag `NonFiniteResult`; values kept; non-finite F yields no ages and no error. |
 
 Numerical policy: build with `-ffp-contract=off` (no FMA contraction) so the
-live and `reduce` paths agree to rtol 1e-12; never `-ffast-math`. Deadtime
+live and `reduce` paths agree to rtol 1e-12; never `-ffast-math`. The flag is a
+PUBLIC compile option of `pychron::reduction` (GCC/Clang): `UFloat`'s
+arithmetic (`combine`, `variance`) is inline in a public header, so every
+consumer must compile it unfused too, or the linker may keep a contracted
+inline copy. Deadtime
 correction applies to the intercept before E1 (E5).
 
 Golden cases that hit a **Fix** row carry the legacy sentinel under

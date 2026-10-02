@@ -427,9 +427,12 @@ TEST(Age, Golden) {
       }
       const std::array<VariableId, 7> none{};
       const auto s = detail::make_age_set(j, 0.0, f, rc, lk, none);
-      ASSERT_TRUE(s) << s.error().what;
-      EXPECT_FALSE(s->has_value());
       if (c["expected"].size() != 0u) ADD_FAILURE() << name << ": error case with expected";
+      if (!s) {
+        ADD_FAILURE() << name << ": " << s.error().what;
+        continue;
+      }
+      EXPECT_FALSE(s->has_value());
       continue;
     }
     if (!c["legacy_sentinel"].is_null()) ADD_FAILURE() << name << ": sentinel without error";
@@ -450,8 +453,14 @@ TEST(Age, Golden) {
     // make_age_set's age_w_j_err is the age equation on the supplied J.
     const std::array<VariableId, 7> none{};
     const auto s = detail::make_age_set(j, 0.0, f, rc, lk, none);
-    ASSERT_TRUE(s) << s.error().what;
-    ASSERT_TRUE(s->has_value());
+    if (!s) {
+      ADD_FAILURE() << name << ": " << s.error().what;
+      continue;
+    }
+    if (!s->has_value()) {
+      ADD_FAILURE() << name << ": make_age_set gave no ages";
+      continue;
+    }
     g::expect_close((*s)->age_w_j_err.nominal(), c["expected"]["age"]["v"].as_number(), t.rtol,
                     t.atol, "age_w_j_err.v");
     g::expect_close((*s)->age_w_j_err.std_dev(), c["expected"]["age"]["e"].as_number(),

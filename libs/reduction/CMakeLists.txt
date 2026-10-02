@@ -16,8 +16,10 @@ target_link_libraries(pychron_reduction PUBLIC pychron::core)
 pychron_set_warnings(pychron_reduction)
 
 # Parity with Python's per-operation rounding (spec 4.7): never fuse a * b + c
-# into an FMA. MSVC's default /fp:precise does not contract across statements
-# and needs nothing here.
+# into an FMA. PUBLIC because UFloat's arithmetic (combine, variance) is inline
+# in a public header: every consumer must compile it unfused too, or the
+# linker may pick a contracted copy (spec 7). MSVC's default /fp:precise does
+# not contract across statements and needs nothing here.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(pychron_reduction PRIVATE -ffp-contract=off)
+  target_compile_options(pychron_reduction PUBLIC -ffp-contract=off)
 endif()

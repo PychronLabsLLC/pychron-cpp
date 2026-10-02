@@ -210,16 +210,42 @@ TEST(IsotopeArithmetic, DeadtimeLegacy6240Divergence) {
 
 TEST(IsotopeArithmetic, Golden) {
   const golden::Json doc = golden::load("isotope_arithmetic.json");
-  ASSERT_GT(doc["cases"].size(), 0U);
+  ASSERT_EQ(doc["cases"].size(), 22U);
+  std::size_t n_isotope = 0, n_deadtime = 0, n_sensitivity = 0, n_error = 0, n_sentinel = 0;
   for (const golden::Json& c : doc["cases"].as_array()) {
     const std::string name = c["name"].as_string();
     SCOPED_TRACE(name);
+    golden::known_keys(c,
+                       {"name", "source", "inputs", "expected", "tol", "legacy_sentinel",
+                        "expect_diagnostics", "expect_error"},
+                       name);
     const golden::Json& in = c["inputs"];
     const golden::Json& ex = c["expected"];
     const golden::Tol t = golden::tol_of(c);
     const std::string fn = in["function"].as_string();
+    // No step here raises diagnostics.
+    if (c["expect_diagnostics"].size() != 0) {
+      ADD_FAILURE() << "unhandled expect_diagnostics";
+      continue;
+    }
+    // Only deadtime cases carry an expected error or a legacy sentinel.
+    if (fn != "deadtime" && (!c["expect_error"].is_null() || !c["legacy_sentinel"].is_null())) {
+      ADD_FAILURE() << "unhandled expect_error / legacy_sentinel for " << fn;
+      continue;
+    }
+    ReductionConstants rc;
+    if (!golden::constants_of(in["constants"], rc, name)) continue;
 
     if (fn == "isotope") {
+      ++n_isotope;
+      golden::known_keys(in,
+                         {"function", "constants", "isotope", "intercept", "baseline", "blank",
+                          "ic_factor", "discrimination", "include_baseline_error",
+                          "correct_for_blank"},
+                         name + " inputs");
+      golden::known_keys(ex, {"baseline_corrected", "non_detector_corrected", "intensity"},
+                         name + " expected");
+      EXPECT_EQ(ex.size(), 3U);
       const std::string iso = in["isotope"].as_string();
       IsotopeSignal s;
       s.intercept = ufloat_of(in["intercept"], iso);
@@ -234,30 +260,65 @@ TEST(IsotopeArithmetic, Golden) {
                     "non_detector_corrected");
       expect_ufloat(corrected_intensity(s), ex["intensity"], t, "intensity");
     } else if (fn == "abundance_sensitivity") {
+      ++n_sensitivity;
+      golden::known_keys(in, {"function", "constants", "signals", "abundance_sensitivity"},
+                         name + " inputs");
       static constexpr std::array<const char*, 5> kKeys{"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"};
+      golden::known_keys(in["signals"], {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"},
+                         name + " signals");
+      golden::known_keys(ex, {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"}, name + " expected");
+      EXPECT_EQ(ex.size(), 5U);
+      const double alpha = in["abundance_sensitivity"].as_number();
+      EXPECT_EQ(rc.abundance_sensitivity, alpha);
       std::array<UFloat, 5> s;
       for (std::size_t i = 0; i < 5; ++i) s[i] = ufloat_of(in["signals"][kKeys[i]], kKeys[i]);
-      const auto n = abundance_sensitivity_correction(s, in["abundance_sensitivity"].as_number());
+      const auto n = abundance_sensitivity_correction(s, alpha);
       for (std::size_t i = 0; i < 5; ++i) expect_ufloat(n[i], ex[kKeys[i]], t, kKeys[i]);
     } else if (fn == "deadtime") {
+      ++n_deadtime;
+      golden::known_keys(in,
+                         {"function", "constants", "signal", "tau_s", "fa_to_cps",
+                          "legacy_fa_to_cps"},
+                         name + " inputs");
       const UFloat s = ufloat_of(in["signal"]);
       const auto r = deadtime_correct(s, in["tau_s"].as_number(), in["fa_to_cps"].as_number());
       if (!c["expect_error"].is_null()) {
-        ASSERT_FALSE(r);
+        ++n_error;
+        EXPECT_EQ(ex.size(), 0U);
+        if (r) {
+          ADD_FAILURE() << "expected an error naming " << c["expect_error"].as_string();
+          continue;
+        }
         EXPECT_NE(r.error().what.find(c["expect_error"].as_string()), std::string::npos)
             << r.error().what;
         continue;
       }
-      ASSERT_TRUE(r) << r.error().what;
+      golden::known_keys(ex, {"corrected"}, name + " expected");
+      if (!r) {
+        ADD_FAILURE() << r.error().what;
+        continue;
+      }
       expect_ufloat(*r, ex["corrected"], t, "corrected");
+      // A legacy sentinel always comes with the legacy factor, and vice versa.
+      EXPECT_EQ(in.contains("legacy_fa_to_cps"), !c["legacy_sentinel"].is_null());
       if (in.contains("legacy_fa_to_cps")) {
+        ++n_sentinel;
+        golden::known_keys(c["legacy_sentinel"], {"corrected"}, name + " legacy_sentinel");
         const auto l = deadtime_correct(s, in["tau_s"].as_number(),
                                         in["legacy_fa_to_cps"].as_number());
-        ASSERT_TRUE(l);
+        if (!l) {
+          ADD_FAILURE() << l.error().what;
+          continue;
+        }
         expect_ufloat(*l, c["legacy_sentinel"]["corrected"], t, "legacy_sentinel");
       }
     } else {
       ADD_FAILURE() << "unknown function " << fn;
     }
   }
+  EXPECT_EQ(n_isotope, 12U);
+  EXPECT_EQ(n_deadtime, 6U);
+  EXPECT_EQ(n_sensitivity, 4U);
+  EXPECT_EQ(n_error, 1U);     // deadtime/saturated
+  EXPECT_EQ(n_sentinel, 1U);  // deadtime/legacy_6240
 }
