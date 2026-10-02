@@ -1,12 +1,14 @@
 # End-to-end: example configs with kind = "sim" -> ExtractionLine ->
-# SimSystem -> actuate -> assert pressures. Globbed so later suites only add files.
+# SimSystem -> actuate -> assert pressures; the measurement path over the sim
+# line and spectrometer. Globbed so later suites only add files.
 file(GLOB PYCHRON_INTEGRATION_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
 if(PYCHRON_INTEGRATION_TESTS)
   add_executable(pychron_integration_tests ${PYCHRON_INTEGRATION_TESTS})
-  target_link_libraries(pychron_integration_tests PRIVATE pychron::systems GTest::gtest_main)
+  target_link_libraries(pychron_integration_tests PRIVATE pychron::experiment pychron::systems GTest::gtest_main)
   target_compile_definitions(pychron_integration_tests PRIVATE
-    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
+    PYCHRON_PLAN_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/experiment/fixtures/plans/valid")
   # spectrometer sim drivers register from static initializers nothing references
   pychron_link_drivers(pychron_integration_tests pychron_sim)
   pychron_set_warnings(pychron_integration_tests)

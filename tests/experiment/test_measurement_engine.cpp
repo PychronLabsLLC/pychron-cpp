@@ -619,7 +619,9 @@ TEST_F(EngineTest, ResultsFitInterceptsAndBaselines) {
       EXPECT_EQ(s.trace.t.size(), 30u);
       EXPECT_GT(s.trace.t.front(), 0.f);  // after time zero
     }
-    if (s.kind == "sniff") EXPECT_LT(s.trace.t.front(), 0.f);
+    if (s.kind == "sniff") {
+      EXPECT_LT(s.trace.t.front(), 0.f);
+    }
   }
   EXPECT_TRUE(found);
 }
