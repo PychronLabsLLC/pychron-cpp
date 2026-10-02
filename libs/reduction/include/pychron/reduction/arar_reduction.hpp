@@ -5,7 +5,9 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <span>
 
 #include "pychron/core/error.hpp"
 #include "pychron/reduction/arar_types.hpp"
@@ -43,5 +45,18 @@ Result<UFloat> deadtime_correct(const UFloat& signal_fa, double tau_s,
 // otherwise deadtime_correct(intercept, *deadtime_tau_s, fa_to_cps).
 Result<UFloat> deadtime_corrected_intercept(const IsotopeSignal& s,
                                             double fa_to_cps = kFaToCountsPerSecond);
+
+// ---- 3.2 Decay since irradiation ------------------------------------------
+
+// E6 (Q11/Q12): UTC epoch seconds, no time zone. t_k = (end - start) days,
+// dt_k measured from start (or end when use_irradiation_endtime); decay_days
+// is from the first dose's start. Doses keep their order.
+Irradiation irradiation_from_doses(std::span<const Dose> doses, std::int64_t analysis_utc_s,
+                                   bool use_irradiation_endtime);
+
+// E7 (McDougall & Harrison 3.22). Lambdas per day. Error (Config, "reduction: "
+// ... "same unit") when |l * max(|t_k|, |dt_k|)| > 50. No segments: {1, 1}.
+Result<DecayFactors> decay_factors(double lambda37_per_day, double lambda39_per_day,
+                                   std::span<const DecaySegment> segments);
 
 }  // namespace pychron::reduction
