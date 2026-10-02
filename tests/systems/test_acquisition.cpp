@@ -677,3 +677,119 @@ TEST(AcquisitionEngine, StartFromInsideAPollDuringAnotherThreadsStopFails) {
   EXPECT_EQ(a.starts, 1);
   EXPECT_EQ(a.stops, 1);
 }
+
+// ---- start() is serialised ---------------------------------------------------
+
+TEST(AcquisitionEngine, ConcurrentStartsRegisterOneRun) {
+  fakes::FakeAcquirer a({"H1"});
+  Gate entered, release;
+  a.on_configure = [&] {
+    entered.open();
+    release.wait();  // a slow configure(): wire I/O in a real driver
+  };
+  ThreadedFixture f;
+  f.make(a);
+
+  auto first = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  ASSERT_TRUE(entered.wait());
+  auto second = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  EXPECT_EQ(second.wait_for(50ms), std::future_status::timeout);  // waits for the first
+  release.open();
+  ASSERT_EQ(first.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(second.wait_for(2s), std::future_status::ready);
+  auto r1 = first.get();
+  auto r2 = second.get();
+
+  ASSERT_TRUE(r1.has_value()) << to_string(r1.error());
+  ASSERT_FALSE(r2.has_value());  // the normal "already running" path
+  EXPECT_EQ(r2.error().kind, ErrorKind::Config);
+  EXPECT_NE(r2.error().what.find("already running"), std::string::npos) << r2.error().what;
+  EXPECT_TRUE(f.engine->running());
+  EXPECT_EQ(a.configures.load(), 1);
+  EXPECT_EQ(a.starts, 1);
+  EXPECT_EQ(f.sched.job_count(), 1U);  // one job per acquirer
+  EXPECT_EQ(a.overlaps.load(), 0);
+
+  f.engine->stop();
+  EXPECT_EQ(a.stops, 1);
+  EXPECT_EQ(f.sched.job_count(), 0U);
+}
+
+TEST(AcquisitionEngine, ConcurrentStartsWithTwoAcquirersRegisterOneJobEach) {
+  fakes::FakeAcquirer a({"H1"}), b({"L1"});
+  Gate entered, release;
+  b.on_configure = [&] {
+    entered.open();
+    release.wait();
+  };
+  ThreadedFixture f;
+  f.make(a, &b);
+  auto first = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  ASSERT_TRUE(entered.wait());
+  auto second = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  EXPECT_EQ(second.wait_for(50ms), std::future_status::timeout);
+  release.open();
+  ASSERT_EQ(first.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(second.wait_for(2s), std::future_status::ready);
+  const bool first_ok = first.get().has_value();
+  const bool second_ok = second.get().has_value();
+  EXPECT_NE(first_ok, second_ok);  // exactly one of them started it
+  EXPECT_EQ(f.sched.job_count(), 2U);
+  EXPECT_EQ(a.starts, 1);
+  EXPECT_EQ(b.starts, 1);
+  EXPECT_EQ(a.overlaps.load() + b.overlaps.load(), 0);
+  f.engine->stop();
+  EXPECT_EQ(f.sched.job_count(), 0U);
+}
+
+TEST(AcquisitionEngine, StopDuringAStartInProgressLeavesTheEngineStopped) {
+  fakes::CallLog log;
+  fakes::FakeAcquirer a({"H1"});
+  a.log = &log;
+  Gate entered, release;
+  a.on_configure = [&] {
+    entered.open();
+    release.wait();
+  };
+  ThreadedFixture f;
+  f.make(a);
+
+  auto started = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  ASSERT_TRUE(entered.wait());
+  auto stopped = std::async(std::launch::async, [&] { f.engine->stop(); });
+  EXPECT_EQ(stopped.wait_for(50ms), std::future_status::timeout);  // waits for the start
+  release.open();
+  ASSERT_EQ(started.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(stopped.wait_for(2s), std::future_status::ready);
+  stopped.get();
+  auto r = started.get();
+  ASSERT_TRUE(r.has_value()) << to_string(r.error());
+
+  EXPECT_FALSE(f.engine->running());
+  EXPECT_EQ(log, (fakes::CallLog{"start", "stop"}));
+  EXPECT_EQ(f.sched.job_count(), 0U);
+
+  // No tick reaches next() afterwards.
+  f.tick();
+  f.sched.wait_idle();
+  EXPECT_EQ(log, (fakes::CallLog{"start", "stop"}));
+}
+
+// A start() that fails must not leave the engine marked as starting.
+TEST(AcquisitionEngine, FailedStartDoesNotBlockLaterStartOrStop) {
+  fakes::FakeAcquirer a({"H1"});
+  ThreadedFixture f;
+  f.make(a);
+  a.fail_start = true;
+  ASSERT_FALSE(f.engine->start(1s).has_value());
+  EXPECT_FALSE(f.engine->running());
+  EXPECT_EQ(f.sched.job_count(), 0U);
+
+  auto stopped = std::async(std::launch::async, [&] { f.engine->stop(); });
+  ASSERT_EQ(stopped.wait_for(2s), std::future_status::ready);
+  a.fail_start = false;
+  auto restarted = std::async(std::launch::async, [&] { return f.engine->start(1s); });
+  ASSERT_EQ(restarted.wait_for(2s), std::future_status::ready);
+  EXPECT_TRUE(restarted.get().has_value());
+  f.engine->stop();
+}

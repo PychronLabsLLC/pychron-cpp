@@ -190,12 +190,35 @@ Result<void> AcquisitionEngine::start(Duration integration) {
     if (polls_on_this_thread() > 0) {
       // The stopper is waiting for this very poll: waiting for it would deadlock.
       if (stopping_) return fail(ErrorKind::Config, "acquisition is stopping", "acquisition");
+      // Nor wait, inside a poll, for another thread's start(): that start()
+      // or a stop() queued behind it may come to wait for this poll.
+      if (starting_) return fail(ErrorKind::Config, "acquisition is starting", "acquisition");
     } else {
-      polls_cv_.wait(lock, [&] { return running_ || (!stopping_ && polling_.empty()); });
+      polls_cv_.wait(lock, [&] { return settled(); });
     }
     if (running_) return fail(ErrorKind::Config, "acquisition already running");
     integration_ = integration;
+    starting_ = true;  // other start() and stop() calls wait until this one is done
   }
+  // Cleared on every way out, so an early return cannot leave it set.
+  struct Starting {
+    AcquisitionEngine& engine;
+    bool armed = true;
+    // Caller holds mutex_. Notifies under the lock: a waiter may destroy the
+    // engine once it wakes.
+    void clear() {
+      armed = false;
+      engine.starting_ = false;
+      engine.polls_cv_.notify_all();
+    }
+    ~Starting() {
+      if (!armed) return;
+      std::lock_guard lock(engine.mutex_);
+      clear();
+    }
+  };
+  Starting starting{*this};
+
   std::size_t started = 0;
   auto undo = [&] {
     for (std::size_t i = 0; i < started; ++i) (void)acquirers_[i]->stop();
@@ -225,6 +248,7 @@ Result<void> AcquisitionEngine::start(Duration integration) {
   std::lock_guard lock(mutex_);
   jobs_ = std::move(jobs);
   running_ = true;
+  starting.clear();  // in the same step as running_, so waiters see one or the other
   return {};
 }
 
@@ -233,16 +257,25 @@ std::size_t AcquisitionEngine::polls_on_this_thread() const {
       std::count(polling_.begin(), polling_.end(), std::this_thread::get_id()));
 }
 
+bool AcquisitionEngine::settled() const {
+  return !starting_ && (running_ || (!stopping_ && polling_.empty()));
+}
+
 void AcquisitionEngine::stop() {
   std::vector<JobId> jobs;
   {
     std::unique_lock lock(mutex_);
     const std::size_t own = polls_on_this_thread();
+    // A start() in progress on another thread is about to bring the engine
+    // up: wait for it, then stop what it started. Not from inside a poll (see
+    // below).
+    if (own == 0) polls_cv_.wait(lock, [&] { return !starting_; });
     if (!running_) {
       // Already stopped, perhaps by a stop() still in progress on another
-      // thread: return only once that one has stopped the acquirers. Not from
-      // inside a poll, though: that stopper may be waiting for this very poll.
-      if (own == 0) polls_cv_.wait(lock, [&] { return !stopping_ && polling_.empty(); });
+      // thread: return only once that one has stopped the acquirers, or the
+      // engine has been started again since. Not from inside a poll, though:
+      // that stopper may be waiting for this very poll.
+      if (own == 0) polls_cv_.wait(lock, [&] { return settled(); });
       return;
     }
     running_ = false;

@@ -9,7 +9,10 @@
 //      |delta| < epsilon)
 //   4. unblank, then unprotect in reverse order. On any failure the cleanup
 //      still runs and the first error is returned: a detector is never left
-//      protected by accident.
+//      protected by accident. When the failure came at or after the first
+//      set() (the magnet may be moving: a set() whose reply timed out was
+//      still delivered), the cleanup waits `settle` first; a failure before
+//      any set() cleans up at once.
 //
 // The Spectrometer decides *what* to protect (MovePlan); this only runs it.
 // Waiting goes through an injected sleep so tests drive a ManualClock.

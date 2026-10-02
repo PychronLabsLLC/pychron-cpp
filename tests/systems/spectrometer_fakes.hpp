@@ -39,11 +39,16 @@ struct FakePositioner : IMassPositioner {
     sets.push_back(v);
     value = v;
     moving_left = moving_polls;
+    if (timeout_set_at && *timeout_set_at == set_calls) return fail(ErrorKind::Timeout, "no reply to set", "magnet");
     return {};
   }
   Result<double> read() override { return value; }
   Result<bool> moving() override {
     ++moving_calls;
+    if (fail_moving) {
+      log.push_back("moving-fail");
+      return fail(ErrorKind::Io, "moving failed", "magnet");
+    }
     if (moving_left > 0) {
       --moving_left;
       return true;
@@ -60,7 +65,9 @@ struct FakePositioner : IMassPositioner {
   int moving_left = 0;
   int moving_calls = 0;
   int set_calls = 0;
-  std::optional<int> fail_set_at;  // 1-based set() call that fails
+  std::optional<int> fail_set_at;     // 1-based set() call that fails with nothing written
+  std::optional<int> timeout_set_at;  // 1-based set() call that is written, then reports Timeout
+  bool fail_moving = false;
   std::vector<double> sets;
 };
 
@@ -135,6 +142,7 @@ struct FakeSource : IBeamSource {
   }
   Result<double> read_hv() override {
     ++hv_reads;
+    if (fail_read_hv) return fail(ErrorKind::Timeout, "no reply to GetHighVoltage", "source");
     return hv;
   }
   std::span<const ParamSpec> params() const override { return specs; }
@@ -155,6 +163,7 @@ struct FakeSource : IBeamSource {
   double hv = 4500.0;
   double trap = 100.0;
   int hv_reads = 0;
+  bool fail_read_hv = false;
 };
 
 struct FakeAcquirer : IIntensityAcquirer {
@@ -163,7 +172,9 @@ struct FakeAcquirer : IIntensityAcquirer {
   bool integrates() const override { return true; }
   Result<void> configure(Duration d) override {
     if (active_next > 0) ++overlaps;
+    ++configures;
     configured = d;
+    if (on_configure) on_configure();
     return {};
   }
   Result<void> start() override {
@@ -206,6 +217,8 @@ struct FakeAcquirer : IIntensityAcquirer {
   Duration configured{};
   int starts = 0, stops = 0;
   bool fail_start = false;
+  std::atomic<int> configures{0};
+  std::function<void()> on_configure;  // runs inside configure(); may block
   std::function<void()> on_next;   // runs inside next(), outside `m`
   std::function<void()> on_stop;   // runs inside stop(), after it is logged
   std::atomic<int> active_next{0};

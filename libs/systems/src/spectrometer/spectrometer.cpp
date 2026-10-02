@@ -361,9 +361,10 @@ Result<double> Spectrometer::mass_at(double native, const DetectorId& det) {
   return table_locked().mass_for(*value, det);
 }
 
-std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, ProtectPolicy policy, bool& blank) {
+Result<std::vector<ChannelId>> Spectrometer::plan_protection(double from, double to, ProtectPolicy policy,
+                                                             bool& blank) {
   blank = false;
-  if (policy == ProtectPolicy::Never) return {};
+  if (policy == ProtectPolicy::Never) return std::vector<ChannelId>{};
   const auto& mp = config_.magnet.protection;
   const bool large = mp.beam_blank_threshold && std::abs(to - from) > *mp.beam_blank_threshold;
   blank = policy == ProtectPolicy::Always || large;
@@ -383,8 +384,10 @@ std::vector<ChannelId> Spectrometer::plan_protection(double from, double to, Pro
       for (const auto& p : table.points()) {
         auto v = p.values.find(name);
         if (v == p.values.end()) continue;
+        // Fail closed: a peak that cannot be placed might be on the path.
         auto native = correct(v->second, name);
-        if (native && *native >= lo && *native <= hi) {
+        if (!native) return fail(native.error());
+        if (*native >= lo && *native <= hi) {
           on_path = true;
           break;
         }
@@ -414,7 +417,9 @@ Result<MoveOutcome> Spectrometer::move_locked(double value, const PositionOption
   MovePlan plan;
   plan.from = *from;
   plan.to = value;
-  plan.protect = plan_protection(plan.from, plan.to, options.protect, plan.blank);
+  auto protect = plan_protection(plan.from, plan.to, options.protect, plan.blank);
+  if (!protect) return fail(protect.error());
+  plan.protect = std::move(*protect);
   const auto& af = config_.magnet.af_demag;
   plan.af_demag = AfDemagSettings{af.enabled,
                                   std::chrono::duration_cast<Duration>(std::chrono::duration<double>(af.period_s)),

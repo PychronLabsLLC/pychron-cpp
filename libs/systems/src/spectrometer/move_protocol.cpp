@@ -58,6 +58,7 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
   std::optional<Error> first;
   std::vector<ChannelId> attempted;  // protect() issued, successful or not
   bool blank_attempted = false;
+  bool set_issued = false;  // a positioner.set() went out, successful or not
 
   // 1. protect, then blank.
   if (!plan.protect.empty() && deps.control == nullptr) {
@@ -86,13 +87,17 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
                                     plan.limits.valid() ? plan.limits : deps.positioner.limits());
     const Duration dt = plan.af_demag.period / kAfDemagStepsPerPeriod;
     for (double v : out.demag) {
+      set_issued = true;
       auto r = deps.positioner.set(v);
       keep_first(first, r);
       if (first) break;
       sleep(dt);
     }
   }
-  if (!first) keep_first(first, deps.positioner.set(plan.to));
+  if (!first) {
+    set_issued = true;
+    keep_first(first, deps.positioner.set(plan.to));
+  }
   if (!first) {
     bool reported_motion = false;
     if (plan.wait_moving) {
@@ -114,6 +119,11 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
     }
     if (!first && !reported_motion && std::abs(plan.to - plan.from) >= plan.epsilon) sleep(plan.settle);
   }
+
+  // A failure once a set() was issued does not mean the magnet is still: a
+  // set() whose reply was lost was delivered all the same. Give it the settle
+  // time before the beam and the detectors are exposed again.
+  if (first && set_issued) sleep(plan.settle);
 
   // 4. cleanup in reverse order, always.
   if (blank_attempted) keep_first(first, deps.beam_blank->blank(false));

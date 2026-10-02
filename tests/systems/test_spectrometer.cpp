@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -35,11 +36,13 @@ struct Rig {
   std::unique_ptr<Spectrometer> spec;
 
   std::optional<cfg::Limits> magnet_limits;  // replaces [magnet].limits when set
+  bool af_demag = false;                     // enables [magnet].af_demag with a 0.5 swing
 
   cfg::SpectrometerData data() {
     auto d = cfg::load_spectrometer(kIntegrated);
     EXPECT_TRUE(d.has_value()) << (d ? "" : d.error().what);
     if (magnet_limits) d->config.magnet.limits = magnet_limits;
+    if (af_demag) d->config.magnet.af_demag = cfg::AfDemag{true, 0.4, 0.4, 0.5, 0.5};
     return std::move(*d);
   }
 
@@ -167,6 +170,61 @@ TEST(Spectrometer, SmallMoveProtectsOnlyWhenPeakOnPath) {
   never.protect = ProtectPolicy::Never;
   ASSERT_TRUE(r.spec->move_native(4.9, never).has_value());
   EXPECT_EQ(r.log, (CallLog{"set:4.900"}));
+}
+
+// A correction that cannot be computed (here the HV read behind it times out)
+// leaves protection unplannable: the move is refused before anything is sent.
+TEST(Spectrometer, FailedCorrectionWhilePlanningProtectionAbortsTheMove) {
+  Rig r;
+  r.build();
+  r.positioner.value = 4.9;
+  r.source.fail_read_hv = true;
+  auto moved = r.spec->move_native(4.52);  // CDD Ar40 peak at 4.505 is on the path
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(r.log.empty());  // no protect, no blank, no set
+  EXPECT_TRUE(r.positioner.sets.empty());
+  EXPECT_FALSE(r.blank.blanked);
+  EXPECT_TRUE(r.moves.empty());
+
+  auto positioned = r.spec->position(PositionTarget{NativeUnits{4.52}, ""});
+  ASSERT_FALSE(positioned.has_value());
+  EXPECT_EQ(positioned.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(r.log.empty());
+
+  // Once HV reads again the same move is planned and protected as usual.
+  r.source.fail_read_hv = false;
+  ASSERT_TRUE(r.spec->move_native(4.52).has_value());
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "set:4.520", "unprotect:CDD"}));
+}
+
+// Nothing is planned from the table for these moves, so no correction is
+// needed and a failing HV read does not stop them.
+TEST(Spectrometer, MovesThatNeedNoCorrectionIgnoreAFailingHvRead) {
+  Rig r;
+  r.build();
+  r.source.fail_read_hv = true;
+  PositionOptions never;
+  never.protect = ProtectPolicy::Never;
+  ASSERT_TRUE(r.spec->move_native(4.52, never).has_value());
+  r.log.clear();
+  ASSERT_TRUE(r.spec->move_native(9.0).has_value());  // large: protected and blanked without the table
+  EXPECT_EQ(r.log, (CallLog{"protect:CDD", "blank", "set:9.000", "unblank", "unprotect:CDD"}));
+}
+
+// The AF demag swing is clamped to the facade's effective limits
+// ([magnet].limits narrowing the positioner's 0..10), not the positioner's.
+TEST(Spectrometer, AfDemagSwingIsClampedToConfigLimits) {
+  Rig r;
+  r.magnet_limits = cfg::Limits{0.0, 6.0};
+  r.af_demag = true;
+  r.build();
+  r.positioner.value = 3.0;
+  ASSERT_TRUE(r.spec->move_native(5.9).has_value());
+  ASSERT_GT(r.positioner.sets.size(), 1U);  // demag steps, then the target
+  EXPECT_DOUBLE_EQ(*std::max_element(r.positioner.sets.begin(), r.positioner.sets.end()), 6.0);  // it swung past
+  for (double v : r.positioner.sets) EXPECT_LE(v, 6.0);
+  EXPECT_DOUBLE_EQ(r.positioner.sets.back(), 5.9);
 }
 
 TEST(Spectrometer, FailedMoveLeavesNothingProtected) {

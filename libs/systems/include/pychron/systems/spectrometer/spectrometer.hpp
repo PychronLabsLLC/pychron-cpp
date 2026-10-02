@@ -182,7 +182,10 @@ class Spectrometer {
   Result<PositionResult> position(const PositionTarget& target, PositionOptions options = {});
   // Move protocol only (section 4.4); `value` is native. Like position(), a
   // value outside the positioner's limits or [magnet].limits (the stricter
-  // bound on each side) is Config with nothing read or written.
+  // bound on each side) is Config with nothing read or written. If detector
+  // protection cannot be planned (a correction fails, e.g. the HV read behind
+  // it), the move fails with that error and nothing is set, protected or
+  // blanked.
   Result<MoveOutcome> move_native(double value, PositionOptions options = {});
   // HV table + IBeamSource::set_hv (section 4.5).
   Result<PositionResult> position_hv(double mass, const DetectorId& det, PositionOptions options = {});
@@ -264,7 +267,10 @@ class Spectrometer {
   const FieldTable& table_locked() const;
   Result<const FieldTable*> table_named_locked(const std::string& name);
   Result<ChannelId> control_channel(const DetectorId& det) const;
-  std::vector<ChannelId> plan_protection(double from, double to, ProtectPolicy policy, bool& blank);
+  // Channels to protect for a move and whether to blank. Fails when a
+  // correction it needs cannot be computed (an HV read that fails, say): the
+  // caller must then not move, since the path cannot be judged.
+  Result<std::vector<ChannelId>> plan_protection(double from, double to, ProtectPolicy policy, bool& blank);
   void sleep(Duration d) const;
   void restore_table(const std::string& name);
 
