@@ -195,6 +195,25 @@ class PeakCenterRun : public ::testing::Test {
   double initial_ = 0, true_center_ = 0, ax_shift_ = 0.001, height_ = 1000;
 };
 
+// With no sleep injected, settle and reference waits go through
+// Spectrometer::sleep: the spectrometer's clock, so a simulated clock is not
+// held up by real time (here a 30 s settle per point would take minutes).
+TEST_F(PeakCenterRun, WaitsOnTheSpectrometersClockByDefault) {
+  auto cfg = config();
+  cfg.settle = 30s;
+  const TimePoint before = rig_.clock.now();
+  const auto wall = std::chrono::steady_clock::now();
+  PeakCenterOptions options;  // no sweep.sleep
+  auto fut = std::async(std::launch::async, [&] { return run_peak_center(*rig_.spec, cfg, progress_, cancel_, options); });
+  auto r = rig_.drive(fut);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->ok) << r->message;
+  EXPECT_LT(std::chrono::steady_clock::now() - wall, 20s);
+  ASSERT_FALSE(r->tries.empty());
+  EXPECT_GE(rig_.clock.now() - before, 30s * static_cast<int>(r->tries.front().points.size()));
+  EXPECT_TRUE(rig_.sleeps.empty());
+}
+
 TEST_F(PeakCenterRun, CentersUpdatesTheTableAndRepositions) {
   auto cfg = config();
   cfg.additional_detectors = {"AX"};

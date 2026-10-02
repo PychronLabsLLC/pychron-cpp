@@ -300,6 +300,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     at = last_started_row_;
   }
 
+  const QueueSpec before = queue.spec();
   if (r.state == run::RunState::Success) {
     for (const auto& trip : r.measurement.modifications) {
       if (!is_queue_action(trip.action.type)) continue;
@@ -341,7 +342,10 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
   }
   previous_spec_ = slot.spec;
   out.runs.push_back(sum);
-  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(RunFinished{sum});
+  if (ctx_.services.bus != nullptr) {
+    if (!(queue.spec() == before)) ctx_.services.bus->publish(QueueEdited{queue.spec(), sum.queue_changes});
+    ctx_.services.bus->publish(RunFinished{sum});
+  }
   write_state(queue, at + 1, out);
 }
 

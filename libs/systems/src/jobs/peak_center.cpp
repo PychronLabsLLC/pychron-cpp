@@ -317,7 +317,7 @@ class Runner {
   void sleep(Duration d) const {
     if (d <= Duration::zero()) return;
     if (options_.sweep.sleep) options_.sweep.sleep(d);
-    else std::this_thread::sleep_for(d);
+    else spec_.sleep(d);  // the spectrometer's clock, simulated or not
   }
 
   Result<std::optional<spectrometer::Reading>> read_one() {

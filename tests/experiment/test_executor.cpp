@@ -234,9 +234,18 @@ action = "skip_next"
 analysis_types = ["blank_unknown"]
 )");
   auto q = queue({unknown_run("12345"), unknown_run("12346"), unknown_run("12347")}, "q-mod");
+  std::vector<QueueEdited> edits;
+  auto sub = bus_.subscribe<QueueEdited>([&](const QueueEdited& e) { edits.push_back(e); });
   Executor ex(context(), options());
   auto r = ex.execute(q);
   ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  // One snapshot per run that changed the queue (the last blank changed nothing).
+  ASSERT_EQ(edits.size(), 3u);
+  EXPECT_EQ(edits[0].changes, std::vector<std::string>{"blank_next: run_blank"});
+  EXPECT_EQ(edits[0].queue.runs.size(), 4u);
+  EXPECT_EQ(edits[0].queue.runs[1].id.identifier, "bu");
+  EXPECT_TRUE(edits[1].queue.runs[2].skip);
+  EXPECT_EQ(edits.back().queue, q.spec());
   // 12345 inserts a blank; the blank's post-run check skips 12346; 12347 inserts
   // another blank, whose post-run check has nothing left to skip.
   EXPECT_EQ(states(r),

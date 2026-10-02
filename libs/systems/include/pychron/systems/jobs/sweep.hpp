@@ -58,8 +58,8 @@ class Sweep {
   static constexpr std::size_t kMaxPoints = 100000;
 
   struct Options {
-    // Settle waits. Default: std::this_thread::sleep_for. Tests advance a
-    // ManualClock instead.
+    // Settle waits. Default: Spectrometer::sleep, i.e. on the spectrometer's
+    // clock. Tests advance a ManualClock instead.
     std::function<void(Duration)> sleep;
     // Protection for the move to the first magnet point; later steps are
     // small and never protect.
@@ -79,7 +79,7 @@ class Sweep {
 
  private:
   Result<double> apply(Spectrometer& spec, const SweepAxis& axis, double x, bool first);
-  void sleep(Duration d) const;
+  void sleep(Spectrometer& spec, Duration d) const;
 
   Options options_;
   std::vector<SweepPoint> points_;

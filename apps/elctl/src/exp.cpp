@@ -1,36 +1,29 @@
 #include "exp.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <iomanip>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <ostream>
-#include <set>
 #include <sstream>
 #include <thread>
 
+#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/config/loader.hpp"
-#include "pychron/experiment/conditionals/library.hpp"
-#include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
+#include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
-#include "pychron/experiment/persist/persister.hpp"
-#include "pychron/experiment/plan/plan_library.hpp"
-#include "pychron/scripting/script_host.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
-#include "pychron/systems/switch_valve_service.hpp"
 
 namespace elctl {
 
@@ -56,13 +49,6 @@ std::string clock_text(experiment::Duration d) {
   s << total / 3600 << ':' << std::setw(2) << std::setfill('0') << (total / 60) % 60 << ':' << std::setw(2)
     << std::setfill('0') << total % 60;
   return s.str();
-}
-
-std::string read_text(const fs::path& p) {
-  std::ifstream in(p);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
 }
 
 struct ExpArgs {
@@ -128,34 +114,14 @@ class Exp {
       io_.err << "error: no extraction line config at " << g_.config.string() << '\n';
       return kFailed;
     }
-    // Clock: real time, or simulated time running sim_speed times faster.
-    // Simulated time runs the line's scheduler inline after each step, so
-    // polling keeps pace with the clock however the threads are scheduled
-    // (a dispatcher thread starved for a few real milliseconds would miss
-    // whole integrations at high speeds).
+    // Clock: real time, or simulated time running sim_speed times faster,
+    // with the line's scheduler driven by the pump (see ClockPump).
     std::unique_ptr<ManualClock> manual;
-    std::thread pump;
-    std::atomic<bool> pumping{true};
-    std::atomic<Scheduler*> driven{nullptr};
+    std::unique_ptr<ClockPump> pump;
     if (a_.sim_speed > 0) {
       manual = std::make_unique<ManualClock>(TimePoint{} + std::chrono::hours(1));
-      pump = std::thread([&] {
-        const auto step = std::chrono::duration_cast<pychron::Duration>(std::chrono::duration<double>(0.001 * a_.sim_speed));
-        while (pumping) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          manual->advance(step);
-          if (auto* scheduler = driven.load()) scheduler->run_pending();
-        }
-      });
+      pump = std::make_unique<ClockPump>(*manual, a_.sim_speed);
     }
-    struct PumpGuard {
-      std::atomic<bool>& on;
-      std::thread& t;
-      ~PumpGuard() {
-        on = false;
-        if (t.joinable()) t.join();
-      }
-    } pump_guard{pumping, pump};
 
     systems::ExtractionLine::Options line_options;
     line_options.clock = manual.get();
@@ -173,8 +139,13 @@ class Exp {
       return kFailed;
     }
     // Declared after the line, so the pump stops before the line goes.
-    PumpGuard driving_guard{pumping, pump};
-    if (manual) driven = &(*line)->scheduler();
+    struct PumpGuard {
+      ClockPump* pump;
+      ~PumpGuard() {
+        if (pump) pump->stop();
+      }
+    } pump_guard{pump.get()};
+    if (pump) pump->drive(&(*line)->scheduler());
     if (auto r = (*line)->start(); !r) {
       io_.err << "error: " << r.error().what << '\n';
       return kFailed;
@@ -206,59 +177,18 @@ class Exp {
       spec = std::move(*assembled);
     }
 
-    // Services.
-    auto host = scripting::make_script_host();
-    systems::SwitchValveService script_valves((*line)->switches(), "script");
-    std::optional<measurement::SpectrometerPort> port;
-    if (spec) port.emplace(*spec);
-    measurement::ExtractionLineValves valves(**line, "measurement");
-    measurement::InstrumentMetrics instrument(spec.get(), line->get());
-    std::optional<measurement::SpectrometerPeakCenter> peak_center;
-    if (spec) peak_center.emplace(*spec, lab_.peak_centers);
-    persist::FilePersister files(a_.data / "records");
-    persist::Spool spool(a_.data / "spool");
-    persist::SavePipeline save(spool, files);
-    persist::AliquotAllocator aliquots(files);
-
-    executor::ExecutorContext ctx;
-    auto& s = ctx.services;
-    s.clock = &clock;
-    s.bus = &(*line)->bus();
-    s.scripts = host.get();
-    s.resolver = &lab_.scripts->resolver();
-    s.line.valves = &script_valves;
-    s.spectrometer = port ? &*port : nullptr;
-    s.valves = &valves;
-    s.peak_center = peak_center ? &*peak_center : nullptr;
-    s.instrument_metrics = &instrument;
-    if (spec) {
-      s.spectrometer_info = [&spec] {
-        const auto st = spec->snapshot();
-        return run::SpectrometerInfo{st.hash_hex(), st.field_table,
-                                     std::chrono::duration<double>(st.integration).count()};
-      };
-    }
-    s.plans = lab_.plans.get();
-    s.conditionals = lab_.conditionals.get();
-    s.aliquots = &aliquots;
-    s.persister = &files;
-    s.save = &save;
-    s.instrument.mass_spectrometer = queue_.mass_spectrometer;
-    s.instrument.analyst = queue_.username;
-    ctx.pre_run_metrics = &instrument;
-    ctx.blank = default_blank_factory(lab_.ids);
-
     executor::ExecutorOptions options;
-    options.state_file = a_.data / "executor_state.json";
     std::size_t from = a_.from.value_or(0);
     if (a_.resume) {
-      auto row = executor::Executor::resume_row(options.state_file);
+      auto row = lab::LabSession::resume_row(a_.data);
       if (!row) {
         io_.err << "error: --resume: " << row.error().what << '\n';
         return kFailed;
       }
       from = *row;
     }
+    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr},
+                            lab::SessionOptions{a_.data, options});
 
     // Progress.
     auto& bus = (*line)->bus();
@@ -296,32 +226,29 @@ class Exp {
       say("  conditional " + e.trip.name + " tripped: " + e.trip.check);
     }));
 
-    executor::Executor ex(ctx, options);
-    executor::QueueResult result;
-    std::atomic<bool> finished{false};
     interrupt_count() = 0;
-    std::thread worker([&] {
-      result = ex.execute(queue_object(), from);
-      finished = true;
-    });
+    if (auto r = session.start(queue_, from); !r) {
+      io_.err << "error: " << r.error().what << '\n';
+      return kFailed;
+    }
     int handled = 0;
-    while (!finished) {
+    while (session.running()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       const int n = interrupt_count();
       for (; handled < n; ++handled) {
         if (handled == 0) {
           say("interrupt: stopping after the current run (again to cancel it)");
-          ex.stop();
+          session.stop();
         } else if (handled == 1) {
           say("interrupt: cancelling (again to abort)");
-          ex.cancel();
+          session.cancel();
         } else {
           say("interrupt: aborting");
-          ex.abort();
+          session.abort();
         }
       }
     }
-    worker.join();
+    const executor::QueueResult result = *session.wait();
     subs.clear();
     if (g_.sim) sim::BeamModelRegistry::global().clear();
 
@@ -330,15 +257,10 @@ class Exp {
     for (const auto& r : result.runs) ok_runs += r.state == run::RunState::Success ? 1 : 0;
     say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; records in " +
         (a_.data / "records").string());
-    if (save.pending() > 0) say("warning: " + std::to_string(save.pending()) + " record(s) still in the spool");
+    if (session.pending_saves() > 0) say("warning: " + std::to_string(session.pending_saves()) + " record(s) still in the spool");
     (*line)->stop();
     const bool good = result.end == executor::QueueEnd::Completed || result.end == executor::QueueEnd::Stopped;
     return good ? kOk : kFailed;
-  }
-
-  ExperimentQueue& queue_object() {
-    if (!queue_model_) queue_model_.emplace(queue_);
-    return *queue_model_;
   }
 
   ExpArgs a_;
@@ -346,7 +268,6 @@ class Exp {
   Io io_;
   lab::Lab lab_;
   QueueSpec queue_;
-  std::optional<ExperimentQueue> queue_model_;
   std::mutex out_mutex_;
 };
 

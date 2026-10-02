@@ -8,6 +8,7 @@ add_executable(pychron_core_tests
   test_log_match.cpp
   test_log_hub.cpp
   test_scheduler.cpp
+  test_clock_pump.cpp
   test_sha256.cpp
   test_config_loader.cpp
   test_config_validate.cpp
