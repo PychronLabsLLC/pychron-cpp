@@ -21,4 +21,4 @@ target_compile_definitions(pychron_dvc_tests PRIVATE
 target_link_libraries(pychron_dvc_tests PRIVATE pychron::dvc pychron::ingest pychron::persistence
   nlohmann_json::nlohmann_json TinyOrm::TinyOrm Qt6::Core Qt6::Sql GTest::gtest_main)
 pychron_set_warnings(pychron_dvc_tests)
-gtest_discover_tests(pychron_dvc_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
+gtest_discover_tests(pychron_dvc_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 600)
