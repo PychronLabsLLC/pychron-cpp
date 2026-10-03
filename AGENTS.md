@@ -20,6 +20,10 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - gcc 13 (the Ubuntu 24.04 default `g++`) warns where the CI compilers do not;
   build it with `-DPYCHRON_WARNINGS_AS_ERRORS=OFF`.
 - `-DPYCHRON_SCRIPTING=OFF` drops the embedded CPython dependency.
+- `-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF` (default `AUTO`) controls the optional
+  OpenCV in `libs/vision` (`LegacyFinder`, `OpenCvSource`); without it those
+  two files compile to stubs. OpenCV headers appear only in those two `.cpp`
+  files. Only the macOS CI job installs OpenCV.
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not

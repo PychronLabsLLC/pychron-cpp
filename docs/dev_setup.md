@@ -55,6 +55,21 @@ createdb pychron_test
 export PYCHRON_TEST_PG_URL=postgresql://$USER@localhost/pychron_test
 ```
 
+### Vision / OpenCV (optional)
+
+`libs/vision` builds `LegacyFinder` (the port of the Python target finder, for
+comparison) and `OpenCvSource` (video file or camera) only with OpenCV.
+Without it both compile to stubs and everything else is unaffected.
+
+```bash
+brew install opencv          # macOS
+sudo apt install libopencv-dev   # Ubuntu
+```
+
+`-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF`: `AUTO` (default) uses OpenCV when CMake
+finds it, `ON` fails the configure if it does not, `OFF` never looks. Both
+OpenCV 4.x and 5.x work. Configure prints one line saying which was chosen.
+
 ## 2. Code
 
 ```bash

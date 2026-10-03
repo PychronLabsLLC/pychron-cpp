@@ -211,3 +211,50 @@ tolerance were not changed to make them pass.
 
 `df0_42` (not committed) fails in both variants: luma merges with the overlay,
 blue merges the faint trail with the bright core.
+
+## Legacy finder comparison
+
+`LegacyFinder` (the OpenCV port of the Python pipeline, built only with
+`PYCHRON_VISION_OPENCV`) and `SimpleFinder` on the same eight committed frames.
+The test `LegacyFinder.RealFixtureComparison` prints this table; it runs both
+finders on every frame, including those marked `skip = true`, and asserts only
+that nothing crashes and results are finite. It is a report, not a gate. Neither
+finder, the marks nor the tolerances were changed to produce it. Parameters are
+those of the fixture tests (`expected_radius_px` from the case, mask radius half
+the crop). Errors are in px against the marked centre; `ok` is within the case
+`tolerance_px` (4 for every case).
+
+| Frame | Mode | skip | SimpleFinder | LegacyFinder | Legacy, tight crop (diagnostic) |
+|---|---|---|---|---|---|
+| `glow_df0_35` | glow | no | 0.88 ok | 3.16 ok | - |
+| `glow_df0_50` | glow | no | 2.95 ok | 3.61 ok | - |
+| `glow_df1_30` | glow | yes | 4.99 | 11.66 | - |
+| `glow_df1_40` | glow | yes | 13.02 | 5.66 | - |
+| `hole_ac1_3` | hole | yes | none | none | 2.24 ok |
+| `hole_ac1_9` | hole | no | 3.86 ok | none | 0.00 ok |
+| `hole_ac2_18` | hole | yes | none | none | 1.00 ok |
+| `hole_ac2_2` | hole | yes | none | none | 2.00 ok |
+
+Summary:
+
+- Within `tolerance_px`: `SimpleFinder` 3 of 8 (`df0_35`, `df0_50`, `ac1_9`);
+  `LegacyFinder` 2 of 8 (`df0_35`, `df0_50`). They agree on the two glows that
+  work and differ on the rest.
+- Glows: the legacy finder returns a target on all four, at a larger error than
+  `SimpleFinder` on the two that pass (3.16 and 3.61 against 0.88 and 2.95). It is
+  closer on `df1_40` (5.66 against 13.02) but still outside 4 px, and further off
+  on `df1_30` (11.66 against 4.99). Part of its glow error is the original's
+  integer truncation of the centroid.
+- Holes: the legacy finder returns nothing on all four frames. Its threshold
+  limiting accepts a threshold only when 25 to 75 percent of the frame is
+  foreground, which suits the crop the legacy autocenter uses (about 2.55 hole
+  radii on a side) and not these 80 by 80 crops, where a hole of radius 11 covers
+  about 6 percent.
+- The last column re-runs `LegacyFinder` on a crop of `ceil(2.55 * radius)` pixels
+  centred on the marked centre. It finds the hole in all four, so the crop alone
+  explains the misses. It is only a diagnostic and is biased toward the mark:
+  the crop is centred on the mark and the legacy finder prefers targets near
+  the crop centre, so the small errors say the hole was detected, not how
+  accurate the finder is. It is not counted in the totals above.
+- On synthetic frames the legacy and simple finders agree within 1.3 px for holes
+  (on a 30 px crop, 10 stage offsets) and within 1.1 px for glows (200 px frame).

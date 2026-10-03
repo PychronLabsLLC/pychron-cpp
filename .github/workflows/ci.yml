@@ -76,7 +76,7 @@ jobs:
 
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja ccache
+        run: brew install ninja ccache opencv
 
       # A step, not a `services:` block: services cannot be limited to one matrix entry.
       - name: Start PostgreSQL 16

@@ -16,4 +16,13 @@ target_include_directories(pychron_vision PUBLIC
 target_compile_features(pychron_vision PUBLIC cxx_std_20)
 target_link_libraries(pychron_vision PUBLIC pychron::core)
 
+# legacy_finder.cpp and opencv_source.cpp are always compiled; each reduces to
+# its stub without PYCHRON_VISION_OPENCV_ENABLED. SYSTEM keeps OpenCV's own
+# warnings away from -Werror.
+if(PYCHRON_VISION_OPENCV_ENABLED)
+  target_include_directories(pychron_vision SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(pychron_vision PRIVATE ${OpenCV_LIBS})
+  target_compile_definitions(pychron_vision PRIVATE PYCHRON_VISION_OPENCV_ENABLED)
+endif()
+
 pychron_set_warnings(pychron_vision)

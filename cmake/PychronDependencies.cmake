@@ -57,6 +57,37 @@ if(PYCHRON_SCRIPTING)
   endif()
 endif()
 
+# Optional OpenCV for libs/vision (LegacyFinder, OpenCvSource). AUTO uses it
+# when found, ON requires it, OFF never looks. There is no fetch fallback: a
+# source build is too heavy for CI. Without it the two OpenCV translation
+# units compile to stubs, so the source list never changes.
+set(PYCHRON_VISION_OPENCV "AUTO" CACHE STRING "OpenCV for libs/vision: AUTO, ON or OFF")
+set_property(CACHE PYCHRON_VISION_OPENCV PROPERTY STRINGS AUTO ON OFF)
+set(PYCHRON_VISION_OPENCV_ENABLED OFF)
+if(PYCHRON_VISION AND NOT PYCHRON_VISION_OPENCV STREQUAL "OFF")
+  if(NOT PYCHRON_VISION_OPENCV STREQUAL "AUTO" AND NOT PYCHRON_VISION_OPENCV STREQUAL "ON")
+    message(FATAL_ERROR "PYCHRON_VISION_OPENCV must be AUTO, ON or OFF (got '${PYCHRON_VISION_OPENCV}')")
+  endif()
+  # The package is called OpenCV in 4.x and 5.x. In 5.x the contour and
+  # geometry functions moved into the geometry module.
+  find_package(OpenCV QUIET COMPONENTS core imgproc videoio)
+  if(OpenCV_FOUND AND OpenCV_VERSION VERSION_GREATER_EQUAL 5)
+    find_package(OpenCV QUIET COMPONENTS core imgproc videoio geometry)
+  endif()
+  if(OpenCV_FOUND)
+    set(PYCHRON_VISION_OPENCV_ENABLED ON)
+  elseif(PYCHRON_VISION_OPENCV STREQUAL "ON")
+    message(FATAL_ERROR "PYCHRON_VISION_OPENCV=ON but OpenCV (core, imgproc, videoio) was not found")
+  endif()
+  if(PYCHRON_VISION_OPENCV_ENABLED)
+    message(STATUS "PYCHRON_VISION_OPENCV=${PYCHRON_VISION_OPENCV}: using OpenCV ${OpenCV_VERSION}")
+  else()
+    message(STATUS "PYCHRON_VISION_OPENCV=${PYCHRON_VISION_OPENCV}: OpenCV not found; building stubs")
+  endif()
+elseif(PYCHRON_VISION)
+  message(STATUS "PYCHRON_VISION_OPENCV=OFF: building stubs")
+endif()
+
 # QCustomPlot (GPL) for the UI strip charts. Ships no CMake project, so the
 # static library is defined here. UI only: Qt must already be found.
 if(BUILD_UI)
