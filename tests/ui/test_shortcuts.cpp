@@ -158,18 +158,18 @@ class TestShortcuts : public QObject {
     QList<QAction*> help;
     for (QMenu* m : MenuHub::instance().menus(qobject_cast<QMenuBar*>(figure.menuWidget())))
       if (m->title().remove(QLatin1Char('&')) == QStringLiteral("Help")) help = m->actions();
-    QCOMPARE(help.size(), 3);  // Keyboard Shortcuts, separator, About
-    QCOMPARE(help.first()->text(), QStringLiteral("Keyboard Shortcuts"));
+    QCOMPARE(help.size(), 4);  // Command Palette…, Keyboard Shortcuts, separator, About
+    QCOMPARE(help.at(1)->text(), QStringLiteral("Keyboard Shortcuts"));
     QCOMPARE(help.last(), main.about_action());
-    QCOMPARE(help.first()->shortcut(), pychron::ui::key(Shortcut::KeyboardShortcuts));
+    QCOMPARE(help.at(1)->shortcut(), pychron::ui::key(Shortcut::KeyboardShortcuts));
 
-    help.first()->trigger();
+    help.at(1)->trigger();
     auto* dialog = main.findChild<ShortcutsDialog*>();
     QVERIFY(dialog != nullptr);
     QVERIFY(dialog->isVisible());
     dialog->filter()->setText(QStringLiteral("zzz"));
     dialog->close();
-    help.first()->trigger();  // the same dialog again, unfiltered
+    help.at(1)->trigger();  // the same dialog again, unfiltered
     QCOMPARE(main.findChildren<ShortcutsDialog*>().size(), 1);
     QVERIFY(dialog->isVisible());
     QVERIFY(dialog->filter()->text().isEmpty());

@@ -27,6 +27,7 @@ enum class Shortcut {
   ExperimentWindow,
   DataWindow,
   KeyboardShortcuts,
+  CommandPalette,
   // The experiment window.
   OpenQueue,
   SaveQueue,
@@ -82,8 +83,8 @@ class ShortcutsDialog : public QDialog {
   QTreeWidget* tree_;
 };
 
-// Puts Help > Keyboard Shortcuts in the unified bar, owned by `window`;
-// the dialog is built on first use as its child. Returns the action.
-QAction* add_shortcuts_reference(QWidget* window);
+// Help > Keyboard Shortcuts, owned by `window` (the caller puts it in the
+// unified bar); the dialog is built on first use as its child.
+QAction* make_shortcuts_action(QWidget* window);
 
 }  // namespace pychron::ui

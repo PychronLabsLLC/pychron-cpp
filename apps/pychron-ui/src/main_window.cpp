@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 
+#include "command_palette.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
 
@@ -65,7 +66,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::Window, {line_window, spectrometer_action_, experiment_action_, data_action_},
                    MenuHub::Scope::App);
-  add_shortcuts_reference(this);
+  MenuHub::instance().contribute(this, MenuHub::Menu::Help,
+                                 {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);
   about_action_ = brand::add_help_menu(this);
   MenuHub::instance().install(this);
   connect(data_action_, &QAction::triggered, this, [this] {

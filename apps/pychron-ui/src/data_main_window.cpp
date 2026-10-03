@@ -1,6 +1,7 @@
 #include "data_main_window.hpp"
 
 #include "brand.hpp"
+#include "command_palette.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
 
@@ -37,7 +38,8 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
-  add_shortcuts_reference(this);
+  MenuHub::instance().contribute(this, MenuHub::Menu::Help,
+                                 {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);
   about_ = brand::add_help_menu(this);
   MenuHub::instance().install(this);
 }

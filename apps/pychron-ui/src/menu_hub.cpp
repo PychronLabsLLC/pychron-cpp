@@ -99,6 +99,18 @@ QList<QMenu*> MenuHub::menus(const QMenuBar* bar) const {
   return out;
 }
 
+QList<MenuHub::Command> MenuHub::commands() const {
+  QList<Command> out;
+  for (const Menu menu : kOrder) {
+    for (const Group& g : groups_) {
+      if (g.menu != menu || g.owner == nullptr) continue;
+      for (const auto& a : g.actions)
+        if (a != nullptr) out.append({a.data(), menu});
+    }
+  }
+  return out;
+}
+
 void MenuHub::contribute(QWidget* owner, Menu menu, const QList<QAction*>& actions, Scope scope) {
   Group g{owner, menu, {}};
   for (QAction* a : actions) g.actions.append(a);

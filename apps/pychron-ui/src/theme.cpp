@@ -258,6 +258,13 @@ QScrollBar::handle:hover { background: @outline; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; background: none; }
 QScrollBar::add-page, QScrollBar::sub-page { background: none; }
 QScrollArea { background: transparent; }
+
+QFrame#CommandPalette { background: @base; border: 1px solid @strong_border; }
+QFrame#CommandPalette QLineEdit { border: none; border-bottom: 2px solid @accent; border-radius: 0; padding: 10px 14px; }
+QFrame#CommandPalette QTreeView { border: none; padding: 2px 0; }
+QFrame#CommandPalette QTreeView::item { padding: 0 10px; border: none; background: transparent; }
+QFrame#CommandPalette QTreeView::item:hover { background: @accent_wash; }
+QFrame#CommandPalette QTreeView::item:selected { background: @accent_soft; color: @accent_strong; }
 )");
   const std::pair<const char*, QColor> colors[] = {
       {"accent_strong", t.accent_strong}, {"accent_soft", t.accent_soft}, {"accent_wash", t.accent_wash},

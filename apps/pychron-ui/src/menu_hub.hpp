@@ -56,6 +56,14 @@ class MenuHub : public QObject {
   // has none yet (normally done when it is first shown). Returns the bar.
   QMenuBar* install(QWidget* window);
 
+  // Every contributed action, in menu order then contribution order (for the
+  // command palette); hidden and disabled ones included.
+  struct Command {
+    QAction* action;
+    Menu menu;
+  };
+  QList<Command> commands() const;
+
   static QString title(Menu menu);
   // The menus `bar` shows, in order (hidden ones included); empty if `bar`
   // is not one of the hub's.

@@ -10,7 +10,6 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
-#include "menu_hub.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -34,6 +33,7 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::DataWindow, C::Everywhere, QStringLiteral("Data browser"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_D)},
       {S::KeyboardShortcuts, C::Everywhere, QStringLiteral("Keyboard shortcuts (this list)"),
        QKeySequence(QKeySequence::HelpContents)},
+      {S::CommandPalette, C::Everywhere, QStringLiteral("Command palette"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_P)},
 
       {S::OpenQueue, C::ExperimentWindow, QStringLiteral("Open queue…"), QKeySequence(QKeySequence::Open)},
       {S::SaveQueue, C::ExperimentWindow, QStringLiteral("Save queue"), QKeySequence(QKeySequence::Save)},
@@ -144,10 +144,9 @@ void ShortcutsDialog::apply_filter(const QString& text) {
   }
 }
 
-QAction* add_shortcuts_reference(QWidget* window) {
+QAction* make_shortcuts_action(QWidget* window) {
   auto* action = new QAction(QStringLiteral("Keyboard Shortcuts"), window);
   action->setShortcut(key(Shortcut::KeyboardShortcuts));
-  MenuHub::instance().contribute(window, MenuHub::Menu::Help, {action}, MenuHub::Scope::App);
   QObject::connect(action, &QAction::triggered, window, [window] {
     auto* dialog = window->findChild<ShortcutsDialog*>(QString(), Qt::FindDirectChildrenOnly);
     if (dialog == nullptr) dialog = new ShortcutsDialog(window);
