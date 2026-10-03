@@ -517,7 +517,6 @@ class TinyStore final : public IStore {
     return sql::kAnalysisSummarySelect.arg(sql::ts(dialect(), QStringLiteral("a.timestamp_utc")));
   }
 
-  // Inserts one catalog row with a fresh uuid and created_utc, audited (D6).
   using NaturalKey = std::vector<std::pair<const char*, QVariant>>;
 
   // The uuid of the row `key` names, matching a null part with IS NULL.
@@ -552,6 +551,7 @@ class TinyStore final : public IStore {
     return insert_catalog_row(tx, client, table, uuid.value_or(Uuid::v7()), std::move(row), detail);
   }
 
+  // Inserts one catalog row with a fresh uuid and created_utc, audited (D6).
   Result<Uuid> add_catalog_row(Uuid client, const char* table, Row row, const std::string& detail) {
     WriteTx tx(*db_);
     if (auto r = tx.begin(); !r) return fail(r.error());

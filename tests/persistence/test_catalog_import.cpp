@@ -85,6 +85,14 @@ TEST_P(CatalogImportTest, AddMaterialTwice) {
   expect_ensure([&] { return store_->add_material(client(), {.name = "sanidine", .grainsize = "180-250"}); });
 }
 
+TEST_P(CatalogImportTest, AddMaterialWithEmptyGrainsizeTwice) {
+  expect_ensure([&] { return store_->add_material(client(), {.name = "sanidine"}); });
+}
+
+TEST_P(CatalogImportTest, AddPrincipalInvestigatorWithEmptyInitialTwice) {
+  expect_ensure([&] { return store_->add_principal_investigator(client(), {.last_name = "Smith"}); });
+}
+
 TEST_P(CatalogImportTest, AddSampleTwice) {
   const Uuid p = project(), m = material();
   expect_ensure([&] { return store_->add_sample(client(), {.name = "FC-1", .project = p, .material = m}); });
