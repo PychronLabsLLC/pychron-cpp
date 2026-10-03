@@ -541,6 +541,43 @@ struct BlobData {
   std::optional<int> n_points;
 };
 
+// The catalog tables that have a natural key, for IStore::find_catalog_row.
+// The key of each, in the order its parts are given:
+//   PrincipalInvestigator  last_name, first_initial
+//   Project                name, principal investigator (uuid, or none)
+//   Material               name, grainsize
+//   Sample                 name, project (uuid), material (uuid)
+//   Irradiation            name
+//   Level                  irradiation (uuid), name
+//   IrradiationPosition    level (uuid), position
+//   User                   name
+//   MassSpectrometer       name
+//   ExtractDevice          name
+//   Load                   name
+//   LoadPosition           load (uuid), position, identifier (uuid)
+//   Repository             name
+//   RefObject              ref_type (stored spelling), key
+enum class CatalogTable {
+  PrincipalInvestigator,
+  Project,
+  Material,
+  Sample,
+  Irradiation,
+  Level,
+  IrradiationPosition,
+  User,
+  MassSpectrometer,
+  ExtractDevice,
+  Load,
+  LoadPosition,
+  Repository,
+  RefObject
+};
+
+// One part of a natural key: text, a number, the uuid of a parent row, or
+// (monostate) no value, which matches a row that has none there.
+using CatalogKeyPart = std::variant<std::monostate, std::string, int, Uuid>;
+
 class IStore {
  public:
   virtual ~IStore() = default;
@@ -602,6 +639,10 @@ class IStore {
   // position does not exist or holds none.
   virtual Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
                                                            int position) = 0;
+  // The row of `table` that `key` names (see CatalogTable for the parts);
+  // nullopt when there is none. A key with the wrong number of parts is an
+  // error. This is the lookup every add_* makes before it writes.
+  virtual Result<std::optional<Uuid>> find_catalog_row(CatalogTable table, const std::vector<CatalogKeyPart>& key) = 0;
 
   // Groups, repositories, bookmarks (sections 3.6, 5.5).
   virtual Result<Uuid> add_repository(Uuid client, const std::string& name) = 0;

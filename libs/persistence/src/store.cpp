@@ -369,6 +369,50 @@ class TinyStore final : public IStore {
     return std::optional<std::string>{to_std((*row)->value("identifier"))};
   }
 
+  Result<std::optional<Uuid>> find_catalog_row(CatalogTable table, const std::vector<CatalogKeyPart>& key) override {
+    struct Columns {
+      const char* table;
+      std::vector<const char*> key;
+    };
+    const auto columns = [](CatalogTable t) -> Columns {
+      switch (t) {
+        case CatalogTable::PrincipalInvestigator: return {"principal_investigator", {"last_name", "first_initial"}};
+        case CatalogTable::Project: return {"project", {"name", "pi_uuid"}};
+        case CatalogTable::Material: return {"material", {"name", "grainsize"}};
+        case CatalogTable::Sample: return {"sample", {"name", "project_uuid", "material_uuid"}};
+        case CatalogTable::Irradiation: return {"irradiation", {"name"}};
+        case CatalogTable::Level: return {"level", {"irradiation_uuid", "name"}};
+        case CatalogTable::IrradiationPosition: return {"irradiation_position", {"level_uuid", "position"}};
+        case CatalogTable::User: return {"app_user", {"name"}};
+        case CatalogTable::MassSpectrometer: return {"mass_spectrometer", {"name"}};
+        case CatalogTable::ExtractDevice: return {"extract_device", {"name"}};
+        case CatalogTable::Load: return {"load", {"name"}};
+        case CatalogTable::LoadPosition: return {"load_position", {"load_uuid", "position", "identifier_uuid"}};
+        case CatalogTable::Repository: return {"repository", {"name"}};
+        case CatalogTable::RefObject: return {"ref_object", {"ref_type", "key"}};
+      }
+      return {nullptr, {}};
+    };
+    const Columns named = columns(table);
+    if (!named.table) return fail(ErrorKind::Protocol, "find_catalog_row: unknown catalog table");
+    if (key.size() != named.key.size())
+      return fail(ErrorKind::Protocol, std::string("find_catalog_row: the key of ") + named.table + " has " +
+                                           std::to_string(named.key.size()) + " parts, " +
+                                           std::to_string(key.size()) + " given");
+    NaturalKey natural;
+    for (std::size_t i = 0; i < key.size(); ++i) {
+      QVariant value;  // null: matched with IS NULL
+      if (const auto* text = std::get_if<std::string>(&key[i]))
+        value = qv(*text);
+      else if (const auto* number = std::get_if<int>(&key[i]))
+        value = qv(*number);
+      else if (const auto* uuid = std::get_if<Uuid>(&key[i]))
+        value = qv(*uuid);
+      natural.emplace_back(named.key[i], std::move(value));
+    }
+    return find_by_key(named.table, natural);
+  }
+
   Result<Uuid> add_repository(Uuid client, const std::string& name) override {
     Row row;
     row["name"] = qv(name);

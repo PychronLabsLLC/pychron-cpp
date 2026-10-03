@@ -302,5 +302,64 @@ TEST_P(CatalogImportTest, ProjectCheckinDateMustBeADate) {
   }
 }
 
+// find_catalog_row is the read half of every ensure: it names the row an
+// add_* would return and creates nothing.
+TEST_P(CatalogImportTest, FindCatalogRowByNaturalKey) {
+  using T = CatalogTable;
+  const Uuid c = client();
+  const ChangeSeq before_reads = *store_->latest_change_seq();
+  const auto find = [&](T table, std::vector<CatalogKeyPart> key) {
+    auto found = store_->find_catalog_row(table, key);
+    EXPECT_TRUE(found) << (found ? "" : to_string(found.error()));
+    return found ? *found : std::optional<Uuid>{};
+  };
+  // Nothing there yet, and asking creates nothing.
+  EXPECT_FALSE(find(T::PrincipalInvestigator, {std::string("Smith"), std::string("J")}));
+  EXPECT_FALSE(find(T::Project, {std::string("Alpha"), std::monostate{}}));
+  EXPECT_EQ(*store_->latest_change_seq(), before_reads);
+
+  const Uuid pi = *store_->add_principal_investigator(c, {.last_name = "Smith", .first_initial = "J"});
+  const Uuid bare = *store_->add_project(c, {.name = "Alpha"});
+  const Uuid owned = *store_->add_project(c, {.name = "Alpha", .principal_investigator = pi});
+  const Uuid mat = *store_->add_material(c, {.name = "sanidine"});
+  const Uuid samp = *store_->add_sample(c, {.name = "FC-2", .project = owned, .material = mat});
+  const Uuid device = *store_->add_extract_device(c, "Fusions CO2");
+  const Uuid user = *store_->ensure_user(c, "newuser");
+  const Uuid repo = *store_->add_repository(c, "IR1010");
+  const Uuid holder = *store_->add_ref_object(c, {.type = RefType::LoadHolder, .key = "221-hole"});
+  LoadSpec tray;
+  tray.name = "L-1";
+  const Uuid load = *store_->add_load(c, tray);
+  ASSERT_TRUE(store_->add_load_position(c, {load, 3, lab_.identifier, std::nullopt, std::nullopt, std::nullopt}));
+  const ChangeSeq after_writes = *store_->latest_change_seq();
+
+  EXPECT_EQ(find(T::PrincipalInvestigator, {std::string("Smith"), std::string("J")}), pi);
+  // A project without a principal investigator is not the one with.
+  EXPECT_EQ(find(T::Project, {std::string("Alpha"), std::monostate{}}), bare);
+  EXPECT_EQ(find(T::Project, {std::string("Alpha"), pi}), owned);
+  EXPECT_EQ(find(T::Material, {std::string("sanidine"), std::string("")}), mat);
+  EXPECT_EQ(find(T::Sample, {std::string("FC-2"), owned, mat}), samp);
+  EXPECT_FALSE(find(T::Sample, {std::string("FC-2"), bare, mat}));
+  EXPECT_EQ(find(T::Irradiation, {std::string("NM-300")}), lab_.irradiation);
+  EXPECT_EQ(find(T::Level, {lab_.irradiation, std::string("A")}), lab_.level);
+  EXPECT_EQ(find(T::IrradiationPosition, {lab_.level, 1}), lab_.position);
+  EXPECT_FALSE(find(T::IrradiationPosition, {lab_.level, 2}));
+  EXPECT_EQ(find(T::User, {std::string("newuser")}), user);
+  EXPECT_EQ(find(T::MassSpectrometer, {std::string("jan")}), lab_.mass_spectrometer);
+  EXPECT_EQ(find(T::ExtractDevice, {std::string("Fusions CO2")}), device);
+  EXPECT_EQ(find(T::Load, {std::string("L-1")}), load);
+  EXPECT_TRUE(find(T::LoadPosition, {load, 3, lab_.identifier}));
+  EXPECT_FALSE(find(T::LoadPosition, {load, 4, lab_.identifier}));
+  EXPECT_EQ(find(T::Repository, {std::string("IR1010")}), repo);
+  EXPECT_EQ(find(T::RefObject, {std::string("load_holder"), std::string("221-hole")}), holder);
+  EXPECT_FALSE(find(T::RefObject, {std::string("irradiation_holder"), std::string("221-hole")}));
+  EXPECT_EQ(*store_->latest_change_seq(), after_writes) << "a read must not write";
+
+  // A key of the wrong shape is refused, not guessed at.
+  auto wrong = store_->find_catalog_row(T::Level, {std::string("A")});
+  ASSERT_FALSE(wrong);
+  EXPECT_EQ(wrong.error().kind, ErrorKind::Protocol);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, CatalogImportTest, ::testing::ValuesIn(engines()),
                          [](const auto& info) { return info.param; });
