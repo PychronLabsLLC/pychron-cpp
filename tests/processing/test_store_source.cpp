@@ -965,6 +965,19 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
     EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
   }
+  // Nor is an IC factor stub row, with neither a value nor an error.
+  {
+    auto parts = argon_parts();
+    auto& ic = first_row<ps::IcFactors>(parts, ps::Kind::IcFactors);
+    ic.value.reset();
+    ic.error.reset();
+    ic.reviewed = true;
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
+    EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->ic_reviewed);
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+  }
   // An isotope reduce() never sees does not stop it.
   {
     auto parts = argon_parts();

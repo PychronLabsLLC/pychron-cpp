@@ -318,11 +318,12 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
             iso.blank_reviewed = b.reviewed;
             if (b.isotope == iso.key) break;
           }
-      // No row for the detector: no correction (1). A row without a value is
-      // an unknown factor, not 1.
+      // No row for the detector, or a stub row with neither a value nor an
+      // error: no correction (1). A row with only one of the two is an unknown
+      // factor, not 1.
       if (ics)
         for (const auto& ic : *ics)
-          if (ic.detector == iso.detector) {
+          if (ic.detector == iso.detector && (ic.value || ic.error || (ic.manual.use_value && ic.manual.value))) {
             iso.ic_factor = value_of(ic.value, ic.error, ic.manual);
             iso.ic_reviewed = ic.reviewed;
           }
