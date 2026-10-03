@@ -15,6 +15,8 @@ Appendix A gives the Drive folder ids, the tree layout, the melbourne
 reference values and how to re-run the survey (added 2026-10-03).
 Appendix B is a file-level pass over every lab's `extractionline/` and
 `canvas2D/` folders, with corrections to the sections below (added 2026-10-03).
+Appendix C does the same for the `devices/` folders and compares the device
+kinds with the drivers pychron-cpp has (added 2026-10-03).
 
 ## Gaps vs current `extraction_line.toml` / `canvas.toml` schema
 
@@ -825,3 +827,218 @@ nested inside `<stage>`; more are nested inside `<laser>` and `<tank>`.
 - UF is listed among labs shipping two formats that disagree. Its `canvas.xml`
   is a two-valve stub and its `valves.yaml` is hal's file, so UF is not
   evidence for a precedence rule.
+
+## Appendix C: `devices/` file survey (2026-10-03)
+
+Every text file in every lab's `devices/` tree was read from the local Drive
+mirror; `backup/` and `zobs/` files were hashed and read only where they differ
+from every live file. Hosts, IPs and serial numbers are left out. Device
+classes come from the file where it names one, otherwise from `<klass>` in the
+lab's `initialization.xml`.
+
+### C.1 Which folders are real
+
+| Folder | Status |
+|---|---|
+| melbourne | Own files, 2025-2026, CRLF. Argus over TCP. One stray `NGXGPActuator.cfg` with an empty host |
+| asu/setupfiles | Own files, 2023. NGX plus an Agilent actuator on VISA-USB |
+| ldeo | Own files. Twelve cfgs, three-way actuator indirection, UDP |
+| usgsdenver | Widest device mix (25 cfgs), 2015-2022 |
+| valve | Byte-identical to usgsdenver, all 76 files |
+| co2, diode | Laser boxes. Each has a live laser folder and a dated snapshot (`fusions_co2_033120`, `fusions_diode_port3`); 13 files in each snapshot match the live folder |
+| felix | Top level, `co2/`, `diode/`, `furnace/`, `furnace/1/` (a snapshot). `diode/` is 16/17 identical to `co2/` |
+| jan | Mostly felix's files: `co2/` 16/17, `diode/` 17/17, `furnace/1/` 14/14 |
+| hal | NGX files from wiscar, cryostat files from ldeo (port name included); only the two LabJack switch files are its own |
+| wiscar = asu/orig | Identical; three NGX files |
+| usgsreston | NGX files identical to wiscar's (2018) |
+| uaf | Three flat NGX cfgs |
+| purdue | uaf's three files plus reston's Agilent file plus a Kinesis cfg |
+| uf/original | Three NGX cfgs on a loopback endpoint (development) |
+| uf/setupfiles | Empty |
+| asu/setupfiles_sft | No `devices/`; a Watlow cfg and `pid.csv` at the root, both diode's |
+
+One NGX actuator file, by hash, sits in asu/orig, hal, wiscar and usgsreston;
+all four point at one endpoint. `newport_parameters/` is identical in co2,
+diode, usgsdenver and valve.
+
+### C.2 Device catalogue
+
+| Legacy class or file | What it is | Labs | Transport |
+|---|---|---|---|
+| NGXGPActuator, ngx_valve_controller | Valves through the NGX | asu, wiscar, hal, usgsreston, uf/orig, uaf, purdue | TCP 1099 |
+| spectrometer_microcontroller (`name= NGX`) | NGX link | same | TCP 1099 |
+| spectrometer_microcontroller (Argus/Helix) | Qtegra remote control | melbourne (TCP); ldeo, felix (UDP) | 1069 |
+| QtegraGPActuator and named variants | Valves through Qtegra | melbourne (TCP); ldeo (UDP); usgsdenver (no `kind`) | 1069 |
+| QtegraGaugeController, QtegraDevice | Values read through Qtegra | ldeo; usgsdenver | 1069 |
+| AgilentGPActuator | Agilent switch unit | asu (VISA-USB); usgsreston, purdue, usgsdenver, ldeo (serial) | VISA or serial |
+| AgilentMultifunction | Valve state readback | ldeo | serial |
+| ArduinoGPActuator | Arduino valves | usgsdenver | serial 115200 |
+| NMGRLFurnaceActuator | Furnace firmware valves | usgsdenver, felix, jan | TCP 4567 |
+| PychronGPActuator | Valves through another Pychron | felix | TCP 1061 |
+| U3Actuator | LabJack actuator and readback | hal | USB and serial |
+| MicroIonController | Granville-Phillips gauge, three on one bus | usgsdenver | serial 19200, bus address |
+| PychronMicroIonController | Gauge read through the furnace host | usgsdenver | TCP 4567 |
+| XGS600GaugeController | Multi-gauge controller | ldeo | serial 9600 |
+| Model335TemperatureController | Cryostat | ldeo (hal is a copy) | serial 9600 7/odd |
+| WatlowEZZone | Temperature controller | diode, asu-sft, felix, jan | Modbus RTU |
+| NMGRLFurnaceEurotherm | Furnace temperature | felix, jan | TCP 4567; serial 7/even |
+| DPi32TemperatureMonitor | Temperature monitor | usgsdenver; diode, felix, jan | serial |
+| ProXRADC + Pneumatics | ADC and air-pressure sensor | usgsdenver | serial 115200 |
+| OmegaADC | ADC behind the pyrometer and power meter | diode, felix, jan | serial 9600, address |
+| TempHumMicroServer | Room temperature and humidity | usgsdenver | TCP 2000 |
+| ThermoRack; PychronChiller | Chiller | usgsdenver; co2, diode | serial 9600; TCP 1061 |
+| UPS | UPS monitor | usgsdenver | serial 1200 |
+| Fusions logic board, zoom and beam motors | Laser controller | co2, diode (serial 19200); felix (TCP 1063, 8000) | |
+| Newport ESP stage, axes, group, profiler, joystick | Motion | co2, diode (serial 19200); felix, jan (TCP 8000) | |
+| Chromium `stage.cfg` | Stage limits and signs only | asu, melbourne | none |
+| VueMetrix / diode control module | Diode module | diode, felix, jan | serial 115200 |
+| Pyrometer | Pyrometer | diode, felix, jan | serial 9600 even |
+| Fiber light + Arduino module | Illumination | co2, diode | serial 115200 |
+| Furnace feeder, funnel, dumper, magnets | Furnace drives | felix, jan | TCP 4567 |
+| Agilent multiplexer | ADC channels | felix, jan | serial, plus `[RPC]` |
+| APIS controller | Pipette system client | felix, jan | TCP 1057 |
+| Unidex | Motion | felix, jan | serial 9600 |
+| Kinesis controller | Thorlabs stage service | purdue | HTTP |
+
+Only in `zobs/` or `backup/`: an RPC chiller, a GPIB stage, six Modbus bakeout
+controllers, pump controllers, the ATL UV laser, a UDP diode server.
+
+### C.3 Transport keys as used
+
+| Transport | Keys and values |
+|---|---|
+| Ethernet | `type` = ethernet / Ethernet; `kind` = TCP / UDP / **absent**; `host` an address, a DHCP hostname, `localhost`, or empty; `timeout` 1, 2, 3, 12; `write_terminator` CRLF or `chr(10)`; `read_terminator` CRLF; `use_end`; `strip`; `verbose`; `test_cmd`; `scheduler` |
+| Serial | `port` as a Keyspan name, `usbserial-<id>`, `usbmodem<digits>`, bare `usbmodem`, bare `usb`; `baudrate` 1200 to 115200 or absent; `bytesize=7`; `parity` odd / even / EVEN; `stopbits`; `timeout`; `terminator` CRLF or ETX with `terminator_position=-2`; `read_delay=0.05`; `scheduler` gauges / agilent / Agilent |
+| Modbus RTU | `type=modbus`, `slave_address=01`, `port`, `baudrate` 9600 or 38400 |
+| VISA-USB | `type=visa`, `board`, `manufacture_id`, `model_code`, `serial_number`, `usb_interface_number` |
+| USB | `type=USB`, `port=usbmodem` |
+| HTTP | `[General] base_url`, quoted |
+
+No file sets a retry count. No Modbus TCP and no telnet appear in any
+`devices/` folder. GPIB appears only in a `zobs/` file.
+
+### C.4 References between files
+
+| Pattern | Example |
+|---|---|
+| `[General] type=<X>`: the comms are in `<X>.cfg` | `switch_controller` to `AgilentGPActuator`; furnace controller, feeder, funnel; pneumatics to the ADC |
+| `[General] name=<file>` + `klass=<Class>` | ldeo `switch_controller_*` |
+| `[ADC] klass=` and `[General] adc=` | power meter and pyrometer monitor to `OmegaADC` |
+| `control_module=` | fiber light to the Arduino module |
+| `[Motors] zoom=zoom_motor.cfg` | laser controller |
+| `[Optional] joystick=, group=` (no extension) | stage controller |
+| `scheduler=<name>` | a shared lock name, not a file |
+
+Dangling or mismatched:
+
+- uf/setupfiles and jan list `switch_controller` in `initialization.xml` with
+  no cfg.
+- felix and jan name the file `stagecontroller.cfg`; every other lab and the
+  init files say `stage_controller`.
+- diode's init lists device `control`; the file is
+  `vue_metrix_controlmodule.cfg`.
+- hal's init lists a temperature controller, a pyrometer, a stage controller
+  and gauge controllers; none has a cfg.
+- diode has two `OmegaADC.cfg` files with different ports.
+- purdue's `AgilentGPActuator.cfg` and melbourne's `NGXGPActuator.cfg` are
+  unreferenced. purdue's setup notes name `stage_controller.cfg`; the file is
+  `kinesis_controller.cfg`.
+
+### C.5 Shared endpoints
+
+| Lab | Devices on one endpoint | Framing agrees |
+|---|---|---|
+| every NGX lab | NGX actuator and spectrometer link | yes, except uaf and purdue (`use_end` differs) |
+| ldeo | Qtegra actuator, Qtegra gauge reader, spectrometer link | only the spectrometer sets a timeout |
+| melbourne | Qtegra actuator and spectrometer link | yes |
+| usgsdenver | three gauge controllers on one serial bus, by address | yes |
+| usgsdenver | furnace actuator and a gauge controller on the furnace host | yes |
+| felix, jan furnace | actuator, temperature controller, feeder, funnel, magnets, dumper | yes |
+| felix, jan lasers | Unidex (9600) and the diode module (115200) on one serial port | **no** |
+| felix, jan lasers | OmegaADC (9600) and the temperature monitor (19200) on one serial port | **no** |
+
+### C.6 Coverage in pychron-cpp
+
+Registered driver kinds: `proxr_relay`, `pfeiffer_maxigauge`, `gp_microion`,
+`thermo_qtegra`, `isotopx_ngx`, `ngx_valves`, `dac_positioner`, `serial_hv`,
+`adc_bank`, `pulse_counter`, and five `sim_*`. `TransportKind` has Serial, Tcp,
+ModbusRtu, ModbusTcp, Sim and Link; `libs/transport` implements serial, tcp,
+sim and link.
+
+| Legacy kind | C++ driver | Labs (clones counted once) |
+|---|---|---|
+| NGX valves | `ngx_valves` | 8 |
+| NGX spectrometer | `isotopx_ngx` | 8 |
+| Qtegra spectrometer | `thermo_qtegra`; two of three labs use UDP | 3 |
+| MicroIon gauge | `gp_microion` | 1 |
+| Agilent switch-unit actuator | none | 5 |
+| Watlow EZ-Zone | none | 4 |
+| Fusions logic board and motors | none | 4 |
+| Newport ESP stage | none | 4 |
+| Qtegra valve actuator | none (the Qtegra driver has no valve code) | 3 |
+| Furnace firmware actuator | none | 3 |
+| Pyrometer, OmegaADC, diode module | none | 3 |
+| Model335 cryostat | none | 1 real, 1 copy |
+| Furnace drives, Eurotherm, multiplexer, APIS, Unidex | none | 2 |
+| Chiller, fiber light, Chromium stage | none | 2 |
+| Fourteen others | none | 1 each |
+
+Missing transports: UDP (ldeo, felix), VISA-USB (asu), USB/LabJack (hal), HTTP
+(purdue). Modbus RTU is in the enum without an implementation. Two C++ drivers
+have no counterpart in these folders: `proxr_relay` (ProXR appears only as an
+ADC) and `pfeiffer_maxigauge`.
+
+By lab count, the next drivers worth writing are the Agilent actuator, then the
+Qtegra valve actuator, which with UDP completes the three Qtegra labs.
+
+### C.7 New parsing hazards
+
+- Ethernet with no `kind=` (several usgsdenver, felix and purdue files). The
+  importer must not assume TCP; require the user to state it.
+- Files with no `[General]` section.
+- Empty values: `host=`, `test_cmd =`.
+- A duplicated section (`[Channel03]` twice) in one `zobs/` file.
+- Bare-CR line endings with quoted fields in one Eurotherm table; `|` and tab
+  separators for the same table kind in one folder.
+- A trailing tab after a port value.
+- Quoted values (`valve='C,U'`, `get_func='temp1'`).
+- Blank lines between keys; no final newline.
+- `.txt` setup files that are positional (`port,baud`), and
+  `newport_parameters/*.txt` that are raw controller commands.
+- A file whose extension lies (`.py` holding rendered HTML text).
+- `clear_output` inside `[Communications]`; `[Communications]` with no `type`.
+- Scheduler names differing only in case.
+
+### C.8 Fixture value
+
+- **Best**: melbourne, ldeo, asu/setupfiles.
+- **Good but dated**: usgsdenver (widest mix; every `type=` reference
+  resolves), diode `fusions_diode/` (a complete laser set).
+- **With caveats**: co2 `fusions_co2/` (two camera files disagree), felix
+  (furnace complete; port collisions; many dated PID variants).
+- **Not fixtures**: valve, wiscar, asu/orig, hal, usgsreston, purdue, jan,
+  asu-sft (clones or assembled), uf (development or empty), and the dated
+  snapshot folders.
+
+### C.9 Corrections to the sections above
+
+1. "Model335 ... 7/odd/GPIB": the cryostat file is plain serial 9600 7/odd.
+   GPIB occurs only in a `zobs/` stage file.
+2. `message_frame=L4,-,C4` is commented out in every device file. It is not
+   live configuration.
+3. The serial-port collision between a temperature monitor and the Omega ADC
+   is in the felix and jan laser folders, not in live diode, where the
+   colliding line is commented out.
+4. The `PychronGPActuator` cfg, and the `switch_controller` that names it, are
+   in felix. jan has no `switch_controller` cfg. The files do not show which
+   side is the client.
+5. Lascon, the telnet ion-pump controllers and the IGC100 do not appear in any
+   `devices/` folder surveyed here; those findings came from other folders or
+   labs.
+6. UDP for Qtegra is live in felix as well as ldeo.
+
+### C.10 Not read
+
+One zip archive in diode (a 2012-2019 copy of the diode laser folder) was
+listed, not extracted. One `zobs/` script holds a plaintext credential; it is
+not reproduced here and was reported to the owner.
