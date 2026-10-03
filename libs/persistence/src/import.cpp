@@ -186,6 +186,7 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     // finds an imported changeset's change_seq through this row.
     if (*written) note(entities, QStringLiteral("changeset"), c.uuid, "insert");
 
+    // Heads are locked in the order given, not sorted: one importer at a time is assumed.
     for (const auto& rev : c.revisions) {
       auto stored = db_.select_one(sql::kRevisionExists, {qv(rev.uuid)});
       if (!stored) return fail(stored.error());

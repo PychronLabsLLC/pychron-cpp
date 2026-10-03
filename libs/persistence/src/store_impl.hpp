@@ -14,7 +14,7 @@ namespace pychron::persistence::detail {
 // ---------------------------------------------------------------- change cursor (9.1)
 
 struct ChangeEntityRow {
-  QString entity_type;  // analysis | ref_object | interpreted_age | app_user | client | ...
+  QString entity_type;  // analysis | ref_object | interpreted_age | changeset | app_user | client | ...
   Uuid entity;
   QString op = QStringLiteral("upsert");
   std::optional<std::string> detail_json;  // catalog edits: {"field": [old, new]} (D6)

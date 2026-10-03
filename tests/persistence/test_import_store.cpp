@@ -179,7 +179,9 @@ TEST_P(ImportStoreTest, RevisionsOfOneSubjectChainInOrder) {
   EXPECT_EQ(parent_of(r3), std::optional<Uuid>{r2});
   auto history = store_->history(analysis_, Kind::Intercepts);
   ASSERT_EQ(history->size(), 4u);
-  EXPECT_EQ(history->front().uuid, previous);
+  std::vector<Uuid> listed;
+  for (const auto& revision : *history) listed.push_back(revision.uuid);
+  EXPECT_EQ(listed, (std::vector<Uuid>{previous, r1, r2, r3})) << "chain order, whatever the git times";
 }
 
 TEST_P(ImportStoreTest, ExistingChangesetStillTakesItsMissingRevisions) {

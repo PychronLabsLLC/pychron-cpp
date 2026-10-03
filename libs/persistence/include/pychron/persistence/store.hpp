@@ -358,6 +358,8 @@ struct ChangeEntity {
 struct ChangeEntry {
   ChangeSeq seq = 0;
   UtcTime committed;
+  // Null for a "changeset" entry written by an import batch, which holds
+  // several changesets: they are among `entities` (entity_type "changeset").
   std::optional<Uuid> changeset;
   Uuid client;
   std::string kind;  // changeset | ingest | blob_complete | catalog | lease
@@ -558,7 +560,9 @@ class IStore {
 
   virtual Result<std::optional<Uuid>> head(Uuid subject, Kind kind) = 0;
   virtual Result<std::vector<HeadInfo>> heads(Uuid subject) = 0;
-  // Every revision of (subject, kind), oldest first by change_seq.
+  // Every revision of (subject, kind), oldest first by change_seq. An
+  // imported revision takes the change_seq of the batch that stored its
+  // changeset; revisions sharing a change_seq are listed parent before child.
   virtual Result<std::vector<RevisionInfo>> history(Uuid subject, Kind kind) = 0;
   virtual Result<std::optional<RevisionPayload>> load_payload(Uuid revision) = 0;
   virtual Result<std::optional<AnalysisView>> load_analysis(Uuid analysis) = 0;

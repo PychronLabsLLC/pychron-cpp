@@ -1,5 +1,6 @@
 #include "pychron/persistence/store.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "migrate.hpp"
@@ -38,6 +39,30 @@ Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject) {
 namespace {
 
 QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
+
+// History rows arrive ordered by change_seq. An import batch stores several
+// revisions of one (subject, kind) under one change_seq; within such a run a
+// revision is listed after its parent, whatever their times and uuids.
+void chain_order(std::vector<RevisionInfo>& history) {
+  for (std::size_t begin = 0; begin < history.size();) {
+    std::size_t end = begin + 1;
+    while (end < history.size() && history[end].change_seq == history[begin].change_seq) ++end;
+    // Selection by "parent not still waiting in this run"; a run is a handful of rows.
+    for (std::size_t placed = begin; placed + 1 < end; ++placed) {
+      const auto waiting = [&](const std::optional<Uuid>& parent) {
+        return parent && std::any_of(history.begin() + static_cast<std::ptrdiff_t>(placed),
+                                     history.begin() + static_cast<std::ptrdiff_t>(end),
+                                     [&](const RevisionInfo& r) { return r.uuid == *parent; });
+      };
+      const auto first = history.begin() + static_cast<std::ptrdiff_t>(placed);
+      const auto last = history.begin() + static_cast<std::ptrdiff_t>(end);
+      const auto next = std::find_if(first, last, [&](const RevisionInfo& r) { return !waiting(r.parent); });
+      if (next == last) break;  // a parent cycle cannot be stored; leave the rest as read
+      std::rotate(first, next, next + 1);
+    }
+    begin = end;
+  }
+}
 
 AnalysisSummary summary_from(const Row& r) {
   AnalysisSummary s;
@@ -333,6 +358,7 @@ class TinyStore final : public IStore {
       info.client_hostname = to_std(r.value("client_hostname"));
       out.push_back(std::move(info));
     }
+    chain_order(out);
     return out;
   }
 
