@@ -286,6 +286,9 @@ void SceneView::rebuild() {
             if (gx.isEmpty()) continue;
             QCPGraph* gp = plot_->addGraph(x, y);
             gp->setLineStyle(QCPGraph::lsNone);
+            // Every point is clickable, and QCustomPlot 2.1.1's scatter thinning
+            // divides by a zero pixel span when a column's points are off-range.
+            gp->setAdaptiveSampling(false);
             gp->setScatterStyle(scatter(excluded ? pts->excluded_marker : pts->marker));
             gp->setData(gx, gy, true);
             gp->setName(QString::fromStdString(pts->label) + (excluded ? tr(" (excluded)") : QString()));

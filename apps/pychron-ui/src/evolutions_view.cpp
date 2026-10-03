@@ -216,6 +216,9 @@ void EvolutionsView::rebuild() {
     g.points->setName(series_name(key));
     g.points->setPen(QPen(line.color, 1.5));
     g.points->setLineStyle(QCPGraph::lsNone);
+    // Every point is clickable, and QCustomPlot 2.1.1's scatter thinning
+    // divides by a zero pixel span when a column's points are off-range.
+    g.points->setAdaptiveSampling(false);
     g.points->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, line.color, line.color, 4));
     g.curve = plot_->addGraph();
     g.curve->setPen(QPen(line.color, 1.2));
@@ -231,6 +234,7 @@ void EvolutionsView::rebuild() {
   if (!graphs_.empty()) {
     excluded_ = plot_->addGraph();
     excluded_->setLineStyle(QCPGraph::lsNone);
+    excluded_->setAdaptiveSampling(false);
     excluded_->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, QColor(0x60, 0x60, 0x60), 9));
     excluded_->removeFromLegend();
   }

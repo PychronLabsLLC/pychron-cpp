@@ -5,6 +5,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QDateTime>
+#include <QTimeZone>
 
 namespace pychron::ui {
 
@@ -47,7 +48,7 @@ int AnalysisTableModel::rowCount(const QModelIndex& parent) const {
 int AnalysisTableModel::columnCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : ColumnCount; }
 
 QString AnalysisTableModel::format_time(double t) {
-  return QDateTime::fromSecsSinceEpoch(static_cast<qint64>(std::llround(t)), Qt::UTC).toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
+  return QDateTime::fromSecsSinceEpoch(static_cast<qint64>(std::llround(t)), QTimeZone::utc()).toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
 }
 
 QVariant AnalysisTableModel::data(const QModelIndex& index, int role) const {
