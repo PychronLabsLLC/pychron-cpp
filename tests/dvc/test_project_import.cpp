@@ -1977,6 +1977,73 @@ TEST_P(ProjectImportTest, RewritesOfACommitSplitByABatchAreAllKept) {
   }
 }
 
+TEST_P(ProjectImportTest, ReplayAfterAFileWasRestoredAndThenChangedWritesNothing) {
+  // The intercepts are removed, restored with what they had, then refit.
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  repo_.remove(LegacyRepoBuilder::path(kRunE, FileKind::Intercepts));
+  legacy_.commit("removed by hand", kDay2);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.commit("restored", kDay2);
+  legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  ASSERT_EQ(store().history(kE, Kind::Intercepts)->size(), 2u);
+  ASSERT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{12.5});
+  const auto seq = *store().latest_change_seq();
+  const auto rows = snapshot_of(*world_);
+
+  // Replayed, the restore is met in a batch of its own: the store's head is
+  // by then the refit, which says nothing about what the path held at the
+  // restore.
+  auto replay = writer_config();
+  replay.replay = true;
+  for (const int batch_commits : {1, 2, 3, 500}) {
+    auto stats = run_import(*world_, adapter_config(repo_, batch_commits), std::nullopt, replay);
+    ASSERT_TRUE(stats) << batch_commits << ": " << err(stats.error());
+    EXPECT_EQ(*store().latest_change_seq(), seq) << batch_commits;
+    EXPECT_EQ(snapshot_of(*world_), rows) << batch_commits;
+    EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{12.5}) << batch_commits;
+    EXPECT_EQ(store().history(kE, Kind::Intercepts)->size(), 2u) << batch_commits;
+  }
+  // The same history imported in batches of one from the start.
+  auto other = fresh_world();
+  ASSERT_TRUE(run_import(*other, adapter_config(repo_, 1)));
+  EXPECT_EQ(snapshot_of(*other), rows);
+}
+
+TEST_P(ProjectImportTest, GoodContentAfterAnUnreadableVersionIsARevisionAtAnyCut) {
+  // Refit, then garbage, then the refit's content again. The garbage is a
+  // conflict; the file after it differs from the version before it, so it is
+  // a revision, whatever the store's head holds when it is met.
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  legacy_.write(kRunE, FileKind::Intercepts, "{\"Ar40\": ");
+  legacy_.commit("<ISOEVO> broken", kRefit);
+  const std::string mended = legacy_.refit(kRunE, "Ar40", 12.5, kLater);
+
+  std::vector<std::string> first;
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    auto history = world->store->history(kE, Kind::Intercepts);
+    ASSERT_EQ(history->size(), 3u) << batch_commits;
+    EXPECT_EQ(history->back().uuid,
+              ingest::revision_id(kUrl, mended, LegacyRepoBuilder::path(kRunE, FileKind::Intercepts)));
+    EXPECT_EQ(world->conflicts(ConflictKind::Unparseable).size(), 1u);
+    const auto rows = snapshot_of(*world);
+    if (first.empty())
+      first = rows;
+    else
+      EXPECT_EQ(rows, first);
+    const auto seq = *world->store->latest_change_seq();
+    auto replay = writer_config();
+    replay.replay = true;
+    ASSERT_TRUE(run_import(*world, adapter_config(repo_, batch_commits == 1 ? 500 : 1), std::nullopt, replay));
+    EXPECT_EQ(*world->store->latest_change_seq(), seq) << batch_commits;
+    EXPECT_EQ(snapshot_of(*world), rows) << batch_commits;
+  }
+}
+
 TEST_P(ProjectImportTest, FileRemovedAndRestoredAddsNothingAtAnyCut) {
   legacy_.collect(kRunE, kE.str(), kCollected);
   legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
@@ -2156,11 +2223,21 @@ void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& histor
   legacy.refit("66052-03A", "Ar36", 6.0, kLater);
   repo.checkout("main");
   repo.git({"merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "Merge branch 'side2'", "side2"}, kLater);
-  // A file deleted and added again with what it had.
+  // A root file and a satellite file removed, added again with what they
+  // had, and changed in a later commit.
+  const std::string extraction_path = LegacyRepoBuilder::path("66052-03A", FileKind::Extraction);
   repo.remove(LegacyRepoBuilder::path("66052-03A", FileKind::Baselines));
+  repo.remove(extraction_path);
   legacy.commit("removed by hand", kLater);
   legacy.write("66052-03A", FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  repo.write(extraction_path, extraction.dump(4));
   legacy.commit("restored", kLater);
+  auto baselines = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  baselines.at("H1")["value"] = 0.125;
+  legacy.write("66052-03A", FileKind::Baselines, baselines.dump(4));
+  extraction["extract_value"] = 6.0;
+  repo.write(extraction_path, extraction.dump(4));
+  legacy.commit("<ISOEVO> fits=H1(Average)", kLater);
   repo.tag("part-one");
 }
 
@@ -2210,7 +2287,7 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
   for (const auto& conflict : world_->conflicts()) ADD_FAILURE() << conflict.path << " " << conflict.detail_json;
   EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{11.0});  // the merge kept main's
   EXPECT_EQ(head_intercept(*world_, kP, "Ar36"), std::optional<double>{6.0});   // the merge kept the side's
-  EXPECT_EQ(store().history(kP, Kind::Baselines)->size(), 1u);                  // removed and restored: nothing
+  EXPECT_EQ(store().history(kP, Kind::Baselines)->size(), 2u);  // removed and restored: nothing; then changed
   EXPECT_EQ(store().history(kL, Kind::Blanks)->size(), 2u);                     // the late file is a revision
   EXPECT_EQ(json::parse(world_->analysis_detail(kL)).at("synthetic_collection"), true);
   EXPECT_EQ(world_->count("bookmark"), 2);
@@ -2267,6 +2344,9 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
     }
     EXPECT_TRUE(finished) << what << ": no end after " << runs << " runs";
     same(*resumed, what + ", resumed after every batch");
+    for (const int replay_commits : {1, 2, 3, 7, 500})
+      replayed(*resumed, what + ", resumed after every batch, replay in " + std::to_string(replay_commits),
+               replay_commits);
   }
 }
 

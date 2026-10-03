@@ -43,6 +43,7 @@ struct SeenFile {
   FileRef ref;
   // For a record or satellite file that replaces an earlier version: that version.
   std::optional<FileRef> previous = std::nullopt;
+  bool restored = false;  // see Change
 };
 
 // The files of one analysis: everything that shares a path key.
@@ -102,6 +103,10 @@ struct Change {
   // Seen while its analysis was pending and handed over with the collection:
   // it took effect in the fold, not at its own commit.
   bool held = false;
+  // The path was removed and is back with the content it had when it was
+  // removed: nothing changed. This is known from the walk alone, so it is the
+  // same in a replay, where the store's head already reflects later commits.
+  bool restored = false;
 };
 
 using Work = std::variant<Collect, Change>;
@@ -171,9 +176,15 @@ class Walk {
   Ledger* ledger_ = nullptr;
 
   std::map<std::string, Track> tracks_;  // by path key; nodes do not move
-  // The blob each path was last seen with. A change that brings a path to the
-  // blob it already has here (a merge repeating a side branch) is skipped.
-  std::unordered_map<std::string, std::string> last_blob_;
+  // The blob each path was last seen with, and whether the path is still
+  // there. A change that brings a path to the blob it already has (a merge
+  // repeating a side branch) is skipped; one that brings a removed path back
+  // with the blob it had is handed on as `restored`.
+  struct LastSeen {
+    std::string blob_sha;
+    bool present = true;
+  };
+  std::unordered_map<std::string, LastSeen> last_blob_;
   std::map<std::string, FileRef> spectrometers_;
   std::set<std::pair<int, Track*>> pending_;  // (record commit index, track)
   std::vector<Track*> flushed_;
@@ -222,7 +233,7 @@ class Mapper {
                             persistence::RevisionPayload payload, std::string detail_json, Output& out,
                             std::string identifier = {});
   // Whether the store's head of (subject, kind) already has this blob.
-  Result<bool> is_head(const FileRef& ref, const ingest::SubjectRef& subject, persistence::Kind kind, Output& out);
+  bool unchanged(const Change& item);
   Result<std::optional<persistence::SpectrometerSnapshot>> snapshot(const std::string& sha1);
   Result<void> synthesize_catalog(const ParsedRecord& record, const persistence::AnalysisIngest& analysis,
                                   const FileRef& from, Output& out);

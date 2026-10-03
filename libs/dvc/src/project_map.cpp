@@ -142,10 +142,6 @@ struct Mapper::Reading {
 struct Mapper::Output {
   ImportBatch& batch;
   std::map<int, ingest::ChangesetItem> changesets;  // by commit index
-  // The blob of the last revision this batch holds for each path. With the
-  // store's head for paths not in it, this is the content a path was last
-  // imported with, whatever the batch cut.
-  std::map<std::string, std::string> emitted;
   std::map<int, std::vector<ingest::FileNote>> rewrites;  // by commit index: record and satellite files rewritten
   // The analyses this batch sends, which the store does not have yet: by
   // uuid, the track that sends each; by run id, the uuid.
@@ -246,7 +242,7 @@ Result<void> Mapper::resolve(const std::vector<Track*>& tracks) {
 }
 
 Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
-  Output out{batch, {}, {}, {}, {}, {}};
+  Output out{batch, {}, {}, {}, {}};
 
   // The records first: they say which analysis each file belongs to.
   std::vector<Collect> collects;
@@ -558,10 +554,6 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
 
   if (config_.catalog_from_repos)
     if (auto r = synthesize_catalog(record, item.ingest, record_ref, out); !r) return r;
-  // The roots are what these paths are imported with from here on.
-  for (const ingest::SourceKey* root : {&item.keys.signals, &item.keys.intercepts, &item.keys.baselines,
-                                        &item.keys.blanks, &item.keys.icfactors, &item.keys.tags})
-    if (!root->path.empty()) out.emitted.insert_or_assign(root->path, root->blob_sha);
   out.batch.analyses.push_back(std::move(item));
   for (auto& late : unrecorded)
     if (auto r = add_revision(late.ref, uuid, late.kind, std::move(late.payload), "{}", out); !r) return r;
@@ -662,20 +654,16 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
 
 // ---------------------------------------------------------------- later changes
 
-Result<bool> Mapper::is_head(const FileRef& ref, const ingest::SubjectRef& subject, ps::Kind kind, Output& out) {
-  // What the path was last imported with: by this batch, else by the store.
-  bool same = false;
-  if (const auto here = out.emitted.find(ref.path); here != out.emitted.end()) {
-    same = here->second == ref.blob_sha;
-  } else {
-    auto head = state_.head_blob_sha(subject, kind);
-    if (!head) return fail(head.error());
-    same = *head && **head == ref.blob_sha;
-  }
-  // No revision then: the content is the one the path was imported with.
-  if (same)
-    silent(ref, ingest::UnitDisposition::Unchanged, {ingest::Evidence::Kind::Blob, {}, ref.path, ref.blob_sha});
-  return same;
+// Whether a revision file holds what its path was last imported with: it was
+// removed and is back unchanged. The walk says so (Change::restored). The
+// store is not asked: in a replay its head is the outcome of later commits,
+// and a file restored before them would be taken for a change and written
+// over the head.
+bool Mapper::unchanged(const Change& item) {
+  if (item.restored)
+    silent(item.ref, ingest::UnitDisposition::Unchanged,
+           {ingest::Evidence::Kind::Blob, {}, item.ref.path, item.ref.blob_sha});
+  return item.restored;
 }
 
 // The changeset of the commit `ref` belongs to, made when first asked for.
@@ -698,7 +686,6 @@ Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject
                                   std::string identifier) {
   auto changeset = changeset_of(ref, out);
   if (!changeset) return fail(changeset.error());
-  if (kind != ps::Kind::Identity) out.emitted.insert_or_assign(ref.path, ref.blob_sha);
   (*changeset)->revisions.push_back({key_of(ref), std::move(subject), kind, std::move(payload),
                                      std::move(detail_json), std::move(identifier)});
   return {};
@@ -738,9 +725,7 @@ Result<void> Mapper::change(const Change& item, Output& out) {
       const std::string name = "frozen/" + config_.repository_name + "/" + irradiation + "/" + level;
       const ingest::SubjectRef subject =
           ingest::RefObjectKey{std::string(ps::to_string(ps::RefType::Production)), name};
-      auto same = is_head(ref, subject, ps::Kind::RefValue, out);
-      if (!same) return fail(same.error());
-      if (*same) return {};
+      if (unchanged(item)) return {};
       auto parsed = parse_frozen_production(*text, irradiation, level);
       if (!parsed) {
         bad(parsed.error().what);
@@ -760,9 +745,7 @@ Result<void> Mapper::change(const Change& item, Output& out) {
 
     case FileKind::InterpretedAge: {
       const ingest::SubjectRef subject = ingest::InterpretedAgeKey{ref.path};
-      auto same = is_head(ref, subject, ps::Kind::InterpretedAge, out);
-      if (!same) return fail(same.error());
-      if (*same) return {};
+      if (unchanged(item)) return {};
       auto parsed = parse_interpreted_age(*text, item.info.key);
       if (!parsed) {
         bad(parsed.error().what);
@@ -807,9 +790,7 @@ Result<void> Mapper::analysis_change(const Change& item, std::string_view text, 
   if (is_rewritable(kind)) return rewritten(item, text, out);
 
   const ps::Kind store_kind = kind == FileKind::Data ? ps::Kind::Signals : *revision_kind(kind);
-  auto same = is_head(ref, ingest::SubjectRef{uuid}, store_kind, out);
-  if (!same) return fail(same.error());
-  if (*same) return {};
+  if (unchanged(item)) return {};
 
   if (kind == FileKind::Data) {
     auto data = parse_data(text);

@@ -48,20 +48,24 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
   };
   for (const auto& entry : changes) {
     if (entry.status == 'D') {
-      // A deleted file adds nothing; added again later, it is a change.
-      last_blob_.erase(entry.path);
+      // A deleted file adds nothing. What it held is remembered: added again
+      // with the same content, it has not changed.
+      if (const auto gone = last_blob_.find(entry.path); gone != last_blob_.end()) gone->second.present = false;
       note(entry, Ledger::Seen::Deleted);
       continue;
     }
-    const auto [seen, first_time] = last_blob_.try_emplace(entry.path, entry.blob_sha);
+    bool restored = false;
+    const auto [seen, first_time] = last_blob_.try_emplace(entry.path, LastSeen{entry.blob_sha, true});
     if (!first_time) {
-      if (seen->second == entry.blob_sha) {
+      const bool same = seen->second.blob_sha == entry.blob_sha;
+      restored = same && !seen->second.present;
+      seen->second = LastSeen{entry.blob_sha, true};
+      if (same && !restored) {
         if (ledger_)
           note(entry, classify_path(entry.path).kind == FileKind::Ignored ? Ledger::Seen::Ignored
                                                                          : Ledger::Seen::Repeated);
         continue;
       }
-      seen->second = entry.blob_sha;
     }
 
     PathInfo info = classify_path(entry.path);
@@ -76,7 +80,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
       case FileKind::Unknown:
       case FileKind::InterpretedAge:
       case FileKind::FrozenProduction:
-        if (out) out->push_back(Change{std::move(info), std::move(ref), nullptr, std::nullopt, false});
+        if (out) out->push_back(Change{std::move(info), std::move(ref), nullptr, std::nullopt, false, restored});
         continue;
       default:
         break;
@@ -92,7 +96,8 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
     if (kind == FileKind::Record || is_satellite(kind)) previous = track.replace_latest(kind, ref);
     if (track.flushed) {
       if (kind == FileKind::Record) record_rewritten = true;
-      if (out) out->push_back(Change{std::move(info), std::move(ref), &track, std::move(previous), false});
+      if (out)
+        out->push_back(Change{std::move(info), std::move(ref), &track, std::move(previous), false, restored});
       continue;
     }
     if (auto* slot = track.root_slot(kind)) {
@@ -100,7 +105,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
         if (kind == FileKind::Record) pending_.emplace(index, &track);
         *slot = std::move(ref);
       } else {
-        track.later.push_back({kind, std::move(ref), std::move(previous)});
+        track.later.push_back({kind, std::move(ref), std::move(previous), restored});
       }
     } else {
       const bool first = is_satellite(kind) &&
@@ -109,7 +114,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
       if (first)
         track.satellites.push_back({kind, std::move(ref)});
       else
-        track.later.push_back({kind, std::move(ref), std::move(previous)});
+        track.later.push_back({kind, std::move(ref), std::move(previous), restored});
     }
     if (std::find(touched.begin(), touched.end(), &track) == touched.end()) touched.push_back(&track);
   }
@@ -134,7 +139,8 @@ void Walk::flush(Track& track, std::vector<Work>* out) {
     out->push_back(std::move(fold));
     for (auto& file : track.later) {
       PathInfo info = classify_path(file.ref.path);
-      out->push_back(Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true});
+      out->push_back(
+          Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true, file.restored});
     }
   }
   track.later.clear();
@@ -165,7 +171,7 @@ void Walk::orphans(std::vector<Work>& out) {
       info.kind = kind;
       info.key = track.key;
       info.key_is_uuid = track.key_is_uuid;
-      out.push_back(Change{std::move(info), ref, owner, std::nullopt, false});
+      out.push_back(Change{std::move(info), ref, owner, std::nullopt, false, false});
     };
     if (track.data) add(FileKind::Data, *track.data);
     if (track.intercepts) add(FileKind::Intercepts, *track.intercepts);
