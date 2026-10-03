@@ -10,6 +10,12 @@ if(PYCHRON_VISION_TESTS)
   target_link_libraries(pychron_vision_tests PRIVATE pychron::vision GTest::gtest_main)
   target_compile_definitions(pychron_vision_tests PRIVATE
     PYCHRON_VISION_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+  # Only the OpenCvSource tests use OpenCV (to write a test video).
+  if(PYCHRON_VISION_OPENCV_ENABLED)
+    target_include_directories(pychron_vision_tests SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(pychron_vision_tests PRIVATE ${OpenCV_LIBS})
+    target_compile_definitions(pychron_vision_tests PRIVATE PYCHRON_VISION_OPENCV_ENABLED)
+  endif()
   pychron_set_warnings(pychron_vision_tests)
   gtest_discover_tests(pychron_vision_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()

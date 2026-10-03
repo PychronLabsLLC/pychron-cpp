@@ -251,10 +251,13 @@ Summary:
   radii on a side) and not these 80 by 80 crops, where a hole of radius 11 covers
   about 6 percent.
 - The last column re-runs `LegacyFinder` on a crop of `ceil(2.55 * radius)` pixels
-  centred on the marked centre. It finds the hole in all four, so the crop alone
-  explains the misses. It is only a diagnostic and is biased toward the mark:
-  the crop is centred on the mark and the legacy finder prefers targets near
-  the crop centre, so the small errors say the hole was detected, not how
-  accurate the finder is. It is not counted in the totals above.
+  centred on the marked centre. It returns the hole in all four. That shows a
+  tight crop centred on the mark is enough for the legacy finder to return the
+  hole; it does not isolate the white-fraction limit as the only cause, because
+  the tight crop also sidesteps the centre gate and most of the surrounding
+  overlays. It is a diagnostic and is biased toward the mark: the crop is
+  centred on it and the legacy finder prefers targets near the crop centre, so
+  the small errors show detection, not accuracy. It is not counted in the totals
+  above.
 - On synthetic frames the legacy and simple finders agree within 1.3 px for holes
   (on a 30 px crop, 10 stage offsets) and within 1.1 px for glows (200 px frame).

@@ -203,6 +203,9 @@ class LegacyFinder final : public ITargetFinder {
 
     // dim for the Hole area window is the expected radius.
     const double dim = p.expected_radius_px;
+    // Hole needs a radius for its area window; with none the window is empty and every
+    // candidate would be rejected, so say so now rather than sweep for nothing.
+    if (!glow && !(dim > 0)) return {};
     const double a_min = (0.5 * dim) * (0.5 * dim) * kLegacyPi;
     const double a_max = (1.25 * dim) * (1.25 * dim) * kLegacyPi;
     // The original gates on 0.75 * px_per_mm px, which FinderParams does not carry. A hole or
@@ -224,7 +227,7 @@ class LegacyFinder final : public ITargetFinder {
     if (glow) {
       std::erase_if(found, [&](const Cand& c) { return !near_centre(c); });
       if (found.empty()) return out;
-      std::sort(found.begin(), found.end(), [](const Cand& a, const Cand& b) { return a.area < b.area; });
+      std::stable_sort(found.begin(), found.end(), [](const Cand& a, const Cand& b) { return a.area < b.area; });  // Python's sorted() is stable
       std::uint16_t peak = 0;
       for (int y = 0; y < v.height; ++y)
         for (int x = 0; x < v.width; ++x) peak = std::max(peak, v.at(x, y));

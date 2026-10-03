@@ -3,6 +3,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <filesystem>
 #include <utility>
 
@@ -22,7 +23,16 @@ class OpenCvSource final : public IFrameSource {
  public:
   OpenCvSource(cv::VideoCapture cap, SourceConfig cfg) : cap_(std::move(cap)), cfg_(cfg) {}
 
+  // No exception may leave the library: OpenCV reports bad input by throwing cv::Exception.
   Result<Frame> grab() override {
+    try {
+      return grab_impl();
+    } catch (const std::exception& e) {
+      return fail(ErrorKind::Io, e.what());
+    }
+  }
+
+  Result<Frame> grab_impl() {
     cv::Mat raw;
     if (!cap_.read(raw) || raw.empty()) return fail(ErrorKind::Io, "end of stream");
 
@@ -61,7 +71,8 @@ class OpenCvSource final : public IFrameSource {
       for (int x = 0; x < grey.cols; ++x) f.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(grey.cols) + static_cast<std::size_t>(x)] = row[x];
     }
     f.seq = ++seq_;
-    // Video position when the backend reports one; cameras report none.
+    // Video position when the backend reports one; cameras report none. A stream that
+    // reports position 0 for its first frame leaves that frame at the default timestamp.
     const double ms = cap_.get(cv::CAP_PROP_POS_MSEC);
     if (std::isfinite(ms) && ms > 0)
       f.timestamp = TimePoint(std::chrono::duration_cast<Duration>(std::chrono::duration<double, std::milli>(ms)));
@@ -69,6 +80,14 @@ class OpenCvSource final : public IFrameSource {
   }
 
   FrameInfo info() const override {
+    try {
+      return info_impl();
+    } catch (const std::exception&) {
+      return FrameInfo{0, 0, 255, 0.0};
+    }
+  }
+
+  FrameInfo info_impl() const {
     int w = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
     int h = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
     if (cfg_.roi.w > 0 && cfg_.roi.h > 0) {
@@ -99,17 +118,21 @@ bool is_index(const std::string& s) {
 Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string& uri, SourceConfig cfg) {
   if (cfg.rotate != 0 && cfg.rotate != 90 && cfg.rotate != 180 && cfg.rotate != 270)
     return fail(ErrorKind::Config, "rotate must be 0, 90, 180 or 270");
-  cv::VideoCapture cap;
-  if (is_index(uri)) {
-    cap.open(std::stoi(uri));
-  } else {
-    // Check first so a missing path is a clear error rather than a backend log line.
-    std::error_code ec;
-    if (!std::filesystem::exists(uri, ec)) return fail(ErrorKind::Io, "no such video file: " + uri);
-    cap.open(uri);
+  try {
+    cv::VideoCapture cap;
+    if (is_index(uri)) {
+      cap.open(std::stoi(uri));
+    } else {
+      // Check first so a missing path is a clear error rather than a backend log line.
+      std::error_code ec;
+      if (!std::filesystem::exists(uri, ec)) return fail(ErrorKind::Io, "no such video file: " + uri);
+      cap.open(uri);
+    }
+    if (!cap.isOpened()) return fail(ErrorKind::Io, "cannot open " + uri);
+    return std::unique_ptr<IFrameSource>(std::make_unique<OpenCvSource>(std::move(cap), cfg));
+  } catch (const std::exception& e) {
+    return fail(ErrorKind::Io, e.what());
   }
-  if (!cap.isOpened()) return fail(ErrorKind::Io, "cannot open " + uri);
-  return std::unique_ptr<IFrameSource>(std::make_unique<OpenCvSource>(std::move(cap), cfg));
 }
 
 #else
