@@ -10,6 +10,7 @@
 
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "theme.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -260,7 +261,7 @@ class TestCanvasView : public QObject {
     }).join();
     ui::GaugeLabelItem* ig = view_->gauge("IG1");
     QTRY_VERIFY(ig->in_alarm());
-    QCOMPARE(ig->brush().color(), QColor(Qt::red));
+    QCOMPARE(ig->brush().color(), ui::theme().error_text);
     QVERIFY(ig->text().contains(QStringLiteral("5.00e-03")));
     std::thread([this] { line_->bus().publish(PressureSample{"IG1", 1e-8, "torr", {}}); }).join();
     QTRY_VERIFY(!ig->in_alarm());

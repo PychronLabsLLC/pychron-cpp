@@ -17,6 +17,8 @@
 
 #include "pychron/core/events.hpp"
 
+#include "theme.hpp"
+
 namespace pychron::ui {
 
 class HealthBar : public QWidget {
@@ -35,7 +37,7 @@ class HealthBar : public QWidget {
   void refresh();
 
   static Status status_of(const TransportHealth& health);
-  static QColor color_of(Status status);
+  static style::Level level_of(Status status);
 
   std::optional<Status> status(const std::string& transport) const;
   QLabel* chip(const std::string& transport) const;

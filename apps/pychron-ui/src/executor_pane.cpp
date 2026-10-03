@@ -1,4 +1,5 @@
 #include "executor_pane.hpp"
+#include "theme.hpp"
 
 #include <cmath>
 
@@ -54,7 +55,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
       events_(new QListWidget),
       timeline_view_(new TimelineView(timeline_)) {
   banner_->setObjectName(QStringLiteral("ExecutorBanner"));
-  banner_->setStyleSheet(QStringLiteral("#ExecutorBanner { background: #f8d7da; } #ExecutorBanner QLabel { color: #721c24; }"));
+  style::make_banner(banner_);
   auto* banner_row = new QHBoxLayout(banner_);
   banner_label_->setWordWrap(true);
   banner_row->addWidget(banner_label_);

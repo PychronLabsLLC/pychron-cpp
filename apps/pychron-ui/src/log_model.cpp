@@ -1,4 +1,5 @@
 #include "log_model.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -93,7 +94,7 @@ QVariant LogModel::data(const QModelIndex& index, int role) const {
   const LogRecord& r = records_[static_cast<std::size_t>(index.row())];
   if (role == Qt::UserRole) return static_cast<int>(r.level);
   if (role == Qt::ForegroundRole) {
-    if (r.history) return QBrush(QColor(Qt::gray));
+    if (r.history) return QBrush(theme().faint_text);
     return {};
   }
   if (role != Qt::DisplayRole) return {};

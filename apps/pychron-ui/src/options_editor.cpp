@@ -1,4 +1,5 @@
 #include "options_editor.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +32,7 @@ QString qs(const std::string& s) { return QString::fromStdString(s); }
 QString number_text(double v) { return QString::number(v, 'g', 12); }
 
 void mark(QWidget* w, const QString& error) {
-  w->setStyleSheet(error.isEmpty() ? QString() : QStringLiteral("border: 1px solid #d62728;"));
+  style::set_invalid(w, !error.isEmpty());
   w->setToolTip(error.isEmpty() ? w->property("help").toString() : error);
 }
 
@@ -202,7 +203,7 @@ QWidget* OptionsEditor::make_editor(const pp::FieldSpec& f, const pp::Options& v
       button->setStyleSheet(swatch_style(c));
       h->addWidget(button, 1);
       connect(button, &QPushButton::clicked, this, [=, this] {
-        const QColor start(button->text() == tr("auto") ? QStringLiteral("#000000") : button->text());
+        const QColor start(button->text() == tr("auto") ? theme().text.name() : button->text());
         const QColor chosen = QColorDialog::getColor(start, this, qs(f.label), QColorDialog::ShowAlphaChannel);
         if (!chosen.isValid()) return;
         const QString hex = chosen.alpha() == 255 ? chosen.name(QColor::HexRgb)

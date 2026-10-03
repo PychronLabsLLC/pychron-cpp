@@ -22,6 +22,8 @@
 #include "pychron/core/events.hpp"
 #include "pychron/systems/canvas/canvas.hpp"
 
+#include "theme.hpp"
+
 namespace pychron::ui {
 
 QPointF to_qpoint(const canvas::Point& p);
@@ -39,7 +41,7 @@ class ValveItem : public QGraphicsObject {
   static constexpr double kLockBorderWidth = 3.0;
 
   // Border colour of a software-locked valve.
-  static QColor lock_color() { return QColor(0x1e, 0x6f, 0xe8); }
+  static QColor lock_color() { return theme().accent; }
 
   ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent = nullptr);
 

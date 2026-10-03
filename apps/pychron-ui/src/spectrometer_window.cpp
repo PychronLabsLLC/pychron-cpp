@@ -1,4 +1,5 @@
 #include "spectrometer_window.hpp"
+#include "theme.hpp"
 
 #include <array>
 #include <chrono>
@@ -78,8 +79,7 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
 
   // Centre: the banner (hidden while healthy) above the chart.
   banner_->setObjectName(QStringLiteral("SpectrometerBanner"));
-  banner_->setStyleSheet(QStringLiteral("#SpectrometerBanner { background: #f8d7da; } "
-                                        "#SpectrometerBanner QLabel { color: #721c24; }"));
+  style::make_banner(banner_);
   auto* restart = new QPushButton(tr("Restart"));
   auto* banner_row = new QHBoxLayout(banner_);
   banner_label_->setWordWrap(true);

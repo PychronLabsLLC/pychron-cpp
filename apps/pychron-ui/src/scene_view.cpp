@@ -1,4 +1,5 @@
 #include "scene_view.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -246,7 +247,7 @@ void SceneView::rebuild() {
         legend = new QCPLegend;
         rect->insetLayout()->addElement(legend, corner_alignment(s.style.legend_corner));
         legend->setFont(scene_font(s.style, s.style.fonts.annotation));
-        legend->setBrush(QBrush(QColor(255, 255, 255, 200)));
+        legend->setBrush(QBrush(theme().overlay));
         legend->setLayer(QStringLiteral("legend"));
       }
       std::map<pp::Corner, QStringList> corner_text;
@@ -357,7 +358,7 @@ void SceneView::rebuild() {
             }
             auto* curve = new QCPCurve(x, y);
             curve->setData(t, ex_x, ex_y, true);
-            curve->setPen(QPen(ex ? QColor(150, 150, 150) : qcolor(el->line), 1.0, ex ? Qt::DashLine : Qt::SolidLine));
+            curve->setPen(QPen(ex ? theme().inactive : qcolor(el->line), 1.0, ex ? Qt::DashLine : Qt::SolidLine));
             if (el->filled && !ex) curve->setBrush(QBrush(qcolor(el->fill)));
           }
         } else if (const auto* text = std::get_if<pp::TextLayer>(&layer)) {
@@ -390,7 +391,7 @@ void SceneView::rebuild() {
         t->setText(lines.join(QLatin1Char('\n')));
         t->setFont(scene_font(s.style, s.style.fonts.annotation));
         t->setPadding(QMargins(4, 2, 4, 2));
-        t->setBrush(QBrush(QColor(255, 255, 255, 200)));
+        t->setBrush(QBrush(theme().overlay));
         for (const auto& line : lines) info.texts.push_back(line);
       }
       if (legend && legend->itemCount() == 0) legend->setVisible(false);

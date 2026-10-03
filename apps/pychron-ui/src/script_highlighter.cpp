@@ -1,4 +1,5 @@
 #include "script_highlighter.hpp"
+#include "theme.hpp"
 
 #include "pychron/experiment/lab/scripts.hpp"
 #include "pychron/scripting/vocabulary.hpp"
@@ -30,14 +31,15 @@ ScriptHighlighter::ScriptHighlighter(QTextDocument* document, scripting::ScriptK
   for (const auto& [name, value] : scripting::default_context()) context_.insert(QString::fromStdString(name));
   context_.insert(QStringLiteral("opt"));
 
-  formats_[static_cast<int>(Role::Keyword)] = make(QColor(0x00, 0x33, 0x99), true);
-  formats_[static_cast<int>(Role::Builtin)] = make(QColor(0x80, 0x00, 0x80));
-  formats_[static_cast<int>(Role::Command)] = make(QColor(0x00, 0x7a, 0x6e), true);
-  formats_[static_cast<int>(Role::Context)] = make(QColor(0x8a, 0x4b, 0x08));
-  formats_[static_cast<int>(Role::Number)] = make(QColor(0xc4, 0x52, 0x00));
-  formats_[static_cast<int>(Role::String)] = make(QColor(0x06, 0x7d, 0x17));
-  formats_[static_cast<int>(Role::Comment)] = make(QColor(0x80, 0x80, 0x80), false, true);
-  formats_[static_cast<int>(Role::Header)] = make(QColor(0x9c, 0x27, 0xb0), true);
+  const auto& syntax = theme().syntax;
+  formats_[static_cast<int>(Role::Keyword)] = make(syntax.keyword, true);
+  formats_[static_cast<int>(Role::Builtin)] = make(syntax.builtin);
+  formats_[static_cast<int>(Role::Command)] = make(syntax.command, true);
+  formats_[static_cast<int>(Role::Context)] = make(syntax.context);
+  formats_[static_cast<int>(Role::Number)] = make(syntax.number);
+  formats_[static_cast<int>(Role::String)] = make(syntax.string);
+  formats_[static_cast<int>(Role::Comment)] = make(syntax.comment, false, true);
+  formats_[static_cast<int>(Role::Header)] = make(syntax.header, true);
 }
 
 std::optional<ScriptHighlighter::Role> ScriptHighlighter::role_of(const QString& word) const {

@@ -1,4 +1,5 @@
 #include "intensities_model.hpp"
+#include "theme.hpp"
 
 #include <cmath>
 
@@ -67,7 +68,7 @@ QVariant IntensitiesModel::data(const QModelIndex& index, int role) const {
 
   if (role == Qt::BackgroundRole) {
     if (col == ColColour) return QBrush(row.series.color);
-    if (col == ColIntensity && saturated) return QBrush(Qt::red);
+    if (col == ColIntensity && saturated) return QBrush(theme().error);
     return {};
   }
   if (role == Qt::ToolTipRole) {

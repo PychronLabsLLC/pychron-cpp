@@ -1,4 +1,5 @@
 #include "strip_chart_view.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -41,7 +42,7 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(plot_);
 
-  plot_->axisRect()->setBackground(QBrush(QColor(0xfa, 0xfa, 0xd2)));  // pychron's light yellow
+  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
   plot_->xAxis->setLabel(tr("Time (s)"));
   plot_->yAxis->setLabel(tr("Signal"));
   plot_->legend->setVisible(false);  // the intensities table is the legend

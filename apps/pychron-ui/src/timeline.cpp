@@ -8,6 +8,7 @@
 #include <QToolTip>
 
 #include "queue_table_model.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -162,8 +163,8 @@ void TimelineView::paintEvent(QPaintEvent*) {
   // Lane backgrounds and names.
   for (int r = 0; r < rows; ++r) {
     const QRectF row(area.left(), area.top() + r * kRowHeight, area.width(), kRowHeight);
-    p.fillRect(row, r % 2 == 0 ? QColor(0xf7, 0xf7, 0xf7) : QColor(0xff, 0xff, 0xff));
-    p.setPen(QColor(0x55, 0x55, 0x55));
+    p.fillRect(row, r % 2 == 0 ? theme().alt_base : theme().base);
+    p.setPen(theme().muted_text);
     p.drawText(QRectF(0, row.top(), kLabelWidth - 4, kRowHeight), Qt::AlignRight | Qt::AlignVCenter,
                r == 0 ? tr("Waits") : tr("Lane %1").arg(r));
   }
@@ -176,7 +177,7 @@ void TimelineView::paintEvent(QPaintEvent*) {
       break;
     }
   if (step < step_raw) step = std::ceil(step_raw / 3600) * 3600;
-  p.setPen(QColor(0xbb, 0xbb, 0xbb));
+  p.setPen(theme().grid);
   const double axis_y = area.bottom();
   for (double t = 0; t <= span() + 1e-9; t += step) {
     const double x = area.left() + area.width() * t / span();
@@ -186,7 +187,7 @@ void TimelineView::paintEvent(QPaintEvent*) {
   // Segments.
   for (const auto& s : model_.segments()) {
     const QRectF r = segment_rect(s);
-    QColor fill = s.state ? QueueTableModel::state_color(*s.state) : QColor(0xdd, 0xdd, 0xdd);
+    QColor fill = s.state ? QueueTableModel::state_color(*s.state) : theme().neutral_fill;
     p.setPen(QPen(fill.darker(140), 1));
     p.setBrush(s.state ? QBrush(fill) : QBrush(fill, Qt::BDiagPattern));
     p.drawRoundedRect(r, 3, 3);
@@ -194,14 +195,14 @@ void TimelineView::paintEvent(QPaintEvent*) {
                            : s.label;
     const QFontMetrics fm(font());
     if (r.width() > 24) {
-      p.setPen(QColor(0x22, 0x22, 0x22));
+      p.setPen(theme().text);
       p.drawText(r.adjusted(4, 0, -2, 0), Qt::AlignVCenter | Qt::AlignLeft,
                  fm.elidedText(text, Qt::ElideRight, static_cast<int>(r.width() - 6)));
     }
   }
   // Now.
   const double xn = area.left() + area.width() * model_.now() / span();
-  p.setPen(QPen(QColor(0xd3, 0x2f, 0x2f), 1, Qt::DashLine));
+  p.setPen(QPen(theme().error, 1, Qt::DashLine));
   p.drawLine(QPointF(xn, area.top()), QPointF(xn, area.bottom()));
 }
 

@@ -1,4 +1,5 @@
 #include "code_editor.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 
@@ -36,9 +37,7 @@ class Gutter : public QWidget {
 
 CodeEditor::CodeEditor(QWidget* parent)
     : QPlainTextEdit(parent), gutter_(new Gutter(this)), completer_(new QCompleter(this)), words_(new QStringListModel(this)) {
-  QFont mono(QStringLiteral("monospace"));
-  mono.setStyleHint(QFont::Monospace);
-  setFont(mono);
+  setFont(style::mono_font());
   setLineWrapMode(QPlainTextEdit::NoWrap);
   setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4);
   setMouseTracking(true);
@@ -80,7 +79,7 @@ void CodeEditor::resizeEvent(QResizeEvent* event) {
 
 void CodeEditor::paint_gutter(QPaintEvent* event) {
   QPainter p(gutter_);
-  p.fillRect(event->rect(), QColor(0xf2, 0xf2, 0xf2));
+  p.fillRect(event->rect(), theme().gutter);
   QTextBlock block = firstVisibleBlock();
   int number = block.blockNumber() + 1;
   int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
@@ -93,10 +92,10 @@ void CodeEditor::paint_gutter(QPaintEvent* event) {
         if (d.line == number) mark = mark.value_or(false) || d.error;
       if (mark) {
         p.setPen(Qt::NoPen);
-        p.setBrush(*mark ? QColor(0xd3, 0x2f, 0x2f) : QColor(0xf5, 0xa6, 0x23));
+        p.setBrush(*mark ? theme().error : theme().warning);
         p.drawEllipse(QPoint(6, top + h / 2), 3, 3);
       }
-      p.setPen(QColor(0x90, 0x90, 0x90));
+      p.setPen(theme().faint_text);
       p.drawText(0, top, gutter_->width() - 4, h, Qt::AlignRight, QString::number(number));
     }
     block = block.next();
@@ -118,7 +117,7 @@ void CodeEditor::refresh_selections() {
     if (!block.isValid()) continue;
     QTextEdit::ExtraSelection s;
     s.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-    s.format.setUnderlineColor(d.error ? QColor(0xd3, 0x2f, 0x2f) : QColor(0xf5, 0xa6, 0x23));
+    s.format.setUnderlineColor(d.error ? theme().error : theme().warning);
     s.format.setToolTip(d.message);
     QTextCursor c(block);
     // The line's text without its indentation.

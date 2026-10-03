@@ -14,7 +14,8 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
   target_compile_definitions(${target} PRIVATE
-    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
+    PYCHRON_UI_SOURCE_DIR="${PROJECT_SOURCE_DIR}/apps/pychron-ui/src")
   # spectrometer sim drivers register from static initializers nothing references
   pychron_link_drivers(${target} pychron_sim)
   pychron_set_warnings(${target})

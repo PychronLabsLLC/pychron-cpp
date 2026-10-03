@@ -65,18 +65,18 @@ HealthBar::Status HealthBar::status_of(const TransportHealth& health) {
   return health.error_count == 0 ? Status::Ok : Status::Degraded;
 }
 
-QColor HealthBar::color_of(Status status) {
+style::Level HealthBar::level_of(Status status) {
   switch (status) {
     case Status::Ok:
-      return QColor(0x2e, 0xcc, 0x40);
+      return style::Level::Ok;
     case Status::Degraded:
-      return QColor(0xff, 0xb3, 0x00);
+      return style::Level::Warning;
     case Status::Down:
-      return QColor(0xe0, 0x3c, 0x31);
+      return style::Level::Error;
     case Status::Unknown:
       break;
   }
-  return QColor(0xaa, 0xaa, 0xaa);
+  return style::Level::Unknown;
 }
 
 std::optional<HealthBar::Status> HealthBar::status(const std::string& transport) const {
@@ -110,8 +110,7 @@ void HealthBar::render(const std::string& name, const Chip& chip) {
     text += QStringLiteral(" · ") + age_text(std::max(age, std::chrono::seconds{0}));
   }
   chip.label->setText(text);
-  chip.label->setStyleSheet(QStringLiteral("QLabel { background: %1; border-radius: 4px; padding: 1px 6px; }")
-                                .arg(color_of(chip.status).name()));
+  style::set_chip(chip.label, level_of(chip.status));
 }
 
 }  // namespace pychron::ui

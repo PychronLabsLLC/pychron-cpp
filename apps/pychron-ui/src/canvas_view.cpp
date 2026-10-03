@@ -1,4 +1,5 @@
 #include "canvas_view.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,9 +22,6 @@ QColor color_or(const canvas::Canvas& c, const std::string& key, QColor fallback
   return fallback;
 }
 
-// Region fill colours, cycled by region index.
-constexpr std::array<QRgb, 6> kRegionPalette = {0x8fd3ff, 0xffd27f, 0xb6e3a8, 0xe3b6e0, 0xffb3a7, 0xc9c3ff};
-
 // Projection of `p` onto the segment a-b, clamped to it.
 QPointF project(QPointF p, QPointF a, QPointF b) {
   const QPointF ab = b - a;
@@ -37,7 +35,7 @@ QPointF project(QPointF p, QPointF a, QPointF b) {
 
 }  // namespace
 
-QColor CanvasView::isolated_color() { return QColor(0xdd, 0xdd, 0xdd); }
+QColor CanvasView::isolated_color() { return theme().neutral_fill; }
 
 CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(parent), bridge_(bridge) {
   setScene(&scene_);
@@ -255,7 +253,9 @@ void CanvasView::apply_regions() {
     if (region.volumes.size() < 2) {
       continue;
     }
-    const QColor color(kRegionPalette[shared++ % kRegionPalette.size()]);
+    // Region fill colours, cycled by region index.
+    const auto& palette = theme().regions;
+    const QColor color = palette[shared++ % palette.size()];
     for (const auto& volume : region.volumes) {
       colors[volume] = color;
     }

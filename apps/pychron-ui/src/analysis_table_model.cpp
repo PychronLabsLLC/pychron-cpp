@@ -1,4 +1,5 @@
 #include "analysis_table_model.hpp"
+#include "theme.hpp"
 
 #include <cmath>
 
@@ -16,10 +17,10 @@ QString qs(const std::string& s) { return QString::fromStdString(s); }
 // Row tint by analysis type (legacy use_analysis_colors).
 QColor type_color(const std::string& t) {
   if (t == "unknown") return {};
-  if (t.rfind("blank", 0) == 0) return QColor(230, 240, 255);
-  if (t == "air") return QColor(235, 250, 235);
-  if (t == "cocktail") return QColor(255, 245, 225);
-  if (t == "detector_ic") return QColor(245, 235, 255);
+  if (t.rfind("blank", 0) == 0) return theme().row_blank;
+  if (t == "air") return theme().row_air;
+  if (t == "cocktail") return theme().row_cocktail;
+  if (t == "detector_ic") return theme().row_detector_ic;
   return {};
 }
 
@@ -55,7 +56,7 @@ QVariant AnalysisTableModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= static_cast<int>(rows_.size())) return {};
   const auto& r = rows_[static_cast<std::size_t>(index.row())];
   if (role == Qt::BackgroundRole) {
-    if (r.tag != "ok" && !r.tag.empty()) return QBrush(QColor(255, 228, 225));
+    if (r.tag != "ok" && !r.tag.empty()) return QBrush(theme().error_bg);
     const QColor c = type_color(r.analysis_type);
     return c.isValid() ? QVariant(QBrush(c)) : QVariant();
   }

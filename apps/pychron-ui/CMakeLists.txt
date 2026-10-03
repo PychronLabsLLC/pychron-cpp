@@ -43,6 +43,7 @@ add_library(pychron_ui_lib STATIC
   src/data_browser_window.cpp
   src/recall_window.cpp
   src/figure_window.cpp
+  src/theme.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -76,6 +77,7 @@ add_library(pychron_ui_lib STATIC
   src/data_browser_window.hpp
   src/recall_window.hpp
   src/figure_window.hpp
+  src/theme.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 

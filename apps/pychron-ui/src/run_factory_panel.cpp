@@ -1,4 +1,5 @@
 #include "run_factory_panel.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <array>
@@ -406,7 +407,7 @@ void RunFactoryPanel::refresh() {
     }
   }
   preview_->setText(text);
-  preview_->setStyleSheet(ok ? QString() : QStringLiteral("color: #a01818;"));
+  style::set_tone(preview_, ok ? style::Tone::Normal : style::Tone::Error);
   add_->setEnabled(ok && !locked_ && !model_.locked());
 }
 
@@ -444,7 +445,7 @@ bool RunFactoryPanel::apply_defaults() {
   if (!d) {
     preview_->setText(tr("No defaults for %1 on device '%2' in defaults.toml")
                           .arg(q(experiment::to_string(lab_.ids.classify(s(identifier_->text())))), device_->text()));
-    preview_->setStyleSheet(QStringLiteral("color: #a01818;"));
+    style::set_tone(preview_, style::Tone::Error);
     return false;
   }
   set_form(*d);

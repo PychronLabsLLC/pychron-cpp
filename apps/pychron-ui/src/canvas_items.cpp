@@ -1,4 +1,5 @@
 #include "canvas_items.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 
@@ -26,13 +27,13 @@ QPointF to_qpoint(const canvas::Point& p) { return {p.x, p.y}; }
 QColor valve_color(ValveState state) {
   switch (state) {
     case ValveState::Open:
-      return QColor(0x2e, 0xcc, 0x40);
+      return theme().ok;
     case ValveState::Closed:
-      return QColor(0xe0, 0x3c, 0x31);
+      return theme().error;
     case ValveState::Unknown:
       break;
   }
-  return QColor(0x99, 0x99, 0x99);
+  return theme().inactive;
 }
 
 // ---- ValveItem --------------------------------------------------------------
@@ -54,7 +55,7 @@ ValveItem::ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* pa
 
 QColor ValveItem::fill_color() const {
   if (is_flashing() && flash_ticks_ % 2 == 0) {
-    return QColor(Qt::yellow);
+    return theme().flash;
   }
   if (state_ == ValveState::Open && inherited_) {
     return *inherited_;
@@ -99,7 +100,7 @@ QRectF ValveItem::boundingRect() const {
 void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
   const QRectF body(-kSize / 2, -kSize / 2, kSize, kSize);
   painter->setRenderHint(QPainter::Antialiasing, true);
-  painter->setPen(QPen(Qt::black, 1));
+  painter->setPen(QPen(theme().text, 1));
   painter->setBrush(fill_color());
   if (kind_ == canvas::ValveKind::Switch) {
     painter->drawEllipse(body);
@@ -113,7 +114,7 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
 
   if (pending_) {
     painter->setBrush(Qt::NoBrush);
-    painter->setPen(QPen(Qt::black, 2, Qt::DashLine));
+    painter->setPen(QPen(theme().text, 2, Qt::DashLine));
     painter->drawRoundedRect(body.adjusted(-3, -3, 3, 3), kCornerRadius + 2, kCornerRadius + 2);
   }
   if (locked_) {
@@ -175,7 +176,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   // without swallowing the whole shape.
   const double radius = std::min(kCornerRadius, std::min(rect_.width(), rect_.height()) / 4);
   painter->setRenderHint(QPainter::Antialiasing, true);
-  painter->setPen(QPen(Qt::black, 1));
+  painter->setPen(QPen(theme().text, 1));
   painter->setBrush(region_);
   painter->drawRoundedRect(rect_, radius, radius);
   painter->drawText(rect_, Qt::AlignCenter, label_);
@@ -198,7 +199,7 @@ ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width,
   setZValue(0);
 }
 
-QColor ConnectionItem::default_color() { return QColor(0x55, 0x55, 0x55); }
+QColor ConnectionItem::default_color() { return theme().outline; }
 
 void ConnectionItem::set_region_color(QColor color) {
   if (color == pen().color()) {
@@ -258,7 +259,7 @@ void GaugeLabelItem::set_alarm(bool alarm) {
 
 void GaugeLabelItem::refresh() {
   setText(QStringLiteral("%1: %2").arg(QString::fromStdString(name_), value_));
-  setBrush(alarm_ ? QColor(Qt::red) : QColor(Qt::black));
+  setBrush(alarm_ ? theme().error_text : theme().text);
   // Centre on the element position the view assigns with setPos().
   const QRectF r = QGraphicsSimpleTextItem::boundingRect();
   setTransform(QTransform::fromTranslate(-r.width() / 2, -r.height() / 2));

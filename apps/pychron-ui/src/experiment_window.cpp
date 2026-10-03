@@ -20,6 +20,7 @@
 
 #include "pychron/experiment/model/queue_file.hpp"
 #include "strip_chart_model.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -67,7 +68,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   table_->setColumnWidth(QueueTableModel::Status, 110);
   table_->setContextMenuPolicy(Qt::ActionsContextMenu);
   diagnostics_->setObjectName(QStringLiteral("QueueDiagnostics"));
-  diagnostics_->setStyleSheet(QStringLiteral("#QueueDiagnostics { background: #f8d7da; color: #721c24; padding: 4px; }"));
+  style::make_banner(diagnostics_);
   diagnostics_->setWordWrap(true);
   diagnostics_->hide();
 

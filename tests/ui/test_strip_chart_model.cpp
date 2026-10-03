@@ -11,6 +11,7 @@
 
 #include "intensities_model.hpp"
 #include "strip_chart_model.hpp"
+#include "theme.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -270,7 +271,7 @@ class TestStripChartModel : public QObject {
     IntensitiesModel m(two());
     m.update(row(0.0, {{"H1", 4.0}}, true));
     const QModelIndex cell = m.index(0, IntensitiesModel::ColIntensity);
-    QCOMPARE(m.data(cell, Qt::BackgroundRole).value<QBrush>().color(), QColor(Qt::red));
+    QCOMPARE(m.data(cell, Qt::BackgroundRole).value<QBrush>().color(), pychron::ui::theme().error);
     QCOMPARE(m.data(cell, Qt::ToolTipRole).toString(), QStringLiteral("saturated"));
     QCOMPARE(m.data(m.index(0, IntensitiesModel::ColColour), Qt::BackgroundRole).value<QBrush>().color(),
              StripChartModel::palette_color(0));

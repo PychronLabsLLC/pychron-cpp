@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include "scene_view.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -112,20 +113,13 @@ const char* stage_title(pp::Stage s) {
 constexpr r::FitKind kFitKinds[] = {r::FitKind::Average, r::FitKind::Linear, r::FitKind::Parabolic, r::FitKind::Cubic,
                                     r::FitKind::Exponential};
 
-const QColor kChanged(255, 236, 160);
-const QColor kAdded(206, 240, 206);
-const QColor kRemoved(245, 205, 205);
-
 }  // namespace
 
 RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidget(parent, Qt::Window), source_(source) {
   resize(900, 650);
   auto* layout = new QVBoxLayout(this);
   title_ = new QLabel;
-  QFont f = title_->font();
-  f.setPointSizeF(f.pointSizeF() * 1.3);
-  f.setBold(true);
-  title_->setFont(f);
+  title_->setFont(style::title_font(title_->font()));
   title_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   layout->addWidget(title_);
   tabs_ = new QTabWidget;
@@ -647,7 +641,9 @@ void RecallWindow::show_revisions() {
   for (int i = 0; i < static_cast<int>(diff.rows.size()); ++i) {
     const auto& row = diff.rows[static_cast<std::size_t>(i)];
     set_cell(revision_content_, i, 0, qs(row.key), qs(std::string(pp::to_string(row.state))));
-    const QColor row_color = row.state == pp::DiffState::Added ? kAdded : row.state == pp::DiffState::Removed ? kRemoved : QColor();
+    const QColor row_color = row.state == pp::DiffState::Added     ? theme().diff_added
+                             : row.state == pp::DiffState::Removed ? theme().diff_removed
+                                                                   : QColor();
     if (row_color.isValid()) revision_content_->item(i, 0)->setBackground(row_color);
     for (std::size_t c = 0; c < diff.columns.size(); ++c) {
       QString text;
@@ -663,7 +659,7 @@ void RecallWindow::show_revisions() {
       if (row_color.isValid()) {
         item->setBackground(row_color);
       } else if (row.changed[c]) {
-        item->setBackground(kChanged);
+        item->setBackground(theme().diff_changed);
       }
     }
   }

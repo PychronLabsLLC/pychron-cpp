@@ -8,6 +8,7 @@
 
 #include "experiment_fixture.hpp"
 #include "queue_table_model.hpp"
+#include "theme.hpp"
 
 using pychron::experiment::QueueSpec;
 using pychron::experiment::run::RunState;
@@ -72,7 +73,7 @@ class TestQueueTableModel : public QObject {
     QVERIFY(!m->runnable());
     QVERIFY(m->data(plan, Qt::ToolTipRole).toString().contains(QStringLiteral("no_such_plan")));
     QCOMPARE(m->data(m->index(2, QueueTableModel::Identifier), Qt::BackgroundRole).value<QBrush>().color(),
-             QColor(0xf8, 0xd7, 0xda));
+             pychron::ui::theme().error_bg);
     QVERIFY(!m->row_has_error(1));
     QVERIFY(m->setData(plan, QStringLiteral("sim_multicollect")));
     QVERIFY(!m->row_has_error(2));

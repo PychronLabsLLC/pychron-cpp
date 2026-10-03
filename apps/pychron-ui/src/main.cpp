@@ -54,12 +54,14 @@
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "spectrometer_bridge.hpp"
+#include "theme.hpp"
 
 int main(int argc, char** argv) {
   pychron::LogHub::install_crash_handlers();
   QApplication app(argc, argv);
   QCoreApplication::setOrganizationName(QStringLiteral("PychronLabs"));
   QApplication::setApplicationName(QStringLiteral("pychron-ui"));
+  pychron::ui::style::apply(app);
 
   const auto cli = pychron::ui::parse_command_line(QApplication::arguments().mid(1));
   if (!cli) {

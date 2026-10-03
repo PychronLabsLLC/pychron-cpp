@@ -1,4 +1,5 @@
 #include "queue_table_model.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -112,10 +113,10 @@ QVariant QueueTableModel::data(const QModelIndex& index, int role) const {
       if (it == by_row_.end()) return {};
       const bool error = std::any_of(it->second.begin(), it->second.end(),
                                      [](const auto& d) { return d.severity == Severity::Error; });
-      return QBrush(error ? QColor(0xf8, 0xd7, 0xda) : QColor(0xff, 0xf3, 0xcd));
+      return QBrush(error ? theme().error_bg : theme().warning_bg);
     }
     case Qt::ForegroundRole:
-      if (r.skip) return QBrush(QColor(0x88, 0x88, 0x88));
+      if (r.skip) return QBrush(theme().faint_text);
       return {};
     case Qt::FontRole:
       if (r.end_after && index.column() == Identifier) {
@@ -438,11 +439,11 @@ QString QueueTableModel::status_text(int row) const {
 
 QColor QueueTableModel::state_color(RunState state) {
   switch (state) {
-    case RunState::Success: return {0xc8, 0xe6, 0xc9};
-    case RunState::Failed: return {0xf8, 0xd7, 0xda};
+    case RunState::Success: return theme().success_bg;
+    case RunState::Failed: return theme().error_bg;
     case RunState::Cancelled:
-    case RunState::Aborted: return {0xff, 0xe0, 0xb2};
-    default: return {0xbb, 0xde, 0xfb};  // in progress
+    case RunState::Aborted: return theme().stopped_bg;
+    default: return theme().progress_bg;
   }
 }
 

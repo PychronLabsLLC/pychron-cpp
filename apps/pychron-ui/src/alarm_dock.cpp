@@ -1,4 +1,5 @@
 #include "alarm_dock.hpp"
+#include "theme.hpp"
 
 #include <QHBoxLayout>
 #include <QTime>
@@ -60,7 +61,7 @@ void AlarmDock::add_alarm(const Alarm& alarm) {
   row->setText(kSeverity, severity_name(alarm.severity));
   row->setText(kMessage, QString::fromStdString(alarm.message));
   row->setText(kTime, QTime::currentTime().toString(QStringLiteral("HH:mm:ss")));
-  const QColor color = alarm.severity == AlarmSeverity::Critical ? QColor(Qt::red) : QColor(0xc0, 0x80, 0x00);
+  const QColor color = alarm.severity == AlarmSeverity::Critical ? theme().error_text : theme().warning_text;
   row->setForeground(kSeverity, color);
 }
 

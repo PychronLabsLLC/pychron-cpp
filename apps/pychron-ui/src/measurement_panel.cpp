@@ -1,4 +1,5 @@
 #include "measurement_panel.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -57,7 +58,7 @@ MeasurementPanel::MeasurementPanel(const experiment::lab::Lab& lab, QueueTableMo
       status_(new QLabel) {
   header_->setWordWrap(true);
   description_->setWordWrap(true);
-  description_->setStyleSheet(QStringLiteral("color: #555;"));
+  style::set_tone(description_, style::Tone::Muted);
   status_->setWordWrap(true);
   family_->setObjectName(QStringLiteral("family"));
   plan_->setObjectName(QStringLiteral("plan"));
@@ -274,7 +275,7 @@ void MeasurementPanel::update_marks() {
     f.setBold(over);
     e.label->setFont(f);
     e.badge->setText(over ? QStringLiteral("●") : QString());
-    e.badge->setStyleSheet(QStringLiteral("color: #1565c0;"));
+    style::set_tone(e.badge, style::Tone::Accent);
     e.badge->setToolTip(over ? tr("Overridden; the plan has %1").arg(q(plan::format_param(e.param.value))) : QString());
     e.reset->setVisible(over);
     e.reset->setEnabled(editable);
@@ -302,7 +303,7 @@ void MeasurementPanel::update_marks() {
                            .arg(d ? clock_text(*d) : tr("?")));
     }
   }
-  status_->setStyleSheet(status_ok_ ? QString() : QStringLiteral("color: #a01818;"));
+  style::set_tone(status_, status_ok_ ? style::Tone::Normal : style::Tone::Error);
 }
 
 bool MeasurementPanel::store(MeasurementRef measurement) {

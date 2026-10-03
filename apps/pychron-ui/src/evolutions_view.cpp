@@ -15,6 +15,7 @@
 #include <qcustomplot.h>
 
 #include "strip_chart_model.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -65,7 +66,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   layout->addWidget(peaks_);
 
   plot_->setMinimumHeight(200);
-  plot_->axisRect()->setBackground(QBrush(QColor(0xfa, 0xfa, 0xd2)));
+  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
   plot_->xAxis->setLabel(tr("Time (s)"));
   plot_->yAxis->setLabel(tr("Intensity"));
   plot_->legend->setVisible(false);  // shown once there are graphs
@@ -235,7 +236,7 @@ void EvolutionsView::rebuild() {
     excluded_ = plot_->addGraph();
     excluded_->setLineStyle(QCPGraph::lsNone);
     excluded_->setAdaptiveSampling(false);
-    excluded_->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, QColor(0x60, 0x60, 0x60), 9));
+    excluded_->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, theme().muted_text, 9));
     excluded_->removeFromLegend();
   }
   plot_->legend->setVisible(!graphs_.empty());  // an empty legend draws a stray box

@@ -1,4 +1,5 @@
 #include "script_editor_window.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -354,7 +355,7 @@ void ScriptEditorWindow::show_check() {
   Document* d = current();
   if (d == nullptr) {
     status_->setText(tr("Open a script from the list, or Script > New."));
-    status_->setStyleSheet(QString());
+    style::set_tone(status_, style::Tone::Normal);
     return;
   }
   auto listed = d->check.report.diagnostics;  // in line order, gosub scripts after this one
@@ -370,7 +371,7 @@ void ScriptEditorWindow::show_check() {
     if (!diag.code.empty()) text += QStringLiteral(" [") + q(diag.code) + QStringLiteral("]");
     auto* item = new QListWidgetItem(text, problems_);
     item->setData(Qt::UserRole, diag.line);
-    item->setForeground(error ? QColor(0xb7, 0x1c, 0x1c) : QColor(0x9a, 0x67, 0x00));
+    item->setForeground(error ? theme().error_text : theme().warning_text);
   }
   QString text;
   bool bad = false;
@@ -387,7 +388,7 @@ void ScriptEditorWindow::show_check() {
     if (const auto w = d->check.report.warnings().size(); w > 0) text += tr(" · %n warning(s)", nullptr, static_cast<int>(w));
   }
   status_->setText(text);
-  status_->setStyleSheet(bad ? QStringLiteral("color: #a01818;") : QString());
+  style::set_tone(status_, bad ? style::Tone::Error : style::Tone::Normal);
 }
 
 QStringList ScriptEditorWindow::diagnostic_lines() const {
