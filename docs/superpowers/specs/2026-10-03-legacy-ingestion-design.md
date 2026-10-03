@@ -446,3 +446,22 @@ points. Where this section and an earlier one disagree, this section wins.
    revisions that were head at the interpreted-age commit, with reference
    data as of that commit. When that state cannot be reproduced, the analysis
    is reported as not comparable with the reason, never as a pass.
+7. **Retrying skipped analyses.** An analysis refused for a missing catalog
+   row (`unknown_analysis`) does not hold the resume token back. After the
+   catalog is fixed, `import run --replay` walks the source again from the
+   start; deterministic ids make everything already imported a no-op and the
+   skipped analyses and their later revisions are written in order. When a
+   replay writes an entity that has a pending `unknown_analysis` conflict,
+   the conflict's resolution becomes `superseded`. Only `pending` conflicts
+   make verify fail.
+8. **Conflicts are matched by id.** A conflict's uuid is
+   v5(namespace, source url, commit sha, path). Accounting looks a conflict
+   up by that id, not by file hash. A refused analysis gets one
+   `unknown_analysis` conflict per file of its collection, so each of its
+   files is accounted for.
+9. **Bookmarks and groups take a caller-supplied id** (v5 of source url and
+   tag name) with ensure semantics, so a crash between creating a bookmark
+   and committing the batch cannot duplicate it.
+10. **Collection changeset id.** One commit can add several analyses, so a
+    collection changeset's id is v5(namespace, source url, commit sha,
+    analysis uuid), distinct from the commit's `import` changeset id.
