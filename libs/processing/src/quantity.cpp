@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <set>
 
 namespace pychron::processing {
@@ -264,8 +265,11 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
           if (ar) return ar->f.interference_corrected[r::index(r::ArgonIsotope::Ar39)];
           return std::nullopt;
         case Named::J:
-          if (a->context.flux) return r::UFloat::variable(a->context.flux->j.value, a->context.flux->j.error, "J");
-          return std::nullopt;
+          if (!a->context.flux) return std::nullopt;
+          // An unknown J or J error is NaN, not a variable (which needs a finite sigma).
+          if (const auto& j = a->context.flux->j; !std::isfinite(j.value) || !std::isfinite(j.error))
+            return r::UFloat(std::numeric_limits<double>::quiet_NaN());
+          return r::UFloat::variable(a->context.flux->j.value, a->context.flux->j.error, "J");
         case Named::Timestamp:
           return r::UFloat(a->timestamp);
         case Named::Aliquot:

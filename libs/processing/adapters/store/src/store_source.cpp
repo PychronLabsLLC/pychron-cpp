@@ -334,11 +334,15 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
 
   for (const auto& ref : parts.refs) {
     if (const auto* f = std::get_if<ps::FluxValue>(&ref)) {
+      // No J: no flux yet, hence no age. With a J, a NULL error is unknown
+      // (NaN), not 0, and the analysis does not reduce.
       if (!f->j) continue;
+      constexpr double unknown = std::numeric_limits<double>::quiet_NaN();
       reduction::Flux flux;
-      flux.j = {*f->j, f->j_err.value_or(0.0)};
-      flux.position_jerr = f->position_jerr.value_or(0.0);
-      if (f->lambda_k_total) flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(0.0)};
+      flux.j = {*f->j, f->j_err.value_or(unknown)};
+      flux.position_jerr = f->position_jerr.value_or(unknown);
+      if (f->lambda_k_total)
+        flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(unknown)};
       a.context.flux = flux;
     } else if (const auto* p = std::get_if<ps::ProductionValue>(&ref)) {
       std::map<std::string, reduction::Measured, std::less<>> rows;

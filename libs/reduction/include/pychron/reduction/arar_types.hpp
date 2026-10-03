@@ -149,6 +149,8 @@ struct DecayFactors {
   double df37 = 1.0, df39 = 1.0;
 };
 
+// An error the source does not have is NaN, never 0; make_j() and reduce()
+// need finite ones, so the caller checks first (processing reduce_analysis).
 struct Flux {  // flux_value (dvc schema 6.1)
   Measured j;
   double position_jerr = 0.0;

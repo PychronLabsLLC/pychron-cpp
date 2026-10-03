@@ -13,6 +13,7 @@
 #include <random>
 #include <thread>
 
+#include "pychron/processing/quantity.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
 
@@ -976,6 +977,94 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar41")->intercept.known());
     EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
     EXPECT_TRUE(std::isnan(reduced->stage("Ar41", Stage::Intercept)->nominal()));
+  }
+}
+
+// A flux with a J and a NULL error: the error is unknown, not 0.
+TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
+  auto flux = [] {
+    ps::FluxValue f;
+    f.j = 0.001;
+    f.j_err = 1e-6;
+    f.position_jerr = 2e-7;
+    f.lambda_k_total = 5.5e-10;
+    f.lambda_k_total_err = 1e-12;
+    return f;
+  };
+  {
+    auto parts = argon_parts();
+    parts.refs = {flux()};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(reduced->arar->ages);
+    EXPECT_TRUE(reduced->j);
+  }
+
+  struct Case {
+    const char* what;
+    std::optional<double> ps::FluxValue::* field;
+    double (*mapped)(const reduction::Flux&);
+  };
+  const Case cases[] = {
+      {"J error", &ps::FluxValue::j_err, [](const reduction::Flux& f) { return f.j.error; }},
+      {"position J error", &ps::FluxValue::position_jerr, [](const reduction::Flux& f) { return f.position_jerr; }},
+      {"lambda_k_total error", &ps::FluxValue::lambda_k_total_err,
+       [](const reduction::Flux& f) { return f.lambda_k_total->error; }},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.what);
+    auto f = flux();
+    (f.*c.field).reset();
+    auto parts = argon_parts();
+    parts.refs = {f};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    ASSERT_TRUE(reduced->analysis->context.flux);
+    EXPECT_TRUE(std::isnan(c.mapped(*reduced->analysis->context.flux)));
+    EXPECT_EQ(reduced->analysis->context.flux->j.value, 0.001);
+    EXPECT_FALSE(reduced->arar);
+    EXPECT_FALSE(reduced->j);
+    EXPECT_NE(reduced->reduction_error.find(std::string("no stored ") + c.what), std::string::npos)
+        << reduced->reduction_error;
+  }
+
+  // The J quantity of an unknown J error is not a number.
+  {
+    auto f = flux();
+    f.j_err.reset();
+    auto parts = argon_parts();
+    parts.refs = {f};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    auto q = Quantity::parse("j");
+    ASSERT_TRUE(q) << to_string(q.error());
+    const auto j = q->eval(*reduced);
+    EXPECT_TRUE(!j || !j->known());
+  }
+
+  // No J is no flux: reduced, without ages. No lambda_k_total is no override.
+  {
+    auto f = flux();
+    f.j.reset();
+    auto parts = argon_parts();
+    parts.refs = {f};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->context.flux);
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_FALSE(reduced->arar->ages);
+  }
+  {
+    auto f = flux();
+    f.lambda_k_total.reset();
+    f.lambda_k_total_err.reset();
+    auto parts = argon_parts();
+    parts.refs = {f};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->context.flux->lambda_k_total);
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
   }
 }
 

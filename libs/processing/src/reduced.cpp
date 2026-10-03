@@ -38,13 +38,16 @@ std::optional<r::ArgonIsotope> argon(std::string_view name) {
   return std::nullopt;
 }
 
-// "Ar40 intercept value" / "... error" for each number of `v` that is unknown.
-void add_unknown(std::string& out, const IsotopeData& iso, std::string_view what, const Value& v) {
-  for (const auto& [part, x] : {std::pair<std::string_view, double>{"value", v.value}, {"error", v.error}}) {
+// "Ar40 intercept value" / "... error" for each of the two that is unknown.
+void add_unknown(std::string& out, const std::string& what, double value, double error) {
+  for (const auto& [part, x] : {std::pair<std::string_view, double>{"value", value}, {"error", error}}) {
     if (std::isfinite(x)) continue;
     if (!out.empty()) out += ", ";
-    out.append(iso.key).append(" ").append(what).append(" ").append(part);
+    out.append(what).append(" ").append(part);
   }
+}
+void add_unknown(std::string& out, const IsotopeData& iso, std::string_view what, const Value& v) {
+  add_unknown(out, iso.key + " " + std::string(what), v.value, v.error);
 }
 
 }  // namespace
@@ -142,18 +145,11 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
   if (!a.context.chronology.empty())
     in.irradiation = r::irradiation_from_doses(a.context.chronology, static_cast<std::int64_t>(std::llround(a.timestamp)),
                                                in.constants.use_irradiation_endtime);
-  if (a.context.flux) {
-    in.j = r::make_j(*a.context.flux);
-    in.position_jerr = a.context.flux->position_jerr;
-    in.lambda_k_total = a.context.flux->lambda_k_total;
-  }
   in.fixed_k3739 = a.context.fixed_k3739;
-
   out->constants = in.constants;
-  out->j = in.j;
-  out->lambda_k_total = in.lambda_k_total;
-  // A stored number the source does not have is not a zero signal: no result
-  // rather than an age from it.
+
+  // A stored number the source does not have is not a zero signal or a zero
+  // error: no result rather than an age from it.
   std::string unknown;
   for (const IsotopeData* iso : argon_data) {
     if (!iso) continue;
@@ -162,10 +158,23 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
     add_unknown(unknown, *iso, "blank", iso->blank);
     add_unknown(unknown, *iso, "IC factor", iso->ic_factor);
   }
+  if (const auto& flux = a.context.flux) {
+    add_unknown(unknown, "J", flux->j.value, flux->j.error);
+    add_unknown(unknown, "position J", 0.0, flux->position_jerr);
+    if (flux->lambda_k_total) add_unknown(unknown, "lambda_k_total", flux->lambda_k_total->value, flux->lambda_k_total->error);
+  }
   if (!unknown.empty()) {
     out->reduction_error = "not reducible: no stored " + unknown;
     return out;
   }
+
+  if (a.context.flux) {
+    in.j = r::make_j(*a.context.flux);
+    in.position_jerr = a.context.flux->position_jerr;
+    in.lambda_k_total = a.context.flux->lambda_k_total;
+  }
+  out->j = in.j;
+  out->lambda_k_total = in.lambda_k_total;
   auto result = r::reduce(in);
   if (!result) {
     out->reduction_error = result.error().what;
