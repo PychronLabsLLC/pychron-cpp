@@ -560,3 +560,24 @@ points. Where this section and an earlier one disagree, this section wins.
     Conflicts that only annotate an imported row (`imported: true` for a
     broken optional catalog link, `synthesized: true` for a catalog row made
     from repo contents) are listed as warnings and do not fail verify.
+27. **Accounting has no blob shortcut** (replaces the last alternative of
+    section 6 item 1). A unit is accounted for by a row at its own
+    (commit, path), by its conflict, or, when the walk itself determines that
+    it repeats content already imported, by the specific earlier unit it
+    repeats. "The same blob exists somewhere in provenance for this path" is
+    not evidence: it would hide a revision dropped from an X, Y, X history.
+28. **Verify needs a finished import.** Verify reports the source's
+    registration and status and is not ok unless the source is registered
+    and its last run finished. For a catalog source this is what ties "the
+    rows exist" to "this dump was imported". Known limit: when a catalog row
+    already existed (the existing row wins), verify cannot tell that the
+    dump's other columns were not applied.
+29. **Late spectrometer file.** A spectrometer settings file that first
+    appears after the analysis naming it was collected cannot be attached
+    (the analysis row is immutable). It is an `unparseable` conflict with
+    reason `spectrometer_file_after_collection`, not a silent skip.
+30. **"As of" is a position in the walk, not a time.** Git author dates tie
+    and run out of order. The state as of an interpreted age is, for each
+    kind, the last revision whose source commit is at or before the
+    interpreted age's commit in the walk order of that source. Members from
+    another source are not comparable.
