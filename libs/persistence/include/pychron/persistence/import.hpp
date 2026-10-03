@@ -2,14 +2,17 @@
 
 // Import bookkeeping types (legacy ingestion spec; DVC schema spec, section
 // 13): the import source, per-entity provenance, and the conflicts an import
-// leaves for an admin. std-only, like the rest of the public headers.
+// leaves for an admin, and the unit of work an importer writes through.
+// std-only, like the rest of the public headers.
 
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "pychron/core/error.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/persistence/ids.hpp"
+#include "pychron/persistence/model.hpp"
 
 namespace pychron::persistence {
 
@@ -70,6 +73,51 @@ struct ConflictFilter {
   std::optional<Uuid> source;
   std::optional<ConflictKind> kind;
   std::optional<std::string> resolution;
+};
+
+// ---------------------------------------------------------------- import writes
+
+// A revision with a caller-derived id. Its parent is the head of
+// (subject, kind) when it is written; the head then moves to it.
+struct ImportedRevision {
+  Uuid uuid;
+  Uuid subject;
+  Kind kind = Kind::Intercepts;
+  RevisionPayload payload;
+};
+
+// A changeset with a caller-derived id and the source's own time (a git
+// commit's author date), stamped on the changeset and its revisions.
+struct ImportedChangeset {
+  Uuid uuid;
+  ChangesetKind kind = ChangesetKind::Import;  // Import or Reference
+  Uuid author_user;
+  UtcTime created;
+  std::string message;
+  std::vector<ImportedRevision> revisions;  // parent = head of (subject, kind) at write time
+};
+
+// One import batch. Everything staged is written by commit() in one
+// transaction, in the order given; a failure leaves nothing behind, progress
+// included. Ids come from the caller, so writing a batch again is a no-op.
+class IImportUnitOfWork {
+ public:
+  virtual ~IImportUnitOfWork() = default;
+
+  // A changeset whose uuid is already stored is not written again, but its
+  // revisions still are when they are missing. A revision whose uuid is
+  // already stored is skipped whole: no payload, no head move.
+  virtual Result<void> add_changeset(ImportedChangeset changeset) = 0;
+  // One row per (entity_type, entity, source); an existing row is kept.
+  virtual Result<void> add_provenance(ProvenanceRow row) = 0;
+  virtual Result<void> add_conflict(ImportConflictRow row) = 0;
+  // The source's resume token and counters. A nullopt head_sha keeps the
+  // stored one; status "finished" also stamps the finish time.
+  virtual Result<void> set_progress(ImportProgress progress) = 0;
+  // One transaction, one change_log entry. Rows whose uuid already exists are
+  // skipped; a batch that adds no changeset and no revision adds no
+  // change_log entry and returns the current change_seq.
+  virtual Result<ChangeSeq> commit() = 0;
 };
 
 }  // namespace pychron::persistence

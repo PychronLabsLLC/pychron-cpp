@@ -279,6 +279,9 @@ struct AnalysisIngest {
   std::optional<int> run_index;
   std::optional<std::string> laboratory, instrument_name;
   std::string analyst;  // app_user name, created if missing
+  // Set by an importer only.
+  std::optional<Uuid> import_source;  // stamped on the collection changeset
+  std::optional<Uuid> author_user;    // overrides `analyst` as changeset author when set
   std::optional<Sha256Digest> record_sha256;
   int record_schema_version = 1;
 
@@ -488,8 +491,10 @@ class IStore {
   virtual Result<std::unique_ptr<IUnitOfWork>> begin(const Actor& actor) = 0;
 
   // Import bookkeeping (legacy ingestion). begin_import inserts the source or
-  // returns the stored row; the rest are reads.
+  // returns the stored row; begin_import_batch stages one batch of that
+  // source's history, written as `client`; the rest are reads.
   virtual Result<ImportSourceInfo> begin_import(const ImportSourceSpec& spec) = 0;
+  virtual Result<std::unique_ptr<IImportUnitOfWork>> begin_import_batch(Uuid source, Uuid client) = 0;
   virtual Result<std::vector<ImportSourceInfo>> import_sources() = 0;
   virtual Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) = 0;
   virtual Result<std::vector<ProvenanceRow>> provenance_for(Uuid entity) = 0;

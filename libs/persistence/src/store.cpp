@@ -72,6 +72,9 @@ class TinyStore final : public IStore {
   Result<ImportSourceInfo> begin_import(const ImportSourceSpec& spec) override {
     return detail::begin_import(*db_, dialect(), spec);
   }
+  Result<std::unique_ptr<IImportUnitOfWork>> begin_import_batch(Uuid source, Uuid client) override {
+    return make_import_unit_of_work(*db_, source, client);
+  }
   Result<std::vector<ImportSourceInfo>> import_sources() override { return detail::import_sources(*db_, dialect()); }
   Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) override {
     return detail::import_conflicts(*db_, filter);
@@ -303,10 +306,7 @@ class TinyStore final : public IStore {
   // ------------------------------------------------------------ reads
 
   Result<std::optional<Uuid>> head(Uuid subject, Kind kind) override {
-    auto row = db_->select_one(sql::kSelectHead, {qv(subject), qstr(to_string(kind))});
-    if (!row) return fail(row.error());
-    if (!*row) return std::optional<Uuid>{};
-    return std::optional<Uuid>{to_uuid((*row)->value("revision_uuid"))};
+    return read_head(*db_, subject, kind);
   }
 
   Result<std::vector<HeadInfo>> heads(Uuid subject) override { return read_heads(*db_, subject); }
@@ -328,7 +328,7 @@ class TinyStore final : public IStore {
       info.changeset.client = to_uuid(r.value("client_uuid"));
       info.changeset.created = to_time(r.value("cs_created"));
       info.changeset.message = to_std(r.value("message"));
-      info.change_seq = r.value("change_seq").toLongLong();
+      info.change_seq = r.value("visible_seq").toLongLong();
       info.author_name = to_std(r.value("author_name"));
       info.client_hostname = to_std(r.value("client_hostname"));
       out.push_back(std::move(info));

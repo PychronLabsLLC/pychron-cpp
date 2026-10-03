@@ -28,12 +28,23 @@ Result<ChangeSeq> take_change(Db& db, const QString& kind, std::optional<Uuid> c
 
 // ---------------------------------------------------------------- rows
 
-Result<void> insert_changeset(Db& db, const ChangesetInfo& changeset);
+// `import_source` is stamped on a changeset written by an importer.
+Result<void> insert_changeset(Db& db, const ChangesetInfo& changeset, std::optional<Uuid> import_source = std::nullopt);
+// The same row, left alone when the uuid is already stored. True if it was written.
+Result<bool> insert_changeset_if_absent(Db& db, const ChangesetInfo& changeset, std::optional<Uuid> import_source);
 Result<void> insert_revision(Db& db, Uuid revision, Uuid changeset, Uuid subject, Kind kind,
                              std::optional<Uuid> parent, UtcTime created);
 Result<void> insert_head_move(Db& db, Uuid changeset, Uuid subject, Kind kind, std::optional<Uuid> from, Uuid to,
                               MoveReason reason);
 Result<std::optional<ChangesetInfo>> changeset_of_revision(Db& db, Uuid revision);
+
+Result<std::optional<Uuid>> read_head(Db& db, Uuid subject, Kind kind);
+// Compare-and-swap of one head from `expected` (nullopt: no head yet) to
+// `to`. False when the head is not `expected`; nothing is written then.
+Result<bool> cas_head(Db& db, Uuid subject, Kind kind, std::optional<Uuid> expected, Uuid to);
+// The analysis row mirrors its identity head: rewrite the identity columns
+// and runid_text in the caller's transaction (UNIQUE keeps holding, I9).
+Result<void> apply_identity(Db& db, Uuid analysis, const IdentityValue& value);
 
 // `subject` is needed to check a RefPayload against its object's ref_type.
 Result<void> write_payload(Db& db, Uuid revision, Uuid subject, const RevisionPayload& payload);
@@ -79,6 +90,7 @@ Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject);
 
 // Import source, provenance and conflict bookkeeping (import.cpp).
 Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourceSpec& spec);
+std::unique_ptr<IImportUnitOfWork> make_import_unit_of_work(Db& db, Uuid source, Uuid client);
 Result<std::vector<ImportSourceInfo>> import_sources(Db& db, Dialect dialect);
 Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFilter& filter);
 Result<std::vector<ProvenanceRow>> provenance_for(Db& db, Dialect dialect, Uuid entity);

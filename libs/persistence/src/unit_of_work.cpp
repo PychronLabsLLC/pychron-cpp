@@ -10,8 +10,6 @@
 namespace pychron::persistence::detail {
 namespace {
 
-QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
-
 struct StagedRevision {
   Uuid uuid;
   Uuid subject;
@@ -78,21 +76,19 @@ class TinyUnitOfWork final : public IUnitOfWork {
 
     std::vector<Conflict> conflicts;
     for (const auto& m : moves_) {
-      Result<int> affected =
-          m.expected ? db_.affecting(sql::kCasHead, {qv(m.to), qv(m.subject), qstr(to_string(m.kind)), qv(*m.expected)})
-                     : db_.affecting(sql::kInsertFirstHead, {qv(m.subject), qstr(to_string(m.kind)), qv(m.to)});
-      if (!affected) return fail(affected.error());
-      if (*affected == 0) conflicts.push_back(Conflict{m.subject, m.kind, m.expected, std::nullopt, std::nullopt});
+      auto moved = cas_head(db_, m.subject, m.kind, m.expected, m.to);
+      if (!moved) return fail(moved.error());
+      if (!*moved) conflicts.push_back(Conflict{m.subject, m.kind, m.expected, std::nullopt, std::nullopt});
     }
 
     if (!conflicts.empty()) {
       tx.rollback();
       // Read the winners after the rollback, outside any transaction.
       for (auto& c : conflicts) {
-        auto actual = db_.select_one(sql::kSelectHead, {qv(c.subject), qstr(to_string(c.kind))});
+        auto actual = read_head(db_, c.subject, c.kind);
         if (!actual) return fail(actual.error());
         if (*actual) {
-          c.actual = to_uuid((*actual)->value("revision_uuid"));
+          c.actual = *actual;
           auto by = changeset_of_revision(db_, *c.actual);
           if (!by) return fail(by.error());
           c.actual_by = *by;
@@ -128,8 +124,7 @@ class TinyUnitOfWork final : public IUnitOfWork {
     return {};
   }
 
-  // The analysis row mirrors its identity head: rewrite the identity columns
-  // and runid_text in the same transaction (UNIQUE keeps holding, I9).
+  // The identity value a move points at: staged here, or already stored.
   Result<void> apply_identity(const StagedMove& m) {
     std::optional<IdentityValue> value;
     for (const auto& rev : revisions_)
@@ -139,15 +134,7 @@ class TinyUnitOfWork final : public IUnitOfWork {
       if (!stored) return fail(stored.error());
       value = std::get<IdentityValue>(*stored);
     }
-    auto text = db_.select_one(sql::kIdentifierText, {qv(value->identifier)});
-    if (!text) return fail(text.error());
-    if (!*text) return fail(ErrorKind::Protocol, "identity revision names an unknown identifier");
-    const std::string runid = make_runid(to_std((*text)->value("identifier")), value->aliquot, value->increment);
-    auto updated = db_.affecting(sql::kApplyIdentity, {qv(value->identifier), value->aliquot, value->increment,
-                                                       qv(runid), qv(m.subject)});
-    if (!updated) return fail(updated.error());
-    if (*updated != 1) return fail(ErrorKind::Protocol, "identity revision for a subject that is not an analysis");
-    return {};
+    return detail::apply_identity(db_, m.subject, *value);
   }
 
   Db& db_;

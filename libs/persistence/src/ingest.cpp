@@ -9,8 +9,6 @@
 namespace pychron::persistence::detail {
 namespace {
 
-QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
-
 Result<std::optional<Uuid>> lookup(Db& db, const QString& sql, const std::string& key) {
   auto row = db.select_one(sql, {qv(key)});
   if (!row) return fail(row.error());
@@ -237,9 +235,9 @@ Result<IngestAck> ingest_analysis(Db& db, const IngestItem& item, const Analysis
   }
 
   const std::string runid = make_runid(a.identifier, a.aliquot, a.increment);
-  const ChangesetInfo cs{a.changeset, ChangesetKind::Collection, *analyst, item.client, a.created,
-                         "<COLLECTION> " + runid};
-  if (auto r = insert_changeset(db, cs); !r) return fail(r.error());
+  const ChangesetInfo cs{a.changeset, ChangesetKind::Collection, a.author_user.value_or(*analyst), item.client,
+                         a.created, "<COLLECTION> " + runid};
+  if (auto r = insert_changeset(db, cs, a.import_source); !r) return fail(r.error());
 
   Row an;
   an["uuid"] = qv(a.analysis);
@@ -324,12 +322,9 @@ Result<IngestAck> ingest_analysis(Db& db, const IngestItem& item, const Analysis
     if (auto r = insert_revision(db, rev.first, a.changeset, a.analysis, kind, std::nullopt, a.created); !r)
       return fail(r.error());
     if (auto r = write_payload(db, rev.first, a.analysis, rev.second); !r) return fail(r.error());
-    Row head;
-    head["subject_uuid"] = qv(a.analysis);
-    head["kind"] = qstr(to_string(kind));
-    head["revision_uuid"] = qv(rev.first);
-    head["head_version"] = 1;
-    if (auto r = db.insert("head", head); !r) return fail(r.error());
+    auto first = cas_head(db, a.analysis, kind, std::nullopt, rev.first);
+    if (!first) return fail(first.error());
+    if (!*first) return fail(ErrorKind::Protocol, "ingest: a new analysis already has a head");
     if (auto r = insert_head_move(db, a.changeset, a.analysis, kind, std::nullopt, rev.first, MoveReason::Ingest); !r)
       return fail(r.error());
   }

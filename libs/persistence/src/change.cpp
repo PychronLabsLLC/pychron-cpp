@@ -96,20 +96,31 @@ Result<ChangeSeq> take_change(Db& db, const QString& kind, std::optional<Uuid> c
   return seq;
 }
 
-Result<void> insert_changeset(Db& db, const ChangesetInfo& c) {
+namespace {
+QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
+
+Row changeset_row(const ChangesetInfo& c, std::optional<Uuid> import_source) {
   Row r;
   r["uuid"] = qv(c.uuid);
-  r["kind"] = QString::fromUtf8(to_string(c.kind).data(), static_cast<qsizetype>(to_string(c.kind).size()));
+  r["kind"] = qstr(to_string(c.kind));
   r["author_user_uuid"] = qv(c.author_user);
   r["client_uuid"] = qv(c.client);
   r["message"] = qv(c.message);
   r["created_utc"] = qv(c.created);
-  return db.insert("changeset", r);
+  if (import_source) r["import_source_uuid"] = qv(*import_source);
+  return r;
+}
+}  // namespace
+
+Result<void> insert_changeset(Db& db, const ChangesetInfo& c, std::optional<Uuid> import_source) {
+  return db.insert("changeset", changeset_row(c, import_source));
 }
 
-namespace {
-QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
-}  // namespace
+Result<bool> insert_changeset_if_absent(Db& db, const ChangesetInfo& c, std::optional<Uuid> import_source) {
+  auto inserted = db.insert_or_ignore("changeset", changeset_row(c, import_source));
+  if (!inserted) return fail(inserted.error());
+  return *inserted > 0;
+}
 
 Result<void> insert_revision(Db& db, Uuid revision, Uuid changeset, Uuid subject, Kind kind,
                              std::optional<Uuid> parent, UtcTime created) {
@@ -139,6 +150,33 @@ Result<void> insert_head_move(Db& db, Uuid changeset, Uuid subject, Kind kind, s
   r["to_revision_uuid"] = qv(to);
   r["reason"] = qstr(to_string(reason));
   return db.insert("head_move", r);
+}
+
+Result<std::optional<Uuid>> read_head(Db& db, Uuid subject, Kind kind) {
+  auto row = db.select_one(sql::kSelectHead, {qv(subject), qstr(to_string(kind))});
+  if (!row) return fail(row.error());
+  if (!*row) return std::optional<Uuid>{};
+  return std::optional<Uuid>{to_uuid((*row)->value("revision_uuid"))};
+}
+
+Result<bool> cas_head(Db& db, Uuid subject, Kind kind, std::optional<Uuid> expected, Uuid to) {
+  Result<int> affected =
+      expected ? db.affecting(sql::kCasHead, {qv(to), qv(subject), qstr(to_string(kind)), qv(*expected)})
+               : db.affecting(sql::kInsertFirstHead, {qv(subject), qstr(to_string(kind)), qv(to)});
+  if (!affected) return fail(affected.error());
+  return *affected != 0;
+}
+
+Result<void> apply_identity(Db& db, Uuid analysis, const IdentityValue& value) {
+  auto text = db.select_one(sql::kIdentifierText, {qv(value.identifier)});
+  if (!text) return fail(text.error());
+  if (!*text) return fail(ErrorKind::Protocol, "identity revision names an unknown identifier");
+  const std::string runid = make_runid(to_std((*text)->value("identifier")), value.aliquot, value.increment);
+  auto updated =
+      db.affecting(sql::kApplyIdentity, {qv(value.identifier), value.aliquot, value.increment, qv(runid), qv(analysis)});
+  if (!updated) return fail(updated.error());
+  if (*updated != 1) return fail(ErrorKind::Protocol, "identity revision for a subject that is not an analysis");
+  return {};
 }
 
 Result<std::optional<ChangesetInfo>> changeset_of_revision(Db& db, Uuid revision) {

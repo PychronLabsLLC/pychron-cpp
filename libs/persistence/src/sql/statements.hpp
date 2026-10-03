@@ -77,15 +77,19 @@ inline const QString kChangesetOfRevision = QStringLiteral(
     "SELECT c.uuid, c.kind, c.author_user_uuid, c.client_uuid, %1 AS created, c.message "
     "FROM revision r JOIN changeset c ON c.uuid = r.changeset_uuid WHERE r.uuid = ?");
 
+// An import batch has one change_log entry for several changesets, so it
+// names them in change_entity ('changeset') instead of change_log.
 inline const QString kHistory = QStringLiteral(
     "SELECT r.uuid, r.parent_uuid, r.subject_uuid, r.kind, c.uuid AS cs_uuid, c.kind AS cs_kind, "
-    "c.author_user_uuid, c.client_uuid, %1 AS cs_created, c.message, l.change_seq, "
+    "c.author_user_uuid, c.client_uuid, %1 AS cs_created, c.message, "
+    "COALESCE(l.change_seq, (SELECT MIN(e.change_seq) FROM change_entity e "
+    "WHERE e.entity_type = 'changeset' AND e.entity_uuid = c.uuid)) AS visible_seq, "
     "u.name AS author_name, cl.hostname AS client_hostname "
     "FROM revision r JOIN changeset c ON c.uuid = r.changeset_uuid "
     "LEFT JOIN change_log l ON l.changeset_uuid = c.uuid "
     "LEFT JOIN app_user u ON u.uuid = c.author_user_uuid "
     "LEFT JOIN client cl ON cl.uuid = c.client_uuid "
-    "WHERE r.subject_uuid = ? AND r.kind = ? ORDER BY l.change_seq, r.created_utc, r.uuid");
+    "WHERE r.subject_uuid = ? AND r.kind = ? ORDER BY visible_seq, r.created_utc, r.uuid");
 
 inline const QString kRevisionKind = QStringLiteral("SELECT kind FROM revision WHERE uuid = ?");
 
@@ -258,6 +262,11 @@ inline const QString kImportedHeadBlobSha = QStringLiteral(
     "SELECT p.git_blob_sha FROM head h JOIN import_provenance p ON p.entity_type = 'revision' "
     "AND p.entity_uuid = h.revision_uuid AND p.import_source_uuid = ? "
     "WHERE h.subject_uuid = ? AND h.kind = ?");
+inline const QString kRevisionExists = QStringLiteral("SELECT 1 AS present FROM revision WHERE uuid = ?");
+// %1: ", head_commit_sha = ?" and/or ", finished_utc = ?", or nothing.
+inline const QString kSetImportProgress = QStringLiteral(
+    "UPDATE import_source SET progress_commit_sha = ?, commits_done = ?, commits_total = ?, status = ?%1 "
+    "WHERE uuid = ?");
 inline const QString kImportConflicts = QStringLiteral(
     "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution "
     "FROM import_conflict");

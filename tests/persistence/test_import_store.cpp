@@ -1,5 +1,5 @@
-// Import source, provenance and conflict reads (legacy ingestion spec; DVC
-// schema spec, section 13).
+// Import source, provenance and conflict reads, and the import unit of work
+// (legacy ingestion spec; DVC schema spec, section 13).
 
 #include <gtest/gtest.h>
 
@@ -12,8 +12,6 @@ namespace pd = pychron::persistence::detail;
 
 namespace {
 
-class ImportStoreTest : public StoreTest {};
-
 ImportSourceSpec spec_for(Uuid uuid) {
   ImportSourceSpec spec;
   spec.uuid = uuid;
@@ -25,7 +23,401 @@ ImportSourceSpec spec_for(Uuid uuid) {
   return spec;
 }
 
+const UtcTime kGitTime = *UtcTime::parse("2016-03-04T05:06:07Z");
+
+Intercepts intercepts(double value) {
+  InterceptRow row;
+  row.isotope = "Ar40";
+  row.detector = "H1";
+  row.value = value;
+  row.error = 0.5;
+  row.fit = "parabolic";
+  return {row};
+}
+
+// A file-backed database with one ingested analysis; `db_` is a second,
+// white-box connection to it. `source_` is registered by the first batch().
+class ImportStoreTest : public ::testing::TestWithParam<std::string> {
+ protected:
+  void SetUp() override {
+    database_ = std::make_unique<TestDatabase>(GetParam(), true);
+    store_ = open_or_die(database_->url());
+    ASSERT_TRUE(store_);
+    lab_ = seed_lab(*store_);
+    source_ = spec_for(Uuid::v7());
+    analysis_ = ingest_analysis(1);
+    auto db = pd::Db::open(StoreConfig{database_->url(), false});
+    ASSERT_TRUE(db) << to_string(db.error());
+    db_ = std::move(*db);
+  }
+
+  Uuid ingest_analysis(int aliquot) {
+    auto item = analysis_item(lab_, aliquot, series(1), series(0));
+    const Uuid analysis = std::get<AnalysisIngest>(item.body).analysis;
+    auto ack = store_->ingest(item);
+    EXPECT_TRUE(ack) << (ack ? "" : to_string(ack.error()));
+    return analysis;
+  }
+
+  ImportedChangeset changeset(Uuid uuid, std::vector<ImportedRevision> revisions) const {
+    ImportedChangeset cs;
+    cs.uuid = uuid;
+    cs.kind = ChangesetKind::Import;
+    cs.author_user = lab_.reducer;
+    cs.created = kGitTime;
+    cs.message = "refit intercepts";
+    cs.revisions = std::move(revisions);
+    return cs;
+  }
+
+  ImportedRevision intercepts_revision(Uuid uuid, double value = 101.0) const {
+    return ImportedRevision{uuid, analysis_, Kind::Intercepts, intercepts(value)};
+  }
+
+  std::unique_ptr<IImportUnitOfWork> batch() {
+    EXPECT_TRUE(store_->begin_import(source_));
+    auto uow = store_->begin_import_batch(source_.uuid, lab_.reduction_client);
+    EXPECT_TRUE(uow) << (uow ? "" : to_string(uow.error()));
+    return uow ? std::move(*uow) : nullptr;
+  }
+
+  long long count(const char* table) {
+    auto row = db_->select_one(QStringLiteral("SELECT count(*) AS n FROM %1").arg(QString::fromUtf8(table)));
+    return row && *row ? (*row)->value("n").toLongLong() : -1;
+  }
+
+  // Declared first so it is destroyed last: the connections point at it.
+  std::unique_ptr<TestDatabase> database_;
+  std::unique_ptr<IStore> store_;
+  std::unique_ptr<pd::Db> db_;
+  Lab lab_;
+  ImportSourceSpec source_;
+  Uuid analysis_;
+};
+
 }  // namespace
+
+TEST_P(ImportStoreTest, ImportedChangesetKeepsCallerIdsAndTime) {
+  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid u = Uuid::v7(), r = Uuid::v7();
+  auto uow = batch();
+  ASSERT_TRUE(uow);
+  ASSERT_TRUE(uow->add_changeset(changeset(u, {intercepts_revision(r)})));
+  auto seq = uow->commit();
+  ASSERT_TRUE(seq) << to_string(seq.error());
+
+  EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r});
+  auto history = store_->history(analysis_, Kind::Intercepts);
+  ASSERT_TRUE(history) << to_string(history.error());
+  ASSERT_EQ(history->size(), 2u);
+  const RevisionInfo& last = history->back();
+  EXPECT_EQ(last.uuid, r);
+  EXPECT_EQ(last.parent, std::optional<Uuid>{previous});
+  EXPECT_EQ(last.changeset.uuid, u);
+  EXPECT_EQ(last.changeset.kind, ChangesetKind::Import);
+  EXPECT_EQ(last.changeset.created, kGitTime);
+  EXPECT_EQ(last.changeset.author_user, lab_.reducer);
+  EXPECT_EQ(last.changeset.client, lab_.reduction_client);
+  EXPECT_EQ(last.changeset.message, "refit intercepts");
+  EXPECT_EQ(last.change_seq, *seq);
+  EXPECT_EQ(*seq, *store_->latest_change_seq());
+
+  auto payload = store_->load_payload(r);
+  ASSERT_TRUE(payload && *payload);
+  EXPECT_EQ(std::get<Intercepts>(**payload).at(0).value, std::optional<double>{101.0});
+
+  auto stamped = db_->select_one("SELECT import_source_uuid FROM changeset WHERE uuid = ?", {pd::qv(u)});
+  ASSERT_TRUE(stamped && *stamped);
+  EXPECT_EQ(pd::to_uuid((*stamped)->value("import_source_uuid")), source_.uuid);
+  auto move = db_->select_one("SELECT reason, from_revision_uuid FROM head_move WHERE to_revision_uuid = ?",
+                              {pd::qv(r)});
+  ASSERT_TRUE(move && *move);
+  EXPECT_EQ(pd::to_std((*move)->value("reason")), "commit");
+  EXPECT_EQ(pd::to_uuid((*move)->value("from_revision_uuid")), previous);
+}
+
+TEST_P(ImportStoreTest, RerunIsNoOp) {
+  const Uuid u = Uuid::v7(), r = Uuid::v7();
+  auto write = [&] {
+    auto uow = batch();
+    EXPECT_TRUE(uow->add_changeset(changeset(u, {intercepts_revision(r)})));
+    return uow->commit();
+  };
+  auto first = write();
+  ASSERT_TRUE(first) << to_string(first.error());
+  const auto history = store_->history(analysis_, Kind::Intercepts)->size();
+  const auto moves = count("head_move"), rows = count("intercept_value");
+
+  auto second = write();
+  ASSERT_TRUE(second) << to_string(second.error());
+  EXPECT_EQ(*second, *first) << "nothing new: no change_log entry";
+  EXPECT_EQ(*store_->latest_change_seq(), *first);
+  EXPECT_EQ(store_->history(analysis_, Kind::Intercepts)->size(), history);
+  EXPECT_EQ(count("head_move"), moves);
+  EXPECT_EQ(count("intercept_value"), rows);
+  EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r});
+}
+
+TEST_P(ImportStoreTest, RevisionsOfOneSubjectChainInOrder) {
+  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid r1 = Uuid::v7(), r2 = Uuid::v7(), r3 = Uuid::v7();
+  auto uow = batch();
+  // The second changeset is older than the first: order given wins.
+  auto later = changeset(Uuid::v7(), {intercepts_revision(r2, 2.0), intercepts_revision(r3, 3.0)});
+  later.created = *UtcTime::parse("2015-01-01T00:00:00Z");
+  ASSERT_TRUE(uow->add_changeset(changeset(Uuid::v7(), {intercepts_revision(r1, 1.0)})));
+  ASSERT_TRUE(uow->add_changeset(std::move(later)));
+  ASSERT_TRUE(uow->commit());
+
+  EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r3});
+  auto parent_of = [&](Uuid revision) {
+    auto row = db_->select_one("SELECT parent_uuid FROM revision WHERE uuid = ?", {pd::qv(revision)});
+    return pd::opt_uuid((**row).value("parent_uuid"));
+  };
+  EXPECT_EQ(parent_of(r1), std::optional<Uuid>{previous});
+  EXPECT_EQ(parent_of(r2), std::optional<Uuid>{r1});
+  EXPECT_EQ(parent_of(r3), std::optional<Uuid>{r2});
+  auto history = store_->history(analysis_, Kind::Intercepts);
+  ASSERT_EQ(history->size(), 4u);
+  EXPECT_EQ(history->front().uuid, previous);
+}
+
+TEST_P(ImportStoreTest, ExistingChangesetStillTakesItsMissingRevisions) {
+  const Uuid u = Uuid::v7(), r1 = Uuid::v7(), r2 = Uuid::v7();
+  auto first = batch();
+  ASSERT_TRUE(first->add_changeset(changeset(u, {intercepts_revision(r1)})));
+  ASSERT_TRUE(first->commit());
+  const auto before = *store_->latest_change_seq();
+
+  BaselineRow h1;
+  h1.detector = "H1";
+  h1.value = 0.02;
+  auto second = batch();
+  ASSERT_TRUE(second->add_changeset(
+      changeset(u, {intercepts_revision(r1), ImportedRevision{r2, analysis_, Kind::Baselines, Baselines{h1}}})));
+  auto seq = second->commit();
+  ASSERT_TRUE(seq) << to_string(seq.error());
+  EXPECT_EQ(*seq, before + 1);
+  EXPECT_EQ(*store_->head(analysis_, Kind::Baselines), std::optional<Uuid>{r2});
+  EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r1});
+  EXPECT_EQ(store_->history(analysis_, Kind::Intercepts)->size(), 2u);
+  auto n = db_->select_one("SELECT count(*) AS n FROM changeset WHERE uuid = ?", {pd::qv(u)});
+  EXPECT_EQ((**n).value("n").toLongLong(), 1);
+}
+
+TEST_P(ImportStoreTest, ProvenanceAndConflictRoundTrip) {
+  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid u = Uuid::v7(), r = Uuid::v7();
+  const auto digest = sha256(std::string_view{"file text"});
+  auto write = [&] {
+    auto uow = batch();
+    EXPECT_TRUE(uow->add_changeset(changeset(u, {intercepts_revision(r)})));
+    ProvenanceRow rev{"revision", r, "ia/66573-01.intercepts.json", "c1", "b2", "jross", kGitTime,
+                      R"({"synthetic_collection":true})"};
+    ProvenanceRow cs{"changeset", u, "", "c1", "", "jross", kGitTime, std::nullopt};
+    EXPECT_TRUE(uow->add_provenance(rev));
+    EXPECT_TRUE(uow->add_provenance(cs));
+    ImportConflictRow conflict;
+    conflict.uuid = Uuid::v5(source_.uuid, "conflict a.json");
+    conflict.path = "a.json";
+    conflict.entity = analysis_;
+    conflict.kind = ConflictKind::HandEdit;
+    conflict.db_head_revision = previous;
+    conflict.file_sha256 = digest;
+    conflict.detail_json = R"({"field":"value"})";
+    EXPECT_TRUE(uow->add_conflict(conflict));
+    return uow->commit();
+  };
+  auto first = write();
+  ASSERT_TRUE(first) << to_string(first.error());
+
+  auto rows = store_->provenance_for(r);
+  ASSERT_TRUE(rows) << to_string(rows.error());
+  ASSERT_EQ(rows->size(), 1u);
+  EXPECT_EQ((*rows)[0].entity_type, "revision");
+  EXPECT_EQ((*rows)[0].path, "ia/66573-01.intercepts.json");
+  EXPECT_EQ((*rows)[0].commit_sha, "c1");
+  EXPECT_EQ((*rows)[0].git_blob_sha, "b2");
+  EXPECT_EQ((*rows)[0].git_author, "jross");
+  EXPECT_EQ((*rows)[0].git_utc, kGitTime);
+  ASSERT_TRUE((*rows)[0].detail_json);
+  EXPECT_NE((*rows)[0].detail_json->find("synthetic_collection"), std::string::npos);
+  auto of_changeset = store_->provenance_for(u);
+  ASSERT_EQ(of_changeset->size(), 1u);
+  EXPECT_FALSE((*of_changeset)[0].detail_json);
+
+  EXPECT_TRUE(*store_->has_provenance(source_.uuid, "c1", "ia/66573-01.intercepts.json"));
+  EXPECT_TRUE(*store_->has_provenance_blob(source_.uuid, "ia/66573-01.intercepts.json", "b2"));
+  EXPECT_TRUE(*store_->has_conflict(source_.uuid, "a.json", digest));
+  EXPECT_EQ(*store_->imported_head_blob_sha(source_.uuid, analysis_, Kind::Intercepts),
+            std::optional<std::string>{"b2"});
+
+  ConflictFilter filter;
+  filter.source = source_.uuid;
+  auto conflicts = store_->import_conflicts(filter);
+  ASSERT_TRUE(conflicts) << to_string(conflicts.error());
+  ASSERT_EQ(conflicts->size(), 1u);
+  const auto& c = (*conflicts)[0];
+  EXPECT_EQ(c.uuid, Uuid::v5(source_.uuid, "conflict a.json"));
+  EXPECT_EQ(c.path, "a.json");
+  EXPECT_EQ(c.entity, std::optional<Uuid>{analysis_});
+  EXPECT_EQ(c.kind, ConflictKind::HandEdit);
+  EXPECT_EQ(c.db_head_revision, std::optional<Uuid>{previous});
+  EXPECT_EQ(c.file_sha256, std::optional<Sha256Digest>{digest});
+  EXPECT_NE(c.detail_json.find("field"), std::string::npos);
+  EXPECT_EQ(c.resolution, "pending");
+
+  // The same rows again: kept, not duplicated.
+  ASSERT_TRUE(write());
+  EXPECT_EQ(count("import_provenance"), 2);
+  EXPECT_EQ(count("import_conflict"), 1);
+}
+
+TEST_P(ImportStoreTest, ProgressIsStoredWithTheBatch) {
+  auto uow = batch();
+  ASSERT_TRUE(uow->set_progress({"abc", 3, 10, "head", "running"}));
+  auto before = store_->begin_import(source_);
+  EXPECT_FALSE(before->progress_token) << "staged, not written";
+  const auto seq = *store_->latest_change_seq();
+  ASSERT_TRUE(uow->commit());
+  EXPECT_EQ(*store_->latest_change_seq(), seq) << "progress alone is not a change";
+
+  auto info = store_->begin_import(source_);
+  ASSERT_TRUE(info) << to_string(info.error());
+  EXPECT_EQ(info->progress_token, std::optional<std::string>{"abc"});
+  EXPECT_EQ(info->done, 3);
+  EXPECT_EQ(info->total, 10);
+  EXPECT_EQ(info->head_sha, std::optional<std::string>{"head"});
+  EXPECT_EQ(info->status, "running");
+  EXPECT_FALSE(info->finished);
+
+  auto last = batch();
+  ASSERT_TRUE(last->set_progress({"def", 10, 10, std::nullopt, "finished"}));
+  ASSERT_TRUE(last->commit());
+  info = store_->begin_import(source_);
+  EXPECT_EQ(info->progress_token, std::optional<std::string>{"def"});
+  EXPECT_EQ(info->head_sha, std::optional<std::string>{"head"}) << "nullopt keeps the stored head";
+  EXPECT_EQ(info->status, "finished");
+  EXPECT_TRUE(info->finished);
+}
+
+TEST_P(ImportStoreTest, ProgressOfAnUnknownSourceFails) {
+  auto uow = store_->begin_import_batch(Uuid::v7(), lab_.reduction_client);
+  ASSERT_TRUE(uow);
+  ASSERT_TRUE((*uow)->set_progress({"abc", 1, 1, std::nullopt, "running"}));
+  EXPECT_FALSE((*uow)->commit());
+}
+
+TEST_P(ImportStoreTest, FailedCommitLeavesNothing) {
+  const Uuid good = Uuid::v7(), r = Uuid::v7();
+  const auto seq = *store_->latest_change_seq();
+  const auto changesets = count("changeset");
+  auto uow = batch();
+  ASSERT_TRUE(uow->add_changeset(changeset(good, {intercepts_revision(r)})));
+  ASSERT_TRUE(uow->add_changeset(
+      changeset(Uuid::v7(), {ImportedRevision{Uuid::v7(), Uuid::v7(), Kind::Intercepts, intercepts(1.0)}})));
+  ASSERT_TRUE(uow->add_provenance({"revision", r, "a.json", "c1", "b1", "jross", kGitTime, std::nullopt}));
+  ASSERT_TRUE(uow->set_progress({"abc", 3, 10, "head", "running"}));
+  auto result = uow->commit();
+  ASSERT_FALSE(result);
+
+  auto info = store_->begin_import(source_);
+  EXPECT_FALSE(info->progress_token);
+  EXPECT_EQ(info->done, 0);
+  EXPECT_EQ(count("import_provenance"), 0);
+  EXPECT_EQ(count("changeset"), changesets);
+  EXPECT_EQ(*store_->latest_change_seq(), seq);
+  EXPECT_NE(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r});
+  EXPECT_FALSE(uow->commit()) << "a unit of work commits once";
+}
+
+TEST_P(ImportStoreTest, OneChangeLogEntryPerBatch) {
+  const Uuid other = ingest_analysis(2);
+  const auto before = *store_->latest_change_seq();
+  auto uow = batch();
+  ASSERT_TRUE(uow->add_changeset(changeset(Uuid::v7(), {intercepts_revision(Uuid::v7(), 1.0)})));
+  ASSERT_TRUE(uow->add_changeset(changeset(Uuid::v7(), {intercepts_revision(Uuid::v7(), 2.0)})));
+  ASSERT_TRUE(uow->add_changeset(
+      changeset(Uuid::v7(), {ImportedRevision{Uuid::v7(), other, Kind::Intercepts, intercepts(3.0)}})));
+  auto seq = uow->commit();
+  ASSERT_TRUE(seq) << to_string(seq.error());
+  EXPECT_EQ(*seq, before + 1);
+  EXPECT_EQ(*store_->latest_change_seq(), before + 1);
+
+  auto page = store_->changes_since(before, 10);
+  ASSERT_TRUE(page) << to_string(page.error());
+  ASSERT_EQ(page->entries.size(), 1u);
+  EXPECT_EQ(page->entries[0].kind, "changeset");
+  int analyses = 0;
+  for (const auto& e : page->entries[0].entities) analyses += e.entity_type == "analysis";
+  EXPECT_EQ(analyses, 2);
+  for (const auto& revision : *store_->history(analysis_, Kind::Intercepts))
+    if (revision.changeset.kind == ChangesetKind::Import) EXPECT_EQ(revision.change_seq, *seq);
+}
+
+TEST_P(ImportStoreTest, ImportedIdentityRevisionRenumbersTheAnalysis) {
+  IdentityValue identity{lab_.identifier2, 4, -1, "provisional_renumber"};
+  auto uow = batch();
+  ASSERT_TRUE(uow->add_changeset(
+      changeset(Uuid::v7(), {ImportedRevision{Uuid::v7(), analysis_, Kind::Identity, identity}})));
+  auto seq = uow->commit();
+  ASSERT_TRUE(seq) << to_string(seq.error());
+  auto row = db_->select_one("SELECT runid_text, aliquot FROM analysis WHERE uuid = ?", {pd::qv(analysis_)});
+  ASSERT_TRUE(row && *row);
+  EXPECT_EQ(pd::to_std((*row)->value("runid_text")), make_runid("66574", 4, -1));
+  EXPECT_EQ((*row)->value("aliquot").toInt(), 4);
+}
+
+TEST_P(ImportStoreTest, RejectsWhatAnImportCannotWrite) {
+  auto uow = batch();
+  auto collection = changeset(Uuid::v7(), {});
+  collection.kind = ChangesetKind::Collection;
+  auto rejected = uow->add_changeset(collection);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().kind, ErrorKind::Protocol);
+  auto mismatch = uow->add_changeset(
+      changeset(Uuid::v7(), {ImportedRevision{Uuid::v7(), analysis_, Kind::Baselines, intercepts(1.0)}}));
+  ASSERT_FALSE(mismatch);
+  EXPECT_EQ(mismatch.error().kind, ErrorKind::Protocol);
+  auto reference = changeset(Uuid::v7(), {});
+  reference.kind = ChangesetKind::Reference;
+  EXPECT_TRUE(uow->add_changeset(reference));
+}
+
+TEST_P(ImportStoreTest, IngestStampsImportSource) {
+  auto item = analysis_item(lab_, 7, series(1), series(0));
+  auto& a = std::get<AnalysisIngest>(item.body);
+  a.import_source = source_.uuid;
+  a.author_user = lab_.reducer;
+  ASSERT_TRUE(store_->begin_import(source_));
+  ASSERT_TRUE(store_->ingest(item));
+  auto row = db_->select_one("SELECT import_source_uuid, author_user_uuid FROM changeset WHERE uuid = ?",
+                             {pd::qv(a.changeset)});
+  ASSERT_TRUE(row && *row);
+  EXPECT_EQ(pd::to_uuid((*row)->value("import_source_uuid")), source_.uuid);
+  EXPECT_EQ(pd::to_uuid((*row)->value("author_user_uuid")), lab_.reducer);
+  auto analyst = db_->select_one("SELECT analyst_user_uuid FROM analysis WHERE uuid = ?", {pd::qv(a.analysis)});
+  EXPECT_EQ(pd::to_uuid((**analyst).value("analyst_user_uuid")), lab_.analyst);
+
+  // An ordinary ingest stamps neither.
+  auto plain = db_->select_one(
+      "SELECT c.import_source_uuid, c.author_user_uuid FROM changeset c JOIN analysis a "
+      "ON a.ingest_changeset_uuid = c.uuid WHERE a.uuid = ?",
+      {pd::qv(analysis_)});
+  ASSERT_TRUE(plain && *plain);
+  EXPECT_TRUE((*plain)->value("import_source_uuid").isNull());
+  EXPECT_EQ(pd::to_uuid((*plain)->value("author_user_uuid")), lab_.analyst);
+}
+
+TEST_P(ImportStoreTest, AppendOnlyTriggersStillHold) {
+  const Uuid u = Uuid::v7(), r = Uuid::v7();
+  auto uow = batch();
+  ASSERT_TRUE(uow->add_changeset(changeset(u, {intercepts_revision(r)})));
+  ASSERT_TRUE(uow->commit());
+  EXPECT_FALSE(db_->affecting("UPDATE revision SET created_utc = created_utc WHERE uuid = ?", {pd::qv(r)}));
+  EXPECT_FALSE(db_->affecting("UPDATE changeset SET message = 'x' WHERE uuid = ?", {pd::qv(u)}));
+  EXPECT_FALSE(db_->affecting("DELETE FROM intercept_value WHERE revision_uuid = ?", {pd::qv(r)}));
+}
 
 TEST_P(ImportStoreTest, BeginImportInsertsThenReturnsStored) {
   const auto spec = spec_for(Uuid::v7());
@@ -98,8 +490,8 @@ TEST_P(ImportStoreTest, EmptyReads) {
   EXPECT_FALSE(*head);
 }
 
-// Rows the import unit of work will write (a later task) are inserted by hand
-// to prove the reads, through a second connection to the same database.
+// Rows inserted by hand, through a second connection to the same database, to
+// prove the reads apart from the import unit of work.
 TEST_P(ImportStoreTest, ReadsSeeProvenanceAndConflictRows) {
   TestDatabase shared(GetParam(), true);
   auto store = open_or_die(shared.url());

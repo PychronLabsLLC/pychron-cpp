@@ -1,6 +1,8 @@
-// Import source, provenance and conflict bookkeeping (legacy ingestion spec).
-// Reads only here plus begin_import; the writes that record provenance,
-// conflicts and progress belong to the import unit of work.
+// Import source, provenance and conflict bookkeeping, and the import unit of
+// work that writes a batch of a source's history (legacy ingestion spec).
+
+#include <set>
+#include <utility>
 
 #include "sql/statements.hpp"
 #include "store_impl.hpp"
@@ -102,6 +104,177 @@ Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourc
   if (!info) return fail(info.error());
   if (auto c = tx.commit(); !c) return fail(c.error());
   return info;
+}
+
+namespace {
+
+// One import batch (legacy ingestion spec, section 3.1). Staged in memory,
+// written by commit() in one transaction.
+class ImportUnitOfWork final : public IImportUnitOfWork {
+ public:
+  ImportUnitOfWork(Db& db, Uuid source, Uuid client) : db_(db), source_(source), client_(client) {}
+
+  Result<void> add_changeset(ImportedChangeset changeset) override {
+    if (auto r = check_open(); !r) return r;
+    if (changeset.kind != ChangesetKind::Import && changeset.kind != ChangesetKind::Reference)
+      return fail(ErrorKind::Protocol, "an import writes import and reference changesets, not '" +
+                                           std::string(to_string(changeset.kind)) + "'");
+    for (const auto& rev : changeset.revisions)
+      if (!payload_kind_matches(rev.kind, rev.payload))
+        return fail(ErrorKind::Protocol,
+                    "payload does not match revision kind '" + std::string(to_string(rev.kind)) + "'");
+    changesets_.push_back(std::move(changeset));
+    return {};
+  }
+
+  Result<void> add_provenance(ProvenanceRow row) override {
+    if (auto r = check_open(); !r) return r;
+    provenance_.push_back(std::move(row));
+    return {};
+  }
+
+  Result<void> add_conflict(ImportConflictRow row) override {
+    if (auto r = check_open(); !r) return r;
+    conflicts_.push_back(std::move(row));
+    return {};
+  }
+
+  Result<void> set_progress(ImportProgress progress) override {
+    if (auto r = check_open(); !r) return r;
+    progress_ = std::move(progress);
+    return {};
+  }
+
+  Result<ChangeSeq> commit() override {
+    if (auto r = check_open(); !r) return fail(r.error());
+    done_ = true;
+
+    WriteTx tx(db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    std::vector<ChangeEntityRow> entities;
+    for (const auto& changeset : changesets_)
+      if (auto r = write_changeset(changeset, entities); !r) return fail(r.error());
+    if (auto r = write_provenance(); !r) return fail(r.error());
+    if (auto r = write_conflicts(); !r) return fail(r.error());
+    if (progress_)
+      if (auto r = write_progress(*progress_); !r) return fail(r.error());
+
+    // A batch that stored no changeset and no revision is not a change.
+    auto seq = entities.empty() ? latest_change_seq(db_)
+                                : take_change(db_, QStringLiteral("changeset"), std::nullopt, client_, entities);
+    if (!seq) return fail(seq.error());
+    if (auto r = tx.commit(); !r) return fail(r.error());
+    return *seq;
+  }
+
+ private:
+  Result<void> check_open() const {
+    if (done_) return fail(ErrorKind::Protocol, "import unit of work already committed");
+    return {};
+  }
+
+  void note(std::vector<ChangeEntityRow>& entities, const QString& type, Uuid entity, const char* op) {
+    if (noted_.emplace(type.toStdString(), entity).second)
+      entities.push_back(ChangeEntityRow{type, entity, QString::fromUtf8(op), std::nullopt});
+  }
+
+  Result<void> write_changeset(const ImportedChangeset& c, std::vector<ChangeEntityRow>& entities) {
+    const ChangesetInfo info{c.uuid, c.kind, c.author_user, client_, c.created, c.message};
+    auto written = insert_changeset_if_absent(db_, info, source_);
+    if (!written) return fail(written.error());
+    // The batch's change_log entry cannot name several changesets; history
+    // finds an imported changeset's change_seq through this row.
+    if (*written) note(entities, QStringLiteral("changeset"), c.uuid, "insert");
+
+    for (const auto& rev : c.revisions) {
+      auto stored = db_.select_one(sql::kRevisionExists, {qv(rev.uuid)});
+      if (!stored) return fail(stored.error());
+      if (*stored) continue;
+      auto parent = read_head(db_, rev.subject, rev.kind);
+      if (!parent) return fail(parent.error());
+      if (auto r = insert_revision(db_, rev.uuid, c.uuid, rev.subject, rev.kind, *parent, c.created); !r) return r;
+      if (auto r = write_payload(db_, rev.uuid, rev.subject, rev.payload); !r) return r;
+      auto moved = cas_head(db_, rev.subject, rev.kind, *parent, rev.uuid);
+      if (!moved) return fail(moved.error());
+      if (!*moved)
+        return fail(ErrorKind::Protocol, "import: the head of " + rev.subject.str() + " '" +
+                                             std::string(to_string(rev.kind)) + "' moved during the batch");
+      if (auto r = insert_head_move(db_, c.uuid, rev.subject, rev.kind, *parent, rev.uuid, MoveReason::Commit); !r)
+        return r;
+      if (rev.kind == Kind::Identity)
+        if (auto r = apply_identity(db_, rev.subject, std::get<IdentityValue>(rev.payload)); !r) return r;
+      note(entities, entity_type_of(subject_type_of(rev.kind)), rev.subject, "upsert");
+    }
+    return {};
+  }
+
+  Result<void> write_provenance() {
+    for (const auto& p : provenance_) {
+      Row r;
+      r["entity_type"] = qv(p.entity_type);
+      r["entity_uuid"] = qv(p.entity);
+      r["import_source_uuid"] = qv(source_);
+      r["path"] = qv(p.path);
+      r["commit_sha"] = qv(p.commit_sha);
+      r["git_blob_sha"] = qv(p.git_blob_sha);
+      r["git_author"] = qv(p.git_author);
+      r["git_utc"] = qv(p.git_utc);
+      r["detail"] = qv(p.detail_json);
+      if (auto ins = db_.insert_or_ignore("import_provenance", r); !ins) return fail(ins.error());
+    }
+    return {};
+  }
+
+  Result<void> write_conflicts() {
+    for (const auto& c : conflicts_) {
+      Row r;
+      r["uuid"] = qv(c.uuid);
+      r["import_source_uuid"] = qv(source_);
+      r["path"] = qv(c.path);
+      r["entity_uuid"] = qv(c.entity);
+      r["conflict_kind"] = qstr(to_string(c.kind));
+      r["db_head_revision_uuid"] = qv(c.db_head_revision);
+      r["file_sha256"] = qv(c.file_sha256);
+      r["detail"] = qv(c.detail_json);
+      r["resolution"] = qv(c.resolution);
+      if (auto ins = db_.insert_or_ignore("import_conflict", r); !ins) return fail(ins.error());
+    }
+    return {};
+  }
+
+  Result<void> write_progress(const ImportProgress& p) {
+    QString extra;
+    Bindings b{qv(p.token), p.done, p.total, qv(p.status)};
+    if (p.head_sha) {
+      extra += QStringLiteral(", head_commit_sha = ?");
+      b << qv(*p.head_sha);
+    }
+    if (p.status == "finished") {
+      extra += QStringLiteral(", finished_utc = ?");
+      b << qv(UtcTime::now());
+    }
+    b << qv(source_);
+    auto updated = db_.affecting(sql::kSetImportProgress.arg(extra), b);
+    if (!updated) return fail(updated.error());
+    if (*updated != 1) return fail(ErrorKind::Protocol, "import progress for an unknown source " + source_.str());
+    return {};
+  }
+
+  Db& db_;
+  Uuid source_;
+  Uuid client_;
+  std::vector<ImportedChangeset> changesets_;
+  std::vector<ProvenanceRow> provenance_;
+  std::vector<ImportConflictRow> conflicts_;
+  std::optional<ImportProgress> progress_;
+  std::set<std::pair<std::string, Uuid>> noted_;  // (entity type, uuid) already in the change entry
+  bool done_ = false;
+};
+
+}  // namespace
+
+std::unique_ptr<IImportUnitOfWork> make_import_unit_of_work(Db& db, Uuid source, Uuid client) {
+  return std::make_unique<ImportUnitOfWork>(db, source, client);
 }
 
 Result<std::vector<ImportSourceInfo>> import_sources(Db& db, Dialect dialect) {
