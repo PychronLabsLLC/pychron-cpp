@@ -13,6 +13,8 @@ want into `tests/` by hand.
 
 Appendix A gives the Drive folder ids, the tree layout, the melbourne
 reference values and how to re-run the survey (added 2026-10-03).
+Appendix B is a file-level pass over every lab's `extractionline/` and
+`canvas2D/` folders, with corrections to the sections below (added 2026-10-03).
 
 ## Gaps vs current `extraction_line.toml` / `canvas.toml` schema
 
@@ -598,3 +600,228 @@ and `.xml` files inline. The snippet is a rendering, not the bytes: it drops
 XML attributes and wraps some CSV files in HTML, so do not infer file format
 from it. `.yaml` files return no snippet and need `download_file_content`,
 which returns base64.
+
+## Appendix B: `extractionline/` and `canvas2D/` file survey (2026-10-03)
+
+Every text file in these two folders was read, for every lab, from the local
+Drive mirror. Nothing failed to read. Dates are file mtimes; a uniform
+"Feb 2022" across a lab is probably the Drive copy date. None of these files
+contains a host, IP or credential.
+
+### B.1 Inventory
+
+BK = backup or editor leftover. DUP = byte-identical by hash. Numbers are line
+counts.
+
+| Lab | `extractionline/` | `canvas2D/` |
+|---|---|---|
+| asu (2023) | valves.yaml 47 | canvas.yaml 262; canvas_config.xml 20 |
+| melbourne (2026) | valves.yaml 39, CRLF | canvas.yaml 250; canvas_config.xml 41; alt_config.xml 18 (2013) |
+| usgsreston (2023) | valves.yaml 21 | canvas.yaml 434; canvas.yaml.bak BK; canvas_config.xml 38 |
+| uaf (2023, flat) | valves.yaml 25 | canvas.yaml 257; no canvas_config |
+| ldeo | valves.yaml 214; backup/valves.xml 200 BK | canvas.xml 566; canvas.xml~ BK; canvas_config.xml 10 |
+| hal | valves.yaml 35 | canvas.yaml 124; canvas.yaml.bak BK; "canvas copy.yaml" (stub); canvas.xml 173; ~canvas.xml BK, not well-formed; canvas_config.xml 38 |
+| uf (2021) | valves.yaml 36 (hal's file) | canvas.yaml 376; canvas.yaml.bak BK; canvas.xml 25 (2-valve stub); canvas_config.xml 10; alt_config.xml DUP |
+| uf/original | valves.yaml 51 (one live entry) | canvas.yaml 376 (3 lines differ from uf); rest DUP of uf |
+| valve | valves.xml 184; ~valves.xml 64 BK (2016, pre-furnace); zobs/ with valves.txt and three copies, valve_groups.txt, section_definitions.cfg (2010-2013) | canvas.xml 870 (2021); canvas_92121.xml 870; canvas_prefurnace.xml 568; canvas_config.xml 33; canvas_config_prefurnace.xml 39; alt_config.xml 32; two BK; zobs/ with four older canvases, valves2D.cfg, valves2D.txt |
+| usgsdenver | valves.xml DUP of valve; valves.yaml 35 (2022, Denver only); zobs/ DUP of valve | canvas.yaml 239 (2022); canvas_config.xml DUP of valve; nmgrl/ = nine files, each DUP of valve's; zobs/ DUP of valve |
+| jan | valves.xml 162; furnace_valves.xml 45; ~valves.xml BK | canvas.xml 547; canvas_config.xml 26; alt_config.xml 25; dumper.xml 64; two BK; zobs/ |
+| felix | no folder | canvas.xml 746; canvas_config.xml 32; alt_config.xml 24; dumper.xml (DUP of jan); two BK; zobs/ |
+| diode | empty | canvas.xml 307; canvas-new.xml 305; canvas.xml~ BK; valves2D.cfg |
+| wiscar | valves.xml 54 | canvas.xml 24; canvas_config.xml 36 |
+| co2 | empty | camera.cfg only |
+
+Binary, not read: `zobs/base*.jpg` and `zobs/canvas.elc` (a Python pickle of
+designer valve objects) in valve and usgsdenver. `canvas3D/` exists in valve
+and usgsdenver (one XML plus a `zobs/` of fourteen `*3D.cfg` files) and is
+empty in co2 and diode.
+
+### B.2 Valve files
+
+**valves.yaml**: a flat list of mappings.
+
+| Key | Examples | Labs |
+|---|---|---|
+| `name` | `A1`, `Tank A`, unquoted ints `0`..`11` | all |
+| `address` | `105`; `101,102`; `PIV`; `Valve 1_9 Set`; `'101'` | all; absent on manual valves and pipettes |
+| `kind` | `valve`, `manual_valve`, `pipette`, `double_actuation_valve` | asu, melbourne, ldeo, denver; absent means valve |
+| `description` | free text | most |
+| `interlock` | scalar (asu, melbourne); list (ldeo) | 3 labs |
+| `inverted_logic` | `True` (one with a trailing space) | asu |
+| `actuator` | a device name | asu, reston, ldeo |
+| `state_device` | `{name, address}` | ldeo |
+| `inner`, `outer` | valve names | pipettes |
+
+**valves.xml** (valve/denver, jan, wiscar, ldeo backup): `<root>` with optional
+`<group>NAME`, then `<valve>`, `<switch>`, `<manual_valve>`, `<pipette>`; the
+name is the element's leading text. Attribute `query_state`. Children
+`address`, `description`, `interlock`, `actuator`, `check_actuation_delay`
+(0.75, 1, 2.75, 4), `check_actuation_enabled`, `ignore_lock_warning`,
+`inverted`, `inner`, `outer`. LDEO's backup uses `<state_device>` as a string
+with a separate `<state_address>`.
+
+**Older text forms** (valve `zobs/`): `valves.txt` is CSV whose first data line
+(`H,Q`) names the mass-spec and quad inlet valves, then rows
+`NAME,ADDR,INTERLOCKS,DESC,query_state,section[,actuator]`;
+`valve_groups.txt` is one group per line; `section_definitions.cfg` is INI with
+`[Section-X] components=` and `testN=VALVE,n,state-label`, a system-state
+definition.
+
+No explanation, procedure or separate pipette files exist in any lab.
+
+| File | Valves | Switches | Manual | Pipettes | Groups | Interlocked | Actuators named |
+|---|---|---|---|---|---|---|---|
+| asu | 6 (1 double-actuation) | 0 | 10 | 1 | - | 2 | 1 |
+| melbourne | 9 | 0 | 3 | 1 | - | 2 | 0 |
+| ldeo | 18 | 0 | 6 | 3 | - | 6 | 2 + 1 state device |
+| usgsreston | 7 | 0 | 0 | 0 | - | 0 | 1 (dangling) |
+| uaf | 12 | 0 | 0 | 0 | - | 0 | 0 |
+| hal = uf | 12 | 0 | 0 | 0 | - | 0 | 0 |
+| denver valves.yaml | 11 (all address 1) | 0 | 5 | 1 | - | 0 | 0 |
+| valve valves.xml | 33 | 0 | 7 | 2 | 5 | 4 | 4 |
+| valve ~valves.xml | 13 | 10 | 4 | 2 | 0 | 4 | 0 |
+| jan valves.xml | 24 (none has an address) | 0 | 5 | 2 | 4 | 4 | 0 |
+| jan furnace_valves.xml | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
+| wiscar | 13 | 0 | 0 | 0 | 0 | 0 | 1 (a class name) |
+
+Every interlock pair is symmetric in every file, and every pipette
+`inner`/`outer` resolves to a valve.
+
+### B.3 Canvas files
+
+**canvas.yaml**: a mapping of kind to a list of elements. Common keys `name`,
+`translation` (an `"x,y"` string), `dimension`, `color`, `display_name`,
+`border_width`, `use_symbol`. Files saved by the designer (hal, uf) also write
+`fill`, `display_name: null`, RGBA colours, two-decimal floats, empty lists
+(`laser: []`) and the empty kinds `switch` and `manualswitch`. Connections:
+`connection`, `hconnection`, `vconnection` with `start`/`end` as
+`{name[, offset]}`; `tee_connection` with `left`/`mid`/`right`; `elbow` with
+`start`/`end`. `offset` is `"5,5"` or the empty string.
+
+**canvas.xml**: the same kinds as tags, name as leading text; children
+`translation`, `dimension`, `color`, `volume`, `font`; attributes
+`display_name`, `border_width`, `use_symbol`, `fill`, `use_border`.
+`<connection orientation="horizontal|vertical">`; with no orientation it is a
+straight line. `offset` is an attribute on `<start>`/`<end>`/`<left>`/`<right>`.
+Also `rconnection`, `elbow` (`corner="ur"`), `tee_connection`, `legend`.
+
+**canvas_config.xml / alt_config.xml**: `origin`, `xview`, `yview`,
+`<color tag="...">`, `valve_dimension`, `connection_dimension`, `font`,
+`image` with `translation` and `scale`. Colour tags: `bgcolor`, `gauge`,
+`getter`, `label`, `ionpump`, `spectrometer`, `tank`, `turbo`,
+`roughing_inner_border_color`.
+
+**dumper.xml** (felix = jan): `switch` with `<association>`, `gate` and
+`funnel` with a `<state>open` geometry, `label`.
+
+**valves2D.cfg**: INI, `[General] window_width/height`, then
+`[Valve-X] pos=x,y` in pixels. **valves2D.txt**: CSV
+`name,default_state,x,y`. `camera.cfg` in these folders is video calibration,
+not canvas.
+
+View boxes (world units, y up):
+
+| Lab | origin | xview | yview |
+|---|---|---|---|
+| asu | 0,0 | -28,28 | -40,25 |
+| melbourne | 0,0 | -50,50 | -50,50 |
+| usgsreston | 5,0 | -40,40 | -40,40 |
+| ldeo | 0,-7 | -21,24 | -20,20 |
+| hal, felix, wiscar | 0,0 | -45,35.5 | -40,40 |
+| denver, valve | 0,0 | -50,35.5 | -40,40 |
+| jan, uf | 0,0 | -28,28 | -25,25 |
+| uaf | none | none | none |
+
+Colour forms: `r,g,b`; `r, g, b`; RGBA; names; `0xFF8000`; `'#FF9967'`;
+floats 0-1 (`1,0.5,0`); another element's name.
+
+Element counts in the main canvas file:
+
+| Kind | asu | melb | uaf | reston | denver | valve | ldeo | jan | felix | uf | diode |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| valve | 6 | 9 | 12 | 7 | 11 | 30 | 18 | 23 | 27 | 8 | 24 |
+| rough_valve | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 2 | 0 | 1 |
+| manual_valve | 10 | 3 | 6 | 11 | 5 | 8 | 6 | 1 | 3 | 11 | 0 |
+| stage | 6 | 1 | 5 | 4 | 5 | 7 | 14 | 3 | 7 | 5 | 4 |
+| spectrometer | 1 | 1 | 1 | 1 | 1 | 3 | 1 | 3 | 3 | 1 | 3 |
+| ionpump | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 0 |
+| turbo | 2 | 1 | 1 | 0 | 3 | 5 | 2 | 3 | 5 | 1 | 2 |
+| laser | 2 | 2 | 1 | 1 | 2 | 3 | 2 | 2 | 4 | 2 | 0 |
+| tank | 1 | 1 | 1 | 1 | 1 | 2 | 3 | 2 | 2 | 1 | 0 |
+| pipette | 1 | 1 | 1 | 1 | 1 | 2 | 3 | 2 | 2 | 1 | 0 |
+| getter | 2 | 2 | 3 | 6 | 2 | 7 | 3 | 4 | 4 | 2 | 0 |
+| gauge | 2 | 0 | 0 | 0 | 0 | 5 | 4 | 3 | 5 | 0 | 0 |
+| connections | 32 | 18 | 30 | 33 | 32 | 76 | 55 | 50 | 66 | 33 | 35 |
+
+In jan's canvas, 20 valves, 27 connections, 2 turbos and a spectrometer are
+nested inside `<stage>`; more are nested inside `<laser>` and `<tank>`.
+
+### B.4 Valve file against canvas
+
+| Lab | In valve file, not on canvas | On canvas, not in valve file | Dangling connection ends | Other |
+|---|---|---|---|---|
+| asu | 0 | 0 | 0 | clean |
+| melbourne | 0 | 0 | 0 | clean |
+| ldeo | 3 pipettes (`Tank A/B/C`) | 3 (`PipetteA/B/C`) | 0 | naming mismatch only |
+| usgsreston | 0 | 12 (M1-M11, AirPipette) | 0 | `ngx_switch_controller` has no cfg |
+| uaf | 0 | 6 | 0 | canvas `LaserInlet` twice |
+| valve | 2 pipettes | 3 | 0 | one address used twice, on different actuators |
+| jan | 6 | 2 | 0 | no actuator cfg |
+| denver yaml | 0 | 0 | 0 | address `1` used 11 times (draft) |
+| uf | 5 | 13 | 0 | valve file is hal's |
+| hal xml | 0 | 0 | 2 (`12`, `G1`) | yaml and xml canvases disagree |
+| wiscar | 13 (all) | 4 | none at all | placeholder canvas |
+
+### B.5 Fixture value
+
+- **asu** and **melbourne** are clean pairs: no mismatch, no dangling end. asu
+  exercises more schema (double actuation, `inverted_logic`, actuator
+  override, manual valves, `gauge`, `elbow`, `offset`); melbourne has Qtegra
+  string addresses, an interlock, a pipette and a `vlabel`.
+- **ldeo** is the best XML-canvas fixture and the only one with `state_device`.
+- **valve** is the stress case: groups, four actuators, `rconnection`, a
+  legend, names with spaces, 870 lines.
+- Not fixtures: wiscar (placeholder names), the denver YAML pair (a draft),
+  uf (borrowed valve file, stub XML), hal (two canvases that disagree),
+  diode (a 2012 layout), usgsdenver `nmgrl/` and every `zobs/` (copies).
+
+### B.6 New findings
+
+- The kind string is exactly `double_actuation_valve`.
+- jan's `valves.xml` has no `<address>` on any valve: the name is the address.
+  Its furnace valves are in a separate `furnace_valves.xml`, as `<switch>`.
+- `<switch>` is also used for non-valve Qtegra outputs: getter degas/operate
+  and ion-gauge enable (valve `~valves.xml`).
+- Pre-XML formats exist and may still be met in old trees: `valves.txt`,
+  `valve_groups.txt`, `section_definitions.cfg`, `valves2D.txt`, and a pickled
+  `canvas.elc`. The importer should name them in its "unsupported" message.
+- The typo `<xvidew>` is in the live melbourne `alt_config.xml` and in diode's
+  canvas. A reader that ignores unknown tags silently loses the x view box.
+- Older `canvas.xml` files carry `origin`, `xview` and `<color tag>` inside
+  the canvas file itself, not in `canvas_config.xml`.
+- New config keys: `valve_dimension`, `connection_dimension`, `font`.
+- New colour forms: `'#RRGGBB'` and 0-1 floats.
+- New YAML shapes: `offset: ''`, empty kind lists, kinds `switch` and
+  `manualswitch`, a connection-level `dimension`, a named connection.
+- hal's `canvas.xml` uses `hconnection`/`vconnection` as XML tags.
+- LDEO's `canvas.xml` puts each name on its own line; names need trimming.
+- YAML `elbow` (asu) has no `corner`.
+- melbourne's `canvas.yaml` carries commented-out UAF and Denver elements: it
+  was cloned from UAF.
+- uaf has no `canvas_config.xml`; its view box must be derived or defaulted.
+- Element nesting is deep in the NMGRL canvases (valves and connections inside
+  `stage`, `laser`, `tank`).
+
+### B.7 Corrections to the sections above
+
+- "Canvas-only valves not in any valve file (Felix `J`)": felix has no
+  `extractionline/` folder; `J` is defined in valve's `valves.xml`. Felix's
+  canvas should be checked against the valve box's file.
+- The double `<volume>` on spectrometer `Felix` is in valve's `canvas.xml` as
+  well as felix's.
+- "`valve` = USGS Denver minus a 2022 draft" is confirmed by hash. Denver's
+  NMGRL canvases sit under `canvas2D/nmgrl/`; its top-level canvas is the YAML
+  draft.
+- UF is listed among labs shipping two formats that disagree. Its `canvas.xml`
+  is a two-valve stub and its `valves.yaml` is hal's file, so UF is not
+  evidence for a precedence rule.
