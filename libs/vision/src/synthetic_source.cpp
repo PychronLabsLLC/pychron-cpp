@@ -9,11 +9,19 @@ SyntheticSource::SyntheticSource(std::variant<HoleScene, GlowScene> scene, Stage
 
 Result<Frame> SyntheticSource::grab() {
   const Vec2 stage = stage_ ? stage_() : Vec2{};
-  auto [frame, truth] = std::visit([&](const auto& s) { return render(s, stage); }, scene_);
+  const std::uint64_t seq = ++seq_;
+  // Mix seq into the seed so successive frames carry independent noise;
+  // render() itself stays deterministic for a given scene.
+  auto [frame, truth] = std::visit(
+      [&](auto s) {
+        s.seed += static_cast<std::uint32_t>(seq);
+        return render(s, stage);
+      },
+      scene_);
   frame.timestamp = clock_ ? clock_() : TimePoint{};
-  frame.seq = ++seq_;
+  frame.seq = seq;
   truth_ = truth;
-  return frame;
+  return std::move(frame);
 }
 
 FrameInfo SyntheticSource::info() const {

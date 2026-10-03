@@ -139,3 +139,47 @@ TEST(SyntheticSource, GrabStampsFramesFromClockAndIncrementsSeq) {
   EXPECT_EQ(src.info().width, 200);
   EXPECT_EQ(src.info().pixel_depth, 255);
 }
+
+TEST(Synth, CrosshairIsOnePixelWideOnEvenAndOddFrames) {
+  for (int n : {200, 201}) {
+    HoleScene h;
+    h.width = h.height = n;
+    h.crosshair = true;
+    auto f = render(h, {5.0, 5.0}).first;  // hole off frame, tray elsewhere
+    int dark_cols = 0, dark_rows = 0;
+    for (int x = 0; x < n; ++x) dark_cols += f.view().at(x, 3) == 0 ? 1 : 0;
+    for (int y = 0; y < n; ++y) dark_rows += f.view().at(3, y) == 0 ? 1 : 0;
+    EXPECT_EQ(dark_cols, 1) << n;
+    EXPECT_EQ(dark_rows, 1) << n;
+    EXPECT_EQ(f.view().at((n - 1) / 2, 3), 0);
+    EXPECT_EQ(f.view().at(3, (n - 1) / 2), 0);
+  }
+}
+
+TEST(Synth, ZeroSigmaAndElongationRenderWithoutNaN) {
+  GlowScene s;
+  s.sigma_mm = 0.0;
+  s.elongation = 0.0;
+  auto [f, truth] = render(s, {0, 0});
+  EXPECT_FALSE(f.data.empty());
+  for (auto v : f.data) EXPECT_LE(v, s.pixel_depth);
+  EXPECT_TRUE(std::isfinite(truth.radius_px));
+}
+
+TEST(SyntheticSource, SuccessiveGrabsHaveIndependentNoiseButSourcesReplay) {
+  HoleScene s;
+  s.noise = 0.05;
+  auto make = [&] {
+    return SyntheticSource(s, [] { return Vec2{}; }, [] { return pychron::TimePoint{}; });
+  };
+  auto a = make();
+  auto b = make();
+  auto a1 = a.grab();
+  auto a2 = a.grab();
+  auto b1 = b.grab();
+  auto b2 = b.grab();
+  ASSERT_TRUE(a1.has_value() && a2.has_value() && b1.has_value() && b2.has_value());
+  EXPECT_NE(a1->data, a2->data);
+  EXPECT_EQ(a1->data, b1->data);
+  EXPECT_EQ(a2->data, b2->data);
+}

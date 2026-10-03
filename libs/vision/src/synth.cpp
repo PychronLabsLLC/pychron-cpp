@@ -49,6 +49,13 @@ class Noise {
   bool have_spare_ = false;
 };
 
+// Exactly 1 px wide for every frame size: column/row floor((n-1)/2).
+bool on_crosshair(int x, int y, int w, int h) { return x == (w - 1) / 2 || y == (h - 1) / 2; }
+
+// Smallest gaussian width (px) and elongation; 0 would give 0/0 = NaN.
+constexpr double kMinSigmaPx = 1e-3;
+constexpr double kMinElongation = 1e-3;
+
 std::uint16_t quantise(double frac, std::uint16_t depth) {
   const double v = std::round(clamp01(frac) * depth);
   return static_cast<std::uint16_t>(v);
@@ -58,7 +65,6 @@ std::uint16_t quantise(double frac, std::uint16_t depth) {
 
 std::pair<Frame, Truth> render(const HoleScene& s, Vec2 stage_mm) {
   Frame f = Frame::make(s.width, s.height, s.pixel_depth);
-  const Vec2 c = image_centre(f.width, f.height);
   const Vec2 t = target_px(f.width, f.height, s.hole_mm, stage_mm, s.px_per_mm);
   const double r = s.hole_radius_mm * s.px_per_mm;
   const double pitch = s.pitch_mm * s.px_per_mm;
@@ -89,20 +95,20 @@ std::pair<Frame, Truth> render(const HoleScene& s, Vec2 stage_mm) {
         const double gr = 0.25 * r;
         level += (1.0 - level) * clamp01(gr - gd + 0.5);
       }
-      if (s.crosshair && (std::abs(x - c.x) <= 0.5 || std::abs(y - c.y) <= 0.5)) level = 0.0;
+      if (s.crosshair && on_crosshair(x, y, f.width, f.height)) level = 0.0;
 
       f.at(x, y) = quantise(level + noise.next(), s.pixel_depth);
     }
   }
-  return {std::move(f), Truth{t, r, inside(f, t)}};
+  const bool visible = inside(f, t);
+  return {std::move(f), Truth{t, r, visible}};
 }
 
 std::pair<Frame, Truth> render(const GlowScene& s, Vec2 stage_mm) {
   Frame f = Frame::make(s.width, s.height, s.pixel_depth);
-  const Vec2 c = image_centre(f.width, f.height);
   const Vec2 t = target_px(f.width, f.height, s.glow_mm, stage_mm, s.px_per_mm);
-  const double sigma = s.sigma_mm * s.px_per_mm;
-  const double sx = s.elongation * sigma;
+  const double sigma = std::max(s.sigma_mm * s.px_per_mm, kMinSigmaPx);
+  const double sx = std::max(s.elongation, kMinElongation) * sigma;
   Noise noise(s.seed, s.noise);
 
   for (int y = 0; y < f.height; ++y) {
@@ -110,11 +116,12 @@ std::pair<Frame, Truth> render(const GlowScene& s, Vec2 stage_mm) {
       const double dx = x - t.x, dy = y - t.y;
       const double g = s.peak * std::exp(-(dx * dx / (sx * sx) + dy * dy / (sigma * sigma)) / 2.0);
       double level = s.background + g;
-      if (s.crosshair && (std::abs(x - c.x) <= 0.5 || std::abs(y - c.y) <= 0.5)) level = std::max(level, 0.6);
+      if (s.crosshair && on_crosshair(x, y, f.width, f.height)) level = std::max(level, 0.6);
       f.at(x, y) = quantise(level + noise.next(), s.pixel_depth);
     }
   }
-  return {std::move(f), Truth{t, sigma, inside(f, t)}};
+  const bool visible = inside(f, t);
+  return {std::move(f), Truth{t, sigma, visible}};
 }
 
 }  // namespace pychron::vision
