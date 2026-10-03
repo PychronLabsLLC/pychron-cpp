@@ -17,6 +17,8 @@ Appendix B is a file-level pass over every lab's `extractionline/` and
 `canvas2D/` folders, with corrections to the sections below (added 2026-10-03).
 Appendix C does the same for the `devices/` folders and compares the device
 kinds with the drivers pychron-cpp has (added 2026-10-03).
+Appendix D covers the `spectrometer/` folders and checks the importer in the
+spectrometer spec (section 7.5) against the real files (added 2026-10-03).
 
 ## Gaps vs current `extraction_line.toml` / `canvas.toml` schema
 
@@ -1042,3 +1044,214 @@ Qtegra valve actuator, which with UDP completes the three Qtegra labs.
 One zip archive in diode (a 2012-2019 copy of the diode laser folder) was
 listed, not extracted. One `zobs/` script holds a plaintext credential; it is
 not reproduced here and was reported to the owner.
+
+## Appendix D: `spectrometer/` file survey (2026-10-03)
+
+Every text file in every lab's `spectrometer/` tree was read from the local
+Drive mirror. Serial ids are present in some detector files and are not
+reproduced. Units of field tables are inferred from magnitude.
+
+### D.1 Which folders are real
+
+| Lab | State |
+|---|---|
+| jan | Populated, Argus. Detectors (yaml and cfg), readout, config, 13 field tables plus backups, conditionals, and the only deflection tables anywhere. 2022 |
+| melbourne | Populated, Argus, 2026. Derived from jan: its field table is jan's plus 0.01789 in every cell, and its relative positions and source values match jan's |
+| ldeo | Populated, Helix. Ten detectors (yaml and cfg), one field table, four `Setup_*.cfg`, Helix readout. 2020 |
+| asu/setupfiles | Populated, NGX, 2023. Only `detectors.yaml` and `argon.csv` are NGX; configs, other tables and readout are Argus-template leftovers |
+| usgsreston | Byte-identical to asu/setupfiles, all 22 files |
+| asu/orig = hal = wiscar | One shared template in INI form (three detector cfgs, no yaml), 19 files each |
+| uf/original | Untuned template: ten detectors, all Ar40, all inactive; empty readout |
+| felix | Configurations and tables only (23 cfgs, 21 distinct). No detector file, readout or molecular weights |
+| co2, diode, uf/setupfiles, usgsdenver, valve | Empty skeleton folders |
+| asu-sft, uaf, purdue | No `spectrometer/` folder |
+
+Every `deflection_backup/` is empty in every lab.
+
+### D.2 Detector files
+
+YAML keys: `active`, `color` (integer, quoted `'#RRGGBB'`, or quoted name),
+`deflection_correction_sign`, `deflection_name`, `index` (always a float),
+`isotope`, `kind` (`Faraday`, `IonCounter`, `CDD`), `name`,
+`protection_threshold` (`null` or float), `relative_position` (float, or
+integer `0`), `serial_id`, `software_gain`, `use_deflection`, `ypadding` (a
+quoted string).
+
+INI keys: `relative_position`, `default_state`, `color`, `isotope`, `kind`
+(only on ion counters), `deflection_correction_sign`, `deflection_name`,
+`ic_factor`, `ic_factor_err`, `protection_threshold`, `index` (integer or
+`4.1`), `serial_id`, `use_deflection`.
+
+No file carries a unit, a channel, a saturation level, a dead time or a
+deflection maximum.
+
+| Lab | Detectors | Notes |
+|---|---|---|
+| jan | H2, H1, AX, L1, L2, CDD (Ar40..Ar35); H1 and AX active | CDD is IonCounter, sign -1, threshold 0.5. yaml and cfg agree |
+| melbourne | as jan, H2 commented out | hex colours |
+| ldeo | H2..L2 Faraday plus `H2(CDD)`..`L2(CDD)` IonCounter; active H2, AX(CDD), L2(CDD) | every `relative_position` is 0; yaml and cfg disagree on the CDD sign |
+| asu = reston | H5..L5, ten entries | isotopes and positions repeat in pairs; L4 is `kind: CDD` with gain 1.6e-08; placeholder serial id |
+| orig = hal = wiscar | H2_B, H1_B, AX_B, L1_B, H2, H1, AX, L1, L2 | three files: `detectors.cfg` and `detectors_atona.cfg` differ only in L2 `ic_factor`; `detectors_FAC.cfg` has no `_B` sections |
+| uf | H5..L5, all Ar40, all inactive, one position | template |
+
+### D.3 Magnet field tables
+
+All CRLF except two CR-only jan files. Three value ranges occur: 19-42 (mass,
+NGX), 3.4-6.7 (magnet DAC volts, Argus and Helix), 4292-5248 (accelerating
+voltage).
+
+| Lab | File | Fit line | Columns | Rows | Axis | Notes |
+|---|---|---|---|---|---|---|
+| asu, reston | `argon.csv` | cubic | H5..L5 | Ar40..Ar36 | mass | matches the detectors |
+| asu family | `argon.fil1.csv` | cubic | H2..L2 | 5 | mass | L1/Ar37 = 39.04138 is an outlier (about 38.04 expected) but monotonic |
+| asu family | `avftable.csv` | parabolic | H2..L2 | Ar36, Ar38, Ar40, CO2 | accel. voltage | |
+| asu family | `ne_av.csv` | parabolic | H2..L2 | Ne20..Ne22, Ar40d | accel. voltage | a relabelled copy of `avftable.csv` |
+| asu family | `ne.csv` | parabolic | H2..L2 | Ne20..Ne22 | mass | |
+| asu family | `mftable.csv` | none | H2..L2, CDD | Ar40, Ar39, Ar36 | DAC | Argus leftover; columns equal in pairs |
+| jan | `mftable.csv` | parabolic | H2..L2, CDD | Ar40, Ar39, Ar36 | DAC | clean |
+| jan | `ic_mftable.csv` | discrete | H1, AX, L2 | same | DAC | H1 non-monotonic |
+| jan | `mftablemass28.csv` | discrete | six | same | DAC | mass-28 positions under the Ar40 label |
+| jan | backups and variants | parabolic or none | six | same | DAC | several non-monotonic; one has no header |
+| ldeo | `mftable.csv` | parabolic | H2, H1, AX, AX(CDD), L1, L2, L2(CDD) | Ar40, Ar38, Ar36 | DAC | no columns for three of the ion counters |
+| melbourne | `mftable.csv` | parabolic | H2..L2, CDD | Ar40, Ar39, Ar36 | DAC | clean |
+| uf | `mftable.csv` | `cubic,,,,,,,,` | H5..H1, AX, L1, L2 | 5 | mass | L1 is not a detector |
+| felix | `argon.csv` | parabolic | H2..L2, L2(CDD) | 3 | DAC | |
+| felix | `argon_2CDD.csv` | discrete | H2, AX(CDD), L2(CDD) | Ar40, Ar38, Ar36, PHHCbs | DAC | sparse: one value per row |
+
+### D.4 Configurations
+
+Sections: `[General] name`, `[Default] eqtime`, `[Magnet] mftable`,
+`[SourceParameters]`, `[Trap]`, `[SourceOptics]`, `[Deflections]`,
+`[CDDParameters]`, `[Protection]`.
+
+Key spellings, three families:
+
+| Parameter | Spellings |
+|---|---|
+| ion repeller | `ionrepeller`, `ion_repeller`, `IonRepeller` |
+| electron energy | `electronenergy`, `electron_energy`, `ElectronEnergy` |
+| high voltage | `hv`, `HV`; absent in jan and melbourne |
+| symmetry, focus | `ysymmetry`/`y_symmetry`/`YSymmetry`, and the same three for z symmetry and z focus |
+| extraction lens | `extractionlens`, `extraction_lens`, `ExtractionLens` |
+| Helix optics | `horizontalsymmetry`, `extractionsymmetry`, `extractionfocus`, `flatapole`, `rotationquad`, `verticaldeflectionn`, `verticaldeflections`, each also snake_case and CamelCase |
+| CDD voltage | `operatingvoltage` (asu family, uf); `ioncountervoltage` (jan, melbourne) |
+| trap | `current`, `voltage` (Helix only), `ramp_step`, `ramp_period`, `ramp_tolerance` |
+| protection | `use_beam_blank`, `beam_blank_threshold`, `use_detector_protection`, `detectors`, `detector_protection_threshold` |
+
+Values:
+
+| Key | asu family, uf | jan | melbourne | ldeo | felix |
+|---|---|---|---|---|---|
+| hv | 4500 or 6000 | none | none | 9900 | 7000-9900 |
+| ion repeller | 10.0 | -4.14..-2.8 | -3.81 | -3.54..-2.79 | -6.4..0.0 |
+| electron energy | 40.2 | 55.0..76.3 | 75.08 | 106.9..118.8 | 79.3..137.2 |
+| trap current | 200 | 200..225 | 200 | 200 | 200..400 |
+| trap voltage | none | none | none | 12.1..27.8 | 36.2, 47.6 |
+| deflections | 0..454 | 0..825 | 0..500 | 0 | 0..3250 |
+| CDD voltage | 618 | 1550..1600 | 2150 | commented | commented |
+| eqtime | none | 15 | 15 | 30 | 20..30 |
+
+A live file named `config.cfg` exists in asu, reston, jan, melbourne and uf
+only. ldeo has four `Setup_*.cfg`; felix has `argon*.cfg`; the shared template
+has `argon`, `ne`, `ne_av`. Every `mftable` name is written without an
+extension and resolves, except one archived felix config. Felix's tables are
+in `felix_mftable_archive/`, not `mftables/`.
+
+### D.5 Readout, conditionals and the rest
+
+- `readout.yaml` is usable in three labs: jan, melbourne and ldeo. It is fully
+  commented out in the asu family and empty in uf.
+  - melbourne: the ranges in A.3.
+  - jan: the same, with extra keys `id`, `hardware_name`, `tolerance`, and trap
+    current and voltage entries.
+  - ldeo: Helix parameter names, `use_word: False`, and an empty detector list.
+    `flatapole` is configured at about -2, outside its 0..100 range.
+- `default_conditionals.yaml`: asu has one real rule (in the Reston section
+  above). jan has five cancelations (for example `Ar36.bs_corrected>10.0`,
+  `H1.bs<-5.0`), and terminations `CDD.inactive` (no comparator) and
+  `CDD.deflection==2000`. An older jan file uses `check:` in place of
+  `teststr:`.
+- `default_conditionals_wait.wait` (shared template): YAML with one pre-run
+  termination on a gauge pressure.
+- `molecular_weights.csv`: tab-separated, no header. The asu family has Ne and
+  no Ar33/Ar41; the jan family has Ar33 = 33.5 and Ar41 and no Ne.
+- `scan.yaml`: one shared file.
+- jan `deflections/`: one extension-less file per detector, two columns
+  (deflection, magnet DAC), no header, CR-only. Live files hold exactly two
+  points; the upper deflection equals the configured value.
+- No lab has `af_demagnetization.yaml`, a peak-centre or peak-hop config, or
+  an integration-time table.
+
+### D.6 Consistency within a lab
+
+| Lab | Problems |
+|---|---|
+| jan | none among live files |
+| melbourne | three references to the commented-out H2; no deflection key for CDD |
+| ldeo | three detectors without a table column; nine without a deflection key; yaml and cfg disagree on a sign; every relative position 0 |
+| asu = reston | seven of eight tables and the configs use Argus detector names; for `ne` and `ne_av` the active detectors have no column; `CO2` and `Ar40d` have no mass |
+| orig = hal = wiscar | `CDD` referenced with no detector; four `_B` detectors without a column |
+| uf | table names a detector that does not exist; three detectors without a column |
+| felix | nothing to check against |
+
+### D.7 The importer in the spectrometer spec, against the files
+
+| Mapping in spec 7.5 | What the files do that it drops or mishandles |
+|---|---|
+| detectors to `[[detectors]]` | No file has `channel`, `units`, `saturation`, `dead_time_ns` or deflection `max`/`per_volt`; these must come from elsewhere. INI Faradays have no `kind`. INI uses `default_state` and `ic_factor` where YAML uses `active` and `software_gain`. `relative_position` is in every file and is on the dropped list. Two labs ship both formats and one pair disagrees. The shared template has three INI files and no YAML. Names contain parentheses |
+| field tables to `tables/` | Tables are named by configuration (`argon`, `ne`, `ne_av`, `argon_2CDD`), not only `mftable`. The fit word `parabolic`, used by most tables, is not among the spec's `discrete, linear, quadratic, cubic`. The fit line is absent in seven files and is `cubic,,,,,,,,` in one. One table has no header. One has sparse cells. Rows `CO2`, `Ar40d` and `PHHCbs` have no mass. No file records its axis (mass, DAC or accelerating voltage) |
+| `config.cfg` plus readout to a profile | Half the populated folders have no `config.cfg`; several have four to six configurations. Readout is usable in three labs, and only jan gives a tolerance. The files call the Helix pole parameters `VerticalDeflectionN/S`. One CDD voltage per configuration, while ldeo has five ion counters. `hv` is absent in jan and melbourne. Trap ramp is a step and a period, not a rate. Three `[Protection]` keys, `eqtime` and `[General] name` have no target |
+| `deflections/<det>` | jan only. The files hold absolute (deflection, DAC) pairs |
+| `af_demagnetization.yaml` | no lab has it |
+| molecular weights (dropped) | the labs' tables differ |
+| not in 7.5 | `default_conditionals.yaml`, the `.wait` file, `scan.yaml` |
+
+The rule "the field table has a column for every active detector" holds for
+jan, melbourne, ldeo and asu `argon`, and fails for asu `ne` and `ne_av`.
+
+### D.8 New parsing hazards
+
+- CR-only files (jan deflection tables and two field tables) and CR CR LF
+  (melbourne and uf `molecular_weights.csv`), besides CRLF.
+- Leading-zero numbers (`06.0`, `01.0`).
+- Integers where floats are expected (`flatapole= -2`, `relative_position: 0`).
+- Empty INI values (`detectors =`).
+- Mixed-case keys within one INI file.
+- A fit line with trailing commas; empty CSV cells; a table with no header.
+- File names with spaces, a leading `~`, double extensions
+  (`mftable.csv.bk`, `default_conditionals.yaml.bk.yaml`), and data files with
+  no extension.
+- Conditions with no comparator (`CDD.inactive`) and with a negative literal
+  directly after the operator (`H1.bs<-5.0`).
+- No BOM and no non-ASCII byte was found.
+
+### D.9 Fixture value
+
+| Instrument | Folder | Assessment |
+|---|---|---|
+| Argus | jan | The only fully self-consistent set, and the only one with deflection tables. 2022, with archive clutter |
+| Argus | melbourne | Current and small; jan-derived; dangling references to a commented detector |
+| Helix | ldeo | Most complete Helix set; not self-consistent |
+| NGX | asu (= reston) | Only `detectors.yaml` and `argon.csv` are NGX; treat everything else in the folder as Argus leftovers |
+| none | the shared template, uf, felix alone, the empty skeletons | not fixtures |
+
+There is no good NGX fixture on Drive.
+
+### D.10 Corrections
+
+1. Above, Reston's `[Deflections]` is said to name four detectors that no
+   longer exist. H2 and H1 are in `detectors.yaml`; only `l1` and `cdd` are
+   unknown.
+2. `39.04138` in `argon.fil1.csv` is called non-monotonic. The column and the
+   row are strictly monotonic; it is an outlier a monotonicity check will not
+   catch.
+3. `avftable.csv` is described as DAC units. Its values (4292-5248) are
+   accelerating voltage.
+4. The `_B` detector variants are in `detectors.cfg` as well as
+   `detectors_atona.cfg`; the two differ only in one `ic_factor`.
+5. `index` is always a float in YAML; integers occur only in INI.
+6. Appendix A.2 lists `deflection_backup/` as a content folder; it is empty in
+   every lab. Appendix A.3 shows melbourne's `index` as integers; the file has
+   floats.
+7. melbourne is the best current Argus fixture but not an independent one: it
+   was derived from jan.
