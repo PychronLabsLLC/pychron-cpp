@@ -700,7 +700,7 @@ TEST_F(StoreSourceTest, BatchIsotopeRefitsSaveInOneChangeset) {
     EXPECT_EQ((*a)->find_isotope("Ar40")->fit->kind, reduction::FitKind::Average);
     EXPECT_TRUE((*a)->find_isotope("Ar40")->intercept_reviewed);
     EXPECT_FALSE((*a)->find_isotope("Ar39")->intercept_reviewed);
-    EXPECT_EQ((*a)->heads.at("intercepts"), saved->revisions.at(id.str()));
+    EXPECT_EQ((*a)->heads.at("intercepts"), saved->revisions.at(id.str() + "/intercepts"));
   }
   auto uh = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
   auto ah = src.revisions()->history(air_.str(), RevisionKind::Intercepts);
@@ -714,6 +714,39 @@ TEST_F(StoreSourceTest, BatchIsotopeRefitsSaveInOneChangeset) {
   EXPECT_EQ(stale->conflict.rfind("2 of 2 analyses changed first", 0), 0u) << stale->conflict;
   EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Intercepts)->size(), 2u);
   EXPECT_FALSE(src.revisions()->save_isotope_fits(IsotopeFitSet{}));
+}
+
+TEST_F(StoreSourceTest, BatchBaselineRefitsSaveBaselinesRevisions) {
+  // The H1 baseline blob: 0, 1, 2, 3, 4.
+  ASSERT_TRUE(store_->ingest(ps::IngestItem{ps::Uuid::v7(), {}, acq_, ps::BlobIngest{"f32le-tv/1", tv(0), 5}}));
+  auto& src = source();
+  Dataset d;
+  d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(unknown_.str()), {}), {}, {}});
+  Options o(isotope_evolution_fit_schema());
+  auto rows = o.rows("isotopes");
+  rows.resize(2);
+  ASSERT_TRUE(rows[0].set("fit", std::string("average")));  // Ar40 signal
+  ASSERT_TRUE(rows[1].set("series", std::string("baseline")));
+  ASSERT_TRUE(rows[1].set("isotope", std::string("H1")));
+  ASSERT_TRUE(rows[1].set("fit", std::string("average")));
+  ASSERT_TRUE(o.set_rows("isotopes", rows));
+  auto fig = build_isotope_evolution_fits(d, o, [&](const std::string& uuid) { return src.load_raw(uuid); });
+  ASSERT_TRUE(fig) << fig.error().what;
+  ASSERT_EQ(fig->fits.analyses.at(0).isotopes.size(), 2u);
+  auto saved = src.revisions()->save_isotope_fits(fig->fits);
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  ASSERT_TRUE(saved->saved) << saved->conflict;
+  const std::string u = unknown_.str();
+  ASSERT_EQ(saved->revisions.size(), 2u);
+  auto a = src.load(u);
+  ASSERT_TRUE(a);
+  EXPECT_EQ((*a)->heads.at("baselines"), saved->revisions.at(u + "/baselines"));
+  EXPECT_EQ((*a)->heads.at("intercepts"), saved->revisions.at(u + "/intercepts"));
+  EXPECT_NEAR((*a)->find_isotope("Ar40")->baseline.value, 2.0, 1e-9);
+  EXPECT_TRUE((*a)->find_isotope("Ar40")->baseline_reviewed);
+  EXPECT_EQ((*a)->find_isotope("Ar40")->baseline_fit->kind, reduction::FitKind::Average);
+  EXPECT_EQ(src.revisions()->history(u, RevisionKind::Baselines)->front().message,
+            "<ISOEVO> refit Ar40(average),H1 baseline(average)");
 }
 
 TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {

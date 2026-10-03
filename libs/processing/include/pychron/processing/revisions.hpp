@@ -76,7 +76,7 @@ RevisionDiff diff_revisions(const RevisionTable& before, const RevisionTable& af
 struct SaveOutcome {
   bool saved = false;
   // The new head per kind ("intercepts", "baselines") for one analysis;
-  // per analysis uuid for reference fits.
+  // per analysis uuid for reference fits; "<uuid>/<kind>" for batch refits.
   std::map<std::string, std::string> revisions;
   std::string conflict;
 };
@@ -98,10 +98,10 @@ class IRevisionSource {
   // isotopes or detectors are added; references recorded, reviewed set);
   // nothing is written if any of those heads moved. Message: fits.message().
   virtual Result<SaveOutcome> save_reference_fits(const ReferenceFitSet& fits) = 0;
-  // One changeset with a new intercepts revision for every analysis of
-  // `fits` (batch isotope-evolution refits), each on the head it was
-  // refitted at; nothing is written if any moved. Revisions by analysis
-  // uuid; message fits.message().
+  // One changeset with new intercepts and/or baselines revisions for every
+  // analysis of `fits` (batch isotope-evolution refits), each on the heads
+  // it was refitted at; nothing is written if any moved. Revisions keyed
+  // "<uuid>/intercepts", "<uuid>/baselines"; message fits.message().
   virtual Result<SaveOutcome> save_isotope_fits(const IsotopeFitSet& fits) = 0;
   // Moves the head of `kind` back to `revision` (an earlier revision of the
   // same analysis and kind) if `expected` is still the head. No revision is

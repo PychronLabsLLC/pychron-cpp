@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cmath>
 
 #include "fixtures.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
@@ -189,6 +190,152 @@ TEST(IsotopeEvolutionFits, KeysAndNames) {
   EXPECT_EQ(by_name->fits.analyses.at(0).isotopes.at(0).fit.key, "AX:Ar39");
   auto none = build_isotope_evolution_fits(
       f.dataset, with_row([](Options& row) { (void)row.set("isotope", std::string("Ar99")); }), f.loader());
+  ASSERT_TRUE(none);
+  EXPECT_TRUE(none->fits.analyses.empty());
+}
+
+TEST(IsotopeEvolutionGoodness, CurvatureAndRsquaredHelpers) {
+  std::vector<double> sq;
+  for (int x = 0; x < 10; ++x) sq.push_back(x * x);
+  // Interior: y' = 2x, y'' = 2 (numpy.gradient), so at index 5: 2 / 101^1.5.
+  EXPECT_NEAR(curvature_at(sq, 5), 2.0 / std::pow(101.0, 1.5), 1e-15);
+  EXPECT_NEAR(curvature_at(sq, 0.5), curvature_at(sq, 5), 1e-15);  // a fraction of the points
+  EXPECT_NEAR(curvature_at(sq, 99), curvature_at(sq, 9), 1e-15);   // clamped
+  EXPECT_EQ(curvature_at({1.0}, 0), 0.0);
+
+  RawSeries line;
+  for (int k = 0; k < 10; ++k) {
+    line.t.push_back(k);
+    line.v.push_back(3.0 + 2.0 * k + (k % 2 ? 0.1 : -0.1));
+  }
+  r::FitSpec lin;
+  auto f = fit_series(line, lin, {});
+  ASSERT_TRUE(f);
+  const auto r2 = adjusted_rsquared(line, *f, {});
+  ASSERT_TRUE(r2);
+  EXPECT_GT(*r2, 0.99);
+  EXPECT_LT(*r2, 1.0);
+  r::FitSpec avg;
+  avg.kind = r::FitKind::Average;
+  EXPECT_FALSE(adjusted_rsquared(line, *fit_series(line, avg, {}), {}));
+}
+
+TEST(IsotopeEvolutionGoodness, RemainingChecks) {
+  auto f = make(1);
+  auto flagged = [&](std::function<void(Options&)> edit, Dataset* d = nullptr) {
+    auto fig = build_isotope_evolution_fits(d ? *d : f.dataset, with_row(edit), f.loader());
+    EXPECT_TRUE(fig);
+    std::vector<std::string> checks;
+    for (const auto& flag : fig->fits.analyses.at(0).flags) checks.push_back(flag.check);
+    return checks;
+  };
+  using V = std::vector<std::string>;
+  // Smart filter: a limit of 0 flags any error, a huge one none; malformed is off.
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("smart_filter", std::string("0,1,0,0")); }), V{"smart_filter"});
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("smart_filter", std::string("0,1,0,1e9")); }), V{});
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("smart_filter", std::string("1,2")); }), V{});
+  // Curvature: large at the wild point (index 7), small elsewhere.
+  EXPECT_EQ(flagged([](Options& r) {
+              (void)r.set("max_curvature", 1.0);
+              (void)r.set("curvature_at", 7.0);
+            }),
+            V{"curvature"});
+  EXPECT_EQ(flagged([](Options& r) {
+              (void)r.set("max_curvature", 1.0);
+              (void)r.set("curvature_at", 15.0);
+            }),
+            V{});
+  // Adjusted R^2: the wild point spoils a near-perfect line.
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("min_rsquared", 0.999); }), V{"rsquared"});
+  EXPECT_EQ(flagged([](Options& r) {
+              (void)r.set("min_rsquared", 0.999);
+              (void)r.set("fit", std::string("average"));
+            }),
+            V{});  // not checked for averages
+  // Slope only above an intensity.
+  auto rising = make(1, true);
+  auto slope = build_isotope_evolution_fits(rising.dataset, with_row([](Options& r) {
+                                              (void)r.set("max_slope", 0.1);
+                                              (void)r.set("slope_intensity", 1e9);
+                                            }),
+                                            rising.loader());
+  ASSERT_TRUE(slope);
+  EXPECT_TRUE(slope->fits.analyses.at(0).good());
+
+  // Signal to baseline and to blank use the stored baseline and blank.
+  auto a = std::make_shared<Analysis>(*f.dataset.items()[0].analysis->analysis);
+  a->isotopes[0].baseline = {0.01, 100.0};  // a baseline error of ~1.7% of the signal
+  a->isotopes[0].blank = {600.0, 1.0};      // ~10% of the signal
+  Dataset d;
+  d.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+  EXPECT_EQ(flagged(
+                [](Options& r) {
+                  (void)r.set("signal_to_baseline", 1.0);
+                  (void)r.set("signal_to_baseline_percent", 0.0);
+                },
+                &d),
+            V{"signal_to_baseline"});
+  EXPECT_EQ(flagged(
+                [](Options& r) {
+                  (void)r.set("signal_to_baseline", 5.0);
+                  (void)r.set("signal_to_baseline_percent", 0.0);
+                },
+                &d),
+            V{});
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("max_signal_to_blank", 5.0); }, &d), V{"signal_to_blank"});
+  EXPECT_EQ(flagged([](Options& r) { (void)r.set("max_signal_to_blank", 50.0); }, &d), V{});
+}
+
+TEST(IsotopeEvolutionFits, BaselineRowsRefitTheDetectorsBaseline) {
+  auto f = make(1);
+  auto a = std::make_shared<Analysis>(*f.dataset.items()[0].analysis->analysis);
+  a->isotopes[2].detector = "H1";  // Ar38 shares Ar40's detector
+  a->isotopes[0].baseline_user_excluded = {3};
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  RawSeries bs;
+  bs.kind = SeriesKind::Baseline;
+  bs.key = "H1";
+  bs.detector = "H1";
+  for (int k = 0; k < 10; ++k) {
+    bs.t.push_back(k);
+    bs.v.push_back(k == 3 ? 5.0 : 0.02);
+  }
+  f.raw.begin()->second.series.push_back(bs);
+  Options o = with_row([](Options& row) {
+    (void)row.set("series", std::string("baseline"));
+    (void)row.set("isotope", std::string("H1"));
+    (void)row.set("fit", std::string("average"));
+  });
+  auto fig = build_isotope_evolution_fits(f.dataset, o, f.loader());
+  ASSERT_TRUE(fig) << fig.error().what;
+  ASSERT_EQ(fig->fits.analyses.size(), 1u);
+  const auto& refits = fig->fits.analyses[0];
+  ASSERT_EQ(refits.isotopes.size(), 1u);
+  const auto& refit = refits.isotopes[0];
+  EXPECT_EQ(refit.fit.kind, SeriesKind::Baseline);
+  EXPECT_EQ(refit.fit.key, "H1");
+  EXPECT_EQ(refit.label(), "H1 baseline");
+  EXPECT_EQ(refit.stored, (Value{0.01, 0.001}));
+  EXPECT_NEAR(refit.fit.value.value, 0.02, 1e-12);  // the wild point stays left out
+  EXPECT_EQ(refit.fit.user_excluded, (std::vector<std::size_t>{3}));
+  for (const char* key : {"Ar40", "Ar38"}) EXPECT_NEAR(refits.edited->find_isotope(key)->baseline.value, 0.02, 1e-12);
+  EXPECT_EQ(refits.edited->find_isotope("Ar39")->baseline, a->find_isotope("Ar39")->baseline);
+  EXPECT_EQ(fig->fits.message(), "<ISOEVO> refit H1 baseline(average)");
+  EXPECT_EQ(fig->scene.graphs[0].panels[0].y.title, "H1 baseline (fA)");
+
+  // Reviewed baselines are kept; an unknown detector refits nothing.
+  a->isotopes[0].baseline_reviewed = true;
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  ASSERT_TRUE(o.set("skip_reviewed", true));
+  auto kept = build_isotope_evolution_fits(f.dataset, o, f.loader());
+  ASSERT_TRUE(kept);
+  EXPECT_TRUE(kept->fits.analyses.empty());
+  EXPECT_EQ(kept->fits.reviewed_kept, 1);
+  auto none = build_isotope_evolution_fits(f.dataset, with_row([](Options& row) {
+                                             (void)row.set("series", std::string("baseline"));
+                                             (void)row.set("isotope", std::string("XX"));
+                                           }),
+                                           f.loader());
   ASSERT_TRUE(none);
   EXPECT_TRUE(none->fits.analyses.empty());
 }

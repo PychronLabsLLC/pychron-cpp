@@ -304,6 +304,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
             iso.baseline = value_of(b.value, b.error, b.manual);
             iso.baseline_fit = fit_spec(b.fit, b.error_type, b.filter_outliers_json);
             if (b.user_excluded_json) iso.baseline_user_excluded = parse_index_list(*b.user_excluded_json);
+            iso.baseline_reviewed = b.reviewed;
           }
       if (blanks)
         for (const auto& b : *blanks)
@@ -952,7 +953,7 @@ Result<SaveOutcome> StoreSource::save_isotope_fits(const IsotopeFitSet& fits) {
     for (const auto& item : items) {
       auto revs = stage_fits(s, **uow, item.id, item.bases, item.edits);
       if (!revs) return fail(revs.error());
-      staged[item.uuid] = revs->at("intercepts");
+      for (const auto& [kind, rev] : *revs) staged[item.uuid + "/" + kind] = rev;
     }
     auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
     if (!committed) return fail(committed.error());

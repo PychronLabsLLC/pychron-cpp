@@ -315,7 +315,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
           }
       const std::string id = "rev-" + std::to_string(++ids_) + "-intercepts";
       copy->heads["intercepts"] = id;
-      out.revisions[a.uuid] = id;
+      out.revisions[a.uuid + "/intercepts"] = id;
       record(*copy, "intercepts", id, "reduction", fits.message());
       add(copy);
     }

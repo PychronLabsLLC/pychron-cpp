@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
 #include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <set>
 
 #include "pychron/processing/units.hpp"
@@ -17,15 +20,39 @@ namespace {
 
 struct RowSpec {
   std::string isotope;
+  bool baseline = false;
   r::FitSpec fit;
-  std::optional<double> max_percent_error, max_outliers, max_slope;
+  std::optional<double> max_percent_error, max_outliers, max_slope, slope_intensity, max_curvature, min_rsquared,
+      signal_to_baseline, signal_to_baseline_percent, max_signal_to_blank;
+  double curvature_at = 0.5;
+  std::optional<std::array<double, 4>> smart_filter;
 };
+
+// "a,b,c,d" -> coefficients; nullopt when empty or malformed.
+std::optional<std::array<double, 4>> parse_smart_filter(const std::string& text) {
+  if (text.empty()) return std::nullopt;
+  std::array<double, 4> c{};
+  std::size_t i = 0, start = 0;
+  while (i < 4) {
+    const auto end = text.find(',', start);
+    const std::string part = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    char* stop = nullptr;
+    c[i] = std::strtod(part.c_str(), &stop);
+    if (stop == part.c_str()) return std::nullopt;
+    ++i;
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  if (i != 4) return std::nullopt;
+  return c;
+}
 
 std::vector<RowSpec> row_specs(const Options& o) {
   std::vector<RowSpec> out;
   for (const auto& row : o.rows("isotopes")) {
     RowSpec s;
     s.isotope = row.get_string("isotope");
+    s.baseline = row.get_string("series") == "baseline";
     s.fit.kind = r::parse_fit_kind(row.get_string("fit")).value_or(r::FitKind::Linear);
     s.fit.error = row.get_string("error") == "SD" ? r::ErrorType::Sd : r::ErrorType::Sem;
     s.fit.outliers.enabled = row.get_bool("filter_outliers");
@@ -34,6 +61,14 @@ std::vector<RowSpec> row_specs(const Options& o) {
     s.max_percent_error = row.get_optional_double("max_percent_error");
     s.max_outliers = row.get_optional_double("max_outliers");
     s.max_slope = row.get_optional_double("max_slope");
+    s.slope_intensity = row.get_optional_double("slope_intensity");
+    s.max_curvature = row.get_optional_double("max_curvature");
+    s.curvature_at = row.get_double("curvature_at");
+    s.min_rsquared = row.get_optional_double("min_rsquared");
+    s.signal_to_baseline = row.get_optional_double("signal_to_baseline");
+    s.signal_to_baseline_percent = row.get_optional_double("signal_to_baseline_percent");
+    s.max_signal_to_blank = row.get_optional_double("max_signal_to_blank");
+    s.smart_filter = parse_smart_filter(row.get_string("smart_filter"));
     out.push_back(std::move(s));
   }
   return out;
@@ -50,20 +85,36 @@ double slope_at_zero(const r::Intercept& f) {
 
 SchemaPtr make_schema_impl() {
   auto row = make_schema(
-      "figure.isotope_evolution_fit.isotope", "Isotope",
-      {text("isotope", "Isotope", "Isotope", "Ar40", "A key (Ar40, H1:Ar40) or an isotope name"),
-       choice("fit", "Fit", "Isotope", {"average", "linear", "parabolic", "cubic", "exponential"}, "linear"),
-       choice("error", "Error", "Isotope", {"SEM", "SD"}, "SEM"),
-       boolean("filter_outliers", "Filter outliers", "Isotope", false),
-       when(integer("iterations", "Iterations", "Isotope", 1, 1, 10), "filter_outliers"),
-       when(number("std_devs", "Std devs", "Isotope", 2.0, 0.5, 10.0, 0.5), "filter_outliers"),
+      "figure.isotope_evolution_fit.isotope", "Fit",
+      {choice("series", "Series", "Fit", {"signal", "baseline"}, "signal"),
+       text("isotope", "Isotope (detector for baselines)", "Fit", "Ar40",
+            "Signals: a key (Ar40, H1:Ar40) or an isotope name; baselines: a detector"),
+       choice("fit", "Fit", "Fit", {"average", "linear", "parabolic", "cubic", "exponential"}, "linear"),
+       choice("error", "Error", "Fit", {"SEM", "SD"}, "SEM"),
+       boolean("filter_outliers", "Filter outliers", "Fit", false),
+       when(integer("iterations", "Iterations", "Fit", 1, 1, 10), "filter_outliers"),
+       when(number("std_devs", "Std devs", "Fit", 2.0, 0.5, 10.0, 0.5), "filter_outliers"),
        optional_number("max_percent_error", "Flag error above (%)", "Goodness"),
+       text("smart_filter", "Smart filter a,b,c,d", "Goodness", "",
+            "Flag an error >= a v^b + c v + d; legacy default 0.0003,0.5,0.00005,0.015; empty: off"),
        optional_number("max_outliers", "Flag outliers above", "Goodness"),
        optional_number("max_slope", "Flag slope above (fA/s)", "Goodness",
-                       "Legacy slope goodness: a growing signal is suspect")});
+                       "Legacy slope goodness: a growing signal is suspect"),
+       optional_number("slope_intensity", "Slope check above (fA)", "Goodness",
+                       "Check the slope only for values above this"),
+       optional_number("max_curvature", "Flag curvature above", "Goodness"),
+       [] {
+         auto f = number("curvature_at", "Curvature at", "Goodness", 0.5, 0.0, 100000.0, 0.1);
+         f.help = "A point index, or a fraction of the points when between 0 and 1";
+         return f;
+       }(),
+       optional_number("min_rsquared", "Flag adjusted R² at or below", "Goodness"),
+       optional_number("signal_to_baseline", "Baseline error above (% of signal)", "Goodness"),
+       optional_number("signal_to_baseline_percent", "... then flag error from (%)", "Goodness"),
+       optional_number("max_signal_to_blank", "Flag blank at or above (% of signal)", "Goodness")});
   ListSpec list;
   list.key = "isotopes";
-  list.label = "Isotopes";
+  list.label = "Fits";
   list.section = "Isotopes";
   list.row = row;
   list.min_rows = 1;
@@ -74,8 +125,8 @@ SchemaPtr make_schema_impl() {
       "figure.isotope_evolution_fit", "Isotope evolutions",
       {boolean("keep_user_excluded", "Keep left-out points", "Fit", true,
                "Refit without the points each analysis already leaves out"),
-       boolean("skip_reviewed", "Keep reviewed intercepts", "Fit", false,
-               "Intercepts already marked reviewed are not refitted or saved"),
+       boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
+               "Intercepts and baselines already marked reviewed are not refitted or saved"),
        integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
        boolean("show_current", "Show current values", "Display", true)},
       {list}));
@@ -84,6 +135,59 @@ SchemaPtr make_schema_impl() {
 }
 
 }  // namespace
+
+double curvature_at(const std::vector<double>& ys, double at) {
+  const std::size_t n = ys.size();
+  if (n < 2) return 0.0;
+  auto gradient = [n](const std::vector<double>& y) {
+    std::vector<double> g(n);
+    g[0] = y[1] - y[0];
+    g[n - 1] = y[n - 1] - y[n - 2];
+    for (std::size_t i = 1; i + 1 < n; ++i) g[i] = (y[i + 1] - y[i - 1]) / 2.0;
+    return g;
+  };
+  const auto d = gradient(ys);
+  const auto dd = gradient(d);
+  double x = at > 0.0 && at < 1.0 ? static_cast<double>(n) * at : at;
+  const auto i = static_cast<std::size_t>(std::clamp(x, 0.0, static_cast<double>(n - 1)));
+  return std::abs(dd[i] / std::pow(1.0 + d[i] * d[i], 1.5));
+}
+
+std::optional<double> adjusted_rsquared(const RawSeries& s, const SeriesFit& fit,
+                                        const std::vector<std::size_t>& user_excluded) {
+  if (fit.intercept.kind == r::FitKind::Average) return std::nullopt;
+  std::vector<bool> drop(s.t.size(), false);
+  for (auto i : user_excluded)
+    if (i < drop.size()) drop[i] = true;
+  for (auto i : fit.outliers)
+    if (i < drop.size()) drop[i] = true;
+  std::vector<double> x, y;
+  for (std::size_t i = 0; i < s.t.size(); ++i)
+    if (!drop[i]) {
+      x.push_back(s.t[i]);
+      y.push_back(s.v[i]);
+    }
+  const std::size_t n = y.size();
+  r::FitSpec spec;
+  spec.kind = fit.intercept.kind;
+  spec.degree = static_cast<int>(fit.intercept.params.size()) - 1;
+  const std::size_t p = r::parameter_count(spec);
+  if (n <= p) return std::nullopt;
+  double mean = 0.0;
+  for (double v : y) mean += v;
+  mean /= static_cast<double>(n);
+  double ss_res = 0.0, ss_tot = 0.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const double e = y[i] - r::predict(fit.intercept, x[i]);
+    ss_res += e * e;
+    ss_tot += (y[i] - mean) * (y[i] - mean);
+  }
+  if (ss_tot <= 0.0) return std::nullopt;
+  const double r2 = 1.0 - ss_res / ss_tot;
+  return 1.0 - (1.0 - r2) * static_cast<double>(n - 1) / static_cast<double>(n - p);
+}
+
+std::string IsotopeRefit::label() const { return fit.kind == SeriesKind::Baseline ? fit.key + " baseline" : fit.key; }
 
 std::vector<EditedFit> AnalysisRefits::fits() const {
   std::vector<EditedFit> out;
@@ -97,8 +201,8 @@ std::string IsotopeFitSet::message() const {
   bool first = true;
   for (const auto& a : analyses)
     for (const auto& i : a.isotopes) {
-      if (!seen.insert(i.fit.key).second) continue;
-      out += (first ? "" : ",") + i.fit.key + "(" + std::string(r::to_string(i.fit.fit.kind)) + ")";
+      if (!seen.insert(i.label()).second) continue;
+      out += (first ? "" : ",") + i.label() + "(" + std::string(r::to_string(i.fit.fit.kind)) + ")";
       first = false;
     }
   return out;
@@ -138,18 +242,44 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     if (cancel && cancel->load()) return fail(ErrorKind::Cancelled, "isotope evolution fits: cancelled");
     if (item.exclusion.excluded()) continue;
     const Analysis& a = *item.analysis->analysis;
-    // The isotopes to refit, with the row that configures each.
-    std::vector<std::pair<const IsotopeData*, std::size_t>> targets;
-    for (const auto& iso : a.isotopes)
-      for (std::size_t s = 0; s < specs.size(); ++s)
-        if (iso.key == specs[s].isotope || iso.isotope == specs[s].isotope) {
-          if (skip_reviewed && iso.intercept_reviewed) {
-            ++fig.fits.reviewed_kept;
-          } else {
-            targets.emplace_back(&iso, s);
+    // What to refit: (series kind, key, stored value, user exclusions,
+    // reviewed, the isotope for signal-only checks), with its row.
+    struct Target {
+      SeriesKind kind;
+      std::string key;
+      Value stored;
+      std::vector<std::size_t> excluded;
+      const IsotopeData* iso;
+      std::size_t row;
+    };
+    std::vector<Target> targets;
+    for (std::size_t s = 0; s < specs.size(); ++s) {
+      const RowSpec& spec = specs[s];
+      if (spec.baseline) {
+        for (const auto& iso : a.isotopes)
+          if (iso.detector == spec.isotope) {
+            if (skip_reviewed && iso.baseline_reviewed) {
+              ++fig.fits.reviewed_kept;
+            } else {
+              targets.push_back({SeriesKind::Baseline, iso.detector, iso.baseline, iso.baseline_user_excluded, &iso, s});
+            }
+            break;  // one baseline per detector
           }
-          break;
+        continue;
+      }
+      for (const auto& iso : a.isotopes) {
+        if (iso.key != spec.isotope && iso.isotope != spec.isotope) continue;
+        const bool taken = std::any_of(targets.begin(), targets.end(), [&](const Target& t) {
+          return t.kind == SeriesKind::Signal && t.key == iso.key;
+        });
+        if (taken) continue;  // an earlier row configures it
+        if (skip_reviewed && iso.intercept_reviewed) {
+          ++fig.fits.reviewed_kept;
+        } else {
+          targets.push_back({SeriesKind::Signal, iso.key, iso.intercept, iso.user_excluded, &iso, s});
         }
+      }
+    }
     if (targets.empty()) continue;
     auto raw = load_raw(a.uuid);
     if (!raw) {
@@ -162,12 +292,13 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     refits.heads = a.heads;
     std::vector<FitEdit> edits;
     std::vector<std::size_t> rows;
-    for (const auto& [iso, s] : targets) {
-      const RowSpec& spec = specs[s];
-      FitEdit edit{SeriesKind::Signal, iso->key, spec.fit, keep_excluded ? iso->user_excluded : std::vector<std::size_t>{}};
-      const RawSeries* series = raw->find(SeriesKind::Signal, iso->key);
+    for (const auto& target : targets) {
+      const RowSpec& spec = specs[target.row];
+      const std::string label = target.kind == SeriesKind::Baseline ? target.key + " baseline" : target.key;
+      FitEdit edit{target.kind, target.key, spec.fit, keep_excluded ? target.excluded : std::vector<std::size_t>{}};
+      const RawSeries* series = raw->find(target.kind, target.key);
       if (!series) {
-        fig.fits.warnings.push_back(a.runid + " " + iso->key + ": no raw signal");
+        fig.fits.warnings.push_back(a.runid + " " + label + ": no raw data");
         continue;
       }
       auto shape = fit_series(*series, spec.fit, edit.user_excluded);
@@ -178,19 +309,41 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
       }
       IsotopeRefit refit;
       refit.fit = one->fits.front();
-      refit.stored = iso->intercept;
+      refit.stored = target.stored;
       refit.slope = slope_at_zero(shape->intercept);
       refit.outliers = shape->outliers.size();
-      const double v = refit.fit.value.value;
-      const double pe = v != 0.0 ? std::abs(refit.fit.value.error / v) * 100.0 : 0.0;
-      if (spec.max_percent_error && pe > *spec.max_percent_error)
-        refits.flags.push_back({iso->key, "percent_error", pe, *spec.max_percent_error});
+      refit.rsquared_adj = adjusted_rsquared(*series, *shape, edit.user_excluded);
+      refit.curvature = curvature_at(series->v, spec.curvature_at);
+      const double v = refit.fit.value.value, e = refit.fit.value.error;
+      const double pe = v != 0.0 ? std::abs(e / v) * 100.0 : std::numeric_limits<double>::infinity();
+      auto flag = [&](const char* check, double value, double threshold) {
+        refits.flags.push_back({target.key, check, value, threshold});
+      };
+      if (spec.max_percent_error && pe > *spec.max_percent_error) flag("percent_error", pe, *spec.max_percent_error);
+      if (spec.smart_filter) {
+        const auto& c = *spec.smart_filter;
+        const double limit = c[0] * std::pow(v, c[1]) + c[2] * v + c[3];
+        if (std::isfinite(limit) && e >= limit) flag("smart_filter", e, limit);
+      }
       if (spec.max_outliers && static_cast<double>(refit.outliers) > *spec.max_outliers)
-        refits.flags.push_back({iso->key, "outliers", static_cast<double>(refit.outliers), *spec.max_outliers});
-      if (spec.max_slope && refit.slope > *spec.max_slope)
-        refits.flags.push_back({iso->key, "slope", refit.slope, *spec.max_slope});
+        flag("outliers", static_cast<double>(refit.outliers), *spec.max_outliers);
+      if (spec.max_slope && (!spec.slope_intensity || v > *spec.slope_intensity) && refit.slope > *spec.max_slope)
+        flag("slope", refit.slope, *spec.max_slope);
+      if (spec.max_curvature && refit.curvature >= *spec.max_curvature)
+        flag("curvature", refit.curvature, *spec.max_curvature);
+      if (spec.min_rsquared && refit.rsquared_adj && *refit.rsquared_adj <= *spec.min_rsquared)
+        flag("rsquared", *refit.rsquared_adj, *spec.min_rsquared);
+      if (target.kind == SeriesKind::Signal && v != 0.0) {
+        const double stb = std::abs(target.iso->baseline.error / v) * 100.0;
+        if (spec.signal_to_baseline && spec.signal_to_baseline_percent && stb > *spec.signal_to_baseline &&
+            pe >= *spec.signal_to_baseline_percent)
+          flag("signal_to_baseline", pe, *spec.signal_to_baseline_percent);
+        const double stbk = target.iso->blank.value / v * 100.0;
+        if (spec.max_signal_to_blank && stbk >= *spec.max_signal_to_blank)
+          flag("signal_to_blank", stbk, *spec.max_signal_to_blank);
+      }
       edits.push_back(std::move(edit));
-      rows.push_back(s);
+      rows.push_back(target.row);
       refits.isotopes.push_back(std::move(refit));
     }
     if (refits.isotopes.empty()) continue;
@@ -205,7 +358,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
       const bool flagged = std::any_of(refits.flags.begin(), refits.flags.end(),
                                        [&](const GoodnessFlag& f) { return f.key == refit.fit.key; });
       panel_points[rows[k]].push_back({a.timestamp, refit.fit.value, refit.stored, a.uuid,
-                                       a.runid + " " + refit.fit.key, flagged});
+                                       a.runid + " " + refit.label(), flagged});
     }
     fig.fits.analyses.push_back(std::move(refits));
   }
@@ -221,7 +374,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     Panel p;
     p.id = "p" + std::to_string(s);
     p.quantity = spec.isotope;
-    p.y.title = spec.isotope + " intercept (fA)";
+    p.y.title = spec.baseline ? spec.isotope + " baseline (fA)" : spec.isotope + " intercept (fA)";
     PointLayer refit, stored, flagged;
     refit.marker.color = color;
     refit.label = "refit";
