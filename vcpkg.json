@@ -1,6 +1,6 @@
 {
   "name": "pychron-cpp",
-  "version-string": "0.1.0",
+  "version-string": "0.2.0",
   "description": "Instrument control for noble-gas extraction lines (pychron replacement)",
   "dependencies": [
     "asio",

@@ -25,7 +25,7 @@ struct Resources {
 Resources find_resources();
 Resources find_resources(const std::filesystem::path& executable_dir);
 
-// The pychron version these programs were built as ("0.1.0").
+// The pychron version these programs were built as ("0.2.0").
 std::string_view version() noexcept;
 
 std::filesystem::path home_dir();
