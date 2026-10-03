@@ -266,7 +266,7 @@ Delivery send_email(const NotificationConfig& c, const EmailChannel& ch, const N
   if (!ch.username.empty()) config += "user = " + curl_value(ch.username + ":" + password) + "\n";
   if (ch.tls && starts_with(ch.url, "smtp://")) config += "ssl-reqd\n";
   config += "upload-file = " + curl_value(payload->path()) + "\n";
-  ProcessSpec spec{curl_argv(c, false), config, {}, process_timeout(c)};
+  ProcessSpec spec{curl_argv(c, false), config, {}, process_timeout(c), std::nullopt};
   return finish(ch.name, c.curl, run(spec));
 }
 
@@ -286,7 +286,7 @@ Delivery send_webhook(const NotificationConfig& c, const WebhookChannel& ch, con
   const std::string config = "url = " + curl_value(ch.url) + "\nrequest = \"POST\"\nheader = " +
                              curl_value("Content-Type: application/json") + "\ndata-binary = " +
                              curl_value("@" + payload->path()) + "\n";
-  ProcessSpec spec{curl_argv(c, true), config, {}, process_timeout(c)};
+  ProcessSpec spec{curl_argv(c, true), config, {}, process_timeout(c), std::nullopt};
   return finish(ch.name, c.curl, run(spec));
 }
 

@@ -80,12 +80,23 @@ Result<int> input_file(const std::string& input) {
 
 Result<ProcessResult> run_process(const ProcessSpec& spec) {
   if (spec.argv.empty() || spec.argv.front().empty()) return fail(ErrorKind::Config, "no program to run");
+  // Opened here, not by a file action, so a failure is reported before any child exists.
+  int file_out = -1;
+  if (spec.stdout_file) {
+    file_out = open(spec.stdout_file->c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (file_out < 0)
+      return fail(ErrorKind::Io, "cannot open " + spec.stdout_file->string() + ": " + errno_text(errno));
+  }
   auto in = input_file(spec.input);
-  if (!in) return fail(in.error());
+  if (!in) {
+    if (file_out >= 0) close(file_out);
+    return fail(in.error());
+  }
   int out[2];
   if (pipe(out) != 0) {
     const int e = errno;
     close(*in);
+    if (file_out >= 0) close(file_out);
     return fail(ErrorKind::Io, "cannot create a pipe: " + errno_text(e));
   }
   fcntl(out[0], F_SETFD, FD_CLOEXEC);
@@ -110,7 +121,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, *in, 0);
-  posix_spawn_file_actions_adddup2(&actions, out[1], 1);
+  posix_spawn_file_actions_adddup2(&actions, file_out >= 0 ? file_out : out[1], 1);
   posix_spawn_file_actions_adddup2(&actions, out[1], 2);
   // Its own process group, so a timeout kills whatever it started too.
   posix_spawnattr_t attr;
@@ -123,6 +134,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   posix_spawn_file_actions_destroy(&actions);
   close(*in);
   close(out[1]);
+  if (file_out >= 0) close(file_out);  // the child has its own copy; keep none here
   if (spawned != 0) {
     close(out[0]);
     return fail(ErrorKind::Io, "cannot run " + spec.argv.front() + ": " + errno_text(spawned));
@@ -269,10 +281,24 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
     return fail(ErrorKind::Io, "cannot open a temporary file: " + why);
   }
 
+  // The child's stdout file, when asked for: an inheritable handle that this
+  // process closes as soon as CreateProcessW has returned.
+  HANDLE file_out = INVALID_HANDLE_VALUE;
+  if (spec.stdout_file) {
+    file_out = CreateFileW(spec.stdout_file->c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file_out == INVALID_HANDLE_VALUE) {
+      const std::string why = last_error_text();
+      CloseHandle(in);
+      return fail(ErrorKind::Io, "cannot open " + spec.stdout_file->string() + ": " + why);
+    }
+  }
+
   HANDLE out_r = nullptr, out_w = nullptr;
   if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
     const std::string why = last_error_text();
     CloseHandle(in);
+    if (file_out != INVALID_HANDLE_VALUE) CloseHandle(file_out);
     return fail(ErrorKind::Io, "cannot create a pipe: " + why);
   }
   SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
@@ -285,7 +311,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   si.cb = sizeof si;
   si.dwFlags = STARTF_USESTDHANDLES;
   si.hStdInput = in;
-  si.hStdOutput = out_w;
+  si.hStdOutput = file_out != INVALID_HANDLE_VALUE ? file_out : out_w;
   si.hStdError = out_w;
   // A job holds the child and whatever it starts: closing the job kills them
   // all, so nothing keeps the output pipe open after the child is done.
@@ -302,6 +328,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   const std::string why = ok ? std::string() : last_error_text();
   CloseHandle(in);
   CloseHandle(out_w);
+  if (file_out != INVALID_HANDLE_VALUE) CloseHandle(file_out);
   if (!ok) {
     CloseHandle(out_r);
     if (job != nullptr) CloseHandle(job);
