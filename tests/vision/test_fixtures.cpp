@@ -302,7 +302,9 @@ TEST(Fixture, RecordedSourceFeedsAutocenterTwoSteps) {
     for (const Frame& f : frames) views.push_back(f.view());
     const auto s = ac.step(std::span<const FrameView>(views));
     EXPECT_NE(s.reason, "stale_frame") << "step " << step;
-    if (step == 0) EXPECT_EQ(s.action, AutocenterStep::Action::Move);
+    if (step == 0) {
+      EXPECT_EQ(s.action, AutocenterStep::Action::Move);
+    }
   }
 }
 
