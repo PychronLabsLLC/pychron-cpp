@@ -60,8 +60,8 @@ TEST_F(ElctlSetupTest, QuestionsAreAskedWithDefaultsInBrackets) {
   const auto root = path("ngx-lab");
   // Simulation, then the connection, then the detectors: simulation: no;
   // host: Enter (default); port: 1091; user, reference isotope, baseline
-  // mass, peak window, reference detector: Enter; then confirm.
-  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n1091\n\n\n\n\n\ny\n");
+  // mass, peak window, reference detector, extraction line: Enter; then confirm.
+  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n1091\n\n\n\n\n\n\ny\n");
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "Address of the NGX controller [192.168.0.20]")) << o.out;
   std::ifstream in(root / "spectrometer.toml");
@@ -117,6 +117,26 @@ TEST_F(ElctlSetupTest, MistakesAreReportedPlainly) {
   o = run_raw({"--install", "nope", "state"});
   EXPECT_EQ(o.code, 1);
   EXPECT_TRUE(contains(o.err, "no install named 'nope'")) << o.err;
+}
+
+TEST_F(ElctlSetupTest, ALabsOwnLineIsImportedAndProbeRunsTheConnectStep) {
+  // The fixture's scratch copy of the example line stands in for the lab's files.
+  const auto root = path("own-line");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--yes", "--set", "line_source=import", "--set",
+                    "line_file=" + path("extraction_line.toml").string(), "--set",
+                    "canvas_file=" + path("canvas.toml").string()});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(std::filesystem::exists(root / "extraction_line.toml"));
+  o = run_raw({"doctor", "--install", "argus", "--probe"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "[OK] connect spectrometer: simulated")) << o.out;
+  // A line file that is not there stops the install before anything is written.
+  o = run_raw({"init", "argus", "--root", path("no-line").string(), "--name", "other", "--yes", "--set",
+               "line_source=import", "--set", "line_file=" + path("missing.toml").string(), "--set",
+               "canvas_file=" + path("canvas.toml").string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_TRUE(contains(o.err, "extraction_line.toml: cannot read")) << o.err;
+  EXPECT_FALSE(std::filesystem::exists(path("no-line")));
 }
 
 }  // namespace

@@ -4,7 +4,7 @@ kind = "fragment"
 summary = "A starter measurement plan, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
 version = 1
 includes = ["lab-common", "extraction-line-starter"]
-groups = ["Simulation", "Instrument connection", "Detectors"]
+groups = ["Simulation", "Instrument connection", "Detectors", "Extraction line"]
 
 [[questions]]
 id = "simulation"

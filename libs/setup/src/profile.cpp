@@ -197,6 +197,9 @@ Result<Profile> load_profile(const fs::path& dir) {
       spec.to = (*f)["to"].value_or(std::string{});
       spec.when = (*f)["when"].value_or(std::string{});
       spec.secret = (*f)["secret"].value_or(false);
+      spec.check = (*f)["check"].value_or(std::string{});
+      if (!spec.check.empty() && spec.check != "line" && spec.check != "canvas")
+        err(w + ".check", "must be \"line\" or \"canvas\"");
       if (spec.template_path.empty() == spec.copy.empty()) err(w, "needs exactly one of template and copy");
       if (spec.to.empty()) err(w + ".to", "missing");
       if (fs::path(spec.to).is_absolute() || spec.to.find("..") != std::string::npos)
@@ -312,6 +315,9 @@ Result<Value> parse_answer(const Question& q, std::string_view raw) {
   switch (q.type) {
     case QuestionType::String:
     case QuestionType::Path:
+      // A file is needed unless the question says what to use instead.
+      if (text.empty() && !q.default_value) return fail(ErrorKind::Config, q.id + ": needs a file");
+      return Value{text};
     case QuestionType::Secret: return Value{text};
     case QuestionType::Host:
       if (!valid_host(text)) return bad("is not a host name or address");

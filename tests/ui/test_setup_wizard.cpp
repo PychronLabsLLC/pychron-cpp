@@ -77,7 +77,7 @@ class TestSetupWizard : public QObject {
 
  private slots:
   void welcomeOffersDataReductionFirst() {
-    SetupWizard w(library_, {dir("site-a.toml"), {}, {}});
+    SetupWizard w(library_, {dir("site-a.toml"), {}, {}, {}});
     w.restart();
     QCOMPARE(w.chosen(), QStringLiteral("data-reduction"));
     for (const char* p : {"argus", "helix", "ngx"}) {
@@ -91,7 +91,7 @@ class TestSetupWizard : public QObject {
 
   void localDataReductionInstallsCreatesItsDatabaseAndIsRecorded() {
     const fs::path site = dir("site-b.toml");
-    SetupWizard w(library_, {site, database_opener(), {}});
+    SetupWizard w(library_, {site, database_opener(), {}, {}});
     w.restart();
     w.next();
     QCOMPARE(w.currentId(), int(SetupWizard::kLocation));
@@ -129,7 +129,7 @@ class TestSetupWizard : public QObject {
       if (!succeed) return fail(ErrorKind::NotConnected, "could not connect to server: Connection refused\ndetail");
       return std::string("schema version 7");
     };
-    SetupWizard w(library_, {dir("site-c.toml"), fake, {}});
+    SetupWizard w(library_, {dir("site-c.toml"), fake, {}, {}});
     w.restart();
     w.next();
     w.root_edit()->setText(QString::fromStdString(dir("dr-server").string()));
@@ -168,7 +168,7 @@ class TestSetupWizard : public QObject {
   }
 
   void simulationSkipsTheConnectionPage() {
-    SetupWizard w(library_, {dir("site-d.toml"), {}, QStringLiteral("argus")});
+    SetupWizard w(library_, {dir("site-d.toml"), {}, QStringLiteral("argus"), {}});
     w.restart();
     QCOMPARE(w.chosen(), QStringLiteral("argus"));
     w.next();
@@ -185,7 +185,7 @@ class TestSetupWizard : public QObject {
   }
 
   void aRealInstrumentAsksForItsConnectionAndChecksIt() {
-    SetupWizard w(library_, {dir("site-e.toml"), {}, QStringLiteral("ngx")});
+    SetupWizard w(library_, {dir("site-e.toml"), {}, QStringLiteral("ngx"), {}});
     w.restart();
     w.next();
     w.root_edit()->setText(QString::fromStdString(dir("ngx").string()));
@@ -216,10 +216,78 @@ class TestSetupWizard : public QObject {
     QVERIFY(text.find("secret") == std::string::npos);  // in spectrometer.local.toml only
   }
 
+  void theInstrumentConnectionPageCanTestTheConnection() {
+    std::string tried_host;
+    auto fake = [&](const setup::ProfileLibrary&, const setup::ResolvedProfile& profile,
+                    const setup::Answers& a) -> Result<std::string> {
+      tried_host = setup::to_text(a.at("ngx_host"));
+      if (tried_host == "10.9.9.9") return fail(ErrorKind::NotConnected, "connection refused\nmore");
+      return "connected: spec: isotopx_ngx (" + profile.top.name + ")";
+    };
+    SetupWizard w(library_, {dir("site-h.toml"), {}, QStringLiteral("ngx"), fake});
+    w.restart();
+    w.next();
+    w.root_edit()->setText(QString::fromStdString(dir("ngx-test").string()));
+    w.next();
+    qobject_cast<QCheckBox*>(w.editor(QStringLiteral("simulation")))->setChecked(false);
+    w.next();
+    QCOMPARE(w.currentPage()->title(), QStringLiteral("Instrument connection"));
+    QVERIFY(w.instrument_test_button() != nullptr);
+    QVERIFY(w.instrument_test_button()->isVisibleTo(w.currentPage()));
+    qobject_cast<QLineEdit*>(w.editor(QStringLiteral("ngx_host")))->setText(QStringLiteral("10.0.0.20"));
+    w.instrument_test_button()->click();
+    QCOMPARE(QString::fromStdString(tried_host), QStringLiteral("10.0.0.20"));
+    QCOMPARE(w.instrument_test_result()->text(), QStringLiteral("connected: spec: isotopx_ngx (ngx)"));
+    qobject_cast<QLineEdit*>(w.editor(QStringLiteral("ngx_host")))->setText(QStringLiteral("10.9.9.9"));
+    w.instrument_test_button()->click();
+    QCOMPARE(w.instrument_test_result()->text(), QStringLiteral("connection refused"));
+    // Data reduction has no instrument to test.
+    SetupWizard dr(library_, {dir("site-i.toml"), {}, {}, fake});
+    dr.restart();
+    dr.next();
+    dr.next();
+    QVERIFY(dr.instrument_test_button() == nullptr);
+  }
+
+  void theExtractionLineIsTheStarterOrTheLabsOwnFiles() {
+    const fs::path examples = setup::find_resources().examples;
+    SetupWizard w(library_, {dir("site-j.toml"), {}, QStringLiteral("helix"), {}});
+    w.restart();
+    w.next();
+    w.root_edit()->setText(QString::fromStdString(dir("helix-own").string()));
+    w.next();
+    while (w.currentPage()->title() != QStringLiteral("Extraction line")) QVERIFY(walk_to(w, w.nextId()));
+    QVERIFY(radio(w.editor(QStringLiteral("line_source")), "line_source-starter")->isChecked());
+    QVERIFY(!w.is_shown(QStringLiteral("line_file")));
+    radio(w.editor(QStringLiteral("line_source")), "line_source-import")->click();
+    QVERIFY(w.is_shown(QStringLiteral("line_file")));
+    QVERIFY(w.is_shown(QStringLiteral("canvas_file")));
+    // Required once asked.
+    const int here = w.currentId();
+    w.next();
+    QCOMPARE(w.currentId(), here);
+    QVERIFY(!w.error_for(QStringLiteral("line_file")).isEmpty());
+    auto set_path = [&](const char* id, const fs::path& p) {
+      w.editor(QString::fromLatin1(id))->findChild<QLineEdit*>()->setText(QString::fromStdString(p.string()));
+    };
+    set_path("line_file", examples / "extraction_line.toml");
+    set_path("canvas_file", dir("nowhere.toml"));
+    QVERIFY(walk_to(w, SetupWizard::kReady));
+    QVERIFY(w.ready_error()->text().contains(QStringLiteral("canvas.toml: cannot read")));
+    QVERIFY(!w.button(QWizard::CommitButton)->isEnabled());
+    w.back();
+    set_path("canvas_file", examples / "canvas.toml");
+    QVERIFY(walk_to(w, SetupWizard::kReady));
+    QVERIFY2(w.ready_error()->isHidden(), qPrintable(w.ready_error()->text()));
+    QVERIFY(walk_to(w, SetupWizard::kDone));
+    QVERIFY(fs::exists(dir("helix-own") / "extraction_line.toml"));
+    QVERIFY(!setup::any_fail(w.checks()));
+  }
+
   void anExistingInstallIsFilledInAndAnotherProfileIsRefused() {
     const fs::path site = dir("site-f.toml");
     {
-      SetupWizard w(library_, {site, {}, QStringLiteral("helix")});
+      SetupWizard w(library_, {site, {}, QStringLiteral("helix"), {}});
       w.restart();
       w.next();
       w.root_edit()->setText(QString::fromStdString(dir("helix").string()));
@@ -229,7 +297,7 @@ class TestSetupWizard : public QObject {
       QVERIFY(walk_to(w, SetupWizard::kDone));
     }
     {
-      SetupWizard w(library_, {site, {}, QStringLiteral("argus")});
+      SetupWizard w(library_, {site, {}, QStringLiteral("argus"), {}});
       w.restart();
       w.next();
       w.root_edit()->setText(QString::fromStdString(dir("helix").string()));
@@ -237,7 +305,7 @@ class TestSetupWizard : public QObject {
       QCOMPARE(w.currentId(), int(SetupWizard::kLocation));
       QVERIFY(w.location_note()->text().contains(QStringLiteral("helix")));
     }
-    SetupWizard w(library_, {site, {}, QStringLiteral("helix")});
+    SetupWizard w(library_, {site, {}, QStringLiteral("helix"), {}});
     w.restart();
     w.next();
     w.root_edit()->setText(QString::fromStdString(dir("helix").string()));

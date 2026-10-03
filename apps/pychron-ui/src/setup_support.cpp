@@ -59,7 +59,7 @@ int self_test(std::ostream& out) {
       if (rp) ++resolved;
     }
     check(resolved > 0, "installable profiles: " + std::to_string(resolved));
-    SetupWizard wizard(*library, {std::filesystem::path("/nonexistent/site.toml"), {}, {}});
+    SetupWizard wizard(*library, {std::filesystem::path("/nonexistent/site.toml"), {}, {}, {}});
     check(wizard.pageIds().size() >= 4, "setup wizard builds");
   }
   if (auto open = database_opener()) {

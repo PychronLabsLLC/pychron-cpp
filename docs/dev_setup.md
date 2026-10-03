@@ -293,6 +293,9 @@ elctl init argus --root ~/Pychron/argus     # asks; Enter accepts [defaults]
 elctl doctor                                # checks the default install
 elctl --install argus exp run experiment.toml --sim-speed 50
 elctl init --reconfigure --set simulation=no --set qtegra_host=10.0.0.5
+elctl doctor --probe                        # connects: the drivers' connect step
+elctl init helix --root ~/Pychron/helix --set line_source=import \
+  --set line_file=old/extraction_line.toml --set canvas_file=old/canvas.toml
 ```
 
 Instrument installs start in simulation; `CALIBRATE.md` in the install lists

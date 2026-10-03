@@ -53,6 +53,12 @@ class SetupWizard : public QWizard {
     std::filesystem::path site_path;  // default: setup::default_site_path()
     OpenDatabase open_database;
     QString profile;  // preselected on the Welcome page
+    // Connects to the instrument the answers describe (the Instrument
+    // connection page's Test connection); default
+    // setup::test_instrument_connection, which runs the real drivers.
+    std::function<Result<std::string>(const setup::ProfileLibrary&, const setup::ResolvedProfile&,
+                                      const setup::Answers&)>
+        test_instrument;
   };
 
   enum Page { kWelcome = 0, kLocation = 1, kFirstGroup = 10, kReady = 900, kDone = 901 };
@@ -84,6 +90,8 @@ class SetupWizard : public QWizard {
   QString error_for(const QString& id) const;   // the field's validation message
   QPushButton* test_button() const noexcept { return test_button_; }
   QLabel* test_result() const noexcept { return test_result_; }
+  QPushButton* instrument_test_button() const noexcept { return instrument_test_button_; }
+  QLabel* instrument_test_result() const noexcept { return instrument_test_result_; }
   QTextBrowser* summary() const noexcept { return summary_; }
   QLabel* ready_error() const noexcept { return ready_error_; }
   QTextBrowser* done_report() const noexcept { return done_report_; }
@@ -116,6 +124,8 @@ class SetupWizard : public QWizard {
   void prepare_ready();
   bool install();
   void test_connection();
+  void test_instrument();
+  QPushButton* add_test_row(QFormLayout* form, QLabel*& result, const char* name);
   std::filesystem::path root() const;
 
   const setup::ProfileLibrary& library_;
@@ -138,6 +148,8 @@ class SetupWizard : public QWizard {
   bool building_ = false;  // rebuild_groups(): editors not all made yet
   QPushButton* test_button_ = nullptr;
   QLabel* test_result_ = nullptr;
+  QPushButton* instrument_test_button_ = nullptr;
+  QLabel* instrument_test_result_ = nullptr;
   QTextBrowser* summary_ = nullptr;
   QLabel* ready_error_ = nullptr;
   QTextBrowser* done_report_ = nullptr;

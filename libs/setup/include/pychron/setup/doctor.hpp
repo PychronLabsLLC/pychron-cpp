@@ -23,7 +23,7 @@ std::string_view to_string(Check::Status s) noexcept;
 
 struct DoctorOptions {
   const ProfileLibrary* library = nullptr;  // to report profiles newer than the install
-  bool probe = false;                       // connect to each TCP transport
+  bool probe = false;                       // connect to each TCP transport, then run the drivers' connect step
   // Opens the install's database (data reduction); empty: reported as not checked.
   std::function<Result<std::string>(const std::string& url)> open_database;
 };

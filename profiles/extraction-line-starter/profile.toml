@@ -1,13 +1,54 @@
 name = "extraction-line-starter"
-title = "Starter extraction line"
+title = "Extraction line"
 kind = "fragment"
-summary = "The example line (five valves, two gauges, a pipette) on simulated transports"
-version = 1
+summary = "The extraction line: the example line (five valves, two gauges, a pipette) on simulated transports, or the line files a lab already has"
+version = 2
+
+[[questions]]
+id = "line_source"
+prompt = "Extraction line"
+type = "choice"
+choices = ["starter", "import"]
+labels = ["Start with the example line", "Use extraction-line files I already have"]
+default = "starter"
+group = "Extraction line"
+help = "The example line is five valves, two gauges and a pipette on simulated controllers: describe your own valves and gauges in it later. Files you already have (extraction_line.toml and canvas.toml from another computer or an earlier install) are checked before anything is written, then copied in."
+
+[[questions]]
+id = "line_file"
+prompt = "Extraction line config (extraction_line.toml)"
+type = "path"
+group = "Extraction line"
+when = "line_source == \"import\""
+
+[[questions]]
+id = "canvas_file"
+prompt = "Canvas (canvas.toml)"
+type = "path"
+group = "Extraction line"
+when = "line_source == \"import\""
+help = "The drawing of the line; checked against the config above."
 
 [[files]]
 copy = "@examples/extraction_line.toml"
 to = "extraction_line.toml"
+when = "line_source == \"starter\""
+check = "line"
 
 [[files]]
 copy = "@examples/canvas.toml"
 to = "canvas.toml"
+when = "line_source == \"starter\""
+check = "canvas"
+
+[[files]]
+copy = "{{ line_file }}"
+to = "extraction_line.toml"
+when = "line_source == \"import\""
+check = "line"
+
+[[files]]
+copy = "{{ canvas_file }}"
+to = "canvas.toml"
+when = "line_source == \"import\""
+check = "canvas"

@@ -3,7 +3,8 @@ file(GLOB PYCHRON_SETUP_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tes
 
 if(PYCHRON_SETUP_TESTS)
   add_executable(pychron_setup_tests ${PYCHRON_SETUP_TESTS})
-  target_link_libraries(pychron_setup_tests PRIVATE pychron::setup GTest::gtest_main)
+  # asio: test_connection.cpp serves a simulated NGX controller over TCP.
+  target_link_libraries(pychron_setup_tests PRIVATE pychron::setup asio::asio GTest::gtest_main)
   target_compile_definitions(pychron_setup_tests PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles")

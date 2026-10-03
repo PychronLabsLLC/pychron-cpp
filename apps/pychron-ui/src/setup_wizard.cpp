@@ -24,6 +24,7 @@
 #include <QVBoxLayout>
 #include <QWizardPage>
 
+#include "pychron/setup/connection.hpp"
 #include "pychron/setup/installer.hpp"
 #include "theme.hpp"
 
@@ -190,6 +191,8 @@ void SetupWizard::rebuild_groups() {
   field_index_.clear();
   test_button_ = nullptr;
   test_result_ = nullptr;
+  instrument_test_button_ = nullptr;
+  instrument_test_result_ = nullptr;
   if (!profile_) return;
   building_ = true;
 
@@ -249,17 +252,19 @@ void SetupWizard::rebuild_groups() {
   }
   // The data-reduction server page can be tried before anything is written.
   if (auto it = field_index_.find("db_host"); it != field_index_.end() && options_.open_database) {
-    QFormLayout* form = fields_[it->second].form;
-    auto* row = new QWidget(form->parentWidget());
-    auto* h = new QHBoxLayout(row);
-    h->setContentsMargins(0, 0, 0, 0);
-    test_button_ = new QPushButton(tr("Test connection"), row);
-    test_button_->setObjectName(QStringLiteral("test-connection"));
-    test_result_ = note(QString(), row);
-    h->addWidget(test_button_);
-    h->addWidget(test_result_, 1);
-    form->addRow(QString(), row);
+    test_button_ = add_test_row(fields_[it->second].form, test_result_, "test-connection");
     connect(test_button_, &QPushButton::clicked, this, [this] { test_connection(); });
+  }
+  // So can an instrument: its drivers connect to the address on the page.
+  if (profile_->top.kind == ProfileKind::Instrument) {
+    const auto g = std::find(groups_.begin(), groups_.end(), std::string("Instrument connection"));
+    const auto f = std::find_if(fields_.begin(), fields_.end(), [&](const Field& x) {
+      return g != groups_.end() && x.group == static_cast<int>(g - groups_.begin());
+    });
+    if (f != fields_.end()) {
+      instrument_test_button_ = add_test_row(f->form, instrument_test_result_, "test-instrument");
+      connect(instrument_test_button_, &QPushButton::clicked, this, [this] { test_instrument(); });
+    }
   }
   if (existing_) {
     for (auto& f : fields_) {
@@ -770,6 +775,38 @@ bool SetupWizard::install() {
   }
   checks_ = doctor(entry, doctor_options);
   return true;
+}
+
+QPushButton* SetupWizard::add_test_row(QFormLayout* form, QLabel*& result, const char* name) {
+  auto* row = new QWidget(form->parentWidget());
+  auto* h = new QHBoxLayout(row);
+  h->setContentsMargins(0, 0, 0, 0);
+  auto* button = new QPushButton(tr("Test connection"), row);
+  button->setObjectName(QString::fromLatin1(name));
+  result = note(QString(), row);
+  h->addWidget(button);
+  h->addWidget(result, 1);
+  form->addRow(QString(), row);
+  return button;
+}
+
+void SetupWizard::test_instrument() {
+  auto show = [this](bool ok, std::string what) {
+    if (const auto nl = what.find('\n'); nl != std::string::npos) what.resize(nl);
+    style::set_tone(instrument_test_result_, ok ? style::Tone::Accent : style::Tone::Error);
+    instrument_test_result_->setText(qs(what));
+  };
+  auto given = answers();
+  if (!given) return show(false, given.error().what);
+  const std::string name = ss(name_->text().trimmed());
+  auto complete = complete_answers(*profile_, *given, builtin_answers(name.empty() ? "test" : name, root()));
+  if (!complete) return show(false, complete.error().what);
+  QApplication::setOverrideCursor(Qt::WaitCursor);
+  auto connected = options_.test_instrument ? options_.test_instrument(library_, *profile_, *complete)
+                                            : test_instrument_connection(library_, *profile_, *complete);
+  QApplication::restoreOverrideCursor();
+  if (connected) show(true, *connected);
+  else show(false, connected.error().what);
 }
 
 void SetupWizard::test_connection() {

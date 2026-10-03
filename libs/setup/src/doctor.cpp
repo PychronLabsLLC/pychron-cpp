@@ -1,4 +1,5 @@
 #include "pychron/setup/doctor.hpp"
+#include "pychron/setup/connection.hpp"
 #include "pychron/setup/installer.hpp"
 
 #include <fstream>
@@ -112,6 +113,11 @@ void check_instrument(std::vector<Check>& out, const SiteInstall& install, const
                                   "is the instrument computer on and reachable from here?"));
       tcp.close();
     }
+    // Then what the programs do at start-up: the drivers' connect step.
+    auto connected = connect_spectrometer(spectrometer);
+    out.push_back(connected ? ok("connect spectrometer", *connected)
+                            : warn("connect spectrometer", first_line(connected.error().what),
+                                   "check the address, port and login in spectrometer.toml / spectrometer.local.toml"));
   }
 
   // Email and webhook notifications run curl.

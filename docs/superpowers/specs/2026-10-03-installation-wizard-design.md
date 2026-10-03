@@ -264,9 +264,17 @@ placeholders, with "Open it now". Choices with four or fewer options are
 radio buttons, labelled by the manifest's optional `labels`. A folder that
 already holds the same profile's install is a reconfigure: its recorded
 answers fill the pages and edited files are kept; another profile's install
-there is refused. Test connection exists for the data-reduction server only;
-the instrument's (driver connect step) and the extraction-line starter/import
-page are follow-ups. A data-reduction install opens `DataMainWindow` (the
+there is refused. Test connection on the data-reduction server page opens
+the database; on the Instrument connection page it renders the install into a
+scratch folder and assembles its spectrometer with the real drivers
+(transports opened, each driver's connect step: NGX banner and login, Qtegra
+handshake), the same check `elctl doctor --probe` runs on an installed
+spectrometer. The Extraction line page starts from the example line or takes
+the lab's own extraction_line.toml and canvas.toml; files marked
+`check = "line" | "canvas"` in a manifest are loaded with the real loaders,
+and the canvas checked against the line, before anything is written.
+Converting legacy Pychron extraction-line files (setupfiles extractionline/,
+canvas2D/) is not done: those formats are not surveyed yet. A data-reduction install opens `DataMainWindow` (the
 data browser alone) rather than the instrument main window.
 
 ### 3.6 Data reduction database

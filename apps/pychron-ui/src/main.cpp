@@ -127,7 +127,7 @@ Choice choose_install(const pychron::ui::CommandLine& cli, const setup::Resource
   auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
   if (cli.setup || site->installs.empty()) {
     if (!library) return {std::nullopt, fatal(library.error().what)};
-    pychron::ui::SetupWizard wizard(*library, {site_path, pychron::ui::database_opener(), {}});
+    pychron::ui::SetupWizard wizard(*library, {site_path, pychron::ui::database_opener(), {}, {}});
     if (wizard.exec() != QDialog::Accepted || !wizard.open_now()) return {std::nullopt, 0};
     return {wizard.installed(), 0};
   }

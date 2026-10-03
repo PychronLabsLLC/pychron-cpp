@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 
 #include <toml++/toml.hpp>
 
+#include "pychron/core/config/loader.hpp"
 #include "pychron/core/sha256.hpp"
+#include "pychron/systems/canvas/cross_validate.hpp"
+#include "pychron/systems/canvas/loader.hpp"
 
 namespace pychron::setup {
 
@@ -39,11 +44,58 @@ Result<void> write_file(const fs::path& p, const std::string& content, bool secr
   return {};
 }
 
-// "@examples/plans/" -> <examples>/plans/; otherwise under the profile.
-fs::path source_of(const FileSpec& f, const fs::path& examples) {
+// "@examples/plans/" -> <examples>/plans/; "{{ line_file }}" -> the file the
+// user named; otherwise under the profile.
+Result<fs::path> source_of(const FileSpec& f, const fs::path& examples, const Answers& answers) {
   constexpr std::string_view kExamples = "@examples/";
   if (std::string_view(f.copy).starts_with(kExamples)) return examples / f.copy.substr(kExamples.size());
+  if (f.copy.find("{{") != std::string::npos) {
+    auto named = render(f.copy, answers, f.profile + ": " + f.to);
+    if (!named) return fail(std::move(named).error());
+    if (named->empty()) return fail(ErrorKind::Config, f.to + ": no file given");
+    return fs::path(*named);
+  }
   return f.profile_dir / f.copy;
+}
+
+std::string first_lines(const std::string& text, int n) {
+  std::string out;
+  std::size_t at = 0;
+  for (int i = 0; i < n && at < text.size(); ++i) {
+    const auto nl = text.find('\n', at);
+    out += (out.empty() ? "" : "\n") + text.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+    if (nl == std::string::npos) break;
+    at = nl + 1;
+  }
+  return out;
+}
+
+// Files marked check = "line" / "canvas" are loaded the way the programs
+// load them, and a canvas is checked against the line it draws.
+void check_files(const std::vector<PlannedFile>& files, const std::map<std::string, std::string>& checks,
+                 std::vector<std::string>& errors) {
+  std::optional<config::SystemConfig> line;
+  for (const auto& f : files) {
+    auto c = checks.find(f.to.generic_string());
+    if (c == checks.end() || c->second != "line") continue;
+    auto loaded = config::load_system_config_from_string(f.content, f.to.generic_string());
+    if (loaded) line = std::move(*loaded);
+    else errors.push_back(f.to.generic_string() + " is not a usable extraction-line config:\n" +
+                          first_lines(loaded.error().what, 8));
+  }
+  for (const auto& f : files) {
+    auto c = checks.find(f.to.generic_string());
+    if (c == checks.end() || c->second != "canvas") continue;
+    auto canvas = canvas::load_canvas_from_string(f.content, f.to.generic_string());
+    if (!canvas) {
+      errors.push_back(f.to.generic_string() + " is not a usable canvas:\n" + first_lines(canvas.error().what, 8));
+      continue;
+    }
+    if (!line) continue;
+    if (auto crossed = canvas::check_canvas(*canvas, *line); !crossed)
+      errors.push_back(f.to.generic_string() + " does not match the extraction line:\n" +
+                       first_lines(crossed.error().what, 8));
+  }
 }
 
 bool is_secret_question(const ResolvedProfile& p, const std::string& id) {
@@ -86,6 +138,7 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
 
   std::vector<std::string> errors;
   std::set<std::string> seen;
+  std::map<std::string, std::string> checks;  // destination -> "line" / "canvas"
   auto add = [&](PlannedFile f) {
     const std::string key = f.to.generic_string();
     if (!seen.insert(key).second) {
@@ -115,10 +168,17 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
         errors.push_back(rendered.error().what);
         continue;
       }
+      if (!spec.check.empty()) checks[fs::path(spec.to).generic_string()] = spec.check;
       add(PlannedFile{spec.to, std::move(*rendered), spec.secret, spec.profile, PlannedFile::Action::Write});
       continue;
     }
-    const fs::path src = source_of(spec, library.examples());
+    auto source = source_of(spec, library.examples(), answers);
+    if (!source) {
+      errors.push_back(source.error().what);
+      continue;
+    }
+    const fs::path src = *source;
+    if (!spec.check.empty()) checks[fs::path(spec.to).generic_string()] = spec.check;
     std::error_code ec;
     if (fs::is_directory(src, ec)) {
       std::vector<fs::path> files;
@@ -139,13 +199,16 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
     } else {
       auto content = read_file(src);
       if (!content) {
-        errors.push_back(spec.profile + ": " + content.error().what);
+        errors.push_back(spec.copy.find("{{") != std::string::npos
+                             ? spec.to + ": cannot read " + src.string()
+                             : spec.profile + ": " + content.error().what);
         continue;
       }
       add(PlannedFile{spec.to, std::move(*content), spec.secret, spec.profile, PlannedFile::Action::Write});
     }
   }
 
+  check_files(plan.files, checks, errors);
   for (auto& f : plan.files) {
     // Every TOML file must parse before anything is written.
     if (f.to.extension() == ".toml") {

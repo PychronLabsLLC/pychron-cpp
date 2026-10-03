@@ -30,8 +30,12 @@
 //   copy = "@examples/plans/"        # or copied verbatim; "@examples/" is the
 //                                    # shipped example configs, a trailing '/' a directory
 //   to = "spectrometer.toml"         # under the install root
+//   copy = "{{ line_file }}"         # or a file the user named (a path answer)
 //   when = "simulation"              # optional condition over the answers
 //   secret = true                    # written owner-only, never summarised
+//   check = "line"                   # loaded before anything is written:
+//                                    # "line" (extraction-line config) or
+//                                    # "canvas" (checked against the line)
 
 #include <cstdint>
 #include <filesystem>
@@ -67,6 +71,7 @@ struct FileSpec {
   std::string to;             // relative to the install root
   std::string when;
   bool secret = false;
+  std::string check;  // "", "line" or "canvas"
   std::string profile;
   std::filesystem::path profile_dir;
 };
