@@ -37,6 +37,7 @@ add_library(pychron_persistence STATIC
   src/change.cpp
   src/collections.cpp
   src/ids.cpp
+  src/import.cpp
   src/ingest.cpp
   src/migrate.cpp
   src/model.cpp

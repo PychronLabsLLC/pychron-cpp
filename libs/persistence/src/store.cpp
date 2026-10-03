@@ -67,6 +67,31 @@ class TinyStore final : public IStore {
     return make_unit_of_work(*db_, actor);
   }
 
+  // ------------------------------------------------------------ import bookkeeping
+
+  Result<ImportSourceInfo> begin_import(const ImportSourceSpec& spec) override {
+    return detail::begin_import(*db_, dialect(), spec);
+  }
+  Result<std::vector<ImportSourceInfo>> import_sources() override { return detail::import_sources(*db_, dialect()); }
+  Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) override {
+    return detail::import_conflicts(*db_, filter);
+  }
+  Result<std::vector<ProvenanceRow>> provenance_for(Uuid entity) override {
+    return detail::provenance_for(*db_, dialect(), entity);
+  }
+  Result<bool> has_provenance(Uuid source, std::string_view commit_sha, std::string_view path) override {
+    return detail::has_provenance(*db_, source, commit_sha, path);
+  }
+  Result<bool> has_provenance_blob(Uuid source, std::string_view path, std::string_view git_blob_sha) override {
+    return detail::has_provenance_blob(*db_, source, path, git_blob_sha);
+  }
+  Result<bool> has_conflict(Uuid source, std::string_view path, const Sha256Digest& file_sha256) override {
+    return detail::has_conflict(*db_, source, path, file_sha256);
+  }
+  Result<std::optional<std::string>> imported_head_blob_sha(Uuid source, Uuid subject, Kind kind) override {
+    return detail::imported_head_blob_sha(*db_, source, subject, kind);
+  }
+
   // ------------------------------------------------------------ catalog
 
   Result<Uuid> register_client(const ClientRegistration& reg) override {

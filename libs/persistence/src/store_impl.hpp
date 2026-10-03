@@ -77,6 +77,16 @@ Result<int> prune_derived(Db& db, Uuid analysis);
 
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject);
 
+// Import source, provenance and conflict bookkeeping (import.cpp).
+Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourceSpec& spec);
+Result<std::vector<ImportSourceInfo>> import_sources(Db& db, Dialect dialect);
+Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFilter& filter);
+Result<std::vector<ProvenanceRow>> provenance_for(Db& db, Dialect dialect, Uuid entity);
+Result<bool> has_provenance(Db& db, Uuid source, std::string_view commit_sha, std::string_view path);
+Result<bool> has_provenance_blob(Db& db, Uuid source, std::string_view path, std::string_view git_blob_sha);
+Result<bool> has_conflict(Db& db, Uuid source, std::string_view path, const Sha256Digest& file_sha256);
+Result<std::optional<std::string>> imported_head_blob_sha(Db& db, Uuid source, Uuid subject, Kind kind);
+
 // Browsing reads (browse.cpp).
 Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& request);
 Result<std::vector<std::string>> facet(Db& db, Dialect dialect, BrowseFacet facet, const BrowseFilter& filter);

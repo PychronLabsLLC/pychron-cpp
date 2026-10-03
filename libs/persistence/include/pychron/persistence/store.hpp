@@ -13,12 +13,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/persistence/blob.hpp"
 #include "pychron/persistence/ids.hpp"
+#include "pychron/persistence/import.hpp"
 #include "pychron/persistence/model.hpp"
 
 namespace pychron::persistence {
@@ -484,6 +486,19 @@ class IStore {
   virtual Result<std::vector<AppliedMigration>> schema_status() = 0;
 
   virtual Result<std::unique_ptr<IUnitOfWork>> begin(const Actor& actor) = 0;
+
+  // Import bookkeeping (legacy ingestion). begin_import inserts the source or
+  // returns the stored row; the rest are reads.
+  virtual Result<ImportSourceInfo> begin_import(const ImportSourceSpec& spec) = 0;
+  virtual Result<std::vector<ImportSourceInfo>> import_sources() = 0;
+  virtual Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) = 0;
+  virtual Result<std::vector<ProvenanceRow>> provenance_for(Uuid entity) = 0;
+  virtual Result<bool> has_provenance(Uuid source, std::string_view commit_sha, std::string_view path) = 0;
+  virtual Result<bool> has_provenance_blob(Uuid source, std::string_view path, std::string_view git_blob_sha) = 0;
+  virtual Result<bool> has_conflict(Uuid source, std::string_view path, const Sha256Digest& file_sha256) = 0;
+  // The git blob sha recorded for the current head revision of (subject, kind)
+  // from this source; nullopt if none.
+  virtual Result<std::optional<std::string>> imported_head_blob_sha(Uuid source, Uuid subject, Kind kind) = 0;
 
   // Catalog (not revisioned; every write is in change_entity with a field diff, D6).
   virtual Result<Uuid> register_client(const ClientRegistration& registration) = 0;

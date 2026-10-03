@@ -27,6 +27,8 @@ Non-mechanical rules:
     * CHECKs that call PostgreSQL-only functions (convert_to, sha256) are
       dropped; the access layer verifies them instead (signal_blob hash).
     * DEFAULT now() becomes the microsecond-free ISO-8601 UTC strftime.
+    * ALTER TABLE ... ADD COLUMN stays an ALTER TABLE (the column is mapped like
+      any other); the table itself comes from an earlier migration.
     * CREATE FUNCTION is dropped. CREATE TRIGGER ... EXECUTE FUNCTION
       forbid_mutation() becomes BEFORE UPDATE and BEFORE DELETE triggers that
       RAISE(ABORT). A '-- @sqlite guard <table> allow <cols...>' directive turns
@@ -218,6 +220,12 @@ def convert(pg_sql: str) -> str:
             for clause in split_top_level(m.group(2)):
                 fk = re.sub(r"^ADD ", "", clause)
                 tables[m.group(1)].extra_constraints.append(f"{fk} DEFERRABLE INITIALLY DEFERRED")
+        elif m := re.match(r"ALTER TABLE (\w+) ADD COLUMN (.*)$", flat):
+            # The table was created by an earlier migration, so there is no
+            # Table to fold into; render the column on its own. Added columns
+            # cannot be primary keys.
+            column = Table(m.group(1), []).render_item(m.group(2))
+            ordered.append(f"ALTER TABLE {m.group(1)} ADD COLUMN {column}")
         elif flat.startswith("CREATE FUNCTION"):
             continue
         elif m := re.match(

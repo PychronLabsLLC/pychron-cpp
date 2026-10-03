@@ -235,4 +235,31 @@ inline const QString kScriptVersion = QStringLiteral(
     "SELECT t.body FROM script_version v JOIN script_text t ON t.sha256 = v.script_sha WHERE v.revision_uuid = ?");
 inline const QString kDocument = QStringLiteral("SELECT * FROM ref_document WHERE revision_uuid = ?");
 
+// ---------------------------------------------------------------- import bookkeeping
+
+inline const QString kImportSourceColumns = QStringLiteral(
+    "uuid, kind, url_or_path, branch, head_commit_sha, progress_commit_sha, commits_total, commits_done, "
+    "importer_version, lab_time_zone, %1 AS started, %2 AS finished, status");
+inline const QString kImportSourceByUuid =
+    QStringLiteral("SELECT %1 FROM import_source WHERE uuid = ?");
+inline const QString kImportSources = QStringLiteral("SELECT %1 FROM import_source ORDER BY started_utc, uuid");
+
+inline const QString kProvenanceFor = QStringLiteral(
+    "SELECT entity_type, entity_uuid, path, commit_sha, git_blob_sha, git_author, %1 AS git_ts, detail "
+    "FROM import_provenance WHERE entity_uuid = ? ORDER BY entity_type, import_source_uuid");
+inline const QString kHasProvenance = QStringLiteral(
+    "SELECT 1 AS present FROM import_provenance WHERE import_source_uuid = ? AND commit_sha = ? AND path = ? LIMIT 1");
+inline const QString kHasProvenanceBlob = QStringLiteral(
+    "SELECT 1 AS present FROM import_provenance WHERE import_source_uuid = ? AND path = ? AND git_blob_sha = ? "
+    "LIMIT 1");
+inline const QString kHasConflict = QStringLiteral(
+    "SELECT 1 AS present FROM import_conflict WHERE import_source_uuid = ? AND path = ? AND file_sha256 = ? LIMIT 1");
+inline const QString kImportedHeadBlobSha = QStringLiteral(
+    "SELECT p.git_blob_sha FROM head h JOIN import_provenance p ON p.entity_type = 'revision' "
+    "AND p.entity_uuid = h.revision_uuid AND p.import_source_uuid = ? "
+    "WHERE h.subject_uuid = ? AND h.kind = ?");
+inline const QString kImportConflicts = QStringLiteral(
+    "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution "
+    "FROM import_conflict");
+
 }  // namespace pychron::persistence::detail::sql
