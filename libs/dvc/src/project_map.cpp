@@ -60,6 +60,33 @@ const char* kind_name(FileKind kind) {
   }
 }
 
+bool is_rewritable(FileKind kind) {
+  return kind == FileKind::Record || kind == FileKind::Extraction || kind == FileKind::PeakCenter ||
+         kind == FileKind::Monitor;
+}
+
+// The top-level keys whose values differ between two versions of a file:
+// {"<key>": {"old": ..., "new": ...}}, a side left out where the key is
+// absent. `before` null: there was no earlier version, or it cannot be read.
+Json changed_keys(const Json* before, const Json& after) {
+  Json changed = Json::object();
+  if (!after.is_object() || (before && !before->is_object())) {
+    if (before) changed["(document)"]["old"] = *before;
+    changed["(document)"]["new"] = after;
+    return changed;
+  }
+  for (auto it = after.begin(); it != after.end(); ++it) {
+    const auto old = before ? before->find(it.key()) : after.end();
+    if (before && old != before->end() && *old == it.value()) continue;
+    if (before && old != before->end()) changed[it.key()]["old"] = *old;
+    changed[it.key()]["new"] = it.value();
+  }
+  if (before)
+    for (auto it = before->begin(); it != before->end(); ++it)
+      if (!after.contains(it.key())) changed[it.key()]["old"] = it.value();
+  return changed;
+}
+
 // The collection files of a track other than the record, in a fixed order.
 std::vector<SeenFile> collection_files(const Track& track) {
   std::vector<SeenFile> files;
@@ -104,6 +131,7 @@ struct Mapper::Output {
   ImportBatch& batch;
   std::map<int, ingest::ChangesetItem> changesets;  // by commit index
   std::set<std::string> revised;                    // paths with a revision earlier in this batch
+  std::map<int, Json> rewrites;                     // by commit index: record and satellite files rewritten
 
   void conflict(const FileRef& ref, ConflictKind kind, std::optional<Uuid> entity,
                 std::optional<Sha256Digest> digest, const Json& detail) {
@@ -189,7 +217,7 @@ Result<void> Mapper::resolve(const std::vector<Track*>& tracks) {
 }
 
 Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
-  Output out{batch, {}, {}};
+  Output out{batch, {}, {}, {}};
 
   // The records first: they say which analysis each file belongs to.
   std::vector<Track*> collects, unresolved;
@@ -216,8 +244,10 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
       if (const FileRef* settings = walk_.spectrometer(*read.parsed->spec_sha)) blobs.push_back(settings->blob_sha);
   }
   for (const auto& item : work)
-    if (const auto* file = std::get_if<Change>(&item); file && !(file->track && !file->track->flushed))
+    if (const auto* file = std::get_if<Change>(&item); file && !(file->track && !file->track->flushed)) {
       blobs.push_back(file->ref.blob_sha);
+      if (file->previous) blobs.push_back(file->previous->blob_sha);  // to say what a rewrite changed
+    }
   if (auto r = fetch(std::move(blobs)); !r) return r;
 
   for (const auto& item : work) {
@@ -229,8 +259,12 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
   }
 
   for (auto& [index, changeset] : out.changesets) {
+    // What the commit rewrote without a revision is kept with its changeset.
+    if (const auto rewritten_here = out.rewrites.find(index); rewritten_here != out.rewrites.end())
+      changeset.detail_json = dump(Json{{"rewrites", rewritten_here->second}});
     // A commit that only touches reference data is a reference changeset.
     const bool reference =
+        !changeset.revisions.empty() &&
         std::all_of(changeset.revisions.begin(), changeset.revisions.end(),
                     [](const ingest::RevisionItem& revision) { return revision.kind == ps::Kind::RefValue; });
     if (reference) changeset.kind = ps::ChangesetKind::Reference;
@@ -290,12 +324,21 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
     release(track);
     return {};
   }
-  // Two analyses cannot share a run id.
-  if (const auto taken = runids_.find(record.runid); taken != runids_.end() && taken->second != uuid) {
-    Json detail = reason("run id " + record.runid + " is already imported with another uuid");
+  // Two analyses cannot share a run id: not in this batch, not with one an
+  // earlier run or another source imported.
+  std::optional<Uuid> holder;
+  if (const auto taken = runids_.find(record.runid); taken != runids_.end()) {
+    holder = taken->second;
+  } else {
+    auto stored = state_.analysis_with_runid(record.ingest.identifier, record.ingest.aliquot, record.ingest.increment);
+    if (!stored) return fail(stored.error());
+    holder = *stored;
+  }
+  if (holder && *holder != uuid) {
+    Json detail = reason("run id " + record.runid + " belongs to another analysis");
     detail["uuid"] = uuid.str();
-    detail["imported_uuid"] = taken->second.str();
-    out.conflict(record_ref, ConflictKind::IdentityClash, taken->second, read.digest, detail);
+    detail["imported_uuid"] = holder->str();
+    out.conflict(record_ref, ConflictKind::IdentityClash, *holder, read.digest, detail);
     refuse_files(uuid, "the analysis " + record.runid + " was not imported: its run id is taken");
     track.role = Track::Role::Broken;
     release(track);
@@ -338,6 +381,24 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
   if (!record.notes.empty()) detail["notes"] = record.notes;
   std::vector<std::pair<int, std::string>> commits{{record_ref.index, record_ref.commit}};
   Json unparseable = Json::array();
+  // An analysis this source already created is sent again as it is (a replay,
+  // or a run that died before its batch was recorded). A root file that has
+  // no provenance yet was never written: it is also sent as a revision, which
+  // the store skips when the root exists under the same id.
+  const bool resent = origin->has_value();
+  struct Unrecorded {
+    FileRef ref;
+    ps::Kind kind;
+    ps::RevisionPayload payload;
+  };
+  std::vector<Unrecorded> unrecorded;
+  const auto check_recorded = [&](const FileRef& ref, ps::Kind kind, ps::RevisionPayload payload) -> Result<void> {
+    if (!resent) return {};
+    auto recorded = state_.imported(ref.commit, ref.path);
+    if (!recorded) return fail(recorded.error());
+    if (!*recorded) unrecorded.push_back({ref, kind, std::move(payload)});
+    return {};
+  };
 
   for (const auto& file : files) {
     auto text = reader_.blob(file.ref.blob_sha);
@@ -361,6 +422,7 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
         for (auto& blob : data->blobs) out.batch.blobs.push_back({key_of(file.ref), std::move(blob)});
         item.keys.signals = key_of(file.ref);
         extra(data->extra_json);
+        if (auto r = check_recorded(file.ref, ps::Kind::Signals, roots.signal_refs); !r) return r;
         break;
       }
       case FileKind::Extraction:
@@ -383,6 +445,7 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
           break;
         }
         extra(revision->extra_json);
+        if (auto r = check_recorded(file.ref, *revision_kind(file.kind), revision->payload); !r) return r;
         if (file.kind == FileKind::Intercepts) {
           roots.intercepts_rows = std::get<ps::Intercepts>(std::move(revision->payload));
           item.keys.intercepts = key_of(file.ref);
@@ -431,8 +494,11 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
   if (!unparseable.empty()) detail["unparseable"] = std::move(unparseable);
   item.detail_json = dump(detail);
 
-  if (config_.catalog_from_repos) synthesize_catalog(record, item.ingest, record_ref, out);
+  if (config_.catalog_from_repos)
+    if (auto r = synthesize_catalog(record, item.ingest, record_ref, out); !r) return r;
   out.batch.analyses.push_back(std::move(item));
+  for (auto& late : unrecorded)
+    if (auto r = add_revision(late.ref, uuid, late.kind, std::move(late.payload), "{}", out); !r) return r;
 
   owners_.insert_or_assign(uuid, &track);
   runids_.insert_or_assign(record.runid, uuid);
@@ -459,8 +525,8 @@ Result<std::optional<ps::SpectrometerSnapshot>> Mapper::snapshot(const std::stri
 // is recorded as a conflict so that it is seen. The conflict is keyed by the
 // identifier, not by a file, so there is one per identifier however often the
 // import is resumed.
-void Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIngest& analysis, const FileRef& from,
-                                Output& out) {
+Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIngest& analysis,
+                                        const FileRef& from, Output& out) {
   const auto once = [&](std::string what) { return sent_.insert(std::move(what)).second; };
   auto& catalog = out.batch.catalog;
   if (once("mass_spectrometer\n" + analysis.mass_spectrometer)) {
@@ -470,7 +536,7 @@ void Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIn
   }
   if (analysis.extract_device && once("extract_device\n" + *analysis.extract_device))
     catalog.push_back(ingest::ExtractDeviceItem{*analysis.extract_device});
-  if (!once("identifier\n" + analysis.identifier)) return;
+  if (!once("identifier\n" + analysis.identifier)) return {};
 
   const auto& names = record.catalog;
   Json detail{{"synthesized", true}, {"table", "identifier"}, {"identifier", analysis.identifier}};
@@ -480,8 +546,19 @@ void Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIn
   if (analysis.analysis_type == "unknown" && irradiated) {
     const std::string where =
         *names.irradiation + "\n" + *names.irradiation_level + "\n" + std::to_string(*names.irradiation_position);
-    // One identifier per irradiation position: a second one there gets none.
-    if (positions_.try_emplace(where, analysis.identifier).first->second == analysis.identifier) {
+    // One identifier per irradiation position: a second one there gets none,
+    // whether the first came in this walk, an earlier run or another source.
+    std::string holder;
+    if (const auto here = positions_.find(where); here != positions_.end()) {
+      holder = here->second;
+    } else {
+      auto stored =
+          state_.identifier_at(*names.irradiation, *names.irradiation_level, *names.irradiation_position);
+      if (!stored) return fail(stored.error());
+      holder = stored->value_or(analysis.identifier);
+      positions_.emplace(where, holder);
+    }
+    if (holder == analysis.identifier) {
       ingest::PositionItem position;
       position.irradiation = *names.irradiation;
       position.level = *names.irradiation_level;
@@ -498,7 +575,7 @@ void Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIn
       detail["position"] = *names.irradiation_position;
       placed = true;
     } else {
-      detail["position_taken_by"] = positions_.at(where);
+      detail["position_taken_by"] = holder;
     }
   }
   if (!placed) {
@@ -514,6 +591,7 @@ void Mapper::synthesize_catalog(const ParsedRecord& record, const ps::AnalysisIn
                                  ConflictKind::IdentityClash,
                                  std::nullopt,
                                  dump(detail)});
+  return {};
 }
 
 // ---------------------------------------------------------------- later changes
@@ -527,8 +605,8 @@ Result<bool> Mapper::is_head(const FileRef& ref, const ingest::SubjectRef& subje
   return *head && **head == ref.blob_sha;
 }
 
-Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject, ps::Kind kind,
-                                  ps::RevisionPayload payload, std::string detail_json, Output& out) {
+// The changeset of the commit `ref` belongs to, made when first asked for.
+Result<ingest::ChangesetItem*> Mapper::changeset_of(const FileRef& ref, Output& out) {
   auto found = out.changesets.find(ref.index);
   if (found == out.changesets.end()) {
     auto meta = commit(ref.commit);
@@ -539,8 +617,16 @@ Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject
     changeset.message = (*meta)->message;
     found = out.changesets.emplace(ref.index, std::move(changeset)).first;
   }
-  found->second.revisions.push_back(
-      {key_of(ref), std::move(subject), kind, std::move(payload), std::move(detail_json)});
+  return &found->second;
+}
+
+Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject, ps::Kind kind,
+                                  ps::RevisionPayload payload, std::string detail_json, Output& out,
+                                  std::string identifier) {
+  auto changeset = changeset_of(ref, out);
+  if (!changeset) return fail(changeset.error());
+  (*changeset)->revisions.push_back({key_of(ref), std::move(subject), kind, std::move(payload),
+                                     std::move(detail_json), std::move(identifier)});
   return {};
 }
 
@@ -644,30 +730,7 @@ Result<void> Mapper::analysis_change(const Change& item, std::string_view text, 
     return {};
   }
 
-  if (kind == FileKind::Record) {
-    auto parsed = parse_record(text, context_);
-    if (!parsed) {
-      out.conflict(ref, ConflictKind::Unparseable, uuid, sha256(text), reason(parsed.error().what));
-      return {};
-    }
-    const Uuid now = parsed->had_uuid ? parsed->ingest.analysis : ingest::derived_analysis_id(url_, parsed->runid);
-    if (now != uuid) {
-      Json detail = reason("the record now carries another uuid; the imported analysis is unchanged");
-      detail["imported_uuid"] = uuid.str();
-      detail["uuid"] = now.str();
-      out.conflict(ref, ConflictKind::IdentityClash, uuid, sha256(text), detail);
-    } else {
-      out.conflict(ref, ConflictKind::HandEdit, uuid, sha256(text),
-                   reason("the record was rewritten after collection; the imported analysis is unchanged"));
-    }
-    return {};
-  }
-  if (kind == FileKind::Extraction || kind == FileKind::PeakCenter || kind == FileKind::Monitor) {
-    out.conflict(ref, ConflictKind::HandEdit, uuid, sha256(text),
-                 reason(std::string("the ") + kind_name(kind) +
-                        " file changed after collection; the imported analysis is unchanged"));
-    return {};
-  }
+  if (is_rewritable(kind)) return rewritten(item, text, out);
 
   const ps::Kind store_kind = kind == FileKind::Data ? ps::Kind::Signals : *revision_kind(kind);
   auto same = is_head(ref, ingest::SubjectRef{uuid}, store_kind, out);
@@ -694,6 +757,74 @@ Result<void> Mapper::analysis_change(const Change& item, std::string_view text, 
   Json detail = Json::object();
   if (revision->extra_json) detail["extra"] = embedded(*revision->extra_json);
   return add_revision(ref, uuid, store_kind, std::move(revision->payload), dump(detail), out);
+}
+
+// A record or satellite file of an imported analysis written again (legacy
+// <SYNC>, <EDIT>, <DEFINE EQUIL> and manual commits). These files are not
+// revisioned. A record that changes the run identity yields an identity
+// revision; whatever else changed is kept, old and new, in the provenance of
+// the commit's changeset. A record that now carries another uuid is a
+// different analysis in the same file: that is a conflict.
+Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output& out) {
+  const FileRef& ref = item.ref;
+  const FileKind kind = item.info.kind;
+  const Uuid uuid = item.track->uuid;
+
+  auto after = parse_legacy(text);
+  if (!after) {
+    out.conflict(ref, ConflictKind::Unparseable, uuid, sha256(text), reason(after.error().what));
+    return {};
+  }
+  std::optional<Json> before;
+  std::optional<ParsedRecord> record_before;
+  if (item.previous) {
+    auto old_text = reader_.blob(item.previous->blob_sha);
+    if (!old_text) return fail(old_text.error());
+    if (auto parsed = parse_legacy(*old_text)) before = std::move(*parsed);
+    if (kind == FileKind::Record)
+      if (auto parsed = parse_record(*old_text, context_)) record_before = std::move(*parsed);
+  }
+
+  if (kind == FileKind::Record) {
+    auto record = parse_record(text, context_);
+    if (!record) {
+      out.conflict(ref, ConflictKind::Unparseable, uuid, sha256(text), reason(record.error().what));
+      return {};
+    }
+    const Uuid now = record->had_uuid ? record->ingest.analysis : ingest::derived_analysis_id(url_, record->runid);
+    if (now != uuid) {
+      Json detail = reason("the record now carries another uuid; the imported analysis is unchanged");
+      detail["imported_uuid"] = uuid.str();
+      detail["uuid"] = now.str();
+      out.conflict(ref, ConflictKind::IdentityClash, uuid, sha256(text), detail);
+      return {};
+    }
+    // Without a readable earlier version the stored identity is not known
+    // here; the revision is then sent, and changes nothing if it is the same.
+    if (!record_before || record_before->runid != record->runid) {
+      ps::IdentityValue identity;
+      identity.aliquot = record->ingest.aliquot;
+      identity.increment = record->ingest.increment;
+      identity.reason = "legacy record rewritten";
+      if (auto r = add_revision(ref, uuid, ps::Kind::Identity, identity, "{}", out, record->ingest.identifier); !r)
+        return r;
+      if (record_before)
+        if (const auto old = runids_.find(record_before->runid); old != runids_.end() && old->second == uuid)
+          runids_.erase(old);
+      runids_.insert_or_assign(record->runid, uuid);
+    }
+  }
+
+  auto changeset = changeset_of(ref, out);  // exists even when the commit has no revision
+  if (!changeset) return fail(changeset.error());
+  Json entry = Json::object();
+  entry["path"] = ref.path;
+  entry["blob"] = ref.blob_sha;
+  entry["kind"] = kind_name(kind);
+  entry["analysis"] = uuid.str();
+  entry["changed"] = changed_keys(before ? &*before : nullptr, *after);
+  out.rewrites[ref.index].push_back(std::move(entry));
+  return {};
 }
 
 }  // namespace pychron::dvc::detail

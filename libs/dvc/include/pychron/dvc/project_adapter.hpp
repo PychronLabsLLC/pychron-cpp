@@ -6,7 +6,10 @@
 //
 //   - one collection per analysis, folded from the commits that first add its
 //     record, intercepts, baselines, blanks and IC factors;
-//   - one changeset per later commit, with a revision per changed file;
+//   - one changeset per later commit, with a revision per changed file; a
+//     merge also carries the files it moved away from what was last imported;
+//   - a rewritten record or satellite file as an identity revision (run id
+//     changed) and a note of what changed in its commit's provenance;
 //   - interpreted ages and frozen productions as revisions of their own
 //     subjects, spectrometer settings as the snapshot of the analyses that
 //     name them, one bookmark per git tag;
@@ -28,12 +31,18 @@
 
 namespace pychron::dvc {
 
+inline constexpr int kDefaultCollectionWaitCommits = 20;
+
 struct ProjectAdapterConfig {
   GitConfig git;                // the repository and branch to read
   std::string url;              // the source's url as registered; ids are derived from its normalized form
   std::string repository_name;  // every analysis seen becomes a member of this repository
   std::string lab_time_zone;    // IANA; legacy timestamps are naive local time
   int batch_commits = 500;      // commits per batch; a batch also ends at a tagged commit
+  // An analysis whose collection is still incomplete this many commits after
+  // the commit of its record is folded with the files it has, so that it does
+  // not hold the resume token for the rest of the walk. Less than 1: no bound.
+  int collection_wait_commits = kDefaultCollectionWaitCommits;
   // No catalog dump: each record also yields the catalog rows its fields
   // imply, and one identity_clash conflict {"synthesized": true} per
   // identifier made up that way.
@@ -50,8 +59,10 @@ class ProjectRepoAdapter final : public ingest::ISourceAdapter {
   ~ProjectRepoAdapter() override;
 
   Result<ingest::SourceDescription> describe() override;
-  // Without a token the walk starts at the first commit. With one it resumes
-  // after it; a token that is not an ancestor of the head is an error whose
+  // Without a token the walk starts at the first commit. A token names a
+  // commit and its place in the walk order. Commit still there: the walk
+  // resumes after it. Commit in the history at another place: the walk starts
+  // again from the first commit. Commit not in the history: an error whose
   // message contains "history was rewritten". Returns the commits to walk.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;

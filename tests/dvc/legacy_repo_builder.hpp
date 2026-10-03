@@ -31,7 +31,8 @@
 // identifier of at least four digits ("66052-01E", "66052-02"); its files sit
 // under the first three characters, as legacy pychron placed them.
 //
-// write() and commit() are there for what the named operations do not cover:
+// write(), write_record_files() and commit() are there for what the named
+// operations do not cover: collections whose commits interleave,
 // a garbage file, a file with a bare NaN, a deletion, an unknown path.
 
 #include <cctype>
@@ -114,7 +115,7 @@ class LegacyRepoBuilder {
   Collected collect(std::string_view runid, std::string_view uuid, std::string_view date,
                     std::string_view author = kAuthor) {
     Collected out;
-    write_collection_files(runid, uuid);
+    write_record_files(runid, uuid);
     out.collection = repo_.commit("<COLLECTION>", date, author);
     write(runid, FileKind::Intercepts, fixture_text(FileKind::Intercepts));
     write(runid, FileKind::Baselines, fixture_text(FileKind::Baselines));
@@ -145,7 +146,7 @@ class LegacyRepoBuilder {
   // without the blanks and IC factors (a collection that never completes).
   std::string import_without_collection(std::string_view runid, std::string_view uuid, std::string_view date,
                                         bool reduced = true) {
-    write_collection_files(runid, uuid);
+    write_record_files(runid, uuid);
     write(runid, FileKind::Intercepts, fixture_text(FileKind::Intercepts));
     write(runid, FileKind::Baselines, fixture_text(FileKind::Baselines));
     if (reduced) {
@@ -169,6 +170,17 @@ class LegacyRepoBuilder {
   std::string add_interpreted_age(std::string_view date) {
     repo_.write(kInterpretedAgePath, fixture("ia/IR1010/660/ia/52.ia.json"));
     return repo_.commit("<IA> added interpreted age 01", date);
+  }
+
+  // What a <COLLECTION> commit adds, uncommitted: record, raw data,
+  // extraction, and the spectrometer file when the work tree has none.
+  void write_record_files(std::string_view runid, std::string_view uuid) {
+    const std::string spectrometer = std::string(kSpecSha) + ".json";
+    if (!std::filesystem::exists(repo_.path() / spectrometer))
+      repo_.write(spectrometer, fixture(kUnknown + spectrometer));
+    write(runid, FileKind::Record, record_text(runid, uuid));
+    write(runid, FileKind::Data, fixture_text(FileKind::Data));
+    write(runid, FileKind::Extraction, fixture_text(FileKind::Extraction));
   }
 
   GitFixture& repo() { return repo_; }
@@ -202,16 +214,6 @@ class LegacyRepoBuilder {
       identity.increment = step - 1;
     }
     return identity;
-  }
-
-  // What the <COLLECTION> commit adds.
-  void write_collection_files(std::string_view runid, std::string_view uuid) {
-    const std::string spectrometer = std::string(kSpecSha) + ".json";
-    if (!std::filesystem::exists(repo_.path() / spectrometer))
-      repo_.write(spectrometer, fixture(kUnknown + spectrometer));
-    write(runid, FileKind::Record, record_text(runid, uuid));
-    write(runid, FileKind::Data, fixture_text(FileKind::Data));
-    write(runid, FileKind::Extraction, fixture_text(FileKind::Extraction));
   }
 
   GitFixture& repo_;
