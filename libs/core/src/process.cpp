@@ -45,6 +45,16 @@ void keep(std::string& out, const char* data, std::size_t n) {
   if (out.size() < kMaxOutput) out.append(data, std::min(n, kMaxOutput - out.size()));
 }
 
+// For error messages only: path::string() can throw on Windows for a name the
+// ANSI code page cannot represent, and no exception may leave this library.
+std::string path_text(const std::filesystem::path& p) noexcept {
+  try {
+    return p.string();
+  } catch (...) {
+    return "the stdout file";
+  }
+}
+
 }  // namespace
 
 #ifndef _WIN32
@@ -85,7 +95,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   if (spec.stdout_file) {
     file_out = open(spec.stdout_file->c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (file_out < 0)
-      return fail(ErrorKind::Io, "cannot open " + spec.stdout_file->string() + ": " + errno_text(errno));
+      return fail(ErrorKind::Io, "cannot open " + path_text(*spec.stdout_file) + ": " + errno_text(errno));
   }
   auto in = input_file(spec.input);
   if (!in) {
@@ -290,7 +300,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
     if (file_out == INVALID_HANDLE_VALUE) {
       const std::string why = last_error_text();
       CloseHandle(in);
-      return fail(ErrorKind::Io, "cannot open " + spec.stdout_file->string() + ": " + why);
+      return fail(ErrorKind::Io, "cannot open " + path_text(*spec.stdout_file) + ": " + why);
     }
   }
 

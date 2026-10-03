@@ -119,7 +119,7 @@ TEST(Process, StdoutFileIsUncapped) {
     std::ofstream f(src, std::ios::binary);
     f << std::string(1048576, 'x');
   }
-  spec = shell("type \"" + src.string() + "\"");
+  spec.argv = {"cmd", "/d", "/c", "type", src.string()};  // no shell string, so no hand-written quotes
 #else
   spec = shell("head -c 1048576 /dev/zero");
 #endif
