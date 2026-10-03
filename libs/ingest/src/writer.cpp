@@ -722,6 +722,7 @@ class BatchWriter::Impl final : public IImportState {
         if (!named) return fail(named.error());
         if (!*named) continue;
       }
+      if (auto r = name_production(revision, payload); !r) return r;
       if (auto r = supersede(revision.key, staged); !r) return r;
       std::vector<Uuid> unresolved;
       if (auto r = drop_unresolved(payload, unresolved); !r) return r;
@@ -767,6 +768,21 @@ class BatchWriter::Impl final : public IImportState {
     staged.provenance.push_back(
         provenance("changeset", changeset.uuid, {item.commit, "", ""}, item.who, std::move(noted)));
     staged.changesets.push_back(std::move(changeset));
+    return {};
+  }
+
+  // A level_production revision: resolves the production it names.
+  Result<void> name_production(const RevisionItem& revision, P::RevisionPayload& payload) {
+    if (revision.production_key.empty()) return {};
+    auto* reference = std::get_if<P::RefPayload>(&payload);
+    auto* value = reference ? std::get_if<P::LevelProductionValue>(reference) : nullptr;
+    if (!value)
+      return fail(ErrorKind::Protocol, "revision of " + revision.key.path + " at " + revision.key.commit +
+                                           " names a production but is not a level_production value");
+    auto production =
+        catalog_.ref_object(RefObjectKey{std::string(P::to_string(P::RefType::Production)), revision.production_key});
+    if (!production) return fail(production.error());
+    value->production = *production;
     return {};
   }
 

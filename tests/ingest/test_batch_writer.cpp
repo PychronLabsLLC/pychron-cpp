@@ -1337,6 +1337,56 @@ TEST_P(BatchWriterTest, IdentityRevisionNamesItsIdentifier) {
   EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
+TEST_P(BatchWriterTest, LevelProductionRevisionNamesItsProduction) {
+  // The production a level uses is named by key, like everything in a batch;
+  // the object need not have been sent, and may exist under any uuid.
+  const Uuid existing = *store().add_ref_object(world_->client, {P::RefType::Production, "NM-300/Triga", {}, {}, {}, {}, {}});
+  ImportBatch b;
+  ChangesetItem c;
+  c.commit = "m1";
+  c.kind = P::ChangesetKind::Reference;
+  c.who = who(kAlice, "2016-03-04T05:06:07Z");
+  c.message = "productions";
+  const auto level = [&](const std::string& name, const std::string& production) {
+    RevisionItem revision{{"m1", "NM-300/productions.json#" + name, "blob"},
+                          RefObjectKey{"level_production", "NM-300/" + name},
+                          Kind::RefValue,
+                          P::RefPayload{P::LevelProductionValue{}}};
+    revision.production_key = production;
+    return revision;
+  };
+  c.revisions = {level("A", "NM-300/Triga"), level("B", "NM-300/Other")};
+  // A name on a payload that has no production is a mistake of the adapter.
+  ChangesetItem wrong = c;
+  wrong.commit = "m2";
+  wrong.revisions = {{{"m2", "NM-300/A.json#1", "blob"}, RefObjectKey{"flux_position", "NM-300/A/1"}, Kind::RefValue,
+                      P::RefPayload{P::FluxValue{}}}};
+  wrong.revisions[0].production_key = "NM-300/Triga";
+  b.changesets.push_back(c);
+  b.resume_token = "m1";
+  FakeAdapter adapter(description(), {b});
+  BatchWriter writer(store(), world_->client, config());
+  auto stats = writer.run(adapter, std::nullopt, {}, {});
+  ASSERT_TRUE(stats) << err(stats.error());
+
+  const auto production_of = [&](const std::string& name) {
+    auto head = store().head(catalog_id("ref_object", "level_production\nNM-300/" + name), Kind::RefValue);
+    EXPECT_TRUE(head && head->has_value());
+    auto payload = store().load_payload(**head);
+    EXPECT_TRUE(payload && payload->has_value());
+    return std::get<P::LevelProductionValue>(std::get<P::RefPayload>(**payload)).production;
+  };
+  EXPECT_EQ(production_of("A"), existing);
+  EXPECT_EQ(production_of("B"), catalog_id("ref_object", "production\nNM-300/Other"));
+
+  ImportBatch bad;
+  bad.changesets.push_back(wrong);
+  bad.resume_token = "m2";
+  FakeAdapter mistaken(description(), {bad});
+  BatchWriter second(store(), world_->client, config());
+  EXPECT_FALSE(second.run(mistaken, std::nullopt, {}, {}));
+}
+
 TEST_P(BatchWriterTest, ChangesetWithoutRevisionsKeepsItsDetail) {
   ImportBatch b = single_batch();
   ChangesetItem sync;

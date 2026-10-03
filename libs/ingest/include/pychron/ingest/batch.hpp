@@ -207,6 +207,11 @@ struct RevisionItem {
   // unknown_analysis conflict (retried by a replay); a run identity another
   // analysis has makes it an identity_clash conflict.
   std::string identifier = {};
+  // A level_production revision names the production its level uses here: the
+  // key of a ref_object of type production. The writer sets
+  // LevelProductionValue::production from it, creating the object bare when
+  // the store does not have it. Set on any other payload it is an error.
+  std::string production_key = {};
 };
 
 // A file a commit rewrote that is not revisioned (an analysis record or
