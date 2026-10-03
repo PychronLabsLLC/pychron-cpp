@@ -7,6 +7,7 @@
 #include <string>
 
 #include "elctl_fixture.hpp"
+#include "pychron/scripting/script_host.hpp"
 
 namespace elctl::testing {
 namespace {
@@ -70,6 +71,8 @@ conditionals = ["broken"]
 }
 
 TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
+  // The example queue names extraction scripts, which only the CPython host runs.
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto data = (dir_ / "out").string();
   auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
                 data, "--sim-speed", "400"},
