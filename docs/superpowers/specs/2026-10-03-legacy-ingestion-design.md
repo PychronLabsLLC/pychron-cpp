@@ -497,3 +497,23 @@ points. Where this section and an earlier one disagree, this section wins.
     another identifier, is an `identity_clash` conflict whether the earlier
     analysis was seen in this walk, an earlier run, or another source. It
     never aborts the import.
+16. **One history, one result.** However the walk is cut into batches,
+    interrupted, resumed, run incrementally or replayed, the store ends in
+    the same state as one uninterrupted import of the same history. In
+    particular a renumbered analysis frees its run id for a later analysis
+    whether the two fall in one batch or several; a replay never refuses an
+    analysis this source already imported; a byte-identical second copy of an
+    analysis in the same source is membership only, a differing one is an
+    `identity_clash`; and all `rewrites` of one commit are kept even when the
+    commit's effects reach the writer in more than one batch.
+17. **Resume token carries a prefix hash.** Besides sha and index the token
+    holds a hash of the commit shas before it; a different prefix means
+    replay from the start.
+18. **Large rewritten values.** A value in `rewrites` larger than 64 KiB is
+    stored as a reference (git blob sha and byte count), not verbatim.
+19. **Known limits.** Topological order can place commits of a branch not
+    yet merged before an unrelated merge, so a bookmark made from a tag on
+    that merge can include a value from the unmerged branch; heads are
+    correct once the branch is merged. Analyses still incomplete when an
+    incremental run ends are folded as synthetic collections, where one
+    longer uninterrupted import would have folded them complete.
