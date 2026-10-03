@@ -25,6 +25,7 @@
 // '/'-separated, never quoted.
 
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <filesystem>
 #include <list>
@@ -148,7 +149,8 @@ class GitReader {
     std::string sha, bytes;
   };
 
-  GitReader(GitConfig config, std::filesystem::path git_dir, std::filesystem::path common_dir, std::string head);
+  GitReader(GitConfig config, std::filesystem::path git_dir, std::filesystem::path common_dir,
+            std::string head_sha);
 
   GitConfig config_;
   std::filesystem::path git_dir_, common_dir_;  // where `repo` keeps its own files and the shared ones

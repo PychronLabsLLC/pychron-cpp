@@ -125,7 +125,7 @@ Result<std::string> read_whole(const std::filesystem::path& path) {
   if (!in) return fail(ErrorKind::Io, "cannot read " + path.string());
   std::string text;
   in.seekg(0, std::ios::end);
-  const auto size = in.tellg();
+  const std::streamoff size = in.tellg();
   if (size > 0) {
     if (!resize_to(text, static_cast<std::uintmax_t>(size)))
       return fail(ErrorKind::Io, "out of memory reading " + std::to_string(size) + " bytes of " + path.string());
@@ -306,11 +306,11 @@ std::optional<GitVersion> parse_git_version(std::string_view text) {
 // ------------------------------------------------------------------- open
 
 GitReader::GitReader(GitConfig config, std::filesystem::path git_dir, std::filesystem::path common_dir,
-                     std::string head)
+                     std::string head_sha)
     : config_(std::move(config)),
       git_dir_(std::move(git_dir)),
       common_dir_(std::move(common_dir)),
-      head_(std::move(head)) {}
+      head_(std::move(head_sha)) {}
 
 Result<GitReader> GitReader::open(GitConfig config) {
   const std::string where = "git repository " + config.repo.string();
@@ -638,21 +638,21 @@ Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
       const auto parsed = std::from_chars(fields[2].data(), fields[2].data() + fields[2].size(), size);
       if (parsed.ec != std::errc{} || parsed.ptr != fields[2].data() + fields[2].size())
         return fail(ErrorKind::Protocol, describe(site) + ": unexpected cat-file output: " + header.substr(0, 200));
-      Blob blob{sha, {}};
-      if (!resize_to(blob.bytes, size)) {
+      Blob item{sha, {}};  // not `blob`: that is a member function
+      if (!resize_to(item.bytes, size)) {
         return fail(ErrorKind::Io, describe(site) + ": out of memory reading blob " + sha + " (" +
                                        std::to_string(size) + " bytes)");
       }
-      in.read(blob.bytes.data(), static_cast<std::streamsize>(size));
+      in.read(item.bytes.data(), static_cast<std::streamsize>(size));
       if (static_cast<std::size_t>(in.gcount()) != size || in.get() != '\n')
         return fail(ErrorKind::Protocol, describe(site) + ": git cat-file output is cut short in blob " + sha);
-      fetched.push_back(std::move(blob));
+      fetched.push_back(std::move(item));
     }
   }
 
-  for (auto& blob : fetched) {
-    cached_bytes_ += blob.bytes.size();
-    lru_.push_front(std::move(blob));
+  for (auto& item : fetched) {
+    cached_bytes_ += item.bytes.size();
+    lru_.push_front(std::move(item));
     index_.emplace(lru_.front().sha, lru_.begin());
   }
   // `asked` views the caller's strings; the cache's own keys are compared by value.

@@ -6,9 +6,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
+#include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -16,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include "git_fixture.hpp"
+#include "pychron/core/env.hpp"
 #include "pychron/dvc/git_reader.hpp"
 
 namespace pychron::dvc {
@@ -62,8 +65,7 @@ std::vector<std::string> paths_of(const std::vector<GitChange>& all, std::string
 class ScopedEnv {
  public:
   void set(const std::string& name, const std::string& value) {
-    const char* old = std::getenv(name.c_str());
-    saved_.emplace_back(name, old ? std::optional<std::string>(old) : std::nullopt);
+    saved_.emplace_back(name, env_var(name.c_str()));  // not std::getenv: MSVC deprecates it
     put(name, value);
   }
   ~ScopedEnv() {
@@ -579,9 +581,10 @@ TEST(GitReader, OddFileNames) {
   SKIP_WITHOUT_GIT();
   GitFixture repo;
   repo.init();
-  std::vector<std::string> names{"664/in tercepts/57 01A.inte.json", "dir/na\xc3\xafve.json", ":colon.json"};
+  std::vector<std::string> names{"664/in tercepts/57 01A.inte.json", "dir/na\xc3\xafve.json"};
 #ifndef _WIN32
-  names.push_back("dir/q\"uote.json");  // Windows has no '"' in file names
+  names.push_back("dir/q\"uote.json");  // Windows has neither '"' nor ':' in file names
+  names.push_back(":colon.json");
 #endif
   for (const auto& name : names) repo.write(name, "text of " + name);
   const std::string c1 = repo.commit("odd names", "2016-03-04T05:06:07+00:00");
