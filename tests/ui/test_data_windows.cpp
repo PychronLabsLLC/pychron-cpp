@@ -7,6 +7,7 @@
 // conflicts reported) and shows revision history and diffs.
 
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <set>
 
@@ -36,6 +37,7 @@
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
 #include "isotope_evolution_window.hpp"
+#include "pychron/processing/isotope_classifier.hpp"
 #include "preset_bar.hpp"
 #include "reference_fit_window.hpp"
 #include "scene_view.hpp"
@@ -912,6 +914,79 @@ class TestDataWindows : public QObject {
     QVERIFY(std::abs(saved->find_isotope("Ar40")->baseline.value - 0.0145) < 1e-12);
     QCOMPARE(saved->heads.at("baselines").rfind("rev-", 0), std::size_t{0});
     QVERIFY(src.last_message.find("H1 baseline(average)") != std::string::npos);
+  }
+
+  void isotope_evolutions_train_and_use_the_classifier() {
+    // uuid-0 has a flat Ar40 sniff, uuid-1 a wildly noisy one.
+    pp::MemorySource src;
+    for (int i = 0; i < 2; ++i) {
+      auto a = analysis(i);
+      auto raw = raw_for(*a);
+      pp::RawSeries sniff;
+      sniff.kind = pp::SeriesKind::Sniff;
+      sniff.key = "Ar40";
+      for (int k = 0; k < 10; ++k) {
+        sniff.t.push_back(0.5 * k);
+        sniff.v.push_back(i == 0 ? 100.0 : (k % 2 ? 900.0 : -900.0));
+      }
+      raw.series.push_back(sniff);
+      src.add(a, raw);
+    }
+    QTemporaryDir dir;
+    ProcessingBridge bridge(src);
+    pp::PresetStore presets(dir.path().toStdString());
+    IsotopeEvolutionWindow w(bridge, presets, {QStringLiteral("uuid-0"), QStringLiteral("uuid-1")});
+    const auto file = std::filesystem::path(dir.path().toStdString()) / "classifier" / "isotope.toml";
+    w.set_classifier_file(file);
+    QVERIFY(wait_runs(w, bridge, 1));
+    QVERIFY(!w.train(QStringLiteral("Ar40"), 1));  // nothing previewed yet
+    QCOMPARE(w.training_label()->text(), QStringLiteral("0 good, 0 bad"));
+
+    // Each train() re-runs; the bridge coalesces back-to-back runs, so wait for
+    // at least one more completion and an idle bridge.
+    auto settle = [&](int before) { return wait_runs(w, bridge, before + 1) && bridge.wait_idle(kWaitMs); };
+    w.analyses_table()->selectRow(0);
+    QCOMPARE(w.train_isotope()->count(), 5);
+    int before = w.runs_completed();
+    QVERIFY(w.train(QStringLiteral("Ar40"), 1));
+    QVERIFY(w.train(QStringLiteral("Ar40"), 1));
+    QVERIFY(settle(before));
+    w.analyses_table()->selectRow(1);
+    before = w.runs_completed();
+    QVERIFY(w.train(QStringLiteral("Ar40"), 0));
+    QVERIFY(w.train(QStringLiteral("Ar40"), 0));
+    QVERIFY(settle(before));
+    QCOMPARE(w.training_label()->text(), QStringLiteral("2 good, 2 bad"));
+    auto trained = pp::IsotopeClassifier::load(file);
+    QVERIFY(trained.has_value());
+    QCOMPARE(trained->samples().size(), std::size_t{4});
+    QCOMPARE(trained->samples()[0].runid, std::string("air-01"));
+    QCOMPARE(w.fits()->flagged(), 0);  // not in use yet
+
+    auto opts = w.pipeline().find("fit")->options;
+    QVERIFY(opts.set("use_classifier", true).has_value());
+    before = w.runs_completed();
+    w.set_fit_options(opts);
+    QVERIFY(settle(before));
+    QCOMPARE(w.fits()->flagged(), 1);
+    const auto& bad = w.fits()->analyses.at(1);
+    QCOMPARE(bad.uuid, std::string("uuid-1"));
+    QCOMPARE(bad.flags.at(0).check, std::string("classifier"));
+    QVERIFY(w.fits()->analyses.at(0).good());
+    QVERIFY(w.analyses_table()->item(1, 2)->text().startsWith(QStringLiteral("Ar40 classifier")));
+
+    // Training re-runs with the new samples; switching it off clears the flag.
+    before = w.runs_completed();
+    QVERIFY(w.train(QStringLiteral("Ar40"), 0));
+    QVERIFY(settle(before));
+    QCOMPARE(w.training_label()->text(), QStringLiteral("2 good, 3 bad"));
+    QCOMPARE(w.fits()->flagged(), 1);
+    opts = w.pipeline().find("fit")->options;
+    QVERIFY(opts.set("use_classifier", false).has_value());
+    before = w.runs_completed();
+    w.set_fit_options(opts);
+    QVERIFY(settle(before));
+    QCOMPARE(w.fits()->flagged(), 0);
   }
 
   void figure_computes_and_click_excludes() {

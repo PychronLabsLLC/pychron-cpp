@@ -4,6 +4,10 @@
 #include <cmath>
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QSignalBlocker>
+#include <QStandardPaths>
 #include <QDockWidget>
 #include <QHeaderView>
 #include <QLabel>
@@ -17,6 +21,7 @@
 
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
+#include "pychron/processing/isotope_classifier.hpp"
 #include "pychron/processing/recall.hpp"
 #include "pychron/processing/revisions.hpp"
 #include "scene_view.hpp"
@@ -79,6 +84,19 @@ IsotopeEvolutionWindow::IsotopeEvolutionWindow(ProcessingBridge& bridge, pp::Pre
   preview_kind_->addTab(tr("Baselines"));
   pl->addWidget(preview_kind_);
   pl->addWidget(preview_, 1);
+  auto* train_row = new QHBoxLayout;
+  train_row->addWidget(new QLabel(tr("Train the classifier:")));
+  train_isotope_ = new QComboBox;
+  train_row->addWidget(train_isotope_);
+  train_good_ = new QPushButton(tr("Good"));
+  train_bad_ = new QPushButton(tr("Bad"));
+  train_row->addWidget(train_good_);
+  train_row->addWidget(train_bad_);
+  training_ = new QLabel;
+  train_row->addWidget(training_, 1);
+  pl->addLayout(train_row);
+  connect(train_good_, &QPushButton::clicked, this, [this] { train(train_isotope_->currentText(), 1); });
+  connect(train_bad_, &QPushButton::clicked, this, [this] { train(train_isotope_->currentText(), 0); });
   split->addWidget(view_);
   split->addWidget(preview_host);
   connect(preview_kind_, &QTabBar::currentChanged, this, [this] {
@@ -153,7 +171,9 @@ IsotopeEvolutionWindow::IsotopeEvolutionWindow(ProcessingBridge& bridge, pp::Pre
   debounce_.setInterval(150);
   connect(&debounce_, &QTimer::timeout, this, &IsotopeEvolutionWindow::run);
 
-  editor_->set_options(pipeline_.find(kFit)->options);
+  set_classifier_file(std::filesystem::path(
+                          QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) /
+                      "classifier" / "isotope.toml");
   presets_->reload(QStringLiteral("Default"));
   update_save_state();
   run();
@@ -242,6 +262,17 @@ void IsotopeEvolutionWindow::fill_table() {
 bool IsotopeEvolutionWindow::preview(const QString& uuid) {
   previewed_ = uuid;
   const auto* r = refits_of(uuid.toStdString());
+  {
+    const QString keep = train_isotope_->currentText();
+    const QSignalBlocker block(train_isotope_);
+    train_isotope_->clear();
+    if (r)
+      for (const auto& iso : r->edited ? r->edited->isotopes : std::vector<pp::IsotopeData>{})
+        train_isotope_->addItem(qs(iso.key));
+    const int at = train_isotope_->findText(keep);
+    train_isotope_->setCurrentIndex(at >= 0 ? at : 0);
+  }
+  update_training_state();
   if (!r || !r->edited) {
     preview_->set_scene(nullptr);
     return false;
@@ -334,6 +365,62 @@ bool IsotopeEvolutionWindow::save() {
   status_->setText(note_);
   run();
   emit saved(ids);
+  return true;
+}
+
+void IsotopeEvolutionWindow::set_classifier_file(const std::filesystem::path& file) {
+  classifier_file_ = file;
+  auto& o = pipeline_.find(kFit)->options;
+  (void)o.set("classifier_file", file.string());
+  editor_->set_options(o);
+  update_training_state();
+}
+
+void IsotopeEvolutionWindow::update_training_state() {
+  auto loaded = pp::IsotopeClassifier::load(classifier_file_);
+  int good = 0, bad = 0;
+  if (loaded)
+    for (const auto& s : loaded->samples()) (s.klass ? good : bad) += 1;
+  training_->setText(loaded ? tr("%1 good, %2 bad").arg(good).arg(bad) : tr("training file unreadable"));
+  training_->setToolTip(qs(classifier_file_.string()));
+  const bool can = !previewed_.isEmpty() && train_isotope_->count() > 0 && !classifier_file_.empty();
+  train_good_->setEnabled(can);
+  train_bad_->setEnabled(can);
+}
+
+bool IsotopeEvolutionWindow::train(const QString& key, int klass) {
+  const auto* r = refits_of(previewed_.toStdString());
+  const pp::IsotopeData* iso = r && r->edited ? r->edited->find_isotope(key.toStdString()) : nullptr;
+  if (!iso || classifier_file_.empty()) {
+    status_->setText(tr("Train: preview an analysis and pick one of its isotopes first"));
+    return false;
+  }
+  auto raw = bridge_.source().load_raw(previewed_.toStdString());
+  if (!raw) {
+    status_->setText(tr("Train: %1").arg(qs(raw.error().what)));
+    return false;
+  }
+  auto classifier = pp::IsotopeClassifier::load(classifier_file_);
+  if (!classifier) {
+    status_->setText(tr("Train: %1").arg(qs(classifier.error().what)));
+    return false;
+  }
+  auto sample = pp::make_isotope_sample(*raw, iso->key, iso->isotope);
+  sample.klass = klass;
+  sample.runid = r->runid;
+  classifier->add(std::move(sample));
+  if (auto ok = classifier->save(classifier_file_); !ok) {
+    status_->setText(tr("Train: %1").arg(qs(ok.error().what)));
+    return false;
+  }
+  // A new stamp reruns the refits when the classifier is in use.
+  auto& o = pipeline_.find(kFit)->options;
+  (void)o.set("classifier_stamp", std::to_string(classifier->samples().size()) + "." +
+                                      std::to_string(++training_version_));
+  editor_->set_options(o);
+  note_ = tr("%1 of %2 marked %3").arg(key, qs(r->runid), klass ? tr("good") : tr("bad"));
+  update_training_state();
+  run();
   return true;
 }
 

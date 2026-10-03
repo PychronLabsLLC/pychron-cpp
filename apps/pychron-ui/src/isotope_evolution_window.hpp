@@ -13,6 +13,13 @@
 // one previews its signal or baseline evolutions with the new fits. Save writes the refits as
 // intercepts revisions of every refitted analysis in one changeset (or of
 // the good ones only), when the source keeps revisions.
+//
+// The isotope classifier is trained here: Good / Bad under the preview add
+// the previewed analysis's chosen isotope (its sniff) to the training file
+// (classifier_file, under the user's config directory by default); the Fits
+// dock's "Classify sniffs" turns its flags on.
+
+#include <filesystem>
 
 #include <QMainWindow>
 #include <QStringList>
@@ -24,6 +31,7 @@
 #include "processing_bridge.hpp"
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QTabBar;
@@ -55,10 +63,19 @@ class IsotopeEvolutionWindow : public QMainWindow {
   // is checked); false (the reason in the status) when nothing was saved.
   bool save();
 
+  // The classifier training file (sets the fit options' classifier_file).
+  void set_classifier_file(const std::filesystem::path& file);
+  const std::filesystem::path& classifier_file() const noexcept { return classifier_file_; }
+  // Adds the previewed analysis's isotope `key` as a good (1) or bad (0)
+  // training sample; false (the reason in the status) when it cannot.
+  bool train(const QString& key, int klass);
+
   // For tests.
   SceneView* view() const noexcept { return view_; }
   SceneView* preview_view() const noexcept { return preview_; }
   QTabBar* preview_kind() const noexcept { return preview_kind_; }  // signals, baselines
+  QComboBox* train_isotope() const noexcept { return train_isotope_; }
+  QLabel* training_label() const noexcept { return training_; }
   OptionsEditor* options_editor() const noexcept { return editor_; }
   PresetBar* presets() const noexcept { return presets_; }
   QTableWidget* analyses_table() const noexcept { return table_; }
@@ -78,6 +95,7 @@ class IsotopeEvolutionWindow : public QMainWindow {
   void fill_table();
   void update_save_state();
   const processing::AnalysisRefits* refits_of(const std::string& uuid) const;
+  void update_training_state();
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
@@ -90,6 +108,12 @@ class IsotopeEvolutionWindow : public QMainWindow {
   SceneView* view_;
   SceneView* preview_;
   QTabBar* preview_kind_;
+  QComboBox* train_isotope_;
+  QPushButton* train_good_;
+  QPushButton* train_bad_;
+  QLabel* training_;
+  std::filesystem::path classifier_file_;
+  int training_version_ = 0;
   OptionsEditor* editor_;
   PresetBar* presets_;
   QTableWidget* table_;
