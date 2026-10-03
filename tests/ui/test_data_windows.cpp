@@ -3,11 +3,15 @@
 // the figure window computes on the bridge, a click on a point excludes the
 // analysis and the statistics change, the options dock and presets drive the
 // figure, and the main window tears the data windows down before the bridge.
+// Recall edits fits (pending until saved, saved through a revision source,
+// conflicts reported) and shows revision history and diffs.
 
 #include <cmath>
 #include <memory>
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -136,6 +140,101 @@ std::unique_ptr<pp::MemorySource> make_steps() {
   return src;
 }
 
+// A memory source that keeps intercept revisions, like the store: every
+// analysis starts at "rev-0"; saves are compare-and-swap on the head.
+class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource {
+ public:
+  explicit RevisionMemorySource(int n) {
+    for (int i = 0; i < n; ++i) {
+      auto a = analysis(i);
+      a->heads["intercepts"] = "rev-0-" + a->uuid;
+      record(*a, a->heads["intercepts"], "", "collection");
+      add(a, raw_for(*a));
+    }
+  }
+
+  pp::IRevisionSource* revisions() noexcept override { return this; }
+
+  Result<std::vector<pp::RevisionSummary>> history(const std::string& uuid, pp::RevisionKind kind) override {
+    if (kind != pp::RevisionKind::Intercepts) return std::vector<pp::RevisionSummary>{};
+    auto list = history_[uuid];
+    std::reverse(list.begin(), list.end());
+    for (auto& r : list) r.head = r.id == head_[uuid];
+    return list;
+  }
+
+  Result<pp::RevisionTable> revision_table(const std::string& id) override {
+    auto it = tables_.find(id);
+    if (it == tables_.end()) return fail(ErrorKind::Config, "no revision " + id);
+    return it->second;
+  }
+
+  Result<pp::SaveOutcome> save_intercepts(const std::string& uuid, const std::string& expected,
+                                          const std::vector<pp::EditedIsotope>& edits, const std::string& message) override {
+    pp::SaveOutcome out;
+    if (expected != head_[uuid]) {
+      out.conflict = "someone else saved first";
+      return out;
+    }
+    auto loaded = load(uuid);
+    if (!loaded) return fail(loaded.error());
+    auto copy = std::make_shared<pp::Analysis>(**loaded);
+    for (const auto& e : edits) {
+      for (auto& iso : copy->isotopes)
+        if (iso.key == e.key) {
+          iso.intercept = e.intercept;
+          iso.fit = e.fit;
+          iso.n = e.n_used;
+          iso.user_excluded = e.user_excluded;
+        }
+    }
+    out.saved = true;
+    out.revision = "rev-" + std::to_string(++saves) + "-" + uuid;
+    copy->heads["intercepts"] = out.revision;
+    record(*copy, out.revision, expected, "reduction", message);
+    add(copy);
+    last_message = message;
+    return out;
+  }
+
+  // Someone else saves: the head moves without this window knowing.
+  void move_head(const std::string& uuid) { head_[uuid] = "rev-elsewhere"; }
+
+  int saves = 0;
+  std::string last_message;
+
+ private:
+  void record(const pp::Analysis& a, const std::string& id, const std::string& parent, const std::string& kind,
+              const std::string& message = {}) {
+    pp::RevisionSummary r;
+    r.id = id;
+    r.parent = parent;
+    r.changeset_kind = kind;
+    r.author = "jross";
+    r.host = "lab-1";
+    r.message = message;
+    r.created = a.timestamp + 60.0 * static_cast<double>(history_[a.uuid].size());
+    r.seq = static_cast<std::int64_t>(++seq_);
+    history_[a.uuid].push_back(r);
+    head_[a.uuid] = id;
+    pp::RevisionTable t;
+    t.columns = {"value", "fit", "excluded"};
+    for (const auto& iso : a.isotopes) {
+      std::string excluded;
+      for (auto i : iso.user_excluded) excluded += (excluded.empty() ? "" : ",") + std::to_string(i);
+      t.rows.push_back({iso.key,
+                        {QString::number(iso.intercept.value, 'g', 10).toStdString(),
+                         iso.fit ? std::string(reduction::to_string(iso.fit->kind)) : std::string(), excluded}});
+    }
+    tables_[id] = t;
+  }
+
+  std::map<std::string, std::vector<pp::RevisionSummary>> history_;
+  std::map<std::string, std::string> head_;
+  std::map<std::string, pp::RevisionTable> tables_;
+  int seq_ = 0;
+};
+
 QListWidgetItem* find_item(QListWidget* list, const QString& text) {
   for (int i = 0; i < list->count(); ++i)
     if (list->item(i)->text() == text) return list->item(i);
@@ -226,6 +325,108 @@ class TestDataWindows : public QObject {
     w.evolution_kind()->setCurrentIndex(1);  // no baselines in this data
     QCOMPARE(w.evolutions()->panel_count(), 0);
     QVERIFY(!w.show_analysis(QStringLiteral("nope")));
+  }
+
+  void recall_fit_edits_are_pending_without_a_revision_source() {
+    auto src = make_source(2);
+    RecallWindow w(*src);
+    QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
+    QVERIFY(w.fit_editor()->isVisible() || !w.isVisible());
+    QCOMPARE(w.fit_isotope()->count(), 5);
+    QCOMPARE(w.fit_isotope()->currentText(), QStringLiteral("Ar40"));
+    QCOMPARE(w.fit_kind()->currentText(), QStringLiteral("linear"));
+    QVERIFY(!w.save_button()->isEnabled());
+    QVERIFY(!w.revert_button()->isEnabled());
+    const double loaded_ar40 = w.isotope_table()->item(0, 4)->text().toDouble();
+
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("average")));
+    QVERIFY(w.has_pending_edits());
+    QVERIFY(w.title_label()->text().contains(QStringLiteral("Unsaved")));
+    QVERIFY(w.edit_status()->text().contains(QStringLiteral("Ar40")));
+    QVERIFY(w.revert_button()->isEnabled());
+    QVERIFY(!w.save_button()->isEnabled());  // memory sources keep no revisions
+    QVERIFY(w.save_button()->toolTip().contains(QStringLiteral("--db")));
+    QCOMPARE(w.shown()->find_isotope("Ar40")->fit->kind, reduction::FitKind::Average);
+    // The isotope table follows: average of v = I - 0.01 k (k = 0..19) is I - 0.095.
+    w.stage_selector()->setCurrentIndex(0);
+    w.stage_selector()->setCurrentIndex(1);
+    QVERIFY(std::abs(w.isotope_table()->item(0, 4)->text().toDouble() - (loaded_ar40 - 0.095)) < 1e-6);
+    QVERIFY(w.isotope_table()->item(0, 2)->text().startsWith(QStringLiteral("average")));
+
+    w.revert_edits();
+    QVERIFY(!w.has_pending_edits());
+    QCOMPARE(w.fit_kind()->currentText(), QStringLiteral("linear"));
+
+    // A click on a point leaves it out; a second click puts it back and the
+    // edit disappears.
+    emit w.evolutions()->point_clicked(QStringLiteral("Ar39#3"));
+    QVERIFY(w.has_pending_edits());
+    QCOMPARE(w.fit_isotope()->currentText(), QStringLiteral("Ar39"));
+    QCOMPARE(w.shown()->find_isotope("Ar39")->user_excluded, (std::vector<std::size_t>{3}));
+    QCOMPARE(w.shown()->find_isotope("Ar39")->n, 19);
+    emit w.evolutions()->points_toggled({QStringLiteral("Ar39#3"), QStringLiteral("junk"), QStringLiteral("Ar99#1")});
+    QVERIFY(!w.has_pending_edits());
+
+    // Outlier filter controls.
+    w.fit_outliers()->setChecked(true);
+    QVERIFY(w.has_pending_edits());
+    QVERIFY(w.shown()->find_isotope("Ar39")->fit->outliers.enabled);
+
+    // History needs revisions.
+    w.tabs()->setCurrentWidget(w.history_page());
+    QVERIFY(w.history_note()->text().contains(QStringLiteral("--db")));
+    QCOMPARE(w.revision_list()->rowCount(), 0);
+
+    // Loading another analysis drops pending edits.
+    QVERIFY(w.show_analysis(QStringLiteral("uuid-0")));
+    QVERIFY(!w.has_pending_edits());
+  }
+
+  void recall_saves_fit_edits_and_shows_history() {
+    RevisionMemorySource src(2);
+    RecallWindow w(src);
+    QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
+    QVERIFY(!w.save_button()->isEnabled());
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("average")));
+    emit w.evolutions()->point_clicked(QStringLiteral("Ar40#0"));
+    QVERIFY(w.save_button()->isEnabled());
+    QVERIFY(w.save_edits());
+    QCOMPARE(src.saves, 1);
+    QCOMPARE(src.last_message, std::string("<ISOEVO> Ar40 linear -> average 1 excluded"));
+    QVERIFY(!w.has_pending_edits());
+    QVERIFY(w.edit_status()->text().startsWith(QStringLiteral("Saved")));
+    QCOMPARE(w.shown()->heads.at("intercepts"), std::string("rev-1-uuid-1"));
+    QCOMPARE(w.shown()->find_isotope("Ar40")->user_excluded, (std::vector<std::size_t>{0}));
+    QCOMPARE(w.fit_kind()->currentText(), QStringLiteral("average"));
+
+    // History: newest first, the head marked; one revision shows its table,
+    // two show the differences.
+    w.tabs()->setCurrentWidget(w.history_page());
+    QCOMPARE(w.revision_list()->rowCount(), 2);
+    QVERIFY(w.revision_list()->item(0, 0)->text().contains(QStringLiteral("●")));
+    QCOMPARE(w.revision_list()->item(0, 5)->text(), QStringLiteral("<ISOEVO> Ar40 linear -> average 1 excluded"));
+    QCOMPARE(w.revision_list()->item(1, 4)->text(), QStringLiteral("collection"));
+    QCOMPARE(w.revision_content()->rowCount(), 5);  // the newest is selected
+    QCOMPARE(w.revision_content()->item(0, 2)->text(), QStringLiteral("average"));
+    w.revision_list()->selectAll();
+    QCOMPARE(w.revision_content()->rowCount(), 5);
+    QCOMPARE(w.revision_content()->item(0, 0)->text(), QStringLiteral("Ar40"));
+    QCOMPARE(w.revision_content()->item(0, 2)->text(), QStringLiteral("linear → average"));
+    QCOMPARE(w.revision_content()->item(0, 3)->text(), QStringLiteral(" → 0"));
+    QCOMPARE(w.revision_content()->item(1, 2)->text(), QStringLiteral("linear"));
+    QVERIFY(w.history_note()->text().contains(QStringLiteral("1 row")));
+    w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Blanks")));
+    QCOMPARE(w.revision_list()->rowCount(), 0);
+    QVERIFY(w.history_note()->text().contains(QStringLiteral("No revisions")));
+
+    // Someone else saves first: nothing is written and the status says so.
+    src.move_head("uuid-1");
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("linear")));
+    QVERIFY(w.has_pending_edits());
+    QVERIFY(!w.save_edits());
+    QCOMPARE(src.saves, 1);
+    QVERIFY(w.has_pending_edits());
+    QVERIFY(w.edit_status()->text().contains(QStringLiteral("someone else saved first")));
   }
 
   void figure_computes_and_click_excludes() {

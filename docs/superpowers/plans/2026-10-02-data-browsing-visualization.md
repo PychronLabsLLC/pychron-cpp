@@ -123,9 +123,13 @@ source adapters as separate targets (`processing_records`,
       load cache (`tests/processing/test_store_source.cpp`).
 - [x] `pychron-ui --db <url>` browses a store instead of the records
       directory (the schema must be current; it is not migrated).
-- [ ] Recall History tab (`IStore::history` per kind) and revision diff.
-- [ ] Editing fits in the Evolutions tab: a pending intercepts revision,
-      committed through `IUnitOfWork`, conflicts shown.
+- [x] Recall History tab (`IRevisionSource::history` per kind, author and
+      host from the store) and a diff of two revisions (`diff_revisions`).
+- [x] Editing fits in the Evolutions tab: fit kind, error type, outlier
+      filter, click-to-exclude points; pending until saved as an intercepts
+      revision on the loaded head (conflicts reported, nothing written).
+- [ ] Rolling back to an older revision from History (`move_head`), and
+      editing baselines the same way.
 - [ ] Saved selections and named queries (spec 9.3).
 - [ ] Browser source picker in the UI when both a database and records
       exist (Q1); today `--db` chooses at start-up.

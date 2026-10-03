@@ -183,7 +183,13 @@ MemorySource::MemorySource(std::vector<AnalysisPtr> analyses, std::map<std::stri
 void MemorySource::add(AnalysisPtr analysis, std::optional<RawData> raw) {
   std::lock_guard lock(mutex_);
   if (raw) raw_[analysis->uuid] = std::move(*raw);
-  analyses_.push_back(std::move(analysis));
+  auto same = std::find_if(analyses_.begin(), analyses_.end(),
+                           [&](const AnalysisPtr& a) { return a->uuid == analysis->uuid; });
+  if (same != analyses_.end()) {
+    *same = std::move(analysis);
+  } else {
+    analyses_.push_back(std::move(analysis));
+  }
   ++generation_;
 }
 

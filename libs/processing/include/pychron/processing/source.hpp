@@ -98,6 +98,8 @@ class IAnalysisSource {
 class MemorySource : public IAnalysisSource {
  public:
   explicit MemorySource(std::vector<AnalysisPtr> analyses = {}, std::map<std::string, RawData> raw = {});
+  // Adds, or replaces the analysis with the same uuid (keeping its raw data
+  // unless `raw` is given).
   void add(AnalysisPtr analysis, std::optional<RawData> raw = std::nullopt);
 
   std::string name() const override { return "memory"; }

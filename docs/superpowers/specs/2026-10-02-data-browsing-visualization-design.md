@@ -656,9 +656,27 @@ One window per analysis (or reuse, a setting), tabs from `RecallModel`:
 | Spectrometer | gains, deflections, source parameters, peak centers |
 | Run | plan, scripts, conditionals installed and tripped, events (records only) |
 
-V2 adds History (revisions of each kind from `IStore::history`, diff between
-two) and editing fits in Evolutions (a pending intercept revision, saved
-through `IUnitOfWork`).
+V2 adds History and fit editing, through `IRevisionSource`
+(`IAnalysisSource::revisions()`, implemented by `StoreSource`; record
+directories keep no revisions):
+
+- History: the revisions of one kind (intercepts, baselines, blanks, IC
+  factors, tag, comment, signals), newest first, with author, host,
+  changeset kind and message; the head is marked. One selected revision
+  shows its rows as a table; two show a diff (changed cells highlighted,
+  added and removed rows coloured). Every kind is shown as a
+  `RevisionTable`, so one diff serves all of them.
+- Fit editing in Evolutions (signals): per isotope, fit kind, error type,
+  outlier filter (iterations, standard deviations), and points left out by
+  clicking them (or dragging a box). The window refits the raw signal
+  (`apply_fit_edits`) and recomputes every tab; the edits stay pending
+  (title marked, Revert) until Save writes one intercepts revision: the
+  rows of the head the edits were made on with the edited rows' value,
+  error, fit, error type, n, fn, outlier filter and user exclusions
+  replaced and any manual override on them cleared, committed with a
+  `<ISOEVO> ...` message. The commit is a compare-and-swap on that head:
+  if someone else saved first, nothing is written and the status says who.
+  Closing the window with pending edits asks whether to save them.
 
 ### 11.4 Figure window
 

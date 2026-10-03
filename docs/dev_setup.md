@@ -124,7 +124,10 @@ Window > Data browses the records under `<data>/records`. With
 `--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
 `postgresql://user:pw@host/db`; the schema must already be current, since
 the UI never migrates it). Rescan picks up new analyses and revisions from
-the store's change log:
+the store's change log. With a database, recall windows show each
+analysis' revision history (History tab) and can save fit edits made in the
+Evolutions tab as a new intercepts revision; saves are recorded under
+`$USER` on this host's client:
 
 ```bash
 build/dev-ui/apps/pychron-ui/pychron-ui --sim --db postgresql://me@labdb/pychron
