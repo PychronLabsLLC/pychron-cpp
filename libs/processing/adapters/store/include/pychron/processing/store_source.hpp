@@ -17,15 +17,19 @@
 #include <string_view>
 
 #include "pychron/persistence/store.hpp"
+#include "pychron/processing/revisions.hpp"
 #include "pychron/processing/source.hpp"
 
 namespace pychron::processing {
 
 struct StoreSourceOptions {
   int connections = 2;  // worker threads, one store each
+  // Who saves edits: an app_user name and this machine's client (role
+  // "reduction"). Empty: $USER and $HOSTNAME (or "pychron", "localhost").
+  std::string user, hostname;
 };
 
-class StoreSource final : public IAnalysisSource {
+class StoreSource final : public IAnalysisSource, public IRevisionSource {
  public:
   // Opens one store per connection (applying migrations as `config` says)
   // and fails if any cannot be opened.
@@ -43,6 +47,12 @@ class StoreSource final : public IAnalysisSource {
   Result<std::vector<std::string>> facet(Facet facet, const BrowseQuery& query) override;
   Result<AnalysisPtr> load(const std::string& uuid) override;
   Result<RawData> load_raw(const std::string& uuid) override;
+  IRevisionSource* revisions() noexcept override { return this; }
+
+  Result<std::vector<RevisionSummary>> history(const std::string& analysis, RevisionKind kind) override;
+  Result<RevisionTable> revision_table(const std::string& revision) override;
+  Result<SaveOutcome> save_intercepts(const std::string& analysis, const std::string& expected,
+                                      const std::vector<EditedIsotope>& edits, const std::string& message) override;
 
   struct Impl;
 
@@ -63,12 +73,27 @@ persistence::BrowseFacet to_store_facet(Facet facet) noexcept;
 struct StoreAnalysisParts {
   persistence::AnalysisDetail detail;
   std::map<persistence::Kind, persistence::RevisionPayload> heads;
+  std::map<persistence::Kind, persistence::Uuid> head_revisions;
   std::vector<persistence::RefPayload> refs;
 };
 Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts);
 
 // One decoded raw series; slices [start_index, end_index) when either is set.
 Result<RawSeries> series_from_blob(const persistence::SignalRefRow& ref, const persistence::BlobData& blob);
+
+// A revision's payload as a table (History tab).
+RevisionTable revision_table_from(const persistence::RevisionPayload& payload);
+
+// The rows of an intercepts revision with refits applied: value, error, fit,
+// error type, n (raw points), fn (points used), outlier filter and user
+// exclusions; a manual override on an edited row is cleared. Fails when an
+// edit names an isotope the rows do not have.
+Result<persistence::Intercepts> apply_intercept_edits(persistence::Intercepts rows,
+                                                      const std::vector<EditedIsotope>& edits);
+
+// "[1, 5, 9]" <-> indices. Malformed text yields what was read before the error.
+std::vector<std::size_t> parse_index_list(std::string_view json);
+std::string index_list_json(const std::vector<std::size_t>& indices);
 
 // Numbers (and booleans, as 0/1) of a flat JSON object; other members are
 // skipped. Malformed text yields what was read before the error.

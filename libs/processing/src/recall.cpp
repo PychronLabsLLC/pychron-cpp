@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <ctime>
 
+#include "pychron/processing/fit_edit.hpp"
 #include "pychron/reduction/fits.hpp"
 
 namespace pychron::processing {
@@ -188,25 +189,43 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
     p.quantity = s.key;
     p.y.title = s.key + (s.detector.empty() || s.detector == s.key ? "" : " (" + s.detector + ")") + " (fA)";
     const Color color = palette_color(index++);
+    const IsotopeData* iso = kind == SeriesKind::Signal ? a.find_isotope(s.key) : nullptr;
+    const std::vector<std::size_t> none;
+    const std::vector<std::size_t>& user_excluded = iso ? iso->user_excluded : none;
+    std::vector<bool> left_out(s.t.size(), false);
+    for (auto i : user_excluded)
+      if (i < left_out.size()) left_out[i] = true;
+
+    // Points in the fit (outliers marked) and points the user left out, each
+    // referenced as "<key>#<index>" so a click can toggle it.
     PointLayer pts;
-    pts.x = s.t;
-    pts.y = s.v;
     pts.marker.size = 3;
     pts.marker.color = color;
-    pts.excluded.assign(s.t.size(), false);
     pts.label = s.key;
-    for (double t : s.t) {
-      xmax = std::max(xmax, t);
+    PointLayer out;
+    out.marker = pts.marker;
+    out.marker.color = Color{150, 150, 150, 255};
+    out.marker.filled = false;
+    std::vector<std::size_t> index_of;  // pts index -> series index
+    for (std::size_t i = 0; i < s.t.size(); ++i) {
+      xmax = std::max(xmax, s.t[i]);
       any_x = true;
+      PointLayer& layer = left_out[i] ? out : pts;
+      layer.x.push_back(s.t[i]);
+      layer.y.push_back(s.v[i]);
+      layer.refs.push_back(PointRef{evolution_ref(s.key, i)});
+      if (!left_out[i]) index_of.push_back(i);
     }
+    pts.excluded.assign(pts.x.size(), false);
 
-    const IsotopeData* iso = kind == SeriesKind::Signal ? a.find_isotope(s.key) : nullptr;
-    if (iso && iso->fit && s.t.size() >= r::parameter_count(*iso->fit)) {
-      r::Series series{s.t, s.v};
-      auto fit = r::fit(series, *iso->fit);
+    if (iso && iso->fit) {
+      auto fit = fit_series(s, *iso->fit, user_excluded);
       if (fit) {
-        for (auto idx : fit->filtered_idx)
-          if (idx < pts.excluded.size()) pts.excluded[idx] = true;
+        for (auto idx : fit->outliers) {
+          const auto at = std::lower_bound(index_of.begin(), index_of.end(), idx) - index_of.begin();
+          if (static_cast<std::size_t>(at) < index_of.size() && index_of[static_cast<std::size_t>(at)] == idx)
+            pts.excluded[static_cast<std::size_t>(at)] = true;
+        }
         // Refit at shifted origins: the fitted value and its error at each x.
         LineLayer line;
         line.style.color = color;
@@ -219,28 +238,36 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
         constexpr int kSamples = 40;
         for (int k = 0; k < kSamples; ++k) {
           const double x = hi * k / (kSamples - 1);
-          r::Series shifted{series.x, series.y};
-          for (auto& t : shifted.x) t -= x;
-          auto f = r::fit(shifted, *iso->fit);
+          auto f = fit_series(s, *iso->fit, user_excluded, x);
           if (!f) continue;
           line.x.push_back(x);
-          line.y.push_back(f->value);
+          line.y.push_back(f->intercept.value);
           band.x.push_back(x);
-          band.low.push_back(f->value - f->error);
-          band.high.push_back(f->value + f->error);
+          band.low.push_back(f->intercept.value - f->intercept.error);
+          band.high.push_back(f->intercept.value + f->intercept.error);
         }
         if (!band.x.empty()) p.layers.emplace_back(std::move(band));
         if (!line.x.empty()) p.layers.emplace_back(std::move(line));
         TextLayer t;
-        char buf[128];
-        std::snprintf(buf, sizeof buf, "%s  I(0) = %.6g ± %.3g  n %zu", std::string(r::to_string(iso->fit->kind)).c_str(),
-                      fit->value, fit->error, fit->n_used);
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "%s %s  I(0) = %.6g ± %.3g  n %zu", std::string(r::to_string(iso->fit->kind)).c_str(),
+                      iso->fit->error == r::ErrorType::Sd ? "SD" : "SEM", fit->intercept.value, fit->intercept.error,
+                      fit->intercept.n_used);
         t.lines.push_back(buf);
-        if (std::abs(fit->value - iso->intercept.value) > 1e-6 * std::max(1.0, std::abs(iso->intercept.value))) {
+        if (!user_excluded.empty() || !fit->outliers.empty()) {
+          std::snprintf(buf, sizeof buf, "%zu left out, %zu outliers", user_excluded.size(), fit->outliers.size());
+          t.lines.push_back(buf);
+        }
+        if (std::abs(fit->intercept.value - iso->intercept.value) > 1e-6 * std::max(1.0, std::abs(iso->intercept.value))) {
           std::snprintf(buf, sizeof buf, "stored %.6g ± %.3g", iso->intercept.value, iso->intercept.error);
           t.lines.push_back(buf);
         }
         t.corner = Corner::TopRight;  // signals decay from the left: keep t = 0 clear
+        p.layers.emplace_back(std::move(t));
+      } else {
+        TextLayer t;
+        t.lines.push_back(fit.error().what);
+        t.corner = Corner::TopRight;
         p.layers.emplace_back(std::move(t));
       }
     }
@@ -249,6 +276,10 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
     pts.excluded_marker.filled = false;
     pts.excluded_marker.color = Color{214, 39, 40, 255};
     p.layers.emplace_back(std::move(pts));
+    if (!out.x.empty()) {
+      out.excluded.assign(out.x.size(), false);
+      p.layers.emplace_back(std::move(out));
+    }
     g.panels.push_back(std::move(p));
   }
   if (any_x) {

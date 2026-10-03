@@ -79,9 +79,12 @@ inline const QString kChangesetOfRevision = QStringLiteral(
 
 inline const QString kHistory = QStringLiteral(
     "SELECT r.uuid, r.parent_uuid, r.subject_uuid, r.kind, c.uuid AS cs_uuid, c.kind AS cs_kind, "
-    "c.author_user_uuid, c.client_uuid, %1 AS cs_created, c.message, l.change_seq "
+    "c.author_user_uuid, c.client_uuid, %1 AS cs_created, c.message, l.change_seq, "
+    "u.name AS author_name, cl.hostname AS client_hostname "
     "FROM revision r JOIN changeset c ON c.uuid = r.changeset_uuid "
     "LEFT JOIN change_log l ON l.changeset_uuid = c.uuid "
+    "LEFT JOIN app_user u ON u.uuid = c.author_user_uuid "
+    "LEFT JOIN client cl ON cl.uuid = c.client_uuid "
     "WHERE r.subject_uuid = ? AND r.kind = ? ORDER BY l.change_seq, r.created_utc, r.uuid");
 
 inline const QString kRevisionKind = QStringLiteral("SELECT kind FROM revision WHERE uuid = ?");

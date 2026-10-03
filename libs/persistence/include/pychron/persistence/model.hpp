@@ -357,6 +357,8 @@ struct RevisionInfo {
   std::optional<Uuid> parent;
   ChangesetInfo changeset;
   ChangeSeq change_seq = 0;  // when the revision became visible
+  std::string author_name;      // app_user.name of the changeset author
+  std::string client_hostname;  // client.hostname of the changeset
 };
 
 struct HeadInfo {

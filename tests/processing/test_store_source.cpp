@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <filesystem>
@@ -186,7 +187,7 @@ class StoreSourceTest : public ::testing::Test {
 
   StoreSource& source() {
     if (!source_) {
-      auto s = StoreSource::open(ps::StoreConfig{url_, false});
+      auto s = StoreSource::open(ps::StoreConfig{url_, false}, StoreSourceOptions{2, "tester", "test-host"});
       EXPECT_TRUE(s) << (s ? "" : to_string(s.error()));
       if (s) source_ = std::move(*s);
     }
@@ -377,6 +378,157 @@ TEST_F(StoreSourceTest, OpenFailsForABadUrlAndHidesPasswords) {
             "postgresql://me:***@db:5432/pychron?sslmode=require");
   EXPECT_EQ(redact_password("postgresql://me@db/pychron"), "postgresql://me@db/pychron");
   EXPECT_EQ(redact_password("postgresql://db:5432/x@y"), "postgresql://db:5432/x@y");
+}
+
+TEST_F(StoreSourceTest, SavedFitEditsBecomeTheHeadAndShowInHistory) {
+  auto& src = source();
+  ASSERT_TRUE(src.revisions());
+  auto loaded = src.load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  const std::string base = (*loaded)->heads.at("intercepts");
+  auto raw = src.load_raw(unknown_.str());
+  ASSERT_TRUE(raw);
+  reduction::FitSpec avg;
+  avg.kind = reduction::FitKind::Average;
+  auto edits = apply_fit_edits(**loaded, *raw, {FitEdit{"Ar40", avg, {0}}});
+  ASSERT_TRUE(edits) << edits.error().what;
+  const std::string message = describe_fit_edits(**loaded, edits->isotopes);
+  auto saved = src.revisions()->save_intercepts(unknown_.str(), base, edits->isotopes, message);
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  ASSERT_TRUE(saved->saved) << saved->conflict;
+
+  // The window [1, 4) of the blob is 101, 102, 103; leaving out the first
+  // point averages 102 and 103.
+  auto after = src.load(unknown_.str());
+  ASSERT_TRUE(after);
+  EXPECT_NE(after->get(), loaded->get());
+  const IsotopeData* ar40 = (*after)->find_isotope("Ar40");
+  ASSERT_TRUE(ar40);
+  EXPECT_DOUBLE_EQ(ar40->intercept.value, 102.5);
+  EXPECT_EQ(ar40->fit->kind, reduction::FitKind::Average);
+  EXPECT_EQ(ar40->user_excluded, (std::vector<std::size_t>{0}));
+  EXPECT_EQ(ar40->n, 2);
+  EXPECT_EQ((*after)->heads.at("intercepts"), saved->revision);
+  EXPECT_EQ((*after)->find_isotope("Ar39")->intercept.value, 100.0);  // untouched rows stay
+
+  auto history = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
+  ASSERT_TRUE(history) << to_string(history.error());
+  ASSERT_EQ(history->size(), 2u);
+  const auto& newest = (*history)[0];
+  EXPECT_EQ(newest.id, saved->revision);
+  EXPECT_EQ(newest.parent, base);
+  EXPECT_TRUE(newest.head);
+  EXPECT_FALSE((*history)[1].head);
+  EXPECT_EQ(newest.author, "tester");
+  EXPECT_EQ(newest.host, "test-host");
+  EXPECT_EQ(newest.changeset_kind, "reduction");
+  EXPECT_EQ(newest.message, "<ISOEVO> Ar40 linear -> average SEM no outlier filter 1 excluded");
+  EXPECT_EQ((*history)[1].changeset_kind, "collection");
+  EXPECT_EQ((*history)[1].author, "jross");
+  EXPECT_GT(newest.seq, (*history)[1].seq);
+
+  auto before_table = src.revisions()->revision_table(base);
+  auto after_table = src.revisions()->revision_table(saved->revision);
+  ASSERT_TRUE(before_table && after_table);
+  const auto diff = diff_revisions(*before_table, *after_table);
+  EXPECT_EQ(diff.changed_rows(), 1);
+  const auto row = [&](const std::string& key) -> const DiffRow& {
+    return *std::find_if(diff.rows.begin(), diff.rows.end(), [&](const DiffRow& d) { return d.key == key; });
+  };
+  const auto col = [&](const std::string& c) {
+    return static_cast<std::size_t>(std::find(diff.columns.begin(), diff.columns.end(), c) - diff.columns.begin());
+  };
+  const DiffRow& ar40_row = row("Ar40");
+  EXPECT_EQ(ar40_row.state, DiffState::Changed);
+  EXPECT_EQ(ar40_row.before[col("fit")], "Linear");
+  EXPECT_EQ(ar40_row.after[col("fit")], "average");
+  EXPECT_EQ(ar40_row.after[col("user excluded")], "[0]");
+  EXPECT_EQ(ar40_row.after[col("n")], "3");
+  EXPECT_EQ(ar40_row.after[col("fn")], "2");
+  EXPECT_EQ(row("Ar36").before[col("manual value")], "0.4");
+  EXPECT_EQ(row("Ar36").state, DiffState::Same);
+
+  // A second save on the old head loses the compare-and-swap.
+  auto stale = src.revisions()->save_intercepts(unknown_.str(), base, edits->isotopes, message);
+  ASSERT_TRUE(stale) << to_string(stale.error());
+  EXPECT_FALSE(stale->saved);
+  EXPECT_NE(stale->conflict.find("<ISOEVO>"), std::string::npos) << stale->conflict;
+  EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Intercepts)->size(), 2u);
+
+  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), base, {}, message));
+  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), "nope", edits->isotopes, message));
+  EditedIsotope unknown_key = edits->isotopes[0];
+  unknown_key.key = "Ar99";
+  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), saved->revision, {unknown_key}, message));
+}
+
+TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {
+  auto& src = source();
+  for (auto kind : kRevisionKinds) {
+    auto history = src.revisions()->history(unknown_.str(), kind);
+    ASSERT_TRUE(history) << to_string(history.error());
+    if (kind == RevisionKind::Annotation) {
+      EXPECT_TRUE(history->empty());
+      continue;
+    }
+    ASSERT_EQ(history->size(), 1u) << to_string(kind);
+    auto table = src.revisions()->revision_table((*history)[0].id);
+    ASSERT_TRUE(table) << to_string(kind);
+    EXPECT_FALSE(table->rows.empty()) << to_string(kind);
+    for (const auto& row : table->rows) EXPECT_EQ(row.cells.size(), table->columns.size()) << to_string(kind);
+  }
+  auto tags = src.revisions()->history(unknown_.str(), RevisionKind::Tags);
+  EXPECT_EQ(src.revisions()->revision_table((*tags)[0].id)->rows[0].cells[0], "ok");
+  auto signals = src.revisions()->history(unknown_.str(), RevisionKind::Signals);
+  const auto signal_table = *src.revisions()->revision_table((*signals)[0].id);
+  EXPECT_EQ(signal_table.rows[1].key, "signal Ar40");
+  EXPECT_EQ(signal_table.rows[1].cells[3], "1");  // start index
+  EXPECT_FALSE(src.revisions()->revision_table(ps::Uuid::v7().str()));
+  EXPECT_FALSE(src.revisions()->history("bad", RevisionKind::Tags));
+}
+
+TEST(StoreSourceMapping, IndexListsAndInterceptEdits) {
+  EXPECT_EQ(parse_index_list("[3, 1,  7,3]"), (std::vector<std::size_t>{1, 3, 7}));
+  EXPECT_TRUE(parse_index_list("[]").empty());
+  EXPECT_TRUE(parse_index_list("").empty());
+  EXPECT_EQ(parse_index_list("[1, x, 2]"), (std::vector<std::size_t>{1}));
+  EXPECT_EQ(index_list_json({}), "[]");
+  EXPECT_EQ(index_list_json({1, 5}), "[1, 5]");
+
+  ps::InterceptRow row;
+  row.isotope = "Ar40";
+  row.detector = "H1";
+  row.value = 1;
+  row.manual.use_value = true;
+  row.manual.value = 9;
+  row.extra_json = R"({"keep": 1})";
+  EditedIsotope e;
+  e.key = "Ar40";
+  e.intercept = {2.5, 0.1};
+  e.fit.kind = reduction::FitKind::Parabolic;
+  e.fit.error = reduction::ErrorType::Sd;
+  e.fit.outliers = {true, 2, 2.5};
+  e.n_points = 30;
+  e.n_used = 27;
+  e.user_excluded = {4};
+  auto rows = apply_intercept_edits({row}, {e});
+  ASSERT_TRUE(rows);
+  const auto& r = (*rows)[0];
+  EXPECT_EQ(r.value, 2.5);
+  EXPECT_EQ(r.error, 0.1);
+  EXPECT_EQ(r.fit, "parabolic");
+  EXPECT_EQ(r.error_type, "SD");
+  EXPECT_EQ(r.n, 30);
+  EXPECT_EQ(r.fn, 27);
+  EXPECT_EQ(r.user_excluded_json, "[4]");
+  EXPECT_FALSE(r.manual.use_value);
+  EXPECT_EQ(r.extra_json, row.extra_json);
+  const auto o = flat_json_numbers(*r.filter_outliers_json);
+  EXPECT_EQ(o.at("filter_outliers"), 1.0);
+  EXPECT_EQ(o.at("iterations"), 2.0);
+  EXPECT_EQ(o.at("std_devs"), 2.5);
+  e.key = "Ar36";
+  EXPECT_FALSE(apply_intercept_edits({row}, {e}));
 }
 
 TEST(StoreSourceMapping, FlatJsonNumbers) {

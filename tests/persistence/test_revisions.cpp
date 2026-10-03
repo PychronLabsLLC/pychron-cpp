@@ -55,6 +55,9 @@ TEST_P(RevisionTest, CommitMovesTheHeadAndKeepsHistory) {
   EXPECT_EQ(history[1].parent, root);
   EXPECT_EQ(history[1].changeset.message, "<BLANKS> fit average");
   EXPECT_EQ(history[1].changeset.author_user, lab_.reducer);
+  EXPECT_EQ(history[1].author_name, "jsmith");
+  EXPECT_EQ(history[1].client_hostname, "red-1");
+  EXPECT_EQ(history[0].author_name, "jross");  // the collection root, by the analyst
   EXPECT_EQ(history[1].change_seq, std::get<Committed>(*outcome).seq);
   EXPECT_EQ(std::get<Blanks>(**store_->load_payload(*rev)), blanks(0.7));
   // Other kinds are untouched: per-kind heads (5.2).

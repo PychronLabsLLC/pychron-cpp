@@ -14,6 +14,9 @@
 #include <utility>
 #include <vector>
 
+#include "pychron/core/env.hpp"
+#include "pychron/core/sha256.hpp"
+
 namespace pychron::processing {
 
 namespace ps = pychron::persistence;
@@ -253,6 +256,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   a.tag = row.tag.empty() ? "ok" : row.tag;
   if (const auto* t = head_payload<ps::TagValue>(parts.heads, ps::Kind::Tags); t && !t->name.empty()) a.tag = t->name;
   if (const auto* n = head_payload<ps::AnnotationValue>(parts.heads, ps::Kind::Annotation)) a.comment = n->comment.value_or("");
+  for (const auto& [kind, revision] : parts.head_revisions) a.heads[std::string(ps::to_string(kind))] = revision.str();
 
   const auto& x = d.extraction;
   a.extraction.value = x.extract_value;
@@ -290,7 +294,8 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
                                                      : (colon == std::string::npos ? "" : ir.isotope.substr(0, colon));
       iso.intercept = value_of(ir.value, ir.error, ir.manual);
       iso.fit = fit_spec(ir.fit, ir.error_type, ir.filter_outliers_json);
-      iso.n = ir.n.value_or(0);
+      iso.n = ir.fn ? *ir.fn : ir.n.value_or(0);
+      if (ir.user_excluded_json) iso.user_excluded = parse_index_list(*ir.user_excluded_json);
       iso.include_baseline_error = ir.include_baseline_error.value_or(false);
       if (baselines)
         for (const auto& b : *baselines)
@@ -399,6 +404,19 @@ struct StoreSource::Impl {
   std::mutex cache_mutex;
   std::map<std::string, AnalysisPtr> cache;
 
+  // Who saves edits; registered on the first save.
+  std::string user, hostname;
+  std::mutex actor_mutex;
+  std::optional<ps::Actor> actor;
+
+  void forget(const std::string& uuid) {
+    {
+      std::lock_guard lock(cache_mutex);
+      cache.erase(uuid);
+    }
+    ++generation;
+  }
+
   ~Impl() {
     {
       std::lock_guard lock(queue_mutex);
@@ -451,6 +469,8 @@ StoreSource::~StoreSource() = default;
 Result<std::unique_ptr<StoreSource>> StoreSource::open(ps::StoreConfig config, StoreSourceOptions options) {
   auto impl = std::make_unique<Impl>();
   impl->config = std::move(config);
+  impl->user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
+  impl->hostname = !options.hostname.empty() ? options.hostname : env_var("HOSTNAME").value_or("localhost");
   const int n = std::max(1, options.connections);
   // The first connection opens alone, so only it applies migrations.
   for (int i = 0; i < n; ++i) {
@@ -537,7 +557,10 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
     p.detail = std::move(**detail);
     auto view = s.load_analysis(id);
     if (!view) return fail(view.error());
-    if (*view) p.heads = std::move((*view)->payloads);
+    if (*view) {
+      p.heads = std::move((*view)->payloads);
+      for (const auto& h : (*view)->heads) p.head_revisions[h.kind] = h.revision;
+    }
     auto refs = s.resolve_refs(id, ps::RefPolicy{});
     if (!refs) return fail(refs.error());
     for (const auto& ref : refs->refs) {
@@ -581,6 +604,238 @@ Result<RawData> StoreSource::load_raw(const std::string& uuid) {
     }
     return raw;
   });
+}
+
+// ---------------------------------------------------------------- revisions
+
+namespace {
+
+std::string fmt(const std::optional<double>& v) {
+  if (!v) return {};
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%.10g", *v);
+  return buf;
+}
+std::string fmt(const std::optional<int>& v) { return v ? std::to_string(*v) : std::string(); }
+std::string fmt(const std::optional<std::string>& v) { return v.value_or(""); }
+std::string yes(bool b) { return b ? "yes" : ""; }
+std::string manual_value(const ps::ManualOverride& m) { return m.use_value ? fmt(m.value) : std::string(); }
+std::string manual_error(const ps::ManualOverride& m) { return m.use_error ? fmt(m.error) : std::string(); }
+
+std::string references(const std::vector<ps::ReferenceRow>& refs) {
+  std::string out;
+  for (const auto& r : refs) {
+    if (!out.empty()) out += ", ";
+    if (r.exclude) out += "!";
+    out += r.record_id ? *r.record_id : r.ref_analysis ? r.ref_analysis->str().substr(0, 8) : "?";
+  }
+  return out;
+}
+
+struct TableBuilder {
+  const ps::RevisionPayload& payload;
+  RevisionTable operator()() const {
+    RevisionTable t;
+    if (const auto* ints = std::get_if<ps::Intercepts>(&payload)) {
+      t.columns = {"detector", "value", "error", "fit", "error type", "n", "fn", "outlier filter",
+                   "user excluded", "manual value", "manual error", "reviewed"};
+      for (const auto& r : *ints)
+        t.rows.push_back({r.isotope,
+                          {r.detector, fmt(r.value), fmt(r.error), fmt(r.fit), fmt(r.error_type), fmt(r.n), fmt(r.fn),
+                           fmt(r.filter_outliers_json), fmt(r.user_excluded_json), manual_value(r.manual),
+                           manual_error(r.manual), yes(r.reviewed)}});
+    } else if (const auto* bls = std::get_if<ps::Baselines>(&payload)) {
+      t.columns = {"value", "error", "fit", "error type", "n", "fn", "outlier filter", "user excluded",
+                   "modifier", "manual value", "manual error", "reviewed"};
+      for (const auto& r : *bls)
+        t.rows.push_back({r.detector,
+                          {fmt(r.value), fmt(r.error), fmt(r.fit), fmt(r.error_type), fmt(r.n), fmt(r.fn),
+                           fmt(r.filter_outliers_json), fmt(r.user_excluded_json), fmt(r.modifier_value),
+                           manual_value(r.manual), manual_error(r.manual), yes(r.reviewed)}});
+    } else if (const auto* bks = std::get_if<ps::Blanks>(&payload)) {
+      t.columns = {"value", "error", "fit", "error type", "manual value", "manual error", "reviewed", "references"};
+      for (const auto& r : *bks)
+        t.rows.push_back({r.isotope,
+                          {fmt(r.value), fmt(r.error), fmt(r.fit), fmt(r.error_type), manual_value(r.manual),
+                           manual_error(r.manual), yes(r.reviewed), references(r.references)}});
+    } else if (const auto* ics = std::get_if<ps::IcFactors>(&payload)) {
+      t.columns = {"value", "error", "fit", "reference detector", "standard ratio", "discrimination",
+                   "source correction", "manual value", "manual error", "reviewed", "references"};
+      for (const auto& r : *ics)
+        t.rows.push_back({r.detector,
+                          {fmt(r.value), fmt(r.error), fmt(r.fit), fmt(r.reference_detector), fmt(r.standard_ratio),
+                           yes(r.discrimination), yes(r.source_correction), manual_value(r.manual),
+                           manual_error(r.manual), yes(r.reviewed), references(r.references)}});
+    } else if (const auto* refs = std::get_if<ps::SignalRefs>(&payload)) {
+      t.columns = {"detector", "blob", "points", "start", "end"};
+      for (const auto& r : *refs)
+        t.rows.push_back({r.series_kind + " " + r.series_key,
+                          {r.detector, to_hex(r.blob_sha).substr(0, 12), fmt(r.n_points), fmt(r.start_index),
+                           fmt(r.end_index)}});
+    } else if (const auto* tag = std::get_if<ps::TagValue>(&payload)) {
+      t.columns = {"name", "note"};
+      t.rows.push_back({"tag", {tag->name, fmt(tag->note)}});
+    } else if (const auto* note = std::get_if<ps::AnnotationValue>(&payload)) {
+      t.columns = {"text"};
+      t.rows.push_back({"comment", {fmt(note->comment)}});
+    } else {
+      t.columns = {"content"};
+      t.rows.push_back({"payload", {"(not shown)"}});
+    }
+    return t;
+  }
+};
+
+std::string outlier_json(const reduction::OutlierSpec& o) {
+  char buf[96];
+  std::snprintf(buf, sizeof buf, R"({"filter_outliers": %s, "iterations": %d, "std_devs": %.10g})",
+                o.enabled ? "true" : "false", o.iterations, o.std_devs);
+  return buf;
+}
+
+std::string describe_conflict(const ps::Conflict& c) {
+  std::string out = "someone else changed the " + std::string(ps::to_string(c.kind)) + " first";
+  if (c.actual_by) {
+    out += " (" + c.actual_by->created.iso().substr(0, 19) + "Z";
+    if (!c.actual_by->message.empty()) out += ": " + c.actual_by->message;
+    out += ")";
+  }
+  return out + "; reload to see their change";
+}
+
+}  // namespace
+
+std::vector<std::size_t> parse_index_list(std::string_view s) {
+  std::vector<std::size_t> out;
+  std::size_t i = s.find('[');
+  if (i == std::string_view::npos) return out;
+  ++i;
+  while (i < s.size()) {
+    while (i < s.size() && (std::isspace(static_cast<unsigned char>(s[i])) || s[i] == ',')) ++i;
+    if (i >= s.size() || s[i] == ']') break;
+    std::size_t v = 0;
+    const auto r = std::from_chars(s.data() + i, s.data() + s.size(), v);
+    if (r.ec != std::errc{}) break;
+    out.push_back(v);
+    i = static_cast<std::size_t>(r.ptr - s.data());
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+std::string index_list_json(const std::vector<std::size_t>& indices) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < indices.size(); ++i) out += (i ? ", " : "") + std::to_string(indices[i]);
+  return out + "]";
+}
+
+RevisionTable revision_table_from(const ps::RevisionPayload& payload) { return TableBuilder{payload}(); }
+
+Result<ps::Intercepts> apply_intercept_edits(ps::Intercepts rows, const std::vector<EditedIsotope>& edits) {
+  for (const auto& e : edits) {
+    auto it = std::find_if(rows.begin(), rows.end(), [&](const ps::InterceptRow& r) { return r.isotope == e.key; });
+    if (it == rows.end()) return fail(ErrorKind::Config, "the stored intercepts have no " + e.key);
+    it->value = e.intercept.value;
+    it->error = e.intercept.error;
+    it->fit = std::string(reduction::to_string(e.fit.kind));
+    it->error_type = e.fit.error == reduction::ErrorType::Sd ? "SD" : "SEM";
+    it->n = e.n_points;
+    it->fn = e.n_used;
+    it->filter_outliers_json = outlier_json(e.fit.outliers);
+    it->user_excluded_json = index_list_json(e.user_excluded);
+    it->manual = ps::ManualOverride{};
+  }
+  return rows;
+}
+
+Result<std::vector<RevisionSummary>> StoreSource::history(const std::string& analysis, RevisionKind kind) {
+  auto id = parse_uuid(analysis);
+  if (!id) return fail(id.error());
+  const auto store_kind = ps::parse_kind(to_string(kind));
+  if (!store_kind) return fail(ErrorKind::Config, "unknown revision kind");
+  return impl_->call<std::vector<RevisionSummary>>(
+      [id = *id, k = *store_kind, kind](ps::IStore& s) -> Result<std::vector<RevisionSummary>> {
+        auto revs = s.history(id, k);
+        if (!revs) return fail(revs.error());
+        auto head = s.head(id, k);
+        if (!head) return fail(head.error());
+        std::vector<RevisionSummary> out;
+        for (auto it = revs->rbegin(); it != revs->rend(); ++it) {
+          RevisionSummary r;
+          r.id = it->uuid.str();
+          if (it->parent) r.parent = it->parent->str();
+          r.kind = kind;
+          r.changeset_kind = std::string(ps::to_string(it->changeset.kind));
+          r.author = it->author_name;
+          r.host = it->client_hostname;
+          r.message = it->changeset.message;
+          r.created = seconds(it->changeset.created);
+          r.seq = it->change_seq;
+          r.head = *head && **head == it->uuid;
+          out.push_back(std::move(r));
+        }
+        return out;
+      });
+}
+
+Result<RevisionTable> StoreSource::revision_table(const std::string& revision) {
+  auto id = parse_uuid(revision);
+  if (!id) return fail(id.error());
+  return impl_->call<RevisionTable>([id = *id, &revision](ps::IStore& s) -> Result<RevisionTable> {
+    auto payload = s.load_payload(id);
+    if (!payload) return fail(payload.error());
+    if (!*payload) return fail(ErrorKind::Config, "no revision " + revision);
+    return revision_table_from(**payload);
+  });
+}
+
+Result<SaveOutcome> StoreSource::save_intercepts(const std::string& analysis, const std::string& expected,
+                                                 const std::vector<EditedIsotope>& edits, const std::string& message) {
+  if (edits.empty()) return fail(ErrorKind::Config, "nothing to save");
+  auto id = parse_uuid(analysis);
+  if (!id) return fail(id.error());
+  auto base = ps::Uuid::parse(expected);
+  if (!base) return fail(ErrorKind::Config, "the analysis was loaded without an intercepts head");
+  Impl* impl = impl_.get();
+  auto outcome = impl->call<SaveOutcome>([=, &edits, &message](ps::IStore& s) -> Result<SaveOutcome> {
+    std::optional<ps::Actor> actor;
+    {
+      std::lock_guard lock(impl->actor_mutex);
+      actor = impl->actor;
+    }
+    if (!actor) {
+      auto client = s.register_client({impl->hostname, "reduction", std::nullopt, "pychron-ui"});
+      if (!client) return fail(client.error());
+      auto user = s.ensure_user(*client, impl->user);
+      if (!user) return fail(user.error());
+      actor = ps::Actor{*user, *client};
+      std::lock_guard lock(impl->actor_mutex);
+      impl->actor = actor;
+    }
+    auto payload = s.load_payload(*base);
+    if (!payload) return fail(payload.error());
+    const auto* rows = *payload ? std::get_if<ps::Intercepts>(&**payload) : nullptr;
+    if (!rows) return fail(ErrorKind::Config, "revision " + expected + " is not an intercepts revision");
+    auto edited = apply_intercept_edits(*rows, edits);
+    if (!edited) return fail(edited.error());
+    auto uow = s.begin(*actor);
+    if (!uow) return fail(uow.error());
+    auto rev = (*uow)->add_revision(*id, ps::Kind::Intercepts, ps::RevisionPayload{std::move(*edited)}, *base);
+    if (!rev) return fail(rev.error());
+    auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
+    if (!committed) return fail(committed.error());
+    SaveOutcome out;
+    if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&*committed)) {
+      out.conflict = conflicts->empty() ? "the save conflicted" : describe_conflict(conflicts->front());
+      return out;
+    }
+    out.saved = true;
+    out.revision = rev->str();
+    return out;
+  });
+  if (outcome && outcome->saved) impl->forget(analysis);
+  return outcome;
 }
 
 }  // namespace pychron::processing

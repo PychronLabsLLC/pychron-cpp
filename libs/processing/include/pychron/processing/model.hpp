@@ -35,6 +35,7 @@ struct IsotopeData {
   std::optional<reduction::FitSpec> fit;
   std::optional<reduction::FitSpec> baseline_fit;
   int n = 0;  // points in the intercept fit
+  std::vector<std::size_t> user_excluded;  // raw signal indices left out of the fit, ascending
   bool include_baseline_error = false;
   std::string blank_source;  // fit name or reference run id
 };
@@ -81,6 +82,9 @@ struct Analysis {
   std::map<std::string, double> environmentals;  // lab_temperature, lab_humidity, ...
   std::vector<PeakCenterInfo> peak_centers;
   ReductionContext context;
+  // Head revision id per revision kind ("intercepts", "blanks", ...), from
+  // sources that keep revisions; edits are saved on top of these.
+  std::map<std::string, std::string> heads;
 
   const IsotopeData* find_isotope(std::string_view key) const;
   // The first isotope named `isotope` (exact key preferred).

@@ -74,9 +74,14 @@ bool matches(const BrowseQuery& q, const AnalysisSummary& s, double newest,
              std::optional<Facet> ignore = std::nullopt);
 std::string facet_value(const AnalysisSummary& s, Facet f);
 
+class IRevisionSource;  // revisions.hpp
+
 class IAnalysisSource {
  public:
   virtual ~IAnalysisSource() = default;
+  // Revision history and saving edits, for sources that keep revisions (the
+  // DVC store); nullptr otherwise. Owned by the source.
+  virtual IRevisionSource* revisions() noexcept { return nullptr; }
   virtual std::string name() const = 0;
   // Changes whenever refresh() finds new or changed analyses.
   virtual std::uint64_t generation() const = 0;

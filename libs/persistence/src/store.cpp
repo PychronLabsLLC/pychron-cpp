@@ -304,6 +304,8 @@ class TinyStore final : public IStore {
       info.changeset.created = to_time(r.value("cs_created"));
       info.changeset.message = to_std(r.value("message"));
       info.change_seq = r.value("change_seq").toLongLong();
+      info.author_name = to_std(r.value("author_name"));
+      info.client_hostname = to_std(r.value("client_hostname"));
       out.push_back(std::move(info));
     }
     return out;
