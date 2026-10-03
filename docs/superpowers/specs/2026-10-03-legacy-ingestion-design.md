@@ -554,3 +554,9 @@ points. Where this section and an earlier one disagree, this section wins.
 25. **Catalog resume token** is `<table index>:<row index>@<manifest sha256>`,
     so a directory converted again from a newer dump does not resume at a
     stale offset.
+26. **What fails verify.** Verify fails on pending conflicts that mean data
+    was not imported or does not agree: `unparseable`, `unknown_analysis`,
+    `value_mismatch`, and `identity_clash` rows that refused something.
+    Conflicts that only annotate an imported row (`imported: true` for a
+    broken optional catalog link, `synthesized: true` for a catalog row made
+    from repo contents) are listed as warnings and do not fail verify.
