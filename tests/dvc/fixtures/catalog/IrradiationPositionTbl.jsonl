@@ -1,0 +1,7 @@
+{"id":1,"identifier":"66573","sampleID":1,"levelID":1,"position":1,"note":"chipped","weight":12.5,"j":0.00125,"j_err":2.1e-06,"packet":"p1"}
+{"id":2,"identifier":"66574","sampleID":2,"levelID":1,"position":2,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}
+{"id":3,"identifier":null,"sampleID":null,"levelID":1,"position":3,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}
+{"id":4,"identifier":"66600","sampleID":1,"levelID":2,"position":1,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}
+{"id":5,"identifier":"66601","sampleID":3,"levelID":2,"position":2,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}
+{"id":6,"identifier":"66573","sampleID":1,"levelID":3,"position":1,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}
+{"id":7,"identifier":"66700","sampleID":null,"levelID":2,"position":null,"note":null,"weight":null,"j":null,"j_err":null,"packet":null}

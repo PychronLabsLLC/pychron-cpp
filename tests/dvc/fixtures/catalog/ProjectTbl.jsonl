@@ -1,0 +1,4 @@
+{"id":1,"name":"Henry Hill","principal_investigatorID":1,"checkin_date":"2016-02-29","comment":"two crates; 'handle' with care","lab_contact":"mheizler","institution":"NMT"}
+{"id":2,"name":"REFERENCES","principal_investigatorID":null,"checkin_date":null,"comment":null,"lab_contact":null,"institution":null}
+{"id":3,"name":"Orphan","principal_investigatorID":99,"checkin_date":null,"comment":null,"lab_contact":null,"institution":null}
+{"id":4,"name":"J-Curve","principal_investigatorID":2,"checkin_date":"0000-00-00","comment":null,"lab_contact":null,"institution":null}

@@ -1,14 +1,16 @@
 # pychron::dvc — the adapter for legacy Python-pychron DVC repositories
 # (legacy ingestion spec, sections 4 and 10): the pure layer (path to file
 # kind, legacy JSON to store payloads), GitReader, which reads a repository's
-# history through git subprocesses, and the project and meta repository
-# adapters built on both. Public headers are std-only;
+# history through git subprocesses, the project and meta repository
+# adapters built on both, and the catalog adapter, which reads a converted
+# dump of the legacy database. Public headers are std-only;
 # nlohmann_json stays behind the library boundary.
 if(NOT PYCHRON_PERSISTENCE_ENABLED)
   return()
 endif()
 
 add_library(pychron_dvc STATIC
+  src/catalog_adapter.cpp
   src/commit_walk.cpp
   src/git_reader.cpp
   src/legacy_interpreted_age.cpp

@@ -1,0 +1,161 @@
+{
+  "columns": {
+    "AnalysisChangeTbl": {
+      "analysisID": "int",
+      "idanalysischangeTbl": "int",
+      "tag": "varchar",
+      "timestamp": "timestamp",
+      "user": "varchar"
+    },
+    "AnalysisTbl": {
+      "aliquot": "int",
+      "analysis_type": "varchar",
+      "experiment_type": "varchar",
+      "extract_device": "varchar",
+      "id": "int",
+      "increment": "int",
+      "irradiation_positionID": "int",
+      "mass_spectrometer": "varchar",
+      "timestamp": "datetime",
+      "uuid": "varchar"
+    },
+    "ExtractDeviceTbl": {
+      "name": "varchar"
+    },
+    "IrradiationPositionTbl": {
+      "id": "int",
+      "identifier": "varchar",
+      "j": "float",
+      "j_err": "float",
+      "levelID": "int",
+      "note": "text",
+      "packet": "varchar",
+      "position": "int",
+      "sampleID": "int",
+      "weight": "float"
+    },
+    "IrradiationTbl": {
+      "create_date": "timestamp",
+      "id": "int",
+      "name": "varchar"
+    },
+    "LevelTbl": {
+      "holder": "varchar",
+      "id": "int",
+      "irradiationID": "int",
+      "name": "varchar",
+      "note": "text",
+      "z": "float"
+    },
+    "LoadPositionTbl": {
+      "id": "int",
+      "identifier": "varchar",
+      "loadName": "varchar",
+      "note": "text",
+      "nxtals": "int",
+      "position": "int",
+      "weight": "float"
+    },
+    "LoadTbl": {
+      "archived": "tinyint",
+      "create_date": "timestamp",
+      "holderName": "varchar",
+      "name": "varchar",
+      "username": "varchar"
+    },
+    "MassSpectrometerTbl": {
+      "kind": "varchar",
+      "name": "varchar"
+    },
+    "MaterialTbl": {
+      "grainsize": "varchar",
+      "id": "int",
+      "name": "varchar"
+    },
+    "PrincipalInvestigatorTbl": {
+      "affiliation": "varchar",
+      "email": "varchar",
+      "first_initial": "varchar",
+      "id": "int",
+      "last_name": "varchar"
+    },
+    "ProjectTbl": {
+      "checkin_date": "date",
+      "comment": "text",
+      "id": "int",
+      "institution": "varchar",
+      "lab_contact": "varchar",
+      "name": "varchar",
+      "principal_investigatorID": "int"
+    },
+    "RepositoryTbl": {
+      "name": "varchar",
+      "principal_investigatorID": "int"
+    },
+    "SampleTbl": {
+      "approximate_age": "float",
+      "create_date": "datetime",
+      "elevation": "float",
+      "id": "int",
+      "igsn": "varchar",
+      "lat": "float",
+      "lithology": "varchar",
+      "lithology_class": "varchar",
+      "lithology_group": "varchar",
+      "lithology_type": "varchar",
+      "location": "varchar",
+      "lon": "float",
+      "materialID": "int",
+      "name": "varchar",
+      "note": "varchar",
+      "projectID": "int",
+      "storage_location": "varchar",
+      "unit": "varchar",
+      "update_date": "datetime"
+    },
+    "UserTbl": {
+      "affiliation": "varchar",
+      "category": "varchar",
+      "email": "varchar",
+      "name": "varchar"
+    }
+  },
+  "dump_completed": true,
+  "files": {
+    "AnalysisChangeTbl": "AnalysisChangeTbl.jsonl",
+    "AnalysisTbl": "AnalysisTbl.jsonl",
+    "ExtractDeviceTbl": "ExtractDeviceTbl.jsonl",
+    "IrradiationPositionTbl": "IrradiationPositionTbl.jsonl",
+    "IrradiationTbl": "IrradiationTbl.jsonl",
+    "LevelTbl": "LevelTbl.jsonl",
+    "LoadPositionTbl": "LoadPositionTbl.jsonl",
+    "LoadTbl": "LoadTbl.jsonl",
+    "MassSpectrometerTbl": "MassSpectrometerTbl.jsonl",
+    "MaterialTbl": "MaterialTbl.jsonl",
+    "PrincipalInvestigatorTbl": "PrincipalInvestigatorTbl.jsonl",
+    "ProjectTbl": "ProjectTbl.jsonl",
+    "RepositoryTbl": "RepositoryTbl.jsonl",
+    "SampleTbl": "SampleTbl.jsonl",
+    "UserTbl": "UserTbl.jsonl"
+  },
+  "non_utf8_values": 0,
+  "sha256": "80a58162ef863be6203d2b442a9a2a69d0530c05f2e1c0c5b5981e5888cf13d5",
+  "tables": {
+    "AnalysisChangeTbl": 5,
+    "AnalysisTbl": 4,
+    "ExtractDeviceTbl": 2,
+    "IrradiationPositionTbl": 7,
+    "IrradiationTbl": 2,
+    "LevelTbl": 4,
+    "LoadPositionTbl": 5,
+    "LoadTbl": 3,
+    "MassSpectrometerTbl": 2,
+    "MaterialTbl": 3,
+    "PrincipalInvestigatorTbl": 3,
+    "ProjectTbl": 4,
+    "RepositoryTbl": 1,
+    "SampleTbl": 5,
+    "UserTbl": 2
+  },
+  "time_zone": "+00:00"
+}

@@ -137,6 +137,20 @@ flat format.
 | `irradiation_holders/24_hole.txt` | `9514dc360662c5c673e4d358755421b1cebb591c` | one irradiation holder. **Unconfirmed** that NM-293 used this holder: the holder name is only in MySQL `LevelTbl.holder`. |
 | `load_holders/37-hole.txt` | `736334304fa414e2c92fffa6d673fcbac0871feb` | load holder named by the fixtures' extraction `tray` (`"37-hole"`). Not asked for by the brief; 539 bytes. |
 
+### 2.5 `catalog/` — a converted dump of the legacy database
+
+Not real data: no dump of a legacy database was available (section 7).
+`catalog/` is what `tools/legacy_dump_to_jsonl.py` writes for the
+hand-written dump `tools/tests/fixtures/legacy_catalog.sql`, which has the
+tables and columns of section 7 in mysqldump's shape, with rows the catalog
+adapter must refuse (the comments in the dump say which and why). After
+editing the dump, regenerate the directory:
+
+    python3 tools/legacy_dump_to_jsonl.py tools/tests/fixtures/legacy_catalog.sql tests/dvc/fixtures/catalog
+
+`tools/tests/test_legacy_dump_to_jsonl.py` fails when the two are out of
+step; `tests/dvc/test_catalog_db.cpp` reads the directory.
+
 ## 3. Path to kind
 
 ### 3.1 How a path is built

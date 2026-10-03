@@ -1,0 +1,4 @@
+{"id":1,"name":"A","irradiationID":1,"holder":"24Spokes","z":0.5,"note":"bottom of the can"}
+{"id":2,"name":"B","irradiationID":1,"holder":null,"z":null,"note":null}
+{"id":3,"name":"A","irradiationID":2,"holder":"24Spokes","z":null,"note":null}
+{"id":4,"name":"Z","irradiationID":7,"holder":null,"z":null,"note":null}
