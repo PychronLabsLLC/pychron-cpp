@@ -9,6 +9,7 @@
 #include <QMainWindow>
 
 #include "data_workspace.hpp"
+#include "preferences_dialog.hpp"
 
 class QAction;
 
@@ -29,12 +30,20 @@ class DataMainWindow : public QMainWindow {
   void set_installations_handler(std::function<void()> handler);
   QAction* installations_action() const noexcept { return installations_; }
   QAction* about_action() const noexcept { return about_; }
+  // File > Preferences…, as in MainWindow.
+  void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
+  QAction* preferences_action() const noexcept { return preferences_; }
+  PreferencesDialog* open_preferences();
+  void apply_preferences(const Preferences& preferences);
 
  private:
   DataWorkspace* data_;
   QAction* installations_;
   std::function<void()> on_installations_;
   QAction* about_ = nullptr;
+  QAction* preferences_;
+  PreferencesDialog::SettingsFactory preferences_settings_;
+  QPointer<PreferencesDialog> preferences_dialog_;
 };
 
 }  // namespace pychron::ui

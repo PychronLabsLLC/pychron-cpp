@@ -30,6 +30,9 @@
 // instead ("postgresql://user:pw@host/db" or "sqlite:/path/to/file.db"; the
 // schema must be current, it is never migrated from here). Figure presets
 // live in the user's config directory, with lab presets under <lab>/figures.
+//
+// File > Preferences… sets the font sizes, the data browser page size and the
+// spectrometer's large-move threshold; they are kept in the user's settings.
 
 #include <chrono>
 #include <cstdio>
@@ -56,6 +59,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include "brand.hpp"
@@ -64,6 +68,7 @@
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
 #include "main_window.hpp"
+#include "preferences.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/site.hpp"
@@ -181,6 +186,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
       install.root / "figures");
   pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
+  window.apply_preferences(pychron::ui::load_preferences(QSettings()));
   window.resize(1200, 800);
   window.show();
   return QApplication::exec();
@@ -357,6 +363,7 @@ int main(int argc, char** argv) {
     // start-up Snapshot paints the canvas before the first scan.
     pychron::ui::MainWindow window(**line);
     window.resize(1200, 850);
+    window.apply_preferences(pychron::ui::load_preferences(QSettings()));
     window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
 
     // Runtime level changes go to the line's LogHub; without one (creation

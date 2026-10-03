@@ -21,7 +21,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
       data_(new DataWorkspace(this, [this](const QString& text) { log_->append_line(text); })),
-      installations_(new QAction(QStringLiteral("Installations…"), this)) {
+      installations_(new QAction(QStringLiteral("Installations…"), this)),
+      preferences_(new QAction(QStringLiteral("Preferences…"), this)) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   setCentralWidget(canvas_);
   addDockWidget(Qt::BottomDockWidgetArea, log_);
@@ -38,6 +39,10 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
+  preferences_->setShortcut(QKeySequence::Preferences);
+  preferences_->setMenuRole(QAction::PreferencesRole);
+  file_menu->addAction(preferences_);
+  connect(preferences_, &QAction::triggered, this, [this] { open_preferences(); });
   file_menu->addSeparator();
   QAction* quit = file_menu->addAction(QStringLiteral("Quit"));
   quit->setShortcut(QKeySequence::Quit);
@@ -80,8 +85,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       return;
     }
     if (spectrometer_window_ == nullptr) {
-      spectrometer_window_ = new SpectrometerWindow(*spectrometer_, simulation_,
-                                                    settings_factory_ ? settings_factory_() : nullptr, this);
+      spectrometer_window_ = new SpectrometerWindow(*spectrometer_, simulation_, spectrometer_settings(), this);
       spectrometer_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     }
     spectrometer_window_->show();
@@ -107,6 +111,10 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       log_->append_line(QStringLiteral("ERROR [ui] %1 rejected: %2").arg(name, QString::fromStdString(to_string(r.error()))));
     }
   });
+}
+
+std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
+  return settings_factory_ ? settings_factory_() : std::make_unique<QSettings>();
 }
 
 void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
@@ -148,6 +156,38 @@ void MainWindow::set_data(processing::IAnalysisSource* source, processing::Prese
 void MainWindow::set_installations_handler(std::function<void()> handler) {
   on_installations_ = std::move(handler);
   installations_->setVisible(static_cast<bool>(on_installations_));
+}
+
+void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory settings) {
+  preferences_settings_ = std::move(settings);
+}
+
+// The spectrometer's move threshold goes through its window when one is open
+// (it keeps the value in use), else straight to its saved settings, which the
+// window reads when it opens.
+PreferencesDialog* MainWindow::open_preferences() {
+  std::optional<double> confirm_move;
+  if (spectrometer_window_ != nullptr) {
+    confirm_move = spectrometer_window_->confirm_move_amu();
+  } else if (spectrometer_ != nullptr) {
+    confirm_move = SpectrometerWindow::saved_confirm_move_amu(*spectrometer_settings(), spectrometer_->name());
+  }
+  return PreferencesDialog::show_for(
+      this, preferences_dialog_, preferences_settings_, confirm_move, [this](const PreferencesDialog::Values& values) {
+        apply_preferences(values.preferences);
+        if (!values.confirm_move_amu) return;
+        if (spectrometer_window_ != nullptr) {
+          spectrometer_window_->set_confirm_move_amu(*values.confirm_move_amu);
+        } else if (spectrometer_ != nullptr) {
+          SpectrometerWindow::save_confirm_move_amu(*spectrometer_settings(), spectrometer_->name(),
+                                                    *values.confirm_move_amu);
+        }
+      });
+}
+
+void MainWindow::apply_preferences(const Preferences& preferences) {
+  apply_application_preferences(preferences);
+  data_->set_page_size(preferences.browser_page_size);
 }
 
 QWidget* MainWindow::open_recall(const QString& uuid) { return data_->open_recall(uuid); }

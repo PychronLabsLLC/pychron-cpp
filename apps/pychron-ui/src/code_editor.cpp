@@ -71,6 +71,15 @@ int CodeEditor::gutter_width() const {
   return 14 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * std::max(3, digits);
 }
 
+void CodeEditor::changeEvent(QEvent* event) {
+  QPlainTextEdit::changeEvent(event);
+  if (event->type() != QEvent::FontChange) return;
+  setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4);
+  setViewportMargins(gutter_width(), 0, 0, 0);
+  const QRect cr = contentsRect();
+  gutter_->setGeometry(QRect(cr.left(), cr.top(), gutter_width(), cr.height()));
+}
+
 void CodeEditor::resizeEvent(QResizeEvent* event) {
   QPlainTextEdit::resizeEvent(event);
   const QRect cr = contentsRect();

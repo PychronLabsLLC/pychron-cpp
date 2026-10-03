@@ -61,6 +61,10 @@ std::optional<bool> read_flag(const QSettings& settings, const QString& key) {
   return std::nullopt;
 }
 
+QString confirm_move_key(const QString& spectrometer) {
+  return QStringLiteral("spectrometer_window/%1/confirm_move_amu").arg(spectrometer);
+}
+
 }  // namespace
 
 SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulation, std::unique_ptr<QSettings> settings,
@@ -323,6 +327,23 @@ void SpectrometerWindow::load_settings() {
     confirm_move_amu_ = *threshold;
   }
   s.endGroup();
+}
+
+void SpectrometerWindow::set_confirm_move_amu(double amu) {
+  if (!std::isfinite(amu) || amu < 0.0) return;
+  confirm_move_amu_ = amu;
+  save_confirm_move_amu(*settings_, bridge_.name(), amu);
+}
+
+double SpectrometerWindow::saved_confirm_move_amu(QSettings& settings, const QString& name) {
+  const auto threshold = read_number(settings, confirm_move_key(name));
+  return threshold && *threshold >= 0.0 ? *threshold : kDefaultConfirmMoveAmu;
+}
+
+void SpectrometerWindow::save_confirm_move_amu(QSettings& settings, const QString& name, double amu) {
+  if (!std::isfinite(amu) || amu < 0.0) return;
+  settings.setValue(confirm_move_key(name), amu);
+  settings.sync();
 }
 
 void SpectrometerWindow::save_settings() {

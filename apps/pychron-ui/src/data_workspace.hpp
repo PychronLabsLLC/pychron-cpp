@@ -15,6 +15,7 @@
 #include <QWidget>
 
 #include "data_browser_window.hpp"
+#include "preferences.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -41,6 +42,8 @@ class DataWorkspace : public QObject {
   DataBrowserWindow* browser(QWidget* embed_in = nullptr);
   DataBrowserWindow* existing_browser() const noexcept { return browser_; }
   ProcessingBridge* processing_bridge() const noexcept { return processing_.get(); }
+  // The browser's page size, for the browser open now and any made later.
+  void set_page_size(int rows);
 
   // Null without data (or for an unknown figure kind).
   QWidget* open_recall(const QString& uuid);
@@ -55,6 +58,7 @@ class DataWorkspace : public QObject {
   processing::PresetStore* presets_ = nullptr;
   std::unique_ptr<ProcessingBridge> processing_;
   DataBrowserWindow* browser_ = nullptr;
+  int page_size_ = Preferences::kDefaultPageSize;
   QList<QPointer<QWidget>> children_;  // recall and figure windows
 };
 

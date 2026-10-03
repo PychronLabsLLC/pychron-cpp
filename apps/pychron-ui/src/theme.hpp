@@ -126,8 +126,15 @@ QColor level_color(Level level);
 // A rounded status chip.
 void set_chip(QLabel* label, Level level);
 
+// Interface and code font sizes in points; 0 is the default (the platform's
+// size; code follows the interface). The interface size reaches every widget
+// that does not set its own; code editors refresh themselves
+// (apply_application_preferences).
+void set_font_sizes(int ui_pt, int code_pt);
+
 // Window headline: larger and bold.
 QFont title_font(const QFont& base);
+// At the code font size when one is set.
 QFont mono_font();
 
 }  // namespace style

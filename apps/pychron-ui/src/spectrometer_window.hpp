@@ -54,6 +54,15 @@ class SpectrometerWindow : public QMainWindow {
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
   void set_confirm_move(std::function<bool(double delta_amu)> confirm);
+  // Moves larger than this (amu) ask first; 0 never asks. The setter
+  // (File > Preferences…) saves it for this spectrometer at once; a negative
+  // or non-finite value is ignored.
+  double confirm_move_amu() const noexcept { return confirm_move_amu_; }
+  void set_confirm_move_amu(double amu);
+  // The same value in `settings` for spectrometer `name` while no window is
+  // open (the default when unset or invalid).
+  static double saved_confirm_move_amu(QSettings& settings, const QString& name);
+  static void save_confirm_move_amu(QSettings& settings, const QString& name, double amu);
 
   // Programmatic equivalents of the controls, used by tests. Unknown detector
   // or isotope names are ignored.

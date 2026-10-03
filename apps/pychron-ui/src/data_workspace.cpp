@@ -30,10 +30,16 @@ void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::
   if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source);
 }
 
+void DataWorkspace::set_page_size(int rows) {
+  page_size_ = rows;
+  if (browser_ != nullptr) browser_->set_page_size(rows);
+}
+
 DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
   if (source_ == nullptr || processing_ == nullptr) return nullptr;
   if (browser_ == nullptr) {
     browser_ = new DataBrowserWindow(*source_, owner_);
+    browser_->set_page_size(page_size_);
     if (embed_in != nullptr) browser_->setParent(embed_in, Qt::Widget);
     connect(browser_, &DataBrowserWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
     connect(browser_, &DataBrowserWindow::figure_requested, this,

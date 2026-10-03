@@ -55,6 +55,7 @@ class CodeEditor : public QPlainTextEdit {
   void keyPressEvent(QKeyEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
   bool event(QEvent* event) override;  // tooltips for diagnostics
+  void changeEvent(QEvent* event) override;  // tab stops and gutter follow the font
 
  private:
   QString word_before_cursor() const;

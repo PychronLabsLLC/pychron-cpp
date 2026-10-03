@@ -24,6 +24,7 @@
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
 #include "log_dock.hpp"
+#include "preferences_dialog.hpp"
 #include "processing_bridge.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
@@ -73,6 +74,14 @@ class MainWindow : public QMainWindow {
   // File > Installations…; hidden until a handler is set.
   void set_installations_handler(std::function<void()> handler);
   QAction* installations_action() const noexcept { return installations_; }
+  // File > Preferences…. Its values are kept in the QSettings `settings` makes
+  // (default: the application's); tests pass a temp file.
+  void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
+  QAction* preferences_action() const noexcept { return preferences_; }
+  // The dialog, window modal; OK and Apply save and apply what it holds.
+  PreferencesDialog* open_preferences();
+  // Fonts (application wide) and the data browser's page size.
+  void apply_preferences(const Preferences& preferences);
   // Opens a recall window / a time-series figure window (null without data).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_time_series(const QStringList& uuids);
@@ -90,6 +99,8 @@ class MainWindow : public QMainWindow {
   void closeEvent(QCloseEvent* event) override;
 
  private:
+  std::unique_ptr<QSettings> spectrometer_settings() const;
+
   CoreBridge bridge_;
   CanvasView* canvas_;
   LogDock* log_;
@@ -111,6 +122,9 @@ class MainWindow : public QMainWindow {
   QAction* installations_;
   std::function<void()> on_installations_;
   QAction* about_action_ = nullptr;
+  QAction* preferences_;
+  PreferencesDialog::SettingsFactory preferences_settings_;
+  QPointer<PreferencesDialog> preferences_dialog_;
 };
 
 }  // namespace pychron::ui

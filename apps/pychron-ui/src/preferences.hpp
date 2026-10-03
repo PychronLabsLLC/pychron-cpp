@@ -1,0 +1,37 @@
+#pragma once
+
+// User preferences: the values File > Preferences… edits, kept in the
+// application's QSettings under "preferences/". Saved values are untrusted:
+// one that is missing, does not parse or is out of range reads as its default.
+//
+// Per-window state (geometry, the spectrometer's chart and target, the last
+// queue) stays with its window. The spectrometer's large-move threshold is
+// edited here too but kept with its spectrometer (SpectrometerWindow).
+
+class QSettings;
+
+namespace pychron::ui {
+
+struct Preferences {
+  static constexpr int kMinFontPt = 6;
+  static constexpr int kMaxFontPt = 32;
+  static constexpr int kDefaultPageSize = 200;
+  static constexpr int kMinPageSize = 20;
+  static constexpr int kMaxPageSize = 5000;
+
+  int font_pt = 0;       // interface text; 0: the platform's size
+  int code_font_pt = 0;  // script editors; 0: the interface size
+  int browser_page_size = kDefaultPageSize;  // analyses per data browser page
+
+  bool operator==(const Preferences&) const = default;
+};
+
+Preferences load_preferences(const QSettings& settings);
+void save_preferences(QSettings& settings, const Preferences& preferences);
+
+// The application-wide part: interface and code font sizes, for every window
+// open now and opened later. Windows apply the rest (MainWindow,
+// DataMainWindow::apply_preferences).
+void apply_application_preferences(const Preferences& preferences);
+
+}  // namespace pychron::ui

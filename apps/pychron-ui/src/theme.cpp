@@ -271,6 +271,14 @@ QScrollArea { background: transparent; }
   return s;
 }
 
+// The platform's interface font size, remembered before a preference changes it.
+double platform_point_size() {
+  static const double pt = QApplication::font().pointSizeF();
+  return pt;
+}
+
+int code_point_size = 0;
+
 }  // namespace
 
 const Theme& theme() {
@@ -335,9 +343,11 @@ QString style_sheet() {
 }
 
 void apply(QApplication& app) {
+  platform_point_size();
   QApplication::setStyle(QStringLiteral("Fusion"));
   QApplication::setPalette(palette());
-  // Whichever of these the machine has; the size stays the platform's.
+  // Whichever of these the machine has; the size stays the platform's until
+  // set_font_sizes.
   QFont font = QApplication::font();
   font.setFamilies({QStringLiteral("IBM Plex Sans"), QStringLiteral("Segoe UI Variable Text"), QStringLiteral("Segoe UI"),
                     QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue"), QStringLiteral("Cantarell"),
@@ -370,6 +380,14 @@ QColor level_color(Level level) {
 
 void set_chip(QLabel* label, Level level) { set_property(label, "chip", QLatin1String(level_name(level))); }
 
+void set_font_sizes(int ui_pt, int code_pt) {
+  QFont font = QApplication::font();
+  const double pt = ui_pt > 0 ? ui_pt : platform_point_size();
+  if (pt > 0) font.setPointSizeF(pt);
+  QApplication::setFont(font);
+  code_point_size = code_pt > 0 ? code_pt : 0;
+}
+
 QFont title_font(const QFont& base) {
   QFont f = base;
   f.setPointSizeF(f.pointSizeF() * 1.3);
@@ -383,6 +401,7 @@ QFont mono_font() {
                  QStringLiteral("Menlo"), QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas"),
                  QStringLiteral("DejaVu Sans Mono"), QStringLiteral("monospace")});
   f.setStyleHint(QFont::Monospace);
+  if (code_point_size > 0) f.setPointSize(code_point_size);
   return f;
 }
 

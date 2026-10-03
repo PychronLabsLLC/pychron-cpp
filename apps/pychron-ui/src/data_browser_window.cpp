@@ -26,8 +26,6 @@ namespace pp = pychron::processing;
 
 namespace {
 
-constexpr int kPageSize = 200;
-
 QString qs(const std::string& s) { return QString::fromStdString(s); }
 
 const std::pair<pp::Facet, const char*> kFacets[] = {
@@ -168,7 +166,7 @@ pp::BrowseQuery DataBrowserWindow::query() const {
   const double hours = dates_->currentData().toDouble();
   if (hours > 0) q.last_hours = hours;
   q.exclude_tags = exclude_invalid_->isChecked() ? std::vector<std::string>{"invalid"} : std::vector<std::string>{};
-  q.limit = kPageSize;
+  q.limit = page_size_;
   for (const auto& [facet, list] : facets_) {
     std::vector<std::string> checked;
     for (int i = 0; i < list->count(); ++i)
@@ -191,6 +189,13 @@ pp::BrowseQuery DataBrowserWindow::query() const {
     }
   }
   return q;
+}
+
+void DataBrowserWindow::set_page_size(int rows) {
+  rows = std::max(1, rows);
+  if (rows == page_size_) return;
+  page_size_ = rows;
+  reload();
 }
 
 void DataBrowserWindow::refresh() {

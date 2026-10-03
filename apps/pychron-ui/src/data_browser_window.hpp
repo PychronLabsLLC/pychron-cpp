@@ -16,6 +16,7 @@
 #include <QWidget>
 
 #include "analysis_table_model.hpp"
+#include "preferences.hpp"
 #include "pychron/processing/source.hpp"
 
 class QComboBox;
@@ -38,6 +39,10 @@ class DataBrowserWindow : public QWidget {
 
   // Rescans the source and reloads the first page.
   void refresh();
+  // Analyses per page (File > Preferences…), at least 1; a change reloads the
+  // first page.
+  void set_page_size(int rows);
+  int page_size() const noexcept { return page_size_; }
   processing::BrowseQuery query() const;
 
   // For tests.
@@ -74,6 +79,7 @@ class DataBrowserWindow : public QWidget {
   QPushButton* more_;
   QToolButton* plot_;
   QLabel* status_;
+  int page_size_ = Preferences::kDefaultPageSize;
   std::optional<processing::BrowseCursor> next_;
   std::optional<std::size_t> total_;
   bool updating_ = false;
