@@ -281,6 +281,55 @@ std::string mirror_name(std::string_view url) {
   return stem + "-" + to_hex(std::span<const std::uint8_t>(digest)).substr(0, 16) + ".git";
 }
 
+// The --raw -z output of diff-tree: NUL-separated tokens, a commit sha (when
+// diff-tree read commits from stdin), then for each change ":<old mode> <new
+// mode> <old sha> <new sha> <status>" and the path. `commit` names the changes
+// until a sha token replaces it.
+Result<std::vector<GitChange>> parse_changes(const Site& site, std::string_view out, std::string commit) {
+  std::vector<GitChange> result;
+  // A path may itself begin with ':', but only ever follows a change line.
+  const std::vector<std::string_view> tokens = split(out, '\0');
+  const auto bad = [&](std::string_view token) {
+    return fail(ErrorKind::Protocol, describe(site) + ": unexpected diff-tree output: " + std::string(token.substr(0, 200)));
+  };
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    const std::string_view token = tokens[i];
+    if (token.empty()) continue;
+    if (token.front() != ':') {
+      if (!is_sha(token)) return bad(token);
+      commit = std::string(token);
+      continue;
+    }
+    const std::vector<std::string_view> fields = split(token.substr(1), ' ');
+    if (fields.size() != 5 || fields[4].empty() || commit.empty() || i + 1 >= tokens.size()) return bad(token);
+    const std::string_view path = tokens[++i];
+    const char letter = fields[4].front();
+    constexpr std::string_view kSubmodule = "160000";
+    GitChange change;
+    change.commit = commit;
+    change.path = std::string(path);
+    switch (letter) {
+      case 'A':
+      case 'M':
+      case 'T':  // the type changed (file to symlink, ...): new content at the same path
+        if (fields[1] == kSubmodule) continue;
+        change.status = letter == 'A' ? 'A' : 'M';
+        change.blob_sha = std::string(fields[3]);
+        if (!is_sha(change.blob_sha)) return bad(token);
+        break;
+      case 'D':
+        if (fields[0] == kSubmodule) continue;
+        change.status = 'D';
+        break;
+      default:
+        return bad(token);
+    }
+    result.push_back(std::move(change));
+  }
+  return result;
+}
+
+
 }  // namespace
 
 std::optional<GitVersion> parse_git_version(std::string_view text) {
@@ -510,8 +559,7 @@ Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> s
 
 Result<std::vector<GitChange>> GitReader::changes(std::span<const std::string> shas) const {
   const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
-  std::vector<GitChange> result;
-  if (shas.empty()) return result;
+  if (shas.empty()) return std::vector<GitChange>{};
   for (const auto& sha : shas)
     if (!is_sha(sha)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + sha + "'");
 
@@ -523,49 +571,16 @@ Result<std::vector<GitChange>> GitReader::changes(std::span<const std::string> s
                     lines_of(shas));
   if (!out) return fail(out.error());
 
-  // NUL-separated: a commit sha, then for each change ":<old mode> <new mode>
-  // <old sha> <new sha> <status>" and the path. A path may itself begin with
-  // ':', but only ever follows a change line.
-  const std::vector<std::string_view> tokens = split(*out, '\0');
-  const auto bad = [&](std::string_view token) {
-    return fail(ErrorKind::Protocol, describe(site) + ": unexpected diff-tree output: " + std::string(token.substr(0, 200)));
-  };
-  std::string commit;
-  for (std::size_t i = 0; i < tokens.size(); ++i) {
-    const std::string_view token = tokens[i];
-    if (token.empty()) continue;
-    if (token.front() != ':') {
-      if (!is_sha(token)) return bad(token);
-      commit = std::string(token);
-      continue;
-    }
-    const std::vector<std::string_view> fields = split(token.substr(1), ' ');
-    if (fields.size() != 5 || fields[4].empty() || commit.empty() || i + 1 >= tokens.size()) return bad(token);
-    const std::string_view path = tokens[++i];
-    const char letter = fields[4].front();
-    constexpr std::string_view kSubmodule = "160000";
-    GitChange change;
-    change.commit = commit;
-    change.path = std::string(path);
-    switch (letter) {
-      case 'A':
-      case 'M':
-      case 'T':  // the type changed (file to symlink, ...): new content at the same path
-        if (fields[1] == kSubmodule) continue;
-        change.status = letter == 'A' ? 'A' : 'M';
-        change.blob_sha = std::string(fields[3]);
-        if (!is_sha(change.blob_sha)) return bad(token);
-        break;
-      case 'D':
-        if (fields[0] == kSubmodule) continue;
-        change.status = 'D';
-        break;
-      default:
-        return bad(token);
-    }
-    result.push_back(std::move(change));
-  }
-  return result;
+  return parse_changes(site, *out, {});
+}
+
+Result<std::vector<GitChange>> GitReader::diff(const std::string& from, const std::string& to) const {
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
+  for (const auto& sha : {from, to})
+    if (!is_sha(sha)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + sha + "'");
+  auto out = output(site, {"diff-tree", "-r", "-z", "--no-renames", "--raw", "--no-abbrev", from, to});
+  if (!out) return fail(out.error());
+  return parse_changes(site, *out, to);
 }
 
 Result<std::vector<GitTag>> GitReader::tags() const {

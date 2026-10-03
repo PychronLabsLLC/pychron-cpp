@@ -577,6 +577,63 @@ TEST(GitReader, MergeEqualToItsFirstParentHasNoChanges) {
   EXPECT_TRUE(changes->empty());
 }
 
+TEST(GitReader, DiffBetweenTwoCommits) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("both.json", "base");
+  repo.write("gone.json", "base");
+  repo.write("same.json", "same");
+  const std::string root = repo.commit("root", "2016-03-04T00:00:00+00:00");
+  repo.branch("side");
+  repo.checkout("side");
+  repo.write("both.json", "side");
+  repo.write("side.json", "side");
+  const std::string side = repo.commit("side work", "2016-03-05T00:00:00+00:00");
+  repo.checkout("main");
+  repo.write("both.json", "main");
+  repo.remove("gone.json");
+  const std::string main_work = repo.commit("main work", "2016-03-06T00:00:00+00:00");
+  // The merge keeps main's tree: nothing differs from its first parent.
+  repo.git({"merge", "--quiet", "--no-ff", "-s", "ours", "-m", "keep ours", "side"}, "2016-03-08T00:00:00+00:00");
+  const std::string merge = repo.head();
+
+  auto reader = GitReader::open(config_for(repo));
+  ASSERT_OK(reader);
+  EXPECT_TRUE(reader->changes(std::vector<std::string>{merge})->empty());
+
+  // What the merge has that the side did not: `to`'s blob per path, in path
+  // order, each change named after `to`.
+  const auto against_side = reader->diff(side, merge);
+  ASSERT_OK(against_side);
+  ASSERT_EQ(against_side->size(), 3u);
+  EXPECT_EQ((*against_side)[0].path, "both.json");
+  EXPECT_EQ((*against_side)[0].status, 'M');
+  EXPECT_EQ((*against_side)[0].commit, merge);
+  EXPECT_EQ((*against_side)[1].path, "gone.json");
+  EXPECT_EQ((*against_side)[1].status, 'D');
+  EXPECT_TRUE((*against_side)[1].blob_sha.empty());
+  EXPECT_EQ((*against_side)[2].path, "side.json");
+  EXPECT_EQ((*against_side)[2].status, 'D');
+  ASSERT_OK(reader->fetch_blobs(std::vector<std::string>{(*against_side)[0].blob_sha}));
+  EXPECT_EQ(reader->blob((*against_side)[0].blob_sha).value_or("?"), "main");
+
+  // The other way round the same paths, with the side's content.
+  const auto against_merge = reader->diff(merge, side);
+  ASSERT_OK(against_merge);
+  ASSERT_EQ(against_merge->size(), 3u);
+  EXPECT_EQ((*against_merge)[1].status, 'A');
+  EXPECT_EQ((*against_merge)[2].status, 'A');
+  EXPECT_EQ((*against_merge)[2].commit, side);
+
+  // Equal trees differ in nothing; a commit is not a tree of another repository.
+  EXPECT_TRUE(reader->diff(main_work, merge)->empty());
+  EXPECT_TRUE(reader->diff(root, root)->empty());
+  EXPECT_FALSE(reader->diff("HEAD", merge));
+  EXPECT_FALSE(reader->diff(root, std::string(40, 'a')));
+  EXPECT_EQ(scratch_files(repo), 0u);
+}
+
 TEST(GitReader, OddFileNames) {
   SKIP_WITHOUT_GIT();
   GitFixture repo;

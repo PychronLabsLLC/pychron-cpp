@@ -130,6 +130,12 @@ class GitReader {
   // Submodule entries are skipped.
   Result<std::vector<GitChange>> changes(std::span<const std::string> shas) const;
 
+  // The paths whose content differs between the trees of two commits, in
+  // git's path order: status and blob as they are in `to` (A: only in `to`,
+  // D: only in `from`, M: in both). Each change carries `to` as its commit.
+  // Submodule entries are skipped. Used to see what a merge kept of each side.
+  Result<std::vector<GitChange>> diff(const std::string& from, const std::string& to) const;
+
   // Reads the blobs not already cached, in one git call, then evicts the
   // least recently used blobs not named in this call until the cache is
   // within cache_bytes. Every blob named in a call is therefore readable
