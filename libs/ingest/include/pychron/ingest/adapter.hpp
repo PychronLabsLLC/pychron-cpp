@@ -64,18 +64,19 @@ struct IImportState {
 // as in SourceKey; a multi-part file names each part "<file>#<part>".
 struct Evidence {
   enum class Kind {
-    // What the writer leaves for an item it is sent at (commit, path): the
-    // provenance row, or, when it refused the item, the conflict
-    // conflict_id(url, commit, path). With `blob_sha` set, a provenance row of
-    // `path` with that blob at another commit also counts: content the walk
-    // had already imported when it came to this commit.
-    Recorded,
+    // What the writer leaves for a revision it is sent at (commit, path): the
+    // provenance row and the revision revision_id(url, commit, path) it is
+    // of, or, when it refused the revision, the conflict
+    // conflict_id(url, commit, path).
+    Revision,
+    // What the writer leaves for an analysis (or a membership) it is sent
+    // with its record at (commit, path): the provenance row and the analysis
+    // `entity`, or, when it refused the analysis, the conflict at that key.
+    Analysis,
     // The conflict conflict_id(url, commit, path): the adapter refused the unit.
     Conflict,
-    // A provenance row of `path` with `blob_sha`, at any commit.
-    Blob,
-    // A provenance row of this source for `entity` (an analysis this source
-    // imported under another path).
+    // A provenance row of this source for `entity`, and the analysis itself
+    // (an analysis this source imported under another path).
     Entity,
     // The provenance detail of the commit's changeset lists `path` under
     // `list`: "rewrites" (entries with a "path") or "removed" (strings).
@@ -83,8 +84,8 @@ struct Evidence {
     // The catalog row `catalog` names by natural key.
     CatalogRow
   };
-  Kind kind = Kind::Recorded;
-  std::string commit = {}, path = {}, blob_sha = {};
+  Kind kind = Kind::Revision;
+  std::string commit = {}, path = {};
   persistence::Uuid entity = {};
   std::string list = {};
   std::optional<CatalogItem> catalog = std::nullopt;
@@ -94,20 +95,25 @@ enum class UnitDisposition {
   Ignored,     // not part of the import by rule (a run log; a file that holds nothing): never reported
   Imported,    // it has rows of its own
   Folded,      // its content lives in another unit's row (a satellite file in its analysis)
-  Unchanged,   // the same content was imported from an earlier unit
+  Unchanged,   // the walk itself says it repeats an earlier unit of its path: that unit's evidence
   Conflict,    // refused; a conflict row says why
   Removed,     // a deletion; evidence only where the import records what went
   Unclassified // the adapter cannot say: reported as unaccounted
 };
 
 // Imported, Folded, Unchanged and Conflict need evidence, and all of it must
-// be found. Removed needs none, but what it names must be found. Ignored is
-// not looked up.
+// be found. Removed needs none when the unit is a deletion, but what it names
+// must be found. Ignored is not looked up. There is no "the same content is
+// somewhere in the store": a unit is accounted for by rows at its own key, or
+// by the rows of the one earlier unit it repeats (spec 10.27).
 struct SourceUnit {
   std::string commit, path, blob_sha;  // blob_sha: empty for a deletion
   bool deleted = false;
   UnitDisposition disposition = UnitDisposition::Unclassified;
   std::vector<Evidence> evidence = {};
+  // Unchanged: the commit of the earlier unit of this path whose evidence
+  // this is.
+  std::string repeats = {};
   // Set when the unit is a version of an interpreted age: the name of its
   // InterpretedAgeKey. The verifier compares the ages stored under it.
   std::string interpreted_age = {};

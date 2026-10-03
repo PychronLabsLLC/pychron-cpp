@@ -234,6 +234,7 @@ Result<void> Mapper::resolve(const std::vector<Track*>& tracks) {
     }
     track->uuid =
         read.parsed->had_uuid ? read.parsed->ingest.analysis : ingest::derived_analysis_id(url_, read.parsed->runid);
+    track->spec_sha = read.parsed->spec_sha;
     auto origin = state_.analysis_origin(track->uuid, track->record->commit);
     if (!origin) return fail(origin.error());
     track->role = !*origin || (*origin)->from_this_source ? Track::Role::Imported : Track::Role::Foreign;
@@ -257,6 +258,20 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
     if (!folded && std::find(unresolved.begin(), unresolved.end(), file->track) == unresolved.end())
       unresolved.push_back(file->track);
   }
+  // A spectrometer file must be told from one that comes too late for an
+  // analysis an earlier run folded: the records of those say which they name.
+  const bool settings_arrive = std::any_of(work.begin(), work.end(), [](const Work& item) {
+    const auto* file = std::get_if<Change>(&item);
+    return file && file->info.kind == FileKind::Spectrometer;
+  });
+  if (settings_arrive)
+    for (Track* track : walk_.flushed()) {
+      const bool folded = std::any_of(collects.begin(), collects.end(),
+                                      [&](const Collect& fold) { return fold.track == track; });
+      if (track->role == Track::Role::Unresolved && track->record && !folded &&
+          std::find(unresolved.begin(), unresolved.end(), track) == unresolved.end())
+        unresolved.push_back(track);
+    }
   Reading reading;
   if (auto r = read_records(collects, reading); !r) return r;
   if (auto r = resolve(unresolved); !r) return r;
@@ -340,6 +355,7 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
   ParsedRecord& record = *read.parsed;
   const Uuid uuid = record.had_uuid ? record.ingest.analysis : ingest::derived_analysis_id(url_, record.runid);
   track.uuid = uuid;
+  track.spec_sha = record.spec_sha;
 
   auto meta = commit(record_ref.commit);
   if (!meta) return fail(meta.error());
@@ -380,9 +396,9 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
     }
     // None of its other files has a row: the analysis is the copy imported
     // under another path (same source) or the membership row at this record.
-    ingest::Evidence host{ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path};
+    ingest::Evidence host{ingest::Evidence::Kind::Analysis, record_ref.commit, record_ref.path, uuid};
     if (same_source) {
-      host = {ingest::Evidence::Kind::Entity, {}, {}, {}, uuid};
+      host = {ingest::Evidence::Kind::Entity, {}, {}, uuid};
       silent(record_ref, ingest::UnitDisposition::Folded, host);
     }
     for (const auto& file : files) silent(file.ref, ingest::UnitDisposition::Folded, host);
@@ -488,7 +504,7 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
         for (auto& blob : scans) out.batch.blobs.push_back({key_of(file.ref), std::move(blob)});
         // Folded into the analysis: its row is the record's.
         silent(file.ref, ingest::UnitDisposition::Folded,
-               {ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path});
+               {ingest::Evidence::Kind::Analysis, record_ref.commit, record_ref.path, uuid});
         break;
       }
       default: {
@@ -528,14 +544,14 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
   }
 
   if (record.spec_sha) {
-    auto settings = snapshot(*record.spec_sha);
+    auto settings = snapshot(*record.spec_sha, track.folded_at);
     if (!settings) return fail(settings.error());
     if (*settings) {
       item.ingest.spectrometer_snapshot = std::move(**settings);
       // The settings file becomes the snapshot of the analyses that name it.
       if (const FileRef* file = walk_.spectrometer(*record.spec_sha))
         silent(*file, ingest::UnitDisposition::Folded,
-               {ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path});
+               {ingest::Evidence::Kind::Analysis, record_ref.commit, record_ref.path, uuid});
     } else {
       detail["spectrometer_file_unavailable"] = *record.spec_sha;  // not in the repository, or unreadable
     }
@@ -565,10 +581,16 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
   return {};
 }
 
-Result<std::optional<ps::SpectrometerSnapshot>> Mapper::snapshot(const std::string& sha1) {
+Result<std::optional<ps::SpectrometerSnapshot>> Mapper::snapshot(const std::string& sha1, int folded_at) {
+  // A file that first appears after the commit that folded the analysis is
+  // not its snapshot, though the walk of this batch may already have seen it:
+  // what is attached must not depend on where the batch ends. The file is
+  // reported when it arrives (change()).
+  const int first = walk_.spectrometer_first(sha1);
+  if (first < 0 || first > folded_at) return std::optional<ps::SpectrometerSnapshot>{};
   if (const auto cached = snapshots_.find(sha1); cached != snapshots_.end()) return cached->second;
   const FileRef* file = walk_.spectrometer(sha1);
-  if (!file) return std::optional<ps::SpectrometerSnapshot>{};  // not in the repository (yet)
+  if (!file) return std::optional<ps::SpectrometerSnapshot>{};
   auto text = reader_.blob(file->blob_sha);
   if (!text) return fail(text.error());
   // A file that does not parse is reported where it was added (change()).
@@ -659,12 +681,7 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
 // store is not asked: in a replay its head is the outcome of later commits,
 // and a file restored before them would be taken for a change and written
 // over the head.
-bool Mapper::unchanged(const Change& item) {
-  if (item.restored)
-    silent(item.ref, ingest::UnitDisposition::Unchanged,
-           {ingest::Evidence::Kind::Blob, {}, item.ref.path, item.ref.blob_sha});
-  return item.restored;
-}
+bool Mapper::unchanged(const Change& item) { return item.restored; }
 
 // The changeset of the commit `ref` belongs to, made when first asked for.
 Result<ingest::ChangesetItem*> Mapper::changeset_of(const FileRef& ref, Output& out) {
@@ -713,10 +730,24 @@ Result<void> Mapper::change(const Change& item, Output& out) {
       auto parsed = parse_spectrometer(*text, item.info.key);
       auto& slot = snapshots_[item.info.key];
       slot.reset();
-      if (parsed)
-        slot = std::move(*parsed);
-      else
+      if (!parsed) {
         bad(parsed.error().what);
+        return {};
+      }
+      slot = std::move(*parsed);
+      // The file is here for the first time, after an analysis that names it
+      // was folded without it: the analysis is stored and cannot take the
+      // snapshot now (spec 10.29). Said once, where the file arrives.
+      if (walk_.spectrometer_first(item.info.key) != ref.index) return {};
+      Json late = Json::array();
+      for (const Track* track : walk_.flushed())
+        if (track->role == Track::Role::Imported && track->spec_sha == item.info.key && track->folded_at < ref.index)
+          late.push_back(track->uuid.str());
+      if (!late.empty()) {
+        Json detail = reason("spectrometer_file_after_collection");
+        detail["analyses"] = std::move(late);
+        out.conflict(ref, ConflictKind::Unparseable, std::nullopt, sha256(*text), detail);
+      }
       return {};
     }
 
@@ -825,11 +856,7 @@ Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output
   const FileKind kind = item.info.kind;
   const Uuid uuid = item.track->uuid;
   // Removed and added again with what it had: nothing was rewritten.
-  if (item.previous && item.previous->blob_sha == ref.blob_sha) {
-    silent(ref, ingest::UnitDisposition::Unchanged,
-           {ingest::Evidence::Kind::Recorded, item.track->record->commit, item.track->record->path});
-    return {};
-  }
+  if (item.previous && item.previous->blob_sha == ref.blob_sha) return {};
 
   auto after = parse_legacy(text);
   if (!after) {

@@ -64,6 +64,19 @@ Result<VerifyReport> verify(P::IStore& store, P::Uuid client, ISourceAdapter& ad
   const detail::VerifySource source{store, source_id(described->kind, url, described->branch), url};
 
   VerifyReport report;
+  report.source.current_head = described->head;
+  {
+    auto stored = store.import_sources();
+    if (!stored) return fail(stored.error());
+    for (const auto& info : *stored) {
+      if (info.spec.uuid != source.uuid) continue;
+      report.source.registered = true;
+      report.source.status = info.status;
+      report.source.done = info.done;
+      report.source.total = info.total;
+      report.source.stored_head = info.head_sha;
+    }
+  }
   WriterConfig dry = config;
   dry.dry_run = true;
   dry.replay = false;

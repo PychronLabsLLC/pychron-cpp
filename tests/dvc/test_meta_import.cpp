@@ -1316,6 +1316,8 @@ TEST_P(MetaImportTest, VerifyAfterImportIsOk) {
   EXPECT_GT(behind.would_write, 0);
   EXPECT_GT(behind.replay_would_write, 0);
   EXPECT_EQ(partial->source().status, "paused");
+  EXPECT_EQ(behind.source.status, "paused");
+  EXPECT_FALSE(behind.source.finished_and_current());
 }
 
 // Take one row out of the store: verify names the file version it came from.
@@ -1379,6 +1381,27 @@ TEST_P(MetaImportTest, VerifyReportsAMissingRevisionNoteOrConflict) {
   EXPECT_EQ(gone.missing[0].list, "removed");
   (void)added;
   (void)listed;
+}
+
+// A position that goes A, B, A has three revisions; the third is accounted
+// for by its own row only, though the file is then byte for byte the first.
+TEST_P(MetaImportTest, VerifyReportsARevisionDroppedFromAnABAHistory) {
+  commit_file(kLevel, level_text({}), kDay1, "Added level G to NM-293");
+  commit_file(kLevel, level_text({{3, 0.0031}}), kDay2, "fit 3");
+  const std::string back = commit_file(kLevel, level_text({}), kDay3, "back");
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  ASSERT_EQ(world_->history(RefType::FluxPosition, flux_key(3)).size(), 3u);
+  const auto listed = [&](int batch_commits) {
+    auto adapter = MetaRepoAdapter::open(adapter_config(repo_, batch_commits));
+    EXPECT_TRUE(adapter);
+    return adapter ? unaccounted(verify_source(*world_, **adapter)) : std::vector<std::string>{};
+  };
+  EXPECT_EQ(listed(1), std::vector<std::string>{});
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(back), pd::qv(kLevel + "#3")}),
+            1);
+  for (const int batch_commits : {1, 500})
+    EXPECT_EQ(listed(batch_commits), std::vector<std::string>{unit_name(back, kLevel)}) << batch_commits;
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, MetaImportTest, ::testing::ValuesIn(P::testing::engines()));

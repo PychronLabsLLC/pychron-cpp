@@ -14,25 +14,6 @@ namespace pychron::ingest::detail {
 namespace P = pychron::persistence;
 using Json = nlohmann::json;
 
-namespace {
-
-bool needs_evidence(UnitDisposition disposition) {
-  switch (disposition) {
-    case UnitDisposition::Imported:
-    case UnitDisposition::Folded:
-    case UnitDisposition::Unchanged:
-    case UnitDisposition::Conflict:
-      return true;
-    case UnitDisposition::Ignored:
-    case UnitDisposition::Removed:
-    case UnitDisposition::Unclassified:
-      break;
-  }
-  return false;
-}
-
-}  // namespace
-
 Result<void> Accountant::check(const SourceUnit& unit, VerifyReport& report) {
   ++report.units;
   if (unit.disposition == UnitDisposition::Ignored) {
@@ -47,10 +28,17 @@ Result<void> Accountant::check(const SourceUnit& unit, VerifyReport& report) {
       if (!*there) open.missing.push_back(evidence);
     }
     // A unit that names nothing is accounted for only as a plain deletion.
-    if (open.missing.empty() && !(unit.evidence.empty() && needs_evidence(unit.disposition))) return {};
+    const bool plain_deletion = unit.disposition == UnitDisposition::Removed && unit.deleted;
+    if (open.missing.empty() && (!unit.evidence.empty() || plain_deletion)) return {};
   }
   report.unaccounted.push_back(std::move(open));
   return {};
+}
+
+Result<bool> Accountant::analysis_stored(P::Uuid analysis) {
+  auto heads = source_.store.heads(analysis);  // every analysis has root revisions
+  if (!heads) return fail(heads.error());
+  return !heads->empty();
 }
 
 Result<bool> Accountant::conflict_stored(const std::string& commit, const std::string& path) {
@@ -62,23 +50,27 @@ Result<bool> Accountant::conflict_stored(const std::string& commit, const std::s
 Result<bool> Accountant::found(const Evidence& evidence) {
   P::IStore& store = source_.store;
   switch (evidence.kind) {
-    case Evidence::Kind::Recorded: {
+    // The provenance row and the thing it is the provenance of, or the
+    // conflict the writer left instead.
+    case Evidence::Kind::Revision:
+    case Evidence::Kind::Analysis: {
       auto recorded = store.has_provenance(source_.uuid, evidence.commit, evidence.path);
-      if (!recorded || *recorded) return recorded;
-      auto refused = conflict_stored(evidence.commit, evidence.path);
-      if (!refused || *refused || evidence.blob_sha.empty()) return refused;
-      return store.has_provenance_blob(source_.uuid, evidence.path, evidence.blob_sha);
+      if (!recorded) return recorded;
+      if (*recorded) {
+        auto there = evidence.kind == Evidence::Kind::Revision
+                         ? store.has_revision(revision_id(source_.url, evidence.commit, evidence.path))
+                         : analysis_stored(evidence.entity);
+        if (!there || *there) return there;
+      }
+      return conflict_stored(evidence.commit, evidence.path);
     }
     case Evidence::Kind::Conflict:
       return conflict_stored(evidence.commit, evidence.path);
-    case Evidence::Kind::Blob:
-      if (evidence.blob_sha.empty()) return false;
-      return store.has_provenance_blob(source_.uuid, evidence.path, evidence.blob_sha);
     case Evidence::Kind::Entity: {
       auto rows = store.provenance_for(evidence.entity);
       if (!rows) return fail(rows.error());
       for (const auto& row : *rows)
-        if (row.source == source_.uuid) return true;
+        if (row.source == source_.uuid) return analysis_stored(evidence.entity);
       return false;
     }
     case Evidence::Kind::Note:

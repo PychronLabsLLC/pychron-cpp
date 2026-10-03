@@ -17,6 +17,7 @@ Result<void> UnitAccount::repeat(SourceUnit unit, const Last& last) {
   const bool plain = last.disposition == UnitDisposition::Ignored || last.disposition == UnitDisposition::Unclassified;
   unit.disposition = plain ? last.disposition : UnitDisposition::Unchanged;
   unit.evidence = last.evidence;
+  unit.repeats = last.commit;
   return visit_(unit);
 }
 
@@ -88,24 +89,24 @@ Result<void> UnitAccount::settle(Ledger& ledger, const ingest::ImportBatch& batc
     }
     return &open;
   };
-  const auto recorded = [&](const ingest::SourceKey& key, bool or_blob) {
-    if (key.path.empty()) return;
-    add(key.commit, key.path, {Evidence::Kind::Recorded, key.commit, key.path, or_blob ? key.blob_sha : std::string()});
+  // Every row is looked for at the file's own commit and path.
+  const auto revision_at = [&](const ingest::SourceKey& key) {
+    if (!key.path.empty()) add(key.commit, key.path, {Evidence::Kind::Revision, key.commit, key.path});
+  };
+  const auto analysis_at = [&](const ingest::SourceKey& key, persistence::Uuid analysis) {
+    add(key.commit, key.path, {Evidence::Kind::Analysis, key.commit, key.path, analysis});
   };
   for (const auto& item : batch.analyses) {
-    recorded(item.keys.record, false);
+    analysis_at(item.keys.record, item.ingest.analysis);
     for (const ingest::SourceKey* root : {&item.keys.signals, &item.keys.intercepts, &item.keys.baselines,
                                           &item.keys.blanks, &item.keys.icfactors, &item.keys.tags})
-      recorded(*root, false);
+      revision_at(*root);
   }
-  for (const auto& item : batch.memberships) recorded(item.key, false);
+  for (const auto& item : batch.memberships) analysis_at(item.key, item.analysis);
   for (const auto& changeset : batch.changesets) {
-    // A revision the walk had already imported the content of may sit at an
-    // earlier commit of its path; an identity revision is keyed by its record.
-    for (const auto& revision : changeset.revisions)
-      recorded(revision.key, revision.kind != persistence::Kind::Identity);
+    for (const auto& revision : changeset.revisions) revision_at(revision.key);  // an identity revision: at its record
     for (const auto& note : changeset.rewrites)
-      add(changeset.commit, note.path, {Evidence::Kind::Note, changeset.commit, note.path, {}, {}, "rewrites"});
+      add(changeset.commit, note.path, {Evidence::Kind::Note, changeset.commit, note.path, {}, "rewrites"});
   }
   for (const auto& conflict : batch.conflicts)
     if (!conflict.key.commit.empty())

@@ -1051,7 +1051,7 @@ Result<void> CatalogAdapter::for_each_unit(ingest::IImportState&,
       unit.path = row.path;
       unit.blob_sha = row.blob;
       unit.disposition = row.item ? ingest::UnitDisposition::Imported : ingest::UnitDisposition::Conflict;
-      if (row.item) unit.evidence.push_back({Evidence::Kind::CatalogRow, {}, {}, {}, {}, {}, *row.item});
+      if (row.item) unit.evidence.push_back({Evidence::Kind::CatalogRow, {}, {}, {}, {}, *row.item});
       for (const auto& conflict : row.conflicts)
         unit.evidence.push_back({Evidence::Kind::Conflict, conflict.key.commit, conflict.key.path});
       if (auto r = visit(unit); !r) return r;

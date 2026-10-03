@@ -43,6 +43,7 @@ std::optional<FileRef> Track::replace_latest(FileKind kind, const FileRef& ref) 
 bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work>* out) {
   std::vector<Track*> touched;
   bool record_rewritten = false;
+  applied_ = index;
   const auto note = [&](const GitChange& change, Ledger::Seen as) {
     if (ledger_) ledger_->changes.push_back({change.commit, change.path, change.blob_sha, as});
   };
@@ -70,12 +71,17 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
 
     PathInfo info = classify_path(entry.path);
     FileRef ref{index, entry.commit, entry.path, entry.blob_sha};
-    note(entry, info.kind == FileKind::Ignored ? Ledger::Seen::Ignored : Ledger::Seen::Taken);
+    // A restored file repeats what its path held: for the ledger it is the
+    // unit it repeats, whatever is made of it below.
+    note(entry, info.kind == FileKind::Ignored ? Ledger::Seen::Ignored
+                : restored                     ? Ledger::Seen::Repeated
+                                               : Ledger::Seen::Taken);
     switch (info.kind) {
       case FileKind::Ignored:
         continue;
       case FileKind::Spectrometer:
         spectrometers_[info.key] = ref;
+        spectrometer_first_.try_emplace(info.key, index);
         [[fallthrough]];
       case FileKind::Unknown:
       case FileKind::InterpretedAge:
@@ -129,6 +135,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
 
 void Walk::flush(Track& track, std::vector<Work>* out) {
   track.flushed = true;
+  track.folded_at = applied_;
   if (track.record) pending_.erase({track.record->index, &track});
   flushed_.push_back(&track);
   if (out) {
@@ -182,6 +189,11 @@ void Walk::orphans(std::vector<Work>& out) {
     for (const auto& file : track.satellites) add(file.kind, file.ref);
     for (const auto& file : track.later) add(file.kind, file.ref);
   }
+}
+
+int Walk::spectrometer_first(const std::string& sha1) const {
+  const auto it = spectrometer_first_.find(sha1);
+  return it == spectrometer_first_.end() ? -1 : it->second;
 }
 
 const FileRef* Walk::spectrometer(const std::string& sha1) const {

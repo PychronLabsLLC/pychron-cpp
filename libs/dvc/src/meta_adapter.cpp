@@ -581,7 +581,11 @@ class MetaRepoAdapter::Impl {
     if (auto planned = plan(std::nullopt); !planned) return fail(planned.error());
     // By path: what its last version that yielded anything left, and what
     // its last version that could be read left.
-    std::unordered_map<std::string, std::vector<Evidence>> last, last_read;
+    struct Left {
+      std::string commit;
+      std::vector<Evidence> evidence;
+    };
+    std::unordered_map<std::string, Left> last, last_read;
     Result<void> done;
     for (;;) {
       std::vector<Listed> listed;
@@ -609,8 +613,8 @@ class MetaRepoAdapter::Impl {
                                : unit.deleted ? UnitDisposition::Removed
                                               : UnitDisposition::Imported;
             unit.evidence = yielded;
-            if (!refused) last_read.insert_or_assign(unit.path, yielded);
-            last.insert_or_assign(unit.path, std::move(yielded));
+            if (!refused) last_read.insert_or_assign(unit.path, Left{unit.commit, yielded});
+            last.insert_or_assign(unit.path, Left{unit.commit, std::move(yielded)});
           } else if (unit.deleted) {
             unit.disposition = UnitDisposition::Removed;  // nothing was there to take away
           } else {
@@ -619,7 +623,8 @@ class MetaRepoAdapter::Impl {
             const auto& from = change.seen ? last_read : last;
             if (const auto before = from.find(unit.path); before != from.end()) {
               unit.disposition = UnitDisposition::Unchanged;
-              unit.evidence = before->second;
+              unit.evidence = before->second.evidence;
+              unit.repeats = before->second.commit;
             } else {
               unit.disposition = UnitDisposition::Ignored;  // no version of the file has held an object
             }
@@ -674,7 +679,7 @@ class MetaRepoAdapter::Impl {
     for (const auto& changeset : batch.changesets) {
       if (changeset.commit != unit.commit) continue;
       for (const auto& revision : changeset.revisions)
-        if (of_file(revision.key.path)) out.push_back({Evidence::Kind::Recorded, unit.commit, revision.key.path});
+        if (of_file(revision.key.path)) out.push_back({Evidence::Kind::Revision, unit.commit, revision.key.path});
       // {"removed": ["<file>#<part>", ...]}: what went and has no revision to say so.
       const auto detail = parse_legacy(changeset.detail_json);
       if (!detail || !detail->is_object()) continue;
@@ -682,7 +687,7 @@ class MetaRepoAdapter::Impl {
       if (removed == detail->end() || !removed->is_array()) continue;
       for (const auto& entry : *removed)
         if (entry.is_string() && of_file(entry.get_ref<const std::string&>()))
-          out.push_back({Evidence::Kind::Note, unit.commit, entry.get<std::string>(), {}, {}, "removed"});
+          out.push_back({Evidence::Kind::Note, unit.commit, entry.get<std::string>(), {}, "removed"});
     }
     for (const auto& conflict : batch.conflicts)
       if (conflict.key.commit == unit.commit && conflict.key.path == unit.path)

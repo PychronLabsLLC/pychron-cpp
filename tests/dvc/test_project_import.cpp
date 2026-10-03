@@ -963,9 +963,14 @@ TEST_P(ProjectImportTest, SecondCopyInTheSameSourceIsMembershipOrIdentityClash) 
   const auto expect = [&](World& w, const std::string& edited, const std::string& what) {
     EXPECT_EQ(w.count("analysis"), 1) << what;
     EXPECT_EQ(w.count("repository_member"), 1) << what;
-    const auto conflicts = w.conflicts();
+    const auto conflicts = w.conflicts(ConflictKind::IdentityClash);
     ASSERT_EQ(conflicts.size(), 1u) << what;
-    EXPECT_EQ(conflicts[0].kind, ConflictKind::IdentityClash) << what;
+    // The copies bring the spectrometer file F's record names, after F was
+    // folded without it: that is said, once, at any cut (spec 10.29).
+    const auto late = w.conflicts(ConflictKind::Unparseable);
+    ASSERT_EQ(late.size(), 1u) << what;
+    EXPECT_EQ(late[0].path, std::string(LegacyRepoBuilder::kSpecSha) + ".json") << what;
+    EXPECT_EQ(json::parse(late[0].detail_json).at("reason"), "spectrometer_file_after_collection") << what;
     EXPECT_EQ(conflicts[0].uuid,
               ingest::conflict_id(kUrl, edited, LegacyRepoBuilder::path("66052-08A", FileKind::Record)))
         << what;
@@ -979,7 +984,7 @@ TEST_P(ProjectImportTest, SecondCopyInTheSameSourceIsMembershipOrIdentityClash) 
   auto later = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(later) << err(later.error());
   expect(*world_, edited, "copies in a later run");
-  const auto detail = world_->conflicts()[0].detail_json;
+  const auto detail = world_->conflicts(ConflictKind::IdentityClash)[0].detail_json;
 
   // All in one walk, in one batch and in several: the same.
   for (const int batch_commits : {500, 1}) {
@@ -987,7 +992,7 @@ TEST_P(ProjectImportTest, SecondCopyInTheSameSourceIsMembershipOrIdentityClash) 
     auto stats = run_import(*other, adapter_config(repo_, batch_commits));
     ASSERT_TRUE(stats) << err(stats.error());
     expect(*other, edited, "one walk, batches of " + std::to_string(batch_commits));
-    EXPECT_EQ(json::parse(other->conflicts()[0].detail_json), json::parse(detail));
+    EXPECT_EQ(json::parse(other->conflicts(ConflictKind::IdentityClash)[0].detail_json), json::parse(detail));
   }
   // Again: nothing.
   const auto seq = *store().latest_change_seq();
@@ -2470,6 +2475,145 @@ TEST_P(ProjectImportTest, VerifyReportsAMissingRevisionAnalysisOrConflict) {
             ingest::UnitDisposition::Folded);
 }
 
+// A file that goes X, Y, X has three revisions. The third has the content of
+// the first: a row for that blob at another commit must not stand in for it.
+TEST_P(ProjectImportTest, VerifyReportsARevisionDroppedFromAnXYXHistory) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  const std::string back = legacy_.commit("<ISOEVO> back to the collection fits", kRefit);
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  ASSERT_EQ(store().history(kE, Kind::Intercepts)->size(), 3u);
+  EXPECT_EQ(unaccounted(verify_repo(*world_, adapter_config(repo_, 1))), std::vector<std::string>{});
+
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(back), pd::qv(path)}),
+            1);
+  for (const int batch_commits : {1, 500}) {
+    const auto report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{unit_name(back, path)}) << batch_commits;
+    EXPECT_FALSE(report.ok());
+  }
+}
+
+// A spectrometer file that first appears after the analysis naming it was
+// folded cannot become its snapshot: it is a conflict, at any cut, and verify
+// lists the file when that conflict is missing. One no record names is ignored.
+TEST_P(ProjectImportTest, LateSpectrometerFileIsAConflict) {
+  write_uuid_named(repo_, kF, "66052-03B");  // names kSpecSha; the file is not there
+  legacy_.commit("<IMPORT> initial", kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kDay2);  // a file of an analysis without a record, for one more commit
+  const std::string spectrometer = std::string(LegacyRepoBuilder::kSpecSha) + ".json";
+  repo_.write(spectrometer, fixture(kUnknown + spectrometer));
+  const std::string unnamed = std::string(40, 'a') + ".json";
+  repo_.write(unnamed, fixture(kUnknown + spectrometer));
+  const std::string late = legacy_.commit("settings, late", kRefit);
+
+  std::vector<std::string> first;
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    const auto conflicts = world->conflicts(ConflictKind::Unparseable);
+    ASSERT_EQ(conflicts.size(), 1u) << batch_commits;
+    EXPECT_EQ(conflicts[0].uuid, ingest::conflict_id(kUrl, late, spectrometer));
+    const json detail = json::parse(conflicts[0].detail_json);
+    EXPECT_EQ(detail.at("reason"), "spectrometer_file_after_collection");
+    EXPECT_EQ(detail.at("analyses"), json::array({kF.str()}));
+    // The analysis was stored without the snapshot, and says which it lacks.
+    EXPECT_EQ(json::parse(world->analysis_detail(kF)).at("spectrometer_file_unavailable"),
+              std::string(LegacyRepoBuilder::kSpecSha))
+        << batch_commits;
+    const auto rows = snapshot_of(*world);
+    if (first.empty())
+      first = rows;
+    else
+      EXPECT_TRUE(rows == first) << batch_commits << ": " << first_difference(rows, first);
+
+    // A replay writes nothing.
+    auto replay = writer_config();
+    replay.replay = true;
+    const auto seq = *world->store->latest_change_seq();
+    ASSERT_TRUE(run_import(*world, adapter_config(repo_, batch_commits == 1 ? 500 : 1), std::nullopt, replay));
+    EXPECT_EQ(*world->store->latest_change_seq(), seq) << batch_commits;
+
+    auto report = verify_repo(*world, adapter_config(repo_, batch_commits == 1 ? 500 : 1));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    EXPECT_EQ(report.replay_would_write, 0);
+    EXPECT_EQ(report.ignored, 1) << "the settings file no record names";
+    EXPECT_FALSE(report.ok());  // the late file and the record-less intercepts are pending conflicts
+    ASSERT_EQ(forget(*world, "DELETE FROM import_conflict WHERE path = ?", {pd::qv(spectrometer)}), 1);
+    report = verify_repo(*world, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{unit_name(late, spectrometer)}) << batch_commits;
+    EXPECT_EQ(unaccounted_unit(report, late, spectrometer).unit.disposition, ingest::UnitDisposition::Conflict);
+  }
+
+  // The file arrives in a later run: the analysis was folded by an earlier one.
+  auto resumed = fresh_world();
+  ASSERT_TRUE(run_import(*resumed, adapter_config(repo_, 1), 2));
+  ASSERT_TRUE(run_import(*resumed, adapter_config(repo_, 1)));
+  const auto rows = snapshot_of(*resumed);
+  EXPECT_TRUE(rows == first) << first_difference(rows, first);
+}
+
+// Good content after a version that could not be read is a revision at its
+// own commit: verify looks for it there, not at the commit that first had it.
+TEST_P(ProjectImportTest, VerifyLooksForGoodContentAfterAnUnreadableVersionAtItsOwnCommit) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string good = legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  legacy_.write(kRunE, FileKind::Intercepts, "{ not json");
+  const std::string bad = legacy_.commit("interrupted", kRefit);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar40", 12.5));
+  const std::string again = legacy_.commit("repaired", kLater);
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+
+  auto report = verify_repo(*world_, adapter_config(repo_, 1));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.pending_blocking, 1);  // the unreadable version
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(again), pd::qv(path)}),
+            1);
+  for (const int batch_commits : {1, 500}) {
+    report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{unit_name(again, path)}) << batch_commits;
+    EXPECT_EQ(unaccounted_unit(report, again, path).unit.disposition, ingest::UnitDisposition::Imported);
+  }
+  (void)good;
+  (void)bad;
+}
+
+// A file removed and restored unchanged repeats the unit before the removal:
+// it is accounted for by that unit's row, and by nothing else.
+TEST_P(ProjectImportTest, VerifyAccountsForARestoredFileByTheUnitItRepeats) {
+  const auto collected = legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string refit = legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  repo_.remove(path);
+  const std::string removed = legacy_.commit("removed by hand", kRefit);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar40", 12.5));
+  const std::string restored = legacy_.commit("restored", kLater);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  EXPECT_EQ(unaccounted(verify_repo(*world_, adapter_config(repo_, 1))), std::vector<std::string>{});
+
+  // The root's row has the path too, but the restored file repeats the refit.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(refit), pd::qv(path)}),
+            1);
+  for (const int batch_commits : {1, 500}) {
+    const auto report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), sorted({unit_name(refit, path), unit_name(restored, path)})) << batch_commits;
+    const auto& repeat = unaccounted_unit(report, restored, path);
+    EXPECT_EQ(repeat.unit.disposition, ingest::UnitDisposition::Unchanged);
+    EXPECT_EQ(repeat.unit.repeats, refit);
+    ASSERT_EQ(repeat.missing.size(), 1u);
+    EXPECT_EQ(repeat.missing[0].commit, refit);
+  }
+  (void)collected;
+  (void)removed;
+}
+
 // An analysis the store does not have: a history longer than what was imported.
 TEST_P(ProjectImportTest, VerifyReportsAnAnalysisThatIsNotImported) {
   legacy_.collect(kRunE, kE.str(), kCollected);
@@ -2493,6 +2637,11 @@ TEST_P(ProjectImportTest, VerifyReportsAnAnalysisThatIsNotImported) {
         << batch_commits;
     EXPECT_GT(report.would_write, 0);
     EXPECT_EQ(report.would_write, report.replay_would_write) << batch_commits;
+    // The import finished, but the repository has a head it did not see.
+    EXPECT_EQ(report.source.status, "finished");
+    EXPECT_NE(report.source.stored_head, std::optional<std::string>{report.source.current_head});
+    EXPECT_EQ(report.source.current_head, repo_.head());
+    EXPECT_FALSE(report.source.finished_and_current());
   }
   // Verify did not import it, nor move the token.
   EXPECT_EQ(world_->count("analysis"), 1);
@@ -2527,13 +2676,14 @@ TEST_P(ProjectImportTest, VerifyAccountsForCopiesOfAnAnalysis) {
     ASSERT_TRUE(run_import(*world, second_config));
     EXPECT_EQ(world->count("analysis"), 1);
 
-    // This source: nothing unaccounted. The copy that differs and the edit of
-    // its record, which is not applied, are pending conflicts.
+    // This source: nothing unaccounted. The copy that differs, the edit of its
+    // record, which is not applied, and the spectrometer file that came after
+    // F was folded are pending conflicts.
     auto report = verify_repo(*world, adapter_config(repo_, batch_commits == 1 ? 500 : 1));
     EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
     EXPECT_EQ(report.would_write, 0);
     EXPECT_EQ(report.replay_would_write, 0);
-    EXPECT_EQ(report.pending_blocking, 2) << batch_commits;
+    EXPECT_EQ(report.pending_blocking, 3) << batch_commits;
     // The other source: the record is the membership row, the rest is folded into it.
     report = verify_repo(*world, second_config);
     EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
@@ -2544,7 +2694,13 @@ TEST_P(ProjectImportTest, VerifyAccountsForCopiesOfAnAnalysis) {
     // the spectrometer file, which no analysis of that source uses.
     ASSERT_EQ(forget(*world, "DELETE FROM import_provenance WHERE commit_sha = ?", {pd::qv(shared)}), 1);
     report = verify_repo(*world, second_config);
-    EXPECT_EQ(report.unaccounted.size(), 7u) << batch_commits;
+    std::vector<std::string> files;
+    for (const FileKind kind : {FileKind::Record, FileKind::Data, FileKind::Extraction, FileKind::Intercepts,
+                                FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+      files.push_back(unit_name(shared, LegacyRepoBuilder::path("66052-03B", kind)));
+    EXPECT_EQ(unaccounted(report), sorted(files)) << batch_commits;
+    EXPECT_EQ(unaccounted_unit(report, shared, LegacyRepoBuilder::path("66052-03B", FileKind::Blanks)).unit.disposition,
+              ingest::UnitDisposition::Folded);
     EXPECT_EQ(report.ignored, 1);
   }
   (void)same;

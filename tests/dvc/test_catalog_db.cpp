@@ -784,6 +784,42 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
   EXPECT_EQ(report.pending_warnings, 3);
 }
 
+// Catalog rows are found by natural key, whoever made them, and a dry run does
+// not count catalog rows: a dump that was never imported can look complete.
+// What says it was imported is the source: registered, finished, same dump.
+TEST_P(CatalogDb, VerifyOfADumpThatWasNotImportedIsNotOk) {
+  import_fixture();
+  DumpDir other;
+  other.table("ExtractDeviceTbl", {R"({"name":"Fusions CO2"})", R"({"name":"Fusions Diode"})"}).done();
+  auto adapter = CatalogAdapter::open(adapter_config(other.path()));
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  auto report = dvc::testing::verify_source(*world_, **adapter);
+  EXPECT_EQ(report.units, 2);
+  EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.would_write, 0);
+  EXPECT_EQ(report.replay_would_write, 0);
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_FALSE(report.source.registered);
+  EXPECT_FALSE(report.ok());
+
+  ASSERT_TRUE(run_import(*world_, adapter_config(other.path())));
+  auto again = CatalogAdapter::open(adapter_config(other.path()));
+  ASSERT_TRUE(again) << err(again.error());
+  report = dvc::testing::verify_source(*world_, **again);
+  EXPECT_TRUE(report.source.registered);
+  EXPECT_EQ(report.source.status, "finished");
+  EXPECT_TRUE(report.ok());
+
+  // The directory converted again from a newer dump: not the dump that was imported.
+  other.set("sha256", std::string(64, 'b')).done();
+  auto newer = CatalogAdapter::open(adapter_config(other.path()));
+  ASSERT_TRUE(newer) << err(newer.error());
+  report = dvc::testing::verify_source(*world_, **newer);
+  EXPECT_EQ(report.source.status, "finished");
+  EXPECT_EQ(report.source.current_head, std::string(64, 'b'));
+  EXPECT_FALSE(report.ok());
+}
+
 // Take one row out of the store: verify names the dump row it belongs to.
 TEST_P(CatalogDb, VerifyReportsAMissingCatalogRowOrConflict) {
   import_fixture();

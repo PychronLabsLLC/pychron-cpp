@@ -3,6 +3,8 @@
 // `import verify` (legacy ingestion spec, sections 6 and 10): whether an
 // import of one source can be trusted. It reports
 //
+//   the import   the source is registered, its last run finished, and it has
+//                not moved since;
 //   accounting   every unit of the source is imported or explained: each
 //                piece of evidence the adapter names (adapter.hpp) is looked
 //                up in the store;
@@ -35,14 +37,19 @@
 
 namespace pychron::ingest {
 
-// The moment a legacy age was computed at: when its interpreted age was
-// saved. An age function reduces the analysis from the revisions that were
-// head then, with the reference data of then (spec 10.6).
+// The point a legacy age was computed at: the commit that saved its
+// interpreted age. It is a place in the walk of the source, not a time: git
+// author dates tie and run out of order (spec 10.6 and 10.30). An age
+// function reduces the analysis from, for each kind, the last revision whose
+// source commit is at or before `commit` in the walk order of `source`, with
+// the reference data of that point.
 struct AsOf {
   persistence::Uuid interpreted_age;  // the interpreted age the legacy age is stored with
-  persistence::Uuid revision;         // its revision that holds the age: the latest one
+  persistence::Uuid revision;         // its head revision, which holds the age
   persistence::Uuid changeset;        // the changeset that stored that revision
-  persistence::UtcTime created;       // that changeset's time: the author date of the commit
+  persistence::Uuid source;           // the import source the revision came from
+  std::string commit;                 // the source commit of that revision, from its provenance row
+  persistence::UtcTime created;       // the changeset's time (the commit's author date): information only
 };
 
 struct ComputedAge {
@@ -78,7 +85,26 @@ struct ParityFailure {
   double age_difference = 0, age_err_difference = 0;  // relative
 };
 
+// The import source as the store has it, against the adapter's source now.
+struct SourceState {
+  bool registered = false;
+  std::string status;                     // registered | running | paused | finished | failed; empty: not registered
+  int done = 0, total = 0;
+  std::optional<std::string> stored_head;  // the head the last batch was read at
+  std::string current_head;                // the adapter's head now
+
+  // The last run reached the end of the source, and the source has not moved since.
+  bool finished_and_current() const {
+    return registered && status == "finished" && stored_head && *stored_head == current_head;
+  }
+};
+
 struct VerifyReport {
+  // The import. Everything below describes the source as it is now; unless
+  // it is the source that was imported, to its end, none of it says the
+  // import can be trusted.
+  SourceState source;
+
   // Accounting.
   int units = 0;    // every unit the source holds
   int ignored = 0;  // of those, not part of the import by rule
@@ -94,17 +120,20 @@ struct VerifyReport {
   int pending_warnings = 0;  // detail has "imported": true or "synthesized": true
   std::vector<persistence::Uuid> blocking_conflicts, warning_conflicts;  // sorted
 
-  // Age parity. Each interpreted age is compared by its latest revision only;
+  // Age parity. Each interpreted age is compared by its head revision only;
   // every member of that revision is one comparison.
-  int parity_pass = 0, parity_fail = 0, parity_not_comparable = 0;
+  int parity_pass = 0;           // age and error agree
+  int parity_pass_age_only = 0;  // the age agrees; the legacy file has no error to compare
+  int parity_fail = 0, parity_not_comparable = 0;
   std::map<std::string, int> not_comparable_reasons;  // reason -> members
   std::vector<ParityFailure> parity_failures;         // sorted by interpreted age, then analysis
 
-  // Everything accounted for, nothing to write, no blocking conflict, no
-  // parity failure. Members that are not comparable do not make it false:
-  // look at parity_not_comparable.
+  // The import finished and the source has not moved, everything accounted
+  // for, nothing to write, no blocking conflict, no parity failure. Members
+  // that are not comparable do not make it false: look at
+  // parity_not_comparable.
   bool ok() const {
-    return unaccounted.empty() && would_write == 0 && replay_would_write == 0 && pending_blocking == 0 &&
+    return source.finished_and_current() && unaccounted.empty() && would_write == 0 && replay_would_write == 0 && pending_blocking == 0 &&
            parity_fail == 0;
   }
 };

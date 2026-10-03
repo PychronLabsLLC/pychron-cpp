@@ -60,6 +60,10 @@ struct Track {
   // file, or a kind that has no root. In walk order.
   std::vector<SeenFile> later;
   bool flushed = false;  // the collection was handed to the mapper, now or by an earlier run
+  // The place in the walk of the commit that folded it: the commit that
+  // completed it or ran out its wait, or the last commit of the walk that
+  // folded it at its end. It does not depend on how the walk is cut.
+  int folded_at = -1;
   // The record and each satellite file as last seen. They are not revisioned;
   // a rewrite is reported with what changed against the version before it.
   std::vector<SeenFile> latest;
@@ -73,6 +77,7 @@ struct Track {
   };
   Role role = Role::Unresolved;
   persistence::Uuid uuid;
+  std::optional<std::string> spec_sha;  // the spectrometer settings its record names
 
   bool complete() const { return record && intercepts && baselines && blanks && icfactors; }
   // The collection slot of a kind; null for a kind that has none.
@@ -119,7 +124,7 @@ struct Ledger {
   enum class Seen {
     Taken,     // handed on: part of a collection, or a change
     Deleted,
-    Repeated,  // the path already has this blob
+    Repeated,  // the path already has this blob, or is back with the blob it had when it was removed
     Ignored    // not a file the import reads
   };
   struct Change {
@@ -168,6 +173,8 @@ class Walk {
   const std::vector<Track*>& flushed() const { return flushed_; }
   // The file that holds spectrometer settings `sha1`, as last seen.
   const FileRef* spectrometer(const std::string& sha1) const;
+  // The place in the walk of the commit that first had that file; -1: none.
+  int spectrometer_first(const std::string& sha1) const;
 
  private:
   void flush(Track& track, std::vector<Work>* out);
@@ -186,6 +193,8 @@ class Walk {
   };
   std::unordered_map<std::string, LastSeen> last_blob_;
   std::map<std::string, FileRef> spectrometers_;
+  std::map<std::string, int> spectrometer_first_;
+  int applied_ = -1;  // the commit apply() was last given
   std::set<std::pair<int, Track*>> pending_;  // (record commit index, track)
   std::vector<Track*> flushed_;
 };
@@ -234,7 +243,9 @@ class Mapper {
                             std::string identifier = {});
   // Whether the file is back with the content its path had when it was removed.
   bool unchanged(const Change& item);
-  Result<std::optional<persistence::SpectrometerSnapshot>> snapshot(const std::string& sha1);
+  // The settings `sha1` for an analysis folded at `folded_at`; nullopt when
+  // the file was not in the repository by then, or cannot be read.
+  Result<std::optional<persistence::SpectrometerSnapshot>> snapshot(const std::string& sha1, int folded_at);
   Result<void> synthesize_catalog(const ParsedRecord& record, const persistence::AnalysisIngest& analysis,
                                   const FileRef& from, Output& out);
 
@@ -259,7 +270,9 @@ class Mapper {
 // verifier checks (ingest/adapter.hpp). A unit is settled in the batch that
 // maps its file: from the batch come the rows the writer leaves for it, from
 // the ledger where its content is when it has no row of its own. A file that
-// repeats the blob its path already has is settled with the unit it repeats.
+// repeats the blob its path already has, or had when it was removed, is
+// settled with the one unit it repeats: that unit's rows, never "a row with
+// this blob" (spec 10.27).
 class UnitAccount {
  public:
   using Visit = std::function<Result<void>(const ingest::SourceUnit&)>;

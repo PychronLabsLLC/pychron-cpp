@@ -140,8 +140,9 @@ std::vector<ImportBatch> history() {
   return out;
 }
 
-Evidence recorded(const SourceKey& key, bool or_blob = false) {
-  return {Evidence::Kind::Recorded, key.commit, key.path, or_blob ? key.blob_sha : std::string()};
+Evidence recorded(const SourceKey& key) { return {Evidence::Kind::Revision, key.commit, key.path}; }
+Evidence analysis_at(const SourceKey& key, Uuid analysis) {
+  return {Evidence::Kind::Analysis, key.commit, key.path, analysis};
 }
 
 SourceUnit unit(const SourceKey& key, UnitDisposition disposition, std::vector<Evidence> evidence = {}) {
@@ -159,13 +160,15 @@ SourceUnit unit(const SourceKey& key, UnitDisposition disposition, std::vector<E
 std::vector<SourceUnit> units_of(const std::vector<ImportBatch>& batches) {
   std::vector<SourceUnit> out;
   for (const auto& batch : batches) {
-    for (const auto& a : batch.analyses)
-      for (const SourceKey* key : {&a.keys.record, &a.keys.signals, &a.keys.intercepts, &a.keys.baselines,
-                                   &a.keys.blanks, &a.keys.icfactors})
+    for (const auto& a : batch.analyses) {
+      out.push_back(unit(a.keys.record, UnitDisposition::Imported, {analysis_at(a.keys.record, a.ingest.analysis)}));
+      for (const SourceKey* key :
+           {&a.keys.signals, &a.keys.intercepts, &a.keys.baselines, &a.keys.blanks, &a.keys.icfactors})
         out.push_back(unit(*key, UnitDisposition::Imported, {recorded(*key)}));
+    }
     for (const auto& c : batch.changesets)
       for (const auto& r : c.revisions) {
-        out.push_back(unit(r.key, UnitDisposition::Imported, {recorded(r.key, true)}));
+        out.push_back(unit(r.key, UnitDisposition::Imported, {recorded(r.key)}));
         if (std::holds_alternative<InterpretedAgeKey>(r.subject))
           out.back().interpreted_age = std::get<InterpretedAgeKey>(r.subject).name;
       }
@@ -195,13 +198,14 @@ std::string age_document(const std::vector<Member>& members) {
 }
 
 // A commit that saves the interpreted age at kAgePath.
-ImportBatch age_batch(const std::string& commit, const char* iso, const std::vector<Member>& members) {
+ImportBatch age_batch(const std::string& commit, const char* iso, const std::vector<Member>& members,
+                      const std::string& document = {}) {
   ImportBatch b;
   b.catalog.push_back(InterpretedAgeItem{kAgePath, "66573 plateau", "66573", "Henry_Hill"});
   P::InterpretedAgeValue value;
   value.age = 28.2;
   value.age_err = 0.05;
-  value.doc_json = age_document(members);
+  value.doc_json = document.empty() ? age_document(members) : document;
   std::set<Uuid> listed;  // a member row once, however often the document lists it
   for (const auto& m : members)
     if (const auto uuid = Uuid::parse(m.uuid); uuid && listed.insert(*uuid).second)
@@ -347,6 +351,79 @@ TEST_P(VerifierTest, CleanImportIsOk) {
   EXPECT_EQ(report.pending_blocking, 0);
   EXPECT_EQ(report.pending_warnings, 0);
   EXPECT_EQ(report.parity_pass + report.parity_fail + report.parity_not_comparable, 0);
+  EXPECT_TRUE(report.source.registered);
+  EXPECT_EQ(report.source.status, "finished");
+  EXPECT_EQ(report.source.done, 3);
+  EXPECT_EQ(report.source.total, 3);
+  EXPECT_EQ(report.source.stored_head, std::optional<std::string>{"head-sha"});
+  EXPECT_EQ(report.source.current_head, "head-sha");
+}
+
+// Everything else can look right for a source that was not imported, not to
+// its end, or that has moved since: rows other sources made satisfy natural
+// keys, and a dry run does not count catalog rows (spec 10.28).
+TEST_P(VerifierTest, NeedsAFinishedImportOfTheSourceAsItIsNow) {
+  std::vector<ImportBatch> batches(2);
+  batches[0].catalog = lab_catalog();
+  batches[1].catalog = {ExtractDeviceItem{"Fusions CO2"}};
+  seal(batches);
+  std::vector<SourceUnit> units;
+  for (const auto& batch : batches)
+    for (const auto& item : batch.catalog)
+      units.push_back(unit({"dump", "Tbl.jsonl#" + std::to_string(units.size()), "line"}, UnitDisposition::Imported,
+                           {{Evidence::Kind::CatalogRow, {}, {}, {}, {}, item}}));
+  const auto verified = [&](const SourceDescription& as) {
+    FakeAdapter adapter(as, batches);
+    adapter.honour_token(true);
+    adapter.units(units);
+    auto report = verify(store(), world_->client, adapter, config(), {}, {});
+    EXPECT_TRUE(report) << (report ? "" : err(report.error()));
+    return report ? *report : VerifyReport{};
+  };
+  const auto clean_but_for_the_source = [](const VerifyReport& r) {
+    return r.unaccounted.empty() && r.would_write == 0 && r.replay_would_write == 0 && r.pending_blocking == 0;
+  };
+
+  // The rows exist: another source brought them. This source was never imported.
+  {
+    SourceDescription other = description();
+    other.url = "https://github.com/NMGRLData/Other";
+    FakeAdapter adapter(other, batches);
+    BatchWriter writer(store(), world_->client, config());
+    ASSERT_TRUE(writer.run(adapter, std::nullopt, {}, {}));
+  }
+  auto report = verified(description());
+  EXPECT_TRUE(clean_but_for_the_source(report));
+  EXPECT_FALSE(report.source.registered);
+  EXPECT_EQ(report.source.status, "");
+  EXPECT_FALSE(report.ok());
+
+  // Imported, but the last run stopped before the end of the stream was seen.
+  run_import(batches, 1);
+  report = verified(description());
+  EXPECT_TRUE(report.source.registered);
+  EXPECT_EQ(report.source.status, "paused");
+  EXPECT_EQ(report.source.done, 1);
+  EXPECT_EQ(report.source.total, 2);
+  EXPECT_TRUE(clean_but_for_the_source(report));
+  EXPECT_FALSE(report.ok());
+
+  // Finished, and the source is what was imported.
+  run_import(batches);
+  report = verified(description());
+  EXPECT_EQ(report.source.status, "finished");
+  EXPECT_TRUE(report.source.finished_and_current());
+  EXPECT_TRUE(report.ok());
+
+  // Finished, but the source has moved since: what was verified is not what is there.
+  SourceDescription moved = description();
+  moved.head = "head-2";
+  report = verified(moved);
+  EXPECT_EQ(report.source.status, "finished");
+  EXPECT_EQ(report.source.stored_head, std::optional<std::string>{"head-sha"});
+  EXPECT_EQ(report.source.current_head, "head-2");
+  EXPECT_TRUE(clean_but_for_the_source(report));
+  EXPECT_FALSE(report.ok());
 }
 
 TEST_P(VerifierTest, MissingProvenanceIsUnaccounted) {
@@ -363,7 +440,7 @@ TEST_P(VerifierTest, MissingProvenanceIsUnaccounted) {
   EXPECT_EQ(report.unaccounted[0].unit.commit, "c4");
   EXPECT_EQ(report.unaccounted[0].unit.path, "665/tags/73-02.json");
   ASSERT_EQ(report.unaccounted[0].missing.size(), 1u);
-  EXPECT_EQ(report.unaccounted[0].missing[0].kind, Evidence::Kind::Recorded);
+  EXPECT_EQ(report.unaccounted[0].missing[0].kind, Evidence::Kind::Revision);
   EXPECT_EQ(report.would_write, 0);
 }
 
@@ -385,15 +462,21 @@ TEST_P(VerifierTest, DeletedAndConflictedUnitsAreAccounted) {
   SourceUnit removal = unit({"c9", "NM-300/A.json", ""}, UnitDisposition::Removed, {recorded({"c9", "NM-300/A.json#1", ""})});
   removal.deleted = true;
   units.push_back(removal);
+  // "Removed" accounts for a deletion, not for a file that is there.
+  units.push_back(unit({"c9", "665/73-01.json", "rec-1b"}, UnitDisposition::Removed));
   const auto report = check(batches, units);
   EXPECT_FALSE(report.ok());
-  ASSERT_EQ(report.unaccounted.size(), 2u);
-  EXPECT_EQ(report.unaccounted[0].unit.path, "NM-300/A.json");  // sorted by path
-  EXPECT_EQ(report.unaccounted[1].unit.path, "notes.txt");
-  EXPECT_EQ(report.unaccounted[1].unit.commit, "c9");
+  ASSERT_EQ(report.unaccounted.size(), 3u);
+  EXPECT_EQ(report.unaccounted[0].unit.path, "665/73-01.json");  // sorted by path
+  EXPECT_FALSE(report.unaccounted[0].unit.deleted);
+  EXPECT_EQ(report.unaccounted[1].unit.path, "NM-300/A.json");
+  EXPECT_EQ(report.unaccounted[2].unit.path, "notes.txt");
+  EXPECT_EQ(report.unaccounted[2].unit.commit, "c9");
 }
 
-TEST_P(VerifierTest, KnownBlobAtOtherCommitIsAccounted) {
+// A unit is accounted for by a row at its own commit, or by the rows of the
+// one earlier unit it repeats: never by "that blob is somewhere" (spec 10.27).
+TEST_P(VerifierTest, ARepeatPointsAtTheUnitItRepeats) {
   const auto batches = history();
   run_import(batches);
   resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
@@ -401,20 +484,54 @@ TEST_P(VerifierTest, KnownBlobAtOtherCommitIsAccounted) {
   // c3's refit of A, seen again at c8 with the same blob (a merge repeating a side).
   const std::string path = kind_path("intercepts", 1);
   auto units = units_of(batches);
-  units.push_back(unit({"c8", path, "int-c3"}, UnitDisposition::Unchanged, {{Evidence::Kind::Blob, {}, path, "int-c3"}}));
-  units.push_back(unit({"c9", path, "int-c3"}, UnitDisposition::Imported, {recorded({"c9", path, "int-c3"}, true)}));
+  SourceUnit repeat = unit({"c8", path, "int-c3"}, UnitDisposition::Unchanged, {recorded({"c3", path, "int-c3"})});
+  repeat.repeats = "c3";
+  units.push_back(repeat);
   EXPECT_TRUE(check(batches, units).ok());
 
-  // Another blob at that path was never imported.
-  units.push_back(unit({"c10", path, "int-zz"}, UnitDisposition::Unchanged, {{Evidence::Kind::Blob, {}, path, "int-zz"}}));
-  units.push_back(unit({"c11", path, "int-zz"}, UnitDisposition::Imported, {recorded({"c11", path, "int-zz"}, true)}));
-  // Without the blob a revision must be at its own commit.
-  units.push_back(unit({"c12", path, "int-c3"}, UnitDisposition::Imported, {recorded({"c12", path, "int-c3"})}));
+  // The same content at another commit said to be a revision of its own: it
+  // needs its own row, whatever blob the path has elsewhere.
+  units.push_back(unit({"c9", path, "int-c3"}, UnitDisposition::Imported, {recorded({"c9", path, "int-c3"})}));
+  // A repeat of a unit that was never imported.
+  units.push_back(unit({"c10", path, "int-zz"}, UnitDisposition::Unchanged, {recorded({"c7", path, "int-zz"})}));
   const auto report = check(batches, units);
-  ASSERT_EQ(report.unaccounted.size(), 3u);
+  ASSERT_EQ(report.unaccounted.size(), 2u);
   EXPECT_EQ(report.unaccounted[0].unit.commit, "c10");
-  EXPECT_EQ(report.unaccounted[1].unit.commit, "c11");
-  EXPECT_EQ(report.unaccounted[2].unit.commit, "c12");
+  EXPECT_EQ(report.unaccounted[0].missing[0].commit, "c7");
+  EXPECT_EQ(report.unaccounted[1].unit.commit, "c9");
+}
+
+// A provenance row is not enough: the revision or analysis it is the
+// provenance of must be there too. (The store cannot be brought into that
+// state by deleting: revision rows are append-only by trigger, and an analysis
+// row is held by the foreign keys of its meta, isotope and member rows. The
+// rows are written here instead, for entities that do not exist.)
+TEST_P(VerifierTest, AProvenanceRowWithoutItsEntityIsNotEvidence) {
+  const auto batches = history();
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  const std::string path = kind_path("intercepts", 1);
+  const Uuid ghost = *Uuid::parse("44444444-4444-4444-8444-444444444444");
+  {
+    auto uow = store().begin_import_batch(source_uuid(), world_->client);
+    ASSERT_TRUE(uow);
+    const auto at = *UtcTime::parse("2016-03-09T00:00:00Z");
+    ASSERT_TRUE((*uow)->add_provenance({"revision", ghost, path, "c9", "int-c9", "A <a@x>", at, std::nullopt}));
+    ASSERT_TRUE((*uow)->add_provenance({"analysis", kC, record_path(9), "c9", "rec-9", "A <a@x>", at, std::nullopt}));
+    ASSERT_TRUE((*uow)->commit());
+  }
+  ASSERT_TRUE(*store().has_provenance(source_uuid(), "c9", path));
+  ASSERT_TRUE(*store().has_provenance(source_uuid(), "c9", record_path(9)));
+
+  auto units = units_of(batches);
+  units.push_back(unit({"c9", path, "int-c9"}, UnitDisposition::Imported, {recorded({"c9", path, "int-c9"})}));
+  units.push_back(unit({"c9", record_path(9), "rec-9"}, UnitDisposition::Imported,
+                       {analysis_at({"c9", record_path(9), "rec-9"}, kC)}));
+  units.push_back(unit({"c9", "copy/73-09.json", "rec-9"}, UnitDisposition::Folded, {{Evidence::Kind::Entity, {}, {}, kC}}));
+  const auto report = check(batches, units);
+  EXPECT_FALSE(report.ok());
+  ASSERT_EQ(report.unaccounted.size(), 3u);
+  for (const auto& open : report.unaccounted) EXPECT_EQ(open.unit.commit, "c9");
 }
 
 // An adapter cannot account for a unit by classifying it: Folded and
@@ -426,7 +543,7 @@ TEST_P(VerifierTest, FoldedUnchangedAndUnclassifiedNeedARow) {
 
   const SourceKey record{"c1", record_path(1), "rec-1"};
   auto units = units_of(batches);
-  units.push_back(unit({"c1", "665/extraction/73-01.json", "ext-1"}, UnitDisposition::Folded, {recorded(record)}));
+  units.push_back(unit({"c1", "665/extraction/73-01.json", "ext-1"}, UnitDisposition::Folded, {analysis_at(record, kA)}));
   units.push_back(unit({"c1", "logs/73-01.logs.log", "log-1"}, UnitDisposition::Ignored));
   auto report = check(batches, units);
   EXPECT_TRUE(report.ok());
@@ -435,12 +552,12 @@ TEST_P(VerifierTest, FoldedUnchangedAndUnclassifiedNeedARow) {
 
   units.push_back(unit({"c1", "665/peakcenter/73-01.json", "pc-1"}, UnitDisposition::Folded));
   units.push_back(unit({"c2", "665/peakcenter/73-01.json", "pc-1"}, UnitDisposition::Unchanged));
-  units.push_back(unit({"c3", "665/peakcenter/73-01.json", "pc-2"}, UnitDisposition::Unclassified, {recorded(record)}));
+  units.push_back(unit({"c3", "665/peakcenter/73-01.json", "pc-2"}, UnitDisposition::Unclassified, {analysis_at(record, kA)}));
   units.push_back(unit({"c4", "665/peakcenter/73-01.json", "pc-3"}, UnitDisposition::Imported));
   units.push_back(unit({"c5", "665/peakcenter/73-01.json", "pc-4"}, UnitDisposition::Conflict));
   // Folded into an analysis that is not there.
   units.push_back(unit({"c6", "665/extraction/73-09.json", "ext-9"}, UnitDisposition::Folded,
-                       {recorded({"c6", record_path(9), "rec-9"})}));
+                       {analysis_at({"c6", record_path(9), "rec-9"}, kC)}));
   report = check(batches, units);
   EXPECT_FALSE(report.ok());
   ASSERT_EQ(report.unaccounted.size(), 6u);
@@ -474,7 +591,7 @@ TEST_P(VerifierTest, RewriteAndRemovalNotesAreEvidence) {
 
   auto units = units_of(batches);
   const auto note = [](const char* commit, const std::string& path, const char* list) {
-    return Evidence{Evidence::Kind::Note, commit, path, {}, {}, list};
+    return Evidence{Evidence::Kind::Note, commit, path, {}, list};
   };
   units.push_back(unit({"c6", record_path(1), "rec-1b"}, UnitDisposition::Imported, {note("c6", record_path(1), "rewrites")}));
   units.push_back(unit({"c7", "NM-300/productions.json", "p-2"}, UnitDisposition::Imported,
@@ -503,10 +620,10 @@ TEST_P(VerifierTest, EntityEvidenceIsAProvenanceRowOfThisSource) {
 
   // A second copy of A under another path: nothing is stored at its key.
   auto units = units_of(batches);
-  units.push_back(unit({"c4", "copy/73-01.json", "rec-1"}, UnitDisposition::Folded, {{Evidence::Kind::Entity, {}, {}, {}, kA}}));
+  units.push_back(unit({"c4", "copy/73-01.json", "rec-1"}, UnitDisposition::Folded, {{Evidence::Kind::Entity, {}, {}, kA}}));
   EXPECT_TRUE(check(batches, units).ok());
 
-  units.push_back(unit({"c4", "copy/73-09.json", "rec-9"}, UnitDisposition::Folded, {{Evidence::Kind::Entity, {}, {}, {}, kC}}));
+  units.push_back(unit({"c4", "copy/73-09.json", "rec-9"}, UnitDisposition::Folded, {{Evidence::Kind::Entity, {}, {}, kC}}));
   const auto report = check(batches, units);
   ASSERT_EQ(report.unaccounted.size(), 1u);
   EXPECT_EQ(report.unaccounted[0].unit.path, "copy/73-09.json");
@@ -549,7 +666,7 @@ TEST_P(VerifierTest, CatalogRowsAreFoundByNaturalKey) {
 
   const auto row = [](int line, const CatalogItem& item) {
     return unit({"dump", "Tbl.jsonl#" + std::to_string(line), "line"}, UnitDisposition::Imported,
-                {{Evidence::Kind::CatalogRow, {}, {}, {}, {}, {}, item}});
+                {{Evidence::Kind::CatalogRow, {}, {}, {}, {}, item}});
   };
   std::vector<SourceUnit> units;
   int n = 0;
@@ -662,6 +779,7 @@ TEST_P(VerifierTest, LeavesTokenStatusAndRowsAlone) {
   ASSERT_TRUE(unseen) << err(unseen.error());
   EXPECT_FALSE(unseen->ok());
   EXPECT_EQ(unseen->unaccounted.size(), 15u);
+  EXPECT_FALSE(unseen->source.registered);
   EXPECT_EQ(fresh.count("import_source"), 0);
   EXPECT_EQ(fresh.count("analysis"), 0);
 }
@@ -752,6 +870,8 @@ TEST_P(VerifierTest, ParityPassFailNotComparable) {
     EXPECT_EQ(as_of.interpreted_age, age);
     EXPECT_EQ(as_of.revision, revisions->front().uuid);
     EXPECT_EQ(as_of.changeset, changeset_id(kUrl, "c5"));
+    EXPECT_EQ(as_of.source, source_uuid());
+    EXPECT_EQ(as_of.commit, "c5");
     EXPECT_EQ(as_of.created, *UtcTime::parse("2016-03-08T00:00:00Z"));
   }
 
@@ -773,7 +893,7 @@ TEST_P(VerifierTest, ParityPassFailNotComparable) {
   EXPECT_EQ(stored.entity, kB);
   EXPECT_EQ(stored.db_head_revision, revisions->front().uuid);
   for (const char* part : {"\"check\"", "age_parity", "\"legacy\"", "28.5", "\"computed\"", "28.50002", "0.25",
-                           "\"relative_difference\"", "\"tolerance\"", "66573-02", "\"as_of\""})
+                           "\"relative_difference\"", "\"tolerance\"", "66573-02", "\"as_of\"", "\"commit\""})
     EXPECT_NE(stored.detail_json.find(part), std::string::npos) << part << " in " << stored.detail_json;
   EXPECT_NE(stored.detail_json.find(age.str()), std::string::npos);
   EXPECT_NE(stored.detail_json.find(changeset_id(kUrl, "c5").str()), std::string::npos);
@@ -818,22 +938,38 @@ TEST_P(VerifierTest, ToleranceIsRelative) {
 
 // The stored age was computed when the interpreted age was saved (c5). A's
 // intercepts are refit afterwards (c6): the comparison is still as of c5.
+// "As of" is a place in the walk, not a time: the later refit carries an
+// author date before the interpreted age's (git dates run out of order).
 TEST_P(VerifierTest, ParityIsAsOfTheInterpretedAge) {
   auto batches = history_with_age({{kA.str(), "66573-01", "28.25", "0.125"}});
   batches.push_back({});
-  batches.back().changesets.push_back(refit("c6", kA, 1, 250.0, who("2019-01-01T00:00:00Z")));
+  batches.back().changesets.push_back(refit("c6", kA, 1, 250.0, who("2016-03-06T12:00:00Z")));
   seal(batches);
   run_import(batches);
   resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
 
-  // The age of A depends on which intercepts revision was head at the time asked about.
+  // What an age function does: of each kind, the last revision whose source
+  // commit is at or before the as-of commit in the walk order of the source.
+  const std::vector<std::string> walk{"c1", "c2", "c3", "c4", "c5", "c6"};
+  const auto place = [&](const std::string& commit) {
+    return std::find(walk.begin(), walk.end(), commit) - walk.begin();
+  };
+  bool by_time_differs = false;
   const AgeFn fn = [&](Uuid analysis, const AsOf& as_of) -> Result<ParityAge> {
+    EXPECT_EQ(as_of.source, source_uuid());
+    EXPECT_EQ(as_of.commit, "c5");
     auto revisions = store().history(analysis, Kind::Intercepts);
     if (!revisions) return fail(revisions.error());
-    std::optional<P::RevisionInfo> head;
-    for (const auto& r : *revisions)
-      if (r.changeset.created <= as_of.created) head = r;
+    std::optional<P::RevisionInfo> head, head_by_time;
+    for (const auto& r : *revisions) {
+      auto rows = store().provenance_for(r.uuid);
+      if (!rows) return fail(rows.error());
+      for (const auto& row : *rows)
+        if (row.source == as_of.source && place(row.commit_sha) <= place(as_of.commit)) head = r;
+      if (r.changeset.created <= as_of.created) head_by_time = r;
+    }
     if (!head) return ParityAge{NotComparable{"no intercepts then"}};
+    by_time_differs = head_by_time && head_by_time->uuid != head->uuid;
     const bool refit_again = head->uuid == revision_id(kUrl, "c6", kind_path("intercepts", 1));
     return ParityAge{ComputedAge{refit_again ? 99.0 : 28.25, 0.125}};
   };
@@ -841,15 +977,95 @@ TEST_P(VerifierTest, ParityIsAsOfTheInterpretedAge) {
   EXPECT_TRUE(report.ok());
   EXPECT_EQ(report.parity_pass, 1);
   EXPECT_EQ(report.parity_fail, 0);
+  EXPECT_TRUE(by_time_differs) << "the test must tell walk order from time";
   // The head now is the later refit: reduced from the heads it would have failed.
   auto now = store().head(kA, Kind::Intercepts);
   ASSERT_TRUE(now && *now);
   EXPECT_EQ(**now, revision_id(kUrl, "c6", kind_path("intercepts", 1)));
 }
 
+// A member this source did not import cannot be placed in its walk: it is
+// not comparable, and the age function is not asked.
+TEST_P(VerifierTest, MemberOfAnotherSourceIsNotComparable) {
+  {
+    SourceDescription other = description();
+    other.url = "https://github.com/NMGRLData/Blanks";
+    std::vector<ImportBatch> theirs(1);
+    theirs[0].catalog = lab_catalog();
+    add_analysis(theirs[0], kC, 3, "x1", who("2016-03-01T00:00:00Z"));
+    seal(theirs);
+    FakeAdapter adapter(other, theirs);
+    BatchWriter writer(store(), world_->client, config());
+    ASSERT_TRUE(writer.run(adapter, std::nullopt, {}, {}));
+  }
+  auto batches = history_with_age({{kA.str(), "66573-01", "28.25", "0.125"}, {kC.str(), "66573-03", "30", "1"}});
+  // C is also a member of this repository, by a copy of its record: still not this source's analysis.
+  batches[2].memberships.push_back({kC, {"c4", "copy/73-03.json", "rec-3"}, who("2016-03-07T00:00:00Z"), {"Henry_Hill"}});
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+
+  std::vector<Uuid> asked;
+  const AgeFn fn = [&](Uuid analysis, const AsOf&) -> Result<ParityAge> {
+    asked.push_back(analysis);
+    return ParityAge{ComputedAge{28.25, 0.125}};
+  };
+  const auto report = check(batches, units_of(batches), fn);
+  EXPECT_EQ(asked, std::vector<Uuid>{kA});
+  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.not_comparable_reasons, (std::map<std::string, int>{{"other_source", 1}}));
+  EXPECT_TRUE(report.ok());
+}
+
+// A failure about a member the interpreted age no longer lists can never be
+// compared again: its conflict is superseded, not left to block for good.
+TEST_P(VerifierTest, ConflictOfADroppedMemberIsSuperseded) {
+  auto batches = history_with_age({{kA.str(), "66573-01", "10", "1"}, {kB.str(), "66573-02", "20", "2"}});
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  const auto fn = ages({{kA, ComputedAge{10.0, 1.0}}, {kB, ComputedAge{25.0, 2.0}}});
+  auto report = check(batches, units_of(batches), fn);
+  EXPECT_EQ(report.parity_fail, 1);
+  EXPECT_EQ(conflict(parity_conflict(kB)).resolution, "pending");
+  // A value_mismatch of this source that is not a parity conflict is not touched.
+  const Uuid other = conflict_id(kUrl, "c9", kAgePath);
+  {
+    auto uow = store().begin_import_batch(source_uuid(), world_->client);
+    ASSERT_TRUE(uow);
+    ASSERT_TRUE((*uow)->add_conflict({other, kAgePath, kB, P::ConflictKind::ValueMismatch, std::nullopt, std::nullopt,
+                                      R"({"imported":true})", "pending"}));
+    ASSERT_TRUE((*uow)->commit());
+  }
+
+  // The interpreted age is saved again without B.
+  batches.push_back(age_batch("c6", "2017-01-01T00:00:00Z", {{kA.str(), "66573-01", "10", "1"}}));
+  seal(batches);
+  run_import(batches);
+  report = check(batches, units_of(batches), fn);
+  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.parity_fail, 0);
+  EXPECT_EQ(conflict(parity_conflict(kB)).resolution, "superseded");
+  EXPECT_EQ(conflict(other).resolution, "pending");
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_TRUE(report.ok());
+}
+
+// An interpreted age whose document lists no analyses is said so: it is not
+// passed over in silence.
+TEST_P(VerifierTest, InterpretedAgeWithoutAListIsTallied) {
+  auto batches = history();
+  batches.push_back(age_batch("c5", "2016-03-08T00:00:00Z", {}, R"({"name":"66573 plateau","age":28.2})"));
+  seal(batches);
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  const auto report = check(batches, units_of(batches), ages({}));
+  EXPECT_EQ(report.parity_pass + report.parity_pass_age_only + report.parity_fail, 0);
+  EXPECT_EQ(report.not_comparable_reasons, (std::map<std::string, int>{{"interpreted age lists no analyses", 1}}));
+  EXPECT_EQ(report.parity_not_comparable, 1);
+}
+
 // Every revision of an interpreted age is a statement of its time; only the
-// latest is compared.
-TEST_P(VerifierTest, ParityComparesTheLatestRevisionOnly) {
+// head is compared.
+TEST_P(VerifierTest, ParityComparesTheHeadRevisionOnly) {
   auto batches = history_with_age({{kA.str(), "66573-01", "10", "1"}, {kB.str(), "66573-02", "20", "2"}});
   batches.push_back(age_batch("c6", "2017-01-01T00:00:00Z", {{kA.str(), "66573-01", "11", "1"}}));
   seal(batches);
@@ -868,6 +1084,8 @@ TEST_P(VerifierTest, ParityComparesTheLatestRevisionOnly) {
   ASSERT_EQ(asked.size(), 1u);
   EXPECT_EQ(asked[0].changeset, changeset_id(kUrl, "c6"));
   EXPECT_EQ(asked[0].revision, revision_id(kUrl, "c6", kAgePath));
+  EXPECT_EQ(asked[0].revision, **store().head(interpreted_age_id(kUrl, kAgePath), Kind::InterpretedAge));
+  EXPECT_EQ(asked[0].commit, "c6");
   EXPECT_EQ(asked[0].created, *UtcTime::parse("2017-01-01T00:00:00Z"));
 }
 
@@ -930,10 +1148,11 @@ TEST_P(VerifierTest, MembersThatCannotBeComparedAreTallied) {
   resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
   const auto units = units_of(batches);
 
-  // B has no legacy error: the age alone is compared.
+  // B has no legacy error: the age alone is compared, and counted apart from a full pass.
   auto report = check(batches, units, ages({{kB, ComputedAge{28.5, 7.0}}}));
   EXPECT_TRUE(report.ok()) << "not comparable is not a failure";
-  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.parity_pass, 0);
+  EXPECT_EQ(report.parity_pass_age_only, 1);
   EXPECT_EQ(report.parity_fail, 0);
   EXPECT_EQ(report.parity_not_comparable, 3);
   EXPECT_EQ(report.not_comparable_reasons,
@@ -975,7 +1194,7 @@ TEST_P(VerifierTest, InterpretedAgeThatIsNotImportedIsNotCompared) {
   resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
   auto units = units_of(batches);
   const SourceKey key{"c5", kAgePath, "ia-c5"};
-  units.push_back(unit(key, UnitDisposition::Imported, {recorded(key, true)}));
+  units.push_back(unit(key, UnitDisposition::Imported, {recorded(key)}));
   units.back().interpreted_age = kAgePath;
   bool asked = false;
   const AgeFn fn = [&](Uuid, const AsOf&) -> Result<ParityAge> {

@@ -40,6 +40,7 @@ class Accountant {
  private:
   Result<bool> found(const Evidence& evidence);
   Result<bool> conflict_stored(const std::string& commit, const std::string& path);
+  Result<bool> analysis_stored(persistence::Uuid analysis);
   Result<bool> noted(const Evidence& evidence);
 
   const VerifySource& source_;

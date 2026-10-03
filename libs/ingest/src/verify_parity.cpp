@@ -7,6 +7,11 @@
 // entry per member with "uuid", "record_id", "age" and "age_err"; the member
 // rows of the payload carry no age, and lose the members whose analysis is
 // not in the store, so the document is what is read.
+//
+// What is compared. The head revision of each interpreted age, as of the
+// source commit that saved it (AsOf). A member whose analysis this source did
+// not import is not comparable: the walk order of another source says nothing
+// about this one's commits (spec 10.30).
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +47,30 @@ double relative_difference(double a, double b) {
   return std::abs(a - b) / std::max(std::abs(a), std::abs(b));
 }
 
+// Whether this source imported the analysis itself: it has the analysis's
+// provenance row, and not one that only made it a member of a repository.
+Result<bool> imported_here(const VerifySource& source, Uuid analysis) {
+  auto rows = source.store.provenance_for(analysis);
+  if (!rows) return fail(rows.error());
+  for (const auto& row : *rows) {
+    if (row.source != source.uuid || row.entity_type != "analysis") continue;
+    const Json detail = Json::parse(row.detail_json.value_or("{}"), nullptr, false);
+    const auto member = detail.is_object() ? detail.find("membership_only") : detail.end();
+    const bool membership = detail.is_object() && member != detail.end() && member->is_boolean() && member->get<bool>();
+    if (!membership) return true;
+  }
+  return false;
+}
+
+// The source commit of a revision this source imported; empty: it did not.
+Result<std::string> commit_of(const VerifySource& source, Uuid revision) {
+  auto rows = source.store.provenance_for(revision);
+  if (!rows) return fail(rows.error());
+  for (const auto& row : *rows)
+    if (row.source == source.uuid && row.entity_type == "revision") return row.commit_sha;
+  return std::string();
+}
+
 }  // namespace
 
 Result<void> check_parity(const VerifySource& source, Uuid client, const std::set<std::string>& interpreted_ages,
@@ -49,6 +78,9 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
   P::IStore& store = source.store;
   std::map<Uuid, P::ImportConflictRow> failed;  // by conflict id
   std::set<Uuid> passed;
+  // By interpreted-age key: the subject and the members its head lists, for
+  // the ages whose head could be read.
+  std::map<std::string, std::pair<Uuid, std::set<Uuid>>> listed;
   const auto not_comparable = [&](const std::string& reason) {
     ++report.parity_not_comparable;
     ++report.not_comparable_reasons[reason.empty() ? std::string("not comparable") : reason];
@@ -59,21 +91,41 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
     auto history = store.history(subject, P::Kind::InterpretedAge);
     if (!history) return fail(history.error());
     if (history->empty()) continue;  // not imported: the accounting says so
-    // One comparison per interpreted age: against its latest revision.
-    const P::RevisionInfo& latest = history->back();
+    // One comparison per interpreted age: against its head revision.
+    auto head = store.head(subject, P::Kind::InterpretedAge);
+    if (!head) return fail(head.error());
+    const auto at_head = std::find_if(history->begin(), history->end(),
+                                      [&](const P::RevisionInfo& r) { return *head && r.uuid == **head; });
+    if (at_head == history->end()) {
+      not_comparable("interpreted age has no head");
+      continue;
+    }
+    const P::RevisionInfo& latest = *at_head;
     auto payload = store.load_payload(latest.uuid);
     if (!payload) return fail(payload.error());
     const auto* value = *payload ? std::get_if<P::InterpretedAgeValue>(&**payload) : nullptr;
-    if (!value) continue;
-    const AsOf as_of{subject, latest.uuid, latest.changeset.uuid, latest.changeset.created};
+    if (!value) {
+      not_comparable("interpreted age has no value");
+      continue;
+    }
+    auto commit = commit_of(source, latest.uuid);
+    if (!commit) return fail(commit.error());
+    const AsOf as_of{subject, latest.uuid, latest.changeset.uuid, source.uuid, *commit, latest.changeset.created};
 
     try {
       const Json doc = Json::parse(value->doc_json, nullptr, false);
       const auto analyses = doc.is_object() ? doc.find("analyses") : doc.end();
-      if (!doc.is_object() || analyses == doc.end() || !analyses->is_array()) continue;
-      std::set<Uuid> seen;
+      auto& members = listed[key];
+      members.first = subject;
+      if (!doc.is_object() || analyses == doc.end() || !analyses->is_array()) {
+        not_comparable("interpreted age lists no analyses");
+        continue;
+      }
       for (const auto& member : *analyses) {
-        if (!member.is_object()) continue;
+        if (!member.is_object()) {
+          not_comparable("member has no uuid");
+          continue;
+        }
         const auto uuid_text = member.find("uuid");
         const auto analysis = uuid_text != member.end() && uuid_text->is_string()
                                   ? Uuid::parse(uuid_text->get<std::string>())
@@ -82,7 +134,7 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
           not_comparable("member has no uuid");
           continue;
         }
-        if (!seen.insert(*analysis).second) continue;  // listed twice: one comparison
+        if (!members.second.insert(*analysis).second) continue;  // listed twice: one comparison
         const auto legacy_age = number(member, "age");
         const auto legacy_err = number(member, "age_err");
         if (!legacy_age) {
@@ -93,6 +145,16 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         if (!heads) return fail(heads.error());
         if (heads->empty()) {
           not_comparable("analysis is not in the store");
+          continue;
+        }
+        auto here = imported_here(source, *analysis);
+        if (!here) return fail(here.error());
+        if (!*here) {
+          not_comparable("other_source");
+          continue;
+        }
+        if (as_of.commit.empty()) {
+          not_comparable("interpreted age revision is not an import of this source");
           continue;
         }
         if (!age_fn) {
@@ -111,7 +173,7 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         const Uuid conflict = conflict_id(source.url, "parity", analysis->str() + "/" + subject.str());
         // Written so that a NaN fails.
         if (age_difference <= options.tolerance && err_difference <= options.tolerance) {
-          ++report.parity_pass;
+          ++(legacy_err ? report.parity_pass : report.parity_pass_age_only);
           passed.insert(conflict);
           continue;
         }
@@ -121,7 +183,8 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         Json detail{{"check", "age_parity"},
                     {"interpreted_age", subject.str()},
                     {"interpreted_age_revision", latest.uuid.str()},
-                    {"as_of", {{"changeset", as_of.changeset.str()}, {"created", as_of.created.iso()}}},
+                    {"as_of",
+                     {{"changeset", as_of.changeset.str()}, {"commit", as_of.commit}, {"created", as_of.created.iso()}}},
                     {"legacy", {{"age", *legacy_age}}},
                     {"computed", {{"age", age.age}, {"age_err", age.age_err}}},
                     {"relative_difference", {{"age", age_difference}}},
@@ -149,11 +212,21 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
   // The outcome: a conflict per failure; one whose comparison now passes is
   // superseded, and one that was superseded and fails again is pending again.
   // A stored row keeps its detail (the values of the run that first failed).
-  if (failed.empty() && passed.empty()) return {};
+  // A pending one about a member the interpreted age no longer lists can
+  // never be compared again: it is superseded too.
+  if (listed.empty()) return {};
   auto stored = store.import_conflicts({source.uuid, P::ConflictKind::ValueMismatch, std::nullopt});
   if (!stored) return fail(stored.error());
   std::map<Uuid, std::string> resolutions;
-  for (const auto& row : *stored) resolutions.emplace(row.uuid, row.resolution);
+  std::vector<Uuid> dropped;
+  for (const auto& row : *stored) {
+    resolutions.emplace(row.uuid, row.resolution);
+    const auto age = listed.find(row.path);
+    if (row.resolution != kPending || !row.entity || age == listed.end()) continue;
+    const auto& [subject, members] = age->second;
+    const bool of_this_age = row.uuid == conflict_id(source.url, "parity", row.entity->str() + "/" + subject.str());
+    if (of_this_age && !members.contains(*row.entity)) dropped.push_back(row.uuid);
+  }
 
   std::unique_ptr<P::IImportUnitOfWork> uow;
   const auto writing = [&]() -> Result<void> {
@@ -176,6 +249,10 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
   for (const Uuid conflict : passed) {
     const auto known = resolutions.find(conflict);
     if (known == resolutions.end() || known->second != kPending) continue;
+    if (auto r = writing(); !r) return r;
+    if (auto r = uow->resolve_conflict(conflict, kSuperseded); !r) return r;
+  }
+  for (const Uuid conflict : dropped) {
     if (auto r = writing(); !r) return r;
     if (auto r = uow->resolve_conflict(conflict, kSuperseded); !r) return r;
   }

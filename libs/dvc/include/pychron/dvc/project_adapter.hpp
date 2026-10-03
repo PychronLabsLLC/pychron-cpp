@@ -76,17 +76,20 @@ class ProjectRepoAdapter final : public ingest::ISourceAdapter {
   // walk sees it), walked from the first commit as an import walks it:
   //   a file the import does not read (a run log)           Ignored
   //   a deletion                                            Removed, no evidence: the analysis stays
-  //   a record; a root file; a later revision; an           Imported: the row at (commit, path), or the
-  //   interpreted age; a frozen production                  conflict the writer left there
+  //   a record; a root file; a later revision; an           Imported: the row at (commit, path) and the analysis
+  //   interpreted age; a frozen production                  or revision it is of, or the conflict the writer
+  //                                                         left there
   //   a rewritten record or satellite file                  Imported: listed under "rewrites" of its commit
   //                                                         (and the identity revision, when the run id changed)
   //   extraction, peak-center and monitor files folded      Folded: the row of the analysis's record
   //   into an analysis; the spectrometer file an analysis
   //   names; the other files of a membership-only analysis
   //   a second copy of an analysis of this source           Folded: the analysis's provenance row
-  //   content its path was already imported with            Unchanged: a provenance row of (path, blob), or
-  //                                                         what the unit it repeats has
+  //   the blob its path already has (a merge repeating a    Unchanged: the rows of the one earlier unit of the
+  //   side), or had when it was removed (a restored file)   path it repeats
   //   a file that cannot be read or belongs to nothing      Conflict
+  //   a spectrometer file that comes after an analysis      Conflict (spectrometer_file_after_collection)
+  //   naming it was folded
   //   a spectrometer file no imported analysis names        Ignored
   Result<void> for_each_unit(ingest::IImportState& state,
                              const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
