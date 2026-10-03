@@ -1,0 +1,10 @@
+provenance = "screen_recording"
+mode = "glow"
+expected_radius_px = 22.0
+tolerance_px = 4.0
+channel = "luma"
+note = "DragonFly.mov (2021), extract labelled df0_50 (exact time not recorded); crop (340,227) 200x200 of an 875x658 video pane; centre marked by eye, low trust"
+
+[[frames]]
+file = "0001.pgm"
+center_px = [100.0, 100.0]

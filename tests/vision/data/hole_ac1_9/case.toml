@@ -1,0 +1,10 @@
+provenance = "screen_recording"
+mode = "hole"
+expected_radius_px = 10.0
+tolerance_px = 4.0
+channel = "luma"
+note = "AutoCenter1.mov (2016), extract labelled ac1_9 (exact time not recorded); crop (255,182) 80x80 of a 591x444 video pane; centre marked by eye, low trust"
+
+[[frames]]
+file = "0001.pgm"
+center_px = [40.0, 40.0]
