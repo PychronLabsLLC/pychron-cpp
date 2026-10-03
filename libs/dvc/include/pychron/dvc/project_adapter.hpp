@@ -1,0 +1,65 @@
+#pragma once
+
+// The source adapter for a legacy Python-pychron project repository (legacy
+// ingestion spec, sections 4.4 and 10). It walks the whole history of one
+// branch and turns it into import batches:
+//
+//   - one collection per analysis, folded from the commits that first add its
+//     record, intercepts, baselines, blanks and IC factors;
+//   - one changeset per later commit, with a revision per changed file;
+//   - interpreted ages and frozen productions as revisions of their own
+//     subjects, spectrometer settings as the snapshot of the analyses that
+//     name them, one bookmark per git tag;
+//   - a conflict for every file that cannot be imported.
+//
+// It reads through GitReader and never touches the store; ingest::BatchWriter
+// writes what it produces. The layout it understands is described in
+// tests/dvc/fixtures/README.md.
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "pychron/core/error.hpp"
+#include "pychron/dvc/git_reader.hpp"
+#include "pychron/ingest/adapter.hpp"
+#include "pychron/persistence/ids.hpp"
+
+namespace pychron::dvc {
+
+struct ProjectAdapterConfig {
+  GitConfig git;                // the repository and branch to read
+  std::string url;              // the source's url as registered; ids are derived from its normalized form
+  std::string repository_name;  // every analysis seen becomes a member of this repository
+  std::string lab_time_zone;    // IANA; legacy timestamps are naive local time
+  int batch_commits = 500;      // commits per batch; a batch also ends at a tagged commit
+  // No catalog dump: each record also yields the catalog rows its fields
+  // imply, and one identity_clash conflict {"synthesized": true} per
+  // identifier made up that way.
+  bool catalog_from_repos = false;
+  // The tag of an analysis that has no tags file (later legacy versions kept
+  // tags only in the database). Empty, or nullopt from it: the default tag.
+  std::function<std::optional<std::string>(const persistence::Uuid& analysis)> tag_lookup;
+};
+
+class ProjectRepoAdapter final : public ingest::ISourceAdapter {
+ public:
+  // Opens the repository (GitReader::open); the branch head is fixed here.
+  static Result<std::unique_ptr<ProjectRepoAdapter>> open(ProjectAdapterConfig config);
+  ~ProjectRepoAdapter() override;
+
+  Result<ingest::SourceDescription> describe() override;
+  // Without a token the walk starts at the first commit. With one it resumes
+  // after it; a token that is not an ancestor of the head is an error whose
+  // message contains "history was rewritten". Returns the commits to walk.
+  Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
+  Result<std::optional<ingest::ImportBatch>> next_batch() override;
+
+ private:
+  class Impl;
+  explicit ProjectRepoAdapter(std::unique_ptr<Impl> impl);
+  std::unique_ptr<Impl> impl_;
+};
+
+}  // namespace pychron::dvc
