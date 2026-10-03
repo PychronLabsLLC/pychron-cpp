@@ -198,6 +198,7 @@ Result<std::string> NgxSpectrometer::ask(const std::string& command) {
 }
 
 Result<void> NgxSpectrometer::stop_acq() {
+  std::lock_guard order(wire_order_);
   auto r = ask(*body(Result<codec::Command>(ngx::stop_acq(""))));
   // The reply is not checked (pychron ignores it); a dead link is still an error.
   if (!r && (r.error().kind == ErrorKind::NotConnected || r.error().kind == ErrorKind::Io)) return fail(r.error());
@@ -326,7 +327,17 @@ Result<void> NgxSpectrometer::trigger() {
   auto l = link();
   std::uint64_t session = l ? (*l)->session() : 0;
   auto cmd = body(ngx::start_acq(seconds, options_.rcs_id, ""));
-  Result<std::string> r = cmd ? ask(*cmd) : Result<std::string>(fail(cmd.error()));
+  Result<std::string> r = fail(ErrorKind::Config, "");
+  {
+    std::lock_guard order(wire_order_);
+    {
+      // Aborted before StartAcq went out: its StopAcq has been sent (or waits
+      // for this lock), and nothing must start after it.
+      std::lock_guard lock(acq_mutex_);
+      if (state_ != State::Arming) return {};
+    }
+    r = cmd ? ask(*cmd) : Result<std::string>(fail(cmd.error()));
+  }
   if (l) session = std::max(session, (*l)->session());
   std::lock_guard lock(acq_mutex_);
   if (state_ != State::Arming) return {};  // stopped or moved meanwhile

@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <string>
 #include <thread>
 
 #include "pychron/devices/spectrometer/ngx.hpp"
@@ -36,7 +40,10 @@ class FlakyTransport final : public Transport {
   }
   void close() override { inner_.close(); }
   Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override { return inner_.exchange(tx, rs, timeout); }
-  Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
+  Result<void> write(Bytes tx) override {
+    if (before_write) before_write(std::string(tx.begin(), tx.end()));
+    return inner_.write(std::move(tx));
+  }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override {
     if (drop_next.exchange(false)) return fail(ErrorKind::Io, "connection reset");
     return inner_.read(std::move(rs), timeout);
@@ -44,6 +51,7 @@ class FlakyTransport final : public Transport {
   Result<void> transaction(std::function<Result<void>()> body) override { return inner_.transaction(std::move(body)); }
   Health health() const override { return inner_.health(); }
 
+  std::function<void(const std::string&)> before_write;  // set before connect()
   std::atomic<bool> drop_next{false};
   std::atomic<int> opens{0};
 
@@ -415,6 +423,43 @@ TEST_F(Ngx, ADroppedConnectionReconnectsAndLogsInFirst) {
   ASSERT_TRUE(m) << m.error().what;
   EXPECT_EQ(count("Login"), 2);
   EXPECT_GE(flaky.opens.load(), 1);
+}
+
+// A move racing a trigger: whichever reaches the instrument first, the
+// integration the trigger may have started is stopped. (The move's StopAcq
+// going out first, then the StartAcq, left it running and the next StartAcq
+// was E43.)
+TEST_F(Ngx, AMoveRacingATriggerNeverLeavesAnIntegrationRunning) {
+  auto s = make(*sim);
+  ASSERT_TRUE(s->connect());
+  ASSERT_TRUE(s->start());
+  for (int i = 0; i < 300; ++i) {
+    std::atomic<int> ready{0};
+    auto go = [&] {
+      ++ready;
+      while (ready < 2) std::this_thread::yield();
+    };
+    std::thread trigger([&] {
+      go();
+      auto r = s->trigger();
+      EXPECT_TRUE(r) << (r ? "" : r.error().what);
+    });
+    std::thread move([&] {
+      go();
+      EXPECT_TRUE(s->set(36.0 + i % 3));
+    });
+    trigger.join();
+    move.join();
+    (void)s->next(0ms);  // drop the cancellation the move queued
+    // The trigger either was aborted or armed; settle it so the next round starts idle.
+    ASSERT_TRUE(s->set(39.96));
+    bool running = false;
+    {
+      std::lock_guard lock(model->mutex);
+      running = model->run && !model->run->done;
+    }
+    ASSERT_FALSE(running) << "round " << i << ": an integration was left running";
+  }
 }
 
 // Acquisition, valves and magnet moves at once, for the thread sanitizer.

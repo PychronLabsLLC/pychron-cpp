@@ -115,6 +115,11 @@ class NgxSpectrometer final : public Device,
   std::vector<ParamSpec> params_;
 
   mutable std::mutex acq_mutex_;
+  // Orders StartAcq and StopAcq on the wire: a StopAcq sent to end an
+  // integration never overtakes the StartAcq still in flight that began it
+  // (it would land first and leave that integration running: the next
+  // StartAcq is then E43). Never taken while holding acq_mutex_.
+  std::mutex wire_order_;
   std::condition_variable acq_cv_;
   bool running_ = false;
   State state_ = State::Idle;
