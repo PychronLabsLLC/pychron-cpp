@@ -867,9 +867,18 @@ versions per large repo):
   of a large repo is an offline migration step, measured on the fixture
   (action item 3).
 
-Catalog rows come from the legacy MySQL database (catalog authority).
-Values come from project repos. Reference data comes from the meta repo.
-These are three `import_source` kinds.
+Catalog rows come from a **dump** of the legacy MySQL database (catalog
+authority), not from a live connection: a `mysqldump` file is converted to
+JSON lines by a `tools/` script and the importer reads those
+(`2026-10-03-legacy-ingestion-design.md` sections 1.2 and 4.2). Values come
+from project repos. Reference data comes from the meta repo. These are three
+`import_source` kinds.
+
+The exact legacy file suffixes, the collection commit sequence, the JSON key
+names and the legacy table names are recorded, with real fixture files, in
+`tests/dvc/fixtures/README.md`. Where that file and this section disagree
+(for example the raw-data suffix is `.dat.json` and the analysis path key
+can be a uuid instead of a runid), the fixture README is correct.
 
 Re-import of a repo that the publisher writes: if a file's sha equals
 `published_file.file_sha256`, nothing happens. If it differs, the result is
@@ -1335,17 +1344,24 @@ libs/persistence/                 # depends on core only; no Qt; no experiment t
   src/pg/              libpqxx backend
   src/sqlite/          sqlite3 backend
   migrations/pg/, migrations/sqlite/
-libs/dvc/                         # depends on persistence, experiment (record), reduction
+libs/ingest/                      # depends on persistence, core; reduction for verify only
+  ISourceAdapter, ImportBatch, BatchWriter, Verifier: the source-agnostic
+                       import core (2026-10-03-legacy-ingestion-design.md)
+libs/dvc/                         # depends on ingest, persistence, experiment (record), reduction
   OutboxPersister      implements IAnalysisPersister (experiment spec 8.4) by mapping
                        AnalysisRecord -> ingest payload
-  Publisher, Importer, LegacyJsonLayout (read/write of the repo file formats)
-apps/elctl             `elctl db migrate|status|verify`, `elctl persist ...`, `elctl dvc import|publish`
+  pychron DVC adapter  GitReader, LegacyJsonLayout (read of the repo file formats),
+                       MetaRepoReader, CatalogDb; implements ISourceAdapter
+  Publisher            (write of the repo file formats, stage D5)
+apps/elctl             `elctl db migrate|status|verify`, `elctl persist ...`,
+                       `elctl import add|run|status|conflicts|verify`, `elctl dvc publish`
 apps/pychron-publisher headless publisher service (or `elctl dvc publish --daemon`)
 ```
 
 The dependency direction extends the existing chain: `core <- persistence
-<- dvc`, and `experiment <- dvc`. `persistence` never sees
-`AnalysisRecord`.
+<- ingest <- dvc`, and `experiment <- dvc`. `persistence` never sees
+`AnalysisRecord`. The import command family is `elctl import`, not
+`elctl dvc import`.
 
 ### 12.2 Interfaces
 
@@ -1597,18 +1613,33 @@ The nine review questions, numbered as asked (D1-D9).
 1. **Project-repo fixture (from D8).** Which NMGRLData project repo, at
    which commit, proves analysis round-trip and age parity? MetaData alone
    exercises only reference data.
+   **Resolved (2026-10-03):** `https://github.com/NMGRLData/IR1010` at
+   `5283d6c85f3e2f57aedd6ad9d0418c7a7257bcd0`, with
+   `https://github.com/NMGRLData/MetaData` at
+   `0ef8d84412ab2f7401c6bae86e0a821ccded72ed`. IR1010 is the smallest public
+   project repo with a refit, a blank change and an interpreted age. Its
+   blanks are in `https://github.com/NMGRLData/Felix_blank180` at
+   `d831c6231d0d0cbbb6bc474f5ab296d25a47004a`. Details and caveats (the
+   interpreted age predates a later IC-factor edit) are in
+   `tests/dvc/fixtures/README.md`.
 2. **Offline export scope (from D3).** May an offline user edit reference
    data, or only analysis-level reduction and interpreted ages? Reference
    edits made offline conflict with every other client's ages.
 3. **Git author mapping (from D9).** Should historical git authors be
    mapped to existing `app_user` rows by a curated email-to-user table, or
    imported as `git:<email>` users and merged later?
+   **Resolved (2026-10-03):** unknown authors become `git:<email>` users; an
+   optional map file assigns emails to existing users
+   (`2026-10-03-legacy-ingestion-design.md` section 1.2).
 4. **Import branches (from D9).** Should `data_collection` branches
    (`dvc/__init__.py:38`) and unmerged reduction branches be imported, or
    only the default branch?
+   **Resolved (2026-10-03):** the default branch only; other branches only
+   when named.
 5. **Git access for the importer (from D9).** Should it use libgit2 (a new
    dependency) or shell out to `git cat-file --batch` (requires git on the
    import machine)?
+   **Resolved (2026-10-03):** shell out to `git`; no libgit2.
 
 ### 13.4 Action items
 

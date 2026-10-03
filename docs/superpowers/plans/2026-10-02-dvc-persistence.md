@@ -143,8 +143,10 @@ Not done in D2 (moved to later stages): the aliquot-lease check at ingest
 
 ### D4-D7
 
-- [ ] D4 importer (legacy MySQL catalog, project repos with full history,
-      meta repo). Open questions 13.3 Q3-Q5 must be answered first.
+- [ ] D4 importer (legacy MySQL catalog from a dump, project repos with full
+      history, meta repo). Planned in `2026-10-03-legacy-ingestion.md` (spec
+      `../specs/2026-10-03-legacy-ingestion-design.md`). Open questions 13.3
+      Q1 and Q3-Q5 are resolved there.
 - [ ] D5 publisher (byte-compatible files, bookmarks as tags).
 - [ ] D6 `ChangeFeed`: poll plus `QSqlDriver::subscribeToNotification`.
 - [ ] D7 writable offline export and `changeset` outbox items.
