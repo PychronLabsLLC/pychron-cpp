@@ -79,7 +79,9 @@ class MainWindow : public QMainWindow {
   void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
   QAction* preferences_action() const noexcept { return preferences_; }
   // The dialog, window modal; OK and Apply save and apply what it holds.
-  PreferencesDialog* open_preferences();
+  // Over `over` (default: this window); the experiment and script editor
+  // windows open it over themselves.
+  PreferencesDialog* open_preferences(QWidget* over = nullptr);
   // Fonts (application wide) and the data browser's page size.
   void apply_preferences(const Preferences& preferences);
   // Opens a recall window / a time-series figure window (null without data).

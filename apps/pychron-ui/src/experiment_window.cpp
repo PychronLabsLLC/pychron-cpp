@@ -181,6 +181,12 @@ void ExperimentWindow::build_actions() {
       QKeySequence::Save);
   save_as_ = add(file, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
+  file->addSeparator();
+  preferences_ = add(file, tr("Preferences…"), [this] {
+    if (on_preferences_) on_preferences_(this);
+  }, QKeySequence::Preferences);
+  preferences_->setMenuRole(QAction::PreferencesRole);
+  preferences_->setVisible(false);
   bar->addAction(open_);
   bar->addAction(save_);
   bar->addAction(revalidate_);
@@ -240,12 +246,19 @@ void ExperimentWindow::select_rows(const std::vector<std::size_t>& rows) {
 
 void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_t>(row)}); }
 
+void ExperimentWindow::set_preferences_handler(std::function<void(QWidget*)> handler) {
+  on_preferences_ = std::move(handler);
+  preferences_->setVisible(static_cast<bool>(on_preferences_));
+  if (script_editor_ != nullptr) script_editor_->set_preferences_handler(on_preferences_);
+}
+
 ScriptEditorWindow* ExperimentWindow::open_script_editor() {
   if (script_editor_ == nullptr) {
     script_editor_ = new ScriptEditorWindow(bridge_.lab(), nullptr, this);
     script_editor_->setWindowFlag(Qt::Window);
     // A new or saved script may fix (or break) rows that name it.
     connect(script_editor_, &ScriptEditorWindow::scriptsChanged, this, [this] { model_.revalidate(); });
+    script_editor_->set_preferences_handler(on_preferences_);
   }
   script_editor_->show();
   script_editor_->raise();

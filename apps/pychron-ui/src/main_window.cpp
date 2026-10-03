@@ -69,6 +69,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
                                                 experiment_settings_ ? experiment_settings_() : nullptr, this);
       experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+      experiment_window_->set_preferences_handler([this](QWidget* over) { open_preferences(over); });
       if (experiment_queue_) {
         QString error;
         if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
@@ -165,7 +166,7 @@ void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory set
 // The spectrometer's move threshold goes through its window when one is open
 // (it keeps the value in use), else straight to its saved settings, which the
 // window reads when it opens.
-PreferencesDialog* MainWindow::open_preferences() {
+PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   std::optional<double> confirm_move;
   if (spectrometer_window_ != nullptr) {
     confirm_move = spectrometer_window_->confirm_move_amu();
@@ -173,7 +174,7 @@ PreferencesDialog* MainWindow::open_preferences() {
     confirm_move = SpectrometerWindow::saved_confirm_move_amu(*spectrometer_settings(), spectrometer_->name());
   }
   return PreferencesDialog::show_for(
-      this, preferences_dialog_, preferences_settings_, confirm_move, [this](const PreferencesDialog::Values& values) {
+      over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move, [this](const PreferencesDialog::Values& values) {
         apply_preferences(values.preferences);
         if (!values.confirm_move_amu) return;
         if (spectrometer_window_ != nullptr) {
