@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(BUILD_UI "Build the Qt6 UI (apps/pychron-ui)" OFF)
+option(PYCHRON_VISION "Build libs/vision" ON)
 option(BUILD_TESTS "Build GoogleTest suites under tests/" ON)
 option(PYCHRON_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 set(PYCHRON_SANITIZE "" CACHE STRING "Comma-separated sanitizers, e.g. address,undefined")
@@ -23,7 +24,7 @@ include(PychronDependencies)
 # persistence depends on core only (DVC schema spec, section 12.1).
 # sim depends on transport and devices only. A library is added once its
 # directory exists so each unit can land independently.
-set(PYCHRON_LIBS core persistence transport codecs devices sim systems reduction scripting experiment processing setup)
+set(PYCHRON_LIBS core vision persistence transport codecs devices sim systems reduction scripting experiment processing setup)
 
 foreach(lib IN LISTS PYCHRON_LIBS)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/${lib}/CMakeLists.txt")
