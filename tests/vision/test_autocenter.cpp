@@ -105,6 +105,23 @@ TEST(Autocenter, MedianRejectsOneBadFrame) {
   EXPECT_NEAR(s.move_mm.y, 0.0, 0.05);
 }
 
+TEST(Autocenter, MedianRejectsDisplacedFrame) {
+  SimpleFinder finder;
+  HoleScene scene = scene_with_hole({0.3, 0});
+  Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, {});
+  SimStage stage{{0, 0}};
+  std::uint64_t seq = 0;
+  auto set = render_frames(scene, stage, 3, seq);
+  // One frame shows the hole centred (stage 0.3 mm away): offsets 0.3, 0, 0.3 mm.
+  std::uint64_t seq2 = 1;
+  set.frames[1] = render_frames(scene, SimStage{{0.3, 0}}, 1, seq2).frames[0];
+  const auto views = set.views();
+  const auto s = ac.step(std::span<const FrameView>(views));
+  ASSERT_EQ(s.action, Action::Move);
+  // The mean of three would be 0.2 mm; the median is the two agreeing frames.
+  EXPECT_NEAR(s.move_mm.x, 0.3, 0.03);
+}
+
 TEST(Autocenter, FailsWhenNoTargetInMajority) {
   SimpleFinder finder;
   HoleScene scene = scene_with_hole({0.3, 0});
@@ -249,4 +266,125 @@ TEST(Autocenter, ResetAllowsReuse) {
   EXPECT_LT(dist(stage2.pos, scene.hole_mm), 0.03);
   ASSERT_GE(second.calls, 1);
   EXPECT_EQ(second.calls, first.calls);
+}
+
+TEST(Autocenter, ClippedCropFails) {
+  SimpleFinder finder;
+  HoleScene scene = scene_with_hole({0.3, 0});
+  AutocenterParams p;
+  p.aim_offset_px = {80, 80};  // aim near the corner: the crop square leaves the frame
+  Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
+  SimStage stage{{0, 0}};
+  std::uint64_t seq = 0;
+  auto set = render_frames(scene, stage, 3, seq);
+  const auto views = set.views();
+  const auto s = ac.step(std::span<const FrameView>(views));
+  EXPECT_EQ(s.action, Action::Failed);
+  EXPECT_EQ(s.reason, "clipped");
+  EXPECT_EQ(s.move_mm.x, 0);
+  EXPECT_EQ(s.move_mm.y, 0);
+  EXPECT_EQ(s.iteration, 0);
+  // Not consumed: a controller with a fitting aim offset is unaffected, and the
+  // clipped call itself did not advance the counter.
+  p.aim_offset_px = {10, -6};
+  Autocenter ok(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
+  EXPECT_NE(ok.step(std::span<const FrameView>(views)).reason, "clipped");
+}
+
+TEST(Autocenter, ClippedDoesNotConsumeIteration) {
+  SimpleFinder finder;
+  HoleScene scene = scene_with_hole({0.3, 0});
+  Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, {});
+  // Small frames: the default crop (59 px) does not fit in 50 px.
+  HoleScene small = scene;
+  small.width = small.height = 50;
+  std::uint64_t seq = 0;
+  auto bad = render_frames(small, SimStage{{0, 0}}, 3, seq);
+  const auto bv = bad.views();
+  EXPECT_EQ(ac.step(std::span<const FrameView>(bv)).reason, "clipped");
+  auto good = render_frames(scene, SimStage{{0, 0}}, 3, seq);
+  const auto gv = good.views();
+  const auto s = ac.step(std::span<const FrameView>(gv));
+  EXPECT_EQ(s.action, Action::Move);
+  EXPECT_EQ(s.iteration, 0);
+}
+
+TEST(Autocenter, StaleFramesRejectedWithoutConsumingIteration) {
+  SimpleFinder finder;
+  HoleScene scene = scene_with_hole({0.3, 0});
+  Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, {});
+  SimStage stage{{0, 0}};
+  std::uint64_t seq = 0;
+  auto first = render_frames(scene, stage, 3, seq);
+  const auto v1 = first.views();
+  const auto a = ac.step(std::span<const FrameView>(v1));
+  ASSERT_EQ(a.action, Action::Move);
+  EXPECT_EQ(a.iteration, 0);
+  stage.move(a.move_mm);
+
+  const auto stale = ac.step(std::span<const FrameView>(v1));
+  EXPECT_EQ(stale.action, Action::Failed);
+  EXPECT_EQ(stale.reason, "stale_frame");
+  EXPECT_EQ(stale.move_mm.x, 0);
+  EXPECT_EQ(stale.move_mm.y, 0);
+
+  auto second = render_frames(scene, stage, 3, seq);
+  const auto v2 = second.views();
+  const auto b = ac.step(std::span<const FrameView>(v2));
+  EXPECT_NE(b.action, Action::Failed);
+  EXPECT_EQ(b.iteration, 1);
+}
+
+TEST(Autocenter, InvalidParamsFail) {
+  SimpleFinder finder;
+  HoleScene scene = scene_with_hole({0.3, 0});
+  std::uint64_t seq = 0;
+  auto set = render_frames(scene, SimStage{{0, 0}}, 3, seq);
+  const auto views = set.views();
+  const double nan = std::nan("");
+  std::vector<AutocenterParams> bad(9);
+  bad[0].tolerance_mm = -0.01;
+  bad[1].tolerance_mm = nan;
+  bad[2].max_step_mm = 0;
+  bad[3].max_total_mm = nan;
+  bad[4].max_iterations = 0;
+  bad[5].crop_scale = nan;
+  bad[6].aim_offset_px = {nan, 0};
+  bad[7].crop_scale = 1e300;  // would overflow the int crop side
+  bad[8].max_step_mm = nan;
+  for (const auto& p : bad) {
+    Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
+    const auto s = ac.step(std::span<const FrameView>(views));
+    EXPECT_EQ(s.action, Action::Failed);
+    EXPECT_EQ(s.reason, "invalid");
+    EXPECT_EQ(s.move_mm.x, 0);
+    EXPECT_EQ(s.move_mm.y, 0);
+  }
+}
+
+TEST(Autocenter, ResetClearsRunawayAndStaleState) {
+  SimpleFinder finder;
+  // Wrong y sign: offsets grow. One growth is recorded before the reset.
+  HoleScene scene = scene_with_hole({0.0, 0.15});
+  Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, false), kScale, {});
+  SimStage stage{{0, 0}};
+  std::uint64_t seq = 0;
+  for (int i = 0; i < 2; ++i) {
+    auto set = render_frames(scene, stage, 3, seq);
+    const auto v = set.views();
+    const auto s = ac.step(std::span<const FrameView>(v));
+    ASSERT_EQ(s.action, Action::Move);
+    stage.move(s.move_mm);
+  }
+  ac.reset();
+  // Fresh run starting at a larger offset (0.4 mm) than the pre-reset one, with
+  // timestamps restarting from the beginning. Stale state would fail it as
+  // runaway or stale_frame.
+  SimStage stage2{{0, -0.25}};
+  std::uint64_t seq2 = 0;
+  auto set = render_frames(scene, stage2, 3, seq2);
+  const auto v = set.views();
+  const auto s = ac.step(std::span<const FrameView>(v));
+  EXPECT_EQ(s.action, Action::Move);
+  EXPECT_EQ(s.iteration, 0);
 }

@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/vision/calibration.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/frame.hpp"
@@ -16,7 +17,7 @@ struct AutocenterParams {
   int max_iterations = 4;
   double max_step_mm = 0.5;
   double max_total_mm = 1.0;
-  int frames_per_step = 3;
+  int frames_per_step = 3;  // hint for the caller; step() uses whatever span it is given
   double crop_scale = 2.55;  // crop side = crop_scale * 2 * radius
   Vec2 aim_offset_px{};      // crosshair offset from image centre
 };
@@ -26,7 +27,7 @@ struct AutocenterStep {
   Vec2 move_mm{};  // relative, stage frame
   Vec2 offset_mm{};
   int iteration = 0;
-  std::string reason;  // "", "no_target", "max_iterations", "runaway", "max_total", "invalid"
+  std::string reason;  // "", "no_target", "max_iterations", "runaway", "max_total", "invalid", "clipped", "stale_frame"
 };
 
 // Step-function controller: takes frames, returns a decision, never moves a
@@ -48,6 +49,8 @@ class Autocenter {
   double total_mm_ = 0;
   double prev_offset_mm_ = -1;  // negative: no previous step
   int grow_count_ = 0;
+  bool have_last_ts_ = false;
+  TimePoint last_ts_{};
 };
 
 }  // namespace pychron::vision
