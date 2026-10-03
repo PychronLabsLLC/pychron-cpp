@@ -72,18 +72,18 @@ class StoreSourceTest : public ::testing::Test {
     acq_ = *store_->register_client({"acq-1", "acquisition", std::nullopt, "test"});
     red_ = *store_->register_client({"red-1", "reduction", std::nullopt, "test"});
     reducer_ = *store_->ensure_user(red_, "jsmith");
-    ms_ = *store_->add_mass_spectrometer(acq_, {"jan", "argus", "j"});
+    ms_ = *store_->add_mass_spectrometer(acq_, {"jan", "argus", "j", std::nullopt});
     irr_ = *store_->add_irradiation(acq_, "NM-300");
-    level_ = *store_->add_level(acq_, {irr_, "A", std::nullopt, 0.5, std::nullopt});
-    const auto pi = *store_->add_principal_investigator(acq_, {"Ross", "J", std::nullopt, std::nullopt});
-    const auto project = *store_->add_project(acq_, {"Fish Canyon", pi});
-    const auto material = *store_->add_material(acq_, {"sanidine", "60-80"});
+    level_ = *store_->add_level(acq_, {irr_, "A", std::nullopt, 0.5, std::nullopt, std::nullopt});
+    const auto pi = *store_->add_principal_investigator(acq_, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt});
+    const auto project = *store_->add_project(acq_, {"Fish Canyon", pi, std::nullopt});
+    const auto material = *store_->add_material(acq_, {"sanidine", "60-80", std::nullopt});
     const auto sample =
-        *store_->add_sample(acq_, {"FC-2", project, material, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+        *store_->add_sample(acq_, {.name = "FC-2", .project = project, .material = material});
     ASSERT_TRUE(store_->add_extract_device(acq_, "co2"));
-    position_ = *store_->add_irradiation_position(acq_, {level_, 3, sample, std::nullopt, {}, {}});
-    ASSERT_TRUE(store_->add_identifier(acq_, {"77000", "unknown", std::nullopt, std::nullopt, position_, std::nullopt}));
-    ASSERT_TRUE(store_->add_identifier(acq_, {"66574", "special", "air", std::nullopt, std::nullopt, std::nullopt}));
+    position_ = *store_->add_irradiation_position(acq_, {level_, 3, sample, std::nullopt, {}, {}, std::nullopt});
+    ASSERT_TRUE(store_->add_identifier(acq_, {"77000", "unknown", std::nullopt, std::nullopt, position_, std::nullopt, std::nullopt}));
+    ASSERT_TRUE(store_->add_identifier(acq_, {"66574", "special", "air", std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
 
     ps::RefObjectSpec pos, lvl, irr, ms;
     pos.position = position_;

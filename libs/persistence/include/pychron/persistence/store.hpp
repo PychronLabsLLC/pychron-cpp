@@ -89,6 +89,7 @@ struct MassSpectrometerSpec {
   std::string name;
   std::optional<std::string> kind;
   std::optional<std::string> code;
+  std::optional<Uuid> uuid;  // used when the row is created; ignored when it exists
 };
 
 struct IdentifierSpec {
@@ -98,22 +99,26 @@ struct IdentifierSpec {
   std::optional<Uuid> mass_spectrometer;
   std::optional<Uuid> position;              // irradiation_position (unknowns only)
   std::optional<Uuid> sample;                // when there is no irradiation position
+  std::optional<Uuid> uuid;
 };
 
 struct PrincipalInvestigatorSpec {
   std::string last_name;
   std::string first_initial;
   std::optional<std::string> affiliation, email;
+  std::optional<Uuid> uuid;
 };
 
 struct ProjectSpec {
   std::string name;
   std::optional<Uuid> principal_investigator;
+  std::optional<Uuid> uuid;
 };
 
 struct MaterialSpec {
   std::string name;
   std::string grainsize;
+  std::optional<Uuid> uuid;
 };
 
 struct SampleSpec {
@@ -122,6 +127,11 @@ struct SampleSpec {
   Uuid material;
   std::optional<std::string> note, igsn;
   std::optional<double> lat, lon;
+  std::optional<double> elevation;
+  std::optional<std::string> storage_location, location, unit;
+  std::optional<std::string> lithology, lithology_class, lithology_type, lithology_group;
+  std::optional<double> approximate_age;
+  std::optional<Uuid> uuid;
 };
 
 struct LevelSpec {
@@ -130,6 +140,7 @@ struct LevelSpec {
   std::optional<Uuid> holder;  // ref_object of type irradiation_holder
   std::optional<double> z;
   std::optional<std::string> note;
+  std::optional<Uuid> uuid;
 };
 
 struct PositionSpec {
@@ -138,6 +149,7 @@ struct PositionSpec {
   std::optional<Uuid> sample;
   std::optional<double> weight;
   std::optional<std::string> packet, note;
+  std::optional<Uuid> uuid;
 };
 
 // A reference object (section 6.1). `key` is unique per ref_type; the scope
@@ -146,6 +158,29 @@ struct RefObjectSpec {
   RefType type = RefType::Document;
   std::string key;  // "<irrad>/<level>/<pos>", "<irrad>", "<ms>", ...
   std::optional<Uuid> irradiation, level, position, mass_spectrometer;
+  std::optional<Uuid> uuid;
+};
+
+// A sample load (table `load`); `name` is its natural key.
+struct LoadSpec {
+  std::string name;
+  std::optional<Uuid> holder;           // ref_object of type load_holder
+  std::optional<Uuid> holder_revision;  // the holder's value revision the load was made against
+  std::optional<Uuid> created_by_user;
+  bool archived = false;
+  std::optional<UtcTime> created;       // created_utc; the write time when unset
+  std::optional<Uuid> uuid;
+};
+
+// One tray position of a load (table `load_position`); (load, position,
+// identifier) is its natural key.
+struct LoadPositionSpec {
+  Uuid load;
+  int position = 0;
+  Uuid identifier;
+  std::optional<double> weight;
+  std::optional<int> nxtals;
+  std::optional<std::string> note;
 };
 
 struct InterpretedAgeSpec {
@@ -508,6 +543,9 @@ class IStore {
   virtual Result<std::optional<std::string>> imported_head_blob_sha(Uuid source, Uuid subject, Kind kind) = 0;
 
   // Catalog (not revisioned; every write is in change_entity with a field diff, D6).
+  // Every add_* is ensure-by-natural-key (the table's UNIQUE columns): when the
+  // row exists its uuid is returned and nothing is written, whatever else the
+  // spec says. `uuid` in a spec is used only when the row is created.
   virtual Result<Uuid> register_client(const ClientRegistration& registration) = 0;
   virtual Result<Uuid> ensure_user(Uuid client, const std::string& name) = 0;
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
@@ -523,6 +561,8 @@ class IStore {
   // A reference object; its values are `value` revisions staged through a unit
   // of work with Kind::RefValue and a RefPayload matching its type.
   virtual Result<Uuid> add_ref_object(Uuid client, const RefObjectSpec& spec) = 0;
+  virtual Result<Uuid> add_load(Uuid client, const LoadSpec& spec) = 0;
+  virtual Result<void> add_load_position(Uuid client, const LoadPositionSpec& spec) = 0;
   // An interpreted age; its values are Kind::InterpretedAge revisions.
   virtual Result<Uuid> add_interpreted_age(Uuid client, const InterpretedAgeSpec& spec) = 0;
 

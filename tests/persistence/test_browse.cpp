@@ -16,13 +16,13 @@ class BrowseTest : public StoreTest {
   void SetUp() override {
     StoreTest::SetUp();
     const Uuid c = lab_.acquisition_client;
-    pi_ = *store_->add_principal_investigator(c, {"Ross", "J", std::nullopt, std::nullopt});
-    project_ = *store_->add_project(c, {"Fish Canyon", pi_});
-    material_ = *store_->add_material(c, {"sanidine", "60-80"});
-    sample_ = *store_->add_sample(c, {"FC-2", project_, material_, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    pi_ = *store_->add_principal_investigator(c, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt});
+    project_ = *store_->add_project(c, {"Fish Canyon", pi_, std::nullopt});
+    material_ = *store_->add_material(c, {"sanidine", "60-80", std::nullopt});
+    sample_ = *store_->add_sample(c, {.name = "FC-2", .project = project_, .material = material_});
     ASSERT_TRUE(store_->add_extract_device(c, "co2"));
-    const Uuid pos2 = *store_->add_irradiation_position(c, {lab_.level, 2, sample_, std::nullopt, {}, {}});
-    ASSERT_TRUE(store_->add_identifier(c, {"77000", "unknown", std::nullopt, std::nullopt, pos2, std::nullopt}));
+    const Uuid pos2 = *store_->add_irradiation_position(c, {lab_.level, 2, sample_, std::nullopt, {}, {}, std::nullopt});
+    ASSERT_TRUE(store_->add_identifier(c, {"77000", "unknown", std::nullopt, std::nullopt, pos2, std::nullopt, std::nullopt}));
     // 77000-01, 77000-02 unknowns (FC-2, co2); 66574-01, -02 airs; 66573-01 blank.
     a1_ = add("77000", 1, "unknown", "2026-10-02T10:00:00Z", "co2", 5.0);
     a2_ = add("77000", 2, "unknown", "2026-10-02T11:00:00Z", "co2", 6.0);

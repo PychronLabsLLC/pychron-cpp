@@ -152,46 +152,32 @@ class TinyStore final : public IStore {
   }
 
   Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) override {
-    WriteTx tx(*db_);
-    if (auto r = tx.begin(); !r) return fail(r.error());
-    const Uuid uuid = Uuid::v7();
     Row row;
-    row["uuid"] = qv(uuid);
     row["name"] = qv(spec.name);
     row["kind"] = qv(spec.kind);
     row["code"] = qv(spec.code);
-    row["created_utc"] = qv(UtcTime::now());
-    if (auto r = db_->insert("mass_spectrometer", row); !r) return fail(r.error());
-    const std::string detail = json_created({{"name", spec.name}, {"kind", spec.kind}, {"code", spec.code}});
-    return finish_catalog(tx, client,
-                          {ChangeEntityRow{QStringLiteral("mass_spectrometer"), uuid, QStringLiteral("insert"), detail}},
-                          uuid);
+    return ensure_catalog_row(client, "mass_spectrometer", {{"name", qv(spec.name)}}, spec.uuid, row,
+                              json_created({{"name", spec.name}, {"kind", spec.kind}, {"code", spec.code}}));
   }
 
   Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) override {
-    WriteTx tx(*db_);
-    if (auto r = tx.begin(); !r) return fail(r.error());
-    const Uuid uuid = Uuid::v7();
     Row row;
-    row["uuid"] = qv(uuid);
     row["identifier"] = qv(spec.identifier);
     row["kind"] = qv(spec.kind);
     row["analysis_type"] = qv(spec.analysis_type);
     row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
     row["position_uuid"] = qv(spec.position);
     row["sample_uuid"] = qv(spec.sample);
-    row["created_utc"] = qv(UtcTime::now());
-    if (auto r = db_->insert("identifier", row); !r) return fail(r.error());
-    const std::string detail =
-        json_created({{"identifier", spec.identifier}, {"kind", spec.kind}, {"analysis_type", spec.analysis_type}});
-    return finish_catalog(tx, client,
-                          {ChangeEntityRow{QStringLiteral("identifier"), uuid, QStringLiteral("insert"), detail}}, uuid);
+    return ensure_catalog_row(
+        client, "identifier", {{"identifier", qv(spec.identifier)}}, spec.uuid, row,
+        json_created({{"identifier", spec.identifier}, {"kind", spec.kind}, {"analysis_type", spec.analysis_type}}));
   }
 
   Result<Uuid> add_extract_device(Uuid client, const std::string& name) override {
     Row row;
     row["name"] = qv(name);
-    return add_catalog_row(client, "extract_device", row, json_created({{"name", name}}));
+    return ensure_catalog_row(client, "extract_device", {{"name", qv(name)}}, std::nullopt, row,
+                              json_created({{"name", name}}));
   }
 
   Result<Uuid> add_principal_investigator(Uuid client, const PrincipalInvestigatorSpec& spec) override {
@@ -200,22 +186,26 @@ class TinyStore final : public IStore {
     row["first_initial"] = qv(spec.first_initial);
     row["affiliation"] = qv(spec.affiliation);
     row["email"] = qv(spec.email);
-    return add_catalog_row(client, "principal_investigator", row,
-                           json_created({{"last_name", spec.last_name}, {"first_initial", spec.first_initial}}));
+    return ensure_catalog_row(client, "principal_investigator",
+                              {{"last_name", qv(spec.last_name)}, {"first_initial", qv(spec.first_initial)}}, spec.uuid,
+                              row, json_created({{"last_name", spec.last_name}, {"first_initial", spec.first_initial}}));
   }
 
   Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) override {
     Row row;
     row["name"] = qv(spec.name);
     row["pi_uuid"] = qv(spec.principal_investigator);
-    return add_catalog_row(client, "project", row, json_created({{"name", spec.name}}));
+    // UNIQUE (name, pi_uuid) does not constrain rows without a PI; the key still matches them.
+    return ensure_catalog_row(client, "project", {{"name", qv(spec.name)}, {"pi_uuid", qv(spec.principal_investigator)}},
+                              spec.uuid, row, json_created({{"name", spec.name}}));
   }
 
   Result<Uuid> add_material(Uuid client, const MaterialSpec& spec) override {
     Row row;
     row["name"] = qv(spec.name);
     row["grainsize"] = qv(spec.grainsize);
-    return add_catalog_row(client, "material", row, json_created({{"name", spec.name}, {"grainsize", spec.grainsize}}));
+    return ensure_catalog_row(client, "material", {{"name", qv(spec.name)}, {"grainsize", qv(spec.grainsize)}},
+                              spec.uuid, row, json_created({{"name", spec.name}, {"grainsize", spec.grainsize}}));
   }
 
   Result<Uuid> add_sample(Uuid client, const SampleSpec& spec) override {
@@ -227,14 +217,27 @@ class TinyStore final : public IStore {
     row["igsn"] = qv(spec.igsn);
     row["lat"] = qv(spec.lat);
     row["lon"] = qv(spec.lon);
+    row["elevation"] = qv(spec.elevation);
+    row["storage_location"] = qv(spec.storage_location);
+    row["location"] = qv(spec.location);
+    row["unit"] = qv(spec.unit);
+    row["lithology"] = qv(spec.lithology);
+    row["lithology_class"] = qv(spec.lithology_class);
+    row["lithology_type"] = qv(spec.lithology_type);
+    row["lithology_group"] = qv(spec.lithology_group);
+    row["approximate_age"] = qv(spec.approximate_age);
     row["updated_utc"] = qv(UtcTime::now());
-    return add_catalog_row(client, "sample", row, json_created({{"name", spec.name}}));
+    return ensure_catalog_row(
+        client, "sample",
+        {{"name", qv(spec.name)}, {"project_uuid", qv(spec.project)}, {"material_uuid", qv(spec.material)}}, spec.uuid,
+        row, json_created({{"name", spec.name}}));
   }
 
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override {
     Row row;
     row["name"] = qv(name);
-    return add_catalog_row(client, "irradiation", row, json_created({{"name", name}}));
+    return ensure_catalog_row(client, "irradiation", {{"name", qv(name)}}, std::nullopt, row,
+                              json_created({{"name", name}}));
   }
 
   Result<Uuid> add_level(Uuid client, const LevelSpec& spec) override {
@@ -244,7 +247,8 @@ class TinyStore final : public IStore {
     row["holder_ref_uuid"] = qv(spec.holder);
     row["z"] = qv(spec.z);
     row["note"] = qv(spec.note);
-    return add_catalog_row(client, "level", row, json_created({{"name", spec.name}}));
+    return ensure_catalog_row(client, "level", {{"irradiation_uuid", qv(spec.irradiation)}, {"name", qv(spec.name)}},
+                              spec.uuid, row, json_created({{"name", spec.name}}));
   }
 
   Result<Uuid> add_irradiation_position(Uuid client, const PositionSpec& spec) override {
@@ -255,8 +259,9 @@ class TinyStore final : public IStore {
     row["weight"] = qv(spec.weight);
     row["packet"] = qv(spec.packet);
     row["note"] = qv(spec.note);
-    return add_catalog_row(client, "irradiation_position", row,
-                           json_created({{"position", std::to_string(spec.position)}}));
+    return ensure_catalog_row(client, "irradiation_position",
+                              {{"level_uuid", qv(spec.level)}, {"position", qv(spec.position)}}, spec.uuid, row,
+                              json_created({{"position", std::to_string(spec.position)}}));
   }
 
   Result<Uuid> add_ref_object(Uuid client, const RefObjectSpec& spec) override {
@@ -267,8 +272,37 @@ class TinyStore final : public IStore {
     row["level_uuid"] = qv(spec.level);
     row["position_uuid"] = qv(spec.position);
     row["mass_spectrometer_uuid"] = qv(spec.mass_spectrometer);
-    return add_catalog_row(client, "ref_object", row,
-                           json_created({{"ref_type", std::string(to_string(spec.type))}, {"key", spec.key}}));
+    return ensure_catalog_row(client, "ref_object",
+                              {{"ref_type", qstr(to_string(spec.type))}, {"key", qv(spec.key)}}, spec.uuid, row,
+                              json_created({{"ref_type", std::string(to_string(spec.type))}, {"key", spec.key}}));
+  }
+
+  Result<Uuid> add_load(Uuid client, const LoadSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["holder_ref_uuid"] = qv(spec.holder);
+    row["holder_ref_revision_uuid"] = qv(spec.holder_revision);
+    row["created_by_user_uuid"] = qv(spec.created_by_user);
+    row["archived"] = spec.archived;
+    if (spec.created) row["created_utc"] = qv(*spec.created);
+    return ensure_catalog_row(client, "load", {{"name", qv(spec.name)}}, spec.uuid, row,
+                              json_created({{"name", spec.name}}));
+  }
+
+  Result<void> add_load_position(Uuid client, const LoadPositionSpec& spec) override {
+    Row row;
+    row["load_uuid"] = qv(spec.load);
+    row["position"] = spec.position;
+    row["identifier_uuid"] = qv(spec.identifier);
+    row["weight"] = qv(spec.weight);
+    row["nxtals"] = qv(spec.nxtals);
+    row["note"] = qv(spec.note);
+    auto uuid = ensure_catalog_row(
+        client, "load_position",
+        {{"load_uuid", qv(spec.load)}, {"position", qv(spec.position)}, {"identifier_uuid", qv(spec.identifier)}},
+        std::nullopt, row, json_created({{"position", std::to_string(spec.position)}}));
+    if (!uuid) return fail(uuid.error());
+    return {};
   }
 
   Result<Uuid> add_interpreted_age(Uuid client, const InterpretedAgeSpec& spec) override {
@@ -282,7 +316,8 @@ class TinyStore final : public IStore {
   Result<Uuid> add_repository(Uuid client, const std::string& name) override {
     Row row;
     row["name"] = qv(name);
-    return add_catalog_row(client, "repository", row, json_created({{"name", name}}));
+    return ensure_catalog_row(client, "repository", {{"name", qv(name)}}, std::nullopt, row,
+                              json_created({{"name", name}}));
   }
 
   // ------------------------------------------------------------ groups, bookmarks
@@ -483,12 +518,50 @@ class TinyStore final : public IStore {
   }
 
   // Inserts one catalog row with a fresh uuid and created_utc, audited (D6).
+  using NaturalKey = std::vector<std::pair<const char*, QVariant>>;
+
+  // The uuid of the row `key` names, matching a null part with IS NULL.
+  Result<std::optional<Uuid>> find_by_key(const char* table, const NaturalKey& key) {
+    QString sql = QStringLiteral("SELECT uuid FROM %1 WHERE ").arg(QString::fromUtf8(table));
+    Bindings bindings;
+    for (std::size_t i = 0; i < key.size(); ++i) {
+      if (i) sql += QStringLiteral(" AND ");
+      sql += QString::fromUtf8(key[i].first);
+      if (key[i].second.isNull()) {
+        sql += QStringLiteral(" IS NULL");
+      } else {
+        sql += QStringLiteral(" = ?");
+        bindings.push_back(key[i].second);
+      }
+    }
+    auto found = db_->select_one(sql, bindings);
+    if (!found) return fail(found.error());
+    if (!*found) return std::optional<Uuid>{};
+    return std::optional<Uuid>{to_uuid((**found).value("uuid"))};
+  }
+
+  // Ensure by natural key: an existing row wins untouched (no update, no
+  // change_log entry); otherwise `row` is inserted under `uuid` (or a new v7).
+  Result<Uuid> ensure_catalog_row(Uuid client, const char* table, const NaturalKey& key, std::optional<Uuid> uuid,
+                                  Row row, const std::string& detail) {
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    auto existing = find_by_key(table, key);
+    if (!existing) return fail(existing.error());
+    if (*existing) return **existing;
+    return insert_catalog_row(tx, client, table, uuid.value_or(Uuid::v7()), std::move(row), detail);
+  }
+
   Result<Uuid> add_catalog_row(Uuid client, const char* table, Row row, const std::string& detail) {
     WriteTx tx(*db_);
     if (auto r = tx.begin(); !r) return fail(r.error());
-    const Uuid uuid = Uuid::v7();
+    return insert_catalog_row(tx, client, table, Uuid::v7(), std::move(row), detail);
+  }
+
+  Result<Uuid> insert_catalog_row(WriteTx& tx, Uuid client, const char* table, Uuid uuid, Row row,
+                                  const std::string& detail) {
     row["uuid"] = qv(uuid);
-    row["created_utc"] = qv(UtcTime::now());
+    if (!row.contains("created_utc")) row["created_utc"] = qv(UtcTime::now());
     if (auto r = db_->insert(table, row); !r) return fail(r.error());
     return finish_catalog(
         tx, client, {ChangeEntityRow{QString::fromUtf8(table), uuid, QStringLiteral("insert"), detail}}, uuid);

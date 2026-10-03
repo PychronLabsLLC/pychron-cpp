@@ -103,14 +103,14 @@ inline Lab seed_lab(IStore& store) {
   lab.reduction_client = *store.register_client({"red-1", "reduction", std::nullopt, "test"});
   lab.analyst = *store.ensure_user(lab.acquisition_client, "jross");
   lab.reducer = *store.ensure_user(lab.reduction_client, "jsmith");
-  lab.mass_spectrometer = *store.add_mass_spectrometer(lab.acquisition_client, {"jan", "argus", "j"});
+  lab.mass_spectrometer = *store.add_mass_spectrometer(lab.acquisition_client, {"jan", "argus", "j", std::nullopt});
   lab.irradiation = *store.add_irradiation(lab.acquisition_client, "NM-300");
-  lab.level = *store.add_level(lab.acquisition_client, {lab.irradiation, "A", std::nullopt, 0.5, std::nullopt});
-  lab.position = *store.add_irradiation_position(lab.acquisition_client, {lab.level, 1, std::nullopt, std::nullopt, {}, {}});
+  lab.level = *store.add_level(lab.acquisition_client, {lab.irradiation, "A", std::nullopt, 0.5, std::nullopt, std::nullopt});
+  lab.position = *store.add_irradiation_position(lab.acquisition_client, {lab.level, 1, std::nullopt, std::nullopt, {}, {}, std::nullopt});
   lab.identifier =
-      *store.add_identifier(lab.acquisition_client, {"66573", "unknown", std::nullopt, std::nullopt, lab.position, std::nullopt});
+      *store.add_identifier(lab.acquisition_client, {"66573", "unknown", std::nullopt, std::nullopt, lab.position, std::nullopt, std::nullopt});
   lab.identifier2 =
-      *store.add_identifier(lab.acquisition_client, {"66574", "unknown", std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+      *store.add_identifier(lab.acquisition_client, {"66574", "unknown", std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
   return lab;
 }
 
