@@ -1,0 +1,16 @@
+# Flux, production ratios and irradiation chronology for analyses read from
+# the records folder (written by pychron setup). Analyses in a database carry
+# their own. Examples:
+#
+# [flux."66001"]
+# j = 0.0012345
+# j_err = 0.0000012
+#
+# [production."NM-300"]
+# K4039 = [0.0, 0.0]
+# Ca3937 = [0.000698, 0.000010]
+#
+# [[chronology."NM-300"]]
+# start = "2026-01-10T08:00:00Z"
+# end = "2026-01-10T20:00:00Z"
+# power = 1.0

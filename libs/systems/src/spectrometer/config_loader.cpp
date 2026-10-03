@@ -350,12 +350,41 @@ class Builder {
   Reader r_;
 };
 
-// Validates a *.local.toml's shape and merges its transport keys into `root`.
+// Driver keys a *.local.toml may set: this machine's credentials (NGX login).
+constexpr std::array<std::string_view, 3> kDriverLocal{"user", "password", "password_env"};
+
+// Validates a *.local.toml's shape and merges its transport keys, and its
+// driver credentials, into `root`.
 void merge_local(toml::table& root, const toml::table& local, Reader& r) {
   auto* transports = root.get_as<toml::table>("transports");
+  auto* drivers = root.get_as<toml::table>("drivers");
   for (auto&& [k, v] : local) {
+    if (k.str() == "drivers") {
+      const auto* ld = r.table(v, "drivers");
+      if (ld == nullptr) continue;
+      for (auto&& [name, node] : *ld) {
+        const auto path = "drivers." + std::string(name.str());
+        const auto* t = r.table(node, path);
+        if (t == nullptr) continue;
+        auto* target = drivers != nullptr ? drivers->get_as<toml::table>(name.str()) : nullptr;
+        if (target == nullptr) {
+          r.error(r.loc(node), path, "local override targets unknown driver '" + std::string(name.str()) + "'");
+          continue;
+        }
+        for (auto&& [key, value] : *t) {
+          if (std::find(kDriverLocal.begin(), kDriverLocal.end(), key.str()) == kDriverLocal.end()) {
+            r.error(r.loc(value), path + "." + std::string(key.str()),
+                    "key may not be overridden locally (allowed: user, password, password_env)");
+            continue;
+          }
+          value.visit([&](auto&& x) { target->insert_or_assign(key.str(), x); });
+        }
+      }
+      continue;
+    }
     if (k.str() != "transports") {
-      r.error(r.loc(v), std::string(k.str()), "local override may only set [transports.<name>] keys");
+      r.error(r.loc(v), std::string(k.str()),
+              "local override may only set [transports.<name>] and [drivers.<name>] credential keys");
       continue;
     }
     const auto* lt = r.table(v, "transports");

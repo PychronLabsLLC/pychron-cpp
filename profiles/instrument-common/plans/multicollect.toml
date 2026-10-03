@@ -1,0 +1,60 @@
+# Starter multicollection for {{ instrument }} (written by pychron setup).
+# One hop: every detector that has an isotope collects it. Edit freely.
+
+[plan]
+name = "multicollect"
+instrument_family = "{{ family }}"
+description = "Starter multicollection: every detector with an isotope, one hop"
+analysis_types = ["unknown", "blank_unknown", "air"]
+
+[detectors]
+reference = {{ reference_detector | toml }}
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+
+[sniff]
+enabled = true
+counts = 10
+integration_s = 1
+
+[peak_center]
+after = true
+detector = {{ reference_detector | toml }}
+isotope = {{ reference_isotope | toml }}
+config = "default"
+
+[baseline]
+after = true
+counts = 10
+mass = {{ baseline_mass }}
+settle_s = 5
+integration_s = 1
+
+[main]
+cycles = 2
+integration_s = 1
+
+[[main.hops]]
+counts = 15
+settle_s = 2
+
+[main.hops.positions]
+{% for d in detectors %}
+{% if d.isotope != "" %}
+{{ d.isotope }} = {{ d.name | toml }}
+{% endif %}
+{% endfor %}
+
+[fits]
+signal = { default = "linear" }
+baseline = { default = "average" }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+
+[parameters]
+expose = ["main.cycles", "main.hops[0].counts", "baseline.counts"]

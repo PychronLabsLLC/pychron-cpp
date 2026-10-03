@@ -4,6 +4,7 @@
 // override, trace-state and trace files without touching the repo.
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -42,6 +43,13 @@ class ElctlTest : public ::testing::Test {
            ("elctl_" + std::string(info->test_suite_name()) + "_" + info->name() + "_" +
             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(dir_);
+    // Never the developer's own installs: a site config of this test's own.
+    const std::string site = (dir_ / "site.toml").string();
+#ifdef _WIN32
+    _putenv_s("PYCHRON_SITE_CONFIG", site.c_str());
+#else
+    setenv("PYCHRON_SITE_CONFIG", site.c_str(), 1);
+#endif
     for (const char* f : {"extraction_line.toml", "canvas.toml"}) {
       std::filesystem::copy_file(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / f, dir_ / f);
     }

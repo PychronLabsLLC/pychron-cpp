@@ -349,12 +349,20 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
       return usage("unexpected '" + x + "'");
     }
   }
+  if (a.lab.empty() && !globals.lab.empty()) a.lab = globals.lab;
+  if (a.data.empty() && !globals.data.empty()) a.data = globals.data;
+  if (a.spectrometer.empty() && !globals.spectrometer.empty()) a.spectrometer = globals.spectrometer;
+  if (a.canvas.empty() && !globals.canvas.empty()) a.canvas = globals.canvas;
   if (a.verb == "notify") {
     if (!a.queue_file.empty()) return usage("notify takes no experiment.toml");
     if (a.lab.empty()) a.lab = ".";
     return Exp(std::move(a), globals, io).run();
   }
   if (a.queue_file.empty()) return usage("needs an experiment.toml");
+  // With an install, a queue named relative to its folder is found there.
+  if (!globals.lab.empty() && a.queue_file.is_relative() && !fs::exists(a.queue_file) &&
+      fs::exists(globals.lab / a.queue_file))
+    a.queue_file = globals.lab / a.queue_file;
   if (a.resume && a.from) return usage("--from and --resume are exclusive");
   if (a.sim_speed > 0 && !globals.sim) return usage("--sim-speed needs --sim");
   if (a.lab.empty()) a.lab = a.queue_file.has_parent_path() ? a.queue_file.parent_path() : fs::path(".");

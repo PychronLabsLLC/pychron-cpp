@@ -1,0 +1,15 @@
+[block]
+name = "blank_pair"
+description = "procedure blank, then a second blank to check memory"
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"

@@ -1,0 +1,36 @@
+name = "helix"
+title = "Thermo Helix MC"
+kind = "instrument"
+summary = "Helix MC over Qtegra RemoteControlServer: five collectors (CONFIRM which are Faraday and which CDD)"
+version = 1
+includes = ["qtegra"]
+
+[values]
+instrument = "Helix MC"
+family = "helix"
+axis = "dac"
+
+[[questions]]
+id = "reference_detector"
+prompt = "Reference detector"
+type = "string"
+default = "H1"
+group = "Detectors"
+
+# CONFIRM: a Helix MC Plus has five collector positions, each a Faraday or a
+# CDD depending on the instrument's build. These defaults mirror the Argus
+# layout so the starter tables apply; change kinds to match your instrument.
+[[questions]]
+id = "detectors"
+prompt = "Detectors (name, kind faraday or cdd, isotope)"
+type = "table"
+columns = ["name", "kind", "isotope"]
+group = "Detectors"
+default = [
+  { name = "H2", kind = "faraday", isotope = "" },
+  { name = "H1", kind = "faraday", isotope = "Ar40" },
+  { name = "AX", kind = "faraday", isotope = "Ar39" },
+  { name = "L1", kind = "faraday", isotope = "Ar38" },
+  { name = "L2", kind = "faraday", isotope = "Ar37" },
+  { name = "CDD", kind = "cdd", isotope = "Ar36" },
+]

@@ -1,0 +1,33 @@
+# System-level conditionals (written by pychron setup): checked for every
+# run; queue, plan and run levels add to or disable these.
+
+# Before extraction and before measurement: stop the queue if an ion counter
+# that collects an isotope is off, or the spectrometer vacuum is poor.
+{% for d in detectors %}
+{% if d.kind == "cdd" %}
+{% if d.isotope != "" %}
+[[pre_run]]
+name = "{{ d.name }}_off"
+check = "{{ d.name }}.inactive"
+
+{% endif %}
+{% endif %}
+{% endfor %}
+[[pre_run]]
+name = "spec_vacuum"
+check = "gauge.IG1.pressure > 1e-6"
+
+# During measurement: cancel the queue on a vacuum excursion.
+[[cancelations]]
+name = "vacuum_excursion"
+check = "gauge.IG1.pressure > 1e-5"
+start = 5
+frequency = 5
+ntrips = 2
+
+# Protect the Faradays from a run that is far too big.
+[[truncations]]
+name = "huge_signal"
+check = "{{ reference_isotope }}.cur > 4e6"
+start = 3
+abbreviated_count_ratio = 0.5

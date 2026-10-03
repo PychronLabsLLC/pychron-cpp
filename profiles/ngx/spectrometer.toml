@@ -1,0 +1,85 @@
+# {{ instrument }} (written by pychron setup). See CALIBRATE.md.
+{% if simulation %}
+# SIMULATION: a simulated spectrometer stands in for the instrument. To
+# connect: elctl init --reconfigure --install {{ install_name }} --set simulation=no
+{% else %}
+# NGX controller at {{ ngx_host }}:{{ ngx_port }}. The isotopx_ngx driver has
+# not yet been run against an instrument: work through the bring-up
+# checklist in the NGX driver spec first. Valves wired to the NGX controller
+# share this connection: see "link" transports in the extraction line docs.
+{% endif %}
+#
+# SIMULATION PLACEHOLDERS: the mass table, nominal_hv and thresholds
+# describe no instrument.
+
+[system]
+name = "{{ family }}"
+reference_detector = {{ reference_detector | toml }}
+integration_time_s = 1.0
+
+[transports.spec]
+{% if simulation %}
+kind = "sim"
+{% else %}
+kind = "tcp"
+host = {{ ngx_host | toml }}
+port = {{ ngx_port }}
+{% endif %}
+timeout_ms = 2000
+
+[drivers.spec]
+{% if simulation %}
+kind = "sim_integrated"
+native_axis = "mass"
+limit_min = 0.0
+limit_max = 200.0
+move_time_ms = 200
+{% else %}
+kind = "isotopx_ngx"
+link = "ngx"
+completion = "acq_b"
+{% if ngx_user != "" %}
+user = {{ ngx_user | toml }}
+{% endif %}
+{% endif %}
+transport = "spec"
+roles = ["positioner", "source", "acquirer"]
+channels = [{% for d in detectors %}{{ d.name | toml }}, {% endfor %}]
+
+[magnet]
+positioner = "spec"
+native_axis = "mass"
+limits = { min = 0.0, max = 200.0 }
+settle_ms = 500
+field_table = "ngx_argon"   # SIMULATION PLACEHOLDER table
+propagate = false
+corrections = { deflection = false, hv = false }
+
+[source]
+driver = "spec"
+nominal_hv = 4500  # SIMULATION PLACEHOLDER
+
+[acquisition]
+acquirers = ["spec"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+# Detectors: CONFIRM names, kinds and isotopes against the instrument.
+{% for d in detectors %}
+
+[[detectors]]
+name = {{ d.name | toml }}
+kind = {{ d.kind | toml }}
+channel = "spec:{{ d.name }}"
+{% if d.kind == "cdd" %}
+units = "cps"
+{% else %}
+units = "fA"
+saturation = 4.9e6
+{% endif %}
+{% if d.isotope != "" %}
+isotope = {{ d.isotope | toml }}
+{% else %}
+active = false
+{% endif %}
+{% endfor %}

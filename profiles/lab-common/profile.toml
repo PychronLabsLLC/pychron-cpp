@@ -1,0 +1,17 @@
+name = "lab-common"
+title = "Lab files"
+kind = "fragment"
+summary = "Extraction and pump scripts, conditionals and a notifications example"
+version = 1
+
+[[files]]
+copy = "@examples/scripts/"
+to = "scripts"
+
+[[files]]
+copy = "@examples/conditionals/default_unknown.toml"
+to = "conditionals/default_unknown.toml"
+
+[[files]]
+copy = "@examples/notifications.toml.example"
+to = "notifications.toml.example"

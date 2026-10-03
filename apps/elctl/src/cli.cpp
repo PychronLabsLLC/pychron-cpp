@@ -15,6 +15,7 @@
 
 #include "duration.hpp"
 #include "exp.hpp"
+#include "setup.hpp"
 #include "line.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/capabilities.hpp"
@@ -34,7 +35,7 @@ using namespace pychron;
 
 namespace {
 
-constexpr const char* kUsageLine = "usage: elctl [-c <extraction_line.toml>] [--sim] <command> [args...]\n";
+constexpr const char* kUsageLine = "usage: elctl [-c <extraction_line.toml> | --install <name>] [--sim] <command> [args...]\n";
 
 constexpr const char* kUsageText =
     "usage: elctl [-c <extraction_line.toml>] [--sim] <command> [args...]\n"
@@ -56,6 +57,15 @@ constexpr const char* kUsageText =
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
     "\n"
+    "Setup (no line needed):\n"
+    "  init --list                 the setup profiles (argus, helix, ngx, data-reduction)\n"
+    "  init <profile> [--root DIR] [--name NAME] [--answers FILE] [--set id=value]... [--yes]\n"
+    "                              install a profile; asks its questions unless --yes or --answers\n"
+    "  init --reconfigure [--set id=value]... [--yes]\n"
+    "                              re-render an install with new answers; edited files are kept\n"
+    "  doctor [--strict] [--probe] check an install (the default, or --install NAME)\n"
+    "  --install NAME              before a command: use that install's files (see doctor)\n"
+    "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
     "  state                       read back every switch and gauge\n"
@@ -76,7 +86,10 @@ constexpr const char* kActor = "elctl";
 
 struct Globals {
   fs::path config = "extraction_line.toml";
+  bool config_given = false;
   bool sim = false;
+  std::optional<std::string> install;  // --install NAME (site config)
+  ExpGlobals exp;                      // defaults --install fills in
 };
 
 std::string_view units_name(config::PressureUnits u) {
@@ -143,7 +156,12 @@ class Session {
     if (cmd == "validate") return validate(args);
     if (cmd == "canvas-check") return canvas_check(args);
     if (cmd == "conditionals-check") return conditionals_check(args);
-    if (cmd == "exp") return exp_command(args, ExpGlobals{g_.config, g_.sim}, io_);
+    if (cmd == "exp") {
+      ExpGlobals e = g_.exp;
+      e.config = g_.config;
+      e.sim = g_.sim;
+      return exp_command(args, e, io_);
+    }
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();
@@ -561,6 +579,13 @@ int run(const std::vector<std::string>& args, Io io) {
         return kUsage;
       }
       globals.config = args[++i];
+      globals.config_given = true;
+    } else if (a == "--install") {
+      if (i + 1 >= args.size()) {
+        io.err << "elctl: --install needs a name\n" << kUsageLine;
+        return kUsage;
+      }
+      globals.install = args[++i];
     } else if (a == "--sim") {
       globals.sim = true;
     } else if (a == "-h" || a == "--help") {
@@ -573,6 +598,30 @@ int run(const std::vector<std::string>& args, Io io) {
   if (i >= args.size()) {
     io.err << kUsageText;
     return kUsage;
+  }
+  const std::string& command = args[i];
+  const std::vector<std::string> rest(args.begin() + static_cast<std::ptrdiff_t>(i) + 1, args.end());
+  // Setup commands need no line.
+  if (command == "init") {
+    std::vector<std::string> init_args = rest;
+    if (globals.install) init_args.insert(init_args.end(), {"--install", *globals.install});
+    return init_command(init_args, io);
+  }
+  if (command == "doctor") return doctor_command(rest, globals.install, io);
+  // --install NAME (or, with no -c, the default install): its files are the defaults.
+  if (globals.install || !globals.config_given) {
+    auto install = resolve_install(globals.install);
+    if (install) {
+      if (!globals.config_given) globals.config = install->path(install->line);
+      globals.sim = globals.sim || install->simulation;
+      globals.exp.lab = install->root;
+      globals.exp.spectrometer = install->path(install->spectrometer);
+      globals.exp.canvas = install->path(install->canvas);
+      globals.exp.data = install->path(install->data.empty() ? "data" : install->data);
+    } else if (globals.install) {
+      io.err << "error: " << install.error().what << "\n";
+      return kFailed;
+    }
   }
   Session session(std::move(globals), io);
   return session.execute(std::vector<std::string>(args.begin() + static_cast<std::ptrdiff_t>(i), args.end()));

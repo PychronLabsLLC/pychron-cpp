@@ -280,7 +280,27 @@ message when a run fails and when the queue ends. Email and webhooks need the
 `password_env`. `elctl exp notify --lab .` sends a test message on each
 channel (the experiment window: Executor > Send Test Notification).
 
-## 6. Checklist
+## 6. Set up an install
+
+`elctl init` installs a setup profile (`profiles/`: `argus`, `helix`, `ngx`,
+`data-reduction`) into a folder and records it in your site config
+(`~/.config/pychron/site.toml` on Linux; `$PYCHRON_SITE_CONFIG` overrides):
+
+```bash
+elctl init --list
+elctl init argus --root ~/Pychron/argus     # asks; Enter accepts [defaults]
+elctl doctor                                # checks the default install
+elctl --install argus exp run experiment.toml --sim-speed 50
+elctl init --reconfigure --set simulation=no --set qtegra_host=10.0.0.5
+```
+
+Instrument installs start in simulation; `CALIBRATE.md` in the install lists
+what is still a placeholder. `--yes` takes every default, `--answers file.toml`
+and `--set id=value` answer without prompts. A re-run never overwrites a file;
+`--reconfigure` rewrites only files nobody edited and leaves `<file>.new`
+beside edited ones.
+
+## 7. Checklist
 
 - `ctest --preset dev` passes.
 - `spec-router status` lists the merged units and the next wave.

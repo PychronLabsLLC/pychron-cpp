@@ -1,0 +1,13 @@
+name = "extraction-line-starter"
+title = "Starter extraction line"
+kind = "fragment"
+summary = "The example line (five valves, two gauges, a pipette) on simulated transports"
+version = 1
+
+[[files]]
+copy = "@examples/extraction_line.toml"
+to = "extraction_line.toml"
+
+[[files]]
+copy = "@examples/canvas.toml"
+to = "canvas.toml"

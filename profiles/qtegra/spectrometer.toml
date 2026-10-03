@@ -1,0 +1,85 @@
+# {{ instrument }} (written by pychron setup). See CALIBRATE.md.
+{% if simulation %}
+# SIMULATION: a simulated spectrometer stands in for the instrument. To
+# connect: elctl init --reconfigure --install {{ install_name }} --set simulation=no
+{% else %}
+# Thermo Qtegra RemoteControlServer at {{ qtegra_host }}:{{ qtegra_port }}.
+# The thermo_qtegra driver has not yet been run against an instrument: read
+# "Running against a Thermo instrument" in the pychron docs first.
+{% endif %}
+#
+# SIMULATION PLACEHOLDERS: the field tables, deflections, nominal_hv and
+# thresholds describe no instrument.
+
+[system]
+name = "{{ family }}"
+reference_detector = {{ reference_detector | toml }}
+integration_time_s = 1.0
+
+[transports.spec]
+{% if simulation %}
+kind = "sim"
+{% else %}
+kind = "tcp"
+host = {{ qtegra_host | toml }}
+port = {{ qtegra_port }}
+{% endif %}
+timeout_ms = 2000
+
+[drivers.spec]
+{% if simulation %}
+kind = "sim_integrated"
+move_time_ms = 200
+{% else %}
+kind = "thermo_qtegra"
+limit_min = 0.0
+limit_max = 10.0
+{% endif %}
+transport = "spec"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+channels = [{% for d in detectors %}{{ d.name | toml }}, {% endfor %}]
+
+[magnet]
+positioner = "spec"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "argon"   # SIMULATION PLACEHOLDER table
+hv_table = "argon_hv"   # SIMULATION PLACEHOLDER table
+propagate = false
+corrections = { deflection = true, hv = true }
+protection = { detectors = [{% for d in detectors %}{% if d.kind == "cdd" %}{{ d.name | toml }}, {% endif %}{% endfor %}], beam_blank_threshold = 0.5 }
+
+[source]
+driver = "spec"
+nominal_hv = 4500  # SIMULATION PLACEHOLDER
+
+[acquisition]
+acquirers = ["spec"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "spec"
+
+# Detectors: CONFIRM names, kinds and isotopes against the instrument.
+{% for d in detectors %}
+
+[[detectors]]
+name = {{ d.name | toml }}
+kind = {{ d.kind | toml }}
+channel = "spec:{{ d.name }}"
+{% if d.kind == "cdd" %}
+units = "cps"
+dead_time_ns = 25
+cdd_voltage = 1450
+protection = { threshold = 5e5, on_move = true }
+{% else %}
+units = "fA"
+saturation = 4.9e6
+{% endif %}
+{% if d.isotope != "" %}
+isotope = {{ d.isotope | toml }}
+{% endif %}
+deflection = { control = true, correction = [0.0, 0.0011], sign = 1, max = 800, per_volt = 0.0030 }
+{% endfor %}

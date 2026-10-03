@@ -1,0 +1,39 @@
+name = "qtegra"
+title = "Thermo Qtegra spectrometer"
+kind = "fragment"
+summary = "A thermo_qtegra spectrometer (Argus, Helix) and its starter tables"
+version = 1
+includes = ["instrument-common"]
+
+[[questions]]
+id = "qtegra_host"
+prompt = "Address of the Qtegra computer"
+type = "host"
+default = "192.168.0.10"
+group = "Instrument connection"
+when = "not simulation"
+help = "The PC running Qtegra and RemoteControlServer."
+
+[[questions]]
+id = "qtegra_port"
+prompt = "RemoteControlServer port"
+type = "port"
+default = 1069
+group = "Instrument connection"
+when = "not simulation"
+
+[[files]]
+template = "spectrometer.toml"
+to = "spectrometer.toml"
+
+[[files]]
+copy = "@examples/tables/argon/"
+to = "tables/argon"
+
+[[files]]
+copy = "@examples/tables/argon_hv/"
+to = "tables/argon_hv"
+
+[[files]]
+copy = "@examples/molecular_weights.toml"
+to = "molecular_weights.toml"

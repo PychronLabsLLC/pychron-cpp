@@ -1,0 +1,63 @@
+name = "instrument-common"
+title = "Instrument lab files"
+kind = "fragment"
+summary = "A starter measurement plan, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
+version = 1
+includes = ["lab-common", "extraction-line-starter"]
+
+[[questions]]
+id = "simulation"
+prompt = "Run in simulation first (no instrument needed)?"
+type = "bool"
+default = true
+group = "Simulation"
+help = "Recommended. Everything runs against a simulated spectrometer and line; switch with elctl init --reconfigure when the instrument is ready."
+
+[[questions]]
+id = "reference_isotope"
+prompt = "Isotope on the reference detector"
+type = "string"
+default = "Ar40"
+group = "Detectors"
+
+[[questions]]
+id = "baseline_mass"
+prompt = "Baseline mass"
+type = "float"
+default = 34.2
+group = "Detectors"
+
+[[questions]]
+id = "peak_window"
+prompt = "Peak-center window (magnet units)"
+type = "float"
+default = 0.06
+group = "Detectors"
+
+[[files]]
+template = "plans/multicollect.toml"
+to = "plans/multicollect.toml"
+
+[[files]]
+template = "peak_center.toml"
+to = "peak_center.toml"
+
+[[files]]
+template = "defaults.toml"
+to = "defaults.toml"
+
+[[files]]
+template = "blocks/blank_pair.toml"
+to = "blocks/blank_pair.toml"
+
+[[files]]
+template = "experiment.toml"
+to = "experiment.toml"
+
+[[files]]
+template = "conditionals/system.toml"
+to = "conditionals/system.toml"
+
+[[files]]
+template = "CALIBRATE.md"
+to = "CALIBRATE.md"

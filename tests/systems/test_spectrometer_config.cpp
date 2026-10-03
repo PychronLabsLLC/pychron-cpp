@@ -269,6 +269,20 @@ TEST(SpectrometerConfig, LocalOverrideMayOnlyTouchTransportConnectionKeys) {
   EXPECT_TRUE(mentions(r, "transports.ghost", "unknown transport")) << dump(r);
 }
 
+// This machine's credentials (an NGX login) may live in the local file too.
+TEST(SpectrometerConfig, LocalOverrideMaySetDriverCredentialsOnly) {
+  auto r = parse_config_from_string(kIntegrated, "spectrometer.toml",
+                                    "[drivers.qtegra]\nuser = \"pychron\"\npassword = \"s3cret\"\n",
+                                    "spectrometer.local.toml");
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.config->drivers.at("qtegra").options["password"].value<std::string>(), "s3cret");
+  auto bad = parse_config_from_string(kIntegrated, "spectrometer.toml",
+                                      "[drivers.qtegra]\nkind = \"other\"\n[drivers.ghost]\nuser = \"x\"\n",
+                                      "spectrometer.local.toml");
+  EXPECT_TRUE(mentions(bad, "drivers.qtegra.kind", "may not be overridden")) << dump(bad);
+  EXPECT_TRUE(mentions(bad, "drivers.ghost", "unknown driver")) << dump(bad);
+}
+
 TEST(SpectrometerConfig, TransportRetriesAndTraceParsed) {
   auto r = parse(with("port = 1069", "port = 1069\nretries = 3\ntrace = true"));
   ASSERT_TRUE(r.ok()) << dump(r);

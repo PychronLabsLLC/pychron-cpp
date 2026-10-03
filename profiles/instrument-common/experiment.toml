@@ -1,0 +1,33 @@
+# Example queue (written by pychron setup):
+#   elctl --install {{ install_name }} exp run experiment.toml
+# A blank and two steps of a sanidine standard.
+
+[queue]
+name = "first-queue"
+mass_spectrometer = "{{ family }}"
+username = "pychron"
+
+[queue.delays]
+before_analyses = 5
+between_analyses = 10
+after_blank = 10
+
+[[runs]]
+identifier = "bu"
+extraction = { script = "sim_extract", duration = 2 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "66001"
+extraction = { script = "sim_extract", value = 5, units = "w", duration = 10 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"
+sample = { sample = "FC-2", material = "sanidine", project = "examples" }
+
+[[runs]]
+identifier = "66001"
+extraction = { script = "sim_extract", value = 8, units = "w", duration = 10 }
+measurement = { plan = "multicollect", overrides = { "main.cycles" = 1 } }
+post_measurement = "sim_pump"
+sample = { sample = "FC-2", material = "sanidine", project = "examples" }

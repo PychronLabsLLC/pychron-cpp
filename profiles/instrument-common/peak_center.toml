@@ -1,0 +1,15 @@
+# Peak-center configs (written by pychron setup). Plans pick one by name.
+# The window and step are in the magnet's native units ({{ axis }}).
+
+[default]
+isotope = {{ reference_isotope | toml }}
+detector = {{ reference_detector | toml }}
+window = {{ peak_window }}
+step = 0.002
+percent = 80
+min_peak_height = 1.0
+n_tries = 2
+integration_s = 1.0
+baseline_timeout_s = 10
+update_table = true
+propagate = true

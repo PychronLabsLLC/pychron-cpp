@@ -1,0 +1,24 @@
+# What a new run starts with in the run factory, per analysis type
+# (written by pychron setup).
+
+[unknown."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[unknown."*".extraction]
+units = "w"
+value = 5
+duration = 10
+
+[blank_unknown."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[blank_unknown."*".extraction]
+duration = 2
+
+[air."*"]
+template = "multicollect"
+post_measurement = "sim_pump"

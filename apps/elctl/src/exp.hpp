@@ -28,6 +28,8 @@ namespace elctl {
 struct ExpGlobals {
   std::filesystem::path config;
   bool sim = false;
+  // From --install: used where the corresponding exp option is not given.
+  std::filesystem::path lab, spectrometer, canvas, data;
 };
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);

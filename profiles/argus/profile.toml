@@ -1,0 +1,33 @@
+name = "argus"
+title = "Thermo Argus VI"
+kind = "instrument"
+summary = "Argus VI over Qtegra RemoteControlServer: five Faradays and a CDD"
+version = 1
+includes = ["qtegra"]
+
+[values]
+instrument = "Argus VI"
+family = "argus"
+axis = "dac"
+
+[[questions]]
+id = "reference_detector"
+prompt = "Reference detector"
+type = "string"
+default = "H1"
+group = "Detectors"
+
+[[questions]]
+id = "detectors"
+prompt = "Detectors (name, kind faraday or cdd, isotope)"
+type = "table"
+columns = ["name", "kind", "isotope"]
+group = "Detectors"
+default = [
+  { name = "H2", kind = "faraday", isotope = "" },
+  { name = "H1", kind = "faraday", isotope = "Ar40" },
+  { name = "AX", kind = "faraday", isotope = "Ar39" },
+  { name = "L1", kind = "faraday", isotope = "Ar38" },
+  { name = "L2", kind = "faraday", isotope = "Ar37" },
+  { name = "CDD", kind = "cdd", isotope = "Ar36" },
+]

@@ -8,7 +8,18 @@ list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
 target_include_directories(pychron_elctl_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(pychron_elctl_lib PUBLIC cxx_std_20)
-target_link_libraries(pychron_elctl_lib PUBLIC pychron::experiment pychron::systems pychron::devices pychron::transport pychron::core)
+target_link_libraries(pychron_elctl_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::devices
+  pychron::transport pychron::core)
+# init/doctor: the setup profiles and the example configs they copy from.
+# PYCHRON_PROFILES_DIR / PYCHRON_EXAMPLES_DIR in the environment override.
+target_compile_definitions(pychron_elctl_lib PRIVATE
+  PYCHRON_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles"
+  PYCHRON_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+# A data reduction install's local database is created with the DVC store.
+if(TARGET pychron_persistence)
+  target_link_libraries(pychron_elctl_lib PUBLIC pychron_persistence)
+  target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1)
+endif()
 pychron_set_warnings(pychron_elctl_lib)
 
 add_executable(elctl src/main.cpp)

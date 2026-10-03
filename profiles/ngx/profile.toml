@@ -1,0 +1,87 @@
+name = "ngx"
+title = "Isotopx NGX"
+kind = "instrument"
+summary = "NGX over its controller's ASCII protocol: nine Faradays and an ion counter"
+version = 1
+includes = ["instrument-common"]
+
+[values]
+instrument = "NGX"
+family = "ngx"
+axis = "mass"
+
+[[questions]]
+id = "ngx_host"
+prompt = "Address of the NGX controller"
+type = "host"
+default = "192.168.0.20"
+group = "Instrument connection"
+when = "not simulation"
+
+[[questions]]
+id = "ngx_port"
+prompt = "NGX controller port"
+type = "port"
+default = 1090
+group = "Instrument connection"
+when = "not simulation"
+
+[[questions]]
+id = "ngx_user"
+prompt = "NGX login user (empty: no login)"
+type = "string"
+default = ""
+group = "Instrument connection"
+when = "not simulation"
+
+[[questions]]
+id = "ngx_password"
+prompt = "NGX login password"
+type = "secret"
+group = "Instrument connection"
+when = "ngx_user != \"\""
+help = "Kept in spectrometer.local.toml on this computer only (owner-readable)."
+
+[[questions]]
+id = "reference_detector"
+prompt = "Reference detector"
+type = "string"
+default = "H4"
+group = "Detectors"
+
+[[questions]]
+id = "detectors"
+prompt = "Detectors in pychron order (name, kind faraday or cdd, isotope)"
+type = "table"
+columns = ["name", "kind", "isotope"]
+group = "Detectors"
+default = [
+  { name = "H4", kind = "faraday", isotope = "Ar40" },
+  { name = "H3", kind = "faraday", isotope = "Ar39" },
+  { name = "H2", kind = "faraday", isotope = "" },
+  { name = "H1", kind = "faraday", isotope = "" },
+  { name = "AX", kind = "faraday", isotope = "Ar38" },
+  { name = "L1", kind = "faraday", isotope = "Ar37" },
+  { name = "L2", kind = "faraday", isotope = "Ar36" },
+  { name = "L3", kind = "faraday", isotope = "" },
+  { name = "L4", kind = "cdd", isotope = "" },
+  { name = "L5", kind = "faraday", isotope = "" },
+]
+
+[[files]]
+template = "spectrometer.toml"
+to = "spectrometer.toml"
+
+[[files]]
+template = "spectrometer.local.toml"
+to = "spectrometer.local.toml"
+when = "ngx_user != \"\""
+secret = true
+
+[[files]]
+copy = "@examples/tables/ngx_argon/"
+to = "tables/ngx_argon"
+
+[[files]]
+copy = "@examples/molecular_weights.toml"
+to = "molecular_weights.toml"
