@@ -409,3 +409,40 @@ All tests must pass under ASan and UBSan on every CI compiler. The subprocess
   `elctl dvc import`.
 - Plan `2026-10-02-dvc-persistence.md` stage D4 points at the plan written
   from this spec.
+
+## 10. Amendments after the layout survey
+
+The survey of the legacy source and public repos
+(`tests/dvc/fixtures/README.md`, the authority on layout) changed these
+points. Where this section and an earlier one disagree, this section wins.
+
+1. **Path key.** A path yields a key that is a runid or, in newer repos, a
+   uuid; the directory prefix length varies (2 to 5). The key is the prefix
+   directory name joined to the file stem. Kind comes from the modifier
+   directory and suffix. The raw-data suffix is `.dat.json`.
+2. **More file kinds.** Root-level spectrometer settings files
+   (`<40 hex>.json`) are imported as spectrometer snapshots of the analyses
+   that name them. Root-level frozen production files
+   (`<irradiation>.<level>.production.json`) are imported as `production`
+   reference objects named `frozen/<repository>/<irradiation>/<level>`; using
+   them in reduction is not part of this spec. Run logs
+   (`logs/*.logs.log`) are skipped and count as accounted for; importing them
+   as artifacts is deferred. Only a path matching no known pattern is an
+   `unparseable` conflict.
+3. **Tags without tag files.** Later legacy versions kept tags only in MySQL
+   (`AnalysisChangeTbl.tag`). When an analysis has no tags file and a catalog
+   dump is registered, the root tag comes from the dump, noted in provenance
+   `detail`. With neither, the tag is `ok`.
+4. **Two interpreted-age formats** (2018 flat, later nested). Both are
+   parsed.
+5. **References to analyses in other repos.** Blanks live in per-spectrometer
+   repos. A blank or IC-factor reference to an analysis not yet in the store
+   is kept in the row's `extra` and noted in provenance `detail`; it is not a
+   conflict.
+6. **Age parity is as of the interpreted age.** A stored age was computed
+   from the reduction state when the interpreted age was saved; later edits
+   (the fixture repo has a bulk IC-factor rescale three years later) change
+   the heads. Verify therefore reduces each member analysis from the
+   revisions that were head at the interpreted-age commit, with reference
+   data as of that commit. When that state cannot be reproduced, the analysis
+   is reported as not comparable with the reason, never as a pass.
