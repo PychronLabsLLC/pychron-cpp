@@ -435,6 +435,9 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
         flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(unknown)};
       a.context.flux = flux;
     } else if (const auto* p = std::get_if<ps::ProductionValue>(&ref)) {
+      // A production without ratios is no production (reference data the
+      // source removed), not nine ratios of zero.
+      if (p->ratios.empty()) continue;
       std::map<std::string, reduction::Measured, std::less<>> rows;
       for (const auto& r : p->ratios) rows[r.key] = {r.value, r.error};
       auto ratios = reduction::production_from_rows(rows);

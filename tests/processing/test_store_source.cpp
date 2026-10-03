@@ -312,6 +312,21 @@ TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
   EXPECT_FALSE(source().load(ps::Uuid::v7().str()));
 }
 
+TEST_F(StoreSourceTest, ReferenceValuesWithoutContentAreNoValues) {
+  // What an import leaves at the head of reference data the source removed:
+  // a value with nothing in it. It must not be read as numbers.
+  publish(ref_object(ps::RefType::FluxPosition, "NM-300/A/3", {}), ps::FluxValue{});
+  publish(ref_object(ps::RefType::Production, "NM-300/Triga", {}), ps::ProductionValue{});
+  publish(ref_object(ps::RefType::Chronology, "NM-300", {}), ps::ChronologyValue{});
+  auto loaded = source().load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  EXPECT_FALSE((*loaded)->context.flux);
+  EXPECT_FALSE((*loaded)->context.production);  // not nine ratios of zero
+  EXPECT_TRUE((*loaded)->context.chronology.empty());
+  const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
+  EXPECT_FALSE(reduced->arar && reduced->arar->ages);
+}
+
 TEST_F(StoreSourceTest, LoadRawDecodesUploadedBlobsAndSlicesWindows) {
   auto raw = source().load_raw(unknown_.str());
   ASSERT_TRUE(raw) << to_string(raw.error());
