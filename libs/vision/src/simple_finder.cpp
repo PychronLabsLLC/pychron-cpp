@@ -66,6 +66,11 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
     debug->height = std::max(h, 0);
   }
   if (w <= 0 || h <= 0 || view.data == nullptr) return out;
+  // Non-finite parameters have no meaning (a NaN would also slip through
+  // std::clamp and the casts below), so they find nothing.
+  if (!std::isfinite(p.expected_radius_px) || !std::isfinite(p.radius_tol) || !std::isfinite(p.mask_radius_px) ||
+      !std::isfinite(p.glow_fraction) || view.pixel_depth == 0)
+    return out;
 
   const double depth = view.pixel_depth;
   const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
@@ -75,7 +80,9 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
   // Median removes one-pixel overlays; blur steadies the threshold against noise.
   // The mask is applied when thresholding, so pixels outside it never become foreground.
   const Frame med = median3(view);
-  const int radius = std::max(1, static_cast<int>(std::lround(p.expected_radius_px / 8.0)));
+  // Clamp as a double: a huge radius must not reach lround. A window wider than
+  // the frame is the whole frame, so max(w, h) loses nothing.
+  const int radius = static_cast<int>(std::lround(std::clamp(p.expected_radius_px / 8.0, 1.0, static_cast<double>(std::max(w, h)))));
   const Frame blurred = box_blur(med.view(), radius);
   const FrameView bv = blurred.view();
   const bool hole = p.mode == FinderMode::Hole;

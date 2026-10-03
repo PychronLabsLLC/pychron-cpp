@@ -83,6 +83,27 @@ TEST(Dragonfly, TracksDriftingGlow) {
   EXPECT_LT(len({rig.scene.glow_mm.x - rig.stage.pos.x, rig.scene.glow_mm.y - rig.stage.pos.y}), 0.05);
 }
 
+// The aim point is image centre + offset: a glow sitting there is on target,
+// and one at the image centre is off by the opposite of the offset.
+TEST(Dragonfly, TracksTowardTheAimPointNotTheImageCentre) {
+  // Image +x is stage +x, image +y is stage -y: 23 px right, 11.5 px up = (+1.0, +0.5) mm.
+  DragonflyParams p = params();
+  p.aim_offset_px = {23.0, -11.5};
+  p.target_radius_mm = 1.0;  // crop wide enough to hold the aim point and the glow
+  const Vec2 aim_mm{1.0, 0.5};
+  // Glow at the aim point: nothing to correct.
+  {
+    Rig rig(glow_at(aim_mm), p);
+    const auto d = rig.step();
+    EXPECT_EQ(d.action, Action::Hold);
+    EXPECT_EQ(d.reason, Reason::Deadband);
+  }
+  // Glow at the image centre: the stage must move so the glow lands on the aim point.
+  Rig rig(glow_at({0, 0}), p);
+  for (int i = 0; i < 12; ++i) rig.step();
+  EXPECT_LT(len({rig.stage.pos.x + aim_mm.x - rig.scene.glow_mm.x, rig.stage.pos.y + aim_mm.y - rig.scene.glow_mm.y}), 0.06);
+}
+
 TEST(Dragonfly, HoldsWhenSaturated) {
   GlowScene s = glow_at({0.2, 0}, 2.0);
   s.sigma_mm = 0.6;
@@ -494,7 +515,9 @@ TEST(Dragonfly, BadParametersGiveInvalid) {
   add([&](DragonflyParams& p) { p.move_threshold_mm = nan; });
   add([&](DragonflyParams& p) { p.saturation_threshold = 1.5; });
   add([&](DragonflyParams& p) { p.saturation_threshold = 0; });
-  add([&](DragonflyParams& p) { p.frames_per_step = 0; });
+  add([&](DragonflyParams& p) { p.aim_offset_px = {nan, 0}; });
+  add([&](DragonflyParams& p) { p.aim_offset_px = {0, 4294967306.0}; });
+  add([&](DragonflyParams& p) { p.aim_offset_px = {1e300, 0}; });
   add([&](DragonflyParams& p) { p.miss_frames_before_search = 0; });
   for (const DragonflyParams& p : bad) {
     SimpleFinder finder;

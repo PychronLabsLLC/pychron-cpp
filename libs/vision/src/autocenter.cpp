@@ -35,7 +35,7 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
   out.action = AutocenterStep::Action::Failed;
   out.iteration = iteration_;
 
-  auto fail = [&](const char* why, Vec2 offset = {}) {
+  auto reject = [&](const char* why, Vec2 offset = {}) {
     out.action = AutocenterStep::Action::Failed;
     out.move_mm = {};
     out.offset_mm = offset;
@@ -43,19 +43,23 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
     return out;
   };
 
+  // Same bound as the crop side: an aim point further out than that cannot
+  // hold a crop inside any real frame.
+  constexpr double kMaxSidePx = 1.0e5;
   const bool params_ok = map_.valid() && std::isfinite(px_per_mm_) && px_per_mm_ > 0 &&
                          std::isfinite(params_.hole_radius_mm) && params_.hole_radius_mm > 0 &&
                          std::isfinite(params_.crop_scale) && params_.crop_scale > 0 &&
-                         finite(params_.aim_offset_px) && std::isfinite(params_.tolerance_mm) &&
+                         finite(params_.aim_offset_px) &&
+                         std::abs(params_.aim_offset_px.x) <= kMaxSidePx &&
+                         std::abs(params_.aim_offset_px.y) <= kMaxSidePx && std::isfinite(params_.tolerance_mm) &&
                          params_.tolerance_mm >= 0 && std::isfinite(params_.max_step_mm) &&
                          params_.max_step_mm > 0 && std::isfinite(params_.max_total_mm) &&
                          params_.max_total_mm > 0 && params_.max_iterations >= 1;
-  if (!params_ok || frames.empty()) return fail("invalid");
+  if (!params_ok || frames.empty()) return reject("invalid");
 
   // Bound the double before any int conversion.
   const double side_d = params_.crop_scale * 2.0 * params_.hole_radius_mm * px_per_mm_;
-  constexpr double kMaxSidePx = 1.0e5;
-  if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) return fail("invalid");
+  if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) return reject("invalid");
   const double radius_px = params_.hole_radius_mm * px_per_mm_;
   const int side = static_cast<int>(std::lround(side_d));
 
@@ -64,8 +68,8 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
   // aim point and hide a hole cut by the frame, so it is never searched.
   for (const FrameView& f : frames) {
     const Rect r = centered_rect(f, side, params_.aim_offset_px);
-    if (r.x < 0 || r.y < 0 || r.x + r.w > f.width || r.y + r.h > f.height) return fail("clipped");
-    if (have_last_ts_ && f.timestamp <= last_ts_) return fail("stale_frame");
+    if (r.x < 0 || r.y < 0 || r.x + r.w > f.width || r.y + r.h > f.height) return reject("clipped");
+    if (have_last_ts_ && f.timestamp <= last_ts_) return reject("stale_frame");
   }
   for (const FrameView& f : frames) {
     if (!have_last_ts_ || f.timestamp > last_ts_) last_ts_ = f.timestamp;
@@ -95,10 +99,10 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
     ys.push_back(oy);
   }
 
-  if (xs.size() * 2 <= frames.size()) return fail("no_target");
+  if (xs.size() * 2 <= frames.size()) return reject("no_target");
 
   const Vec2 offset_mm = map_.to_mm({median(xs), median(ys)});
-  if (!finite(offset_mm)) return fail("invalid");
+  if (!finite(offset_mm)) return reject("invalid");
   out.offset_mm = offset_mm;
   const double mag = std::hypot(offset_mm.x, offset_mm.y);
 
@@ -107,16 +111,16 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
     return out;
   }
 
-  if (out.iteration >= params_.max_iterations) return fail("max_iterations", offset_mm);
+  if (out.iteration >= params_.max_iterations) return reject("max_iterations", offset_mm);
 
   grow_count_ = (prev_offset_mm_ >= 0 && mag > prev_offset_mm_) ? grow_count_ + 1 : 0;
   prev_offset_mm_ = mag;
-  if (grow_count_ >= 2) return fail("runaway", offset_mm);
+  if (grow_count_ >= 2) return reject("runaway", offset_mm);
 
   const double k = mag > params_.max_step_mm ? params_.max_step_mm / mag : 1.0;
   const Vec2 move{offset_mm.x * k, offset_mm.y * k};
   const double len = std::hypot(move.x, move.y);
-  if (total_mm_ + len > params_.max_total_mm) return fail("max_total", offset_mm);
+  if (total_mm_ + len > params_.max_total_mm) return reject("max_total", offset_mm);
   total_mm_ += len;
 
   out.action = AutocenterStep::Action::Move;

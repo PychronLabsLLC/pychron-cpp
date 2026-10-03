@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
+
 #include "pychron/vision/frame.hpp"
 
 using namespace pychron::vision;
@@ -49,4 +52,20 @@ TEST(Frame, CenteredRectIsCentredAndOffsettable) {
   auto o = centered_rect(f.view(), 20, Vec2{5, -3});
   EXPECT_EQ(o.x, 45);
   EXPECT_EQ(o.y, 27);
+}
+
+TEST(Frame, CenteredRectClampsHugeAndNonFiniteOffsets) {
+  auto f = Frame::make(100, 80, 255);
+  const auto big = centered_rect(f.view(), 20, Vec2{4294967306.0, 1e300});
+  EXPECT_LE(big.x, 1000000000);
+  EXPECT_LE(big.y, 1000000000);
+  EXPECT_GT(big.x, 0);
+  EXPECT_GT(big.y, 0);
+  const auto neg = centered_rect(f.view(), 20, Vec2{-1e300, -4294967306.0});
+  EXPECT_LT(neg.x, 0);
+  EXPECT_LT(neg.y, 0);
+  const auto nan = centered_rect(f.view(), 20, Vec2{std::nan(""), std::numeric_limits<double>::infinity()});
+  EXPECT_EQ(nan.w, 20);
+  // No overflow when a caller adds the side.
+  EXPECT_GT(static_cast<long long>(big.x) + big.w, 0);
 }

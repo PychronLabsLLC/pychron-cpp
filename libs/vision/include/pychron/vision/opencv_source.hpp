@@ -1,8 +1,10 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/vision/source.hpp"
 #include "pychron/vision/types.hpp"
@@ -17,8 +19,12 @@ struct SourceConfig {
   int rotate = 0;  // 0, 90, 180, 270 (clockwise); anything else is ErrorKind::Config
 };
 
+// Same shape as SyntheticSource::ClockFn; empty means steady_clock::now.
+using ClockFn = std::function<TimePoint()>;
+
 // uri: a video file path or a decimal camera index. Frames are 8-bit
-// (pixel_depth 255), numbered from 1. ErrorKind::Config when built without OpenCV.
-Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string& uri, SourceConfig);
+// (pixel_depth 255), numbered from 1 and stamped from `clock` at grab() time.
+// ErrorKind::Config when built without OpenCV.
+Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string& uri, SourceConfig, ClockFn clock = {});
 
 }  // namespace pychron::vision

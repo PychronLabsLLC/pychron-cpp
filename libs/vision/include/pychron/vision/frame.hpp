@@ -44,7 +44,8 @@ struct FrameView {
 Frame crop(const FrameView& v, Rect r);
 
 // Square of side `side` centred on the frame centre, shifted by `offset` pixels
-// (rounded). Not clamped: crop() clamps.
+// (rounded). The rectangle is not clamped to the frame (crop() does that), but
+// its corner is limited to +-1e9 so a huge offset cannot overflow int.
 Rect centered_rect(const FrameView& v, int side, Vec2 offset_px = {});
 
 }  // namespace pychron::vision

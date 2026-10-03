@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/synth.hpp"
@@ -236,4 +237,38 @@ TEST(SimpleFinder, DebugIsFilledWhenRequested) {
   EXPECT_GT(std::count(dbg.mask.begin(), dbg.mask.end(), 1), 0);
   EXPECT_EQ(dbg.mask[static_cast<std::size_t>(100 * f.width + 100)], 1);  // inside the hole
   EXPECT_EQ(dbg.mask[0], 0);                                              // tray corner
+}
+
+// Non-finite or absurd parameters find nothing and never reach lround / int arithmetic.
+TEST(SimpleFinder, NonFiniteOrHugeParametersFindNothing) {
+  HoleScene hs;
+  const auto hole = render(hs, {0.0, 0.0}).first;
+  GlowScene gs;
+  gs.peak = 0.6;
+  const auto glow = render(gs, {0.0, 0.0}).first;
+  const double nan = std::nan(""), inf = std::numeric_limits<double>::infinity();
+  SimpleFinder finder;
+  for (const double bad : {nan, inf, -inf, 1e300}) {
+    for (int field = 0; field < 4; ++field) {
+      for (int m = 0; m < 2; ++m) {
+        FinderParams p = m == 0 ? hole_params(hs) : glow_params();
+        if (m == 0) p.expected_radius_px = hs.hole_radius_mm * hs.px_per_mm;
+        double& slot = field == 0 ? p.expected_radius_px : field == 1 ? p.radius_tol : field == 2 ? p.mask_radius_px : p.glow_fraction;
+        slot = bad;
+        const auto r = finder.find((m == 0 ? hole : glow).view(), p);
+        if (!std::isfinite(bad)) {
+          EXPECT_TRUE(r.empty()) << "field " << field << " mode " << m;
+        }
+        // 1e300 is finite: it only has to be well defined (no UB under the sanitizers).
+      }
+    }
+  }
+}
+
+TEST(SimpleFinder, ZeroPixelDepthFindsNothing) {
+  Frame f = Frame::make(40, 40, 0);
+  SimpleFinder finder;
+  FinderParams p;
+  p.expected_radius_px = 10;
+  EXPECT_TRUE(finder.find(f.view(), p).empty());
 }

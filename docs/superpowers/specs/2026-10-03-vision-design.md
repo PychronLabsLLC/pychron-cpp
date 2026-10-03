@@ -128,7 +128,15 @@ Dependency-free. The default.
 2. 3x3 median, to suppress one-pixel overlay lines such as crosshairs.
 3. Box blur, radius `max(1, expected_radius_px / 8)`.
 4. Threshold:
-   - `Hole`: Otsu inside the mask, keep the dark side.
+   - `Hole`: Otsu inside the mask, then the threshold is pulled halfway down
+     from Otsu's split to the mode of the dark class, and the dark side is
+     kept. A shadow on the tray is darker than the tray but lighter than the
+     hole; plain Otsu puts it on the dark side and it fuses with the hole, and
+     the pulled threshold keeps only pixels near the hole's own level. Assumes
+     the hole is the largest dark mass: a shadow larger than the hole puts the
+     mode on the shadow and the rule degrades to plain Otsu. The lower
+     threshold biases `radius_px` slightly low (more with a larger blur
+     radius).
    - `Glow`: `t = floor + glow_fraction * (max - floor)`, where `floor` is the
      mask median. Otsu is not used: a dark frame with a small glow is not
      bimodal.
@@ -424,3 +432,12 @@ polygons, video degas.
   recordings suggest a single channel may separate holes from the tray better.
 - Whether overlay suppression needs more than a 3x3 median for screen-capture
   sources with thicker overlay lines.
+- The meaning of the legacy `dim` (radius or diameter of the hole), and so the
+  legacy autocenter crop size. `docs/vision_fixtures.md` reads it as about 2.55
+  hole radii on a side; `AutocenterParams::crop_scale` gives 5.1 radii
+  (`crop_scale * 2 * radius`). Unresolved.
+- `LegacyFinder` in `Hole` mode needs the target to fill 25 to 75 percent of
+  the view, so at `Autocenter`'s default `crop_scale` it returns no target.
+- Neither finder is validated on real camera frames (see
+  `docs/vision_fixtures.md`); the committed fixtures are synthetic or screen
+  recordings.

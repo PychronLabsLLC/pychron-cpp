@@ -13,7 +13,8 @@ namespace pychron::vision {
 
 // 3x3 median; edge pixels replicate the border.
 Frame median3(const FrameView&);
-// Mean over the (2r+1)^2 window clipped to the frame; r <= 0 is a copy.
+// Mean over the (2r+1)^2 window clipped to the frame; r <= 0 is a copy and r is
+// clamped to max(width, height) (the window is then the whole frame).
 Frame box_blur(const FrameView&, int radius);
 // Sets pixels outside the disk to `outside`. No-op without a mask.
 void apply_disk_mask(Frame&, double radius_px, std::uint16_t outside);

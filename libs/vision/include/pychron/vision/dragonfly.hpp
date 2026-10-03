@@ -23,6 +23,7 @@ struct DragonflyParams {
   double spiral_base_mm = 0.5;
   int frames_per_step = 1;  // hint for the caller; step() uses whatever span it is given
   int miss_frames_before_search = 3;
+  Vec2 aim_offset_px{};  // crosshair offset from image centre; the crop and the measured offset follow it
   double target_radius_mm = 0.5;  // sizes the crop (2.5x diameter) and the mask (1.05x diameter)
 };
 

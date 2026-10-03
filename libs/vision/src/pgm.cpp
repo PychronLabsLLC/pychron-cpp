@@ -91,6 +91,12 @@ Result<Frame> read_pgm(const std::filesystem::path& path) {
 Result<void> write_pgm(const std::filesystem::path& path, const FrameView& v) {
   if (v.width <= 0 || v.height <= 0 || v.pixel_depth < 1)
     return fail(ErrorKind::Config, "cannot write an empty frame to " + path.string());
+  // The header says pixel_depth is the maximum; a larger sample would be cut
+  // to its low byte (8-bit) or misread by the next reader, so refuse up front.
+  for (int y = 0; y < v.height; ++y)
+    for (int x = 0; x < v.width; ++x)
+      if (v.at(x, y) > v.pixel_depth)
+        return fail(ErrorKind::Config, "pixel value exceeds pixel_depth in frame for " + path.string());
   const bool wide = v.pixel_depth > 255;
   std::string out = "P5\n" + std::to_string(v.width) + " " + std::to_string(v.height) + "\n" +
                     std::to_string(v.pixel_depth) + "\n";

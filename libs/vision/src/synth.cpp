@@ -57,6 +57,7 @@ constexpr double kMinSigmaPx = 1e-3;
 constexpr double kMinElongation = 1e-3;
 
 std::uint16_t quantise(double frac, std::uint16_t depth) {
+  if (!std::isfinite(frac)) return 0;  // a NaN stage position or parameter must not reach the cast
   const double v = std::round(clamp01(frac) * depth);
   return static_cast<std::uint16_t>(v);
 }

@@ -173,3 +173,17 @@ TEST(Pgm, HugeDimensionsFailWithoutAllocating) {
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().kind, ErrorKind::Io);
 }
+
+TEST(Pgm, PixelAbovePixelDepthIsRejectedBeforeWriting) {
+  TempDir d;
+  const auto path = d.path / "bad.pgm";
+  Frame f = Frame::make(4, 4, 255);
+  f.at(2, 3) = 256;  // would wrap to 0 in an 8-bit file
+  const auto r = write_pgm(path, f.view());
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(std::filesystem::exists(path));
+  // At the depth itself is fine.
+  f.at(2, 3) = 255;
+  EXPECT_TRUE(write_pgm(path, f.view()).has_value());
+}

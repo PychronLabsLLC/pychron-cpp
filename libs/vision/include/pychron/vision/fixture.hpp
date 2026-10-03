@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/frame.hpp"
@@ -40,16 +42,20 @@ Result<FixtureCase> load_case(const std::filesystem::path& dir);
 // Writes dir/case.toml (the frame files are not touched).
 Result<void> save_case(const FixtureCase&);
 
-// Replays the frames of a case in file order, seq from 1, then fails with Io.
+// Replays the frames of a case in file order, seq from 1, then fails with Io
+// ("end of stream"). Every frame is stamped from `clock` at grab() time
+// (default steady_clock), because recorded frames carry no time of their own.
 class RecordedSource final : public IFrameSource {
  public:
-  explicit RecordedSource(FixtureCase c);
+  using ClockFn = std::function<TimePoint()>;
+  explicit RecordedSource(FixtureCase c, ClockFn clock = {});
 
   Result<Frame> grab() override;
   FrameInfo info() const override;
 
  private:
   FixtureCase case_;
+  ClockFn clock_;
   std::size_t next_ = 0;
 };
 

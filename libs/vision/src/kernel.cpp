@@ -53,6 +53,9 @@ Frame box_blur(const FrameView& v, int radius) {
       for (int x = 0; x < v.width; ++x) out.at(x, y) = v.at(x, y);
     return out;
   }
+  // A window wider than the frame is the whole frame; the clamp also keeps
+  // x + radius from overflowing int.
+  radius = std::min(radius, std::max(v.width, v.height));
   // Integral image: (w+1)*(h+1) so the window sum is four lookups.
   const int iw = v.width + 1;
   std::vector<std::uint64_t> integral(static_cast<std::size_t>(iw) * static_cast<std::size_t>(v.height + 1), 0);

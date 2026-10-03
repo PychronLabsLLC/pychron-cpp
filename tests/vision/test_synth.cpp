@@ -200,3 +200,29 @@ TEST(Synth, NonPositiveSizeRendersEmptyFrame) {
     EXPECT_TRUE(fg.width == 0 || fg.height == 0);
   }
 }
+
+TEST(Synth, NanStagePositionRendersAFrameWithoutUB) {
+  const double nan = std::nan("");
+  HoleScene h;
+  auto [hf, ht] = render(h, {nan, 0.0});
+  EXPECT_EQ(hf.width, h.width);
+  EXPECT_EQ(hf.data.size(), static_cast<std::size_t>(h.width) * static_cast<std::size_t>(h.height));
+  EXPECT_FALSE(ht.visible);
+  GlowScene g;
+  auto [gf, gt] = render(g, {0.0, nan});
+  EXPECT_EQ(gf.width, g.width);
+  EXPECT_FALSE(gt.visible);
+  GlowScene bad = g;
+  bad.peak = nan;
+  bad.noise = nan;
+  auto [bf, bt] = render(bad, {0.0, 0.0});
+  EXPECT_EQ(bf.data.size(), gf.data.size());
+}
+
+TEST(Synth, NanGlowParametersDoNotReachTheCast) {
+  GlowScene g;
+  g.background = std::nan("");
+  auto [f, t] = render(g, {0.0, 0.0});
+  (void)t;
+  EXPECT_FALSE(f.data.empty());
+}

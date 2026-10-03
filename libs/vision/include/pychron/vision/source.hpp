@@ -17,6 +17,8 @@ struct FrameInfo {
   double fps;
 };
 
+// Frame::timestamp is on the clock the caller also uses for the `now` it passes
+// to the controllers (Dragonfly compares them); sources never invent their own epoch.
 class IFrameSource {
  public:
   virtual ~IFrameSource() = default;

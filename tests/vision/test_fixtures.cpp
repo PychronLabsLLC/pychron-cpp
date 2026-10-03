@@ -1,13 +1,18 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "pychron/vision/autocenter.hpp"
+#include "pychron/vision/dragonfly.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/fixture.hpp"
 #include "pychron/vision/pgm.hpp"
@@ -121,7 +126,7 @@ TEST(Fixture, RecorderWritesLoadableCase) {
   auto end = src.grab();
   ASSERT_FALSE(end.has_value());
   EXPECT_EQ(end.error().kind, ErrorKind::Io);
-  EXPECT_EQ(end.error().what, "end of recording");
+  EXPECT_EQ(end.error().what, "end of stream");
 }
 
 TEST(Fixture, ChannelNoteAndSkipRoundTrip) {
@@ -235,4 +240,108 @@ TEST(Fixture, ExternalCasesWithinTolerance) {
   ASSERT_TRUE(std::filesystem::is_directory(env, ec)) << "PYCHRON_VISION_FIXTURES is not a directory: " << env;
   const auto r = check_cases(env);
   EXPECT_GT(r.cases, 0) << "PYCHRON_VISION_FIXTURES contains no case.toml directory: " << env;
+}
+
+namespace {
+
+// A deterministic counter clock: every call is 1 ms later than the last.
+RecordedSource::ClockFn counter_clock() {
+  auto n = std::make_shared<int>(0);
+  return [n] { return pychron::TimePoint{} + std::chrono::milliseconds(++*n); };
+}
+
+// Records `n` frames of a scene at the origin into `dir` and loads the case back.
+template <class Scene>
+FixtureCase record_case(const std::filesystem::path& dir, const Scene& scene, FinderMode mode, double radius_px, int n) {
+  FrameRecorder rec(dir, Provenance::Synthetic, mode, radius_px);
+  for (int i = 0; i < n; ++i) {
+    Scene s = scene;
+    s.seed += static_cast<std::uint32_t>(i);
+    const Frame f = render(s, {0, 0}).first;
+    EXPECT_TRUE(rec.add(f.view()).has_value());
+  }
+  EXPECT_TRUE(rec.finish().has_value());
+  auto c = load_case(dir);
+  EXPECT_TRUE(c.has_value());
+  return c.value_or(FixtureCase{});
+}
+
+}  // namespace
+
+TEST(Fixture, RecordedSourceStampsFramesFromTheClock) {
+  TempDir d;
+  const FixtureCase c = record_case(d.path, HoleScene{}, FinderMode::Hole, 11.5, 3);
+  RecordedSource src(c, counter_clock());
+  pychron::TimePoint prev{};
+  for (int i = 0; i < 3; ++i) {
+    auto f = src.grab();
+    ASSERT_TRUE(f.has_value());
+    EXPECT_GT(f->timestamp, prev);
+    prev = f->timestamp;
+  }
+}
+
+// Recorded frames carry no time of their own; without a stamp the second
+// controller step would reject every frame as stale.
+TEST(Fixture, RecordedSourceFeedsAutocenterTwoSteps) {
+  TempDir d;
+  HoleScene scene;
+  scene.hole_mm = {0.3, 0};
+  const FixtureCase c = record_case(d.path, scene, FinderMode::Hole, 11.5, 6);
+  RecordedSource src(c, counter_clock());
+  SimpleFinder finder;
+  Autocenter ac(finder, CameraStageMap::from_scale(23.0, false, true), 23.0, {});
+  for (int step = 0; step < 2; ++step) {
+    std::vector<Frame> frames;
+    for (int i = 0; i < 3; ++i) {
+      auto f = src.grab();
+      ASSERT_TRUE(f.has_value());
+      frames.push_back(std::move(*f));
+    }
+    std::vector<FrameView> views;
+    for (const Frame& f : frames) views.push_back(f.view());
+    const auto s = ac.step(std::span<const FrameView>(views));
+    EXPECT_NE(s.reason, "stale_frame") << "step " << step;
+    if (step == 0) EXPECT_EQ(s.action, AutocenterStep::Action::Move);
+  }
+}
+
+TEST(Fixture, RecordedSourceFeedsDragonflyAfterAMove) {
+  TempDir d;
+  GlowScene scene;
+  scene.glow_mm = {0.1, 0};
+  scene.peak = 0.6;
+  const FixtureCase c = record_case(d.path, scene, FinderMode::Glow, 11.5, 3);
+  auto clock = counter_clock();
+  RecordedSource src(c, clock);  // shares the clock the caller uses for `now`
+  SimpleFinder finder;
+  DragonflyParams p;
+  p.total_duration = std::chrono::hours(1);
+  Dragonfly df(finder, CameraStageMap::from_scale(23.0, false, true), 23.0, p);
+  df.start(clock(), {0, 0});
+
+  auto first = src.grab();
+  ASSERT_TRUE(first.has_value());
+  const FrameView v1 = first->view();
+  auto a = df.step(std::span<const FrameView>(&v1, 1), clock(), {0, 0});
+  ASSERT_TRUE(a.has_value());
+  ASSERT_EQ(a->action, DragonflyStep::Action::Move);
+
+  // Grabbed after the Move was returned: accepted, not "stale frame".
+  auto second = src.grab();
+  ASSERT_TRUE(second.has_value());
+  const FrameView v2 = second->view();
+  auto b = df.step(std::span<const FrameView>(&v2, 1), clock(), a->target_mm);
+  EXPECT_TRUE(b.has_value()) << (b.has_value() ? "" : b.error().what);
+}
+
+TEST(Fixture, RecorderSurfacesPixelAboveDepth) {
+  TempDir d;
+  FrameRecorder rec(d.path, Provenance::Synthetic, FinderMode::Hole, 5.0);
+  Frame f = Frame::make(4, 4, 255);
+  f.at(1, 1) = 300;
+  const auto r = rec.add(f.view());
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(rec.finish().has_value());  // nothing was recorded
 }

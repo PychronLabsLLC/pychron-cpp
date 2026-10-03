@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -342,7 +343,7 @@ TEST(Autocenter, InvalidParamsFail) {
   auto set = render_frames(scene, SimStage{{0, 0}}, 3, seq);
   const auto views = set.views();
   const double nan = std::nan("");
-  std::vector<AutocenterParams> bad(9);
+  std::vector<AutocenterParams> bad(12);
   bad[0].tolerance_mm = -0.01;
   bad[1].tolerance_mm = nan;
   bad[2].max_step_mm = 0;
@@ -352,6 +353,10 @@ TEST(Autocenter, InvalidParamsFail) {
   bad[6].aim_offset_px = {nan, 0};
   bad[7].crop_scale = 1e300;  // would overflow the int crop side
   bad[8].max_step_mm = nan;
+  // 2^32 + 10 wraps to 10 in an int cast: it must never pass as a "clipped"-free aim point.
+  bad[9].aim_offset_px = {4294967306.0, 0};
+  bad[10].aim_offset_px = {0, 1e300};
+  bad[11].aim_offset_px = {-1e5 - 1, 0};
   for (const auto& p : bad) {
     Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
     const auto s = ac.step(std::span<const FrameView>(views));

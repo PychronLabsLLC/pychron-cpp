@@ -247,8 +247,8 @@ Summary:
   integer truncation of the centroid.
 - Holes: the legacy finder returns nothing on all four frames. Its threshold
   limiting accepts a threshold only when 25 to 75 percent of the frame is
-  foreground, which suits the crop the legacy autocenter uses (about 2.55 hole
-  radii on a side) and not these 80 by 80 crops, where a hole of radius 11 covers
+  foreground, which suits a tight crop (about 2.55 hole radii on a side, if the legacy
+  `dim` is a radius) and not these 80 by 80 crops, where a hole of radius 11 covers
   about 6 percent.
 - The last column re-runs `LegacyFinder` on a crop of `ceil(2.55 * radius)` pixels
   centred on the marked centre. It returns the hole in all four. That shows a
@@ -259,5 +259,9 @@ Summary:
   centred on it and the legacy finder prefers targets near the crop centre, so
   the small errors show detection, not accuracy. It is not counted in the totals
   above.
+- Crop size caveat: this diagnostic and the legacy reading use about 2.55 hole
+  radii on a side, whereas `Autocenter` crops `crop_scale * 2 * radius` (5.1
+  radii at the default `crop_scale` of 2.55). Which reading of the legacy `dim`
+  (radius or diameter) is right is unresolved.
 - On synthetic frames the legacy and simple finders agree within 1.3 px for holes
   (on a 30 px crop, 10 stage offsets) and within 1.1 px for glows (200 px frame).

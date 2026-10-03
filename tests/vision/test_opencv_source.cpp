@@ -3,8 +3,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <system_error>
 
@@ -154,6 +156,22 @@ TEST_F(OpenCvSourceVideo, RotationsAreClockwise) {
   SourceConfig r270;
   r270.rotate = 270;
   expect_stream(r270, kH, kW, {1, 3, 0, 2}, luma());
+}
+
+// Frames are stamped from the injected clock, not from the video position.
+TEST_F(OpenCvSourceVideo, FramesCarryStrictlyIncreasingTimestampsFromTheClock) {
+  auto n = std::make_shared<int>(0);
+  auto s = open_opencv_source(file.string(), SourceConfig{},
+                              [n] { return pychron::TimePoint{} + std::chrono::milliseconds(100 * ++*n); });
+  ASSERT_TRUE(s.has_value()) << s.error().what;
+  pychron::TimePoint prev{};
+  for (int i = 0; i < kFrames; ++i) {
+    auto f = (*s)->grab();
+    ASSERT_TRUE(f.has_value()) << f.error().what;
+    EXPECT_EQ(f->timestamp, pychron::TimePoint{} + std::chrono::milliseconds(100 * (i + 1)));
+    EXPECT_GT(f->timestamp, prev);
+    prev = f->timestamp;
+  }
 }
 
 TEST_F(OpenCvSourceVideo, InvalidRotationIsConfigError) {

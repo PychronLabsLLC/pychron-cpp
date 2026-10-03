@@ -38,11 +38,23 @@ Frame crop(const FrameView& v, Rect r) {
   return out;
 }
 
+namespace {
+
+// An out-of-range double must never reach lround or the int cast (UB, or a
+// silent wrap). +-1e9 leaves room for the caller's x + w in int; a non-finite
+// value (no meaningful position) is taken as 0.
+int to_coord(double v) {
+  constexpr double kLimit = 1.0e9;
+  if (!std::isfinite(v)) return 0;
+  return static_cast<int>(std::lround(std::clamp(v, -kLimit, kLimit)));
+}
+
+}  // namespace
+
 Rect centered_rect(const FrameView& v, int side, Vec2 offset_px) {
   const double cx = v.width / 2.0 + offset_px.x;
   const double cy = v.height / 2.0 + offset_px.y;
-  return Rect{static_cast<int>(std::lround(cx - side / 2.0)), static_cast<int>(std::lround(cy - side / 2.0)), side,
-              side};
+  return Rect{to_coord(cx - side / 2.0), to_coord(cy - side / 2.0), side, side};
 }
 
 }  // namespace pychron::vision

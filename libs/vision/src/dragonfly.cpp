@@ -16,6 +16,9 @@ bool finite(Vec2 v) { return std::isfinite(v.x) && std::isfinite(v.y); }
 bool positive(double v) { return std::isfinite(v) && v > 0; }
 bool non_negative(double v) { return std::isfinite(v) && v >= 0; }
 
+// Upper bound on any pixel extent; also bounds the aim offset.
+constexpr double kMaxSidePx = 1.0e5;
+
 }  // namespace
 
 Dragonfly::Dragonfly(ITargetFinder& finder, CameraStageMap map, double px_per_mm, DragonflyParams params)
@@ -44,7 +47,8 @@ bool Dragonfly::params_ok() const {
          positive(params_.target_radius_mm) && non_negative(params_.aggressiveness) &&
          non_negative(params_.move_threshold_mm) && std::isfinite(params_.saturation_threshold) &&
          params_.saturation_threshold > 0 && params_.saturation_threshold <= 1 &&
-         params_.frames_per_step >= 1 && params_.miss_frames_before_search >= 1;
+         finite(params_.aim_offset_px) && std::abs(params_.aim_offset_px.x) <= kMaxSidePx &&
+         std::abs(params_.aim_offset_px.y) <= kMaxSidePx && params_.miss_frames_before_search >= 1;
 }
 
 Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoint now, Vec2 stage_pos_mm) {
@@ -73,9 +77,8 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     }
   }
 
-  // Crop and mask are sized from the target, centred on the image centre.
+  // Crop and mask are sized from the target, centred on the aim point (image centre plus offset).
   const double diameter_px = 2.0 * params_.target_radius_mm * px_per_mm_;
-  constexpr double kMaxSidePx = 1.0e5;
   const double side_d = 2.5 * diameter_px;
   if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) {
     out.action = Step::Action::Hold;
@@ -98,8 +101,9 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   // blob, but the masked median is bright. They count as saturated, not as misses.
   std::vector<double> flooded;
   for (const FrameView& f : frames) {
-    const Rect r = centered_rect(f, side);
-    // Where the clamped crop really starts; the frame centre is the reference.
+    const Rect r = centered_rect(f, side, params_.aim_offset_px);
+    // Where the clamped crop really starts; the aim point is the reference, even
+    // when the crop does not fit and is clamped.
     const int x0 = std::max(r.x, 0), y0 = std::max(r.y, 0);
     const Frame c = crop(f, r);
     if (c.width <= 0 || c.height <= 0) continue;
@@ -111,8 +115,8 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
       if (m >= params_.saturation_threshold) flooded.push_back(std::min(m, 1.0));
       continue;
     }
-    const Vec2 off{x0 + targets.front().center_px.x - (f.width - 1) / 2.0,
-                   y0 + targets.front().center_px.y - (f.height - 1) / 2.0};
+    const Vec2 off{x0 + targets.front().center_px.x - ((f.width - 1) / 2.0 + params_.aim_offset_px.x),
+                   y0 + targets.front().center_px.y - ((f.height - 1) / 2.0 + params_.aim_offset_px.y)};
     if (!finite(off)) continue;
     const double s = saturation(targets.front());
     hits.push_back({off, std::isfinite(s) ? std::clamp(s, 0.0, 1.0) : 0.0});

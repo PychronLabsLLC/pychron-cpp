@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -152,4 +153,17 @@ TEST(Kernel, FitCircleOnCollinearPointsHasLargeRms) {
   auto c = fit_circle(pts);
   EXPECT_TRUE(c.rms > 1.0 || !std::isfinite(c.radius));
   EXPECT_FALSE(std::isfinite(fit_circle({}).radius));  // empty input must not crash
+}
+
+TEST(Kernel, BoxBlurHugeRadiusIsTheFrameMean) {
+  auto f = Frame::make(5, 4, 255, 0);
+  for (int x = 0; x < 5; ++x) f.at(x, 0) = 100;  // mean = 500 / 20 = 25
+  for (const int radius : {std::numeric_limits<int>::max(), std::numeric_limits<int>::max() - 1, 1000000}) {
+    const Frame b = box_blur(f.view(), radius);
+    for (int y = 0; y < 4; ++y)
+      for (int x = 0; x < 5; ++x) EXPECT_EQ(b.view().at(x, y), 25) << radius;
+  }
+  // Non-positive radius stays an identity copy.
+  const Frame same = box_blur(f.view(), std::numeric_limits<int>::min());
+  EXPECT_EQ(same.data, f.data);
 }
