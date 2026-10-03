@@ -1,8 +1,10 @@
 #include "reference_fit_window.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QCheckBox>
+#include <QDateTime>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
@@ -10,10 +12,14 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QStatusBar>
+#include <QTableWidget>
+#include <QTimeZone>
 #include <QToolBar>
+#include <QHeaderView>
 #include <QVBoxLayout>
 
 #include "options_editor.hpp"
+#include "preset_bar.hpp"
 #include "pychron/processing/revisions.hpp"
 #include "scene_view.hpp"
 
@@ -104,9 +110,37 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
   connect(save_, &QPushButton::clicked, this, [this] { save(); });
 
   auto* dock = new QDockWidget(tr("Fits"), this);
+  auto* host = new QWidget;
+  auto* hl = new QVBoxLayout(host);
+  presets_ = new PresetBar(store_, schema_);
+  presets_->current = [this] { return pipeline_.find(kFit)->options; };
+  hl->addWidget(presets_);
   editor_ = new OptionsEditor;
-  dock->setWidget(editor_);
+  hl->addWidget(editor_, 1);
+  dock->setWidget(host);
   addDockWidget(Qt::RightDockWidgetArea, dock);
+  connect(presets_, &PresetBar::loaded, this, [this](const pp::Options& o, const QString& name) {
+    pipeline_.find(kFit)->preset = name.toStdString();
+    set_fit_options(o);
+  });
+  connect(presets_, &PresetBar::message, this, [this](const QString& text, const QString& details) {
+    status_->setText(text);
+    if (!details.isEmpty()) status_->setToolTip(details);
+  });
+
+  auto* rdock = new QDockWidget(tr("References"), this);
+  table_ = new QTableWidget;
+  table_->setColumnCount(4);
+  table_->setHorizontalHeaderLabels({tr("Run ID"), tr("Type"), tr("Run time (UTC)"), tr("Included")});
+  table_->verticalHeader()->setVisible(false);
+  table_->horizontalHeader()->setStretchLastSection(true);
+  table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  rdock->setWidget(table_);
+  addDockWidget(Qt::BottomDockWidgetArea, rdock);
+  connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+    if (filling_ || item->column() != 3) return;
+    toggle_references({item->data(Qt::UserRole).toString()});
+  });
   connect(editor_, &OptionsEditor::changed, this, [this] {
     pipeline_.find(kFit)->options = editor_->options();
     note_.clear();
@@ -122,6 +156,7 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
   connect(&debounce_, &QTimer::timeout, this, &ReferenceFitWindow::run);
 
   editor_->set_options(pipeline_.find(kFit)->options);
+  presets_->reload(QStringLiteral("Default"));
   update_save_state();
   if (!find_references()) run();
 }
@@ -173,6 +208,7 @@ void ReferenceFitWindow::on_result(const PipelineResult& r) {
   QStringList warnings;
   for (const auto& d : r.diagnostics) warnings << qs(d);
   if (r.outputs.size() >= 2 && r.outputs[1]) references_ = std::get<pp::DatasetPtr>(r.outputs[1]->at(0));
+  fill_table();
   if (r.outputs.empty() || !r.outputs[0]) {
     const QString what = r.outputs.empty() ? tr("nothing computed") : qs(to_string(r.outputs[0].error()));
     status_->setText(tr("Error: %1").arg(what));
@@ -199,6 +235,37 @@ void ReferenceFitWindow::on_result(const PipelineResult& r) {
   status_->setToolTip(warnings.join(QLatin1Char('\n')));
   update_save_state();
   emit figure_updated();
+}
+
+void ReferenceFitWindow::fill_table() {
+  filling_ = true;
+  table_->setRowCount(references_ ? static_cast<int>(references_->size()) : 0);
+  if (references_) {
+    // Newest first, as found.
+    std::vector<const pp::DatasetItem*> items;
+    for (const auto& it : references_->items()) items.push_back(&it);
+    std::stable_sort(items.begin(), items.end(), [](const pp::DatasetItem* a, const pp::DatasetItem* b) {
+      return a->analysis->analysis->timestamp > b->analysis->analysis->timestamp;
+    });
+    int row = 0;
+    for (const auto* it : items) {
+      const auto& a = *it->analysis->analysis;
+      table_->setItem(row, 0, new QTableWidgetItem(qs(a.runid)));
+      table_->setItem(row, 1, new QTableWidgetItem(qs(a.analysis_type)));
+      const auto when = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(std::llround(a.timestamp * 1000.0)),
+                                                       QTimeZone::utc());
+      table_->setItem(row, 2, new QTableWidgetItem(when.toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
+      auto* inc = new QTableWidgetItem;
+      inc->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      inc->setCheckState(it->exclusion.included() ? Qt::Checked : Qt::Unchecked);
+      inc->setData(Qt::UserRole, qs(a.uuid));
+      if (it->exclusion.user) inc->setText(*it->exclusion.user ? tr("left out by you") : tr("put back by you"));
+      table_->setItem(row, 3, inc);
+      ++row;
+    }
+  }
+  table_->resizeColumnsToContents();
+  filling_ = false;
 }
 
 void ReferenceFitWindow::toggle_references(const QStringList& uuids) {

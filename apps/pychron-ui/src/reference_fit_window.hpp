@@ -10,7 +10,9 @@
 // run on the ProcessingBridge. The references come from find_references
 // (types, hours either side, same spectrometer / extract device); clicking a
 // reference point leaves it out of the fit or puts it back. The options
-// dock sets one fit per isotope (blanks) or detector pair (IC factors).
+// dock sets one fit per isotope (blanks) or detector pair (IC factors), with
+// named presets; the References dock lists every reference with an
+// Included box (the same edit as clicking its point).
 // Save writes the predicted values as blanks / IC factors revisions of every
 // fitted unknown in one changeset, when the source keeps revisions.
 
@@ -28,10 +30,12 @@ class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QTableWidget;
 
 namespace pychron::ui {
 
 class OptionsEditor;
+class PresetBar;
 class SceneView;
 
 class ReferenceFitWindow : public QMainWindow {
@@ -61,6 +65,8 @@ class ReferenceFitWindow : public QMainWindow {
   // For tests.
   SceneView* view() const noexcept { return view_; }
   OptionsEditor* options_editor() const noexcept { return editor_; }
+  PresetBar* presets() const noexcept { return presets_; }
+  QTableWidget* references_table() const noexcept { return table_; }
   QLineEdit* reference_types() const noexcept { return types_; }
   QDoubleSpinBox* hours() const noexcept { return hours_; }
   QCheckBox* same_spectrometer() const noexcept { return same_ms_; }
@@ -81,6 +87,7 @@ class ReferenceFitWindow : public QMainWindow {
   void run();
   void on_result(const PipelineResult& r);
   void update_save_state();
+  void fill_table();
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
@@ -95,6 +102,9 @@ class ReferenceFitWindow : public QMainWindow {
   processing::DatasetPtr references_;
   SceneView* view_;
   OptionsEditor* editor_;
+  PresetBar* presets_;
+  QTableWidget* table_;
+  bool filling_ = false;
   QLineEdit* types_;
   QDoubleSpinBox* hours_;
   QCheckBox* same_ms_;

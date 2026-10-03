@@ -143,9 +143,11 @@ source adapters as separate targets (`processing_records`,
       `icfactor_fit` -> Scene + `ReferenceFits`), `find_references`,
       `IRevisionSource::save_reference_fits` (one changeset, reviewed set),
       and the Blanks / IC factors window from the browser's Plot menu.
-- [ ] Reference fits: weighted polynomial regressions, CI and Monte Carlo
-      errors, presets in the window, discrimination and source-correction
-      IC modes, "skip reviewed" on refit, references table dock.
+- [x] Reference fits: weighted polynomial regressions, CI and Monte Carlo
+      errors, presets in the window (`PresetBar`), source-correction IC
+      mode, keep reviewed values, references table dock.
+- [ ] Discrimination IC mode: decide the formula (legacy's
+      `set_discrimination` power is suspect, see spec 7.5).
 - [ ] `fit_isotope_evolution` over many analyses (batch refits).
 - [ ] Tables and CSV export units.
 - [ ] Pipeline template editor (graph view of units, per-node options dock).

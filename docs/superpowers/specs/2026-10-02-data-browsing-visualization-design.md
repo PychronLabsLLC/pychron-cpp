@@ -365,10 +365,24 @@ After legacy FitBlanksNode / FitICFactorNode (`references_series.py`):
   or before / after the unknown, clamped at the ends), bracketing average
   (mean of the two, error sqrt(eL² + eH²) / 2), bracketing interpolate
   (linear between them, error sqrt(((1 - f) eL)² + (f eH)²)), average and
-  weighted mean (SEM, SD, MSEM), linear, parabolic, cubic and exponential
-  regressions (`reduction::fit` on hours relative to each unknown; SEM or
-  SD). Deviation: legacy weights polynomial fits by the references'
-  errors when they have them; these are unweighted.
+  weighted mean, linear, parabolic, cubic and exponential regressions on
+  hours. Polynomials are weighted by 1/σ² when every included reference has
+  an error (legacy `WeightedPolynomialRegressor`), else ordinary least
+  squares; exponentials are unweighted. Errors: SEM (weighted: propagated,
+  sqrt(x'(X'WX)⁻¹x)), SD (SEM and the residual scatter), MSEM (SEM ×
+  sqrt(MSWD) when MSWD > 1), CI (t(0.975, n − p) × MSEM) and MC (the spread
+  of 500 seeded refits of references perturbed by their errors; Box–Muller
+  over `mt19937_64` so every compiler draws the same numbers).
+- IC mode `source_correction` (legacy `set_beta`): the Ar40/Ar36 pair's
+  fit v = measured/standard gives β = ln(1/v)/ln(m40/m36) and IC factors
+  (m/m40)^β = v^k, k = ln(m40/m)/ln(m40/m36), on the detectors of Ar36..Ar39,
+  saved with `source_correction` set. Legacy's discrimination mode
+  (`set_discrimination`) is not ported: it computes `(disc / (m40 − m36))
+  ** (m − m36)`, which does not reduce to a per-amu power law; it needs a
+  decision on the intended formula first.
+- `skip_reviewed`: values already marked reviewed (analyses carry the
+  `reviewed` flags of their blanks and IC factors) are shown but not
+  refitted or saved, like legacy's `check_refit`.
 - Excluded references (the references' `edits` unit) are shown hollow and
   left out of the fit; excluded unknowns are not fitted.
 - `ReferenceFits` (a new port type) holds, per fitted unknown, its heads
@@ -725,8 +739,10 @@ Plot > Blanks... / IC factors... in the browser opens a window for the
 selected unknowns: a finder bar (reference types, hours either side, same
 spectrometer, same extract device, Find), the scene (one panel per isotope
 or detector pair; click a reference to leave it out or put it back), a
-Fits dock generated from the unit's schema, and Save, enabled when the
-source keeps revisions and something was fitted. A lost compare-and-swap
+Fits dock (named presets, `PresetBar`, shared with figure windows, above
+the editor generated from the unit's schema), a References dock (run id,
+type, time, an Included box doing the same edit as a click), and Save,
+enabled when the source keeps revisions and something was fitted. A lost compare-and-swap
 writes nothing and the status says so.
 
 ### 11.4 Figure window

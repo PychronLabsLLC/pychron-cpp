@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 
 #include "options_editor.hpp"
+#include "preset_bar.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "scene_view.hpp"
 
@@ -101,27 +102,22 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   auto* dock = new QDockWidget(tr("Options"), this);
   auto* host = new QWidget;
   auto* hl = new QVBoxLayout(host);
-  auto* prow = new QHBoxLayout;
-  presets_combo_ = new QComboBox;
-  prow->addWidget(presets_combo_, 1);
-  auto* save = new QPushButton(tr("Save"));
-  auto* save_as = new QPushButton(tr("Save as..."));
-  auto* remove = new QPushButton(tr("Delete"));
-  auto* factory = new QPushButton(tr("Factory"));
-  factory->setToolTip(tr("Reload the factory preset of this name"));
-  hl->addLayout(prow);
-  auto* brow = new QHBoxLayout;
-  for (auto* b : {save, save_as, remove, factory}) brow->addWidget(b);
-  hl->addLayout(brow);
+  presets_ = new PresetBar(store_, schema_);
+  presets_->current = [this] { return pipeline_.find(kFigure)->options; };
+  presets_->ask_name = [this] { return ask_preset_name ? ask_preset_name() : QString(); };
+  hl->addWidget(presets_);
   editor_ = new OptionsEditor;
   hl->addWidget(editor_, 1);
   dock->setWidget(host);
   addDockWidget(Qt::RightDockWidgetArea, dock);
-  connect(save, &QPushButton::clicked, this, [this] { save_preset(false); });
-  connect(save_as, &QPushButton::clicked, this, [this] { save_preset(true); });
-  connect(remove, &QPushButton::clicked, this, &FigureWindow::delete_preset);
-  connect(factory, &QPushButton::clicked, this, &FigureWindow::factory_reset);
-  connect(presets_combo_, &QComboBox::activated, this, [this](int) { select_preset(presets_combo_->currentText()); });
+  connect(presets_, &PresetBar::loaded, this, [this](const pp::Options& o, const QString& name) {
+    pipeline_.find(kFigure)->preset = name.toStdString();
+    set_figure_options(o);
+  });
+  connect(presets_, &PresetBar::message, this, [this](const QString& text, const QString& details) {
+    status_->setText(text);
+    if (!details.isEmpty()) status_->setToolTip(details);
+  });
   connect(editor_, &OptionsEditor::changed, this, [this] {
     pipeline_.find(kFigure)->options = editor_->options();
     schedule();
@@ -153,7 +149,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   connect(&debounce_, &QTimer::timeout, this, &FigureWindow::run);
 
   editor_->set_options(pipeline_.find(kFigure)->options);
-  reload_preset_list(QStringLiteral("Default"));
+  presets_->reload(QStringLiteral("Default"));
   run();
 }
 
@@ -268,68 +264,9 @@ void FigureWindow::set_group_key(const QString& key) {
   run();
 }
 
-void FigureWindow::reload_preset_list(const QString& select) {
-  presets_combo_->clear();
-  for (const auto& p : store_.list(schema_)) {
-    QString label = qs(p.name);
-    presets_combo_->addItem(label);
-    const int i = presets_combo_->count() - 1;
-    presets_combo_->setItemData(i, p.origin == pp::PresetOrigin::Factory ? tr("factory")
-                                   : p.origin == pp::PresetOrigin::Lab   ? tr("lab")
-                                                                         : tr("yours"),
-                                Qt::ToolTipRole);
-  }
-  presets_combo_->setCurrentText(select);
-}
+QComboBox* FigureWindow::preset_combo() const noexcept { return presets_->combo(); }
 
-void FigureWindow::select_preset(const QString& name) {
-  auto loaded = store_.load(schema_, name.toStdString());
-  if (!loaded) {
-    status_->setText(tr("Preset: %1").arg(qs(loaded.error().what)));
-    return;
-  }
-  pipeline_.find(kFigure)->preset = name.toStdString();
-  presets_combo_->setCurrentText(name);
-  set_figure_options(loaded->options);
-  if (!loaded->warnings.empty()) {
-    QStringList w;
-    for (const auto& s : loaded->warnings) w << qs(s);
-    status_->setToolTip(w.join(QLatin1Char('\n')));
-  }
-}
-
-void FigureWindow::save_preset(bool as) {
-  QString name = presets_combo_->currentText();
-  if (as || name.isEmpty()) name = ask_preset_name ? ask_preset_name() : QString();
-  if (name.isEmpty()) return;
-  if (auto ok = store_.save(name.toStdString(), pipeline_.find(kFigure)->options); !ok) {
-    status_->setText(tr("Save failed: %1").arg(qs(ok.error().what)));
-    return;
-  }
-  pipeline_.find(kFigure)->preset = name.toStdString();
-  reload_preset_list(name);
-  status_->setText(tr("Saved preset \"%1\"").arg(name));
-}
-
-void FigureWindow::delete_preset() {
-  const QString name = presets_combo_->currentText();
-  if (auto ok = store_.remove(schema_, name.toStdString()); !ok) {
-    status_->setText(qs(ok.error().what));
-    return;
-  }
-  reload_preset_list(name);  // a factory preset of the same name may remain
-  select_preset(presets_combo_->currentText().isEmpty() ? QStringLiteral("Default") : presets_combo_->currentText());
-}
-
-void FigureWindow::factory_reset() {
-  const QString name = presets_combo_->currentText();
-  auto f = store_.factory(schema_, name.toStdString());
-  if (!f) {
-    status_->setText(tr("No factory preset named \"%1\"").arg(name));
-    return;
-  }
-  set_figure_options(f->options);
-}
+void FigureWindow::select_preset(const QString& name) { presets_->select(name); }
 
 bool FigureWindow::export_figure(const QString& path) {
   if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) return view_->save_pdf(path);

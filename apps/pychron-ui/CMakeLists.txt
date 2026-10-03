@@ -44,6 +44,7 @@ add_library(pychron_ui_lib STATIC
   src/recall_window.cpp
   src/figure_window.cpp
   src/reference_fit_window.cpp
+  src/preset_bar.cpp
   src/theme.cpp
   src/command_line.hpp
   src/core_bridge.hpp
@@ -79,6 +80,7 @@ add_library(pychron_ui_lib STATIC
   src/recall_window.hpp
   src/figure_window.hpp
   src/reference_fit_window.hpp
+  src/preset_bar.hpp
   src/theme.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)

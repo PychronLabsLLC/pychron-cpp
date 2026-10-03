@@ -100,7 +100,9 @@ TEST(ReferenceModel, WeightedPolynomials) {
   // Exponential fits are never weighted.
   pts[0].value.error = 0.1;
   auto ex = ReferenceModel::make(pts, ReferenceFitKind::Exponential, ReferenceErrorKind::Sem);
-  if (ex) EXPECT_FALSE(ex->weighted());
+  if (ex) {
+    EXPECT_FALSE(ex->weighted());
+  }
 }
 
 TEST(ReferenceModel, WeightedErrorKinds) {

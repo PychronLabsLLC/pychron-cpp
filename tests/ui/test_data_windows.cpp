@@ -35,6 +35,7 @@
 #include "processing_bridge.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
+#include "preset_bar.hpp"
 #include "reference_fit_window.hpp"
 #include "scene_view.hpp"
 #include "ui_fixture.hpp"
@@ -666,6 +667,37 @@ class TestDataWindows : public QObject {
     QVERIFY(wait_runs(w, bridge, 4));
     QVERIFY(w.status_label()->text().contains(QStringLiteral("saved blanks for 2 analyses")));
 
+    // The References table lists both, blank 4 unchecked; checking it
+    // puts it back.
+    QCOMPARE(w.references_table()->rowCount(), 2);
+    QTableWidgetItem* box4 = nullptr;
+    for (int r = 0; r < 2; ++r)
+      if (w.references_table()->item(r, 3)->data(Qt::UserRole).toString() == QStringLiteral("uuid-4"))
+        box4 = w.references_table()->item(r, 3);
+    QVERIFY(box4);
+    QCOMPARE(box4->checkState(), Qt::Unchecked);
+    QCOMPARE(w.references_table()->item(0, 0)->text(), QStringLiteral("bu-10"));  // newest first
+    box4->setCheckState(Qt::Checked);
+    QVERIFY(wait_runs(w, bridge, 5));
+    QCOMPARE(w.fits()->analyses[0].rows[0].value.value, 2989.99);
+
+    // Presets: save the current fits as a user preset, change, reload it.
+    auto opts = w.pipeline().find("fit")->options;
+    auto rows = opts.rows("isotopes");
+    QVERIFY(rows[0].set("fit", std::string("average")).has_value());
+    QVERIFY(opts.set_rows("isotopes", rows).has_value());
+    w.set_fit_options(opts);
+    QVERIFY(wait_runs(w, bridge, 6));
+    w.presets()->ask_name = [] { return QStringLiteral("Averages"); };
+    QVERIFY(w.presets()->save(true));
+    QVERIFY(w.presets()->select(QStringLiteral("Default")));
+    QVERIFY(wait_runs(w, bridge, 7));
+    QCOMPARE(w.fits()->analyses[0].rows[0].fit, pp::ReferenceFitKind::Preceding);
+    QVERIFY(w.presets()->select(QStringLiteral("Averages")));
+    QVERIFY(wait_runs(w, bridge, 8));
+    QCOMPARE(w.fits()->analyses[0].rows[0].fit, pp::ReferenceFitKind::Average);
+    QCOMPARE(w.pipeline().find("fit")->preset, std::string("Averages"));
+
     // Someone else saves first: nothing written.
     src.move_head("uuid-6", "blanks");
     QVERIFY(!w.save());
@@ -675,8 +707,9 @@ class TestDataWindows : public QObject {
     // A window too narrow for any reference: nothing to fit or save.
     w.hours()->setValue(0.5);
     QVERIFY(w.find_references());
-    QVERIFY(wait_runs(w, bridge, 5));
+    QVERIFY(wait_runs(w, bridge, 9));
     QVERIFY(w.reference_uuids().isEmpty());
+    QCOMPARE(w.references_table()->rowCount(), 0);
     QVERIFY(w.fits()->analyses.empty());
     QVERIFY(!w.save_button()->isEnabled());
     QVERIFY(w.status_label()->toolTip().contains(QStringLiteral("no references")));

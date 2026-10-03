@@ -650,7 +650,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
         for (const auto& [name, mass] : kSourceMasses) {
           const IsotopeData* iso = a.find_by_isotope(name);
           if (!iso || iso->detector.empty() ||
-              std::any_of(outs.begin(), outs.end(), [&](const Out& o) { return o.key == iso->detector; }))
+              std::any_of(outs.begin(), outs.end(), [&](const Out& existing) { return existing.key == iso->detector; }))
             continue;
           const double k = std::log(kMass40 / mass) / std::log(kMass40 / kMass36);
           outs.push_back({iso->detector,

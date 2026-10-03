@@ -30,6 +30,7 @@ class QTableWidget;
 namespace pychron::ui {
 
 class OptionsEditor;
+class PresetBar;
 class SceneView;
 
 class FigureWindow : public QMainWindow {
@@ -64,7 +65,7 @@ class FigureWindow : public QMainWindow {
   // For tests.
   SceneView* view() const noexcept { return view_; }
   OptionsEditor* options_editor() const noexcept { return editor_; }
-  QComboBox* preset_combo() const noexcept { return presets_combo_; }
+  QComboBox* preset_combo() const noexcept;
   QComboBox* group_combo() const noexcept { return group_; }
   QTableWidget* analyses_table() const noexcept { return analyses_; }
   QLabel* status_label() const noexcept { return status_; }
@@ -80,10 +81,6 @@ class FigureWindow : public QMainWindow {
   void schedule();
   void on_result(const PipelineResult& r);
   void fill_analyses();
-  void reload_preset_list(const QString& select);
-  void save_preset(bool as);
-  void delete_preset();
-  void factory_reset();
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
@@ -94,7 +91,7 @@ class FigureWindow : public QMainWindow {
   processing::DatasetPtr dataset_;
   SceneView* view_;
   OptionsEditor* editor_;
-  QComboBox* presets_combo_;
+  PresetBar* presets_;
   QComboBox* group_;
   QTableWidget* analyses_;
   QLabel* status_;
