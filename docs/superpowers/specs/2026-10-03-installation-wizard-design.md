@@ -257,18 +257,18 @@ the install can finish in simulation.
 
 ### 3.6 Data reduction database
 
-- `libs/processing` gains `StoreSource : IAnalysisSource` over
-  `persistence::IStore` (`find_analyses` / `load_analysis`); built only when
-  persistence is built (it already is wherever Qt is, which is every UI
-  build).
-- Local install: `sqlite:<root>/data/pychron.db`, created and migrated on
-  first open. Server: `postgresql://user@host:port/db` in the site config,
-  password from the secret store; `migrate = false` for a server (a reduction
-  laptop must never migrate the lab's schema; doctor reports a schema behind
-  the app as FAIL with "ask your administrator").
-- The data browser takes its source from the install: records folder
-  (instrument installs, as today) or the database (data reduction installs).
-  Both can be listed in the browser's source selector.
+Already on main (2026-10-03): `processing::StoreSource` over the DVC store
+and `pychron-ui --db <url>` to browse it. Setup adds:
+
+- Local install: `sqlite:<root>/data/pychron.db`, created and migrated by
+  `elctl init` (and the wizard) when the store library is built in.
+- Server install: `postgresql://user@host:port/db` in the site config; the
+  password in `<root>/.pychron/credentials.toml` (owner-only), joined into
+  the URL only when the store is opened (`setup::database_url`). A server is
+  never migrated by setup or the app; doctor reports a schema it cannot open
+  with "ask your administrator".
+- `pychron-ui --install <name>` (or the default install) opens a data
+  reduction install's database the way `--db` does.
 
 ### 3.7 Installers
 
