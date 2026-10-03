@@ -215,40 +215,42 @@ QPixmap banner(QSize size, qreal dpr, bool simulation, bool compact) {
   return pm;
 }
 
-QIcon app_icon() {
+QPixmap icon_pixmap(int s) {
   const Theme& t = theme();
-  QIcon icon;
-  for (const int s : {16, 24, 32, 48, 64, 128, 256}) {
-    QPixmap pm(s, s);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    const QRectF tile(0, 0, s, s);
-    QLinearGradient bg(0, 0, 0, s);
-    bg.setColorAt(0, t.chrome.lighter(150));
-    bg.setColorAt(1, t.chrome);
-    p.setPen(Qt::NoPen);
-    p.setBrush(bg);
-    p.drawRoundedRect(tile, s * 0.22, s * 0.22);
-    const double m = s * 0.14;
-    if (s >= 48) {
-      paint_peaks(p, QRectF(m * 0.6, m * 1.3, s - m * 1.2, s - m * 2.4), t.signal, false);
-      p.fillRect(QRectF(m, s - m * 1.1, s - 2 * m, std::max(1.0, s / 40.0)), t.signal);
-    } else {
-      // Too small for the trace: 36, 39 and 40 as bars on a baseline.
-      const double base = s - m * 1.2;
-      const double top = m * 1.2;
-      const double bar = (s - 2 * m) / 5.0;
-      const std::array<std::pair<double, double>, 3> bars{{{0, 0.3}, {2, 0.6}, {4, 1.0}}};
-      p.setBrush(t.signal);
-      for (const auto& [slot, rel] : bars) {
-        const double bh = (base - top) * rel;
-        p.drawRoundedRect(QRectF(m + slot * bar, base - bh, bar, bh), bar * 0.3, bar * 0.3);
-      }
+  QPixmap pm(s, s);
+  pm.fill(Qt::transparent);
+  QPainter p(&pm);
+  p.setRenderHint(QPainter::Antialiasing);
+  const QRectF tile(0, 0, s, s);
+  QLinearGradient bg(0, 0, 0, s);
+  bg.setColorAt(0, t.chrome.lighter(150));
+  bg.setColorAt(1, t.chrome);
+  p.setPen(Qt::NoPen);
+  p.setBrush(bg);
+  p.drawRoundedRect(tile, s * 0.22, s * 0.22);
+  const double m = s * 0.14;
+  if (s >= 48) {
+    paint_peaks(p, QRectF(m * 0.6, m * 1.3, s - m * 1.2, s - m * 2.4), t.signal, false);
+    p.fillRect(QRectF(m, s - m * 1.1, s - 2 * m, std::max(1.0, s / 40.0)), t.signal);
+  } else {
+    // Too small for the trace: 36, 39 and 40 as bars on a baseline.
+    const double base = s - m * 1.2;
+    const double top = m * 1.2;
+    const double bar = (s - 2 * m) / 5.0;
+    const std::array<std::pair<double, double>, 3> bars{{{0, 0.3}, {2, 0.6}, {4, 1.0}}};
+    p.setBrush(t.signal);
+    for (const auto& [slot, rel] : bars) {
+      const double bh = (base - top) * rel;
+      p.drawRoundedRect(QRectF(m + slot * bar, base - bh, bar, bh), bar * 0.3, bar * 0.3);
     }
-    p.end();
-    icon.addPixmap(pm);
   }
+  p.end();
+  return pm;
+}
+
+QIcon app_icon() {
+  QIcon icon;
+  for (const int s : {16, 24, 32, 48, 64, 128, 256}) icon.addPixmap(icon_pixmap(s));
   return icon;
 }
 

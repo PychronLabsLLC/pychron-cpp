@@ -70,9 +70,15 @@ if(TARGET pychron-ui)
       MACOSX_BUNDLE_BUNDLE_NAME Pychron
       MACOSX_BUNDLE_GUI_IDENTIFIER com.pychronlabs.pychron
       MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-      MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+      MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+      MACOSX_BUNDLE_ICON_FILE pychron.icns)
+    # The icon files are the application icon rendered by tools/make_icons.py.
+    set(_pychron_icns "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.icns")
+    set_source_files_properties("${_pychron_icns}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(pychron-ui PRIVATE "${_pychron_icns}")
   elseif(WIN32)
     set_target_properties(pychron-ui PROPERTIES WIN32_EXECUTABLE ON)
+    target_sources(pychron-ui PRIVATE "${PROJECT_SOURCE_DIR}/packaging/windows/pychron.rc")
   endif()
   install(TARGETS pychron-ui
     BUNDLE DESTINATION . COMPONENT ${PYCHRON_COMPONENT}
@@ -91,8 +97,8 @@ install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/README.md" 
 if(UNIX AND NOT APPLE AND TARGET pychron-ui)
   install(FILES "${PROJECT_SOURCE_DIR}/packaging/linux/pychron.desktop"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT ${PYCHRON_COMPONENT})
-  install(FILES "${PROJECT_SOURCE_DIR}/packaging/pychron.svg"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps" COMPONENT ${PYCHRON_COMPONENT})
+  install(FILES "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.png"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps" COMPONENT ${PYCHRON_COMPONENT})
 endif()
 
 # --- bundled Python -------------------------------------------------------------

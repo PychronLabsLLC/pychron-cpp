@@ -1,0 +1,3 @@
+// The program icon (Explorer, taskbar, Start menu): the application icon,
+// packed by tools/make_icons.py.
+IDI_ICON1 ICON "../icons/pychron.ico"

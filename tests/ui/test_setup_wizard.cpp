@@ -7,6 +7,7 @@
 
 #include <QAbstractButton>
 #include <QCheckBox>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -292,6 +293,20 @@ class TestSetupWizard : public QObject {
     QVERIFY2(!text.contains(QStringLiteral("FAIL")), qPrintable(text));
     QVERIFY(text.contains(QStringLiteral("OK    profile data-reduction")));
     QVERIFY(text.contains(QStringLiteral("setup wizard builds")));
+  }
+
+  void theInstallerIconsAreRenderedAtEverySize() {
+    const fs::path out = dir("icons");
+    std::ostringstream log;
+    QCOMPARE(write_icons(out, log), 0);
+    for (const int size : {16, 24, 32, 48, 64, 128, 256, 512, 1024}) {
+      const QImage img(QString::fromStdString((out / ("pychron-" + std::to_string(size) + ".png")).string()));
+      QCOMPARE(img.width(), size);
+      QCOMPARE(img.height(), size);
+      QVERIFY(img.hasAlphaChannel());
+      QCOMPARE(qAlpha(img.pixel(0, 0)), 0);                 // rounded corner
+      QVERIFY(qAlpha(img.pixel(size / 2, size / 2)) > 0);  // the tile
+    }
   }
 
   void aDataReductionWindowIsTheBrowserAlone() {

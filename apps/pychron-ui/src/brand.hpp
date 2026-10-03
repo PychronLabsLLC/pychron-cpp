@@ -44,6 +44,9 @@ QPixmap banner(QSize size, qreal dpr, bool simulation, bool compact);
 
 // The application icon: the peaks on an ink tile.
 QIcon app_icon();
+// One size of it (the installers' icon files are rendered from these:
+// pychron-ui --write-icons, tools/make_icons.py).
+QPixmap icon_pixmap(int size);
 
 // Gives `window` its icon and a Help menu with About pychron (the application
 // menu on macOS), whose dialog is built on first use as the window's child.

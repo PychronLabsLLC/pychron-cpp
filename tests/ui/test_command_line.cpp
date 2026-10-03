@@ -110,6 +110,10 @@ class TestCommandLine : public QObject {
       auto r = parse_command_line(both);
       QVERIFY2(!r.has_value(), qPrintable(both.join(QLatin1Char(' '))));
     }
+    auto icons = parse_command_line({QStringLiteral("--write-icons"), QStringLiteral("out")});
+    QVERIFY(icons.has_value());
+    QVERIFY(icons->write_icons == std::filesystem::path("out"));
+    QVERIFY(!parse_command_line({QStringLiteral("--write-icons")}).has_value());
     QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--instal")}).error().what),
              QStringLiteral("unknown option --instal"));
   }

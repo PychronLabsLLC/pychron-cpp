@@ -44,6 +44,10 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.version = true;
     } else if (arg == QStringLiteral("--self-test")) {
       cli.self_test = true;
+    } else if (arg == QStringLiteral("--write-icons")) {
+      auto v = value();
+      if (!v) return fail(ErrorKind::Config, "--write-icons needs a directory");
+      cli.write_icons = std::filesystem::path(v->toStdString());
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
       bool ok = false;

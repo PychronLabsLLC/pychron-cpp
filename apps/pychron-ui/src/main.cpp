@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
   // they were started from.
   for (int i = 1; i < argc; ++i) {
     const std::string_view a(argv[i]);
-    if ((a == "--version" || a == "--self-test") && AttachConsole(ATTACH_PARENT_PROCESS)) {
+    if ((a == "--version" || a == "--self-test" || a == "--write-icons") && AttachConsole(ATTACH_PARENT_PROCESS)) {
       std::freopen("CONOUT$", "w", stdout);
       std::freopen("CONOUT$", "w", stderr);
     }
@@ -220,6 +220,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   if (cli->self_test) return pychron::ui::self_test(std::cout);
+  if (cli->write_icons) return pychron::ui::write_icons(*cli->write_icons, std::cout);
   const setup::Resources resources = setup::find_resources();
   const fs::path examples = resources.examples;
 

@@ -5,7 +5,7 @@
 //   [extraction_line.toml [canvas.toml] | --install <name> | --setup | --examples]
 //   [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>] [--queue <file>]
 //   [--sim-speed <x>] [--db <url>]
-//   --version | --self-test
+//   --version | --self-test | --write-icons <dir>
 
 #include <filesystem>
 #include <optional>
@@ -32,6 +32,7 @@ struct CommandLine {
   bool examples = false;               // the shipped example configs (development)
   bool version = false;                // print the version and exit
   bool self_test = false;              // check an installed copy and exit
+  std::optional<std::filesystem::path> write_icons;  // render the icon PNGs there and exit
 };
 
 // A Config error is a usage error: an unknown option, an option without a

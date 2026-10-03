@@ -14,6 +14,7 @@
 #pragma pop_macro("signals")
 #endif
 
+#include "brand.hpp"
 #include "pychron/setup/installer.hpp"
 
 namespace pychron::ui {
@@ -66,6 +67,19 @@ int self_test(std::ostream& out) {
     check(db.has_value(), "database (Qt SQLite plugin): " + (db ? *db : db.error().what));
   } else {
     out << "skip  database: built without the DVC store\n";
+  }
+  return failed == 0 ? 0 : 1;
+}
+
+int write_icons(const std::filesystem::path& dir, std::ostream& out) {
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  int failed = 0;
+  for (const int size : {16, 24, 32, 48, 64, 128, 256, 512, 1024}) {
+    const std::filesystem::path file = dir / ("pychron-" + std::to_string(size) + ".png");
+    const bool ok = brand::icon_pixmap(size).save(QString::fromStdString(file.string()), "PNG");
+    out << (ok ? "wrote " : "FAILED ") << file.string() << "\n";
+    if (!ok) ++failed;
   }
   return failed == 0 ? 0 : 1;
 }
