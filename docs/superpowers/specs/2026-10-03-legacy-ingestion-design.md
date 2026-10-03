@@ -465,3 +465,35 @@ points. Where this section and an earlier one disagree, this section wins.
 10. **Collection changeset id.** One commit can add several analyses, so a
     collection changeset's id is v5(namespace, source url, commit sha,
     analysis uuid), distinct from the commit's `import` changeset id.
+11. **Files rewritten after collection.** A later commit that rewrites an
+    analysis record or a satellite file (legacy `<SYNC>`, `<EDIT>`,
+    `<DEFINE EQUIL>` and manual commits) is not a conflict. If identifier,
+    aliquot or increment changed, it becomes an `identity` revision. A
+    rewritten raw-data file becomes a `signals` revision. Every other
+    difference is kept in the provenance `detail` of that commit's `import`
+    changeset as `rewrites`: path, blob sha and the changed keys with old and
+    new values. `hand_edit` stays reserved for re-import of a published repo.
+12. **Merges.** Diffing a merge against its first parent alone leaves the
+    wrong head when the merge keeps the first parent's version of a file the
+    other side changed. At a merge commit the adapter also diffs the merge
+    against each other parent; for every path that differs, if the merge's
+    blob is not the blob last imported for that path, the merge emits a
+    revision carrying the merge's content. After a merge, every imported
+    head equals the merge tree.
+13. **Resume position.** The resume token records the commit sha and its
+    index in the `rev-list --topo-order --reverse` order. On resume the list
+    is recomputed; if the commit at that index is the token's sha the walk
+    continues after it, with in-walk state rebuilt from the commits before
+    it. If it is not (history rewritten is an error; order merely changed is
+    not), the walk replays from the start, which deterministic ids make
+    safe.
+14. **Bounded wait for a collection.** An analysis whose collection is still
+    incomplete 20 commits after its record commit is flushed as a
+    `synthetic_collection` with the files it has. Files that arrive later are
+    ordinary revisions. One incomplete analysis therefore cannot hold the
+    resume token for the rest of the walk.
+15. **Identity guards survive a resume.** A run id already used by another
+    analysis, or (with `--catalog-from-repos`) a position already holding
+    another identifier, is an `identity_clash` conflict whether the earlier
+    analysis was seen in this walk, an earlier run, or another source. It
+    never aborts the import.
