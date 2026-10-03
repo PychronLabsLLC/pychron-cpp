@@ -48,9 +48,9 @@ QIcon app_icon();
 // pychron-ui --write-icons, tools/make_icons.py).
 QPixmap icon_pixmap(int size);
 
-// Gives `window` its icon and a Help menu with About pychron (the application
-// menu on macOS), whose dialog is built on first use as the window's child.
-// Returns the About action.
+// Gives `window` its icon and puts About pychron in the unified Help menu
+// (the application menu on macOS); its dialog is built on first use as the
+// window's child. Returns the About action.
 QAction* add_help_menu(QMainWindow* window);
 
 }  // namespace brand

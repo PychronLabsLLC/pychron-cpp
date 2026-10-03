@@ -77,12 +77,6 @@ class ExperimentWindow : public QMainWindow {
   void set_ask_unsaved(std::function<Unsaved()> ask) { ask_unsaved_ = std::move(ask); }
   void set_ask_stop(std::function<bool()> ask) { ask_stop_ = std::move(ask); }
 
-  // Queue > Preferences… (the application menu on macOS), and the same in the
-  // script editor; hidden until a handler is set. The handler gets the window
-  // that asked, to open the dialog over.
-  void set_preferences_handler(std::function<void(QWidget*)> handler);
-  QAction* preferences_action() const noexcept { return preferences_; }
-
  protected:
   void closeEvent(QCloseEvent* event) override;
 
@@ -112,13 +106,11 @@ class ExperimentWindow : public QMainWindow {
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;
   std::function<bool()> ask_stop_;
-  std::function<void(QWidget*)> on_preferences_;
 
   QAction* open_ = nullptr;
   QAction* save_ = nullptr;
   QAction* save_as_ = nullptr;
   QAction* revalidate_ = nullptr;
-  QAction* preferences_ = nullptr;
   std::vector<QAction*> row_actions_;
 };
 

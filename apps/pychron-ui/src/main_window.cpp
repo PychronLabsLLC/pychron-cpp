@@ -1,8 +1,12 @@
 #include "main_window.hpp"
 
+#include "menu_hub.hpp"
+
 #include <utility>
 
+#include <QApplication>
 #include <QCloseEvent>
+#include <QDialog>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
@@ -33,27 +37,35 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   spectrometer_action_->setEnabled(false);
   experiment_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
   experiment_action_->setEnabled(false);
-  QMenu* file_menu = menuBar()->addMenu(QStringLiteral("File"));
-  file_menu->addAction(installations_);
   installations_->setVisible(false);
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
   preferences_->setShortcut(QKeySequence::Preferences);
   preferences_->setMenuRole(QAction::PreferencesRole);
-  file_menu->addAction(preferences_);
-  connect(preferences_, &QAction::triggered, this, [this] { open_preferences(); });
-  file_menu->addSeparator();
-  QAction* quit = file_menu->addAction(QStringLiteral("Quit"));
+  // From any window (the bar is the same in all): over the one in front.
+  connect(preferences_, &QAction::triggered, this, [this] { open_preferences(preferences_parent()); });
+  auto* quit = new QAction(QStringLiteral("Quit"), this);
   quit->setShortcut(QKeySequence::Quit);
+  quit->setMenuRole(QAction::QuitRole);
   connect(quit, &QAction::triggered, this, &QMainWindow::close);
-  QMenu* window_menu = menuBar()->addMenu(QStringLiteral("Window"));
-  window_menu->addAction(spectrometer_action_);
-  window_menu->addAction(experiment_action_);
+  // Back here from any window: every window shows the same bar.
+  auto* line_window = new QAction(QStringLiteral("Extraction Line"), this);
+  line_window->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
+  connect(line_window, &QAction::triggered, this, [this] {
+    showNormal();
+    raise();
+    activateWindow();
+  });
   data_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
   data_action_->setEnabled(false);
-  window_menu->addAction(data_action_);
+  auto& menus = MenuHub::instance();
+  menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
+  menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
+  menus.contribute(this, MenuHub::Menu::Window, {line_window, spectrometer_action_, experiment_action_, data_action_},
+                   MenuHub::Scope::App);
   about_action_ = brand::add_help_menu(this);
+  MenuHub::instance().install(this);
   connect(data_action_, &QAction::triggered, this, [this] {
     DataBrowserWindow* w = data_->browser();
     if (w == nullptr) return;
@@ -69,7 +81,6 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
                                                 experiment_settings_ ? experiment_settings_() : nullptr, this);
       experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
-      experiment_window_->set_preferences_handler([this](QWidget* over) { open_preferences(over); });
       if (experiment_queue_) {
         QString error;
         if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
@@ -166,6 +177,12 @@ void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory set
 // The spectrometer's move threshold goes through its window when one is open
 // (it keeps the value in use), else straight to its saved settings, which the
 // window reads when it opens.
+QWidget* MainWindow::preferences_parent() {
+  QWidget* front = QApplication::activeWindow();
+  if (front == nullptr || qobject_cast<QDialog*>(front) != nullptr) return this;
+  return front;
+}
+
 PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   std::optional<double> confirm_move;
   if (spectrometer_window_ != nullptr) {

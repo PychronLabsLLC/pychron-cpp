@@ -6,6 +6,8 @@
 #include <memory>
 
 #include <QAction>
+#include <QMenu>
+#include <QMenuBar>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -13,6 +15,7 @@
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
 #include "main_window.hpp"
+#include "menu_hub.hpp"
 #include "preferences_dialog.hpp"
 #include "script_editor_window.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
@@ -341,40 +344,45 @@ class TestExperimentWindow : public QObject {
     QVERIFY(main.experiment_window() == nullptr);
   }
 
+  // The one File > Preferences… is in every window's bar, and opens over the
+  // window in front.
   void experimentAndScriptEditorOfferPreferences() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());
-    {
-      // Standalone, there is no dialog to open: the action stays hidden.
-      ExperimentWindow window(bridge, true, settings());
-      QVERIFY(!window.preferences_action()->isVisible());
-      QVERIFY(!window.open_script_editor()->preferences_action()->isVisible());
-    }
     pychron::ui::MainWindow main(*sim.line);
     main.set_preferences_settings([this] { return settings(); });
     main.set_experiment(&bridge, true, std::nullopt, [this] { return settings(); });
     main.experiment_action()->trigger();
     ExperimentWindow* window = main.experiment_window();
-    QAction* action = window->preferences_action();
-    QVERIFY(action->isVisible());
+    pychron::ui::ScriptEditorWindow* editor = window->open_script_editor();
+    const auto file_menu = [](QMainWindow* w) {
+      auto* bar = qobject_cast<QMenuBar*>(w->menuWidget());
+      return pychron::ui::MenuHub::instance().menus(bar).at(static_cast<int>(pychron::ui::MenuHub::Menu::File));
+    };
+    QAction* action = main.preferences_action();
+    QVERIFY(file_menu(window)->actions().contains(action));
+    QVERIFY(file_menu(editor)->actions().contains(action));
     QCOMPARE(action->menuRole(), QAction::PreferencesRole);
     QCOMPARE(action->shortcut(), QKeySequence(QKeySequence::Preferences));
 
+    window->activateWindow();
+    if (!QTest::qWaitForWindowActive(window)) QSKIP("this platform does not activate windows");
     action->trigger();  // over the experiment window
     auto dialogs = window->findChildren<pychron::ui::PreferencesDialog*>();
     QCOMPARE(dialogs.size(), 1);
     QVERIFY(dialogs.front()->isVisible());
-    // The script editor asks for the same dialog, which is raised, not doubled.
-    QAction* editor_action = window->open_script_editor()->preferences_action();
-    QVERIFY(editor_action->isVisible());
-    QCOMPARE(editor_action->menuRole(), QAction::PreferencesRole);
-    editor_action->trigger();
+    // From the script editor: the same dialog, raised, not doubled.
+    editor->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(editor));
+    action->trigger();
     QCOMPARE(main.findChildren<pychron::ui::PreferencesDialog*>().size(), 1);
     dialogs.front()->reject();
     QTRY_COMPARE(main.findChildren<pychron::ui::PreferencesDialog*>().size(), 0);  // deleted on close
 
-    window->script_editor()->preferences_action()->trigger();  // now over the editor
-    QCOMPARE(window->script_editor()->findChildren<pychron::ui::PreferencesDialog*>().size(), 1);
+    editor->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(editor));
+    action->trigger();  // now over the editor
+    QCOMPARE(editor->findChildren<pychron::ui::PreferencesDialog*>().size(), 1);
     main.set_experiment(nullptr, false);
   }
 };

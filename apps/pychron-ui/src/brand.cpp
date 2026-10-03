@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "menu_hub.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -258,7 +259,7 @@ QAction* add_help_menu(QMainWindow* window) {
   window->setWindowIcon(app_icon());
   auto* about = new QAction(QStringLiteral("About pychron"), window);
   about->setMenuRole(QAction::AboutRole);
-  window->menuBar()->addMenu(QStringLiteral("Help"))->addAction(about);
+  MenuHub::instance().contribute(window, MenuHub::Menu::Help, {about}, MenuHub::Scope::App);
   QObject::connect(about, &QAction::triggered, window, [window] {
     auto* dialog = window->findChild<AboutDialog*>(QString(), Qt::FindDirectChildrenOnly);
     if (dialog == nullptr) dialog = new AboutDialog(window);

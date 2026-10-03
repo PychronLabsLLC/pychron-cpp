@@ -53,6 +53,7 @@ add_library(pychron_ui_lib STATIC
   src/installations_dialog.cpp
   src/setup_support.cpp
   src/brand.cpp
+  src/menu_hub.cpp
   src/preferences.cpp
   src/preferences_dialog.cpp
   src/command_line.hpp
@@ -98,6 +99,7 @@ add_library(pychron_ui_lib STATIC
   src/installations_dialog.hpp
   src/setup_support.hpp
   src/brand.hpp
+  src/menu_hub.hpp
   src/preferences.hpp
   src/preferences_dialog.hpp
 )

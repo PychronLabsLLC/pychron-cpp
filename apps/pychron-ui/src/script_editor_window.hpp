@@ -24,7 +24,6 @@
 #include "pychron/experiment/lab/scripts.hpp"
 #include "script_highlighter.hpp"
 
-class QAction;
 class QLabel;
 class QListWidget;
 class QTabWidget;
@@ -67,11 +66,6 @@ class ScriptEditorWindow : public QMainWindow {
 
   void set_ask_unsaved(std::function<Unsaved(const QString& name)> ask) { ask_unsaved_ = std::move(ask); }
 
-  // Script > Preferences… (the application menu on macOS); hidden until a
-  // handler is set. The handler gets this window, to open the dialog over.
-  void set_preferences_handler(std::function<void(QWidget*)> handler);
-  QAction* preferences_action() const noexcept { return preferences_; }
-
  signals:
   // A script was created or saved (the lab's script lists may have changed).
   void scriptsChanged();
@@ -108,8 +102,6 @@ class ScriptEditorWindow : public QMainWindow {
   QLabel* status_;
   QTimer check_timer_;
   std::function<Unsaved(const QString&)> ask_unsaved_;
-  std::function<void(QWidget*)> on_preferences_;
-  QAction* preferences_ = nullptr;
 };
 
 }  // namespace pychron::ui

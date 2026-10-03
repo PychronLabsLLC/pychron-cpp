@@ -79,8 +79,8 @@ class MainWindow : public QMainWindow {
   void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
   QAction* preferences_action() const noexcept { return preferences_; }
   // The dialog, window modal; OK and Apply save and apply what it holds.
-  // Over `over` (default: this window); the experiment and script editor
-  // windows open it over themselves.
+  // Over `over` (default: this window). File > Preferences… opens it over the
+  // window in front, whichever one's bar it was chosen from.
   PreferencesDialog* open_preferences(QWidget* over = nullptr);
   // Fonts (application wide) and the data browser's page size.
   void apply_preferences(const Preferences& preferences);
@@ -101,6 +101,9 @@ class MainWindow : public QMainWindow {
   void closeEvent(QCloseEvent* event) override;
 
  private:
+  // The window in front, to open a dialog over: not a dialog itself, and
+  // this window when none of the application's is active.
+  QWidget* preferences_parent();
   std::unique_ptr<QSettings> spectrometer_settings() const;
 
   CoreBridge bridge_;

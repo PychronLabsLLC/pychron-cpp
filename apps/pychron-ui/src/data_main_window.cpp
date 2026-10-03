@@ -1,6 +1,7 @@
 #include "data_main_window.hpp"
 
 #include "brand.hpp"
+#include "menu_hub.hpp"
 
 #include <utility>
 
@@ -22,21 +23,21 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
   data_->set_source(&source, &presets);
   setCentralWidget(data_->browser(this));
 
-  QMenu* file = menuBar()->addMenu(tr("File"));
-  file->addAction(installations_);
   preferences_->setShortcut(QKeySequence::Preferences);
   preferences_->setMenuRole(QAction::PreferencesRole);
-  file->addAction(preferences_);
   connect(preferences_, &QAction::triggered, this, [this] { open_preferences(); });
-  file->addSeparator();
-  QAction* quit = file->addAction(tr("Quit"));
+  auto* quit = new QAction(tr("Quit"), this);
   quit->setShortcut(QKeySequence::Quit);
+  quit->setMenuRole(QAction::QuitRole);
   connect(quit, &QAction::triggered, this, &QMainWindow::close);
+  MenuHub::instance().contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
+  MenuHub::instance().contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
   installations_->setVisible(false);
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
   about_ = brand::add_help_menu(this);
+  MenuHub::instance().install(this);
 }
 
 DataMainWindow::~DataMainWindow() {

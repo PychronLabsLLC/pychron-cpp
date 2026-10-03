@@ -1,6 +1,9 @@
 #include "experiment_window.hpp"
 
+#include "menu_hub.hpp"
+
 #include <algorithm>
+#include <map>
 #include <set>
 
 #include <QAction>
@@ -155,16 +158,19 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
 }
 
 void ExperimentWindow::build_actions() {
-  // Plain addAction(text) plus connect: the (text, receiver, functor)
-  // overloads are deprecated in recent Qt.
-  auto add = [this](QMenu* menu, const QString& text, std::function<void()> f, const QKeySequence& key = {}) {
-    QAction* a = menu->addAction(text);
+  // The actions go into the unified menu bar (MenuHub), enabled while this
+  // window is active; `into` collects each menu's group.
+  using Menu = MenuHub::Menu;
+  std::map<Menu, QList<QAction*>> into;
+  auto add = [this, &into](Menu menu, const QString& text, std::function<void()> f, const QKeySequence& key = {}) {
+    auto* a = new QAction(text, this);
     if (!key.isEmpty()) a->setShortcut(key);
     connect(a, &QAction::triggered, this, [f = std::move(f)] { f(); });
+    into[menu].append(a);
     return a;
   };
 
-  auto* file = menuBar()->addMenu(tr("&Queue"));
+  const Menu file = Menu::Queue;
   auto* bar = addToolBar(tr("Queue"));
   bar->setObjectName(QStringLiteral("ExperimentToolBar"));
   open_ = add(file, tr("&Open..."), [this] { open_dialog(); }, QKeySequence::Open);
@@ -181,17 +187,11 @@ void ExperimentWindow::build_actions() {
       QKeySequence::Save);
   save_as_ = add(file, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
-  file->addSeparator();
-  preferences_ = add(file, tr("Preferences…"), [this] {
-    if (on_preferences_) on_preferences_(this);
-  }, QKeySequence::Preferences);
-  preferences_->setMenuRole(QAction::PreferencesRole);
-  preferences_->setVisible(false);
   bar->addAction(open_);
   bar->addAction(save_);
   bar->addAction(revalidate_);
 
-  auto* rows = menuBar()->addMenu(tr("&Rows"));
+  const Menu rows = Menu::Rows;
   auto add_row_action = [&](const QString& name, const QKeySequence& key, std::function<void()> f) {
     QAction* a = add(rows, name, std::move(f), key);
     table_->addAction(a);
@@ -217,17 +217,20 @@ void ExperimentWindow::build_actions() {
   add_row_action(tr("Edit Post-Measurement Script"), {},
                  [this] { edit_row_script(scripting::ScriptKind::PostMeasurement); });
 
-  auto* scripts = menuBar()->addMenu(tr("S&cripts"));
-  add(scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+  add(Menu::Scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
 
-  auto* run = menuBar()->addMenu(tr("&Executor"));
+  const Menu run = Menu::Executor;
   add(run, tr("Start"), [this] { pane_->request_start(); }, QKeySequence(Qt::Key_F5));
   add(run, tr("Stop"), [this] { pane_->request_stop(); });
   add(run, tr("Cancel..."), [this] { pane_->request_cancel(); });
   add(run, tr("Abort..."), [this] { pane_->request_abort(); });
   add(run, tr("Truncate"), [this] { pane_->request_truncate(); });
-  run->addSeparator();
-  add(run, tr("Send Test Notification"), [this] { bridge_.session().notify_test(); });
+  auto& menus = MenuHub::instance();
+  for (const auto& [menu, actions] : into) menus.contribute(this, menu, actions, MenuHub::Scope::Window);
+  // The test notification is apart from the run controls.
+  auto* notify = new QAction(tr("Send Test Notification"), this);
+  connect(notify, &QAction::triggered, this, [this] { bridge_.session().notify_test(); });
+  menus.contribute(this, run, {notify}, MenuHub::Scope::Window);
 }
 
 std::vector<std::size_t> ExperimentWindow::selected_rows() const {
@@ -246,19 +249,12 @@ void ExperimentWindow::select_rows(const std::vector<std::size_t>& rows) {
 
 void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_t>(row)}); }
 
-void ExperimentWindow::set_preferences_handler(std::function<void(QWidget*)> handler) {
-  on_preferences_ = std::move(handler);
-  preferences_->setVisible(static_cast<bool>(on_preferences_));
-  if (script_editor_ != nullptr) script_editor_->set_preferences_handler(on_preferences_);
-}
-
 ScriptEditorWindow* ExperimentWindow::open_script_editor() {
   if (script_editor_ == nullptr) {
     script_editor_ = new ScriptEditorWindow(bridge_.lab(), nullptr, this);
     script_editor_->setWindowFlag(Qt::Window);
     // A new or saved script may fix (or break) rows that name it.
     connect(script_editor_, &ScriptEditorWindow::scriptsChanged, this, [this] { model_.revalidate(); });
-    script_editor_->set_preferences_handler(on_preferences_);
   }
   script_editor_->show();
   script_editor_->raise();

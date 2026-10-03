@@ -1,4 +1,6 @@
 #include "script_editor_window.hpp"
+
+#include "menu_hub.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -100,11 +102,15 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
   split->setSizes({600, 160});  // an empty tab widget would otherwise get almost nothing
   setCentralWidget(split);
 
-  auto* file = menuBar()->addMenu(tr("&Script"));
-  auto add = [this](QMenu* menu, const QString& text, const QKeySequence& key, std::function<void()> f) {
-    QAction* a = menu->addAction(text);
+  // Two groups in the unified Scripts menu (MenuHub), enabled while this
+  // window is active.
+  QList<QAction*> file;
+  QList<QAction*> code;
+  auto add = [this](QList<QAction*>& group, const QString& text, const QKeySequence& key, std::function<void()> f) {
+    auto* a = new QAction(text, this);
     if (!key.isEmpty()) a->setShortcut(key);
     connect(a, &QAction::triggered, this, [f = std::move(f)] { f(); });
+    group.append(a);
     return a;
   };
   add(file, tr("&New..."), QKeySequence::New, [this] {
@@ -125,18 +131,13 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
   });
   add(file, tr("&Close Tab"), QKeySequence::Close, [this] { close_current(); });
-  file->addSeparator();
-  preferences_ = add(file, tr("Preferences…"), QKeySequence::Preferences, [this] {
-    if (on_preferences_) on_preferences_(this);
-  });
-  preferences_->setMenuRole(QAction::PreferencesRole);
-  preferences_->setVisible(false);
-  auto* code = menuBar()->addMenu(tr("&Code"));
   add(code, tr("&Check Now"), QKeySequence(Qt::Key_F7), [this] { check_now(); });
   add(code, tr("Go to &Gosub"), QKeySequence(Qt::Key_F2), [this] {
     if (Document* d = current())
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });
+  MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, file, MenuHub::Scope::Window);
+  MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, code, MenuHub::Scope::Window);
 
   ask_unsaved_ = [this](const QString& name) {
     const auto b = QMessageBox::question(this, tr("Unsaved script"), tr("%1 has unsaved changes. Save them?").arg(name),
@@ -168,11 +169,6 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
 }
 
 ScriptEditorWindow::~ScriptEditorWindow() = default;
-
-void ScriptEditorWindow::set_preferences_handler(std::function<void(QWidget*)> handler) {
-  on_preferences_ = std::move(handler);
-  preferences_->setVisible(static_cast<bool>(on_preferences_));
-}
 
 QString ScriptEditorWindow::label(const ScriptFile& file) { return q(scripting::to_string(file.kind)) + QLatin1Char('/') + q(file.name); }
 
