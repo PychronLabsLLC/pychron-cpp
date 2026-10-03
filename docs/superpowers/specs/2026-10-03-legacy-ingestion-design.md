@@ -529,3 +529,15 @@ points. Where this section and an earlier one disagree, this section wins.
     the token sentence of section 4.4 and the last sentence of item 14). On
     resume, analyses still pending at the token are rebuilt by re-reading
     the paths, not the contents, of the commits before it.
+21. **Removed reference data.** When a position, a level's production, a
+    sensitivity list, or a whole reference file disappears from the meta
+    repo, the legacy system has no value there. The import does not leave
+    the old value as head: it writes a revision whose value is explicitly
+    absent, with `removed` in provenance detail, so a reduction sees "no
+    value", not a stale one. Where a payload type cannot express absence the
+    removal is recorded in the changeset's provenance detail and the old
+    head stays; that case is a documented limit. Deleted analysis files in a
+    project repo are unaffected: the analysis stays.
+22. **Chronology is strict.** A chronology line that looks like a dose but
+    cannot be read makes the file an `unparseable` conflict; a chronology
+    stored with fewer doses would silently change decay corrections.
