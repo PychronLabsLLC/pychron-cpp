@@ -22,6 +22,7 @@
 #include "pychron/ingest/ids.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "store_fixture.hpp"
+#include "verify_support.hpp"
 
 using namespace pychron;
 using namespace pychron::dvc;
@@ -2267,6 +2268,256 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
     EXPECT_TRUE(finished) << what << ": no end after " << runs << " runs";
     same(*resumed, what + ", resumed after every batch");
   }
+}
+
+// ---------------------------------------------------------------- verify
+
+namespace {
+
+ingest::VerifyReport verify_repo(World& w, const ProjectAdapterConfig& config,
+                                 const ingest::AgeFn& age_fn = no_ages()) {
+  auto adapter = ProjectRepoAdapter::open(config);
+  EXPECT_TRUE(adapter) << (adapter ? "" : err(adapter.error()));
+  return adapter ? verify_source(w, **adapter, age_fn) : ingest::VerifyReport{};
+}
+
+}  // namespace
+
+// The whole of OneHistoryOneResult's history, and then an interpreted age, a
+// run log and a file that is nothing: every file of every commit is accounted
+// for, whatever the batch size of the import or of the walk that verifies it.
+TEST_P(ProjectImportTest, VerifyAfterImportIsOk) {
+  History history;
+  build_part_one(repo_, legacy_, history);
+  build_part_two(repo_, legacy_);
+  legacy_.add_interpreted_age("2019-02-01T10:00:00-07:00");
+  repo_.write("660/logs/52-05A.logs.log", "run log\n");
+  repo_.write("notes.txt", "not a legacy file\n");
+  const std::string stray = legacy_.commit("by hand", "2019-02-02T10:00:00-07:00");
+  auto imported = run_import(*world_, adapter_config(repo_, 4));
+  ASSERT_TRUE(imported) << err(imported.error());
+  const auto rows = snapshot_of(*world_);
+  const auto seq = *store().latest_change_seq();
+  const Uuid source = world_->source().spec.uuid;
+
+  std::optional<ingest::VerifyReport> first;
+  for (const int batch_commits : {1, 3, 500}) {
+    const auto report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    for (const auto& open : report.unaccounted)
+      ADD_FAILURE() << batch_commits << ": " << open.unit.commit << " " << open.unit.path << " disposition "
+                    << static_cast<int>(open.unit.disposition) << ", " << open.missing.size() << " missing";
+    EXPECT_EQ(report.would_write, 0) << batch_commits;
+    EXPECT_EQ(report.replay_would_write, 0) << batch_commits;
+    // notes.txt is a pending conflict: that alone fails verify.
+    EXPECT_EQ(report.pending_blocking, 1) << batch_commits;
+    EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{ingest::conflict_id(kUrl, stray, "notes.txt")});
+    EXPECT_EQ(report.pending_warnings, 0);
+    EXPECT_FALSE(report.ok());
+    EXPECT_EQ(report.ignored, 2) << batch_commits;  // README.md and the run log
+    EXPECT_GT(report.units, 60) << batch_commits;
+    // The interpreted age: its members are not reduced here, and most are in no repository this store has.
+    EXPECT_EQ(report.parity_pass, 0);
+    EXPECT_EQ(report.parity_fail, 0);
+    EXPECT_GT(report.parity_not_comparable, 1) << batch_commits;
+    EXPECT_EQ(report.not_comparable_reasons.count("not reduced in this test"), 1u);
+    EXPECT_EQ(report.not_comparable_reasons.count("analysis is not in the store"), 1u);
+    if (first) {
+      EXPECT_EQ(report.units, first->units) << batch_commits;
+      EXPECT_EQ(report.parity_not_comparable, first->parity_not_comparable) << batch_commits;
+      EXPECT_EQ(report.not_comparable_reasons, first->not_comparable_reasons) << batch_commits;
+    }
+    first = report;
+  }
+  const auto after = snapshot_of(*world_);
+  EXPECT_TRUE(after == rows) << "verify wrote something: " << first_difference(after, rows);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->source().status, "finished");
+
+  resolve_pending(*world_, source);
+  EXPECT_TRUE(verify_repo(*world_, adapter_config(repo_)).ok());
+
+  // The same history imported in one batch verifies the same.
+  auto whole = fresh_world();
+  ASSERT_TRUE(run_import(*whole, adapter_config(repo_)));
+  const auto other = verify_repo(*whole, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(other), std::vector<std::string>{});
+  EXPECT_EQ(other.units, first->units);
+  EXPECT_EQ(other.replay_would_write, 0);
+}
+
+// Take one row out of the store: verify names the file it came from.
+TEST_P(ProjectImportTest, VerifyReportsAMissingRevisionAnalysisOrConflict) {
+  const auto collected = legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string refit = legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
+  repo_.write("notes.txt", "not a legacy file\n");
+  const std::string stray = legacy_.commit("by hand", kLater);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const auto path = [](FileKind kind) { return LegacyRepoBuilder::path(kRunE, kind); };
+  const std::string spectrometer = std::string(LegacyRepoBuilder::kSpecSha) + ".json";
+
+  auto report = verify_repo(*world_, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.units, 10);  // record, data, extraction, spectrometer, four reduced files, the refit, the note
+
+  // A revision's provenance row.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(refit), pd::qv(path(FileKind::Intercepts))}),
+            1);
+  report = verify_repo(*world_, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{unit_name(refit, path(FileKind::Intercepts))});
+  EXPECT_EQ(report.replay_would_write, 1);
+
+  // A conflict row.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_conflict WHERE path = 'notes.txt'"), 1);
+  report = verify_repo(*world_, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(report),
+            sorted({unit_name(refit, path(FileKind::Intercepts)), unit_name(stray, "notes.txt")}));
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_FALSE(report.ok());
+
+  // The row of the analysis: the host of what was folded into it. Its
+  // record, its extraction file and the spectrometer file it names go with it;
+  // the files that are revisions of their own do not.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE entity_type = 'analysis'"), 1);
+  report = verify_repo(*world_, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(report),
+            sorted({unit_name(refit, path(FileKind::Intercepts)), unit_name(stray, "notes.txt"),
+                    unit_name(collected.collection, path(FileKind::Record)),
+                    unit_name(collected.collection, path(FileKind::Extraction)),
+                    unit_name(collected.collection, spectrometer)}));
+  EXPECT_EQ(unaccounted_unit(report, collected.collection, path(FileKind::Extraction)).unit.disposition,
+            ingest::UnitDisposition::Folded);
+}
+
+// An analysis the store does not have: a history longer than what was imported.
+TEST_P(ProjectImportTest, VerifyReportsAnAnalysisThatIsNotImported) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const std::string token = *world_->source().progress_token;
+  EXPECT_TRUE(verify_repo(*world_, adapter_config(repo_)).ok());
+
+  const auto added = legacy_.collect("66052-02A", kF.str(), kLater);
+  const auto path = [](FileKind kind) { return LegacyRepoBuilder::path("66052-02A", kind); };
+  for (const int batch_commits : {1, 500}) {
+    const auto report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_FALSE(report.ok());
+    EXPECT_EQ(unaccounted(report), sorted({unit_name(added.collection, path(FileKind::Record)),
+                                           unit_name(added.collection, path(FileKind::Data)),
+                                           unit_name(added.collection, path(FileKind::Extraction)),
+                                           unit_name(added.isoevo, path(FileKind::Intercepts)),
+                                           unit_name(added.isoevo, path(FileKind::Baselines)),
+                                           unit_name(added.blanks, path(FileKind::Blanks)),
+                                           unit_name(added.icfactors, path(FileKind::IcFactors))}))
+        << batch_commits;
+    EXPECT_GT(report.would_write, 0);
+    EXPECT_EQ(report.would_write, report.replay_would_write) << batch_commits;
+  }
+  // Verify did not import it, nor move the token.
+  EXPECT_EQ(world_->count("analysis"), 1);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token});
+
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  EXPECT_TRUE(verify_repo(*world_, adapter_config(repo_)).ok());
+}
+
+// Copies of an analysis have no rows of their own: a second copy in the same
+// source points at the analysis, a copy in another source at its membership.
+TEST_P(ProjectImportTest, VerifyAccountsForCopiesOfAnAnalysis) {
+  write_uuid_named(repo_, kF, "66052-03B");
+  legacy_.commit("<IMPORT> initial", kCollected);
+  const std::string same = legacy_.import_without_collection("66052-03B", kF.str(), kDay2);  // the same record text
+  legacy_.import_without_collection("66052-08A", kF.str(), kRefit);
+  auto record = json::parse(LegacyRepoBuilder::record_text("66052-03B", kF.str()));
+  record["comment"] = "edited in the copy";
+  legacy_.write("66052-08A", FileKind::Record, record.dump(4));
+  const std::string edited = legacy_.commit("edited", kRefit);
+  GitFixture second;
+  second.init();
+  LegacyRepoBuilder copy(second);
+  const std::string shared = copy.import_without_collection("66052-03B", kF.str(), kLater);
+  auto second_config = adapter_config(second);
+  second_config.url = "https://github.com/NMGRLData/Shared";
+  second_config.repository_name = "Shared";
+
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    ASSERT_TRUE(run_import(*world, adapter_config(repo_, batch_commits)));
+    ASSERT_TRUE(run_import(*world, second_config));
+    EXPECT_EQ(world->count("analysis"), 1);
+
+    // This source: nothing unaccounted. The copy that differs and the edit of
+    // its record, which is not applied, are pending conflicts.
+    auto report = verify_repo(*world, adapter_config(repo_, batch_commits == 1 ? 500 : 1));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    EXPECT_EQ(report.would_write, 0);
+    EXPECT_EQ(report.replay_would_write, 0);
+    EXPECT_EQ(report.pending_blocking, 2) << batch_commits;
+    // The other source: the record is the membership row, the rest is folded into it.
+    report = verify_repo(*world, second_config);
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    EXPECT_TRUE(report.ok());
+    EXPECT_EQ(report.units, 8);  // seven files and the spectrometer settings
+
+    // Without the membership row every file of the copy is unaccounted for but
+    // the spectrometer file, which no analysis of that source uses.
+    ASSERT_EQ(forget(*world, "DELETE FROM import_provenance WHERE commit_sha = ?", {pd::qv(shared)}), 1);
+    report = verify_repo(*world, second_config);
+    EXPECT_EQ(report.unaccounted.size(), 7u) << batch_commits;
+    EXPECT_EQ(report.ignored, 1);
+  }
+  (void)same;
+  (void)edited;
+}
+
+// The fixture's interpreted age holds the age legacy pychron stored for
+// 66052-01E; the age function is asked for it as of the commit that saved it.
+TEST_P(ProjectImportTest, VerifyComparesTheStoredAgeOfAMember) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string saved = legacy_.add_interpreted_age(kRefit);
+  legacy_.refit(kRunE, "Ar40", 12.5, kLater);  // after the age was saved
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+
+  const json document = json::parse(fixture("ia/IR1010/660/ia/52.ia.json"));
+  std::optional<double> legacy_age, legacy_err;
+  for (const auto& member : document.at("analyses"))
+    if (member.value("uuid", "") == kE.str()) {
+      legacy_age = member.at("age").get<double>();
+      legacy_err = member.at("age_err").get<double>();
+    }
+  ASSERT_TRUE(legacy_age && legacy_err);
+
+  std::vector<ingest::AsOf> asked;
+  double factor = 1.0;
+  const ingest::AgeFn fn = [&](Uuid analysis, const ingest::AsOf& as_of) -> Result<ingest::ParityAge> {
+    EXPECT_EQ(analysis, kE);
+    asked.push_back(as_of);
+    return ingest::ParityAge{ingest::ComputedAge{*legacy_age * factor, *legacy_err}};
+  };
+  auto report = verify_repo(*world_, adapter_config(repo_), fn);
+  EXPECT_TRUE(report.ok());
+  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.parity_fail, 0);
+  EXPECT_EQ(report.not_comparable_reasons.count("analysis is not in the store"), 1u);
+  ASSERT_EQ(asked.size(), 1u);
+  const std::string path(LegacyRepoBuilder::kInterpretedAgePath);
+  EXPECT_EQ(asked[0].interpreted_age, ingest::interpreted_age_id(kUrl, path));
+  EXPECT_EQ(asked[0].revision, ingest::revision_id(kUrl, saved, path));
+  EXPECT_EQ(asked[0].changeset, ingest::changeset_id(kUrl, saved));
+  EXPECT_EQ(asked[0].created, *UtcTime::parse(kRefitUtc));
+
+  factor = 1.001;
+  report = verify_repo(*world_, adapter_config(repo_), fn);
+  EXPECT_FALSE(report.ok());
+  ASSERT_EQ(report.parity_failures.size(), 1u);
+  EXPECT_EQ(report.parity_failures[0].analysis, kE);
+  const auto conflicts = world_->conflicts(ConflictKind::ValueMismatch);
+  ASSERT_EQ(conflicts.size(), 1u);
+  EXPECT_EQ(conflicts[0].uuid, report.parity_failures[0].conflict);
+  EXPECT_EQ(conflicts[0].path, path);
+  EXPECT_EQ(json::parse(conflicts[0].detail_json).at("legacy").at("age").get<double>(), *legacy_age);
+  EXPECT_EQ(json::parse(conflicts[0].detail_json).at("record_id").get<std::string>(), kRunE);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, ProjectImportTest, ::testing::ValuesIn(P::testing::engines()));

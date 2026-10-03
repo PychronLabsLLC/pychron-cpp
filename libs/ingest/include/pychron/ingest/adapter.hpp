@@ -3,9 +3,11 @@
 // A source adapter knows one source format and never touches the store
 // (legacy ingestion spec, section 2.1).
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/batch.hpp"
@@ -50,6 +52,67 @@ struct IImportState {
                                                            int position) = 0;
 };
 
+// ---------------------------------------------------------------- accounting
+//
+// For `import verify` an adapter lists every unit its source holds (a file as
+// one commit left it; a row of a table) and says, for each, where the import
+// left it. The verifier does not take the adapter's word: it looks every
+// piece of evidence up in the store, and a unit is accounted for only when
+// all of it is there.
+
+// A row the import leaves in the store. `commit` and `path` are a source key
+// as in SourceKey; a multi-part file names each part "<file>#<part>".
+struct Evidence {
+  enum class Kind {
+    // What the writer leaves for an item it is sent at (commit, path): the
+    // provenance row, or, when it refused the item, the conflict
+    // conflict_id(url, commit, path). With `blob_sha` set, a provenance row of
+    // `path` with that blob at another commit also counts: content the walk
+    // had already imported when it came to this commit.
+    Recorded,
+    // The conflict conflict_id(url, commit, path): the adapter refused the unit.
+    Conflict,
+    // A provenance row of `path` with `blob_sha`, at any commit.
+    Blob,
+    // A provenance row of this source for `entity` (an analysis this source
+    // imported under another path).
+    Entity,
+    // The provenance detail of the commit's changeset lists `path` under
+    // `list`: "rewrites" (entries with a "path") or "removed" (strings).
+    Note,
+    // The catalog row `catalog` names by natural key.
+    CatalogRow
+  };
+  Kind kind = Kind::Recorded;
+  std::string commit = {}, path = {}, blob_sha = {};
+  persistence::Uuid entity = {};
+  std::string list = {};
+  std::optional<CatalogItem> catalog = std::nullopt;
+};
+
+enum class UnitDisposition {
+  Ignored,     // not part of the import by rule (a run log; a file that holds nothing): never reported
+  Imported,    // it has rows of its own
+  Folded,      // its content lives in another unit's row (a satellite file in its analysis)
+  Unchanged,   // the same content was imported from an earlier unit
+  Conflict,    // refused; a conflict row says why
+  Removed,     // a deletion; evidence only where the import records what went
+  Unclassified // the adapter cannot say: reported as unaccounted
+};
+
+// Imported, Folded, Unchanged and Conflict need evidence, and all of it must
+// be found. Removed needs none, but what it names must be found. Ignored is
+// not looked up.
+struct SourceUnit {
+  std::string commit, path, blob_sha;  // blob_sha: empty for a deletion
+  bool deleted = false;
+  UnitDisposition disposition = UnitDisposition::Unclassified;
+  std::vector<Evidence> evidence = {};
+  // Set when the unit is a version of an interpreted age: the name of its
+  // InterpretedAgeKey. The verifier compares the ages stored under it.
+  std::string interpreted_age = {};
+};
+
 struct SourceDescription {
   persistence::ImportSourceKind kind = persistence::ImportSourceKind::ProjectRepo;
   std::string url;     // as given; the writer normalizes it
@@ -66,6 +129,13 @@ class ISourceAdapter {
   virtual Result<int> plan(std::optional<std::string> resume_token, IImportState& state) = 0;
   // nullopt: end of stream.
   virtual Result<std::optional<ImportBatch>> next_batch() = 0;
+  // Walks the whole source again, read-only, and hands every unit it holds to
+  // `visit`, in no particular order, each exactly once. What a unit became is
+  // decided as the import decides it, so `state` is asked what plan() and
+  // next_batch() would ask. It replaces any plan: call plan() again before
+  // next_batch(). An error from `visit` stops the walk and is returned.
+  virtual Result<void> for_each_unit(IImportState& state,
+                                     const std::function<Result<void>(const SourceUnit&)>& visit) = 0;
 };
 
 }  // namespace pychron::ingest

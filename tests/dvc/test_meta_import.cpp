@@ -21,6 +21,7 @@
 #include "pychron/ingest/ids.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "store_fixture.hpp"
+#include "verify_support.hpp"
 
 using namespace pychron;
 using namespace pychron::dvc;
@@ -1259,6 +1260,125 @@ TEST_P(MetaImportTest, OneHistoryOneResult) {
     EXPECT_TRUE(finished) << what << ": no end after " << runs << " runs";
     same(*resumed, what + ", resumed after every batch");
   }
+}
+
+// ---------------------------------------------------------------- verify
+
+// The whole of OneHistoryOneResult's history (merges, a garbage commit, files
+// that change nothing, removed positions, a deleted list): every file of every
+// commit is accounted for, whatever the batch size of the import or of the
+// walk that verifies it.
+TEST_P(MetaImportTest, VerifyAfterImportIsOk) {
+  build_part_one(repo_);
+  build_part_two(repo_);
+  auto imported = run_import(*world_, adapter_config(repo_, 3));
+  ASSERT_TRUE(imported) << err(imported.error());
+  const auto rows = snapshot_of(*world_);
+  const Uuid source = world_->source().spec.uuid;
+
+  std::optional<ingest::VerifyReport> first;
+  for (const int batch_commits : {1, 4, 500}) {
+    auto adapter = MetaRepoAdapter::open(adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    const auto report = verify_source(*world_, **adapter);
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    EXPECT_EQ(report.would_write, 0);
+    EXPECT_EQ(report.replay_would_write, 0);
+    // The garbage level file is a pending conflict: that alone fails verify.
+    EXPECT_EQ(report.pending_blocking, 1) << batch_commits;
+    EXPECT_EQ(report.pending_warnings, 0);
+    EXPECT_FALSE(report.ok());
+    // README.md and the script of the first commit.
+    EXPECT_EQ(report.ignored, 2) << batch_commits;
+    EXPECT_GT(report.units, 30) << batch_commits;
+    if (first) EXPECT_EQ(report.units, first->units) << batch_commits;
+    first = report;
+  }
+  const auto after = snapshot_of(*world_);
+  EXPECT_TRUE(after == rows) << "verify wrote something: " << first_difference(after, rows);
+  EXPECT_EQ(world_->source().status, "finished");
+
+  resolve_pending(*world_, source);
+  auto adapter = MetaRepoAdapter::open(adapter_config(repo_));
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  EXPECT_TRUE(verify_source(*world_, **adapter).ok());
+
+  // A store that has part of the history: what is missing is listed, and a
+  // run would write it.
+  auto partial = fresh_world();
+  auto some = run_import(*partial, adapter_config(repo_, 2), 3);
+  ASSERT_TRUE(some) << err(some.error());
+  auto again = MetaRepoAdapter::open(adapter_config(repo_, 2));
+  ASSERT_TRUE(again) << err(again.error());
+  const auto behind = verify_source(*partial, **again);
+  EXPECT_FALSE(behind.ok());
+  EXPECT_FALSE(behind.unaccounted.empty());
+  EXPECT_GT(behind.would_write, 0);
+  EXPECT_GT(behind.replay_would_write, 0);
+  EXPECT_EQ(partial->source().status, "paused");
+}
+
+// Take one row out of the store: verify names the file version it came from.
+TEST_P(MetaImportTest, VerifyReportsAMissingRevisionNoteOrConflict) {
+  const std::string added = commit_file(kLevel, fixture("meta/NM-293/G.json"), kDay1, "Added level G to NM-293");
+  const std::string fitted = commit_file(kLevel, level_text({{3, 0.0031}}), kDay2, "fit 3");
+  const std::string garbage = commit_file(kLevel, "{\"positions\": [", kDay3, "interrupted");
+  // The same content in another layout: a version that changes nothing.
+  const std::string reformatted =
+      commit_file(kLevel, json::parse(level_text({{3, 0.0031}})).dump(1), kDay3, "reformatted");
+  repo_.write(kSens, sensitivities(2).dump(4));
+  const std::string listed = repo_.commit("sensitivities", kDay3);
+  repo_.remove(kSens);
+  const std::string emptied = repo_.commit("sensitivities moved", kDay4);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+
+  const auto open = [&] {
+    auto adapter = MetaRepoAdapter::open(adapter_config(repo_, 2));
+    EXPECT_TRUE(adapter);
+    return adapter ? verify_source(*world_, **adapter) : ingest::VerifyReport{};
+  };
+  auto report = open();
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.units, 6);
+  EXPECT_EQ(report.pending_blocking, 1);
+
+  // One revision of a file that holds many: the provenance row of position 3 at the fit.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
+                   {pd::qv(fitted), pd::qv(kLevel + "#3")}),
+            1);
+  report = open();
+  // The fit, and the reformatted version, whose content is in the fit's rows.
+  EXPECT_EQ(unaccounted(report), sorted({unit_name(fitted, kLevel), unit_name(reformatted, kLevel)}));
+  for (const std::string& commit : {fitted, reformatted}) {
+    const auto& unit = unaccounted_unit(report, commit, kLevel);
+    ASSERT_EQ(unit.missing.size(), 1u);
+    EXPECT_EQ(unit.missing[0].commit, fitted);
+    EXPECT_EQ(unit.missing[0].path, kLevel + "#3");
+  }
+  EXPECT_EQ(unaccounted_unit(report, fitted, kLevel).unit.disposition, ingest::UnitDisposition::Imported);
+  EXPECT_EQ(unaccounted_unit(report, reformatted, kLevel).unit.disposition, ingest::UnitDisposition::Unchanged);
+  EXPECT_EQ(report.replay_would_write, 1);
+  EXPECT_EQ(report.would_write, 0);  // the token is at the end: only a replay sees it
+
+  // The conflict of the file that could not be read.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_conflict WHERE path = ?", {pd::qv(kLevel)}), 1);
+  EXPECT_EQ(unaccounted(open()),
+            sorted({unit_name(fitted, kLevel), unit_name(garbage, kLevel), unit_name(reformatted, kLevel)}));
+
+  // The note of a removal that has no revision: the deleted sensitivity list.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE entity_type = 'changeset' AND commit_sha = ?",
+                   {pd::qv(emptied)}),
+            1);
+  report = open();
+  EXPECT_EQ(unaccounted(report), sorted({unit_name(fitted, kLevel), unit_name(garbage, kLevel),
+                                         unit_name(reformatted, kLevel), unit_name(emptied, kSens)}));
+  const auto& gone = unaccounted_unit(report, emptied, kSens);
+  EXPECT_TRUE(gone.unit.deleted);
+  ASSERT_EQ(gone.missing.size(), 1u);
+  EXPECT_EQ(gone.missing[0].kind, ingest::Evidence::Kind::Note);
+  EXPECT_EQ(gone.missing[0].list, "removed");
+  (void)added;
+  (void)listed;
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, MetaImportTest, ::testing::ValuesIn(P::testing::engines()));

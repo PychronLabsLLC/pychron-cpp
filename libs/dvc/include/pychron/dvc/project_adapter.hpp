@@ -72,6 +72,24 @@ class ProjectRepoAdapter final : public ingest::ISourceAdapter {
   // commits to walk.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
+  // One unit per file a commit adds, changes or deletes (for a merge: as the
+  // walk sees it), walked from the first commit as an import walks it:
+  //   a file the import does not read (a run log)           Ignored
+  //   a deletion                                            Removed, no evidence: the analysis stays
+  //   a record; a root file; a later revision; an           Imported: the row at (commit, path), or the
+  //   interpreted age; a frozen production                  conflict the writer left there
+  //   a rewritten record or satellite file                  Imported: listed under "rewrites" of its commit
+  //                                                         (and the identity revision, when the run id changed)
+  //   extraction, peak-center and monitor files folded      Folded: the row of the analysis's record
+  //   into an analysis; the spectrometer file an analysis
+  //   names; the other files of a membership-only analysis
+  //   a second copy of an analysis of this source           Folded: the analysis's provenance row
+  //   content its path was already imported with            Unchanged: a provenance row of (path, blob), or
+  //                                                         what the unit it repeats has
+  //   a file that cannot be read or belongs to nothing      Conflict
+  //   a spectrometer file no imported analysis names        Ignored
+  Result<void> for_each_unit(ingest::IImportState& state,
+                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
 
  private:
   class Impl;

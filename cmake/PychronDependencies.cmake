@@ -212,8 +212,9 @@ if(PYCHRON_PERSISTENCE_ENABLED)
   endif()
 endif()
 
-# JSON for libs/dvc (legacy repository files). Header-only and PRIVATE to
-# pychron_dvc: it appears in no public header.
+# JSON for libs/dvc (legacy repository files) and libs/ingest (the verifier
+# reads stored detail). Header-only and PRIVATE to both: it appears in no
+# public header.
 if(PYCHRON_PERSISTENCE_ENABLED)
   set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
   set(JSON_Install OFF CACHE BOOL "" FORCE)

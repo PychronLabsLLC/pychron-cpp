@@ -170,6 +170,10 @@ void Mapper::remember(std::vector<GitCommit> commits) {
   }
 }
 
+void Mapper::silent(const FileRef& ref, ingest::UnitDisposition disposition, ingest::Evidence evidence) {
+  if (ledger_) ledger_->silent.push_back({ref.commit, ref.path, disposition, std::move(evidence)});
+}
+
 Result<const GitCommit*> Mapper::commit(const std::string& sha) {
   if (const auto it = commits_.find(sha); it != commits_.end()) return &it->second;
   const std::vector<std::string> one{sha};
@@ -378,6 +382,14 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
       detail["blob"] = record_ref.blob_sha;
       out.conflict(record_ref, ConflictKind::IdentityClash, uuid, read.digest, detail);
     }
+    // None of its other files has a row: the analysis is the copy imported
+    // under another path (same source) or the membership row at this record.
+    ingest::Evidence host{ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path};
+    if (same_source) {
+      host = {ingest::Evidence::Kind::Entity, {}, {}, {}, uuid};
+      silent(record_ref, ingest::UnitDisposition::Folded, host);
+    }
+    for (const auto& file : files) silent(file.ref, ingest::UnitDisposition::Folded, host);
     track.role = Track::Role::Foreign;
     release(track);
     return {};
@@ -478,6 +490,9 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
         }
         item.ingest = std::move(merged);
         for (auto& blob : scans) out.batch.blobs.push_back({key_of(file.ref), std::move(blob)});
+        // Folded into the analysis: its row is the record's.
+        silent(file.ref, ingest::UnitDisposition::Folded,
+               {ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path});
         break;
       }
       default: {
@@ -519,10 +534,15 @@ Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out)
   if (record.spec_sha) {
     auto settings = snapshot(*record.spec_sha);
     if (!settings) return fail(settings.error());
-    if (*settings)
+    if (*settings) {
       item.ingest.spectrometer_snapshot = std::move(**settings);
-    else
+      // The settings file becomes the snapshot of the analyses that name it.
+      if (const FileRef* file = walk_.spectrometer(*record.spec_sha))
+        silent(*file, ingest::UnitDisposition::Folded,
+               {ingest::Evidence::Kind::Recorded, record_ref.commit, record_ref.path});
+    } else {
       detail["spectrometer_file_unavailable"] = *record.spec_sha;  // not in the repository, or unreadable
+    }
   }
 
   // A collection whose record did not arrive in a <COLLECTION> commit, or that
@@ -644,10 +664,18 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
 
 Result<bool> Mapper::is_head(const FileRef& ref, const ingest::SubjectRef& subject, ps::Kind kind, Output& out) {
   // What the path was last imported with: by this batch, else by the store.
-  if (const auto here = out.emitted.find(ref.path); here != out.emitted.end()) return here->second == ref.blob_sha;
-  auto head = state_.head_blob_sha(subject, kind);
-  if (!head) return fail(head.error());
-  return *head && **head == ref.blob_sha;
+  bool same = false;
+  if (const auto here = out.emitted.find(ref.path); here != out.emitted.end()) {
+    same = here->second == ref.blob_sha;
+  } else {
+    auto head = state_.head_blob_sha(subject, kind);
+    if (!head) return fail(head.error());
+    same = *head && **head == ref.blob_sha;
+  }
+  // No revision then: the content is the one the path was imported with.
+  if (same)
+    silent(ref, ingest::UnitDisposition::Unchanged, {ingest::Evidence::Kind::Blob, {}, ref.path, ref.blob_sha});
+  return same;
 }
 
 // The changeset of the commit `ref` belongs to, made when first asked for.
@@ -816,7 +844,11 @@ Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output
   const FileKind kind = item.info.kind;
   const Uuid uuid = item.track->uuid;
   // Removed and added again with what it had: nothing was rewritten.
-  if (item.previous && item.previous->blob_sha == ref.blob_sha) return {};
+  if (item.previous && item.previous->blob_sha == ref.blob_sha) {
+    silent(ref, ingest::UnitDisposition::Unchanged,
+           {ingest::Evidence::Kind::Recorded, item.track->record->commit, item.track->record->path});
+    return {};
+  }
 
   auto after = parse_legacy(text);
   if (!after) {

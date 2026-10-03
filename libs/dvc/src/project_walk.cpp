@@ -43,20 +43,30 @@ std::optional<FileRef> Track::replace_latest(FileKind kind, const FileRef& ref) 
 bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work>* out) {
   std::vector<Track*> touched;
   bool record_rewritten = false;
+  const auto note = [&](const GitChange& change, Ledger::Seen as) {
+    if (ledger_) ledger_->changes.push_back({change.commit, change.path, change.blob_sha, as});
+  };
   for (const auto& entry : changes) {
     if (entry.status == 'D') {
       // A deleted file adds nothing; added again later, it is a change.
       last_blob_.erase(entry.path);
+      note(entry, Ledger::Seen::Deleted);
       continue;
     }
     const auto [seen, first_time] = last_blob_.try_emplace(entry.path, entry.blob_sha);
     if (!first_time) {
-      if (seen->second == entry.blob_sha) continue;
+      if (seen->second == entry.blob_sha) {
+        if (ledger_)
+          note(entry, classify_path(entry.path).kind == FileKind::Ignored ? Ledger::Seen::Ignored
+                                                                         : Ledger::Seen::Repeated);
+        continue;
+      }
       seen->second = entry.blob_sha;
     }
 
     PathInfo info = classify_path(entry.path);
     FileRef ref{index, entry.commit, entry.path, entry.blob_sha};
+    note(entry, info.kind == FileKind::Ignored ? Ledger::Seen::Ignored : Ledger::Seen::Taken);
     switch (info.kind) {
       case FileKind::Ignored:
         continue;

@@ -22,6 +22,7 @@ add_library(pychron_dvc STATIC
   src/meta_layout.cpp
   src/project_adapter.cpp
   src/project_map.cpp
+  src/project_units.cpp
   src/project_walk.cpp
 )
 add_library(pychron::dvc ALIAS pychron_dvc)

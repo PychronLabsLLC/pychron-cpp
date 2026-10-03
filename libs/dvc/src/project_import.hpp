@@ -12,6 +12,7 @@
 // uuid of an analysis, whether it is this source's to import, what cannot be
 // parsed.
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -105,11 +106,39 @@ struct Change {
 
 using Work = std::variant<Collect, Change>;
 
+// What became of the files a walk was shown, written down only while the
+// adapter lists its units (ISourceAdapter::for_each_unit). The walk notes
+// every change it is given; the mapper notes the files it takes in without a
+// row of their own. Everything else a file becomes is in the batch.
+struct Ledger {
+  enum class Seen {
+    Taken,     // handed on: part of a collection, or a change
+    Deleted,
+    Repeated,  // the path already has this blob
+    Ignored    // not a file the import reads
+  };
+  struct Change {
+    std::string commit, path, blob_sha;
+    Seen seen = Seen::Taken;
+  };
+  struct Silent {
+    std::string commit, path;
+    ingest::UnitDisposition disposition = ingest::UnitDisposition::Folded;
+    ingest::Evidence evidence;
+  };
+  std::vector<Change> changes;  // in walk order
+  std::vector<Silent> silent;
+};
+
 class Walk {
  public:
   // `wait`: an analysis still pending this many commits after its record's
   // commit is folded with what it has (less than 1: never).
   explicit Walk(int wait = 0) : wait_(wait) {}
+
+  // Notes every change apply() is given in `ledger` (null: stop). The ledger
+  // outlives the walk or is taken away first.
+  void observe(Ledger* ledger) { ledger_ = ledger; }
 
   // Applies the changes of commit `index`, all of them at once (git lists the
   // files of one commit in path order, so a record can follow its own
@@ -139,6 +168,7 @@ class Walk {
   void flush(Track& track, std::vector<Work>* out);
 
   int wait_ = 0;
+  Ledger* ledger_ = nullptr;
 
   std::map<std::string, Track> tracks_;  // by path key; nodes do not move
   // The blob each path was last seen with. A change that brings a path to the
@@ -155,6 +185,10 @@ class Mapper {
   Mapper(const ProjectAdapterConfig& config, std::string url, GitReader& reader, const Walk& walk,
          ingest::IImportState& state);
 
+  // Notes in `ledger` the files taken in without a row of their own (null:
+  // stop). The ledger outlives the mapper or is taken away first.
+  void observe(Ledger* ledger) { ledger_ = ledger; }
+
   // Commit metadata the mapper will need; anything else is fetched on demand.
   void remember(std::vector<GitCommit> commits);
 
@@ -169,6 +203,10 @@ class Mapper {
  private:
   struct Reading;  // the records of one batch, parsed
   struct Output;   // one batch being built
+
+  // For the ledger: `ref` has no row of its own; `evidence` is where its
+  // content is.
+  void silent(const FileRef& ref, ingest::UnitDisposition disposition, ingest::Evidence evidence);
 
   Result<const GitCommit*> commit(const std::string& sha);
   Result<void> fetch(std::vector<std::string> blob_shas);
@@ -195,6 +233,7 @@ class Mapper {
   const Walk& walk_;
   ingest::IImportState& state_;
   ParseContext context_;
+  Ledger* ledger_ = nullptr;
 
   std::unordered_map<std::string, GitCommit> commits_;
   // Spectrometer settings by sha1: parsed, or nullopt when the file is bad.
@@ -203,6 +242,47 @@ class Mapper {
   // walk put at each position (the store answers for earlier batches).
   std::set<std::string> sent_;
   std::map<std::string, std::string> positions_;
+};
+
+// Turns what a walk and its mapper did with each file into the units the
+// verifier checks (ingest/adapter.hpp). A unit is settled in the batch that
+// maps its file: from the batch come the rows the writer leaves for it, from
+// the ledger where its content is when it has no row of its own. A file that
+// repeats the blob its path already has is settled with the unit it repeats.
+class UnitAccount {
+ public:
+  using Visit = std::function<Result<void>(const ingest::SourceUnit&)>;
+  // `visit` outlives the account.
+  explicit UnitAccount(const Visit& visit) : visit_(visit) {}
+
+  // After a batch is mapped. The ledger is emptied.
+  Result<void> settle(Ledger& ledger, const ingest::ImportBatch& batch);
+  // After the last batch: what is still open. A spectrometer file no analysis
+  // used holds nothing that is imported; anything else was never classified.
+  Result<void> finish();
+
+ private:
+  using Key = std::pair<std::string, std::string>;  // commit, path
+  struct Open {
+    ingest::SourceUnit unit;
+    std::vector<ingest::SourceUnit> repeats;
+    bool folded = false;     // the mapper said where its content is
+    bool touched = false;    // it got evidence in the batch being settled
+  };
+  // The last unit of a path that was handed on, and what it settled as.
+  struct Last {
+    std::string commit;
+    bool settled = false;
+    ingest::UnitDisposition disposition = ingest::UnitDisposition::Unclassified;
+    std::vector<ingest::Evidence> evidence;
+  };
+
+  Result<void> close(Open& open);
+  Result<void> repeat(ingest::SourceUnit unit, const Last& last);
+
+  const Visit& visit_;
+  std::map<Key, Open> open_;
+  std::unordered_map<std::string, Last> last_;
 };
 
 }  // namespace pychron::dvc::detail

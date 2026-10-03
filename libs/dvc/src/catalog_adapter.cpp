@@ -410,6 +410,8 @@ class Fields {
 struct Unit {
   std::optional<ingest::CatalogItem> item;
   std::vector<ingest::ConflictItem> conflicts;
+  std::string path;  // "<file>#<legacy id>": the row's name in this source
+  std::string blob;  // SHA-256 of its line, as text
 };
 
 // ---------------------------------------------------------------- the catalog
@@ -531,6 +533,8 @@ class Reader {
         return made;
       };
       Unit unit;
+      unit.path = source.file + "#" + legacy_id;
+      unit.blob = to_hex(digest);
       if (problems.empty()) {
         unit.item = std::move(item);
         // The row is stored; each link it lost is a conflict of its own, named
@@ -1030,6 +1034,29 @@ Result<std::optional<ingest::ImportBatch>> CatalogAdapter::next_batch() {
     batch.total = static_cast<int>(d.units.size());
     batch.head = d.sha256;
     return std::optional<ingest::ImportBatch>{std::move(batch)};
+  } catch (const std::exception& e) {
+    return fail(ErrorKind::Io, what_failed(e));
+  }
+}
+
+// A row that was sent is accounted for by the catalog row its item names, and
+// by the conflict of each link it lost; a refused row by its conflict.
+Result<void> CatalogAdapter::for_each_unit(ingest::IImportState&,
+                                           const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
+  try {
+    using ingest::Evidence;
+    for (const auto& row : impl_->units) {
+      ingest::SourceUnit unit;
+      unit.commit = impl_->sha256;
+      unit.path = row.path;
+      unit.blob_sha = row.blob;
+      unit.disposition = row.item ? ingest::UnitDisposition::Imported : ingest::UnitDisposition::Conflict;
+      if (row.item) unit.evidence.push_back({Evidence::Kind::CatalogRow, {}, {}, {}, {}, {}, *row.item});
+      for (const auto& conflict : row.conflicts)
+        unit.evidence.push_back({Evidence::Kind::Conflict, conflict.key.commit, conflict.key.path});
+      if (auto r = visit(unit); !r) return r;
+    }
+    return {};
   } catch (const std::exception& e) {
     return fail(ErrorKind::Io, what_failed(e));
   }

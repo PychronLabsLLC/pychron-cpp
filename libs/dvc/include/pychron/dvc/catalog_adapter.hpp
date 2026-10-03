@@ -99,6 +99,15 @@ class CatalogAdapter final : public ingest::ISourceAdapter {
   // still to send. The state is not asked anything.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
+  // One unit per row of each table: commit the manifest's sha256, path
+  // "<file>#<legacy id>", blob the SHA-256 of its line. The state is not asked
+  // anything.
+  //   a row that was sent        Imported: the catalog row its item names by natural key, and the
+  //                              conflict at "<file>#<legacy id>@<column>" of each link it lost
+  //   a row that was refused     Conflict: the conflict at "<file>#<legacy id>"
+  // A row that repeats an earlier one exactly names the same catalog row.
+  Result<void> for_each_unit(ingest::IImportState& state,
+                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
 
   // What is worth telling the operator about the dump without stopping the
   // import, one line each. Now: the manifest says the dump has no

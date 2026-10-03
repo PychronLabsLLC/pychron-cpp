@@ -116,6 +116,36 @@ class ProjectRepoAdapter::Impl {
     return std::optional<ingest::ImportBatch>{std::move(batch)};
   }
 
+  // The walk an import makes from the first commit, with a ledger: every
+  // file is settled in the batch that maps it, by the rows that batch would
+  // leave for it.
+  Result<void> for_each_unit(ingest::IImportState& state,
+                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
+    if (auto planned = plan(std::nullopt, state); !planned) return fail(planned.error());
+    detail::Ledger ledger;
+    detail::UnitAccount account(visit);
+    walk_.observe(&ledger);
+    mapper_->observe(&ledger);
+    Result<void> done;
+    for (;;) {
+      auto batch = next_batch();
+      if (!batch) {
+        done = fail(batch.error());
+        break;
+      }
+      if (!*batch) {
+        done = account.finish();
+        break;
+      }
+      done = account.settle(ledger, **batch);
+      if (!done) break;
+    }
+    walk_.observe(nullptr);
+    mapper_->observe(nullptr);
+    planned_ = false;  // the walk is used up: an import plans again
+    return done;
+  }
+
  private:
   bool tagged(const std::string& sha) const {
     return std::any_of(tags_.begin(), tags_.end(), [&](const GitTag& tag) { return tag.commit == sha; });
@@ -170,5 +200,10 @@ Result<int> ProjectRepoAdapter::plan(std::optional<std::string> resume_token, in
 }
 
 Result<std::optional<ingest::ImportBatch>> ProjectRepoAdapter::next_batch() { return impl_->next_batch(); }
+
+Result<void> ProjectRepoAdapter::for_each_unit(ingest::IImportState& state,
+                                               const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
+  return impl_->for_each_unit(state, visit);
+}
 
 }  // namespace pychron::dvc

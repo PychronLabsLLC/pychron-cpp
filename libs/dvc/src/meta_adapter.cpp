@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <set>
 #include <span>
@@ -566,7 +567,85 @@ class MetaRepoAdapter::Impl {
     return static_cast<int>(order_.size() - first_);
   }
 
-  Result<std::optional<ingest::ImportBatch>> next_batch() {
+  Result<std::optional<ingest::ImportBatch>> next_batch() { return build(nullptr); }
+
+  // The walk an import makes from the first commit. What a file version
+  // yields depends on the history alone, so each unit is settled by what the
+  // batch that maps it holds for it: its revisions (one per object, at
+  // "<file>#<part>"), its conflict, the objects its commit notes as removed.
+  // A version that yields nothing changed nothing against the version before
+  // it; its content is in the rows of the last version that did yield.
+  Result<void> for_each_unit(const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
+    using ingest::Evidence;
+    using ingest::UnitDisposition;
+    if (auto planned = plan(std::nullopt); !planned) return fail(planned.error());
+    // By path: what its last version that yielded anything left, and what
+    // its last version that could be read left.
+    std::unordered_map<std::string, std::vector<Evidence>> last, last_read;
+    Result<void> done;
+    for (;;) {
+      std::vector<Listed> listed;
+      auto batch = build(&listed);
+      if (!batch) {
+        done = fail(batch.error());
+        break;
+      }
+      if (!*batch) break;
+      for (auto& change : listed) {
+        ingest::SourceUnit unit;
+        unit.commit = std::move(change.commit);
+        unit.path = std::move(change.path);
+        unit.blob_sha = std::move(change.blob_sha);
+        unit.deleted = change.deleted;
+        if (change.ignored) {
+          unit.disposition = UnitDisposition::Ignored;
+        } else {
+          std::vector<Evidence> yielded;
+          if (change.seen) yielded = yield_of(unit, **batch);
+          if (!yielded.empty()) {
+            const bool refused = std::all_of(yielded.begin(), yielded.end(),
+                                             [](const Evidence& e) { return e.kind == Evidence::Kind::Conflict; });
+            unit.disposition = refused        ? UnitDisposition::Conflict
+                               : unit.deleted ? UnitDisposition::Removed
+                                              : UnitDisposition::Imported;
+            unit.evidence = yielded;
+            if (!refused) last_read.insert_or_assign(unit.path, yielded);
+            last.insert_or_assign(unit.path, std::move(yielded));
+          } else if (unit.deleted) {
+            unit.disposition = UnitDisposition::Removed;  // nothing was there to take away
+          } else {
+            // The blob the path already has: whatever that version left. A new
+            // version that states nothing new: what the last readable one left.
+            const auto& from = change.seen ? last_read : last;
+            if (const auto before = from.find(unit.path); before != from.end()) {
+              unit.disposition = UnitDisposition::Unchanged;
+              unit.evidence = before->second;
+            } else {
+              unit.disposition = UnitDisposition::Ignored;  // no version of the file has held an object
+            }
+          }
+        }
+        done = visit(unit);
+        if (!done) break;
+      }
+      if (!done) break;
+    }
+    planned_ = false;  // the walk is used up: an import plans again
+    return done;
+  }
+
+ private:
+  // A change the walk was given, for for_each_unit.
+  struct Listed {
+    std::string commit, path, blob_sha;
+    bool deleted = false;
+    bool ignored = false;  // not a reference file
+    bool seen = false;     // handed to the mapper: a new version of its path
+  };
+
+  // The next batch; nullopt at the end of the walk. `listed`: every change of
+  // its commits, in walk order.
+  Result<std::optional<ingest::ImportBatch>> build(std::vector<Listed>* listed) {
     if (!planned_) return fail(ErrorKind::Config, "meta adapter: next_batch() before plan()");
     if (next_ == order_.size()) return std::optional<ingest::ImportBatch>{};
 
@@ -576,7 +655,7 @@ class MetaRepoAdapter::Impl {
     const std::size_t end = std::min(order_.size(), next_ + static_cast<std::size_t>(config_.batch_commits));
     std::vector<Seen> work;
     std::vector<GitCommit> commits;
-    if (auto r = walk(next_, end, &work, &commits); !r) return fail(r.error());
+    if (auto r = walk(next_, end, &work, &commits, listed); !r) return fail(r.error());
     Mapper mapper(config_, reader_, walk_);
     if (auto r = mapper.map(work, commits, next_, batch); !r) return fail(r.error());
 
@@ -586,18 +665,60 @@ class MetaRepoAdapter::Impl {
     return std::optional<ingest::ImportBatch>{std::move(batch)};
   }
 
- private:
+  // What `batch` holds for the file version `unit`.
+  static std::vector<ingest::Evidence> yield_of(const ingest::SourceUnit& unit, const ingest::ImportBatch& batch) {
+    using ingest::Evidence;
+    std::vector<Evidence> out;
+    const std::string part = unit.path + "#";
+    const auto of_file = [&](const std::string& path) { return path == unit.path || path.starts_with(part); };
+    for (const auto& changeset : batch.changesets) {
+      if (changeset.commit != unit.commit) continue;
+      for (const auto& revision : changeset.revisions)
+        if (of_file(revision.key.path)) out.push_back({Evidence::Kind::Recorded, unit.commit, revision.key.path});
+      // {"removed": ["<file>#<part>", ...]}: what went and has no revision to say so.
+      const auto detail = parse_legacy(changeset.detail_json);
+      if (!detail || !detail->is_object()) continue;
+      const auto removed = detail->find("removed");
+      if (removed == detail->end() || !removed->is_array()) continue;
+      for (const auto& entry : *removed)
+        if (entry.is_string() && of_file(entry.get_ref<const std::string&>()))
+          out.push_back({Evidence::Kind::Note, unit.commit, entry.get<std::string>(), {}, {}, "removed"});
+    }
+    for (const auto& conflict : batch.conflicts)
+      if (conflict.key.commit == unit.commit && conflict.key.path == unit.path)
+        out.push_back({Evidence::Kind::Conflict, unit.commit, unit.path});
+    return out;
+  }
+
   // Applies commits [begin, end) of the walk order. `out` null: a replay.
-  Result<void> walk(std::size_t begin, std::size_t end, std::vector<Seen>* out, std::vector<GitCommit>* commits) {
-    std::vector<GitCommit> listed;
-    auto applied = detail::walk_commits(reader_, order_, begin, end, listed,
+  Result<void> walk(std::size_t begin, std::size_t end, std::vector<Seen>* out, std::vector<GitCommit>* commits,
+                    std::vector<Listed>* listed = nullptr) {
+    std::vector<GitCommit> log;
+    auto applied = detail::walk_commits(reader_, order_, begin, end, log,
                                         [&](std::size_t index, std::span<const GitChange> changes) {
+                                          const std::size_t before = out ? out->size() : 0;
                                           walk_.apply(static_cast<int>(index), changes, out);
+                                          if (listed && out) list(changes, *out, before, *listed);
                                           return false;
                                         });
     if (!applied) return fail(applied.error());
-    if (commits) *commits = std::move(listed);
+    if (commits) *commits = std::move(log);
     return {};
+  }
+
+  // Notes the changes of one commit; those the walk took are `work[first..]`.
+  static void list(std::span<const GitChange> changes, const std::vector<Seen>& work, std::size_t first,
+                   std::vector<Listed>& listed) {
+    for (const auto& entry : changes) {
+      Listed change;
+      change.commit = entry.commit;
+      change.path = entry.path;
+      change.deleted = entry.status == 'D';
+      if (!change.deleted) change.blob_sha = entry.blob_sha;
+      change.ignored = classify_meta_path(entry.path).kind == MetaKind::Ignored;
+      for (std::size_t i = first; i < work.size() && !change.seen; ++i) change.seen = work[i].path == entry.path;
+      listed.push_back(std::move(change));
+    }
   }
 
   MetaAdapterConfig config_;
@@ -630,5 +751,10 @@ Result<int> MetaRepoAdapter::plan(std::optional<std::string> resume_token, inges
 }
 
 Result<std::optional<ingest::ImportBatch>> MetaRepoAdapter::next_batch() { return impl_->next_batch(); }
+
+Result<void> MetaRepoAdapter::for_each_unit(ingest::IImportState&,
+                                            const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
+  return impl_->for_each_unit(visit);
+}
 
 }  // namespace pychron::dvc

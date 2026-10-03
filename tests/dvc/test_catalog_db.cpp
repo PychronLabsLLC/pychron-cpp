@@ -27,6 +27,7 @@
 #include "pychron/ingest/ids.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "store_fixture.hpp"
+#include "verify_support.hpp"
 
 using namespace pychron;
 using namespace pychron::dvc;
@@ -739,6 +740,93 @@ TEST_P(CatalogDb, OneHistoryOneResult) {
       EXPECT_TRUE(got == want) << "batch_rows " << batch_rows << ", resumed: " << first_difference(got, want);
     }
   }
+}
+
+// ---------------------------------------------------------------- verify
+
+// Every row of the dump is a catalog row in the store or a conflict that says
+// why not, however the rows were cut into batches.
+TEST_P(CatalogDb, VerifyAfterImportIsOk) {
+  auto imported = run_import(*world_, adapter_config(kFixture, 7));
+  ASSERT_TRUE(imported) << err(imported.error());
+  const auto rows = snapshot_of(*world_);
+
+  for (const int batch_rows : {1, 5, 2000}) {
+    auto adapter = CatalogAdapter::open(adapter_config(kFixture, batch_rows));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    const auto report = dvc::testing::verify_source(*world_, **adapter);
+    EXPECT_EQ(report.units, kRows) << batch_rows;
+    EXPECT_EQ(report.ignored, 0);
+    EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{}) << batch_rows;
+    EXPECT_EQ(report.would_write, 0);
+    EXPECT_EQ(report.replay_would_write, 0);
+    // Seven rows were refused; three were imported without a link.
+    EXPECT_EQ(report.pending_blocking, 7) << batch_rows;
+    EXPECT_EQ(report.pending_warnings, 3) << batch_rows;
+    EXPECT_FALSE(report.ok());
+    EXPECT_EQ(report.parity_pass + report.parity_fail + report.parity_not_comparable, 0);
+  }
+  EXPECT_EQ(snapshot_of(*world_), rows) << "verify wrote something";
+
+  // With the refusals dealt with, the warnings alone do not fail it.
+  auto refused = world_->store->import_conflicts({world_->source().spec.uuid, std::nullopt, std::string("pending")});
+  ASSERT_TRUE(refused);
+  auto uow = world_->store->begin_import_batch(world_->source().spec.uuid, world_->client);
+  ASSERT_TRUE(uow);
+  for (const auto& row : *refused)
+    if (row.path.find('@') == std::string::npos) ASSERT_TRUE((*uow)->resolve_conflict(row.uuid, "ignored"));
+  ASSERT_TRUE((*uow)->commit());
+  auto adapter = CatalogAdapter::open(adapter_config());
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  const auto report = dvc::testing::verify_source(*world_, **adapter);
+  EXPECT_TRUE(report.ok());
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_EQ(report.pending_warnings, 3);
+}
+
+// Take one row out of the store: verify names the dump row it belongs to.
+TEST_P(CatalogDb, VerifyReportsAMissingCatalogRowOrConflict) {
+  import_fixture();
+  const std::string sha = fixture_sha();
+  const auto name = [&](const char* path) { return dvc::testing::unit_name(sha, path); };
+  const auto listed = [&] {
+    auto adapter = CatalogAdapter::open(adapter_config());
+    EXPECT_TRUE(adapter);
+    return adapter ? dvc::testing::unaccounted(dvc::testing::verify_source(*world_, **adapter))
+                   : std::vector<std::string>{};
+  };
+  ASSERT_EQ(listed(), std::vector<std::string>{});
+
+  // A catalog row.
+  ASSERT_EQ(dvc::testing::forget(*world_, "DELETE FROM extract_device WHERE name = 'Fusions CO2'"), 1);
+  EXPECT_EQ(listed(), std::vector<std::string>{name("ExtractDeviceTbl.jsonl#Fusions CO2")});
+
+  // A row with parents: the load position of 66600 in L-101.
+  ASSERT_EQ(dvc::testing::forget(*world_, "DELETE FROM load_position WHERE position = 4"), 1);
+  EXPECT_EQ(listed(),
+            (std::vector<std::string>{name("ExtractDeviceTbl.jsonl#Fusions CO2"), name("LoadPositionTbl.jsonl#6")}));
+
+  // The conflict of a refused row, and the conflict of a link an imported row lost.
+  ASSERT_EQ(dvc::testing::forget(*world_, "DELETE FROM import_conflict WHERE path = 'SampleTbl.jsonl#3'"), 1);
+  ASSERT_EQ(
+      dvc::testing::forget(*world_, "DELETE FROM import_conflict WHERE path = 'LoadTbl.jsonl#L-103@username'"), 1);
+  auto adapter = CatalogAdapter::open(adapter_config());
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  const auto report = dvc::testing::verify_source(*world_, **adapter);
+  EXPECT_EQ(dvc::testing::unaccounted(report),
+            (std::vector<std::string>{name("ExtractDeviceTbl.jsonl#Fusions CO2"), name("LoadPositionTbl.jsonl#6"),
+                                      name("LoadTbl.jsonl#L-103"), name("SampleTbl.jsonl#3")}));
+  // What is missing is named: the load is there, its link's conflict is not.
+  const auto& load = dvc::testing::unaccounted_unit(report, sha, "LoadTbl.jsonl#L-103");
+  ASSERT_EQ(load.missing.size(), 1u);
+  EXPECT_EQ(load.missing[0].kind, ingest::Evidence::Kind::Conflict);
+  EXPECT_EQ(load.missing[0].path, "LoadTbl.jsonl#L-103@username");
+  const auto& device = dvc::testing::unaccounted_unit(report, sha, "ExtractDeviceTbl.jsonl#Fusions CO2");
+  ASSERT_EQ(device.missing.size(), 1u);
+  EXPECT_EQ(device.missing[0].kind, ingest::Evidence::Kind::CatalogRow);
+  // The dry run sees the two conflicts it would write again; catalog rows it does not count.
+  EXPECT_EQ(report.replay_would_write, 2);
+  EXPECT_FALSE(report.ok());
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, CatalogDb, ::testing::ValuesIn(P::testing::engines()),

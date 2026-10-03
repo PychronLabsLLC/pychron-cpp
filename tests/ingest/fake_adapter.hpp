@@ -1,8 +1,10 @@
 #pragma once
 
-// A source adapter that serves scripted batches.
+// A source adapter that serves scripted batches, and scripted units for the
+// verifier.
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -22,6 +24,9 @@ class FakeAdapter final : public ISourceAdapter {
   // Skip the batches up to and including the one whose resume_token was
   // passed to plan(), as a real adapter does. Off: plan() rewinds to batch 1.
   void honour_token(bool on) { honour_token_ = on; }
+
+  // What for_each_unit() hands to its visitor.
+  void units(std::vector<SourceUnit> scripted) { units_ = std::move(scripted); }
 
   const std::optional<std::string>& planned_token() const { return planned_token_; }
   int plans() const { return plans_; }
@@ -46,7 +51,14 @@ class FakeAdapter final : public ISourceAdapter {
     return std::optional<ImportBatch>{batches_[next_++]};
   }
 
+  Result<void> for_each_unit(IImportState&, const std::function<Result<void>(const SourceUnit&)>& visit) override {
+    for (const auto& unit : units_)
+      if (auto r = visit(unit); !r) return r;
+    return {};
+  }
+
  private:
+  std::vector<SourceUnit> units_;
   SourceDescription description_;
   std::vector<ImportBatch> batches_;
   std::optional<std::size_t> fail_at_;

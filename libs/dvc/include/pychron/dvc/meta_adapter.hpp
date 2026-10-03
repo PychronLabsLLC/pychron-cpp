@@ -55,6 +55,7 @@
 // writes what it produces. The layout it understands is described in
 // tests/dvc/fixtures/README.md, section 6.
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -90,6 +91,22 @@ class MetaRepoAdapter final : public ingest::ISourceAdapter {
   // Returns the commits to walk.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
+  // One unit per file a commit adds, changes or deletes (for a merge: as the
+  // walk sees it). The state is not asked anything.
+  //   a path that is not a reference file                   Ignored
+  //   a version that states objects                         Imported: the row of each revision, at
+  //                                                         (commit, "<file>[#<part>]")
+  //   a version that cannot be read                         Conflict
+  //   a deletion (or a version) that takes objects away     Removed (or Imported): the rows of the revisions
+  //                                                         without a value, and for a level production or a
+  //                                                         sensitivity list "<file>[#<part>]" under "removed"
+  //                                                         of its commit
+  //   a deletion that takes nothing away                    Removed, no evidence
+  //   a version that changes nothing (the blob the path     Unchanged: the rows of the last version of the path
+  //   has; a reformatted file)                              that left any
+  //   a version of a file that has never held an object     Ignored
+  Result<void> for_each_unit(ingest::IImportState& state,
+                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
 
  private:
   class Impl;
