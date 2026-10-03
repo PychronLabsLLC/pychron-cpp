@@ -517,3 +517,8 @@ points. Where this section and an earlier one disagree, this section wins.
     correct once the branch is merged. Analyses still incomplete when an
     incremental run ends are folded as synthetic collections, where one
     longer uninterrupted import would have folded them complete.
+20. **Token rule, revised.** Every batch moves the resume token to its last
+    commit; the token no longer waits for pending analyses (this replaces
+    the token sentence of section 4.4 and the last sentence of item 14). On
+    resume, analyses still pending at the token are rebuilt by re-reading
+    the paths, not the contents, of the commits before it.
