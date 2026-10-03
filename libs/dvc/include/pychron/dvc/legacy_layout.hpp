@@ -48,7 +48,7 @@ enum class FileKind {
   InterpretedAge,    // [reduction/]<p>/ia/<t>.ia.json
   Spectrometer,      // <40 hex>.json at the root
   FrozenProduction,  // <irradiation>.<level>.production.json at the root
-  Ignored,           // README.md at the root; run logs <p>/logs/<t>.logs.log
+  Ignored,           // README* and dotfiles (.gitignore) at the root; run logs <p>/logs/<t>.logs.log
   Unknown            // matches no known pattern
 };
 
@@ -76,7 +76,8 @@ struct FrozenProductionKey {
 FrozenProductionKey split_frozen_production_key(std::string_view key);
 
 // "<identifier>-<aliquot, two digits at least><step letters>"; increment 0 is
-// "A", 25 "Z", 26 "AA"; a negative increment has no step.
+// "A", 25 "Z", 26 "AA"; a negative increment has no step. The store's rule
+// (persistence::make_runid), under the name the legacy source uses.
 std::string make_runid(std::string_view identifier, int aliquot, int increment);
 
 // ---------------------------------------------------------------- analysis record
@@ -100,7 +101,9 @@ struct RecordScriptNames {
 
 struct ParsedRecord {
   // Set: analysis (nil when the file has no uuid), identity, analysis_type,
-  // timestamp (UTC), time_zero, mass_spectrometer, experiment_type,
+  // timestamp (UTC), time_zero, mass_spectrometer (lower case, as the catalog
+  // and the meta repository name spectrometers; a different spelling in the
+  // file stays in meta.legacy_json), experiment_type,
   // laboratory, instrument_name, analyst, isotopes, detectors, meta.
   // Not set: roots (parse_data, parse_revision), extraction and positions
   // (merge_satellite), spectrometer_snapshot (parse_spectrometer of the file
@@ -167,8 +170,10 @@ Result<ParsedData> parse_data(std::string_view json);
 // non-zero number, or a string other than "" and "ok".
 //
 // TagValue has no extra field, so the unknown keys of a tags file come back in
-// ParsedRevision::extra_json. It is unset for the other kinds, whose rows
-// carry their own extra (cosmogenic keeps the whole file as its document).
+// ParsedRevision::extra_json. So does a top-level value of an intercepts,
+// baselines, blanks or IC-factor file that is not an entry (not an object),
+// beside at least one that is. Otherwise it is unset: rows carry their own
+// extra, and cosmogenic keeps the whole file as its document.
 struct ParsedRevision {
   persistence::RevisionPayload payload;
   std::optional<std::string> extra_json;

@@ -205,14 +205,26 @@ ps::IcFactorRow icfactor_row(const std::string& detector, Json entry, const std:
   return row;
 }
 
+// One row per entry. A top-level value that is not an entry (not an object)
+// has no row to go to: it comes back in the revision's extra, with its
+// non-finite token if it was one. A file with such values and no entry at all
+// is not a revision file.
 template <class Row, class Make>
-Result<std::vector<Row>> keyed_rows(const Json& doc, const std::vector<NonFinite>& nonfinite, Make make) {
+Result<ParsedRevision> keyed_rows(const Json& doc, const std::vector<NonFinite>& nonfinite, Make make) {
   std::vector<Row> rows;
+  Json extra;
   for (auto it = doc.begin(); it != doc.end(); ++it) {
-    if (!it.value().is_object()) return fail(ErrorKind::Protocol, "entry \"" + it.key() + "\" is not an object");
-    rows.push_back(make(it.key(), it.value(), nonfinite));
+    if (it.value().is_object()) {
+      rows.push_back(make(it.key(), it.value(), nonfinite));
+      continue;
+    }
+    extra[it.key()] = it.value();
+    for (const auto& token : nonfinite)
+      if (token.pointer == pointer_of(it.key())) extra["nonfinite"][token.pointer] = token.token;
   }
-  return rows;
+  if (rows.empty() && !extra.is_null())
+    return fail(ErrorKind::Protocol, "entry \"" + extra.begin().key() + "\" is not an object");
+  return ParsedRevision{std::move(rows), extra_text(extra)};
 }
 
 Result<ParsedRevision> tag_revision(Json doc, const std::vector<NonFinite>& nonfinite) {
@@ -312,26 +324,14 @@ Result<ParsedRevision> parse_revision(FileKind kind, std::string_view json) {
   if (!doc.is_object()) return fail(ErrorKind::Protocol, "revision file is not a JSON object");
 
   switch (kind) {
-    case FileKind::Intercepts: {
-      auto rows = keyed_rows<ps::InterceptRow>(doc, nonfinite, intercept_row);
-      if (!rows) return fail(rows.error());
-      return ParsedRevision{std::move(*rows), std::nullopt};
-    }
-    case FileKind::Baselines: {
-      auto rows = keyed_rows<ps::BaselineRow>(doc, nonfinite, baseline_row);
-      if (!rows) return fail(rows.error());
-      return ParsedRevision{std::move(*rows), std::nullopt};
-    }
-    case FileKind::Blanks: {
-      auto rows = keyed_rows<ps::BlankRow>(doc, nonfinite, blank_row);
-      if (!rows) return fail(rows.error());
-      return ParsedRevision{std::move(*rows), std::nullopt};
-    }
-    case FileKind::IcFactors: {
-      auto rows = keyed_rows<ps::IcFactorRow>(doc, nonfinite, icfactor_row);
-      if (!rows) return fail(rows.error());
-      return ParsedRevision{std::move(*rows), std::nullopt};
-    }
+    case FileKind::Intercepts:
+      return keyed_rows<ps::InterceptRow>(doc, nonfinite, intercept_row);
+    case FileKind::Baselines:
+      return keyed_rows<ps::BaselineRow>(doc, nonfinite, baseline_row);
+    case FileKind::Blanks:
+      return keyed_rows<ps::BlankRow>(doc, nonfinite, blank_row);
+    case FileKind::IcFactors:
+      return keyed_rows<ps::IcFactorRow>(doc, nonfinite, icfactor_row);
     case FileKind::Tags:
       return tag_revision(std::move(doc), nonfinite);
     default: {  // Cosmogenic: no real file has been seen, so the document is kept whole

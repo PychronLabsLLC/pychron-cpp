@@ -98,10 +98,24 @@ TEST(Layout, OnlyAPathMatchingNoPatternIsUnknown) {
   expect_path("660/productions/52-01E.prod.json", FileKind::Unknown, "");
   expect_path("6a9b4615cd24138b6ce541f75240dc4091378bb.json", FileKind::Unknown, "");    // 39 hex
   expect_path("6a9b4615cd24138b6ce541f75240dc4091378bbg.json", FileKind::Unknown, "");   // not hex
-  expect_path(".production.json", FileKind::Unknown, "");
+  expect_path("production.json", FileKind::Unknown, "");
   expect_path("NM-312.production.json", FileKind::Unknown, "");  // no level
   expect_path("docs/README.md", FileKind::Unknown, "");
-  expect_path(".gitignore", FileKind::Unknown, "");
+  expect_path("docs/.gitignore", FileKind::Unknown, "");
+  expect_path("notes.txt", FileKind::Unknown, "");
+}
+
+TEST(Layout, RootDotfilesAndReadmesAreIgnored) {
+  // Not part of the data: git's own files and whatever README the host made.
+  expect_path(".gitignore", FileKind::Ignored, "");
+  expect_path(".gitattributes", FileKind::Ignored, "");
+  expect_path(".production.json", FileKind::Ignored, "");  // a dotfile, whatever follows
+  expect_path("README", FileKind::Ignored, "");
+  expect_path("README.md", FileKind::Ignored, "");
+  expect_path("README.rst", FileKind::Ignored, "");
+  // Only at the root, and only that name.
+  expect_path("660/README.md", FileKind::Unknown, "");
+  expect_path("readme.md", FileKind::Unknown, "");
 }
 
 TEST(Layout, SplitFrozenProductionKey) {
@@ -123,6 +137,9 @@ TEST(Layout, MakeRunid) {
   EXPECT_EQ(make_runid("66052", 12, 27), "66052-12AB");
   EXPECT_EQ(make_runid("bu-FD-F", 789, -1), "bu-FD-F-789");
   EXPECT_EQ(make_runid("a-01-F", 2505, -1), "a-01-F-2505");
+  // One rule for the whole program: the store's.
+  for (int increment : {-1, 0, 25, 26, 27, 701, 702})
+    EXPECT_EQ(make_runid("66052", 7, increment), persistence::make_runid("66052", 7, increment)) << increment;
 }
 
 }  // namespace

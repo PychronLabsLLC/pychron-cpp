@@ -556,9 +556,30 @@ TEST(Layout, GarbageIsError) {
     EXPECT_FALSE(parse_revision(kind, "[1, 2]").has_value());   // not an object
     EXPECT_FALSE(parse_revision(kind, R"({"Ar40": )").has_value());
   }
-  // An entry that is not an object.
+  // No entry at all, only values that are not entries.
   EXPECT_FALSE(parse_revision(FileKind::Intercepts, R"({"Ar40": 1.5})").has_value());
   EXPECT_FALSE(parse_revision(FileKind::Blanks, R"({"Ar40": "x"})").has_value());
+}
+
+TEST(Layout, TopLevelValueBesideTheEntriesGoesToExtra) {
+  // A key that is not an isotope or detector entry does not fail the file.
+  const std::string text = R"({"Ar40": {"value": 2.5, "error": 0.1, "fit": "linear"},
+                               "reviewed": true, "note": "by hand", "version": 2, "nothing": null})";
+  for (FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors}) {
+    auto r = parse_revision(kind, text);
+    ASSERT_TRUE(r.has_value()) << r.error().what;
+    EXPECT_EQ(extra(r->extra_json), json::parse(R"({"reviewed": true, "note": "by hand", "version": 2, "nothing": null})"));
+  }
+  const auto rows = rows_of<ps::Intercepts>(FileKind::Intercepts, text);
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].isotope, "Ar40");
+  EXPECT_EQ(rows[0].value, std::optional<double>{2.5});
+  // A bare NaN there is recorded like any other.
+  auto nan = parse_revision(FileKind::Intercepts, R"({"Ar40": {"value": 1.0}, "scale": NaN})");
+  ASSERT_TRUE(nan.has_value()) << nan.error().what;
+  EXPECT_EQ(extra(nan->extra_json), json::parse(R"({"scale": null, "nonfinite": {"/scale": "NaN"}})"));
+  // Without such keys there is no extra.
+  EXPECT_FALSE(parse_revision(FileKind::Intercepts, R"({"Ar40": {"value": 1.0}})")->extra_json.has_value());
 }
 
 TEST(Layout, ParseRevisionRejectsKindsThatAreNotRevisions) {

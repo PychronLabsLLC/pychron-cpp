@@ -48,7 +48,10 @@ TEST(Layout, RecordFixture) {
   EXPECT_EQ(a.increment, 4);
   EXPECT_EQ(r->runid, "66052-01E");
   EXPECT_EQ(a.analysis_type, "unknown");
-  EXPECT_EQ(a.mass_spectrometer, "Felix");
+  // The catalog names spectrometers in lower case ("felix.sens.json"); the
+  // file's spelling is kept.
+  EXPECT_EQ(a.mass_spectrometer, "felix");
+  EXPECT_EQ(legacy(a)["record"]["mass_spectrometer"], "Felix");
   // "2018-02-20T00:27:08.852603" in America/Denver (MST, UTC-7).
   EXPECT_EQ(a.timestamp.iso(), "2018-02-20T07:27:08.852603Z");
   EXPECT_FALSE(a.time_zero.has_value());
@@ -118,7 +121,7 @@ TEST(Layout, RecordFixture) {
   EXPECT_EQ(rest["analyst_name"], "MHeizler");
   // What a typed field carries is not repeated.
   for (const char* key : {"uuid", "identifier", "aliquot", "increment", "analysis_type", "timestamp",
-                          "mass_spectrometer", "username", "source", "environmental", "conditionals", "detectors",
+                          "username", "source", "environmental", "conditionals", "detectors",
                           "intensity_scalar", "acquisition_software", "experiment_queue_name"})
     EXPECT_FALSE(rest.contains(key)) << key;
   // isotopes.<iso>.name has no column; it stays.

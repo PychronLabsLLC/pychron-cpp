@@ -2,6 +2,7 @@
 // center, monitor, spectrometer settings (tests/dvc/fixtures/README.md,
 // sections 5.1, 5.7, 5.8).
 
+#include <cctype>
 #include <initializer_list>
 #include <iterator>
 #include <utility>
@@ -312,7 +313,11 @@ Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx
 
   auto mass_spectrometer = take_text(doc, "mass_spectrometer");
   if (!mass_spectrometer) return fail(ErrorKind::Protocol, "analysis record has no mass_spectrometer");
-  a.mass_spectrometer = std::move(*mass_spectrometer);
+  // The catalog and the meta repository name spectrometers in lower case
+  // ("felix"); records capitalize ("Felix"). The file's spelling is kept.
+  a.mass_spectrometer = *mass_spectrometer;
+  for (auto& c : a.mass_spectrometer) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (a.mass_spectrometer != *mass_spectrometer) doc["mass_spectrometer"] = *mass_spectrometer;
   a.laboratory = take_text(doc, "laboratory");
   a.instrument_name = take_text(doc, "instrument_name");
   if (auto username = take_text(doc, "username")) {

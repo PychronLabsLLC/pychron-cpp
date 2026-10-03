@@ -1,7 +1,6 @@
 // Path -> file kind (tests/dvc/fixtures/README.md, section 3).
 
 #include <array>
-#include <cstdio>
 #include <vector>
 
 #include "pychron/dvc/legacy_layout.hpp"
@@ -68,8 +67,8 @@ PathInfo analysis_file(FileKind kind, std::string_view prefix, std::string_view 
 
 PathInfo root_file(std::string_view name) {
   PathInfo info;
-  if (name == "README.md") {
-    info.kind = FileKind::Ignored;
+  if (name.front() == '.' || name.starts_with("README")) {
+    info.kind = FileKind::Ignored;  // git's own files (.gitignore, .gitattributes) and the host's README
   } else if (ends_with(name, kProduction)) {
     const std::string_view key = name.substr(0, name.size() - kProduction.size());
     const auto dot = key.rfind('.');
@@ -124,16 +123,7 @@ FrozenProductionKey split_frozen_production_key(std::string_view key) {
 }
 
 std::string make_runid(std::string_view identifier, int aliquot, int increment) {
-  char buffer[16];
-  std::snprintf(buffer, sizeof buffer, "%02d", aliquot);
-  std::string runid = std::string(identifier) + "-" + buffer;
-  if (increment >= 0) {
-    // Bijective base 26: 0 "A", 25 "Z", 26 "AA".
-    std::string step;
-    for (int i = increment; i >= 0; i = i / 26 - 1) step.insert(step.begin(), static_cast<char>('A' + i % 26));
-    runid += step;
-  }
-  return runid;
+  return persistence::make_runid(std::string(identifier), aliquot, increment);
 }
 
 }  // namespace pychron::dvc
