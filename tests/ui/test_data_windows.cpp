@@ -299,24 +299,37 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
   Result<pp::SaveOutcome> save_isotope_fits(const pp::IsotopeFitSet& fits) override {
     pp::SaveOutcome out;
     for (const auto& a : fits.analyses)
-      if (a.heads.count("intercepts") == 0 || a.heads.at("intercepts") != head_[{a.uuid, "intercepts"}]) {
-        out.conflict = "someone else saved first";
-        return out;
+      for (const auto& refit : a.isotopes) {
+        const std::string k = refit.fit.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts";
+        if (a.heads.count(k) == 0 || a.heads.at(k) != head_[{a.uuid, k}]) {
+          out.conflict = "someone else saved first";
+          return out;
+        }
       }
     for (const auto& a : fits.analyses) {
       auto copy = std::make_shared<pp::Analysis>(**load(a.uuid));
+      std::set<std::string> kinds;
       for (const auto& refit : a.isotopes)
-        for (auto& iso : copy->isotopes)
-          if (iso.key == refit.fit.key) {
+        for (auto& iso : copy->isotopes) {
+          if (refit.fit.kind == pp::SeriesKind::Signal && iso.key == refit.fit.key) {
             iso.intercept = refit.fit.value;
             iso.fit = refit.fit.fit;
             iso.n = refit.fit.n_used;
             iso.user_excluded = refit.fit.user_excluded;
+            kinds.insert("intercepts");
+          } else if (refit.fit.kind == pp::SeriesKind::Baseline && iso.detector == refit.fit.key) {
+            iso.baseline = refit.fit.value;
+            iso.baseline_fit = refit.fit.fit;
+            iso.baseline_user_excluded = refit.fit.user_excluded;
+            kinds.insert("baselines");
           }
-      const std::string id = "rev-" + std::to_string(++ids_) + "-intercepts";
-      copy->heads["intercepts"] = id;
-      out.revisions[a.uuid + "/intercepts"] = id;
-      record(*copy, "intercepts", id, "reduction", fits.message());
+        }
+      for (const auto& k : kinds) {
+        const std::string id = "rev-" + std::to_string(++ids_) + "-" + k;
+        copy->heads[k] = id;
+        out.revisions[a.uuid + "/" + k] = id;
+        record(*copy, k, id, "reduction", fits.message());
+      }
       add(copy);
     }
     out.saved = true;
@@ -861,6 +874,44 @@ class TestDataWindows : public QObject {
     QCOMPARE(v.fits()->analyses.size(), std::size_t{1});
     QVERIFY(!v.save_button()->isEnabled());
     QVERIFY(v.save_button()->toolTip().contains(QStringLiteral("--db")));
+  }
+
+  void isotope_evolutions_refit_baselines() {
+    // Baselines are 0.01 + 0.001 k (k = 0..9) on every detector.
+    RevisionMemorySource src(2);
+    QTemporaryDir dir;
+    ProcessingBridge bridge(src);
+    pp::PresetStore presets(dir.path().toStdString());
+    IsotopeEvolutionWindow w(bridge, presets, {QStringLiteral("uuid-0")});
+    QVERIFY(wait_runs(w, bridge, 1));
+    auto opts = w.pipeline().find("fit")->options;
+    auto rows = opts.rows("isotopes");
+    rows.resize(2);  // Ar40 signal, linear; then the H1 baseline
+    QVERIFY(rows[1].set("series", std::string("baseline")).has_value());
+    QVERIFY(rows[1].set("isotope", std::string("H1")).has_value());
+    QVERIFY(rows[1].set("fit", std::string("average")).has_value());
+    QVERIFY(rows[1].set("min_rsquared", 0.5).has_value());  // not checked: an average
+    QVERIFY(rows[0].set("min_rsquared", 1.0).has_value());  // an R^2 of 1 is still "at or below"
+    QVERIFY(opts.set_rows("isotopes", rows).has_value());
+    w.set_fit_options(opts);
+    QVERIFY(wait_runs(w, bridge, 2));
+    const auto& refits = w.fits()->analyses.at(0);
+    QCOMPARE(refits.isotopes.size(), std::size_t{2});
+    QCOMPARE(refits.isotopes[1].label(), std::string("H1 baseline"));
+    QVERIFY(std::abs(refits.isotopes[1].fit.value.value - 0.0145) < 1e-12);
+    QVERIFY(w.analyses_table()->item(0, 3)->text().contains(QStringLiteral("H1 baseline 0.0145")));
+    QVERIFY(w.analyses_table()->item(0, 2)->text().startsWith(QStringLiteral("Ar40 rsquared 1 <= 1")));
+
+    w.analyses_table()->selectRow(0);
+    QCOMPARE(w.preview_view()->panel_count(), 5);  // signals
+    w.preview_kind()->setCurrentIndex(1);
+    QCOMPARE(w.preview_view()->panel_count(), 5);  // a baseline per detector
+
+    QVERIFY(w.save());
+    const auto saved = *src.load("uuid-0");
+    QVERIFY(std::abs(saved->find_isotope("Ar40")->baseline.value - 0.0145) < 1e-12);
+    QCOMPARE(saved->heads.at("baselines").rfind("rev-", 0), std::size_t{0});
+    QVERIFY(src.last_message.find("H1 baseline(average)") != std::string::npos);
   }
 
   void figure_computes_and_click_excludes() {

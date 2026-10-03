@@ -151,8 +151,10 @@ source adapters as separate targets (`processing_records`,
 - [x] Batch isotope-evolution refits (`isotope_evolution_fit` -> Scene +
       `IsotopeFits`, goodness flags, `save_isotope_fits`) and the Isotope
       evolutions window.
-- [ ] Remaining legacy goodness checks (signal-to-baseline, curvature,
-      smart filter) and baseline batch refits.
+- [x] Remaining legacy goodness checks (smart filter, curvature, adjusted
+      R^2, signal to baseline, signal to blank, slope intensity) and
+      baseline batch refits (series = baseline rows).
+- [ ] Legacy's isotope classifier and auto-fit by point count (AUTO_N).
 - [ ] Tables and CSV export units.
 - [ ] Pipeline template editor (graph view of units, per-node options dock).
 - [ ] Listen/auto pipelines driven by `IAnalysisSource::generation()`.

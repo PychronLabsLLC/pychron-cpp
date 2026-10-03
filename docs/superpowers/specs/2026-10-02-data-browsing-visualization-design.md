@@ -352,20 +352,29 @@ isotope-evolution refits and the reference fits:
 
 | Unit | Ports | Options |
 |---|---|---|
-| `isotope_evolution_fit` | analyses -> (Scene, IsotopeFits) | per isotope (a key, or a name matching every key of it): fit, error, outlier filter, goodness thresholds (max percent error, max outliers, max slope); keep_user_excluded, skip_reviewed |
+| `isotope_evolution_fit` | analyses -> (Scene, IsotopeFits) | per row: series (signal: an isotope key or name; baseline: a detector), fit, error, outlier filter, goodness thresholds; keep_user_excluded, skip_reviewed |
 
 After legacy FitIsotopeEvolutionNode: every included analysis's raw
 signals are refitted (reading `load_raw` from the source), keeping the
-points each analysis already leaves out unless told otherwise. Legacy's
-goodness checks flag a refit whose percent error, outlier count or slope at
-t = 0 exceeds its threshold (signal-to-baseline and curvature checks are
-not ported yet). The scene plots each isotope's refitted and current
-intercepts against run time, flagged ones marked. `IsotopeFits` holds per
+points each analysis already leaves out unless told otherwise. A baseline
+row refits the detector's baseline and applies it to every isotope on that
+detector. Legacy's goodness checks (`IsoFilterFitAuxPlot`), each optional:
+percent error; smart filter (error >= a v^b + c v + d); outlier count;
+slope at t = 0 (above a minimum intensity); curvature |y''|/(1 + y'^2)^1.5
+of the raw points with numpy.gradient at an index or fraction; adjusted
+R^2 (not for averages); and, for signals, signal to baseline (when the
+baseline error exceeds a share of the signal, a percent error from a
+second threshold) and signal to blank. Deviation: legacy's R^2 check is on
+by default (0.95) and so flags every average fit; here it is opt-in. The
+classifier (`IsotopeClassifier`) is not ported. The scene plots each row's
+refitted and current values against run time, flagged ones marked. `IsotopeFits` holds per
 analysis its heads, the refits (`EditedFit`, stored value, slope,
 outliers), flags and the edited analysis for previews;
 `IRevisionSource::save_isotope_fits` writes one intercepts revision per
-analysis in one changeset (`<ISOEVO> refit Ar40(linear),...`). Saved fits,
-here and from recall, are marked reviewed.
+analysis in one changeset, with a baselines revision too when baselines
+were refitted (`<ISOEVO> refit Ar40(linear),H1 baseline(average)`). Saved
+fits, here and from recall, are marked reviewed; analyses carry the
+reviewed flags of their intercepts and baselines for skip_reviewed.
 
 
 | Unit | Ports | Options |
@@ -767,7 +776,7 @@ writes nothing and the status says so.
 
 Plot > Isotope evolutions... refits the selected analyses: the summary
 scene (click a point to leave its analysis out), a preview of the selected
-analysis's evolutions with the refits, a Fits dock (presets, one row per
+analysis's signal or baseline evolutions with the refits, a Fits dock (presets, one row per
 isotope), an Analyses dock (Included box, goodness flags, refits), and
 Save, optionally leaving flagged analyses out. A lost compare-and-swap
 writes nothing.

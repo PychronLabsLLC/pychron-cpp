@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -39,8 +40,10 @@ constexpr const char* kFit = "fit";
 constexpr const char* kEdits = "edits";
 
 QString flag_text(const pp::GoodnessFlag& f) {
-  return QStringLiteral("%1 %2 %3 > %4")
-      .arg(qs(f.key), qs(f.check), QString::number(f.value, 'g', 4), QString::number(f.threshold, 'g', 4));
+  const char* op = f.check == "rsquared" ? "<=" : f.check == "outliers" || f.check == "slope" || f.check == "percent_error" ? ">" : ">=";
+  return QStringLiteral("%1 %2 %3 %4 %5")
+      .arg(qs(f.key), qs(f.check), QString::number(f.value, 'g', 4), QString::fromLatin1(op),
+           QString::number(f.threshold, 'g', 4));
 }
 
 }  // namespace
@@ -68,8 +71,19 @@ IsotopeEvolutionWindow::IsotopeEvolutionWindow(ProcessingBridge& bridge, pp::Pre
   auto* split = new QSplitter(Qt::Vertical);
   view_ = new SceneView;
   preview_ = new SceneView;
+  auto* preview_host = new QWidget;
+  auto* pl = new QVBoxLayout(preview_host);
+  pl->setContentsMargins(0, 0, 0, 0);
+  preview_kind_ = new QTabBar;
+  preview_kind_->addTab(tr("Signals"));
+  preview_kind_->addTab(tr("Baselines"));
+  pl->addWidget(preview_kind_);
+  pl->addWidget(preview_, 1);
   split->addWidget(view_);
-  split->addWidget(preview_);
+  split->addWidget(preview_host);
+  connect(preview_kind_, &QTabBar::currentChanged, this, [this] {
+    if (!previewed_.isEmpty()) preview(previewed_);
+  });
   split->setStretchFactor(0, 3);
   split->setStretchFactor(1, 2);
   setCentralWidget(split);
@@ -209,7 +223,7 @@ void IsotopeEvolutionWindow::fill_table() {
         for (const auto& f : r->flags) flags << flag_text(f);
         for (const auto& i : r->isotopes) {
           const double v = i.fit.value.value;
-          refits << QStringLiteral("%1 %2 ± %3%").arg(qs(i.fit.key), QString::number(v, 'g', 7),
+          refits << QStringLiteral("%1 %2 ± %3%").arg(qs(i.label()), QString::number(v, 'g', 7),
                                                        QString::number(v != 0 ? std::abs(i.fit.value.error / v) * 100 : 0, 'f', 3));
         }
       } else {
@@ -238,7 +252,8 @@ bool IsotopeEvolutionWindow::preview(const QString& uuid) {
     preview_->set_scene(nullptr);
     return false;
   }
-  preview_->set_scene(std::make_shared<const pp::Scene>(pp::make_evolution_scene(*r->edited, *raw, pp::SeriesKind::Signal)));
+  const auto kind = preview_kind_->currentIndex() == 1 ? pp::SeriesKind::Baseline : pp::SeriesKind::Signal;
+  preview_->set_scene(std::make_shared<const pp::Scene>(pp::make_evolution_scene(*r->edited, *raw, kind)));
   return true;
 }
 

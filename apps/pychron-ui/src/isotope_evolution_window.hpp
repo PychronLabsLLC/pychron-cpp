@@ -10,7 +10,7 @@
 // refitted and current intercepts against run time (flagged refits marked;
 // click a point to leave its analysis out). The Analyses dock lists every
 // analysis with an Included box, its goodness flags and refits; selecting
-// one previews its evolutions with the new fits. Save writes the refits as
+// one previews its signal or baseline evolutions with the new fits. Save writes the refits as
 // intercepts revisions of every refitted analysis in one changeset (or of
 // the good ones only), when the source keeps revisions.
 
@@ -26,6 +26,7 @@
 class QCheckBox;
 class QLabel;
 class QPushButton;
+class QTabBar;
 class QTableWidget;
 
 namespace pychron::ui {
@@ -57,6 +58,7 @@ class IsotopeEvolutionWindow : public QMainWindow {
   // For tests.
   SceneView* view() const noexcept { return view_; }
   SceneView* preview_view() const noexcept { return preview_; }
+  QTabBar* preview_kind() const noexcept { return preview_kind_; }  // signals, baselines
   OptionsEditor* options_editor() const noexcept { return editor_; }
   PresetBar* presets() const noexcept { return presets_; }
   QTableWidget* analyses_table() const noexcept { return table_; }
@@ -87,6 +89,7 @@ class IsotopeEvolutionWindow : public QMainWindow {
   processing::DatasetPtr dataset_;
   SceneView* view_;
   SceneView* preview_;
+  QTabBar* preview_kind_;
   OptionsEditor* editor_;
   PresetBar* presets_;
   QTableWidget* table_;
