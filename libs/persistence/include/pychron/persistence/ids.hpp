@@ -28,6 +28,9 @@ class Uuid {
 
   // A fresh UUIDv7 from the process-wide generator (monotonic per process).
   static Uuid v7();
+  // RFC 9562 name-based UUIDv5 (SHA-1 over namespace bytes then name):
+  // deterministic, so re-deriving an id from the same inputs is idempotent.
+  static Uuid v5(const Uuid& ns, std::string_view name);
   // Canonical 8-4-4-4-12 hex, either case; anything else is nullopt.
   static std::optional<Uuid> parse(std::string_view text);
 

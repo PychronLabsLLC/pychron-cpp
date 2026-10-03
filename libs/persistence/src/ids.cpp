@@ -2,6 +2,9 @@
 
 #include <chrono>
 #include <cstdio>
+#include <string>
+
+#include "pychron/core/sha1.hpp"
 
 namespace pychron::persistence {
 namespace {
@@ -34,6 +37,17 @@ bool parse_int(std::string_view s, int& out) {
 Uuid Uuid::v7() {
   static UuidV7Generator generator;
   return generator.next();
+}
+
+Uuid Uuid::v5(const Uuid& ns, std::string_view name) {
+  std::string input(reinterpret_cast<const char*>(ns.bytes().data()), ns.bytes().size());
+  input.append(name);
+  const auto digest = sha1(input);
+  Bytes b{};
+  for (std::size_t i = 0; i < b.size(); ++i) b[i] = digest[i];
+  b[6] = static_cast<std::uint8_t>(0x50 | (b[6] & 0x0f));
+  b[8] = static_cast<std::uint8_t>(0x80 | (b[8] & 0x3f));
+  return Uuid(b);
 }
 
 std::optional<Uuid> Uuid::parse(std::string_view text) {

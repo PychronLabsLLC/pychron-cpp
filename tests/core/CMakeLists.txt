@@ -11,6 +11,7 @@ add_executable(pychron_core_tests
   test_clock_pump.cpp
   test_process.cpp
   test_sha256.cpp
+  test_sha1.cpp
   test_config_loader.cpp
   test_config_validate.cpp
   test_config_override.cpp
