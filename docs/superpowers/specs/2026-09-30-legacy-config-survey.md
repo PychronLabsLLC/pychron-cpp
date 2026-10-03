@@ -19,6 +19,9 @@ Appendix C does the same for the `devices/` folders and compares the device
 kinds with the drivers pychron-cpp has (added 2026-10-03).
 Appendix D covers the `spectrometer/` folders and checks the importer in the
 spectrometer spec (section 7.5) against the real files (added 2026-10-03).
+Appendix E covers the PyScript `scripts/` trees: the verbs real scripts call,
+measurement docstrings and hops, and what the scripting host and the
+measurement-plan importer would mishandle (added 2026-10-03).
 
 ## Gaps vs current `extraction_line.toml` / `canvas.toml` schema
 
@@ -1255,3 +1258,251 @@ There is no good NGX fixture on Drive.
    floats.
 7. melbourne is the best current Argus fixture but not an independent one: it
    was derived from jan.
+
+## Appendix E: `scripts/` survey (2026-10-03)
+
+519 files in seven trees: `PychronConsulting/scripts/{felix, jan, melbourne,
+tap, uf}` and `setupfiles/{asu, uf/original}/scripts`. All 458 `.py` files
+were parsed with `ast`; about 110 were read in full and the rest covered by
+hashing, call inventory and body clustering. No script contains a credential,
+host or address.
+
+### E.1 Inventory
+
+| Tree | .py | State |
+|---|---|---|
+| felix | 123 | Most complete and current (to 2024): CO2, diode, furnace, pipettes, both hop formats, resource flags. Best fixture |
+| jan | 309 | Largest. The only whiff, APIS, UV, multi-shot and dynamic-baseline examples. About 130 files are `zobs/`, `backup/` or "test scripts" |
+| asu | 16 | Small NGX set; consistent for air and blank; the unknown row of `defaults.yaml` names files that do not exist |
+| melbourne | 5 | Minimal template: one measurement body twice, one-line post scripts, no extraction script |
+| uf/original | 3 | Example template; one file broken |
+| uf, tap | 1 each | One literal-only NGX script; one script using an unknown verb |
+
+Only three files are byte-identical across labs; no folder is cloned.
+`pipeline/` is empty in every tree. `spectrometer/` holds one broken file.
+Other script folders exist under `labs/` (usgs_denver, goddard, uman) and were
+not read.
+
+### E.2 Shape of a script
+
+- Every script defines `main()`. No classes, `while`, `try` or `lambda`.
+- Measurement scripts start with `#!Measurement` (161 files). No other
+  directive is used.
+- Extraction scripts carry YAML metadata in the module docstring (`eqtime`,
+  `modifier`, `sensitivity_multiplier`) in 98 files. Top-level scripts are
+  mostly `gosub` chains into library scripts in `extraction/<ns>/`, addressed
+  as `ns:Name` (`felix:`, `jan:`, `common:`, `apis:`, `local:`).
+- Run values read: `duration`, `extract_value`, `pattern`, `analysis_type`
+  (only ever compared with `'blank'`), `cleanup`, `position` (always treated
+  as a list), `ramp_rate`, `extract_units`, `disable_between_positions`,
+  `ramp_duration`, `beam_diameter`, `load_identifier`, `run_identifier`,
+  `reprate`, `extract_device`. `tray` is never read.
+- `main` takes parameters in 16 files: defaults (`main(valve_pause=3, ...)`),
+  flags (`main(do_cleanup=True, degas=False)`), and a required argument
+  (`main(shot_name)`).
+
+### E.3 Extraction-side verbs
+
+| Verb | Calls | Labs | Forms | In pychron-cpp |
+|---|---|---|---|---|
+| `gosub` | 766 | 3 | `'ns:Name'`; `argv=(x,)` 42; keyword arguments 5 | present; `argv` is not forwarded and keywords do not reach `main` |
+| `close` / `open` | 695 / 509 | 6 | `description=`; `name=`; positional; `open(..., cancel_on_failed_actuation=False, ntries=20)` | present; those two keywords are not accepted |
+| `info`, `sleep` | 521, 513 | 5 | `sleep(duration=, message=)` | present |
+| `execute_pattern` | 41 | 2 | `(pattern)`, `block=False`; return value used as elapsed seconds | present; returns nothing |
+| `extract` / `end_extract` | 39 / 40 | 2 | `()`, `(value)`, `(value, units)` | present |
+| `enable` / `disable` | 28 each | 2 | | present |
+| `begin_interval` / `complete_interval` | 27 each | 2 | | present |
+| `ramp` | 26 | 2 | `setpoint=, rate=`; `setpoint=, duration=, period=0.5`; return value used | name present; the signature has no `setpoint` |
+| `move_to_position` | 25 | 2 | `(pi)`, `autocenter=True/False` | present |
+| `set_motor` | 18 | 2 | `'beam'`, `'mask'`, `'attenuator'` | present |
+| resource flags: `get_resource_value`, `set_resource`, `release`, `acquire`, `wait` | 61 | 2 | named flags shared between two instruments | present |
+| `video_recording` (with) | 9 | 2 | | present |
+| `lighting` (with) | 8 | 2 | `(55)`, `(60)` | **absent** |
+| `import time`, `time.time()` | 9 | 1 | elapsed-time bookkeeping | `time` is not importable |
+| `start_response_recorder` / `stop_response_recorder` | 6 | 1 | furnace | **absent** |
+| `set_pid_parameters`, `extract_pipette`, `get_value`, `is_closed`, `prepare` | 14 | 1-2 | `prepare` return value tested | present; `prepare` returns nothing |
+| `trace_path`, `set_reprate`, `set_light`, `grain_polygon`, `sink_data`, `exit`, `xrange` | 9 | 1 | UV, variants, Python 2 | **absent** |
+
+Verbs in the C++ vocabulary that no script in these trees calls: `lock`,
+`unlock`, `is_open`, `fire_laser`, `warmup`, `set_x/y/z/xy`, `set_tray`,
+`dump_sample`, `drop_sample`, `begin_heating_interval`, `load_pipette`,
+`set_cryo`, `get_cryo_temp`, `snapshot`, `video_start/stop`, `get_pressure`,
+`get_manometer_pressure`, `waitfor`, `wake`, `pause`, `delay`, `get_device`,
+`signal_pump_time_start`.
+
+Mismatches by weight: `ramp(setpoint=)` (26 calls, 2 labs); `gosub` argument
+passing (47 calls); `lighting` (8 calls, 2 labs); the extra `open` keywords;
+`import time`; the response recorder.
+
+### E.4 Measurement-side verbs
+
+165 measurement scripts, 72 distinct bodies.
+
+| Verb | Calls | Notes |
+|---|---|---|
+| `baselines` | 312 | `ncounts, mass, detector, settling_time`; also `integration_time`, `use_dac`, `check_conditionals=False` |
+| `peak_center` | 303 | `detector, isotope`; `integration_time`; `config_name=`; `save=False` |
+| `activate_detectors` | 300 | `*dets`, with `peak_center=True` in 137 |
+| `position_magnet` | 169 | isotope and detector; `for_collection=False`; a DAC value with `dac=True`; a named position |
+| `set_time_zero` | 172 | |
+| `equilibrate`, `sniff` | 151, 146 | `eqtime, inlet, outlet, delay`; `do_post_equilibration=` |
+| `set_fits`, `set_baseline_fits` | 149, 151 | |
+| `multicollect` | 140 | `ncounts, integration_time` |
+| `gosub('warm_cdd')` | 130 | |
+| `sleep` | 109 | |
+| `define_detectors`, `set_deflection`, `set_integration_time` | 44, 35, 20 | |
+| `load_hops`, `define_hops`, `peak_hop` | 21 each | `peak_hop(ncycles, hops, mftable=)` |
+| `open`, `close` | 62 | valves from the script |
+| `generate_ic_mftable`, `set_spectrometer_configuration`, `set_accelerating_voltage` | 8, 6, 6 | |
+| `whiff` | 7 | returns the action string |
+| `post_equilibration`, `reset_measurement`, `regress`, `get_intensity`, `get_deflection`, `abort`, `is_last_run`, `add_truncation` | 1-13 each | |
+
+### E.5 Measurement docstrings, hops, fits
+
+114 scripts have a YAML docstring. **49 have an empty one and use module
+constants instead** (`MULTICOLLECT_COUNTS`, `BASELINE_*`, `PEAK_CENTER_*`,
+`EQ_TIME`, `INLET`, `OUTLET`, `FITS`, `NCYCLES`, ...). No docstring is invalid
+YAML.
+
+| Key | Values |
+|---|---|
+| `baseline.{after, before, counts, detector, mass, settling_time}` | `mass` a number, or a named position |
+| `baseline.{lo_mass, hi_mass}` | asu: two baseline positions |
+| `baseline.{use_dac, nominal_isotope, integration_time}` | a few scripts |
+| `default_fits` | the name of a file in `fits/` |
+| `equilibration.{eqtime, inlet, inlet_delay, outlet, use_extraction_eqtime, post_equilibration_delay}` | inlet and outlet differ per lab |
+| `multicollect.{counts, detector, isotope}` | |
+| `peakcenter.{after, before, detector, isotope, detectors, integration_time}` | |
+| `peakhop.{use_peak_hop, hops_name, ncycles, generate_ic_table}` | |
+| `whiff.{counts, eqtime, abbreviated_count_ratio, conditionals[]}` | jan |
+
+Two hop formats:
+
+```
+# hops.txt: Python tuples
+('Ar40:H1, Ar41:H2, Ar38:L1, Ar37:L2, Ar36:CDD:110', 15, 3)   # iso:det[:deflection], counts, settle
+('Ar39:CDD', 15, 3)
+```
+
+```yaml
+# hops.yaml
+- counts: 20
+  settle: 5
+  cup_configuration:
+    - {isotope: Ar40, active: False, deflection: 3250, detector: H2(CDD), protect: True, is_baseline: False}
+    - {isotope: Ar39, active: True, deflection: 200, detector: H1(CDD), protect: False, is_baseline: False}
+  positioning: {detector: AX(CDD), isotope: Ar38}
+```
+
+`positioning.isotope` can be a mass or a named position;
+`positioning.use_af_demag` occurs.
+
+Fits files: lists `signal` and `baseline` of `{name, fit, error_type,
+filter_outliers, filter_iterations, filter_std_devs}`. Fit spellings vary in
+case (`linear`/`Linear`, `parabolic`/`Parabolic`, `average`/`Average`). Signal
+names can include the detector (`Ar39H1(CDD)`). Outlier settings are per
+entry.
+
+### E.6 Extraction sequences
+
+- **CO2** (felix, jan): take resource flags; prepare valves; set the beam
+  motor; for a blank, isolate and sleep; otherwise enable, then per position:
+  under `lighting(55)` move with `autocenter=True`; isolate on the first
+  position; extract; end; then disable and sleep for cleanup. The extraction
+  step is `begin_interval(duration)`, then `ramp(...)` or `extract(value,
+  units)`, optionally `execute_pattern(pattern)`, then `complete_interval()`.
+- **Diode**: isolate the cold finger, fire as above inside `video_recording`,
+  `extract(0)` between positions.
+- **Furnace** (felix): response recorder on; `set_pid_parameters`; extract in
+  an interval; idle setpoint chosen by threshold; a 60 s cool-down.
+- **UV** (jan, archived only): mask, attenuator, rep rate, `prepare()`,
+  `trace_path`.
+- **Chromium**: no extraction script exists. melbourne's `defaults.yaml` names
+  one that is absent.
+- **Pipettes**: evacuate, fill (skip the inner valve for a blank), prepare,
+  expand or sniff; 15 s waits; multi-shot by repetition.
+- The pattern name always comes from the run. **No script names a dragonfly or
+  seek pattern.** No `snapshot` or autofocus call exists; autocenter appears
+  only as the `move_to_position` keyword.
+- No error handling anywhere. 271 literal sleeps.
+
+### E.7 `defaults.yaml` and conditionals
+
+`defaults.yaml`: `<Type>: {extraction, measurement, post_equilibration,
+post_measurement, modifier?, options?, <ExtractDevice>: {extraction?,
+cleanup, duration, extract_value?, extract_units?, beam_diameter?}}`. Script
+names omit the `<spectrometer>_` prefix and usually `.py`. Types seen beyond
+the common ones: `AP`, `BAP`, `BAC`, `BFC`, `Ic`, `Dg`, `Pa`; asu uses
+lowercase keys. `modifier: 03` loads as integer 3. Several named scripts do
+not exist.
+
+Conditionals: 16 YAML files. Most entries are placeholders with an empty
+`teststr`; about 47 real rules, nearly all truncations (`age>100.0`,
+`Ar40>5000.0`, `Ar39.bs_corrected<0.2`). Every expression found parses under
+the conditionals grammar. Not convertible as written: a misspelt top-level key
+(`modifcations`), an old list format using `comp`/`start`/`value`, and actions
+with a check and `action: null`.
+
+### E.8 Python used
+
+| Feature | Count |
+|---|---|
+| `if` | about 1100 |
+| `for` over positions, shots, cycles | about 45 |
+| arithmetic on run values | 113 |
+| `str.format` | about 190 |
+| helper functions besides `main` | 39 files |
+| `with` | 18 |
+| stdlib imports | `time` (3 files), `os` (1 broken file) |
+| builtins | `len`, `max`, `min`, `range`, `enumerate`, `float`, `isinstance`, `xrange`, `exit` |
+| outside the script API | one file write, in the broken file; no subprocess, sockets, `eval` |
+
+Four files do not parse as Python 3. `xrange` in three. CRLF in the asu,
+melbourne and uf/original trees. Ten tab-indented files. About 25 file names
+contain spaces.
+
+### E.9 Against the pychron-cpp design
+
+Scripting host:
+
+- `ramp(setpoint=...)` fails the signature (26 calls).
+- `gosub(..., argv=(x,))` into `main(x)`, and `gosub(..., degas=True)` into
+  `main(degas=False)`: the callee's parameters are not supplied (47 calls; all
+  21 APIS scripts depend on it).
+- Library scripts live in `extraction/<ns>/` and are called `ns:Name`; the
+  resolver looks in `<kind>/` then `lib/`. Cross-kind calls
+  (`extraction:felix:X` from a procedure) do not resolve. There is no
+  `procedures` or `spectrometer` kind.
+- `position` is iterated and `len()`-ed; the default context value is a
+  string.
+- Return values of `ramp`, `execute_pattern` and `prepare` are used.
+- Metadata is in the docstring, not a `#! pychron:` line.
+- Unknown: `lighting`, the response recorder, `time`, `trace_path`,
+  `set_reprate`, `set_light`, `grain_polygon`, `sink_data`, `exit`, `xrange`.
+
+Measurement plan and its importer (experiment spec 4.1, 5.3):
+
+- The importer script the spec names does not exist in the tree yet.
+- 49 of 165 scripts carry their values in module constants, not a docstring.
+- Not representable in the plan as specified: two baseline masses; named and
+  DAC positions; per-cup deflection, `active: False` and `protect` in hops;
+  `mftable=` on a peak hop; `generate_ic_mftable`;
+  `set_spectrometer_configuration`; a peak-centre detector list and
+  integration time; `post_equilibration_delay`; scripts with no equilibration;
+  the `warm_cdd` routine (130 call sites); accelerating voltage switched off
+  during equilibration; intensity-dependent baseline settling; abort on a
+  deflection value; whiff results `run_total`, `run_split`, `run_pipette`,
+  `run_chamber_split` with their own valve choreography.
+- Fits are per isotope and per detector, with per-entry outlier settings.
+- `'L2 (CDD)'` with a space occurs 17 times beside `'L2(CDD)'`.
+- The spec expects about 30 scripts with at most 4 exotic ones. These trees
+  have 165 measurement scripts in 72 distinct bodies.
+
+### E.10 Corrections
+
+1. The "Global and experiment" section says the measurement docstring "matches
+   the MeasurementPlan importer's input exactly". It does not: see E.5 and
+   E.9.
+2. `defaults.yaml` is more than analysis type to script per phase: it carries
+   per-extract-device blocks with extraction defaults, and `modifier` and
+   `options`.
