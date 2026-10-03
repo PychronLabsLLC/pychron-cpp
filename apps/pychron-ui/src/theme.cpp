@@ -1,8 +1,10 @@
 #include "theme.hpp"
 
+#include <initializer_list>
 #include <utility>
 
 #include <QApplication>
+#include <QFontDatabase>
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
@@ -342,16 +344,31 @@ QString style_sheet() {
   return s;
 }
 
+namespace {
+
+// The first of `wanted` installed here, or empty. A family that is not
+// installed is never handed to Qt: on macOS that makes it build its whole
+// alias table ("Populating font family aliases took ... ms").
+QString installed_family(std::initializer_list<QLatin1String> wanted) {
+  static const QStringList installed = QFontDatabase::families();
+  for (const QLatin1String name : wanted) {
+    if (installed.contains(name, Qt::CaseInsensitive)) return name;
+  }
+  return {};
+}
+
+}  // namespace
+
 void apply(QApplication& app) {
   platform_point_size();
   QApplication::setStyle(QStringLiteral("Fusion"));
   QApplication::setPalette(palette());
-  // Whichever of these the machine has; the size stays the platform's until
-  // set_font_sizes.
+  // IBM Plex Sans (or Windows 11's variable Segoe) where installed, else the
+  // platform's own UI font. The size stays the platform's until set_font_sizes.
   QFont font = QApplication::font();
-  font.setFamilies({QStringLiteral("IBM Plex Sans"), QStringLiteral("Segoe UI Variable Text"), QStringLiteral("Segoe UI"),
-                    QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue"), QStringLiteral("Cantarell"),
-                    QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans")});
+  if (const QString family = installed_family({QLatin1String("IBM Plex Sans"), QLatin1String("Segoe UI Variable Text")});
+      !family.isEmpty())
+    font.setFamily(family);
   font.setHintingPreference(QFont::PreferNoHinting);
   QApplication::setFont(font);
   app.setStyleSheet(style_sheet());
@@ -396,12 +413,21 @@ QFont title_font(const QFont& base) {
 }
 
 QFont mono_font() {
-  QFont f(QStringLiteral("monospace"));
-  f.setFamilies({QStringLiteral("JetBrains Mono"), QStringLiteral("IBM Plex Mono"), QStringLiteral("SF Mono"),
-                 QStringLiteral("Menlo"), QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas"),
-                 QStringLiteral("DejaVu Sans Mono"), QStringLiteral("monospace")});
+  // The platform's fixed font (a real family everywhere, unlike "monospace"),
+  // or the first of these that is installed.
+  QFont f = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  if (const QString family =
+          installed_family({QLatin1String("JetBrains Mono"), QLatin1String("IBM Plex Mono"), QLatin1String("SF Mono"),
+                            QLatin1String("Cascadia Mono"), QLatin1String("Consolas"), QLatin1String("Menlo")});
+      !family.isEmpty())
+    f.setFamily(family);
   f.setStyleHint(QFont::Monospace);
-  if (code_point_size > 0) f.setPointSize(code_point_size);
+  // The system font carries its own size; code follows the interface's unless set.
+  if (code_point_size > 0) {
+    f.setPointSize(code_point_size);
+  } else {
+    f.setPointSizeF(QApplication::font().pointSizeF());
+  }
   return f;
 }
 

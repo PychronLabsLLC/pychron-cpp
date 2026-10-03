@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
@@ -132,6 +133,19 @@ class TestTheme : public QObject {
     QVERIFY(title.bold());
     QCOMPARE(title.pointSizeF(), 13.0);
     QCOMPARE(style::mono_font().styleHint(), QFont::Monospace);
+  }
+
+  // Only installed families are named: a missing one makes Qt build its alias
+  // table on macOS ("Populating font family aliases took ... ms").
+  void fonts_name_only_installed_families() {
+    const QStringList installed = QFontDatabase::families();
+    const auto check = [&](const QFont& f, const char* what) {
+      for (const QString& family : f.families())
+        QVERIFY2(installed.contains(family, Qt::CaseInsensitive),
+                 qPrintable(QStringLiteral("%1 names %2, which is not installed").arg(QLatin1String(what), family)));
+    };
+    check(QApplication::font(), "the application font");
+    check(style::mono_font(), "the code font");
   }
 
   // Colours are named in theme.cpp and nowhere else.
