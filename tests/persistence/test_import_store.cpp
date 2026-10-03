@@ -275,6 +275,63 @@ TEST_P(ImportStoreTest, ProvenanceAndConflictRoundTrip) {
   EXPECT_EQ(count("import_conflict"), 1);
 }
 
+TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
+  const Uuid id = Uuid::v5(source_.uuid, "conflict b.json");
+  const Uuid other = Uuid::v5(source_.uuid, "conflict c.json");
+  auto missing = store_->import_conflict(id);
+  ASSERT_TRUE(missing) << to_string(missing.error());
+  EXPECT_FALSE(missing->has_value());
+
+  auto uow = batch();
+  for (const Uuid uuid : {id, other}) {
+    ImportConflictRow row;
+    row.uuid = uuid;
+    row.path = uuid == id ? "b.json" : "c.json";
+    row.entity = analysis_;
+    row.kind = ConflictKind::UnknownAnalysis;
+    row.detail_json = R"({"reason":"x"})";
+    ASSERT_TRUE(uow->add_conflict(row));
+  }
+  ASSERT_TRUE(uow->commit());
+  auto stored = store_->import_conflict(id);
+  ASSERT_TRUE(stored && stored->has_value());
+  EXPECT_EQ((*stored)->path, "b.json");
+  EXPECT_EQ((*stored)->kind, ConflictKind::UnknownAnalysis);
+  EXPECT_EQ((*stored)->entity, std::optional<Uuid>{analysis_});
+  EXPECT_EQ((*stored)->resolution, "pending");
+
+  // Resolving is staged with the batch; an absent conflict is not an error.
+  const auto seq = *store_->latest_change_seq();
+  auto resolve = batch();
+  ASSERT_TRUE(resolve->resolve_conflict(id, "superseded"));
+  ASSERT_TRUE(resolve->resolve_conflict(Uuid::v7(), "superseded"));
+  EXPECT_EQ((*store_->import_conflict(id))->resolution, "pending") << "staged, not written";
+  ASSERT_TRUE(resolve->commit());
+  EXPECT_EQ(*store_->latest_change_seq(), seq) << "a resolution alone is not a change";
+  EXPECT_EQ((*store_->import_conflict(id))->resolution, "superseded");
+  EXPECT_EQ((*store_->import_conflict(other))->resolution, "pending");
+
+  ConflictFilter pending;
+  pending.source = source_.uuid;
+  pending.resolution = "pending";
+  auto rows = store_->import_conflicts(pending);
+  ASSERT_TRUE(rows);
+  ASSERT_EQ(rows->size(), 1u);
+  EXPECT_EQ(rows->front().uuid, other);
+
+  // A conflict added and resolved in one batch ends resolved.
+  const Uuid fresh = Uuid::v5(source_.uuid, "conflict d.json");
+  auto both = batch();
+  ImportConflictRow row;
+  row.uuid = fresh;
+  row.path = "d.json";
+  row.kind = ConflictKind::UnknownAnalysis;
+  ASSERT_TRUE(both->add_conflict(row));
+  ASSERT_TRUE(both->resolve_conflict(fresh, "superseded"));
+  ASSERT_TRUE(both->commit());
+  EXPECT_EQ((*store_->import_conflict(fresh))->resolution, "superseded");
+}
+
 TEST_P(ImportStoreTest, ProgressIsStoredWithTheBatch) {
   auto uow = batch();
   ASSERT_TRUE(uow->set_progress({"abc", 3, 10, "head", "running"}));

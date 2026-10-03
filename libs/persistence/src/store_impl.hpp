@@ -71,7 +71,8 @@ std::unique_ptr<IUnitOfWork> make_unit_of_work(Db& db, const Actor& actor);
 
 // Groups, repositories, bookmarks, collection rollback (collections.cpp).
 Result<void> add_repository_members(Db& db, const Actor& actor, Uuid repository, const std::vector<Uuid>& analyses);
-Result<Uuid> create_group(Db& db, const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses);
+Result<Uuid> create_group(Db& db, const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses,
+                          std::optional<Uuid> uuid);
 Result<Uuid> create_bookmark(Db& db, const Actor& actor, const BookmarkSpec& spec);
 Result<std::vector<HeadInfo>> bookmark_heads(Db& db, Uuid bookmark);
 Result<CommitOutcome> restore_bookmark(Db& db, const Actor& actor, Uuid bookmark, std::string message);
@@ -93,6 +94,7 @@ Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourc
 std::unique_ptr<IImportUnitOfWork> make_import_unit_of_work(Db& db, Uuid source, Uuid client);
 Result<std::vector<ImportSourceInfo>> import_sources(Db& db, Dialect dialect);
 Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFilter& filter);
+Result<std::optional<ImportConflictRow>> import_conflict(Db& db, Uuid conflict);
 Result<std::vector<ProvenanceRow>> provenance_for(Db& db, Dialect dialect, Uuid entity);
 Result<bool> has_provenance(Db& db, Uuid source, std::string_view commit_sha, std::string_view path);
 Result<bool> has_provenance_blob(Db& db, Uuid source, std::string_view path, std::string_view git_blob_sha);

@@ -20,6 +20,8 @@ constexpr const char* kRunning = "running";
 constexpr const char* kPaused = "paused";
 constexpr const char* kFinished = "finished";
 constexpr const char* kFailed = "failed";
+constexpr const char* kPending = "pending";
+constexpr const char* kSuperseded = "superseded";
 
 // Calls exactly one lambda per alternative. There is no catch-all, so a new
 // SubjectRef alternative does not compile until every visit here handles it.
@@ -97,16 +99,6 @@ std::string with_members(std::string_view object, const JsonMembers& members) {
   return out + json_object(members).substr(1);
 }
 
-// IStore::ingest reports an analysis whose identifier, mass spectrometer or
-// extract device is not in the catalog as a Protocol error "unknown <what>
-// '<name>'"; the store has no read that would tell beforehand.
-bool is_missing_catalog_row(const Error& error) {
-  if (error.kind != ErrorKind::Protocol) return false;
-  for (std::string_view what : {"unknown identifier '", "unknown mass spectrometer '", "unknown extract device '"})
-    if (error.what.starts_with(what)) return true;
-  return false;
-}
-
 std::string author_text(const GitWho& who) { return who.name + " <" + who.email + ">"; }
 
 P::ProvenanceRow provenance(const char* entity_type, Uuid entity, const SourceKey& key, const GitWho& who,
@@ -121,6 +113,7 @@ struct Staged {
   std::vector<P::ImportedChangeset> changesets;
   std::vector<P::ProvenanceRow> provenance;
   std::vector<P::ImportConflictRow> conflicts;
+  std::vector<std::pair<Uuid, const char*>> resolutions;  // conflict -> new resolution
 };
 
 }  // namespace
@@ -174,6 +167,7 @@ class BatchWriter::Impl final : public IImportState {
       if (auto opened = open(adapter); !opened) return fail(opened.error());
     RunStats stats;
     if (auto r = run_batches(adapter, max_batches, keep_going, on_batch, stats); !r) {
+      conflicts_.reset();         // staged changes to it may not have been stored
       (void)set_status(kFailed);  // best effort: the error that stopped the run is the one reported
       return fail(r.error());
     }
@@ -213,17 +207,25 @@ class BatchWriter::Impl final : public IImportState {
   Result<void> run_batches(ISourceAdapter& adapter, std::optional<int> max_batches,
                            const std::function<bool()>& keep_going,
                            const std::function<void(const RunStats&, const ImportBatch&)>& on_batch, RunStats& stats) {
-    if (auto planned = adapter.plan(token_, *this); !planned) return fail(planned.error());
+    // A replay walks from the start. Until the walk reaches the stored token,
+    // the batches it writes leave the stored progress as it is.
+    catching_up_ = config_.replay && token_.has_value();
+    std::optional<P::ImportProgress> walked;  // of the last batch written while catching up
+    if (auto planned = adapter.plan(config_.replay ? std::nullopt : token_, *this); !planned)
+      return fail(planned.error());
     for (;;) {
       if (max_batches && stats.batches >= *max_batches) return set_status(kPaused);
       auto next = adapter.next_batch();
       if (!next) return fail(next.error());
       if (!*next) {
         stats.finished = true;
+        // The whole source was walked without meeting the stored token (the
+        // batches are cut differently now): the end of the walk is past it.
+        if (catching_up_ && walked) adopt(*walked);
         return set_status(kFinished);
       }
       const ImportBatch& batch = **next;
-      if (auto r = config_.dry_run ? count_batch(batch, stats) : write_batch(batch, stats); !r) return r;
+      if (auto r = config_.dry_run ? count_batch(batch, stats) : write_batch(batch, stats, walked); !r) return r;
       ++stats.batches;
       if (on_batch) on_batch(stats, batch);
       if (keep_going && !keep_going()) return set_status(kPaused);
@@ -231,6 +233,13 @@ class BatchWriter::Impl final : public IImportState {
   }
 
   P::ImportProgress progress(const char* status) const { return {token_.value_or(""), done_, total_, head_, status}; }
+
+  void adopt(const P::ImportProgress& committed) {
+    if (!committed.token.empty()) token_ = committed.token;
+    done_ = committed.done;
+    total_ = committed.total;
+    head_ = committed.head_sha;
+  }
 
   // Restates the stored progress with a new status.
   Result<void> set_status(const char* status) {
@@ -283,22 +292,83 @@ class BatchWriter::Impl final : public IImportState {
                       subject);
   }
 
-  // The writer has no file bytes; its conflicts are keyed by the SHA-256 of
-  // the git blob sha text, the value used for an analysis's ingest payload.
-  P::ImportConflictRow unknown_analysis(const SourceKey& key, Uuid analysis, std::string_view reason) const {
-    return {conflict_id(url_, key.commit, key.path),
-            key.path,
-            analysis,
-            P::ConflictKind::UnknownAnalysis,
-            std::nullopt,
-            sha256(std::string_view{key.blob_sha}),
-            json_object({{"reason", json_string(reason)}}),
-            "pending"};
+  // ------------------------------------------------------------ conflicts
+
+  struct KnownConflict {
+    P::ConflictKind kind;
+    std::string resolution;
+  };
+
+  // Every conflict stored for this source, by id; kept current with what the
+  // writer stages. Loaded once per run.
+  Result<std::map<Uuid, KnownConflict>*> conflicts() {
+    if (!conflicts_) {
+      auto rows = store_.import_conflicts({*source_, std::nullopt, std::nullopt});
+      if (!rows) return fail(rows.error());
+      conflicts_.emplace();
+      for (const auto& row : *rows) conflicts_->emplace(row.uuid, KnownConflict{row.kind, row.resolution});
+    }
+    return &*conflicts_;
+  }
+
+  // Stages a conflict row. One that is stored and resolved stays resolved and
+  // is not counted.
+  Result<void> stage_conflict(P::ImportConflictRow row, Staged& staged, RunStats& stats) {
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    const auto [it, added] = (*known)->try_emplace(row.uuid, KnownConflict{row.kind, kPending});
+    if (added || it->second.resolution == kPending) ++stats.conflicts;
+    staged.conflicts.push_back(std::move(row));
+    return {};
+  }
+
+  // An analysis, or a revision of one, that cannot be written because the
+  // analysis is not in the store. The writer has no file bytes: the conflict
+  // carries the SHA-256 of the git blob sha text. A conflict that was
+  // superseded and applies again is pending again.
+  Result<void> stage_unknown_analysis(const SourceKey& key, Uuid analysis, std::string_view reason, Staged& staged,
+                                      RunStats& stats) {
+    const Uuid id = conflict_id(url_, key.commit, key.path);
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    if (auto it = (*known)->find(id);
+        it != (*known)->end() && it->second.kind == P::ConflictKind::UnknownAnalysis &&
+        it->second.resolution == kSuperseded) {
+      it->second.resolution = kPending;
+      staged.resolutions.emplace_back(id, kPending);
+    }
+    return stage_conflict({id, key.path, analysis, P::ConflictKind::UnknownAnalysis, std::nullopt,
+                           sha256(std::string_view{key.blob_sha}), json_object({{"reason", json_string(reason)}}),
+                           kPending},
+                          staged, stats);
+  }
+
+  // The file at `key` is now written: a pending unknown_analysis conflict
+  // about it no longer applies.
+  Result<void> supersede(const SourceKey& key, Staged& staged) {
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    const Uuid id = conflict_id(url_, key.commit, key.path);
+    auto it = (*known)->find(id);
+    if (it == (*known)->end() || it->second.kind != P::ConflictKind::UnknownAnalysis ||
+        it->second.resolution != kPending)
+      return {};
+    it->second.resolution = kSuperseded;
+    staged.resolutions.emplace_back(id, kSuperseded);
+    return {};
+  }
+
+  // The files of an analysis's collection: the record and each root that has one.
+  std::vector<SourceKey> collection_files(const AnalysisItem& item) const {
+    std::vector<SourceKey> files{item.keys.record};
+    for (const auto& root : kRoots)
+      if (SourceKey key = root_key(item, root); !key.path.empty()) files.push_back(std::move(key));
+    return files;
   }
 
   // ------------------------------------------------------------ writing
 
-  Result<void> write_batch(const ImportBatch& batch, RunStats& stats) {
+  Result<void> write_batch(const ImportBatch& batch, RunStats& stats, std::optional<P::ImportProgress>& walked) {
     // Step 1: writes that are idempotent on their own.
     for (const auto& item : batch.catalog)
       if (auto r = catalog_.write(item); !r) return r;
@@ -324,17 +394,20 @@ class BatchWriter::Impl final : public IImportState {
     // Step 2: one transaction.
     for (const auto& item : batch.changesets)
       if (auto r = stage_changeset(item, staged, stats); !r) return r;
-    for (const auto& item : batch.conflicts) {
-      staged.conflicts.push_back({conflict_id(url_, item.key.commit, item.key.path), item.key.path, item.entity,
-                                  item.kind, std::nullopt, item.file_sha256, item.detail_json, "pending"});
-      ++stats.conflicts;
-    }
+    for (const auto& item : batch.conflicts)
+      if (auto r = stage_conflict({conflict_id(url_, item.key.commit, item.key.path), item.key.path, item.entity,
+                                   item.kind, std::nullopt, item.file_sha256, item.detail_json, kPending},
+                                  staged, stats);
+          !r)
+        return r;
 
-    P::ImportProgress next = progress(kRunning);
-    if (!batch.resume_token.empty()) next.token = batch.resume_token;
-    next.done = batch.done;
-    next.total = batch.total;
-    if (!batch.head.empty()) next.head_sha = batch.head;
+    P::ImportProgress reached = progress(kRunning);
+    if (!batch.resume_token.empty()) reached.token = batch.resume_token;
+    reached.done = batch.done;
+    reached.total = batch.total;
+    if (!batch.head.empty()) reached.head_sha = batch.head;
+    // While a replay catches up, the stored progress is restated unchanged.
+    const P::ImportProgress next = catching_up_ ? progress(kRunning) : reached;
 
     // A bookmark captures heads, so it is made after the batch's revisions are
     // stored; the token moves only once the bookmarks are recorded too.
@@ -347,10 +420,12 @@ class BatchWriter::Impl final : public IImportState {
       if (auto r = commit(std::move(recorded), &next); !r) return r;
     }
 
-    if (!next.token.empty()) token_ = next.token;
-    done_ = next.done;
-    total_ = next.total;
-    head_ = next.head_sha;
+    if (catching_up_) {
+      walked = reached;
+      if (token_ && reached.token == *token_) catching_up_ = false;  // from here on the token advances
+    } else {
+      adopt(next);
+    }
     return {};
   }
 
@@ -363,6 +438,8 @@ class BatchWriter::Impl final : public IImportState {
       if (auto r = (*uow)->add_provenance(std::move(row)); !r) return r;
     for (auto& row : staged.conflicts)
       if (auto r = (*uow)->add_conflict(std::move(row)); !r) return r;
+    for (const auto& [conflict, resolution] : staged.resolutions)
+      if (auto r = (*uow)->resolve_conflict(conflict, resolution); !r) return r;
     if (next)
       if (auto r = (*uow)->set_progress(*next); !r) return r;
     if (auto seq = (*uow)->commit(); !seq) return fail(seq.error());
@@ -403,7 +480,7 @@ class BatchWriter::Impl final : public IImportState {
     const Uuid analysis = item.ingest.analysis;
 
     P::AnalysisIngest ingest = item.ingest;
-    ingest.changeset = collection_changeset_id(url_, record.commit, record.path);
+    ingest.changeset = collection_changeset_id(url_, record.commit, analysis);
     ingest.created = item.who.utc;
     ingest.import_source = *source_;
     ingest.author_user = who->user;
@@ -413,13 +490,16 @@ class BatchWriter::Impl final : public IImportState {
     auto ack = store_.ingest({revision_id(url_, record.commit, record.path), sha256(std::string_view{record.blob_sha}),
                               client_, std::move(ingest)});
     if (!ack) {
-      if (!is_missing_catalog_row(ack.error())) return fail(ack.error());
-      staged.conflicts.push_back(unknown_analysis(record, analysis, ack.error().what));
-      ++stats.conflicts;
+      if (!P::is_unknown_catalog_reference(ack.error())) return fail(ack.error());
+      // One conflict per file, so every file of the collection is accounted for.
+      for (const auto& file : collection_files(item))
+        if (auto r = stage_unknown_analysis(file, analysis, ack.error().what, staged, stats); !r) return r;
       return {};
     }
     present_.insert(analysis);
     ++stats.analyses;
+    for (const auto& file : collection_files(item))
+      if (auto r = supersede(file, staged); !r) return r;
 
     staged.provenance.push_back(provenance("analysis", analysis, record, item.who, analysis_detail(item)));
     for (const auto& root : kRoots)
@@ -432,12 +512,10 @@ class BatchWriter::Impl final : public IImportState {
   Result<void> stage_membership(const MembershipItem& item, Staged& staged, Memberships& memberships, RunStats& stats) {
     auto present = analysis_present(item.analysis);
     if (!present) return fail(present.error());
-    if (!*present) {
-      staged.conflicts.push_back(
-          unknown_analysis(item.key, item.analysis, "membership of an analysis that is not in the store"));
-      ++stats.conflicts;
-      return {};
-    }
+    if (!*present)
+      return stage_unknown_analysis(item.key, item.analysis, "membership of an analysis that is not in the store",
+                                    staged, stats);
+    if (auto r = supersede(item.key, staged); !r) return r;
     auto who = author(item.who);
     if (!who) return fail(who.error());
     staged.provenance.push_back(
@@ -473,11 +551,13 @@ class BatchWriter::Impl final : public IImportState {
       auto subject = resolve(revision.subject, revision.kind);
       if (!subject) return fail(subject.error());
       if (!*subject) {
-        staged.conflicts.push_back(unknown_analysis(revision.key, std::get<Uuid>(revision.subject),
-                                                    "revision of an analysis that is not in the store"));
-        ++stats.conflicts;
+        if (auto r = stage_unknown_analysis(revision.key, std::get<Uuid>(revision.subject),
+                                            "revision of an analysis that is not in the store", staged, stats);
+            !r)
+          return r;
         continue;
       }
+      if (auto r = supersede(revision.key, staged); !r) return r;
       const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
       changeset.revisions.push_back({id, **subject, revision.kind, revision.payload});
       staged.provenance.push_back(provenance("revision", id, revision.key, item.who));
@@ -491,42 +571,39 @@ class BatchWriter::Impl final : public IImportState {
     return {};
   }
 
-  // The store generates group and bookmark ids, so the bookmark's provenance
-  // row is what tells a re-run that the tag is already imported.
+  // Group and bookmark are ensured by ids derived from the tag, so a run that
+  // died anywhere between creating them and recording them creates nothing
+  // twice. The provenance row marks a bookmark as done.
   Result<void> write_bookmark(const BookmarkItem& item, Staged& recorded) {
-    const std::string path = bookmark_path(item);
-    auto stored = store_.has_provenance(*source_, item.commit, path);
+    const Uuid id = bookmark_id(url_, item.name);
+    auto stored = store_.provenance_for(id);
     if (!stored) return fail(stored.error());
-    if (*stored) return {};
+    if (!stored->empty()) return {};
     std::vector<Uuid> analyses;
     for (const Uuid analysis : item.analyses) {
       auto present = analysis_present(analysis);
       if (!present) return fail(present.error());
       if (*present) analyses.push_back(analysis);
     }
-    if (analyses.empty()) return {};  // nothing to capture
+    if (analyses.empty()) return {};  // nothing to capture; count_batch applies the same rule
     auto who = author(item.who);
     if (!who) return fail(who.error());
     const P::Actor actor{who->user, client_};
-    auto group = store_.create_group(actor, item.name, analyses);
+    auto group = store_.create_group(actor, item.name, analyses, bookmark_group_id(url_, item.name));
     if (!group) return fail(group.error());
-    auto bookmark =
-        store_.create_bookmark(actor, {item.name, "git tag " + item.name + " at " + item.commit, std::nullopt, *group});
+    auto bookmark = store_.create_bookmark(
+        actor, {item.name, "git tag " + item.name + " at " + item.commit, std::nullopt, *group, id});
     if (!bookmark) return fail(bookmark.error());
-    recorded.provenance.push_back(provenance("bookmark", *bookmark, {item.commit, path, ""}, item.who));
+    recorded.provenance.push_back(provenance("bookmark", *bookmark, {item.commit, bookmark_path(item), ""}, item.who));
     return {};
   }
 
   // ------------------------------------------------------------ dry run
 
   Result<bool> conflict_stored(Uuid conflict) {
-    if (!stored_conflicts_) {
-      auto rows = store_.import_conflicts({*source_, std::nullopt, std::nullopt});
-      if (!rows) return fail(rows.error());
-      stored_conflicts_.emplace();
-      for (const auto& row : *rows) stored_conflicts_->insert(row.uuid);
-    }
-    return stored_conflicts_->contains(conflict);
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    return (*known)->contains(conflict);
   }
 
   // A file is accounted for when it has a provenance row or a conflict row.
@@ -551,11 +628,16 @@ class BatchWriter::Impl final : public IImportState {
       if (!counted_.insert(item.ingest.analysis).second) continue;
       auto exists = analysis_exists(item.ingest.analysis);
       if (!exists) return fail(exists.error());
-      if (*exists) continue;
+      if (*exists) {
+        importable_.insert(item.ingest.analysis);
+        continue;
+      }
       // An analysis the store refused is a recorded conflict, not pending work.
       auto refused = conflict_stored(conflict_id(url_, item.keys.record.commit, item.keys.record.path));
       if (!refused) return fail(refused.error());
-      if (!*refused) ++stats.would_write;
+      if (*refused) continue;
+      importable_.insert(item.ingest.analysis);
+      ++stats.would_write;
     }
     for (const auto& item : batch.memberships) {
       auto done = accounted(item.key);
@@ -580,17 +662,31 @@ class BatchWriter::Impl final : public IImportState {
       if (rows->empty()) ++stats.would_write;
     }
     for (const auto& item : batch.conflicts) {
-      ++stats.conflicts;
       const Uuid conflict = conflict_id(url_, item.key.commit, item.key.path);
+      auto known = conflicts();
+      if (!known) return fail(known.error());
+      const auto stored = (*known)->find(conflict);
+      if (stored == (*known)->end() || stored->second.resolution == kPending) ++stats.conflicts;
       if (!counted_.insert(conflict).second) continue;
-      auto stored = conflict_stored(conflict);
-      if (!stored) return fail(stored.error());
-      if (!*stored) ++stats.would_write;
+      if (stored == (*known)->end()) ++stats.would_write;
     }
+    // As write_bookmark: a tag is imported unless it is recorded already or
+    // none of its analyses is, or would be, in the store.
     for (const auto& item : batch.bookmarks) {
-      auto stored = store_.has_provenance(*source_, item.commit, bookmark_path(item));
+      const Uuid id = bookmark_id(url_, item.name);
+      if (!counted_.insert(id).second) continue;
+      auto stored = store_.provenance_for(id);
       if (!stored) return fail(stored.error());
-      if (!*stored) ++stats.would_write;
+      if (!stored->empty()) continue;
+      bool captures = false;
+      for (const Uuid analysis : item.analyses) {
+        if (importable_.contains(analysis)) captures = true;
+        if (captures) break;
+        auto exists = analysis_exists(analysis);
+        if (!exists) return fail(exists.error());
+        captures = *exists;
+      }
+      if (captures) ++stats.would_write;
     }
     return {};
   }
@@ -609,9 +705,11 @@ class BatchWriter::Impl final : public IImportState {
 
   std::map<std::string, Author> authors_;  // by git email
   std::set<Uuid> present_;                 // analyses known to be in the store
+  std::optional<std::map<Uuid, KnownConflict>> conflicts_;  // of this source; see conflicts()
+  bool catching_up_ = false;                                // a replay that has not reached the stored token
   // Dry run only.
-  std::optional<std::set<Uuid>> stored_conflicts_;
   std::set<Uuid> counted_;
+  std::set<Uuid> importable_;  // analyses seen that are stored or would be
   std::set<Sha256Digest> counted_blobs_;
 };
 

@@ -93,6 +93,36 @@ TEST_P(IngestTest, UnknownIdentifierIsAPermanentErrorAndWritesNothing) {
   EXPECT_TRUE(found->empty());
 }
 
+TEST_P(IngestTest, UnknownCatalogReferenceIsRecognisable) {
+  // What an importer turns into a conflict instead of a failed run.
+  auto no_identifier = analysis_item(lab_, 1, series(1), series(0), "99999");
+  auto r = store_->ingest(no_identifier);
+  ASSERT_FALSE(r);
+  EXPECT_TRUE(is_unknown_catalog_reference(r.error())) << to_string(r.error());
+
+  auto no_spectrometer = analysis_item(lab_, 2, series(1), series(0));
+  std::get<AnalysisIngest>(no_spectrometer.body).mass_spectrometer = "felix";
+  r = store_->ingest(no_spectrometer);
+  ASSERT_FALSE(r);
+  EXPECT_TRUE(is_unknown_catalog_reference(r.error())) << to_string(r.error());
+
+  auto no_device = analysis_item(lab_, 3, series(1), series(0));
+  std::get<AnalysisIngest>(no_device.body).extract_device = "no-such-laser";
+  r = store_->ingest(no_device);
+  ASSERT_FALSE(r);
+  EXPECT_TRUE(is_unknown_catalog_reference(r.error())) << to_string(r.error());
+
+  // Any other failure is not one.
+  auto first = analysis_item(lab_, 4, series(1), series(0));
+  ASSERT_TRUE(store_->ingest(first));
+  auto same_runid = analysis_item(lab_, 4, series(1), series(0));
+  r = store_->ingest(same_runid);
+  ASSERT_FALSE(r);
+  EXPECT_FALSE(is_unknown_catalog_reference(r.error())) << to_string(r.error());
+  EXPECT_FALSE(is_unknown_catalog_reference(Error{ErrorKind::Protocol, "unknown bookmark x", {}}));
+  EXPECT_FALSE(is_unknown_catalog_reference(Error{ErrorKind::Io, "unknown identifier 'x'", {}}));
+}
+
 TEST_P(IngestTest, DuplicateRunIdIsRejected) {
   ASSERT_TRUE(store_->ingest(analysis_item(lab_, 3, series(1), series(0))));
   auto clash = store_->ingest(analysis_item(lab_, 3, series(2), series(0)));

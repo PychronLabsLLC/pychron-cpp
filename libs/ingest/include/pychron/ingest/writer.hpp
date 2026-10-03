@@ -25,6 +25,11 @@ struct WriterConfig {
   std::map<std::string, std::string> author_map;  // git email -> app_user name
   // Write nothing; count in RunStats::would_write what a real run would add.
   bool dry_run = false;
+  // Walk the whole source again instead of resuming from the stored token.
+  // Everything already imported is a no-op; analyses refused earlier for a
+  // missing catalog row, and their later revisions, are written in order and
+  // their conflicts become `superseded`. The stored token never moves back.
+  bool replay = false;
 };
 
 // Items handled in this run, whether or not they were already stored.
@@ -33,10 +38,11 @@ struct RunStats {
   int analyses = 0;    // ingested or already present
   int changesets = 0;  // import and reference changesets, not collections
   int revisions = 0;   // of those changesets
-  int conflicts = 0;   // from the adapter and from the writer
+  int conflicts = 0;   // from the adapter and from the writer; a conflict stored as resolved is not counted
   // Dry run only: analyses, blobs, memberships, changesets, revisions,
-  // conflicts and bookmarks that are not in the store. Catalog rows are not
-  // counted: the store has no read that could tell.
+  // conflicts and bookmarks that are not in the store. An analysis or revision
+  // with a pending unknown_analysis conflict is recorded, not missing. Catalog
+  // rows are not counted: the store has no read that could tell.
   int would_write = 0;
   bool finished = false;  // the adapter reached the end of its stream
 };
@@ -53,7 +59,8 @@ class BatchWriter {
   // stored row with its resume token. A dry run registers nothing.
   Result<persistence::ImportSourceInfo> open(ISourceAdapter& adapter);
 
-  // Plans the adapter from the stored token and writes its batches. Stops,
+  // Plans the adapter from the stored token (from the start with
+  // WriterConfig::replay) and writes its batches. Stops,
   // leaving the source `paused`, once `max_batches` are written or
   // `keep_going` returns false after a batch; `finished` at end of stream;
   // `failed` on an error, which is returned. `on_batch` runs after each batch

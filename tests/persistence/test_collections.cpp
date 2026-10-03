@@ -60,7 +60,7 @@ TEST_P(CollectionTest, RepositoryBookmarkRestoresEveryHead) {
   ASSERT_TRUE(store_->add_repository_members(reducer(), repo, {a, b}));
   refit(a, Kind::Blanks, 1);
   const auto before = all_heads({a, b});
-  auto bm = store_->create_bookmark(reducer(), {"submitted", "as submitted", repo, std::nullopt});
+  auto bm = store_->create_bookmark(reducer(), {"submitted", "as submitted", repo, std::nullopt, std::nullopt});
   ASSERT_TRUE(bm) << to_string(bm.error());
   EXPECT_EQ(store_->bookmark_heads(*bm)->size(), before.size());
 
@@ -84,12 +84,43 @@ TEST_P(CollectionTest, RepositoryBookmarkRestoresEveryHead) {
 TEST_P(CollectionTest, GroupBookmarkAndScopeRules) {
   const Uuid a = ingest(1);
   const Uuid group = *store_->create_group(reducer(), "plateau", {a, a});
-  auto bm = store_->create_bookmark(reducer(), {"g", std::nullopt, std::nullopt, group});
+  auto bm = store_->create_bookmark(reducer(), {"g", std::nullopt, std::nullopt, group, std::nullopt});
   ASSERT_TRUE(bm) << to_string(bm.error());
   EXPECT_EQ(store_->bookmark_heads(*bm)->size(), std::size(kCollectionKinds));
-  EXPECT_FALSE(store_->create_bookmark(reducer(), {"none", std::nullopt, std::nullopt, std::nullopt}));
-  EXPECT_FALSE(store_->create_bookmark(reducer(), {"both", std::nullopt, group, group}));
+  EXPECT_FALSE(store_->create_bookmark(reducer(), {"none", std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
+  EXPECT_FALSE(store_->create_bookmark(reducer(), {"both", std::nullopt, group, group, std::nullopt}));
   EXPECT_FALSE(store_->restore_bookmark(reducer(), Uuid::v7(), "unknown"));
+}
+
+TEST_P(CollectionTest, GroupAndBookmarkWithCallerIdsAreEnsured) {
+  const Uuid a = ingest(1);
+  const Uuid b = ingest(2);
+  const Uuid group_id = Uuid::v7();
+  const Uuid bookmark_id = Uuid::v7();
+  auto group = store_->create_group(reducer(), "tag", {a}, group_id);
+  ASSERT_TRUE(group) << to_string(group.error());
+  EXPECT_EQ(*group, group_id);
+  auto bm = store_->create_bookmark(reducer(), {"tag", std::nullopt, std::nullopt, group_id, bookmark_id});
+  ASSERT_TRUE(bm) << to_string(bm.error());
+  EXPECT_EQ(*bm, bookmark_id);
+  const auto captured = store_->bookmark_heads(bookmark_id)->size();
+  EXPECT_EQ(captured, std::size(kCollectionKinds));
+
+  // The same ids again: the stored rows win and nothing is written, whatever
+  // else the call says.
+  refit(a, Kind::Blanks, 2);
+  const auto seq = *store_->latest_change_seq();
+  auto group_again = store_->create_group(reducer(), "other name", {a, b}, group_id);
+  ASSERT_TRUE(group_again) << to_string(group_again.error());
+  EXPECT_EQ(*group_again, group_id);
+  auto bm_again = store_->create_bookmark(reducer(), {"other", "m", std::nullopt, group_id, bookmark_id});
+  ASSERT_TRUE(bm_again) << to_string(bm_again.error());
+  EXPECT_EQ(*bm_again, bookmark_id);
+  EXPECT_EQ(*store_->latest_change_seq(), seq);
+  EXPECT_EQ(store_->bookmark_heads(bookmark_id)->size(), captured) << "group membership unchanged";
+
+  // Without an id every call makes a new row, as before.
+  EXPECT_NE(*store_->create_group(reducer(), "tag", {a}), *store_->create_group(reducer(), "tag", {a}));
 }
 
 TEST_P(CollectionTest, RollbackToCollectionMovesEveryKindToItsRoot) {

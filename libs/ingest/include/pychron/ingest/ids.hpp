@@ -26,14 +26,17 @@ std::string normalize_source_url(std::string_view url);
 persistence::Uuid source_id(persistence::ImportSourceKind kind, std::string_view url, std::string_view branch);
 persistence::Uuid changeset_id(std::string_view url, std::string_view commit);
 // The collection changeset of one analysis. A commit that adds several
-// analyses yields one collection changeset each, so the record path is part
-// of the name.
-persistence::Uuid collection_changeset_id(std::string_view url, std::string_view commit, std::string_view path);
+// analyses yields one collection changeset each, so the analysis is part of
+// the name.
+persistence::Uuid collection_changeset_id(std::string_view url, std::string_view commit, persistence::Uuid analysis);
 persistence::Uuid revision_id(std::string_view url, std::string_view commit, std::string_view path);
 // `natural_key`: the key parts joined with '\n' (parents by their own keys).
 persistence::Uuid catalog_id(std::string_view table, std::string_view natural_key);
 // For a legacy record that carries no uuid.
 persistence::Uuid derived_analysis_id(std::string_view url, std::string_view runid);
 persistence::Uuid conflict_id(std::string_view url, std::string_view commit, std::string_view path);
+// A git tag's bookmark, and the analysis group the bookmark is scoped to.
+persistence::Uuid bookmark_id(std::string_view url, std::string_view tag);
+persistence::Uuid bookmark_group_id(std::string_view url, std::string_view tag);
 
 }  // namespace pychron::ingest

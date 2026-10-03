@@ -31,8 +31,19 @@ struct GitWho {
 
 // ---------------------------------------------------------------- catalog
 // Catalog items name their parents by natural key. A parent that is not in
-// the store yet is created bare, so every item is safe to repeat and to send
-// before or after a restart; a full parent item sent first fills the columns.
+// the store yet is created bare (key columns only), so every item is safe to
+// repeat and to send before or after a restart.
+//
+// Order matters for the other columns: an existing row always wins, and the
+// writer does not look at an item again once its row is known. Send the full
+// item before anything that names it, or its columns stay empty:
+//   PiItem before ProjectItem, SampleItem, PositionItem naming that PI;
+//   SampleItem before a PositionItem naming the sample;
+//   LevelItem before any PositionItem or RefObjectItem of that level;
+//   PositionItem before a RefObjectItem scoped to that position;
+//   MassSpecItem before a SpecialIdentifierItem or RefObjectItem naming it;
+//   RefObjectItem before a LevelItem or LoadItem naming it as holder, and
+//   before a revision whose subject is its RefObjectKey.
 
 struct PiItem {
   std::string last_name, first_initial;
@@ -183,7 +194,8 @@ struct ConflictItem {
 };
 
 // A git tag: a bookmark of the heads of `analyses` at the moment the batch
-// that carries it has been written.
+// that carries it has been written, so that batch must end at the tagged
+// commit. A tag none of whose analyses is in the store is skipped.
 struct BookmarkItem {
   std::string name, commit;
   std::vector<persistence::Uuid> analyses;

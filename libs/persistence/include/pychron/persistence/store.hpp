@@ -196,6 +196,9 @@ struct BookmarkSpec {
   std::optional<std::string> message;
   std::optional<Uuid> repository;
   std::optional<Uuid> group;
+  // When set, the bookmark is ensured by this id: an existing bookmark with
+  // it is returned and nothing is written.
+  std::optional<Uuid> uuid;
 };
 
 // ---------------------------------------------------------------- ingest (5.3, 8.3)
@@ -534,6 +537,7 @@ class IStore {
   virtual Result<std::unique_ptr<IImportUnitOfWork>> begin_import_batch(Uuid source, Uuid client) = 0;
   virtual Result<std::vector<ImportSourceInfo>> import_sources() = 0;
   virtual Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) = 0;
+  virtual Result<std::optional<ImportConflictRow>> import_conflict(Uuid conflict) = 0;
   virtual Result<std::vector<ProvenanceRow>> provenance_for(Uuid entity) = 0;
   virtual Result<bool> has_provenance(Uuid source, std::string_view commit_sha, std::string_view path) = 0;
   virtual Result<bool> has_provenance_blob(Uuid source, std::string_view path, std::string_view git_blob_sha) = 0;
@@ -570,8 +574,10 @@ class IStore {
   virtual Result<Uuid> add_repository(Uuid client, const std::string& name) = 0;
   virtual Result<void> add_repository_members(const Actor& actor, Uuid repository,
                                               const std::vector<Uuid>& analyses) = 0;
-  virtual Result<Uuid> create_group(const Actor& actor, const std::string& name,
-                                    const std::vector<Uuid>& analyses) = 0;
+  // With `uuid`, the group is ensured by that id: an existing group with it
+  // is returned and nothing is written, members included.
+  virtual Result<Uuid> create_group(const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses,
+                                    std::optional<Uuid> uuid = std::nullopt) = 0;
   virtual Result<Uuid> create_bookmark(const Actor& actor, const BookmarkSpec& spec) = 0;
   virtual Result<std::vector<HeadInfo>> bookmark_heads(Uuid bookmark) = 0;
   // CAS moves of every head in the bookmark that differs from it, as one
@@ -622,6 +628,11 @@ class IStore {
 };
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);
+
+// True for the error IStore::ingest returns when an analysis names an
+// identifier, mass spectrometer or extract device that is not in the catalog.
+// Nothing was written; the item can be ingested once the row exists.
+bool is_unknown_catalog_reference(const Error& error) noexcept;
 
 // identifier + "-" + two-digit aliquot + step letters (A..Z, AA, ...), as
 // legacy make_runid.

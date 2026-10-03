@@ -104,6 +104,9 @@ class TinyStore final : public IStore {
   Result<std::vector<ImportConflictRow>> import_conflicts(const ConflictFilter& filter) override {
     return detail::import_conflicts(*db_, filter);
   }
+  Result<std::optional<ImportConflictRow>> import_conflict(Uuid conflict) override {
+    return detail::import_conflict(*db_, conflict);
+  }
   Result<std::vector<ProvenanceRow>> provenance_for(Uuid entity) override {
     return detail::provenance_for(*db_, dialect(), entity);
   }
@@ -326,8 +329,9 @@ class TinyStore final : public IStore {
                                       const std::vector<Uuid>& analyses) override {
     return detail::add_repository_members(*db_, actor, repository, analyses);
   }
-  Result<Uuid> create_group(const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses) override {
-    return detail::create_group(*db_, actor, name, analyses);
+  Result<Uuid> create_group(const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses,
+                            std::optional<Uuid> uuid) override {
+    return detail::create_group(*db_, actor, name, analyses, uuid);
   }
   Result<Uuid> create_bookmark(const Actor& actor, const BookmarkSpec& spec) override {
     return detail::create_bookmark(*db_, actor, spec);

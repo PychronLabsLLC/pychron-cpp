@@ -80,6 +80,21 @@ Result<ImportSourceInfo> source_from(const Row& r) {
   return info;
 }
 
+Result<ImportConflictRow> conflict_from(const Row& r) {
+  ImportConflictRow c;
+  c.uuid = to_uuid(r.value("uuid"));
+  c.path = to_std(r.value("path"));
+  c.entity = opt_uuid(r.value("entity_uuid"));
+  const auto kind = parse_conflict_kind(to_std(r.value("conflict_kind")));
+  if (!kind) return fail(ErrorKind::Protocol, "unknown conflict kind '" + to_std(r.value("conflict_kind")) + "'");
+  c.kind = *kind;
+  c.db_head_revision = opt_uuid(r.value("db_head_revision_uuid"));
+  if (!r.value("file_sha256").isNull()) c.file_sha256 = to_digest(r.value("file_sha256"));
+  c.detail_json = opt_str(r.value("detail")).value_or("{}");
+  c.resolution = to_std(r.value("resolution"));
+  return c;
+}
+
 }  // namespace
 
 Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourceSpec& spec) {
@@ -139,6 +154,12 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     return {};
   }
 
+  Result<void> resolve_conflict(Uuid conflict, std::string resolution) override {
+    if (auto r = check_open(); !r) return r;
+    resolutions_.emplace_back(conflict, std::move(resolution));
+    return {};
+  }
+
   Result<void> set_progress(ImportProgress progress) override {
     if (auto r = check_open(); !r) return r;
     progress_ = std::move(progress);
@@ -156,6 +177,9 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
       if (auto r = write_changeset(changeset, entities); !r) return fail(r.error());
     if (auto r = write_provenance(); !r) return fail(r.error());
     if (auto r = write_conflicts(); !r) return fail(r.error());
+    for (const auto& [conflict, resolution] : resolutions_)
+      if (auto r = db_.affecting(sql::kResolveConflict, {qv(resolution), qv(conflict), qv(source_)}); !r)
+        return fail(r.error());
     if (progress_)
       if (auto r = write_progress(*progress_); !r) return fail(r.error());
 
@@ -267,6 +291,7 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
   std::vector<ImportedChangeset> changesets_;
   std::vector<ProvenanceRow> provenance_;
   std::vector<ImportConflictRow> conflicts_;
+  std::vector<std::pair<Uuid, std::string>> resolutions_;
   std::optional<ImportProgress> progress_;
   std::set<std::pair<std::string, Uuid>> noted_;  // (entity type, uuid) already in the change entry
   bool done_ = false;
@@ -312,20 +337,20 @@ Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFi
   if (!rows) return fail(rows.error());
   std::vector<ImportConflictRow> out;
   for (const auto& r : *rows) {
-    ImportConflictRow c;
-    c.uuid = to_uuid(r.value("uuid"));
-    c.path = to_std(r.value("path"));
-    c.entity = opt_uuid(r.value("entity_uuid"));
-    const auto kind = parse_conflict_kind(to_std(r.value("conflict_kind")));
-    if (!kind) return fail(ErrorKind::Protocol, "unknown conflict kind '" + to_std(r.value("conflict_kind")) + "'");
-    c.kind = *kind;
-    c.db_head_revision = opt_uuid(r.value("db_head_revision_uuid"));
-    if (!r.value("file_sha256").isNull()) c.file_sha256 = to_digest(r.value("file_sha256"));
-    c.detail_json = opt_str(r.value("detail")).value_or("{}");
-    c.resolution = to_std(r.value("resolution"));
-    out.push_back(std::move(c));
+    auto c = conflict_from(r);
+    if (!c) return fail(c.error());
+    out.push_back(std::move(*c));
   }
   return out;
+}
+
+Result<std::optional<ImportConflictRow>> import_conflict(Db& db, Uuid conflict) {
+  auto row = db.select_one(sql::kImportConflicts + QStringLiteral(" WHERE uuid = ?"), {qv(conflict)});
+  if (!row) return fail(row.error());
+  if (!*row) return std::optional<ImportConflictRow>{};
+  auto c = conflict_from(**row);
+  if (!c) return fail(c.error());
+  return std::optional<ImportConflictRow>{std::move(*c)};
 }
 
 Result<std::vector<ProvenanceRow>> provenance_for(Db& db, Dialect dialect, Uuid entity) {

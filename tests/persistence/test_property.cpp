@@ -125,7 +125,7 @@ TEST_P(PropertyTest, RandomOperationSequencesKeepTheInvariants) {
       if (moved) ++model.changes;
       seen["collection"] += moved;
     } else if (op == 8) {  // bookmark
-      auto bm = store_->create_bookmark(actor, {"bm" + std::to_string(step), std::nullopt, std::nullopt, group});
+      auto bm = store_->create_bookmark(actor, {"bm" + std::to_string(step), std::nullopt, std::nullopt, group, std::nullopt});
       ASSERT_TRUE(bm);
       model.bookmarks.emplace_back(*bm, model.heads);
       ++model.changes;

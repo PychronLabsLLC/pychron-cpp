@@ -111,6 +111,10 @@ class IImportUnitOfWork {
   // One row per (entity_type, entity, source); an existing row is kept.
   virtual Result<void> add_provenance(ProvenanceRow row) = 0;
   virtual Result<void> add_conflict(ImportConflictRow row) = 0;
+  // Sets the resolution of a stored conflict (import_conflict is an updatable
+  // table), after this batch's own conflicts are written. A conflict that
+  // does not exist is left alone. Not a change_log entry.
+  virtual Result<void> resolve_conflict(Uuid conflict, std::string resolution) = 0;
   // The source's resume token and counters. A nullopt head_sha keeps the
   // stored one; status "finished" also stamps the finish time.
   virtual Result<void> set_progress(ImportProgress progress) = 0;

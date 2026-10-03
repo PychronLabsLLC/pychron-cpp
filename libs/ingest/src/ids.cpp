@@ -81,8 +81,8 @@ Uuid source_id(persistence::ImportSourceKind kind, std::string_view url, std::st
 
 Uuid changeset_id(std::string_view url, std::string_view commit) { return derive("changeset", {url, commit}); }
 
-Uuid collection_changeset_id(std::string_view url, std::string_view commit, std::string_view path) {
-  return derive("collection", {url, commit, path});
+Uuid collection_changeset_id(std::string_view url, std::string_view commit, Uuid analysis) {
+  return derive("collection", {url, commit, analysis.str()});
 }
 
 Uuid revision_id(std::string_view url, std::string_view commit, std::string_view path) {
@@ -98,5 +98,9 @@ Uuid derived_analysis_id(std::string_view url, std::string_view runid) { return 
 Uuid conflict_id(std::string_view url, std::string_view commit, std::string_view path) {
   return derive("conflict", {url, commit, path});
 }
+
+Uuid bookmark_id(std::string_view url, std::string_view tag) { return derive("bookmark", {url, tag}); }
+
+Uuid bookmark_group_id(std::string_view url, std::string_view tag) { return derive("bookmark_group", {url, tag}); }
 
 }  // namespace pychron::ingest

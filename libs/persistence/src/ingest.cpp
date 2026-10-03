@@ -16,10 +16,21 @@ Result<std::optional<Uuid>> lookup(Db& db, const QString& sql, const std::string
   return std::optional<Uuid>{to_uuid((*row)->value("uuid"))};
 }
 
-Result<Uuid> require(Db& db, const QString& sql, const std::string& key, const char* what) {
+// The catalog rows an analysis must find, as they are named in the error.
+constexpr std::string_view kIdentifier = "identifier";
+constexpr std::string_view kMassSpectrometer = "mass spectrometer";
+constexpr std::string_view kExtractDevice = "extract device";
+constexpr std::string_view kRequiredRows[] = {kIdentifier, kMassSpectrometer, kExtractDevice};
+
+// "unknown <what> '": the start of the error for a missing required row.
+// is_unknown_catalog_reference() recognises an error by it.
+constexpr std::string_view kUnknown = "unknown ";
+std::string unknown_prefix(std::string_view what) { return std::string(kUnknown) + std::string(what) + " '"; }
+
+Result<Uuid> require(Db& db, const QString& sql, const std::string& key, std::string_view what) {
   auto id = lookup(db, sql, key);
   if (!id) return fail(id.error());
-  if (!*id) return fail(ErrorKind::Protocol, std::string("unknown ") + what + " '" + key + "'");
+  if (!*id) return fail(ErrorKind::Protocol, unknown_prefix(what) + key + "'");
   return **id;
 }
 
@@ -147,13 +158,13 @@ Result<IngestAck> ingest_analysis(Db& db, const IngestItem& item, const Analysis
   if (*dup) return **dup;
 
   std::vector<ChangeEntityRow> entities;
-  auto identifier = require(db, sql::kIdentifierByText, a.identifier, "identifier");
+  auto identifier = require(db, sql::kIdentifierByText, a.identifier, kIdentifier);
   if (!identifier) return fail(identifier.error());
-  auto ms = require(db, sql::kMassSpecByName, a.mass_spectrometer, "mass spectrometer");
+  auto ms = require(db, sql::kMassSpecByName, a.mass_spectrometer, kMassSpectrometer);
   if (!ms) return fail(ms.error());
   std::optional<Uuid> device;
   if (a.extract_device) {
-    auto d = require(db, sql::kExtractDeviceByName, *a.extract_device, "extract device");
+    auto d = require(db, sql::kExtractDeviceByName, *a.extract_device, kExtractDevice);
     if (!d) return fail(d.error());
     device = *d;
   }
@@ -387,6 +398,18 @@ Result<IngestAck> ingest_blob(Db& db, const IngestItem& item, const BlobIngest& 
 }  // namespace pychron::persistence::detail
 
 namespace pychron::persistence {
+
+bool is_unknown_catalog_reference(const Error& error) noexcept {
+  if (error.kind != ErrorKind::Protocol) return false;
+  const std::string_view what = error.what;
+  for (const auto row : detail::kRequiredRows) {
+    // "unknown <row> '", without building the string (noexcept).
+    if (what.starts_with(detail::kUnknown) && what.substr(detail::kUnknown.size()).starts_with(row) &&
+        what.substr(detail::kUnknown.size() + row.size()).starts_with(" '"))
+      return true;
+  }
+  return false;
+}
 
 Sha256Digest snapshot_sha256(const SpectrometerSnapshot& s) {
   Sha256 h;

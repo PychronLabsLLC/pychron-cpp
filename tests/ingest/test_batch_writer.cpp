@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "fake_adapter.hpp"
+#include "forwarding_store.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "store_fixture.hpp"
@@ -256,7 +257,7 @@ TEST_P(BatchWriterTest, WritesCatalogAnalysesAndRevisions) {
   const auto& root = (*history)[0];
   const auto& later = (*history)[1];
   EXPECT_EQ(root.uuid, revision_id(kUrl, "c1", kind_path("intercepts", 1)));
-  EXPECT_EQ(root.changeset.uuid, collection_changeset_id(kUrl, "c1", record_path(1)));
+  EXPECT_EQ(root.changeset.uuid, collection_changeset_id(kUrl, "c1", kA));
   EXPECT_EQ(root.changeset.kind, P::ChangesetKind::Collection);
   EXPECT_EQ(root.changeset.created, *UtcTime::parse("2016-03-04T05:06:07Z"));
   EXPECT_EQ(later.uuid, revision_id(kUrl, "c2", kind_path("intercepts", 1)));
@@ -445,7 +446,9 @@ TEST_P(BatchWriterTest, MissingIdentifierBecomesConflict) {
   EXPECT_TRUE(stats->finished);
   EXPECT_EQ(stats->analyses, 0);
   EXPECT_EQ(stats->revisions, 0);
-  EXPECT_EQ(stats->conflicts, 2);
+  // One per file of the refused collection (record, signals, intercepts,
+  // baselines, blanks, icfactors) and one for the dropped revision.
+  EXPECT_EQ(stats->conflicts, 6 + 1);
 
   auto view = store().load_analysis(kA);
   ASSERT_TRUE(view);
@@ -456,7 +459,19 @@ TEST_P(BatchWriterTest, MissingIdentifierBecomesConflict) {
   const Uuid source = source_id(P::ImportSourceKind::ProjectRepo, kUrl, "main");
   auto conflicts = store().import_conflicts({source, P::ConflictKind::UnknownAnalysis, std::nullopt});
   ASSERT_TRUE(conflicts);
-  ASSERT_EQ(conflicts->size(), 2u);
+  ASSERT_EQ(conflicts->size(), 7u);
+  for (const auto& c : *conflicts) {
+    EXPECT_EQ(c.entity, std::optional<Uuid>{kA}) << c.path;
+    EXPECT_EQ(c.resolution, "pending") << c.path;
+  }
+  // Every file is accounted for by a conflict keyed by its id.
+  for (const char* dir : {".data", "intercepts", "baselines", "blanks", "icfactors"}) {
+    auto row = store().import_conflict(conflict_id(kUrl, "c1", kind_path(dir, 1)));
+    ASSERT_TRUE(row && row->has_value()) << dir;
+    EXPECT_EQ((*row)->kind, P::ConflictKind::UnknownAnalysis);
+  }
+  auto of_blanks = store().import_conflict(conflict_id(kUrl, "c1", kind_path("blanks", 1)));
+  EXPECT_EQ((*of_blanks)->file_sha256, std::optional<Sha256Digest>{sha256(std::string_view{"bla-1"})});
   auto of_record = std::find_if(conflicts->begin(), conflicts->end(),
                                 [](const auto& c) { return c.path == record_path(1); });
   ASSERT_NE(of_record, conflicts->end());
@@ -467,13 +482,175 @@ TEST_P(BatchWriterTest, MissingIdentifierBecomesConflict) {
   EXPECT_TRUE(*store().has_conflict(source, record_path(1), sha256(std::string_view{"rec-1"})));
   EXPECT_TRUE(*store().has_conflict(source, kind_path("intercepts", 1), sha256(std::string_view{"int-c2"})));
 
-  // Once the identifier exists, the next run imports the analysis.
+  // Once the identifier exists, a run that sees the analysis again imports
+  // it and its later revision, and their conflicts are superseded.
   FakeAdapter again(description(), {single_batch()});
   auto second = run_all(*world_, again);
   ASSERT_TRUE(second) << err(second.error());
   EXPECT_EQ(second->analyses, 1);
+  EXPECT_EQ(second->revisions, 1);
+  EXPECT_EQ(second->conflicts, 0);
   view = store().load_analysis(kA);
   ASSERT_TRUE(view && view->has_value());
+  conflicts = store().import_conflicts({source, std::nullopt, std::nullopt});
+  ASSERT_TRUE(conflicts);
+  ASSERT_EQ(conflicts->size(), 7u);
+  for (const auto& c : *conflicts) EXPECT_EQ(c.resolution, "superseded") << c.path;
+}
+
+TEST_P(BatchWriterTest, MissingExtractDeviceBecomesConflict) {
+  ImportBatch b;
+  b.catalog = lab_catalog();
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  b.analyses[0].ingest.extract_device = "fusions_co2";
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->analyses, 0);
+  EXPECT_EQ(stats->conflicts, 6);
+  auto record = store().import_conflict(conflict_id(kUrl, "c1", record_path(1)));
+  ASSERT_TRUE(record && record->has_value());
+  EXPECT_EQ((*record)->kind, P::ConflictKind::UnknownAnalysis);
+  EXPECT_NE((*record)->detail_json.find("extract device"), std::string::npos);
+
+  b.catalog.push_back(ExtractDeviceItem{"fusions_co2"});
+  FakeAdapter fixed(description(), {b});
+  stats = run_all(*world_, fixed);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->analyses, 1);
+  EXPECT_TRUE(store().import_conflicts({{}, {}, "pending"})->empty());
+}
+
+TEST_P(BatchWriterTest, ReplayImportsWhatWasRefused) {
+  // Batch 1: analysis A, whose identifier is missing. Batch 2: analysis B of
+  // the same identifier and a later refit of A. Batch 3: another refit of A.
+  auto script = [](bool with_catalog) {
+    std::vector<ImportBatch> out(3);
+    out[0].catalog = {MassSpecItem{{"jan", "argus", "j", std::nullopt}}, RepositoryItem{"Henry_Hill"}};
+    if (with_catalog) out[0].catalog = lab_catalog();
+    add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+    add_analysis(out[1], kB, 2, "c2", who(kAlice, "2016-03-05T00:00:00Z"));
+    out[1].changesets.push_back(refit("c3", kA, 1, 101.5, who(kAlice, "2016-03-06T00:00:00Z")));
+    out[2].changesets.push_back(refit("c4", kA, 1, 102.5, who(kAlice, "2016-03-07T00:00:00Z")));
+    const char* tokens[] = {"c1", "c3", "c4"};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      out[i].resume_token = tokens[i];
+      out[i].done = static_cast<int>(i) + 1;
+      out[i].total = 3;
+    }
+    return out;
+  };
+  const Uuid source = source_id(P::ImportSourceKind::ProjectRepo, kUrl, "main");
+  const P::ConflictFilter pending{source, std::nullopt, "pending"};
+
+  FakeAdapter adapter(description(), script(false));
+  adapter.honour_token(true);
+  auto first = run_all(*world_, adapter);
+  ASSERT_TRUE(first) << err(first.error());
+  EXPECT_TRUE(first->finished);
+  EXPECT_EQ(first->analyses, 0);
+  EXPECT_EQ(first->conflicts, 2 * 6 + 2);
+  EXPECT_EQ(store().import_conflicts(pending)->size(), 14u);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c4"});
+
+  // The catalog is fixed by hand.
+  ASSERT_TRUE(store().add_identifier(world_->client, {"66573", "unknown", {}, {}, {}, {}, {}}));
+
+  // A plain run resumes after the token: nothing is retried.
+  const auto seq = *store().latest_change_seq();
+  auto plain = run_all(*world_, adapter);
+  ASSERT_TRUE(plain) << err(plain.error());
+  EXPECT_EQ(plain->batches, 0);
+  EXPECT_EQ(adapter.planned_token(), std::optional<std::string>{"c4"});
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(store().import_conflicts(pending)->size(), 14u);
+  EXPECT_EQ(world_->count("analysis"), 0);
+
+  // A replay walks the source from the start. Interrupted after one batch,
+  // it must not set the stored token back.
+  auto replay = config();
+  replay.replay = true;
+  {
+    BatchWriter writer(store(), world_->client, replay);
+    auto partial = writer.run(adapter, 1, {}, {});
+    ASSERT_TRUE(partial) << err(partial.error());
+    EXPECT_FALSE(adapter.planned_token().has_value());
+    EXPECT_EQ(partial->batches, 1);
+    EXPECT_EQ(partial->analyses, 1);
+  }
+  EXPECT_EQ(world_->source().status, "paused");
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c4"});
+  EXPECT_EQ(world_->source().done, 3);
+
+  auto full = run_all(*world_, adapter, replay);
+  ASSERT_TRUE(full) << err(full.error());
+  EXPECT_TRUE(full->finished);
+  EXPECT_EQ(full->batches, 3);
+  EXPECT_EQ(full->analyses, 2);
+  EXPECT_EQ(full->revisions, 2);
+  EXPECT_EQ(full->conflicts, 0);
+  EXPECT_EQ(world_->source().status, "finished");
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c4"});
+
+  EXPECT_TRUE(store().import_conflicts(pending)->empty());
+  auto all = store().import_conflicts({source, std::nullopt, std::nullopt});
+  ASSERT_TRUE(all);
+  EXPECT_EQ(all->size(), 14u);
+  for (const auto& c : *all) EXPECT_EQ(c.resolution, "superseded") << c.path;
+
+  // The history is what a clean import of a source with a complete catalog gives.
+  World clean(GetParam());
+  ASSERT_TRUE(clean.store && clean.db);
+  FakeAdapter clean_adapter(description(), script(true));
+  ASSERT_TRUE(run_all(clean, clean_adapter));
+  for (Uuid analysis : {kA, kB}) {
+    for (Kind kind : {Kind::Intercepts, Kind::Blanks, Kind::Tags}) {
+      auto mine = store().history(analysis, kind);
+      auto theirs = clean.store->history(analysis, kind);
+      ASSERT_TRUE(mine && theirs);
+      ASSERT_EQ(mine->size(), theirs->size());
+      for (std::size_t i = 0; i < mine->size(); ++i) {
+        EXPECT_EQ((*mine)[i].uuid, (*theirs)[i].uuid);
+        EXPECT_EQ((*mine)[i].parent, (*theirs)[i].parent);
+        EXPECT_EQ((*mine)[i].changeset.created, (*theirs)[i].changeset.created);
+      }
+    }
+  }
+  auto history = store().history(kA, Kind::Intercepts);
+  ASSERT_EQ(history->size(), 3u);
+  EXPECT_EQ((*history)[2].uuid, revision_id(kUrl, "c4", kind_path("intercepts", 1)));
+  for (const char* t : {"analysis", "changeset", "revision", "head_move", "repository_member", "import_provenance"})
+    EXPECT_EQ(world_->count(t), clean.count(t)) << t;
+
+  // A replay of a source with nothing left to fix changes nothing.
+  const auto settled = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter, replay));
+  EXPECT_EQ(*store().latest_change_seq(), settled);
+}
+
+TEST_P(BatchWriterTest, ReplayMovesTheTokenForwardPastTheStoredOne) {
+  auto batches = four_batches();
+  FakeAdapter adapter(description(), batches);
+  adapter.honour_token(true);
+  {
+    BatchWriter writer(store(), world_->client, config());
+    ASSERT_TRUE(writer.run(adapter, 2, {}, {}));
+  }
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c3"});
+
+  auto replay = config();
+  replay.replay = true;
+  std::vector<std::string> stored;
+  BatchWriter writer(store(), world_->client, replay);
+  auto stats = writer.run(adapter, std::nullopt, {}, [&](const RunStats&, const ImportBatch&) {
+    stored.push_back(world_->source().progress_token.value_or(""));
+  });
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->batches, 4);
+  // Unchanged until the walk passes the stored token, then it advances.
+  EXPECT_EQ(stored, (std::vector<std::string>{"c3", "c3", "c4", "c5"}));
+  EXPECT_EQ(world_->source().done, 4);
+  EXPECT_EQ(world_->source().status, "finished");
 }
 
 TEST_P(BatchWriterTest, MissingMassSpectrometerBecomesConflict) {
@@ -484,12 +661,14 @@ TEST_P(BatchWriterTest, MissingMassSpectrometerBecomesConflict) {
   FakeAdapter adapter(description(), {b});
   auto stats = run_all(*world_, adapter);
   ASSERT_TRUE(stats) << err(stats.error());
-  EXPECT_EQ(stats->conflicts, 1);
+  EXPECT_EQ(stats->conflicts, 6);
   auto conflicts = store().import_conflicts({});
   ASSERT_TRUE(conflicts);
-  ASSERT_EQ(conflicts->size(), 1u);
-  EXPECT_EQ(conflicts->front().kind, P::ConflictKind::UnknownAnalysis);
-  EXPECT_NE(conflicts->front().detail_json.find("mass spectrometer"), std::string::npos);
+  ASSERT_EQ(conflicts->size(), 6u);
+  for (const auto& c : *conflicts) {
+    EXPECT_EQ(c.kind, P::ConflictKind::UnknownAnalysis);
+    EXPECT_NE(c.detail_json.find("mass spectrometer"), std::string::npos);
+  }
 }
 
 TEST_P(BatchWriterTest, AdapterConflictIsStoredWithItsFileHash) {
@@ -785,6 +964,88 @@ TEST_P(BatchWriterTest, StoreErrorFailsTheRunAndKeepsTheToken) {
   EXPECT_EQ(world_->source().status, "failed");
   EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c1"});
   EXPECT_EQ(world_->count("import_provenance"), 1 + 5);  // batch 1 only: analysis A and its five root files
+}
+
+TEST_P(BatchWriterTest, BookmarkSurvivesAFailureBeforeItIsRecorded) {
+  ImportBatch b;
+  b.catalog = lab_catalog();
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  b.bookmarks.push_back({"v1.0", "c1", {kA}, who(kAlice, "2016-03-04T06:00:00Z")});
+  b.resume_token = "c1";
+  FakeAdapter adapter(description(), {b});
+
+  // The batch commits (1st unit of work), the group and the bookmark are
+  // created, and the unit of work that records them (2nd) cannot be opened.
+  ForwardingStore flaky(store());
+  flaky.before_import_batch = [](int n) -> Result<void> {
+    if (n == 2) return fail(ErrorKind::Io, "connection lost");
+    return {};
+  };
+  {
+    BatchWriter writer(flaky, world_->client, config());
+    auto failed = writer.run(adapter, std::nullopt, {}, {});
+    ASSERT_FALSE(failed);
+    EXPECT_EQ(failed.error().what, "connection lost");
+  }
+  EXPECT_EQ(world_->count("analysis_group"), 1);
+  EXPECT_EQ(world_->count("bookmark"), 1);
+  EXPECT_EQ(world_->source().status, "failed");
+  EXPECT_EQ(world_->source().progress_token.value_or(""), "");
+  const Uuid bookmark = bookmark_id(kUrl, "v1.0");
+  EXPECT_TRUE(store().provenance_for(bookmark)->empty());
+
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(world_->count("analysis_group"), 1);
+  EXPECT_EQ(world_->count("bookmark"), 1);
+  EXPECT_EQ(world_->count("analysis_group_member"), 1);
+  EXPECT_EQ(store().bookmark_heads(bookmark)->size(), 6u);
+  EXPECT_EQ(store().provenance_for(bookmark)->size(), 1u);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c1"});
+
+  // The same holds when the failure comes between the group and the bookmark.
+  World other(GetParam());
+  ASSERT_TRUE(other.store && other.db);
+  const P::Actor actor{*other.store->ensure_user(other.client, "someone"), other.client};
+  {
+    ImportBatch without = b;
+    without.bookmarks.clear();
+    without.resume_token.clear();
+    FakeAdapter first(description(), {without});
+    ASSERT_TRUE(run_all(other, first));
+  }
+  ASSERT_TRUE(other.store->create_group(actor, "v1.0", {kA}, bookmark_group_id(kUrl, "v1.0")));
+  FakeAdapter second(description(), {b});
+  ASSERT_TRUE(run_all(other, second));
+  EXPECT_EQ(other.count("analysis_group"), 1);
+  EXPECT_EQ(other.count("bookmark"), 1);
+  EXPECT_EQ(other.store->bookmark_heads(bookmark)->size(), 6u);
+}
+
+TEST_P(BatchWriterTest, TagWithNoStoredAnalysisIsSkippedAndNotPending) {
+  // The tag lists an analysis that was refused and one that was never sent.
+  ImportBatch b;
+  b.catalog = {MassSpecItem{{"jan", "argus", "j", std::nullopt}}};
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  b.bookmarks.push_back({"v0.1", "c1", {kA, kB}, who(kAlice, "2016-03-04T06:00:00Z")});
+  b.resume_token = "c1";
+  FakeAdapter adapter(description(), {b});
+
+  auto dry = config();
+  dry.dry_run = true;
+  auto before = run_all(*world_, adapter, dry);
+  ASSERT_TRUE(before) << err(before.error());
+  // Blobs and the analysis, and the bookmark that would capture it.
+  EXPECT_EQ(before->would_write, 2 + 1 + 1);
+
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ(world_->count("bookmark"), 0);
+  EXPECT_EQ(world_->count("analysis_group"), 0);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c1"});
+
+  auto after = run_all(*world_, adapter, dry);
+  ASSERT_TRUE(after) << err(after.error());
+  EXPECT_EQ(after->would_write, 0);
 }
 
 TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {

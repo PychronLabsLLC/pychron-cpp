@@ -58,10 +58,16 @@ Result<void> add_repository_members(Db& db, const Actor& actor, Uuid repository,
   return tx.commit();
 }
 
-Result<Uuid> create_group(Db& db, const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses) {
+Result<Uuid> create_group(Db& db, const Actor& actor, const std::string& name, const std::vector<Uuid>& analyses,
+                          std::optional<Uuid> given) {
   WriteTx tx(db);
   if (auto r = tx.begin(); !r) return fail(r.error());
-  const Uuid uuid = Uuid::v7();
+  if (given) {
+    auto stored = db.select_one(QStringLiteral("SELECT uuid FROM analysis_group WHERE uuid = ?"), {qv(*given)});
+    if (!stored) return fail(stored.error());
+    if (*stored) return *given;
+  }
+  const Uuid uuid = given.value_or(Uuid::v7());
   Row g;
   g["uuid"] = qv(uuid);
   g["name"] = qv(name);
@@ -89,11 +95,16 @@ Result<Uuid> create_bookmark(Db& db, const Actor& actor, const BookmarkSpec& spe
     return fail(ErrorKind::Protocol, "a bookmark needs exactly one of repository or group");
   WriteTx tx(db);
   if (auto r = tx.begin(); !r) return fail(r.error());
+  if (spec.uuid) {
+    auto stored = db.select_one(QStringLiteral("SELECT uuid FROM bookmark WHERE uuid = ?"), {qv(*spec.uuid)});
+    if (!stored) return fail(stored.error());
+    if (*stored) return *spec.uuid;
+  }
   // Read the heads inside the write transaction so the capture is consistent.
   auto heads = spec.repository ? heads_of(db, sql::kHeadsInRepository, *spec.repository)
                                : heads_of(db, sql::kHeadsInGroup, *spec.group);
   if (!heads) return fail(heads.error());
-  const Uuid uuid = Uuid::v7();
+  const Uuid uuid = spec.uuid.value_or(Uuid::v7());
   Row b;
   b["uuid"] = qv(uuid);
   b["name"] = qv(spec.name);

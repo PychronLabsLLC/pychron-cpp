@@ -267,6 +267,8 @@ inline const QString kRevisionExists = QStringLiteral("SELECT 1 AS present FROM 
 inline const QString kSetImportProgress = QStringLiteral(
     "UPDATE import_source SET progress_commit_sha = ?, commits_done = ?, commits_total = ?, status = ?%1 "
     "WHERE uuid = ?");
+inline const QString kResolveConflict =
+    QStringLiteral("UPDATE import_conflict SET resolution = ? WHERE uuid = ? AND import_source_uuid = ?");
 inline const QString kImportConflicts = QStringLiteral(
     "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution "
     "FROM import_conflict");
