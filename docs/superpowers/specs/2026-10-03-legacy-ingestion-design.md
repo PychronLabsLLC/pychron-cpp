@@ -42,6 +42,7 @@ An import of a source is successful when `elctl import verify` reports:
 | Real-data fixture | Public `github.com/NMGRLData` repos; CI uses synthetic fixtures |
 | Surface | CLI only (`elctl import ...`) |
 | Structure | C++ core and C++ adapters |
+| Dump handling | A `tools/` script converts the mysqldump to JSON lines; the adapter reads those |
 | Git access (13.3 Q5) | Shell out to `git`; no libgit2 |
 | Branches (13.3 Q4) | The default branch only; others only when named |
 | Git authors (13.3 Q3) | Unknown authors become `git:<email>` users; an optional map file assigns emails to existing users |
@@ -51,6 +52,12 @@ An import of a source is successful when `elctl import verify` reports:
 MassSpec adapter, ArArCalc adapter, an import action in pychron-ui, commands
 that resolve conflicts (accept or reject), the publisher, a PostgreSQL `COPY`
 bulk path, a live MySQL connection.
+
+Three items of schema design section 10.3 wait for the publisher (stage D5)
+or a consumer, and are not built here: filling `published_file` and
+`publish_state` at the end of a repo, `hand_edit` conflicts on re-import of a
+published repo, and the verbatim copy of `SamplePrep*`-style tables into a
+`legacy` schema (the JSON-lines directory already preserves them).
 
 ## 2. Architecture
 
@@ -68,8 +75,7 @@ Dependencies:
 
 - `libs/ingest` depends on `persistence`, `core` and, for verify only,
   `reduction`.
-- `libs/dvc` depends on `ingest`, `core`, nlohmann_json (new dependency) and
-  sqlite3.
+- `libs/dvc` depends on `ingest`, `core` and nlohmann_json (new dependency).
 - Qt stays confined to `libs/persistence`. Public headers of both new
   libraries are std-only.
 - Both libraries, and the `elctl import` command, are built only when
@@ -95,15 +101,18 @@ A batch carries no uuids except legacy analysis uuids. The adapter supplies
 **source keys** (source url, commit sha, path) and the core derives ids from
 them, so one rule applies to every source.
 
-**`BatchWriter`** writes one batch in one store transaction: rows, provenance,
-conflicts and the progress token together. After a crash the import restarts
-from the last committed token, and deterministic ids prevent duplicates.
+**`BatchWriter`** writes one batch in two steps. First the idempotent writes:
+catalog rows (ensure-by-natural-key), analyses and blobs (the existing
+`IStore::ingest`, keyed by a deterministic item id). Then one transaction
+holding changesets, revisions, provenance, conflicts and the progress token.
+After a crash the import restarts from the last committed token; the
+idempotent writes repeat as no-ops and deterministic ids prevent duplicates.
 
 **`Verifier`** implements the three checks of section 1.1.
 
 ### 2.2 Fit of later sources
 
-- **MassSpec.** An adapter over the same dump-to-SQLite path as the DVC
+- **MassSpec.** An adapter over the same dump-to-JSON-lines path as the DVC
   catalog. One synthesized changeset per analysis; raw peak-time data becomes
   signal blobs.
 - **ArArCalc.** An adapter that emits analyses with intercepts only and no
@@ -116,8 +125,11 @@ own spec.
 ## 3. Store additions
 
 The import tables (`import_source`, `import_provenance`, `import_conflict`)
-already exist in `migrations/pg/0001_init.sql`. No migration is expected.
-`import_source.progress_commit_sha` is used as an opaque resume token.
+already exist in `migrations/pg/0001_init.sql`. One migration,
+`0002_import_detail.sql`, adds `detail jsonb` to `import_provenance`; it holds
+the `synthetic_collection` flag, the extra commit shas of a folded collection
+and time-zone notes. `import_source.progress_commit_sha` is used as an opaque
+resume token.
 
 ### 3.1 New `IStore` surface
 
@@ -129,11 +141,11 @@ already exist in `migrations/pg/0001_init.sql`. No migration is expected.
     `IUnitOfWork::commit` always uses `Uuid::v7()` and `UtcTime::now()`.
   - `add_revision(...)` with caller-supplied uuid and parent. The head moves
     with reason `commit`.
-  - `ingest(IngestItem)`: the existing analysis and blob path, inside the
-    same transaction.
   - `add_provenance(row)`, `add_conflict(row)`,
     `set_progress(token, done, total)`.
   - `commit()`: one `change_log` entry per batch, not per source commit.
+- `AnalysisIngest` gains an optional `import_source`, stamped on its
+  collection changeset.
 - Reads: `import_sources()`, `import_conflicts(source, filter)`,
   `provenance_for(entity)`, `imported_head_blob_sha(subject, kind)`.
 - Catalog: `SampleSpec` is widened to the full `sample` table. `add_load` and
@@ -195,15 +207,16 @@ cannot be ingested before its identifier and mass spectrometer exist:
 
 ### 4.2 Catalog (`CatalogDb`)
 
-- `tools/legacy_dump_to_sqlite.py <dump.sql> <out.sqlite>` translates the
-  mysqldump DDL and INSERT statements to SQLite. Tables are copied verbatim.
-  It uses the Python standard library only.
-- The adapter reads the SQLite file through the sqlite3 C API and emits
+- `tools/legacy_dump_to_jsonl.py <dump.sql> <outdir>` writes one
+  `<table>.jsonl` file per table, one JSON object per row, values verbatim.
+  It uses the Python standard library only. JSON lines rather than SQLite
+  keep a sqlite3 link dependency out of `libs/dvc` (Qt's bundled SQLite is
+  private to `libs/persistence`); the catalog tables are small enough to join
+  in memory.
+- The adapter reads the directory with nlohmann_json and emits
   catalog specs in foreign-key order: principal investigator, project,
   material, sample, irradiation, level, position, identifier, users, mass
   spectrometers, extract devices, loads.
-- Tables listed in schema design section 3.9 (`SamplePrep*` and others) are
-  copied verbatim into the `legacy` schema.
 - `--catalog-from-repos` is an opt-in fallback for sources with no dump (the
   public fixture). It synthesizes a thin catalog from analysis JSON and the
   meta repo. Each synthesized row is recorded as an `identity_clash` conflict
@@ -232,10 +245,12 @@ per batch of about 500 commits:
   -> ImportBatch
 ```
 
-`core::run_process` runs a process to completion. `ProcessSpec` gains a stdin
-buffer, and `cat-file --batch` is run once per commit batch with the list of
-blob shas, so output is bounded and no long-lived child process is needed.
-There is never a checkout.
+`core::run_process` runs a process to completion, feeds stdin from a string,
+and keeps only the first 64 KiB of output. `ProcessSpec` gains an optional
+`stdout_file`: stdout goes to that file, uncapped, and stderr alone is
+captured. `cat-file --batch` is run once per commit batch with the list of
+blob shas on stdin, so no long-lived child process is needed. There is never
+a checkout.
 
 **Path to kind.** One table in `LegacyJsonLayout` maps each legacy file type
 (analysis JSON, raw data, intercepts, baselines, blanks, icfactors, tags,
@@ -248,6 +263,13 @@ when the table is written, with one test per entry.
 **Raw signals.** The legacy `>ff` base64 series is decoded with the existing
 `decode_legacy_ff_base64` and stored as an `f32le-tv/1` blob. The original git
 blob sha is kept in provenance.
+
+**Interpreted ages.** Legacy interpreted-age files become `interpreted_age`
+revisions. They also carry the per-analysis ages that verify compares
+against (section 6).
+
+**Missing uuid.** An analysis file with no legacy uuid gets
+v5(namespace, source url, runid), noted in provenance `detail`.
 
 **Unknown content.** Unknown JSON keys go into the row's `extra` column
 (principle P8). A file of unknown type, or one that does not parse, becomes
@@ -271,8 +293,8 @@ its first commit, flagged `synthetic_collection` in provenance.
 **Later changes.** Each later commit becomes an `import` changeset with one
 revision per changed file. The parent is the current imported head.
 
-**Deletes, renames, moves.** A deleted file produces no revision and a
-provenance note. An analysis whose legacy uuid is already imported from
+**Deletes, renames, moves.** A deleted file produces no revision and no
+row; verify counts a deletion as accounted for. An analysis whose legacy uuid is already imported from
 another repo gains a `repository_member` row and is not duplicated; if its
 content differs, an `identity_clash` conflict is recorded.
 
@@ -285,9 +307,6 @@ of C.
 
 **Membership.** Every analysis seen in a repo becomes a member of the
 `repository` named after the source.
-
-**Completion.** At the end of a repo the importer fills `published_file` and
-`publish_state`, so the future publisher does not rewrite history.
 
 ### 4.5 Memory and performance
 
@@ -323,10 +342,13 @@ elctl import verify    --db <url> [--source <s>] [--tolerance 1e-9] [--json]
 ## 6. Verify
 
 1. **Accounting.** Walk the source again, read-only. Every (commit, path)
-   must have a provenance row or a conflict row. Misses are listed.
+   must be a deletion, have a provenance row or a conflict row, or carry a
+   blob sha already recorded in provenance for that path (content the
+   linearized walk had already imported). Misses are listed.
 2. **Idempotence.** Run the batch stream against the store without writing
    and count rows that would be new. The count must be zero.
-3. **Age parity.** For each analysis with a legacy stored age, reduce from
+3. **Age parity.** For each analysis with a legacy stored age (the
+   per-analysis ages inside imported interpreted-age files), reduce from
    the imported heads with `libs/reduction` and compare age and error by
    relative tolerance. Each analysis is reported as pass, fail or not
    comparable (for example, missing J or blank). A failure is also recorded
@@ -363,8 +385,8 @@ SQLite and, when `PYCHRON_TEST_PG_URL` is set, PostgreSQL.
 | `tests/dvc/test_git_reader.cpp` | Repo built in `SetUp` with real `git` and fixed author and date: linear, merge, tag, delete, rename. Skipped with a message when `git` is absent |
 | `tests/dvc/test_project_import.cpp` | End to end on a synthetic repo: collection folding, including across batches; synthetic collection; refit chain; same uuid in two repos |
 | `tests/dvc/test_meta_import.cpp` | Per-position flux diff; sensitivity list order |
-| `tests/dvc/test_catalog_db.cpp` | Checked-in small SQLite fixture; foreign-key order; widened `SampleSpec` |
-| `tools/tests/test_legacy_dump_to_sqlite.py` | Small mysqldump sample to SQLite |
+| `tests/dvc/test_catalog_db.cpp` | Checked-in small JSON-lines fixture; foreign-key order; widened `SampleSpec` |
+| `tools/tests/test_legacy_dump_to_jsonl.py` | Small mysqldump sample to JSON lines |
 | `apps/elctl/tests/test_import_cmd.cpp` | add, run, status, verify through `elctl::run`; exit codes |
 
 **Real data.** `tools/import_fixture_check.sh` clones a pinned NMGRLData
@@ -374,7 +396,7 @@ network. The first task of the plan chooses the project repo and commit sha
 and records them in schema design section 13.3 Q1.
 
 All tests must pass under ASan and UBSan on every CI compiler. The subprocess
-stdin path needs a test on MSVC.
+`stdout_file` path needs a test on MSVC.
 
 ## 9. Updates to existing documents
 
