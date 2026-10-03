@@ -4,6 +4,7 @@
 // visualization design, section 7.3). Plain immutable values: a source builds
 // an Analysis once and every consumer shares it as shared_ptr<const Analysis>.
 
+#include <cmath>
 #include <map>
 #include <memory>
 #include <optional>
@@ -15,10 +16,14 @@
 
 namespace pychron::processing {
 
-// A value with a 1-sigma error.
+// A value with a 1-sigma error. A number the source does not have (a NULL in
+// the store, which is how a legacy NaN is kept) is NaN here, never 0: nothing
+// computed from it is finite, and reduce_analysis() refuses to reduce with it.
 struct Value {
   double value = 0.0;
   double error = 0.0;
+  // Both the value and its error are numbers.
+  bool known() const noexcept { return std::isfinite(value) && std::isfinite(error); }
   friend bool operator==(const Value&, const Value&) = default;
 };
 

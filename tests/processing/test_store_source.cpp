@@ -818,6 +818,190 @@ TEST(StoreSourceMapping, IndexListsAndInterceptEdits) {
   EXPECT_FALSE(apply_intercept_edits({row}, {e}));
 }
 
+// Five argon isotopes on H1 with a baseline, an Ar40 blank and an IC factor.
+StoreAnalysisParts argon_parts() {
+  StoreAnalysisParts parts;
+  parts.detail.row.summary.analysis_type = "unknown";
+  ps::Intercepts intercepts;
+  for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"}) {
+    ps::InterceptRow row;
+    row.isotope = iso;
+    row.detector = "H1";
+    row.value = 100.0;
+    row.error = 0.1;
+    intercepts.push_back(row);
+  }
+  ps::BaselineRow baseline;
+  baseline.detector = "H1";
+  baseline.value = 0.01;
+  baseline.error = 0.001;
+  ps::BlankRow blank;
+  blank.isotope = "Ar40";
+  blank.value = 0.5;
+  blank.error = 0.05;
+  ps::IcFactorRow ic;
+  ic.detector = "H1";
+  ic.value = 1.02;
+  ic.error = 0.001;
+  parts.heads[ps::Kind::Intercepts] = std::move(intercepts);
+  parts.heads[ps::Kind::Baselines] = ps::Baselines{baseline};
+  parts.heads[ps::Kind::Blanks] = ps::Blanks{blank};
+  parts.heads[ps::Kind::IcFactors] = ps::IcFactors{ic};
+  return parts;
+}
+
+template <class Rows>
+auto& first_row(StoreAnalysisParts& parts, ps::Kind kind) {
+  return std::get<Rows>(parts.heads.at(kind)).front();
+}
+
+ReducedPtr reduce_parts(const StoreAnalysisParts& parts) {
+  auto a = analysis_from_store(parts);
+  EXPECT_TRUE(a) << (a ? "" : to_string(a.error()));
+  if (!a) return nullptr;
+  return reduce_analysis(std::make_shared<const Analysis>(std::move(*a)), ReductionSettings{});
+}
+
+// A NULL value or error in a stored row is unknown, not 0: it reaches the
+// model as NaN and the analysis does not reduce.
+TEST(StoreSourceMapping, MissingStoredNumbersAreUnknownNotZero) {
+  {
+    const auto reduced = reduce_parts(argon_parts());
+    ASSERT_TRUE(reduced);
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    for (const auto& iso : reduced->analysis->isotopes) {
+      EXPECT_TRUE(iso.intercept.known());
+      EXPECT_TRUE(iso.baseline.known());
+      EXPECT_TRUE(iso.blank.known());
+      EXPECT_TRUE(iso.ic_factor.known());
+    }
+  }
+
+  struct Case {
+    const char* what;  // as reduction_error names it
+    std::optional<double>& (*field)(StoreAnalysisParts&);
+    const Value& (*mapped)(const IsotopeData&);
+    bool is_error;
+    double other;  // the number left in place
+    Stage stage;
+  };
+  const Case cases[] = {
+      {"Ar40 intercept value", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Intercepts>(p, ps::Kind::Intercepts).value; },
+       [](const IsotopeData& i) -> const Value& { return i.intercept; }, false, 0.1, Stage::Intercept},
+      {"Ar40 intercept error", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Intercepts>(p, ps::Kind::Intercepts).error; },
+       [](const IsotopeData& i) -> const Value& { return i.intercept; }, true, 100.0, Stage::Intercept},
+      {"Ar40 baseline value", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Baselines>(p, ps::Kind::Baselines).value; },
+       [](const IsotopeData& i) -> const Value& { return i.baseline; }, false, 0.001, Stage::Baseline},
+      {"Ar40 baseline error", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Baselines>(p, ps::Kind::Baselines).error; },
+       [](const IsotopeData& i) -> const Value& { return i.baseline; }, true, 0.01, Stage::Baseline},
+      {"Ar40 blank value", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Blanks>(p, ps::Kind::Blanks).value; },
+       [](const IsotopeData& i) -> const Value& { return i.blank; }, false, 0.05, Stage::Blank},
+      {"Ar40 blank error", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::Blanks>(p, ps::Kind::Blanks).error; },
+       [](const IsotopeData& i) -> const Value& { return i.blank; }, true, 0.5, Stage::Blank},
+      {"Ar40 IC factor value", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::IcFactors>(p, ps::Kind::IcFactors).value; },
+       [](const IsotopeData& i) -> const Value& { return i.ic_factor; }, false, 0.001, Stage::IcFactor},
+      {"Ar40 IC factor error", [](StoreAnalysisParts& p) -> auto& { return first_row<ps::IcFactors>(p, ps::Kind::IcFactors).error; },
+       [](const IsotopeData& i) -> const Value& { return i.ic_factor; }, true, 1.02, Stage::IcFactor},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.what);
+    auto parts = argon_parts();
+    c.field(parts).reset();
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    const IsotopeData* ar40 = reduced->analysis->find_isotope("Ar40");
+    ASSERT_TRUE(ar40);
+    const Value& v = c.mapped(*ar40);
+    EXPECT_FALSE(v.known());
+    EXPECT_TRUE(std::isnan(c.is_error ? v.error : v.value));
+    EXPECT_EQ(c.is_error ? v.value : v.error, c.other);  // the stored half survives
+
+    EXPECT_FALSE(reduced->arar);
+    EXPECT_NE(reduced->reduction_error.find("not reducible"), std::string::npos) << reduced->reduction_error;
+    EXPECT_NE(reduced->reduction_error.find(c.what), std::string::npos) << reduced->reduction_error;
+    // The stage is not a number either, whichever half is missing.
+    const auto stage = reduced->stage("Ar40", c.stage);
+    ASSERT_TRUE(stage);
+    EXPECT_FALSE(std::isfinite(stage->nominal()) && std::isfinite(stage->std_dev()));
+    const auto corrected = reduced->stage("Ar40", Stage::IcCorrected);
+    ASSERT_TRUE(corrected);
+    EXPECT_FALSE(std::isfinite(corrected->nominal()) && std::isfinite(corrected->std_dev()));
+  }
+}
+
+TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
+  // A manual override supplies the missing number.
+  {
+    auto parts = argon_parts();
+    auto& row = first_row<ps::Intercepts>(parts, ps::Kind::Intercepts);
+    row.value.reset();
+    row.error.reset();
+    row.manual = ps::ManualOverride{true, 90.0, true, 0.2};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->intercept, (Value{90.0, 0.2}));
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+  }
+  // A flagged override that holds no number does not.
+  {
+    auto parts = argon_parts();
+    auto& row = first_row<ps::Intercepts>(parts, ps::Kind::Intercepts);
+    row.value.reset();
+    row.manual.use_value = true;
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->intercept.known());
+    EXPECT_FALSE(reduced->arar);
+  }
+  // No row at all is still "none": blank 0, IC factor 1.
+  {
+    auto parts = argon_parts();
+    parts.heads.erase(ps::Kind::Blanks);
+    parts.heads.erase(ps::Kind::IcFactors);
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->blank, (Value{0.0, 0.0}));
+    EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+  }
+  // An isotope reduce() never sees does not stop it.
+  {
+    auto parts = argon_parts();
+    ps::InterceptRow extra;
+    extra.isotope = "Ar41";
+    extra.detector = "CDD";
+    std::get<ps::Intercepts>(parts.heads.at(ps::Kind::Intercepts)).push_back(extra);
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->find_isotope("Ar41")->intercept.known());
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(std::isnan(reduced->stage("Ar41", Stage::Intercept)->nominal()));
+  }
+}
+
+// The same through a real store: a NULL column comes back unknown.
+TEST_F(StoreSourceTest, NullInterceptLoadsAsUnknownAndDoesNotReduce) {
+  const auto head = *store_->head(unknown_, ps::Kind::Intercepts);
+  auto rows = std::get<ps::Intercepts>(**store_->load_payload(*head));
+  auto ar40 = std::find_if(rows.begin(), rows.end(), [](const ps::InterceptRow& r) { return r.isotope == "Ar40"; });
+  ASSERT_NE(ar40, rows.end());
+  ar40->value.reset();
+  auto uow = *store_->begin(reducer());
+  ASSERT_TRUE(uow->add_revision(unknown_, ps::Kind::Intercepts, ps::RevisionPayload{std::move(rows)}, *head));
+  auto outcome = uow->commit(ps::ChangesetKind::Reduction, "legacy NaN");
+  ASSERT_TRUE(outcome && std::holds_alternative<ps::Committed>(*outcome));
+
+  auto loaded = source().load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  const IsotopeData* iso = (*loaded)->find_isotope("Ar40");
+  ASSERT_TRUE(iso);
+  EXPECT_TRUE(std::isnan(iso->intercept.value));
+  EXPECT_EQ(iso->intercept.error, 0.5);
+  const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
+  EXPECT_FALSE(reduced->arar);
+  EXPECT_NE(reduced->reduction_error.find("Ar40 intercept value"), std::string::npos) << reduced->reduction_error;
+}
+
 TEST(StoreSourceMapping, FlatJsonNumbers) {
   const auto m = flat_json_numbers(R"( {"a": 1.5, "b": -2e3, "s": "x\"y", "o": {"z": [1, {"q": 2}]}, "t": true,
                                        "f": false, "n": null, "c": 3} )");

@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -50,9 +51,12 @@ std::optional<reduction::FitSpec> fit_spec(const std::optional<std::string>& fit
   return spec;
 }
 
-// The stored value with a manual override applied.
+// The stored value with a manual override applied. A NULL value or error is
+// unknown (the legacy importer stores a NaN that way), not 0: it stays NaN so
+// that Value::known() is false and the analysis does not reduce.
 Value value_of(std::optional<double> value, std::optional<double> error, const ps::ManualOverride& m) {
-  Value v{value.value_or(0.0), error.value_or(0.0)};
+  constexpr double unknown = std::numeric_limits<double>::quiet_NaN();
+  Value v{value.value_or(unknown), error.value_or(unknown)};
   if (m.use_value && m.value) v.value = *m.value;
   if (m.use_error && m.error) v.error = *m.error;
   return v;
@@ -314,9 +318,11 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
             iso.blank_reviewed = b.reviewed;
             if (b.isotope == iso.key) break;
           }
+      // No row for the detector: no correction (1). A row without a value is
+      // an unknown factor, not 1.
       if (ics)
         for (const auto& ic : *ics)
-          if (ic.detector == iso.detector && (ic.value || (ic.manual.use_value && ic.manual.value))) {
+          if (ic.detector == iso.detector) {
             iso.ic_factor = value_of(ic.value, ic.error, ic.manual);
             iso.ic_reviewed = ic.reviewed;
           }

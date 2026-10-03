@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <utility>
 
 namespace pychron::processing {
 
@@ -23,12 +25,26 @@ constexpr std::pair<Stage, std::string_view> kStageNames[] = {
     {Stage::InterferenceCorrected, "interference_corrected"},
 };
 
-r::Measured measured(const Value& v) { return {v.value, v.error}; }
+// An unknown value enters as an exact NaN: UFloat::variable needs a finite
+// sigma, and every stage built on it is then NaN rather than a number.
+r::Measured measured(const Value& v) {
+  if (!v.known()) return {std::numeric_limits<double>::quiet_NaN(), 0.0};
+  return {v.value, v.error};
+}
 
 std::optional<r::ArgonIsotope> argon(std::string_view name) {
   for (const auto iso : r::kArgonKeys)
     if (r::to_string(iso) == name) return iso;
   return std::nullopt;
+}
+
+// "Ar40 intercept value" / "... error" for each number of `v` that is unknown.
+void add_unknown(std::string& out, const IsotopeData& iso, std::string_view what, const Value& v) {
+  for (const auto& [part, x] : {std::pair<std::string_view, double>{"value", v.value}, {"error", v.error}}) {
+    if (std::isfinite(x)) continue;
+    if (!out.empty()) out += ", ";
+    out.append(iso.key).append(" ").append(what).append(" ").append(part);
+  }
 }
 
 }  // namespace
@@ -75,6 +91,7 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
   // One signal per isotope; the argon five feed reduce() with these same
   // variables so every stage correlates with the reduced values.
   std::array<std::optional<r::IsotopeSignal>, 5> argon_signals;
+  std::array<const IsotopeData*, 5> argon_data{};
   for (const auto& iso : a.isotopes) {
     r::MeasuredSignal m;
     m.intercept = measured(iso.intercept);
@@ -99,7 +116,10 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
     out->isotopes.push_back(std::move(st));
 
     // The exact-key isotope wins ("Ar40" over "H1:Ar40").
-    if (ar && (!argon_signals[r::index(*ar)] || iso.key == iso.isotope)) argon_signals[r::index(*ar)] = s;
+    if (ar && (!argon_signals[r::index(*ar)] || iso.key == iso.isotope)) {
+      argon_signals[r::index(*ar)] = s;
+      argon_data[r::index(*ar)] = &iso;
+    }
   }
 
   const bool any_argon = std::any_of(argon_signals.begin(), argon_signals.end(), [](const auto& s) { return s.has_value(); });
@@ -132,6 +152,20 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
   out->constants = in.constants;
   out->j = in.j;
   out->lambda_k_total = in.lambda_k_total;
+  // A stored number the source does not have is not a zero signal: no result
+  // rather than an age from it.
+  std::string unknown;
+  for (const IsotopeData* iso : argon_data) {
+    if (!iso) continue;
+    add_unknown(unknown, *iso, "intercept", iso->intercept);
+    add_unknown(unknown, *iso, "baseline", iso->baseline);
+    add_unknown(unknown, *iso, "blank", iso->blank);
+    add_unknown(unknown, *iso, "IC factor", iso->ic_factor);
+  }
+  if (!unknown.empty()) {
+    out->reduction_error = "not reducible: no stored " + unknown;
+    return out;
+  }
   auto result = r::reduce(in);
   if (!result) {
     out->reduction_error = result.error().what;

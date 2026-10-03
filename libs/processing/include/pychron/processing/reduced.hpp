@@ -64,7 +64,9 @@ struct ReducedAnalysis {
 using ReducedPtr = std::shared_ptr<const ReducedAnalysis>;
 
 // Never fails: reduction errors are recorded in reduction_error. Ages need a
-// flux in the analysis context.
+// flux in the analysis context. An argon isotope whose intercept, baseline,
+// blank or IC factor is unknown (Value::known() false) gives no `arar`, and
+// reduction_error names what is missing; that isotope's stages are NaN.
 ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settings);
 
 }  // namespace pychron::processing
