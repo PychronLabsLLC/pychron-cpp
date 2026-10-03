@@ -43,24 +43,23 @@ bool Dragonfly::params_ok() const {
          positive(params_.max_step_mm) && positive(params_.spiral_base_mm) &&
          positive(params_.target_radius_mm) && non_negative(params_.aggressiveness) &&
          non_negative(params_.move_threshold_mm) && std::isfinite(params_.saturation_threshold) &&
-         params_.saturation_threshold >= 0 && params_.saturation_threshold <= 1 &&
+         params_.saturation_threshold > 0 && params_.saturation_threshold <= 1 &&
          params_.frames_per_step >= 1 && params_.miss_frames_before_search >= 1;
 }
 
 Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoint now, Vec2 stage_pos_mm) {
   Step out;
 
-  const bool pos_ok = started_ && finite(start_pos_) && finite(stage_pos_mm);
-  if (!pos_ok || !params_ok()) {
+  // Every Hold carries `current`, so it must be finite: positions that are
+  // finite but whose difference overflows are rejected here, once.
+  const Vec2 current{stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
+  if (!started_ || !finite(start_pos_) || !finite(stage_pos_mm) || !finite(current) || !params_ok()) {
     out.action = Step::Action::Hold;
     out.reason = Step::Reason::Invalid;
-    if (pos_ok) out.target_mm = {stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
-    if (!finite(out.target_mm)) out.target_mm = {};
+    if (started_ && finite(current)) out.target_mm = current;
     return out;
   }
-
-  const Vec2 current{stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
-  out.target_mm = finite(current) ? current : Vec2{};
+  out.target_mm = current;
 
   if (now - start_time_ >= params_.total_duration) {
     out.action = Step::Action::Done;
@@ -106,6 +105,7 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     if (c.width <= 0 || c.height <= 0) continue;
     const auto targets = finder_.find(c.view(), fp);
     if (targets.empty()) {
+      if (c.pixel_depth == 0) continue;
       const double m = static_cast<double>(median_in_mask(c.view(), fp.mask_radius_px)) /
                        static_cast<double>(c.pixel_depth);
       if (m >= params_.saturation_threshold) flooded.push_back(std::min(m, 1.0));
@@ -159,7 +159,7 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   };
 
   if (hits.empty() && flooded.empty()) {
-    ++misses_;
+    misses_ = std::min(misses_ + 1, params_.miss_frames_before_search);
     if (misses_ < params_.miss_frames_before_search) {
       hold(Step::Reason::Miss);
       return out;

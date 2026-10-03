@@ -15,7 +15,7 @@ namespace pychron::vision {
 struct DragonflyParams {
   Duration total_duration{};
   double perimeter_radius_mm = 2.5;
-  double saturation_threshold = 0.75;
+  double saturation_threshold = 0.75;  // in (0, 1]; 0 would make every dark frame "saturated"
   double aggressiveness = 1.0;
   double move_threshold_mm = 0.033;
   double max_step_mm = 0.5;

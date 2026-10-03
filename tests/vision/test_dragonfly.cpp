@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <span>
 #include <utility>
 #include <vector>
@@ -403,8 +404,27 @@ TEST(Dragonfly, ProjectedSearchPointsStillAdvance) {
   for (std::size_t i = 0; i < pts.size(); ++i)
     for (std::size_t j = i + 1; j < pts.size(); ++j)
       EXPECT_GT(len({pts[i].x - pts[j].x, pts[i].y - pts[j].y}), 0.1);
+  // The first three are the hexagon directions 0, 60 and 120 degrees at R.
+  for (int i = 0; i < 3; ++i) {
+    const double a = i * std::numbers::pi / 3.0;
+    EXPECT_NEAR(pts[static_cast<std::size_t>(i)].x, 0.3 * std::cos(a), 1e-9);
+    EXPECT_NEAR(pts[static_cast<std::size_t>(i)].y, 0.3 * std::sin(a), 1e-9);
+  }
+  // After the ring the search restarts at ring 1's first point.
   const auto again = rig.step();
-  EXPECT_NEAR(again.target_mm.x - pts[0].x, 0.0, 0.2);  // back near ring 1's first point
+  EXPECT_NEAR(again.target_mm.x, pts[0].x, 1e-9);
+  EXPECT_NEAR(again.target_mm.y, pts[0].y, 1e-9);
+}
+
+TEST(Dragonfly, OverflowingOffsetGivesInvalid) {
+  SimpleFinder finder;
+  Dragonfly df(finder, good_map(), kScale, params());
+  df.start(kT0, {-1e308, 0});
+  auto r = df.step({}, kT0 + std::chrono::seconds(1), {1e308, 0});
+  ASSERT_TRUE(r.has_value());
+  EXPECT_EQ(r->action, Action::Hold);
+  EXPECT_EQ(r->reason, Reason::Invalid);
+  EXPECT_TRUE(std::isfinite(r->target_mm.x) && std::isfinite(r->target_mm.y));
 }
 
 TEST(Dragonfly, SquareSearchStaysFiniteAndInside) {
@@ -473,6 +493,7 @@ TEST(Dragonfly, BadParametersGiveInvalid) {
   add([&](DragonflyParams& p) { p.aggressiveness = -0.1; });
   add([&](DragonflyParams& p) { p.move_threshold_mm = nan; });
   add([&](DragonflyParams& p) { p.saturation_threshold = 1.5; });
+  add([&](DragonflyParams& p) { p.saturation_threshold = 0; });
   add([&](DragonflyParams& p) { p.frames_per_step = 0; });
   add([&](DragonflyParams& p) { p.miss_frames_before_search = 0; });
   for (const DragonflyParams& p : bad) {
