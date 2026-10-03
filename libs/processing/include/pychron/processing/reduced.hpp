@@ -66,7 +66,7 @@ using ReducedPtr = std::shared_ptr<const ReducedAnalysis>;
 // Never fails: reduction errors are recorded in reduction_error. Ages need a
 // flux in the analysis context. An argon isotope whose intercept, baseline,
 // blank or IC factor is unknown (Value::known() false), or a flux whose J
-// error, position J error or lambda_k_total error is NaN, gives no `arar` (and
+// error or lambda_k_total error is NaN, gives no `arar` (and
 // no `j`), and reduction_error names what is missing; that isotope's stages
 // are NaN.
 ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settings);

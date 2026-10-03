@@ -1008,7 +1008,6 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
   };
   const Case cases[] = {
       {"J error", &ps::FluxValue::j_err, [](const reduction::Flux& f) { return f.j.error; }},
-      {"position J error", &ps::FluxValue::position_jerr, [](const reduction::Flux& f) { return f.position_jerr; }},
       {"lambda_k_total error", &ps::FluxValue::lambda_k_total_err,
        [](const reduction::Flux& f) { return f.lambda_k_total->error; }},
   };
@@ -1041,6 +1040,19 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     ASSERT_TRUE(q) << to_string(q.error());
     const auto j = q->eval(*reduced);
     EXPECT_TRUE(!j || !j->known());
+  }
+
+  // No position error is none (0), and the ages stand.
+  {
+    auto f = flux();
+    f.position_jerr.reset();
+    auto parts = argon_parts();
+    parts.refs = {f};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_EQ(reduced->analysis->context.flux->position_jerr, 0.0);
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(reduced->arar->ages);
   }
 
   // No J is no flux: reduced, without ages. No lambda_k_total is no override.

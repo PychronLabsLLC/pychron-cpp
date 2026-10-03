@@ -335,12 +335,13 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   for (const auto& ref : parts.refs) {
     if (const auto* f = std::get_if<ps::FluxValue>(&ref)) {
       // No J: no flux yet, hence no age. With a J, a NULL error is unknown
-      // (NaN), not 0, and the analysis does not reduce.
+      // (NaN), not 0, and the analysis does not reduce. The position error is
+      // an optional extra: NULL is none.
       if (!f->j) continue;
       constexpr double unknown = std::numeric_limits<double>::quiet_NaN();
       reduction::Flux flux;
       flux.j = {*f->j, f->j_err.value_or(unknown)};
-      flux.position_jerr = f->position_jerr.value_or(unknown);
+      flux.position_jerr = f->position_jerr.value_or(0.0);
       if (f->lambda_k_total)
         flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(unknown)};
       a.context.flux = flux;

@@ -160,7 +160,6 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
   }
   if (const auto& flux = a.context.flux) {
     add_unknown(unknown, "J", flux->j.value, flux->j.error);
-    add_unknown(unknown, "position J", 0.0, flux->position_jerr);
     if (flux->lambda_k_total) add_unknown(unknown, "lambda_k_total", flux->lambda_k_total->value, flux->lambda_k_total->error);
   }
   if (!unknown.empty()) {
