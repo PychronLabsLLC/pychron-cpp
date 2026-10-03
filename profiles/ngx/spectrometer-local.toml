@@ -1,0 +1,5 @@
+# This computer only: the NGX login password (written by pychron setup,
+# readable by its owner only). Never commit or share this file.
+
+[drivers.spec]
+password = {{ ngx_password | toml }}

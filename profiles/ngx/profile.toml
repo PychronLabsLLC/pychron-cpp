@@ -73,7 +73,7 @@ template = "spectrometer.toml"
 to = "spectrometer.toml"
 
 [[files]]
-template = "spectrometer.local.toml"
+template = "spectrometer-local.toml"  # not *.local.toml: that is gitignored
 to = "spectrometer.local.toml"
 when = "ngx_user != \"\""
 secret = true
