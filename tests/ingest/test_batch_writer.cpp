@@ -966,6 +966,78 @@ TEST_P(BatchWriterTest, StoreErrorFailsTheRunAndKeepsTheToken) {
   EXPECT_EQ(world_->count("import_provenance"), 1 + 5);  // batch 1 only: analysis A and its five root files
 }
 
+TEST_P(BatchWriterTest, ReplayBatchWithoutATokenDoesNotMoveTheTokenBack) {
+  FakeAdapter adapter(description(), four_batches());
+  ASSERT_TRUE(run_all(*world_, adapter));
+  ASSERT_EQ(world_->source().progress_token, std::optional<std::string>{"c5"});
+  ASSERT_EQ(world_->source().done, 4);
+
+  // The replay's first batch carries no resume token; it is paused after the second.
+  auto batches = four_batches();
+  batches[0].resume_token.clear();
+  FakeAdapter replayed(description(), batches);
+  auto replay = config();
+  replay.replay = true;
+  std::vector<std::string> stored;
+  {
+    BatchWriter writer(store(), world_->client, replay);
+    auto stats = writer.run(replayed, 2, {}, [&](const RunStats&, const ImportBatch&) {
+      stored.push_back(world_->source().progress_token.value_or(""));
+    });
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_EQ(stats->batches, 2);
+  }
+  EXPECT_EQ(stored, (std::vector<std::string>{"c5", "c5"}));
+  EXPECT_EQ(world_->source().status, "paused");
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"c5"});
+  EXPECT_EQ(world_->source().done, 4);
+  EXPECT_EQ(world_->source().total, 4);
+}
+
+TEST_P(BatchWriterTest, ReplayThatNeverMeetsTheStoredTokenAdoptsTheEndOfTheWalk) {
+  FakeAdapter adapter(description(), four_batches());
+  ASSERT_TRUE(run_all(*world_, adapter));
+  ASSERT_EQ(world_->source().progress_token, std::optional<std::string>{"c5"});
+
+  // The same content, cut into batches whose tokens the stored one is not among.
+  auto batches = four_batches();
+  const char* tokens[] = {"x1", "x2", "x3", "x4"};
+  for (std::size_t i = 0; i < batches.size(); ++i) {
+    batches[i].resume_token = tokens[i];
+    batches[i].total = 9;
+  }
+  FakeAdapter recut(description(), batches);
+  auto replay = config();
+  replay.replay = true;
+  const auto seq = *store().latest_change_seq();
+  const auto before = world_->counts();
+  std::vector<std::string> stored;
+  {
+    BatchWriter writer(store(), world_->client, replay);
+    auto stats = writer.run(recut, std::nullopt, {}, [&](const RunStats&, const ImportBatch&) {
+      stored.push_back(world_->source().progress_token.value_or(""));
+    });
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_TRUE(stats->finished);
+  }
+  // Untouched during the walk, then the walk's end.
+  EXPECT_EQ(stored, (std::vector<std::string>{"c5", "c5", "c5", "c5"}));
+  EXPECT_EQ(world_->source().status, "finished");
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"x4"});
+  EXPECT_EQ(world_->source().done, 4);
+  EXPECT_EQ(world_->source().total, 9);
+
+  // The same replay again writes nothing and keeps the token.
+  auto again = run_all(*world_, recut, replay);
+  ASSERT_TRUE(again) << err(again.error());
+  EXPECT_TRUE(again->finished);
+  EXPECT_EQ(again->batches, 4);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->counts(), before);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"x4"});
+  EXPECT_EQ(world_->source().done, 4);
+}
+
 TEST_P(BatchWriterTest, BookmarkSurvivesAFailureBeforeItIsRecorded) {
   ImportBatch b;
   b.catalog = lab_catalog();

@@ -421,8 +421,12 @@ class BatchWriter::Impl final : public IImportState {
     }
 
     if (catching_up_) {
-      walked = reached;
-      if (token_ && reached.token == *token_) catching_up_ = false;  // from here on the token advances
+      // A batch without a token marks no position: it neither ends the
+      // catch-up nor counts as the end of the walk.
+      if (!batch.resume_token.empty()) {
+        walked = reached;
+        if (token_ && batch.resume_token == *token_) catching_up_ = false;  // from here on the token advances
+      }
     } else {
       adopt(next);
     }
