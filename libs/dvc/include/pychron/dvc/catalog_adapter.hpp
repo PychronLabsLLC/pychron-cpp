@@ -23,24 +23,39 @@
 //
 // Rows name their parents by legacy id; items name them by natural key. A
 // table name is matched without regard to case (MySQL on Windows lower-cases
-// them); column names are matched as written.
+// them); column names are matched as written. A string key (a user, load or
+// spectrometer name, an identifier) is matched as MySQL's default collations
+// match it, without regard to case or trailing spaces; what is stored is the
+// parent's own spelling, of two rows that spell one name the first.
 //
-// One row is one unit, and yields one item or one conflict. A row that cannot
-// be imported is an `identity_clash` conflict and the import goes on: a
-// parent row that is missing or was itself refused, a required value that is
-// missing, a value that cannot be read, an identifier already placed
-// elsewhere, a row with the natural key of an earlier row and other values
-// (the earlier row is kept). The conflict's path is
-// "<file>#<legacy id>" at commit <manifest sha256>, and its detail holds the
-// table, the legacy id, the reason and the row. A row that repeats an earlier
-// one exactly is not a conflict. Rows that name a refused duplicate resolve
-// to the row that was kept.
+// One row is one unit, and yields its item or one conflict. A row the store
+// cannot hold is refused: an `identity_clash` conflict, and the import goes
+// on. Refused are a row whose required parent (a sample's project and
+// material, a level's irradiation, a position's level, a load position's load
+// and identifier) is missing or was itself refused, a row without a required
+// value, one with a value that cannot be read, an identifier already placed
+// elsewhere, and a row with the natural key of an earlier row and other
+// values (the earlier row is kept). The conflict's path is
+// "<file>#<legacy id>" at commit <manifest sha256>; its detail holds the
+// table, the legacy id, the reason and the row.
 //
-// Times: a column the dump declares TIMESTAMP is UTC when the dump set the
-// session time zone to +00:00, as mysqldump does. Every other time is naive
-// local time in the lab's zone; of an ambiguous one the earlier instant is
-// taken, of one in a gap the instant the gap begins (ingest/tz.hpp). MySQL's
-// zero date is no value.
+// A link the store can do without (a project's principal investigator, a
+// position's sample, a load's user) that names no usable row does not cost
+// the row: it is sent without the link, with an `identity_clash` conflict at
+// path "<file>#<legacy id>@<column>" whose detail also holds the column, its
+// value and "imported": true. So one sample that cannot be stored does not
+// take its positions, their identifiers and their loads with it.
+//
+// A row that repeats an earlier one exactly is not a conflict. Rows that name
+// a refused duplicate resolve to the row that was kept.
+//
+// Times: a TIMESTAMP column is UTC when the dump set the session time zone to
+// +00:00, as mysqldump does. The type is the one the dump's CREATE TABLE
+// gives; a dump without one (--no-create-info) is read with the types the
+// legacy ORM declares (TIMESTAMP: an irradiation's and a load's create_date).
+// Every other time is naive local time in the lab's zone; of an ambiguous one
+// the earlier instant is taken, of one in a gap the instant the gap begins
+// (ingest/tz.hpp). MySQL's zero date is no value.
 //
 // What is produced depends on the directory alone, never on where the stream
 // was cut or resumed. The adapter never touches the store;
@@ -51,6 +66,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/adapter.hpp"
@@ -83,6 +99,12 @@ class CatalogAdapter final : public ingest::ISourceAdapter {
   // still to send. The state is not asked anything.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
+
+  // What is worth telling the operator about the dump without stopping the
+  // import, one line each. Now: the manifest says the dump has no
+  // "-- Dump completed" line, so it may be cut short (mysqldump
+  // --skip-comments also writes none).
+  std::vector<std::string> warnings() const;
 
  private:
   class Impl;

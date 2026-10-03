@@ -8,7 +8,8 @@
 -- see tests/dvc/fixtures/README.md, section 7). It is the source of
 -- tests/dvc/fixtures/catalog: after editing it run
 --   python3 tools/legacy_dump_to_jsonl.py tools/tests/fixtures/legacy_catalog.sql tests/dvc/fixtures/catalog
--- Rows marked "refused" are there to be refused by the catalog adapter.
+-- The comments say which rows the catalog adapter must refuse, or import
+-- without a link, and why.
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET NAMES utf8 */;
@@ -46,7 +47,7 @@ CREATE TABLE `ProjectTbl` (
   CONSTRAINT `projecttbl_ibfk_1` FOREIGN KEY (`principal_investigatorID`) REFERENCES `PrincipalInvestigatorTbl` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8;
 
--- 3: refused, its principal investigator is not in the dump.
+-- 3: imported without its principal investigator, who is not in the dump.
 LOCK TABLES `ProjectTbl` WRITE;
 INSERT INTO `ProjectTbl` VALUES (1,'Henry Hill',1,'2016-02-29','two crates; \'handle\' with care','mheizler','NMT'),(2,'REFERENCES',NULL,NULL,NULL,NULL,NULL),(3,'Orphan',99,NULL,NULL,NULL,NULL),(4,'J-Curve',2,'0000-00-00',NULL,NULL,NULL);
 UNLOCK TABLES;
@@ -90,8 +91,8 @@ CREATE TABLE `SampleTbl` (
   KEY `projectID` (`projectID`)
 ) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8;
 
--- 3: refused, no such project. 4: refused, its project was refused.
--- 5: refused, it is sample 1 again with another note.
+-- 3: refused, no such project. 5: refused, it is sample 1 again with another
+-- note.
 LOCK TABLES `SampleTbl` WRITE;
 INSERT INTO `SampleTbl` VALUES (1,'HH-1',1,1,'collected at the base, north side','IGSN001',34.0722,-106.905,'shelf 3','ignimbrite','Tuff of Henry Hill','volcanic','pyroclastic','Mogollon','Socorro, NM',28.2,1890.5,'2016-03-01 09:30:00','2016-11-06 01:30:00'),(2,'FC-2',3,2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(3,'Lost',1,42,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Orphan-1',1,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'HH-1',1,1,'another note',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 UNLOCK TABLES;
@@ -143,8 +144,8 @@ CREATE TABLE `IrradiationPositionTbl` (
   KEY `levelID` (`levelID`)
 ) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8;
 
--- 3: an empty hole. 5: refused, its sample was refused. 6: refused, 66573
--- already sits at NM-300 A 1. 7: refused, no position.
+-- 3: an empty hole. 5: imported without its sample, which was refused.
+-- 6: refused, 66573 already sits at NM-300 A 1. 7: refused, no position.
 LOCK TABLES `IrradiationPositionTbl` WRITE;
 INSERT INTO `IrradiationPositionTbl` VALUES (1,'66573',1,1,1,'chipped',12.5,0.00125,2.1e-06,'p1'),(2,'66574',2,1,2,NULL,NULL,NULL,NULL,NULL),(3,NULL,NULL,1,3,NULL,NULL,NULL,NULL,NULL),(4,'66600',1,2,1,NULL,NULL,NULL,NULL,NULL),(5,'66601',3,2,2,NULL,NULL,NULL,NULL,NULL),(6,'66573',1,3,1,NULL,NULL,NULL,NULL,NULL),(7,'66700',NULL,2,NULL,NULL,NULL,NULL,NULL,NULL);
 UNLOCK TABLES;
@@ -193,9 +194,10 @@ CREATE TABLE `LoadTbl` (
   PRIMARY KEY (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
--- L-103: refused, no such user.
+-- L-103: imported without its user, who is not in the dump. L-104: its user
+-- is 'jross' as MySQL compares names (case and trailing spaces ignored).
 LOCK TABLES `LoadTbl` WRITE;
-INSERT INTO `LoadTbl` VALUES ('L-101','2018-03-01 18:00:00',0,'mheizler','221-hole'),('L-102','2018-04-01 18:00:00',1,NULL,NULL),('L-103','2018-05-01 18:00:00',0,'nobody',NULL);
+INSERT INTO `LoadTbl` VALUES ('L-101','2018-03-01 18:00:00',0,'mheizler','221-hole'),('L-102','2018-04-01 18:00:00',1,NULL,NULL),('L-103','2018-05-01 18:00:00',0,'nobody',NULL),('L-104','2018-06-01 18:00:00',0,'JRoss ',NULL);
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `LoadPositionTbl`;
@@ -208,12 +210,12 @@ CREATE TABLE `LoadPositionTbl` (
   `note` text,
   `nxtals` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8;
 
--- 3: refused, no such identifier. 4: refused, no such load. 5: refused, the
--- position of its identifier was refused.
+-- 3: refused, no such identifier. 4: refused, no such load. 6: its load is
+-- 'L-101' as MySQL compares names.
 LOCK TABLES `LoadPositionTbl` WRITE;
-INSERT INTO `LoadPositionTbl` VALUES (1,'66573',1,'L-101',1.5,'big',2),(2,'66574',2,'L-101',NULL,NULL,NULL),(3,'99999',3,'L-101',NULL,NULL,NULL),(4,'66573',1,'L-999',NULL,NULL,NULL),(5,'66601',1,'L-102',NULL,NULL,NULL);
+INSERT INTO `LoadPositionTbl` VALUES (1,'66573',1,'L-101',1.5,'big',2),(2,'66574',2,'L-101',NULL,NULL,NULL),(3,'99999',3,'L-101',NULL,NULL,NULL),(4,'66573',1,'L-999',NULL,NULL,NULL),(5,'66601',1,'L-102',NULL,NULL,NULL),(6,'66600',4,'l-101 ',NULL,NULL,NULL);
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `RepositoryTbl`;

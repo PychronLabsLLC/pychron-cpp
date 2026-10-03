@@ -4,7 +4,6 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -19,6 +18,7 @@
 #include <vector>
 
 #include "legacy_json.hpp"
+#include "pychron/core/calendar.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/ingest/tz.hpp"
 
@@ -73,6 +73,16 @@ constexpr std::array<TableInfo, kTableCount> kTables{{
 std::string lower(std::string text) {
   for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return text;
+}
+
+// A string key as MySQL's default collations (latin1_swedish_ci,
+// utf8_general_ci) compare it: without regard to case or trailing spaces.
+// Folding ASCII letters is enough for the keys the legacy tables use (user,
+// load and spectrometer names, identifiers); the collations also equate
+// accented letters, which this does not.
+std::string fold(std::string_view key) {
+  while (!key.empty() && key.back() == ' ') key.remove_suffix(1);
+  return lower(std::string(key));
 }
 
 bool is_utf8(std::string_view s) {
@@ -171,22 +181,6 @@ std::optional<std::string> base64_decode(std::string_view text) {
   return out;
 }
 
-// "YYYY-MM-DD" naming a day of the calendar.
-bool is_calendar_date(std::string_view text) {
-  if (text.size() != 10 || text[4] != '-' || text[7] != '-') return false;
-  int parts[3] = {0, 0, 0};
-  const std::size_t starts[3] = {0, 5, 8}, lengths[3] = {4, 2, 2};
-  for (std::size_t p = 0; p < 3; ++p)
-    for (std::size_t i = 0; i < lengths[p]; ++i) {
-      const char c = text[starts[p] + i];
-      if (c < '0' || c > '9') return false;
-      parts[p] = parts[p] * 10 + (c - '0');
-    }
-  const std::chrono::year_month_day day{std::chrono::year{parts[0]}, std::chrono::month{static_cast<unsigned>(parts[1])},
-                                        std::chrono::day{static_cast<unsigned>(parts[2])}};
-  return parts[0] >= 1 && day.ok();
-}
-
 bool is_zero_date(std::string_view text) { return text.substr(0, 10) == "0000-00-00"; }
 
 // A uuid with dashes or, as the legacy String(32) column holds it, without.
@@ -225,6 +219,8 @@ struct Manifest {
   std::string sha256;
   // TIMESTAMP columns were dumped in UTC (the dump set its session zone to +00:00).
   bool utc_timestamps = false;
+  // The dump ends with mysqldump's "-- Dump completed" line; true when the manifest does not say.
+  bool dump_completed = true;
   std::vector<ManifestTable> tables;
 
   const ManifestTable* find(std::string_view name) const {
@@ -265,6 +261,7 @@ Result<Manifest> read_manifest(const std::filesystem::path& dir) {
     const std::string zone = lower(it->get<std::string>());
     manifest.utc_timestamps = zone == "+00:00" || zone == "utc";
   }
+  if (const auto it = j.find("dump_completed"); it != j.end() && it->is_boolean()) manifest.dump_completed = it->get<bool>();
   const auto tables = j.find("tables");
   if (tables == j.end() || !tables->is_object()) return bad("no tables");
   const auto files = j.find("files");
@@ -324,6 +321,14 @@ class Fields {
   bool ok() const { return problems_.empty(); }
   void refuse(std::string why) { problems_.push_back(std::move(why)); }
   const std::vector<std::string>& problems() const { return problems_; }
+
+  // A link the store can do without names no usable parent: the row is
+  // imported without it, and the link is reported.
+  struct BrokenLink {
+    std::string column, why;
+  };
+  void unlink(std::string_view column, std::string why) { links_.push_back({std::string(column), std::move(why)}); }
+  const std::vector<BrokenLink>& broken_links() const { return links_; }
 
   std::optional<std::string> text(std::string_view column) {
     std::string out;
@@ -397,12 +402,14 @@ class Fields {
 
   const Json& row_;
   std::vector<std::string> problems_;
+  std::vector<BrokenLink> links_;
 };
 
-// One row of a catalog table: what it becomes.
+// One row of a catalog table: what it becomes. A refused row is one conflict;
+// an imported row is its item and one conflict per link it lost.
 struct Unit {
   std::optional<ingest::CatalogItem> item;
-  std::optional<ingest::ConflictItem> conflict;
+  std::vector<ingest::ConflictItem> conflicts;
 };
 
 // ---------------------------------------------------------------- the catalog
@@ -479,6 +486,7 @@ class Reader {
     return each_row(dir_, source, [&](std::size_t number, const std::string& line) -> Result<void> {
       std::string legacy_id = "line" + std::to_string(number);
       std::vector<std::string> problems;
+      std::vector<Fields::BrokenLink> links;
       std::optional<ingest::CatalogItem> item;
       Json detail = Json::object();
       detail["table"] = source.name;
@@ -507,47 +515,73 @@ class Reader {
           Fields fields(row);
           item = to_item(row, fields, legacy_id);
           problems = fields.problems();
-          if (!problems.empty()) refused_[index].insert(legacy_id);
+          links = fields.broken_links();
+          if (!problems.empty()) refused_[index].insert(fold(legacy_id));
         }
       }
 
+      const Sha256Digest digest = sha256(std::string_view{line});
+      const auto conflict = [&](const std::string& path, Json about) {
+        spell_nul(about);
+        ingest::ConflictItem made;
+        made.key = {manifest_.sha256, path, to_hex(digest)};
+        made.kind = P::ConflictKind::IdentityClash;
+        made.file_sha256 = digest;
+        made.detail_json = dump(about);
+        return made;
+      };
       Unit unit;
       if (problems.empty()) {
         unit.item = std::move(item);
+        // The row is stored; each link it lost is a conflict of its own, named
+        // by the column, so it is never taken for a refusal of the row.
+        for (const auto& link : links) {
+          Json about = detail;
+          about["imported"] = true;
+          about["column"] = link.column;
+          about["value"] = detail["row"].value(link.column, Json());
+          about["reason"] = link.why + "; imported without it";
+          unit.conflicts.push_back(conflict(source.file + "#" + legacy_id + "@" + link.column, std::move(about)));
+        }
       } else {
         std::string reason;
         for (const auto& problem : problems) reason += (reason.empty() ? "" : "; ") + problem;
+        for (const auto& link : links) reason += "; " + link.why;
+        detail["imported"] = false;
         detail["reason"] = reason;
-        spell_nul(detail);
-        const Sha256Digest digest = sha256(std::string_view{line});
-        ingest::ConflictItem conflict;
-        conflict.key = {manifest_.sha256, source.file + "#" + legacy_id, to_hex(digest)};
-        conflict.kind = P::ConflictKind::IdentityClash;
-        conflict.file_sha256 = digest;
-        conflict.detail_json = dump(detail);
-        unit.conflict = std::move(conflict);
+        unit.conflicts.push_back(conflict(source.file + "#" + legacy_id, std::move(detail)));
       }
       units_[index].push_back(std::move(unit));
       return {};
     });
   }
 
-  // The parent row a foreign key names; nullptr when it names none, with the
-  // row refused unless the key is null and not `required`.
+  // Whether the store can hold a row without the parent a foreign key names
+  // (the target column is nullable in migrations/pg/0001_init.sql).
+  enum class Link { Required, Optional };
+
+  // The parent row a foreign key names; nullptr when it names none. A
+  // required link that is null, or names a row that is missing or was
+  // refused, refuses the row. An optional link may be null; one that names no
+  // usable row is dropped and reported (spec section 10.23). A key that
+  // cannot be read refuses the row either way.
   template <class Key>
-  const Key* parent(Fields& f, std::string_view column, TableIndex of, const std::map<int, Key>& rows,
-                    bool required) {
-    const auto id = required ? f.required_integer(column) : f.integer(column);
+  const Key* parent(Fields& f, std::string_view column, TableIndex of, const std::map<int, Key>& rows, Link link) {
+    const auto id = link == Link::Required ? f.required_integer(column) : f.integer(column);
     if (!id) return nullptr;
     if (const auto it = rows.find(*id); it != rows.end()) return &it->second;
-    f.refuse(missing(std::string(column) + " " + std::to_string(*id), of, std::to_string(*id)));
+    std::string why = missing(std::string(column) + " " + std::to_string(*id), of, std::to_string(*id));
+    if (link == Link::Required)
+      f.refuse(std::move(why));
+    else
+      f.unlink(column, std::move(why));
     return nullptr;
   }
 
   // Why a row named by `what` cannot be used.
   std::string missing(const std::string& what, TableIndex of, const std::string& legacy_id) const {
     const std::string name = kTables[of].name;
-    return refused_[of].contains(legacy_id) ? what + " names a " + name + " row that was not imported"
+    return refused_[of].contains(fold(legacy_id)) ? what + " names a " + name + " row that was not imported"
                                             : what + " is not in " + name;
   }
 
@@ -563,6 +597,19 @@ class Reader {
              " and other values; that row is kept");
   }
 
+  // A row of a table whose key is a name. Names that differ by case or
+  // trailing spaces are one name to MySQL: such a row repeats the earlier one
+  // (once()), and the name everything is stored under is the first row's
+  // spelling, which is returned. `known`: the table's names, folded.
+  std::string named(Fields& f, TableIndex index, std::map<std::string, std::string>& known,
+                    const std::string& spelling, Json compared, const std::string& legacy_id) {
+    const std::string key = fold(spelling);
+    compared["name"] = key;
+    const std::string kept = known.try_emplace(key, spelling).first->second;
+    once(f, index, key, compared, legacy_id);
+    return kept;
+  }
+
   // The row without its surrogate key: what two rows are compared by.
   static Json signature(const Json& row) {
     Json out = row;
@@ -570,12 +617,16 @@ class Reader {
     return out;
   }
 
-  std::optional<P::UtcTime> time(Fields& f, std::string_view column) const {
+  // `declared`: the column's type in the legacy ORM (fixtures/README.md,
+  // section 7), used when the dump has no CREATE TABLE to say (mysqldump
+  // --no-create-info). The dump's own type wins.
+  std::optional<P::UtcTime> time(Fields& f, std::string_view column, std::string_view declared) const {
     auto text = f.text(column);
     if (!text || is_zero_date(*text)) return std::nullopt;
     if (text->size() == 10) *text += " 00:00:00";
-    const auto type = current_->types.find(column);
-    if (manifest_.utc_timestamps && type != current_->types.end() && type->second == "timestamp") {
+    const auto dumped = current_->types.find(column);
+    const std::string_view type = dumped != current_->types.end() ? std::string_view{dumped->second} : declared;
+    if (manifest_.utc_timestamps && type == "timestamp") {
       std::string iso = *text;
       if (iso.size() > 10 && iso[10] == ' ') iso[10] = 'T';
       if (auto utc = P::UtcTime::parse(iso + "Z")) return utc;
@@ -618,7 +669,7 @@ class Reader {
     ingest::ProjectItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
-    const PiKey* investigator = parent(f, "principal_investigatorID", kPi, pis_, false);
+    const PiKey* investigator = parent(f, "principal_investigatorID", kPi, pis_, Link::Optional);
     item.checkin_date = date(f, "checkin_date");
     item.comment = f.text("comment");
     item.lab_contact = f.text("lab_contact");
@@ -656,8 +707,8 @@ class Reader {
     const auto id = f.integer("id");
     auto& s = item.fields;
     s.name = f.required("name");
-    const MaterialKey* of = parent(f, "materialID", kMaterial, materials_, true);
-    const ProjectKey* in = parent(f, "projectID", kProject, projects_, true);
+    const MaterialKey* of = parent(f, "materialID", kMaterial, materials_, Link::Required);
+    const ProjectKey* in = parent(f, "projectID", kProject, projects_, Link::Required);
     s.note = f.text("note");
     s.igsn = f.text("igsn");
     s.lat = f.number("lat");
@@ -671,8 +722,8 @@ class Reader {
     s.lithology_type = f.text("lithology_type");
     s.lithology_group = f.text("lithology_group");
     s.approximate_age = f.number("approximate_age");
-    s.created = time(f, "create_date");
-    s.updated = time(f, "update_date");
+    s.created = time(f, "create_date", "datetime");
+    s.updated = time(f, "update_date", "datetime");
     if (f.ok() && id && of && in) {
       item.project = in->name;
       item.material = of->name;
@@ -695,7 +746,7 @@ class Reader {
     ingest::IrradiationItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
-    item.created = time(f, "create_date");
+    item.created = time(f, "create_date", "timestamp");
     if (f.ok() && id) {
       irradiations_.emplace(*id, item.name);
       once(f, kIrradiation, item.name, signature(row), legacy_id);
@@ -707,7 +758,7 @@ class Reader {
     ingest::LevelItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
-    const std::string* in = parent(f, "irradiationID", kIrradiation, irradiations_, true);
+    const std::string* in = parent(f, "irradiationID", kIrradiation, irradiations_, Link::Required);
     item.holder = f.text("holder");
     item.z = f.number("z");
     item.note = f.text("note");
@@ -724,8 +775,8 @@ class Reader {
 
   ingest::CatalogItem position(const Json& row, Fields& f, const std::string& legacy_id) {
     ingest::PositionItem item;
-    const LevelKey* in = parent(f, "levelID", kLevel, levels_, true);
-    const SampleKey* of = parent(f, "sampleID", kSample, samples_, false);
+    const LevelKey* in = parent(f, "levelID", kLevel, levels_, Link::Required);
+    const SampleKey* of = parent(f, "sampleID", kSample, samples_, Link::Optional);
     const auto hole = f.required_integer("position");
     item.identifier = f.text("identifier").value_or("");
     item.weight = f.number("weight");
@@ -752,13 +803,14 @@ class Reader {
       once(f, kPosition, where, compared, legacy_id);
       if (f.ok() && !item.identifier.empty()) {
         // An identifier sits at one position.
-        const auto [it, inserted] = identifiers_.try_emplace(item.identifier, where, legacy_id);
-        if (!inserted && it->second.first != where)
+        const auto [it, inserted] =
+            identifiers_.try_emplace(fold(item.identifier), Placed{where, legacy_id, item.identifier});
+        if (!inserted && it->second.where != where)
           f.refuse("identifier " + item.identifier + " already sits at the position of IrradiationPositionTbl " +
-                   it->second.second);
+                   it->second.legacy_id);
       }
     }
-    if (!f.ok() && !item.identifier.empty()) refused_identifiers_.insert(item.identifier);
+    if (!f.ok() && !item.identifier.empty()) refused_identifiers_.insert(fold(item.identifier));
     return item;
   }
 
@@ -768,10 +820,7 @@ class Reader {
     item.email = f.text("email");
     item.affiliation = f.text("affiliation");
     item.category = f.text("category");
-    if (f.ok()) {
-      users_.insert(item.name);
-      once(f, kUser, item.name, row, legacy_id);
-    }
+    if (f.ok()) item.name = named(f, kUser, users_, item.name, row, legacy_id);
     return item;
   }
 
@@ -780,59 +829,62 @@ class Reader {
     // Lower case, as the analysis and reference imports name spectrometers.
     item.spec.name = lower(f.required("name"));
     item.spec.kind = f.text("kind");
-    if (f.ok()) {
-      Json compared = row;
-      compared["name"] = item.spec.name;
-      once(f, kMassSpec, item.spec.name, compared, legacy_id);
-    }
+    if (f.ok()) item.spec.name = named(f, kMassSpec, spectrometers_, item.spec.name, row, legacy_id);
     return item;
   }
 
   ingest::CatalogItem extract_device(const Json& row, Fields& f, const std::string& legacy_id) {
     ingest::ExtractDeviceItem item;
     item.name = f.required("name");
-    once(f, kExtractDevice, item.name, row, legacy_id);
+    if (f.ok()) item.name = named(f, kExtractDevice, devices_, item.name, row, legacy_id);
     return item;
   }
 
   ingest::CatalogItem load(const Json& row, Fields& f, const std::string& legacy_id) {
     ingest::LoadItem item;
     item.spec.name = f.required("name");
-    item.spec.created = time(f, "create_date");
+    item.spec.created = time(f, "create_date", "timestamp");
     item.spec.archived = f.flag("archived").value_or(false);
     item.holder_name = f.text("holderName");
-    if (auto by = f.text("username")) {
-      if (users_.contains(*by))
-        item.created_by = std::move(*by);
-      else
-        f.refuse(missing("username '" + *by + "'", kUser, *by));
+    Json compared = row;
+    if (const auto by = f.text("username")) {
+      if (const auto creator = users_.find(fold(*by)); creator != users_.end()) {
+        item.created_by = creator->second;
+        compared["username"] = creator->second;
+      } else {
+        f.unlink("username", missing("username '" + *by + "'", kUser, *by));
+      }
     }
-    if (f.ok()) {
-      loads_.insert(item.spec.name);
-      once(f, kLoad, item.spec.name, row, legacy_id);
-    }
+    if (f.ok()) item.spec.name = named(f, kLoad, loads_, item.spec.name, compared, legacy_id);
     return item;
   }
 
   ingest::CatalogItem load_position(const Json& row, Fields& f, const std::string& legacy_id) {
     ingest::LoadPositionItem item;
-    item.load = f.required("loadName");
-    if (!item.load.empty() && !loads_.contains(item.load))
-      f.refuse(missing("loadName '" + item.load + "'", kLoad, item.load));
-    item.identifier = f.required("identifier");
-    if (!item.identifier.empty() && !identifiers_.contains(item.identifier))
-      f.refuse("identifier " + item.identifier +
-               (refused_identifiers_.contains(item.identifier)
-                    ? " names an IrradiationPositionTbl row that was not imported"
-                    : " is not in IrradiationPositionTbl"));
+    Json compared = signature(row);
+    // Both parents are stored in their own spelling.
+    if (const std::string tray = f.required("loadName"); !tray.empty()) {
+      if (const auto found = loads_.find(fold(tray)); found != loads_.end())
+        compared["loadName"] = item.load = found->second;
+      else
+        f.refuse(missing("loadName '" + tray + "'", kLoad, tray));
+    }
+    if (const std::string loaded = f.required("identifier"); !loaded.empty()) {
+      if (const auto found = identifiers_.find(fold(loaded)); found != identifiers_.end())
+        compared["identifier"] = item.identifier = found->second.spelling;
+      else
+        f.refuse("identifier " + loaded +
+                 (refused_identifiers_.contains(fold(loaded))
+                      ? " names an IrradiationPositionTbl row that was not imported"
+                      : " is not in IrradiationPositionTbl"));
+    }
     const auto hole = f.required_integer("position");
     item.weight = f.number("weight");
     item.nxtals = f.integer("nxtals");
     item.note = f.text("note");
     if (f.ok() && hole) {
       item.position = *hole;
-      once(f, kLoadPosition, item.load + "\n" + std::to_string(*hole) + "\n" + item.identifier, signature(row),
-           legacy_id);
+      once(f, kLoadPosition, item.load + "\n" + std::to_string(*hole) + "\n" + item.identifier, compared, legacy_id);
     }
     return item;
   }
@@ -843,7 +895,7 @@ class Reader {
   const ManifestTable* current_ = nullptr;  // the table being read
 
   std::array<std::vector<Unit>, kTableCount> units_;
-  std::array<std::set<std::string>, kTableCount> refused_;  // legacy ids of refused rows
+  std::array<std::set<std::string>, kTableCount> refused_;  // legacy ids of refused rows, folded
   // natural key -> (what the first row with it says, its legacy id)
   std::array<std::map<std::string, std::pair<std::string, std::string>>, kTableCount> seen_;
 
@@ -854,9 +906,17 @@ class Reader {
   std::map<int, SampleKey> samples_;
   std::map<int, std::string> irradiations_;
   std::map<int, LevelKey> levels_;
-  std::map<std::string, std::pair<std::string, std::string>> identifiers_;  // -> (its position, the row's legacy id)
-  std::set<std::string> refused_identifiers_;
-  std::set<std::string> users_, loads_;
+  // Rows that later tables may name by a string key, by that key folded: MySQL
+  // matches such keys without regard to case or trailing spaces. The value is
+  // the parent's own spelling, which is what references to it are stored as.
+  struct Placed {
+    std::string where;      // the position, as a natural key
+    std::string legacy_id;  // of the IrradiationPositionTbl row
+    std::string spelling;   // the identifier as that row writes it
+  };
+  std::map<std::string, Placed> identifiers_;
+  std::set<std::string> refused_identifiers_;  // folded
+  std::map<std::string, std::string> users_, spectrometers_, devices_, loads_;
 };
 
 std::optional<std::size_t> parse_index(std::string_view text) {
@@ -878,6 +938,7 @@ class CatalogAdapter::Impl {
   std::string url;
   std::string sha256;
   std::size_t batch_rows = 1;
+  std::vector<std::string> warnings;
   std::vector<Unit> units;                          // every row, in the order sent
   std::array<std::size_t, kTableCount + 1> starts{};  // where each table's rows begin in `units`
   std::size_t next = 0;
@@ -927,6 +988,9 @@ Result<std::unique_ptr<CatalogAdapter>> CatalogAdapter::open(CatalogAdapterConfi
     impl->url = absolute.lexically_normal().string();
     while (impl->url.size() > 1 && (impl->url.back() == '/' || impl->url.back() == '\\')) impl->url.pop_back();
     impl->sha256 = manifest->sha256;
+    if (!manifest->dump_completed)
+      impl->warnings.push_back("catalog dump: " + impl->url +
+                               ": the dump has no completion marker; it may be truncated");
     impl->batch_rows = static_cast<std::size_t>(config.batch_rows);
     for (std::size_t index = 0; index < kTableCount; ++index) {
       impl->starts[index] = impl->units.size();
@@ -943,6 +1007,8 @@ Result<ingest::SourceDescription> CatalogAdapter::describe() {
   return ingest::SourceDescription{P::ImportSourceKind::LegacyDb, impl_->url, "", impl_->sha256};
 }
 
+std::vector<std::string> CatalogAdapter::warnings() const { return impl_->warnings; }
+
 Result<int> CatalogAdapter::plan(std::optional<std::string> resume_token, ingest::IImportState&) {
   impl_->next = resume_token ? impl_->place(*resume_token).value_or(0) : 0;
   return static_cast<int>(impl_->units.size() - impl_->next);
@@ -956,7 +1022,7 @@ Result<std::optional<ingest::ImportBatch>> CatalogAdapter::next_batch() {
     ingest::ImportBatch batch;
     for (std::size_t i = d.next; i < end; ++i) {
       if (d.units[i].item) batch.catalog.push_back(*d.units[i].item);
-      if (d.units[i].conflict) batch.conflicts.push_back(*d.units[i].conflict);
+      for (const auto& conflict : d.units[i].conflicts) batch.conflicts.push_back(conflict);
     }
     d.next = end;
     batch.resume_token = d.token(end);

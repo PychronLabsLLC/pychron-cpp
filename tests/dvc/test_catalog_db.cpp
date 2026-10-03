@@ -3,8 +3,8 @@
 //
 // fixtures/catalog is what tools/legacy_dump_to_jsonl.py writes for
 // tools/tests/fixtures/legacy_catalog.sql (a test of the tool checks that it
-// is current). The dump has rows that must be refused; the comments in it say
-// which and why.
+// is current). The dump has rows that must be refused, and rows that are
+// imported without a link; the comments in it say which and why.
 
 #include <gtest/gtest.h>
 
@@ -42,7 +42,7 @@ namespace {
 const std::filesystem::path kFixture = std::filesystem::path(PYCHRON_DVC_FIXTURES_DIR) / "catalog";
 const char* const kZone = "America/Denver";
 // Rows of the fixture's catalog tables: one unit each.
-constexpr int kRows = 42;
+constexpr int kRows = 44;
 
 std::string err(const Error& e) { return to_string(e); }
 
@@ -288,6 +288,15 @@ std::vector<Item> items_of(const ingest::ImportBatch& batch) {
 
 json detail_of(const ingest::ConflictItem& conflict) { return json::parse(conflict.detail_json); }
 
+// The rows a batch accounts for: a row is an item (with a conflict for each
+// link it lost, path "...@<column>") or a refusal.
+std::size_t rows_of(const ingest::ImportBatch& batch) {
+  std::size_t refusals = 0;
+  for (const auto& conflict : batch.conflicts)
+    if (conflict.key.path.find('@') == std::string::npos) ++refusals;
+  return batch.catalog.size() + refusals;
+}
+
 const char* name_of(const ingest::CatalogItem& item) {
   struct Name {
     const char* operator()(const ingest::PiItem&) const { return "pi"; }
@@ -338,13 +347,13 @@ TEST_P(CatalogDb, ImportsInForeignKeyOrder) {
   ASSERT_TRUE(stats) << err(stats.error());
   EXPECT_TRUE(stats->finished);
   EXPECT_EQ(stats->batches, 1);
-  EXPECT_EQ(stats->conflicts, 12);
+  EXPECT_EQ(stats->conflicts, 10);
 
   const std::map<std::string, long long> want{
-      {"principal_investigator", 3}, {"project", 3},  {"material", 2},          {"sample", 2},
-      {"irradiation", 2},            {"level", 3},    {"irradiation_position", 4}, {"identifier", 3},
-      {"app_user", 2},               {"mass_spectrometer", 2}, {"extract_device", 2}, {"load", 2},
-      {"load_position", 2},          {"ref_object", 2}, {"import_conflict", 12}};
+      {"principal_investigator", 3}, {"project", 4},  {"material", 2},          {"sample", 3},
+      {"irradiation", 2},            {"level", 3},    {"irradiation_position", 5}, {"identifier", 4},
+      {"app_user", 2},               {"mass_spectrometer", 2}, {"extract_device", 2}, {"load", 4},
+      {"load_position", 4},          {"ref_object", 2}, {"import_conflict", 10}};
   for (const auto& [table, n] : want) EXPECT_EQ(world_->count(table.c_str()), n) << table;
 
   // A sample is linked to its project (and that to its investigator) and its material.
@@ -485,6 +494,15 @@ TEST_P(CatalogDb, PositionUserSpectrometerAndLoadKeepTheirColumns) {
   EXPECT_TRUE(r.value("created_by_user_uuid").isNull());
   EXPECT_TRUE(r.value("holder_ref_uuid").isNull());
 
+  // String keys match as MySQL's collations match them: 'JRoss ' is the user jross, 'l-101 ' the load L-101.
+  EXPECT_EQ(world_->text("SELECT u.name AS v FROM load l JOIN app_user u ON u.uuid = l.created_by_user_uuid "
+                         "WHERE l.name = 'L-104'"),
+            "jross");
+  EXPECT_EQ(world_->text("SELECT d.identifier AS v FROM load_position p JOIN load l ON l.uuid = p.load_uuid "
+                         "JOIN identifier d ON d.uuid = p.identifier_uuid WHERE l.name = 'L-101' AND p.position = 4"),
+            "66600");
+  EXPECT_EQ(world_->count("app_user"), 2);
+
   r = world_->one("SELECT p.weight AS weight, p.nxtals AS nxtals, p.note AS note, d.identifier AS identifier "
                   "FROM load_position p JOIN load l ON l.uuid = p.load_uuid "
                   "JOIN identifier d ON d.uuid = p.identifier_uuid WHERE l.name = 'L-101' AND p.position = 1");
@@ -498,20 +516,21 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
   import_fixture();
   const std::string sha = fixture_sha();
   const std::string url = std::filesystem::absolute(kFixture).lexically_normal().string();
-  // path -> what the reason says
+  // path -> what the reason says. A path that ends in "@<column>" is a row
+  // that was imported without the link that column makes.
   const std::map<std::string, std::string> want{
-      {"ProjectTbl.jsonl#3", "principal_investigatorID 99 is not in PrincipalInvestigatorTbl"},
+      {"ProjectTbl.jsonl#3@principal_investigatorID",
+       "principal_investigatorID 99 is not in PrincipalInvestigatorTbl; imported without it"},
       {"SampleTbl.jsonl#3", "projectID 42 is not in ProjectTbl"},
-      {"SampleTbl.jsonl#4", "projectID 3 names a ProjectTbl row that was not imported"},
       {"SampleTbl.jsonl#5", "has the natural key of SampleTbl 1 and other values; that row is kept"},
       {"LevelTbl.jsonl#4", "irradiationID 7 is not in IrradiationTbl"},
-      {"IrradiationPositionTbl.jsonl#5", "sampleID 3 names a SampleTbl row that was not imported"},
+      {"IrradiationPositionTbl.jsonl#5@sampleID",
+       "sampleID 3 names a SampleTbl row that was not imported; imported without it"},
       {"IrradiationPositionTbl.jsonl#6", "identifier 66573 already sits at the position of IrradiationPositionTbl 1"},
       {"IrradiationPositionTbl.jsonl#7", "position is missing"},
-      {"LoadTbl.jsonl#L-103", "username 'nobody' is not in UserTbl"},
+      {"LoadTbl.jsonl#L-103@username", "username 'nobody' is not in UserTbl; imported without it"},
       {"LoadPositionTbl.jsonl#3", "identifier 99999 is not in IrradiationPositionTbl"},
       {"LoadPositionTbl.jsonl#4", "loadName 'L-999' is not in LoadTbl"},
-      {"LoadPositionTbl.jsonl#5", "identifier 66601 names an IrradiationPositionTbl row that was not imported"},
   };
   const auto conflicts = world_->conflicts();
   ASSERT_EQ(conflicts.size(), want.size());
@@ -524,10 +543,17 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
     EXPECT_TRUE(conflict.file_sha256.has_value()) << conflict.path;
     const json detail = json::parse(conflict.detail_json);
     const std::string table = conflict.path.substr(0, conflict.path.find(".jsonl"));
+    const auto hash = conflict.path.find('#'), link = conflict.path.find('@');
     EXPECT_EQ(detail.at("table"), table) << conflict.path;
-    EXPECT_EQ(detail.at("legacy_id"), conflict.path.substr(conflict.path.find('#') + 1)) << conflict.path;
+    EXPECT_EQ(detail.at("legacy_id"), conflict.path.substr(hash + 1, link == std::string::npos ? link : link - hash - 1))
+        << conflict.path;
     EXPECT_EQ(detail.at("reason"), expected->second) << conflict.path;
     EXPECT_TRUE(detail.at("row").is_object()) << conflict.path;
+    EXPECT_EQ(detail.at("imported"), link != std::string::npos) << conflict.path;
+    if (link != std::string::npos) {
+      EXPECT_EQ(detail.at("column"), conflict.path.substr(link + 1)) << conflict.path;
+      EXPECT_EQ(detail.at("value"), detail.at("row").at(conflict.path.substr(link + 1))) << conflict.path;
+    }
   }
   // The refused row is kept whole in the conflict.
   const auto lost = std::find_if(conflicts.begin(), conflicts.end(),
@@ -535,15 +561,100 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
   ASSERT_NE(lost, conflicts.end());
   EXPECT_EQ(json::parse(lost->detail_json).at("row").at("name"), "Lost");
   // Nothing of a refused row is stored, nor made up for it.
-  EXPECT_EQ(world_->count("sample"), 2);
+  EXPECT_EQ(world_->count("sample"), 3);
   EXPECT_EQ(world_->text("SELECT note AS v FROM sample WHERE name = 'HH-1'"), "collected at the base, north side");
-  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM project WHERE name = 'Orphan'").value("n").toInt(), 0);
-  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM identifier WHERE identifier IN ('66601', '66700', '99999')")
+  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM sample WHERE name = 'Lost'").value("n").toInt(), 0);
+  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM identifier WHERE identifier IN ('66700', '99999')")
                 .value("n")
                 .toInt(),
             0);
-  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM load WHERE name IN ('L-103', 'L-999')").value("n").toInt(), 0);
+  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM load WHERE name = 'L-999'").value("n").toInt(), 0);
   EXPECT_EQ(world_->one("SELECT count(*) AS n FROM app_user WHERE name = 'nobody'").value("n").toInt(), 0);
+}
+
+// A link the store can do without does not cost the row, nor the rows under
+// it (spec section 10.23).
+TEST_P(CatalogDb, BrokenOptionalLinkIsImportedWithoutIt) {
+  import_fixture();
+  // A project whose investigator is not in the dump, and the sample in it.
+  EXPECT_TRUE(world_->is_null("SELECT pi_uuid AS v FROM project WHERE name = 'Orphan'"));
+  EXPECT_EQ(world_->text("SELECT p.name AS v FROM sample s JOIN project p ON p.uuid = s.project_uuid "
+                         "WHERE s.name = 'Orphan-1'"),
+            "Orphan");
+  // A position whose sample was refused: the identifier still sits in it, and can be loaded.
+  auto r = world_->one("SELECT p.position AS position, p.sample_uuid AS sample, l.name AS level FROM identifier d "
+                       "JOIN irradiation_position p ON p.uuid = d.position_uuid JOIN level l ON l.uuid = p.level_uuid "
+                       "WHERE d.identifier = '66601'");
+  EXPECT_EQ(r.value("position").toInt(), 2);
+  EXPECT_EQ(pd::to_std(r.value("level")), "B");
+  EXPECT_TRUE(r.value("sample").isNull());
+  EXPECT_EQ(world_->text("SELECT l.name AS v FROM load_position p JOIN load l ON l.uuid = p.load_uuid "
+                         "JOIN identifier d ON d.uuid = p.identifier_uuid WHERE d.identifier = '66601'"),
+            "L-102");
+  // A load whose user is not in the dump.
+  r = world_->one("SELECT created_by_user_uuid, created_utc FROM load WHERE name = 'L-103'");
+  EXPECT_TRUE(r.value("created_by_user_uuid").isNull());
+  EXPECT_EQ(pd::to_time(r.value("created_utc")).iso(), "2018-05-01T18:00:00.000000Z");
+}
+
+// One sample that cannot be stored (no material) does not take its positions,
+// their identifiers and the loads they sit in with it.
+TEST_P(CatalogDb, RefusedSampleKeepsItsPositionsAndLoads) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
+      .table("SampleTbl", {R"({"id":1,"name":"S","materialID":null,"projectID":1})"})
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","sampleID":1,"levelID":1,"position":1,"weight":2.5})",
+                 R"({"id":2,"identifier":"101","sampleID":1,"levelID":1,"position":2})",
+             })
+      .table("LoadTbl", {R"({"name":"L","create_date":null,"archived":0,"username":null,"holderName":null})"})
+      .table("LoadPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","position":1,"loadName":"L"})",
+                 R"({"id":2,"identifier":"101","position":2,"loadName":"L"})",
+             })
+      .done();
+  auto stats = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+
+  std::map<std::string, std::string> reasons;
+  for (const auto& conflict : world_->conflicts())
+    reasons[conflict.path] = json::parse(conflict.detail_json).at("reason").get<std::string>();
+  EXPECT_EQ(reasons, (std::map<std::string, std::string>{
+                         {"SampleTbl.jsonl#1", "materialID is missing"},
+                         {"IrradiationPositionTbl.jsonl#1@sampleID",
+                          "sampleID 1 names a SampleTbl row that was not imported; imported without it"},
+                         {"IrradiationPositionTbl.jsonl#2@sampleID",
+                          "sampleID 1 names a SampleTbl row that was not imported; imported without it"},
+                     }));
+  EXPECT_EQ(world_->count("sample"), 0);
+  EXPECT_EQ(world_->count("irradiation_position"), 2);
+  EXPECT_EQ(world_->count("identifier"), 2);
+  EXPECT_EQ(world_->count("load_position"), 2);
+  const auto r = world_->one("SELECT p.weight AS weight, p.sample_uuid AS sample, l.name AS level, i.name AS irradiation "
+                             "FROM identifier d JOIN irradiation_position p ON p.uuid = d.position_uuid "
+                             "JOIN level l ON l.uuid = p.level_uuid JOIN irradiation i ON i.uuid = l.irradiation_uuid "
+                             "WHERE d.identifier = '100'");
+  EXPECT_DOUBLE_EQ(r.value("weight").toDouble(), 2.5);
+  EXPECT_TRUE(r.value("sample").isNull());
+  EXPECT_EQ(pd::to_std(r.value("level")), "A");
+  EXPECT_EQ(pd::to_std(r.value("irradiation")), "NM-1");
+  EXPECT_EQ(world_->one("SELECT count(*) AS n FROM load_position p JOIN identifier d ON d.uuid = p.identifier_uuid "
+                        "WHERE d.identifier IN ('100', '101')")
+                .value("n")
+                .toInt(),
+            2);
+
+  // Again: nothing new, the conflicts are not duplicated.
+  auto replay = writer_config();
+  replay.replay = true;
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path()), std::nullopt, replay));
+  EXPECT_EQ(world_->count("import_conflict"), 3);
 }
 
 TEST_P(CatalogDb, ResumeFromToken) {
@@ -601,7 +712,7 @@ TEST_P(CatalogDb, SecondRunIsNoOp) {
 TEST_P(CatalogDb, OneHistoryOneResult) {
   import_fixture();
   const auto want = snapshot_of(*world_);
-  ASSERT_EQ(want.size(), 47u);  // every stored row and the source
+  ASSERT_EQ(want.size(), 53u);  // every stored row and the source
 
   for (const int batch_rows : {1, 2, 2000}) {
     {
@@ -609,7 +720,7 @@ TEST_P(CatalogDb, OneHistoryOneResult) {
       auto stats = run_import(*w, adapter_config(kFixture, batch_rows));
       ASSERT_TRUE(stats) << batch_rows << ": " << err(stats.error());
       EXPECT_TRUE(stats->finished);
-      EXPECT_EQ(stats->conflicts, 12) << batch_rows;
+      EXPECT_EQ(stats->conflicts, 10) << batch_rows;
       const auto got = snapshot_of(*w);
       EXPECT_TRUE(got == want) << "batch_rows " << batch_rows << ": " << first_difference(got, want);
     }
@@ -656,7 +767,8 @@ TEST(CatalogDbAdapter, SendsParentsBeforeChildren) {
     if (order.empty() || order.back() != name_of(item)) order.emplace_back(name_of(item));
   EXPECT_EQ(order, (std::vector<std::string>{"pi", "project", "material", "sample", "irradiation", "level", "position",
                                               "user", "mass_spectrometer", "extract_device", "load", "load_position"}));
-  EXPECT_EQ(batches[0].catalog.size() + batches[0].conflicts.size(), static_cast<std::size_t>(kRows));
+  EXPECT_EQ(rows_of(batches[0]), static_cast<std::size_t>(kRows));
+  EXPECT_EQ(batches[0].conflicts.size(), 10u);
   EXPECT_EQ(batches[0].done, kRows);
   EXPECT_EQ(batches[0].total, kRows);
   EXPECT_EQ(batches[0].head, fixture_sha());
@@ -674,7 +786,7 @@ TEST(CatalogDbAdapter, BatchesAreTheSameRowsHoweverTheyAreCut) {
     EXPECT_EQ(batches.size(), static_cast<std::size_t>((kRows + batch_rows - 1) / batch_rows)) << batch_rows;
     std::vector<std::string> items, conflicts;
     for (const auto& batch : batches) {
-      EXPECT_LE(batch.catalog.size() + batch.conflicts.size(), static_cast<std::size_t>(batch_rows));
+      EXPECT_LE(rows_of(batch), static_cast<std::size_t>(batch_rows));
       for (const auto& item : batch.catalog) items.emplace_back(name_of(item));
       for (const auto& conflict : batch.conflicts) conflicts.push_back(conflict.key.path);
     }
@@ -961,11 +1073,214 @@ TEST(CatalogDbAdapter, TimesFollowTheColumnTypeAndTheDumpsZone) {
     EXPECT_EQ(created(dir).at("winter"), "2018-01-16T00:00:00.000000Z");
   }
   {
-    // No CREATE TABLE in the dump: the type is not known, lab time.
+    // No CREATE TABLE in the dump (--no-create-info): the type is the one the
+    // legacy ORM declares, TIMESTAMP for an irradiation's and a load's
+    // create_date, DATETIME for a sample's dates.
     DumpDir dir;
-    dir.table("IrradiationTbl", irradiations).done();
+    dir.table("IrradiationTbl", irradiations)
+        .table("LoadTbl", {R"({"name":"L","create_date":"2018-01-15 17:00:00","archived":0})"})
+        .table("ProjectTbl", {R"({"id":1,"name":"P"})"})
+        .table("MaterialTbl", {R"({"id":1,"name":"M"})"})
+        .table("SampleTbl",
+               {R"({"id":1,"name":"S","materialID":1,"projectID":1,"create_date":"2018-01-15 17:00:00","update_date":"2018-01-15 18:00:00"})"})
+        .done();
+    const auto batch = only_batch(dir);
+    const auto made = items_of<ingest::IrradiationItem>(batch);
+    ASSERT_EQ(made.size(), 5u);
+    EXPECT_EQ(made[0].created->iso(), "2018-01-15T17:00:00.000000Z");
+    const auto loads = items_of<ingest::LoadItem>(batch);
+    ASSERT_EQ(loads.size(), 1u);
+    EXPECT_EQ(loads[0].spec.created->iso(), "2018-01-15T17:00:00.000000Z");
+    const auto samples = items_of<ingest::SampleItem>(batch);
+    ASSERT_EQ(samples.size(), 1u);
+    EXPECT_EQ(samples[0].fields.created->iso(), "2018-01-16T00:00:00.000000Z");
+    EXPECT_EQ(samples[0].fields.updated->iso(), "2018-01-16T01:00:00.000000Z");
+  }
+  {
+    // Neither a CREATE TABLE nor a session zone: lab time.
+    DumpDir dir;
+    dir.table("IrradiationTbl", irradiations).set("time_zone", nullptr).done();
     EXPECT_EQ(created(dir).at("winter"), "2018-01-16T00:00:00.000000Z");
   }
+  {
+    // A type the dump declares wins over the ORM's.
+    DumpDir dir;
+    dir.table("SampleTbl", {R"({"id":1,"name":"S","materialID":1,"projectID":1,"create_date":"2018-01-15 17:00:00"})"})
+        .table("ProjectTbl", {R"({"id":1,"name":"P"})"})
+        .table("MaterialTbl", {R"({"id":1,"name":"M"})"})
+        .set("columns", {{"SampleTbl", {{"create_date", "timestamp"}}}})
+        .done();
+    const auto samples = items_of<ingest::SampleItem>(only_batch(dir));
+    ASSERT_EQ(samples.size(), 1u);
+    EXPECT_EQ(samples[0].fields.created->iso(), "2018-01-15T17:00:00.000000Z");
+  }
+}
+
+TEST(CatalogDbAdapter, BrokenOptionalLinkGivesTheItemAndAConflict) {
+  DumpDir dir;
+  dir.table("PrincipalInvestigatorTbl", {R"({"id":1,"last_name":null})"})
+      .table("ProjectTbl",
+             {
+                 R"({"id":1,"name":"dangling","principal_investigatorID":9})",
+                 R"({"id":2,"name":"refused parent","principal_investigatorID":1})",
+                 // A key that cannot be read is not a broken link: the row is refused.
+                 R"({"id":3,"name":"unreadable","principal_investigatorID":"abc"})",
+             })
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1"})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","sampleID":7,"levelID":1,"position":1})",
+                 // Refused for another reason: one conflict, which names the link too.
+                 R"({"id":2,"identifier":"101","sampleID":7,"levelID":1,"position":null})",
+             })
+      .table("LoadTbl", {R"({"name":"L","username":"ghost","archived":1})"})
+      .done();
+  const auto batch = only_batch(dir);
+
+  const auto projects = items_of<ingest::ProjectItem>(batch);
+  ASSERT_EQ(projects.size(), 2u);
+  EXPECT_EQ(projects[0].name, "dangling");
+  EXPECT_EQ(projects[0].pi_last_name, std::nullopt);
+  EXPECT_EQ(projects[1].name, "refused parent");
+  EXPECT_EQ(projects[1].pi_last_name, std::nullopt);
+  const auto positions = items_of<ingest::PositionItem>(batch);
+  ASSERT_EQ(positions.size(), 1u);
+  EXPECT_EQ(positions[0].identifier, "100");
+  EXPECT_EQ(positions[0].sample, std::nullopt);
+  EXPECT_EQ(positions[0].project, std::nullopt);
+  const auto loads = items_of<ingest::LoadItem>(batch);
+  ASSERT_EQ(loads.size(), 1u);
+  EXPECT_EQ(loads[0].created_by, std::nullopt);
+  EXPECT_TRUE(loads[0].spec.archived);
+
+  std::map<std::string, json> details;
+  for (const auto& conflict : batch.conflicts) {
+    EXPECT_EQ(conflict.kind, ConflictKind::IdentityClash);
+    EXPECT_TRUE(details.emplace(conflict.key.path, detail_of(conflict)).second) << conflict.key.path;
+  }
+  const std::map<std::string, std::string> want{
+      {"PrincipalInvestigatorTbl.jsonl#1", "last_name is missing"},
+      {"ProjectTbl.jsonl#1@principal_investigatorID",
+       "principal_investigatorID 9 is not in PrincipalInvestigatorTbl; imported without it"},
+      {"ProjectTbl.jsonl#2@principal_investigatorID",
+       "principal_investigatorID 1 names a PrincipalInvestigatorTbl row that was not imported; imported without it"},
+      {"ProjectTbl.jsonl#3", "principal_investigatorID is not a whole number"},
+      {"IrradiationPositionTbl.jsonl#1@sampleID", "sampleID 7 is not in SampleTbl; imported without it"},
+      {"IrradiationPositionTbl.jsonl#2", "position is missing; sampleID 7 is not in SampleTbl"},
+      {"LoadTbl.jsonl#L@username", "username 'ghost' is not in UserTbl; imported without it"},
+  };
+  ASSERT_EQ(details.size(), want.size());
+  for (const auto& [path, reason] : want) {
+    ASSERT_TRUE(details.contains(path)) << path;
+    EXPECT_EQ(details.at(path).at("reason"), reason) << path;
+    EXPECT_EQ(details.at(path).at("imported"), path.find('@') != std::string::npos) << path;
+  }
+  const json& link = details.at("ProjectTbl.jsonl#1@principal_investigatorID");
+  EXPECT_EQ(link.at("table"), "ProjectTbl");
+  EXPECT_EQ(link.at("legacy_id"), "1");
+  EXPECT_EQ(link.at("column"), "principal_investigatorID");
+  EXPECT_EQ(link.at("value"), 9);
+  EXPECT_EQ(link.at("row").at("name"), "dangling");
+  EXPECT_EQ(details.at("LoadTbl.jsonl#L@username").at("value"), "ghost");
+  // One row is still one unit.
+  EXPECT_EQ(batch.done, 9);
+}
+
+// MySQL's default collations compare text without regard to case or trailing
+// spaces, so a foreign key may spell its parent differently (spec section 10.24).
+TEST(CatalogDbAdapter, StringKeysMatchWithoutCaseOrTrailingSpaces) {
+  DumpDir dir;
+  dir.table("IrradiationTbl", {R"({"id":1,"name":"NM-1"})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"ba-01","levelID":1,"position":1})",
+                 // The same identifier, as MySQL compares it, in another hole.
+                 R"({"id":2,"identifier":"BA-01 ","levelID":1,"position":2})",
+             })
+      .table("UserTbl",
+             {
+                 R"({"name":"jross","affiliation":"NMT","category":null,"email":null})",
+                 // The same user again, saying the same: nothing new.
+                 R"({"name":"JRoss","affiliation":"NMT","category":null,"email":null})",
+                 // The same user again, saying something else.
+                 R"({"name":"JROSS  ","affiliation":"UNM","category":null,"email":null})",
+                 // A leading space is part of a name.
+                 R"({"name":" jross","affiliation":null,"category":null,"email":null})",
+             })
+      .table("ExtractDeviceTbl", {R"({"name":"Fusions CO2"})", R"({"name":"fusions co2 "})"})
+      .table("LoadTbl",
+             {
+                 R"({"name":"L-1","username":"JROSS","archived":0})",
+                 R"({"name":"L-2","username":"jross   ","archived":0})",
+                 R"({"name":"l-2","username":"jross","archived":0})",
+                 R"({"name":"L-3","username":"Jross","archived":1})",
+                 R"({"name":"l-3 ","username":"jross","archived":0})",
+             })
+      .table("LoadPositionTbl",
+             {
+                 R"({"id":1,"identifier":"BA-01","position":1,"loadName":"l-1 "})",
+                 R"({"id":2,"identifier":"ba-01  ","position":2,"loadName":"L-2"})",
+                 R"({"id":3,"identifier":" ba-01","position":3,"loadName":"L-2"})",
+             })
+      .done();
+  const auto batch = only_batch(dir);
+
+  const auto users = items_of<ingest::UserItem>(batch);
+  ASSERT_EQ(users.size(), 3u);
+  EXPECT_EQ(users[0].name, "jross");
+  EXPECT_EQ(users[1].name, "jross");  // the first row's spelling
+  EXPECT_EQ(users[2].name, " jross");
+  const auto devices = items_of<ingest::ExtractDeviceItem>(batch);
+  ASSERT_EQ(devices.size(), 2u);
+  EXPECT_EQ(devices[1].name, "Fusions CO2");
+  // A reference is stored in its parent's own spelling.
+  const auto loads = items_of<ingest::LoadItem>(batch);
+  ASSERT_EQ(loads.size(), 4u);
+  EXPECT_EQ(loads[0].spec.name, "L-1");
+  EXPECT_EQ(loads[2].spec.name, "L-2");
+  for (const auto& load : loads) EXPECT_EQ(load.created_by, std::optional<std::string>{"jross"}) << load.spec.name;
+  const auto loaded = items_of<ingest::LoadPositionItem>(batch);
+  ASSERT_EQ(loaded.size(), 2u);
+  EXPECT_EQ(loaded[0].load, "L-1");
+  EXPECT_EQ(loaded[0].identifier, "ba-01");
+  EXPECT_EQ(loaded[1].load, "L-2");
+  EXPECT_EQ(loaded[1].identifier, "ba-01");
+
+  std::map<std::string, std::string> reasons;
+  for (const auto& conflict : batch.conflicts) reasons[conflict.key.path] = detail_of(conflict).at("reason");
+  EXPECT_EQ(reasons, (std::map<std::string, std::string>{
+                         {"IrradiationPositionTbl.jsonl#2",
+                          "identifier BA-01  already sits at the position of IrradiationPositionTbl 1"},
+                         {"UserTbl.jsonl#JROSS  ", "has the natural key of UserTbl jross and other values; that row is kept"},
+                         {"LoadTbl.jsonl#l-3 ", "has the natural key of LoadTbl L-3 and other values; that row is kept"},
+                         {"LoadPositionTbl.jsonl#3", "identifier  ba-01 is not in IrradiationPositionTbl"},
+                     }));
+}
+
+TEST(CatalogDbAdapter, WarnsWhenTheDumpHasNoCompletionMarker) {
+  auto whole = CatalogAdapter::open(adapter_config());
+  ASSERT_TRUE(whole) << err(whole.error());
+  EXPECT_TRUE((*whole)->warnings().empty());
+
+  DumpDir cut;
+  cut.table("MaterialTbl", {R"({"id":1,"name":"M"})"}).set("dump_completed", false).done();
+  auto adapter = CatalogAdapter::open(adapter_config(cut.path()));
+  ASSERT_TRUE(adapter) << err(adapter.error());  // not an error: mysqldump --skip-comments writes no marker
+  const auto warnings = (*adapter)->warnings();
+  ASSERT_EQ(warnings.size(), 1u);
+  EXPECT_NE(warnings[0].find("no completion marker"), std::string::npos) << warnings[0];
+  EXPECT_NE(warnings[0].find("truncated"), std::string::npos) << warnings[0];
+  NoState state;
+  EXPECT_EQ(*(*adapter)->plan(std::nullopt, state), 1);
+
+  // A manifest that does not say (written by hand, or by an older converter) is not warned about.
+  DumpDir silent;
+  silent.table("MaterialTbl", {R"({"id":1,"name":"M"})"}).done();
+  auto quiet = CatalogAdapter::open(adapter_config(silent.path()));
+  ASSERT_TRUE(quiet);
+  EXPECT_TRUE((*quiet)->warnings().empty());
 }
 
 TEST(CatalogDbAdapter, ProjectDatesAndBinaryText) {
