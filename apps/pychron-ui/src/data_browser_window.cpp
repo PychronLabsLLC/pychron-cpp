@@ -20,6 +20,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "shortcuts.hpp"
+
 namespace pychron::ui {
 
 namespace pp = pychron::processing;
@@ -147,8 +149,8 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
   connect(recall, &QPushButton::clicked, this, &DataBrowserWindow::recall_current);
   connect(table_, &QTableView::activated, this, [this](const QModelIndex&) { recall_current(); });
-  auto* next = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_N), this);
-  auto* prev = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_B), this);
+  auto* next = new QShortcut(key(Shortcut::RecallNext), this);
+  auto* prev = new QShortcut(key(Shortcut::RecallPrevious), this);
   connect(next, &QShortcut::activated, this, [this] { recall_step(1); });
   connect(prev, &QShortcut::activated, this, [this] { recall_step(-1); });
 

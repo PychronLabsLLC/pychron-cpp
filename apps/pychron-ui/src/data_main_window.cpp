@@ -2,6 +2,7 @@
 
 #include "brand.hpp"
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 
 #include <utility>
 
@@ -23,11 +24,11 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
   data_->set_source(&source, &presets);
   setCentralWidget(data_->browser(this));
 
-  preferences_->setShortcut(QKeySequence::Preferences);
+  preferences_->setShortcut(key(Shortcut::Preferences));
   preferences_->setMenuRole(QAction::PreferencesRole);
   connect(preferences_, &QAction::triggered, this, [this] { open_preferences(); });
   auto* quit = new QAction(tr("Quit"), this);
-  quit->setShortcut(QKeySequence::Quit);
+  quit->setShortcut(key(Shortcut::Quit));
   quit->setMenuRole(QAction::QuitRole);
   connect(quit, &QAction::triggered, this, &QMainWindow::close);
   MenuHub::instance().contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
@@ -36,6 +37,7 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
+  add_shortcuts_reference(this);
   about_ = brand::add_help_menu(this);
   MenuHub::instance().install(this);
 }

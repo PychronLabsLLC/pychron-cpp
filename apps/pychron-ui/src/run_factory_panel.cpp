@@ -1,4 +1,5 @@
 #include "run_factory_panel.hpp"
+#include "shortcuts.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -209,8 +210,8 @@ QWidget* RunFactoryPanel::build_add() {
   preview_ = new QLabel;
   preview_->setWordWrap(true);
   add_ = new QPushButton(tr("Add"));
-  add_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
-  add_->setToolTip(tr("Add the runs (Ctrl+Return)"));
+  add_->setShortcut(key(Shortcut::AddRuns));
+  add_->setToolTip(tr("Add the runs (%1)").arg(key(Shortcut::AddRuns).toString(QKeySequence::NativeText)));
   auto* defaults = new QPushButton(tr("Defaults"));
   defaults->setToolTip(tr("Apply the lab's defaults.toml entry for this type and device"));
   auto* from_row = new QPushButton(tr("From Row"));

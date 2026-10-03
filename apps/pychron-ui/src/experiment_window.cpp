@@ -1,6 +1,7 @@
 #include "experiment_window.hpp"
 
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 
 #include <algorithm>
 #include <map>
@@ -173,7 +174,7 @@ void ExperimentWindow::build_actions() {
   const Menu file = Menu::Queue;
   auto* bar = addToolBar(tr("Queue"));
   bar->setObjectName(QStringLiteral("ExperimentToolBar"));
-  open_ = add(file, tr("&Open..."), [this] { open_dialog(); }, QKeySequence::Open);
+  open_ = add(file, tr("&Open..."), [this] { open_dialog(); }, key(Shortcut::OpenQueue));
   save_ = add(
       file, tr("&Save"),
       [this] {
@@ -184,7 +185,7 @@ void ExperimentWindow::build_actions() {
         QString error;
         if (!save(&error)) QMessageBox::warning(this, tr("Save"), error);
       },
-      QKeySequence::Save);
+      key(Shortcut::SaveQueue));
   save_as_ = add(file, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
   bar->addAction(open_);
@@ -197,18 +198,18 @@ void ExperimentWindow::build_actions() {
     table_->addAction(a);
     row_actions_.push_back(a);
   };
-  add_row_action(tr("Move Up"), QKeySequence(Qt::CTRL | Qt::Key_Up), [this] {
+  add_row_action(tr("Move Up"), key(Shortcut::MoveRowsUp), [this] {
     std::vector<std::size_t> moved;
     if (model_.move_up(selected_rows(), &moved)) select_rows(moved);
   });
-  add_row_action(tr("Move Down"), QKeySequence(Qt::CTRL | Qt::Key_Down), [this] {
+  add_row_action(tr("Move Down"), key(Shortcut::MoveRowsDown), [this] {
     std::vector<std::size_t> moved;
     if (model_.move_down(selected_rows(), &moved)) select_rows(moved);
   });
-  add_row_action(tr("Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D), [this] { model_.duplicate(selected_rows()); });
-  add_row_action(tr("Delete"), QKeySequence::Delete, [this] { model_.remove(selected_rows()); });
-  add_row_action(tr("Toggle Skip"), QKeySequence(Qt::CTRL | Qt::Key_K), [this] { model_.toggle_skip(selected_rows()); });
-  add_row_action(tr("End After"), QKeySequence(Qt::CTRL | Qt::Key_E), [this] {
+  add_row_action(tr("Duplicate"), key(Shortcut::DuplicateRows), [this] { model_.duplicate(selected_rows()); });
+  add_row_action(tr("Delete"), key(Shortcut::DeleteRows), [this] { model_.remove(selected_rows()); });
+  add_row_action(tr("Toggle Skip"), key(Shortcut::ToggleSkip), [this] { model_.toggle_skip(selected_rows()); });
+  add_row_action(tr("End After"), key(Shortcut::EndAfter), [this] {
     auto r = selected_rows();
     if (r.size() == 1) model_.toggle_end_after(r.front());
   });
@@ -217,10 +218,10 @@ void ExperimentWindow::build_actions() {
   add_row_action(tr("Edit Post-Measurement Script"), {},
                  [this] { edit_row_script(scripting::ScriptKind::PostMeasurement); });
 
-  add(Menu::Scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+  add(Menu::Scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, key(Shortcut::ScriptEditor));
 
   const Menu run = Menu::Executor;
-  add(run, tr("Start"), [this] { pane_->request_start(); }, QKeySequence(Qt::Key_F5));
+  add(run, tr("Start"), [this] { pane_->request_start(); }, key(Shortcut::StartQueue));
   add(run, tr("Stop"), [this] { pane_->request_stop(); });
   add(run, tr("Cancel..."), [this] { pane_->request_cancel(); });
   add(run, tr("Abort..."), [this] { pane_->request_abort(); });

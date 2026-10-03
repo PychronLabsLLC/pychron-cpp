@@ -1,6 +1,7 @@
 #include "script_editor_window.hpp"
 
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -113,7 +114,7 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     group.append(a);
     return a;
   };
-  add(file, tr("&New..."), QKeySequence::New, [this] {
+  add(file, tr("&New..."), key(Shortcut::NewScript), [this] {
     QStringList kinds;
     for (auto k : kKinds) kinds.append(q(scripting::to_string(k)));
     bool ok = false;
@@ -126,13 +127,13 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
       QMessageBox::warning(this, tr("New script"), error);
   });
-  add(file, tr("&Save"), QKeySequence::Save, [this] {
+  add(file, tr("&Save"), key(Shortcut::SaveScript), [this] {
     QString error;
     if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
   });
-  add(file, tr("&Close Tab"), QKeySequence::Close, [this] { close_current(); });
-  add(code, tr("&Check Now"), QKeySequence(Qt::Key_F7), [this] { check_now(); });
-  add(code, tr("Go to &Gosub"), QKeySequence(Qt::Key_F2), [this] {
+  add(file, tr("&Close Tab"), key(Shortcut::CloseScriptTab), [this] { close_current(); });
+  add(code, tr("&Check Now"), key(Shortcut::CheckScript), [this] { check_now(); });
+  add(code, tr("Go to &Gosub"), key(Shortcut::GoToGosub), [this] {
     if (Document* d = current())
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });

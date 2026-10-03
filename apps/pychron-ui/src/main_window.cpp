@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 
 #include <utility>
 
@@ -33,37 +34,38 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   addDockWidget(Qt::RightDockWidgetArea, alarms_);
   statusBar()->addPermanentWidget(health_, 1);
 
-  spectrometer_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+  spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));
   spectrometer_action_->setEnabled(false);
-  experiment_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+  experiment_action_->setShortcut(key(Shortcut::ExperimentWindow));
   experiment_action_->setEnabled(false);
   installations_->setVisible(false);
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
-  preferences_->setShortcut(QKeySequence::Preferences);
+  preferences_->setShortcut(key(Shortcut::Preferences));
   preferences_->setMenuRole(QAction::PreferencesRole);
   // From any window (the bar is the same in all): over the one in front.
   connect(preferences_, &QAction::triggered, this, [this] { open_preferences(preferences_parent()); });
   auto* quit = new QAction(QStringLiteral("Quit"), this);
-  quit->setShortcut(QKeySequence::Quit);
+  quit->setShortcut(key(Shortcut::Quit));
   quit->setMenuRole(QAction::QuitRole);
   connect(quit, &QAction::triggered, this, &QMainWindow::close);
   // Back here from any window: every window shows the same bar.
   auto* line_window = new QAction(QStringLiteral("Extraction Line"), this);
-  line_window->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
+  line_window->setShortcut(key(Shortcut::ExtractionLineWindow));
   connect(line_window, &QAction::triggered, this, [this] {
     showNormal();
     raise();
     activateWindow();
   });
-  data_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+  data_action_->setShortcut(key(Shortcut::DataWindow));
   data_action_->setEnabled(false);
   auto& menus = MenuHub::instance();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::Window, {line_window, spectrometer_action_, experiment_action_, data_action_},
                    MenuHub::Scope::App);
+  add_shortcuts_reference(this);
   about_action_ = brand::add_help_menu(this);
   MenuHub::instance().install(this);
   connect(data_action_, &QAction::triggered, this, [this] {
