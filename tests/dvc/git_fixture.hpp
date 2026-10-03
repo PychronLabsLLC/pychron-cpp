@@ -17,11 +17,16 @@
 //   <root>/gitconfig  an empty file used as the global git configuration
 //   <root>/...        temp(name): room for clones, mirrors and scratch files
 //
-// It is deterministic. Every command runs as `git -C <root>/repo` with the
-// system configuration off, the empty global configuration, discovery capped
-// at <root> (so it can never reach a repository above the temp directory),
-// no hooks, no signing, no line-ending conversion and no rename detection in
-// the user's hands. Author name, email and date come from the arguments of
+// It cannot touch any repository but its own. Every command runs with
+// GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and
+// GIT_COMMON_DIR set to the fixture's repository (or, for clone_bare(), to the
+// clone being made), so git discovers nothing and a value inherited from the
+// process that started the tests (a git hook exports them) is replaced, not
+// obeyed.
+//
+// It is deterministic: system configuration off, the empty file as global
+// configuration (an empty file rather than the null device, so the same line
+// works on every platform), no hooks, no signing, no line-ending conversion. Author name, email and date come from the arguments of
 // commit() and merge(); the committer is always "Fixture <fixture@example.org>"
 // with the same date. The same calls therefore give the same commit shas on
 // every machine.
@@ -87,7 +92,19 @@ class GitFixture {
   // An empty repository whose unborn branch is "main".
   void init() {
     std::filesystem::create_directories(path());
-    run_in({}, {"init", "--quiet", "--initial-branch=main", "--template=", path().string()});
+    git({"init", "--quiet", "--initial-branch=main", "--template="});  // GIT_DIR says where
+  }
+
+  // A bare clone of this repository at temp(name), which it returns:
+  // `git clone --bare <extra> <url()> <temp(name)>`.
+  std::filesystem::path clone_bare(std::string_view name, std::vector<std::string> extra = {}) {
+    const std::filesystem::path destination = temp(name);
+    std::vector<std::string> args{"clone", "--quiet", "--bare", "--template="};
+    for (auto& arg : extra) args.push_back(std::move(arg));
+    args.push_back(url());
+    args.push_back(destination.string());
+    run(root_, destination, destination, std::move(args), kNoDate, kAnn);
+    return destination;
   }
 
   void write(std::string_view relative, std::string_view text) {
@@ -128,9 +145,9 @@ class GitFixture {
   std::string head() { return trimmed(git({"rev-parse", "HEAD"})); }
 
   // `git -C path() <args>`; returns its output (stdout and stderr together).
-  std::string git(std::vector<std::string> args, std::string_view date_iso = "2000-01-01T00:00:00+00:00",
-                  std::string_view author = "Ann <ann@example.org>") {
-    return run_in(path(), std::move(args), date_iso, author);
+  std::string git(std::vector<std::string> args, std::string_view date_iso = kNoDate,
+                  std::string_view author = kAnn) {
+    return run(path(), path() / ".git", path(), std::move(args), date_iso, author);
   }
 
   const std::filesystem::path& root() const { return root_; }
@@ -144,6 +161,9 @@ class GitFixture {
   }
 
  private:
+  static constexpr std::string_view kNoDate = "2000-01-01T00:00:00+00:00";
+  static constexpr std::string_view kAnn = "Ann <ann@example.org>";
+
   static std::filesystem::path utf8(std::string_view text) {
     return std::filesystem::path(std::u8string(text.begin(), text.end()));
   }
@@ -153,20 +173,18 @@ class GitFixture {
     return text;
   }
 
-  std::string run_in(const std::filesystem::path& dir, std::vector<std::string> args,
-                     std::string_view date_iso = "2000-01-01T00:00:00+00:00",
-                     std::string_view author = "Ann <ann@example.org>") {
+  // git in directory `cwd`, on the repository at `git_dir` with work tree
+  // `work_tree`, and on no other.
+  std::string run(const std::filesystem::path& cwd, const std::filesystem::path& git_dir,
+                  const std::filesystem::path& work_tree, std::vector<std::string> args, std::string_view date_iso,
+                  std::string_view author) {
     const auto open = author.find(" <");
     const auto close = author.rfind('>');
     if (open == std::string_view::npos || close == std::string_view::npos || close < open)
       throw std::runtime_error("GitFixture: author must be \"Name <email>\"");
 
     ProcessSpec spec;
-    spec.argv = {"git"};
-    if (!dir.empty()) {
-      spec.argv.push_back("-C");
-      spec.argv.push_back(dir.string());
-    }
+    spec.argv = {"git", "-C", cwd.string()};
     for (const char* option :
          {"core.hooksPath=no-hooks", "core.autocrlf=false", "core.quotepath=false", "core.fsmonitor=false",
           "core.precomposeUnicode=false", "commit.gpgsign=false", "tag.gpgsign=false", "tag.forceSignAnnotated=false",
@@ -179,7 +197,12 @@ class GitFixture {
     spec.env = {
         {"GIT_CONFIG_NOSYSTEM", "1"},
         {"GIT_CONFIG_GLOBAL", (root_ / "gitconfig").string()},
-        {"GIT_CEILING_DIRECTORIES", root_.string()},
+        {"GIT_DIR", git_dir.string()},
+        {"GIT_WORK_TREE", work_tree.string()},
+        {"GIT_INDEX_FILE", (git_dir / "index").string()},
+        {"GIT_OBJECT_DIRECTORY", (git_dir / "objects").string()},
+        {"GIT_COMMON_DIR", git_dir.string()},
+        {"GIT_ALTERNATE_OBJECT_DIRECTORIES", ""},
         {"GIT_TERMINAL_PROMPT", "0"},
         {"LC_ALL", "C"},
         {"GIT_AUTHOR_NAME", std::string(author.substr(0, open))},

@@ -3,9 +3,13 @@
 // the fixture's temporary directory.
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -51,6 +55,271 @@ std::vector<std::string> paths_of(const std::vector<GitChange>& all, std::string
   for (const auto& change : all)
     if (change.commit == commit) paths.push_back(change.path);
   return paths;
+}
+
+// Sets variables in this process's environment, which every child inherits,
+// and puts the old values back when it goes out of scope.
+class ScopedEnv {
+ public:
+  void set(const std::string& name, const std::string& value) {
+    const char* old = std::getenv(name.c_str());
+    saved_.emplace_back(name, old ? std::optional<std::string>(old) : std::nullopt);
+    put(name, value);
+  }
+  ~ScopedEnv() {
+    for (auto it = saved_.rbegin(); it != saved_.rend(); ++it) put(it->first, it->second);
+  }
+  ScopedEnv() = default;
+  ScopedEnv(const ScopedEnv&) = delete;
+  ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+ private:
+  static void put(const std::string& name, const std::optional<std::string>& value) {
+#ifdef _WIN32
+    _putenv_s(name.c_str(), value ? value->c_str() : "");  // an empty value removes it
+#else
+    if (value)
+      ::setenv(name.c_str(), value->c_str(), 1);
+    else
+      ::unsetenv(name.c_str());
+#endif
+  }
+  std::vector<std::pair<std::string, std::optional<std::string>>> saved_;
+};
+
+// What a git hook exports, aimed at `decoy`: a throwaway repository, never
+// this project's.
+void point_git_environment_at(ScopedEnv& env, const GitFixture& decoy) {
+  const std::filesystem::path git_dir = decoy.path() / ".git";
+  env.set("GIT_DIR", git_dir.string());
+  env.set("GIT_WORK_TREE", decoy.path().string());
+  env.set("GIT_INDEX_FILE", (git_dir / "index").string());
+  env.set("GIT_OBJECT_DIRECTORY", (git_dir / "objects").string());
+  env.set("GIT_COMMON_DIR", git_dir.string());
+}
+
+std::string slurp(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
+}
+
+TEST(GitFixture, IgnoresInheritedGitEnvironment) {
+  SKIP_WITHOUT_GIT();
+  GitFixture decoy;
+  decoy.init();
+  decoy.write("d.json", "d");
+  const std::string decoy_head = decoy.commit("decoy", "2016-03-04T05:06:07+00:00");
+  const std::string refs_before = decoy.git({"for-each-ref"});
+  const std::string index_before = slurp(decoy.path() / ".git" / "index");
+  ASSERT_FALSE(index_before.empty());
+
+  std::string head;
+  {
+    ScopedEnv env;
+    point_git_environment_at(env, decoy);
+    GitFixture repo;
+    repo.init();
+    repo.write("a.json", "a");
+    head = repo.commit("one", "2016-03-05T05:06:07+00:00");
+    repo.tag("v1");
+    repo.branch("side");
+    EXPECT_TRUE(std::filesystem::is_directory(repo.path() / ".git"));
+    EXPECT_EQ(repo.git({"rev-list", "--count", "--all"}), "1\n");
+    EXPECT_EQ(repo.git({"ls-files"}), "a.json\n");
+    EXPECT_EQ(slurp(decoy.path() / ".git" / "index"), index_before);
+  }
+  EXPECT_NE(head, decoy_head);
+  EXPECT_EQ(decoy.head(), decoy_head);
+  EXPECT_EQ(decoy.git({"for-each-ref"}), refs_before);
+  EXPECT_EQ(decoy.git({"status", "--porcelain"}), "");
+  EXPECT_EQ(decoy.git({"ls-files"}), "d.json\n");
+}
+
+TEST(GitReader, IgnoresInheritedGitEnvironment) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "one");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  repo.write("a.json", "two");
+  const std::string c2 = repo.commit("two", "2016-03-05T05:06:07+00:00");
+  repo.tag("ours");
+  GitFixture decoy;
+  decoy.init();
+  decoy.write("d.json", "d");
+  const std::string decoy_head = decoy.commit("decoy", "2016-03-06T05:06:07+00:00");
+  decoy.tag("theirs");
+  const std::string refs_before = decoy.git({"for-each-ref"});
+
+  {
+    ScopedEnv env;
+    point_git_environment_at(env, decoy);
+
+    auto reader = GitReader::open(config_for(repo));
+    ASSERT_OK(reader);
+    EXPECT_EQ(reader->head(), c2);
+    const auto order = reader->rev_list(std::nullopt);
+    ASSERT_OK(order);
+    EXPECT_EQ(*order, (std::vector<std::string>{c1, c2}));
+    const auto commits = reader->commits(*order);
+    ASSERT_OK(commits);
+    EXPECT_EQ((*commits)[1].message, "two");
+    const auto changes = reader->changes(*order);
+    ASSERT_OK(changes);
+    ASSERT_EQ(changes->size(), 2u);
+    ASSERT_OK(reader->fetch_blobs(std::vector<std::string>{(*changes)[1].blob_sha}));
+    EXPECT_EQ(*reader->blob((*changes)[1].blob_sha), "two");
+    const auto tags = reader->tags();
+    ASSERT_OK(tags);
+    ASSERT_EQ(tags->size(), 1u);
+    EXPECT_EQ((*tags)[0].name, "ours");
+    EXPECT_TRUE(reader->is_ancestor(c1, c2).value_or(false));
+    EXPECT_EQ(reader->default_branch().value_or(""), "main");
+
+    // mirror(): the clone, then the update, both land in the cache directory.
+    const std::filesystem::path cache = repo.temp("mirrors");
+    for (int pass = 0; pass < 2; ++pass) {
+      const auto mirrored = GitReader::mirror(repo.url(), cache);
+      ASSERT_OK(mirrored);
+      GitConfig config = config_for(repo);
+      config.repo = *mirrored;
+      auto from_mirror = GitReader::open(config);
+      ASSERT_OK(from_mirror);
+      EXPECT_EQ(from_mirror->head(), c2);
+      EXPECT_EQ(from_mirror->tags()->size(), 1u);
+    }
+  }
+  EXPECT_EQ(decoy.head(), decoy_head);
+  EXPECT_EQ(decoy.git({"for-each-ref"}), refs_before);
+  EXPECT_EQ(decoy.git({"status", "--porcelain"}), "");
+}
+
+TEST(GitReader, AMovedReaderKeepsItsBlobs) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "aaa");
+  repo.write("b.json", "bbb");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+
+  auto opened = GitReader::open(config_for(repo, 5));
+  ASSERT_OK(opened);
+  const auto changes = opened->changes(std::vector<std::string>{c1});
+  ASSERT_OK(changes);
+  const std::string a = find_change(*changes, c1, "a.json")->blob_sha;
+  const std::string b = find_change(*changes, c1, "b.json")->blob_sha;
+  ASSERT_OK(opened->fetch_blobs(std::vector<std::string>{a}));
+
+  GitReader moved = std::move(*opened);
+  EXPECT_EQ(moved.head(), c1);
+  EXPECT_EQ(moved.blob(a).value_or("?"), "aaa");
+  // The cache still counts and evicts: 3 + 3 bytes do not fit in 5.
+  ASSERT_OK(moved.fetch_blobs(std::vector<std::string>{b}));
+  EXPECT_EQ(moved.blob(b).value_or("?"), "bbb");
+  EXPECT_FALSE(moved.blob(a).has_value());
+
+  GitReader assigned = GitReader::open(config_for(repo)).value();
+  assigned = std::move(moved);
+  EXPECT_EQ(assigned.blob(b).value_or("?"), "bbb");
+  static_assert(!std::is_copy_constructible_v<GitReader> && !std::is_copy_assignable_v<GitReader>);
+}
+
+TEST(GitReader, SeparatorBytesInAuthorAndMessage) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string message = "sub\x1fject\x1f\n\nbody \x1f\x1f text\n\n\n";
+  const std::string c1 = repo.commit(message, "2016-03-04T05:06:07+00:00", "An\x1fn B\x1f <a\x1fnn@example.org>");
+  repo.write("a.json", "2");
+  const std::string c2 = repo.commit("plain", "2016-03-05T05:06:07+00:00");
+
+  auto reader = GitReader::open(config_for(repo));
+  ASSERT_OK(reader);
+  const auto commits = reader->commits(std::vector<std::string>{c1, c2});
+  ASSERT_OK(commits);
+  ASSERT_EQ(commits->size(), 2u);
+  EXPECT_EQ((*commits)[0].sha, c1);
+  EXPECT_EQ((*commits)[0].author.name, "An\x1fn B");  // git itself trims the ends of a name
+  EXPECT_EQ((*commits)[0].author.email, "a\x1fnn@example.org");
+  // Stored with three trailing newlines; only the one that ends the message is dropped.
+  EXPECT_EQ((*commits)[0].message, "sub\x1fject\x1f\n\nbody \x1f\x1f text\n\n");
+  EXPECT_EQ((*commits)[1].sha, c2);
+  EXPECT_EQ((*commits)[1].parents, (std::vector<std::string>{c1}));
+  EXPECT_EQ((*commits)[1].message, "plain");
+}
+
+TEST(GitReader, EmptyCommitThenAChangingCommit) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  const std::string empty = repo.commit("nothing", "2016-03-05T05:06:07+00:00");
+  repo.write("b.json", "2");
+  const std::string c3 = repo.commit("three", "2016-03-06T05:06:07+00:00");
+  const std::string empty_again = repo.commit("nothing again", "2016-03-07T05:06:07+00:00");
+
+  auto reader = GitReader::open(config_for(repo));
+  ASSERT_OK(reader);
+  const auto changes = reader->changes(std::vector<std::string>{empty, c3, empty_again, c1});
+  ASSERT_OK(changes);
+  ASSERT_EQ(changes->size(), 2u);
+  EXPECT_EQ((*changes)[0].commit, c3);
+  EXPECT_EQ((*changes)[0].path, "b.json");
+  EXPECT_EQ((*changes)[0].status, 'A');
+  EXPECT_EQ((*changes)[1].commit, c1);
+  EXPECT_EQ((*changes)[1].path, "a.json");
+}
+
+TEST(GitReader, ParsesGitVersions) {
+  EXPECT_EQ(parse_git_version("git version 2.43.0\n"), (GitVersion{2, 43, 0}));
+  EXPECT_EQ(parse_git_version("git version 2.50.1 (Apple Git-155)\n"), (GitVersion{2, 50, 1}));
+  EXPECT_EQ(parse_git_version("git version 2.39.2.windows.1\r\n"), (GitVersion{2, 39, 2}));
+  EXPECT_EQ(parse_git_version("git version 2.32"), (GitVersion{2, 32, 0}));
+  EXPECT_EQ(parse_git_version("git version 2.47.0.rc1"), (GitVersion{2, 47, 0}));
+  EXPECT_EQ(parse_git_version("git version 2.47.GIT"), (GitVersion{2, 47, 0}));
+  EXPECT_EQ(parse_git_version("git version 10.2.13"), (GitVersion{10, 2, 13}));
+  EXPECT_EQ(parse_git_version(""), std::nullopt);
+  EXPECT_EQ(parse_git_version("git version"), std::nullopt);
+  EXPECT_EQ(parse_git_version("git version two"), std::nullopt);
+  EXPECT_EQ(parse_git_version("git version 2"), std::nullopt);
+  EXPECT_EQ(parse_git_version("hg version 2.43.0"), std::nullopt);
+  EXPECT_EQ(parse_git_version("git version -2.43.0"), std::nullopt);
+
+  EXPECT_LT((GitVersion{2, 31, 9}), kMinimumGitVersion);
+  EXPECT_GE((GitVersion{2, 32, 0}), kMinimumGitVersion);
+  EXPECT_GE((GitVersion{3, 0, 0}), kMinimumGitVersion);
+  EXPECT_LT((GitVersion{1, 99, 99}), kMinimumGitVersion);
+}
+
+TEST(GitReader, ReadsALinkedWorkTree) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  repo.branch("side");
+  const std::filesystem::path linked = repo.temp("linked");
+  repo.git({"worktree", "add", "--quiet", linked.string(), "side"});
+  repo.write("a.json", "2");
+  const std::string c2 = repo.commit("two", "2016-03-05T05:06:07+00:00");
+
+  // <linked>/.git is a file; refs and objects are the main repository's.
+  GitConfig config = config_for(repo);
+  config.repo = linked;
+  auto reader = GitReader::open(config);
+  ASSERT_OK(reader);
+  EXPECT_EQ(reader->head(), c2);
+  EXPECT_EQ(reader->default_branch().value_or(""), "side");
+  const auto changes = reader->changes(std::vector<std::string>{c2});
+  ASSERT_OK(changes);
+  ASSERT_EQ(changes->size(), 1u);
+  ASSERT_OK(reader->fetch_blobs(std::vector<std::string>{(*changes)[0].blob_sha}));
+  EXPECT_EQ(reader->blob((*changes)[0].blob_sha).value_or("?"), "2");
+  EXPECT_TRUE(reader->is_ancestor(c1, c2).value_or(false));
 }
 
 TEST(GitReader, LinearHistoryInOrder) {
@@ -575,8 +844,7 @@ TEST(GitReader, OpenRejectsShallowClone) {
   repo.commit("one", "2016-03-04T05:06:07+00:00");
   repo.write("a.json", "2");
   repo.commit("two", "2016-03-05T05:06:07+00:00");
-  const std::filesystem::path shallow = repo.temp("shallow");
-  repo.git({"clone", "--quiet", "--depth", "1", "--template=", repo.url(), shallow.string()});
+  const std::filesystem::path shallow = repo.clone_bare("shallow.git", {"--depth", "1"});
 
   GitConfig config = config_for(repo);
   config.repo = shallow;
@@ -628,8 +896,7 @@ TEST(GitReader, MirrorNamesAreStableAndDistinct) {
   one.write("a.json", "1");
   one.commit("one", "2016-03-04T05:06:07+00:00");
   const std::filesystem::path cache = one.temp("mirrors");
-  const std::filesystem::path other_repo = one.temp("other/repo");
-  one.git({"clone", "--quiet", "--template=", one.url(), other_repo.string()});
+  const std::filesystem::path other_repo = one.clone_bare("other/repo");
   const std::string other_url = "file://" + std::string(other_repo.generic_string().starts_with('/') ? "" : "/") +
                                 other_repo.generic_string();
 

@@ -5,8 +5,10 @@
 #include <charconv>
 #include <cstdint>
 #include <fstream>
+#include <new>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <system_error>
 #include <unordered_set>
 #include <utility>
@@ -105,6 +107,19 @@ class ScratchFile {
   std::filesystem::path path_;
 };
 
+// No exception leaves the library: a buffer too large to allocate is false.
+bool resize_to(std::string& text, std::uintmax_t size) noexcept {
+  try {
+    if (size > text.max_size()) return false;
+    text.resize(static_cast<std::size_t>(size));
+    return true;
+  } catch (const std::bad_alloc&) {
+    return false;
+  } catch (const std::length_error&) {
+    return false;
+  }
+}
+
 Result<std::string> read_whole(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) return fail(ErrorKind::Io, "cannot read " + path.string());
@@ -112,7 +127,8 @@ Result<std::string> read_whole(const std::filesystem::path& path) {
   in.seekg(0, std::ios::end);
   const auto size = in.tellg();
   if (size > 0) {
-    text.resize(static_cast<std::size_t>(size));
+    if (!resize_to(text, static_cast<std::uintmax_t>(size)))
+      return fail(ErrorKind::Io, "out of memory reading " + std::to_string(size) + " bytes of " + path.string());
     in.seekg(0, std::ios::beg);
     in.read(text.data(), static_cast<std::streamsize>(text.size()));
     if (static_cast<std::size_t>(in.gcount()) != text.size()) return fail(ErrorKind::Io, "short read of " + path.string());
@@ -122,13 +138,78 @@ Result<std::string> read_whole(const std::filesystem::path& path) {
 
 // ------------------------------------------------------------- running git
 
-std::vector<std::pair<std::string, std::string>> base_environment() {
-  return {{"GIT_CONFIG_NOSYSTEM", "1"}, {"GIT_TERMINAL_PROMPT", "0"}, {"LC_ALL", "C"}};
+#ifdef _WIN32
+constexpr const char* kNullDevice = "NUL";
+#else
+constexpr const char* kNullDevice = "/dev/null";
+#endif
+
+// What every child gets: no system or global configuration, no prompt, and
+// the repository named outright. Each of the repository variables is set, so
+// one inherited from the parent process is replaced rather than obeyed, and
+// git has nothing left to discover. `work_tree` is not read by any command
+// here; it is set only so that an inherited value is not used.
+std::vector<std::pair<std::string, std::string>> environment(const std::filesystem::path& git_dir,
+                                                             const std::filesystem::path& common_dir,
+                                                             const std::filesystem::path& work_tree) {
+  return {{"GIT_CONFIG_NOSYSTEM", "1"},
+          {"GIT_CONFIG_GLOBAL", kNullDevice},
+          {"GIT_TERMINAL_PROMPT", "0"},
+          {"LC_ALL", "C"},
+          {"GIT_DIR", git_dir.string()},
+          {"GIT_COMMON_DIR", common_dir.string()},
+          {"GIT_OBJECT_DIRECTORY", (common_dir / "objects").string()},
+          {"GIT_ALTERNATE_OBJECT_DIRECTORIES", ""},
+          {"GIT_INDEX_FILE", (git_dir / "index").string()},
+          {"GIT_WORK_TREE", work_tree.string()}};
+}
+
+std::string first_line(const std::filesystem::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  std::string line;
+  if (in) std::getline(in, line, '\n');
+  while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+  return line;
+}
+
+// Where a repository keeps its files, read from the directory itself and not
+// asked of git (whose answer an inherited GIT_DIR would change):
+//   <repo>/.git a directory   an ordinary work tree
+//   <repo>/.git a file        a linked work tree or submodule: "gitdir: <path>"
+//   otherwise                 <repo> is itself the git directory (bare, mirror)
+// A linked work tree's git directory names the shared one in `commondir`.
+// Whether any of it is a repository is for git to say.
+struct Layout {
+  std::filesystem::path git_dir, common_dir;
+};
+
+Layout layout_of(const std::filesystem::path& repo) {
+  std::error_code code;
+  std::filesystem::path root = std::filesystem::absolute(repo, code);
+  if (code) root = repo;
+  Layout layout{root, {}};
+  const std::filesystem::path dot_git = root / ".git";
+  if (std::filesystem::is_directory(dot_git, code)) {
+    layout.git_dir = dot_git;
+  } else if (std::filesystem::is_regular_file(dot_git, code)) {
+    constexpr std::string_view kPrefix = "gitdir: ";
+    const std::string line = first_line(dot_git);
+    if (line.starts_with(kPrefix)) {
+      const std::filesystem::path target(line.substr(kPrefix.size()));
+      layout.git_dir = target.is_absolute() ? target : root / target;
+    }
+  }
+  layout.common_dir = layout.git_dir;
+  if (const std::string line = first_line(layout.git_dir / "commondir"); !line.empty()) {
+    const std::filesystem::path target(line);
+    layout.common_dir = target.is_absolute() ? target : layout.git_dir / target;
+  }
+  return layout;
 }
 
 // Where the commands of one reader run.
 struct Site {
-  std::filesystem::path repo, scratch;
+  std::filesystem::path repo, git_dir, common_dir, scratch;
   std::chrono::milliseconds timeout;
 };
 
@@ -136,24 +217,12 @@ std::string describe(const Site& site) { return "git repository " + site.repo.st
 
 ProcessSpec spec_for(const Site& site, std::vector<std::string> args, std::string input) {
   ProcessSpec spec;
-  spec.argv = {"git",
-               "--no-replace-objects",
-               "--no-optional-locks",
-               "-c",
-               "core.quotepath=false",
-               "-c",
-               "i18n.logOutputEncoding=UTF-8",
-               "-C",
-               site.repo.string()};
+  spec.argv = {"git", "--no-replace-objects", "--no-optional-locks", "-c", "core.quotepath=false",
+               "-c",  "i18n.logOutputEncoding=UTF-8"};
   for (auto& arg : args) spec.argv.push_back(std::move(arg));
   spec.input = std::move(input);
-  spec.env = base_environment();
-  // Discovery stops at the directory given: its parent is the ceiling.
-  std::error_code ignored;
-  std::filesystem::path absolute = std::filesystem::weakly_canonical(site.repo, ignored);
-  if (ignored || absolute.empty()) absolute = std::filesystem::absolute(site.repo, ignored);
-  if (absolute.has_parent_path() && absolute.parent_path() != absolute)
-    spec.env.emplace_back("GIT_CEILING_DIRECTORIES", absolute.parent_path().string());
+  const bool bare = site.git_dir.filename() != ".git" && site.git_dir == site.common_dir;
+  spec.env = environment(site.git_dir, site.common_dir, bare ? site.git_dir : site.repo);
   spec.timeout = site.timeout;
   return spec;
 }
@@ -193,8 +262,6 @@ Result<std::string> output(const Site& site, std::vector<std::string> args, std:
   return std::move(ran->out);
 }
 
-Site site_of(const GitConfig& config) { return Site{config.repo, config.scratch, config.timeout}; }
-
 // The directory name of a url's mirror: its last component, made safe, and a
 // hash of the whole url.
 std::string mirror_name(std::string_view url) {
@@ -216,9 +283,34 @@ std::string mirror_name(std::string_view url) {
 
 }  // namespace
 
+std::optional<GitVersion> parse_git_version(std::string_view text) {
+  constexpr std::string_view kPrefix = "git version ";
+  text = trimmed(text);
+  if (!text.starts_with(kPrefix)) return std::nullopt;
+  text.remove_prefix(kPrefix.size());
+  // Up to three numbers separated by dots; whatever follows is the vendor's.
+  int numbers[3] = {0, 0, 0};
+  int count = 0;
+  while (count < 3) {
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), numbers[count]);
+    if (parsed.ec != std::errc{} || numbers[count] < 0) break;
+    ++count;
+    text.remove_prefix(static_cast<std::size_t>(parsed.ptr - text.data()));
+    if (text.size() < 2 || text.front() != '.' || text[1] < '0' || text[1] > '9') break;
+    text.remove_prefix(1);
+  }
+  if (count < 2) return std::nullopt;
+  return GitVersion{numbers[0], numbers[1], numbers[2]};
+}
+
 // ------------------------------------------------------------------- open
 
-GitReader::GitReader(GitConfig config, std::string head) : config_(std::move(config)), head_(std::move(head)) {}
+GitReader::GitReader(GitConfig config, std::filesystem::path git_dir, std::filesystem::path common_dir,
+                     std::string head)
+    : config_(std::move(config)),
+      git_dir_(std::move(git_dir)),
+      common_dir_(std::move(common_dir)),
+      head_(std::move(head)) {}
 
 Result<GitReader> GitReader::open(GitConfig config) {
   const std::string where = "git repository " + config.repo.string();
@@ -231,13 +323,36 @@ Result<GitReader> GitReader::open(GitConfig config) {
     return fail(ErrorKind::Io,
                 where + ": cannot create scratch directory " + config.scratch.string() + ": " + code.message());
   }
-  const Site site = site_of(config);
+  Layout layout = layout_of(config.repo);
+  const Site site{config.repo, layout.git_dir, layout.common_dir, config.scratch, config.timeout};
+
+  {
+    ProcessSpec spec;
+    spec.argv = {"git", "--version"};
+    spec.env = environment(layout.git_dir, layout.common_dir, layout.git_dir);
+    spec.timeout = config.timeout;
+    const auto ran = run_process(spec);
+    if (!ran) {
+      if (ran.error().kind == ErrorKind::Timeout) return fail(ran.error());
+      return fail(ErrorKind::Io, where + ": git not found or cannot be started: " + ran.error().what);
+    }
+    const auto version = parse_git_version(ran->output);
+    if (ran->exit_code != 0 || !version) {
+      return fail(ErrorKind::Io, where + ": cannot read the git version from `git --version`: " +
+                                     std::string(trimmed(ran->output)).substr(0, 200));
+    }
+    if (*version < kMinimumGitVersion) {
+      const auto text = [](const GitVersion& v) {
+        return std::to_string(v.major_number) + "." + std::to_string(v.minor_number) + "." +
+               std::to_string(v.patch_number);
+      };
+      return fail(ErrorKind::Config, where + ": git " + text(*version) + " found; git " + text(kMinimumGitVersion) +
+                                         " or newer is required");
+    }
+  }
 
   auto git_dir = run(site, {"rev-parse", "--git-dir"});
-  if (!git_dir) {
-    if (git_dir.error().kind == ErrorKind::Timeout) return fail(git_dir.error());
-    return fail(ErrorKind::Io, where + ": git not found or cannot be started: " + git_dir.error().what);
-  }
+  if (!git_dir) return fail(git_dir.error());
   if (git_dir->exit_code != 0) return fail(ErrorKind::Config, where + ": not a git repository: " + git_dir->err);
 
   auto shallow = output(site, {"rev-parse", "--is-shallow-repository"});
@@ -252,7 +367,9 @@ Result<GitReader> GitReader::open(GitConfig config) {
     auto resolved = run(site, {"rev-parse", "--verify", "--quiet", "--end-of-options", name + "^{commit}"});
     if (!resolved) return fail(resolved.error());
     const std::string_view sha = trimmed(resolved->out);
-    if (resolved->exit_code == 0 && is_sha(sha)) return GitReader(std::move(config), std::string(sha));
+    if (resolved->exit_code == 0 && is_sha(sha)) {
+      return GitReader(std::move(config), std::move(layout.git_dir), std::move(layout.common_dir), std::string(sha));
+    }
   }
 
   auto any = output(site, {"rev-list", "--max-count=1", "--all"});
@@ -269,19 +386,19 @@ Result<std::filesystem::path> GitReader::mirror(std::string_view url, const std:
   std::error_code code;
   std::filesystem::create_directories(cache_dir, code);
   if (code) return fail(ErrorKind::Io, "git mirror: cannot create " + cache_dir.string() + ": " + code.message());
-  const std::filesystem::path directory = cache_dir / mirror_name(url);
+  std::filesystem::path directory = std::filesystem::absolute(cache_dir, code);
+  if (code) return fail(ErrorKind::Io, "git mirror: cannot resolve " + cache_dir.string() + ": " + code.message());
+  directory /= mirror_name(url);
+  const bool present = std::filesystem::exists(directory, code);
 
+  // The mirror is bare: its directory is the git directory, named outright
+  // for the clone as well, which would otherwise obey an inherited GIT_DIR.
   ProcessSpec spec;
-  const bool present = std::filesystem::exists(directory);
-  if (present) {
-    spec.argv = {"git", "-C", directory.string(), "fetch", "--prune", "--quiet", "origin"};
-    spec.env = base_environment();
-    const std::filesystem::path ceiling = std::filesystem::absolute(cache_dir, code);
-    if (!code) spec.env.emplace_back("GIT_CEILING_DIRECTORIES", ceiling.string());
-  } else {
+  if (present)
+    spec.argv = {"git", "fetch", "--prune", "--quiet", "origin"};
+  else
     spec.argv = {"git", "clone", "--mirror", "--quiet", "--", std::string(url), directory.string()};
-    spec.env = base_environment();
-  }
+  spec.env = environment(directory, directory, directory);
   spec.timeout = timeout;
   const auto result = run_process(spec);
   const std::string what = std::string("git mirror of ") + std::string(url) + " in " + directory.string();
@@ -296,7 +413,7 @@ Result<std::filesystem::path> GitReader::mirror(std::string_view url, const std:
 // ---------------------------------------------------------------- history
 
 Result<std::string> GitReader::default_branch() const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   auto ran = run(site, {"symbolic-ref", "--quiet", "--short", "HEAD"});
   if (!ran) return fail(ran.error());
   const std::string_view name = trimmed(ran->out);
@@ -306,7 +423,7 @@ Result<std::string> GitReader::default_branch() const {
 }
 
 Result<bool> GitReader::is_ancestor(std::string_view ancestor, std::string_view descendant) const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   for (const std::string_view name : {ancestor, descendant}) {
     if (name.empty() || name.front() == '-')
       return fail(ErrorKind::Config, describe(site) + ": not a commit: '" + std::string(name) + "'");
@@ -319,7 +436,7 @@ Result<bool> GitReader::is_ancestor(std::string_view ancestor, std::string_view 
 }
 
 Result<std::vector<std::string>> GitReader::rev_list(std::optional<std::string> after) const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   std::vector<std::string> args{"rev-list", "--topo-order", "--reverse", head_};
   if (after) {
     if (!is_sha(*after)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + *after + "'");
@@ -343,7 +460,7 @@ Result<std::vector<std::string>> GitReader::rev_list(std::optional<std::string> 
 }
 
 Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> shas) const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   std::vector<GitCommit> result;
   if (shas.empty()) return result;  // git log without revisions would show HEAD
   for (const auto& sha : shas)
@@ -351,36 +468,32 @@ Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> s
 
   auto out = output(site,
                     {"log", "--no-walk=unsorted", "--stdin", "-z", "--no-show-signature",
-                     "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%B"},
+                     "--format=%H%x00%P%x00%aI%x00%an%x00%ae%x00%B"},
                     lines_of(shas));
   if (!out) return fail(out.error());
 
+  // Six NUL-terminated fields per commit (-z ends the last one). NUL is the
+  // one byte that a name, an address or a message cannot hold.
+  std::vector<std::string_view> tokens = split(*out, '\0');
+  if (!tokens.empty() && tokens.back().empty()) tokens.pop_back();
+  if (tokens.size() % 6 != 0) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
   std::unordered_map<std::string, GitCommit> by_sha;
-  for (const std::string_view record : split(*out, '\0')) {
-    if (record.empty()) continue;
-    // Five separators; the message is the rest and may hold anything.
-    std::vector<std::string_view> fields;
-    std::string_view rest = record;
-    for (int i = 0; i < 5; ++i) {
-      const std::size_t end = rest.find(kFieldSeparator);
-      if (end == std::string_view::npos) break;
-      fields.push_back(rest.substr(0, end));
-      rest.remove_prefix(end + 1);
-    }
-    if (fields.size() != 5 || !is_sha(fields[0]))
-      return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
+  for (std::size_t i = 0; i < tokens.size(); i += 6) {
+    const std::string_view* fields = &tokens[i];  // sha, parents, date, name, email, message
+    if (!is_sha(fields[0])) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
     GitCommit commit;
     commit.sha = std::string(fields[0]);
     for (const std::string_view parent : split(fields[1], ' '))
       if (!parent.empty()) commit.parents.emplace_back(parent);
-    commit.author.name = std::string(fields[2]);
-    commit.author.email = std::string(fields[3]);
-    const auto utc = parse_author_date(fields[4]);
+    commit.author.name = std::string(fields[3]);
+    commit.author.email = std::string(fields[4]);
+    const auto utc = parse_author_date(fields[2]);
     if (!utc) {
       return fail(ErrorKind::Protocol, describe(site) + ": commit " + commit.sha + " has an author date that cannot be read: '" +
-                                           std::string(fields[4]) + "'");
+                                           std::string(fields[2]) + "'");
     }
     commit.author.utc = *utc;
+    std::string_view rest = fields[5];
     if (rest.ends_with('\n')) rest.remove_suffix(1);
     commit.message = std::string(rest);
     by_sha.insert_or_assign(commit.sha, std::move(commit));
@@ -396,7 +509,7 @@ Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> s
 }
 
 Result<std::vector<GitChange>> GitReader::changes(std::span<const std::string> shas) const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   std::vector<GitChange> result;
   if (shas.empty()) return result;
   for (const auto& sha : shas)
@@ -456,7 +569,7 @@ Result<std::vector<GitChange>> GitReader::changes(std::span<const std::string> s
 }
 
 Result<std::vector<GitTag>> GitReader::tags() const {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   auto out = output(site, {"for-each-ref", "--sort=refname",
                            "--format=%(refname:strip=2)%1f%(objectname)%1f%(objecttype)%1f%(*objectname)%1f%(*objecttype)",
                            "refs/tags"});
@@ -479,7 +592,7 @@ Result<std::vector<GitTag>> GitReader::tags() const {
 // ------------------------------------------------------------------ blobs
 
 Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
-  const Site site = site_of(config_);
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   std::unordered_set<std::string_view> asked;
   std::vector<std::string> wanted;
   for (const auto& sha : blob_shas) {
@@ -525,7 +638,11 @@ Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
       const auto parsed = std::from_chars(fields[2].data(), fields[2].data() + fields[2].size(), size);
       if (parsed.ec != std::errc{} || parsed.ptr != fields[2].data() + fields[2].size())
         return fail(ErrorKind::Protocol, describe(site) + ": unexpected cat-file output: " + header.substr(0, 200));
-      Blob blob{sha, std::string(size, '\0')};
+      Blob blob{sha, {}};
+      if (!resize_to(blob.bytes, size)) {
+        return fail(ErrorKind::Io, describe(site) + ": out of memory reading blob " + sha + " (" +
+                                       std::to_string(size) + " bytes)");
+      }
       in.read(blob.bytes.data(), static_cast<std::streamsize>(size));
       if (static_cast<std::size_t>(in.gcount()) != size || in.get() != '\n')
         return fail(ErrorKind::Protocol, describe(site) + ": git cat-file output is cut short in blob " + sha);

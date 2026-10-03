@@ -8,12 +8,17 @@
 // Nothing writes to the repository being read. mirror() is the only function
 // that writes at all, and only inside the cache directory it is given.
 //
-// The child environment is fixed (system configuration off, no terminal
-// prompt, C locale, no replace objects, no optional locks), and discovery is
-// capped at the given directory: `repo` must be the repository itself (a work
-// tree or a bare/mirror directory), not a directory inside one.
+// The child environment is fixed: system and global configuration off, no
+// terminal prompt, C locale, no replace objects, no optional locks. git never
+// discovers the repository: GIT_DIR, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY,
+// GIT_INDEX_FILE and GIT_WORK_TREE are set for every child from the path
+// given, so values inherited from the parent process (a git hook exports
+// them) cannot send a command to another repository. `repo` must therefore
+// be the repository itself (a work tree, a linked work tree, or a
+// bare/mirror directory), not a directory inside one.
 //
-// Needs git 2.31 or newer (diff-tree --diff-merges=first-parent).
+// Needs git 2.32 or newer (diff-tree --diff-merges=first-parent is 2.31,
+// GIT_CONFIG_GLOBAL is 2.32); open() checks.
 //
 // Shas are full lower-case hex object names (40 digits, or 64 in a SHA-256
 // repository), as git prints them. Paths are the raw bytes git stores,
@@ -39,8 +44,23 @@ struct GitCommit {
   std::string sha;
   std::vector<std::string> parents;  // first parent first; empty for a root commit
   ingest::GitWho author;             // author date, converted to UTC
-  std::string message;               // subject and body, without the final newline
+  // Subject and body as stored, less the one newline that ends the message;
+  // further trailing newlines are kept.
+  std::string message;
 };
+
+struct GitVersion {
+  int major_number = 0, minor_number = 0, patch_number = 0;
+  friend auto operator<=>(const GitVersion&, const GitVersion&) = default;
+};
+
+// The oldest git the reader works with.
+inline constexpr GitVersion kMinimumGitVersion{2, 32, 0};
+
+// The version in the output of `git --version`: "git version 2.43.0",
+// "git version 2.50.1 (Apple Git-155)", "git version 2.39.2.windows.1". A
+// missing patch number is 0. nullopt when the text is not that.
+std::optional<GitVersion> parse_git_version(std::string_view text);
 
 // One file that differs between a commit and its first parent.
 struct GitChange {
@@ -64,7 +84,7 @@ struct GitConfig {
 
 class GitReader {
  public:
-  // Checks that git runs, that `repo` is a repository, that it is not a
+  // Checks that git runs and is new enough, that `repo` is a repository, that it is not a
   // shallow clone, and that `branch` names a commit; that commit is head()
   // for the life of the reader, whatever happens to the branch afterwards.
   // Each failure names the repository path and the reason.
@@ -76,6 +96,13 @@ class GitReader {
   // the source). Returns the directory, ready for open().
   static Result<std::filesystem::path> mirror(std::string_view url, const std::filesystem::path& cache_dir,
                                               std::chrono::milliseconds timeout = std::chrono::minutes(30));
+
+  // Movable, not copyable: the cache index points into the cache itself. A
+  // moved reader keeps its head and its blobs.
+  GitReader(GitReader&&) = default;
+  GitReader& operator=(GitReader&&) = default;
+  GitReader(const GitReader&) = delete;
+  GitReader& operator=(const GitReader&) = delete;
 
   const std::string& head() const { return head_; }
 
@@ -121,9 +148,10 @@ class GitReader {
     std::string sha, bytes;
   };
 
-  GitReader(GitConfig config, std::string head);
+  GitReader(GitConfig config, std::filesystem::path git_dir, std::filesystem::path common_dir, std::string head);
 
   GitConfig config_;
+  std::filesystem::path git_dir_, common_dir_;  // where `repo` keeps its own files and the shared ones
   std::string head_;
   std::list<Blob> lru_;  // most recently used first
   std::unordered_map<std::string, std::list<Blob>::iterator> index_;
