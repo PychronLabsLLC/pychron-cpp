@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
+#include <utility>
 
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/kernel.hpp"
@@ -88,7 +90,7 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
       for (int x = 0; x < w; ++x)
         if (in_disk(x, y, w, h, p.mask_radius_px)) {
           const double v = bv.at(x, y);
-          if (bv.at(x, y) <= threshold) {
+          if (v <= threshold) {
             lo_sum += v;
             ++lo_n;
           } else {
@@ -110,14 +112,22 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
           max_v = any ? std::max<double>(max_v, bv.at(x, y)) : bv.at(x, y);
           any = true;
         }
-    if (!any || max_v - floor_v < kMinContrast * depth) return out;
-    threshold = static_cast<std::uint16_t>(std::lround(floor_v + p.glow_fraction * (max_v - floor_v)));
+    const double frac = std::clamp(p.glow_fraction, 0.0, 1.0);  // keeps the cast below in range
+    threshold = static_cast<std::uint16_t>(std::lround(floor_v + frac * (max_v - floor_v)));
+    if (!any || max_v - floor_v < kMinContrast * depth) {
+      if (debug) debug->threshold = threshold;
+      return out;
+    }
   }
   if (hole) {
     // A shadow on the tray is darker than the tray but lighter than the hole, so
     // Otsu puts it on the dark side and it fuses with the hole. Pull the
     // threshold halfway from Otsu's split down to the hole's own level (the mode
     // of the dark class) so only pixels close to the hole level stay foreground.
+    // Assumes the hole is the largest mass in the dark class: a shadow larger
+    // than the hole puts the mode on the shadow and the rule degrades to plain
+    // Otsu. Pulling the threshold down also biases the reported radius_px
+    // slightly low, by an amount that grows with the blur radius.
     constexpr int kBins = 256;
     std::array<std::uint64_t, kBins> hist{};
     const double bin_w = (depth + 1) / kBins;

@@ -152,11 +152,45 @@ TEST(SimpleFinder, UniformFramesGiveNoTarget) {
 }
 
 TEST(SimpleFinder, GlowBelowMinimumAreaIgnored) {
-  Frame f = Frame::make(100, 100, 255, 5);
-  for (int y = 40; y < 42; ++y)
-    for (int x = 40; x < 42; ++x) f.at(x, y) = 255;
+  // A square blob survives the median and the contrast gate. With a high
+  // glow_fraction only its core passes the threshold: 5 px for a 5x5 blob
+  // (below the 9 px minimum), 12 px for a 6x6 blob.
+  auto blob = [](int side) {
+    Frame f = Frame::make(100, 100, 255, 5);
+    for (int y = 40; y < 40 + side; ++y)
+      for (int x = 40; x < 40 + side; ++x) f.at(x, y) = 255;
+    return f;
+  };
+  FinderParams p = glow_params();
+  p.glow_fraction = 0.9;
   SimpleFinder finder;
-  EXPECT_TRUE(finder.find(f.view(), glow_params()).empty());
+
+  FinderDebug small;
+  EXPECT_TRUE(finder.find(blob(5).view(), p, &small).empty());
+  EXPECT_GE(small.components, 1);
+  EXPECT_GE(small.rejected_area, 1);
+  EXPECT_LT(std::count(small.mask.begin(), small.mask.end(), 1), 9);
+
+  FinderDebug large;
+  EXPECT_EQ(finder.find(blob(6).view(), p, &large).size(), 1u);
+  EXPECT_EQ(large.rejected_area, 0);
+  EXPECT_GE(std::count(large.mask.begin(), large.mask.end(), 1), 9);
+}
+
+TEST(SimpleFinder, GlowFractionOutOfRangeIsClamped) {
+  GlowScene s;
+  auto [f, truth] = render(s, {0, 0});
+  SimpleFinder finder;
+  FinderParams p = glow_params();
+  p.glow_fraction = -1;  // clamps to 0: threshold at the floor, no wrap
+  FinderDebug low;
+  finder.find(f.view(), p, &low);  // must not crash
+  EXPECT_LE(low.threshold, f.pixel_depth);
+  p.glow_fraction = 5;  // clamps to 1: threshold at the maximum, nothing above it but the peak
+  FinderDebug high;
+  EXPECT_TRUE(finder.find(f.view(), p, &high).empty());
+  EXPECT_LE(high.threshold, f.pixel_depth);
+  EXPECT_GT(high.threshold, low.threshold);
 }
 
 TEST(SimpleFinder, MaskLargerThanFrameDoesNotReadOutOfBounds) {
