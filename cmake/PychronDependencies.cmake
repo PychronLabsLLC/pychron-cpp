@@ -184,3 +184,30 @@ if(PYCHRON_PERSISTENCE)
     message(WARNING "PYCHRON_PERSISTENCE: Qt6 Core/Sql not found; libs/persistence is not built")
   endif()
 endif()
+
+# Time zone conversion for libs/ingest. C++20 std::chrono::locate_zone where
+# the standard library ships the tzdb (libstdc++ 13+, MSVC); Apple's libc++
+# does not, so Howard Hinnant's date (same API, the library the C++20 one came
+# from) is fetched only when the probe fails. It reads the system tz database.
+if(PYCHRON_PERSISTENCE_ENABLED)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_FEATURES cxx_std_20)
+  check_cxx_source_compiles("
+    #include <chrono>
+    int main() { return std::chrono::locate_zone(\"UTC\") == nullptr; }"
+    PYCHRON_HAVE_STD_TZDB)
+  unset(CMAKE_REQUIRED_FEATURES)
+  if(NOT PYCHRON_HAVE_STD_TZDB)
+    set(USE_SYSTEM_TZ_DB ON CACHE BOOL "" FORCE)
+    set(BUILD_TZ_LIB ON CACHE BOOL "" FORCE)
+    set(ENABLE_DATE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_DATE_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(date
+      URL https://github.com/HowardHinnant/date/archive/refs/tags/v3.0.3.tar.gz
+      URL_HASH SHA256=30de45a34a2605cca33a993a9ea54e8f140f23b1caf1acf3c2fd436c42c7d942
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      SYSTEM
+      FIND_PACKAGE_ARGS CONFIG)
+    FetchContent_MakeAvailable(date)
+  endif()
+endif()
