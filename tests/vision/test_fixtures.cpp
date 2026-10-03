@@ -36,18 +36,26 @@ struct TempDir {
 
 void write_text(const std::filesystem::path& p, const std::string& s) { std::ofstream(p, std::ios::binary) << s; }
 
+struct CheckResult {
+  int cases = 0, frames = 0;
+};
+
 // Runs the finder on every non-skipped, marked frame of every case below `root`.
-// Returns the number of frames checked.
-int check_cases(const std::filesystem::path& root) {
-  int checked = 0;
+// Counts the cases found and the frames actually checked. Never throws.
+CheckResult check_cases(const std::filesystem::path& root) {
+  CheckResult out;
+  std::error_code ec;
   std::vector<std::filesystem::path> dirs;
-  for (const auto& e : std::filesystem::directory_iterator(root))
-    if (e.is_directory() && std::filesystem::exists(e.path() / "case.toml")) dirs.push_back(e.path());
+  for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code ec2;
+    if (it->is_directory(ec2) && std::filesystem::exists(it->path() / "case.toml", ec2)) dirs.push_back(it->path());
+  }
   std::sort(dirs.begin(), dirs.end());
   for (const auto& dir : dirs) {
     auto c = load_case(dir);
     EXPECT_TRUE(c.has_value()) << dir << ": " << (c ? "" : c.error().what);
     if (!c) continue;
+    ++out.cases;
     for (const auto& ff : c->frames) {
       if (ff.skip || !ff.center_px) continue;
       auto fr = read_pgm(c->dir / ff.file);
@@ -62,10 +70,10 @@ int check_cases(const std::filesystem::path& root) {
       if (targets.empty()) continue;
       const double err = std::hypot(targets[0].center_px.x - ff.center_px->x, targets[0].center_px.y - ff.center_px->y);
       EXPECT_LE(err, c->tolerance_px) << c->dir.filename() << "/" << ff.file << ": centre error " << err << " px";
-      ++checked;
+      ++out.frames;
     }
   }
-  return checked;
+  return out;
 }
 
 }  // namespace
@@ -166,13 +174,65 @@ TEST(Fixture, LoadCaseRejectsUnknownProvenanceOrMode) {
   EXPECT_EQ(b.error().kind, ErrorKind::Config);
 }
 
+TEST(Fixture, LoadCaseRejectsFrameFilesOutsideTheCase) {
+  TempDir d;
+  for (const std::string bad : {"../x.pgm", "sub/../../x.pgm", "/etc/passwd"}) {
+    write_text(d.path / "case.toml",
+               "provenance = \"raw\"\nmode = \"hole\"\nexpected_radius_px = 10\ntolerance_px = 2\n"
+               "[[frames]]\nfile = \"" + bad + "\"\n");
+    auto r = load_case(d.path);
+    ASSERT_FALSE(r.has_value()) << bad;
+    EXPECT_EQ(r.error().kind, ErrorKind::Config) << bad;
+  }
+}
+
+TEST(Fixture, RecorderRejectsBadRadiusAndEmptyCase) {
+  TempDir d;
+  HoleScene scene;
+  scene.width = 20;
+  scene.height = 20;
+  const Frame f = render(scene, {0, 0}).first;
+  for (double radius : {0.0, -1.0, std::nan("")}) {
+    FrameRecorder rec(d.path / "r", Provenance::Synthetic, FinderMode::Hole, radius);
+    ASSERT_TRUE(rec.add(f.view()).has_value());
+    auto r = rec.finish();
+    ASSERT_FALSE(r.has_value()) << radius;
+    EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  }
+  FrameRecorder empty(d.path / "e", Provenance::Synthetic, FinderMode::Hole, 10);
+  auto r = empty.finish();
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(std::filesystem::exists(d.path / "e" / "case.toml"));
+}
+
+TEST(Fixture, SkippedFramesAreNotChecked) {
+  TempDir d;
+  // A blank frame with a mark that cannot be right: it would fail if it were checked.
+  const Frame blank = Frame::make(30, 30, 255, 200);
+  std::filesystem::create_directories(d.path / "c");
+  ASSERT_TRUE(write_pgm(d.path / "c" / "0001.pgm", blank.view()).has_value());
+  FixtureCase c;
+  c.dir = d.path / "c";
+  c.expected_radius_px = 5;
+  c.frames.push_back(FixtureFrame{"0001.pgm", Vec2{3, 3}, true});
+  ASSERT_TRUE(save_case(c).has_value());
+  const auto r = check_cases(d.path);
+  EXPECT_EQ(r.cases, 1);
+  EXPECT_EQ(r.frames, 0);
+}
+
 TEST(Fixture, CommittedCasesWithinTolerance) {
-  const int n = check_cases(PYCHRON_VISION_DATA_DIR);
-  EXPECT_GT(n, 0) << "no committed frames were checked";
+  const auto r = check_cases(PYCHRON_VISION_DATA_DIR);
+  EXPECT_GT(r.cases, 0) << "no committed cases found";
+  EXPECT_GT(r.frames, 0) << "no committed frames were checked";
 }
 
 TEST(Fixture, ExternalCasesWithinTolerance) {
   const char* env = std::getenv("PYCHRON_VISION_FIXTURES");
   if (env == nullptr || *env == '\0') GTEST_SKIP() << "PYCHRON_VISION_FIXTURES is not set";
-  check_cases(env);
+  std::error_code ec;
+  ASSERT_TRUE(std::filesystem::is_directory(env, ec)) << "PYCHRON_VISION_FIXTURES is not a directory: " << env;
+  const auto r = check_cases(env);
+  EXPECT_GT(r.cases, 0) << "PYCHRON_VISION_FIXTURES contains no case.toml directory: " << env;
 }

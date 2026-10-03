@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "pychron/vision/fixture.hpp"
 #include "pychron/vision/pgm.hpp"
 

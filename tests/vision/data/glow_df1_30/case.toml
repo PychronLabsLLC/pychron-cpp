@@ -3,9 +3,9 @@ mode = "glow"
 expected_radius_px = 13.0
 tolerance_px = 4.0
 channel = "luma"
-note = "dragonfly1.mov, extract labelled df1_30 (exact time not recorded); crop (347,219) 200x200 of an 873x658 video pane; centre marked by eye, low trust"
+note = "dragonfly1.mov t=30 s; pane crop 974,337,873,658 of the movie; sub-crop 341,207 200x200 of the pane; target offset (+6,+12) from the frame centre; centre marked by eye, low trust"
 
 [[frames]]
 file = "0001.pgm"
-center_px = [100.0, 100.0]
+center_px = [106.0, 112.0]
 skip = true

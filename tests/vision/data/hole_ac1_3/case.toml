@@ -3,9 +3,9 @@ mode = "hole"
 expected_radius_px = 11.0
 tolerance_px = 4.0
 channel = "luma"
-note = "AutoCenter1.mov (2016), extract labelled ac1_3 (exact time not recorded); crop (255,182) 80x80 of a 591x444 video pane; centre marked by eye, low trust"
+note = "AutoCenter1.mov t=3 s; pane crop 426,402,591,444 of the movie; sub-crop 246,189 80x80 of the pane; target offset (+9,-7) from the frame centre; centre marked by eye, low trust"
 
 [[frames]]
 file = "0001.pgm"
-center_px = [40.0, 40.0]
+center_px = [49.0, 33.0]
 skip = true

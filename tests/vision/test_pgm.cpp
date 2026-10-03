@@ -131,3 +131,45 @@ TEST(Pgm, MaxvalOutOfRangeIsConfigError) {
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
 }
+
+TEST(Pgm, TruncatedHeadersAreIoErrorsNamingTheFile) {
+  TempDir d;
+  const std::vector<std::string> cases = {"", "P5", "P5\n4 4", "P5\n4 4\n255", "P5\n4 4\n255\n"};
+  int i = 0;
+  for (const auto& text : cases) {
+    const auto p = d.path / ("h" + std::to_string(i++) + ".pgm");
+    write_bytes(p, text);
+    auto r = read_pgm(p);
+    ASSERT_FALSE(r.has_value()) << "'" << text << "'";
+    EXPECT_EQ(r.error().kind, ErrorKind::Io) << "'" << text << "'";
+    EXPECT_NE(r.error().what.find(p.filename().string()), std::string::npos) << r.error().what;
+  }
+}
+
+TEST(Pgm, MalformedHeaderIsConfigError) {
+  TempDir d;
+  const std::vector<std::string> cases = {
+      "P5\n1 1\n0\n\x01",            // maxval 0
+      "P5\n1 1\n70000\n\x01\x01",    // maxval too large
+      "P5\nabc 1\n255\n\x01",        // non-numeric
+      "P5\n1 1\n255# late comment\n\x01",  // comment right after maxval
+      "P5\n1 1\n255x\x01",           // maxval not followed by whitespace
+  };
+  int i = 0;
+  for (const auto& text : cases) {
+    const auto p = d.path / ("m" + std::to_string(i++) + ".pgm");
+    write_bytes(p, text);
+    auto r = read_pgm(p);
+    ASSERT_FALSE(r.has_value()) << i;
+    EXPECT_EQ(r.error().kind, ErrorKind::Config) << i << ": " << r.error().what;
+    EXPECT_NE(r.error().what.find(p.filename().string()), std::string::npos) << r.error().what;
+  }
+}
+
+TEST(Pgm, HugeDimensionsFailWithoutAllocating) {
+  TempDir d;
+  write_bytes(d.path / "big.pgm", std::string("P5\n999999999 999999999\n255\n\x01\x02\x03", 29));
+  auto r = read_pgm(d.path / "big.pgm");
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+}

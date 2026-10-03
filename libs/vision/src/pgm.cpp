@@ -52,29 +52,36 @@ Result<Frame> read_pgm(const std::filesystem::path& path) {
   if (!in) return fail(ErrorKind::Io, "cannot open " + name);
   const std::vector<unsigned char> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
+  // Running out of bytes is truncation (Io); a token that is present but wrong is a bad file (Config).
   std::size_t pos = 0;
   std::string tok;
-  if (!next_token(b, pos, tok)) return fail(ErrorKind::Config, "empty PGM file " + name);
+  if (!next_token(b, pos, tok)) return fail(ErrorKind::Io, "truncated PGM (no magic) in " + name);
   if (tok != "P5") return fail(ErrorKind::Config, "not a binary P5 PGM: " + name);
 
   int vals[3] = {0, 0, 0};
   for (int& v : vals) {
-    if (!next_token(b, pos, tok) || !parse_int(tok, v)) return fail(ErrorKind::Config, "bad PGM header in " + name);
+    if (!next_token(b, pos, tok)) return fail(ErrorKind::Io, "truncated PGM header in " + name);
+    if (!parse_int(tok, v)) return fail(ErrorKind::Config, "non-numeric PGM header token '" + tok + "' in " + name);
   }
   const int w = vals[0], h = vals[1], maxval = vals[2];
   if (w <= 0 || h <= 0) return fail(ErrorKind::Config, "PGM has zero dimension: " + name);
   if (maxval < 1 || maxval > 65535) return fail(ErrorKind::Config, "PGM maxval out of range in " + name);
   // Exactly one whitespace byte separates maxval from the data.
-  if (pos >= b.size() || !is_space(b[pos])) return fail(ErrorKind::Io, "truncated PGM header in " + name);
+  if (pos >= b.size()) return fail(ErrorKind::Io, "truncated PGM header (no data) in " + name);
+  if (b[pos] == '#')
+    return fail(ErrorKind::Config, "PGM comment after maxval is not allowed (header ends after one whitespace byte) in " + name);
+  if (!is_space(b[pos])) return fail(ErrorKind::Config, "PGM maxval not followed by whitespace in " + name);
   ++pos;
 
-  const std::size_t bytes_per = maxval > 255 ? 2 : 1;
-  const std::size_t count = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-  if (b.size() - pos < count * bytes_per) return fail(ErrorKind::Io, "truncated PGM data in " + name);
+  const unsigned long long bytes_per = maxval > 255 ? 2 : 1;
+  // 64-bit, and compared before any allocation, so absurd dimensions cannot allocate or overflow.
+  const unsigned long long count = static_cast<unsigned long long>(w) * static_cast<unsigned long long>(h);
+  if (static_cast<unsigned long long>(b.size() - pos) / bytes_per < count)
+    return fail(ErrorKind::Io, "truncated PGM data in " + name);
 
   Frame f = Frame::make(w, h, static_cast<std::uint16_t>(maxval));
-  for (std::size_t i = 0; i < count; ++i) {
-    const std::size_t o = pos + i * bytes_per;
+  for (std::size_t i = 0; i < static_cast<std::size_t>(count); ++i) {
+    const std::size_t o = pos + i * static_cast<std::size_t>(bytes_per);
     f.data[i] = bytes_per == 1 ? static_cast<std::uint16_t>(b[o])
                                : static_cast<std::uint16_t>((b[o] << 8) | b[o + 1]);
   }

@@ -112,6 +112,12 @@ Result<FixtureCase> load_case(const std::filesystem::path& dir) {
       if (!b) return fail(ErrorKind::Config, file.string() + ": skip must be a boolean");
       f.skip = *b;
     }
+    // A case may only name files inside its own directory.
+    const std::filesystem::path rel(f.file);
+    bool escapes = rel.is_absolute() || rel.has_root_name() || rel.has_root_directory();
+    for (const auto& part : rel)
+      if (part == "..") escapes = true;
+    if (escapes) return fail(ErrorKind::Config, file.string() + ": frame file must be relative and inside the case: " + f.file);
     std::error_code ec;
     if (!std::filesystem::exists(dir / f.file, ec))
       return fail(ErrorKind::Io, "frame file missing: " + (dir / f.file).string());
@@ -161,6 +167,10 @@ Result<void> FrameRecorder::add(const FrameView& v, std::optional<Vec2> center_p
 }
 
 Result<void> FrameRecorder::finish() {
+  // Refuse to write a case that load_case would reject.
+  if (!std::isfinite(case_.expected_radius_px) || case_.expected_radius_px <= 0)
+    return fail(ErrorKind::Config, "FrameRecorder: expected_radius_px must be positive and finite");
+  if (case_.frames.empty()) return fail(ErrorKind::Config, "FrameRecorder: no frames recorded");
   std::error_code ec;
   std::filesystem::create_directories(case_.dir, ec);
   if (ec) return fail(ErrorKind::Io, "cannot create " + case_.dir.string() + ": " + ec.message());
