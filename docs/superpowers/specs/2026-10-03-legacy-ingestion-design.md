@@ -541,3 +541,16 @@ points. Where this section and an earlier one disagree, this section wins.
 22. **Chronology is strict.** A chronology line that looks like a dose but
     cannot be read makes the file an `unparseable` conflict; a chronology
     stored with fewer doses would silently change decay corrections.
+23. **Catalog rows with a bad optional link.** A catalog row is refused only
+    when the store cannot hold it (a required parent is missing or was
+    refused). When the broken link is optional in the store (a position's
+    sample, a project's principal investigator, a load's user) the row is
+    imported with the link absent and an `identity_clash` conflict records
+    the broken link. One unusable parent therefore does not remove its whole
+    subtree.
+24. **String keys in the legacy database** are matched as MySQL's default
+    collations match them: ignoring case and trailing spaces. The parent's
+    own spelling is what is stored.
+25. **Catalog resume token** is `<table index>:<row index>@<manifest sha256>`,
+    so a directory converted again from a newer dump does not resume at a
+    stale offset.
