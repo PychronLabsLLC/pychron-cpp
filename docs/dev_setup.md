@@ -127,7 +127,8 @@ the UI never migrates it). Rescan picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
 Evolutions tab (signal and baseline fits) as new revisions, or restore an
-older revision from History; saves are recorded under
+older revision from History, and Plot > Blanks... / IC factors... fits and
+saves blanks and IC factors from reference analyses; saves are recorded under
 `$USER` on this host's client:
 
 ```bash

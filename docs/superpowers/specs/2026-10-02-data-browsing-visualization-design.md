@@ -347,10 +347,44 @@ marks the upstream result reviewed, which is also an option.
 | `time_series` | Dataset -> Scene | section 8.3 |
 
 V2 adds `ideogram`, `spectrum`, `inverse_isochron`, `xy_scatter`,
-`subgroup`, `mswd_filter`. V3 adds `fit_blanks`, `fit_icfactors`,
-`fit_isotope_evolution` (each Dataset + references -> Dataset + FitSet),
-`persist_fits` (FitSet -> revisions through `IStore`), `table`,
-`export_csv`.
+`subgroup`, `mswd_filter`. V3 adds `table`, `export_csv`,
+`fit_isotope_evolution`, and the reference fits:
+
+| Unit | Ports | Options |
+|---|---|---|
+| `blank_fit` | (unknowns, references) -> (Scene, ReferenceFits) | per isotope: fit, error; nsigma, show_current |
+| `icfactor_fit` | (unknowns, references) -> (Scene, ReferenceFits) | per detector pair: numerator, denominator, standard ratio, fit, error; nsigma, show_current |
+
+After legacy FitBlanksNode / FitICFactorNode (`references_series.py`):
+
+- Blanks fit each reference's baseline-corrected intercept of the isotope
+  against run time; IC factors fit (N / D) / standard ratio of the
+  references' blank-corrected signals on the two detectors, and the
+  prediction is the IC factor of the denominator detector.
+- Fit kinds: preceding, succeeding (the last / first included reference at
+  or before / after the unknown, clamped at the ends), bracketing average
+  (mean of the two, error sqrt(eL² + eH²) / 2), bracketing interpolate
+  (linear between them, error sqrt(((1 - f) eL)² + (f eH)²)), average and
+  weighted mean (SEM, SD, MSEM), linear, parabolic, cubic and exponential
+  regressions (`reduction::fit` on hours relative to each unknown; SEM or
+  SD). Deviation: legacy weights polynomial fits by the references'
+  errors when they have them; these are unweighted.
+- Excluded references (the references' `edits` unit) are shown hollow and
+  left out of the fit; excluded unknowns are not fitted.
+- `ReferenceFits` (a new port type) holds, per fitted unknown, its heads
+  and one row per isotope (blanks) or denominator detector (IC factors):
+  value, fit, error kind, reference detector and standard ratio (IC
+  factors) and every reference shown with its exclusion.
+- `IRevisionSource::save_reference_fits` writes a blanks or IC factors
+  revision for every unknown in one changeset, on the heads they were
+  fitted at (all or nothing, DVC spec 5.4): edited rows get value, error,
+  fit, error type, references and `reviewed`; keys the revision lacks get
+  new rows; manual overrides are cleared. Message
+  `<BLANKS> fits=Ar40(linear),...` or `<ICFactor> fits=CDD(average)`.
+- `find_references(source, unknowns, query)`: analyses of the query's types
+  (blank types for blanks, air for IC factors) within N hours of any
+  unknown (windows merged, legacy `bin_datetimes`), optionally on the same
+  spectrometer or extract device, without invalid runs or the unknowns.
 
 ### 7.6 Templates
 
@@ -684,6 +718,16 @@ directories keep no revisions):
   `<ISOEVO> ...`. The commit is a compare-and-swap on those heads: if
   someone else moved either first, nothing is written and the status says
   who. Closing the window with pending edits asks whether to save them.
+
+### 11.3a Blanks and IC factors window
+
+Plot > Blanks... / IC factors... in the browser opens a window for the
+selected unknowns: a finder bar (reference types, hours either side, same
+spectrometer, same extract device, Find), the scene (one panel per isotope
+or detector pair; click a reference to leave it out or put it back), a
+Fits dock generated from the unit's schema, and Save, enabled when the
+source keeps revisions and something was fitted. A lost compare-and-swap
+writes nothing and the status says so.
 
 ### 11.4 Figure window
 

@@ -35,6 +35,7 @@
 #include "processing_bridge.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
+#include "reference_fit_window.hpp"
 #include "scene_view.hpp"
 #include "ui_fixture.hpp"
 
@@ -45,6 +46,7 @@ using pychron::ui::FigureWindow;
 using pychron::ui::OptionsEditor;
 using pychron::ui::ProcessingBridge;
 using pychron::ui::RecallWindow;
+using pychron::ui::ReferenceFitWindow;
 
 namespace {
 
@@ -169,7 +171,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     for (int i = 0; i < n; ++i) {
       auto a = analysis(i);
       for (auto& iso : a->isotopes) iso.baseline = {0.01, 0.001};
-      for (const char* kind : {"intercepts", "baselines"}) {
+      for (const char* kind : {"intercepts", "baselines", "blanks", "icfactors"}) {
         a->heads[kind] = std::string("root-") + kind + "-" + a->uuid;
         record(*a, kind, a->heads[kind], "collection", "");
       }
@@ -264,6 +266,33 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     return out;
   }
 
+  Result<pp::SaveOutcome> save_reference_fits(const pp::ReferenceFitSet& fits) override {
+    const std::string k(pp::to_string(fits.target));
+    pp::SaveOutcome out;
+    for (const auto& a : fits.analyses)
+      if (a.heads.count(k) == 0 || a.heads.at(k) != head_[{a.uuid, k}]) {
+        out.conflict = "someone else saved first";
+        return out;
+      }
+    for (const auto& a : fits.analyses) {
+      auto copy = std::make_shared<pp::Analysis>(**load(a.uuid));
+      for (const auto& row : a.rows)
+        for (auto& iso : copy->isotopes) {
+          if (fits.target == pp::ReferenceFitTarget::Blanks && iso.key == row.key) iso.blank = row.value;
+          if (fits.target == pp::ReferenceFitTarget::IcFactors && iso.detector == row.key) iso.ic_factor = row.value;
+        }
+      const std::string id = "rev-" + std::to_string(++ids_) + "-" + k;
+      copy->heads[k] = id;
+      out.revisions[a.uuid] = id;
+      record(*copy, k, id, "reduction", fits.message());
+      add(copy);
+    }
+    out.saved = true;
+    ++reference_saves;
+    last_message = fits.message();
+    return out;
+  }
+
   // Someone else saves: the head moves without this window knowing.
   void move_head(const std::string& uuid, const std::string& kind = "intercepts") {
     head_[{uuid, kind}] = "rev-elsewhere";
@@ -271,6 +300,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
 
   int saves = 0;
   int restores = 0;
+  int reference_saves = 0;
   std::string last_message;
 
  private:
@@ -339,6 +369,16 @@ bool wait_runs(FigureWindow& w, ProcessingBridge& bridge, int runs) {
   return w.runs_completed() >= runs;
 }
 
+bool wait_runs(ReferenceFitWindow& w, ProcessingBridge& bridge, int runs) {
+  QElapsedTimer t;
+  t.start();
+  while (w.runs_completed() < runs && t.elapsed() < kWaitMs) {
+    bridge.wait_idle(100);
+    QTest::qWait(5);
+  }
+  return w.runs_completed() >= runs;
+}
+
 }  // namespace
 
 class TestDataWindows : public QObject {
@@ -389,7 +429,8 @@ class TestDataWindows : public QObject {
     w.select_rows({0, 2});
     QCOMPARE(w.selected_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
     const auto actions = w.plot_button()->menu()->actions();
-    QCOMPARE(actions.size(), 4);
+    QCOMPARE(actions.size(), 7);  // four figures, a separator, blanks and IC factors
+    QCOMPARE(actions[6]->data().toString(), QStringLiteral("icfactor_fit"));
     actions[2]->trigger();  // Age spectrum
     QCOMPARE(series.count(), 1);
     const auto args = series.takeFirst();
@@ -503,7 +544,7 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.revision_content()->item(0, 3)->text(), QStringLiteral(" → 0"));
     QCOMPARE(w.revision_content()->item(1, 2)->text(), QStringLiteral("linear"));
     QVERIFY(w.history_note()->text().contains(QStringLiteral("1 row")));
-    w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Blanks")));
+    w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Tag")));
     QCOMPARE(w.revision_list()->rowCount(), 0);
     QVERIFY2(w.history_note()->text().contains(QStringLiteral("No revisions")), qPrintable(w.history_note()->text()));
     w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Intercepts")));
@@ -583,6 +624,94 @@ class TestDataWindows : public QObject {
     QVERIFY(v.show_analysis(QStringLiteral("uuid-0")));
     QVERIFY(!v.restore_selected());
     QVERIFY(v.restore_button()->toolTip().contains(QStringLiteral("--db")));
+  }
+
+  void reference_fits_find_fit_exclude_and_save() {
+    // Ten analyses an hour apart; 4 and 9 are blanks (obama, jan), the
+    // rest airs. Unknowns 5 (jan) and 6 (obama).
+    RevisionMemorySource src(10);
+    QTemporaryDir dir;
+    ProcessingBridge bridge(src);
+    pp::PresetStore presets(dir.path().toStdString());
+    ReferenceFitWindow w(bridge, presets, "blank_fit", {QStringLiteral("uuid-5"), QStringLiteral("uuid-6")});
+    QVERIFY(wait_runs(w, bridge, 1));
+    QCOMPARE(w.reference_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-4")}));
+    QVERIFY(w.fits());
+    QCOMPARE(w.fits()->analyses.size(), std::size_t{2});
+    // Preceding: blank 4 (Ar40/Ar36 = 299, Ar40 = 2990 less the 0.01
+    // baseline) for both unknowns.
+    QCOMPARE(w.fits()->analyses[0].rows[0].key, std::string("Ar40"));
+    QCOMPARE(w.fits()->analyses[0].rows[0].value.value, 2989.99);
+    QCOMPARE(w.fits()->analyses[1].rows[0].value.value, 2989.99);
+    QCOMPARE(w.view()->panel_count(), 5);
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("2 reference")));
+    QVERIFY(w.save_button()->isEnabled());
+
+    // Clicking blank 4 leaves it out: preceding falls back to blank 9.
+    emit w.view()->point_clicked(QStringLiteral("uuid-4"));
+    QVERIFY(wait_runs(w, bridge, 2));
+    QCOMPARE(w.fits()->analyses[0].rows[0].value.value, 2979.99);
+    for (const auto& ref : w.fits()->analyses[0].rows[0].references)
+      QCOMPARE(ref.excluded, ref.uuid == "uuid-4");
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("1 left out")));
+    w.toggle_references({QStringLiteral("uuid-5")});  // an unknown, not a reference: no change
+    QVERIFY(wait_runs(w, bridge, 3));
+    QCOMPARE(w.fits()->analyses[0].rows[0].value.value, 2979.99);
+
+    QVERIFY(w.save());
+    QCOMPARE(src.reference_saves, 1);
+    QCOMPARE(src.last_message,
+             std::string("<BLANKS> fits=Ar40(preceding),Ar39(preceding),Ar38(preceding),Ar37(preceding),Ar36(preceding)"));
+    QCOMPARE((*src.load("uuid-5"))->find_isotope("Ar40")->blank.value, 2979.99);
+    QVERIFY(wait_runs(w, bridge, 4));
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("saved blanks for 2 analyses")));
+
+    // Someone else saves first: nothing written.
+    src.move_head("uuid-6", "blanks");
+    QVERIFY(!w.save());
+    QCOMPARE(src.reference_saves, 1);
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("someone else saved first")));
+
+    // A window too narrow for any reference: nothing to fit or save.
+    w.hours()->setValue(0.5);
+    QVERIFY(w.find_references());
+    QVERIFY(wait_runs(w, bridge, 5));
+    QVERIFY(w.reference_uuids().isEmpty());
+    QVERIFY(w.fits()->analyses.empty());
+    QVERIFY(!w.save_button()->isEnabled());
+    QVERIFY(w.status_label()->toolTip().contains(QStringLiteral("no references")));
+  }
+
+  void icfactor_fits_from_airs() {
+    RevisionMemorySource src(10);
+    QTemporaryDir dir;
+    ProcessingBridge bridge(src);
+    pp::PresetStore presets(dir.path().toStdString());
+    // Blank 4 (obama) as the unknown; the obama airs 0, 2, 6, 8 within 10 h.
+    ReferenceFitWindow w(bridge, presets, "icfactor_fit", {QStringLiteral("uuid-4")});
+    QVERIFY(wait_runs(w, bridge, 1));
+    QCOMPARE(w.reference_types()->text(), QStringLiteral("air"));
+    QCOMPARE(w.reference_uuids().size(), 4);
+    QCOMPARE(w.fits()->analyses.size(), std::size_t{1});
+    const auto& row = w.fits()->analyses[0].rows.at(0);
+    QCOMPARE(row.key, std::string("CDD"));
+    QCOMPARE(row.reference_detector, std::string("H1"));
+    // Baseline-corrected Ar40/Ar36 of the airs (ratios 295, 297, 295, 297,
+    // baselines 0.01), averaged, over 295.5.
+    double expected = 0;
+    for (double r : {295.0, 297.0, 295.0, 297.0}) expected += (10 * r - 0.01) / 9.99 / 295.5 / 4;
+    QVERIFY(std::abs(row.value.value - expected) < 1e-12);
+    QVERIFY(w.save());
+    QCOMPARE((*src.load("uuid-4"))->find_isotope("Ar36")->ic_factor.value, row.value.value);
+
+    // Without revisions there is nothing to save to.
+    auto plain = make_source(10);
+    ProcessingBridge plain_bridge(*plain);
+    ReferenceFitWindow v(plain_bridge, presets, "blank_fit", {QStringLiteral("uuid-5")});
+    QVERIFY(wait_runs(v, plain_bridge, 1));
+    QVERIFY(!v.save_button()->isEnabled());
+    QVERIFY(v.save_button()->toolTip().contains(QStringLiteral("--db")));
+    QVERIFY(!v.save());
   }
 
   void figure_computes_and_click_excludes() {

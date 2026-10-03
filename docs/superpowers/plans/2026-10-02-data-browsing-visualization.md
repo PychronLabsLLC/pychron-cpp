@@ -132,16 +132,21 @@ source adapters as separate targets (`processing_records`,
       CAS head move recorded as a `rollback` changeset), and editing
       baseline fits per detector, saved with intercept edits in one
       changeset.
-- [ ] Editing blanks and IC factors (needs the V3 reference fits).
+- [x] Editing blanks and IC factors: through the V3 reference fits (below).
 - [ ] Saved selections and named queries (spec 9.3).
 - [ ] Browser source picker in the UI when both a database and records
       exist (Q1); today `--db` chooses at start-up.
 
 ### V3 reduction workflows
 
-- [ ] Fit units with references: `fit_blanks`, `fit_icfactors`,
-      `fit_isotope_evolution` producing a `FitSet` port value; review flag;
-      `persist_fits` through revisions.
+- [x] Blank and IC factor fits from references (`blank_fit`,
+      `icfactor_fit` -> Scene + `ReferenceFits`), `find_references`,
+      `IRevisionSource::save_reference_fits` (one changeset, reviewed set),
+      and the Blanks / IC factors window from the browser's Plot menu.
+- [ ] Reference fits: weighted polynomial regressions, CI and Monte Carlo
+      errors, presets in the window, discrimination and source-correction
+      IC modes, "skip reviewed" on refit, references table dock.
+- [ ] `fit_isotope_evolution` over many analyses (batch refits).
 - [ ] Tables and CSV export units.
 - [ ] Pipeline template editor (graph view of units, per-node options dock).
 - [ ] Listen/auto pipelines driven by `IAnalysisSource::generation()`.

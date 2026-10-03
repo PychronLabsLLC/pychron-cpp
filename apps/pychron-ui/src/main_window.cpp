@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 
 #include "figure_window.hpp"
+#include "reference_fit_window.hpp"
 #include "recall_window.hpp"
 
 #include <utility>
@@ -163,6 +164,13 @@ QWidget* MainWindow::open_time_series(const QStringList& uuids) { return open_fi
 QWidget* MainWindow::open_figure(const QString& kind, const QStringList& uuids) {
   if (!processing_ || presets_ == nullptr) return nullptr;
   if (processing::UnitRegistry::builtin().find(kind.toStdString()) == nullptr) return nullptr;
+  if (ReferenceFitWindow::handles(kind.toStdString())) {
+    auto* r = new ReferenceFitWindow(*processing_, *presets_, kind.toStdString(), uuids, this);
+    r->setAttribute(Qt::WA_DeleteOnClose);
+    data_children_.append(r);
+    r->show();
+    return r;
+  }
   auto* w = new FigureWindow(*processing_, *presets_, kind.toStdString(), uuids, this);
   w->setAttribute(Qt::WA_DeleteOnClose);
   connect(w, &FigureWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
