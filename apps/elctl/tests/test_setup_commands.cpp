@@ -92,7 +92,8 @@ TEST_F(ElctlSetupTest, DataReductionIsTwoAnswersAndADatabase) {
   const auto root = path("Pychron");
   auto o = run_raw({"init", "data-reduction", "--root", root.string(), "--yes"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
-  const auto* dr = site().find("data-reduction");
+  const auto config = site();  // find() points into it
+  const auto* dr = config.find("data-reduction");
   ASSERT_NE(dr, nullptr);
   EXPECT_EQ(dr->kind, "data_reduction");
 #ifdef PYCHRON_ELCTL_HAS_STORE
