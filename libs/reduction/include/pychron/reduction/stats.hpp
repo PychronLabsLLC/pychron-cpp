@@ -67,6 +67,10 @@ double chi2_cdf(double x, double dof);
 double chi2_sf(double x, double dof);
 double chi2_quantile(double p, double dof);  // inverse of chi2_cdf, p in (0, 1)
 
+// Student's t distribution with `dof` degrees of freedom (dof > 0).
+double student_t_cdf(double t, double dof);
+double student_t_quantile(double p, double dof);  // inverse of student_t_cdf, p in (0, 1); NaN otherwise
+
 // The central 95% interval of the reduced chi-squared for n - k degrees of
 // freedom (Mahon 1996; legacy get_mswd_limits). {0, 0} when n <= k.
 std::pair<double, double> mswd_limits(std::size_t n, int k = 1);

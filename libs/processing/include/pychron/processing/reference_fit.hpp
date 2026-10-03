@@ -13,7 +13,10 @@
 // The fit kinds are legacy's: preceding, succeeding, bracketing average,
 // bracketing interpolate (interpolations of the included references),
 // average, weighted mean, and linear, parabolic, cubic, exponential
-// regressions (reduction::fit on hours relative to the newest reference).
+// regressions on hours. Polynomial regressions are weighted by 1/sigma^2
+// when every included reference has an error (legacy
+// WeightedPolynomialRegressor), else ordinary least squares; exponential
+// fits are unweighted.
 
 #include <map>
 #include <memory>
@@ -50,10 +53,19 @@ std::string_view to_string(ReferenceFitKind kind) noexcept;
 std::optional<ReferenceFitKind> parse_reference_fit(std::string_view text) noexcept;
 bool is_interpolation(ReferenceFitKind kind) noexcept;
 
-// SEM, SD, or MSEM (SEM x sqrt(MSWD) when MSWD > 1; means only, regressions
-// treat it as SEM). Interpolations carry the references' own errors.
-enum class ReferenceErrorKind { Sem, Sd, Msem };
-std::string_view to_string(ReferenceErrorKind kind) noexcept;  // "SEM", "SD", "MSEM"
+// Error of a mean or regression at a time (interpolations carry the
+// references' own errors whatever the kind):
+//   SEM   standard error: means as reduction::MeanErrorKind::Sem; weighted
+//         regressions propagate the references' errors, sqrt(x' (X'WX)^-1 x);
+//         unweighted ones as reduction::fit (ErrorType::Sem)
+//   SD    means: the references' standard deviation; regressions: SEM and the
+//         references' scatter about the fit (a prediction error)
+//   MSEM  SEM x sqrt(MSWD) when MSWD > 1
+//   CI    the 95% confidence half-width, t(0.975, n - p) x MSEM
+//   MC    the standard deviation of the fit at that time over 500 refits of
+//         references perturbed by their errors (seeded, reproducible)
+enum class ReferenceErrorKind { Sem, Sd, Msem, Ci, MonteCarlo };
+std::string_view to_string(ReferenceErrorKind kind) noexcept;  // "SEM", "SD", "MSEM", "CI", "MC"
 std::optional<ReferenceErrorKind> parse_reference_error(std::string_view text) noexcept;
 
 struct ReferencePoint {
@@ -77,14 +89,27 @@ class ReferenceModel {
   ReferenceErrorKind error_kind() const noexcept { return error_; }
   const std::vector<ReferencePoint>& included() const noexcept { return included_; }  // by time
   std::optional<double> mswd() const noexcept { return mswd_; }
+  bool weighted() const noexcept { return weighted_; }  // a weighted polynomial regression
+
+  static constexpr int kMonteCarloTrials = 500;
 
  private:
+  Result<Value> regression_at(double t) const;
+
   ReferenceFitKind kind_ = ReferenceFitKind::Average;
   ReferenceErrorKind error_ = ReferenceErrorKind::Sem;
   std::vector<ReferencePoint> included_;
-  double t0_ = 0.0;  // regressions: hours are relative to this
+  double t0_ = 0.0;                // regressions: hours are relative to this
   std::optional<Value> constant_;  // means
   std::optional<double> mswd_;
+  bool weighted_ = false;
+  // Weighted regressions: coefficients c0.. in hours from t0_, (X'WX)^-1,
+  // and the references' unweighted residual variance.
+  std::vector<double> beta_, cov_;
+  double residual_variance_ = 0.0;
+  // MC: the fitted curve of every perturbed trial (polynomial coefficients,
+  // or exponential a, b, c), in hours from t0_.
+  std::vector<std::vector<double>> trials_;
 };
 
 // ---------------------------------------------------------------- fit sets
@@ -102,6 +127,7 @@ struct ReferenceRowFit {
   ReferenceErrorKind error = ReferenceErrorKind::Sem;
   std::string reference_detector;      // IC factors: the numerator detector
   std::optional<double> standard_ratio;  // IC factors
+  bool source_correction = false;        // IC factors from a source mass-discrimination fit
   std::vector<ReferenceUse> references;  // every reference shown, with its exclusion
 };
 
@@ -127,8 +153,14 @@ using ReferenceFitSetPtr = std::shared_ptr<const ReferenceFitSet>;
 // ---------------------------------------------------------------- figures
 
 // Options: blanks list "isotopes" (isotope, fit, error); IC factors list
-// "ratios" (numerator, denominator, standard_ratio, fit, error); both
-// nsigma and show_current.
+// "ratios" (numerator, denominator, standard_ratio, fit, error, mode); both
+// nsigma, show_current and skip_reviewed (rows whose stored value is
+// marked reviewed are shown but not refitted).
+//
+// IC mode "source_correction" (legacy set_beta, WiscAr): the fit of the
+// Ar40 / Ar36 detector pair, v = measured / standard, is a source mass
+// discrimination beta = ln(1/v) / ln(m40/m36); each of Ar36..Ar39 gets the
+// IC factor (m/m40)^beta = v^k, k = ln(m40/m) / ln(m40/m36), on its detector.
 const SchemaPtr& blank_fit_schema();
 const SchemaPtr& icfactor_fit_schema();
 

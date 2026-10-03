@@ -569,7 +569,7 @@ TEST_F(StoreSourceTest, ReferenceFitsSaveForManyAnalysesInOneChangeset) {
     f.uuid = a->uuid;
     f.runid = a->runid;
     f.heads = a->heads;
-    ReferenceRowFit ar40{"Ar40", {0.7, 0.07}, ReferenceFitKind::Linear, ReferenceErrorKind::Sd, "", std::nullopt,
+    ReferenceRowFit ar40{"Ar40", {0.7, 0.07}, ReferenceFitKind::Linear, ReferenceErrorKind::Sd, "", std::nullopt, false,
                          {{air_.str(), "66574-01", false}, {"not-a-uuid", "bu-1", true}}};
     ReferenceRowFit ar39 = ar40;  // no Ar39 blank row yet: appended
     ar39.key = "Ar39";
@@ -588,6 +588,8 @@ TEST_F(StoreSourceTest, ReferenceFitsSaveForManyAnalysesInOneChangeset) {
   EXPECT_EQ((*after)->find_isotope("Ar40")->blank, (Value{0.7, 0.07}));
   EXPECT_EQ((*after)->find_isotope("Ar40")->blank_source, "linear");
   EXPECT_EQ((*after)->find_isotope("Ar39")->blank, (Value{0.02, 0.002}));
+  EXPECT_TRUE((*after)->find_isotope("Ar40")->blank_reviewed);
+  EXPECT_FALSE((*after)->find_isotope("Ar40")->ic_reviewed);
   EXPECT_EQ((*after)->heads.at("blanks"), saved->revisions.at(unknown_.str()));
   EXPECT_EQ((*src.load(air_.str()))->find_isotope("Ar40")->blank, (Value{0.7, 0.07}));
   auto uh = src.revisions()->history(unknown_.str(), RevisionKind::Blanks);
@@ -617,13 +619,14 @@ TEST_F(StoreSourceTest, ReferenceFitsSaveForManyAnalysesInOneChangeset) {
   f.uuid = unknown_.str();
   f.runid = (*after)->runid;
   f.heads = (*after)->heads;
-  f.rows = {{"AX", {1.03, 0.004}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, {}},
-            {"H1", {1.0, 0.0}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, {}}};
+  f.rows = {{"AX", {1.03, 0.004}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, false, {}},
+            {"H1", {1.0, 0.0}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, false, {}}};
   ic.analyses = {f};
   auto ic_saved = src.revisions()->save_reference_fits(ic);
   ASSERT_TRUE(ic_saved && ic_saved->saved);
   auto with_ic = src.load(unknown_.str());
   EXPECT_EQ((*with_ic)->find_isotope("Ar39")->ic_factor, (Value{1.03, 0.004}));
+  EXPECT_TRUE((*with_ic)->find_isotope("Ar39")->ic_reviewed);
   EXPECT_EQ((*with_ic)->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
   EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::IcFactors)->front().message,
             "<ICFactor> fits=AX(average),H1(average)");
@@ -640,9 +643,9 @@ TEST(StoreSourceMapping, ReferenceFitRows) {
   old.manual.use_value = true;
   old.extra_json = R"({"keep": 1})";
   const auto rows = apply_blank_fits(
-      {old}, {{"Ar40", {2, 0.2}, ReferenceFitKind::BracketingInterpolate, ReferenceErrorKind::Msem, "", std::nullopt,
+      {old}, {{"Ar40", {2, 0.2}, ReferenceFitKind::BracketingInterpolate, ReferenceErrorKind::Msem, "", std::nullopt, false,
                {{ps::Uuid::v7().str(), "bu-1", false}, {"", "", true}}},
-              {"Ar36", {0.1, 0.01}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "", std::nullopt, {}}});
+              {"Ar36", {0.1, 0.01}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "", std::nullopt, false, {}}});
   ASSERT_EQ(rows.size(), 2u);
   EXPECT_EQ(rows[0].value, 2.0);
   EXPECT_EQ(rows[0].fit, "bracketing_interpolate");
@@ -659,12 +662,18 @@ TEST(StoreSourceMapping, ReferenceFitRows) {
   EXPECT_EQ(rows[0].references[1].ordinal, 1);
   EXPECT_EQ(rows[1].isotope, "Ar36");
   const auto ics = apply_icfactor_fits({}, {{"CDD", {1.01, 0.001}, ReferenceFitKind::Linear, ReferenceErrorKind::Sem,
-                                             "H1", 295.5, {}}});
+                                             "H1", 295.5, false, {}}});
   ASSERT_EQ(ics.size(), 1u);
   EXPECT_EQ(ics[0].detector, "CDD");
   EXPECT_EQ(ics[0].reference_detector, "H1");
   EXPECT_EQ(ics[0].standard_ratio, 295.5);
   EXPECT_EQ(ics[0].fit, "linear");
+  EXPECT_FALSE(ics[0].source_correction);
+  ReferenceRowFit source{"AX", {0.99, 0.001}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, true, {}};
+  const auto corrected = apply_icfactor_fits(ics, {source});
+  ASSERT_EQ(corrected.size(), 2u);
+  EXPECT_TRUE(corrected[1].source_correction);
+  EXPECT_FALSE(corrected[1].discrimination);
 }
 
 TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {

@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <numbers>
+#include <random>
 #include <set>
 
 #include "pychron/processing/units.hpp"
@@ -33,16 +36,13 @@ std::optional<r::FitKind> regression_kind(ReferenceFitKind k) {
   }
 }
 
-r::MeanErrorKind mean_error(ReferenceErrorKind e) {
-  switch (e) {
-    case ReferenceErrorKind::Sd: return r::MeanErrorKind::Sd;
-    case ReferenceErrorKind::Msem: return r::MeanErrorKind::Msem;
-    case ReferenceErrorKind::Sem: break;
-  }
-  return r::MeanErrorKind::Sem;
-}
 
 constexpr double kHour = 3600.0;
+
+// Legacy masses (arar_age.py set_beta).
+constexpr double kMass40 = 39.9624, kMass36 = 35.9675;
+constexpr std::pair<const char*, double> kSourceMasses[] = {
+    {"Ar36", 35.9675}, {"Ar37", 36.9668}, {"Ar38", 37.9627}, {"Ar39", 38.964}};
 
 }  // namespace
 
@@ -78,12 +78,15 @@ std::string_view to_string(ReferenceErrorKind kind) noexcept {
     case ReferenceErrorKind::Sem: return "SEM";
     case ReferenceErrorKind::Sd: return "SD";
     case ReferenceErrorKind::Msem: return "MSEM";
+    case ReferenceErrorKind::Ci: return "CI";
+    case ReferenceErrorKind::MonteCarlo: return "MC";
   }
   return "";
 }
 
 std::optional<ReferenceErrorKind> parse_reference_error(std::string_view text) noexcept {
-  for (auto k : {ReferenceErrorKind::Sem, ReferenceErrorKind::Sd, ReferenceErrorKind::Msem})
+  for (auto k : {ReferenceErrorKind::Sem, ReferenceErrorKind::Sd, ReferenceErrorKind::Msem, ReferenceErrorKind::Ci,
+                 ReferenceErrorKind::MonteCarlo})
     if (to_string(k) == text) return k;
   return std::nullopt;
 }
@@ -93,6 +96,119 @@ std::string_view to_string(ReferenceFitTarget target) noexcept {
 }
 
 // ---------------------------------------------------------------- model
+
+namespace {
+
+// Deterministic normal deviates: Box-Muller over mt19937_64, whose output is
+// fixed by the standard (std::normal_distribution is not, across libraries).
+class Normal {
+ public:
+  explicit Normal(std::uint64_t seed) : rng_(seed) {}
+  double operator()() {
+    if (spare_) {
+      const double v = *spare_;
+      spare_.reset();
+      return v;
+    }
+    const double u1 = (static_cast<double>(rng_() >> 11) + 1.0) * 0x1.0p-53;  // (0, 1]
+    const double u2 = static_cast<double>(rng_() >> 11) * 0x1.0p-53;          // [0, 1)
+    const double r = std::sqrt(-2.0 * std::log(u1));
+    spare_ = r * std::sin(2.0 * std::numbers::pi * u2);
+    return r * std::cos(2.0 * std::numbers::pi * u2);
+  }
+
+ private:
+  std::mt19937_64 rng_;
+  std::optional<double> spare_;
+};
+
+constexpr std::uint64_t kMonteCarloSeed = 0x5eed2026;
+
+int degree_of(ReferenceFitKind k) {
+  switch (k) {
+    case ReferenceFitKind::Linear: return 1;
+    case ReferenceFitKind::Parabolic: return 2;
+    case ReferenceFitKind::Cubic: return 3;
+    default: return 0;
+  }
+}
+
+// Weighted least squares polynomial of `degree`: coefficients and
+// (X'WX)^-1, row major. nullopt when singular.
+struct Wls {
+  std::vector<double> beta, cov;
+};
+std::optional<Wls> wls(const std::vector<double>& x, const std::vector<double>& y, const std::vector<double>& w,
+                       int degree) {
+  const int p = degree + 1;
+  std::vector<double> a(static_cast<std::size_t>(p * p), 0.0), b(static_cast<std::size_t>(p), 0.0);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    std::vector<double> pw(static_cast<std::size_t>(p), 1.0);
+    for (int k = 1; k < p; ++k) pw[static_cast<std::size_t>(k)] = pw[static_cast<std::size_t>(k - 1)] * x[i];
+    for (int r = 0; r < p; ++r) {
+      b[static_cast<std::size_t>(r)] += w[i] * pw[static_cast<std::size_t>(r)] * y[i];
+      for (int c = 0; c < p; ++c)
+        a[static_cast<std::size_t>(r * p + c)] += w[i] * pw[static_cast<std::size_t>(r)] * pw[static_cast<std::size_t>(c)];
+    }
+  }
+  // Gauss-Jordan on [A | I | b] with partial pivoting.
+  std::vector<double> inv(static_cast<std::size_t>(p * p), 0.0);
+  for (int i = 0; i < p; ++i) inv[static_cast<std::size_t>(i * p + i)] = 1.0;
+  auto at = [&](std::vector<double>& m, int r, int c) -> double& { return m[static_cast<std::size_t>(r * p + c)]; };
+  for (int col = 0; col < p; ++col) {
+    int piv = col;
+    for (int r = col + 1; r < p; ++r)
+      if (std::abs(at(a, r, col)) > std::abs(at(a, piv, col))) piv = r;
+    if (std::abs(at(a, piv, col)) < 1e-300) return std::nullopt;
+    if (piv != col) {
+      for (int c = 0; c < p; ++c) {
+        std::swap(at(a, piv, c), at(a, col, c));
+        std::swap(at(inv, piv, c), at(inv, col, c));
+      }
+      std::swap(b[static_cast<std::size_t>(piv)], b[static_cast<std::size_t>(col)]);
+    }
+    const double d = at(a, col, col);
+    for (int c = 0; c < p; ++c) {
+      at(a, col, c) /= d;
+      at(inv, col, c) /= d;
+    }
+    b[static_cast<std::size_t>(col)] /= d;
+    for (int r = 0; r < p; ++r) {
+      if (r == col) continue;
+      const double f = at(a, r, col);
+      if (f == 0.0) continue;
+      for (int c = 0; c < p; ++c) {
+        at(a, r, c) -= f * at(a, col, c);
+        at(inv, r, c) -= f * at(inv, col, c);
+      }
+      b[static_cast<std::size_t>(r)] -= f * b[static_cast<std::size_t>(col)];
+    }
+  }
+  return Wls{std::move(b), std::move(inv)};
+}
+
+double poly(const std::vector<double>& c, double x) {
+  double v = 0.0;
+  for (auto it = c.rbegin(); it != c.rend(); ++it) v = v * x + *it;
+  return v;
+}
+
+double sd_of(const std::vector<double>& v) {
+  if (v.size() < 2) return 0.0;
+  double m = 0.0;
+  for (double x : v) m += x;
+  m /= static_cast<double>(v.size());
+  double ss = 0.0;
+  for (double x : v) ss += (x - m) * (x - m);
+  return std::sqrt(ss / static_cast<double>(v.size() - 1));
+}
+
+// t(0.975, dof), or 1 without degrees of freedom.
+double t95(std::size_t n, std::size_t p) {
+  return n > p ? r::student_t_quantile(0.975, static_cast<double>(n - p)) : 1.0;
+}
+
+}  // namespace
 
 Result<ReferenceModel> ReferenceModel::make(std::vector<ReferencePoint> points, ReferenceFitKind kind,
                                             ReferenceErrorKind error) {
@@ -105,70 +221,165 @@ Result<ReferenceModel> ReferenceModel::make(std::vector<ReferencePoint> points, 
                    [](const ReferencePoint& a, const ReferencePoint& b) { return a.t < b.t; });
   if (m.included_.empty()) return fail(ErrorKind::Config, "no references to fit");
   m.t0_ = m.included_.back().t;
-  std::vector<double> v, e;
+  const std::size_t n = m.included_.size();
+  std::vector<double> v, e, x;
   for (const auto& p : m.included_) {
     v.push_back(p.value.value);
     e.push_back(p.value.error);
+    x.push_back((p.t - m.t0_) / kHour);
   }
+  const bool all_errors =
+      std::all_of(e.begin(), e.end(), [](double s) { return s > 0.0 && std::isfinite(s); });
+  Normal normal(kMonteCarloSeed);
+  auto perturbed = [&] {
+    std::vector<double> out(n);
+    for (std::size_t i = 0; i < n; ++i) out[i] = v[i] + e[i] * normal();
+    return out;
+  };
+
   if (kind == ReferenceFitKind::Average || kind == ReferenceFitKind::WeightedMean) {
-    auto mean = kind == ReferenceFitKind::Average ? r::arithmetic_mean(v, e, mean_error(error))
-                                                  : r::weighted_mean(v, e, mean_error(error));
+    const bool weighted = kind == ReferenceFitKind::WeightedMean;
+    auto mean_of = [&](const std::vector<double>& vals, r::MeanErrorKind mk) {
+      return weighted ? r::weighted_mean(vals, e, mk) : r::arithmetic_mean(vals, e, mk);
+    };
+    const auto base = error == ReferenceErrorKind::Sd ? r::MeanErrorKind::Sd
+                      : error == ReferenceErrorKind::Sem ? r::MeanErrorKind::Sem
+                                                         : r::MeanErrorKind::Msem;
+    auto mean = mean_of(v, base);
     if (!mean) return fail(ErrorKind::Config, std::string(to_string(kind)) + ": " + mean.error().what);
-    m.constant_ = Value{mean->value, mean->error};
+    double err = mean->error;
+    if (error == ReferenceErrorKind::Ci) err = t95(mean->n, 1) * mean->error;  // mean->error is MSEM here
+    if (error == ReferenceErrorKind::MonteCarlo) {
+      std::vector<double> means;
+      for (int k = 0; k < kMonteCarloTrials; ++k)
+        if (auto t = mean_of(perturbed(), r::MeanErrorKind::Sem)) means.push_back(t->value);
+      err = sd_of(means);
+    }
+    m.constant_ = Value{mean->value, err};
     if (mean->n > 1) m.mswd_ = mean->mswd;
-  } else if (auto rk = regression_kind(kind)) {
-    r::FitSpec spec;
-    spec.kind = *rk;
-    if (m.included_.size() < r::parameter_count(spec))
-      return fail(ErrorKind::Config, std::string(to_string(kind)) + " needs " + std::to_string(r::parameter_count(spec)) +
-                                         " references, has " + std::to_string(m.included_.size()));
+    return m;
+  }
+
+  const auto rk = regression_kind(kind);
+  if (!rk) return m;  // interpolations need nothing more
+  r::FitSpec spec;
+  spec.kind = *rk;
+  const std::size_t params = r::parameter_count(spec);
+  if (n < params)
+    return fail(ErrorKind::Config, std::string(to_string(kind)) + " needs " + std::to_string(params) +
+                                       " references, has " + std::to_string(n));
+  const int degree = degree_of(kind);
+  if (degree > 0 && all_errors) {
+    std::vector<double> w;
+    for (double s : e) w.push_back(1.0 / (s * s));
+    auto fit = wls(x, v, w, degree);
+    if (!fit) return fail(ErrorKind::Config, std::string(to_string(kind)) + ": singular fit");
+    m.weighted_ = true;
+    m.beta_ = std::move(fit->beta);
+    m.cov_ = std::move(fit->cov);
+    double chi2 = 0.0, ss = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+      const double res = v[i] - poly(m.beta_, x[i]);
+      chi2 += w[i] * res * res;
+      ss += res * res;
+    }
+    if (n > params) {
+      m.mswd_ = chi2 / static_cast<double>(n - params);
+      m.residual_variance_ = ss / static_cast<double>(n - params);
+    }
+    if (error == ReferenceErrorKind::MonteCarlo)
+      for (int k = 0; k < kMonteCarloTrials; ++k)
+        if (auto t = wls(x, perturbed(), w, degree)) m.trials_.push_back(std::move(t->beta));
+  } else {
     auto probe = m.at(m.t0_);
     if (!probe) return fail(probe.error());
+    if (error == ReferenceErrorKind::MonteCarlo)
+      for (int k = 0; k < kMonteCarloTrials; ++k) {
+        auto t = r::fit(r::Series{x, perturbed()}, spec);
+        if (t) m.trials_.push_back(t->params);
+      }
   }
   return m;
+}
+
+Result<Value> ReferenceModel::regression_at(double t) const {
+  const double h = (t - t0_) / kHour;
+  const std::size_t n = included_.size();
+  r::FitSpec spec;
+  spec.kind = *regression_kind(kind_);
+  const std::size_t params = r::parameter_count(spec);
+  auto monte_carlo = [&](double value) -> Value {
+    std::vector<double> preds;
+    for (const auto& c : trials_) {
+      r::Intercept curve;
+      curve.kind = spec.kind;
+      curve.params = c;
+      const double y = weighted_ ? poly(c, h) : r::predict(curve, h);
+      if (std::isfinite(y)) preds.push_back(y);
+    }
+    return Value{value, sd_of(preds)};
+  };
+  if (weighted_) {
+    const int p = static_cast<int>(beta_.size());
+    std::vector<double> xk(static_cast<std::size_t>(p), 1.0);
+    for (int k = 1; k < p; ++k) xk[static_cast<std::size_t>(k)] = xk[static_cast<std::size_t>(k - 1)] * h;
+    double var = 0.0;
+    for (int r1 = 0; r1 < p; ++r1)
+      for (int c = 0; c < p; ++c)
+        var += xk[static_cast<std::size_t>(r1)] * cov_[static_cast<std::size_t>(r1 * p + c)] * xk[static_cast<std::size_t>(c)];
+    const double sem = std::sqrt(std::max(0.0, var));
+    const double value = poly(beta_, h);
+    const double msem = sem * std::sqrt(std::max(1.0, mswd_.value_or(1.0)));
+    switch (error_) {
+      case ReferenceErrorKind::Sem: return Value{value, sem};
+      case ReferenceErrorKind::Msem: return Value{value, msem};
+      case ReferenceErrorKind::Sd: return Value{value, std::sqrt(sem * sem + residual_variance_)};
+      case ReferenceErrorKind::Ci: return Value{value, t95(n, params) * msem};
+      case ReferenceErrorKind::MonteCarlo: return monte_carlo(value);
+    }
+    return Value{value, sem};
+  }
+  // Unweighted: refit with time zero at t, so the intercept is the value at t.
+  r::Series s;
+  for (const auto& q : included_) {
+    s.x.push_back((q.t - t) / kHour);
+    s.y.push_back(q.value.value);
+  }
+  spec.error = error_ == ReferenceErrorKind::Sd ? r::ErrorType::Sd : r::ErrorType::Sem;
+  auto f = r::fit(s, spec);
+  if (!f) return fail(ErrorKind::Config, std::string(to_string(kind_)) + ": " + f.error().what);
+  if (error_ == ReferenceErrorKind::Ci) return Value{f->value, t95(n, params) * f->error};
+  if (error_ == ReferenceErrorKind::MonteCarlo) return monte_carlo(f->value);
+  return Value{f->value, f->error};
 }
 
 Result<Value> ReferenceModel::at(double t) const {
   if (constant_) return *constant_;
   const auto& p = included_;
-  if (is_interpolation(kind_)) {
-    // Last point at or before t, first at or after (clamped at the ends).
-    std::size_t hi = static_cast<std::size_t>(
-        std::lower_bound(p.begin(), p.end(), t, [](const ReferencePoint& a, double x) { return a.t < x; }) - p.begin());
-    std::size_t lo = hi;
-    if (hi == p.size() || p[hi].t > t) lo = hi == 0 ? 0 : hi - 1;
-    if (hi == p.size()) hi = p.size() - 1;
-    const auto& L = p[lo];
-    const auto& H = p[hi];
-    switch (kind_) {
-      case ReferenceFitKind::Preceding: return (L.t <= t ? L : p.front()).value;
-      case ReferenceFitKind::Succeeding: return (H.t >= t ? H : p.back()).value;
-      case ReferenceFitKind::BracketingAverage:
-        if (lo == hi) return L.value;
-        return Value{(L.value.value + H.value.value) / 2.0, std::hypot(L.value.error, H.value.error) / 2.0};
-      case ReferenceFitKind::BracketingInterpolate: {
-        if (lo == hi || H.t == L.t) return L.value;
-        const double f = std::clamp((t - L.t) / (H.t - L.t), 0.0, 1.0);
-        return Value{L.value.value + f * (H.value.value - L.value.value),
-                     std::hypot((1.0 - f) * L.value.error, f * H.value.error)};
-      }
-      default: break;
+  if (!is_interpolation(kind_)) return regression_at(t);
+  // Last point at or before t, first at or after (clamped at the ends).
+  std::size_t hi = static_cast<std::size_t>(
+      std::lower_bound(p.begin(), p.end(), t, [](const ReferencePoint& a, double x) { return a.t < x; }) - p.begin());
+  std::size_t lo = hi;
+  if (hi == p.size() || p[hi].t > t) lo = hi == 0 ? 0 : hi - 1;
+  if (hi == p.size()) hi = p.size() - 1;
+  const auto& L = p[lo];
+  const auto& H = p[hi];
+  switch (kind_) {
+    case ReferenceFitKind::Preceding: return (L.t <= t ? L : p.front()).value;
+    case ReferenceFitKind::Succeeding: return (H.t >= t ? H : p.back()).value;
+    case ReferenceFitKind::BracketingAverage:
+      if (lo == hi) return L.value;
+      return Value{(L.value.value + H.value.value) / 2.0, std::hypot(L.value.error, H.value.error) / 2.0};
+    case ReferenceFitKind::BracketingInterpolate: {
+      if (lo == hi || H.t == L.t) return L.value;
+      const double f = std::clamp((t - L.t) / (H.t - L.t), 0.0, 1.0);
+      return Value{L.value.value + f * (H.value.value - L.value.value),
+                   std::hypot((1.0 - f) * L.value.error, f * H.value.error)};
     }
+    default: break;
   }
-  const auto rk = regression_kind(kind_);
-  if (!rk) return fail(ErrorKind::Config, "unsupported fit");
-  // Hours relative to `t`, so the intercept is the value at t.
-  r::Series s;
-  for (const auto& q : p) {
-    s.x.push_back((q.t - t) / kHour);
-    s.y.push_back(q.value.value);
-  }
-  r::FitSpec spec;
-  spec.kind = *rk;
-  spec.error = error_ == ReferenceErrorKind::Sd ? r::ErrorType::Sd : r::ErrorType::Sem;
-  auto f = r::fit(s, spec);
-  if (!f) return fail(ErrorKind::Config, std::string(to_string(kind_)) + ": " + f.error().what);
-  return Value{f->value, f->error};
+  return fail(ErrorKind::Config, "unsupported fit");
 }
 
 // ---------------------------------------------------------------- fit sets
@@ -199,14 +410,16 @@ std::vector<std::string> fit_choices() {
 std::vector<FieldSpec> common_fields() {
   return {integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
           boolean("show_current", "Show current values", "Display", true,
-                  "The unknowns' stored values beside the predicted ones")};
+                  "The unknowns' stored values beside the predicted ones"),
+          boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
+                  "Values already marked reviewed are shown but not refitted or saved")};
 }
 
 SchemaPtr make_blank_schema() {
   auto row = make_schema("figure.blank_fit.isotope", "Isotope",
                          {text("isotope", "Isotope", "Isotope", "Ar40"),
                           choice("fit", "Fit", "Isotope", fit_choices(), "preceding"),
-                          choice("error", "Error", "Isotope", {"SEM", "SD", "MSEM"}, "SEM")});
+                          choice("error", "Error", "Isotope", {"SEM", "SD", "MSEM", "CI", "MC"}, "SEM")});
   ListSpec list;
   list.key = "isotopes";
   list.label = "Isotopes";
@@ -227,7 +440,8 @@ SchemaPtr make_icfactor_schema() {
                           text("denominator", "Denominator detector", "Ratio", "CDD"),
                           number("standard_ratio", "Standard ratio", "Ratio", 295.5, 1e-9, 1e12),
                           choice("fit", "Fit", "Ratio", fit_choices(), "average"),
-                          choice("error", "Error", "Ratio", {"SEM", "SD", "MSEM"}, "SEM")});
+                          choice("error", "Error", "Ratio", {"SEM", "SD", "MSEM", "CI", "MC"}, "SEM"),
+                          choice("mode", "Mode", "Ratio", {"ic_factor", "source_correction"}, "ic_factor")});
   ListSpec list;
   list.key = "ratios";
   list.label = "Ratios";
@@ -264,6 +478,7 @@ struct RowSpec {
   std::string isotope;                  // blanks
   std::string numerator, denominator;   // IC factors
   double standard_ratio = 1.0;
+  bool source_correction = false;
   ReferenceFitKind fit = ReferenceFitKind::Average;
   ReferenceErrorKind error = ReferenceErrorKind::Sem;
 };
@@ -281,6 +496,7 @@ std::vector<RowSpec> row_specs(ReferenceFitTarget target, const Options& o) {
       s.numerator = row.get_string("numerator");
       s.denominator = row.get_string("denominator");
       s.standard_ratio = row.get_double("standard_ratio");
+      s.source_correction = row.get_string("mode") == "source_correction";
       s.title = s.numerator + "/" + s.denominator;
     }
     out.push_back(std::move(s));
@@ -309,6 +525,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
   fig.scene.kind = target == ReferenceFitTarget::Blanks ? "blank_fit" : "icfactor_fit";
   const double nsigma = static_cast<double>(o.get_int("nsigma"));
   const bool show_current = o.get_bool("show_current");
+  const bool skip_reviewed = o.get_bool("skip_reviewed");
   const bool blanks = target == ReferenceFitTarget::Blanks;
 
   // Time zero: the newest run among references and unknowns.
@@ -376,6 +593,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
     }
 
     // Unknowns: current and predicted values.
+    int reviewed_kept = 0;
     PointLayer current, predicted;
     current.marker.shape = MarkerShape::Square;
     current.marker.color = Color{140, 140, 140, 255};
@@ -415,19 +633,49 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
       predicted.y_err.push_back(v->error * nsigma);
       predicted.refs.push_back(PointRef{});
       predicted.tooltips.push_back(a.runid + " predicted");
-      auto& entry = by_uuid[a.uuid];
-      entry.uuid = a.uuid;
-      entry.runid = a.runid;
-      entry.heads = a.heads;
-      for (const auto& [key, _] : keys) {
+      // The rows to store: blanks per isotope key; IC factors for the
+      // denominator, or per Ar36..Ar39 detector from a source correction.
+      struct Out {
+        std::string key;
+        Value value;
+        bool reviewed = false;
+      };
+      std::vector<Out> outs;
+      if (blanks) {
+        for (const auto& iso : a.isotopes)
+          if (iso.isotope == spec.isotope || iso.key == spec.isotope) outs.push_back({iso.key, *v, iso.blank_reviewed});
+      } else if (!spec.source_correction) {
+        outs.push_back({spec.denominator, *v, isotope_on(a, spec.denominator)->ic_reviewed});
+      } else if (v->value > 0.0) {
+        for (const auto& [name, mass] : kSourceMasses) {
+          const IsotopeData* iso = a.find_by_isotope(name);
+          if (!iso || iso->detector.empty() ||
+              std::any_of(outs.begin(), outs.end(), [&](const Out& o) { return o.key == iso->detector; }))
+            continue;
+          const double k = std::log(kMass40 / mass) / std::log(kMass40 / kMass36);
+          outs.push_back({iso->detector,
+                          Value{std::pow(v->value, k), std::abs(k) * std::pow(v->value, k - 1.0) * v->error},
+                          iso->ic_reviewed});
+        }
+      }
+      for (const auto& out : outs) {
+        if (skip_reviewed && out.reviewed) {
+          ++reviewed_kept;
+          continue;
+        }
+        auto& entry = by_uuid[a.uuid];
+        entry.uuid = a.uuid;
+        entry.runid = a.runid;
+        entry.heads = a.heads;
         ReferenceRowFit row;
-        row.key = key;
-        row.value = *v;
+        row.key = out.key;
+        row.value = out.value;
         row.fit = spec.fit;
         row.error = spec.error;
         if (!blanks) {
           row.reference_detector = spec.numerator;
           row.standard_ratio = spec.standard_ratio;
+          row.source_correction = spec.source_correction;
         }
         row.references = uses;
         entry.rows.push_back(std::move(row));
@@ -465,9 +713,11 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
                     model->included().size(), points.size());
       t.lines.push_back(buf);
       if (model->mswd()) {
-        std::snprintf(buf, sizeof buf, "MSWD %.3g", *model->mswd());
+        std::snprintf(buf, sizeof buf, "MSWD %.3g%s", *model->mswd(), model->weighted() ? "  weighted" : "");
         t.lines.push_back(buf);
       }
+      if (spec.source_correction) t.lines.push_back("source correction (Ar36..Ar39)");
+      if (reviewed_kept > 0) t.lines.push_back(std::to_string(reviewed_kept) + " reviewed value(s) kept");
       t.corner = Corner::TopLeft;
       p.layers.emplace_back(std::move(t));
     }

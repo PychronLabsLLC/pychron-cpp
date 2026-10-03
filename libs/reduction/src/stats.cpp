@@ -65,6 +65,46 @@ double gamma_p(double a, double x) {
   return 1.0 - std::exp(-x + a * std::log(x) - gln) * h;
 }
 
+// Continued fraction of the incomplete beta (Numerical Recipes betacf).
+double beta_cf(double a, double b, double x) {
+  constexpr double kTiny = 1e-300;
+  const double qab = a + b, qap = a + 1.0, qam = a - 1.0;
+  double c = 1.0, d = 1.0 - qab * x / qap;
+  if (std::abs(d) < kTiny) d = kTiny;
+  d = 1.0 / d;
+  double h = d;
+  for (int m = 1; m <= 1000; ++m) {
+    const double m2 = 2.0 * m;
+    double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1.0 + aa * d;
+    if (std::abs(d) < kTiny) d = kTiny;
+    c = 1.0 + aa / c;
+    if (std::abs(c) < kTiny) c = kTiny;
+    d = 1.0 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1.0 + aa * d;
+    if (std::abs(d) < kTiny) d = kTiny;
+    c = 1.0 + aa / c;
+    if (std::abs(c) < kTiny) c = kTiny;
+    d = 1.0 / d;
+    const double del = d * c;
+    h *= del;
+    if (std::abs(del - 1.0) < 1e-16) break;
+  }
+  return h;
+}
+
+// Regularized incomplete beta I_x(a, b).
+double beta_i(double a, double b, double x) {
+  if (x <= 0.0) return 0.0;
+  if (x >= 1.0) return 1.0;
+  const double front =
+      std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) + a * std::log(x) + b * std::log1p(-x));
+  if (x < (a + 1.0) / (a + b + 2.0)) return front * beta_cf(a, b, x) / a;
+  return 1.0 - front * beta_cf(b, a, 1.0 - x) / b;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- means
@@ -185,6 +225,31 @@ double chi2_quantile(double p, double dof) {
     if (hi - lo <= 1e-14 * hi) break;
   }
   return 0.5 * (lo + hi);
+}
+
+double student_t_cdf(double t, double dof) {
+  if (!(dof > 0.0) || std::isnan(t)) return std::numeric_limits<double>::quiet_NaN();
+  const double tail = 0.5 * beta_i(dof / 2.0, 0.5, dof / (dof + t * t));
+  return t >= 0.0 ? 1.0 - tail : tail;
+}
+
+double student_t_quantile(double p, double dof) {
+  if (!(p > 0.0) || !(p < 1.0) || !(dof > 0.0)) return std::numeric_limits<double>::quiet_NaN();
+  if (p == 0.5) return 0.0;
+  // Symmetric: solve for the upper tail, bisecting on [0, hi].
+  const double q = p > 0.5 ? p : 1.0 - p;
+  double lo = 0.0, hi = 1.0;
+  while (student_t_cdf(hi, dof) < q) hi *= 2.0;
+  for (int i = 0; i < 300; ++i) {
+    const double mid = 0.5 * (lo + hi);
+    if (student_t_cdf(mid, dof) < q)
+      lo = mid;
+    else
+      hi = mid;
+    if (hi - lo <= 1e-14 * hi) break;
+  }
+  const double t = 0.5 * (lo + hi);
+  return p > 0.5 ? t : -t;
 }
 
 std::pair<double, double> mswd_limits(std::size_t n, int k) {

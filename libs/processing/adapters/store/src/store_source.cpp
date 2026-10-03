@@ -309,12 +309,15 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
           if (b.isotope == iso.key || b.isotope == iso.isotope) {
             iso.blank = value_of(b.value, b.error, b.manual);
             iso.blank_source = b.fit.value_or("");
+            iso.blank_reviewed = b.reviewed;
             if (b.isotope == iso.key) break;
           }
       if (ics)
         for (const auto& ic : *ics)
-          if (ic.detector == iso.detector && (ic.value || (ic.manual.use_value && ic.manual.value)))
+          if (ic.detector == iso.detector && (ic.value || (ic.manual.use_value && ic.manual.value))) {
             iso.ic_factor = value_of(ic.value, ic.error, ic.manual);
+            iso.ic_reviewed = ic.reviewed;
+          }
       a.isotopes.push_back(std::move(iso));
     }
   }
@@ -942,6 +945,8 @@ ps::IcFactors apply_icfactor_fits(ps::IcFactors rows, const std::vector<Referenc
     row.fit = std::string(to_string(f.fit));
     if (!f.reference_detector.empty()) row.reference_detector = f.reference_detector;
     if (f.standard_ratio) row.standard_ratio = f.standard_ratio;
+    row.source_correction = f.source_correction;
+    row.discrimination = false;
     row.reviewed = true;
     row.manual = ps::ManualOverride{};
     row.references = reference_rows(f.references);

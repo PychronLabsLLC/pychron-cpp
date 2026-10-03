@@ -9,6 +9,7 @@
 #include "fixtures.hpp"
 #include "pychron/processing/reference_fit.hpp"
 #include "pychron/processing/units.hpp"
+#include "pychron/reduction/stats.hpp"
 
 namespace pychron::processing {
 namespace {
@@ -79,12 +80,80 @@ TEST(ReferenceModel, RegressionsAndFailures) {
   EXPECT_FALSE(ReferenceModel::make(zero, ReferenceFitKind::WeightedMean, ReferenceErrorKind::Sem));
 }
 
+TEST(ReferenceModel, WeightedPolynomials) {
+  // Three references on y = 1 + x (hours) with small errors and a wild one
+  // with a huge error: the weighted fit follows the three.
+  std::vector<ReferencePoint> pts{{0, {1, 0.1}, "a", "", false},
+                                  {3600, {2, 0.1}, "b", "", false},
+                                  {7200, {3, 0.1}, "c", "", false},
+                                  {10800, {10, 100}, "d", "", false}};
+  auto w = ReferenceModel::make(pts, ReferenceFitKind::Linear, ReferenceErrorKind::Sem);
+  ASSERT_TRUE(w) << w.error().what;
+  EXPECT_TRUE(w->weighted());
+  EXPECT_NEAR(w->at(14400)->value, 5.0, 1e-3);
+  // A zero error anywhere: unweighted, pulled towards the wild point.
+  pts[0].value.error = 0;
+  auto ols = ReferenceModel::make(pts, ReferenceFitKind::Linear, ReferenceErrorKind::Sem);
+  ASSERT_TRUE(ols);
+  EXPECT_FALSE(ols->weighted());
+  EXPECT_GT(ols->at(14400)->value, 6.0);
+  // Exponential fits are never weighted.
+  pts[0].value.error = 0.1;
+  auto ex = ReferenceModel::make(pts, ReferenceFitKind::Exponential, ReferenceErrorKind::Sem);
+  if (ex) EXPECT_FALSE(ex->weighted());
+}
+
+TEST(ReferenceModel, WeightedErrorKinds) {
+  // On y = 1 + x exactly, sigma 0.1: at the centre, SEM = 0.1 / sqrt(3).
+  std::vector<ReferencePoint> pts{{0, {1, 0.1}, "a", "", false}, {3600, {2, 0.1}, "b", "", false},
+                                  {7200, {3, 0.1}, "c", "", false}};
+  auto err = [&](ReferenceErrorKind k) { return ReferenceModel::make(pts, ReferenceFitKind::Linear, k)->at(3600)->error; };
+  const double sem = 0.1 / std::sqrt(3.0);
+  EXPECT_NEAR(err(ReferenceErrorKind::Sem), sem, 1e-12);
+  EXPECT_NEAR(err(ReferenceErrorKind::Msem), sem, 1e-12);  // MSWD 0
+  EXPECT_NEAR(err(ReferenceErrorKind::Sd), sem, 1e-12);    // no scatter
+  EXPECT_NEAR(err(ReferenceErrorKind::Ci), reduction::student_t_quantile(0.975, 1) * sem, 1e-9);
+  // Away from the centre: sigma^2 (1/n + (x - xbar)^2 / Sxx), x - xbar = 2 h.
+  EXPECT_NEAR(ReferenceModel::make(pts, ReferenceFitKind::Linear, ReferenceErrorKind::Sem)->at(10800)->error,
+              0.1 * std::sqrt(1.0 / 3.0 + 4.0 / 2.0), 1e-12);
+  // Monte Carlo agrees with the propagated SEM within its sampling error,
+  // and is reproducible.
+  const double mc = err(ReferenceErrorKind::MonteCarlo);
+  EXPECT_NEAR(mc, sem, 0.15 * sem);
+  EXPECT_EQ(mc, err(ReferenceErrorKind::MonteCarlo));
+  // Scatter: SD includes the residuals, MSEM scales by sqrt(MSWD).
+  pts[1].value.value = 2.5;
+  auto scattered = [&](ReferenceErrorKind k) {
+    return ReferenceModel::make(pts, ReferenceFitKind::Linear, k);
+  };
+  const auto m = scattered(ReferenceErrorKind::Msem);
+  ASSERT_TRUE(m && m->mswd());
+  EXPECT_GT(*m->mswd(), 1.0);
+  EXPECT_NEAR(m->at(3600)->error, sem * std::sqrt(*m->mswd()), 1e-12);
+  EXPECT_GT(scattered(ReferenceErrorKind::Sd)->at(3600)->error, sem);
+}
+
+TEST(ReferenceModel, MeanErrorKinds) {
+  std::vector<double> v{1, 3, 5}, e{0.1, 0.2, 0.1};
+  const auto msem = reduction::arithmetic_mean(v, e, reduction::MeanErrorKind::Msem)->error;
+  EXPECT_NEAR(at(ReferenceFitKind::Average, 0, ReferenceErrorKind::Ci).error,
+              reduction::student_t_quantile(0.975, 2) * msem, 1e-12);
+  const double wsem = reduction::weighted_mean(v, e, reduction::MeanErrorKind::Sem)->error;
+  const double mc = at(ReferenceFitKind::WeightedMean, 0, ReferenceErrorKind::MonteCarlo).error;
+  EXPECT_NEAR(mc, wsem, 0.15 * wsem);
+  // Interpolations keep the references' errors whatever the kind.
+  EXPECT_EQ(at(ReferenceFitKind::Preceding, 12, ReferenceErrorKind::MonteCarlo), (Value{3, 0.2}));
+}
+
 TEST(ReferenceModel, Spellings) {
   for (const char* k : {"preceding", "succeeding", "bracketing_average", "bracketing_interpolate", "average",
                         "weighted_mean", "linear", "parabolic", "cubic", "exponential"})
     EXPECT_EQ(to_string(*parse_reference_fit(k)), k);
   EXPECT_FALSE(parse_reference_fit("Linear"));
   EXPECT_EQ(parse_reference_error("MSEM"), ReferenceErrorKind::Msem);
+  EXPECT_EQ(parse_reference_error("CI"), ReferenceErrorKind::Ci);
+  EXPECT_EQ(parse_reference_error("MC"), ReferenceErrorKind::MonteCarlo);
+  EXPECT_FALSE(parse_reference_error("sem"));
   EXPECT_TRUE(is_interpolation(ReferenceFitKind::Succeeding));
   EXPECT_FALSE(is_interpolation(ReferenceFitKind::Average));
 }
@@ -209,6 +278,56 @@ TEST(ReferenceFigure, IcFactorsFromAirRatios) {
   auto none = build_reference_figure(ReferenceFitTarget::IcFactors, unknowns_dataset(), airs, o);
   ASSERT_TRUE(none);
   EXPECT_TRUE(none->fits.analyses.empty());
+}
+
+TEST(ReferenceFigure, SourceCorrectionGivesIcFactorsByMass) {
+  Dataset airs;
+  for (int i : {0, 4}) {
+    auto a = test::make_air(i, i == 0 ? 295.5 : 300.0);
+    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+  }
+  Options o(icfactor_fit_schema());
+  auto rows = o.rows("ratios");
+  ASSERT_TRUE(rows[0].set("mode", std::string("source_correction")));
+  ASSERT_TRUE(o.set_rows("ratios", rows));
+  auto fig = build_reference_figure(ReferenceFitTarget::IcFactors, unknowns_dataset(), airs, o);
+  ASSERT_TRUE(fig) << fig.error().what;
+  const auto& out = fig->fits.analyses.at(0).rows;
+  ASSERT_EQ(out.size(), 4u);  // Ar36 CDD, Ar37 L2, Ar38 L1, Ar39 AX
+  const double v = (1.0 + 300.0 / 295.5) / 2.0;
+  const double l = std::log(39.9624 / 35.9675);
+  auto row = [&](const std::string& det) {
+    return *std::find_if(out.begin(), out.end(), [&](const ReferenceRowFit& r) { return r.key == det; });
+  };
+  EXPECT_NEAR(row("CDD").value.value, v, 1e-12);  // k = 1 for Ar36
+  EXPECT_NEAR(row("AX").value.value, std::pow(v, std::log(39.9624 / 38.964) / l), 1e-12);
+  EXPECT_NEAR(row("L2").value.value, std::pow(v, std::log(39.9624 / 36.9668) / l), 1e-12);
+  const double k38 = std::log(39.9624 / 37.9627) / l;
+  EXPECT_NEAR(row("L1").value.error, k38 * std::pow(v, k38 - 1.0) * row("CDD").value.error, 1e-15);
+  EXPECT_TRUE(row("AX").source_correction);
+  EXPECT_EQ(row("AX").reference_detector, "H1");
+}
+
+TEST(ReferenceFigure, SkipReviewedKeepsReviewedValues) {
+  Dataset unknowns = unknowns_dataset();
+  auto reviewed = std::make_shared<Analysis>(*unknowns.items()[0].analysis->analysis);
+  reviewed->isotopes[0].blank_reviewed = true;  // Ar40
+  unknowns.mutable_items()[0].analysis = reduce_analysis(reviewed, {});
+  Options o(blank_fit_schema());
+  auto all = build_reference_figure(ReferenceFitTarget::Blanks, unknowns, blanks_dataset(), o);
+  ASSERT_TRUE(all);
+  EXPECT_EQ(all->fits.analyses[0].rows.size(), 5u);
+  ASSERT_TRUE(o.set("skip_reviewed", true));
+  auto skip = build_reference_figure(ReferenceFitTarget::Blanks, unknowns, blanks_dataset(), o);
+  ASSERT_TRUE(skip);
+  ASSERT_EQ(skip->fits.analyses[0].rows.size(), 4u);
+  EXPECT_EQ(skip->fits.analyses[0].rows[0].key, "Ar39");
+  EXPECT_EQ(skip->fits.analyses[1].rows.size(), 5u);
+  bool noted = false;
+  for (const auto& l : skip->scene.graphs[0].panels[0].layers)
+    if (const auto* t = std::get_if<TextLayer>(&l))
+      for (const auto& line : t->lines) noted = noted || line == "1 reviewed value(s) kept";
+  EXPECT_TRUE(noted);
 }
 
 TEST(ReferenceFitUnits, RunInAPipeline) {

@@ -86,6 +86,22 @@ TEST(Stats, MswdProbability) {
   EXPECT_NEAR(pr::chi2_quantile(pr::chi2_cdf(3.3, 7.0), 7.0), 3.3, 1e-10);
 }
 
+TEST(Stats, StudentT) {
+  // Two-sided 95% critical values (scipy.stats.t.ppf(0.975, dof)).
+  EXPECT_NEAR(pr::student_t_quantile(0.975, 1), 12.706204736174698, 1e-9);
+  EXPECT_NEAR(pr::student_t_quantile(0.975, 2), 4.302652729749464, 1e-10);
+  EXPECT_NEAR(pr::student_t_quantile(0.975, 5), 2.570581835636314, 1e-10);
+  EXPECT_NEAR(pr::student_t_quantile(0.975, 30), 2.042272456301238, 1e-10);
+  EXPECT_NEAR(pr::student_t_quantile(0.025, 10), -2.228138851986274, 1e-10);
+  EXPECT_DOUBLE_EQ(pr::student_t_quantile(0.5, 3), 0.0);
+  EXPECT_NEAR(pr::student_t_cdf(1.0, 1), 0.75, 1e-12);  // Cauchy
+  EXPECT_NEAR(pr::student_t_cdf(-1.0, 1), 0.25, 1e-12);
+  EXPECT_DOUBLE_EQ(pr::student_t_cdf(0.0, 4), 0.5);
+  EXPECT_NEAR(pr::student_t_cdf(pr::student_t_quantile(0.9, 7.5), 7.5), 0.9, 1e-12);
+  EXPECT_TRUE(std::isnan(pr::student_t_quantile(1.0, 3)));
+  EXPECT_TRUE(std::isnan(pr::student_t_quantile(0.5, 0)));
+}
+
 TEST(Stats, CumulativeProbabilityIntegratesToN) {
   std::vector<double> v{10.0, 12.0}, e{0.5, 0.25};
   auto c = pr::cumulative_probability(v, e, 0.0, 22.0, 2201);
