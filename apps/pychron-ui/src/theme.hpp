@@ -4,8 +4,12 @@
 // Widgets ask for a colour by meaning (theme().error, theme().plot_bg), never
 // by value, and mark state with the helpers below (set_tone, set_invalid,
 // make_banner, set_chip), which the application style sheet turns into looks.
-// apply() installs the style, palette and style sheet; without it the helpers
-// only set properties. Light only.
+// apply() installs the style, palette, font and style sheet; without it the
+// helpers only set properties. Light only.
+//
+// The look is "ink and signal": cool lab-white surfaces, ink text, an ink
+// menu bar as the one dark band, and a single teal signal colour for focus,
+// selection and the primary action. Status colours are kept for status.
 //
 // Colours that are data stay where the data is: detector and canvas colours
 // from config, figure colours from pp::SceneStyle.
@@ -50,6 +54,17 @@ struct Theme {
   QColor outline;       // pipes
   QColor neutral_fill;  // isolated volumes, pending steps
   QColor flash;
+
+  // Chrome: the style sheet's frames, headers and the menu bar.
+  QColor border;         // hairlines between surfaces
+  QColor strong_border;  // input and button outlines
+  QColor header_bg;      // table headers, dock titles
+  QColor chrome;         // the menu bar
+  QColor on_chrome;      // text on chrome
+  QColor accent_strong;  // pressed, text on accent_soft
+  QColor accent_soft;    // selected menu item, pressed button
+  QColor accent_wash;    // hover
+  QColor scroll_handle;
 
   // Tinted backgrounds for a row, cell or banner.
   QColor error_bg;

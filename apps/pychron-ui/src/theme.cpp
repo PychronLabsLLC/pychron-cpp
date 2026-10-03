@@ -1,8 +1,15 @@
 #include "theme.hpp"
 
+#include <utility>
+
 #include <QApplication>
+#include <QImage>
 #include <QLabel>
+#include <QPainter>
+#include <QPen>
+#include <QPolygonF>
 #include <QStyle>
+#include <QTemporaryDir>
 #include <QVariant>
 #include <QWidget>
 
@@ -14,40 +21,50 @@ QColor rgb(QRgb value) { return QColor(value); }
 
 Theme light() {
   Theme t;
-  t.ok = rgb(0x2ecc40);
-  t.warning = rgb(0xffb300);
-  t.error = rgb(0xe03c31);
-  t.inactive = rgb(0x999999);
+  t.ok = rgb(0x1fb46a);
+  t.warning = rgb(0xf5a524);
+  t.error = rgb(0xe5484d);
+  t.inactive = rgb(0xa7b0bc);
 
-  t.text = rgb(0x222222);
-  t.muted_text = rgb(0x555555);
-  t.faint_text = rgb(0x888888);
-  t.error_text = rgb(0xa01818);
-  t.warning_text = rgb(0x9a6700);
-  t.accent = rgb(0x1e6fe8);
+  t.text = rgb(0x141b24);
+  t.muted_text = rgb(0x536070);
+  t.faint_text = rgb(0x8b95a3);
+  t.error_text = rgb(0xb4232a);
+  t.warning_text = rgb(0x8a5a00);
+  t.accent = rgb(0x0b7a75);
 
-  t.window = rgb(0xf0f0f0);
+  t.window = rgb(0xeef1f4);
   t.base = rgb(0xffffff);
-  t.alt_base = rgb(0xf7f7f7);
-  t.gutter = rgb(0xf2f2f2);
+  t.alt_base = rgb(0xf6f8fa);
+  t.gutter = rgb(0xf1f4f7);
   t.plot_bg = rgb(0xfafad2);
-  t.overlay = QColor(255, 255, 255, 200);
-  t.grid = rgb(0xbbbbbb);
-  t.outline = rgb(0x555555);
-  t.neutral_fill = rgb(0xdddddd);
-  t.flash = rgb(0xffff00);
+  t.overlay = QColor(255, 255, 255, 215);
+  t.grid = rgb(0xc9d1da);
+  t.outline = rgb(0x4a5563);
+  t.neutral_fill = rgb(0xdde3ea);
+  t.flash = rgb(0xffe14d);
 
-  t.error_bg = rgb(0xf8d7da);
-  t.on_error_bg = rgb(0x721c24);
-  t.warning_bg = rgb(0xfff3cd);
-  t.success_bg = rgb(0xc8e6c9);
-  t.stopped_bg = rgb(0xffe0b2);
-  t.progress_bg = rgb(0xbbdefb);
+  t.border = rgb(0xd5dce4);
+  t.strong_border = rgb(0xb7c1cc);
+  t.header_bg = rgb(0xe6ebf0);
+  t.chrome = rgb(0x111a24);
+  t.on_chrome = rgb(0xe6edf3);
+  t.accent_strong = rgb(0x065c58);
+  t.accent_soft = rgb(0xcde9e6);
+  t.accent_wash = rgb(0xeaf5f4);
+  t.scroll_handle = rgb(0xc2cbd5);
 
-  t.row_blank = rgb(0xe6f0ff);
-  t.row_air = rgb(0xebfaeb);
-  t.row_cocktail = rgb(0xfff5e1);
-  t.row_detector_ic = rgb(0xf5ebff);
+  t.error_bg = rgb(0xfde7e7);
+  t.on_error_bg = rgb(0x7a1419);
+  t.warning_bg = rgb(0xfff3d4);
+  t.success_bg = rgb(0xd8f4e5);
+  t.stopped_bg = rgb(0xffe7cf);
+  t.progress_bg = rgb(0xd3eeec);
+
+  t.row_blank = rgb(0xe7effd);
+  t.row_air = rgb(0xe5f6ec);
+  t.row_cocktail = rgb(0xfff2dc);
+  t.row_detector_ic = rgb(0xf0e9fc);
 
   t.diff_changed = rgb(0xffeca0);
   t.diff_added = rgb(0xcef0ce);
@@ -108,6 +125,151 @@ const char* level_name(style::Level level) {
   return "unknown";
 }
 
+// A style sheet that restyles a combo or spin box frame must also supply its
+// arrows as images. They are drawn here, at twice the size they are shown, into
+// a directory that lasts as long as the application.
+QString arrow_dir(const Theme& t) {
+  static QTemporaryDir dir;
+  static bool drawn = false;
+  if (drawn || !dir.isValid()) return dir.path();
+  drawn = true;
+  const auto draw = [&](const QString& name, bool up, const QColor& color) {
+    QImage image(20, 20, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const double a = up ? 13 : 7;
+    const double b = up ? 7 : 13;
+    p.drawPolyline(QPolygonF({QPointF(4, a), QPointF(10, b), QPointF(16, a)}));
+    p.end();
+    image.save(dir.filePath(name));
+  };
+  draw(QStringLiteral("down.png"), false, t.muted_text);
+  draw(QStringLiteral("up.png"), true, t.muted_text);
+  draw(QStringLiteral("down-off.png"), false, t.strong_border);
+  draw(QStringLiteral("up-off.png"), true, t.strong_border);
+  return dir.path();
+}
+
+// The widget chrome. Colours are @name tokens, filled from the theme.
+// Item views keep their default item drawing so a model's BackgroundRole
+// (run states, analysis types) still shows; only frames and headers change.
+QString chrome_sheet(const Theme& t) {
+  QString s = QStringLiteral(R"(
+QMainWindow::separator { background: @window; width: 5px; height: 5px; }
+QMainWindow::separator:hover { background: @accent; }
+
+QMenuBar { background: @chrome; color: @on_chrome; padding: 3px 6px; border: none; }
+QMenuBar::item { background: transparent; padding: 5px 12px; border-radius: 5px; }
+QMenuBar::item:selected { background: @accent_strong; }
+QMenuBar::item:pressed { background: @accent; color: @base; }
+QMenu { background: @base; border: 1px solid @strong_border; border-radius: 8px; padding: 5px; }
+QMenu::item { padding: 6px 26px 6px 12px; border-radius: 5px; }
+QMenu::item:selected { background: @accent_soft; color: @accent_strong; }
+QMenu::item:disabled { color: @faint_text; }
+QMenu::separator { height: 1px; background: @border; margin: 4px 8px; }
+QToolTip { background: @chrome; color: @on_chrome; border: none; padding: 5px 8px; }
+
+QToolBar { background: @base; border: none; border-bottom: 1px solid @border; padding: 4px 6px; spacing: 4px; }
+QToolBar::separator { background: @border; width: 1px; margin: 4px 6px; }
+QStatusBar { background: @base; border-top: 1px solid @border; color: @muted_text; }
+QStatusBar::item { border: none; }
+
+QDockWidget::title { background: @header_bg; padding: 6px 10px; border-left: 3px solid @accent; text-align: left; }
+
+QPushButton { background: @base; color: @text; border: 1px solid @strong_border; border-radius: 6px; padding: 5px 14px; min-height: 18px; }
+QPushButton:hover { background: @accent_wash; border-color: @accent; }
+QPushButton:pressed, QPushButton:checked { background: @accent_soft; border-color: @accent_strong; color: @accent_strong; }
+QPushButton:default { background: @accent; border-color: @accent_strong; color: @base; }
+QPushButton:default:hover { background: @accent_strong; }
+QPushButton:disabled { background: @alt_base; border-color: @border; color: @faint_text; }
+QPushButton:focus { outline: none; }
+QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; }
+QToolButton:hover { background: @accent_wash; border-color: @border; }
+QToolButton:pressed, QToolButton:checked { background: @accent_soft; border-color: @accent; color: @accent_strong; }
+QToolButton:disabled { color: @faint_text; }
+
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+  background: @base; color: @text; border: 1px solid @strong_border; border-radius: 6px;
+  padding: 4px 6px; selection-background-color: @accent; selection-color: @base; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @outline; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: @accent; }
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+  background: @alt_base; border-color: @border; color: @faint_text; }
+QLineEdit:read-only { background: @alt_base; }
+QComboBox { padding-right: 22px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 20px; border: none; }
+QComboBox::down-arrow { image: url(@arrows/down.png); width: 10px; height: 10px; }
+QComboBox::down-arrow:disabled { image: url(@arrows/down-off.png); }
+QComboBox::down-arrow:on { image: url(@arrows/up.png); }
+QComboBox QAbstractItemView { background: @base; border: 1px solid @strong_border; outline: 0;
+  selection-background-color: @accent_soft; selection-color: @accent_strong; }
+QSpinBox, QDoubleSpinBox { padding-right: 18px; }
+QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
+  subcontrol-origin: border; width: 16px; border: none; background: transparent; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-position: top right; margin: 2px 2px 0 0; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-position: bottom right; margin: 0 2px 2px 0; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(@arrows/up.png); width: 8px; height: 8px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(@arrows/down.png); width: 8px; height: 8px; }
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:off {
+  image: url(@arrows/up-off.png); }
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,
+QDoubleSpinBox::down-arrow:off { image: url(@arrows/down-off.png); }
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: @accent_wash; border-radius: 3px; }
+
+QPlainTextEdit, QTextEdit, QAbstractItemView {
+  background: @base; border: 1px solid @border; selection-background-color: @accent; selection-color: @base; }
+QPlainTextEdit:focus, QTextEdit:focus, QAbstractItemView:focus { border-color: @accent; }
+QTableView, QTreeView, QListView { gridline-color: @border; alternate-background-color: @alt_base; }
+QHeaderView { background: @header_bg; border: none; }
+QHeaderView::section { background: @header_bg; color: @muted_text; font-weight: 600; padding: 5px 8px;
+  border: none; border-right: 1px solid @border; border-bottom: 1px solid @strong_border; }
+QHeaderView::section:hover { color: @text; }
+QHeaderView::section:checked { color: @accent_strong; }
+QTableCornerButton::section { background: @header_bg; border: none; border-bottom: 1px solid @strong_border; }
+
+QTabWidget::pane { background: @base; border: 1px solid @border; border-radius: 6px; top: -1px; }
+QTabBar::tab { background: transparent; color: @muted_text; padding: 7px 16px; border: none;
+  border-bottom: 2px solid transparent; margin-right: 2px; }
+QTabBar::tab:hover { color: @text; background: @accent_wash; }
+QTabBar::tab:selected { color: @text; border-bottom: 2px solid @accent; }
+
+QGroupBox { background: @base; border: 1px solid @border; border-radius: 8px; margin-top: 12px; padding: 12px 8px 8px 8px; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px;
+  color: @accent_strong; font-weight: 600; }
+
+QProgressBar { background: @border; border: none; border-radius: 5px; text-align: center; color: @text; min-height: 14px; }
+QProgressBar::chunk { background: @accent; border-radius: 5px; }
+
+QSplitter::handle { background: transparent; }
+QSplitter::handle:hover { background: @accent_soft; }
+
+QScrollBar:vertical { background: transparent; width: 12px; margin: 0; }
+QScrollBar:horizontal { background: transparent; height: 12px; margin: 0; }
+QScrollBar::handle { background: @scroll_handle; border: 3px solid transparent; border-radius: 6px; }
+QScrollBar::handle:vertical { min-height: 32px; }
+QScrollBar::handle:horizontal { min-width: 32px; }
+QScrollBar::handle:hover { background: @outline; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; background: none; }
+QScrollBar::add-page, QScrollBar::sub-page { background: none; }
+QScrollArea { background: transparent; }
+)");
+  const std::pair<const char*, QColor> colors[] = {
+      {"accent_strong", t.accent_strong}, {"accent_soft", t.accent_soft}, {"accent_wash", t.accent_wash},
+      {"strong_border", t.strong_border}, {"scroll_handle", t.scroll_handle}, {"muted_text", t.muted_text},
+      {"faint_text", t.faint_text},       {"header_bg", t.header_bg},     {"on_chrome", t.on_chrome},
+      {"alt_base", t.alt_base},           {"outline", t.outline},         {"border", t.border},
+      {"chrome", t.chrome},               {"accent", t.accent},           {"window", t.window},
+      {"base", t.base},                   {"text", t.text},
+  };
+  s.replace(QStringLiteral("@arrows"), arrow_dir(t));
+  // Longer names first, so @accent never eats the start of @accent_soft.
+  for (const auto& [name, color] : colors) s.replace(QLatin1Char('@') + QLatin1String(name), color.name());
+  return s;
+}
+
 }  // namespace
 
 const Theme& theme() {
@@ -140,7 +302,7 @@ QPalette palette() {
 
 QString style_sheet() {
   const Theme& t = theme();
-  QString s;
+  QString s = chrome_sheet(t);
   const auto tone = [&s](Tone which, const QColor& color) {
     s += QStringLiteral("*[tone=\"%1\"] { color: %2; }\n").arg(QLatin1String(tone_name(which)), color.name());
   };
@@ -149,23 +311,38 @@ QString style_sheet() {
   tone(Tone::Warning, t.warning_text);
   tone(Tone::Error, t.error_text);
 
-  s += QStringLiteral("*[invalid=\"true\"] { border: 1px solid %1; }\n").arg(t.error.name());
+  // After the chrome, and with :focus spelled out, so it beats the focus ring.
+  s += QStringLiteral("*[invalid=\"true\"], *[invalid=\"true\"]:focus, *[invalid=\"true\"]:hover "
+                      "{ border: 1px solid %1; background: %2; }\n")
+           .arg(t.error.name(), t.error_bg.name());
 
   s += QStringLiteral("*[banner=\"true\"] { background: %1; color: %2; }\n"
                       "*[banner=\"true\"] QLabel { color: %2; }\n"
-                      "QLabel[banner=\"true\"] { padding: 4px; }\n")
-           .arg(t.error_bg.name(), t.on_error_bg.name());
+                      "*[banner=\"true\"] { border-bottom: 2px solid %3; }\n"
+                      "QLabel[banner=\"true\"] { padding: 6px 10px; font-weight: 600; }\n")
+           .arg(t.error_bg.name(), t.on_error_bg.name(), t.error.name());
 
-  s += QStringLiteral("QLabel[chip] { border-radius: 4px; padding: 1px 6px; }\n");
-  for (const auto level : {Level::Unknown, Level::Ok, Level::Warning, Level::Error})
-    s += QStringLiteral("QLabel[chip=\"%1\"] { background: %2; }\n")
-             .arg(QLatin1String(level_name(level)), level_color(level).name());
+  // Pills; the text is the darkest shade of the fill that still reads.
+  s += QStringLiteral("QLabel[chip] { border-radius: 9px; padding: 2px 10px; font-weight: 600; }\n");
+  for (const auto level : {Level::Unknown, Level::Ok, Level::Warning, Level::Error}) {
+    const QColor fill = level_color(level);
+    const QColor ink = level == Level::Error ? t.base : fill.darker(level == Level::Unknown ? 260 : 330);
+    s += QStringLiteral("QLabel[chip=\"%1\"] { background: %2; color: %3; }\n")
+             .arg(QLatin1String(level_name(level)), fill.name(), ink.name());
+  }
   return s;
 }
 
 void apply(QApplication& app) {
   QApplication::setStyle(QStringLiteral("Fusion"));
   QApplication::setPalette(palette());
+  // Whichever of these the machine has; the size stays the platform's.
+  QFont font = QApplication::font();
+  font.setFamilies({QStringLiteral("IBM Plex Sans"), QStringLiteral("Segoe UI Variable Text"), QStringLiteral("Segoe UI"),
+                    QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue"), QStringLiteral("Cantarell"),
+                    QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans")});
+  font.setHintingPreference(QFont::PreferNoHinting);
+  QApplication::setFont(font);
   app.setStyleSheet(style_sheet());
 }
 
@@ -201,6 +378,9 @@ QFont title_font(const QFont& base) {
 
 QFont mono_font() {
   QFont f(QStringLiteral("monospace"));
+  f.setFamilies({QStringLiteral("JetBrains Mono"), QStringLiteral("IBM Plex Mono"), QStringLiteral("SF Mono"),
+                 QStringLiteral("Menlo"), QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas"),
+                 QStringLiteral("DejaVu Sans Mono"), QStringLiteral("monospace")});
   f.setStyleHint(QFont::Monospace);
   return f;
 }
