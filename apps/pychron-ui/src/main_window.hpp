@@ -16,6 +16,7 @@
 #include <QSettings>
 
 #include "alarm_dock.hpp"
+#include "brand.hpp"
 #include "data_browser_window.hpp"
 #include "data_workspace.hpp"
 #include "canvas_view.hpp"
@@ -79,6 +80,10 @@ class MainWindow : public QMainWindow {
   // inverse_isochron); null without data or for an unknown kind.
   QWidget* open_figure(const QString& kind, const QStringList& uuids);
 
+  // Help > About pychron; the dialog is null until the action is first triggered.
+  QAction* about_action() const noexcept { return about_action_; }
+  AboutDialog* about_dialog() const { return findChild<AboutDialog*>(QString(), Qt::FindDirectChildrenOnly); }
+
  protected:
   // Closes the experiment window (which may refuse, keeping everything open)
   // and the spectrometer window first.
@@ -105,6 +110,7 @@ class MainWindow : public QMainWindow {
   DataWorkspace* data_;
   QAction* installations_;
   std::function<void()> on_installations_;
+  QAction* about_action_ = nullptr;
 };
 
 }  // namespace pychron::ui

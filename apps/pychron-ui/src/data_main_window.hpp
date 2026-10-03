@@ -28,11 +28,13 @@ class DataMainWindow : public QMainWindow {
   // File > Installations…; hidden until a handler is set.
   void set_installations_handler(std::function<void()> handler);
   QAction* installations_action() const noexcept { return installations_; }
+  QAction* about_action() const noexcept { return about_; }
 
  private:
   DataWorkspace* data_;
   QAction* installations_;
   std::function<void()> on_installations_;
+  QAction* about_ = nullptr;
 };
 
 }  // namespace pychron::ui

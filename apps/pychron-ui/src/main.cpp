@@ -46,6 +46,7 @@
 #include <QMessageBox>
 #include <QStandardPaths>
 
+#include "brand.hpp"
 #include "command_line.hpp"
 #include "data_main_window.hpp"
 #include "experiment_bridge.hpp"
@@ -181,6 +182,7 @@ int main(int argc, char** argv) {
   QCoreApplication::setOrganizationName(QStringLiteral("PychronLabs"));
   QApplication::setApplicationName(QStringLiteral("pychron-ui"));
   pychron::ui::style::apply(app);
+  QApplication::setWindowIcon(pychron::ui::brand::app_icon());
 
   const auto cli = pychron::ui::parse_command_line(QApplication::arguments().mid(1));
   if (!cli) {
@@ -205,6 +207,13 @@ int main(int argc, char** argv) {
       fs::exists(install->path(install->spectrometer))) {
     spectrometer_file = install->path(install->spectrometer);
   }
+
+  // Shown from here until the main window is up (after any installation
+  // choice, which it would cover); loading blocks the event loop, so each step
+  // repaints it explicitly.
+  pychron::ui::SplashScreen splash(sim);
+  splash.show();
+  splash.status(QStringLiteral("Starting"));
 
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = sim;
@@ -234,10 +243,12 @@ int main(int argc, char** argv) {
     if (files.size() > 1) canvas_file = files[1];
   }
 
+  splash.status(QStringLiteral("Loading the extraction line: %1").arg(QString::fromStdString(system_file.filename().string())));
   auto line = pychron::systems::ExtractionLine::load(system_file, canvas_file, options);
   if (!line) {
     std::string what = pychron::to_string(line.error());
     if (install) what = "installation '" + install->name + "': " + what + "\n\nelctl doctor --install " + install->name + " says more.";
+    splash.close();  // it would sit over the message box
     return fatal(what);
   }
 
@@ -257,6 +268,7 @@ int main(int argc, char** argv) {
       spectrometer_file ? *spectrometer_file : sim ? examples / "spectrometer.sim-integrated.toml" : fs::path();
   if (!spectrometer_config.empty()) {
     const fs::path& file = spectrometer_config;
+    splash.status(QStringLiteral("Bringing up the spectrometer: %1").arg(QString::fromStdString(file.filename().string())));
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       auto data = pychron::spectrometer::cfg::load_spectrometer(file);
       if (!data) return pychron::fail(data.error());
@@ -289,6 +301,7 @@ int main(int argc, char** argv) {
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
   if (cli->db) {
 #ifdef PYCHRON_UI_HAS_STORE
+    splash.status(QStringLiteral("Opening the DVC store"));
     auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{*cli->db, false});
     if (!opened) {
       std::fprintf(stderr, "pychron-ui: --db: %s\n", pychron::to_string(opened.error()).c_str());
@@ -332,6 +345,7 @@ int main(int argc, char** argv) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
                                      QString::fromStdString(*spectrometer_error));
     }
+    splash.status(QStringLiteral("Starting the extraction line"));
     const auto started = (*line)->start();
     if (!started) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] start failed: ") +
@@ -349,6 +363,7 @@ int main(int argc, char** argv) {
       }
     }
     if (started) {
+      splash.status(QStringLiteral("Loading the lab: %1").arg(QString::fromStdString(lab_dir.string())));
       lab = std::make_unique<pychron::experiment::lab::Lab>(pychron::experiment::lab::load_lab(
           {lab_dir, system_file, spectrometer ? spectrometer_config : fs::path()}));
       for (const auto& problem : lab->problems) {
@@ -363,6 +378,7 @@ int main(int argc, char** argv) {
       window.log_dock()->append_line(
           QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));
     }
+    splash.finish_after(&window, std::chrono::milliseconds(1200));
     rc = QApplication::exec();
     window.set_data(nullptr, nullptr);        // data windows go before the data source
     window.set_experiment(nullptr, false);    // the experiment window goes before its bridge

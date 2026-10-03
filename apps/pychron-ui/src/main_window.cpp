@@ -48,6 +48,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   data_action_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
   data_action_->setEnabled(false);
   window_menu->addAction(data_action_);
+  about_action_ = brand::add_help_menu(this);
   connect(data_action_, &QAction::triggered, this, [this] {
     DataBrowserWindow* w = data_->browser();
     if (w == nullptr) return;

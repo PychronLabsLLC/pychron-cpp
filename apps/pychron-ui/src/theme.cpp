@@ -53,6 +53,7 @@ Theme light() {
   t.accent_soft = rgb(0xcde9e6);
   t.accent_wash = rgb(0xeaf5f4);
   t.scroll_handle = rgb(0xc2cbd5);
+  t.signal = rgb(0x3fd6c6);
 
   t.error_bg = rgb(0xfde7e7);
   t.on_error_bg = rgb(0x7a1419);

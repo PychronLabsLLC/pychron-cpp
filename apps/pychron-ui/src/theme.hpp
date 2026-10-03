@@ -65,6 +65,7 @@ struct Theme {
   QColor accent_soft;    // selected menu item, pressed button
   QColor accent_wash;    // hover
   QColor scroll_handle;
+  QColor signal;  // the accent on chrome: the brand mark, splash and about banner
 
   // Tinted backgrounds for a row, cell or banner.
   QColor error_bg;

@@ -52,6 +52,7 @@ add_library(pychron_ui_lib STATIC
   src/setup_wizard.cpp
   src/installations_dialog.cpp
   src/setup_support.cpp
+  src/brand.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -94,6 +95,7 @@ add_library(pychron_ui_lib STATIC
   src/setup_wizard.hpp
   src/installations_dialog.hpp
   src/setup_support.hpp
+  src/brand.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
@@ -101,6 +103,7 @@ target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
   qcustomplot)
 pychron_set_warnings(pychron_ui_lib)
+target_compile_definitions(pychron_ui_lib PRIVATE PYCHRON_VERSION="${PROJECT_VERSION}")
 # --db browses the DVC store; it needs the persistence library.
 if(TARGET pychron_processing_store)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::processing_store)

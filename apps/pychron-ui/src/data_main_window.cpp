@@ -1,5 +1,7 @@
 #include "data_main_window.hpp"
 
+#include "brand.hpp"
+
 #include <utility>
 
 #include <QAction>
@@ -29,6 +31,7 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
   connect(installations_, &QAction::triggered, this, [this] {
     if (on_installations_) on_installations_();
   });
+  about_ = brand::add_help_menu(this);
 }
 
 DataMainWindow::~DataMainWindow() {
