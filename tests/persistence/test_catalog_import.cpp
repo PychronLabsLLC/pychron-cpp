@@ -244,5 +244,63 @@ TEST_P(CatalogImportTest, LoadKeepsItsColumns) {
   EXPECT_EQ(pd::to_time(r.value("created_utc")), *spec.created);
 }
 
+TEST_P(CatalogImportTest, AddUserTwice) {
+  expect_ensure([&] { return store_->add_user(client(), {.name = "mheizler", .email = "m@nmt.edu"}); });
+  // A user that exists wins, whoever made it.
+  EXPECT_EQ(*store_->add_user(client(), {.name = "jross", .email = "j@nmt.edu"}), lab_.analyst);
+}
+
+TEST_P(CatalogImportTest, UserProjectSampleAndIrradiationKeepLegacyColumns) {
+  TestDatabase shared(GetParam(), true);
+  auto store = open_or_die(shared.url());
+  ASSERT_TRUE(store);
+  const Lab lab = seed_lab(*store);
+  const Uuid c = lab.acquisition_client;
+
+  const Uuid user = *store->add_user(c, {"mheizler", "m@nmt.edu", "NMT", "staff"});
+  Row r = raw_row(shared, "app_user", user);
+  EXPECT_EQ(pd::to_std(r.value("email")), "m@nmt.edu");
+  EXPECT_EQ(pd::to_std(r.value("affiliation")), "NMT");
+  EXPECT_EQ(pd::to_std(r.value("category")), "staff");
+
+  ProjectSpec project{.name = "Alpha"};
+  project.checkin_date = "2016-02-29";
+  project.comment = "two crates";
+  project.lab_contact = "mheizler";
+  project.institution = "NMT";
+  const Uuid p = *store->add_project(c, project);
+  r = raw_row(shared, "project", p);
+  EXPECT_EQ(pd::to_std(r.value("checkin_date")).substr(0, 10), "2016-02-29");
+  EXPECT_EQ(pd::to_std(r.value("comment")), "two crates");
+  EXPECT_EQ(pd::to_std(r.value("lab_contact")), "mheizler");
+  EXPECT_EQ(pd::to_std(r.value("institution")), "NMT");
+
+  SampleSpec sample{.name = "FC-2", .project = p, .material = *store->add_material(c, {.name = "sanidine"})};
+  sample.created = UtcTime::parse("2015-01-02T03:04:05Z").value();
+  sample.updated = UtcTime::parse("2016-01-02T03:04:05Z").value();
+  r = raw_row(shared, "sample", *store->add_sample(c, sample));
+  EXPECT_EQ(pd::to_time(r.value("created_utc")), *sample.created);
+  EXPECT_EQ(pd::to_time(r.value("updated_utc")), *sample.updated);
+  // Without an update time a sample was last updated when it was created.
+  sample.name = "FC-3";
+  sample.updated.reset();
+  r = raw_row(shared, "sample", *store->add_sample(c, sample));
+  EXPECT_EQ(pd::to_time(r.value("updated_utc")), *sample.created);
+
+  const UtcTime made = UtcTime::parse("2014-05-06T07:08:09Z").value();
+  r = raw_row(shared, "irradiation", *store->add_irradiation(c, IrradiationSpec{"NM-301", made}));
+  EXPECT_EQ(pd::to_time(r.value("created_utc")), made);
+}
+
+TEST_P(CatalogImportTest, ProjectCheckinDateMustBeADate) {
+  for (const char* bad : {"2016-02-30", "2016-13-01", "16-02-03", "2016-02-03 10:00:00", "0000-00-00", ""}) {
+    ProjectSpec spec{.name = std::string("P ") + bad};
+    spec.checkin_date = bad;
+    auto added = store_->add_project(client(), spec);
+    ASSERT_FALSE(added) << bad;
+    EXPECT_EQ(added.error().kind, ErrorKind::Protocol) << bad;
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, CatalogImportTest, ::testing::ValuesIn(engines()),
                          [](const auto& info) { return info.param; });

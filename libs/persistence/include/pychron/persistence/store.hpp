@@ -92,6 +92,17 @@ struct MassSpectrometerSpec {
   std::optional<Uuid> uuid;  // used when the row is created; ignored when it exists
 };
 
+// A user (table `app_user`); `name` is its natural key.
+struct UserSpec {
+  std::string name;
+  std::optional<std::string> email, affiliation, category;
+};
+
+struct IrradiationSpec {
+  std::string name;
+  std::optional<UtcTime> created;  // created_utc; the write time when unset
+};
+
 struct IdentifierSpec {
   std::string identifier;
   std::string kind = "unknown";               // unknown | special
@@ -113,6 +124,9 @@ struct ProjectSpec {
   std::string name;
   std::optional<Uuid> principal_investigator;
   std::optional<Uuid> uuid;
+  // A calendar date, "YYYY-MM-DD"; anything else is an error.
+  std::optional<std::string> checkin_date = std::nullopt;
+  std::optional<std::string> comment = std::nullopt, lab_contact = std::nullopt, institution = std::nullopt;
 };
 
 struct MaterialSpec {
@@ -132,6 +146,8 @@ struct SampleSpec {
   std::optional<std::string> lithology, lithology_class, lithology_type, lithology_group;
   std::optional<double> approximate_age;
   std::optional<Uuid> uuid;
+  std::optional<UtcTime> created = std::nullopt;  // created_utc; the write time when unset
+  std::optional<UtcTime> updated = std::nullopt;  // updated_utc; `created`, else the write time, when unset
 };
 
 struct LevelSpec {
@@ -556,6 +572,8 @@ class IStore {
   // spec says. `uuid` in a spec is used only when the row is created.
   virtual Result<Uuid> register_client(const ClientRegistration& registration) = 0;
   virtual Result<Uuid> ensure_user(Uuid client, const std::string& name) = 0;
+  // As ensure_user, with the descriptive columns a new row gets.
+  virtual Result<Uuid> add_user(Uuid client, const UserSpec& spec) = 0;
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
   virtual Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) = 0;
   virtual Result<Uuid> add_extract_device(Uuid client, const std::string& name) = 0;
@@ -564,6 +582,7 @@ class IStore {
   virtual Result<Uuid> add_material(Uuid client, const MaterialSpec& spec) = 0;
   virtual Result<Uuid> add_sample(Uuid client, const SampleSpec& spec) = 0;
   virtual Result<Uuid> add_irradiation(Uuid client, const std::string& name) = 0;
+  virtual Result<Uuid> add_irradiation(Uuid client, const IrradiationSpec& spec) = 0;
   virtual Result<Uuid> add_level(Uuid client, const LevelSpec& spec) = 0;
   virtual Result<Uuid> add_irradiation_position(Uuid client, const PositionSpec& spec) = 0;
   // A reference object; its values are `value` revisions staged through a unit

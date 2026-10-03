@@ -1,6 +1,7 @@
 #include "pychron/persistence/store.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 #include "migrate.hpp"
@@ -62,6 +63,22 @@ void chain_order(std::vector<RevisionInfo>& history) {
     }
     begin = end;
   }
+}
+
+// "YYYY-MM-DD" naming a day of the calendar.
+bool is_calendar_date(std::string_view text) {
+  if (text.size() != 10 || text[4] != '-' || text[7] != '-') return false;
+  int parts[3] = {0, 0, 0};
+  const std::size_t starts[3] = {0, 5, 8}, lengths[3] = {4, 2, 2};
+  for (std::size_t p = 0; p < 3; ++p)
+    for (std::size_t i = 0; i < lengths[p]; ++i) {
+      const char c = text[starts[p] + i];
+      if (c < '0' || c > '9') return false;
+      parts[p] = parts[p] * 10 + (c - '0');
+    }
+  const std::chrono::year_month_day day{std::chrono::year{parts[0]}, std::chrono::month{static_cast<unsigned>(parts[1])},
+                                        std::chrono::day{static_cast<unsigned>(parts[2])}};
+  return parts[0] >= 1 && day.ok();
 }
 
 AnalysisSummary summary_from(const Row& r) {
@@ -154,6 +171,16 @@ class TinyStore final : public IStore {
     return finish_catalog(tx, client, created, *uuid);
   }
 
+  Result<Uuid> add_user(Uuid client, const UserSpec& spec) override {
+    Row row;
+    row["name"] = qv(spec.name);
+    row["email"] = qv(spec.email);
+    row["affiliation"] = qv(spec.affiliation);
+    row["category"] = qv(spec.category);
+    return ensure_catalog_row(client, "app_user", {{"name", qv(spec.name)}}, std::nullopt, row,
+                              json_created({{"name", spec.name}}));
+  }
+
   Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) override {
     Row row;
     row["name"] = qv(spec.name);
@@ -195,9 +222,16 @@ class TinyStore final : public IStore {
   }
 
   Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) override {
+    if (spec.checkin_date && !is_calendar_date(*spec.checkin_date))
+      return fail(ErrorKind::Protocol, "project '" + spec.name + "': checkin_date '" + *spec.checkin_date +
+                                           "' is not a date (YYYY-MM-DD)");
     Row row;
     row["name"] = qv(spec.name);
     row["pi_uuid"] = qv(spec.principal_investigator);
+    row["checkin_date"] = qv(spec.checkin_date);
+    row["comment"] = qv(spec.comment);
+    row["lab_contact"] = qv(spec.lab_contact);
+    row["institution"] = qv(spec.institution);
     // UNIQUE (name, pi_uuid) does not constrain rows without a PI; the key still matches them.
     return ensure_catalog_row(client, "project", {{"name", qv(spec.name)}, {"pi_uuid", qv(spec.principal_investigator)}},
                               spec.uuid, row, json_created({{"name", spec.name}}));
@@ -229,7 +263,8 @@ class TinyStore final : public IStore {
     row["lithology_type"] = qv(spec.lithology_type);
     row["lithology_group"] = qv(spec.lithology_group);
     row["approximate_age"] = qv(spec.approximate_age);
-    row["updated_utc"] = qv(UtcTime::now());
+    if (spec.created) row["created_utc"] = qv(*spec.created);
+    row["updated_utc"] = qv(spec.updated ? *spec.updated : spec.created ? *spec.created : UtcTime::now());
     return ensure_catalog_row(
         client, "sample",
         {{"name", qv(spec.name)}, {"project_uuid", qv(spec.project)}, {"material_uuid", qv(spec.material)}}, spec.uuid,
@@ -237,10 +272,15 @@ class TinyStore final : public IStore {
   }
 
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override {
+    return add_irradiation(client, IrradiationSpec{name, std::nullopt});
+  }
+
+  Result<Uuid> add_irradiation(Uuid client, const IrradiationSpec& spec) override {
     Row row;
-    row["name"] = qv(name);
-    return ensure_catalog_row(client, "irradiation", {{"name", qv(name)}}, std::nullopt, row,
-                              json_created({{"name", name}}));
+    row["name"] = qv(spec.name);
+    if (spec.created) row["created_utc"] = qv(*spec.created);
+    return ensure_catalog_row(client, "irradiation", {{"name", qv(spec.name)}}, std::nullopt, row,
+                              json_created({{"name", spec.name}}));
   }
 
   Result<Uuid> add_level(Uuid client, const LevelSpec& spec) override {

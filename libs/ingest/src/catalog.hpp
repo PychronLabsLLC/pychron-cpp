@@ -53,11 +53,15 @@ class CatalogResolver {
   Result<Uuid> cached(const char* table, const std::string& key, Ensure&& ensure);
 
   Result<Uuid> principal_investigator(const PiItem& item);
-  Result<Uuid> project(const ProjectKey& key);
+  // `full`: the item that describes the project; nullptr creates it bare.
+  Result<Uuid> project(const ProjectKey& key, const ProjectItem* full = nullptr);
   Result<Uuid> material(const std::string& name, const std::string& grainsize);
   Result<Uuid> sample(persistence::SampleSpec fields, const ProjectKey& project, const std::string& material,
                       const std::string& grainsize);
-  Result<Uuid> irradiation(const std::string& name);
+  Result<Uuid> irradiation(const std::string& name, std::optional<persistence::UtcTime> created = std::nullopt);
+  Result<Uuid> user(const UserItem& item);
+  Result<Uuid> load(const LoadItem& item);
+  Result<Uuid> identifier(const std::string& name);
   Result<Uuid> level(const LevelItem& item);
   Result<Uuid> position(const PositionItem& item);
   Result<Uuid> mass_spectrometer(persistence::MassSpectrometerSpec spec);

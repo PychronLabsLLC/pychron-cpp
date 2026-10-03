@@ -40,7 +40,10 @@ struct GitWho {
 //   PiItem before ProjectItem, SampleItem, PositionItem naming that PI;
 //   SampleItem before a PositionItem naming the sample;
 //   LevelItem before any PositionItem or RefObjectItem of that level;
-//   PositionItem before a RefObjectItem scoped to that position;
+//   PositionItem before a RefObjectItem scoped to that position, and before
+//   a LoadPositionItem naming its identifier;
+//   UserItem before a LoadItem naming that user;
+//   LoadItem before a LoadPositionItem of that load;
 //   MassSpecItem before a SpecialIdentifierItem or RefObjectItem naming it;
 //   RefObjectItem before a LevelItem or LoadItem naming it as holder, and
 //   before a revision whose subject is its RefObjectKey.
@@ -54,6 +57,8 @@ struct PiItem {
 struct ProjectItem {
   std::string name;
   std::optional<std::string> pi_last_name, pi_first_initial;
+  std::optional<std::string> checkin_date = std::nullopt;  // "YYYY-MM-DD"
+  std::optional<std::string> comment = std::nullopt, lab_contact = std::nullopt, institution = std::nullopt;
 };
 
 struct MaterialItem {
@@ -61,13 +66,15 @@ struct MaterialItem {
 };
 
 struct SampleItem {
-  persistence::SampleSpec fields;  // name and the descriptive columns; project, material and uuid are ignored
+  // name, the descriptive columns and the two times; project, material and uuid are ignored
+  persistence::SampleSpec fields;
   std::string project, material, grainsize;
   std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
 };
 
 struct IrradiationItem {
   std::string name;
+  std::optional<persistence::UtcTime> created = std::nullopt;  // the write time when unset
 };
 
 struct LevelItem {
@@ -85,6 +92,8 @@ struct PositionItem {
   std::string identifier;
   std::optional<std::string> sample, project, material, grainsize;
   std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
+  std::optional<double> weight = std::nullopt;
+  std::optional<std::string> packet = std::nullopt, note = std::nullopt;
 };
 
 struct SpecialIdentifierItem {
@@ -94,6 +103,7 @@ struct SpecialIdentifierItem {
 
 struct UserItem {
   std::string name;
+  std::optional<std::string> email = std::nullopt, affiliation = std::nullopt, category = std::nullopt;
 };
 
 struct MassSpecItem {
@@ -107,6 +117,18 @@ struct ExtractDeviceItem {
 struct LoadItem {
   persistence::LoadSpec spec;              // holder and uuid ignored
   std::optional<std::string> holder_name;  // key of a ref_object of type load_holder
+  // A user name; when set it replaces spec.created_by_user.
+  std::optional<std::string> created_by = std::nullopt;
+};
+
+// One tray position of a load: the identifier loaded into it.
+struct LoadPositionItem {
+  std::string load;
+  int position = 0;
+  std::string identifier;
+  std::optional<double> weight;
+  std::optional<int> nxtals;
+  std::optional<std::string> note;
 };
 
 struct RepositoryItem {
@@ -138,7 +160,7 @@ struct InterpretedAgeItem {
 
 using CatalogItem = std::variant<PiItem, ProjectItem, MaterialItem, SampleItem, IrradiationItem, LevelItem, PositionItem,
                                  SpecialIdentifierItem, UserItem, MassSpecItem, ExtractDeviceItem, LoadItem,
-                                 RepositoryItem, RefObjectItem, InterpretedAgeItem>;
+                                 RepositoryItem, RefObjectItem, InterpretedAgeItem, LoadPositionItem>;
 
 // ---------------------------------------------------------------- history
 

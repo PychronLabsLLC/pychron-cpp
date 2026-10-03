@@ -51,12 +51,12 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
   return std::visit(
       Overloaded{
           [&](const PiItem& i) { return done(principal_investigator(i)); },
-          [&](const ProjectItem& i) { return done(project({i.name, i.pi_last_name, i.pi_first_initial})); },
+          [&](const ProjectItem& i) { return done(project({i.name, i.pi_last_name, i.pi_first_initial}, &i)); },
           [&](const MaterialItem& i) { return done(material(i.name, i.grainsize)); },
           [&](const SampleItem& i) {
             return done(sample(i.fields, {i.project, i.pi_last_name, i.pi_first_initial}, i.material, i.grainsize));
           },
-          [&](const IrradiationItem& i) { return done(irradiation(i.name)); },
+          [&](const IrradiationItem& i) { return done(irradiation(i.name, i.created)); },
           [&](const LevelItem& i) { return done(level(i)); },
           [&](const PositionItem& i) { return done(position(i)); },
           [&](const SpecialIdentifierItem& i) {
@@ -74,24 +74,21 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
               return store_.add_identifier(client_, spec);
             }));
           },
-          [&](const UserItem& i) { return done(user(i.name)); },
+          [&](const UserItem& i) { return done(user(i)); },
           [&](const MassSpecItem& i) { return done(mass_spectrometer(i.spec)); },
           [&](const ExtractDeviceItem& i) {
             return done(cached("extract_device", i.name,
                                [&](Uuid) { return store_.add_extract_device(client_, i.name); }));
           },
-          [&](const LoadItem& i) {
-            return done(cached("load", i.spec.name, [&](Uuid id) -> Result<Uuid> {
-              P::LoadSpec spec = i.spec;
-              spec.holder.reset();
-              if (i.holder_name) {
-                auto holder = ref_object(P::RefType::LoadHolder, *i.holder_name, nullptr);
-                if (!holder) return fail(holder.error());
-                spec.holder = *holder;
-              }
-              spec.uuid = id;
-              return store_.add_load(client_, spec);
-            }));
+          [&](const LoadItem& i) { return done(load(i)); },
+          [&](const LoadPositionItem& i) -> Result<void> {
+            LoadItem bare;
+            bare.spec.name = i.load;
+            auto tray = load(bare);
+            if (!tray) return fail(tray.error());
+            auto loaded = identifier(i.identifier);
+            if (!loaded) return fail(loaded.error());
+            return store_.add_load_position(client_, {*tray, i.position, *loaded, i.weight, i.nxtals, i.note});
           },
           [&](const RepositoryItem& i) { return done(repository(i.name)); },
           [&](const RefObjectItem& i) { return done(ref_object(i.type, i.key, &i)); },
@@ -102,6 +99,42 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
 
 Result<Uuid> CatalogResolver::user(const std::string& name) {
   return cached("app_user", name, [&](Uuid) { return store_.ensure_user(client_, name); });
+}
+
+Result<Uuid> CatalogResolver::user(const UserItem& item) {
+  return cached("app_user", item.name, [&](Uuid) {
+    return store_.add_user(client_, {item.name, item.email, item.affiliation, item.category});
+  });
+}
+
+Result<Uuid> CatalogResolver::load(const LoadItem& item) {
+  return cached("load", item.spec.name, [&](Uuid id) -> Result<Uuid> {
+    P::LoadSpec spec = item.spec;
+    spec.holder.reset();
+    if (item.holder_name) {
+      auto holder = ref_object(P::RefType::LoadHolder, *item.holder_name, nullptr);
+      if (!holder) return fail(holder.error());
+      spec.holder = *holder;
+    }
+    if (item.created_by) {
+      auto creator = user(*item.created_by);
+      if (!creator) return fail(creator.error());
+      spec.created_by_user = *creator;
+    }
+    spec.uuid = id;
+    return store_.add_load(client_, spec);
+  });
+}
+
+// An identifier named by something loaded: the one a PositionItem or
+// SpecialIdentifierItem made, else a bare unknown.
+Result<Uuid> CatalogResolver::identifier(const std::string& name) {
+  return cached("identifier", name, [&](Uuid id) {
+    P::IdentifierSpec spec;
+    spec.identifier = name;
+    spec.uuid = id;
+    return store_.add_identifier(client_, spec);
+  });
 }
 
 Result<Uuid> CatalogResolver::repository(const std::string& name) {
@@ -164,7 +197,7 @@ Result<Uuid> CatalogResolver::principal_investigator(const PiItem& item) {
   });
 }
 
-Result<Uuid> CatalogResolver::project(const ProjectKey& key) {
+Result<Uuid> CatalogResolver::project(const ProjectKey& key, const ProjectItem* full) {
   const std::string last = key.pi_last_name.value_or("");
   const std::string first = key.pi_first_initial.value_or("");
   return cached("project", join({key.name, last, first}), [&](Uuid id) -> Result<Uuid> {
@@ -174,7 +207,14 @@ Result<Uuid> CatalogResolver::project(const ProjectKey& key) {
       if (!found) return fail(found.error());
       pi = *found;
     }
-    return store_.add_project(client_, {key.name, pi, id});
+    P::ProjectSpec spec{key.name, pi, id, std::nullopt, std::nullopt, std::nullopt, std::nullopt};
+    if (full) {
+      spec.checkin_date = full->checkin_date;
+      spec.comment = full->comment;
+      spec.lab_contact = full->lab_contact;
+      spec.institution = full->institution;
+    }
+    return store_.add_project(client_, spec);
   });
 }
 
@@ -199,8 +239,9 @@ Result<Uuid> CatalogResolver::sample(P::SampleSpec fields, const ProjectKey& pro
   });
 }
 
-Result<Uuid> CatalogResolver::irradiation(const std::string& name) {
-  return cached("irradiation", name, [&](Uuid) { return store_.add_irradiation(client_, name); });
+Result<Uuid> CatalogResolver::irradiation(const std::string& name, std::optional<P::UtcTime> created) {
+  return cached("irradiation", name,
+                [&](Uuid) { return store_.add_irradiation(client_, P::IrradiationSpec{name, created}); });
 }
 
 Result<Uuid> CatalogResolver::level(const LevelItem& item) {
@@ -230,6 +271,9 @@ Result<Uuid> CatalogResolver::position(const PositionItem& item) {
     P::PositionSpec spec;
     spec.level = *lvl;
     spec.position = item.position;
+    spec.weight = item.weight;
+    spec.packet = item.packet;
+    spec.note = item.note;
     if (item.sample) {
       if (!item.project || !item.material)
         return fail(ErrorKind::Protocol, "irradiation position " + item.irradiation + "/" + item.level + "/" +

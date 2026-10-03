@@ -1572,4 +1572,85 @@ TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {
   EXPECT_FALSE(writer.state().analysis_origin(kA, "c1"));
 }
 
+// What a legacy catalog has beyond the natural keys reaches the store.
+TEST_P(BatchWriterTest, CatalogItemsCarryTheirDescriptiveColumns) {
+  ImportBatch b;
+  b.catalog.push_back(PiItem{"Ross", "J", "NMT", std::nullopt});
+  ProjectItem project{"Henry Hill", "Ross", "J"};
+  project.checkin_date = "2016-02-29";
+  project.comment = "two crates";
+  project.lab_contact = "mheizler";
+  project.institution = "NMT";
+  b.catalog.push_back(project);
+  const UtcTime made = *UtcTime::parse("2014-05-06T07:08:09Z");
+  b.catalog.push_back(IrradiationItem{"NM-300", made});
+  b.catalog.push_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
+  PositionItem position;
+  position.irradiation = "NM-300";
+  position.level = "A";
+  position.position = 4;
+  position.identifier = "66573";
+  position.weight = 12.5;
+  position.packet = "p4";
+  position.note = "chipped";
+  b.catalog.push_back(position);
+  b.catalog.push_back(UserItem{"mheizler", "m@nmt.edu", "NMT", "staff"});
+  LoadItem load;
+  load.spec.name = "load-7";
+  load.spec.archived = true;
+  load.spec.created = made;
+  load.created_by = "mheizler";
+  b.catalog.push_back(load);
+  b.catalog.push_back(LoadPositionItem{"load-7", 3, "66573", 1.5, 2, "big"});
+  // A load position may come first: its load and identifier are made bare.
+  b.catalog.push_back(LoadPositionItem{"load-8", 1, "66600", std::nullopt, std::nullopt, std::nullopt});
+  b.resume_token = "c1";
+  FakeAdapter adapter(description(), {b});
+  ASSERT_TRUE(run_all(*world_, adapter));
+
+  const auto one = [&](const char* sql) {
+    auto row = world_->db->select_one(QString::fromUtf8(sql));
+    EXPECT_TRUE(row && *row) << sql;
+    return row && *row ? **row : pd::Row{};
+  };
+  auto r = one("SELECT checkin_date, comment, lab_contact, institution FROM project");
+  EXPECT_EQ(pd::to_std(r.value("checkin_date")).substr(0, 10), "2016-02-29");
+  EXPECT_EQ(pd::to_std(r.value("comment")), "two crates");
+  EXPECT_EQ(pd::to_std(r.value("lab_contact")), "mheizler");
+  EXPECT_EQ(pd::to_std(r.value("institution")), "NMT");
+  EXPECT_EQ(pd::to_time(one("SELECT created_utc FROM irradiation").value("created_utc")), made);
+  r = one("SELECT weight, packet, note FROM irradiation_position");
+  EXPECT_DOUBLE_EQ(r.value("weight").toDouble(), 12.5);
+  EXPECT_EQ(pd::to_std(r.value("packet")), "p4");
+  EXPECT_EQ(pd::to_std(r.value("note")), "chipped");
+  r = one("SELECT email, affiliation, category FROM app_user WHERE name = 'mheizler'");
+  EXPECT_EQ(pd::to_std(r.value("email")), "m@nmt.edu");
+  EXPECT_EQ(pd::to_std(r.value("affiliation")), "NMT");
+  EXPECT_EQ(pd::to_std(r.value("category")), "staff");
+  r = one("SELECT l.archived AS archived, l.created_utc AS created_utc, u.name AS creator FROM load l "
+          "JOIN app_user u ON u.uuid = l.created_by_user_uuid WHERE l.name = 'load-7'");
+  EXPECT_TRUE(r.value("archived").toBool());
+  EXPECT_EQ(pd::to_time(r.value("created_utc")), made);
+  EXPECT_EQ(pd::to_std(r.value("creator")), "mheizler");
+  r = one("SELECT p.position AS position, p.weight AS weight, p.nxtals AS nxtals, p.note AS note, "
+          "i.identifier AS identifier FROM load_position p JOIN load l ON l.uuid = p.load_uuid "
+          "JOIN identifier i ON i.uuid = p.identifier_uuid WHERE l.name = 'load-7'");
+  EXPECT_EQ(r.value("position").toInt(), 3);
+  EXPECT_DOUBLE_EQ(r.value("weight").toDouble(), 1.5);
+  EXPECT_EQ(r.value("nxtals").toInt(), 2);
+  EXPECT_EQ(pd::to_std(r.value("note")), "big");
+  EXPECT_EQ(pd::to_std(r.value("identifier")), "66573");
+  EXPECT_EQ(world_->count("load"), 2);
+  EXPECT_EQ(world_->count("load_position"), 2);
+  EXPECT_EQ(world_->count("identifier"), 2);
+
+  // The batch again writes nothing.
+  const auto users = world_->count("app_user");
+  FakeAdapter again(description(), {b});
+  ASSERT_TRUE(run_all(*world_, again));
+  EXPECT_EQ(world_->count("load_position"), 2);
+  EXPECT_EQ(world_->count("load"), 2);
+  EXPECT_EQ(world_->count("app_user"), users);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, BatchWriterTest, ::testing::ValuesIn(P::testing::engines()));

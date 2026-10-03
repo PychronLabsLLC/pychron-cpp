@@ -48,6 +48,7 @@ class ForwardingStore : public persistence::IStore {
   Result<std::optional<std::string>> imported_head_blob_sha(Uuid source, Uuid subject, Kind kind) override { return inner_.imported_head_blob_sha(source, subject, kind); }
   Result<Uuid> register_client(const persistence::ClientRegistration& registration) override { return inner_.register_client(registration); }
   Result<Uuid> ensure_user(Uuid client, const std::string& name) override { return inner_.ensure_user(client, name); }
+  Result<Uuid> add_user(Uuid client, const persistence::UserSpec& spec) override { return inner_.add_user(client, spec); }
   Result<Uuid> add_mass_spectrometer(Uuid client, const persistence::MassSpectrometerSpec& spec) override { return inner_.add_mass_spectrometer(client, spec); }
   Result<Uuid> add_identifier(Uuid client, const persistence::IdentifierSpec& spec) override { return inner_.add_identifier(client, spec); }
   Result<Uuid> add_extract_device(Uuid client, const std::string& name) override { return inner_.add_extract_device(client, name); }
@@ -56,6 +57,7 @@ class ForwardingStore : public persistence::IStore {
   Result<Uuid> add_material(Uuid client, const persistence::MaterialSpec& spec) override { return inner_.add_material(client, spec); }
   Result<Uuid> add_sample(Uuid client, const persistence::SampleSpec& spec) override { return inner_.add_sample(client, spec); }
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override { return inner_.add_irradiation(client, name); }
+  Result<Uuid> add_irradiation(Uuid client, const persistence::IrradiationSpec& spec) override { return inner_.add_irradiation(client, spec); }
   Result<Uuid> add_level(Uuid client, const persistence::LevelSpec& spec) override { return inner_.add_level(client, spec); }
   Result<Uuid> add_irradiation_position(Uuid client, const persistence::PositionSpec& spec) override { return inner_.add_irradiation_position(client, spec); }
   Result<Uuid> add_ref_object(Uuid client, const persistence::RefObjectSpec& spec) override { return inner_.add_ref_object(client, spec); }
