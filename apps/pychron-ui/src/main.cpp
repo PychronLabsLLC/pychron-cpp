@@ -1,18 +1,29 @@
 // pychron-ui: M1 status/control window.
 //
-//   pychron-ui [extraction_line.toml [canvas.toml]] [--sim] [--spectrometer <file>]
-//              [--lab <dir>] [--data <dir>] [--queue <file>] [--sim-speed <x>] [--db <url>]
+//   pychron-ui [--install <name> | --setup | --examples | extraction_line.toml [canvas.toml]]
+//              [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>]
+//              [--queue <file>] [--sim-speed <x>] [--db <url>]
 //
-// With no files it opens the example line in configs/examples. --sim forces
-// every extraction-line transport to kind = "sim". --spectrometer loads that
-// spectrometer config for Window > Spectrometer; with --sim and no file the
-// example sim-integrated spectrometer is used. --sim never rewrites a
-// spectrometer config: one that is not simulated is refused.
+// With no config files it opens an install from the site config: --install
+// names one, else the default (or the only) one; with several and no default
+// File > Installations asks. With nothing installed (or --setup) the setup
+// wizard runs first. An instrument install opens its line, canvas and
+// spectrometer configs, as --sim when it was set up for simulation; a
+// data-reduction install opens the data browser on its database alone.
+// --examples opens the example line shipped with pychron (development), as
+// does --sim when nothing is installed.
+//
+// --sim forces every extraction-line transport to kind = "sim".
+// --spectrometer loads that spectrometer config for Window > Spectrometer;
+// with --sim and no file the example sim-integrated spectrometer is used.
+// --sim never rewrites a spectrometer config: one that is not simulated is
+// refused.
 //
 // Window > Experiment runs queues against the lab directory (--lab, default
-// the line config's directory; records under --data, default <lab>/data).
-// --queue opens a queue there. --sim-speed (with --sim) puts the whole app on
-// simulated time running that many times faster than real time.
+// the install folder or the line config's directory; records under --data,
+// default <lab>/data). --queue opens a queue there. --sim-speed (with --sim)
+// puts the whole app on simulated time running that many times faster than
+// real time.
 //
 // Window > Data browses the records under the data directory
 // (<data>/records) and plots them; with --db it browses that DVC store
@@ -21,6 +32,7 @@
 // live in the user's config directory, with lab presets under <lab>/figures.
 
 #include <chrono>
+#include <functional>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -35,8 +47,15 @@
 #include <QStandardPaths>
 
 #include "command_line.hpp"
+#include "data_main_window.hpp"
 #include "experiment_bridge.hpp"
+#include "installations_dialog.hpp"
 #include "main_window.hpp"
+#include "pychron/setup/doctor.hpp"
+#include "pychron/setup/installer.hpp"
+#include "pychron/setup/site.hpp"
+#include "setup_support.hpp"
+#include "setup_wizard.hpp"
 #include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -56,6 +75,106 @@
 #include "spectrometer_bridge.hpp"
 #include "theme.hpp"
 
+namespace {
+
+namespace fs = std::filesystem;
+namespace setup = pychron::setup;
+
+int fatal(const std::string& what) {
+  std::fprintf(stderr, "pychron-ui: %s\n", what.c_str());
+  QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QString::fromStdString(what));
+  return 1;
+}
+
+// Which install to open: the one named, else the default, else the wizard
+// (nothing installed, or --setup), else File > Installations' choice.
+// nullopt with rc: quit with rc. nullopt with rc < 0: the shipped examples.
+struct Choice {
+  std::optional<setup::SiteInstall> install;
+  int rc = -1;
+};
+
+Choice choose_install(const pychron::ui::CommandLine& cli, const setup::Resources& resources) {
+  const fs::path site_path = setup::default_site_path();
+  auto site = setup::load_site(site_path);
+  if (!site) return {std::nullopt, fatal(site.error().what)};
+  if (cli.install) {
+    if (const auto* i = site->find(*cli.install)) return {*i, 0};
+    return {std::nullopt, fatal("no installation named '" + *cli.install + "' in " + site_path.string())};
+  }
+  if (!cli.setup) {
+    if (const auto* i = site->pick()) return {*i, 0};
+    if (site->installs.empty() && cli.sim) return {};  // development: the examples
+  }
+  auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
+  if (cli.setup || site->installs.empty()) {
+    if (!library) return {std::nullopt, fatal(library.error().what)};
+    pychron::ui::SetupWizard wizard(*library, {site_path, pychron::ui::database_opener(), {}});
+    if (wizard.exec() != QDialog::Accepted || !wizard.open_now()) return {std::nullopt, 0};
+    return {wizard.installed(), 0};
+  }
+  pychron::ui::InstallationsDialog dialog(site_path, library ? &*library : nullptr, pychron::ui::database_opener(), {});
+  if (dialog.exec() != QDialog::Accepted || !dialog.to_open()) return {std::nullopt, 0};
+  auto again = setup::load_site(site_path);
+  const auto* i = again ? again->find(*dialog.to_open()) : nullptr;
+  if (i == nullptr) return {std::nullopt, fatal("installation '" + *dialog.to_open() + "' is gone")};
+  return {*i, 0};
+}
+
+// File > Installations from an open window: switching closes this one and
+// starts pychron-ui again on the other install.
+std::function<void()> installations_handler(QWidget* window, const setup::Resources& resources, std::string current) {
+  return [window, resources, current] {
+    auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
+    pychron::ui::InstallationsDialog dialog(setup::default_site_path(), library ? &*library : nullptr,
+                                            pychron::ui::database_opener(), current, window);
+    if (dialog.exec() != QDialog::Accepted || !dialog.to_open() || *dialog.to_open() == current) return;
+    if (!window->close()) return;  // e.g. unsaved queue edits, and the user chose Cancel
+    if (!pychron::ui::start_install(*dialog.to_open())) {
+      QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
+    }
+  };
+}
+
+// A data-reduction install: the data browser on its database, nothing else.
+int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::CommandLine& cli,
+                       const setup::Resources& resources) {
+  pychron::processing::RecordDirectorySource records(install.path(install.data.empty() ? "data" : install.data) /
+                                                     "records");
+  std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
+  std::string url = cli.db.value_or(std::string{});
+  if (url.empty() && !install.database.empty()) {
+    auto with_password = setup::database_url(install);
+    if (!with_password) return fatal(with_password.error().what);
+    url = *with_password;
+  }
+  if (!url.empty()) {
+#ifdef PYCHRON_UI_HAS_STORE
+    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{url, false});
+    if (!opened) {
+      return fatal("installation '" + install.name + "': database " + install.database + ": " +
+                   pychron::to_string(opened.error()) + "\n\nelctl doctor --install " + install.name +
+                   " says more; pychron-ui --setup can set it up again.");
+    }
+    store_source = std::move(*opened);
+#else
+    std::fprintf(stderr, "pychron-ui: built without the DVC store; browsing the records folder instead\n");
+#endif
+  }
+  pychron::processing::IAnalysisSource& source =
+      store_source ? *store_source : static_cast<pychron::processing::IAnalysisSource&>(records);
+  pychron::processing::PresetStore presets(
+      fs::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
+      install.root / "figures");
+  pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
+  window.set_installations_handler(installations_handler(&window, resources, install.name));
+  window.resize(1200, 800);
+  window.show();
+  return QApplication::exec();
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
   pychron::LogHub::install_crash_handlers();
   QApplication app(argc, argv);
@@ -68,8 +187,27 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: %s\n", cli.error().what.c_str());
     return 2;
   }
+  const setup::Resources resources = setup::find_resources();
+  const fs::path examples = resources.examples;
+
+  std::optional<setup::SiteInstall> install;
+  if (cli->files.empty() && !cli->examples) {
+    Choice choice = choose_install(*cli, resources);
+    if (!choice.install && choice.rc >= 0) return choice.rc;
+    install = std::move(choice.install);
+  }
+  if (install && install->kind == "data_reduction") return run_data_reduction(*install, *cli, resources);
+
+  // An instrument install fills in what the command line leaves out.
+  const bool sim = cli->sim || (install && install->simulation);
+  std::optional<fs::path> spectrometer_file = cli->spectrometer_file;
+  if (install && !spectrometer_file && !install->spectrometer.empty() &&
+      fs::exists(install->path(install->spectrometer))) {
+    spectrometer_file = install->path(install->spectrometer);
+  }
+
   pychron::systems::ExtractionLine::Options options;
-  options.force_sim = cli->sim;
+  options.force_sim = sim;
   // Simulated time: the pump advances the clock and runs the line's scheduler
   // inline (no dispatcher), so polling keeps pace however fast time runs.
   std::unique_ptr<pychron::ManualClock> sim_clock;
@@ -81,23 +219,26 @@ int main(int argc, char** argv) {
     options.scheduler.threads = 0;
     options.run_scheduler = false;
   }
-  const std::vector<std::filesystem::path>& files = cli->files;
+  const std::vector<fs::path>& files = cli->files;
 
-  const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
-  const std::filesystem::path system_file = files.empty() ? examples / "extraction_line.toml" : files[0];
-  std::optional<std::filesystem::path> canvas_file;
-  if (files.size() > 1) {
-    canvas_file = files[1];
+  fs::path system_file;
+  std::optional<fs::path> canvas_file;
+  if (install) {
+    system_file = install->path(install->line);
+    if (!install->canvas.empty()) canvas_file = install->path(install->canvas);
   } else if (files.empty()) {
+    system_file = examples / "extraction_line.toml";
     canvas_file = examples / "canvas.toml";
+  } else {
+    system_file = files[0];
+    if (files.size() > 1) canvas_file = files[1];
   }
 
   auto line = pychron::systems::ExtractionLine::load(system_file, canvas_file, options);
   if (!line) {
-    const QString what = QString::fromStdString(pychron::to_string(line.error()));
-    std::fprintf(stderr, "pychron-ui: %s\n", qPrintable(what));
-    QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), what);
-    return 1;
+    std::string what = pychron::to_string(line.error());
+    if (install) what = "installation '" + install->name + "': " + what + "\n\nelctl doctor --install " + install->name + " says more.";
+    return fatal(what);
   }
 
   if (pump) pump->drive(&(*line)->scheduler());
@@ -112,9 +253,10 @@ int main(int argc, char** argv) {
   // What was actually loaded decides the window's "(Simulation)" title and the
   // table-following sim beam; --sim only demands it (require_sim).
   bool simulation = false;
-  if (cli->spectrometer_file || cli->sim) {
-    const std::filesystem::path file =
-        cli->spectrometer_file ? *cli->spectrometer_file : examples / "spectrometer.sim-integrated.toml";
+  const fs::path spectrometer_config =
+      spectrometer_file ? *spectrometer_file : sim ? examples / "spectrometer.sim-integrated.toml" : fs::path();
+  if (!spectrometer_config.empty()) {
+    const fs::path& file = spectrometer_config;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       auto data = pychron::spectrometer::cfg::load_spectrometer(file);
       if (!data) return pychron::fail(data.error());
@@ -122,7 +264,7 @@ int main(int argc, char** argv) {
       return pychron::spectrometer::load_spectrometer_for_app(
           std::move(*data),
           pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
-          pychron::spectrometer::SpectrometerBringup{.sim_beam_from_table = simulation, .require_sim = cli->sim});
+          pychron::spectrometer::SpectrometerBringup{.sim_beam_from_table = simulation, .require_sim = sim});
     }();
     if (loaded) {
       spectrometer = std::move(*loaded);
@@ -134,13 +276,15 @@ int main(int argc, char** argv) {
   }
 
   // The experiment session is built once the line has started (below).
-  const std::filesystem::path lab_dir = cli->lab ? *cli->lab : system_file.parent_path();
+  const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
   std::unique_ptr<pychron::experiment::lab::Lab> lab;
   std::unique_ptr<pychron::experiment::lab::LabSession> session;
   std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
 
   // Data browsing: the records the experiment writes, and figure presets.
-  const std::filesystem::path data_dir = cli->data ? *cli->data : lab_dir / "data";
+  const fs::path data_dir = cli->data            ? *cli->data
+                            : install && !install->data.empty() ? install->path(install->data)
+                                                                : lab_dir / "data";
   pychron::processing::RecordDirectorySource records(data_dir / "records");
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
   if (cli->db) {
@@ -168,6 +312,7 @@ int main(int argc, char** argv) {
     // start-up Snapshot paints the canvas before the first scan.
     pychron::ui::MainWindow window(**line);
     window.resize(1200, 850);
+    window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
 
     // Runtime level changes go to the line's LogHub; without one (creation
     // failed) the "Set logger level..." action stays hidden.
@@ -204,11 +349,8 @@ int main(int argc, char** argv) {
       }
     }
     if (started) {
-      const std::filesystem::path spectrometer_config =
-          spectrometer ? (cli->spectrometer_file ? *cli->spectrometer_file : examples / "spectrometer.sim-integrated.toml")
-                       : std::filesystem::path();
-      lab = std::make_unique<pychron::experiment::lab::Lab>(
-          pychron::experiment::lab::load_lab({lab_dir, system_file, spectrometer_config}));
+      lab = std::make_unique<pychron::experiment::lab::Lab>(pychron::experiment::lab::load_lab(
+          {lab_dir, system_file, spectrometer ? spectrometer_config : fs::path()}));
       for (const auto& problem : lab->problems) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] lab: ") + QString::fromStdString(problem));
       }
@@ -216,7 +358,7 @@ int main(int argc, char** argv) {
           *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get()},
           pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
-      window.set_experiment(experiment_bridge.get(), cli->sim, cli->queue);
+      window.set_experiment(experiment_bridge.get(), sim, cli->queue);
     } else {
       window.log_dock()->append_line(
           QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));

@@ -94,6 +94,25 @@ class TestCommandLine : public QObject {
     QVERIFY(!no_sim.has_value());
     QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));
   }
+
+  void installSetupAndExamples() {
+    auto cli = parse_command_line({QStringLiteral("--install"), QStringLiteral("argus-lab"), QStringLiteral("--sim")});
+    QVERIFY(cli.has_value());
+    QCOMPARE(QString::fromStdString(*cli->install), QStringLiteral("argus-lab"));
+    QVERIFY(!cli->setup && !cli->examples);
+    QVERIFY(parse_command_line({QStringLiteral("--setup")})->setup);
+    QVERIFY(parse_command_line({QStringLiteral("--examples"), QStringLiteral("--sim")})->examples);
+    QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--install")}).error().what),
+             QStringLiteral("--install needs an installation name"));
+    for (const QStringList& both : {QStringList{QStringLiteral("line.toml"), QStringLiteral("--install"), QStringLiteral("a")},
+                                    QStringList{QStringLiteral("--setup"), QStringLiteral("--examples")},
+                                    QStringList{QStringLiteral("--install"), QStringLiteral("a"), QStringLiteral("--setup")}}) {
+      auto r = parse_command_line(both);
+      QVERIFY2(!r.has_value(), qPrintable(both.join(QLatin1Char(' '))));
+    }
+    QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--instal")}).error().what),
+             QStringLiteral("unknown option --instal"));
+  }
 };
 
 QTEST_APPLESS_MAIN(TestCommandLine)

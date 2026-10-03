@@ -11,6 +11,7 @@
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
+#include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
 
 using namespace pychron;
@@ -149,4 +150,18 @@ TEST(Profiles, DataReductionLocalAndServer) {
   ASSERT_TRUE(url);
   EXPECT_EQ(*url, "postgresql://reader:p%40ss%20word@db.lab.org:5432/pychron");
   fs::remove_all(server);
+}
+
+TEST(Profiles, InstrumentPagesAreSimulationConnectionThenDetectors) {
+  const auto r = find_resources();
+  auto lib = ProfileLibrary::load(r.profiles, r.examples);
+  ASSERT_TRUE(lib) << lib.error().what;
+  for (const char* name : {"argus", "helix", "ngx"}) {
+    auto p = lib->resolve(name);
+    ASSERT_TRUE(p) << p.error().what;
+    ASSERT_GE(p->groups.size(), 3u) << name;
+    EXPECT_EQ(p->groups[0], "Simulation") << name;
+    EXPECT_EQ(p->groups[1], "Instrument connection") << name;
+    EXPECT_EQ(p->groups[2], "Detectors") << name;
+  }
 }

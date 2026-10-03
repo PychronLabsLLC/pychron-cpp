@@ -119,6 +119,12 @@ Result<Profile> load_profile(const fs::path& dir) {
   else if (kind == "data_reduction") p.kind = ProfileKind::DataReduction;
   else if (kind == "fragment") p.kind = ProfileKind::Fragment;
   else err("kind", "must be instrument, data_reduction or fragment");
+  if (const auto* g = t["groups"].as_array()) {
+    for (const auto& e : *g) {
+      if (auto s = e.value<std::string>()) p.groups.push_back(*s);
+      else err("groups", "must be group names");
+    }
+  }
   if (const auto* inc = t["includes"].as_array()) {
     for (const auto& e : *inc) {
       if (auto s = e.value<std::string>()) p.includes.push_back(*s);
@@ -127,7 +133,7 @@ Result<Profile> load_profile(const fs::path& dir) {
   }
   for (const auto& [k, v] : t) {
     static const std::set<std::string> known{"name",     "title",     "summary", "version", "kind",
-                                             "includes", "questions", "files",   "values"};
+                                             "includes", "questions", "files",   "values", "groups"};
     if (!known.contains(std::string(k.str()))) err(std::string(k.str()), "unknown key");
   }
 
@@ -163,6 +169,10 @@ Result<Profile> load_profile(const fs::path& dir) {
       }
       if (const auto* c = (*q)["choices"].as_array())
         for (const auto& e : *c) question.choices.push_back(e.value_or(std::string{}));
+      if (const auto* c = (*q)["labels"].as_array())
+        for (const auto& e : *c) question.labels.push_back(e.value_or(std::string{}));
+      if (!question.labels.empty() && question.labels.size() != question.choices.size())
+        err(w + ".labels", "needs one label per choice");
       if (const auto* c = (*q)["columns"].as_array())
         for (const auto& e : *c) question.columns.push_back(e.value_or(std::string{}));
       if (question.type == QuestionType::Choice && question.choices.empty()) err(w + ".choices", "a choice needs choices");
@@ -282,6 +292,13 @@ Result<ResolvedProfile> ProfileLibrary::resolve(const std::string& name) const {
       return fail(ErrorKind::Config, "'" + f.to + "' is written by both '" + it->second + "' and '" + f.profile + "'");
     owner[key] = f.profile;
   }
+  // Hints from the top profile down to the deepest include, then the rest.
+  for (auto it = out.chain.rbegin(); it != out.chain.rend(); ++it) {
+    for (const auto& g : profiles_.at(*it).groups)
+      if (std::find(out.groups.begin(), out.groups.end(), g) == out.groups.end()) out.groups.push_back(g);
+  }
+  for (const auto& q : out.questions)
+    if (std::find(out.groups.begin(), out.groups.end(), q.group) == out.groups.end()) out.groups.push_back(q.group);
   return out;
 }
 

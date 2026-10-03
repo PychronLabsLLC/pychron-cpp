@@ -1,4 +1,5 @@
 #include "pychron/setup/doctor.hpp"
+#include "pychron/setup/installer.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -222,11 +223,7 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name) {
   };
   if (plan.profile.top.kind == ProfileKind::DataReduction) {
     s.kind = "data_reduction";
-    if (text("data_source") == "server") {
-      s.database = "postgresql://" + text("db_user") + "@" + text("db_host") + ":" + text("db_port") + "/" + text("db_name");
-    } else {
-      s.database = "sqlite:" + (plan.root / "data" / "pychron.db").generic_string();
-    }
+    s.database = database_url_for(plan.answers, plan.root, false);
   } else {
     s.kind = "instrument";
     s.line = "extraction_line.toml";
@@ -249,18 +246,7 @@ Result<std::string> database_url(const SiteInstall& install) {
   if (password.empty()) return url;
   const auto at = url.find('@');
   if (at == std::string::npos) return fail(ErrorKind::Config, "database URL has no user: " + url);
-  // Percent-encode what would end the userinfo part.
-  std::string encoded;
-  for (const char c : password) {
-    if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
-      encoded += c;
-    } else {
-      char buf[4];
-      std::snprintf(buf, sizeof buf, "%%%02X", static_cast<unsigned char>(c));
-      encoded += buf;
-    }
-  }
-  return url.substr(0, at) + ":" + encoded + url.substr(at);
+  return url.substr(0, at) + ":" + percent_encode(password) + url.substr(at);
 }
 
 }  // namespace pychron::setup

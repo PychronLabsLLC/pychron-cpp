@@ -10,6 +10,7 @@
 
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
+#include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
 #include "pychron/setup/site.hpp"
 
@@ -242,4 +243,61 @@ TEST(Site, TheLocationCanBeOverridden) {
   unsetenv("PYCHRON_SITE_CONFIG");
 #endif
   EXPECT_EQ(default_site_path().filename(), "site.toml");
+}
+
+TEST(Installer, DatabaseUrlsFromTheAnswers) {
+  const Answers local{{"data_source", Value{std::string("local")}}};
+  EXPECT_EQ(database_url_for(local, "/labs/dr", true), "sqlite:/labs/dr/data/pychron.db");
+  Answers server{{"data_source", Value{std::string("server")}}, {"db_user", Value{std::string("ar user")}},
+                 {"db_host", Value{std::string("db.lab.edu")}}, {"db_port", Value{std::int64_t{5433}}},
+                 {"db_name", Value{std::string("pychron")}}, {"db_password", Value{std::string("p@ss:/")}}};
+  EXPECT_EQ(database_url_for(server, "/x", false), "postgresql://ar%20user@db.lab.edu:5433/pychron");
+  EXPECT_EQ(database_url_for(server, "/x", true), "postgresql://ar%20user:p%40ss%3A%2F@db.lab.edu:5433/pychron");
+  server["db_password"] = Value{std::string{}};
+  EXPECT_EQ(database_url_for(server, "/x", true), "postgresql://ar%20user@db.lab.edu:5433/pychron");
+}
+
+TEST(Installer, RegisteringAnInstallMakesTheFirstOneTheDefault) {
+  Tmp tmp;
+  const fs::path site = tmp.dir / "site.toml";
+  ASSERT_TRUE(register_install({"a", "instrument", "argus", tmp.dir / "a", "", "", "", "data", "", true}, site));
+  ASSERT_TRUE(register_install({"b", "instrument", "ngx", tmp.dir / "b", "", "", "", "data", "", true}, site));
+  auto loaded = load_site(site);
+  ASSERT_TRUE(loaded);
+  EXPECT_EQ(loaded->default_install, "a");
+  EXPECT_EQ(loaded->installs.size(), 2u);
+}
+
+TEST(Installer, TheShippedProfilesAreFoundAndEnvironmentWins) {
+  const Resources r = find_resources();
+  EXPECT_TRUE(fs::exists(r.profiles / "data-reduction" / "profile.toml")) << r.profiles;
+  EXPECT_TRUE(fs::exists(r.examples / "extraction_line.toml")) << r.examples;
+  // An installed layout next to the program wins over the source tree.
+  Tmp tmp;
+  fs::create_directories(tmp.dir / "share" / "pychron" / "profiles");
+  fs::create_directories(tmp.dir / "share" / "pychron" / "examples");
+  fs::create_directories(tmp.dir / "bin");
+  EXPECT_EQ(find_resources(tmp.dir / "bin").profiles, fs::weakly_canonical(tmp.dir / "share" / "pychron") / "profiles");
+}
+
+TEST(Installer, ChoiceLabelsMatchTheChoices) {
+  Tmp profiles, examples;
+  profiles.write("c/profile.toml", R"(
+name = "c"
+kind = "instrument"
+[[questions]]
+id = "where"
+type = "choice"
+choices = ["a", "b"]
+labels = ["only one"]
+)");
+  auto bad = ProfileLibrary::load(profiles.dir, examples.dir);
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("needs one label per choice"), std::string::npos) << bad.error().what;
+  auto shipped = ProfileLibrary::load(find_resources().profiles, find_resources().examples);
+  ASSERT_TRUE(shipped) << shipped.error().what;
+  auto dr = shipped->resolve("data-reduction");
+  ASSERT_TRUE(dr);
+  for (const auto& q : dr->questions)
+    if (q.id == "data_source") EXPECT_EQ(q.labels.size(), 2u);
 }

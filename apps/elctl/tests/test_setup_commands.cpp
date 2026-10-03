@@ -58,9 +58,10 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallsChecksAndRunsByName) {
 
 TEST_F(ElctlSetupTest, QuestionsAreAskedWithDefaultsInBrackets) {
   const auto root = path("ngx-lab");
-  // simulation: no; reference isotope, baseline mass, peak window, host: Enter
-  // (defaults); port: 1091; user, reference detector: Enter; then confirm.
-  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n\n\n\n1091\n\n\ny\n");
+  // Simulation, then the connection, then the detectors: simulation: no;
+  // host: Enter (default); port: 1091; user, reference isotope, baseline
+  // mass, peak window, reference detector: Enter; then confirm.
+  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n1091\n\n\n\n\n\ny\n");
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "Address of the NGX controller [192.168.0.20]")) << o.out;
   std::ifstream in(root / "spectrometer.toml");

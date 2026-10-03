@@ -300,6 +300,16 @@ and `--set id=value` answer without prompts. A re-run never overwrites a file;
 `--reconfigure` rewrites only files nobody edited and leaves `<file>.new`
 beside edited ones.
 
+`pychron-ui` does the same with a setup wizard. Started with nothing
+installed, it opens the wizard: pick data reduction or an instrument, a
+folder, and answer one page per question group; Install writes the files,
+creates a local database, records the install and shows the doctor's checks.
+After that `pychron-ui` opens the default install (`--install NAME` another;
+File > Installations switches, sets the default or forgets one). A
+data-reduction install opens the data browser alone. `pychron-ui --setup`
+runs the wizard again; `--examples` (or `--sim` with nothing installed) opens
+the example line in `configs/examples` as before.
+
 ## 7. Checklist
 
 - `ctest --preset dev` passes.

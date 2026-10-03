@@ -74,7 +74,7 @@ TEST(NgxExampleConfig, ALinkTransportLoads) {
   fs::copy(kNgx.parent_path() / "tables" / "ngx_argon", dir / "tables" / "ngx_argon", fs::copy_options::recursive);
   std::ifstream in(kNgx);
   std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  const std::string tcp = "kind = \"tcp\"\nhost = \"192.168.0.20\"\nport = 1090\ntimeout_ms = 2000";
+  const std::string tcp = "kind = \"tcp\"\nhost = \"192.168.0.20\"\nport = 1099\ntimeout_ms = 2000";
   ASSERT_NE(text.find(tcp), std::string::npos);
   text.replace(text.find(tcp), tcp.size(), "kind = \"link\"\nlink = \"ngx\"");
   std::ofstream(dir / "spectrometer.toml") << text;

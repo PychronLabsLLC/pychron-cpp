@@ -12,6 +12,8 @@
 //   summary = "..."
 //   version = 1
 //   includes = ["lab-common"]
+//   groups = ["Simulation", "Instrument connection", "Detectors"]
+//                                # optional: the order the wizard asks groups in
 //
 //   [values]                     # fixed answers the templates use, never asked
 //   instrument = "Argus VI"
@@ -20,6 +22,7 @@
 //   id = "host"  prompt = "..."  type = "host"  default = "192.168.0.10"
 //   group = "Connection"  help = "..."  when = "not simulation"
 //   choices = [...]      # type choice
+//   labels = [...]       # optional: how the wizard shows each choice
 //   columns = [...]      # type table: each row is a table with these keys
 //
 //   [[files]]
@@ -53,6 +56,7 @@ struct Question {
   QuestionType type = QuestionType::String;
   std::optional<Value> default_value;
   std::vector<std::string> choices;  // Choice
+  std::vector<std::string> labels;   // Choice: what the wizard shows for each (optional)
   std::vector<std::string> columns;  // Table
   std::string profile;               // the profile that asked it
 };
@@ -72,6 +76,7 @@ struct Profile {
   ProfileKind kind = ProfileKind::Fragment;
   std::int64_t version = 1;
   std::vector<std::string> includes;
+  std::vector<std::string> groups;  // wizard page order hint
   Answers values;
   std::vector<Question> questions;
   std::vector<FileSpec> files;
@@ -86,6 +91,9 @@ struct ResolvedProfile {
   std::vector<std::string> chain;                   // names, includes first
   std::map<std::string, std::int64_t> versions;     // by name
   Answers values;                                   // merged; the including profile wins
+  // Group order: the including profile's hints first, then each include's;
+  // groups no hint names follow in the order their first question comes.
+  std::vector<std::string> groups;
   std::vector<Question> questions;                  // includes' first
   std::vector<FileSpec> files;
 };

@@ -12,9 +12,10 @@ id = "data_source"
 prompt = "Where is the data?"
 type = "choice"
 choices = ["local", "server"]
+labels = ["On this computer (a new database in the install folder)", "My lab's database server (PostgreSQL)"]
 default = "local"
 group = "Data"
-help = "local: a database file in this folder (start empty, or import later). server: your lab's PostgreSQL database."
+help = "A database on this computer starts empty and is yours alone; a server database is shared with your lab."
 
 [[questions]]
 id = "db_host"

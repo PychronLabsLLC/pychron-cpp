@@ -46,6 +46,11 @@ add_library(pychron_ui_lib STATIC
   src/reference_fit_window.cpp
   src/preset_bar.cpp
   src/theme.cpp
+  src/data_workspace.cpp
+  src/data_main_window.cpp
+  src/setup_wizard.cpp
+  src/installations_dialog.cpp
+  src/setup_support.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -82,11 +87,16 @@ add_library(pychron_ui_lib STATIC
   src/reference_fit_window.hpp
   src/preset_bar.hpp
   src/theme.hpp
+  src/data_workspace.hpp
+  src/data_main_window.hpp
+  src/setup_wizard.hpp
+  src/installations_dialog.hpp
+  src/setup_support.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
 target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
+target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
   qcustomplot)
 pychron_set_warnings(pychron_ui_lib)
 # --db browses the DVC store; it needs the persistence library.
@@ -99,6 +109,4 @@ add_executable(pychron-ui src/main.cpp)
 target_link_libraries(pychron-ui PRIVATE pychron_ui_lib)
 # spectrometer sim drivers register from static initializers nothing references
 pychron_link_drivers(pychron-ui pychron_sim)
-target_compile_definitions(pychron-ui PRIVATE
-  PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
 pychron_set_warnings(pychron-ui)

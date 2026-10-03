@@ -32,6 +32,14 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--db needs a database url");
       cli.db = v->toStdString();
+    } else if (arg == QStringLiteral("--install")) {
+      auto v = value();
+      if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--install needs an installation name");
+      cli.install = v->toStdString();
+    } else if (arg == QStringLiteral("--setup")) {
+      cli.setup = true;
+    } else if (arg == QStringLiteral("--examples")) {
+      cli.examples = true;
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
       bool ok = false;
@@ -40,11 +48,15 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
         return fail(ErrorKind::Config, "--sim-speed needs a positive number");
       }
       cli.sim_speed = speed;
+    } else if (arg.startsWith(QStringLiteral("--"))) {
+      return fail(ErrorKind::Config, "unknown option " + arg.toStdString());
     } else {
       cli.files.emplace_back(arg.toStdString());
     }
   }
   if (cli.sim_speed > 0 && !cli.sim) return fail(ErrorKind::Config, "--sim-speed needs --sim");
+  const int sources = (cli.files.empty() ? 0 : 1) + (cli.install ? 1 : 0) + (cli.setup ? 1 : 0) + (cli.examples ? 1 : 0);
+  if (sources > 1) return fail(ErrorKind::Config, "config files, --install, --setup and --examples exclude each other");
   return cli;
 }
 

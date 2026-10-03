@@ -22,7 +22,7 @@ when = "not simulation"
 id = "ngx_port"
 prompt = "NGX controller port"
 type = "port"
-default = 1090
+default = 1099
 group = "Instrument connection"
 when = "not simulation"
 

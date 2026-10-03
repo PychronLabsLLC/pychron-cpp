@@ -4,6 +4,7 @@ kind = "fragment"
 summary = "A starter measurement plan, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
 version = 1
 includes = ["lab-common", "extraction-line-starter"]
+groups = ["Simulation", "Instrument connection", "Detectors"]
 
 [[questions]]
 id = "simulation"
@@ -11,7 +12,7 @@ prompt = "Run in simulation first (no instrument needed)?"
 type = "bool"
 default = true
 group = "Simulation"
-help = "Recommended. Everything runs against a simulated spectrometer and line; switch with elctl init --reconfigure when the instrument is ready."
+help = "Recommended. Everything runs against a simulated spectrometer and line; when the instrument is ready, run setup again on this folder (pychron-ui --setup, or elctl init --reconfigure) and turn it off."
 
 [[questions]]
 id = "reference_isotope"

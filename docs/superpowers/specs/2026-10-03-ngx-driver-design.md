@@ -50,7 +50,7 @@ declares a transport of the new kind `link`:
 [transports.ngx]
 kind = "tcp"
 host = "192.168.0.20"
-port = 1090
+port = 1099
 [drivers.ngx]
 kind = "isotopx_ngx"
 transport = "ngx"

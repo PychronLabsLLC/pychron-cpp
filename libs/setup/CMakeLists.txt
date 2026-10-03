@@ -13,4 +13,8 @@ target_include_directories(pychron_setup PUBLIC
 target_compile_features(pychron_setup PUBLIC cxx_std_20)
 target_link_libraries(pychron_setup PUBLIC pychron::experiment pychron::systems pychron::core)
 
+# The source tree: where a program that is not installed finds the profiles
+# and example configs (setup::find_resources).
+target_compile_definitions(pychron_setup PRIVATE PYCHRON_SETUP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 pychron_set_warnings(pychron_setup)

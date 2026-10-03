@@ -255,6 +255,20 @@ page and kept in `CALIBRATE.md` in the root.
 The wizard never blocks on hardware: a failed Test connection is a warning;
 the install can finish in simulation.
 
+As built (2026-10-03, `apps/pychron-ui/src/setup_wizard.*`): Welcome lists
+data reduction first, then each instrument profile; Location (name and
+folder, Browse); one page per question group in manifest order, skipping a
+group with nothing to ask (simulation skips Instrument connection); Ready is
+the commit page (Install); Done shows the doctor's checks and the
+placeholders, with "Open it now". Choices with four or fewer options are
+radio buttons, labelled by the manifest's optional `labels`. A folder that
+already holds the same profile's install is a reconfigure: its recorded
+answers fill the pages and edited files are kept; another profile's install
+there is refused. Test connection exists for the data-reduction server only;
+the instrument's (driver connect step) and the extraction-line starter/import
+page are follow-ups. A data-reduction install opens `DataMainWindow` (the
+data browser alone) rather than the instrument main window.
+
 ### 3.6 Data reduction database
 
 Already on main (2026-10-03): `processing::StoreSource` over the DVC store

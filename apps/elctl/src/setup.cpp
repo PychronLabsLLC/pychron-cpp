@@ -7,6 +7,7 @@
 #include "pychron/core/env.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
+#include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
@@ -27,28 +28,10 @@ constexpr const char* kInitUsage =
     "       elctl init --reconfigure [--install NAME] [--set id=value]... [--yes]\n"
     "options: --profiles DIR   where the profiles are (default: the ones shipped with elctl)\n";
 
-fs::path profiles_dir(const std::optional<fs::path>& given) {
-  if (given) return *given;
-  if (auto env = env_var("PYCHRON_PROFILES_DIR"); env && !env->empty()) return *env;
-  return PYCHRON_PROFILES_DIR;
-}
-
-fs::path examples_dir() {
-  if (auto env = env_var("PYCHRON_EXAMPLES_DIR"); env && !env->empty()) return *env;
-  return PYCHRON_EXAMPLES_DIR;
-}
-
-fs::path home() {
-#ifdef _WIN32
-  return env_var("USERPROFILE").value_or(".");
-#else
-  return env_var("HOME").value_or(".");
-#endif
-}
-
-fs::path default_root(const Profile& p, const std::string& name) {
-  if (p.kind == ProfileKind::DataReduction) return home() / "Documents" / "Pychron";
-  return home() / "Pychron" / name;
+Resources resources(const std::optional<fs::path>& profiles) {
+  Resources r = find_resources();
+  if (profiles) r.profiles = *profiles;
+  return r;
 }
 
 bool yes(std::istream& in, std::ostream& out, const std::string& question) {
@@ -72,16 +55,19 @@ std::string shown(const Question& q, const Value& v) {
   return to_text(v);
 }
 
-// Asks every question still without an answer whose `when` holds, in order.
+// Asks every question still without an answer whose `when` holds, group by
+// group in the profile's group order.
 Result<void> ask(const ResolvedProfile& profile, Answers& given, const Answers& fixed, Io io) {
   Answers so_far = fixed;
   for (const auto& [k, v] : given) so_far[k] = v;
+  std::vector<const Question*> ordered;
+  for (const auto& g : profile.groups)
+    for (const auto& q : profile.questions)
+      if (q.group == g) ordered.push_back(&q);
   std::string group;
-  for (const auto& q : profile.questions) {
-    if (!q.when.empty()) {
-      auto c = evaluate(q.when, so_far);
-      if (!c || !*c) continue;
-    }
+  for (const Question* qp : ordered) {
+    const Question& q = *qp;
+    if (!is_asked(q, so_far)) continue;
     if (given.count(q.id)) continue;
     if (q.group != group) {
       group = q.group;
@@ -204,7 +190,8 @@ int init_command(const std::vector<std::string>& args, Io io) {
     }
   }
 
-  auto library = ProfileLibrary::load(profiles_dir(profiles), examples_dir());
+  const Resources where = resources(profiles);
+  auto library = ProfileLibrary::load(where.profiles, where.examples);
   if (!library) {
     io.err << "error: " << library.error().what << "\n";
     return kFailed;
@@ -265,20 +252,12 @@ int init_command(const std::vector<std::string>& args, Io io) {
     if (!kv) return usage(kv.error().what);
     given[kv->first] = Value{kv->second};  // typed by complete_answers
   }
-  if (!name) name = resolved->top.kind == ProfileKind::DataReduction ? std::string("data-reduction") : *profile_name;
+  if (!name) name = default_install_name(resolved->top);
   if (!root) root = default_root(resolved->top, *name);
-  const Answers builtins{{"install_name", Value{*name}}, {"root", Value{root->generic_string()}}};
+  const Answers builtins = builtin_answers(*name, *root);
 
   // A reconfigure without the secrets again keeps the files that hold them.
-  bool keep_secrets = false;
-  if (reconfigure) {
-    for (const auto& q : resolved->questions) {
-      if (q.type == QuestionType::Secret && !given.count(q.id)) {
-        given[q.id] = Value{std::string{}};
-        keep_secrets = true;
-      }
-    }
-  }
+  const bool keep_secrets = reconfigure && keep_unanswered_secrets(*resolved, given);
   if (!assume_yes && !answers_file && !reconfigure) {
     io.out << resolved->top.title << ": " << resolved->top.summary << "\n"
            << "Press Enter to accept the value in [brackets].\n";
@@ -326,14 +305,7 @@ int init_command(const std::vector<std::string>& args, Io io) {
   }
 #endif
   const auto site_path = default_site_path();
-  auto site = load_site(site_path);
-  if (!site) {
-    io.err << "error: " << site.error().what << "\n";
-    return kFailed;
-  }
-  site->upsert(entry);
-  if (site->default_install.empty()) site->default_install = entry.name;
-  if (auto saved = save_site(*site, site_path); !saved) {
+  if (auto saved = register_install(entry, site_path); !saved) {
     io.err << "error: " << saved.error().what << "\n";
     return kFailed;
   }
@@ -365,7 +337,8 @@ int doctor_command(const std::vector<std::string>& args, std::optional<std::stri
     io.err << "error: " << i.error().what << "\n";
     return kFailed;
   }
-  auto library = ProfileLibrary::load(profiles_dir(profiles), examples_dir());
+  const Resources where = resources(profiles);
+  auto library = ProfileLibrary::load(where.profiles, where.examples);
   return report_doctor(*i, library ? &*library : nullptr, strict, probe, io);
 }
 

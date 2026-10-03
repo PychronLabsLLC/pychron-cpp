@@ -17,6 +17,7 @@
 
 #include "alarm_dock.hpp"
 #include "data_browser_window.hpp"
+#include "data_workspace.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
 #include "experiment_window.hpp"
@@ -66,8 +67,11 @@ class MainWindow : public QMainWindow {
   // window). Both must outlive the main window or be cleared first.
   void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);
   QAction* data_action() const noexcept { return data_action_; }
-  DataBrowserWindow* data_window() const noexcept { return data_window_; }
-  ProcessingBridge* processing_bridge() const noexcept { return processing_.get(); }
+  DataBrowserWindow* data_window() const noexcept { return data_->existing_browser(); }
+  ProcessingBridge* processing_bridge() const noexcept { return data_->processing_bridge(); }
+  // File > Installations…; hidden until a handler is set.
+  void set_installations_handler(std::function<void()> handler);
+  QAction* installations_action() const noexcept { return installations_; }
   // Opens a recall window / a time-series figure window (null without data).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_time_series(const QStringList& uuids);
@@ -98,11 +102,9 @@ class MainWindow : public QMainWindow {
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
   QAction* data_action_;
-  processing::IAnalysisSource* data_source_ = nullptr;
-  processing::PresetStore* presets_ = nullptr;
-  std::unique_ptr<ProcessingBridge> processing_;
-  DataBrowserWindow* data_window_ = nullptr;
-  QList<QPointer<QWidget>> data_children_;  // recall and figure windows
+  DataWorkspace* data_;
+  QAction* installations_;
+  std::function<void()> on_installations_;
 };
 
 }  // namespace pychron::ui
