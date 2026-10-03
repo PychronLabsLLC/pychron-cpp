@@ -1,7 +1,7 @@
 # Vision library design (laser program, sub-project 1)
 
 Date: 2026-10-03
-Status: Approved (design), pending implementation plan
+Status: Implemented. Finders are not validated on real frames; see docs/vision_fixtures.md and section 20
 Owner: Jake Ross
 Scope: `libs/vision`: frames, target finding, autocenter, dragonfly, focus
 metrics, camera-to-stage calibration, frame sources for test and replay.
@@ -441,3 +441,69 @@ polygons, video degas.
 - Neither finder is validated on real camera frames (see
   `docs/vision_fixtures.md`); the committed fixtures are synthetic or screen
   recordings.
+
+## 20. As built
+
+Implemented by docs/superpowers/plans/2026-10-03-vision.md. Decisions taken
+during implementation, where they add to or depart from the sections above:
+
+**Finder**
+- Hole threshold is not plain Otsu (section 5 step 4 as amended): a shadow
+  fused with the hole under Otsu.
+- `mask_radius_px <= 0` means no mask. A component touching the frame border
+  counts as touching the mask edge.
+- Non-finite parameters, or a zero pixel depth, give no targets.
+- Pixels are stored as `uint16_t` at every depth.
+
+**Autocenter**
+- A crop that does not fit inside the frame is not searched: `Failed
+  "clipped"`. The aim point must be kept away from the frame edge.
+- Stale frames are rejected without a clock: a frame not later than the newest
+  frame of the previous step gives `Failed "stale_frame"`.
+- Rejections (`invalid`, `clipped`, `stale_frame`) do not consume an iteration.
+- Adds `crop_scale` and `aim_offset_px`.
+
+**Dragonfly**
+- Crop side is 2.5 x the target diameter; mask radius 1.05 x the diameter.
+- Step order: invalid, elapsed, stale, detect. `step` returns a `Result`; a
+  frame older than the `now` of the step that last returned `Move` is an error.
+- A frame with no target whose masked region is at or above the saturation
+  threshold counts as saturated, so a glow that fills the mask holds instead
+  of starting a search. A uniformly bright frame with no glow also holds.
+- Saturation keeps the legacy meaning (mean blob intensity over depth), so a
+  wide unclipped glow can read as saturated. `saturation_threshold` must be in
+  (0, 1].
+- After perimeter projection, a move shorter than the deadband is a `Hold`
+  with reason `PerimeterClamp`.
+- The search restarts from the anchor when a whole spiral ring falls outside
+  the perimeter.
+- Any step that sees the glow re-anchors the spiral there.
+- Square spiral: lap n visits (+s,0), (0,+s), (-s,0), (0,-s), s = base x
+  growth^(n-1).
+- Adds `start()`, `target_radius_mm`, `aim_offset_px`, and reasons `Miss` and
+  `Invalid`. `frames_per_step` is a hint to the caller in both controllers.
+
+**Sources and fixtures**
+- `RecordedSource` and `OpenCvSource` stamp frames from an injectable clock
+  that defaults to the steady clock. A frame's timestamp must be on the clock
+  the caller uses for `now`.
+- Fixture frames carry `skip`; a case carries `channel` and `note`. Frame
+  paths may not leave the case directory.
+- Committed real frames were cut with the target deliberately off-centre.
+  Three of eight pass `SimpleFinder`; the rest are `skip = true` with the
+  reason recorded. `LegacyFinder` passes two of eight.
+
+**OpenCV**
+- Built and tested with OpenCV 5.0, where contour functions are in the
+  `geometry` module; the 4.x path is written and untested.
+- `LegacyFinder` uses `0.75 x 2 x expected_radius_px` where the legacy code
+  used `0.75 x px_per_mm`, because `FinderParams` carries no scale.
+
+**Left for the laser-system sub-project**
+- One stale-frame rule for both controllers, on frame timestamps only.
+- An enum for Autocenter's reasons, separating rejections from failures.
+- One shared crop, find and offset helper for the two controllers.
+- Scale has two sources of truth: `px_per_mm` and `CameraStageMap`.
+- Dragonfly with its aim point outside the frame searches; Autocenter fails.
+- The synthetic glow has no halo, smear or dependence on distance from the
+  beam.
