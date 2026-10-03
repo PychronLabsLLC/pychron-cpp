@@ -898,6 +898,116 @@ Result<SaveOutcome> StoreSource::save_fits(const std::string& analysis, const st
   return outcome;
 }
 
+namespace {
+
+std::vector<ps::ReferenceRow> reference_rows(const std::vector<ReferenceUse>& uses) {
+  std::vector<ps::ReferenceRow> out;
+  for (std::size_t i = 0; i < uses.size(); ++i)
+    out.push_back(ps::ReferenceRow{static_cast<int>(i), ps::Uuid::parse(uses[i].uuid),
+                                   uses[i].runid.empty() ? std::nullopt : std::optional<std::string>(uses[i].runid),
+                                   uses[i].excluded});
+  return out;
+}
+
+template <class Row, class Key>
+Row& row_for(std::vector<Row>& rows, const std::string& key, Key key_of) {
+  auto it = std::find_if(rows.begin(), rows.end(), [&](const Row& r) { return key_of(r) == key; });
+  if (it != rows.end()) return *it;
+  rows.emplace_back();
+  key_of(rows.back()) = key;
+  return rows.back();
+}
+
+}  // namespace
+
+ps::Blanks apply_blank_fits(ps::Blanks rows, const std::vector<ReferenceRowFit>& fits) {
+  for (const auto& f : fits) {
+    auto& row = row_for(rows, f.key, [](auto& r) -> auto& { return r.isotope; });
+    row.value = f.value.value;
+    row.error = f.value.error;
+    row.fit = std::string(to_string(f.fit));
+    row.error_type = std::string(to_string(f.error));
+    row.reviewed = true;
+    row.manual = ps::ManualOverride{};
+    row.references = reference_rows(f.references);
+  }
+  return rows;
+}
+
+ps::IcFactors apply_icfactor_fits(ps::IcFactors rows, const std::vector<ReferenceRowFit>& fits) {
+  for (const auto& f : fits) {
+    auto& row = row_for(rows, f.key, [](auto& r) -> auto& { return r.detector; });
+    row.value = f.value.value;
+    row.error = f.value.error;
+    row.fit = std::string(to_string(f.fit));
+    if (!f.reference_detector.empty()) row.reference_detector = f.reference_detector;
+    if (f.standard_ratio) row.standard_ratio = f.standard_ratio;
+    row.reviewed = true;
+    row.manual = ps::ManualOverride{};
+    row.references = reference_rows(f.references);
+  }
+  return rows;
+}
+
+Result<SaveOutcome> StoreSource::save_reference_fits(const ReferenceFitSet& fits) {
+  if (fits.analyses.empty()) return fail(ErrorKind::Config, "nothing to save");
+  const bool blanks = fits.target == ReferenceFitTarget::Blanks;
+  const ps::Kind kind = blanks ? ps::Kind::Blanks : ps::Kind::IcFactors;
+  const std::string name(ps::to_string(kind));
+  struct Item {
+    ps::Uuid id, base;
+    const AnalysisReferenceFits* fits;
+  };
+  std::vector<Item> items;
+  for (const auto& a : fits.analyses) {
+    auto id = parse_uuid(a.uuid);
+    if (!id) return fail(id.error());
+    auto head = a.heads.find(name);
+    auto base = head == a.heads.end() ? std::nullopt : ps::Uuid::parse(head->second);
+    if (!base) return fail(ErrorKind::Config, a.runid + " was loaded without a " + name + " head");
+    items.push_back({*id, *base, &a});
+  }
+  const std::string message = fits.message();
+  Impl* impl = impl_.get();
+  auto outcome = impl->call<SaveOutcome>([&, impl](ps::IStore& s) -> Result<SaveOutcome> {
+    auto actor = impl->actor_for(s);
+    if (!actor) return fail(actor.error());
+    auto uow = s.begin(*actor);
+    if (!uow) return fail(uow.error());
+    std::map<std::string, std::string> staged;
+    for (const auto& item : items) {
+      auto payload = s.load_payload(item.base);
+      if (!payload) return fail(payload.error());
+      std::optional<ps::RevisionPayload> edited;
+      if (blanks) {
+        const auto* rows = *payload ? std::get_if<ps::Blanks>(&**payload) : nullptr;
+        if (!rows) return fail(ErrorKind::Config, "revision " + item.base.str() + " is not a blanks revision");
+        edited = ps::RevisionPayload{apply_blank_fits(*rows, item.fits->rows)};
+      } else {
+        const auto* rows = *payload ? std::get_if<ps::IcFactors>(&**payload) : nullptr;
+        if (!rows) return fail(ErrorKind::Config, "revision " + item.base.str() + " is not an IC factors revision");
+        edited = ps::RevisionPayload{apply_icfactor_fits(*rows, item.fits->rows)};
+      }
+      auto rev = (*uow)->add_revision(item.id, kind, std::move(*edited), item.base);
+      if (!rev) return fail(rev.error());
+      staged[item.fits->uuid] = rev->str();
+    }
+    auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
+    if (!committed) return fail(committed.error());
+    if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&*committed)) {
+      SaveOutcome out;
+      out.conflict = std::to_string(conflicts->size()) + " of " + std::to_string(items.size()) +
+                     " analyses changed first: " +
+                     (conflicts->empty() ? std::string("conflict") : describe_conflict(conflicts->front()));
+      return out;
+    }
+    return outcome_of(*committed, std::move(staged));
+  });
+  if (outcome && outcome->saved)
+    for (const auto& a : fits.analyses) impl->forget(a.uuid);
+  return outcome;
+}
+
 Result<SaveOutcome> StoreSource::restore_revision(const std::string& analysis, RevisionKind kind,
                                                   const std::string& expected, const std::string& revision,
                                                   const std::string& message) {

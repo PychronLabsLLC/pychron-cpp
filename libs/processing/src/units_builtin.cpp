@@ -7,6 +7,7 @@
 
 #include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/quantity.hpp"
+#include "pychron/processing/reference_fit.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
@@ -447,6 +448,8 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(make_ideogram_unit());
     r.add(make_spectrum_unit());
     r.add(make_isochron_unit());
+    r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
+    r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
     return r;
   }();
   return registry;

@@ -53,6 +53,7 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource {
   Result<RevisionTable> revision_table(const std::string& revision) override;
   Result<SaveOutcome> save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
                                 const std::vector<EditedFit>& edits, const std::string& message) override;
+  Result<SaveOutcome> save_reference_fits(const ReferenceFitSet& fits) override;
   Result<SaveOutcome> restore_revision(const std::string& analysis, RevisionKind kind, const std::string& expected,
                                        const std::string& revision, const std::string& message) override;
 
@@ -93,6 +94,13 @@ RevisionTable revision_table_from(const persistence::RevisionPayload& payload);
 // Fails when an edit names an isotope or detector the rows do not have.
 Result<persistence::Intercepts> apply_intercept_edits(persistence::Intercepts rows, const std::vector<EditedFit>& edits);
 Result<persistence::Baselines> apply_baseline_edits(persistence::Baselines rows, const std::vector<EditedFit>& edits);
+
+// The rows of a blanks / IC factors revision with reference fits applied:
+// value, error, fit, error type (blanks), reference detector and standard
+// ratio (IC factors), references, reviewed; a manual override is cleared.
+// Rows for keys the revision lacks are appended.
+persistence::Blanks apply_blank_fits(persistence::Blanks rows, const std::vector<ReferenceRowFit>& fits);
+persistence::IcFactors apply_icfactor_fits(persistence::IcFactors rows, const std::vector<ReferenceRowFit>& fits);
 
 // "[1, 5, 9]" <-> indices. Malformed text yields what was read before the error.
 std::vector<std::size_t> parse_index_list(std::string_view json);

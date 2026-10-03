@@ -40,6 +40,8 @@ std::string_view to_string(PortType t) noexcept {
       return "scene";
     case PortType::GroupResults:
       return "group_results";
+    case PortType::ReferenceFits:
+      return "reference_fits";
   }
   return "dataset";
 }
@@ -50,8 +52,10 @@ PortType port_type(const PortValue& v) noexcept {
       return PortType::Dataset;
     case 1:
       return PortType::Scene;
-    default:
+    case 2:
       return PortType::GroupResults;
+    default:
+      return PortType::ReferenceFits;
   }
 }
 

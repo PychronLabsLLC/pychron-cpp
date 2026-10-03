@@ -14,6 +14,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/processing/fit_edit.hpp"
+#include "pychron/processing/reference_fit.hpp"
 
 namespace pychron::processing {
 
@@ -73,7 +74,9 @@ RevisionDiff diff_revisions(const RevisionTable& before, const RevisionTable& af
 // someone else moved one first, nothing is saved and `conflict` says who.
 struct SaveOutcome {
   bool saved = false;
-  std::map<std::string, std::string> revisions;  // the new head per kind ("intercepts", "baselines")
+  // The new head per kind ("intercepts", "baselines") for one analysis;
+  // per analysis uuid for reference fits.
+  std::map<std::string, std::string> revisions;
   std::string conflict;
 };
 
@@ -89,6 +92,11 @@ class IRevisionSource {
   // every one of those heads is still current.
   virtual Result<SaveOutcome> save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
                                         const std::vector<EditedFit>& edits, const std::string& message) = 0;
+  // One changeset with a new blanks (or IC factors) revision for every
+  // analysis of `fits`, each built on the head it was fitted at (rows for new
+  // isotopes or detectors are added; references recorded, reviewed set);
+  // nothing is written if any of those heads moved. Message: fits.message().
+  virtual Result<SaveOutcome> save_reference_fits(const ReferenceFitSet& fits) = 0;
   // Moves the head of `kind` back to `revision` (an earlier revision of the
   // same analysis and kind) if `expected` is still the head. No revision is
   // written: the history keeps every revision, and the newer ones stay there

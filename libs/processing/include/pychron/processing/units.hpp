@@ -20,15 +20,16 @@
 #include "pychron/processing/dataset.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/group_results.hpp"
+#include "pychron/processing/reference_fit.hpp"
 #include "pychron/processing/scene.hpp"
 #include "pychron/processing/source.hpp"
 
 namespace pychron::processing {
 
-enum class PortType { Dataset, Scene, GroupResults };
+enum class PortType { Dataset, Scene, GroupResults, ReferenceFits };
 std::string_view to_string(PortType t) noexcept;
 
-using PortValue = std::variant<DatasetPtr, ScenePtr, GroupResultsPtr>;
+using PortValue = std::variant<DatasetPtr, ScenePtr, GroupResultsPtr, ReferenceFitSetPtr>;
 PortType port_type(const PortValue& v) noexcept;
 
 struct PortSpec {
@@ -64,7 +65,8 @@ class UnitRegistry {
   const Unit* find(std::string_view kind) const;
   std::vector<std::string> kinds() const;
   // Every built-in unit (select, reduce, filter, group, edits, group_stats,
-  // time_series, ideogram, spectrum, inverse_isochron).
+  // time_series, ideogram, spectrum, inverse_isochron, blank_fit,
+  // icfactor_fit).
   static const UnitRegistry& builtin();
 
  private:

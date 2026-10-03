@@ -557,6 +557,116 @@ TEST_F(StoreSourceTest, RestoreMovesTheHeadBackWithoutANewRevision) {
   EXPECT_EQ((*src.load(unknown_.str()))->heads.at("intercepts"), edited);
 }
 
+TEST_F(StoreSourceTest, ReferenceFitsSaveForManyAnalysesInOneChangeset) {
+  auto& src = source();
+  auto unknown = src.load(unknown_.str());
+  auto air = src.load(air_.str());
+  ASSERT_TRUE(unknown && air);
+  ReferenceFitSet blanks;
+  blanks.target = ReferenceFitTarget::Blanks;
+  for (const auto& a : {*unknown, *air}) {
+    AnalysisReferenceFits f;
+    f.uuid = a->uuid;
+    f.runid = a->runid;
+    f.heads = a->heads;
+    ReferenceRowFit ar40{"Ar40", {0.7, 0.07}, ReferenceFitKind::Linear, ReferenceErrorKind::Sd, "", std::nullopt,
+                         {{air_.str(), "66574-01", false}, {"not-a-uuid", "bu-1", true}}};
+    ReferenceRowFit ar39 = ar40;  // no Ar39 blank row yet: appended
+    ar39.key = "Ar39";
+    ar39.value = {0.02, 0.002};
+    ar39.fit = ReferenceFitKind::Preceding;
+    f.rows = {ar40, ar39};
+    blanks.analyses.push_back(f);
+  }
+  auto saved = src.revisions()->save_reference_fits(blanks);
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  ASSERT_TRUE(saved->saved) << saved->conflict;
+  ASSERT_EQ(saved->revisions.size(), 2u);
+
+  auto after = src.load(unknown_.str());
+  ASSERT_TRUE(after);
+  EXPECT_EQ((*after)->find_isotope("Ar40")->blank, (Value{0.7, 0.07}));
+  EXPECT_EQ((*after)->find_isotope("Ar40")->blank_source, "linear");
+  EXPECT_EQ((*after)->find_isotope("Ar39")->blank, (Value{0.02, 0.002}));
+  EXPECT_EQ((*after)->heads.at("blanks"), saved->revisions.at(unknown_.str()));
+  EXPECT_EQ((*src.load(air_.str()))->find_isotope("Ar40")->blank, (Value{0.7, 0.07}));
+  auto uh = src.revisions()->history(unknown_.str(), RevisionKind::Blanks);
+  auto ah = src.revisions()->history(air_.str(), RevisionKind::Blanks);
+  ASSERT_TRUE(uh && ah);
+  ASSERT_EQ(uh->size(), 2u);
+  EXPECT_EQ((*uh)[0].seq, (*ah)[0].seq);  // one changeset
+  EXPECT_EQ((*uh)[0].message, "<BLANKS> fits=Ar40(linear),Ar39(preceding)");
+  const auto table = *src.revisions()->revision_table((*uh)[0].id);
+  const auto refs_col = static_cast<std::size_t>(
+      std::find(table.columns.begin(), table.columns.end(), "references") - table.columns.begin());
+  const auto row40 = std::find_if(table.rows.begin(), table.rows.end(), [](const auto& r) { return r.key == "Ar40"; });
+  ASSERT_NE(row40, table.rows.end());
+  EXPECT_EQ(row40->cells[refs_col], "66574-01, !bu-1");
+
+  // A save on the old heads conflicts for both and writes nothing.
+  auto stale = src.revisions()->save_reference_fits(blanks);
+  ASSERT_TRUE(stale);
+  EXPECT_FALSE(stale->saved);
+  EXPECT_EQ(stale->conflict.rfind("2 of 2 analyses changed first", 0), 0u) << stale->conflict;
+  EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Blanks)->size(), 2u);
+
+  // IC factors: the AX row updated, an H1 row added.
+  ReferenceFitSet ic;
+  ic.target = ReferenceFitTarget::IcFactors;
+  AnalysisReferenceFits f;
+  f.uuid = unknown_.str();
+  f.runid = (*after)->runid;
+  f.heads = (*after)->heads;
+  f.rows = {{"AX", {1.03, 0.004}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, {}},
+            {"H1", {1.0, 0.0}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "H1", 295.5, {}}};
+  ic.analyses = {f};
+  auto ic_saved = src.revisions()->save_reference_fits(ic);
+  ASSERT_TRUE(ic_saved && ic_saved->saved);
+  auto with_ic = src.load(unknown_.str());
+  EXPECT_EQ((*with_ic)->find_isotope("Ar39")->ic_factor, (Value{1.03, 0.004}));
+  EXPECT_EQ((*with_ic)->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
+  EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::IcFactors)->front().message,
+            "<ICFactor> fits=AX(average),H1(average)");
+
+  EXPECT_FALSE(src.revisions()->save_reference_fits(ReferenceFitSet{}));
+  ic.analyses[0].heads.erase("icfactors");
+  EXPECT_FALSE(src.revisions()->save_reference_fits(ic));
+}
+
+TEST(StoreSourceMapping, ReferenceFitRows) {
+  ps::BlankRow old;
+  old.isotope = "Ar40";
+  old.value = 1;
+  old.manual.use_value = true;
+  old.extra_json = R"({"keep": 1})";
+  const auto rows = apply_blank_fits(
+      {old}, {{"Ar40", {2, 0.2}, ReferenceFitKind::BracketingInterpolate, ReferenceErrorKind::Msem, "", std::nullopt,
+               {{ps::Uuid::v7().str(), "bu-1", false}, {"", "", true}}},
+              {"Ar36", {0.1, 0.01}, ReferenceFitKind::Average, ReferenceErrorKind::Sem, "", std::nullopt, {}}});
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0].value, 2.0);
+  EXPECT_EQ(rows[0].fit, "bracketing_interpolate");
+  EXPECT_EQ(rows[0].error_type, "MSEM");
+  EXPECT_TRUE(rows[0].reviewed);
+  EXPECT_FALSE(rows[0].manual.use_value);
+  EXPECT_EQ(rows[0].extra_json, old.extra_json);
+  ASSERT_EQ(rows[0].references.size(), 2u);
+  EXPECT_TRUE(rows[0].references[0].ref_analysis);
+  EXPECT_EQ(rows[0].references[0].record_id, "bu-1");
+  EXPECT_FALSE(rows[0].references[1].ref_analysis);
+  EXPECT_FALSE(rows[0].references[1].record_id);
+  EXPECT_TRUE(rows[0].references[1].exclude);
+  EXPECT_EQ(rows[0].references[1].ordinal, 1);
+  EXPECT_EQ(rows[1].isotope, "Ar36");
+  const auto ics = apply_icfactor_fits({}, {{"CDD", {1.01, 0.001}, ReferenceFitKind::Linear, ReferenceErrorKind::Sem,
+                                             "H1", 295.5, {}}});
+  ASSERT_EQ(ics.size(), 1u);
+  EXPECT_EQ(ics[0].detector, "CDD");
+  EXPECT_EQ(ics[0].reference_detector, "H1");
+  EXPECT_EQ(ics[0].standard_ratio, 295.5);
+  EXPECT_EQ(ics[0].fit, "linear");
+}
+
 TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {
   auto& src = source();
   for (auto kind : kRevisionKinds) {
