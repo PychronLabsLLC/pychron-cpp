@@ -8,10 +8,12 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QColor>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QRectF>
 
 #include "canvas_items.hpp"
 #include "core_bridge.hpp"
@@ -49,6 +51,10 @@ class CanvasView : public QGraphicsView {
   void add_path(const std::vector<std::string>& names, double width);
   ConnectionItem* add_pipe(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints);
   bool position(const std::string& name, QPointF& out) const;
+  // A connection with an orientation: straight into a box it lines up with,
+  // else one corner (vertical first for "v", horizontal first for "h").
+  std::vector<QPointF> oriented(QPointF a, const std::string& a_name, QPointF b, const std::string& b_name,
+                                bool vertical) const;
 
   void on_click(const std::string& name);
   void apply_state();
@@ -64,6 +70,7 @@ class CanvasView : public QGraphicsView {
   std::map<std::string, QPointF> positions_;
   std::map<std::string, ValveItem*> valves_;
   std::map<std::string, StageItem*> stages_;
+  std::map<std::string, QRectF> boxes_;  // stages and pipettes, scene coordinates
   std::map<std::string, GaugeLabelItem*> gauges_;
   std::vector<ConnectionItem*> pipes_;
   int connections_ = 0;

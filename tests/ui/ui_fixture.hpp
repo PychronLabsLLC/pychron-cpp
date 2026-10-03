@@ -14,7 +14,8 @@
 
 namespace pychron::ui::test {
 
-inline std::unique_ptr<systems::ExtractionLine> make_example_line() {
+// `canvas`: another drawing of the example line (default: the example's own).
+inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {}) {
   using namespace std::chrono_literals;
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   systems::ExtractionLine::Options options;
@@ -29,7 +30,8 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line() {
   options.state_file = std::filesystem::temp_directory_path() /
                        ("pychron-ui-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
                         ".state.toml");
-  auto line = systems::ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", options);
+  auto line =
+      systems::ExtractionLine::load(dir / "extraction_line.toml", canvas.empty() ? dir / "canvas.toml" : canvas, options);
   if (!line) {
     qFatal("cannot load example line: %s", to_string(line.error()).c_str());
   }

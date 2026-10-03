@@ -45,6 +45,9 @@ struct InstallPlan {
   std::vector<PlannedFile> files;
   // Files still holding "SIMULATION PLACEHOLDER" or "CONFIRM" markers.
   std::vector<std::filesystem::path> placeholders;
+  // What converting a legacy setup (FileSpec::convert) read and could not
+  // carry over, for the user to review.
+  std::vector<std::string> notes;
 };
 
 struct PlanOptions {

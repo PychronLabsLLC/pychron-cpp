@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <thread>
+#include <vector>
 
 #include <QtTest/QtTest>
 
@@ -252,6 +255,35 @@ class TestCanvasView : public QObject {
       }
     }
     QVERIFY(coloured >= 2);
+  }
+
+  // A connection with an orientation is drawn in straight runs, never on a
+  // slant (the legacy importer writes them; legacy canvases rely on them):
+  // straight when the ends line up, else round one corner.
+  void orientedConnectionsAreDrawnSquare() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    QTemporaryDir tmp;
+    const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
+    std::filesystem::copy_file(examples / "canvas.toml", canvas);
+    // B (550, 200) and turbo (650, 300; 60 x 40) do not line up either way.
+    std::ofstream(canvas, std::ios::app) << "\n[[connection]]\nstart = \"B\"\nend = \"turbo\"\norientation = \"v\"\n";
+    auto line = ui::test::make_example_line(canvas);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    auto route = [&](const char* a, const char* b) {
+      std::vector<QPointF> points;
+      for (const ui::ConnectionItem* pipe : view.pipes()) {
+        if (pipe->endpoints() != std::vector<std::string>{a, b}) continue;
+        const QPainterPath path = pipe->path();
+        for (int i = 0; i < path.elementCount(); ++i) points.emplace_back(path.elementAt(i));
+      }
+      return points;
+    };
+    // down first, then across
+    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {550, 300}, {650, 300}}));
+    // the example's own: P1 straight under prep
+    QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{400, 200}, {400, 330}}));
+    line->stop();
   }
 
   void gaugeLabelTurnsRedOnAlarmAndClearsInLimits() {

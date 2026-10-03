@@ -284,6 +284,44 @@ class TestSetupWizard : public QObject {
     QVERIFY(!setup::any_fail(w.checks()));
   }
 
+  void aLegacySetupFolderIsConvertedAndItsNotesShownBeforeWriting() {
+    // A synthetic legacy setupfiles folder: two valves on a Qtegra actuator.
+    const fs::path legacy = dir("setupfiles");
+    fs::create_directories(legacy / "extractionline");
+    fs::create_directories(legacy / "devices");
+    std::ofstream(legacy / "extractionline" / "valves.yaml")
+        << "- name: A\n  address: Valve 1_1 Set\n  query_state: false\n- name: B\n  address: Valve 1_2 Set\n";
+    std::ofstream(legacy / "devices" / "switch_controller.cfg")
+        << "[General]\ntype = QtegraGPActuator\n[Communications]\nhost = localhost\nport = 1069\n";
+
+    SetupWizard w(library_, {dir("site-k.toml"), {}, QStringLiteral("helix"), {}});
+    w.restart();
+    w.next();
+    w.root_edit()->setText(QString::fromStdString(dir("helix-legacy").string()));
+    w.next();
+    while (w.currentPage()->title() != QStringLiteral("Extraction line")) QVERIFY(walk_to(w, w.nextId()));
+    QVERIFY(!w.is_shown(QStringLiteral("legacy_folder")));
+    radio(w.editor(QStringLiteral("line_source")), "line_source-legacy")->click();
+    QVERIFY(w.is_shown(QStringLiteral("legacy_folder")));
+    QVERIFY(!w.is_shown(QStringLiteral("line_file")));
+    const int here = w.currentId();
+    w.next();
+    QCOMPARE(w.currentId(), here);
+    QVERIFY(w.error_for(QStringLiteral("legacy_folder")).contains(QStringLiteral("folder")));
+    w.editor(QStringLiteral("legacy_folder"))->findChild<QLineEdit*>()->setText(QString::fromStdString(legacy.string()));
+    QVERIFY(walk_to(w, SetupWizard::kReady));
+    QVERIFY2(w.ready_error()->isHidden(), qPrintable(w.ready_error()->text()));
+    const QString summary = w.summary()->toPlainText();
+    QVERIFY2(summary.contains(QStringLiteral("query_state not carried over")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("QtegraGPActuator")), qPrintable(summary));
+    QVERIFY(walk_to(w, SetupWizard::kDone));
+    std::ifstream in(dir("helix-legacy") / "extraction_line.toml");
+    const std::string line((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    QVERIFY(line.find("address = \"Valve 1_2 Set\"") != std::string::npos);
+    QVERIFY(fs::exists(dir("helix-legacy") / "canvas.toml"));
+    QVERIFY(!setup::any_fail(w.checks()));
+  }
+
   void anExistingInstallIsFilledInAndAnotherProfileIsRefused() {
     const fs::path site = dir("site-f.toml");
     {

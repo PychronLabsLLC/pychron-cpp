@@ -312,7 +312,17 @@ elctl init --reconfigure --set simulation=no --set qtegra_host=10.0.0.5
 elctl doctor --probe                        # connects: the drivers' connect step
 elctl init helix --root ~/Pychron/helix --set line_source=import \
   --set line_file=old/extraction_line.toml --set canvas_file=old/canvas.toml
+elctl init helix --root ~/Pychron/helix --set line_source=legacy \
+  --set legacy_folder=~/Pychron/setupfiles   # converts a legacy Pychron line
+elctl import-line ~/Pychron/setupfiles       # prints the conversion; --out DIR writes it
 ```
+
+A legacy Pychron line (`extractionline/valves.yaml` or `valves.xml`,
+`canvas2D/`, `devices/`) is converted to `extraction_line.toml` and
+`canvas.toml`. NGX valve controllers keep their address; controllers with no
+pychron-cpp driver yet are simulated (`sim_valves`), and the report lists
+what was not carried over (legacy extraction-line survey,
+`docs/superpowers/specs/2026-10-03-legacy-extraction-line-survey.md`).
 
 Instrument installs start in simulation; `CALIBRATE.md` in the install lists
 what is still a placeholder. `--yes` takes every default, `--answers file.toml`

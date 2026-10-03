@@ -11,6 +11,7 @@
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/sha256.hpp"
+#include "pychron/setup/legacy_line.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 
@@ -139,6 +140,7 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
   std::vector<std::string> errors;
   std::set<std::string> seen;
   std::map<std::string, std::string> checks;  // destination -> "line" / "canvas"
+  std::map<fs::path, LegacyLine> converted;   // legacy folder -> both files, converted once
   auto add = [&](PlannedFile f) {
     const std::string key = f.to.generic_string();
     if (!seen.insert(key).second) {
@@ -179,6 +181,23 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
     }
     const fs::path src = *source;
     if (!spec.check.empty()) checks[fs::path(spec.to).generic_string()] = spec.check;
+    if (!spec.convert.empty()) {
+      auto it = converted.find(src);
+      if (it == converted.end()) {
+        auto line = import_legacy_line(src);
+        if (!line) {
+          errors.push_back(spec.to + ": " + line.error().what);
+          continue;
+        }
+        plan.notes.push_back("converted from " + src.string());
+        for (const auto& r : line->read) plan.notes.push_back("read " + r);
+        for (const auto& n : line->notes) plan.notes.push_back(n);
+        it = converted.emplace(src, std::move(*line)).first;
+      }
+      add(PlannedFile{spec.to, spec.convert == "legacy_line" ? it->second.line_toml : it->second.canvas_toml,
+                      spec.secret, spec.profile, PlannedFile::Action::Write});
+      continue;
+    }
     std::error_code ec;
     if (fs::is_directory(src, ec)) {
       std::vector<fs::path> files;

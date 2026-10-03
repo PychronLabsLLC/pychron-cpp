@@ -66,6 +66,8 @@ constexpr const char* kUsageText =
     "  init --reconfigure [--set id=value]... [--yes]\n"
     "                              re-render an install with new answers; edited files are kept\n"
     "  doctor [--strict] [--probe] check an install (the default, or --install NAME)\n"
+    "  import-line <folder> [--out DIR] [--force]\n"
+    "                              convert a legacy Pychron setupfiles extraction line and canvas\n"
     "  --install NAME              before a command: use that install's files (see doctor)\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
@@ -616,6 +618,7 @@ int run(const std::vector<std::string>& args, Io io) {
     return init_command(init_args, io);
   }
   if (command == "doctor") return doctor_command(rest, globals.install, io);
+  if (command == "import-line") return import_line_command(rest, io);
   // --install NAME (or, with no -c, the default install): its files are the defaults.
   if (globals.install || !globals.config_given) {
     auto install = resolve_install(globals.install);

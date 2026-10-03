@@ -2,17 +2,17 @@ name = "extraction-line-starter"
 title = "Extraction line"
 kind = "fragment"
 summary = "The extraction line: the example line (five valves, two gauges, a pipette) on simulated transports, or the line files a lab already has"
-version = 2
+version = 3
 
 [[questions]]
 id = "line_source"
 prompt = "Extraction line"
 type = "choice"
-choices = ["starter", "import"]
-labels = ["Start with the example line", "Use extraction-line files I already have"]
+choices = ["starter", "import", "legacy"]
+labels = ["Start with the example line", "Use extraction-line files I already have", "Convert a legacy Pychron setupfiles folder"]
 default = "starter"
 group = "Extraction line"
-help = "The example line is five valves, two gauges and a pipette on simulated controllers: describe your own valves and gauges in it later. Files you already have (extraction_line.toml and canvas.toml from another computer or an earlier install) are checked before anything is written, then copied in."
+help = "The example line is five valves, two gauges and a pipette on simulated controllers: describe your own valves and gauges in it later. Files you already have (extraction_line.toml and canvas.toml from another computer or an earlier install) are checked before anything is written, then copied in. A legacy Pychron setupfiles folder (extractionline/valves.yaml or valves.xml, canvas2D/, devices/) is converted: the Ready page lists what could not be carried over."
 
 [[questions]]
 id = "line_file"
@@ -28,6 +28,14 @@ type = "path"
 group = "Extraction line"
 when = "line_source == \"import\""
 help = "The drawing of the line; checked against the config above."
+
+[[questions]]
+id = "legacy_folder"
+prompt = "Legacy setupfiles folder"
+type = "folder"
+group = "Extraction line"
+when = "line_source == \"legacy\""
+help = "The folder holding extractionline/ and canvas2D/ (and devices/ for the valve controllers). Controllers pychron-cpp has no driver for yet are simulated; the converted files say which."
 
 [[files]]
 copy = "@examples/extraction_line.toml"
@@ -51,4 +59,18 @@ check = "line"
 copy = "{{ canvas_file }}"
 to = "canvas.toml"
 when = "line_source == \"import\""
+check = "canvas"
+
+[[files]]
+copy = "{{ legacy_folder }}"
+convert = "legacy_line"
+to = "extraction_line.toml"
+when = "line_source == \"legacy\""
+check = "line"
+
+[[files]]
+copy = "{{ legacy_folder }}"
+convert = "legacy_canvas"
+to = "canvas.toml"
+when = "line_source == \"legacy\""
 check = "canvas"

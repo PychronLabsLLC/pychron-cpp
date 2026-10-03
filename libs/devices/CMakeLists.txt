@@ -8,6 +8,7 @@ add_library(pychron_devices STATIC
   src/pfeiffer_maxigauge.cpp
   src/gp_microion.cpp
   src/proxr_relay.cpp
+  src/sim_valves.cpp
   src/proxr_board_sim.cpp
   src/spectrometer/types.cpp
   src/spectrometer/params.cpp

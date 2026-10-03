@@ -342,7 +342,8 @@ QWidget* SetupWizard::make_editor(Field& field) {
       });
       return box;
     }
-    case QuestionType::Path: {
+    case QuestionType::Path:
+    case QuestionType::Folder: {
       auto* box = new QWidget;
       auto* h = new QHBoxLayout(box);
       h->setContentsMargins(0, 0, 0, 0);
@@ -352,8 +353,10 @@ QWidget* SetupWizard::make_editor(Field& field) {
       h->addWidget(edit, 1);
       h->addWidget(browse);
       connect(edit, &QLineEdit::textChanged, this, changed);
-      connect(browse, &QPushButton::clicked, this, [this, edit] {
-        const QString f = QFileDialog::getOpenFileName(this, QString(), edit->text());
+      const bool folder = q.type == QuestionType::Folder;
+      connect(browse, &QPushButton::clicked, this, [this, edit, folder] {
+        const QString f = folder ? QFileDialog::getExistingDirectory(this, QString(), edit->text())
+                                 : QFileDialog::getOpenFileName(this, QString(), edit->text());
         if (!f.isEmpty()) edit->setText(f);
       });
       return box;
@@ -740,6 +743,11 @@ void SetupWizard::prepare_ready() {
   if (profile_->top.kind == ProfileKind::DataReduction) {
     const std::string url = database_url_for(*answers, root(), false);
     html += QStringLiteral("<p>%1 <code>%2</code></p>").arg(tr("Database:"), escaped(url));
+  }
+  if (!plan->notes.empty()) {
+    html += QStringLiteral("<p>%1</p><ul>").arg(tr("Converting the legacy setup: review these before running on hardware."));
+    for (const auto& n : plan->notes) html += QStringLiteral("<li>%1</li>").arg(escaped(n));
+    html += QStringLiteral("</ul>");
   }
   summary_->setHtml(html);
   plan_ = std::move(*plan);

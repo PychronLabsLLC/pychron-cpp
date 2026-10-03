@@ -31,6 +31,10 @@
 //                                    # shipped example configs, a trailing '/' a directory
 //   to = "spectrometer.toml"         # under the install root
 //   copy = "{{ line_file }}"         # or a file the user named (a path answer)
+//   convert = "legacy_line"          # with copy naming a folder: the file is
+//                                    # converted from a legacy Pychron setup
+//                                    # ("legacy_line" -> extraction_line.toml,
+//                                    # "legacy_canvas" -> canvas.toml)
 //   when = "simulation"              # optional condition over the answers
 //   secret = true                    # written owner-only, never summarised
 //   check = "line"                   # loaded before anything is written:
@@ -52,7 +56,8 @@ namespace pychron::setup {
 enum class ProfileKind { Instrument, DataReduction, Fragment };
 std::string_view to_string(ProfileKind k) noexcept;
 
-enum class QuestionType { String, Host, Port, Int, Float, Bool, Choice, Path, Secret, List, Table };
+// Path names a file, Folder a directory.
+enum class QuestionType { String, Host, Port, Int, Float, Bool, Choice, Path, Folder, Secret, List, Table };
 std::string_view to_string(QuestionType t) noexcept;
 
 struct Question {
@@ -68,6 +73,7 @@ struct Question {
 struct FileSpec {
   std::string template_path;  // relative to the profile directory; or
   std::string copy;           // relative to the profile directory, or "@examples/..."
+  std::string convert;        // "", "legacy_line" or "legacy_canvas": copy names a legacy setup folder
   std::string to;             // relative to the install root
   std::string when;
   bool secret = false;

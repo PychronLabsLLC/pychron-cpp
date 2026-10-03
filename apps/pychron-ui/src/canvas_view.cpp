@@ -85,6 +85,8 @@ void CanvasView::build(const canvas::Canvas& c) {
     scene_.addItem(item);
     stages_[s.name] = item;
     positions_[s.name] = item->pos();
+    boxes_[s.name] = QRectF(item->pos().x() - s.size.width / 2, item->pos().y() - s.size.height / 2, s.size.width,
+                            s.size.height);
   }
   const QColor pipette_color = color_or(c, "pipette", isolated_color());
   for (const auto& p : c.pipettes) {
@@ -94,6 +96,8 @@ void CanvasView::build(const canvas::Canvas& c) {
     scene_.addItem(item);
     stages_[p.name] = item;
     positions_[p.name] = item->pos();
+    boxes_[p.name] = QRectF(item->pos().x() - p.size.width / 2, item->pos().y() - p.size.height / 2, p.size.width,
+                            p.size.height);
   }
   for (const auto& g : c.gauges) {
     auto* item = new GaugeLabelItem(g.name);
@@ -110,7 +114,14 @@ void CanvasView::build(const canvas::Canvas& c) {
 
   const auto width = static_cast<double>(c.canvas.connection_width);
   for (const auto& conn : c.connections) {
-    add_path({conn.start, conn.end}, width);
+    QPointF a;
+    QPointF b;
+    if (conn.orientation == canvas::Orientation::Auto || !position(conn.start, a) || !position(conn.end, b)) {
+      add_path({conn.start, conn.end}, width);
+      continue;
+    }
+    add_pipe(oriented(a, conn.start, b, conn.end, conn.orientation == canvas::Orientation::Vertical), width,
+             {conn.start, conn.end});
   }
   for (const auto& e : c.elbows) {
     QPointF a;
@@ -139,6 +150,24 @@ void CanvasView::build(const canvas::Canvas& c) {
     add_path({x.left, x.right}, width);
     add_path({x.top, x.bottom}, width);
   }
+}
+
+std::vector<QPointF> CanvasView::oriented(QPointF a, const std::string& a_name, QPointF b, const std::string& b_name,
+                                          bool vertical) const {
+  auto box = [this](const std::string& name) -> const QRectF* {
+    auto it = boxes_.find(name);
+    return it == boxes_.end() ? nullptr : &it->second;
+  };
+  if (vertical) {
+    if (const QRectF* r = box(b_name); r && a.x() >= r->left() && a.x() <= r->right()) return {a, QPointF(a.x(), b.y())};
+    if (const QRectF* r = box(a_name); r && b.x() >= r->left() && b.x() <= r->right()) return {QPointF(b.x(), a.y()), b};
+    if (a.x() == b.x()) return {a, b};
+    return {a, QPointF(a.x(), b.y()), b};
+  }
+  if (const QRectF* r = box(b_name); r && a.y() >= r->top() && a.y() <= r->bottom()) return {a, QPointF(b.x(), a.y())};
+  if (const QRectF* r = box(a_name); r && b.y() >= r->top() && b.y() <= r->bottom()) return {QPointF(a.x(), b.y()), b};
+  if (a.y() == b.y()) return {a, b};
+  return {a, QPointF(b.x(), a.y()), b};
 }
 
 void CanvasView::add_path(const std::vector<std::string>& names, double width) {

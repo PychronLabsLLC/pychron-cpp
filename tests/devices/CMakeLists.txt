@@ -13,6 +13,7 @@ add_executable(pychron_devices_tests
   test_gp_microion.cpp
   test_proxr_relay.cpp
   test_proxr_board_sim.cpp
+  test_sim_valves.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp

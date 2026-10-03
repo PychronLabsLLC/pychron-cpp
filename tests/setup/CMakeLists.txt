@@ -5,6 +5,8 @@ if(PYCHRON_SETUP_TESTS)
   add_executable(pychron_setup_tests ${PYCHRON_SETUP_TESTS})
   # asio: test_connection.cpp serves a simulated NGX controller over TCP.
   target_link_libraries(pychron_setup_tests PRIVATE pychron::setup asio::asio GTest::gtest_main)
+  # test_legacy_line.cpp reads the importer's private legacy/lite.hpp readers.
+  target_include_directories(pychron_setup_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/setup/src")
   target_compile_definitions(pychron_setup_tests PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles")

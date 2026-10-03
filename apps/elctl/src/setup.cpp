@@ -8,6 +8,7 @@
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
 #include "pychron/setup/installer.hpp"
+#include "pychron/setup/legacy_line.hpp"
 #include "pychron/setup/profile.hpp"
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
@@ -118,6 +119,10 @@ void print_plan(const InstallPlan& plan, Io io) {
     if (interesting) io.out << "  " << to_string(f.action) << "  " << f.to.generic_string() << "\n";
   }
   io.out << writes << " file(s) to write under " << plan.root.string() << "\n";
+  if (!plan.notes.empty()) {
+    io.out << "Legacy setup conversion:\n";
+    for (const auto& n : plan.notes) io.out << "  " << n << "\n";
+  }
 }
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
@@ -340,6 +345,53 @@ int doctor_command(const std::vector<std::string>& args, std::optional<std::stri
   const Resources where = resources(profiles);
   auto library = ProfileLibrary::load(where.profiles, where.examples);
   return report_doctor(*i, library ? &*library : nullptr, strict, probe, io);
+}
+
+int import_line_command(const std::vector<std::string>& args, Io io) {
+  std::optional<fs::path> folder, out;
+  bool force = false;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--out" && i + 1 < args.size()) out = args[++i];
+    else if (args[i] == "--force") force = true;
+    else if (!args[i].starts_with("-") && !folder) folder = args[i];
+    else {
+      io.err << "elctl import-line: unexpected '" << args[i]
+             << "'\nusage: elctl import-line <setupfiles folder> [--out DIR] [--force]\n";
+      return kUsage;
+    }
+  }
+  if (!folder) {
+    io.err << "usage: elctl import-line <setupfiles folder> [--out DIR] [--force]\n";
+    return kUsage;
+  }
+  auto line = import_legacy_line(*folder);
+  if (!line) {
+    io.err << "error: " << line.error().what << "\n";
+    return kFailed;
+  }
+  io.out << "read:\n";
+  for (const auto& r : line->read) io.out << "  " << r << "\n";
+  if (!line->notes.empty()) {
+    io.out << "not carried over, or changed:\n";
+    for (const auto& n : line->notes) io.out << "  " << n << "\n";
+  }
+  if (!out) {
+    io.out << "\n--- extraction_line.toml\n" << line->line_toml << "\n--- canvas.toml\n" << line->canvas_toml;
+    return kOk;
+  }
+  std::error_code ec;
+  fs::create_directories(*out, ec);
+  for (const auto& [name, text] : {std::pair<const char*, const std::string*>{"extraction_line.toml", &line->line_toml},
+                                   {"canvas.toml", &line->canvas_toml}}) {
+    const fs::path target = *out / name;
+    if (fs::exists(target, ec) && !force) {
+      io.err << "error: " << target.string() << " exists (--force replaces it)\n";
+      return kFailed;
+    }
+    std::ofstream(target, std::ios::binary | std::ios::trunc) << *text;
+  }
+  io.out << "wrote " << (*out / "extraction_line.toml").string() << " and " << (*out / "canvas.toml").string() << "\n";
+  return kOk;
 }
 
 }  // namespace elctl

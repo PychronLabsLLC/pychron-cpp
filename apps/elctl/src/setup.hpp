@@ -24,6 +24,9 @@ namespace elctl {
 
 int init_command(const std::vector<std::string>& args, Io io);
 int doctor_command(const std::vector<std::string>& args, std::optional<std::string> install, Io io);
+// elctl import-line <setupfiles folder> [--out DIR] [--force]: converts a
+// legacy Pychron extraction line and canvas (setup::import_legacy_line).
+int import_line_command(const std::vector<std::string>& args, Io io);
 
 // The install `--install NAME` names (or the default one); Config with what
 // to do when there is none.

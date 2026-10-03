@@ -139,5 +139,62 @@ TEST_F(ElctlSetupTest, ALabsOwnLineIsImportedAndProbeRunsTheConnectStep) {
   EXPECT_FALSE(std::filesystem::exists(path("no-line")));
 }
 
+// A legacy Pychron setupfiles folder, synthetic, in the formats the legacy
+// survey found.
+void write_legacy(const fs::path& dir) {
+  fs::create_directories(dir / "extractionline");
+  fs::create_directories(dir / "devices");
+  std::ofstream(dir / "extractionline" / "valves.yaml")
+      << "- name: A\n  address: 1\n  interlock: B\n- name: B\n  address: 2\n  query_state: false\n";
+  std::ofstream(dir / "devices" / "switch_controller.cfg")
+      << "[General]\ntype = NGXGPActuator\n[Communications]\nhost = 10.0.0.5\nport = 1099\n";
+}
+
+TEST_F(ElctlSetupTest, ImportLinePrintsOrWritesTheConvertedFiles) {
+  const auto legacy = path("setupfiles");
+  write_legacy(legacy);
+  auto o = run_raw({"import-line", legacy.string()});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "extractionline/valves.yaml")) << o.out;
+  EXPECT_TRUE(contains(o.out, "query_state not carried over (1 valve: B)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "kind = \"ngx_valves\"")) << o.out;
+  EXPECT_TRUE(contains(o.out, "--- canvas.toml")) << o.out;
+
+  const auto out = path("converted");
+  o = run_raw({"import-line", legacy.string(), "--out", out.string()});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(out / "extraction_line.toml"));
+  EXPECT_TRUE(fs::exists(out / "canvas.toml"));
+  // Never over what is there, unless asked.
+  o = run_raw({"import-line", legacy.string(), "--out", out.string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_TRUE(contains(o.err, "exists (--force replaces it)")) << o.err;
+  EXPECT_EQ(run_raw({"import-line", legacy.string(), "--out", out.string(), "--force"}).code, 0);
+
+  o = run_raw({"import-line", path("nothing-here").string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_TRUE(contains(o.err, "is not a folder")) << o.err;
+}
+
+TEST_F(ElctlSetupTest, InitConvertsALegacyLineAndSaysWhatWasNotCarriedOver) {
+  const auto legacy = path("setupfiles");
+  write_legacy(legacy);
+  const auto root = path("legacy-lab");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--yes", "--set", "line_source=legacy", "--set",
+                    "legacy_folder=" + legacy.string()});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "Legacy setup conversion:")) << o.out;
+  EXPECT_TRUE(contains(o.out, "query_state not carried over")) << o.out;
+  std::ifstream in(root / "extraction_line.toml");
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_TRUE(contains(text, "host = \"10.0.0.5\"")) << text;
+  EXPECT_TRUE(fs::exists(root / "canvas.toml"));
+  // A folder with no legacy line stops the install before anything is written.
+  o = run_raw({"init", "argus", "--root", path("no-legacy").string(), "--name", "other", "--yes", "--set",
+               "line_source=legacy", "--set", "legacy_folder=" + path("empty").string()});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_FALSE(fs::exists(path("no-legacy")));
+}
+
 }  // namespace
 }  // namespace elctl::testing

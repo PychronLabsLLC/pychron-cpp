@@ -3,7 +3,11 @@
 What `elctl init` and the setup wizard install (installation wizard spec,
 `docs/superpowers/specs/2026-10-03-installation-wizard-design.md`). Each
 directory is a profile: `profile.toml` (questions and files) plus the
-templates it renders. `@examples/` in a `copy` names `configs/examples`.
+templates it renders. `@examples/` in a `copy` names `configs/examples`;
+`convert = "legacy_line"` or `"legacy_canvas"` with a `copy` naming a folder
+converts a legacy Pychron setup (`setup::import_legacy_line`) instead of
+copying. Question types: string, host, port, int, float, bool, choice, path
+(a file), folder, secret, list, table.
 
 | Profile | Kind | What it sets up |
 |---|---|---|

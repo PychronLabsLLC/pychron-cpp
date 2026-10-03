@@ -30,8 +30,8 @@ const std::vector<std::pair<std::string_view, QuestionType>>& type_names() {
   static const std::vector<std::pair<std::string_view, QuestionType>> names{
       {"string", QuestionType::String}, {"host", QuestionType::Host},     {"port", QuestionType::Port},
       {"int", QuestionType::Int},       {"float", QuestionType::Float},   {"bool", QuestionType::Bool},
-      {"choice", QuestionType::Choice}, {"path", QuestionType::Path},     {"secret", QuestionType::Secret},
-      {"list", QuestionType::List},     {"table", QuestionType::Table}};
+      {"choice", QuestionType::Choice}, {"path", QuestionType::Path},     {"folder", QuestionType::Folder},
+      {"secret", QuestionType::Secret}, {"list", QuestionType::List},     {"table", QuestionType::Table}};
   return names;
 }
 
@@ -198,6 +198,10 @@ Result<Profile> load_profile(const fs::path& dir) {
       spec.when = (*f)["when"].value_or(std::string{});
       spec.secret = (*f)["secret"].value_or(false);
       spec.check = (*f)["check"].value_or(std::string{});
+      spec.convert = (*f)["convert"].value_or(std::string{});
+      if (!spec.convert.empty() && spec.convert != "legacy_line" && spec.convert != "legacy_canvas")
+        err(w + ".convert", "must be \"legacy_line\" or \"legacy_canvas\"");
+      if (!spec.convert.empty() && spec.copy.empty()) err(w + ".convert", "needs copy naming the legacy folder");
       if (!spec.check.empty() && spec.check != "line" && spec.check != "canvas")
         err(w + ".check", "must be \"line\" or \"canvas\"");
       if (spec.template_path.empty() == spec.copy.empty()) err(w, "needs exactly one of template and copy");
@@ -315,8 +319,10 @@ Result<Value> parse_answer(const Question& q, std::string_view raw) {
   switch (q.type) {
     case QuestionType::String:
     case QuestionType::Path:
+    case QuestionType::Folder:
       // A file is needed unless the question says what to use instead.
-      if (text.empty() && !q.default_value) return fail(ErrorKind::Config, q.id + ": needs a file");
+      if (text.empty() && !q.default_value)
+        return fail(ErrorKind::Config, q.id + (q.type == QuestionType::Folder ? ": needs a folder" : ": needs a file"));
       return Value{text};
     case QuestionType::Secret: return Value{text};
     case QuestionType::Host:
