@@ -183,3 +183,20 @@ TEST(SyntheticSource, SuccessiveGrabsHaveIndependentNoiseButSourcesReplay) {
   EXPECT_EQ(a1->data, b1->data);
   EXPECT_EQ(a2->data, b2->data);
 }
+
+TEST(Synth, NonPositiveSizeRendersEmptyFrame) {
+  for (auto [w, h] : {std::pair{0, 200}, std::pair{200, -5}}) {
+    HoleScene hs;
+    hs.width = w;
+    hs.height = h;
+    auto fh = render(hs, {0, 0}).first;
+    EXPECT_TRUE(fh.data.empty());
+    EXPECT_TRUE(fh.width == 0 || fh.height == 0);
+    GlowScene gs;
+    gs.width = w;
+    gs.height = h;
+    auto fg = render(gs, {0, 0}).first;
+    EXPECT_TRUE(fg.data.empty());
+    EXPECT_TRUE(fg.width == 0 || fg.height == 0);
+  }
+}
