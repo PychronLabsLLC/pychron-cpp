@@ -6,6 +6,7 @@
     "asio",
     "tomlplusplus",
     "spdlog",
+    "nlohmann-json",
     "gtest"
   ],
   "features": {
