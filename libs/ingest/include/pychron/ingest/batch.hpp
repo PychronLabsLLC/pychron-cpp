@@ -1,0 +1,206 @@
+#pragma once
+
+// The neutral unit a source adapter hands to the BatchWriter (legacy
+// ingestion spec, section 2.1). A batch names things by source key (commit,
+// path, git blob sha) and by natural key; the only uuids in it are analysis
+// uuids. The writer derives every other id and resolves every natural key.
+
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "pychron/core/sha256.hpp"
+#include "pychron/persistence/ids.hpp"
+#include "pychron/persistence/import.hpp"
+#include "pychron/persistence/model.hpp"
+#include "pychron/persistence/store.hpp"
+
+namespace pychron::ingest {
+
+// Where a row came from. `blob_sha` is the git blob sha of the file at
+// `commit`, as text; for a non-git source any stable content key.
+struct SourceKey {
+  std::string commit, path, blob_sha;
+};
+
+struct GitWho {
+  std::string name, email;
+  persistence::UtcTime utc;  // author date
+};
+
+// ---------------------------------------------------------------- catalog
+// Catalog items name their parents by natural key. A parent that is not in
+// the store yet is created bare, so every item is safe to repeat and to send
+// before or after a restart; a full parent item sent first fills the columns.
+
+struct PiItem {
+  std::string last_name, first_initial;
+  std::optional<std::string> affiliation, email;
+};
+
+// A project's natural key is (name, principal investigator).
+struct ProjectItem {
+  std::string name;
+  std::optional<std::string> pi_last_name, pi_first_initial;
+};
+
+struct MaterialItem {
+  std::string name, grainsize;
+};
+
+struct SampleItem {
+  persistence::SampleSpec fields;  // name and the descriptive columns; project, material and uuid are ignored
+  std::string project, material, grainsize;
+  std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
+};
+
+struct IrradiationItem {
+  std::string name;
+};
+
+struct LevelItem {
+  std::string irradiation, name;
+  std::optional<std::string> holder;  // key of a ref_object of type irradiation_holder
+  std::optional<double> z;
+  std::optional<std::string> note;
+};
+
+// An irradiation position and, when `identifier` is not empty, the unknown
+// identifier that sits in it. `sample` needs `project` and `material`.
+struct PositionItem {
+  std::string irradiation, level;
+  int position = 0;
+  std::string identifier;
+  std::optional<std::string> sample, project, material, grainsize;
+  std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
+};
+
+struct SpecialIdentifierItem {
+  std::string identifier, analysis_type;
+  std::optional<std::string> mass_spectrometer;
+};
+
+struct UserItem {
+  std::string name;
+};
+
+struct MassSpecItem {
+  persistence::MassSpectrometerSpec spec;  // uuid ignored
+};
+
+struct ExtractDeviceItem {
+  std::string name;
+};
+
+struct LoadItem {
+  persistence::LoadSpec spec;              // holder and uuid ignored
+  std::optional<std::string> holder_name;  // key of a ref_object of type load_holder
+};
+
+struct RepositoryItem {
+  std::string name;
+};
+
+// A reference object. Its scope is named, not given by uuid as in
+// persistence::RefObjectSpec.
+struct RefObjectItem {
+  persistence::RefType type = persistence::RefType::Document;
+  std::string key;
+  std::optional<std::string> irradiation;
+  std::optional<std::string> level;  // needs irradiation
+  std::optional<int> position;       // needs level
+  std::optional<std::string> mass_spectrometer;
+};
+
+using CatalogItem = std::variant<PiItem, ProjectItem, MaterialItem, SampleItem, IrradiationItem, LevelItem, PositionItem,
+                                 SpecialIdentifierItem, UserItem, MassSpecItem, ExtractDeviceItem, LoadItem,
+                                 RepositoryItem, RefObjectItem>;
+
+// ---------------------------------------------------------------- history
+
+struct RefObjectKey {
+  std::string ref_type;  // stored spelling, e.g. "flux_position"
+  std::string name;      // the object's key
+};
+
+// What a revision is about: an analysis uuid, or a reference object.
+using SubjectRef = std::variant<persistence::Uuid, RefObjectKey>;
+
+// The file each root revision of an analysis came from. A kind the source has
+// no file for is left empty (its root revision is then keyed by the record).
+struct RootKeys {
+  SourceKey record, signals, intercepts, baselines, blanks, icfactors, tags;
+};
+
+struct AnalysisItem {
+  // Set: analysis uuid, identity, catalog names, rows of the roots, satellites.
+  // Left for the writer: changeset, created, roots.* uuids, import_source,
+  // author_user. An empty `analyst` becomes the author's user name.
+  persistence::AnalysisIngest ingest;
+  RootKeys keys;  // record: the <runid>.json commit, which dates and authors the collection
+  GitWho who;
+  bool synthetic_collection = false;
+  std::vector<std::string> repositories;  // made a member of each
+  std::string detail_json = "{}";         // a JSON object, kept in the analysis provenance row
+};
+
+// An analysis that is already in the store (imported from another source)
+// and is seen in this one: it joins the repositories and nothing else.
+struct MembershipItem {
+  persistence::Uuid analysis;
+  SourceKey key;  // its record file in this source
+  GitWho who;
+  std::vector<std::string> repositories;
+};
+
+struct BlobItem {
+  SourceKey key;
+  persistence::BlobIngest blob;
+};
+
+struct RevisionItem {
+  SourceKey key;
+  SubjectRef subject;
+  persistence::Kind kind = persistence::Kind::Intercepts;
+  persistence::RevisionPayload payload;
+};
+
+struct ChangesetItem {
+  std::string commit;
+  persistence::ChangesetKind kind = persistence::ChangesetKind::Import;  // Import or Reference
+  GitWho who;
+  std::string message;
+  std::vector<RevisionItem> revisions;
+};
+
+struct ConflictItem {
+  SourceKey key;
+  std::optional<persistence::Uuid> entity;
+  persistence::ConflictKind kind = persistence::ConflictKind::Unparseable;
+  std::optional<Sha256Digest> file_sha256;  // SHA-256 of the file bytes; set whenever the conflict is about a file
+  std::string detail_json = "{}";
+};
+
+// A git tag: a bookmark of the heads of `analyses` at the moment the batch
+// that carries it has been written.
+struct BookmarkItem {
+  std::string name, commit;
+  std::vector<persistence::Uuid> analyses;
+  GitWho who;
+};
+
+struct ImportBatch {
+  std::vector<CatalogItem> catalog;  // in dependency order
+  std::vector<BlobItem> blobs;
+  std::vector<AnalysisItem> analyses;
+  std::vector<MembershipItem> memberships;
+  std::vector<ChangesetItem> changesets;  // in source order
+  std::vector<ConflictItem> conflicts;
+  std::vector<BookmarkItem> bookmarks;
+  std::string resume_token;  // valid once this batch is committed
+  int done = 0, total = 0;
+  std::string head;  // the source head this batch was read at; empty: as described
+};
+
+}  // namespace pychron::ingest
