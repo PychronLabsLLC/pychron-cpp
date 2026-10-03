@@ -154,7 +154,9 @@ source adapters as separate targets (`processing_records`,
 - [x] Remaining legacy goodness checks (smart filter, curvature, adjusted
       R^2, signal to baseline, signal to blank, slope intensity) and
       baseline batch refits (series = baseline rows).
-- [ ] Legacy's isotope classifier and auto-fit by point count (AUTO_N).
+- [x] Legacy's isotope classifier and auto-fit by point count (AUTO_N),
+      with Good / Bad training in the Isotope evolutions window (legacy
+      pickled models cannot be read).
 - [ ] Tables and CSV export units.
 - [ ] Pipeline template editor (graph view of units, per-node options dock).
 - [ ] Listen/auto pipelines driven by `IAnalysisSource::generation()`.

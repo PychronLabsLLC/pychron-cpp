@@ -352,7 +352,7 @@ isotope-evolution refits and the reference fits:
 
 | Unit | Ports | Options |
 |---|---|---|
-| `isotope_evolution_fit` | analyses -> (Scene, IsotopeFits) | per row: series (signal: an isotope key or name; baseline: a detector), fit, error, outlier filter, goodness thresholds; keep_user_excluded, skip_reviewed |
+| `isotope_evolution_fit` | analyses -> (Scene, IsotopeFits) | per row: series (signal: an isotope key or name; baseline: a detector), fit (or auto_n: n_threshold, n_true, n_false), error, outlier filter, goodness thresholds; keep_user_excluded, skip_reviewed, use_classifier, classifier_file |
 
 After legacy FitIsotopeEvolutionNode: every included analysis's raw
 signals are refitted (reading `load_raw` from the source), keeping the
@@ -365,8 +365,18 @@ of the raw points with numpy.gradient at an index or fraction; adjusted
 R^2 (not for averages); and, for signals, signal to baseline (when the
 baseline error exceeds a share of the signal, a percent error from a
 second threshold) and signal to blank. Deviation: legacy's R^2 check is on
-by default (0.95) and so flags every average fit; here it is opt-in. The
-classifier (`IsotopeClassifier`) is not ported. The scene plots each row's
+by default (0.95) and so flags every average fit; here it is opt-in.
+A fit of `auto_n` (legacy AUTO_N) uses n_true when the series has at least
+n_threshold raw points, else n_false; the concrete fit is what is saved.
+With use_classifier, each signal is also classified by legacy's
+`IsotopeClassifier`: a 3-nearest-neighbour vote (uniform weights, Euclidean
+distance) on a sample of [mass, -9999, sniff values in 12000 tenth-second
+bins]; class 0 (bad) is flagged `classifier` with the vote share. Training
+samples live in a TOML file (`isotope_classifier/1`, `[[sample]]` klass,
+mass, sparse bins and values, run id, isotope); legacy's pickled sklearn
+models cannot be read, so isotopes have to be marked again. Equal
+distances keep training order, as sklearn's brute search, and a tied vote
+goes to class 0. The scene plots each row's
 refitted and current values against run time, flagged ones marked. `IsotopeFits` holds per
 analysis its heads, the refits (`EditedFit`, stored value, slope,
 outliers), flags and the edited analysis for previews;
@@ -779,7 +789,10 @@ scene (click a point to leave its analysis out), a preview of the selected
 analysis's signal or baseline evolutions with the refits, a Fits dock (presets, one row per
 isotope), an Analyses dock (Included box, goodness flags, refits), and
 Save, optionally leaving flagged analyses out. A lost compare-and-swap
-writes nothing.
+writes nothing. Under the preview, Good / Bad mark the previewed
+analysis's chosen isotope as a classifier training sample (saved to
+`<AppConfigLocation>/classifier/isotope.toml`, counts shown) and re-run
+the refits.
 
 ### 11.4 Figure window
 
