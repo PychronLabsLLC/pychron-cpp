@@ -98,8 +98,9 @@ TEST_P(InstrumentProfile, InstallsLoadsAndPassesDoctor) {
 
 INSTANTIATE_TEST_SUITE_P(Shipped, InstrumentProfile,
                          ::testing::Combine(::testing::Values("argus", "helix", "ngx"), ::testing::Bool()),
-                         [](const auto& info) {
-                           std::string n = std::get<0>(info.param) + (std::get<1>(info.param) ? "_sim" : "_hardware");
+                         [](const auto& param_info) {
+                           std::string n = std::get<0>(param_info.param) +
+                                           (std::get<1>(param_info.param) ? "_sim" : "_hardware");
                            return n;
                          });
 

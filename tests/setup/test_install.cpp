@@ -125,8 +125,9 @@ TEST_F(Fixture, AnInstallNeverOverwritesAndAReconfigureOnlyRewritesUntouchedFile
   auto keep = plan({{"host", Value{std::string("10.0.0.2")}}});
   ASSERT_TRUE(keep);
   for (const auto& f : keep->files) {
-    if (f.to == "shared.txt") EXPECT_EQ(f.action, PlannedFile::Action::Keep);
-    if (f.to == "main.toml") EXPECT_EQ(f.action, PlannedFile::Action::Keep);
+    if (f.to == "shared.txt" || f.to == "main.toml") {
+      EXPECT_EQ(f.action, PlannedFile::Action::Keep) << f.to;
+    }
   }
   // A reconfigure rewrites main.toml (untouched) and puts shared.txt.new beside the edit.
   auto re = plan({{"host", Value{std::string("10.0.0.2")}}}, PlanOptions{true, false});
@@ -299,5 +300,7 @@ labels = ["only one"]
   auto dr = shipped->resolve("data-reduction");
   ASSERT_TRUE(dr);
   for (const auto& q : dr->questions)
-    if (q.id == "data_source") EXPECT_EQ(q.labels.size(), 2u);
+    if (q.id == "data_source") {
+      EXPECT_EQ(q.labels.size(), 2u);
+    }
 }

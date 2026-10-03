@@ -20,7 +20,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
-      data_(new DataWorkspace(this, [this](const QString& line) { log_->append_line(line); })),
+      data_(new DataWorkspace(this, [this](const QString& text) { log_->append_line(text); })),
       installations_(new QAction(QStringLiteral("Installations…"), this)) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   setCentralWidget(canvas_);
