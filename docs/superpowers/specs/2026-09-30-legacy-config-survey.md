@@ -11,6 +11,9 @@ Decoded copies were saved to the session scratchpad under
 are not committed because they contain lab hosts and IPs. Copy any fixtures you
 want into `tests/` by hand.
 
+Appendix A gives the Drive folder ids, the tree layout, the melbourne
+reference values and how to re-run the survey (added 2026-10-03).
+
 ## Gaps vs current `extraction_line.toml` / `canvas.toml` schema
 
 ### Transports
@@ -423,3 +426,175 @@ files that are identical across labs as possibly stale.
    recommended. Define precedence among canvas.yaml / canvas.xml /
    valves2D.cfg and among valves.yaml / valves.xml.
 7. Treat monitoring, dashboards and notifications as a separate spec.
+
+## Appendix A: Drive locations and reference values (2026-10-03)
+
+A second read-only pass over the same Drive tree. It adds where the files are
+and one worked example. Hosts and IPs are left out, as above.
+
+### A.1 Where the files are
+
+Root: `PychronConsulting/setupfiles`, folder id
+`1Al7k47FSWOkfvMUyevhpl-tZkiZayXPy`. It also holds loose `Tube2x.txt` and
+`Tube4x.txt` (Jun 2026).
+
+| Lab | Folder id | Notes |
+|---|---|---|
+| melbourne | `1HiYE_1HLOnXXq6m4jKvFYkVeFffWh2bC` | Jan 2026 |
+| asu | `1--mRBD_l8oumYB4rBK3HrXlV1vZehdwN` | `setupfiles/` = `1Gr8qzf9poLGXc4vvlbXY95TOzYUTb0y7`; also `setupfiles_sft/`, `orig/` (copy of wiscar), `scripts/` |
+| usgsreston | `1M62KbrfoyyqqvwGsUNtUzBzkOWq_ACwa` | `setupfiles/` = `1NNvbMPf3W-Of4DjPxU4uf5qZAVWAiZCo` |
+| usgsdenver | `1zC3A1g600FtmP6c3aNI9afOKUxBC1aA0` | `setupfiles/` plus `gaugesetup.txt` |
+| valve | `1pBY5_lZwcSJSRTTAuxB6Nhvz8SOhV9yE` | NMGRL valve box |
+| ldeo | `1EofYUk0ONHAekpVZQqXsNiWMSqvwXLB4` | |
+| wiscar | `1nQSLba3PRQ97SW57xy03bcSmZJ9uz39g` | |
+| hal | `1FlnueM0ssX9v3ayPNjK7AoTqIBzxAR6b` | |
+| jan | `1bo3LhIBpLq7SlX07eCXOg-vfB5fSjS_a` | |
+| felix | `1qmIKSS5Z4_iW8rg7pIwB46-AQtUeImus` | |
+| co2 | `1AqYp9cmighrvHup0cjT5S88wDnjhJyvq` | |
+| diode | `1L-oa36ivyMgqMLTXODE80J0nK-wLdZEH` | |
+| uf | `1cGyyIQHW7EW4ApH90c4v3mJwCvoWUFE6` | `setupfiles/` plus `original/setupfiles/` |
+| uaf | `15N4yuHa_AqvHCXYc08ziT1fRFK8NAN7o` | flat |
+| purdue | `11Deqm3lC5ZHxU_BCpcFfckU5aezHFUbr` | flat; `backup/` |
+| gsc | `1ilu3fipzw59iDPPTAoYE0xO5YgORaSmH` | irradiation data only |
+| uman, ua | `1Gg2b1PGDkwitc613OqTI70bLueRxD7oH`, `13b9z0FxGTkrbGUMltj1-TSQ4uAsGol9n` | empty |
+
+Copies outside the root:
+
+- `PychronConsulting/PychronFolder/Purdue/setupfiles`
+  (`1wspdM6GQbv_ZqgM7g_dwA0vwc9pQ4CAa`), a newer Purdue tree, files to Oct 2025.
+- `PychronConsulting/PychronFolder/Pychron_copy/setupfiles`
+  (`1Nnojzf5Ing-12ZAG1lwHJ1su3YZKXZDt`), initialization from Apr 2025.
+- Two older trees whose location was not traced:
+  `1gGIaf4GZ1OM90mhTo30I_Up6PjnEwnhC` (2019; NGX, ChromiumCO2, LDEOFurnace, MKS
+  gauge) and `1--mA9LM8SGQe5Ypvrn96x63sPZa4tLwx` (2020).
+
+### A.2 Tree layout
+
+```
+initialization.xml
+devices/            *.cfg, one per device, plus backup/ and per-laser folders
+spectrometer/       detectors.yaml, readout.yaml, molecular_weights.csv,
+                    scan.yaml, default_conditionals.yaml,
+                    mftables/, configurations/, deflection_backup/
+extractionline/
+canvas2D/
+monitors/  blocks/  tray_maps/  irradiation_tray_maps/
+incremental_heat_templates/  patterns/  pipeline/
+startup_tests.yaml  experiment_defaults.yaml  users.yaml
+flux_constants.yaml  system_health.yaml
+```
+
+### A.3 melbourne reference values
+
+The newest tree, and the best candidate for an Argus importer fixture.
+
+`devices/`: `spectrometer_microcontroller.cfg` (`name = Argus`, ethernet, TCP,
+port 1069, timeout 3); `switch_controller.cfg` (`type=QtegraGPActuator`);
+`QtegraGPActuator.cfg` (same endpoint, `test_cmd=GetData`); a stray
+`NGXGPActuator.cfg` with an empty host.
+
+`spectrometer/detectors.yaml`, a flow-style list:
+
+| Name | Active | Isotope | Kind | Index | Relative position | Notes |
+|---|---|---|---|---|---|---|
+| H2 | - | Ar40 | Faraday | 0 | 0.963553562 | entry commented out |
+| H1 | yes | Ar39 | Faraday | 1 | 0.981570944 | |
+| AX | yes | Ar38 | Faraday | 2 | 1.0 | |
+| L1 | no | Ar37 | Faraday | 3 | 1.019457506 | |
+| L2 | no | Ar36 | Faraday | 4 | 1.039696524 | |
+| CDD | no | Ar35 | IonCounter | 5 | 1.058303063 | deflection sign -1, protection_threshold 0.5 |
+
+`spectrometer/readout.yaml`, first list (CRLF line endings):
+
+| Name | Min | Max | Compare |
+|---|---|---|---|
+| HighVoltage | 0 | 5 | False |
+| ElectronEnergy | 53 | 153 | False |
+| YSymmetry | -100 | 100 | True |
+| ZSymmetry | -100 | 100 | True |
+| ZFocus | 0 | 100 | True |
+| IonRepeller | -22.5 | 53.4 | True |
+| ExtractionLens | 0 | 100 | True |
+
+The second list names H2, H1, AX, L1, L2, CDD, each `compare: True`.
+
+`spectrometer/mftables/mftable.csv`:
+
+```
+parabolic
+iso,H2,H1,AX,L1,L2,CDD
+Ar40,5.78595,5.89471,6.00644,6.12488,6.25235,6.35914
+Ar39,5.67677,5.78567,5.89760,6.01601,6.13507,6.24482
+Ar36,5.35165,5.45468,5.56320,5.67181,5.79005,5.89793
+```
+
+`spectrometer/configurations/config.cfg`:
+
+```ini
+[Default]
+eqtime = 15
+
+[SourceParameters]
+ion_repeller = -3.81
+electron_energy = 75.08
+
+[Trap]
+current = 200
+ramp_step = 2
+ramp_period = 1
+ramp_tolerance = 25
+
+[SourceOptics]
+y_symmetry = -4.04
+z_symmetry = 7.16
+z_focus = 48.34
+extraction_lens = 25.52
+
+[Deflections]
+h2 = 0
+h1 = 0
+ax = 125
+l1 = 250
+l2 = 500
+
+[CDDParameters]
+ioncountervoltage = 2150
+
+[Protection]
+use_beam_blank = False
+beam_blank_threshold = 0.1
+use_detector_protection = False
+detectors = CDD
+
+[Magnet]
+mftable = mftable
+```
+
+`molecular_weights.csv` carries Ar33, Ar35-Ar41, PM41, PM42.
+`deflection_backup/` and `mftables/backup/` are empty.
+
+### A.4 Findings not listed above
+
+- A detector commented out of `detectors.yaml` (melbourne H2) still has an
+  mftable column, a readout entry and a `[Deflections]` key. This is the live
+  form of the Reston stale-detector case: the importer should warn, not fail.
+- `[Deflections]` has no key for the CDD. A missing key means zero.
+- `[Magnet] mftable` names the table without its `.csv` extension.
+- `detectors.yaml` is flow-style in melbourne and block-style in asu. Fractional
+  `index` values (0.3, 1.3) and `ypadding` as a quoted string both occur.
+- asu's `detectors.yaml` has ten Helix-named entries (H5..L5) with every
+  `serial_id` `'00000'` and repeated isotopes and positions. It reads as an
+  untuned template. Do not build an NGX detector fixture from it.
+- asu's `readout.yaml` is the fully commented-out case.
+- Reston's device cfgs date from 2018; only the spectrometer folder was
+  refreshed in 2023.
+
+### A.5 Re-running the survey
+
+With the Drive connector: `search_files` with `parentId = '<id>'` lists a
+folder (the first page can return as few as five items; follow
+`nextPageToken`). `snippetVerbosity: MEDIUM` returns the text of `.cfg`, `.csv`
+and `.xml` files inline. The snippet is a rendering, not the bytes: it drops
+XML attributes and wraps some CSV files in HTML, so do not infer file format
+from it. `.yaml` files return no snippet and need `download_file_content`,
+which returns base64.
