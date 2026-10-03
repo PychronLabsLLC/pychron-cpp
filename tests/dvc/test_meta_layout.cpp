@@ -191,19 +191,18 @@ TEST(MetaLayout, ChronologyKeepsTheLinesItCannotInterpret) {
                                      "\r\n"
                                      "1.0,2017-12-21 06:28:00,2017-12-21 14:28:00\r\n"
                                      "2017-12-22 06:28:00%2017-12-22 14:28:00\r\n"
-                                     "full,2017-12-23 06:28:00,2017-12-23 14:28:00\n"
                                      " 0.5 , 2017-12-24 06:28:00 , 2017-12-24 14:28:00 \n"
                                      "1.0,2018-11-04 01:30:00,2018-03-11 02:30:00\n",
                                      kZone);
   ASSERT_TRUE(chronology) << chronology.error().what;
   ASSERT_EQ(chronology->value.doses.size(), 3u);
+  // The line numbers are the file's.
   EXPECT_EQ(chronology->value.doses[1].ordinal, 1);
   EXPECT_EQ(chronology->value.doses[1].power, 0.5);
   EXPECT_EQ(chronology->value.doses[1].start, *P::UtcTime::parse("2017-12-24T13:28:00Z"));
   EXPECT_EQ(chronology->detail.at("uninterpreted_lines"),
             Json::parse(R"([{"line": 1, "text": "# reactor log"},
-                            {"line": 4, "text": "2017-12-22 06:28:00%2017-12-22 14:28:00"},
-                            {"line": 5, "text": "full,2017-12-23 06:28:00,2017-12-23 14:28:00"}])"));
+                            {"line": 4, "text": "2017-12-22 06:28:00%2017-12-22 14:28:00"}])"));
   // A time the clocks went through twice, and one they skipped: said, not guessed silently.
   EXPECT_EQ(chronology->value.doses[2].start, *P::UtcTime::parse("2018-11-04T07:30:00Z"));
   EXPECT_EQ(chronology->value.doses[2].end, *P::UtcTime::parse("2018-03-11T09:00:00Z"));
@@ -217,6 +216,24 @@ TEST(MetaLayout, ChronologyKeepsTheLinesItCannotInterpret) {
   EXPECT_TRUE(empty->value.doses.empty());
   EXPECT_FALSE(parse_chronology("\x89PNG\r\n\x1a\n", kZone));
   EXPECT_FALSE(parse_chronology("to be filled in\n", kZone));
+}
+
+TEST(MetaLayout, ChronologyDoseLineThatCannotBeReadFailsTheFile) {
+  // Three fields is a dose. Stored without it, the decay corrections of the
+  // whole irradiation would change and nothing would say so.
+  const std::string good = "1.0,2017-12-21 06:28:00,2017-12-21 14:28:00\n";
+  for (const char* line : {"1.0,2017-12-22 06:28,2017-12-22 14:28:00\n", "1.0,2017-12-22 06:28:00,tomorrow\n",
+                           "full,2017-12-22 06:28:00,2017-12-22 14:28:00\n", ",,\n",
+                           "1.0,2017-13-45 06:28:00,2017-12-22 14:28:00\n"}) {
+    auto chronology = parse_chronology(good + line + good, kZone);
+    ASSERT_FALSE(chronology) << line;
+    EXPECT_NE(chronology.error().what.find("line 2"), std::string::npos) << chronology.error().what;
+  }
+  // Not three fields: not a dose, kept as written.
+  auto noted = parse_chronology(good + "1.0,2017-12-22 06:28:00\n", kZone);
+  ASSERT_TRUE(noted);
+  EXPECT_EQ(noted->value.doses.size(), 1u);
+  EXPECT_EQ(noted->detail.at("uninterpreted_lines").size(), 1u);
 }
 
 TEST(MetaLayout, GainsFile) {

@@ -68,6 +68,9 @@ struct GitChange {
   std::string commit, path;
   std::string blob_sha;  // the file's blob at `commit`; empty for a deletion
   char status = 'M';     // A, M, D; renames arrive as D + A
+  // The file's blob on the other side of the comparison: at the first parent
+  // for changes(), at `from` for diff(). Empty for an addition.
+  std::string old_blob_sha = {};
 };
 
 struct GitTag {

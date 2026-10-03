@@ -11,8 +11,8 @@
 // `detail` of the Parsed* result, which the caller keeps in the revision's
 // provenance. A bare NaN reads as unknown and is recorded under "nonfinite".
 // JSON of the wrong shape is an error. The two text formats (chronology,
-// holders) keep each line they cannot interpret in `detail`, and are an error
-// only when the file as a whole cannot be read.
+// holders) keep each line that is not theirs in `detail`, and are an error
+// when the file as a whole, or a chronology dose, cannot be read.
 
 #include <map>
 #include <optional>
@@ -124,8 +124,11 @@ struct ParsedChronology {
 };
 
 // One dose per line, "power,start,end", the times naive local
-// "YYYY-MM-DD HH:MM:SS" in `lab_time_zone`. Blank lines are skipped. An error
-// when there are lines and none is a dose, or the zone is unknown.
+// "YYYY-MM-DD HH:MM:SS" in `lab_time_zone`. Blank lines are skipped. A line
+// of three fields is a dose: when its power or a time cannot be read the file
+// is an error (legacy ingestion spec, 10.22), as it is when there are lines
+// and none is a dose, or the zone is unknown. Any other line is kept in
+// `detail`.
 Result<ParsedChronology> parse_chronology(std::string_view text, std::string_view lab_time_zone);
 
 // ---------------------------------------------------------------- spectrometers

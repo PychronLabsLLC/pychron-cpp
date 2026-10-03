@@ -308,6 +308,11 @@ Result<std::vector<GitChange>> parse_changes(const Site& site, std::string_view 
     GitChange change;
     change.commit = commit;
     change.path = std::string(path);
+    // An all-zero name stands for "no blob" on the side that lacks the file.
+    if (fields[2].find_first_not_of('0') != std::string_view::npos) {
+      change.old_blob_sha = std::string(fields[2]);
+      if (!is_sha(change.old_blob_sha)) return bad(token);
+    }
     switch (letter) {
       case 'A':
       case 'M':

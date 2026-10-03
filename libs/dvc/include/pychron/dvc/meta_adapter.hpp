@@ -24,11 +24,32 @@
 // when a commit leaves another revision as the head, the last entry is
 // restated, so the head is always the entry the legacy code would use.
 //
+// Removed data (spec 10.21). An object the source no longer has (a position
+// or the z dropped from a level file; a deleted level, production,
+// chronology, gains or holder file, also by a merge or a renamed directory)
+// gets a revision without a value: every field unset, every list empty, and
+// {"removed": true} in its provenance detail. The head then says "no value";
+// an object that comes back gets an ordinary revision. Two payload types
+// cannot say "no value": a level_production must name a production and a
+// sensitivity is a number. A level dropped from productions.json, and a
+// sensitivity list emptied or deleted, keep their head; the commit's
+// changeset says what went in its provenance detail,
+// {"removed": ["<file>#<level>", "<file>"]}, and exists for that alone when
+// the commit has no revision.
+//
+// The walk puts the commits of every branch on one line, so some revisions
+// are not an edit anyone made. They carry "walk" in their provenance detail:
+// "branch" where a commit comes after one of another branch and an object it
+// did not touch goes back to what its own parent had; "merge" for every
+// revision made at a merge commit.
+//
 // Every other path is ignored: the repository holds scripts, experiment
 // templates and documents that are not reference data. A reference file that
-// cannot be read is an `unparseable` conflict and the walk goes on. A deleted
-// file, and a position or entry that a new version no longer has, add
-// nothing: the object keeps its last value.
+// cannot be read is an `unparseable` conflict, its objects keep what they
+// have, and the walk goes on.
+//
+// A level's z is kept in its level_geometry object only; the LevelItem sent
+// for the catalog row carries none.
 //
 // It reads through GitReader and never touches the store; ingest::BatchWriter
 // writes what it produces. The layout it understands is described in

@@ -281,13 +281,18 @@ Result<ParsedChronology> parse_chronology(std::string_view text, std::string_vie
     const auto fields = split(trim(lines[i]), ',');
     const std::string what = "dose " + std::to_string(out.value.doses.size());
     Json notes = Json::object();
-    const auto power = fields.size() == 3 ? number(fields[0]) : std::nullopt;
-    const auto start = power ? to_utc(fields[1], lab_time_zone, what + " start", notes) : std::nullopt;
-    const auto end = start ? to_utc(fields[2], lab_time_zone, what + " end", notes) : std::nullopt;
-    if (!end) {
+    if (fields.size() != 3) {
       out.detail["uninterpreted_lines"].push_back(line_note(i, lines[i]));
       continue;
     }
+    // Three fields is a dose, and a dose that cannot be read fails the file:
+    // a chronology one dose short would change every decay correction.
+    const auto power = number(fields[0]);
+    const auto start = power ? to_utc(fields[1], lab_time_zone, what + " start", notes) : std::nullopt;
+    const auto end = start ? to_utc(fields[2], lab_time_zone, what + " end", notes) : std::nullopt;
+    if (!end)
+      return fail(ErrorKind::Protocol, "chronology line " + std::to_string(i + 1) + " is not \"power,start,end\": " +
+                                           std::string(trim(lines[i])));
     for (auto& note : notes["notes"]) out.detail["notes"].push_back(std::move(note));
     out.value.doses.push_back({static_cast<int>(out.value.doses.size()), *power, *start, *end});
   }

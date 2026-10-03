@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,13 @@ struct World {
     return payload<Value>(**found);
   }
 
+  // The provenance detail of the changeset of a commit; null: it has none.
+  json changeset_detail(const std::string& commit) {
+    auto rows = store->provenance_for(ingest::changeset_id(kUrl, commit));
+    if (!rows || rows->empty() || !rows->front().detail_json) return nullptr;
+    return json::parse(*rows->front().detail_json);
+  }
+
   json revision_detail(Uuid revision) {
     auto rows = store->provenance_for(revision);
     if (!rows || rows->empty()) return nullptr;
@@ -152,11 +160,18 @@ Result<RunStats> run_import(World& w, const MetaAdapterConfig& config, std::opti
 
 std::string flux_key(int position) { return "NM-293/G/" + std::to_string(position); }
 
-// The fixture level file with the J of some positions (by hole number) replaced.
-std::string level_text(const std::map<int, double>& j) {
-  json level = json::parse(fixture("meta/NM-293/G.json"));
-  for (auto& entry : level.at("positions"))
-    if (const auto it = j.find(entry.at("position").get<int>()); it != j.end()) entry["j"] = it->second;
+// The fixture level file with the J of some positions (by hole number)
+// replaced, and without the positions of `without`.
+std::string level_text(const std::map<int, double>& j, const std::set<int>& without = {}) {
+  const json fixed = json::parse(fixture("meta/NM-293/G.json"));
+  json level = fixed;
+  level["positions"] = json::array();
+  for (json entry : fixed.at("positions")) {
+    const int position = entry.at("position").get<int>();
+    if (without.contains(position)) continue;
+    if (const auto it = j.find(position); it != j.end()) entry["j"] = it->second;
+    level["positions"].push_back(std::move(entry));
+  }
   return level.dump(4);
 }
 
@@ -240,23 +255,33 @@ std::vector<std::string> snapshot_of(World& w) {
        {"entity_type", "entity_uuid", "path", "commit_sha", "git_blob_sha"}, "detail");
   rows("conflict", QStringLiteral("SELECT uuid, path, conflict_kind, resolution, detail FROM import_conflict"),
        {"uuid", "path", "conflict_kind", "resolution"}, "detail");
-  rows("flux", QStringLiteral("SELECT revision_uuid, j, j_err, mean_j, extra FROM flux_value"),
-       {"revision_uuid", "j", "j_err", "mean_j"}, "extra");
-  rows("flux_analysis", QStringLiteral("SELECT revision_uuid, record_id, is_omitted FROM flux_value_analysis"),
-       {"revision_uuid", "record_id", "is_omitted"});
+  rows("flux",
+       QStringLiteral("SELECT revision_uuid, j, j_err, mean_j, mean_j_err, mean_j_mswd, position_jerr, "
+                      "lambda_k_total, lambda_k_total_err, monitor_name, monitor_material, monitor_age, "
+                      "monitor_age_err, options, extra FROM flux_value"),
+       {"revision_uuid", "j", "j_err", "mean_j", "mean_j_err", "mean_j_mswd", "position_jerr", "lambda_k_total",
+        "lambda_k_total_err", "monitor_name", "monitor_material", "monitor_age", "monitor_age_err", "options"},
+       "extra");
+  rows("flux_analysis",
+       QStringLiteral("SELECT revision_uuid, record_id, analysis_uuid, is_omitted FROM flux_value_analysis"),
+       {"revision_uuid", "record_id", "analysis_uuid", "is_omitted"});
   rows("level_z", QStringLiteral("SELECT revision_uuid, z FROM level_z_value"), {"revision_uuid", "z"});
+  rows("production_meta", QStringLiteral("SELECT revision_uuid, reactor, note FROM production_meta"),
+       {"revision_uuid", "reactor", "note"});
   rows("production", QStringLiteral("SELECT revision_uuid, key, value, error FROM production_value"),
        {"revision_uuid", "key", "value", "error"});
   rows("level_production", QStringLiteral("SELECT revision_uuid, production_ref_uuid, note FROM level_production_value"),
        {"revision_uuid", "production_ref_uuid", "note"});
-  rows("dose", QStringLiteral("SELECT revision_uuid, ordinal, power FROM chronology_dose"),
-       {"revision_uuid", "ordinal", "power"});
+  rows("dose", QStringLiteral("SELECT revision_uuid, ordinal, power, start_utc, end_utc FROM chronology_dose"),
+       {"revision_uuid", "ordinal", "power", "start_utc", "end_utc"});
   rows("gain", QStringLiteral("SELECT revision_uuid, detector, gain FROM detector_gain"),
        {"revision_uuid", "detector", "gain"});
-  rows("sensitivity", QStringLiteral("SELECT revision_uuid, sensitivity, extra FROM sensitivity_value"),
-       {"revision_uuid", "sensitivity"}, "extra");
-  rows("hole", QStringLiteral("SELECT revision_uuid, ordinal, hole_id, x, y FROM holder_hole"),
-       {"revision_uuid", "ordinal", "hole_id", "x", "y"});
+  rows("sensitivity", QStringLiteral("SELECT revision_uuid, sensitivity, create_date_utc, extra FROM sensitivity_value"),
+       {"revision_uuid", "sensitivity", "create_date_utc"}, "extra");
+  rows("holder", QStringLiteral("SELECT revision_uuid, shape, radius, has_hole_numbers FROM holder_meta"),
+       {"revision_uuid", "shape", "radius", "has_hole_numbers"});
+  rows("hole", QStringLiteral("SELECT revision_uuid, ordinal, hole_id, x, y, radius FROM holder_hole"),
+       {"revision_uuid", "ordinal", "hole_id", "x", "y", "radius"});
   return out;
 }
 
@@ -333,7 +358,8 @@ TEST_P(MetaImportTest, LevelFileMakesOneRevisionPerPosition) {
 
   // The irradiation, its level and the positions exist, and each object is scoped to its own.
   EXPECT_EQ(world_->count("irradiation", "WHERE name = 'NM-293'"), 1);
-  EXPECT_EQ(world_->count("level", "WHERE name = 'G' AND z = 0"), 1);
+  // The level's z is the level_geometry value below, and nowhere else.
+  EXPECT_EQ(world_->count("level", "WHERE name = 'G' AND z IS NULL"), 1);
   EXPECT_EQ(world_->count("irradiation_position"), 23);
   EXPECT_EQ(world_->count("ref_object", "WHERE ref_type = 'flux_position' AND position_uuid IS NOT NULL"), 23);
   // No identifier is made up from a level file: that is the catalog's.
@@ -616,16 +642,253 @@ TEST_P(MetaImportTest, FilesThatAreNotReferenceDataAreIgnored) {
   EXPECT_EQ(world_->source().status, "finished");
 }
 
-TEST_P(MetaImportTest, DeletedFileAddsNothingAndRestoredIsNotRepeated) {
+TEST_P(MetaImportTest, RemovedPositionHasNoValue) {
+  commit_file(kLevel, level_text({}), kDay1);
+  const std::string dropped = commit_file(kLevel, level_text({}, {5}), kDay2, "position 5 emptied");
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->revisions, 24 + 1);
+
+  // The legacy system has no J there any more; nor has the head.
+  auto history = world_->history(RefType::FluxPosition, flux_key(5));
+  ASSERT_EQ(history.size(), 2u);
+  EXPECT_EQ(history[1].uuid, ingest::revision_id(kUrl, dropped, kLevel + "#5"));
+  EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(5)), P::FluxValue{});
+  EXPECT_EQ(world_->revision_detail(history[1].uuid), json::parse(R"({"removed": true})"));
+  EXPECT_EQ(world_->count("flux_value", "WHERE j IS NULL AND j_err IS NULL AND lambda_k_total IS NULL"), 1);
+  for (int position = 1; position <= 23; ++position) {
+    if (position == 5) continue;
+    EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(position)).size(), 1u) << position;
+  }
+
+  // Nothing more while it stays away; a normal revision when it is back.
+  commit_file(kLevel, level_text({{4, 0.0044}}, {5}), kDay3);
+  const std::string back = commit_file(kLevel, level_text({{4, 0.0044}}), kDay4, "position 5 filled again");
+  auto later = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(later) << err(later.error());
+  EXPECT_EQ(later->revisions, 1 + 1);
+  history = world_->history(RefType::FluxPosition, flux_key(5));
+  ASSERT_EQ(history.size(), 3u);
+  EXPECT_EQ(history[2].uuid, ingest::revision_id(kUrl, back, kLevel + "#5"));
+  EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(5)).j,
+            std::optional<double>{json::parse(fixture("meta/NM-293/G.json")).at("positions").at(4).at("j").get<double>()});
+  EXPECT_FALSE(world_->revision_detail(history[2].uuid).contains("removed"));
+}
+
+TEST_P(MetaImportTest, PositionRemovedOnOneSideOfAMerge) {
+  commit_file(kLevel, level_text({}), kDay1);
+  // The merge takes the side's removal along with main's fit.
+  repo_.branch("side");
+  const std::string fit = commit_file(kLevel, level_text({{12, 0.0122}}), kDay2, "main fits 12");
+  repo_.checkout("side");
+  const std::string emptied = commit_file(kLevel, level_text({}, {5}), kDay2, "side empties 5");
+  repo_.checkout("main");
+  const std::string merged = repo_.merge("side", "Merge branch 'side'", kDay3);
+  // Another side empties position 7; this merge keeps main's tree.
+  repo_.branch("other");
+  commit_file(kLevel, level_text({{12, 0.0122}, {2, 0.0021}}, {5}), kDay3, "main fits 2");
+  repo_.checkout("other");
+  const std::string discarded = commit_file(kLevel, level_text({{12, 0.0122}}, {5, 7}), kDay3, "other empties 7");
+  repo_.checkout("main");
+  repo_.git({"merge", "--quiet", "--no-ff", "-s", "ours", "-m", "Merge branch 'other'", "other"}, kDay4);
+  const std::string kept = repo_.head();
+
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    // Kept by the merge: removed.
+    EXPECT_EQ(world->head<P::FluxValue>(RefType::FluxPosition, flux_key(5)), P::FluxValue{});
+    const auto of_5 = world->history(RefType::FluxPosition, flux_key(5));
+    ASSERT_EQ(of_5.size(), 2u);
+    EXPECT_EQ(of_5[1].uuid, ingest::revision_id(kUrl, emptied, kLevel + "#5"));
+    EXPECT_EQ(world->revision_detail(of_5[1].uuid), json::parse(R"({"removed": true})"));
+    // Discarded by the merge: not removed. The walk is one line, so the
+    // position is emptied at the other's commit and filled at the merge.
+    EXPECT_EQ(world->head<P::FluxValue>(RefType::FluxPosition, flux_key(7)).j,
+              std::optional<double>{json::parse(fixture("meta/NM-293/G.json")).at("positions").at(6).at("j").get<double>()});
+    const auto of_7 = world->history(RefType::FluxPosition, flux_key(7));
+    ASSERT_EQ(of_7.size(), 3u);
+    EXPECT_EQ(of_7[1].uuid, ingest::revision_id(kUrl, discarded, kLevel + "#7"));
+    EXPECT_EQ(world->revision_detail(of_7[1].uuid), json::parse(R"({"removed": true})"));
+    EXPECT_EQ(of_7[2].uuid, ingest::revision_id(kUrl, kept, kLevel + "#7"));
+    EXPECT_EQ(world->revision_detail(of_7[2].uuid), json::parse(R"({"walk": "merge"})"));
+
+    // What the walk itself did to position 12 is told apart from main's fit:
+    // put back where the side's commit comes after main's, and stated again
+    // at the merge.
+    EXPECT_EQ(world->head<P::FluxValue>(RefType::FluxPosition, flux_key(12)).j, std::optional<double>{0.0122});
+    const auto of_12 = world->history(RefType::FluxPosition, flux_key(12));
+    ASSERT_EQ(of_12.size(), 4u);
+    EXPECT_EQ(of_12[1].uuid, ingest::revision_id(kUrl, fit, kLevel + "#12"));
+    EXPECT_FALSE(world->revision_detail(of_12[1].uuid).contains("walk"));
+    EXPECT_EQ(of_12[2].uuid, ingest::revision_id(kUrl, emptied, kLevel + "#12"));
+    EXPECT_EQ(world->revision_detail(of_12[2].uuid), json::parse(R"({"walk": "branch"})"));
+    EXPECT_EQ(of_12[3].uuid, ingest::revision_id(kUrl, merged, kLevel + "#12"));
+    EXPECT_EQ(world->revision_detail(of_12[3].uuid), json::parse(R"({"walk": "merge"})"));
+    // main's second fit comes before the other's commit, which puts it back.
+    EXPECT_EQ(world->head<P::FluxValue>(RefType::FluxPosition, flux_key(2)).j, std::optional<double>{0.0021});
+    EXPECT_EQ(world->history(RefType::FluxPosition, flux_key(2)).size(), 4u);
+  }
+}
+
+TEST_P(MetaImportTest, LevelDroppedFromProductionsIsNotedAndKeepsItsHead) {
+  commit_file("NM-293/productions.json", fixture("meta/NM-293/productions.json"), kDay1);
+  json map = json::parse(fixture("meta/NM-293/productions.json"));
+  map.erase("M");
+  map.erase("L");
+  const std::string dropped = commit_file("NM-293/productions.json", map.dump(4), kDay2);
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->revisions, 12);
+
+  // A level_production value must name a production: it cannot say "none".
+  // The commit says what went, and the head stays (a documented limit).
+  EXPECT_EQ(world_->changeset_detail(dropped),
+            json::parse(R"({"removed": ["NM-293/productions.json#L", "NM-293/productions.json#M"]})"));
+  EXPECT_EQ(world_->history(RefType::LevelProduction, "NM-293/M").size(), 1u);
+  EXPECT_EQ(world_->head<P::LevelProductionValue>(RefType::LevelProduction, "NM-293/M").production,
+            World::object(RefType::Production, "NM-293/Triga_PR"));
+  EXPECT_EQ(world_->count("changeset"), 2);
+
+  // Deleted altogether: every level it still had.
+  repo_.remove("NM-293/productions.json");
+  const std::string deleted = repo_.commit("removed", kDay3);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const json detail = world_->changeset_detail(deleted);
+  ASSERT_EQ(detail.at("removed").size(), 10u);
+  EXPECT_EQ(detail.at("removed")[0], "NM-293/productions.json#A");
+}
+
+TEST_P(MetaImportTest, DeletedFilesLeaveNoValue) {
+  write_fixture_files(repo_);
+  repo_.commit("initial import", kDay1);
+  for (const char* path : {"NM-293/productions/Triga_PR.json", "NM-293/chronology.txt", "spectrometers/jan.gain.json",
+                           "spectrometers/felix.sens.json", "irradiation_holders/24_hole.txt",
+                           "load_holders/37-hole.txt"})
+    repo_.remove(path);
+  const std::string deleted = repo_.commit("cleared out", kDay2);
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+
+  const auto removed_at = [&](RefType type, const std::string& key, const std::string& path) {
+    const auto history = world_->history(type, key);
+    ASSERT_EQ(history.size(), 2u) << key;
+    EXPECT_EQ(history[1].uuid, ingest::revision_id(kUrl, deleted, path)) << key;
+    EXPECT_EQ(world_->revision_detail(history[1].uuid), json::parse(R"({"removed": true})")) << key;
+    auto provenance = store().provenance_for(history[1].uuid);
+    ASSERT_TRUE(provenance && provenance->size() == 1u) << key;
+    EXPECT_EQ(provenance->front().git_blob_sha, "") << key;  // there is no file
+  };
+  removed_at(RefType::Chronology, "NM-293", "NM-293/chronology.txt");
+  EXPECT_EQ(world_->head<P::ChronologyValue>(RefType::Chronology, "NM-293"), P::ChronologyValue{});
+  removed_at(RefType::Production, "NM-293/Triga_PR", "NM-293/productions/Triga_PR.json");
+  EXPECT_EQ(world_->head<P::ProductionValue>(RefType::Production, "NM-293/Triga_PR"), P::ProductionValue{});
+  removed_at(RefType::Gains, "jan", "spectrometers/jan.gain.json");
+  EXPECT_EQ(world_->head<P::GainsValue>(RefType::Gains, "jan"), P::GainsValue{});
+  removed_at(RefType::IrradiationHolder, "24_hole", "irradiation_holders/24_hole.txt");
+  EXPECT_EQ(world_->head<P::HolderValue>(RefType::IrradiationHolder, "24_hole"), P::HolderValue{});
+  removed_at(RefType::LoadHolder, "37-hole", "load_holders/37-hole.txt");
+  EXPECT_EQ(world_->head<P::HolderValue>(RefType::LoadHolder, "37-hole"), P::HolderValue{});
+
+  // A sensitivity value is a number and cannot be "none": the commit says the
+  // list went, and the head stays (a documented limit).
+  EXPECT_EQ(world_->history(RefType::Sensitivity, "felix").size(), 4u);
+  EXPECT_EQ(world_->head<P::SensitivityValue>(RefType::Sensitivity, "felix").sensitivity, 5e-16);
+  EXPECT_EQ(world_->changeset_detail(deleted), json::parse(R"({"removed": ["spectrometers/felix.sens.json"]})"));
+
+  // A file that never had a value leaves nothing when it goes.
+  commit_file("NM-293/productions/Other.json", "not json", kDay3);
+  repo_.remove("NM-293/productions/Other.json");
+  repo_.commit("gone again", kDay4);
+  auto later = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(later) << err(later.error());
+  EXPECT_EQ(later->revisions, 0);
+  EXPECT_EQ(later->conflicts, 1);
+  EXPECT_EQ(world_->count("ref_object", "WHERE key = 'NM-293/Other'"), 0);
+}
+
+TEST_P(MetaImportTest, EmptiedSensitivityListIsNoted) {
+  commit_file(kSens, fixture("meta/spectrometers/felix.sens.json"), kDay1);
+  const std::string emptied = commit_file(kSens, "[]", kDay2);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  EXPECT_EQ(world_->history(RefType::Sensitivity, "felix").size(), 4u);
+  EXPECT_EQ(world_->changeset_detail(emptied), json::parse(R"({"removed": ["spectrometers/felix.sens.json"]})"));
+}
+
+TEST_P(MetaImportTest, DeletedLevelFileRemovesItsPositionsAndRestoringBringsThemBack) {
   commit_file(kLevel, fixture("meta/NM-293/G.json"), kDay1);
   repo_.remove(kLevel);
-  repo_.commit("removed by hand", kDay2);
-  commit_file(kLevel, fixture("meta/NM-293/G.json"), kDay3, "restored");
+  const std::string deleted = repo_.commit("removed by hand", kDay2);
+  const std::string restored = commit_file(kLevel, fixture("meta/NM-293/G.json"), kDay3, "restored");
   auto stats = run_import(*world_, adapter_config(repo_, 1));
   ASSERT_TRUE(stats) << err(stats.error());
   EXPECT_EQ(stats->batches, 3);
-  EXPECT_EQ(world_->count("changeset"), 1);
-  EXPECT_EQ(world_->count("revision"), 24);
+  EXPECT_EQ(world_->count("changeset"), 3);
+  EXPECT_EQ(world_->count("revision"), 3 * 24);
+  const auto history = world_->history(RefType::FluxPosition, flux_key(16));
+  ASSERT_EQ(history.size(), 3u);
+  EXPECT_EQ(history[1].uuid, ingest::revision_id(kUrl, deleted, kLevel + "#16"));
+  EXPECT_EQ(world_->payload<P::FluxValue>(history[1].uuid), P::FluxValue{});
+  EXPECT_EQ(history[2].uuid, ingest::revision_id(kUrl, restored, kLevel + "#16"));
+  EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(16)).j,
+            std::optional<double>{0.0018848683037985877});
+  const auto geometry = world_->history(RefType::LevelGeometry, "NM-293/G");
+  ASSERT_EQ(geometry.size(), 3u);
+  EXPECT_FALSE(world_->payload<P::LevelZValue>(geometry[1].uuid).z.has_value());
+  EXPECT_EQ(world_->revision_detail(geometry[1].uuid), json::parse(R"({"removed": true})"));
+  EXPECT_EQ(world_->head<P::LevelZValue>(RefType::LevelGeometry, "NM-293/G").z, std::optional<double>{0.0});
+}
+
+TEST_P(MetaImportTest, RenamedIrradiationRemovesTheOldObjectsAndMakesNewOnes) {
+  write_fixture_files(repo_);
+  repo_.commit("initial import", kDay1);
+  for (const char* file : {"G.json", "productions.json", "productions/Triga_PR.json", "chronology.txt"}) {
+    repo_.remove(std::string("NM-293/") + file);
+    repo_.write(std::string("NM-294/") + file, fixture(std::string("meta/NM-293/") + file));
+  }
+  const std::string renamed = repo_.commit("it was NM-294 all along", kDay2);
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+
+  // Under the old name nothing has a value any more.
+  for (int position = 1; position <= 23; ++position)
+    EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(position)), P::FluxValue{}) << position;
+  EXPECT_FALSE(world_->head<P::LevelZValue>(RefType::LevelGeometry, "NM-293/G").z.has_value());
+  EXPECT_TRUE(world_->head<P::ChronologyValue>(RefType::Chronology, "NM-293").doses.empty());
+  EXPECT_TRUE(world_->head<P::ProductionValue>(RefType::Production, "NM-293/Triga_PR").ratios.empty());
+  const json detail = world_->changeset_detail(renamed);
+  ASSERT_EQ(detail.at("removed").size(), 12u);  // the level productions, which cannot say "none"
+  EXPECT_EQ(detail.at("removed")[6], "NM-293/productions.json#G");
+  // Under the new one everything has.
+  EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, "NM-294/G/16").j,
+            std::optional<double>{0.0018848683037985877});
+  EXPECT_EQ(world_->head<P::LevelZValue>(RefType::LevelGeometry, "NM-294/G").z, std::optional<double>{0.0});
+  EXPECT_EQ(world_->head<P::ChronologyValue>(RefType::Chronology, "NM-294").doses.size(), 1u);
+  EXPECT_EQ(world_->head<P::ProductionValue>(RefType::Production, "NM-294/Triga_PR").ratios.size(), 9u);
+  EXPECT_EQ(world_->head<P::LevelProductionValue>(RefType::LevelProduction, "NM-294/G").production,
+            World::object(RefType::Production, "NM-294/Triga_PR"));
+  EXPECT_EQ(world_->count("irradiation"), 2);
+  EXPECT_EQ(world_->history(RefType::FluxPosition, "NM-294/G/16").size(), 1u);
+  EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(16)).size(), 2u);
+}
+
+TEST_P(MetaImportTest, ChronologyWithAnUnreadableDoseIsAConflict) {
+  commit_file("NM-293/chronology.txt", fixture("meta/NM-293/chronology.txt"), kDay1);
+  const std::string text = fixture("meta/NM-293/chronology.txt") + "1.0,2017-12-22 06:28,2017-12-22 14:28:00\n";
+  const std::string bad = commit_file("NM-293/chronology.txt", text, kDay2);
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 1);
+  auto conflict = store().import_conflict(ingest::conflict_id(kUrl, bad, "NM-293/chronology.txt"));
+  ASSERT_TRUE(conflict && conflict->has_value());
+  EXPECT_EQ((*conflict)->kind, ConflictKind::Unparseable);
+  EXPECT_EQ((*conflict)->file_sha256, std::optional<Sha256Digest>{sha256(std::string_view{text})});
+  // The chronology is not stored with a dose short.
+  EXPECT_EQ(world_->history(RefType::Chronology, "NM-293").size(), 1u);
+  EXPECT_EQ(world_->head<P::ChronologyValue>(RefType::Chronology, "NM-293").doses.size(), 1u);
 }
 
 TEST_P(MetaImportTest, MergeLeavesEveryHeadAsTheMergeTreeHasIt) {
@@ -660,6 +923,11 @@ TEST_P(MetaImportTest, MergeLeavesEveryHeadAsTheMergeTreeHasIt) {
     const auto of_3 = world->history(RefType::FluxPosition, flux_key(3));
     ASSERT_EQ(of_3.size(), 4u);  // as added, main's fit, back at the side's commit, main's again at the merge
     EXPECT_EQ(of_3[3].uuid, ingest::revision_id(kUrl, merged, kLevel + "#3"));
+    EXPECT_EQ(world->revision_detail(of_3[1].uuid), json::object());  // an edit
+    EXPECT_EQ(world->revision_detail(of_3[2].uuid), json::parse(R"({"walk": "branch"})"));
+    EXPECT_EQ(world->revision_detail(of_3[3].uuid), json::parse(R"({"walk": "merge"})"));
+    // The side's own fit, at the same commit as that put-back, is an edit.
+    EXPECT_EQ(world->revision_detail(world->history(RefType::FluxPosition, flux_key(12))[1].uuid), json::object());
     EXPECT_EQ(world->history(RefType::FluxPosition, flux_key(12)).size(), 2u);
     const auto of_20 = world->history(RefType::FluxPosition, flux_key(20));
     ASSERT_EQ(of_20.size(), 4u);  // as added, main's, the other's, and main's again at the merge
@@ -771,7 +1039,7 @@ TEST_P(MetaImportTest, OpenAndPlanErrors) {
   ASSERT_GE((*batch)->catalog.size(), 3u);
   EXPECT_TRUE(std::holds_alternative<ingest::IrradiationItem>((*batch)->catalog[0]));
   ASSERT_TRUE(std::holds_alternative<ingest::LevelItem>((*batch)->catalog[1]));
-  EXPECT_EQ(std::get<ingest::LevelItem>((*batch)->catalog[1]).z, std::optional<double>{0.0});
+  EXPECT_FALSE(std::get<ingest::LevelItem>((*batch)->catalog[1]).z.has_value());
   EXPECT_TRUE(std::holds_alternative<ingest::RefObjectItem>((*batch)->catalog[2]));
   auto end = (*adapter)->next_batch();
   ASSERT_TRUE(end);
@@ -846,13 +1114,31 @@ void build_part_one(GitFixture& repo) {
   json map = json::parse(fixture("meta/NM-293/productions.json"));
   map["G"] = "Cd_shielded";
   put("NM-293/productions.json", map.dump(4), kDay4, "modified - productions.json");
+  // Removals. Two positions are emptied, one is filled again; a level leaves
+  // productions.json; a holder file is deleted.
+  put(kLevel, level_text(j, {22, 23}), kDay4, "emptied 22 and 23");
+  put(kLevel, level_text(j, {23}), kDay4, "22 again");
+  map.erase("M");
+  put("NM-293/productions.json", map.dump(4), kDay4, "level M is gone");
+  repo.remove("irradiation_holders/24_hole.txt");
+  repo.commit("holder removed", kDay4);
+  // One branch fits a position, the other empties one; the merge has both.
+  repo.branch("side4");
+  j[14] = 0.0141;
+  put(kLevel, level_text(j, {23}), kDay4, "main fits 14");
+  repo.checkout("side4");
+  std::map<int, double> on_side4 = j;
+  on_side4.erase(14);
+  put(kLevel, level_text(on_side4, {19, 23}), kDay4, "side4 empties 19");
+  repo.checkout("main");
+  repo.merge("side4", "Merge branch 'side4'", kDay4);
 }
 
 void build_part_two(GitFixture& repo) {
   const char* const later = "2019-01-10T10:00:00-07:00";
-  std::map<int, double> j{{16, 0.0019}, {2, 0.0021}, {3, 0.0031},  {12, 0.0122},
-                          {20, 0.0201}, {21, 0.0212}, {9, 0.0099}, {10, 0.0101}};
-  repo.write(kLevel, level_text(j));
+  std::map<int, double> j{{16, 0.0019}, {2, 0.0021},  {3, 0.0031},  {12, 0.0122}, {20, 0.0201},
+                          {21, 0.0212}, {9, 0.0099},  {10, 0.0101}, {14, 0.0141}};
+  repo.write(kLevel, level_text(j, {19, 23}));
   repo.commit("fit flux for NM-293G", later);
   json list = sensitivities(4);
   list[1]["sensitivity"] = 4.5e-16;
@@ -864,6 +1150,9 @@ void build_part_two(GitFixture& repo) {
   repo.write("NM-293/chronology.txt",
              fixture("meta/NM-293/chronology.txt") + "1.0,2017-12-22 06:28:00,2017-12-22 14:28:00\n");
   repo.commit("second day", later);
+  // A commit that leaves nothing but a note: the sensitivity list is deleted.
+  repo.remove(kSens);
+  repo.commit("sensitivities moved to the database", later);
 }
 
 }  // namespace
@@ -888,11 +1177,21 @@ TEST_P(MetaImportTest, OneHistoryOneResult) {
 
   // What the reference must hold, whatever else it holds: every head is what
   // the files at the branch head say.
-  const std::map<int, double> fitted{{16, 0.0019}, {2, 0.0021}, {3, 0.0031},  {12, 0.0122},
-                                     {20, 0.0201}, {21, 0.0212}, {9, 0.0099}, {10, 0.0101}};
+  const std::map<int, double> fitted{{16, 0.0019}, {2, 0.0021},  {3, 0.0031},  {12, 0.0122}, {20, 0.0201},
+                                     {21, 0.0212}, {9, 0.0099},  {10, 0.0101}, {14, 0.0141}};
   const json original = json::parse(fixture("meta/NM-293/G.json"));
   for (const auto& entry : original.at("positions")) {
     const int position = entry.at("position").get<int>();
+    if (position == 19 || position == 23) {  // emptied, and still empty at the branch head
+      EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(position)), P::FluxValue{}) << position;
+      continue;
+    }
+    if (position == 22) {  // emptied and filled again
+      EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(position)).size(), 3u);
+      EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(position)).j,
+                std::optional<double>{entry.at("j").get<double>()});
+      continue;
+    }
     const auto it = fitted.find(position);
     const double j = it != fitted.end() ? it->second : entry.at("j").get<double>();
     EXPECT_EQ(world_->head<P::FluxValue>(RefType::FluxPosition, flux_key(position)).j, std::optional<double>{j})
@@ -917,6 +1216,8 @@ TEST_P(MetaImportTest, OneHistoryOneResult) {
   EXPECT_EQ(world_->head<P::LevelProductionValue>(RefType::LevelProduction, "NM-293/G").production,
             World::object(RefType::Production, "NM-293/Cd_shielded"));
   EXPECT_EQ(world_->head<P::ChronologyValue>(RefType::Chronology, "NM-293").doses.size(), 2u);
+  EXPECT_EQ(world_->head<P::HolderValue>(RefType::IrradiationHolder, "24_hole"), P::HolderValue{});
+  EXPECT_EQ(world_->history(RefType::LevelProduction, "NM-293/M").size(), 1u);
 
   const auto same = [&](World& w, const std::string& what) {
     const auto got = snapshot_of(w);

@@ -477,6 +477,15 @@ TEST(GitReader, ChangesAddModifyDelete) {
   EXPECT_EQ(deleted->blob_sha, "");
   EXPECT_TRUE(paths_of(*changes, c3).empty());
 
+  // And the blob the parent had there: none for an addition, the content
+  // replaced or removed otherwise.
+  const GitChange* rooted = find_change(*changes, c1, "660/52-01E.json");
+  ASSERT_NE(rooted, nullptr);
+  EXPECT_EQ(rooted->old_blob_sha, "");
+  EXPECT_EQ(added->old_blob_sha, "");
+  EXPECT_EQ(modified->old_blob_sha, rooted->blob_sha);
+  EXPECT_EQ(deleted->old_blob_sha, find_change(*changes, c1, "660/tags/52-01E.tags.json")->blob_sha);
+
   // The blob sha names the content at that commit.
   const std::vector<std::string> blobs{modified->blob_sha, added->blob_sha};
   ASSERT_OK(reader->fetch_blobs(blobs));
