@@ -36,7 +36,8 @@ Result<r::UFloat> integrated_age(const GroupItems& items, bool include_j_error) 
   r::UFloat rad40, k39;
   std::size_t n = 0;
   for (const auto* it : items) {
-    if (!it || !it->analysis || !it->analysis->arar) continue;
+    // A reduction_error with `arar` present: corrections are missing.
+    if (!it || !it->analysis || !it->analysis->arar || !it->analysis->reduction_error.empty()) continue;
     rad40 = rad40 + it->analysis->arar->f.rad40;
     k39 = k39 + it->analysis->arar->f.interference_corrected[r::index(r::ArgonIsotope::Ar39)];
     ++n;
@@ -55,7 +56,7 @@ Result<r::UFloat> integrated_age(const GroupItems& items, bool include_j_error) 
 std::vector<IsochronPoint> isochron_points(const GroupItems& items) {
   std::vector<IsochronPoint> out;
   for (const auto* it : items) {
-    if (!it || !it->analysis) continue;
+    if (!it || !it->analysis || !it->analysis->reduction_error.empty()) continue;
     const auto a40 = it->analysis->stage("Ar40", Stage::InterferenceCorrected);
     const auto a39 = it->analysis->stage("Ar39", Stage::InterferenceCorrected);
     const auto a36 = it->analysis->stage("Ar36", Stage::InterferenceCorrected);

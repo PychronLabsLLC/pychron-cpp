@@ -84,7 +84,9 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
       wo.units = "Ma";
       m.computed.rows.push_back(wo);
     } else {
-      m.computed.rows.push_back(value_row("Age", std::nullopt, "Ma", "no J for this analysis"));
+      m.computed.rows.push_back(value_row("Age", std::nullopt, "Ma",
+                                          ra.reduction_error.empty() ? "no J for this analysis" : ra.reduction_error));
+      m.reduction_note = ra.reduction_error;
     }
     m.computed.rows.push_back(value_row("F (40Ar*/39ArK)", val(ar->f.f)));
     m.computed.rows.push_back(value_row("K/Ca", val(ar->kca)));

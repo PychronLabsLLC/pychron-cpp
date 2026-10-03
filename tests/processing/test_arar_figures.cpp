@@ -95,6 +95,28 @@ TEST(ArArGroups, IsochronRecoversFAndTrapped) {
   EXPECT_FALSE(pp::isochron_age({pts[0], pts[1]}, r::YorkMethod::NewYork, false, true));
 }
 
+// An unknown without production ratios reduces without interference
+// corrections: its F stands but it has no age and stays out of group ages,
+// which would otherwise borrow another step's J for it.
+TEST(ArArGroups, AnUnknownWithoutProductionStaysOutOfGroupAges) {
+  auto d = steps();
+  auto odd = make_step(8, 30.0, 0.1, 50.0);
+  odd->context.production.reset();
+  pp::DatasetItem item;
+  item.analysis = pp::reduce_analysis(odd, {});
+  ASSERT_TRUE(item.analysis->arar);
+  EXPECT_FALSE(item.analysis->arar->ages);
+  EXPECT_FALSE(item.analysis->j);
+  EXPECT_EQ(item.analysis->reduction_error, "no age: no production ratios");
+  EXPECT_NEAR(pp::Quantity::parse("F")->eval(*item.analysis)->value, 50.0, 1e-9);
+  d.mutable_items().push_back(item);
+
+  auto ia = pp::integrated_age(all(d), false);
+  ASSERT_TRUE(ia) << ia.error().what;
+  EXPECT_NEAR(ia->nominal(), age_of_f(10.0), 1e-9);
+  EXPECT_EQ(pp::isochron_points(all(d)).size(), 8u);
+}
+
 TEST(ArArGroups, ExternalError) {
   EXPECT_DOUBLE_EQ(pp::with_external_error(100.0, 1.0, 0.0), 1.0);
   EXPECT_NEAR(pp::with_external_error(100.0, 3.0, 0.04), 5.0, 1e-12);

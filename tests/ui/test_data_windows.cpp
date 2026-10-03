@@ -143,6 +143,8 @@ std::unique_ptr<pp::MemorySource> make_steps() {
     iso("Ar37", 0.1, 0.005);
     iso("Ar36", ar36[i], 0.003);
     a->context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
+    a->context.production = reduction::ProductionRatios{};  // no correction
+    a->context.chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
     src->add(a);
   }
   return src;

@@ -167,7 +167,17 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
     return out;
   }
 
-  if (a.context.flux) {
+  // An unknown was irradiated: without its production ratios every
+  // interference correction is zero, without its chronology Ar37 and Ar39 are
+  // not decay corrected. Its ratios stand, but it gets no J and so no age, and
+  // reduction_error says why. Airs, blanks and cocktails need neither.
+  std::string missing;
+  if (a.analysis_type == "unknown") {
+    if (!a.context.production) missing = "no production ratios";
+    if (a.context.chronology.empty()) missing += (missing.empty() ? "" : ", ") + std::string("no chronology");
+  }
+
+  if (a.context.flux && missing.empty()) {
     in.j = r::make_j(*a.context.flux);
     in.position_jerr = a.context.flux->position_jerr;
     in.lambda_k_total = a.context.flux->lambda_k_total;
@@ -180,6 +190,7 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
     return out;
   }
   out->arar = std::move(*result);
+  if (!missing.empty()) out->reduction_error = "no age: " + missing;
   // Decay and interference stages for the isotopes that fed reduce().
   for (const auto iso : r::kArgonKeys) {
     if (!argon_signals[r::index(iso)]) continue;

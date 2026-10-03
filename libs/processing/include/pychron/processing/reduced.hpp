@@ -48,7 +48,10 @@ struct ReducedAnalysis {
   std::vector<IsotopeStages> isotopes;  // same order as analysis->isotopes
   // Present when the five argon isotopes reduced (missing ones enter as 0).
   std::optional<reduction::ArArResult> arar;
-  std::string reduction_error;  // why `arar` is absent, if it failed
+  // Why `arar` is absent, if it failed; or, with `arar` present, why it has no
+  // ages and must not feed group results (an unknown without production
+  // ratios or chronology).
+  std::string reduction_error;
   // What reduce() was given, for group ages (integrated, isochron) that run
   // the age equation again: the constants, J (the same variable the ages
   // used) and the flux's lambda_k_total override.
@@ -68,7 +71,9 @@ using ReducedPtr = std::shared_ptr<const ReducedAnalysis>;
 // blank or IC factor is unknown (Value::known() false), or a flux whose J
 // error or lambda_k_total error is NaN, gives no `arar` (and
 // no `j`), and reduction_error names what is missing; that isotope's stages
-// are NaN.
+// are NaN. An "unknown" without production ratios or without a chronology
+// reduces with neither interference nor decay correction for them, so it gets
+// `arar` without ages (and no `j`), and reduction_error names what is missing.
 ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settings);
 
 }  // namespace pychron::processing

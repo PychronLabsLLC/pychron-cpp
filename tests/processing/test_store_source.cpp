@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "pychron/processing/quantity.hpp"
+#include "pychron/processing/recall.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
 
@@ -823,6 +824,7 @@ TEST(StoreSourceMapping, IndexListsAndInterceptEdits) {
 StoreAnalysisParts argon_parts() {
   StoreAnalysisParts parts;
   parts.detail.row.summary.analysis_type = "unknown";
+  parts.detail.row.summary.timestamp = *ps::UtcTime::parse("2026-10-02T10:00:00Z");
   ps::Intercepts intercepts;
   for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"}) {
     ps::InterceptRow row;
@@ -854,6 +856,13 @@ StoreAnalysisParts argon_parts() {
 template <class Rows>
 auto& first_row(StoreAnalysisParts& parts, ps::Kind kind) {
   return std::get<Rows>(parts.heads.at(kind)).front();
+}
+
+// The production and chronology an irradiated unknown reduces with.
+ps::ProductionValue production_ref() { return ps::ProductionValue{"Triga", std::nullopt, {{"K4039", 0.0008, 5e-5}}}; }
+ps::ChronologyValue chronology_ref() {
+  return ps::ChronologyValue{
+      {{0, 1.0, *ps::UtcTime::parse("2026-01-01T00:00:00Z"), *ps::UtcTime::parse("2026-01-01T10:00:00Z")}}};
 }
 
 ReducedPtr reduce_parts(const StoreAnalysisParts& parts) {
@@ -1035,7 +1044,7 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
   };
   {
     auto parts = argon_parts();
-    parts.refs = {flux()};
+    parts.refs = {flux(), production_ref(), chronology_ref()};
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
@@ -1089,7 +1098,7 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     auto f = flux();
     f.position_jerr.reset();
     auto parts = argon_parts();
-    parts.refs = {f};
+    parts.refs = {f, production_ref(), chronology_ref()};
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->context.flux->position_jerr, 0.0);
@@ -1119,6 +1128,85 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->context.flux->lambda_k_total);
     EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+  }
+}
+
+// An irradiated unknown whose production or chronology is missing (removed in
+// the reference-data history) is not given an age from zero interference
+// corrections or no decay correction: its ratios stand, it has no J and no
+// age, and reduction_error names what is missing.
+TEST(StoreSourceMapping, UnknownWithoutProductionOrChronologyHasNoAge) {
+  ps::FluxValue flux;
+  flux.j = 0.001;
+  flux.j_err = 1e-6;
+  {
+    auto parts = argon_parts();
+    parts.refs = {flux, production_ref(), chronology_ref()};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(reduced->arar->ages);
+    EXPECT_TRUE(reduced->j);
+    EXPECT_EQ(reduced->reduction_error, "");
+    EXPECT_NE(reduced->arar->decay.df39, 1.0);
+  }
+
+  struct Case {
+    const char* what;
+    std::vector<ps::RefPayload> refs;
+    const char* error;
+  };
+  const Case cases[] = {
+      {"no production", {flux, chronology_ref()}, "no age: no production ratios"},
+      {"no chronology", {flux, production_ref()}, "no age: no chronology"},
+      {"neither", {flux}, "no age: no production ratios, no chronology"},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.what);
+    auto parts = argon_parts();
+    parts.refs = c.refs;
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    ASSERT_TRUE(reduced->analysis->context.flux);
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_FALSE(reduced->arar->ages);
+    EXPECT_FALSE(reduced->j);
+    EXPECT_EQ(reduced->reduction_error, c.error);
+    EXPECT_TRUE(reduced->arar->f.f);
+    EXPECT_FALSE(Quantity::parse("age")->eval(*reduced));
+
+    // Recall says why there is no age.
+    const auto recall = make_recall_model(*reduced);
+    EXPECT_EQ(recall.reduction_note, c.error);
+  }
+
+  // A stored number the source does not have still wins: nothing reduces.
+  {
+    auto parts = argon_parts();
+    first_row<ps::Intercepts>(parts, ps::Kind::Intercepts).error.reset();
+    parts.refs = {flux};
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->arar);
+    EXPECT_NE(reduced->reduction_error.find("not reducible"), std::string::npos) << reduced->reduction_error;
+  }
+}
+
+// Airs, blanks and cocktails are not irradiated: no flux, production or
+// chronology is no reduction error.
+TEST(StoreSourceMapping, UnirradiatedTypesNeedNoProductionOrChronology) {
+  for (const char* type : {"air", "cocktail", "blank_unknown", "blank_air", "blank_cocktail"}) {
+    SCOPED_TRACE(type);
+    auto parts = argon_parts();
+    parts.detail.row.summary.analysis_type = type;
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->context.flux);
+    EXPECT_FALSE(reduced->analysis->context.production);
+    EXPECT_TRUE(reduced->analysis->context.chronology.empty());
+    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_EQ(reduced->reduction_error, "");
+    EXPECT_EQ(reduced->arar->decay.df39, 1.0);
   }
 }
 
