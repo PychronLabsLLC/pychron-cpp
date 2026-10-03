@@ -978,6 +978,35 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->ic_reviewed);
     EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
   }
+  // Unless the importer noted that its value or error was not finite: then
+  // the factor is unknown.
+  for (const char* extra : {R"({"nonfinite": {"/value": "NaN", "/error": "Infinity"}})",
+                            R"({"note": "x", "nonfinite": {"/value": "NaN"}})",
+                            R"({"nonfinite": {"/error": "NaN"}})"}) {
+    SCOPED_TRACE(extra);
+    auto parts = argon_parts();
+    auto& ic = first_row<ps::IcFactors>(parts, ps::Kind::IcFactors);
+    ic.value.reset();
+    ic.error.reset();
+    ic.extra_json = extra;
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->ic_factor.known());
+    EXPECT_FALSE(reduced->arar);
+    EXPECT_NE(reduced->reduction_error.find("Ar40 IC factor value"), std::string::npos) << reduced->reduction_error;
+  }
+  // A note about some other field leaves it a stub.
+  {
+    auto parts = argon_parts();
+    auto& ic = first_row<ps::IcFactors>(parts, ps::Kind::IcFactors);
+    ic.value.reset();
+    ic.error.reset();
+    ic.extra_json = R"({"nonfinite": {"/standard_ratio": "NaN"}, "value": "/value"})";
+    const auto reduced = reduce_parts(parts);
+    ASSERT_TRUE(reduced);
+    EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
+    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+  }
   // An isotope reduce() never sees does not stop it.
   {
     auto parts = argon_parts();
@@ -1114,6 +1143,20 @@ TEST_F(StoreSourceTest, NullInterceptLoadsAsUnknownAndDoesNotReduce) {
   const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
   EXPECT_FALSE(reduced->arar);
   EXPECT_NE(reduced->reduction_error.find("Ar40 intercept value"), std::string::npos) << reduced->reduction_error;
+}
+
+TEST(StoreSourceMapping, NonfinitePointers) {
+  using V = std::vector<std::string>;
+  EXPECT_EQ(nonfinite_pointers(R"({"nonfinite": {"/value": "NaN", "/error": "Infinity"}})"), (V{"/value", "/error"}));
+  EXPECT_EQ(nonfinite_pointers(R"({"a": [1, {"nonfinite": {"/x": "NaN"}}], "s": "}\"{", "n": -1.5e3, "b": true,
+                                  "nonfinite" : { "/value" : "-Infinity" } , "z": null})"),
+            (V{"/value"}));
+  EXPECT_TRUE(nonfinite_pointers(R"({"nested": {"nonfinite": {"/value": "NaN"}}})").empty());  // top level only
+  EXPECT_TRUE(nonfinite_pointers(R"({"nonfinite": "/value"})").empty());
+  EXPECT_TRUE(nonfinite_pointers(R"({"nonfinite": {}})").empty());
+  EXPECT_TRUE(nonfinite_pointers("{}").empty());
+  EXPECT_TRUE(nonfinite_pointers("").empty());
+  EXPECT_TRUE(nonfinite_pointers(R"({"nonfinite": {"/value": "NaN")").empty());  // cut short
 }
 
 TEST(StoreSourceMapping, FlatJsonNumbers) {

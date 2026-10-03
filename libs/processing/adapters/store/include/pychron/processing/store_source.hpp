@@ -111,4 +111,9 @@ std::string index_list_json(const std::vector<std::size_t>& indices);
 // skipped. Malformed text yields what was read before the error.
 std::map<std::string, double> flat_json_numbers(std::string_view json);
 
+// The keys of the "nonfinite" member of a row's extra_json: the JSON pointers
+// ("/value", "/error") of the numbers the legacy importer read as NaN or
+// Infinity and stored as NULL. Empty without such a member or on malformed text.
+std::vector<std::string> nonfinite_pointers(std::string_view extra_json);
+
 }  // namespace pychron::processing

@@ -62,6 +62,14 @@ Value value_of(std::optional<double> value, std::optional<double> error, const p
   return v;
 }
 
+// The importer noted that the row's value or error was not a finite number.
+bool was_nonfinite(const std::optional<std::string>& extra_json) {
+  if (!extra_json) return false;
+  for (const auto& pointer : nonfinite_pointers(*extra_json))
+    if (pointer == "/value" || pointer == "/error") return true;
+  return false;
+}
+
 template <class T>
 const T* head_payload(const std::map<ps::Kind, ps::RevisionPayload>& heads, ps::Kind kind) {
   auto it = heads.find(kind);
@@ -155,6 +163,85 @@ std::map<std::string, double> flat_json_numbers(std::string_view s) {
     }
     return out;
   }
+}
+
+namespace {
+
+// Just enough JSON to walk an object's members.
+struct JsonScan {
+  std::string_view s;
+  std::size_t i = 0;
+
+  void ws() {
+    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+  }
+  bool eat(char c) {
+    ws();
+    if (i >= s.size() || s[i] != c) return false;
+    ++i;
+    return true;
+  }
+  bool string(std::string* into) {  // at the opening quote
+    if (i >= s.size() || s[i] != '"') return false;
+    for (++i; i < s.size(); ++i) {
+      if (s[i] == '"') {
+        ++i;
+        return true;
+      }
+      if (s[i] == '\\' && ++i >= s.size()) return false;
+      if (into) into->push_back(s[i]);
+    }
+    return false;
+  }
+  bool skip_value() {
+    ws();
+    if (i >= s.size()) return false;
+    if (s[i] == '"') return string(nullptr);
+    if (s[i] != '{' && s[i] != '[') {  // number, true, false, null
+      while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']') ++i;
+      return true;
+    }
+    for (int depth = 0; i < s.size();) {
+      if (s[i] == '"') {
+        if (!string(nullptr)) return false;
+        continue;
+      }
+      if (s[i] == '{' || s[i] == '[') ++depth;
+      if (s[i] == '}' || s[i] == ']') --depth;
+      ++i;
+      if (depth == 0) return true;
+    }
+    return false;
+  }
+  // Calls member(key) at each value of the object at the cursor; member
+  // consumes the value. False on malformed text.
+  template <class F>
+  bool object(F member) {
+    if (!eat('{')) return false;
+    if (eat('}')) return true;
+    do {
+      std::string key;
+      ws();
+      if (!string(&key) || !eat(':') || !member(key)) return false;
+    } while (eat(','));
+    return eat('}');
+  }
+};
+
+}  // namespace
+
+std::vector<std::string> nonfinite_pointers(std::string_view extra_json) {
+  std::vector<std::string> out;
+  JsonScan scan{extra_json};
+  const bool ok = scan.object([&](const std::string& key) {
+    if (key != "nonfinite") return scan.skip_value();
+    return scan.object([&](const std::string& pointer) {
+      out.push_back(pointer);
+      return scan.skip_value();
+    });
+  });
+  if (!ok) out.clear();
+  return out;
 }
 
 std::string redact_password(std::string url) {
@@ -318,12 +405,13 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
             iso.blank_reviewed = b.reviewed;
             if (b.isotope == iso.key) break;
           }
-      // No row for the detector, or a stub row with neither a value nor an
-      // error: no correction (1). A row with only one of the two is an unknown
-      // factor, not 1.
+      // No row for the detector, or a stub row that never held a value or an
+      // error: no correction (1). A row with only one of the two, or whose
+      // legacy value or error was NaN (stored as NULL), is an unknown factor.
       if (ics)
         for (const auto& ic : *ics)
-          if (ic.detector == iso.detector && (ic.value || ic.error || (ic.manual.use_value && ic.manual.value))) {
+          if (ic.detector == iso.detector &&
+              (ic.value || ic.error || (ic.manual.use_value && ic.manual.value) || was_nonfinite(ic.extra_json))) {
             iso.ic_factor = value_of(ic.value, ic.error, ic.manual);
             iso.ic_reviewed = ic.reviewed;
           }
