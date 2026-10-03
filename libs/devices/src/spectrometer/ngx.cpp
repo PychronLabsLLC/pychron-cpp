@@ -30,6 +30,8 @@ constexpr Range kNominalRange{-1e6, 1e6};
 // How long past its integration time an armed acquisition may go without
 // its completing event before next() gives up and sends StopAcq.
 constexpr auto kArmGrace = std::chrono::seconds(5);
+// How long trigger() waits for an integration ended elsewhere to be stopped.
+constexpr auto kStopWait = std::chrono::seconds(5);
 
 // NGX parameter -> canonical parameter, where one exists; the rest are Custom
 // under pychron's name (YFocus, ...). TrapCurrent and EmissionCurrent are only
@@ -214,10 +216,18 @@ Result<void> NgxSpectrometer::connect() {
 }
 
 void NgxSpectrometer::abort_locked(const std::string& why) {
-  if (state_ == State::Idle) return;
-  state_ = State::Idle;
+  if (state_ == State::Idle || state_ == State::Stopping) return;
+  state_ = State::Stopping;
   ++stats_.aborted;
   if (!why.empty()) ready_.push_back(fail(ErrorKind::Cancelled, why));
+  acq_cv_.notify_all();
+}
+
+void NgxSpectrometer::stopped() {
+  {
+    std::lock_guard lock(acq_mutex_);
+    if (state_ == State::Stopping) state_ = State::Idle;
+  }
   acq_cv_.notify_all();
 }
 
@@ -265,11 +275,13 @@ Result<void> NgxSpectrometer::configure(Duration integration) {
     std::lock_guard lock(acq_mutex_);
     if (snapped == seconds_) return {};
     seconds_ = snapped;
-    was_armed = state_ != State::Idle;
+    was_armed = state_ == State::Arming || state_ == State::Armed;
     abort_locked(was_armed ? "integration time changed" : "");
   }
-  if (was_armed) return observe(stop_acq());
-  return {};
+  if (!was_armed) return {};
+  auto sent = stop_acq();
+  stopped();
+  return observe(sent);
 }
 
 Result<void> NgxSpectrometer::start() {
@@ -301,8 +313,11 @@ Result<void> NgxSpectrometer::stop() {
 Result<void> NgxSpectrometer::trigger() {
   int seconds = 0;
   {
-    std::lock_guard lock(acq_mutex_);
+    std::unique_lock lock(acq_mutex_);
+    // An integration ended here is still being stopped: StartAcq now would be E43.
+    acq_cv_.wait_for(lock, kStopWait, [&] { return state_ != State::Stopping; });
     if (!running_) return fail(ErrorKind::Config, "acquirer not started");
+    if (state_ == State::Stopping) return fail(ErrorKind::Timeout, "the previous integration is still being stopped");
     if (state_ != State::Idle) return {};  // never a second StartAcq (E43)
     state_ = State::Arming;
     acq_count_ = 0;
@@ -335,10 +350,11 @@ Result<std::optional<Frame>> NgxSpectrometer::next(Duration timeout) {
   while (ready_.empty()) {
     if (!running_) return std::optional<Frame>{};
     if (state_ == State::Armed && clock_.now() > armed_at_ + std::chrono::seconds(seconds_) + kArmGrace) {
-      state_ = State::Idle;
+      state_ = State::Stopping;
       ++stats_.aborted;
       lock.unlock();
       (void)stop_acq();
+      stopped();
       return observe(Next(fail(ErrorKind::Timeout, "NGX integration did not complete (no " +
                                                        std::string(options_.completion == NgxOptions::Completion::AcqB
                                                                        ? "ACQ.B"
@@ -366,12 +382,14 @@ Result<void> NgxSpectrometer::set(double mass) {
   std::optional<double> previous;
   {
     std::lock_guard lock(acq_mutex_);
-    was_armed = state_ != State::Idle;
+    was_armed = state_ == State::Arming || state_ == State::Armed;
     abort_locked("aborted by magnet move");
     previous = mass_;
   }
   if (was_armed) {
-    if (auto s = stop_acq(); !s) return observe(s);
+    auto s = stop_acq();
+    stopped();
+    if (!s) return observe(s);
   }
   const bool deflect = options_.deflect_threshold > 0 && previous && std::abs(mass - *previous) > options_.deflect_threshold;
   auto cmd = body(ngx::set_mass(mass, options_.settle_ms, deflect, ""));

@@ -152,7 +152,7 @@ TEST(ConfigLoader, InvalidEnumValues) {
       "[transports.s]\nkind = \"serial\"\nport = \"COM4\"\nparity = \"mark\"\n";
   auto rep = load_report_from_string(text, "f.toml");
   EXPECT_TRUE(has(rep.diagnostics,
-                  "f.toml:4:transports.t.kind: invalid value 'usb' (expected serial | tcp | modbus_rtu | modbus_tcp | sim)"));
+                  "f.toml:4:transports.t.kind: invalid value 'usb' (expected serial | tcp | modbus_rtu | modbus_tcp | sim | link)"));
   EXPECT_TRUE(has(rep.diagnostics, "f.toml:8:transports.s.parity: invalid value 'mark' (expected none | even | odd)"));
 }
 

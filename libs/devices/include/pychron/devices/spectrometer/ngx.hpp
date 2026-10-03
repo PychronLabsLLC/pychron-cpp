@@ -95,13 +95,17 @@ class NgxSpectrometer final : public Device,
   AcqStats acq_stats() const;
 
  private:
-  enum class State { Idle, Arming, Armed };
+  // Stopping: an integration was ended here and its StopAcq is not yet
+  // answered; trigger() waits it out (a StartAcq before it would be E43).
+  enum class State { Idle, Arming, Armed, Stopping };
   Result<std::shared_ptr<NgxLink>> link();
   Result<std::string> ask(const std::string& command);
   void on_event(const codec::ngx::AcqFrame& frame, TimePoint at, std::uint64_t session);
   // Ends the current integration (caller holds acq_mutex_); `why` is queued
   // for the waiting next() when non-empty.
   void abort_locked(const std::string& why);
+  // The StopAcq after abort_locked() has been answered (or failed).
+  void stopped();
   Result<void> stop_acq();
 
   NgxLinkHandle link_;

@@ -447,7 +447,9 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
   });
   int frames = 0, cancelled = 0;  // a move aborts the integration it lands in
   for (int i = 0; i < 30; ++i) {
-    ASSERT_TRUE(s->trigger());
+    auto armed = s->trigger();
+    EXPECT_TRUE(armed) << (armed ? "" : armed.error().what);
+    if (!armed) break;  // the threads below still get joined
     auto f = s->next(2s);
     if (f && *f) ++frames;
     else if (!f && f.error().kind == ErrorKind::Cancelled) ++cancelled;
