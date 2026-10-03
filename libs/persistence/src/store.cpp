@@ -323,6 +323,28 @@ class TinyStore final : public IStore {
     return insert_catalog_row(tx, client, "interpreted_age", *spec.uuid, std::move(row), detail);
   }
 
+  Result<std::optional<Uuid>> find_identifier(const std::string& identifier) override {
+    auto row = db_->select_one(sql::kIdentifierByText, {qv(identifier)});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<Uuid>{};
+    return std::optional<Uuid>{to_uuid((*row)->value("uuid"))};
+  }
+
+  Result<std::optional<Uuid>> find_analysis(const std::string& identifier, int aliquot, int increment) override {
+    auto row = db_->select_one(sql::kAnalysisByIdentity, {qv(identifier), aliquot, increment});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<Uuid>{};
+    return std::optional<Uuid>{to_uuid((*row)->value("uuid"))};
+  }
+
+  Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
+                                                   int position) override {
+    auto row = db_->select_one(sql::kIdentifierAtPosition, {qv(irradiation), qv(level), position});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<std::string>{};
+    return std::optional<std::string>{to_std((*row)->value("identifier"))};
+  }
+
   Result<Uuid> add_repository(Uuid client, const std::string& name) override {
     Row row;
     row["name"] = qv(name);

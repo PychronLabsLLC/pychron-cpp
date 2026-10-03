@@ -427,6 +427,41 @@ TEST_P(ImportStoreTest, ImportedIdentityRevisionRenumbersTheAnalysis) {
   EXPECT_EQ((*row)->value("aliquot").toInt(), 4);
 }
 
+TEST_P(ImportStoreTest, LookupsByNaturalKeyCreateNothing) {
+  const auto seq = *store_->latest_change_seq();
+  // seed_lab: 66573 sits at NM-300/A/1, 66574 nowhere; SetUp ingested 66573-01.
+  auto identifier = store_->find_identifier("66573");
+  ASSERT_TRUE(identifier) << to_string(identifier.error());
+  EXPECT_EQ(*identifier, std::optional<Uuid>{lab_.identifier});
+  EXPECT_FALSE(store_->find_identifier("99999")->has_value());
+
+  auto analysis = store_->find_analysis("66573", 1, -1);
+  ASSERT_TRUE(analysis) << to_string(analysis.error());
+  EXPECT_EQ(*analysis, std::optional<Uuid>{analysis_});
+  EXPECT_FALSE(store_->find_analysis("66573", 1, 0)->has_value());   // another step
+  EXPECT_FALSE(store_->find_analysis("66573", 2, -1)->has_value());  // another aliquot
+  EXPECT_FALSE(store_->find_analysis("66574", 1, -1)->has_value());  // another identifier
+  EXPECT_FALSE(store_->find_analysis("99999", 1, -1)->has_value());
+
+  auto at = store_->identifier_at("NM-300", "A", 1);
+  ASSERT_TRUE(at) << to_string(at.error());
+  EXPECT_EQ(*at, std::optional<std::string>{"66573"});
+  EXPECT_FALSE(store_->identifier_at("NM-300", "A", 2)->has_value());
+  EXPECT_FALSE(store_->identifier_at("NM-300", "B", 1)->has_value());
+  EXPECT_FALSE(store_->identifier_at("NM-999", "A", 1)->has_value());
+  EXPECT_EQ(*store_->latest_change_seq(), seq);
+  EXPECT_FALSE(store_->find_identifier("99999")->has_value());  // asking did not create it
+
+  // The run identity is the current one: after a renumber the old one is free.
+  IdentityValue identity{lab_.identifier2, 4, -1, "provisional_renumber"};
+  auto uow = batch();
+  ASSERT_TRUE(uow->add_changeset(
+      changeset(Uuid::v7(), {ImportedRevision{Uuid::v7(), analysis_, Kind::Identity, identity}})));
+  ASSERT_TRUE(uow->commit());
+  EXPECT_FALSE(store_->find_analysis("66573", 1, -1)->has_value());
+  EXPECT_EQ(*store_->find_analysis("66574", 4, -1), std::optional<Uuid>{analysis_});
+}
+
 TEST_P(ImportStoreTest, RejectsWhatAnImportCannotWrite) {
   auto uow = batch();
   auto collection = changeset(Uuid::v7(), {});

@@ -330,6 +330,21 @@ class BatchWriter::Impl final : public IImportState {
                       subject);
   }
 
+  Result<bool> imported(std::string_view commit, std::string_view path) override {
+    if (!source_) return fail(ErrorKind::Config, "import state: no source is open");
+    return store_.has_provenance(*source_, commit, path);
+  }
+
+  Result<std::optional<Uuid>> analysis_with_runid(const std::string& identifier, int aliquot,
+                                                  int increment) override {
+    return store_.find_analysis(identifier, aliquot, increment);
+  }
+
+  Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
+                                                   int position) override {
+    return store_.identifier_at(irradiation, level, position);
+  }
+
   // ------------------------------------------------------------ references to analyses
 
   // Whether an analysis another row points at can be pointed at. What is
@@ -662,9 +677,14 @@ class BatchWriter::Impl final : public IImportState {
           return r;
         continue;
       }
+      P::RevisionPayload payload = revision.payload;
+      if (auto* identity = std::get_if<P::IdentityValue>(&payload)) {
+        auto named = name_identity(revision, **subject, *identity, staged, stats);
+        if (!named) return fail(named.error());
+        if (!*named) continue;
+      }
       if (auto r = supersede(revision.key, staged); !r) return r;
       const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
-      P::RevisionPayload payload = revision.payload;
       std::vector<Uuid> unresolved;
       if (auto r = drop_unresolved(payload, unresolved); !r) return r;
       JsonMembers notes;
@@ -676,12 +696,48 @@ class BatchWriter::Impl final : public IImportState {
       staged.provenance.push_back(provenance("revision", id, revision.key, item.who, std::move(detail)));
       ++stats.revisions;
     }
-    // A changeset none of whose revisions could be written is not written.
-    if (changeset.revisions.empty() && !item.revisions.empty()) return {};
-    staged.provenance.push_back(provenance("changeset", changeset.uuid, {item.commit, "", ""}, item.who));
+    // A changeset none of whose revisions could be written is not written,
+    // unless it has something of its own to keep.
+    const bool has_detail = item.detail_json.find_first_not_of("{} \t\r\n") != std::string::npos;
+    if (changeset.revisions.empty() && !item.revisions.empty() && !has_detail) return {};
+    staged.provenance.push_back(provenance("changeset", changeset.uuid, {item.commit, "", ""}, item.who,
+                                           has_detail ? std::optional<std::string>{item.detail_json} : std::nullopt));
     staged.changesets.push_back(std::move(changeset));
     ++stats.changesets;
     return {};
+  }
+
+  // An Identity revision: resolves the identifier it names. false: the
+  // revision cannot be written and a conflict was staged instead.
+  Result<bool> name_identity(const RevisionItem& revision, Uuid analysis, P::IdentityValue& identity, Staged& staged,
+                             RunStats& stats) {
+    auto identifier = store_.find_identifier(revision.identifier);
+    if (!identifier) return fail(identifier.error());
+    if (!*identifier) {
+      if (auto r = stage_unknown_analysis(revision.key, analysis, "unknown identifier '" + revision.identifier + "'",
+                                          staged, stats);
+          !r)
+        return fail(r.error());
+      return false;
+    }
+    auto holder = store_.find_analysis(revision.identifier, identity.aliquot, identity.increment);
+    if (!holder) return fail(holder.error());
+    if (*holder && **holder != analysis) {
+      const std::string runid = P::make_runid(revision.identifier, identity.aliquot, identity.increment);
+      if (auto r = stage_conflict({conflict_id(url_, revision.key.commit, revision.key.path), revision.key.path,
+                                   analysis, P::ConflictKind::IdentityClash, std::nullopt,
+                                   sha256(std::string_view{revision.key.blob_sha}),
+                                   json_object({{"reason", json_string("run id " + runid +
+                                                                       " belongs to another analysis")},
+                                                {"analysis", json_string((*holder)->str())}}),
+                                   kPending},
+                                  staged, stats);
+          !r)
+        return fail(r.error());
+      return false;
+    }
+    identity.identifier = **identifier;
+    return true;
   }
 
   // Group and bookmark are ensured by ids derived from the tag, so a run that

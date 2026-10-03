@@ -201,6 +201,12 @@ struct RevisionItem {
   persistence::Kind kind = persistence::Kind::Intercepts;
   persistence::RevisionPayload payload;
   std::string detail_json = "{}";  // a JSON object, kept in the revision's provenance row when not empty
+  // An Identity revision names its identifier here, as everything in a batch
+  // is named; the writer sets IdentityValue::identifier from it. An
+  // identifier that is not in the store makes the revision an
+  // unknown_analysis conflict (retried by a replay); a run identity another
+  // analysis has makes it an identity_clash conflict.
+  std::string identifier = {};
 };
 
 struct ChangesetItem {
@@ -208,7 +214,8 @@ struct ChangesetItem {
   persistence::ChangesetKind kind = persistence::ChangesetKind::Import;  // Import or Reference
   GitWho who;
   std::string message;
-  std::vector<RevisionItem> revisions;
+  std::vector<RevisionItem> revisions;  // may be empty: a commit recorded for its detail alone
+  std::string detail_json = "{}";       // a JSON object, kept in the changeset's provenance row when not empty
 };
 
 struct ConflictItem {

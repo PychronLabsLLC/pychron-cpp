@@ -104,6 +104,13 @@ inline const QString kClientByHost = QStringLiteral("SELECT uuid FROM client WHE
 inline const QString kUserByName = QStringLiteral("SELECT uuid FROM app_user WHERE name = ?");
 inline const QString kLoadByName = QStringLiteral("SELECT uuid FROM load WHERE name = ?");
 inline const QString kIdentifierByText = QStringLiteral("SELECT uuid FROM identifier WHERE identifier = ?");
+inline const QString kAnalysisByIdentity = QStringLiteral(
+    "SELECT a.uuid FROM analysis a JOIN identifier i ON i.uuid = a.identifier_uuid "
+    "WHERE i.identifier = ? AND a.aliquot = ? AND a.increment = ?");
+inline const QString kIdentifierAtPosition = QStringLiteral(
+    "SELECT i.identifier FROM identifier i JOIN irradiation_position p ON p.uuid = i.position_uuid "
+    "JOIN level l ON l.uuid = p.level_uuid JOIN irradiation r ON r.uuid = l.irradiation_uuid "
+    "WHERE r.name = ? AND l.name = ? AND p.position = ?");
 inline const QString kMassSpecByName = QStringLiteral("SELECT uuid FROM mass_spectrometer WHERE name = ?");
 inline const QString kExtractDeviceByName = QStringLiteral("SELECT uuid FROM extract_device WHERE name = ?");
 

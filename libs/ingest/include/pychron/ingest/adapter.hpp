@@ -33,6 +33,18 @@ struct IImportState {
   // that first adds its record in this source.
   virtual Result<std::optional<AnalysisOrigin>> analysis_origin(persistence::Uuid analysis,
                                                                 std::string_view record_commit) = 0;
+  // Whether this source has recorded the file at (commit, path): a provenance
+  // row exists for it.
+  virtual Result<bool> imported(std::string_view commit, std::string_view path) = 0;
+  // The analysis that has this run identity now, from any source (increment
+  // -1: no step). An adapter asks before it sends an analysis: two analyses
+  // cannot share a run id.
+  virtual Result<std::optional<persistence::Uuid>> analysis_with_runid(const std::string& identifier, int aliquot,
+                                                                       int increment) = 0;
+  // The identifier that sits at an irradiation position; nullopt: none. A
+  // position holds one identifier.
+  virtual Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
+                                                           int position) = 0;
 };
 
 struct SourceDescription {

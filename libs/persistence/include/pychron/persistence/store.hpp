@@ -574,6 +574,16 @@ class IStore {
   // An interpreted age; its values are Kind::InterpretedAge revisions.
   virtual Result<Uuid> add_interpreted_age(Uuid client, const InterpretedAgeSpec& spec) = 0;
 
+  // Lookups by natural key. Unlike add_*, they create nothing: an importer
+  // asks them before it sends something that would collide.
+  virtual Result<std::optional<Uuid>> find_identifier(const std::string& identifier) = 0;
+  // The analysis that has this run identity now (increment -1: no step).
+  virtual Result<std::optional<Uuid>> find_analysis(const std::string& identifier, int aliquot, int increment) = 0;
+  // The identifier that sits at an irradiation position; nullopt when the
+  // position does not exist or holds none.
+  virtual Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
+                                                           int position) = 0;
+
   // Groups, repositories, bookmarks (sections 3.6, 5.5).
   virtual Result<Uuid> add_repository(Uuid client, const std::string& name) = 0;
   virtual Result<void> add_repository_members(const Actor& actor, Uuid repository,

@@ -1284,6 +1284,92 @@ TEST_P(BatchWriterTest, AnalysisOriginTellsWhoCollectedIt) {
   EXPECT_EQ((*there)->record_blob_sha, "rec-1");
 }
 
+TEST_P(BatchWriterTest, IdentityRevisionNamesItsIdentifier) {
+  // A and B are 66573-01 and 66573-02. Later commits renumber A to 66573-07
+  // (free), then to 66573-02 (B's), then to an identifier nobody knows.
+  ImportBatch b;
+  b.catalog = lab_catalog();
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  add_analysis(b, kB, 2, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  const auto renumber = [&](const std::string& commit, const std::string& identifier, int aliquot) {
+    ChangesetItem c;
+    c.commit = commit;
+    c.who = who(kAlice, "2016-03-05T00:00:00Z");
+    c.message = "<EDIT> RunID";
+    RevisionItem revision{{commit, record_path(1), "rec-" + commit}, kA, Kind::Identity,
+                          P::IdentityValue{Uuid{}, aliquot, -1, "legacy record rewritten"}};
+    revision.identifier = identifier;
+    c.revisions.push_back(std::move(revision));
+    return c;
+  };
+  b.changesets = {renumber("c2", "66573", 7), renumber("c3", "66573", 2), renumber("c4", "99999", 1)};
+  b.resume_token = "c4";
+  FakeAdapter adapter(description(), {b});
+  BatchWriter writer(store(), world_->client, config());
+  auto stats = writer.run(adapter, std::nullopt, {}, {});
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->revisions, 1);
+  EXPECT_EQ(stats->conflicts, 2);
+
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-07");
+  EXPECT_EQ((*store().load_analysis(kB))->summary.runid, "66573-02");
+  auto history = store().history(kA, Kind::Identity);
+  ASSERT_TRUE(history);
+  ASSERT_EQ(history->size(), 1u);
+  EXPECT_EQ(history->front().uuid, revision_id(kUrl, "c2", record_path(1)));
+  auto clash = store().import_conflict(conflict_id(kUrl, "c3", record_path(1)));
+  ASSERT_TRUE(clash && clash->has_value());
+  EXPECT_EQ((*clash)->kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ((*clash)->entity, std::optional<Uuid>{kA});
+  EXPECT_NE((*clash)->detail_json.find(kB.str()), std::string::npos);
+  auto unknown = store().import_conflict(conflict_id(kUrl, "c4", record_path(1)));
+  ASSERT_TRUE(unknown && unknown->has_value());
+  EXPECT_EQ((*unknown)->kind, P::ConflictKind::UnknownAnalysis);
+
+  // What an adapter asks before it sends an analysis.
+  EXPECT_EQ(*writer.state().analysis_with_runid("66573", 7, -1), std::optional<Uuid>{kA});
+  EXPECT_FALSE(writer.state().analysis_with_runid("66573", 1, -1)->has_value());
+  EXPECT_EQ(*writer.state().identifier_at("NM-300", "A", 1), std::optional<std::string>{"66573"});
+  EXPECT_FALSE(writer.state().identifier_at("NM-300", "A", 2)->has_value());
+
+  const auto seq = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+}
+
+TEST_P(BatchWriterTest, ChangesetWithoutRevisionsKeepsItsDetail) {
+  ImportBatch b = single_batch();
+  ChangesetItem sync;
+  sync.commit = "c3";
+  sync.who = who(kAlice, "2016-03-06T00:00:00Z");
+  sync.message = "<SYNC> Synced repository with database";
+  sync.detail_json = R"({"rewrites":[{"path":"665/73-01.json","blob":"rec-c3"}]})";
+  b.changesets.push_back(sync);
+  b.resume_token = "c3";
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->changesets, 2);
+  EXPECT_EQ(stats->conflicts, 0);
+
+  auto rows = store().provenance_for(changeset_id(kUrl, "c3"));
+  ASSERT_TRUE(rows);
+  ASSERT_EQ(rows->size(), 1u);
+  EXPECT_EQ(rows->front().entity_type, "changeset");
+  const std::string detail = rows->front().detail_json.value_or("");
+  EXPECT_NE(detail.find("rewrites"), std::string::npos) << detail;
+  EXPECT_NE(detail.find("rec-c3"), std::string::npos) << detail;
+  auto row = world_->db->select_one(QStringLiteral("SELECT message FROM changeset WHERE uuid = ?"),
+                                    {pd::qv(changeset_id(kUrl, "c3"))});
+  ASSERT_TRUE(row && *row);
+  // The refit's changeset has no detail of its own.
+  EXPECT_FALSE(store().provenance_for(changeset_id(kUrl, "c2"))->front().detail_json.has_value());
+
+  const auto seq = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+}
+
 TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {
   BatchWriter writer(store(), world_->client, config());
   EXPECT_FALSE(writer.state().head_blob_sha(SubjectRef{kA}, Kind::Intercepts));
