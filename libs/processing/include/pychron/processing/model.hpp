@@ -39,6 +39,7 @@ struct IsotopeData {
   std::vector<std::size_t> baseline_user_excluded;  // raw baseline indices left out, ascending
   bool include_baseline_error = false;
   std::string blank_source;  // fit name or reference run id
+  bool intercept_reviewed = false;  // the stored intercept was marked reviewed
   bool blank_reviewed = false;  // the stored blank was marked reviewed
   bool ic_reviewed = false;     // the stored IC factor of this detector was marked reviewed
 };

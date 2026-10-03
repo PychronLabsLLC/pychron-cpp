@@ -54,6 +54,7 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource {
   Result<SaveOutcome> save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
                                 const std::vector<EditedFit>& edits, const std::string& message) override;
   Result<SaveOutcome> save_reference_fits(const ReferenceFitSet& fits) override;
+  Result<SaveOutcome> save_isotope_fits(const IsotopeFitSet& fits) override;
   Result<SaveOutcome> restore_revision(const std::string& analysis, RevisionKind kind, const std::string& expected,
                                        const std::string& revision, const std::string& message) override;
 

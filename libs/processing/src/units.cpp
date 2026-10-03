@@ -42,6 +42,8 @@ std::string_view to_string(PortType t) noexcept {
       return "group_results";
     case PortType::ReferenceFits:
       return "reference_fits";
+    case PortType::IsotopeFits:
+      return "isotope_fits";
   }
   return "dataset";
 }
@@ -54,8 +56,10 @@ PortType port_type(const PortValue& v) noexcept {
       return PortType::Scene;
     case 2:
       return PortType::GroupResults;
-    default:
+    case 3:
       return PortType::ReferenceFits;
+    default:
+      return PortType::IsotopeFits;
   }
 }
 

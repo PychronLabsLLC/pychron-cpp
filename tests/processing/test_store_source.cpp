@@ -676,6 +676,46 @@ TEST(StoreSourceMapping, ReferenceFitRows) {
   EXPECT_FALSE(corrected[1].discrimination);
 }
 
+TEST_F(StoreSourceTest, BatchIsotopeRefitsSaveInOneChangeset) {
+  auto& src = source();
+  Dataset d;
+  for (const auto& id : {unknown_, air_})
+    d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(id.str()), {}), {}, {}});
+  Options o(isotope_evolution_fit_schema());
+  auto rows = o.rows("isotopes");
+  ASSERT_TRUE(rows[0].set("fit", std::string("average")));
+  ASSERT_TRUE(o.set_rows("isotopes", rows));
+  auto fig = build_isotope_evolution_fits(d, o, [&](const std::string& uuid) { return src.load_raw(uuid); });
+  ASSERT_TRUE(fig) << fig.error().what;
+  ASSERT_EQ(fig->fits.analyses.size(), 2u);  // only Ar40 has a raw signal
+  EXPECT_FALSE(fig->fits.warnings.empty());
+  auto saved = src.revisions()->save_isotope_fits(fig->fits);
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  ASSERT_TRUE(saved->saved) << saved->conflict;
+  ASSERT_EQ(saved->revisions.size(), 2u);
+  for (const auto& id : {unknown_, air_}) {
+    auto a = src.load(id.str());
+    ASSERT_TRUE(a);
+    EXPECT_NEAR((*a)->find_isotope("Ar40")->intercept.value, 102.0, 1e-9);  // average of the window 101..103
+    EXPECT_EQ((*a)->find_isotope("Ar40")->fit->kind, reduction::FitKind::Average);
+    EXPECT_TRUE((*a)->find_isotope("Ar40")->intercept_reviewed);
+    EXPECT_FALSE((*a)->find_isotope("Ar39")->intercept_reviewed);
+    EXPECT_EQ((*a)->heads.at("intercepts"), saved->revisions.at(id.str()));
+  }
+  auto uh = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
+  auto ah = src.revisions()->history(air_.str(), RevisionKind::Intercepts);
+  ASSERT_TRUE(uh && ah);
+  EXPECT_EQ((*uh)[0].seq, (*ah)[0].seq);
+  EXPECT_EQ((*uh)[0].message, "<ISOEVO> refit Ar40(average)");
+  // Saving the same refits again: their heads moved, nothing is written.
+  auto stale = src.revisions()->save_isotope_fits(fig->fits);
+  ASSERT_TRUE(stale);
+  EXPECT_FALSE(stale->saved);
+  EXPECT_EQ(stale->conflict.rfind("2 of 2 analyses changed first", 0), 0u) << stale->conflict;
+  EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Intercepts)->size(), 2u);
+  EXPECT_FALSE(src.revisions()->save_isotope_fits(IsotopeFitSet{}));
+}
+
 TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {
   auto& src = source();
   for (auto kind : kRevisionKinds) {

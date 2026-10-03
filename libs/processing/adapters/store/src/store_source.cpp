@@ -295,6 +295,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
       iso.intercept = value_of(ir.value, ir.error, ir.manual);
       iso.fit = fit_spec(ir.fit, ir.error_type, ir.filter_outliers_json);
       iso.n = ir.fn ? *ir.fn : ir.n.value_or(0);
+      iso.intercept_reviewed = ir.reviewed;
       if (ir.user_excluded_json) iso.user_excluded = parse_index_list(*ir.user_excluded_json);
       iso.include_baseline_error = ir.include_baseline_error.value_or(false);
       if (baselines)
@@ -753,6 +754,7 @@ void apply_fit(Row& row, const EditedFit& e) {
   row.filter_outliers_json = outlier_json(e.fit.outliers);
   row.user_excluded_json = index_list_json(e.user_excluded);
   row.manual = ps::ManualOverride{};
+  row.reviewed = true;  // a person chose this fit
 }
 
 }  // namespace
@@ -848,56 +850,123 @@ SaveOutcome outcome_of(const ps::CommitOutcome& committed, std::map<std::string,
 
 }  // namespace
 
+namespace {
+
+// The kinds the edits touch, each with the head it was loaded at.
+Result<std::map<ps::Kind, ps::Uuid>> fit_bases(const std::map<std::string, std::string>& heads,
+                                               const std::vector<EditedFit>& edits, const std::string& runid) {
+  std::map<ps::Kind, ps::Uuid> bases;
+  for (const auto& e : edits) {
+    if (e.kind != SeriesKind::Signal && e.kind != SeriesKind::Baseline)
+      return fail(ErrorKind::Config, "only signal and baseline fits can be saved");
+    const ps::Kind kind = e.kind == SeriesKind::Baseline ? ps::Kind::Baselines : ps::Kind::Intercepts;
+    const std::string name(ps::to_string(kind));
+    auto head = heads.find(name);
+    auto base = head == heads.end() ? std::nullopt : ps::Uuid::parse(head->second);
+    if (!base) return fail(ErrorKind::Config, runid + " was loaded without a " + name + " head");
+    bases[kind] = *base;
+  }
+  return bases;
+}
+
+// Stages one analysis's new intercepts / baselines revisions; returns the
+// revision ids by kind name.
+Result<std::map<std::string, std::string>> stage_fits(ps::IStore& s, ps::IUnitOfWork& uow, ps::Uuid id,
+                                                      const std::map<ps::Kind, ps::Uuid>& bases,
+                                                      const std::vector<EditedFit>& edits) {
+  std::map<std::string, std::string> staged;
+  for (const auto& [kind, base] : bases) {
+    auto payload = s.load_payload(base);
+    if (!payload) return fail(payload.error());
+    std::optional<ps::RevisionPayload> edited;
+    if (kind == ps::Kind::Intercepts) {
+      const auto* rows = *payload ? std::get_if<ps::Intercepts>(&**payload) : nullptr;
+      if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not an intercepts revision");
+      auto e = apply_intercept_edits(*rows, edits);
+      if (!e) return fail(e.error());
+      edited = ps::RevisionPayload{std::move(*e)};
+    } else {
+      const auto* rows = *payload ? std::get_if<ps::Baselines>(&**payload) : nullptr;
+      if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not a baselines revision");
+      auto e = apply_baseline_edits(*rows, edits);
+      if (!e) return fail(e.error());
+      edited = ps::RevisionPayload{std::move(*e)};
+    }
+    auto rev = uow.add_revision(id, kind, std::move(*edited), base);
+    if (!rev) return fail(rev.error());
+    staged[std::string(ps::to_string(kind))] = rev->str();
+  }
+  return staged;
+}
+
+}  // namespace
+
 Result<SaveOutcome> StoreSource::save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
                                            const std::vector<EditedFit>& edits, const std::string& message) {
   if (edits.empty()) return fail(ErrorKind::Config, "nothing to save");
   auto id = parse_uuid(analysis);
   if (!id) return fail(id.error());
-  // The kinds the edits touch, each with the head it was loaded at.
-  std::map<ps::Kind, ps::Uuid> bases;
-  for (const auto& e : edits) {
-    const ps::Kind kind = e.kind == SeriesKind::Baseline ? ps::Kind::Baselines : ps::Kind::Intercepts;
-    if (e.kind != SeriesKind::Signal && e.kind != SeriesKind::Baseline)
-      return fail(ErrorKind::Config, "only signal and baseline fits can be saved");
-    const std::string name(ps::to_string(kind));
-    auto head = heads.find(name);
-    auto base = head == heads.end() ? std::nullopt : ps::Uuid::parse(head->second);
-    if (!base) return fail(ErrorKind::Config, "the analysis was loaded without a " + name + " head");
-    bases[kind] = *base;
-  }
+  auto bases = fit_bases(heads, edits, "the analysis");
+  if (!bases) return fail(bases.error());
   Impl* impl = impl_.get();
-  auto outcome = impl->call<SaveOutcome>([=, &edits, &message](ps::IStore& s) -> Result<SaveOutcome> {
+  auto outcome = impl->call<SaveOutcome>([&, impl](ps::IStore& s) -> Result<SaveOutcome> {
+    auto actor = impl->actor_for(s);
+    if (!actor) return fail(actor.error());
+    auto uow = s.begin(*actor);
+    if (!uow) return fail(uow.error());
+    auto staged = stage_fits(s, **uow, *id, *bases, edits);
+    if (!staged) return fail(staged.error());
+    auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
+    if (!committed) return fail(committed.error());
+    return outcome_of(*committed, std::move(*staged));
+  });
+  if (outcome && outcome->saved) impl->forget(analysis);
+  return outcome;
+}
+
+Result<SaveOutcome> StoreSource::save_isotope_fits(const IsotopeFitSet& fits) {
+  if (fits.analyses.empty()) return fail(ErrorKind::Config, "nothing to save");
+  struct Item {
+    ps::Uuid id;
+    std::map<ps::Kind, ps::Uuid> bases;
+    std::vector<EditedFit> edits;
+    std::string uuid;
+  };
+  std::vector<Item> items;
+  for (const auto& a : fits.analyses) {
+    auto id = parse_uuid(a.uuid);
+    if (!id) return fail(id.error());
+    auto edits = a.fits();
+    auto bases = fit_bases(a.heads, edits, a.runid);
+    if (!bases) return fail(bases.error());
+    items.push_back({*id, std::move(*bases), std::move(edits), a.uuid});
+  }
+  const std::string message = fits.message();
+  Impl* impl = impl_.get();
+  auto outcome = impl->call<SaveOutcome>([&, impl](ps::IStore& s) -> Result<SaveOutcome> {
     auto actor = impl->actor_for(s);
     if (!actor) return fail(actor.error());
     auto uow = s.begin(*actor);
     if (!uow) return fail(uow.error());
     std::map<std::string, std::string> staged;
-    for (const auto& [kind, base] : bases) {
-      auto payload = s.load_payload(base);
-      if (!payload) return fail(payload.error());
-      std::optional<ps::RevisionPayload> edited;
-      if (kind == ps::Kind::Intercepts) {
-        const auto* rows = *payload ? std::get_if<ps::Intercepts>(&**payload) : nullptr;
-        if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not an intercepts revision");
-        auto e = apply_intercept_edits(*rows, edits);
-        if (!e) return fail(e.error());
-        edited = ps::RevisionPayload{std::move(*e)};
-      } else {
-        const auto* rows = *payload ? std::get_if<ps::Baselines>(&**payload) : nullptr;
-        if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not a baselines revision");
-        auto e = apply_baseline_edits(*rows, edits);
-        if (!e) return fail(e.error());
-        edited = ps::RevisionPayload{std::move(*e)};
-      }
-      auto rev = (*uow)->add_revision(*id, kind, std::move(*edited), base);
-      if (!rev) return fail(rev.error());
-      staged[std::string(ps::to_string(kind))] = rev->str();
+    for (const auto& item : items) {
+      auto revs = stage_fits(s, **uow, item.id, item.bases, item.edits);
+      if (!revs) return fail(revs.error());
+      staged[item.uuid] = revs->at("intercepts");
     }
     auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
     if (!committed) return fail(committed.error());
+    if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&*committed)) {
+      SaveOutcome out;
+      out.conflict = std::to_string(conflicts->size()) + " of " + std::to_string(items.size()) +
+                     " analyses changed first: " +
+                     (conflicts->empty() ? std::string("conflict") : describe_conflict(conflicts->front()));
+      return out;
+    }
     return outcome_of(*committed, std::move(staged));
   });
-  if (outcome && outcome->saved) impl->forget(analysis);
+  if (outcome && outcome->saved)
+    for (const auto& a : fits.analyses) impl->forget(a.uuid);
   return outcome;
 }
 

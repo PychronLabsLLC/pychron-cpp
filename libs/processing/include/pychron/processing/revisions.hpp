@@ -14,6 +14,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/processing/fit_edit.hpp"
+#include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/reference_fit.hpp"
 
 namespace pychron::processing {
@@ -97,6 +98,11 @@ class IRevisionSource {
   // isotopes or detectors are added; references recorded, reviewed set);
   // nothing is written if any of those heads moved. Message: fits.message().
   virtual Result<SaveOutcome> save_reference_fits(const ReferenceFitSet& fits) = 0;
+  // One changeset with a new intercepts revision for every analysis of
+  // `fits` (batch isotope-evolution refits), each on the head it was
+  // refitted at; nothing is written if any moved. Revisions by analysis
+  // uuid; message fits.message().
+  virtual Result<SaveOutcome> save_isotope_fits(const IsotopeFitSet& fits) = 0;
   // Moves the head of `kind` back to `revision` (an earlier revision of the
   // same analysis and kind) if `expected` is still the head. No revision is
   // written: the history keeps every revision, and the newer ones stay there

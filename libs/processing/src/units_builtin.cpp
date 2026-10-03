@@ -6,6 +6,7 @@
 #include <map>
 
 #include "pychron/processing/arar_figures.hpp"
+#include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/reference_fit.hpp"
 #include "pychron/processing/time_series.hpp"
@@ -450,6 +451,7 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(make_isochron_unit());
     r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
     r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
+    r.add(make_isotope_evolution_fit_unit());
     return r;
   }();
   return registry;
