@@ -9,6 +9,7 @@ if(NOT PYCHRON_PERSISTENCE_ENABLED)
 endif()
 
 add_library(pychron_dvc STATIC
+  src/commit_walk.cpp
   src/git_reader.cpp
   src/legacy_interpreted_age.cpp
   src/legacy_json.cpp
