@@ -7,13 +7,15 @@
 // Extraction, Spectrometer, History. Everything shown comes from processing::
 // RecallModel and make_evolution_scene.
 //
-// Fit editing (Evolutions, signals): change an isotope's fit, error type or
-// outlier filter, or click points to leave them out; the window refits and
-// recomputes everything as a pending edit. Save commits the edits as a new
-// intercepts revision when the source keeps revisions (the database), on top
-// of the head they were made on; if someone else saved first nothing is
-// written and the status says who. History lists the revisions of each kind
-// and shows one, or the differences between two.
+// Fit editing (Evolutions, signal and baseline panels): change an isotope's
+// or a detector baseline's fit, error type or outlier filter, or click points
+// to leave them out; the window refits and recomputes everything as a pending
+// edit. Save commits the edits as new intercepts and/or baselines revisions
+// in one changeset when the source keeps revisions (the database), on top of
+// the heads they were made on; if someone else saved first nothing is
+// written and the status says who. History lists the revisions of each kind,
+// shows one or the differences between two, and restores an older one as
+// the current revision.
 
 #include <map>
 
@@ -57,6 +59,9 @@ class RecallWindow : public QWidget {
   // in edit_status()).
   bool save_edits();
   void revert_edits();
+  // Makes the one selected History revision the current one; false (the
+  // reason in history_note()) when nothing was restored. `confirm` asks first.
+  bool restore_selected(bool confirm = false);
 
   // For tests.
   QTabWidget* tabs() const noexcept { return tabs_; }
@@ -70,7 +75,7 @@ class RecallWindow : public QWidget {
   const processing::RecallModel& model() const noexcept { return model_; }
   const processing::AnalysisPtr& shown() const noexcept { return shown_; }
   QGroupBox* fit_editor() const noexcept { return fit_box_; }
-  QComboBox* fit_isotope() const noexcept { return fit_isotope_; }
+  QComboBox* fit_isotope() const noexcept { return fit_isotope_; }  // isotopes, or detectors on baselines
   QComboBox* fit_kind() const noexcept { return fit_kind_; }
   QComboBox* fit_error() const noexcept { return fit_error_; }
   QCheckBox* fit_outliers() const noexcept { return fit_outliers_; }
@@ -82,6 +87,7 @@ class RecallWindow : public QWidget {
   QTableWidget* revision_list() const noexcept { return revisions_; }
   QTableWidget* revision_content() const noexcept { return revision_content_; }
   QLabel* history_note() const noexcept { return history_note_; }
+  QPushButton* restore_button() const noexcept { return restore_; }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -97,14 +103,17 @@ class RecallWindow : public QWidget {
   void update_edit_state();
   void fill_history();
   void show_revisions();
-  processing::FitEdit current_edit(const std::string& key) const;
+  void fill_fit_keys();
+  void update_restore_state();
+  processing::SeriesKind current_kind() const;
+  processing::FitEdit current_edit(processing::SeriesKind kind, const std::string& key) const;
 
   processing::IAnalysisSource& source_;
   QString uuid_;
   processing::AnalysisPtr analysis_;  // as loaded
   processing::AnalysisPtr shown_;     // with pending edits
-  std::map<std::string, processing::FitEdit> edits_;
-  std::vector<processing::EditedIsotope> edited_;
+  std::map<std::pair<processing::SeriesKind, std::string>, processing::FitEdit> edits_;
+  std::vector<processing::EditedFit> edited_;
   processing::RawData raw_;
   std::vector<processing::RevisionSummary> history_;
   bool history_stale_ = true;
@@ -122,6 +131,7 @@ class RecallWindow : public QWidget {
   QTableWidget* extraction_;
   QTableWidget* spectrometer_;
   QGroupBox* fit_box_;
+  QLabel* fit_key_label_;
   QComboBox* fit_isotope_;
   QComboBox* fit_kind_;
   QComboBox* fit_error_;
@@ -137,6 +147,7 @@ class RecallWindow : public QWidget {
   QTableWidget* revisions_;
   QTableWidget* revision_content_;
   QLabel* history_note_;
+  QPushButton* restore_;
 };
 
 }  // namespace pychron::ui

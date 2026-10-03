@@ -51,8 +51,10 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource {
 
   Result<std::vector<RevisionSummary>> history(const std::string& analysis, RevisionKind kind) override;
   Result<RevisionTable> revision_table(const std::string& revision) override;
-  Result<SaveOutcome> save_intercepts(const std::string& analysis, const std::string& expected,
-                                      const std::vector<EditedIsotope>& edits, const std::string& message) override;
+  Result<SaveOutcome> save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
+                                const std::vector<EditedFit>& edits, const std::string& message) override;
+  Result<SaveOutcome> restore_revision(const std::string& analysis, RevisionKind kind, const std::string& expected,
+                                       const std::string& revision, const std::string& message) override;
 
   struct Impl;
 
@@ -84,12 +86,13 @@ Result<RawSeries> series_from_blob(const persistence::SignalRefRow& ref, const p
 // A revision's payload as a table (History tab).
 RevisionTable revision_table_from(const persistence::RevisionPayload& payload);
 
-// The rows of an intercepts revision with refits applied: value, error, fit,
-// error type, n (raw points), fn (points used), outlier filter and user
-// exclusions; a manual override on an edited row is cleared. Fails when an
-// edit names an isotope the rows do not have.
-Result<persistence::Intercepts> apply_intercept_edits(persistence::Intercepts rows,
-                                                      const std::vector<EditedIsotope>& edits);
+// The rows of an intercepts (signal edits) or baselines (baseline edits)
+// revision with refits applied: value, error, fit, error type, n (raw
+// points), fn (points used), outlier filter and user exclusions; a manual
+// override on an edited row is cleared. Edits of the other kind are skipped.
+// Fails when an edit names an isotope or detector the rows do not have.
+Result<persistence::Intercepts> apply_intercept_edits(persistence::Intercepts rows, const std::vector<EditedFit>& edits);
+Result<persistence::Baselines> apply_baseline_edits(persistence::Baselines rows, const std::vector<EditedFit>& edits);
 
 // "[1, 5, 9]" <-> indices. Malformed text yields what was read before the error.
 std::vector<std::size_t> parse_index_list(std::string_view json);

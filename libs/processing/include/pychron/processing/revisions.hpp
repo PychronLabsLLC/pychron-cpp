@@ -6,6 +6,7 @@
 // A revision's content is shown as a table, so every kind diffs the same way.
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -68,11 +69,11 @@ struct RevisionDiff {
 
 RevisionDiff diff_revisions(const RevisionTable& before, const RevisionTable& after);
 
-// Saving is a compare-and-swap on the head the edits were made on: when
-// someone else moved it first, nothing is saved and `conflict` says who.
+// Saving is a compare-and-swap on the heads the edits were made on: when
+// someone else moved one first, nothing is saved and `conflict` says who.
 struct SaveOutcome {
   bool saved = false;
-  std::string revision;  // the new head when saved
+  std::map<std::string, std::string> revisions;  // the new head per kind ("intercepts", "baselines")
   std::string conflict;
 };
 
@@ -82,10 +83,19 @@ class IRevisionSource {
   // Revisions of one kind of an analysis, newest first.
   virtual Result<std::vector<RevisionSummary>> history(const std::string& analysis, RevisionKind kind) = 0;
   virtual Result<RevisionTable> revision_table(const std::string& revision) = 0;
-  // A new intercepts revision: the rows of `expected` with `edits` applied,
-  // committed only if `expected` is still the head.
-  virtual Result<SaveOutcome> save_intercepts(const std::string& analysis, const std::string& expected,
-                                              const std::vector<EditedIsotope>& edits, const std::string& message) = 0;
+  // One changeset with a new intercepts revision (signal edits) and/or a new
+  // baselines revision (baseline edits): the rows of the head in `heads`
+  // (Analysis::heads, as loaded) with the edits applied, committed only if
+  // every one of those heads is still current.
+  virtual Result<SaveOutcome> save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
+                                        const std::vector<EditedFit>& edits, const std::string& message) = 0;
+  // Moves the head of `kind` back to `revision` (an earlier revision of the
+  // same analysis and kind) if `expected` is still the head. No revision is
+  // written: the history keeps every revision, and the newer ones stay there
+  // to restore again.
+  virtual Result<SaveOutcome> restore_revision(const std::string& analysis, RevisionKind kind,
+                                               const std::string& expected, const std::string& revision,
+                                               const std::string& message) = 0;
 };
 
 }  // namespace pychron::processing

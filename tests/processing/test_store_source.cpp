@@ -390,10 +390,10 @@ TEST_F(StoreSourceTest, SavedFitEditsBecomeTheHeadAndShowInHistory) {
   ASSERT_TRUE(raw);
   reduction::FitSpec avg;
   avg.kind = reduction::FitKind::Average;
-  auto edits = apply_fit_edits(**loaded, *raw, {FitEdit{"Ar40", avg, {0}}});
+  auto edits = apply_fit_edits(**loaded, *raw, {FitEdit{SeriesKind::Signal, "Ar40", avg, {0}}});
   ASSERT_TRUE(edits) << edits.error().what;
-  const std::string message = describe_fit_edits(**loaded, edits->isotopes);
-  auto saved = src.revisions()->save_intercepts(unknown_.str(), base, edits->isotopes, message);
+  const std::string message = describe_fit_edits(**loaded, edits->fits);
+  auto saved = src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, edits->fits, message);
   ASSERT_TRUE(saved) << to_string(saved.error());
   ASSERT_TRUE(saved->saved) << saved->conflict;
 
@@ -408,14 +408,14 @@ TEST_F(StoreSourceTest, SavedFitEditsBecomeTheHeadAndShowInHistory) {
   EXPECT_EQ(ar40->fit->kind, reduction::FitKind::Average);
   EXPECT_EQ(ar40->user_excluded, (std::vector<std::size_t>{0}));
   EXPECT_EQ(ar40->n, 2);
-  EXPECT_EQ((*after)->heads.at("intercepts"), saved->revision);
+  EXPECT_EQ((*after)->heads.at("intercepts"), saved->revisions.at("intercepts"));
   EXPECT_EQ((*after)->find_isotope("Ar39")->intercept.value, 100.0);  // untouched rows stay
 
   auto history = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
   ASSERT_TRUE(history) << to_string(history.error());
   ASSERT_EQ(history->size(), 2u);
   const auto& newest = (*history)[0];
-  EXPECT_EQ(newest.id, saved->revision);
+  EXPECT_EQ(newest.id, saved->revisions.at("intercepts"));
   EXPECT_EQ(newest.parent, base);
   EXPECT_TRUE(newest.head);
   EXPECT_FALSE((*history)[1].head);
@@ -428,7 +428,7 @@ TEST_F(StoreSourceTest, SavedFitEditsBecomeTheHeadAndShowInHistory) {
   EXPECT_GT(newest.seq, (*history)[1].seq);
 
   auto before_table = src.revisions()->revision_table(base);
-  auto after_table = src.revisions()->revision_table(saved->revision);
+  auto after_table = src.revisions()->revision_table(saved->revisions.at("intercepts"));
   ASSERT_TRUE(before_table && after_table);
   const auto diff = diff_revisions(*before_table, *after_table);
   EXPECT_EQ(diff.changed_rows(), 1);
@@ -449,17 +449,112 @@ TEST_F(StoreSourceTest, SavedFitEditsBecomeTheHeadAndShowInHistory) {
   EXPECT_EQ(row("Ar36").state, DiffState::Same);
 
   // A second save on the old head loses the compare-and-swap.
-  auto stale = src.revisions()->save_intercepts(unknown_.str(), base, edits->isotopes, message);
+  auto stale = src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, edits->fits, message);
   ASSERT_TRUE(stale) << to_string(stale.error());
   EXPECT_FALSE(stale->saved);
   EXPECT_NE(stale->conflict.find("<ISOEVO>"), std::string::npos) << stale->conflict;
   EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Intercepts)->size(), 2u);
 
-  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), base, {}, message));
-  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), "nope", edits->isotopes, message));
-  EditedIsotope unknown_key = edits->isotopes[0];
+  EXPECT_FALSE(src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, {}, message));
+  EXPECT_FALSE(src.revisions()->save_fits(unknown_.str(), {{"intercepts", "nope"}}, edits->fits, message));
+  EditedFit unknown_key = edits->fits[0];
   unknown_key.key = "Ar99";
-  EXPECT_FALSE(src.revisions()->save_intercepts(unknown_.str(), saved->revision, {unknown_key}, message));
+  EXPECT_FALSE(src.revisions()->save_fits(unknown_.str(), (*after)->heads, {unknown_key}, message));
+}
+
+TEST_F(StoreSourceTest, BaselineAndInterceptEditsSaveInOneChangeset) {
+  // Upload the H1 baseline blob (0, 1, 2, 3, 4 at t = 0..4).
+  ASSERT_TRUE(store_->ingest(ps::IngestItem{ps::Uuid::v7(), {}, acq_, ps::BlobIngest{"f32le-tv/1", tv(0), 5}}));
+  auto& src = source();
+  auto loaded = src.load(unknown_.str());
+  ASSERT_TRUE(loaded);
+  auto raw = src.load_raw(unknown_.str());
+  ASSERT_TRUE(raw);
+  ASSERT_TRUE(raw->find(SeriesKind::Baseline, "H1"));
+  reduction::FitSpec lin, avg;
+  lin.kind = reduction::FitKind::Linear;
+  avg.kind = reduction::FitKind::Average;
+  auto edits = apply_fit_edits(**loaded, *raw,
+                               {FitEdit{SeriesKind::Baseline, "H1", lin, {4}}, FitEdit{SeriesKind::Signal, "Ar40", avg, {}}});
+  ASSERT_TRUE(edits) << edits.error().what;
+  auto saved = src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, edits->fits,
+                                          describe_fit_edits(**loaded, edits->fits));
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  ASSERT_TRUE(saved->saved) << saved->conflict;
+  ASSERT_EQ(saved->revisions.size(), 2u);
+
+  auto after = src.load(unknown_.str());
+  ASSERT_TRUE(after);
+  const IsotopeData* ar40 = (*after)->find_isotope("Ar40");
+  EXPECT_NEAR(ar40->baseline.value, 0.0, 1e-9);  // the line through 0..3 at t = 0
+  EXPECT_EQ(ar40->baseline_fit->kind, reduction::FitKind::Linear);
+  EXPECT_EQ(ar40->baseline_user_excluded, (std::vector<std::size_t>{4}));
+  EXPECT_NEAR(ar40->intercept.value, 102.0, 1e-9);  // average of 101, 102, 103
+  EXPECT_EQ((*after)->heads.at("baselines"), saved->revisions.at("baselines"));
+  EXPECT_EQ((*after)->heads.at("intercepts"), saved->revisions.at("intercepts"));
+
+  auto bh = src.revisions()->history(unknown_.str(), RevisionKind::Baselines);
+  auto ih = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
+  ASSERT_TRUE(bh && ih);
+  ASSERT_EQ(bh->size(), 2u);
+  EXPECT_EQ((*bh)[0].seq, (*ih)[0].seq);  // one changeset
+  EXPECT_EQ((*bh)[0].message, "<ISOEVO> H1 baseline average -> linear 1 excluded, Ar40 linear -> average SEM no outlier filter");
+
+  // A baseline edit on a stale baselines head conflicts and writes nothing,
+  // not even the intercepts revision staged with it.
+  auto stale = src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, edits->fits, "stale");
+  ASSERT_TRUE(stale);
+  EXPECT_FALSE(stale->saved);
+  EXPECT_EQ(src.revisions()->history(unknown_.str(), RevisionKind::Intercepts)->size(), 2u);
+  auto no_head = (*after)->heads;
+  no_head.erase("baselines");
+  EXPECT_FALSE(src.revisions()->save_fits(unknown_.str(), no_head, edits->fits, "x"));
+}
+
+TEST_F(StoreSourceTest, RestoreMovesTheHeadBackWithoutANewRevision) {
+  auto& src = source();
+  auto loaded = src.load(unknown_.str());
+  auto raw = src.load_raw(unknown_.str());
+  ASSERT_TRUE(loaded && raw);
+  const std::string root = (*loaded)->heads.at("intercepts");
+  reduction::FitSpec avg;
+  avg.kind = reduction::FitKind::Average;
+  auto edits = apply_fit_edits(**loaded, *raw, {FitEdit{SeriesKind::Signal, "Ar40", avg, {}}});
+  ASSERT_TRUE(edits);
+  auto saved = src.revisions()->save_fits(unknown_.str(), (*loaded)->heads, edits->fits, "edit");
+  ASSERT_TRUE(saved && saved->saved);
+  const std::string edited = saved->revisions.at("intercepts");
+  EXPECT_NEAR((*src.load(unknown_.str()))->find_isotope("Ar40")->intercept.value, 102.0, 1e-9);
+
+  auto restored = src.revisions()->restore_revision(unknown_.str(), RevisionKind::Intercepts, edited, root,
+                                                    "<ROLLBACK> intercepts");
+  ASSERT_TRUE(restored) << to_string(restored.error());
+  ASSERT_TRUE(restored->saved) << restored->conflict;
+  EXPECT_EQ(restored->revisions.at("intercepts"), root);
+  auto back = src.load(unknown_.str());
+  ASSERT_TRUE(back);
+  EXPECT_EQ((*back)->find_isotope("Ar40")->intercept, (Value{1000.0, 0.5}));
+  EXPECT_EQ((*back)->find_isotope("Ar40")->fit->kind, reduction::FitKind::Linear);
+  EXPECT_EQ((*back)->heads.at("intercepts"), root);
+
+  auto history = src.revisions()->history(unknown_.str(), RevisionKind::Intercepts);
+  ASSERT_TRUE(history);
+  ASSERT_EQ(history->size(), 2u);  // no revision written
+  EXPECT_FALSE((*history)[0].head);
+  EXPECT_TRUE((*history)[1].head);
+
+  // And forward again; then a stale restore conflicts.
+  auto forward = src.revisions()->restore_revision(unknown_.str(), RevisionKind::Intercepts, root, edited, "redo");
+  ASSERT_TRUE(forward && forward->saved);
+  auto stale = src.revisions()->restore_revision(unknown_.str(), RevisionKind::Intercepts, root, edited, "again");
+  ASSERT_TRUE(stale) << to_string(stale.error());
+  EXPECT_FALSE(stale->saved);
+  EXPECT_FALSE(stale->conflict.empty());
+  EXPECT_FALSE(src.revisions()->restore_revision(unknown_.str(), RevisionKind::Intercepts, edited, edited, "same"));
+  // Another analysis' revision cannot become this one's head.
+  const std::string air_root = (*src.load(air_.str()))->heads.at("intercepts");
+  EXPECT_FALSE(src.revisions()->restore_revision(unknown_.str(), RevisionKind::Intercepts, edited, air_root, "x"));
+  EXPECT_EQ((*src.load(unknown_.str()))->heads.at("intercepts"), edited);
 }
 
 TEST_F(StoreSourceTest, RevisionTablesForEveryKind) {
@@ -502,9 +597,9 @@ TEST(StoreSourceMapping, IndexListsAndInterceptEdits) {
   row.manual.use_value = true;
   row.manual.value = 9;
   row.extra_json = R"({"keep": 1})";
-  EditedIsotope e;
+  EditedFit e;
   e.key = "Ar40";
-  e.intercept = {2.5, 0.1};
+  e.value = {2.5, 0.1};
   e.fit.kind = reduction::FitKind::Parabolic;
   e.fit.error = reduction::ErrorType::Sd;
   e.fit.outliers = {true, 2, 2.5};

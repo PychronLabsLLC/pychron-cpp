@@ -36,6 +36,7 @@ struct IsotopeData {
   std::optional<reduction::FitSpec> baseline_fit;
   int n = 0;  // points in the intercept fit
   std::vector<std::size_t> user_excluded;  // raw signal indices left out of the fit, ascending
+  std::vector<std::size_t> baseline_user_excluded;  // raw baseline indices left out, ascending
   bool include_baseline_error = false;
   std::string blank_source;  // fit name or reference run id
 };

@@ -302,6 +302,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
           if (b.detector == iso.detector) {
             iso.baseline = value_of(b.value, b.error, b.manual);
             iso.baseline_fit = fit_spec(b.fit, b.error_type, b.filter_outliers_json);
+            if (b.user_excluded_json) iso.baseline_user_excluded = parse_index_list(*b.user_excluded_json);
           }
       if (blanks)
         for (const auto& b : *blanks)
@@ -408,6 +409,9 @@ struct StoreSource::Impl {
   std::string user, hostname;
   std::mutex actor_mutex;
   std::optional<ps::Actor> actor;
+
+  // The actor saves are recorded under, registered on first use.
+  Result<ps::Actor> actor_for(ps::IStore& s);
 
   void forget(const std::string& uuid) {
     {
@@ -732,19 +736,40 @@ std::string index_list_json(const std::vector<std::size_t>& indices) {
 
 RevisionTable revision_table_from(const ps::RevisionPayload& payload) { return TableBuilder{payload}(); }
 
-Result<ps::Intercepts> apply_intercept_edits(ps::Intercepts rows, const std::vector<EditedIsotope>& edits) {
+namespace {
+
+// The fields a refit sets on an intercept or baseline row.
+template <class Row>
+void apply_fit(Row& row, const EditedFit& e) {
+  row.value = e.value.value;
+  row.error = e.value.error;
+  row.fit = std::string(reduction::to_string(e.fit.kind));
+  row.error_type = e.fit.error == reduction::ErrorType::Sd ? "SD" : "SEM";
+  row.n = e.n_points;
+  row.fn = e.n_used;
+  row.filter_outliers_json = outlier_json(e.fit.outliers);
+  row.user_excluded_json = index_list_json(e.user_excluded);
+  row.manual = ps::ManualOverride{};
+}
+
+}  // namespace
+
+Result<ps::Intercepts> apply_intercept_edits(ps::Intercepts rows, const std::vector<EditedFit>& edits) {
   for (const auto& e : edits) {
+    if (e.kind != SeriesKind::Signal) continue;
     auto it = std::find_if(rows.begin(), rows.end(), [&](const ps::InterceptRow& r) { return r.isotope == e.key; });
     if (it == rows.end()) return fail(ErrorKind::Config, "the stored intercepts have no " + e.key);
-    it->value = e.intercept.value;
-    it->error = e.intercept.error;
-    it->fit = std::string(reduction::to_string(e.fit.kind));
-    it->error_type = e.fit.error == reduction::ErrorType::Sd ? "SD" : "SEM";
-    it->n = e.n_points;
-    it->fn = e.n_used;
-    it->filter_outliers_json = outlier_json(e.fit.outliers);
-    it->user_excluded_json = index_list_json(e.user_excluded);
-    it->manual = ps::ManualOverride{};
+    apply_fit(*it, e);
+  }
+  return rows;
+}
+
+Result<ps::Baselines> apply_baseline_edits(ps::Baselines rows, const std::vector<EditedFit>& edits) {
+  for (const auto& e : edits) {
+    if (e.kind != SeriesKind::Baseline) continue;
+    auto it = std::find_if(rows.begin(), rows.end(), [&](const ps::BaselineRow& r) { return r.detector == e.key; });
+    if (it == rows.end()) return fail(ErrorKind::Config, "the stored baselines have no detector " + e.key);
+    apply_fit(*it, e);
   }
   return rows;
 }
@@ -790,49 +815,111 @@ Result<RevisionTable> StoreSource::revision_table(const std::string& revision) {
   });
 }
 
-Result<SaveOutcome> StoreSource::save_intercepts(const std::string& analysis, const std::string& expected,
-                                                 const std::vector<EditedIsotope>& edits, const std::string& message) {
+Result<ps::Actor> StoreSource::Impl::actor_for(ps::IStore& s) {
+  {
+    std::lock_guard lock(actor_mutex);
+    if (actor) return *actor;
+  }
+  auto client = s.register_client({hostname, "reduction", std::nullopt, "pychron-ui"});
+  if (!client) return fail(client.error());
+  auto u = s.ensure_user(*client, user);
+  if (!u) return fail(u.error());
+  std::lock_guard lock(actor_mutex);
+  actor = ps::Actor{*u, *client};
+  return *actor;
+}
+
+namespace {
+
+// A commit's outcome as a SaveOutcome; `revisions` are the staged ones.
+SaveOutcome outcome_of(const ps::CommitOutcome& committed, std::map<std::string, std::string> revisions) {
+  SaveOutcome out;
+  if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&committed)) {
+    out.conflict = conflicts->empty() ? "the save conflicted" : describe_conflict(conflicts->front());
+    return out;
+  }
+  out.saved = true;
+  out.revisions = std::move(revisions);
+  return out;
+}
+
+}  // namespace
+
+Result<SaveOutcome> StoreSource::save_fits(const std::string& analysis, const std::map<std::string, std::string>& heads,
+                                           const std::vector<EditedFit>& edits, const std::string& message) {
   if (edits.empty()) return fail(ErrorKind::Config, "nothing to save");
   auto id = parse_uuid(analysis);
   if (!id) return fail(id.error());
-  auto base = ps::Uuid::parse(expected);
-  if (!base) return fail(ErrorKind::Config, "the analysis was loaded without an intercepts head");
+  // The kinds the edits touch, each with the head it was loaded at.
+  std::map<ps::Kind, ps::Uuid> bases;
+  for (const auto& e : edits) {
+    const ps::Kind kind = e.kind == SeriesKind::Baseline ? ps::Kind::Baselines : ps::Kind::Intercepts;
+    if (e.kind != SeriesKind::Signal && e.kind != SeriesKind::Baseline)
+      return fail(ErrorKind::Config, "only signal and baseline fits can be saved");
+    const std::string name(ps::to_string(kind));
+    auto head = heads.find(name);
+    auto base = head == heads.end() ? std::nullopt : ps::Uuid::parse(head->second);
+    if (!base) return fail(ErrorKind::Config, "the analysis was loaded without a " + name + " head");
+    bases[kind] = *base;
+  }
   Impl* impl = impl_.get();
   auto outcome = impl->call<SaveOutcome>([=, &edits, &message](ps::IStore& s) -> Result<SaveOutcome> {
-    std::optional<ps::Actor> actor;
-    {
-      std::lock_guard lock(impl->actor_mutex);
-      actor = impl->actor;
-    }
-    if (!actor) {
-      auto client = s.register_client({impl->hostname, "reduction", std::nullopt, "pychron-ui"});
-      if (!client) return fail(client.error());
-      auto user = s.ensure_user(*client, impl->user);
-      if (!user) return fail(user.error());
-      actor = ps::Actor{*user, *client};
-      std::lock_guard lock(impl->actor_mutex);
-      impl->actor = actor;
-    }
-    auto payload = s.load_payload(*base);
-    if (!payload) return fail(payload.error());
-    const auto* rows = *payload ? std::get_if<ps::Intercepts>(&**payload) : nullptr;
-    if (!rows) return fail(ErrorKind::Config, "revision " + expected + " is not an intercepts revision");
-    auto edited = apply_intercept_edits(*rows, edits);
-    if (!edited) return fail(edited.error());
+    auto actor = impl->actor_for(s);
+    if (!actor) return fail(actor.error());
     auto uow = s.begin(*actor);
     if (!uow) return fail(uow.error());
-    auto rev = (*uow)->add_revision(*id, ps::Kind::Intercepts, ps::RevisionPayload{std::move(*edited)}, *base);
-    if (!rev) return fail(rev.error());
+    std::map<std::string, std::string> staged;
+    for (const auto& [kind, base] : bases) {
+      auto payload = s.load_payload(base);
+      if (!payload) return fail(payload.error());
+      std::optional<ps::RevisionPayload> edited;
+      if (kind == ps::Kind::Intercepts) {
+        const auto* rows = *payload ? std::get_if<ps::Intercepts>(&**payload) : nullptr;
+        if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not an intercepts revision");
+        auto e = apply_intercept_edits(*rows, edits);
+        if (!e) return fail(e.error());
+        edited = ps::RevisionPayload{std::move(*e)};
+      } else {
+        const auto* rows = *payload ? std::get_if<ps::Baselines>(&**payload) : nullptr;
+        if (!rows) return fail(ErrorKind::Config, "revision " + base.str() + " is not a baselines revision");
+        auto e = apply_baseline_edits(*rows, edits);
+        if (!e) return fail(e.error());
+        edited = ps::RevisionPayload{std::move(*e)};
+      }
+      auto rev = (*uow)->add_revision(*id, kind, std::move(*edited), base);
+      if (!rev) return fail(rev.error());
+      staged[std::string(ps::to_string(kind))] = rev->str();
+    }
     auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, message);
     if (!committed) return fail(committed.error());
-    SaveOutcome out;
-    if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&*committed)) {
-      out.conflict = conflicts->empty() ? "the save conflicted" : describe_conflict(conflicts->front());
-      return out;
-    }
-    out.saved = true;
-    out.revision = rev->str();
-    return out;
+    return outcome_of(*committed, std::move(staged));
+  });
+  if (outcome && outcome->saved) impl->forget(analysis);
+  return outcome;
+}
+
+Result<SaveOutcome> StoreSource::restore_revision(const std::string& analysis, RevisionKind kind,
+                                                  const std::string& expected, const std::string& revision,
+                                                  const std::string& message) {
+  auto id = parse_uuid(analysis);
+  if (!id) return fail(id.error());
+  const auto store_kind = ps::parse_kind(to_string(kind));
+  if (!store_kind) return fail(ErrorKind::Config, "unknown revision kind");
+  auto from = ps::Uuid::parse(expected);
+  if (!from) return fail(ErrorKind::Config, "the analysis was loaded without a " + std::string(to_string(kind)) + " head");
+  auto to = ps::Uuid::parse(revision);
+  if (!to) return fail(ErrorKind::Config, "not a revision id: " + revision);
+  if (*to == *from) return fail(ErrorKind::Config, "that revision is already the current one");
+  Impl* impl = impl_.get();
+  auto outcome = impl->call<SaveOutcome>([=, k = *store_kind, &message](ps::IStore& s) -> Result<SaveOutcome> {
+    auto actor = impl->actor_for(s);
+    if (!actor) return fail(actor.error());
+    auto uow = s.begin(*actor);
+    if (!uow) return fail(uow.error());
+    if (auto ok = (*uow)->move_head(*id, k, *from, *to, ps::MoveReason::Rollback); !ok) return fail(ok.error());
+    auto committed = (*uow)->commit(ps::ChangesetKind::Rollback, message);
+    if (!committed) return fail(committed.error());
+    return outcome_of(*committed, {{std::string(ps::to_string(k)), to->str()}});
   });
   if (outcome && outcome->saved) impl->forget(analysis);
   return outcome;

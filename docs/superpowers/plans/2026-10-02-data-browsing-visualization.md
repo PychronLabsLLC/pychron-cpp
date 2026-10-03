@@ -128,8 +128,11 @@ source adapters as separate targets (`processing_records`,
 - [x] Editing fits in the Evolutions tab: fit kind, error type, outlier
       filter, click-to-exclude points; pending until saved as an intercepts
       revision on the loaded head (conflicts reported, nothing written).
-- [ ] Rolling back to an older revision from History (`move_head`), and
-      editing baselines the same way.
+- [x] Restoring an older revision from History (`restore_revision`, a
+      CAS head move recorded as a `rollback` changeset), and editing
+      baseline fits per detector, saved with intercept edits in one
+      changeset.
+- [ ] Editing blanks and IC factors (needs the V3 reference fits).
 - [ ] Saved selections and named queries (spec 9.3).
 - [ ] Browser source picker in the UI when both a database and records
       exist (Q1); today `--db` chooses at start-up.

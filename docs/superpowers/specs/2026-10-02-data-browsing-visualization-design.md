@@ -665,18 +665,25 @@ directories keep no revisions):
   changeset kind and message; the head is marked. One selected revision
   shows its rows as a table; two show a diff (changed cells highlighted,
   added and removed rows coloured). Every kind is shown as a
-  `RevisionTable`, so one diff serves all of them.
-- Fit editing in Evolutions (signals): per isotope, fit kind, error type,
-  outlier filter (iterations, standard deviations), and points left out by
-  clicking them (or dragging a box). The window refits the raw signal
-  (`apply_fit_edits`) and recomputes every tab; the edits stay pending
-  (title marked, Revert) until Save writes one intercepts revision: the
-  rows of the head the edits were made on with the edited rows' value,
-  error, fit, error type, n, fn, outlier filter and user exclusions
-  replaced and any manual override on them cleared, committed with a
-  `<ISOEVO> ...` message. The commit is a compare-and-swap on that head:
-  if someone else saved first, nothing is written and the status says who.
-  Closing the window with pending edits asks whether to save them.
+  `RevisionTable`, so one diff serves all of them. Restore makes the
+  selected older revision the current one (`restore_revision`: a
+  compare-and-swap head move, changeset kind `rollback`, message
+  `<ROLLBACK> <kind> to revision <seq>`); no revision is written, so the
+  newer revisions stay in the list and can be restored in turn. Restore is
+  disabled while fit edits are pending.
+- Fit editing in Evolutions (signal and baseline panels): per isotope (or,
+  for baselines, per detector, applied to every isotope on it), fit kind,
+  error type, outlier filter (iterations, standard deviations), and points
+  left out by clicking them (or dragging a box). The window refits the raw
+  series (`apply_fit_edits`) and recomputes every tab; the edits stay
+  pending (title marked, Revert) until Save writes one changeset with an
+  intercepts revision (signal edits) and/or a baselines revision (baseline
+  edits): the rows of the heads the edits were made on with the edited
+  rows' value, error, fit, error type, n, fn, outlier filter and user
+  exclusions replaced and any manual override on them cleared, message
+  `<ISOEVO> ...`. The commit is a compare-and-swap on those heads: if
+  someone else moved either first, nothing is written and the status says
+  who. Closing the window with pending edits asks whether to save them.
 
 ### 11.4 Figure window
 

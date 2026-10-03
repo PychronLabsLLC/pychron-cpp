@@ -175,7 +175,8 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
   fit_std_devs_->setSingleStep(0.5);
   fit_std_devs_->setDecimals(1);
   clear_excluded_ = new QPushButton(tr("Include all points"));
-  fl->addRow(tr("Isotope"), fit_isotope_);
+  fit_key_label_ = new QLabel(tr("Isotope"));
+  fl->addRow(fit_key_label_, fit_isotope_);
   fl->addRow(tr("Fit"), fit_kind_);
   fl->addRow(tr("Error"), fit_error_);
   fl->addRow(fit_outliers_);
@@ -200,7 +201,9 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
 
   connect(kind_, &QTabBar::currentChanged, this, [this] {
     fill_evolutions();
-    fit_box_->setVisible(kind_->currentIndex() == 0);
+    fit_box_->setVisible(current_kind() != pp::SeriesKind::Sniff);
+    fill_fit_keys();
+    fill_fit_editor();
   });
   connect(fit_isotope_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] { fill_fit_editor(); });
   for (auto* combo : {fit_kind_, fit_error_})
@@ -211,10 +214,11 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
   connect(clear_excluded_, &QPushButton::clicked, this, [this] {
     const std::string key = fit_isotope_->currentText().toStdString();
     if (key.empty()) return;
-    auto e = current_edit(key);
+    auto e = current_edit(current_kind(), key);
     e.user_excluded.clear();
-    edits_[key] = e;
+    edits_[{e.kind, key}] = e;
     recompute();
+    fill_fit_editor();
   });
   connect(revert_, &QPushButton::clicked, this, [this] { revert_edits(); });
   connect(save_, &QPushButton::clicked, this, [this] { save_edits(); });
@@ -239,6 +243,10 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
   hrow->addWidget(new QLabel(tr("Revisions of")));
   hrow->addWidget(history_kind_);
   hrow->addStretch(1);
+  restore_ = new QPushButton(tr("Restore selected"));
+  restore_->setEnabled(false);
+  hrow->addWidget(restore_);
+  connect(restore_, &QPushButton::clicked, this, [this] { restore_selected(true); });
   hl->addLayout(hrow);
   revisions_ = make_table({tr("Seq"), tr("Date (UTC)"), tr("Author"), tr("Host"), tr("Change"), tr("Message")});
   revisions_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -278,15 +286,7 @@ bool RecallWindow::show_analysis(const QString& uuid) {
   auto raw = source_.load_raw(uuid.toStdString());
   raw_ = raw ? std::move(*raw) : pp::RawData{};
 
-  const QString keep = fit_isotope_->currentText();
-  {
-    QSignalBlocker block(fit_isotope_);
-    fit_isotope_->clear();
-    for (const auto& s : raw_.series)
-      if (s.kind == pp::SeriesKind::Signal && analysis_->find_isotope(s.key)) fit_isotope_->addItem(qs(s.key));
-    const int at = fit_isotope_->findText(keep);
-    fit_isotope_->setCurrentIndex(at >= 0 ? at : 0);
-  }
+  fill_fit_keys();
   edit_status_->clear();
   display();
   fill_fit_editor();
@@ -377,13 +377,34 @@ void RecallWindow::fill_evolutions() {
 
 // ---------------------------------------------------------------- fit editing
 
-pp::FitEdit RecallWindow::current_edit(const std::string& key) const {
-  if (auto it = edits_.find(key); it != edits_.end()) return it->second;
+pp::SeriesKind RecallWindow::current_kind() const {
+  const pp::SeriesKind kinds[] = {pp::SeriesKind::Signal, pp::SeriesKind::Baseline, pp::SeriesKind::Sniff};
+  return kinds[std::clamp(kind_->currentIndex(), 0, 2)];
+}
+
+void RecallWindow::fill_fit_keys() {
+  const pp::SeriesKind kind = current_kind();
+  fit_key_label_->setText(kind == pp::SeriesKind::Baseline ? tr("Detector") : tr("Isotope"));
+  const QString keep = fit_isotope_->currentText();
+  const QSignalBlocker block(fit_isotope_);
+  fit_isotope_->clear();
+  if (!analysis_ || kind == pp::SeriesKind::Sniff) return;
+  for (const auto& s : raw_.series)
+    if (s.kind == kind && pp::stored_fit(*analysis_, kind, s.key)) fit_isotope_->addItem(qs(s.key));
+  const int at = fit_isotope_->findText(keep);
+  fit_isotope_->setCurrentIndex(at >= 0 ? at : 0);
+}
+
+pp::FitEdit RecallWindow::current_edit(pp::SeriesKind kind, const std::string& key) const {
+  if (auto it = edits_.find({kind, key}); it != edits_.end()) return it->second;
   pp::FitEdit e;
+  e.kind = kind;
   e.key = key;
-  if (const pp::IsotopeData* iso = shown_ ? shown_->find_isotope(key) : nullptr) {
-    e.fit = iso->fit.value_or(r::FitSpec{});
-    e.user_excluded = iso->user_excluded;
+  // Baselines are usually averages; signals default to a line.
+  e.fit.kind = kind == pp::SeriesKind::Baseline ? r::FitKind::Average : r::FitKind::Linear;
+  if (const auto stored = shown_ ? pp::stored_fit(*shown_, kind, key) : std::nullopt) {
+    if (stored->fit) e.fit = *stored->fit;
+    e.user_excluded = stored->user_excluded;
   }
   if (e.fit.kind == r::FitKind::CustomPoly) e.fit.kind = r::FitKind::Linear;  // not editable here
   return e;
@@ -399,7 +420,7 @@ void RecallWindow::fill_fit_editor() {
     update_edit_state();
     return;
   }
-  const pp::FitEdit e = current_edit(key);
+  const pp::FitEdit e = current_edit(current_kind(), key);
   const QSignalBlocker b1(fit_kind_), b2(fit_error_), b3(fit_outliers_), b4(fit_iterations_), b5(fit_std_devs_);
   fit_kind_->setCurrentIndex(std::max(0, fit_kind_->findData(static_cast<int>(e.fit.kind))));
   fit_error_->setCurrentIndex(std::max(0, fit_error_->findData(static_cast<int>(e.fit.error))));
@@ -414,7 +435,7 @@ void RecallWindow::fill_fit_editor() {
 void RecallWindow::fit_controls_changed() {
   const std::string key = fit_isotope_->currentText().toStdString();
   if (key.empty() || !shown_) return;
-  pp::FitEdit e = current_edit(key);
+  pp::FitEdit e = current_edit(current_kind(), key);
   e.fit.kind = static_cast<r::FitKind>(fit_kind_->currentData().toInt());
   e.fit.error = static_cast<r::ErrorType>(fit_error_->currentData().toInt());
   e.fit.outliers.enabled = fit_outliers_->isChecked();
@@ -422,19 +443,20 @@ void RecallWindow::fit_controls_changed() {
   e.fit.outliers.std_devs = fit_std_devs_->value();
   fit_iterations_->setEnabled(e.fit.outliers.enabled);
   fit_std_devs_->setEnabled(e.fit.outliers.enabled);
-  edits_[key] = e;
+  edits_[{e.kind, key}] = e;
   recompute();
 }
 
 void RecallWindow::toggle_points(const QStringList& refs) {
-  if (!shown_ || kind_->currentIndex() != 0) return;
+  const pp::SeriesKind kind = current_kind();
+  if (!shown_ || kind == pp::SeriesKind::Sniff) return;
   std::string last;
   for (const auto& ref : refs) {
     const auto parsed = pp::parse_evolution_ref(ref.toStdString());
-    if (!parsed || !shown_->find_isotope(parsed->first)) continue;
-    pp::FitEdit e = current_edit(parsed->first);
+    if (!parsed || !pp::stored_fit(*shown_, kind, parsed->first)) continue;
+    pp::FitEdit e = current_edit(kind, parsed->first);
     pp::toggle_index(e.user_excluded, parsed->second);
-    edits_[parsed->first] = e;
+    edits_[{kind, parsed->first}] = e;
     last = parsed->first;
   }
   if (last.empty()) return;
@@ -449,16 +471,8 @@ void RecallWindow::toggle_points(const QStringList& refs) {
 void RecallWindow::recompute() {
   if (!analysis_) return;
   // An edit equal to what was loaded is no edit.
-  for (auto it = edits_.begin(); it != edits_.end();) {
-    const pp::IsotopeData* iso = analysis_->find_isotope(it->first);
-    const r::FitSpec stored = iso && iso->fit ? *iso->fit : r::FitSpec{};
-    const bool same = iso && iso->fit && stored.kind == it->second.fit.kind && stored.error == it->second.fit.error &&
-                      stored.outliers.enabled == it->second.fit.outliers.enabled &&
-                      (!stored.outliers.enabled || (stored.outliers.iterations == it->second.fit.outliers.iterations &&
-                                                    stored.outliers.std_devs == it->second.fit.outliers.std_devs)) &&
-                      iso->user_excluded == it->second.user_excluded;
-    it = same ? edits_.erase(it) : std::next(it);
-  }
+  for (auto it = edits_.begin(); it != edits_.end();)
+    it = pp::same_as_stored(*analysis_, it->second) ? edits_.erase(it) : std::next(it);
   if (edits_.empty()) {
     shown_ = analysis_;
     edited_.clear();
@@ -475,29 +489,33 @@ void RecallWindow::recompute() {
     return;
   }
   shown_ = result->analysis;
-  edited_ = std::move(result->isotopes);
+  edited_ = std::move(result->fits);
   edit_status_->clear();
   display();
 }
 
 void RecallWindow::update_edit_state() {
   pp::IRevisionSource* revisions = source_.revisions();
-  const bool has_head = analysis_ && analysis_->heads.count("intercepts") > 0;
+  bool has_heads = analysis_ != nullptr;
+  for (const auto& e : edited_)
+    if (analysis_ && !analysis_->heads.count(e.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts"))
+      has_heads = false;
   const bool pending = !edits_.empty() && !edited_.empty();
   revert_->setEnabled(!edits_.empty());
-  save_->setEnabled(pending && revisions && has_head);
+  save_->setEnabled(pending && revisions && has_heads);
   if (!revisions) {
     save_->setToolTip(tr("Saving needs a source that keeps revisions (pychron-ui --db)"));
-  } else if (!has_head) {
-    save_->setToolTip(tr("This analysis has no intercepts revision to build on"));
+  } else if (!has_heads) {
+    save_->setToolTip(tr("This analysis has no revision to build the edit on"));
   } else {
-    save_->setToolTip(tr("Save the edited fits as a new intercepts revision"));
+    save_->setToolTip(tr("Save the edited fits as new intercepts / baselines revisions"));
   }
   if (pending && edit_status_->text().isEmpty()) {
     QStringList keys;
-    for (const auto& e : edited_) keys << qs(e.key);
+    for (const auto& e : edited_) keys << qs(e.key) + (e.kind == pp::SeriesKind::Baseline ? tr(" baseline") : QString());
     edit_status_->setText(tr("Edited: %1 (not saved)").arg(keys.join(QStringLiteral(", "))));
   }
+  update_restore_state();
 }
 
 void RecallWindow::revert_edits() {
@@ -508,11 +526,9 @@ void RecallWindow::revert_edits() {
 
 bool RecallWindow::save_edits() {
   pp::IRevisionSource* revisions = source_.revisions();
-  if (!revisions || !analysis_ || edited_.empty()) return false;
-  auto head = analysis_->heads.find("intercepts");
-  if (head == analysis_->heads.end()) return false;
+  if (!revisions || !analysis_ || edited_.empty() || !save_->isEnabled()) return false;
   const std::string message = pp::describe_fit_edits(*analysis_, edited_);
-  auto outcome = revisions->save_intercepts(analysis_->uuid, head->second, edited_, message);
+  auto outcome = revisions->save_fits(analysis_->uuid, analysis_->heads, edited_, message);
   if (!outcome) {
     edit_status_->setText(tr("Save failed: %1").arg(qs(outcome.error().what)));
     return false;
@@ -521,9 +537,10 @@ bool RecallWindow::save_edits() {
     edit_status_->setText(tr("Not saved: %1").arg(qs(outcome->conflict)));
     return false;
   }
-  const QString revision = qs(outcome->revision);
+  QStringList saved;
+  for (const auto& [kind, id] : outcome->revisions) saved << qs(kind) + QStringLiteral(" ") + qs(id).left(8);
   show_analysis(uuid_);
-  edit_status_->setText(tr("Saved as revision %1").arg(revision.left(8)));
+  edit_status_->setText(tr("Saved: %1").arg(saved.join(QStringLiteral(", "))));
   return true;
 }
 
@@ -589,6 +606,7 @@ void RecallWindow::fill_history() {
 }
 
 void RecallWindow::show_revisions() {
+  update_restore_state();
   pp::IRevisionSource* revisions = source_.revisions();
   if (!revisions) return;
   std::vector<int> rows;
@@ -667,6 +685,60 @@ void RecallWindow::show_revisions() {
   history_note_->setText(tr("%n row(s) differ between %1 and %2.", nullptr, diff.changed_rows())
                              .arg(QString::number(history_[static_cast<std::size_t>(rows[1])].seq),
                                   QString::number(history_[static_cast<std::size_t>(rows[0])].seq)));
+}
+
+void RecallWindow::update_restore_state() {
+  const auto selected = revisions_->selectionModel() ? revisions_->selectionModel()->selectedRows() : QModelIndexList{};
+  QString why;
+  if (!source_.revisions()) {
+    why = tr("Restoring needs a source that keeps revisions (pychron-ui --db)");
+  } else if (!edits_.empty()) {
+    why = tr("Save or revert the pending fit edits first");
+  } else if (selected.size() != 1) {
+    why = tr("Select one revision to restore");
+  } else if (const auto row = static_cast<std::size_t>(selected.front().row());
+             row >= history_.size() || history_[row].head) {
+    why = tr("That revision is already the current one");
+  } else if (!analysis_ || !analysis_->heads.count(std::string(pp::to_string(history_[row].kind)))) {
+    why = tr("This analysis has no current revision of that kind");
+  }
+  restore_->setEnabled(why.isEmpty());
+  restore_->setToolTip(why.isEmpty() ? tr("Make the selected revision the current one; newer revisions stay in the history")
+                                     : why);
+}
+
+bool RecallWindow::restore_selected(bool confirm) {
+  update_restore_state();
+  if (!restore_->isEnabled()) {
+    history_note_->setText(restore_->toolTip());
+    return false;
+  }
+  const auto row = static_cast<std::size_t>(revisions_->selectionModel()->selectedRows().front().row());
+  const pp::RevisionSummary target = history_[row];
+  const std::string kind(pp::to_string(target.kind));
+  if (confirm &&
+      QMessageBox::question(this, tr("Restore revision"),
+                            tr("Make revision %1 (%2) the current %3 of %4?")
+                                .arg(QString::number(target.seq), qs(target.message.empty() ? target.changeset_kind : target.message),
+                                     qs(std::string(pp::title(target.kind))).toLower(), qs(analysis_->runid))) != QMessageBox::Yes)
+    return false;
+  const std::string message = "<ROLLBACK> " + kind + " to revision " + std::to_string(target.seq) + " (" +
+                              target.id.substr(0, 8) + ")";
+  auto outcome = source_.revisions()->restore_revision(analysis_->uuid, target.kind, analysis_->heads.at(kind), target.id,
+                                                       message);
+  if (!outcome) {
+    history_note_->setText(tr("Restore failed: %1").arg(qs(outcome.error().what)));
+    return false;
+  }
+  if (!outcome->saved) {
+    history_note_->setText(tr("Not restored: %1").arg(qs(outcome->conflict)));
+    return false;
+  }
+  show_analysis(uuid_);
+  fill_history();
+  history_note_->setText(tr("Restored revision %1 as the current %2.")
+                             .arg(QString::number(target.seq), qs(std::string(pp::title(target.kind))).toLower()));
+  return true;
 }
 
 }  // namespace pychron::ui

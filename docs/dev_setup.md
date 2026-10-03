@@ -126,7 +126,8 @@ Window > Data browses the records under `<data>/records`. With
 the UI never migrates it). Rescan picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
-Evolutions tab as a new intercepts revision; saves are recorded under
+Evolutions tab (signal and baseline fits) as new revisions, or restore an
+older revision from History; saves are recorded under
 `$USER` on this host's client:
 
 ```bash

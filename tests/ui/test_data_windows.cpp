@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <memory>
+#include <set>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -140,26 +141,48 @@ std::unique_ptr<pp::MemorySource> make_steps() {
   return src;
 }
 
-// A memory source that keeps intercept revisions, like the store: every
-// analysis starts at "rev-0"; saves are compare-and-swap on the head.
+// Raw data with a baseline series per detector (0.01 + 0.001 k).
+pp::RawData raw_with_baselines(const pp::Analysis& a) {
+  pp::RawData raw = raw_for(a);
+  std::set<std::string> detectors;
+  for (const auto& iso : a.isotopes) detectors.insert(iso.detector);
+  for (const auto& d : detectors) {
+    pp::RawSeries s;
+    s.kind = pp::SeriesKind::Baseline;
+    s.key = d;
+    s.detector = d;
+    for (int k = 0; k < 10; ++k) {
+      s.t.push_back(k);
+      s.v.push_back(0.01 + 0.001 * k);
+    }
+    raw.series.push_back(s);
+  }
+  return raw;
+}
+
+// A memory source that keeps intercepts and baselines revisions, like the
+// store: every analysis starts at a root of each; saves and restores are
+// compare-and-swap on the heads.
 class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource {
  public:
   explicit RevisionMemorySource(int n) {
     for (int i = 0; i < n; ++i) {
       auto a = analysis(i);
-      a->heads["intercepts"] = "rev-0-" + a->uuid;
-      record(*a, a->heads["intercepts"], "", "collection");
-      add(a, raw_for(*a));
+      for (auto& iso : a->isotopes) iso.baseline = {0.01, 0.001};
+      for (const char* kind : {"intercepts", "baselines"}) {
+        a->heads[kind] = std::string("root-") + kind + "-" + a->uuid;
+        record(*a, kind, a->heads[kind], "collection", "");
+      }
+      add(a, raw_with_baselines(*a));
     }
   }
 
   pp::IRevisionSource* revisions() noexcept override { return this; }
 
   Result<std::vector<pp::RevisionSummary>> history(const std::string& uuid, pp::RevisionKind kind) override {
-    if (kind != pp::RevisionKind::Intercepts) return std::vector<pp::RevisionSummary>{};
-    auto list = history_[uuid];
+    auto list = history_[{uuid, std::string(pp::to_string(kind))}];
     std::reverse(list.begin(), list.end());
-    for (auto& r : list) r.head = r.id == head_[uuid];
+    for (auto& r : list) r.head = r.id == head_[{uuid, std::string(pp::to_string(kind))}];
     return list;
   }
 
@@ -169,70 +192,135 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     return it->second;
   }
 
-  Result<pp::SaveOutcome> save_intercepts(const std::string& uuid, const std::string& expected,
-                                          const std::vector<pp::EditedIsotope>& edits, const std::string& message) override {
+  Result<pp::SaveOutcome> save_fits(const std::string& uuid, const std::map<std::string, std::string>& heads,
+                                    const std::vector<pp::EditedFit>& edits, const std::string& message) override {
     pp::SaveOutcome out;
-    if (expected != head_[uuid]) {
-      out.conflict = "someone else saved first";
-      return out;
-    }
-    auto loaded = load(uuid);
-    if (!loaded) return fail(loaded.error());
-    auto copy = std::make_shared<pp::Analysis>(**loaded);
-    for (const auto& e : edits) {
-      for (auto& iso : copy->isotopes)
-        if (iso.key == e.key) {
-          iso.intercept = e.intercept;
+    std::set<std::string> kinds;
+    for (const auto& e : edits) kinds.insert(e.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts");
+    for (const auto& k : kinds)
+      if (heads.at(k) != head_[{uuid, k}]) {
+        out.conflict = "someone else saved first";
+        return out;
+      }
+    auto copy = std::make_shared<pp::Analysis>(**load(uuid));
+    for (const auto& e : edits)
+      for (auto& iso : copy->isotopes) {
+        if (e.kind == pp::SeriesKind::Signal && iso.key == e.key) {
+          iso.intercept = e.value;
           iso.fit = e.fit;
           iso.n = e.n_used;
           iso.user_excluded = e.user_excluded;
+        } else if (e.kind == pp::SeriesKind::Baseline && iso.detector == e.key) {
+          iso.baseline = e.value;
+          iso.baseline_fit = e.fit;
+          iso.baseline_user_excluded = e.user_excluded;
         }
-    }
+      }
     out.saved = true;
-    out.revision = "rev-" + std::to_string(++saves) + "-" + uuid;
-    copy->heads["intercepts"] = out.revision;
-    record(*copy, out.revision, expected, "reduction", message);
+    ++saves;
+    for (const auto& k : kinds) {
+      const std::string id = "rev-" + std::to_string(++ids_) + "-" + k;
+      copy->heads[k] = id;
+      out.revisions[k] = id;
+      record(*copy, k, id, "reduction", message);
+    }
     add(copy);
     last_message = message;
     return out;
   }
 
+  Result<pp::SaveOutcome> restore_revision(const std::string& uuid, pp::RevisionKind kind, const std::string& expected,
+                                           const std::string& revision, const std::string& message) override {
+    const std::string k(pp::to_string(kind));
+    pp::SaveOutcome out;
+    if (expected != head_[{uuid, k}]) {
+      out.conflict = "someone else saved first";
+      return out;
+    }
+    auto snap = snapshots_.find(revision);
+    if (snap == snapshots_.end()) return fail(ErrorKind::Config, "no revision " + revision);
+    auto copy = std::make_shared<pp::Analysis>(**load(uuid));
+    for (std::size_t i = 0; i < copy->isotopes.size(); ++i) {
+      auto& iso = copy->isotopes[i];
+      const auto& old = snap->second.isotopes[i];
+      if (k == "intercepts") {
+        iso.intercept = old.intercept;
+        iso.fit = old.fit;
+        iso.n = old.n;
+        iso.user_excluded = old.user_excluded;
+      } else {
+        iso.baseline = old.baseline;
+        iso.baseline_fit = old.baseline_fit;
+        iso.baseline_user_excluded = old.baseline_user_excluded;
+      }
+    }
+    copy->heads[k] = revision;
+    head_[{uuid, k}] = revision;
+    add(copy);
+    last_message = message;
+    ++restores;
+    out.saved = true;
+    out.revisions[k] = revision;
+    return out;
+  }
+
   // Someone else saves: the head moves without this window knowing.
-  void move_head(const std::string& uuid) { head_[uuid] = "rev-elsewhere"; }
+  void move_head(const std::string& uuid, const std::string& kind = "intercepts") {
+    head_[{uuid, kind}] = "rev-elsewhere";
+  }
 
   int saves = 0;
+  int restores = 0;
   std::string last_message;
 
  private:
-  void record(const pp::Analysis& a, const std::string& id, const std::string& parent, const std::string& kind,
-              const std::string& message = {}) {
+  void record(const pp::Analysis& a, const std::string& kind, const std::string& id, const std::string& cs,
+              const std::string& message) {
+    auto& list = history_[{a.uuid, kind}];
     pp::RevisionSummary r;
     r.id = id;
-    r.parent = parent;
-    r.changeset_kind = kind;
+    r.parent = list.empty() ? "" : list.back().id;
+    r.kind = *pp::parse_revision_kind(kind);
+    r.changeset_kind = cs;
     r.author = "jross";
     r.host = "lab-1";
     r.message = message;
-    r.created = a.timestamp + 60.0 * static_cast<double>(history_[a.uuid].size());
-    r.seq = static_cast<std::int64_t>(++seq_);
-    history_[a.uuid].push_back(r);
-    head_[a.uuid] = id;
+    r.created = a.timestamp + 60.0 * static_cast<double>(list.size());
+    r.seq = ++seq_;
+    list.push_back(r);
+    head_[{a.uuid, kind}] = id;
+    snapshots_[id] = a;
     pp::RevisionTable t;
     t.columns = {"value", "fit", "excluded"};
+    auto excluded_text = [](const std::vector<std::size_t>& v) {
+      std::string out;
+      for (auto i : v) out += (out.empty() ? "" : ",") + std::to_string(i);
+      return out;
+    };
+    auto fit_text = [](const std::optional<reduction::FitSpec>& f) {
+      return f ? std::string(reduction::to_string(f->kind)) : std::string();
+    };
+    std::set<std::string> seen;
     for (const auto& iso : a.isotopes) {
-      std::string excluded;
-      for (auto i : iso.user_excluded) excluded += (excluded.empty() ? "" : ",") + std::to_string(i);
-      t.rows.push_back({iso.key,
-                        {QString::number(iso.intercept.value, 'g', 10).toStdString(),
-                         iso.fit ? std::string(reduction::to_string(iso.fit->kind)) : std::string(), excluded}});
+      if (kind == "intercepts") {
+        t.rows.push_back({iso.key,
+                          {QString::number(iso.intercept.value, 'g', 10).toStdString(), fit_text(iso.fit),
+                           excluded_text(iso.user_excluded)}});
+      } else if (seen.insert(iso.detector).second) {
+        t.rows.push_back({iso.detector,
+                          {QString::number(iso.baseline.value, 'g', 10).toStdString(), fit_text(iso.baseline_fit),
+                           excluded_text(iso.baseline_user_excluded)}});
+      }
     }
     tables_[id] = t;
   }
 
-  std::map<std::string, std::vector<pp::RevisionSummary>> history_;
-  std::map<std::string, std::string> head_;
+  std::map<std::pair<std::string, std::string>, std::vector<pp::RevisionSummary>> history_;
+  std::map<std::pair<std::string, std::string>, std::string> head_;
   std::map<std::string, pp::RevisionTable> tables_;
-  int seq_ = 0;
+  std::map<std::string, pp::Analysis> snapshots_;
+  std::int64_t seq_ = 0;
+  int ids_ = 0;
 };
 
 QListWidgetItem* find_item(QListWidget* list, const QString& text) {
@@ -395,7 +483,7 @@ class TestDataWindows : public QObject {
     QCOMPARE(src.last_message, std::string("<ISOEVO> Ar40 linear -> average 1 excluded"));
     QVERIFY(!w.has_pending_edits());
     QVERIFY(w.edit_status()->text().startsWith(QStringLiteral("Saved")));
-    QCOMPARE(w.shown()->heads.at("intercepts"), std::string("rev-1-uuid-1"));
+    QCOMPARE(w.shown()->heads.at("intercepts"), std::string("rev-1-intercepts"));
     QCOMPARE(w.shown()->find_isotope("Ar40")->user_excluded, (std::vector<std::size_t>{0}));
     QCOMPARE(w.fit_kind()->currentText(), QStringLiteral("average"));
 
@@ -417,7 +505,8 @@ class TestDataWindows : public QObject {
     QVERIFY(w.history_note()->text().contains(QStringLiteral("1 row")));
     w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Blanks")));
     QCOMPARE(w.revision_list()->rowCount(), 0);
-    QVERIFY(w.history_note()->text().contains(QStringLiteral("No revisions")));
+    QVERIFY2(w.history_note()->text().contains(QStringLiteral("No revisions")), qPrintable(w.history_note()->text()));
+    w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Intercepts")));
 
     // Someone else saves first: nothing is written and the status says so.
     src.move_head("uuid-1");
@@ -427,6 +516,73 @@ class TestDataWindows : public QObject {
     QCOMPARE(src.saves, 1);
     QVERIFY(w.has_pending_edits());
     QVERIFY(w.edit_status()->text().contains(QStringLiteral("someone else saved first")));
+  }
+
+  void recall_edits_baselines_and_restores_from_history() {
+    RevisionMemorySource src(2);
+    RecallWindow w(src);
+    QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
+    w.evolution_kind()->setCurrentIndex(1);  // baselines
+    QCOMPARE(w.evolutions()->panel_count(), 5);
+    QCOMPARE(w.fit_isotope()->count(), 5);  // one per detector
+    QVERIFY(w.fit_isotope()->findText(QStringLiteral("H1")) >= 0);
+    w.fit_isotope()->setCurrentIndex(w.fit_isotope()->findText(QStringLiteral("H1")));
+    QCOMPARE(w.fit_kind()->currentText(), QStringLiteral("average"));  // the default for baselines
+
+    // Leaving out point 2 averages the other nine: (0.09 + 0.043) / 9.
+    emit w.evolutions()->point_clicked(QStringLiteral("H1#2"));
+    QVERIFY(w.has_pending_edits());
+    QCOMPARE(w.shown()->find_isotope("Ar40")->baseline_user_excluded, (std::vector<std::size_t>{2}));
+    QVERIFY(std::abs(w.shown()->find_isotope("Ar40")->baseline.value - 0.133 / 9) < 1e-12);
+    QCOMPARE(w.shown()->find_isotope("Ar39")->baseline.value, 0.01);  // AX untouched
+    QVERIFY(w.edit_status()->text().contains(QStringLiteral("H1 baseline")));
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("linear")));
+    QVERIFY(std::abs(w.shown()->find_isotope("Ar40")->baseline.value - 0.01) < 1e-12);
+    // Signals on another tab still edit as before; both save together.
+    w.evolution_kind()->setCurrentIndex(0);
+    QCOMPARE(w.fit_isotope()->currentText(), QStringLiteral("Ar40"));
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("average")));
+
+    QVERIFY(!w.restore_button()->isEnabled());  // pending edits
+    QVERIFY(w.save_edits());
+    QCOMPARE(src.saves, 1);
+    QCOMPARE(src.last_message,
+             std::string("<ISOEVO> Ar40 linear -> average, H1 baseline ? -> linear SEM no outlier filter 1 excluded"));
+    QCOMPARE(w.shown()->heads.at("baselines"), std::string("rev-1-baselines"));
+    QCOMPARE(w.shown()->find_isotope("Ar40")->baseline_fit->kind, reduction::FitKind::Linear);
+
+    // Restore the baselines root from History.
+    w.tabs()->setCurrentWidget(w.history_page());
+    w.history_kind()->setCurrentIndex(w.history_kind()->findText(QStringLiteral("Baselines")));
+    QCOMPARE(w.revision_list()->rowCount(), 2);
+    QVERIFY(!w.restore_button()->isEnabled());  // the head is selected
+    w.revision_list()->selectRow(1);
+    QVERIFY(w.restore_button()->isEnabled());
+    QVERIFY(w.restore_selected());
+    QCOMPARE(src.restores, 1);
+    QVERIFY(src.last_message.rfind("<ROLLBACK> baselines to revision", 0) == 0);
+    QCOMPARE(w.shown()->find_isotope("Ar40")->baseline, (pp::Value{0.01, 0.001}));
+    QVERIFY(!w.shown()->find_isotope("Ar40")->baseline_fit);
+    QCOMPARE(w.shown()->find_isotope("Ar40")->fit->kind, reduction::FitKind::Average);  // intercepts stay
+    QCOMPARE(w.revision_list()->rowCount(), 2);
+    QVERIFY(w.revision_list()->item(1, 0)->text().contains(QStringLiteral("●")));
+    QVERIFY(!w.revision_list()->item(0, 0)->text().contains(QStringLiteral("●")));
+    QVERIFY(w.history_note()->text().startsWith(QStringLiteral("Restored")));
+
+    // Someone else moves the head: restoring the newer one is refused.
+    src.move_head("uuid-1", "baselines");
+    w.revision_list()->selectRow(0);
+    QVERIFY(w.restore_button()->isEnabled());
+    QVERIFY(!w.restore_selected());
+    QCOMPARE(src.restores, 1);
+    QVERIFY(w.history_note()->text().contains(QStringLiteral("someone else saved first")));
+
+    // Without revisions there is nothing to restore.
+    auto plain = make_source(1);
+    RecallWindow v(*plain);
+    QVERIFY(v.show_analysis(QStringLiteral("uuid-0")));
+    QVERIFY(!v.restore_selected());
+    QVERIFY(v.restore_button()->toolTip().contains(QStringLiteral("--db")));
   }
 
   void figure_computes_and_click_excludes() {

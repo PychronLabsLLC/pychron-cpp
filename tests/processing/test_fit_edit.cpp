@@ -66,24 +66,24 @@ TEST(FitEdits, ApplyRefitsOnACopy) {
   raw.series.push_back(signal());
   r::FitSpec avg;
   avg.kind = r::FitKind::Average;
-  auto result = apply_fit_edits(*a, raw, {FitEdit{"Ar40", linear(), {7}}});
+  auto result = apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Signal, "Ar40", linear(), {7}}});
   ASSERT_TRUE(result) << result.error().what;
-  ASSERT_EQ(result->isotopes.size(), 1u);
-  const auto& e = result->isotopes[0];
-  EXPECT_NEAR(e.intercept.value, 100.0, 0.01);
+  ASSERT_EQ(result->fits.size(), 1u);
+  const auto& e = result->fits[0];
+  EXPECT_NEAR(e.value.value, 100.0, 0.01);
   EXPECT_EQ(e.n_points, 20);
   EXPECT_EQ(e.n_used, 19);
   const IsotopeData* edited = result->analysis->find_isotope("Ar40");
   ASSERT_TRUE(edited);
-  EXPECT_EQ(edited->intercept, e.intercept);
+  EXPECT_EQ(edited->intercept, e.value);
   EXPECT_EQ(edited->n, 19);
   EXPECT_EQ(edited->user_excluded, (std::vector<std::size_t>{7}));
   ASSERT_TRUE(edited->fit);
   EXPECT_EQ(edited->fit->kind, r::FitKind::Linear);
   EXPECT_EQ(a->find_isotope("Ar40")->intercept.value, 10.0 * 295.5 + 0.01);  // original untouched
 
-  EXPECT_FALSE(apply_fit_edits(*a, raw, {FitEdit{"Ar99", linear(), {}}}));
-  auto missing = apply_fit_edits(*a, raw, {FitEdit{"Ar39", avg, {}}});
+  EXPECT_FALSE(apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Signal, "Ar99", linear(), {}}}));
+  auto missing = apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Signal, "Ar39", avg, {}}});
   ASSERT_FALSE(missing);
   EXPECT_NE(missing.error().what.find("Ar39"), std::string::npos);
 }
@@ -105,7 +105,7 @@ TEST(FitEdits, RefsTogglesAndMessages) {
   auto a = test::make_air(0);
   Analysis& before = *a;
   before.isotopes[0].fit = linear();
-  EditedIsotope e;
+  EditedFit e;
   e.key = "Ar40";
   e.fit = linear();
   e.fit.kind = r::FitKind::Parabolic;
@@ -138,6 +138,81 @@ TEST(EvolutionScene, LeftOutPointsAreAReferencedLayerOfTheirOwn) {
   EXPECT_EQ(in.refs[3].analysis, "Ar40#4");
   // The wild point (series index 7, layer index 6) is the filter's outlier.
   for (std::size_t i = 0; i < in.excluded.size(); ++i) EXPECT_EQ(in.excluded[i], i == 6) << i;
+}
+
+TEST(FitEdits, BaselineEditsApplyToEveryIsotopeOnTheDetector) {
+  auto a = std::make_shared<Analysis>(*test::make_air(0));
+  a->isotopes[2].detector = "H1";  // Ar38 shares Ar40's detector
+  RawData raw;
+  RawSeries bs = signal("H1");
+  bs.kind = SeriesKind::Baseline;
+  raw.series.push_back(bs);
+  r::FitSpec avg;
+  avg.kind = r::FitKind::Average;
+  auto stored = stored_fit(*a, SeriesKind::Baseline, "H1");
+  ASSERT_TRUE(stored);
+  EXPECT_EQ(stored->value, (Value{0.01, 0.001}));
+  EXPECT_FALSE(stored_fit(*a, SeriesKind::Baseline, "XX"));
+  EXPECT_FALSE(stored_fit(*a, SeriesKind::Sniff, "Ar40"));
+
+  auto result = apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Baseline, "H1", linear(), {7}}});
+  ASSERT_TRUE(result) << result.error().what;
+  ASSERT_EQ(result->fits.size(), 1u);
+  EXPECT_EQ(result->fits[0].kind, SeriesKind::Baseline);
+  EXPECT_NEAR(result->fits[0].value.value, 100.0, 0.01);
+  for (const char* key : {"Ar40", "Ar38"}) {
+    const IsotopeData* iso = result->analysis->find_isotope(key);
+    EXPECT_NEAR(iso->baseline.value, 100.0, 0.01) << key;
+    EXPECT_EQ(iso->baseline_user_excluded, (std::vector<std::size_t>{7})) << key;
+    EXPECT_EQ(iso->baseline_fit->kind, r::FitKind::Linear) << key;
+    EXPECT_EQ(iso->intercept, a->find_isotope(key)->intercept) << key;  // signals untouched
+  }
+  EXPECT_EQ(result->analysis->find_isotope("Ar39")->baseline, a->find_isotope("Ar39")->baseline);
+  EXPECT_EQ(describe_fit_edits(*a, result->fits), "<ISOEVO> H1 baseline ? -> linear SEM no outlier filter 1 excluded");
+
+  EXPECT_FALSE(apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Baseline, "XX", avg, {}}}));
+  EXPECT_FALSE(apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Baseline, "AX", avg, {}}}));  // no raw baseline
+  EXPECT_FALSE(apply_fit_edits(*a, raw, {FitEdit{SeriesKind::Sniff, "Ar40", avg, {}}}));
+}
+
+TEST(FitEdits, SameAsStored) {
+  auto a = std::make_shared<Analysis>(*test::make_air(0));
+  a->isotopes[0].fit = linear(true);
+  a->isotopes[0].user_excluded = {2};
+  FitEdit e{SeriesKind::Signal, "Ar40", linear(true), {2}};
+  EXPECT_TRUE(same_as_stored(*a, e));
+  e.fit.outliers.std_devs = 3;
+  EXPECT_FALSE(same_as_stored(*a, e));
+  e = FitEdit{SeriesKind::Signal, "Ar40", linear(true), {}};
+  EXPECT_FALSE(same_as_stored(*a, e));
+  // Without the filter its settings do not matter.
+  a->isotopes[0].fit = linear(false);
+  e = FitEdit{SeriesKind::Signal, "Ar40", linear(false), {2}};
+  e.fit.outliers.iterations = 4;
+  EXPECT_TRUE(same_as_stored(*a, e));
+  EXPECT_FALSE(same_as_stored(*a, FitEdit{SeriesKind::Baseline, "H1", linear(), {}}));  // no stored baseline fit
+}
+
+TEST(EvolutionScene, BaselinePanelsDrawTheDetectorsFit) {
+  auto a = std::make_shared<Analysis>(*test::make_air(0));
+  a->isotopes[0].baseline_fit = linear();
+  a->isotopes[0].baseline_user_excluded = {7};
+  RawData raw;
+  RawSeries bs = signal("H1");
+  bs.kind = SeriesKind::Baseline;
+  raw.series.push_back(bs);
+  const Scene scene = make_evolution_scene(*a, raw, SeriesKind::Baseline);
+  const auto& layers = scene.graphs[0].panels[0].layers;
+  int lines = 0, points = 0;
+  std::string text;
+  for (const auto& l : layers) {
+    lines += std::holds_alternative<LineLayer>(l);
+    points += std::holds_alternative<PointLayer>(l);
+    if (const auto* t = std::get_if<TextLayer>(&l)) text = t->lines.at(0);
+  }
+  EXPECT_EQ(lines, 1);
+  EXPECT_EQ(points, 2);  // in the fit, and the left-out point
+  EXPECT_EQ(text.rfind("linear SEM  Bs = ", 0), 0u) << text;
 }
 
 TEST(RevisionDiff, ChangedAddedRemovedAndColumnUnion) {

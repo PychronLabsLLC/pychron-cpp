@@ -189,9 +189,10 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
     p.quantity = s.key;
     p.y.title = s.key + (s.detector.empty() || s.detector == s.key ? "" : " (" + s.detector + ")") + " (fA)";
     const Color color = palette_color(index++);
-    const IsotopeData* iso = kind == SeriesKind::Signal ? a.find_isotope(s.key) : nullptr;
+    // Signals: the isotope's fit; baselines: the detector's.
+    const std::optional<StoredFit> stored = kind == SeriesKind::Sniff ? std::nullopt : stored_fit(a, kind, s.key);
     const std::vector<std::size_t> none;
-    const std::vector<std::size_t>& user_excluded = iso ? iso->user_excluded : none;
+    const std::vector<std::size_t>& user_excluded = stored ? stored->user_excluded : none;
     std::vector<bool> left_out(s.t.size(), false);
     for (auto i : user_excluded)
       if (i < left_out.size()) left_out[i] = true;
@@ -218,8 +219,9 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
     }
     pts.excluded.assign(pts.x.size(), false);
 
-    if (iso && iso->fit) {
-      auto fit = fit_series(s, *iso->fit, user_excluded);
+    if (stored && stored->fit) {
+      const r::FitSpec& spec = *stored->fit;
+      auto fit = fit_series(s, spec, user_excluded);
       if (fit) {
         for (auto idx : fit->outliers) {
           const auto at = std::lower_bound(index_of.begin(), index_of.end(), idx) - index_of.begin();
@@ -238,7 +240,7 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
         constexpr int kSamples = 40;
         for (int k = 0; k < kSamples; ++k) {
           const double x = hi * k / (kSamples - 1);
-          auto f = fit_series(s, *iso->fit, user_excluded, x);
+          auto f = fit_series(s, spec, user_excluded, x);
           if (!f) continue;
           line.x.push_back(x);
           line.y.push_back(f->intercept.value);
@@ -250,16 +252,16 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
         if (!line.x.empty()) p.layers.emplace_back(std::move(line));
         TextLayer t;
         char buf[160];
-        std::snprintf(buf, sizeof buf, "%s %s  I(0) = %.6g ± %.3g  n %zu", std::string(r::to_string(iso->fit->kind)).c_str(),
-                      iso->fit->error == r::ErrorType::Sd ? "SD" : "SEM", fit->intercept.value, fit->intercept.error,
-                      fit->intercept.n_used);
+        std::snprintf(buf, sizeof buf, "%s %s  %s = %.6g ± %.3g  n %zu", std::string(r::to_string(spec.kind)).c_str(),
+                      spec.error == r::ErrorType::Sd ? "SD" : "SEM", kind == SeriesKind::Baseline ? "Bs" : "I(0)",
+                      fit->intercept.value, fit->intercept.error, fit->intercept.n_used);
         t.lines.push_back(buf);
         if (!user_excluded.empty() || !fit->outliers.empty()) {
           std::snprintf(buf, sizeof buf, "%zu left out, %zu outliers", user_excluded.size(), fit->outliers.size());
           t.lines.push_back(buf);
         }
-        if (std::abs(fit->intercept.value - iso->intercept.value) > 1e-6 * std::max(1.0, std::abs(iso->intercept.value))) {
-          std::snprintf(buf, sizeof buf, "stored %.6g ± %.3g", iso->intercept.value, iso->intercept.error);
+        if (std::abs(fit->intercept.value - stored->value.value) > 1e-6 * std::max(1.0, std::abs(stored->value.value))) {
+          std::snprintf(buf, sizeof buf, "stored %.6g ± %.3g", stored->value.value, stored->value.error);
           t.lines.push_back(buf);
         }
         t.corner = Corner::TopRight;  // signals decay from the left: keep t = 0 clear

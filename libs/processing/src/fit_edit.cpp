@@ -30,31 +30,66 @@ Result<SeriesFit> fit_series(const RawSeries& s, const r::FitSpec& spec, const s
   return out;
 }
 
+std::optional<StoredFit> stored_fit(const Analysis& a, SeriesKind kind, const std::string& key) {
+  if (kind == SeriesKind::Signal) {
+    const IsotopeData* iso = a.find_isotope(key);
+    if (!iso) return std::nullopt;
+    return StoredFit{iso->fit, iso->user_excluded, iso->intercept};
+  }
+  if (kind == SeriesKind::Baseline) {
+    for (const auto& iso : a.isotopes)
+      if (iso.detector == key) return StoredFit{iso.baseline_fit, iso.baseline_user_excluded, iso.baseline};
+  }
+  return std::nullopt;
+}
+
 Result<FitEditResult> apply_fit_edits(const Analysis& analysis, const RawData& raw, const std::vector<FitEdit>& edits) {
   auto copy = std::make_shared<Analysis>(analysis);
   FitEditResult result;
   for (const auto& e : edits) {
-    auto it = std::find_if(copy->isotopes.begin(), copy->isotopes.end(), [&](const IsotopeData& d) { return d.key == e.key; });
-    if (it == copy->isotopes.end()) return fail(ErrorKind::Config, "no isotope " + e.key);
-    const RawSeries* s = raw.find(SeriesKind::Signal, e.key);
-    if (!s) return fail(ErrorKind::Config, e.key + ": no raw signal to refit");
+    const std::string what = e.kind == SeriesKind::Baseline ? e.key + " baseline" : e.key;
+    if (e.kind != SeriesKind::Signal && e.kind != SeriesKind::Baseline)
+      return fail(ErrorKind::Config, what + ": only signal and baseline fits can be edited");
+    if (!stored_fit(*copy, e.kind, e.key))
+      return fail(ErrorKind::Config, e.kind == SeriesKind::Baseline ? "no isotope on detector " + e.key : "no isotope " + e.key);
+    const RawSeries* s = raw.find(e.kind, e.key);
+    if (!s) return fail(ErrorKind::Config, what + ": no raw data to refit");
     auto fit = fit_series(*s, e.fit, e.user_excluded);
-    if (!fit) return fail(fit.error());
-    EditedIsotope ed;
+    if (!fit) return fail(ErrorKind::Config, what + ": " + fit.error().what);
+    EditedFit ed;
+    ed.kind = e.kind;
     ed.key = e.key;
-    ed.intercept = Value{fit->intercept.value, fit->intercept.error};
+    ed.value = Value{fit->intercept.value, fit->intercept.error};
     ed.fit = e.fit;
     ed.n_points = static_cast<int>(s->t.size());
     ed.n_used = static_cast<int>(fit->intercept.n_used);
     ed.user_excluded = e.user_excluded;
-    it->intercept = ed.intercept;
-    it->fit = ed.fit;
-    it->n = ed.n_used;
-    it->user_excluded = ed.user_excluded;
-    result.isotopes.push_back(std::move(ed));
+    for (auto& iso : copy->isotopes) {
+      if (e.kind == SeriesKind::Signal && iso.key == e.key) {
+        iso.intercept = ed.value;
+        iso.fit = ed.fit;
+        iso.n = ed.n_used;
+        iso.user_excluded = ed.user_excluded;
+      } else if (e.kind == SeriesKind::Baseline && iso.detector == e.key) {
+        iso.baseline = ed.value;
+        iso.baseline_fit = ed.fit;
+        iso.baseline_user_excluded = ed.user_excluded;
+      }
+    }
+    result.fits.push_back(std::move(ed));
   }
   result.analysis = std::move(copy);
   return result;
+}
+
+bool same_as_stored(const Analysis& a, const FitEdit& e) {
+  const auto stored = stored_fit(a, e.kind, e.key);
+  if (!stored || !stored->fit) return false;
+  const auto& f = *stored->fit;
+  return f.kind == e.fit.kind && f.error == e.fit.error && f.outliers.enabled == e.fit.outliers.enabled &&
+         (!f.outliers.enabled ||
+          (f.outliers.iterations == e.fit.outliers.iterations && f.outliers.std_devs == e.fit.outliers.std_devs)) &&
+         stored->user_excluded == e.user_excluded;
 }
 
 void toggle_index(std::vector<std::size_t>& v, std::size_t index) {
@@ -79,22 +114,23 @@ std::optional<std::pair<std::string, std::size_t>> parse_evolution_ref(const std
   return std::make_pair(ref.substr(0, hash), index);
 }
 
-std::string describe_fit_edits(const Analysis& before, const std::vector<EditedIsotope>& edits) {
+std::string describe_fit_edits(const Analysis& before, const std::vector<EditedFit>& edits) {
   std::string out = "<ISOEVO>";
   bool first = true;
   for (const auto& e : edits) {
     out += first ? " " : ", ";
     first = false;
-    out += e.key;
-    const IsotopeData* old = before.find_isotope(e.key);
-    const std::string was = old && old->fit ? std::string(r::to_string(old->fit->kind)) : "?";
+    out += e.kind == SeriesKind::Baseline ? e.key + " baseline" : e.key;
+    const auto stored = stored_fit(before, e.kind, e.key);
+    const std::optional<r::FitSpec> old = stored ? stored->fit : std::nullopt;
+    const std::string was = old ? std::string(r::to_string(old->kind)) : "?";
     const std::string now(r::to_string(e.fit.kind));
     if (was != now) out += " " + was + " -> " + now;
-    if (!old || !old->fit || old->fit->error != e.fit.error) out += e.fit.error == r::ErrorType::Sd ? " SD" : " SEM";
-    if (!old || !old->fit || old->fit->outliers.enabled != e.fit.outliers.enabled ||
-        old->fit->outliers.iterations != e.fit.outliers.iterations || old->fit->outliers.std_devs != e.fit.outliers.std_devs)
+    if (!old || old->error != e.fit.error) out += e.fit.error == r::ErrorType::Sd ? " SD" : " SEM";
+    if (!old || old->outliers.enabled != e.fit.outliers.enabled || old->outliers.iterations != e.fit.outliers.iterations ||
+        old->outliers.std_devs != e.fit.outliers.std_devs)
       out += e.fit.outliers.enabled ? " outliers " + std::to_string(e.fit.outliers.iterations) + "x" : " no outlier filter";
-    if (!old || old->user_excluded != e.user_excluded) out += " " + std::to_string(e.user_excluded.size()) + " excluded";
+    if (!stored || stored->user_excluded != e.user_excluded) out += " " + std::to_string(e.user_excluded.size()) + " excluded";
   }
   return out;
 }
