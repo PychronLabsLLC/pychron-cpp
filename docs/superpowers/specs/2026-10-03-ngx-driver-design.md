@@ -67,8 +67,8 @@ transport = "ngx"
 
 - `kind = "link"` builds a `LinkTransport`: open/close succeed and do
   nothing; exchange/read/write fail Config ("transport 'ngx' is a link to
-  NGX link 'ngx'; only NGX drivers can use it"). `elctl validate` and the
-  spectrometer validator accept it only under NGX drivers.
+  NGX link 'ngx'; only NGX drivers can use it"), so a link transport under
+  any other driver fails at its first command with that message.
 - `NgxLinkRegistry` (process-wide, mutex-protected, `weak_ptr` entries):
   a driver whose transport is a real one creates the `NgxLink` on it and
   registers it under `link`; a driver whose transport is a `LinkTransport`
@@ -137,8 +137,17 @@ right (bring-up item 2).
 
 Credentials: `user` in the driver options; the password from
 `password_env` (an environment variable) or a `password` key in the
-spectrometer's `*.local.toml` (machine-local, git-ignored). Traces and logs
-redact the Login argument ("Login user,****").
+spectrometer's `*.local.toml` (machine-local, git-ignored). The link's own
+errors show the Login as "Login user,****". Wire traces (`trace = true`)
+record bytes verbatim, Login included: do not enable a trace on an NGX
+transport with credentials until the trace recorder can redact (follow-up).
+
+Implementation notes: the reader uses `Transport::poll()` (added for this),
+a read for unsolicited input whose "nothing yet" is neither a failure nor a
+health change, so an idle link keeps its transport Connected; it polls every
+10 ms (`read_timeout`), which also bounds how long a command's write waits
+behind a read. `SimTransport::hooked(hook, options, unsolicited)` gained the
+event source.
 
 A reconnect bumps the acquisition generation (section 4) so nothing from the
 old session counts.

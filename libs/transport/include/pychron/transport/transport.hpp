@@ -40,6 +40,15 @@ class Transport {
   virtual Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) = 0;
   virtual Result<void> write(Bytes tx) = 0;
   virtual Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) = 0;
+  // read() for a reader that waits on unsolicited input (an instrument's
+  // event stream): no complete frame within `timeout` is nullopt, not a
+  // failure, and leaves health alone. Other errors are read()'s.
+  virtual Result<std::optional<Bytes>> poll(ReadSpec rs, Duration timeout = kDefaultTimeout) {
+    auto r = read(std::move(rs), timeout);
+    if (r) return std::optional<Bytes>(std::move(*r));
+    if (r.error().kind == ErrorKind::Timeout) return std::optional<Bytes>{};
+    return fail(std::move(r).error());
+  }
 
   // Runs `body` with exclusive use of the bus: exchange()/write()/read() calls
   // it makes on this transport run back to back, and no other caller's
@@ -105,6 +114,7 @@ class QueuedTransport : public Transport {
   Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) final;
   Result<void> write(Bytes tx) final;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) final;
+  Result<std::optional<Bytes>> poll(ReadSpec rs, Duration timeout = kDefaultTimeout) final;
   // One queued job that runs `body` on the worker; calls body makes run inline.
   Result<void> transaction(std::function<Result<void>()> body) final;
   Health health() const final;

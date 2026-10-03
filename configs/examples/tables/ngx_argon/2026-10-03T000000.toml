@@ -1,0 +1,76 @@
+# SIMULATION PLACEHOLDER: an NGX mass table (axis "mass") shaped like
+# pychron's ngx_mftable.csv; the values put each isotope on each collector
+# at a one-mass-unit spacing around AX. Replace with the instrument's
+# calibration before any magnet move.
+fit = "quadratic"
+axis = "mass"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H4 = 35.962383
+H3 = 36.962383
+H2 = 37.962383
+H1 = 38.962383
+AX = 39.962383
+L1 = 40.962383
+L2 = 41.962383
+L3 = 42.962383
+L4 = 43.962383
+L5 = 44.962383
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+H4 = 34.964313
+H3 = 35.964313
+H2 = 36.964313
+H1 = 37.964313
+AX = 38.964313
+L1 = 39.964313
+L2 = 40.964313
+L3 = 41.964313
+L4 = 42.964313
+L5 = 43.964313
+
+[[points]]
+isotope = "Ar38"
+mass = 37.9627322
+H4 = 33.962732
+H3 = 34.962732
+H2 = 35.962732
+H1 = 36.962732
+AX = 37.962732
+L1 = 38.962732
+L2 = 39.962732
+L3 = 40.962732
+L4 = 41.962732
+L5 = 42.962732
+
+[[points]]
+isotope = "Ar37"
+mass = 36.9667759
+H4 = 32.966776
+H3 = 33.966776
+H2 = 34.966776
+H1 = 35.966776
+AX = 36.966776
+L1 = 37.966776
+L2 = 38.966776
+L3 = 39.966776
+L4 = 40.966776
+L5 = 41.966776
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H4 = 31.967545
+H3 = 32.967545
+H2 = 33.967545
+H1 = 34.967545
+AX = 35.967545
+L1 = 36.967545
+L2 = 37.967545
+L3 = 38.967545
+L4 = 39.967545
+L5 = 40.967545

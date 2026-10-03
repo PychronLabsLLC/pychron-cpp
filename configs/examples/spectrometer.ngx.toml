@@ -1,0 +1,152 @@
+# Isotopx NGX over its controller's ASCII protocol (NGX driver spec,
+# docs/superpowers/specs/2026-10-03-ngx-driver-design.md). One isotopx_ngx
+# driver plays positioner (mass), source and acquirer on one TCP connection.
+# Valves wired to the NGX controller use the same connection: in
+# extraction_line.toml declare
+#
+#   [transports.ngx]
+#   kind = "link"
+#   link = "ngx"
+#   [drivers.ngx_valves]
+#   kind = "ngx_valves"
+#   transport = "ngx"
+#
+# so the socket is opened once, here.
+#
+# The driver has never been run against an instrument; the spec's bring-up
+# checklist (section 9) lists what must be confirmed first. The host is a
+# placeholder: set the real address, user and password in
+# spectrometer.ngx.local.toml (machine-local, git-ignored), e.g.
+#
+#   [transports.ngx]
+#   host = "10.0.0.20"
+#   [drivers.ngx]
+#   user = "pychron"
+#   password = "..."
+#
+# Do not set `trace = true` on this transport while a password is configured:
+# traces record the wire verbatim, Login included.
+#
+# SIMULATION PLACEHOLDERS: the mass table (tables/ngx_argon), nominal_hv, and
+# the saturation values describe no instrument.
+
+[system]
+name = "ngx"
+reference_detector = "H4"
+integration_time_s = 1.0
+
+[transports.ngx]
+kind = "tcp"
+host = "192.168.0.20"
+port = 1090
+timeout_ms = 2000
+
+[drivers.ngx]
+kind = "isotopx_ngx"
+transport = "ngx"
+roles = ["positioner", "source", "acquirer"]
+# pychron's detectors.yaml order; ACQ values arrive in reverse of it.
+channels = ["H4", "H3", "H2", "H1", "AX", "L1", "L2", "L3", "L4", "L5"]
+link = "ngx"
+completion = "acq_b"    # bring-up item 3
+settle_ms = 500
+deflect_threshold = 0.5
+# user = "pychron"      # set user and password in spectrometer.ngx.local.toml
+
+[magnet]
+positioner = "ngx"
+native_axis = "mass"
+limits = { min = 0.0, max = 200.0 }
+settle_ms = 500
+field_table = "ngx_argon"   # SIMULATION PLACEHOLDER table
+propagate = false
+corrections = { deflection = false, hv = false }
+
+[source]
+driver = "ngx"
+nominal_hv = 4500  # SIMULATION PLACEHOLDER
+
+[acquisition]
+acquirers = ["ngx"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[[detectors]]
+name = "H4"
+kind = "faraday"
+channel = "ngx:H4"
+units = "fA"
+isotope = "Ar40"
+color = "#ff7f0e"
+saturation = 4.9e6
+
+[[detectors]]
+name = "H3"
+kind = "faraday"
+channel = "ngx:H3"
+units = "fA"
+isotope = "Ar39"
+color = "#2ca02c"
+saturation = 4.9e6
+
+[[detectors]]
+name = "H2"
+kind = "faraday"
+channel = "ngx:H2"
+units = "fA"
+active = false
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "ngx:H1"
+units = "fA"
+active = false
+
+[[detectors]]
+name = "AX"
+kind = "faraday"
+channel = "ngx:AX"
+units = "fA"
+isotope = "Ar38"
+color = "#d62728"
+saturation = 4.9e6
+
+[[detectors]]
+name = "L1"
+kind = "faraday"
+channel = "ngx:L1"
+units = "fA"
+isotope = "Ar37"
+color = "#9467bd"
+saturation = 4.9e6
+
+[[detectors]]
+name = "L2"
+kind = "faraday"
+channel = "ngx:L2"
+units = "fA"
+isotope = "Ar36"
+color = "#8c564b"
+saturation = 4.9e6
+
+[[detectors]]
+name = "L3"
+kind = "faraday"
+channel = "ngx:L3"
+units = "fA"
+active = false
+
+[[detectors]]
+name = "L4"
+kind = "cdd"
+channel = "ngx:L4"
+units = "cps"
+active = false
+
+[[detectors]]
+name = "L5"
+kind = "faraday"
+channel = "ngx:L5"
+units = "fA"
+active = false

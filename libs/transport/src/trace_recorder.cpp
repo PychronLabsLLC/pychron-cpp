@@ -94,6 +94,18 @@ Result<Bytes> TraceRecorder::read(ReadSpec rs, Duration timeout) {
   });
 }
 
+Result<std::optional<Bytes>> TraceRecorder::poll(ReadSpec rs, Duration timeout) {
+  return transact(*inner_, [&]() -> Result<std::optional<Bytes>> {
+    auto r = inner_->poll(std::move(rs), timeout);
+    if (r && *r) {
+      record(TraceRecord::Dir::Rx, **r);
+    } else if (!r) {
+      record_error(r.error());
+    }
+    return r;
+  });
+}
+
 Result<void> TraceRecorder::transaction(std::function<Result<void>()> body) {
   return inner_->transaction(std::move(body));
 }

@@ -145,6 +145,10 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
       tc.kind = config::TransportKind::Sim;
       tc.params = config::SimParams{};
       break;
+    case cfg::TransportKind::Link:
+      tc.kind = config::TransportKind::Link;
+      tc.params = config::LinkParams{c.link};
+      break;
   }
   TransportContext tctx;
   tctx.clock = &context.clock;

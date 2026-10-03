@@ -193,6 +193,7 @@ constexpr std::array kTransportKinds{
     std::pair<std::string_view, TransportKind>{"modbus_rtu", TransportKind::ModbusRtu},
     std::pair<std::string_view, TransportKind>{"modbus_tcp", TransportKind::ModbusTcp},
     std::pair<std::string_view, TransportKind>{"sim", TransportKind::Sim},
+    std::pair<std::string_view, TransportKind>{"link", TransportKind::Link},
 };
 
 constexpr std::array kParities{
@@ -479,6 +480,13 @@ class ConfigBuilder {
       case TransportKind::Sim:
         tc.params = SimParams{};
         break;
+      case TransportKind::Link: {
+        allowed.insert("link");
+        LinkParams lp;
+        p_.read(get, tc, "link", lp.link, true);
+        tc.params = lp;
+        break;
+      }
     }
     p_.reject_unknown(t, tc, allowed);
     if (ovr != nullptr) {

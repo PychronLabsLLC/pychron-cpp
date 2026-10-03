@@ -7,6 +7,7 @@
 
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
+#include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/types.hpp"
 
 namespace pychron::sim {
@@ -164,6 +165,30 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     std::lock_guard lock(mutex_);
     boards_.push_back(std::move(board));
     return hook;
+  }
+
+  if (driver.kind == "ngx_valves") {
+    // The NGX simulator answers (Login, SAB, valves); actuations move the
+    // simulated line's valves.
+    std::map<std::string, std::string> by_address;
+    for (const auto& v : system.valves)
+      if (v.actuator == driver.name) by_address[v.address] = v.name;
+    for (const auto& s : system.switches)
+      if (s.actuator == driver.name) by_address[s.address] = s.name;
+    auto model = std::make_shared<spectrometer::NgxSimModel>();
+    model->banner_pending = false;  // no event source on a line transport
+    auto inner = spectrometer::ngx_sim_hook(model);
+    return [this, model, inner = std::move(inner), by_address = std::move(by_address)](const Bytes& tx) {
+      Bytes reply = inner(tx);
+      std::string cmd = to_string(tx);
+      while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n' || cmd.back() == '#')) cmd.pop_back();
+      for (const auto* verb : {"OpenValve ", "CloseValve "}) {
+        if (!cmd.starts_with(verb)) continue;
+        if (auto it = by_address.find(cmd.substr(std::string(verb).size())); it != by_address.end())
+          set_valve(it->second, cmd.starts_with("OpenValve "));
+      }
+      return reply;
+    };
   }
 
   if (driver.kind == "pfeiffer_maxigauge") {

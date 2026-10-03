@@ -10,11 +10,13 @@
 //   IX = pychron/spectrometer/isotopx/__init__.py
 //   GA = pychron/hardware/actuators/ngx_gp_actuator.py
 //
-// Framing: replies and event lines end with "#\r\n" (NC NGX_TERMINATOR, SP
-// readline("#\r\n"), LineDemultiplexer). The send terminator is the
-// communicator's configured write_terminator in Python (unverified: not
-// determinable from pychron Python; the class default is "\r"). Every encoder
-// takes it as a parameter, default "#\r\n".
+// Framing: event lines end with "#\r\n" (SP readline("#\r\n")). Python
+// reads command replies with one recv and no terminator, unstripped, so a
+// reply ends at least in "\r\n"; whether a '#' precedes it is unverified.
+// Lines are therefore framed on "\n"; a trailing "\r" and then a trailing
+// '#' are stripped (strip_line), so "E00\r\n" and "E00#\r\n" both decode.
+// The send terminator is the communicator's write_terminator, default "\r"
+// in Python (EC:573); every encoder takes it as a parameter, default "\r".
 //
 //   host -> "Login user,password"                   (NC:147)
 //   host -> "GETMASS"                               (MG:33)
@@ -66,12 +68,13 @@
 
 namespace pychron::codec::ngx {
 
-// Reply and event line terminator (NC NGX_TERMINATOR).
+// Event line terminator (SP readline("#\r\n")).
 inline constexpr std::string_view kTerminator = "#\r\n";
-// unverified: not determinable from pychron Python. Python appends the
-// communicator's configured write_terminator (EC:639, NC:92/172); "#\r\n" is
-// inferred from the NGX login/payload code paths.
-inline constexpr std::string_view kDefaultSendTerminator = "#\r\n";
+// Every line, reply or event, ends here; replies are read up to it.
+inline constexpr std::string_view kLineEnd = "\n";
+// Python's communicator default write_terminator (unverified on an
+// instrument; the driver's send_terminator option overrides it).
+inline constexpr std::string_view kDefaultSendTerminator = "\r";
 // Lines starting with this are events (LineDemultiplexer event_prefix).
 inline constexpr std::string_view kEventPrefix = "#EVENT";
 inline constexpr std::string_view kDefaultRcsId = "NOM";  // SP rcs_id
@@ -158,6 +161,10 @@ std::string_view error_text(int code) noexcept;
 
 // --- decoders (complete message, including terminator) ------------------------
 
+// The line without its "\n", then without a trailing "\r" and a trailing '#'.
+// Protocol when the line does not end in "\n".
+Result<std::string> strip_line(const Bytes& line);
+
 struct Readback {
   double setpoint = 0.0;
   double actual = 0.0;
@@ -197,8 +204,8 @@ struct Reply { Bytes raw; };                 // command reply, terminator includ
 struct OtherEvent { std::string name; std::string body; };
 using Message = std::variant<Reply, AcqFrame, OtherEvent>;
 
-// Accumulates stream bytes and yields whole "#\r\n" lines; a terminator split
-// across chunks is handled. Lines starting with "#EVENT" are events, anything
+// Accumulates stream bytes and yields whole lines (framed on "\n"); a line
+// split across chunks is handled. Lines starting with "#EVENT" are events, anything
 // else a reply (LineDemultiplexer). Holds only its buffer.
 class Demultiplexer {
  public:

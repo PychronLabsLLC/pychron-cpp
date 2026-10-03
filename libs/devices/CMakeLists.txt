@@ -13,6 +13,9 @@ add_library(pychron_devices STATIC
   src/spectrometer/params.cpp
   src/spectrometer/roles.cpp
   src/spectrometer/detectors.cpp
+  src/spectrometer/ngx_link.cpp
+  src/spectrometer/ngx.cpp
+  src/spectrometer/ngx_sim.cpp
   src/spectrometer/legacy/polled_acquirer.cpp
   src/spectrometer/legacy/dac_output.cpp
   src/spectrometer/legacy/dac_positioner.cpp

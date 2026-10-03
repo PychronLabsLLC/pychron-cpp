@@ -40,6 +40,7 @@ class TraceRecorder final : public Transport {
   Result<void> transaction(std::function<Result<void>()> body) override;
   Result<void> write(Bytes tx) override;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) override;
+  Result<std::optional<Bytes>> poll(ReadSpec rs, Duration timeout = kDefaultTimeout) override;
   Health health() const override;
 
   Transport& inner() noexcept { return *inner_; }

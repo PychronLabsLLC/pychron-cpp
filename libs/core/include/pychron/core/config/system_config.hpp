@@ -21,7 +21,7 @@ struct SystemSection : Located {
   std::int64_t scan_interval_ms = 1000;
 };
 
-enum class TransportKind { Serial, Tcp, ModbusRtu, ModbusTcp, Sim };
+enum class TransportKind { Serial, Tcp, ModbusRtu, ModbusTcp, Sim, Link };
 
 enum class Parity { None, Even, Odd };
 
@@ -48,7 +48,13 @@ struct ModbusTcpParams {
 
 struct SimParams {};
 
-using TransportParams = std::variant<SerialParams, TcpParams, ModbusRtuParams, ModbusTcpParams, SimParams>;
+// A connection another config owns (NGX); see LinkTransport.
+struct LinkParams {
+  std::string link;
+};
+
+using TransportParams =
+    std::variant<SerialParams, TcpParams, ModbusRtuParams, ModbusTcpParams, SimParams, LinkParams>;
 
 struct TransportConfig : Located {
   std::string name;

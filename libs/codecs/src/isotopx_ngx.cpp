@@ -11,7 +11,7 @@ namespace pychron::codec::ngx {
 namespace {
 
 const ReadSpec& line_reply() {
-  static const ReadSpec spec = ReadSpec::until(kTerminator);
+  static const ReadSpec spec = ReadSpec::until(kLineEnd);
   return spec;
 }
 
@@ -77,6 +77,19 @@ std::vector<std::string_view> split(std::string_view s, char sep) {
   }
 }
 
+}  // namespace
+
+Result<std::string> strip_line(const Bytes& line) {
+  std::string text = to_string(line);
+  if (text.empty() || text.back() != '\n') return protocol_error("missing line terminator", line);
+  text.pop_back();
+  if (!text.empty() && text.back() == '\r') text.pop_back();
+  if (!text.empty() && text.back() == '#') text.pop_back();
+  return text;
+}
+
+namespace {
+
 // "Exx" with two digits.
 std::optional<int> e_code(std::string_view head) {
   if (head.size() == 3 && head[0] == 'E' && head[1] >= '0' && head[1] <= '9' && head[2] >= '0' &&
@@ -89,7 +102,7 @@ std::optional<int> e_code(std::string_view head) {
 // Reply body without terminator, or the device error it reports. A bare
 // "Exx" (IX ERRORS) or "Exx,text" with xx != 00 is an error.
 Result<std::string> reply_text(const Bytes& reply) {
-  auto text = strip_terminator(reply, kTerminator);
+  auto text = strip_line(reply);
   if (!text) return fail(std::move(text).error());
   std::string_view body = trim(*text);
   auto comma = body.find(',');
@@ -368,7 +381,7 @@ Result<bool> decode_valve_status(const Bytes& reply) {
 }
 
 Result<AcqFrame> decode_acq_event(const Bytes& line) {
-  auto text = strip_terminator(line, kTerminator);
+  auto text = strip_line(line);
   if (!text) return fail(std::move(text).error());
   std::string_view body = *text;
   constexpr std::string_view kAcq = "#EVENT:ACQ,";
@@ -402,17 +415,17 @@ std::vector<Result<Message>> Demultiplexer::feed(const Bytes& chunk) {
   std::vector<Result<Message>> out;
   // Search the whole buffer so a terminator split across chunks is found.
   for (;;) {
-    auto end = buffer_.find(kTerminator);
-    if (end == std::string::npos) break;
-    std::size_t len = end + kTerminator.size();
-    std::string line = buffer_.substr(0, len);
-    buffer_.erase(0, len);
+    auto nl = buffer_.find('\n');
+    if (nl == std::string::npos) break;
+    std::string line = buffer_.substr(0, nl + 1);
+    buffer_.erase(0, nl + 1);
 
     if (!std::string_view(line).starts_with(kEventPrefix)) {
       out.emplace_back(Message{Reply{to_bytes(line)}});
       continue;
     }
-    std::string body = line.substr(kEventPrefix.size(), end - kEventPrefix.size());
+    auto stripped = strip_line(to_bytes(line));
+    std::string body = stripped ? stripped->substr(kEventPrefix.size()) : std::string{};
     if (!body.empty() && body[0] == ':') body.erase(0, 1);
     std::string ev = body.substr(0, body.find(','));
     if (ev == "ACQ" || ev == "ACQ.B") {

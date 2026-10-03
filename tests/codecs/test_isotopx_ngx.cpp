@@ -11,21 +11,28 @@ namespace ngx = pychron::codec::ngx;
 // isotopx_spectrometer_controller.py, pychron/spectrometer/isotopx/*).
 
 namespace {
-const ReadSpec kLine = ReadSpec::until("#\r\n");
+const ReadSpec kLine = ReadSpec::until("\n");
 Bytes B(std::string_view s) { return to_bytes(s); }
 codec::Command C(std::string_view s) { return codec::Command::ascii(s, kLine); }
 }  // namespace
 
 // --- framing ------------------------------------------------------------------
 
-TEST(NgxCodec, FramingIsHashCrLf) {
+TEST(NgxCodec, FramingIsOnLineFeedAndSendsCarriageReturn) {
   EXPECT_EQ(ngx::kTerminator, "#\r\n");
-  EXPECT_EQ(ngx::kDefaultSendTerminator, "#\r\n");
-  EXPECT_EQ(ngx::stop_acq(), C("StopAcq#\r\n"));
+  EXPECT_EQ(ngx::kLineEnd, "\n");
+  EXPECT_EQ(ngx::kDefaultSendTerminator, "\r");  // Python's write_terminator default
+  EXPECT_EQ(ngx::stop_acq(), C("StopAcq\r"));
+  // A reply may end "\r\n" or "#\r\n"; both decode.
+  EXPECT_TRUE(ngx::decode_ok(B("E00\r\n")));
+  EXPECT_TRUE(ngx::decode_ok(B("E00#\r\n")));
+  EXPECT_DOUBLE_EQ(*ngx::decode_mass(B("39.9\n")), 39.9);
+  EXPECT_EQ(*ngx::strip_line(B("#EVENT:ACQ,NOM#\r\n")), "#EVENT:ACQ,NOM");
+  EXPECT_FALSE(ngx::strip_line(B("E00")));
 }
 
 TEST(NgxCodec, SendTerminatorIsAParameter) {
-  EXPECT_EQ(ngx::stop_acq("\r"), C("StopAcq\r"));
+  EXPECT_EQ(ngx::stop_acq("#\r\n"), C("StopAcq#\r\n"));
   EXPECT_EQ(ngx::get_mass("\r\n"), C("GETMASS\r\n"));
   EXPECT_EQ(*ngx::login("admin", "pw", "\r"), C("Login admin,pw\r"));
   // reply framing does not follow the send terminator
@@ -35,33 +42,33 @@ TEST(NgxCodec, SendTerminatorIsAParameter) {
 // --- encoders -----------------------------------------------------------------
 
 TEST(NgxCodec, Encoding) {
-  EXPECT_EQ(*ngx::login("admin", "pw"), C("Login admin,pw#\r\n"));
-  EXPECT_EQ(ngx::get_mass(), C("GETMASS#\r\n"));
-  EXPECT_EQ(*ngx::set_mass(39.9624, 500), C("SetMass 39.9624,500#\r\n"));
-  EXPECT_EQ(*ngx::set_mass(39.9624, 500, true), C("SetMass 39.9624,500,deflect#\r\n"));
-  EXPECT_EQ(*ngx::start_acq(10), C("StartAcq 10,NOM#\r\n"));
-  EXPECT_EQ(*ngx::start_acq(4.9, "RCS2"), C("StartAcq 4,RCS2#\r\n"));  // int() truncates
-  EXPECT_EQ(ngx::stop_acq(), C("StopAcq#\r\n"));
-  EXPECT_EQ(*ngx::set_acq_period(1000), C("SetAcqPeriod 1000#\r\n"));
-  EXPECT_EQ(ngx::sab(true), C("SAB 1#\r\n"));
-  EXPECT_EQ(ngx::sab(false), C("SAB 0#\r\n"));
+  EXPECT_EQ(*ngx::login("admin", "pw"), C("Login admin,pw\r"));
+  EXPECT_EQ(ngx::get_mass(), C("GETMASS\r"));
+  EXPECT_EQ(*ngx::set_mass(39.9624, 500), C("SetMass 39.9624,500\r"));
+  EXPECT_EQ(*ngx::set_mass(39.9624, 500, true), C("SetMass 39.9624,500,deflect\r"));
+  EXPECT_EQ(*ngx::start_acq(10), C("StartAcq 10,NOM\r"));
+  EXPECT_EQ(*ngx::start_acq(4.9, "RCS2"), C("StartAcq 4,RCS2\r"));  // int() truncates
+  EXPECT_EQ(ngx::stop_acq(), C("StopAcq\r"));
+  EXPECT_EQ(*ngx::set_acq_period(1000), C("SetAcqPeriod 1000\r"));
+  EXPECT_EQ(ngx::sab(true), C("SAB 1\r"));
+  EXPECT_EQ(ngx::sab(false), C("SAB 0\r"));
 }
 
 TEST(NgxCodec, SourceParamEncoding) {
-  EXPECT_EQ(*ngx::set_source_param(ngx::Param::IonEnergy, 4500.0), C("SSO IE, 4500.0#\r\n"));
-  EXPECT_EQ(*ngx::set_source_param(ngx::Param::YFocus, 1.5), C("SSO YF, 1.5#\r\n"));
-  EXPECT_EQ(*ngx::get_source_param(ngx::Param::IonEnergy), C("GSO IE#\r\n"));
-  EXPECT_EQ(*ngx::get_source_param(ngx::Param::ESAPlus), C("GSO ESA+#\r\n"));
-  EXPECT_EQ(*ngx::get_source_param("XTRA.1"), C("GSO XTRA.1#\r\n"));
-  EXPECT_EQ(*ngx::set_source_output("YF", 1.25), C("SetSourceOutput YF,1.25#\r\n"));
-  EXPECT_EQ(*ngx::get_source_output("TC"), C("GetSourceOutput TC#\r\n"));
-  EXPECT_EQ(*ngx::get_source_output(ngx::Param::ESAMinus), C("GetSourceOutput ESA-#\r\n"));
+  EXPECT_EQ(*ngx::set_source_param(ngx::Param::IonEnergy, 4500.0), C("SSO IE, 4500.0\r"));
+  EXPECT_EQ(*ngx::set_source_param(ngx::Param::YFocus, 1.5), C("SSO YF, 1.5\r"));
+  EXPECT_EQ(*ngx::get_source_param(ngx::Param::IonEnergy), C("GSO IE\r"));
+  EXPECT_EQ(*ngx::get_source_param(ngx::Param::ESAPlus), C("GSO ESA+\r"));
+  EXPECT_EQ(*ngx::get_source_param("XTRA.1"), C("GSO XTRA.1\r"));
+  EXPECT_EQ(*ngx::set_source_output("YF", 1.25), C("SetSourceOutput YF,1.25\r"));
+  EXPECT_EQ(*ngx::get_source_output("TC"), C("GetSourceOutput TC\r"));
+  EXPECT_EQ(*ngx::get_source_output(ngx::Param::ESAMinus), C("GetSourceOutput ESA-\r"));
 }
 
 TEST(NgxCodec, ValveEncoding) {
-  EXPECT_EQ(*ngx::open_valve("3"), C("OpenValve 3#\r\n"));
-  EXPECT_EQ(*ngx::close_valve("3"), C("CloseValve 3#\r\n"));
-  EXPECT_EQ(*ngx::get_valve_status("12"), C("GetValveStatus 12#\r\n"));
+  EXPECT_EQ(*ngx::open_valve("3"), C("OpenValve 3\r"));
+  EXPECT_EQ(*ngx::close_valve("3"), C("CloseValve 3\r"));
+  EXPECT_EQ(*ngx::get_valve_status("12"), C("GetValveStatus 12\r"));
 }
 
 TEST(NgxCodec, SettlingDelayTruncatesLikePythonInt) {
@@ -84,7 +91,7 @@ TEST(NgxCodec, FloatsFormatLikePythonStr) {
   EXPECT_EQ(ngx::format_float(-2.25), "-2.25");
   EXPECT_EQ(ngx::format_float(0.0), "0.0");
   EXPECT_EQ(ngx::format_float(1.0 / 3.0), "0.3333333333333333");
-  EXPECT_EQ(*ngx::set_mass(1.0 / 3.0, 0), C("SetMass 0.3333333333333333,0#\r\n"));
+  EXPECT_EQ(*ngx::set_mass(1.0 / 3.0, 0), C("SetMass 0.3333333333333333,0\r"));
 }
 
 TEST(NgxCodec, InvalidArgsAreConfig) {
@@ -148,7 +155,7 @@ TEST(NgxCodec, BareValueReplies) {
 }
 
 TEST(NgxCodec, BadReplies) {
-  for (auto s : {"39.9", "39.9#\n", "abc#\r\n", "OK,39.9#\r\n", "#\r\n", ""}) {
+  for (auto s : {"39.9", "39.9#", "abc#\r\n", "OK,39.9#\r\n", "#\r\n", ""}) {
     auto r = ngx::decode_mass(B(s));
     ASSERT_FALSE(r) << s;
     EXPECT_EQ(r.error().kind, ErrorKind::Protocol) << s;
@@ -248,7 +255,7 @@ TEST(NgxCodec, AcqEventGarbage) {
                  "#EVENT:ACQ,NOM,a,b,12:00:00.0,zz#\r\n",
                  "#EVENT:ACQ,NOM,a,b,12:00:00.0,#\r\n",
                  "#EVENT:FOO,NOM,a,b,12:00:00.0,1#\r\n", "E00#\r\n",
-                 "#EVENT:ACQ,NOM,a,b,12:00:00.0,1#\n"}) {
+                 "#EVENT:ACQ,NOM,a,b,12:00:00.0,1#"}) {
     auto r = ngx::decode_acq_event(B(s));
     ASSERT_FALSE(r) << s;
     EXPECT_EQ(r.error().kind, ErrorKind::Protocol) << s;
@@ -285,8 +292,10 @@ TEST(NgxDemux, TerminatorSplitAcrossChunks) {
   out = d.feed(B("\n"));
   ASSERT_EQ(out.size(), 1u);
   EXPECT_EQ(std::get<ngx::Reply>(*out[0]).raw, B("OPEN#\r\n"));
-  // a bare "#\n" is not a terminator any more
-  EXPECT_TRUE(d.feed(B("E00#\n")).empty());
+  // any "\n" ends a line: replies without '#' frame too
+  out = d.feed(B("E00\r\nCLOSED"));
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(std::get<ngx::Reply>(*out[0]).raw, B("E00\r\n"));
   EXPECT_GT(d.pending(), 0u);
 }
 

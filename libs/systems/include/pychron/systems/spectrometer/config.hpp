@@ -41,7 +41,7 @@ struct SystemSection : Located {
   double integration_time_s = 1.0;
 };
 
-enum class TransportKind { Tcp, Serial, ModbusTcp, ModbusRtu, LabjackU3, Sim };
+enum class TransportKind { Tcp, Serial, ModbusTcp, ModbusRtu, LabjackU3, Sim, Link };
 
 // `[transports.<name>]`. `port` is a TCP port number for network kinds and a
 // device path for serial kinds, so both forms are kept.
@@ -51,6 +51,7 @@ struct TransportConfig : Located {
   std::string host;
   std::int64_t tcp_port = 0;
   std::string serial_port;
+  std::string link;  // kind "link": the shared connection's name (NGX)
   std::int64_t baud = 9600;
   std::int64_t timeout_ms = 1000;
   std::int64_t retries = 0;  // extra attempts per request; 0 = none

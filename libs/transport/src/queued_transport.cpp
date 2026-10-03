@@ -258,4 +258,16 @@ Result<Bytes> QueuedTransport::read(ReadSpec rs, Duration timeout) {
   });
 }
 
+Result<std::optional<Bytes>> QueuedTransport::poll(ReadSpec rs, Duration timeout) {
+  return impl_->submit<std::optional<Bytes>>([this, rs = std::move(rs), timeout]() -> Result<std::optional<Bytes>> {
+    auto& impl = *impl_;
+    if (!impl.open) return fail(impl.not_connected());
+    auto r = do_read(rs, impl.effective(timeout));
+    if (!r && r.error().kind == ErrorKind::Timeout) return std::optional<Bytes>{};  // nothing yet: not a failure
+    auto done = impl.finish(std::move(r));
+    if (!done) return fail(std::move(done).error());
+    return std::optional<Bytes>(std::move(*done));
+  });
+}
+
 }  // namespace pychron

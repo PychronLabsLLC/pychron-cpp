@@ -4,6 +4,7 @@
 #include <chrono>
 #include <deque>
 #include <mutex>
+#include <thread>
 
 namespace pychron {
 
@@ -71,6 +72,7 @@ struct SimTransport::State {
 
   Mode mode = Mode::Scripted;
   Hook hook;  // set at construction, then read-only
+  Unsolicited unsolicited;  // likewise; empty: none
 
   std::mutex mutex;
   std::deque<SimStep> steps;
@@ -94,10 +96,11 @@ std::unique_ptr<SimTransport> SimTransport::scripted(std::vector<SimStep> steps,
   return std::unique_ptr<SimTransport>(new SimTransport(std::move(options), std::move(state)));
 }
 
-std::unique_ptr<SimTransport> SimTransport::hooked(Hook hook, TransportOptions options) {
+std::unique_ptr<SimTransport> SimTransport::hooked(Hook hook, TransportOptions options, Unsolicited unsolicited) {
   auto state = std::make_shared<State>();
   state->mode = State::Mode::Hook;
   state->hook = std::move(hook);
+  state->unsolicited = std::move(unsolicited);
   return std::unique_ptr<SimTransport>(new SimTransport(std::move(options), std::move(state)));
 }
 
@@ -197,6 +200,11 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
   Bytes reply;
   Duration delay{};
   if (s.mode == State::Mode::Hook) {
+    // Input already due arrives before this command's reply, as on a wire.
+    if (s.unsolicited) {
+      std::lock_guard lock(s.mutex);
+      if (Bytes due = s.unsolicited(); !due.empty()) s.rx.push_back(Chunk{std::move(due), {}, false});
+    }
     reply = s.hook ? s.hook(tx) : Bytes{};  // outside the lock: hooks may be slow
   }
 
@@ -226,18 +234,31 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
 }
 
 Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
-  std::lock_guard lock(state_->mutex);
+  // With an unsolicited source the read waits in real time, like a socket,
+  // for input the source produces; without one, time is virtual.
+  const auto real_deadline = std::chrono::steady_clock::now() + timeout;
+  std::unique_lock lock(state_->mutex);
   auto& rx = state_->rx;
   Bytes buf;
   std::optional<std::size_t> n;
-  for (auto& chunk : rx) {
-    if (chunk.delay >= timeout) break;  // arrives too late for this read
-    if (chunk.garble) {
-      garble(rs, chunk.data);
-      chunk.garble = false;
+  for (;;) {
+    if (state_->unsolicited) {
+      if (Bytes more = state_->unsolicited(); !more.empty()) rx.push_back(Chunk{std::move(more), {}, false});
     }
-    buf.insert(buf.end(), chunk.data.begin(), chunk.data.end());
-    if ((n = frame_length(rs, buf))) break;
+    buf.clear();
+    for (auto& chunk : rx) {
+      if (chunk.delay >= timeout) break;  // arrives too late for this read
+      if (chunk.garble) {
+        garble(rs, chunk.data);
+        chunk.garble = false;
+      }
+      buf.insert(buf.end(), chunk.data.begin(), chunk.data.end());
+      if ((n = frame_length(rs, buf))) break;
+    }
+    if (n || !state_->unsolicited || std::chrono::steady_clock::now() >= real_deadline) break;
+    lock.unlock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    lock.lock();
   }
   if (!n) {
     return fail(ErrorKind::Timeout, (buf.empty() ? "no reply within " : "incomplete reply within ") +

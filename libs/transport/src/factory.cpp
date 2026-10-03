@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 
+#include "pychron/transport/link_transport.hpp"
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
 #include "pychron/transport/trace_recorder.hpp"
@@ -60,6 +61,10 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
     case config::TransportKind::ModbusRtu:
     case config::TransportKind::ModbusTcp:
       return fail(ErrorKind::Config, "modbus transports are not supported yet", config.name);
+    case config::TransportKind::Link:
+      if (const auto* p = std::get_if<config::LinkParams>(&config.params))
+        return std::unique_ptr<Transport>(std::make_unique<LinkTransport>(config.name, p->link));
+      break;
   }
   if (!transport) return fail(ErrorKind::Config, "transport parameters do not match its kind", config.name);
 

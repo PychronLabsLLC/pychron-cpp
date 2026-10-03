@@ -17,13 +17,14 @@ using detail::Reader;
 template <class E, std::size_t N>
 using Table = std::array<std::pair<std::string_view, E>, N>;
 
-constexpr Table<TransportKind, 6> kTransportKinds{{
+constexpr Table<TransportKind, 7> kTransportKinds{{
     {"tcp", TransportKind::Tcp},
     {"serial", TransportKind::Serial},
     {"modbus_tcp", TransportKind::ModbusTcp},
     {"modbus_rtu", TransportKind::ModbusRtu},
     {"labjack_u3", TransportKind::LabjackU3},
     {"sim", TransportKind::Sim},
+    {"link", TransportKind::Link},
 }};
 
 constexpr Table<Axis, 3> kAxes{{{"dac", Axis::Dac}, {"field", Axis::Field}, {"mass", Axis::Mass}}};
@@ -140,7 +141,7 @@ class Builder {
   void parse_transport(Obj o, TransportConfig& t) {
     record(o, t);
     o.rec = &t;
-    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms", "retries", "trace"});
+    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms", "retries", "trace", "link"});
     const bool kind_ok = r_.choice(o, "kind", t.kind, choices(kTransportKinds), true) && o.t.get("kind") != nullptr;
     r_.str(o, "host", t.host, false);
     r_.integer(o, "baud", t.baud, false, 1);
@@ -148,6 +149,9 @@ class Builder {
     r_.integer(o, "retries", t.retries, false, 0);
     r_.boolean(o, "trace", t.trace);
     if (!kind_ok) return;
+    r_.str(o, "link", t.link, t.kind == TransportKind::Link);
+    if (t.kind != TransportKind::Link && o.t.get("link") != nullptr)
+      r_.error(o.loc, Reader::join(o.path, "link"), "only for kind \"link\"");
 
     const bool network = t.kind == TransportKind::Tcp || t.kind == TransportKind::ModbusTcp;
     const bool serial = t.kind == TransportKind::Serial || t.kind == TransportKind::ModbusRtu;

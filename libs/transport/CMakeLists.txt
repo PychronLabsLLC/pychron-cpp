@@ -28,6 +28,7 @@ add_library(pychron_transport
   src/bytes.cpp
   src/read_spec.cpp
   src/health.cpp
+  src/link_transport.cpp
   src/queued_transport.cpp
   src/sim_transport.cpp
   src/trace.cpp

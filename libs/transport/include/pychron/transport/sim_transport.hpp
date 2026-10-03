@@ -27,16 +27,21 @@ struct SimStep {
 //   scripted  ordered SimSteps; any unexpected tx is recorded as a failure
 //             (see verify()) and the write fails with Protocol.
 //   replay    steps rebuilt from a TraceRecorder file.
-//   hook      a callback maps each tx to a reply (empty = no reply).
+//   hook      a callback maps each tx to a reply (empty = no reply);
+//             optionally with an Unsolicited source of input.
 //
 // Time is virtual: a reply delayed by at least the read timeout is a Timeout
 // and stays buffered as late input, discarded before the next exchange.
 class SimTransport final : public QueuedTransport {
  public:
   using Hook = std::function<Bytes(const Bytes& tx)>;
+  // Input nobody asked for (an instrument's event stream): polled by each
+  // read; returns the bytes due now, empty for none. With one, a read with
+  // nothing to frame waits in real time up to its timeout, as a socket does.
+  using Unsolicited = std::function<Bytes()>;
 
   static std::unique_ptr<SimTransport> scripted(std::vector<SimStep> steps, TransportOptions options = {});
-  static std::unique_ptr<SimTransport> hooked(Hook hook, TransportOptions options = {});
+  static std::unique_ptr<SimTransport> hooked(Hook hook, TransportOptions options = {}, Unsolicited unsolicited = {});
   // Config error if the trace cannot be read or parsed.
   static Result<std::unique_ptr<SimTransport>> replay(const std::string& trace_path,
                                                       TransportOptions options = {});

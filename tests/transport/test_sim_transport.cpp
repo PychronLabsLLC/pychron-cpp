@@ -3,6 +3,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <mutex>
+#include <thread>
+#include <utility>
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -208,4 +211,73 @@ TEST(SimTransportReplay, MissingFileIsConfigError) {
   auto r = SimTransport::replay(std::string("/nonexistent/trace.txt"), opts());
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
+}
+
+// An instrument's event stream: input nobody wrote for, interleaved with
+// replies in arrival order, framed like any other input.
+TEST(SimTransportHooked, UnsolicitedInputIsReadAndWaitedFor) {
+  std::mutex m;
+  std::string due;  // what the source hands over next
+  auto source = [&] {
+    std::lock_guard lock(m);
+    return to_bytes(std::exchange(due, std::string{}));
+  };
+  auto t = SimTransport::hooked([](const Bytes&) { return to_bytes(std::string("OK\r\n")); }, opts(), source);
+  ASSERT_TRUE(t->open());
+  {
+    std::lock_guard lock(m);
+    due = "EVENT 1\r\n";
+  }
+  ASSERT_TRUE(t->write(to_bytes(std::string("Q\r"))));
+  // The event was due before the command: it is read first.
+  EXPECT_EQ(*t->read(kCrLf), to_bytes(std::string("EVENT 1\r\n")));
+  EXPECT_EQ(*t->read(kCrLf), to_bytes(std::string("OK\r\n")));
+  // A read with nothing complete waits (real time) for the source.
+  std::thread late([&] {
+    std::this_thread::sleep_for(20ms);
+    std::lock_guard lock(m);
+    due = "EVENT 2\r\n";
+  });
+  const auto t0 = std::chrono::steady_clock::now();
+  auto second = t->read(kCrLf, 2s);
+  late.join();
+  ASSERT_TRUE(second) << second.error().what;
+  EXPECT_EQ(*second, to_bytes(std::string("EVENT 2\r\n")));
+  EXPECT_LT(std::chrono::steady_clock::now() - t0, 2s);
+  // Nothing due: a Timeout after (about) the timeout, not at once.
+  const auto t1 = std::chrono::steady_clock::now();
+  auto none = t->read(kCrLf, 30ms);
+  ASSERT_FALSE(none);
+  EXPECT_EQ(none.error().kind, ErrorKind::Timeout);
+  EXPECT_GE(std::chrono::steady_clock::now() - t1, 25ms);
+}
+
+// poll(): nothing yet is not a failure and leaves health alone; a frame is
+// returned like read() returns it.
+TEST(SimTransportHooked, PollTreatsNothingYetAsNormal) {
+  std::mutex m;
+  std::string due;
+  auto t = SimTransport::hooked([](const Bytes&) { return Bytes{}; }, opts(), [&] {
+    std::lock_guard lock(m);
+    return to_bytes(std::exchange(due, std::string{}));
+  });
+  ASSERT_TRUE(t->open());
+  for (int i = 0; i < 5; ++i) {
+    auto r = t->poll(kCrLf, 5ms);
+    ASSERT_TRUE(r) << r.error().what;
+    EXPECT_FALSE(*r);
+  }
+  EXPECT_EQ(t->health().consecutive_failures, 0u);
+  {
+    std::lock_guard lock(m);
+    due = "EVENT\r\n";
+  }
+  auto r = t->poll(kCrLf, 1s);
+  ASSERT_TRUE(r && *r);
+  EXPECT_EQ(**r, to_bytes(std::string("EVENT\r\n")));
+  EXPECT_EQ(t->health().state, HealthState::Connected);
+  t->close();
+  auto closed = t->poll(kCrLf, 5ms);
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().kind, ErrorKind::NotConnected);
 }
