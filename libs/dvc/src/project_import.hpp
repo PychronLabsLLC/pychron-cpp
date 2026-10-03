@@ -232,7 +232,7 @@ class Mapper {
   Result<void> add_revision(const FileRef& ref, ingest::SubjectRef subject, persistence::Kind kind,
                             persistence::RevisionPayload payload, std::string detail_json, Output& out,
                             std::string identifier = {});
-  // Whether the store's head of (subject, kind) already has this blob.
+  // Whether the file is back with the content its path had when it was removed.
   bool unchanged(const Change& item);
   Result<std::optional<persistence::SpectrometerSnapshot>> snapshot(const std::string& sha1);
   Result<void> synthesize_catalog(const ParsedRecord& record, const persistence::AnalysisIngest& analysis,
