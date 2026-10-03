@@ -5,15 +5,7 @@
 #include <system_error>
 
 #include "pychron/core/env.hpp"
-
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <cstdint>
-#include <vector>
-#endif
+#include "pychron/core/process.hpp"
 
 namespace pychron::setup {
 
@@ -27,26 +19,6 @@ bool has_profiles(const fs::path& dir) {
 }
 
 }  // namespace
-
-fs::path executable_dir() {
-  std::error_code ec;
-#if defined(_WIN32)
-  wchar_t buf[MAX_PATH * 4];
-  const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
-  if (n == 0 || n >= std::size(buf)) return {};
-  return fs::path(std::wstring(buf, n)).parent_path();
-#elif defined(__APPLE__)
-  std::uint32_t size = 0;
-  _NSGetExecutablePath(nullptr, &size);
-  std::vector<char> buf(size + 1, '\0');
-  if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
-  auto p = fs::weakly_canonical(fs::path(buf.data()), ec);
-  return ec ? fs::path(buf.data()).parent_path() : p.parent_path();
-#else
-  auto p = fs::read_symlink("/proc/self/exe", ec);
-  return ec ? fs::path{} : p.parent_path();
-#endif
-}
 
 Resources find_resources() { return find_resources(executable_dir()); }
 
@@ -84,6 +56,8 @@ fs::path default_root(const Profile& profile, const std::string& name) {
   if (profile.kind == ProfileKind::DataReduction) return home_dir() / "Documents" / "Pychron";
   return home_dir() / "Pychron" / name;
 }
+
+std::string_view version() noexcept { return PYCHRON_VERSION; }
 
 Answers builtin_answers(const std::string& name, const fs::path& root) {
   return {{"install_name", Value{name}}, {"root", Value{root.generic_string()}}};

@@ -15,6 +15,7 @@ target_link_libraries(pychron_setup PUBLIC pychron::experiment pychron::systems 
 
 # The source tree: where a program that is not installed finds the profiles
 # and example configs (setup::find_resources).
-target_compile_definitions(pychron_setup PRIVATE PYCHRON_SETUP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_compile_definitions(pychron_setup PRIVATE PYCHRON_SETUP_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+  PYCHRON_VERSION="${PROJECT_VERSION}")
 
 pychron_set_warnings(pychron_setup)

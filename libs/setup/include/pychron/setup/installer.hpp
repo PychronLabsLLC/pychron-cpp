@@ -24,8 +24,9 @@ struct Resources {
 };
 Resources find_resources();
 Resources find_resources(const std::filesystem::path& executable_dir);
-// The running program's directory; empty when it cannot be found.
-std::filesystem::path executable_dir();
+
+// The pychron version these programs were built as ("0.1.0").
+std::string_view version() noexcept;
 
 std::filesystem::path home_dir();
 // "data-reduction" for data reduction, else the profile's name.

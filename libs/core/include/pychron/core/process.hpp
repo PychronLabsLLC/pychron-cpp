@@ -7,6 +7,7 @@
 // shell is involved, so arguments are passed as they are.
 
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,5 +31,9 @@ struct ProcessResult {
 // Io when the program cannot be started; Timeout when it was killed for
 // running too long. A non-zero exit code is not an error here.
 Result<ProcessResult> run_process(const ProcessSpec& spec);
+
+// The running program's directory (resolved through symlinks); empty when it
+// cannot be found.
+std::filesystem::path executable_dir();
 
 }  // namespace pychron

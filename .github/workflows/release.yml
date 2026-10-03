@@ -1,0 +1,157 @@
+# Installers for the three platforms (installation wizard spec section 3.7).
+#
+# On a v* tag: build, smoke-test the installed package and attach it to the
+# GitHub release. On a pull request that touches packaging, and on demand:
+# the same build and smoke test, packages kept as workflow artifacts only.
+#
+# Each package carries a relocatable CPython (python-build-standalone) for
+# scripted extractions; the programs are linked against that Python and find
+# it beside themselves. Qt comes with the package on macOS and Windows; the
+# .deb depends on Ubuntu's Qt.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - cmake/PychronInstall.cmake
+      - cmake/PychronPackaging.cmake
+      - packaging/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PBS_RELEASE: "20250918"
+  PBS_PYTHON: "3.12.11"
+
+jobs:
+  package:
+    name: package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            pbs: x86_64-unknown-linux-gnu
+          - name: macos
+            os: macos-15
+            pbs: aarch64-apple-darwin
+          - name: windows
+            os: windows-2022
+            pbs: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build dpkg-dev
+          qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
+
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install qt ninja
+
+      - name: Install Qt (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          cache: true
+
+      - name: Relocatable Python
+        run: |
+          url="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PBS_PYTHON}+${PBS_RELEASE}-${{ matrix.pbs }}-install_only.tar.gz"
+          curl -sSfL "$url" -o python.tar.gz
+          mkdir -p "$RUNNER_TEMP/pbs" && tar xzf python.tar.gz -C "$RUNNER_TEMP/pbs"
+          pbs="$RUNNER_TEMP/pbs/python"
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Link it through the RPATH the install sets.
+            install_name_tool -id @rpath/libpython3.12.dylib "$pbs/lib/libpython3.12.dylib"
+            codesign --force --sign - "$pbs/lib/libpython3.12.dylib"
+          fi
+          echo "PBS=$pbs" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          gen=(-G Ninja)
+          if [ "$RUNNER_OS" = Windows ]; then gen=(-G "Visual Studio 17 2022" -A x64); fi
+          cmake -S . -B build "${gen[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_UI=ON -DBUILD_TESTS=OFF -DPYCHRON_WARNINGS_AS_ERRORS=OFF \
+            -DPython_ROOT_DIR="$PBS" -DPython_FIND_STRATEGY=LOCATION \
+            -DPYCHRON_BUNDLE_PYTHON="$PBS"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        run: cd build && cpack -C Release
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./build/pychron_*.deb
+          elctl --version
+          QT_QPA_PLATFORM=offscreen pychron-ui --self-test
+          export PYCHRON_SITE_CONFIG="$RUNNER_TEMP/site.toml"
+          elctl init data-reduction --root "$RUNNER_TEMP/dr" --yes
+          elctl init argus --root "$RUNNER_TEMP/argus" --yes
+          elctl --install argus exp run experiment.toml --sim-speed 200
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil attach build/Pychron-*.dmg -mountpoint /Volumes/Pychron
+          cp -R /Volumes/Pychron/Pychron.app "$RUNNER_TEMP/"
+          hdiutil detach /Volumes/Pychron
+          app="$RUNNER_TEMP/Pychron.app/Contents/MacOS"
+          "$app/elctl" --version
+          QT_QPA_PLATFORM=offscreen "$app/Pychron" --self-test
+          export PYCHRON_SITE_CONFIG="$RUNNER_TEMP/site.toml"
+          "$app/elctl" init argus --root "$RUNNER_TEMP/argus" --yes
+          "$app/elctl" --install argus exp run experiment.toml --sim-speed 200
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p "$RUNNER_TEMP/zip" && unzip -q build/Pychron-*.zip -d "$RUNNER_TEMP/zip"
+          bin=$(ls -d "$RUNNER_TEMP"/zip/*/bin)
+          "$bin/elctl.exe" --version
+          "$bin/pychron-ui.exe" --self-test  # windeployqt ships the windows platform plugin only
+          export PYCHRON_SITE_CONFIG="$RUNNER_TEMP/site.toml"
+          "$bin/elctl.exe" init argus --root "$RUNNER_TEMP/argus" --yes
+          "$bin/elctl.exe" --install argus exp run experiment.toml --sim-speed 200
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pychron-${{ matrix.name }}
+          path: |
+            build/*.deb
+            build/*.tar.gz
+            build/*.dmg
+            build/*.exe
+            build/*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -12,3 +12,17 @@ if(PYCHRON_SETUP_TESTS)
   pychron_set_warnings(pychron_setup_tests)
   gtest_discover_tests(pychron_setup_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
 endif()
+
+# The install layout: install the programs and shared files into a scratch
+# prefix and check the installed elctl finds the profiles there, not in the
+# source tree (cmake/PychronInstall.cmake, setup::find_resources).
+if(TARGET elctl)
+  add_test(NAME Install.ElctlFindsItsInstalledProfiles
+    COMMAND ${CMAKE_COMMAND}
+      -DBUILD_DIR=${CMAKE_BINARY_DIR}
+      -DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/install-test
+      -DCONFIG=$<CONFIG>
+      -DELCTL_NAME=$<TARGET_FILE_NAME:elctl>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/install_test.cmake)
+  set_tests_properties(Install.ElctlFindsItsInstalledProfiles PROPERTIES TIMEOUT 120)
+endif()

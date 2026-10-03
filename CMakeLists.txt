@@ -53,3 +53,6 @@ if(BUILD_TESTS)
     add_subdirectory(tests/ui)
   endif()
 endif()
+
+# Install rules and packages (cpack); see cmake/PychronInstall.cmake.
+include(PychronInstall)

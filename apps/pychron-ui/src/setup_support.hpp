@@ -3,6 +3,7 @@
 // What the app's setup paths share: opening a database for the setup wizard
 // and doctor, and switching to another install.
 
+#include <ostream>
 #include <string>
 
 #include "setup_wizard.hpp"
@@ -16,5 +17,11 @@ SetupWizard::OpenDatabase database_opener();
 // Starts pychron-ui again on install `name` (detached). False when it could
 // not be started.
 bool start_install(const std::string& name);
+
+// pychron-ui --self-test: what an installed copy needs, checked without a
+// window: the shipped profiles load and resolve, the setup wizard builds, and
+// (with the store) an in-memory database opens through the Qt SQL plugin.
+// One line per check on `out`; 0 when all pass.
+int self_test(std::ostream& out);
 
 }  // namespace pychron::ui

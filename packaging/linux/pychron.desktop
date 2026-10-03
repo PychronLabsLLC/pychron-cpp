@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pychron
+GenericName=Noble-gas mass spectrometry
+Comment=Instrument control, extraction lines and Ar/Ar data reduction
+Exec=pychron-ui
+Icon=pychron
+Terminal=false
+Categories=Science;Education;

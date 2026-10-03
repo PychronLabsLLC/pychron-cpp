@@ -40,6 +40,10 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.setup = true;
     } else if (arg == QStringLiteral("--examples")) {
       cli.examples = true;
+    } else if (arg == QStringLiteral("--version")) {
+      cli.version = true;
+    } else if (arg == QStringLiteral("--self-test")) {
+      cli.self_test = true;
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
       bool ok = false;

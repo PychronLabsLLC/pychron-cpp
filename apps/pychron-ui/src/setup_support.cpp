@@ -1,5 +1,8 @@
 #include "setup_support.hpp"
 
+#include <filesystem>
+
+#include <QApplication>
 #include <QCoreApplication>
 #include <QProcess>
 #include <QStringList>
@@ -10,6 +13,8 @@
 #include "pychron/persistence/store.hpp"
 #pragma pop_macro("signals")
 #endif
+
+#include "pychron/setup/installer.hpp"
 
 namespace pychron::ui {
 
@@ -30,6 +35,39 @@ SetupWizard::OpenDatabase database_opener() {
 bool start_install(const std::string& name) {
   return QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                  {QStringLiteral("--install"), QString::fromStdString(name)});
+}
+
+int self_test(std::ostream& out) {
+  int failed = 0;
+  auto check = [&](bool ok, const std::string& what) {
+    out << (ok ? "OK    " : "FAIL  ") << what << "\n";
+    if (!ok) ++failed;
+  };
+  out << "pychron-ui " << setup::version() << "\n";
+  check(QApplication::instance() != nullptr && !QGuiApplication::platformName().isEmpty(),
+        "Qt platform: " + QGuiApplication::platformName().toStdString());
+  const setup::Resources r = setup::find_resources();
+  auto library = setup::ProfileLibrary::load(r.profiles, r.examples);
+  check(library.has_value(), "profiles: " + r.profiles.string() + (library ? "" : ": " + library.error().what));
+  if (library) {
+    int resolved = 0;
+    for (const auto* p : library->list()) {
+      if (p->kind == setup::ProfileKind::Fragment) continue;
+      auto rp = library->resolve(p->name);
+      check(rp.has_value(), "profile " + p->name + (rp ? "" : ": " + rp.error().what));
+      if (rp) ++resolved;
+    }
+    check(resolved > 0, "installable profiles: " + std::to_string(resolved));
+    SetupWizard wizard(*library, {std::filesystem::path("/nonexistent/site.toml"), {}, {}});
+    check(wizard.pageIds().size() >= 4, "setup wizard builds");
+  }
+  if (auto open = database_opener()) {
+    auto db = open("sqlite::memory:", true);
+    check(db.has_value(), "database (Qt SQLite plugin): " + (db ? *db : db.error().what));
+  } else {
+    out << "skip  database: built without the DVC store\n";
+  }
+  return failed == 0 ? 0 : 1;
 }
 
 }  // namespace pychron::ui

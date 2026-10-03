@@ -5,6 +5,7 @@
 //   [extraction_line.toml [canvas.toml] | --install <name> | --setup | --examples]
 //   [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>] [--queue <file>]
 //   [--sim-speed <x>] [--db <url>]
+//   --version | --self-test
 
 #include <filesystem>
 #include <optional>
@@ -29,6 +30,8 @@ struct CommandLine {
   std::optional<std::string> install;  // an install from the site config
   bool setup = false;                  // run the setup wizard first
   bool examples = false;               // the shipped example configs (development)
+  bool version = false;                // print the version and exit
+  bool self_test = false;              // check an installed copy and exit
 };
 
 // A Config error is a usage error: an unknown option, an option without a

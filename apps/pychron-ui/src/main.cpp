@@ -32,14 +32,26 @@
 // live in the user's config directory, with lab presets under <lab>/figures.
 
 #include <chrono>
-#include <functional>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -178,6 +190,24 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
 
 int main(int argc, char** argv) {
   pychron::LogHub::install_crash_handlers();
+#ifdef _WIN32
+  // A GUI program has no console: --version and --self-test print to the one
+  // they were started from.
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view a(argv[i]);
+    if ((a == "--version" || a == "--self-test") && AttachConsole(ATTACH_PARENT_PROCESS)) {
+      std::freopen("CONOUT$", "w", stdout);
+      std::freopen("CONOUT$", "w", stderr);
+    }
+  }
+#endif
+  // --version needs no display.
+  for (int i = 1; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--version") {
+      std::printf("pychron-ui %s\n", std::string(setup::version()).c_str());
+      return 0;
+    }
+  }
   QApplication app(argc, argv);
   QCoreApplication::setOrganizationName(QStringLiteral("PychronLabs"));
   QApplication::setApplicationName(QStringLiteral("pychron-ui"));
@@ -189,6 +219,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: %s\n", cli.error().what.c_str());
     return 2;
   }
+  if (cli->self_test) return pychron::ui::self_test(std::cout);
   const setup::Resources resources = setup::find_resources();
   const fs::path examples = resources.examples;
 

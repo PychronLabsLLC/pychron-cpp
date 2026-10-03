@@ -15,6 +15,7 @@
 
 #include "duration.hpp"
 #include "exp.hpp"
+#include "pychron/setup/installer.hpp"
 #include "setup.hpp"
 #include "line.hpp"
 #include "pychron/core/config/loader.hpp"
@@ -38,7 +39,8 @@ namespace {
 constexpr const char* kUsageLine = "usage: elctl [-c <extraction_line.toml> | --install <name>] [--sim] <command> [args...]\n";
 
 constexpr const char* kUsageText =
-    "usage: elctl [-c <extraction_line.toml>] [--sim] <command> [args...]\n"
+    "usage: elctl [-c <extraction_line.toml> | --install <name>] [--sim] <command> [args...]\n"
+    "       elctl --version\n"
     "\n"
     "Offline:\n"
     "  validate [file]             check a system config; print every error\n"
@@ -590,6 +592,12 @@ int run(const std::vector<std::string>& args, Io io) {
       globals.sim = true;
     } else if (a == "-h" || a == "--help") {
       io.out << kUsageText;
+      return kOk;
+    } else if (a == "--version") {
+      // Where the shipped profiles were found: checks an installed layout.
+      const auto r = pychron::setup::find_resources();
+      io.out << "elctl " << pychron::setup::version() << "\nprofiles: " << r.profiles.string()
+             << "\nexamples: " << r.examples.string() << "\n";
       return kOk;
     } else {
       break;

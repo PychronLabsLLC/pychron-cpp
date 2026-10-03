@@ -311,7 +311,29 @@ data-reduction install opens the data browser alone. `pychron-ui --setup`
 runs the wizard again; `--examples` (or `--sim` with nothing installed) opens
 the example line in `configs/examples` as before.
 
-## 7. Checklist
+## 7. Build the installers
+
+`cpack` packages the programs, the profiles and the example configs
+(`cmake/PychronInstall.cmake`, `cmake/PychronPackaging.cmake`): a `.deb` and
+`.tar.gz` on Linux, a `.dmg` on macOS, an NSIS installer and `.zip` on Windows.
+
+```bash
+cmake -S . -B build/pkg -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_UI=ON -DBUILD_TESTS=OFF
+cmake --build build/pkg
+(cd build/pkg && cpack)
+sudo apt install ./build/pkg/pychron_*.deb
+elctl --version                                   # shows where the profiles were found
+QT_QPA_PLATFORM=offscreen pychron-ui --self-test  # profiles, wizard, database plugin
+```
+
+To ship Python with the package (scripted extractions without a system
+Python), unpack a python-build-standalone `install_only` archive and pass it
+twice: `-DPython_ROOT_DIR=<dir> -DPYCHRON_BUNDLE_PYTHON=<dir>`. On macOS and
+Windows the Qt runtime is copied in (`PYCHRON_DEPLOY_QT`). The `release`
+workflow does all of this on a `v*` tag and attaches the packages to the
+GitHub release; it also runs on pull requests that touch packaging.
+
+## 8. Checklist
 
 - `ctest --preset dev` passes.
 - `spec-router status` lists the merged units and the next wave.

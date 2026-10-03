@@ -1,9 +1,14 @@
 // Interpreter start-up and the pybind11 bindings of HostState (`_h`), the
 // hook `api` and get_device() handles.
 
+#include <cstdlib>
+#include <filesystem>
 #include <mutex>
+#include <system_error>
 
 #include "internal.hpp"
+#include "pychron/core/env.hpp"
+#include "pychron/core/process.hpp"
 
 namespace pychron::scripting::python {
 namespace {
@@ -161,10 +166,37 @@ void create_runtime() {
 
 }  // namespace
 
+namespace {
+
+// An installed pychron carries its own CPython (python-build-standalone)
+// beside the programs: <prefix>/share/pychron/python, or a macOS bundle's
+// Contents/Resources/python. Point the interpreter at it unless PYTHONHOME is
+// already set; a build-tree run uses the Python it was built against.
+void use_bundled_python() {
+  if (auto home = env_var("PYTHONHOME"); home && !home->empty()) return;
+  const std::filesystem::path exe = executable_dir();
+  if (exe.empty()) return;
+  for (const auto& dir : {exe / ".." / "share" / "pychron" / "python", exe / ".." / "Resources" / "python"}) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir / "lib", ec) && !std::filesystem::is_directory(dir / "Lib", ec)) continue;
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(dir, ec);
+    const std::string value = (ec ? dir : canonical).string();
+#ifdef _WIN32
+    _putenv_s("PYTHONHOME", value.c_str());
+#else
+    setenv("PYTHONHOME", value.c_str(), 1);
+#endif
+    return;
+  }
+}
+
+}  // namespace
+
 void ensure_interpreter() {
   static std::once_flag once;
   std::call_once(once, [] {
     if (!Py_IsInitialized()) {
+      use_bundled_python();
       py::initialize_interpreter(/*init_signal_handlers=*/false);
       create_runtime();
       // Scripts take the GIL only while they run.

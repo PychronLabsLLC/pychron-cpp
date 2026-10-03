@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <thread>
 
 #ifdef _WIN32
@@ -26,6 +27,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 extern char** environ;
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+
+#include <cstdint>
+#include <vector>
 #endif
 
 namespace pychron {
@@ -329,5 +336,26 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
 }
 
 #endif
+
+std::filesystem::path executable_dir() {
+#if defined(_WIN32)
+  wchar_t buf[MAX_PATH * 4];
+  const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+  if (n == 0 || n >= std::size(buf)) return {};
+  return std::filesystem::path(std::wstring(buf, n)).parent_path();
+#elif defined(__APPLE__)
+  std::error_code ec;
+  std::uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::vector<char> buf(size + 1, '\0');
+  if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
+  auto p = std::filesystem::weakly_canonical(std::filesystem::path(buf.data()), ec);
+  return ec ? std::filesystem::path(buf.data()).parent_path() : p.parent_path();
+#else
+  std::error_code ec;
+  auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::filesystem::path{} : p.parent_path();
+#endif
+}
 
 }  // namespace pychron

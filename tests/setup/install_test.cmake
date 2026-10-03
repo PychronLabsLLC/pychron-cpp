@@ -1,0 +1,43 @@
+# Installs the "pychron" component into PREFIX and runs the installed elctl.
+file(REMOVE_RECURSE "${PREFIX}")
+set(config_args)
+if(CONFIG)
+  set(config_args --config "${CONFIG}")
+endif()
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --component pychron --prefix "${PREFIX}" ${config_args}
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE out)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "install failed (${rc}):\n${out}")
+endif()
+
+file(GLOB_RECURSE candidates "${PREFIX}/*/${ELCTL_NAME}")
+list(LENGTH candidates n)
+if(NOT n EQUAL 1)
+  message(FATAL_ERROR "expected one installed ${ELCTL_NAME} under ${PREFIX}, found: ${candidates}")
+endif()
+list(GET candidates 0 elctl)
+
+# The source tree's profiles must not be what it finds.
+set(ENV{PYCHRON_PROFILES_DIR} "")
+set(ENV{PYCHRON_EXAMPLES_DIR} "")
+execute_process(COMMAND "${elctl}" --version RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "${elctl} --version failed (${rc}):\n${out}${err}")
+endif()
+file(REAL_PATH "${PREFIX}" prefix_real)
+if(NOT out MATCHES "profiles: ([^\r\n]*)")
+  message(FATAL_ERROR "no profiles line in:\n${out}")
+endif()
+file(TO_CMAKE_PATH "${CMAKE_MATCH_1}" profiles_path)  # Windows separators
+file(REAL_PATH "${profiles_path}" profiles_real)
+string(FIND "${profiles_real}" "${prefix_real}/" at)
+if(NOT at EQUAL 0)
+  message(FATAL_ERROR "installed elctl uses ${profiles_real}, not the install under ${prefix_real}")
+endif()
+foreach(f data-reduction/profile.toml argus/profile.toml ngx/spectrometer-local.toml)
+  if(NOT EXISTS "${profiles_real}/${f}")
+    message(FATAL_ERROR "missing from the install: ${profiles_real}/${f}")
+  endif()
+endforeach()
+message(STATUS "installed elctl finds ${profiles_real}")

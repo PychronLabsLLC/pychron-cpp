@@ -17,6 +17,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -282,6 +283,15 @@ class TestSetupWizard : public QObject {
     QVERIFY(!d.to_open());
     d.list()->setCurrentRow(0);
     QVERIFY(!d.open_button()->isEnabled());
+  }
+
+  void theSelfTestPassesFromTheSourceTree() {
+    std::ostringstream out;
+    QCOMPARE(self_test(out), 0);
+    const QString text = QString::fromStdString(out.str());
+    QVERIFY2(!text.contains(QStringLiteral("FAIL")), qPrintable(text));
+    QVERIFY(text.contains(QStringLiteral("OK    profile data-reduction")));
+    QVERIFY(text.contains(QStringLiteral("setup wizard builds")));
   }
 
   void aDataReductionWindowIsTheBrowserAlone() {
