@@ -256,8 +256,11 @@ inline const QString kImportSourceByUuid =
 inline const QString kImportSources = QStringLiteral("SELECT %1 FROM import_source ORDER BY started_utc, uuid");
 
 inline const QString kProvenanceFor = QStringLiteral(
-    "SELECT entity_type, entity_uuid, path, commit_sha, git_blob_sha, git_author, %1 AS git_ts, detail "
+    "SELECT entity_type, entity_uuid, import_source_uuid, path, commit_sha, git_blob_sha, git_author, %1 AS git_ts, "
+    "detail "
     "FROM import_provenance WHERE entity_uuid = ? ORDER BY entity_type, import_source_uuid");
+inline const QString kSetProvenanceDetail = QStringLiteral(
+    "UPDATE import_provenance SET detail = ? WHERE entity_type = ? AND entity_uuid = ? AND import_source_uuid = ?");
 inline const QString kHasProvenance = QStringLiteral(
     "SELECT 1 AS present FROM import_provenance WHERE import_source_uuid = ? AND commit_sha = ? AND path = ? LIMIT 1");
 inline const QString kHasProvenanceBlob = QStringLiteral(

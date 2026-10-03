@@ -1370,6 +1370,149 @@ TEST_P(BatchWriterTest, ChangesetWithoutRevisionsKeepsItsDetail) {
   EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
+TEST_P(BatchWriterTest, SecondAnalysisWithATakenRunIdIsAConflictNotAnError) {
+  // B claims the run id A has: in the same batch, and against the store.
+  ImportBatch b;
+  b.catalog = lab_catalog();
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  add_analysis(b, kB, 1, "c2", who(kAlice, "2016-03-05T00:00:00Z"));
+  b.analyses[1].keys.record.path = "665/other.json";
+  b.resume_token = "c2";
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->analyses, 1);
+  EXPECT_EQ(stats->conflicts, 6);  // the record and five root files
+  EXPECT_TRUE(store().load_analysis(kA)->has_value());
+  EXPECT_FALSE(store().load_analysis(kB)->has_value());
+  auto clash = store().import_conflict(conflict_id(kUrl, "c2", "665/other.json"));
+  ASSERT_TRUE(clash && clash->has_value());
+  EXPECT_EQ((*clash)->kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ((*clash)->entity, std::optional<Uuid>{kA});
+  EXPECT_NE((*clash)->detail_json.find(kB.str()), std::string::npos);
+
+  const auto seq = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->count("import_conflict"), 6);
+}
+
+TEST_P(BatchWriterTest, IdentityRevisionsOfOneBatchSeeEachOther) {
+  const auto renumber = [&](const std::string& commit, Uuid analysis, int file, int aliquot) {
+    ChangesetItem c;
+    c.commit = commit;
+    c.who = who(kAlice, "2016-03-05T00:00:00Z");
+    c.message = "<EDIT> RunID";
+    RevisionItem revision{{commit, record_path(file), "rec-" + commit}, analysis, Kind::Identity,
+                          P::IdentityValue{Uuid{}, aliquot, -1, "legacy record rewritten"}};
+    revision.identifier = "66573";
+    c.revisions.push_back(std::move(revision));
+    return c;
+  };
+  // A leaves 66573-01 for -07; B then takes -01. Then A moves on to -08 and B to -07.
+  ImportBatch first;
+  first.catalog = lab_catalog();
+  add_analysis(first, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  add_analysis(first, kB, 2, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  first.changesets = {renumber("c2", kA, 1, 7), renumber("c3", kB, 2, 1), renumber("c4", kA, 1, 8),
+                      renumber("c5", kB, 2, 7)};
+  first.resume_token = "c5";
+  FakeAdapter adapter(description(), {first});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+  EXPECT_EQ(stats->revisions, 4);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-08");
+  EXPECT_EQ((*store().load_analysis(kB))->summary.runid, "66573-07");
+  EXPECT_EQ(store().history(kA, Kind::Identity)->size(), 2u);
+
+  // A replay meets revisions whose run ids have since been taken by the other
+  // analysis. They are stored: nothing is checked, nothing is written.
+  const auto seq = *store().latest_change_seq();
+  auto replay = config();
+  replay.replay = true;
+  auto again = run_all(*world_, adapter, replay);
+  ASSERT_TRUE(again) << err(again.error());
+  EXPECT_EQ(again->conflicts, 0);
+  EXPECT_EQ(world_->count("import_conflict"), 0);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-08");
+}
+
+TEST_P(BatchWriterTest, RewritesOfOneCommitAreMergedAcrossBatches) {
+  const auto with_notes = [&](std::vector<FileNote> notes) {
+    ChangesetItem c;
+    c.commit = "c3";
+    c.who = who(kAlice, "2016-03-06T00:00:00Z");
+    c.message = "<SYNC> Synced repository with database";
+    c.rewrites = std::move(notes);
+    return c;
+  };
+  // The same commit in two batches: first a revision and one note, later two
+  // more notes, one of them a repeat.
+  std::vector<ImportBatch> batches(2);
+  batches[0] = single_batch();
+  batches[0].changesets.push_back(with_notes({{"665/73-09.json", R"({"path":"665/73-09.json","blob":"b9"})"}}));
+  batches[0].resume_token = "c3";
+  batches[1].changesets.push_back(with_notes(
+      {{"665/73-09.json", R"({"path":"665/73-09.json","blob":"b9"})"},
+       {"665/73-01.json",
+        R"({"path":"665/73-01.json","blob":"b1","changed":{"hash_id":{"old":-7399522718437156748,"new":"a ] \" }"}}})"}}));
+  batches[1].resume_token = "c4";
+  FakeAdapter adapter(description(), batches);
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+
+  const auto detail_of = [&] {
+    auto rows = store().provenance_for(changeset_id(kUrl, "c3"));
+    EXPECT_TRUE(rows && rows->size() == 1);
+    return rows && !rows->empty() ? rows->front().detail_json.value_or("") : std::string();
+  };
+  const std::string detail = detail_of();
+  // Both paths, once each, sorted by path; a 64-bit number keeps its digits
+  // and a string with brackets in it is not taken apart.
+  const auto first = detail.find("665/73-01.json");
+  const auto second = detail.find("665/73-09.json");
+  ASSERT_NE(first, std::string::npos) << detail;
+  ASSERT_NE(second, std::string::npos) << detail;
+  EXPECT_LT(first, second) << detail;
+  EXPECT_EQ(detail.find("665/73-09.json", second + 1), std::string::npos) << detail;
+  EXPECT_NE(detail.find("-7399522718437156748"), std::string::npos) << detail;
+  EXPECT_NE(detail.find(R"(a ] \" })"), std::string::npos) << detail;
+  EXPECT_EQ(world_->count("changeset"), 3);  // the collection, c2, c3
+
+  // Again, and replayed: the row is not touched.
+  const auto seq = *store().latest_change_seq();
+  auto replay = config();
+  replay.replay = true;
+  ASSERT_TRUE(run_all(*world_, adapter, replay));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(detail_of(), detail);
+}
+
+TEST_P(BatchWriterTest, ChangesetThatBringsNothingNewIsNotWritten) {
+  // A root file sent again as a revision of its own commit (an adapter does
+  // that for an analysis it sends twice): the revision is the stored root.
+  ImportBatch b = single_batch();
+  ChangesetItem repeat;
+  repeat.commit = "c1";
+  repeat.who = who(kAlice, "2016-03-04T05:06:07Z");
+  repeat.message = "<ISOEVO> default collection fits";
+  repeat.revisions.push_back({{"c1", kind_path("intercepts", 1), "int-1"}, kA, Kind::Intercepts, intercepts(100.5)});
+  b.changesets.push_back(repeat);
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+
+  EXPECT_EQ(store().history(kA, Kind::Intercepts)->size(), 2u);  // root and the refit of c2
+  EXPECT_EQ(world_->count("changeset"), 2);                      // the collection and c2: none for c1
+  EXPECT_TRUE(store().provenance_for(changeset_id(kUrl, "c1"))->empty());
+  auto row = world_->db->select_one(QStringLiteral("SELECT uuid FROM changeset WHERE uuid = ?"),
+                                    {pd::qv(changeset_id(kUrl, "c1"))});
+  ASSERT_TRUE(row);
+  EXPECT_FALSE(row->has_value());
+}
+
 TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {
   BatchWriter writer(store(), world_->client, config());
   EXPECT_FALSE(writer.state().head_blob_sha(SubjectRef{kA}, Kind::Intercepts));

@@ -17,6 +17,9 @@ struct AnalysisOrigin {
   // Its collection changeset is the one this source derives for a record
   // first added at the commit asked about: this source created it from there.
   bool from_this_source = false;
+  // This source created it, from that record or another one (a second copy
+  // of an analysis in the same source).
+  bool in_this_source = false;
   // The git blob sha of the record it was created from; empty when it was not
   // imported (or its provenance is not written yet).
   std::string record_blob_sha;

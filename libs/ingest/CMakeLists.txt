@@ -8,6 +8,7 @@ endif()
 add_library(pychron_ingest STATIC
   src/catalog.cpp
   src/ids.cpp
+  src/rewrites.cpp
   src/tz.cpp
   src/writer.cpp
 )

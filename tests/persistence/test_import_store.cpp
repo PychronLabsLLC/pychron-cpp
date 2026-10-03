@@ -462,6 +462,40 @@ TEST_P(ImportStoreTest, LookupsByNaturalKeyCreateNothing) {
   EXPECT_EQ(*store_->find_analysis("66574", 4, -1), std::optional<Uuid>{analysis_});
 }
 
+TEST_P(ImportStoreTest, ProvenanceDetailCanBeReplaced) {
+  const Uuid u = Uuid::v7(), r = Uuid::v7();
+  {
+    auto uow = batch();
+    ASSERT_TRUE(uow->add_changeset(changeset(u, {intercepts_revision(r)})));
+    ASSERT_TRUE(uow->add_provenance({"changeset", u, "", "c1", "", "jross", kGitTime, std::nullopt}));
+    ASSERT_TRUE(uow->add_provenance({"revision", r, "a.json", "c1", "b1", "jross", kGitTime, R"({"extra":1})"}));
+    // In the batch that writes the row, and for a row that is not there.
+    ASSERT_TRUE(uow->set_provenance_detail("changeset", u, R"({"rewrites":[{"path":"x.json"}]})"));
+    ASSERT_TRUE(uow->set_provenance_detail("changeset", Uuid::v7(), R"({"lost":true})"));
+    ASSERT_TRUE(uow->commit());
+  }
+  EXPECT_TRUE(*store_->has_revision(r));
+  EXPECT_FALSE(*store_->has_revision(u));
+  auto rows = store_->provenance_for(u);
+  ASSERT_TRUE(rows) << to_string(rows.error());
+  ASSERT_EQ(rows->size(), 1u);
+  EXPECT_EQ(rows->front().source, source_.uuid);
+  EXPECT_NE(rows->front().detail_json.value_or("").find("x.json"), std::string::npos);
+
+  // In a later batch: replaced, and only that row.
+  const auto seq = *store_->latest_change_seq();
+  {
+    auto uow = batch();
+    ASSERT_TRUE(uow->set_provenance_detail("changeset", u, R"({"rewrites":[{"path":"x.json"},{"path":"y.json"}]})"));
+    ASSERT_TRUE(uow->commit());
+  }
+  EXPECT_EQ(*store_->latest_change_seq(), seq);  // not a change
+  const std::string detail = store_->provenance_for(u)->front().detail_json.value_or("");
+  EXPECT_NE(detail.find("x.json"), std::string::npos);
+  EXPECT_NE(detail.find("y.json"), std::string::npos);
+  EXPECT_NE(store_->provenance_for(r)->front().detail_json.value_or("").find("extra"), std::string::npos);
+}
+
 TEST_P(ImportStoreTest, RejectsWhatAnImportCannotWrite) {
   auto uow = batch();
   auto collection = changeset(Uuid::v7(), {});

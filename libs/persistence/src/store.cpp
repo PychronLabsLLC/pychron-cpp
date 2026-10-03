@@ -430,6 +430,12 @@ class TinyStore final : public IStore {
     return out;
   }
 
+  Result<bool> has_revision(Uuid revision) override {
+    auto row = db_->select_one(sql::kRevisionExists, {qv(revision)});
+    if (!row) return fail(row.error());
+    return row->has_value();
+  }
+
   Result<std::optional<RevisionPayload>> load_payload(Uuid revision) override {
     auto row = db_->select_one(sql::kRevisionKind, {qv(revision)});
     if (!row) return fail(row.error());

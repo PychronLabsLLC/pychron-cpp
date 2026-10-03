@@ -81,6 +81,7 @@ class ForwardingStore : public persistence::IStore {
   Result<std::optional<Uuid>> head(Uuid subject, Kind kind) override { return inner_.head(subject, kind); }
   Result<std::vector<persistence::HeadInfo>> heads(Uuid subject) override { return inner_.heads(subject); }
   Result<std::vector<persistence::RevisionInfo>> history(Uuid subject, Kind kind) override { return inner_.history(subject, kind); }
+  Result<bool> has_revision(Uuid revision) override { return inner_.has_revision(revision); }
   Result<std::optional<persistence::RevisionPayload>> load_payload(Uuid revision) override { return inner_.load_payload(revision); }
   Result<std::optional<persistence::AnalysisView>> load_analysis(Uuid analysis) override { return inner_.load_analysis(analysis); }
   Result<std::vector<persistence::AnalysisSummary>> find_analyses(const persistence::AnalysisQuery& query) override { return inner_.find_analyses(query); }

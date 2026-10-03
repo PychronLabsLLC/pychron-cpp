@@ -624,6 +624,7 @@ class IStore {
   // imported revision takes the change_seq of the batch that stored its
   // changeset; revisions sharing a change_seq are listed parent before child.
   virtual Result<std::vector<RevisionInfo>> history(Uuid subject, Kind kind) = 0;
+  virtual Result<bool> has_revision(Uuid revision) = 0;
   virtual Result<std::optional<RevisionPayload>> load_payload(Uuid revision) = 0;
   virtual Result<std::optional<AnalysisView>> load_analysis(Uuid analysis) = 0;
   virtual Result<std::vector<AnalysisSummary>> find_analyses(const AnalysisQuery& query) = 0;

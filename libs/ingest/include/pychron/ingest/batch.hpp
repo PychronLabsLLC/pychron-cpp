@@ -209,6 +209,12 @@ struct RevisionItem {
   std::string identifier = {};
 };
 
+// A file a commit rewrote that is not revisioned (an analysis record or
+// satellite file): `json` is a JSON object that has "path" among its members.
+struct FileNote {
+  std::string path, json;
+};
+
 struct ChangesetItem {
   std::string commit;
   persistence::ChangesetKind kind = persistence::ChangesetKind::Import;  // Import or Reference
@@ -216,6 +222,10 @@ struct ChangesetItem {
   std::string message;
   std::vector<RevisionItem> revisions;  // may be empty: a commit recorded for its detail alone
   std::string detail_json = "{}";       // a JSON object, kept in the changeset's provenance row when not empty
+  // Kept under "rewrites" in the same row, one entry per path, sorted by
+  // path. The notes of one commit may arrive in several batches: the writer
+  // adds those the row does not have yet.
+  std::vector<FileNote> rewrites = {};
 };
 
 struct ConflictItem {

@@ -8,6 +8,7 @@
 
 #include "catalog.hpp"
 #include "pychron/ingest/ids.hpp"
+#include "rewrites.hpp"
 
 namespace pychron::ingest {
 
@@ -124,6 +125,7 @@ struct Staged {
   std::vector<P::ProvenanceRow> provenance;
   std::vector<P::ImportConflictRow> conflicts;
   std::vector<std::pair<Uuid, const char*>> resolutions;  // conflict -> new resolution
+  std::vector<std::pair<Uuid, std::string>> details;      // changeset -> its provenance detail, replaced
 };
 
 }  // namespace
@@ -221,8 +223,10 @@ class BatchWriter::Impl final : public IImportState {
     // A source that only made the analysis a member marks its row (stage_membership).
     for (const auto& row : *rows)
       if (row.entity_type == "analysis" &&
-          !(row.detail_json && row.detail_json->find("\"membership_only\"") != std::string::npos))
+          !(row.detail_json && row.detail_json->find("\"membership_only\"") != std::string::npos)) {
         origin.record_blob_sha = row.git_blob_sha;
+        origin.in_this_source = row.source == *source_;
+      }
     return std::optional<AnalysisOrigin>{std::move(origin)};
   }
 
@@ -473,6 +477,8 @@ class BatchWriter::Impl final : public IImportState {
 
   Result<void> write_batch(const ImportBatch& batch, RunStats& stats, std::optional<P::ImportProgress>& walked) {
     absent_.clear();
+    renumbered_.clear();
+    taken_.clear();
     // Step 1: writes that are idempotent on their own.
     // An interpreted age links its identifier only when an analysis uses it,
     // so those wait for the batch's analyses.
@@ -551,6 +557,8 @@ class BatchWriter::Impl final : public IImportState {
       if (auto r = (*uow)->add_changeset(std::move(changeset)); !r) return r;
     for (auto& row : staged.provenance)
       if (auto r = (*uow)->add_provenance(std::move(row)); !r) return r;
+    for (auto& [changeset, detail] : staged.details)
+      if (auto r = (*uow)->set_provenance_detail("changeset", changeset, std::move(detail)); !r) return r;
     for (auto& row : staged.conflicts)
       if (auto r = (*uow)->add_conflict(std::move(row)); !r) return r;
     for (const auto& [conflict, resolution] : staged.resolutions)
@@ -605,6 +613,30 @@ class BatchWriter::Impl final : public IImportState {
     std::vector<Uuid> unresolved;
     if (auto r = clear_unresolved(ingest.roots.blanks_rows, unresolved); !r) return r;
     if (auto r = clear_unresolved(ingest.roots.icfactors_rows, unresolved); !r) return r;
+
+    // Two analyses cannot share a run id. The store would refuse the second
+    // with an error; here it becomes a conflict, one per file.
+    auto present = analysis_present(analysis);
+    if (!present) return fail(present.error());
+    if (!*present) {
+      auto holder = store_.find_analysis(ingest.identifier, ingest.aliquot, ingest.increment);
+      if (!holder) return fail(holder.error());
+      if (*holder && **holder != analysis) {
+        const std::string detail = json_object(
+            {{"reason", json_string("run id " + P::make_runid(ingest.identifier, ingest.aliquot, ingest.increment) +
+                                    " belongs to another analysis")},
+             {"uuid", json_string(analysis.str())},
+             {"imported_uuid", json_string((*holder)->str())}});
+        for (const auto& file : collection_files(item))
+          if (auto r = stage_conflict({conflict_id(url_, file.commit, file.path), file.path, **holder,
+                                       P::ConflictKind::IdentityClash, std::nullopt,
+                                       sha256(std::string_view{file.blob_sha}), detail, kPending},
+                                      staged, stats);
+              !r)
+            return r;
+        return {};
+      }
+    }
 
     auto ack = store_.ingest({revision_id(url_, record.commit, record.path), sha256(std::string_view{record.blob_sha}),
                               client_, std::move(ingest)});
@@ -667,6 +699,7 @@ class BatchWriter::Impl final : public IImportState {
     auto who = author(item.who);
     if (!who) return fail(who.error());
     P::ImportedChangeset changeset{changeset_id(url_, item.commit), item.kind, who->user, item.who.utc, item.message, {}};
+    int fresh = 0;  // revisions that are not in the store yet
     for (const auto& revision : item.revisions) {
       auto subject = resolve(revision.subject, revision.kind);
       if (!subject) return fail(subject.error());
@@ -678,13 +711,18 @@ class BatchWriter::Impl final : public IImportState {
         continue;
       }
       P::RevisionPayload payload = revision.payload;
-      if (auto* identity = std::get_if<P::IdentityValue>(&payload)) {
+      const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
+      auto exists = store_.has_revision(id);
+      if (!exists) return fail(exists.error());
+      if (!*exists) ++fresh;
+      // A stored revision is skipped by the store whatever it says; only a
+      // new identity is checked against the identities in use.
+      if (auto* identity = std::get_if<P::IdentityValue>(&payload); identity && !*exists) {
         auto named = name_identity(revision, **subject, *identity, staged, stats);
         if (!named) return fail(named.error());
         if (!*named) continue;
       }
       if (auto r = supersede(revision.key, staged); !r) return r;
-      const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
       std::vector<Uuid> unresolved;
       if (auto r = drop_unresolved(payload, unresolved); !r) return r;
       JsonMembers notes;
@@ -698,12 +736,37 @@ class BatchWriter::Impl final : public IImportState {
     }
     // A changeset none of whose revisions could be written is not written,
     // unless it has something of its own to keep.
-    const bool has_detail = item.detail_json.find_first_not_of("{} \t\r\n") != std::string::npos;
+    const bool has_detail =
+        !item.rewrites.empty() || item.detail_json.find_first_not_of("{} \t\r\n") != std::string::npos;
     if (changeset.revisions.empty() && !item.revisions.empty() && !has_detail) return {};
-    staged.provenance.push_back(provenance("changeset", changeset.uuid, {item.commit, "", ""}, item.who,
-                                           has_detail ? std::optional<std::string>{item.detail_json} : std::nullopt));
-    staged.changesets.push_back(std::move(changeset));
     ++stats.changesets;
+    // Nor is one that would bring nothing new: every revision is stored (a
+    // root sent again as a revision, a replay) and it has no detail. Written,
+    // it would be an empty changeset that a run without the repeat lacks.
+    if (fresh == 0 && !item.revisions.empty() && !has_detail) return {};
+
+    // The detail: the item's own, and its rewrites merged into what the row
+    // already holds (the notes of one commit can come in several batches).
+    std::optional<std::string> noted;
+    if (item.rewrites.empty()) {
+      if (has_detail) noted = item.detail_json;
+    } else {
+      auto rows = store_.provenance_for(changeset.uuid);
+      if (!rows) return fail(rows.error());
+      bool stored = false;
+      std::string stored_detail;
+      for (const auto& row : *rows)
+        if (row.entity_type == "changeset" && row.source == *source_) {
+          stored = true;
+          stored_detail = row.detail_json.value_or("");
+        }
+      auto merged = detail::with_rewrites(stored_detail, item.detail_json, item.rewrites);
+      if (stored && merged) staged.details.push_back({changeset.uuid, *merged});
+      noted = merged ? std::move(merged) : std::optional<std::string>{std::move(stored_detail)};
+    }
+    staged.provenance.push_back(
+        provenance("changeset", changeset.uuid, {item.commit, "", ""}, item.who, std::move(noted)));
+    staged.changesets.push_back(std::move(changeset));
     return {};
   }
 
@@ -720,16 +783,24 @@ class BatchWriter::Impl final : public IImportState {
         return fail(r.error());
       return false;
     }
-    auto holder = store_.find_analysis(revision.identifier, identity.aliquot, identity.increment);
-    if (!holder) return fail(holder.error());
-    if (*holder && **holder != analysis) {
-      const std::string runid = P::make_runid(revision.identifier, identity.aliquot, identity.increment);
+    // Who holds that run identity once the identity revisions staged before
+    // this one in the batch are applied: the store does not show those yet.
+    const std::string runid = P::make_runid(revision.identifier, identity.aliquot, identity.increment);
+    std::optional<Uuid> holder;
+    if (const auto staged_here = taken_.find(runid); staged_here != taken_.end()) {
+      holder = staged_here->second;
+    } else {
+      auto stored = store_.find_analysis(revision.identifier, identity.aliquot, identity.increment);
+      if (!stored) return fail(stored.error());
+      if (*stored && !renumbered_.contains(**stored)) holder = *stored;  // one renumbered away has left it
+    }
+    if (holder && *holder != analysis) {
       if (auto r = stage_conflict({conflict_id(url_, revision.key.commit, revision.key.path), revision.key.path,
                                    analysis, P::ConflictKind::IdentityClash, std::nullopt,
                                    sha256(std::string_view{revision.key.blob_sha}),
                                    json_object({{"reason", json_string("run id " + runid +
                                                                        " belongs to another analysis")},
-                                                {"analysis", json_string((*holder)->str())}}),
+                                                {"analysis", json_string(holder->str())}}),
                                    kPending},
                                   staged, stats);
           !r)
@@ -737,6 +808,9 @@ class BatchWriter::Impl final : public IImportState {
       return false;
     }
     identity.identifier = **identifier;
+    std::erase_if(taken_, [&](const auto& entry) { return entry.second == analysis; });
+    taken_.insert_or_assign(runid, analysis);
+    renumbered_.insert(analysis);
     return true;
   }
 
@@ -875,6 +949,10 @@ class BatchWriter::Impl final : public IImportState {
   std::map<std::string, Author> authors_;  // by git email
   std::set<Uuid> present_;                 // analyses known to be in the store
   std::set<Uuid> absent_;                  // analyses a row of this batch names that are not; see referable()
+  // Identity revisions staged in this batch: the analyses they renumber and
+  // the run ids they take. See name_identity().
+  std::set<Uuid> renumbered_;
+  std::map<std::string, Uuid> taken_;
   std::optional<std::map<Uuid, KnownConflict>> conflicts_;  // of this source; see conflicts()
   bool catching_up_ = false;                                // a replay that has not reached the stored token
   // Dry run only.

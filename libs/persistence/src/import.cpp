@@ -154,6 +154,12 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     return {};
   }
 
+  Result<void> set_provenance_detail(std::string entity_type, Uuid entity, std::string detail_json) override {
+    if (auto r = check_open(); !r) return r;
+    details_.push_back({std::move(entity_type), entity, std::move(detail_json)});
+    return {};
+  }
+
   Result<void> resolve_conflict(Uuid conflict, std::string resolution) override {
     if (auto r = check_open(); !r) return r;
     resolutions_.emplace_back(conflict, std::move(resolution));
@@ -176,6 +182,11 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     for (const auto& changeset : changesets_)
       if (auto r = write_changeset(changeset, entities); !r) return fail(r.error());
     if (auto r = write_provenance(); !r) return fail(r.error());
+    for (const auto& d : details_)
+      if (auto r = db_.affecting(sql::kSetProvenanceDetail,
+                                 {qv(d.detail_json), qv(d.entity_type), qv(d.entity), qv(source_)});
+          !r)
+        return fail(r.error());
     if (auto r = write_conflicts(); !r) return fail(r.error());
     for (const auto& [conflict, resolution] : resolutions_)
       if (auto r = db_.affecting(sql::kResolveConflict, {qv(resolution), qv(conflict), qv(source_)}); !r)
@@ -291,6 +302,12 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
   std::vector<ImportedChangeset> changesets_;
   std::vector<ProvenanceRow> provenance_;
   std::vector<ImportConflictRow> conflicts_;
+  struct Detail {
+    std::string entity_type;
+    Uuid entity;
+    std::string detail_json;
+  };
+  std::vector<Detail> details_;
   std::vector<std::pair<Uuid, std::string>> resolutions_;
   std::optional<ImportProgress> progress_;
   std::set<std::pair<std::string, Uuid>> noted_;  // (entity type, uuid) already in the change entry
@@ -367,6 +384,7 @@ Result<std::vector<ProvenanceRow>> provenance_for(Db& db, Dialect dialect, Uuid 
     p.git_author = to_std(r.value("git_author"));
     p.git_utc = to_time(r.value("git_ts"));
     p.detail_json = opt_str(r.value("detail"));
+    p.source = to_uuid(r.value("import_source_uuid"));
     out.push_back(std::move(p));
   }
   return out;

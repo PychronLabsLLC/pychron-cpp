@@ -49,6 +49,9 @@ struct ProvenanceRow {
   std::string path, commit_sha, git_blob_sha, git_author;
   UtcTime git_utc;
   std::optional<std::string> detail_json;
+  // The import source the row belongs to. Set on read; a write takes it from
+  // the batch.
+  Uuid source = {};
 };
 
 struct ImportConflictRow {
@@ -111,6 +114,11 @@ class IImportUnitOfWork {
   // One row per (entity_type, entity, source); an existing row is kept.
   virtual Result<void> add_provenance(ProvenanceRow row) = 0;
   virtual Result<void> add_conflict(ImportConflictRow row) = 0;
+  // Replaces the detail of this source's provenance row of (entity_type,
+  // entity), after this batch's own rows are written (import_provenance is an
+  // updatable table). A row that does not exist is left alone. Not a
+  // change_log entry.
+  virtual Result<void> set_provenance_detail(std::string entity_type, Uuid entity, std::string detail_json) = 0;
   // Sets the resolution of a stored conflict (import_conflict is an updatable
   // table), after this batch's own conflicts are written. A conflict that
   // does not exist is left alone. Not a change_log entry.
