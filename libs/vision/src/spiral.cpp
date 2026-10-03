@@ -10,11 +10,13 @@ Spiral::Spiral(SpiralKind kind, double base_mm, double square_growth)
 
 void Spiral::reset() {
   ring_ = 1;
+  last_ring_ = 0;
   index_ = 0;
   side_mm_ = base_mm_;
 }
 
 Vec2 Spiral::next() {
+  last_ring_ = ring_;
   if (kind_ == SpiralKind::Square) {
     static constexpr double kDir[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
     const Vec2 p{kDir[index_][0] * side_mm_, kDir[index_][1] * side_mm_};

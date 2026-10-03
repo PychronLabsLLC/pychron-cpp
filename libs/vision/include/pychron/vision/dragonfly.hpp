@@ -59,6 +59,9 @@ class Dragonfly {
   int misses_ = 0;
   bool have_move_ = false;
   TimePoint last_move_now_{};
+  // Search bookkeeping: a ring with no point inside the perimeter restarts the spiral.
+  int prev_ring_ = 0;
+  bool ring_inside_ = false;
   Spiral spiral_;
 };
 

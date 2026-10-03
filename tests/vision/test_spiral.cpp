@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 #include <vector>
 
@@ -88,4 +90,30 @@ TEST(Spiral, Deterministic) {
       EXPECT_GT(len(p), 0.0);  // never the anchor itself
     }
   }
+}
+
+TEST(Spiral, RingIndexFollowsRingsAndLaps) {
+  Spiral h(SpiralKind::Hexagon, 0.5);
+  EXPECT_EQ(h.ring(), 0);
+  for (int i = 0; i < 6; ++i) {
+    h.next();
+    EXPECT_EQ(h.ring(), 1);
+  }
+  for (int i = 0; i < 12; ++i) {
+    h.next();
+    EXPECT_EQ(h.ring(), 2);
+  }
+  h.reset();
+  EXPECT_EQ(h.ring(), 0);
+  Spiral q(SpiralKind::Square, 0.5);
+  for (int i = 0; i < 4; ++i) {
+    q.next();
+    EXPECT_EQ(q.ring(), 1);
+  }
+  for (int i = 0; i < 4; ++i) {
+    q.next();
+    EXPECT_EQ(q.ring(), 2);
+  }
+  q.reset();
+  EXPECT_EQ(q.ring(), 0);
 }

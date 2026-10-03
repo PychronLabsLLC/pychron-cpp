@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "pychron/vision/kernel.hpp"
+
 namespace pychron::vision {
 
 namespace {
@@ -31,6 +33,8 @@ void Dragonfly::start(TimePoint now, Vec2 stage_pos_mm) {
   anchor_ = {};
   misses_ = 0;
   have_move_ = false;
+  prev_ring_ = 0;
+  ring_inside_ = false;
   spiral_.reset();
 }
 
@@ -46,15 +50,17 @@ bool Dragonfly::params_ok() const {
 Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoint now, Vec2 stage_pos_mm) {
   Step out;
 
-  if (!started_ || !params_ok() || !finite(stage_pos_mm)) {
+  const bool pos_ok = started_ && finite(start_pos_) && finite(stage_pos_mm);
+  if (!pos_ok || !params_ok()) {
     out.action = Step::Action::Hold;
     out.reason = Step::Reason::Invalid;
-    if (started_ && finite(stage_pos_mm)) out.target_mm = {stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
+    if (pos_ok) out.target_mm = {stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
+    if (!finite(out.target_mm)) out.target_mm = {};
     return out;
   }
 
   const Vec2 current{stage_pos_mm.x - start_pos_.x, stage_pos_mm.y - start_pos_.y};
-  out.target_mm = current;
+  out.target_mm = finite(current) ? current : Vec2{};
 
   if (now - start_time_ >= params_.total_duration) {
     out.action = Step::Action::Done;
@@ -89,6 +95,9 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     double sat;
   };
   std::vector<Hit> hits;
+  // Frames where the glow fills the mask: the finder's contrast gate finds no
+  // blob, but the masked median is bright. They count as saturated, not as misses.
+  std::vector<double> flooded;
   for (const FrameView& f : frames) {
     const Rect r = centered_rect(f, side);
     // Where the clamped crop really starts; the frame centre is the reference.
@@ -96,12 +105,17 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     const Frame c = crop(f, r);
     if (c.width <= 0 || c.height <= 0) continue;
     const auto targets = finder_.find(c.view(), fp);
-    if (targets.empty()) continue;
+    if (targets.empty()) {
+      const double m = static_cast<double>(median_in_mask(c.view(), fp.mask_radius_px)) /
+                       static_cast<double>(c.pixel_depth);
+      if (m >= params_.saturation_threshold) flooded.push_back(std::min(m, 1.0));
+      continue;
+    }
     const Vec2 off{x0 + targets.front().center_px.x - (f.width - 1) / 2.0,
                    y0 + targets.front().center_px.y - (f.height - 1) / 2.0};
     if (!finite(off)) continue;
     const double s = saturation(targets.front());
-    hits.push_back({off, std::isfinite(s) ? s : 0.0});
+    hits.push_back({off, std::isfinite(s) ? std::clamp(s, 0.0, 1.0) : 0.0});
   }
 
   auto project = [&](Vec2 t, Step::Reason& reason) {
@@ -113,34 +127,69 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     }
     return t;
   };
+  auto hold = [&](Step::Reason why) {
+    out.action = Step::Action::Hold;
+    out.reason = why;
+    out.target_mm = current;
+  };
+  // A projected move that goes nowhere is a Hold; commanding it would only
+  // re-send the stage to where it already is.
+  auto finish_move = [&](Vec2 t) {
+    if (!finite(t)) {
+      out.action = Step::Action::Hold;
+      out.reason = Step::Reason::Invalid;
+      out.target_mm = finite(current) ? current : Vec2{};
+      return;
+    }
+    if (out.reason == Step::Reason::PerimeterClamp &&
+        std::hypot(t.x - current.x, t.y - current.y) < params_.move_threshold_mm) {
+      hold(Step::Reason::PerimeterClamp);
+      return;
+    }
+    out.action = Step::Action::Move;
+    out.target_mm = t;
+    have_move_ = true;
+    last_move_now_ = now;
+  };
+  auto reanchor = [&](Vec2 at) {
+    anchor_ = at;
+    prev_ring_ = 0;
+    ring_inside_ = false;
+    spiral_.reset();
+  };
 
-  if (hits.empty()) {
+  if (hits.empty() && flooded.empty()) {
     ++misses_;
     if (misses_ < params_.miss_frames_before_search) {
-      out.action = Step::Action::Hold;
-      out.reason = Step::Reason::Miss;
+      hold(Step::Reason::Miss);
       return out;
     }
     // The spiral advances even when the point is projected, so a search at
-    // the perimeter keeps moving around it.
-    const Vec2 p = spiral_.next();
+    // the perimeter keeps moving around it. A whole ring outside the
+    // perimeter restarts the search from the anchor instead of circling the rim.
+    Vec2 p = spiral_.next();
+    if (spiral_.ring() != prev_ring_ && prev_ring_ >= 1 && !ring_inside_) {
+      spiral_.reset();
+      p = spiral_.next();
+    }
+    if (spiral_.ring() != prev_ring_) ring_inside_ = false;
+    prev_ring_ = spiral_.ring();
+    const Vec2 raw{anchor_.x + p.x, anchor_.y + p.y};
+    if (std::hypot(raw.x, raw.y) <= params_.perimeter_radius_mm) ring_inside_ = true;
     out.reason = Step::Reason::Search;
-    out.target_mm = project({anchor_.x + p.x, anchor_.y + p.y}, out.reason);
-    out.action = Step::Action::Move;
-    have_move_ = true;
-    last_move_now_ = now;
+    finish_move(project(raw, out.reason));
     return out;
   }
 
   misses_ = 0;
-  double mean_sat = 0;
-  for (const Hit& h : hits) mean_sat += h.sat;
-  mean_sat /= static_cast<double>(hits.size());
-  out.saturation = mean_sat;
+  double sat_sum = 0;
+  for (const Hit& h : hits) sat_sum += h.sat;
+  for (double v : flooded) sat_sum += v;
+  out.saturation = sat_sum / static_cast<double>(hits.size() + flooded.size());
 
-  if (mean_sat >= params_.saturation_threshold) {
-    out.action = Step::Action::Hold;
-    out.reason = Step::Reason::Saturated;
+  if (hits.empty() || out.saturation >= params_.saturation_threshold) {
+    hold(Step::Reason::Saturated);
+    reanchor(current);
     return out;
   }
 
@@ -158,14 +207,13 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   Vec2 corr = map_.to_mm(mean_px);
   corr = {corr.x * params_.aggressiveness, corr.y * params_.aggressiveness};
   if (!finite(corr)) {
-    out.action = Step::Action::Hold;
-    out.reason = Step::Reason::Invalid;
+    hold(Step::Reason::Invalid);
     return out;
   }
   const double mag = std::hypot(corr.x, corr.y);
   if (mag < params_.move_threshold_mm) {
-    out.action = Step::Action::Hold;
-    out.reason = Step::Reason::Deadband;
+    hold(Step::Reason::Deadband);
+    reanchor(current);
     return out;
   }
   if (mag > params_.max_step_mm) {
@@ -174,12 +222,9 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   }
 
   out.reason = Step::Reason::Track;
-  out.target_mm = project({current.x + corr.x, current.y + corr.y}, out.reason);
-  out.action = Step::Action::Move;
-  anchor_ = out.target_mm;
-  spiral_.reset();
-  have_move_ = true;
-  last_move_now_ = now;
+  const Vec2 t = project({current.x + corr.x, current.y + corr.y}, out.reason);
+  finish_move(t);
+  if (finite(t)) reanchor(out.action == Step::Action::Move ? t : current);
   return out;
 }
 
