@@ -35,6 +35,7 @@
 #include "processing_bridge.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
+#include "isotope_evolution_window.hpp"
 #include "preset_bar.hpp"
 #include "reference_fit_window.hpp"
 #include "scene_view.hpp"
@@ -48,6 +49,7 @@ using pychron::ui::OptionsEditor;
 using pychron::ui::ProcessingBridge;
 using pychron::ui::RecallWindow;
 using pychron::ui::ReferenceFitWindow;
+using pychron::ui::IsotopeEvolutionWindow;
 
 namespace {
 
@@ -294,6 +296,35 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     return out;
   }
 
+  Result<pp::SaveOutcome> save_isotope_fits(const pp::IsotopeFitSet& fits) override {
+    pp::SaveOutcome out;
+    for (const auto& a : fits.analyses)
+      if (a.heads.count("intercepts") == 0 || a.heads.at("intercepts") != head_[{a.uuid, "intercepts"}]) {
+        out.conflict = "someone else saved first";
+        return out;
+      }
+    for (const auto& a : fits.analyses) {
+      auto copy = std::make_shared<pp::Analysis>(**load(a.uuid));
+      for (const auto& refit : a.isotopes)
+        for (auto& iso : copy->isotopes)
+          if (iso.key == refit.fit.key) {
+            iso.intercept = refit.fit.value;
+            iso.fit = refit.fit.fit;
+            iso.n = refit.fit.n_used;
+            iso.user_excluded = refit.fit.user_excluded;
+          }
+      const std::string id = "rev-" + std::to_string(++ids_) + "-intercepts";
+      copy->heads["intercepts"] = id;
+      out.revisions[a.uuid] = id;
+      record(*copy, "intercepts", id, "reduction", fits.message());
+      add(copy);
+    }
+    out.saved = true;
+    ++isotope_saves;
+    last_message = fits.message();
+    return out;
+  }
+
   // Someone else saves: the head moves without this window knowing.
   void move_head(const std::string& uuid, const std::string& kind = "intercepts") {
     head_[{uuid, kind}] = "rev-elsewhere";
@@ -302,6 +333,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
   int saves = 0;
   int restores = 0;
   int reference_saves = 0;
+  int isotope_saves = 0;
   std::string last_message;
 
  private:
@@ -361,6 +393,16 @@ QListWidgetItem* find_item(QListWidget* list, const QString& text) {
 }
 
 bool wait_runs(FigureWindow& w, ProcessingBridge& bridge, int runs) {
+  QElapsedTimer t;
+  t.start();
+  while (w.runs_completed() < runs && t.elapsed() < kWaitMs) {
+    bridge.wait_idle(100);
+    QTest::qWait(5);
+  }
+  return w.runs_completed() >= runs;
+}
+
+bool wait_runs(IsotopeEvolutionWindow& w, ProcessingBridge& bridge, int runs) {
   QElapsedTimer t;
   t.start();
   while (w.runs_completed() < runs && t.elapsed() < kWaitMs) {
@@ -430,8 +472,9 @@ class TestDataWindows : public QObject {
     w.select_rows({0, 2});
     QCOMPARE(w.selected_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
     const auto actions = w.plot_button()->menu()->actions();
-    QCOMPARE(actions.size(), 7);  // four figures, a separator, blanks and IC factors
-    QCOMPARE(actions[6]->data().toString(), QStringLiteral("icfactor_fit"));
+    QCOMPARE(actions.size(), 8);  // four figures, a separator, isotope evolutions, blanks, IC factors
+    QCOMPARE(actions[5]->data().toString(), QStringLiteral("isotope_evolution_fit"));
+    QCOMPARE(actions[7]->data().toString(), QStringLiteral("icfactor_fit"));
     actions[2]->trigger();  // Age spectrum
     QCOMPARE(series.count(), 1);
     const auto args = series.takeFirst();
@@ -745,6 +788,79 @@ class TestDataWindows : public QObject {
     QVERIFY(!v.save_button()->isEnabled());
     QVERIFY(v.save_button()->toolTip().contains(QStringLiteral("--db")));
     QVERIFY(!v.save());
+  }
+
+  void isotope_evolutions_refit_flag_and_save() {
+    // Signals are exact lines v = I - 0.01 k: a linear refit keeps I, an
+    // average gives I - 0.095.
+    RevisionMemorySource src(4);
+    QTemporaryDir dir;
+    ProcessingBridge bridge(src);
+    pp::PresetStore presets(dir.path().toStdString());
+    IsotopeEvolutionWindow w(bridge, presets,
+                             {QStringLiteral("uuid-0"), QStringLiteral("uuid-1"), QStringLiteral("uuid-2")});
+    QVERIFY(wait_runs(w, bridge, 1));
+    QVERIFY(w.fits());
+    QCOMPARE(w.fits()->analyses.size(), std::size_t{3});
+    QCOMPARE(w.fits()->analyses[0].isotopes.size(), std::size_t{5});
+    QVERIFY(std::abs(w.fits()->analyses[0].isotopes[0].fit.value.value - 2950.0) < 1e-6);
+    QCOMPARE(w.analyses_table()->rowCount(), 3);
+    QVERIFY(w.analyses_table()->item(0, 3)->text().startsWith(QStringLiteral("Ar40 2950")));
+    QCOMPARE(w.view()->panel_count(), 5);
+
+    // Selecting an analysis previews its evolutions with the refits.
+    w.analyses_table()->selectRow(0);
+    QCOMPARE(w.preview_view()->panel_count(), 5);
+
+    auto opts = w.pipeline().find("fit")->options;
+    auto rows = opts.rows("isotopes");
+    QVERIFY(rows[0].set("fit", std::string("average")).has_value());
+    QVERIFY(opts.set_rows("isotopes", rows).has_value());
+    w.set_fit_options(opts);
+    QVERIFY(wait_runs(w, bridge, 2));
+    QVERIFY(std::abs(w.fits()->analyses[0].isotopes[0].fit.value.value - 2949.905) < 1e-6);
+    QCOMPARE(w.preview_view()->panel_count(), 5);  // still previewing uuid-0
+
+    // Unchecking an analysis leaves it out.
+    w.analyses_table()->item(1, 1)->setCheckState(Qt::Unchecked);
+    QVERIFY(wait_runs(w, bridge, 3));
+    QCOMPARE(w.fits()->analyses.size(), std::size_t{2});
+    QCOMPARE(w.analyses_table()->item(1, 3)->text(), QStringLiteral("left out"));
+
+    // A goodness threshold nothing passes flags both.
+    QVERIFY(rows[0].set("max_percent_error", 1e-12).has_value());
+    QVERIFY(opts.set_rows("isotopes", rows).has_value());
+    w.set_fit_options(opts);
+    QVERIFY(wait_runs(w, bridge, 4));
+    QCOMPARE(w.fits()->flagged(), 2);
+    QVERIFY(w.analyses_table()->item(0, 2)->text().startsWith(QStringLiteral("Ar40 percent_error")));
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("2 flagged")));
+    w.leave_out_flagged()->setChecked(true);
+    QVERIFY(!w.save_button()->isEnabled());
+    QVERIFY(!w.save());
+    w.leave_out_flagged()->setChecked(false);
+    QVERIFY(w.save());
+    QCOMPARE(src.isotope_saves, 1);
+    QCOMPARE(src.last_message,
+             std::string("<ISOEVO> refit Ar40(average),Ar39(linear),Ar38(linear),Ar37(linear),Ar36(linear)"));
+    QVERIFY(std::abs((*src.load("uuid-0"))->find_isotope("Ar40")->intercept.value - 2949.905) < 1e-6);
+    QVERIFY(wait_runs(w, bridge, 5));
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("saved intercepts of 2 analyses")));
+
+    // Someone else saves first: nothing written.
+    src.move_head("uuid-2", "intercepts");
+    QVERIFY(!w.save());
+    QCOMPARE(src.isotope_saves, 1);
+    QVERIFY(w.status_label()->text().contains(QStringLiteral("someone else saved first")));
+
+    // Without revisions there is nothing to save to.
+    auto plain = make_source(3);
+    ProcessingBridge plain_bridge(*plain);
+    IsotopeEvolutionWindow v(plain_bridge, presets, {QStringLiteral("uuid-0")});
+    QVERIFY(wait_runs(v, plain_bridge, 1));
+    QCOMPARE(v.fits()->analyses.size(), std::size_t{1});
+    QVERIFY(!v.save_button()->isEnabled());
+    QVERIFY(v.save_button()->toolTip().contains(QStringLiteral("--db")));
   }
 
   void figure_computes_and_click_excludes() {

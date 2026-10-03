@@ -347,8 +347,26 @@ marks the upstream result reviewed, which is also an option.
 | `time_series` | Dataset -> Scene | section 8.3 |
 
 V2 adds `ideogram`, `spectrum`, `inverse_isochron`, `xy_scatter`,
-`subgroup`, `mswd_filter`. V3 adds `table`, `export_csv`,
-`fit_isotope_evolution`, and the reference fits:
+`subgroup`, `mswd_filter`. V3 adds `table`, `export_csv`, batch
+isotope-evolution refits and the reference fits:
+
+| Unit | Ports | Options |
+|---|---|---|
+| `isotope_evolution_fit` | analyses -> (Scene, IsotopeFits) | per isotope (a key, or a name matching every key of it): fit, error, outlier filter, goodness thresholds (max percent error, max outliers, max slope); keep_user_excluded, skip_reviewed |
+
+After legacy FitIsotopeEvolutionNode: every included analysis's raw
+signals are refitted (reading `load_raw` from the source), keeping the
+points each analysis already leaves out unless told otherwise. Legacy's
+goodness checks flag a refit whose percent error, outlier count or slope at
+t = 0 exceeds its threshold (signal-to-baseline and curvature checks are
+not ported yet). The scene plots each isotope's refitted and current
+intercepts against run time, flagged ones marked. `IsotopeFits` holds per
+analysis its heads, the refits (`EditedFit`, stored value, slope,
+outliers), flags and the edited analysis for previews;
+`IRevisionSource::save_isotope_fits` writes one intercepts revision per
+analysis in one changeset (`<ISOEVO> refit Ar40(linear),...`). Saved fits,
+here and from recall, are marked reviewed.
+
 
 | Unit | Ports | Options |
 |---|---|---|
@@ -744,6 +762,15 @@ the editor generated from the unit's schema), a References dock (run id,
 type, time, an Included box doing the same edit as a click), and Save,
 enabled when the source keeps revisions and something was fitted. A lost compare-and-swap
 writes nothing and the status says so.
+
+### 11.3b Isotope evolutions window
+
+Plot > Isotope evolutions... refits the selected analyses: the summary
+scene (click a point to leave its analysis out), a preview of the selected
+analysis's evolutions with the refits, a Fits dock (presets, one row per
+isotope), an Analyses dock (Included box, goodness flags, refits), and
+Save, optionally leaving flagged analyses out. A lost compare-and-swap
+writes nothing.
 
 ### 11.4 Figure window
 

@@ -148,7 +148,11 @@ source adapters as separate targets (`processing_records`,
       mode, keep reviewed values, references table dock.
 - [ ] Discrimination IC mode: decide the formula (legacy's
       `set_discrimination` power is suspect, see spec 7.5).
-- [ ] `fit_isotope_evolution` over many analyses (batch refits).
+- [x] Batch isotope-evolution refits (`isotope_evolution_fit` -> Scene +
+      `IsotopeFits`, goodness flags, `save_isotope_fits`) and the Isotope
+      evolutions window.
+- [ ] Remaining legacy goodness checks (signal-to-baseline, curvature,
+      smart filter) and baseline batch refits.
 - [ ] Tables and CSV export units.
 - [ ] Pipeline template editor (graph view of units, per-node options dock).
 - [ ] Listen/auto pipelines driven by `IAnalysisSource::generation()`.

@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "figure_window.hpp"
+#include "isotope_evolution_window.hpp"
 #include "recall_window.hpp"
 #include "reference_fit_window.hpp"
 
@@ -54,6 +55,13 @@ QWidget* DataWorkspace::open_recall(const QString& uuid) {
 QWidget* DataWorkspace::open_figure(const QString& kind, const QStringList& uuids) {
   if (!processing_ || presets_ == nullptr) return nullptr;
   if (processing::UnitRegistry::builtin().find(kind.toStdString()) == nullptr) return nullptr;
+  if (kind == QLatin1String(IsotopeEvolutionWindow::kKind)) {
+    auto* e = new IsotopeEvolutionWindow(*processing_, *presets_, uuids, owner_);
+    e->setAttribute(Qt::WA_DeleteOnClose);
+    children_.append(e);
+    e->show();
+    return e;
+  }
   if (ReferenceFitWindow::handles(kind.toStdString())) {
     auto* r = new ReferenceFitWindow(*processing_, *presets_, kind.toStdString(), uuids, owner_);
     r->setAttribute(Qt::WA_DeleteOnClose);

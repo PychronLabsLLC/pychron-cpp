@@ -118,10 +118,13 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
     connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
   }
   plot_menu->addSeparator();
-  for (const auto& [kind, label] : {std::pair{"blank_fit", "Blanks..."}, {"icfactor_fit", "IC factors..."}}) {
+  for (const auto& [kind, label] : {std::pair{"isotope_evolution_fit", "Isotope evolutions..."},
+                                    {"blank_fit", "Blanks..."}, {"icfactor_fit", "IC factors..."}}) {
     QAction* a = plot_menu->addAction(tr(label));
     a->setData(QString::fromLatin1(kind));
-    a->setToolTip(tr("Fit the selected unknowns' values from reference analyses"));
+    a->setToolTip(QString::fromLatin1(kind) == QStringLiteral("isotope_evolution_fit")
+                      ? tr("Refit the selected analyses' isotope evolutions")
+                      : tr("Fit the selected unknowns' values from reference analyses"));
     connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
   }
   plot_->setMenu(plot_menu);
