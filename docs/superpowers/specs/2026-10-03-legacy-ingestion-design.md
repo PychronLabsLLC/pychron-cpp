@@ -517,6 +517,13 @@ points. Where this section and an earlier one disagree, this section wins.
     correct once the branch is merged. Analyses still incomplete when an
     incremental run ends are folded as synthetic collections, where one
     longer uninterrupted import would have folded them complete.
+    Within a single commit: two analyses that swap run ids both become
+    `identity_clash`; a collection in the same commit as the renumber that
+    frees its run id is refused (a replay then imports it). An analysis
+    renumbered while its collection is still pending is folded under its
+    later identity with no `identity` revision; the rewrite is kept under
+    `rewrites`. A record without a uuid that is renumbered reads as a
+    different analysis (`identity_clash`).
 20. **Token rule, revised.** Every batch moves the resume token to its last
     commit; the token no longer waits for pending analyses (this replaces
     the token sentence of section 4.4 and the last sentence of item 14). On
