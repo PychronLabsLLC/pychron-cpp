@@ -12,6 +12,7 @@ add_executable(pychron_core_tests
   test_process.cpp
   test_sha256.cpp
   test_sha1.cpp
+  test_calendar.cpp
   test_config_loader.cpp
   test_config_validate.cpp
   test_config_override.cpp
