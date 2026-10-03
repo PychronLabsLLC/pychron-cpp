@@ -20,6 +20,9 @@ namespace {
 
 constexpr std::string_view kCollectionTag = "<COLLECTION>";
 constexpr std::size_t kRecordsPerFetch = 256;
+// A rewritten value larger than this is kept as a reference to the git blob
+// of its file, not verbatim (spec section 10, item 18).
+constexpr std::size_t kMaxRewriteValueBytes = 64 * 1024;
 
 ingest::SourceKey key_of(const FileRef& ref) { return {ref.commit, ref.path, ref.blob_sha}; }
 
@@ -68,22 +71,30 @@ bool is_rewritable(FileKind kind) {
 // The top-level keys whose values differ between two versions of a file:
 // {"<key>": {"old": ..., "new": ...}}, a side left out where the key is
 // absent. `before` null: there was no earlier version, or it cannot be read.
-Json changed_keys(const Json* before, const Json& after) {
+// A value larger than kMaxRewriteValueBytes is replaced by a reference to the
+// blob of the file version it is in (`before_blob`, `after_blob`).
+Json changed_keys(const Json* before, const Json& after, const std::string& before_blob,
+                  const std::string& after_blob) {
+  const auto kept = [](const Json& value, const std::string& blob) {
+    const std::size_t bytes = dump(value).size();
+    if (bytes <= kMaxRewriteValueBytes) return value;
+    return Json{{"blob_sha", blob}, {"bytes", bytes}};
+  };
   Json changed = Json::object();
   if (!after.is_object() || (before && !before->is_object())) {
-    if (before) changed["(document)"]["old"] = *before;
-    changed["(document)"]["new"] = after;
+    if (before) changed["(document)"]["old"] = kept(*before, before_blob);
+    changed["(document)"]["new"] = kept(after, after_blob);
     return changed;
   }
   for (auto it = after.begin(); it != after.end(); ++it) {
     const auto old = before ? before->find(it.key()) : after.end();
     if (before && old != before->end() && *old == it.value()) continue;
-    if (before && old != before->end()) changed[it.key()]["old"] = *old;
-    changed[it.key()]["new"] = it.value();
+    if (before && old != before->end()) changed[it.key()]["old"] = kept(*old, before_blob);
+    changed[it.key()]["new"] = kept(it.value(), after_blob);
   }
   if (before)
     for (auto it = before->begin(); it != before->end(); ++it)
-      if (!after.contains(it.key())) changed[it.key()]["old"] = it.value();
+      if (!after.contains(it.key())) changed[it.key()]["old"] = kept(it.value(), before_blob);
   return changed;
 }
 
@@ -121,6 +132,7 @@ void release(Track& track) {
 struct Mapper::Reading {
   struct Record {
     std::optional<ParsedRecord> parsed;
+    std::optional<ParsedRecord> now;  // the record at fold time (Collect::record_now), when it can be read
     std::string error;
     Sha256Digest digest{};
   };
@@ -130,8 +142,15 @@ struct Mapper::Reading {
 struct Mapper::Output {
   ImportBatch& batch;
   std::map<int, ingest::ChangesetItem> changesets;  // by commit index
-  std::set<std::string> revised;                    // paths with a revision earlier in this batch
-  std::map<int, Json> rewrites;                     // by commit index: record and satellite files rewritten
+  // The blob of the last revision this batch holds for each path. With the
+  // store's head for paths not in it, this is the content a path was last
+  // imported with, whatever the batch cut.
+  std::map<std::string, std::string> emitted;
+  std::map<int, std::vector<ingest::FileNote>> rewrites;  // by commit index: record and satellite files rewritten
+  // The analyses this batch sends, which the store does not have yet: by
+  // uuid, the track that sends each; by run id, the uuid.
+  std::map<Uuid, const Track*> owners;
+  std::map<std::string, Uuid> runids;
 
   void conflict(const FileRef& ref, ConflictKind kind, std::optional<Uuid> entity,
                 std::optional<Sha256Digest> digest, const Json& detail) {
@@ -168,14 +187,17 @@ Result<void> Mapper::fetch(std::vector<std::string> blob_shas) {
 
 // Parses the record of each track. The views of one fetch do not survive the
 // next, so everything needed from the bytes is taken here.
-Result<void> Mapper::read_records(const std::vector<Track*>& tracks, Reading& reading) {
-  for (std::size_t begin = 0; begin < tracks.size(); begin += kRecordsPerFetch) {
-    const std::size_t end = std::min(tracks.size(), begin + kRecordsPerFetch);
+Result<void> Mapper::read_records(const std::vector<Collect>& folds, Reading& reading) {
+  for (std::size_t begin = 0; begin < folds.size(); begin += kRecordsPerFetch) {
+    const std::size_t end = std::min(folds.size(), begin + kRecordsPerFetch);
     std::vector<std::string> blobs;
-    for (std::size_t i = begin; i < end; ++i) blobs.push_back(tracks[i]->record->blob_sha);
+    for (std::size_t i = begin; i < end; ++i) {
+      blobs.push_back(folds[i].track->record->blob_sha);
+      if (folds[i].record_now) blobs.push_back(folds[i].record_now->blob_sha);
+    }
     if (auto r = fetch(std::move(blobs)); !r) return r;
     for (std::size_t i = begin; i < end; ++i) {
-      auto text = reader_.blob(tracks[i]->record->blob_sha);
+      auto text = reader_.blob(folds[i].track->record->blob_sha);
       if (!text) return fail(text.error());
       Reading::Record read;
       read.digest = sha256(*text);
@@ -184,7 +206,12 @@ Result<void> Mapper::read_records(const std::vector<Track*>& tracks, Reading& re
         read.parsed = std::move(*parsed);
       else
         read.error = parsed.error().what;
-      reading.records.insert_or_assign(tracks[i], std::move(read));
+      if (folds[i].record_now) {
+        auto text_now = reader_.blob(folds[i].record_now->blob_sha);
+        if (!text_now) return fail(text_now.error());
+        if (auto parsed_now = parse_record(*text_now, context_)) read.now = std::move(*parsed_now);
+      }
+      reading.records.insert_or_assign(folds[i].track, std::move(read));
     }
   }
   return {};
@@ -196,7 +223,9 @@ Result<void> Mapper::read_records(const std::vector<Track*>& tracks, Reading& re
 // refused until a replay imports it.
 Result<void> Mapper::resolve(const std::vector<Track*>& tracks) {
   Reading reading;
-  if (auto r = read_records(tracks, reading); !r) return r;
+  std::vector<Collect> folds;
+  for (Track* track : tracks) folds.push_back({track, std::nullopt});
+  if (auto r = read_records(folds, reading); !r) return r;
   for (Track* track : tracks) {
     const auto& read = reading.records.at(track);
     if (!read.parsed) {
@@ -208,28 +237,25 @@ Result<void> Mapper::resolve(const std::vector<Track*>& tracks) {
     auto origin = state_.analysis_origin(track->uuid, track->record->commit);
     if (!origin) return fail(origin.error());
     track->role = !*origin || (*origin)->from_this_source ? Track::Role::Imported : Track::Role::Foreign;
-    if (track->role == Track::Role::Imported) {
-      owners_.try_emplace(track->uuid, track);
-      runids_.try_emplace(read.parsed->runid, track->uuid);
-    }
   }
   return {};
 }
 
 Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
-  Output out{batch, {}, {}, {}};
+  Output out{batch, {}, {}, {}, {}, {}};
 
   // The records first: they say which analysis each file belongs to.
-  std::vector<Track*> collects, unresolved;
+  std::vector<Collect> collects;
+  std::vector<Track*> unresolved;
   for (const auto& item : work)
-    if (const auto* fold = std::get_if<Collect>(&item)) collects.push_back(fold->track);
+    if (const auto* fold = std::get_if<Collect>(&item)) collects.push_back(*fold);
   for (const auto& item : work) {
     const auto* file = std::get_if<Change>(&item);
     if (!file || !file->track || !file->track->flushed || file->track->role != Track::Role::Unresolved) continue;
-    const auto listed = [&](const std::vector<Track*>& list) {
-      return std::find(list.begin(), list.end(), file->track) != list.end();
-    };
-    if (!listed(collects) && !listed(unresolved)) unresolved.push_back(file->track);
+    const bool folded = std::any_of(collects.begin(), collects.end(),
+                                    [&](const Collect& fold) { return fold.track == file->track; });
+    if (!folded && std::find(unresolved.begin(), unresolved.end(), file->track) == unresolved.end())
+      unresolved.push_back(file->track);
   }
   Reading reading;
   if (auto r = read_records(collects, reading); !r) return r;
@@ -237,9 +263,9 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
 
   // Then every other file of the batch, in one read.
   std::vector<std::string> blobs;
-  for (const Track* track : collects) {
-    for (const auto& file : collection_files(*track)) blobs.push_back(file.ref.blob_sha);
-    const auto& read = reading.records.at(track);
+  for (const auto& fold : collects) {
+    for (const auto& file : collection_files(*fold.track)) blobs.push_back(file.ref.blob_sha);
+    const auto& read = reading.records.at(fold.track);
     if (read.parsed && read.parsed->spec_sha && !snapshots_.contains(*read.parsed->spec_sha))
       if (const FileRef* settings = walk_.spectrometer(*read.parsed->spec_sha)) blobs.push_back(settings->blob_sha);
   }
@@ -252,7 +278,7 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
 
   for (const auto& item : work) {
     if (const auto* fold = std::get_if<Collect>(&item)) {
-      if (auto r = collect(*fold->track, reading, out); !r) return r;
+      if (auto r = collect(*fold, reading, out); !r) return r;
     } else if (auto r = change(std::get<Change>(item), out); !r) {
       return r;
     }
@@ -261,7 +287,7 @@ Result<void> Mapper::map(const std::vector<Work>& work, ImportBatch& batch) {
   for (auto& [index, changeset] : out.changesets) {
     // What the commit rewrote without a revision is kept with its changeset.
     if (const auto rewritten_here = out.rewrites.find(index); rewritten_here != out.rewrites.end())
-      changeset.detail_json = dump(Json{{"rewrites", rewritten_here->second}});
+      changeset.rewrites = std::move(rewritten_here->second);
     // A commit that only touches reference data is a reference changeset.
     const bool reference =
         !changeset.revisions.empty() &&
@@ -292,7 +318,8 @@ Result<void> Mapper::bookmark(const GitTag& tag, ImportBatch& batch) {
 
 // ---------------------------------------------------------------- collections
 
-Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
+Result<void> Mapper::collect(const Collect& fold, Reading& reading, Output& out) {
+  Track& track = *fold.track;
   const FileRef record_ref = *track.record;
   auto& read = reading.records.at(&track);
   const std::vector<SeenFile> files = collection_files(track);
@@ -314,57 +341,71 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
   const Uuid uuid = record.had_uuid ? record.ingest.analysis : ingest::derived_analysis_id(url_, record.runid);
   track.uuid = uuid;
 
-  // A second copy of an analysis this walk already imported (a file set moved
-  // or copied to another run id).
-  if (const auto owner = owners_.find(uuid); owner != owners_.end() && owner->second != &track) {
-    Json detail = reason("this analysis is already imported from " + owner->second->record->path);
-    detail["uuid"] = uuid.str();
-    out.conflict(record_ref, ConflictKind::IdentityClash, uuid, read.digest, detail);
-    track.role = Track::Role::Foreign;
-    release(track);
-    return {};
-  }
-  // Two analyses cannot share a run id: not in this batch, not with one an
-  // earlier run or another source imported.
-  std::optional<Uuid> holder;
-  if (const auto taken = runids_.find(record.runid); taken != runids_.end()) {
-    holder = taken->second;
-  } else {
-    auto stored = state_.analysis_with_runid(record.ingest.identifier, record.ingest.aliquot, record.ingest.increment);
-    if (!stored) return fail(stored.error());
-    holder = *stored;
-  }
-  if (holder && *holder != uuid) {
-    Json detail = reason("run id " + record.runid + " belongs to another analysis");
-    detail["uuid"] = uuid.str();
-    detail["imported_uuid"] = holder->str();
-    out.conflict(record_ref, ConflictKind::IdentityClash, *holder, read.digest, detail);
-    refuse_files(uuid, "the analysis " + record.runid + " was not imported: its run id is taken");
-    track.role = Track::Role::Broken;
-    release(track);
-    return {};
-  }
-
   auto meta = commit(record_ref.commit);
   if (!meta) return fail(meta.error());
   const ingest::GitWho who = (*meta)->author;
   const bool collection_commit = std::string_view((*meta)->message).starts_with(kCollectionTag);
 
-  // In the store from another source: it joins this repository, nothing else.
+  // The record was rewritten while the analysis was pending: it is imported
+  // under the run identity it has now, when the collection is folded. (A
+  // rewrite that carries another uuid is a conflict, reported with that file.)
+  if (read.now) {
+    const Uuid uuid_now = read.now->had_uuid ? read.now->ingest.analysis
+                                             : ingest::derived_analysis_id(url_, read.now->runid);
+    if (uuid_now == uuid) {
+      record.ingest.identifier = read.now->ingest.identifier;
+      record.ingest.aliquot = read.now->ingest.aliquot;
+      record.ingest.increment = read.now->ingest.increment;
+      record.runid = read.now->runid;
+    }
+  }
+
+  // Another copy of the same analysis. In the store from another source: it
+  // joins this repository and nothing else. From this source, under another
+  // path (in the store, or earlier in this batch): it is a member already.
+  // Either way a copy whose record differs from the imported one is reported.
   auto origin = state_.analysis_origin(uuid, record_ref.commit);
   if (!origin) return fail(origin.error());
-  if (*origin && !(*origin)->from_this_source) {
-    out.batch.memberships.push_back({uuid, key_of(record_ref), who, {config_.repository_name}});
-    const std::string& stored = (*origin)->record_blob_sha;
-    if (!stored.empty() && stored != record_ref.blob_sha) {
+  const auto batch_owner = out.owners.find(uuid);
+  const bool copy_in_batch = !*origin && batch_owner != out.owners.end() && batch_owner->second != &track;
+  if ((*origin && !(*origin)->from_this_source) || copy_in_batch) {
+    const bool same_source = copy_in_batch || (*origin)->in_this_source;
+    if (!same_source) out.batch.memberships.push_back({uuid, key_of(record_ref), who, {config_.repository_name}});
+    const std::string imported = copy_in_batch ? batch_owner->second->record->blob_sha : (*origin)->record_blob_sha;
+    if (!imported.empty() && imported != record_ref.blob_sha) {
       Json detail = reason("the record differs from the one this analysis was imported from");
-      detail["imported_blob"] = stored;
+      detail["imported_blob"] = imported;
       detail["blob"] = record_ref.blob_sha;
       out.conflict(record_ref, ConflictKind::IdentityClash, uuid, read.digest, detail);
     }
     track.role = Track::Role::Foreign;
     release(track);
     return {};
+  }
+
+  // Two analyses cannot share a run id: not in this batch, not with one an
+  // earlier run or another source imported. An analysis this source already
+  // imported is sent again as it is: its run id may have changed since.
+  if (!*origin) {
+    std::optional<Uuid> holder;
+    if (const auto taken = out.runids.find(record.runid); taken != out.runids.end()) {
+      holder = taken->second;
+    } else {
+      auto stored =
+          state_.analysis_with_runid(record.ingest.identifier, record.ingest.aliquot, record.ingest.increment);
+      if (!stored) return fail(stored.error());
+      holder = *stored;
+    }
+    if (holder && *holder != uuid) {
+      Json detail = reason("run id " + record.runid + " belongs to another analysis");
+      detail["uuid"] = uuid.str();
+      detail["imported_uuid"] = holder->str();
+      out.conflict(record_ref, ConflictKind::IdentityClash, *holder, read.digest, detail);
+      refuse_files(uuid, "the analysis " + record.runid + " was not imported: its run id is taken");
+      track.role = Track::Role::Broken;
+      release(track);
+      return {};
+    }
   }
 
   ingest::AnalysisItem item;
@@ -378,6 +419,7 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
   Json detail = Json::object();
   detail["runid"] = record.runid;
   if (!record.had_uuid) detail["derived_uuid"] = true;
+  if (fold.record_now && read.now) detail["identity_from"] = fold.record_now->commit;
   if (!record.notes.empty()) detail["notes"] = record.notes;
   std::vector<std::pair<int, std::string>> commits{{record_ref.index, record_ref.commit}};
   Json unparseable = Json::array();
@@ -496,12 +538,16 @@ Result<void> Mapper::collect(Track& track, Reading& reading, Output& out) {
 
   if (config_.catalog_from_repos)
     if (auto r = synthesize_catalog(record, item.ingest, record_ref, out); !r) return r;
+  // The roots are what these paths are imported with from here on.
+  for (const ingest::SourceKey* root : {&item.keys.signals, &item.keys.intercepts, &item.keys.baselines,
+                                        &item.keys.blanks, &item.keys.icfactors, &item.keys.tags})
+    if (!root->path.empty()) out.emitted.insert_or_assign(root->path, root->blob_sha);
   out.batch.analyses.push_back(std::move(item));
   for (auto& late : unrecorded)
     if (auto r = add_revision(late.ref, uuid, late.kind, std::move(late.payload), "{}", out); !r) return r;
 
-  owners_.insert_or_assign(uuid, &track);
-  runids_.insert_or_assign(record.runid, uuid);
+  out.owners.insert_or_assign(uuid, &track);
+  out.runids.insert_or_assign(record.runid, uuid);
   track.role = Track::Role::Imported;
   release(track);
   return {};
@@ -597,9 +643,8 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
 // ---------------------------------------------------------------- later changes
 
 Result<bool> Mapper::is_head(const FileRef& ref, const ingest::SubjectRef& subject, ps::Kind kind, Output& out) {
-  // The stored head is what it was before this batch: only the first change
-  // of a file in the batch can be compared with it.
-  if (!out.revised.insert(ref.path).second) return false;
+  // What the path was last imported with: by this batch, else by the store.
+  if (const auto here = out.emitted.find(ref.path); here != out.emitted.end()) return here->second == ref.blob_sha;
   auto head = state_.head_blob_sha(subject, kind);
   if (!head) return fail(head.error());
   return *head && **head == ref.blob_sha;
@@ -625,6 +670,7 @@ Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject
                                   std::string identifier) {
   auto changeset = changeset_of(ref, out);
   if (!changeset) return fail(changeset.error());
+  if (kind != ps::Kind::Identity) out.emitted.insert_or_assign(ref.path, ref.blob_sha);
   (*changeset)->revisions.push_back({key_of(ref), std::move(subject), kind, std::move(payload),
                                      std::move(detail_json), std::move(identifier)});
   return {};
@@ -769,6 +815,8 @@ Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output
   const FileRef& ref = item.ref;
   const FileKind kind = item.info.kind;
   const Uuid uuid = item.track->uuid;
+  // Removed and added again with what it had: nothing was rewritten.
+  if (item.previous && item.previous->blob_sha == ref.blob_sha) return {};
 
   auto after = parse_legacy(text);
   if (!after) {
@@ -799,19 +847,21 @@ Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output
       out.conflict(ref, ConflictKind::IdentityClash, uuid, sha256(text), detail);
       return {};
     }
-    // Without a readable earlier version the stored identity is not known
-    // here; the revision is then sent, and changes nothing if it is the same.
-    if (!record_before || record_before->runid != record->runid) {
+    // A rewrite held with a pending collection needs no revision: the
+    // analysis was folded under the identity its record had by then. Without
+    // a readable earlier version the stored identity is not known here; the
+    // revision is then sent, and changes nothing if it is the same.
+    if (!item.held && (!record_before || record_before->runid != record->runid)) {
+      // No catalog: the identifier a record is renumbered to is made as the
+      // identifier of a collected record is.
+      if (config_.catalog_from_repos)
+        if (auto r = synthesize_catalog(*record, record->ingest, ref, out); !r) return r;
       ps::IdentityValue identity;
       identity.aliquot = record->ingest.aliquot;
       identity.increment = record->ingest.increment;
       identity.reason = "legacy record rewritten";
       if (auto r = add_revision(ref, uuid, ps::Kind::Identity, identity, "{}", out, record->ingest.identifier); !r)
         return r;
-      if (record_before)
-        if (const auto old = runids_.find(record_before->runid); old != runids_.end() && old->second == uuid)
-          runids_.erase(old);
-      runids_.insert_or_assign(record->runid, uuid);
     }
   }
 
@@ -822,8 +872,9 @@ Result<void> Mapper::rewritten(const Change& item, std::string_view text, Output
   entry["blob"] = ref.blob_sha;
   entry["kind"] = kind_name(kind);
   entry["analysis"] = uuid.str();
-  entry["changed"] = changed_keys(before ? &*before : nullptr, *after);
-  out.rewrites[ref.index].push_back(std::move(entry));
+  entry["changed"] = changed_keys(before ? &*before : nullptr, *after,
+                                  item.previous ? item.previous->blob_sha : std::string(), ref.blob_sha);
+  out.rewrites[ref.index].push_back({ref.path, dump(entry)});
   return {};
 }
 

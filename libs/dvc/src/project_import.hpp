@@ -83,6 +83,10 @@ struct Track {
 // The collection of `track` is ready to be folded into one analysis.
 struct Collect {
   Track* track = nullptr;
+  // The record as it is when the collection is folded, when it was rewritten
+  // while the analysis was pending: the analysis is imported under the run
+  // identity it has by then.
+  std::optional<FileRef> record_now = std::nullopt;
 };
 
 // A file to import on its own: a later change of an analysis file (`track`
@@ -94,6 +98,9 @@ struct Change {
   FileRef ref;
   Track* track = nullptr;
   std::optional<FileRef> previous = std::nullopt;  // see SeenFile
+  // Seen while its analysis was pending and handed over with the collection:
+  // it took effect in the fold, not at its own commit.
+  bool held = false;
 };
 
 using Work = std::variant<Collect, Change>;
@@ -107,15 +114,16 @@ class Walk {
   // Applies the changes of commit `index`, all of them at once (git lists the
   // files of one commit in path order, so a record can follow its own
   // intercepts). For a merge the caller adds what the merge kept of its other
-  // parents. With `out` null only the state moves.
-  void apply(int index, std::span<const GitChange> changes, std::vector<Work>* out);
+  // parents. With `out` null only the state moves. Returns whether the commit
+  // rewrote the record of an analysis already folded: that can change a run
+  // identity, which must be stored before anything later is checked against
+  // it, so a batch ends there.
+  bool apply(int index, std::span<const GitChange> changes, std::vector<Work>* out);
 
   // After replaying, up to the head it had, a walk that an earlier run
   // finished: the analyses still pending there were folded by that run.
   void assume_written();
 
-  // The record's commit index of the earliest analysis still pending.
-  std::optional<int> earliest_pending() const;
   // The pending analyses, earliest record first.
   std::vector<Track*> pending() const;
   // End of walk: folds a pending analysis with what it has.
@@ -164,10 +172,10 @@ class Mapper {
 
   Result<const GitCommit*> commit(const std::string& sha);
   Result<void> fetch(std::vector<std::string> blob_shas);
-  Result<void> read_records(const std::vector<Track*>& tracks, Reading& reading);
+  Result<void> read_records(const std::vector<Collect>& folds, Reading& reading);
   Result<void> resolve(const std::vector<Track*>& tracks);
 
-  Result<void> collect(Track& track, Reading& reading, Output& out);
+  Result<void> collect(const Collect& fold, Reading& reading, Output& out);
   Result<void> change(const Change& item, Output& out);
   Result<void> analysis_change(const Change& item, std::string_view text, Output& out);
   Result<void> rewritten(const Change& item, std::string_view text, Output& out);
@@ -191,10 +199,6 @@ class Mapper {
   std::unordered_map<std::string, GitCommit> commits_;
   // Spectrometer settings by sha1: parsed, or nullopt when the file is bad.
   std::map<std::string, std::optional<persistence::SpectrometerSnapshot>> snapshots_;
-  std::map<persistence::Uuid, const Track*> owners_;  // the track that imported each analysis in this walk
-  // Run ids imported in this walk. The store answers for everything written
-  // before this batch; this covers the analyses of the batch being built.
-  std::map<std::string, persistence::Uuid> runids_;
   // catalog_from_repos: what was already sent, and which identifier this
   // walk put at each position (the store answers for earlier batches).
   std::set<std::string> sent_;

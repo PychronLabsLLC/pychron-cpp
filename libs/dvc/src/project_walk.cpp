@@ -40,8 +40,9 @@ std::optional<FileRef> Track::replace_latest(FileKind kind, const FileRef& ref) 
   return std::nullopt;
 }
 
-void Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work>* out) {
+bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work>* out) {
   std::vector<Track*> touched;
+  bool record_rewritten = false;
   for (const auto& entry : changes) {
     if (entry.status == 'D') {
       // A deleted file adds nothing; added again later, it is a change.
@@ -65,7 +66,7 @@ void Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
       case FileKind::Unknown:
       case FileKind::InterpretedAge:
       case FileKind::FrozenProduction:
-        if (out) out->push_back(Change{std::move(info), std::move(ref), nullptr});
+        if (out) out->push_back(Change{std::move(info), std::move(ref), nullptr, std::nullopt, false});
         continue;
       default:
         break;
@@ -80,7 +81,8 @@ void Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
     std::optional<FileRef> previous;
     if (kind == FileKind::Record || is_satellite(kind)) previous = track.replace_latest(kind, ref);
     if (track.flushed) {
-      if (out) out->push_back(Change{std::move(info), std::move(ref), &track, std::move(previous)});
+      if (kind == FileKind::Record) record_rewritten = true;
+      if (out) out->push_back(Change{std::move(info), std::move(ref), &track, std::move(previous), false});
       continue;
     }
     if (auto* slot = track.root_slot(kind)) {
@@ -107,6 +109,7 @@ void Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
   // are folded at the same commits however the walk is cut into batches.
   while (wait_ > 0 && !pending_.empty() && pending_.begin()->first + wait_ <= index)
     flush(*pending_.begin()->second, out);
+  return record_rewritten;
 }
 
 void Walk::flush(Track& track, std::vector<Work>* out) {
@@ -114,10 +117,14 @@ void Walk::flush(Track& track, std::vector<Work>* out) {
   if (track.record) pending_.erase({track.record->index, &track});
   flushed_.push_back(&track);
   if (out) {
-    out->push_back(Collect{&track});
+    Collect fold{&track, std::nullopt};
+    for (const auto& file : track.latest)
+      if (file.kind == FileKind::Record && track.record && file.ref.blob_sha != track.record->blob_sha)
+        fold.record_now = file.ref;
+    out->push_back(std::move(fold));
     for (auto& file : track.later) {
       PathInfo info = classify_path(file.ref.path);
-      out->push_back(Change{std::move(info), std::move(file.ref), &track, std::move(file.previous)});
+      out->push_back(Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true});
     }
   }
   track.later.clear();
@@ -126,11 +133,6 @@ void Walk::flush(Track& track, std::vector<Work>* out) {
 
 void Walk::assume_written() {
   for (const auto& entry : pending()) flush(*entry, nullptr);
-}
-
-std::optional<int> Walk::earliest_pending() const {
-  if (pending_.empty()) return std::nullopt;
-  return pending_.begin()->first;
 }
 
 std::vector<Track*> Walk::pending() const {
@@ -153,7 +155,7 @@ void Walk::orphans(std::vector<Work>& out) {
       info.kind = kind;
       info.key = track.key;
       info.key_is_uuid = track.key_is_uuid;
-      out.push_back(Change{std::move(info), ref, owner, std::nullopt});
+      out.push_back(Change{std::move(info), ref, owner, std::nullopt, false});
     };
     if (track.data) add(FileKind::Data, *track.data);
     if (track.intercepts) add(FileKind::Intercepts, *track.intercepts);

@@ -38,10 +38,14 @@ struct ProjectAdapterConfig {
   std::string url;              // the source's url as registered; ids are derived from its normalized form
   std::string repository_name;  // every analysis seen becomes a member of this repository
   std::string lab_time_zone;    // IANA; legacy timestamps are naive local time
-  int batch_commits = 500;      // commits per batch; a batch also ends at a tagged commit
+  // Commits per batch. A batch also ends after a tagged commit and after a
+  // commit that rewrites the record of an analysis already imported. How the
+  // walk is cut does not change what is stored.
+  int batch_commits = 500;
   // An analysis whose collection is still incomplete this many commits after
-  // the commit of its record is folded with the files it has, so that it does
-  // not hold the resume token for the rest of the walk. Less than 1: no bound.
+  // the commit of its record is folded with the files it has; files that
+  // arrive later are ordinary revisions. Less than 1: it waits for the end of
+  // the walk.
   int collection_wait_commits = kDefaultCollectionWaitCommits;
   // No catalog dump: each record also yields the catalog rows its fields
   // imply, and one identity_clash conflict {"synthesized": true} per
@@ -60,10 +64,12 @@ class ProjectRepoAdapter final : public ingest::ISourceAdapter {
 
   Result<ingest::SourceDescription> describe() override;
   // Without a token the walk starts at the first commit. A token names a
-  // commit and its place in the walk order. Commit still there: the walk
-  // resumes after it. Commit in the history at another place: the walk starts
-  // again from the first commit. Commit not in the history: an error whose
-  // message contains "history was rewritten". Returns the commits to walk.
+  // commit, its place in the walk order and a hash of the commits before it.
+  // All three as they were: the walk resumes after it. Commit in the history
+  // at another place or after other commits, or a token in an older format:
+  // the walk starts again from the first commit. Commit not in the history:
+  // an error whose message contains "history was rewritten". Returns the
+  // commits to walk.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
 

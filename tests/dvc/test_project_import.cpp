@@ -159,10 +159,29 @@ Result<RunStats> run_import(World& w, const ProjectAdapterConfig& config, std::o
   return batches.run(**adapter, max_batches, {}, {});
 }
 
+// The commits of the fixture's branch in the order the adapter walks them.
+std::vector<std::string> walk_order(GitFixture& repo) {
+  std::istringstream lines(repo.git({"rev-list", "--topo-order", "--reverse", "HEAD"}));
+  std::vector<std::string> order;
+  for (std::string line; std::getline(lines, line);)
+    if (!line.empty()) order.push_back(line);
+  return order;
+}
+
 // The resume token of a walk that stopped after commit `index` (0-based, in
-// git's topological order); `end`: the walk reached the head.
-std::string token_at(const std::string& sha, int index, bool end = false) {
-  return sha + "@" + std::to_string(index) + (end ? "+end" : "");
+// that order), which must be `sha`: the commit, its place, and the first 16
+// hex digits of the SHA-256 of the commits up to it, one per line. `end`: the
+// walk reached the head.
+std::string token_at(GitFixture& repo, const std::string& sha, std::size_t index, bool end = false) {
+  const auto order = walk_order(repo);
+  if (index >= order.size() || order[index] != sha) {
+    ADD_FAILURE() << "commit " << sha << " is not at place " << index << " of the walk";
+    return {};
+  }
+  std::string before;
+  for (std::size_t i = 0; i <= index; ++i) before += order[i] + "\n";
+  const Sha256Digest digest = sha256(std::string_view{before});
+  return sha + "@" + std::to_string(index) + "~" + to_hex(digest).substr(0, 16) + (end ? "+end" : "");
 }
 
 // Newer repositories name the files of an analysis by its uuid, under a
@@ -219,6 +238,46 @@ std::optional<double> head_intercept(World& w, Uuid analysis, const std::string&
   for (const auto& row : std::get<P::Intercepts>((*view)->payloads.at(Kind::Intercepts)))
     if (row.isotope == isotope) return row.value;
   return std::nullopt;
+}
+
+// Every stored row an import decides, without what differs by design from
+// run to run (change sequence numbers, write times, random row ids).
+std::vector<std::string> snapshot_of(World& w) {
+  std::vector<std::string> out;
+  const auto rows = [&](const char* label, const QString& sql, const std::vector<const char*>& columns,
+                        const char* json_column = nullptr) {
+    auto found = w.db->select(sql);
+    ASSERT_TRUE(found) << label;
+    std::vector<std::string> lines;
+    for (const auto& row : *found) {
+      std::string line = label;
+      for (const char* column : columns) line += " | " + pd::to_std(row.value(column));
+      if (json_column) {
+        const std::string text = pd::to_std(row.value(json_column));
+        line += " | " + (text.empty() ? std::string("-") : json::parse(text).dump());
+      }
+      lines.push_back(std::move(line));
+    }
+    std::sort(lines.begin(), lines.end());
+    out.insert(out.end(), lines.begin(), lines.end());
+  };
+  rows("analysis", QStringLiteral("SELECT uuid, runid_text, aliquot, increment FROM analysis"),
+       {"uuid", "runid_text", "aliquot", "increment"});
+  rows("revision", QStringLiteral("SELECT uuid, subject_uuid, kind, parent_uuid, changeset_uuid FROM revision"),
+       {"uuid", "subject_uuid", "kind", "parent_uuid", "changeset_uuid"});
+  rows("head", QStringLiteral("SELECT subject_uuid, kind, revision_uuid FROM head"),
+       {"subject_uuid", "kind", "revision_uuid"});
+  rows("changeset", QStringLiteral("SELECT uuid, kind, message FROM changeset"), {"uuid", "kind", "message"});
+  rows("provenance",
+       QStringLiteral("SELECT entity_type, entity_uuid, path, commit_sha, git_blob_sha, detail FROM import_provenance"),
+       {"entity_type", "entity_uuid", "path", "commit_sha", "git_blob_sha"}, "detail");
+  rows("conflict", QStringLiteral("SELECT uuid, path, conflict_kind, resolution, detail FROM import_conflict"),
+       {"uuid", "path", "conflict_kind", "resolution"}, "detail");
+  rows("bookmark", QStringLiteral("SELECT uuid, name FROM bookmark"), {"uuid", "name"});
+  rows("bookmark_entry", QStringLiteral("SELECT bookmark_uuid, subject_uuid, kind, revision_uuid FROM bookmark_entry"),
+       {"bookmark_uuid", "subject_uuid", "kind", "revision_uuid"});
+  rows("member", QStringLiteral("SELECT repository_uuid, analysis_uuid FROM repository_member"), {"analysis_uuid"});
+  return out;
 }
 
 class ProjectImportTest : public ::testing::TestWithParam<std::string> {
@@ -328,7 +387,7 @@ TEST_P(ProjectImportTest, CollectionFoldsIntoOneChangeset) {
 
   const auto source = world_->source();
   EXPECT_EQ(source.status, "finished");
-  EXPECT_EQ(source.progress_token, std::optional<std::string>{token_at(c.icfactors, 3, true)});
+  EXPECT_EQ(source.progress_token, std::optional<std::string>{token_at(repo_, c.icfactors, 3, true)});
   EXPECT_EQ(source.head_sha, std::optional<std::string>{c.icfactors});
   EXPECT_EQ(source.done, 4);
   EXPECT_EQ(source.total, 4);
@@ -381,67 +440,58 @@ TEST_P(ProjectImportTest, RefitAddsRevision) {
   EXPECT_EQ(head_intercept(*world_, kE, "Ar39"), std::optional<double>{fixture_intercept("Ar39")});
   for (const Kind kind : {Kind::Signals, Kind::Baselines, Kind::Blanks, Kind::IcFactors, Kind::Tags})
     EXPECT_EQ(store().history(kE, kind)->size(), 1u) << P::to_string(kind);
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(refit, 4, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, refit, 4, true)});
 }
 
 TEST_P(ProjectImportTest, CollectionSplitAcrossBatches) {
   legacy_.collect(kRunE, kE.str(), kCollected);
-  legacy_.collect("66052-02A", kF.str(), kDay2);
   legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
   auto whole = run_import(*world_, adapter_config(repo_, 500));
   ASSERT_TRUE(whole) << err(whole.error());
   EXPECT_EQ(whole->batches, 1);
 
-  // Six commits per batch: the first ends between the second and third
-  // commit of F's collection, which is folded in the second.
+  // Two commits per batch: the first batch holds half of the collection.
   auto other = fresh_world();
-  int batches = 0;
-  std::vector<int> analyses_after;
-  {
-    auto adapter = ProjectRepoAdapter::open(adapter_config(repo_, 6));
-    ASSERT_TRUE(adapter) << err(adapter.error());
-    ingest::BatchWriter writer(*other->store, other->client, writer_config());
-    auto split = writer.run(**adapter, std::nullopt, {}, [&](const RunStats&, const ingest::ImportBatch& batch) {
-      ++batches;
-      analyses_after.push_back(static_cast<int>(batch.analyses.size()));
-    });
-    ASSERT_TRUE(split) << err(split.error());
-    EXPECT_EQ(split->analyses, 2);
-  }
-  EXPECT_EQ(batches, 2);
-  EXPECT_EQ(analyses_after, (std::vector<int>{1, 1}));
+  auto split = run_import(*other, adapter_config(repo_, 2));
+  ASSERT_TRUE(split) << err(split.error());
+  EXPECT_EQ(split->batches, 3);
+  EXPECT_EQ(split->analyses, 1);
   EXPECT_EQ(other->revisions(kE), world_->revisions(kE));
-  EXPECT_EQ(other->revisions(kF), world_->revisions(kF));
   EXPECT_EQ(other->counts(), world_->counts());
-  EXPECT_EQ(other->analysis_detail(kF), world_->analysis_detail(kF));
+  EXPECT_EQ(other->analysis_detail(kE), world_->analysis_detail(kE));
   EXPECT_EQ(other->source().progress_token, world_->source().progress_token);
 }
 
-TEST_P(ProjectImportTest, BatchGoesOnUntilTheTokenCanMove) {
+TEST_P(ProjectImportTest, ResumeMidCollection) {
   const auto c = legacy_.collect(kRunE, kE.str(), kCollected);
   legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
   auto whole = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(whole) << err(whole.error());
 
-  // Two commits per batch would end the first batch inside the collection,
-  // with nothing written and no token: an interrupted run would walk the same
-  // two commits for ever. The batch is extended to the end of the collection.
+  // Stopped after the first two of the four collection commits: nothing is
+  // written yet, and the token is the second commit, with the analysis
+  // incomplete at it.
   auto other = fresh_world();
   auto first = run_import(*other, adapter_config(repo_, 2), 1);
   ASSERT_TRUE(first) << err(first.error());
   EXPECT_FALSE(first->finished);
-  EXPECT_EQ(other->count("analysis"), 1);
+  EXPECT_EQ(other->count("analysis"), 0);
   EXPECT_EQ(other->source().status, "paused");
-  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(c.icfactors, 3)});
+  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(repo_, c.isoevo, 1)});
 
+  // Resumed from that token: the collection is folded from the two commits
+  // before it and the two after it.
   auto second = run_import(*other, adapter_config(repo_, 2));
   ASSERT_TRUE(second) << err(second.error());
   EXPECT_TRUE(second->finished);
+  EXPECT_EQ(second->batches, 2);
   EXPECT_EQ(other->revisions(kE), world_->revisions(kE));
   EXPECT_EQ(other->counts(), world_->counts());
+  EXPECT_EQ(other->analysis_detail(kE), world_->analysis_detail(kE));
+  EXPECT_EQ(other->source().progress_token, world_->source().progress_token);
 }
 
-TEST_P(ProjectImportTest, ResumeMidCollection) {
+TEST_P(ProjectImportTest, ResumeWithASecondCollectionPending) {
   const auto e = legacy_.collect(kRunE, kE.str(), kCollected);
   const auto f = legacy_.collect("66052-02A", kF.str(), kDay2);
   legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
@@ -449,15 +499,16 @@ TEST_P(ProjectImportTest, ResumeMidCollection) {
   auto whole = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(whole) << err(whole.error());
 
-  // Six commits: E is complete, F has its record and intercepts only. The
-  // token stays before F's record: the run stops with F incomplete at it.
+  // Six commits: E is complete and written, F has its record and intercepts
+  // only. The run stops with F incomplete at the token.
   auto other = fresh_world();
   auto first = run_import(*other, adapter_config(repo_, 6), 1);
   ASSERT_TRUE(first) << err(first.error());
   EXPECT_FALSE(first->finished);
   EXPECT_EQ(other->count("analysis"), 1);
   EXPECT_FALSE(other->store->load_analysis(kF)->has_value());
-  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(e.icfactors, 3)});
+  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(repo_, f.isoevo, 5)});
+  (void)e;
 
   // Resumed from that token, with another batch size: F is folded from the
   // same four commits as in a run that was never interrupted.
@@ -497,16 +548,16 @@ TEST_P(ProjectImportTest, ResumeWithACollectionStraddlingTheToken) {
   auto whole = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(whole) << err(whole.error());
 
-  // Five commits: E is complete and written, F is pending, so the token is
-  // E's second commit, before F's record and before E's last two files.
+  // Stopped after two commits: the token is E's second commit, with E's
+  // record before it and its last files, and all of F, after it.
   auto other = fresh_world();
-  auto first = run_import(*other, adapter_config(repo_, 5), 1);
+  auto first = run_import(*other, adapter_config(repo_, 2), 1);
   ASSERT_TRUE(first) << err(first.error());
-  EXPECT_EQ(other->count("analysis"), 1);
-  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(e_isoevo, 1)});
+  EXPECT_EQ(other->count("analysis"), 0);
+  EXPECT_EQ(other->source().progress_token, std::optional<std::string>{token_at(repo_, e_isoevo, 1)});
 
-  // The resumed run meets E's blanks, IC factors and extraction again; they
-  // are still its collection, not later changes.
+  // The resumed run meets E's blanks, IC factors and rewritten extraction;
+  // they are still its collection, not later changes.
   auto second = run_import(*other, adapter_config(repo_, 5));
   ASSERT_TRUE(second) << err(second.error());
   EXPECT_TRUE(second->finished);
@@ -549,29 +600,38 @@ TEST_P(ProjectImportTest, ResumeAcrossAMergeMatchesAnUninterruptedRun) {
   EXPECT_EQ(other->source().progress_token, world_->source().progress_token);
 }
 
-TEST_P(ProjectImportTest, ResumeTokenNamesACommitAndItsPlaceInTheWalk) {
+TEST_P(ProjectImportTest, ResumeTokenNamesACommitItsPlaceAndWhatCameBefore) {
   const auto c = legacy_.collect(kRunE, kE.str(), kCollected);
   legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
   auto adapter = ProjectRepoAdapter::open(adapter_config(repo_));
   ASSERT_TRUE(adapter) << err(adapter.error());
   NoState state;
+  const std::string good = token_at(repo_, c.icfactors, 3);
   // No token: all five commits.
   EXPECT_EQ((*adapter)->plan(std::nullopt, state).value_or(-1), 5);
-  // The commit is where the token says: the walk continues after it.
-  EXPECT_EQ((*adapter)->plan(token_at(c.icfactors, 3), state).value_or(-1), 1);
-  EXPECT_EQ((*adapter)->plan(token_at(repo_.head(), 4, true), state).value_or(-1), 0);
-  // The commit is in the history but not there (the order changed): from the start.
-  EXPECT_EQ((*adapter)->plan(token_at(c.icfactors, 2), state).value_or(-1), 5);
-  EXPECT_EQ((*adapter)->plan(token_at(c.icfactors, 40), state).value_or(-1), 5);
-  EXPECT_EQ((*adapter)->plan(c.icfactors, state).value_or(-1), 5);  // a token without a place
+  // The commit is where the token says, after the commits it says: go on after it.
+  EXPECT_EQ((*adapter)->plan(good, state).value_or(-1), 1);
+  EXPECT_EQ((*adapter)->plan(token_at(repo_, repo_.head(), 4, true), state).value_or(-1), 0);
+  // The commit is in the history but not there: from the start.
+  const auto tilde = good.find('~');
+  EXPECT_EQ((*adapter)->plan(c.icfactors + "@2" + good.substr(tilde), state).value_or(-1), 5);
+  EXPECT_EQ((*adapter)->plan(c.icfactors + "@40" + good.substr(tilde), state).value_or(-1), 5);
+  // It is there, but after other commits than the token saw: from the start.
+  EXPECT_EQ((*adapter)->plan(good.substr(0, tilde) + "~0123456789abcdef", state).value_or(-1), 5);
+  // Tokens of older formats: from the start.
+  EXPECT_EQ((*adapter)->plan(c.icfactors, state).value_or(-1), 5);
+  EXPECT_EQ((*adapter)->plan(c.icfactors + "@3", state).value_or(-1), 5);
+  EXPECT_EQ((*adapter)->plan(c.icfactors + "@3+end", state).value_or(-1), 5);
   // The commit is not in the history at all.
-  auto gone = (*adapter)->plan(token_at(std::string(40, 'a'), 3), state);
+  auto gone = (*adapter)->plan(std::string(40, 'a') + "@3" + good.substr(tilde), state);
   ASSERT_FALSE(gone);
   EXPECT_NE(gone.error().what.find("history was rewritten"), std::string::npos) << gone.error().what;
   // Something that is not a token is not a rewritten history.
-  auto junk = (*adapter)->plan(std::string("not a token"), state);
-  ASSERT_FALSE(junk);
-  EXPECT_EQ(junk.error().what.find("history was rewritten"), std::string::npos) << junk.error().what;
+  for (const std::string& junk : {std::string("not a token"), c.icfactors + "@x~12", c.icfactors + "@3~"}) {
+    auto refused = (*adapter)->plan(junk, state);
+    ASSERT_FALSE(refused) << junk;
+    EXPECT_EQ(refused.error().what.find("history was rewritten"), std::string::npos) << refused.error().what;
+  }
 }
 
 TEST_P(ProjectImportTest, IncompleteCollectionIsFoldedAfterABoundedWait) {
@@ -581,34 +641,44 @@ TEST_P(ProjectImportTest, IncompleteCollectionIsFoldedAfterABoundedWait) {
   for (const char* runid : others)
     legacy_.collect(runid, Uuid::v5(kG, runid).str(), kDay2);
   const std::string last = legacy_.refit("66052-02A", "Ar40", 12.5, kRefit);
-
   auto whole = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(whole) << err(whole.error());
   ASSERT_TRUE(store().load_analysis(kE)->has_value());
   EXPECT_EQ(json::parse(world_->analysis_detail(kE)).at("synthetic_collection"), true);
   EXPECT_TRUE(std::get<P::Blanks>((*store().load_analysis(kE))->payloads.at(Kind::Blanks)).empty());
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(last, 25, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, last, 25, true)});
 
-  // 13 commits per batch, stopped after one. E holds the token before its
-  // record until it is folded, 20 commits after it; the batch goes on until
-  // then and no further, and the token is that commit.
+  // 13 commits, then stopped: E is still waiting, and the token has moved
+  // past it all the same. The next run goes on from there.
   auto other = fresh_world();
   auto config = adapter_config(repo_, 13);
   auto paused = run_import(*other, config, 1);
   ASSERT_TRUE(paused) << err(paused.error());
-  EXPECT_FALSE(paused->finished);
-  EXPECT_TRUE(other->store->load_analysis(kE)->has_value());
-  EXPECT_EQ(other->count("analysis"), 6);  // E and the five collected by then
+  EXPECT_FALSE(other->store->load_analysis(kE)->has_value());
+  EXPECT_EQ(other->count("analysis"), 3);
   const std::string stored = other->source().progress_token.value_or("");
-  EXPECT_TRUE(stored.ends_with("@20")) << stored;
-  // An interrupted run goes on from there, not from the first commit.
+  EXPECT_EQ(stored, token_at(repo_, walk_order(repo_)[12], 12));
   auto adapter = ProjectRepoAdapter::open(config);
   ASSERT_TRUE(adapter);
   NoState state;
-  EXPECT_EQ((*adapter)->plan(stored, state).value_or(-1), 5);
-  ASSERT_TRUE(run_import(*other, config));
+  EXPECT_EQ((*adapter)->plan(stored, state).value_or(-1), 13);
+  // 20 commits after its record E is folded with what it has: in the batch
+  // that holds commit 20, not at the end of the walk.
+  std::vector<int> folded_in;
+  {
+    ingest::BatchWriter writer(*other->store, other->client, writer_config());
+    auto resumed = ProjectRepoAdapter::open(adapter_config(repo_, 4));
+    ASSERT_TRUE(resumed);
+    auto stats = writer.run(**resumed, std::nullopt, {}, [&](const RunStats&, const ingest::ImportBatch& batch) {
+      for (const auto& item : batch.analyses)
+        if (item.ingest.analysis == kE) folded_in.push_back(batch.done);
+    });
+    ASSERT_TRUE(stats) << err(stats.error());
+  }
+  EXPECT_EQ(folded_in, (std::vector<int>{21}));  // batch 13..16, 17..20: done == 21
   EXPECT_EQ(other->revisions(kE), world_->revisions(kE));
   EXPECT_EQ(other->counts(), world_->counts());
+  EXPECT_EQ(other->analysis_detail(kE), world_->analysis_detail(kE));
 
   // A shorter wait is a setting.
   auto impatient = fresh_world();
@@ -664,7 +734,7 @@ TEST_P(ProjectImportTest, CollectionThatNeverCompletesIsFoldedAtTheEnd) {
   EXPECT_TRUE(std::get<P::Blanks>((*view)->payloads.at(Kind::Blanks)).empty());
   EXPECT_TRUE(std::get<P::IcFactors>((*view)->payloads.at(Kind::IcFactors)).empty());
   const std::string head = repo_.head();
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(head, 4, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, head, 4, true)});
 
   // Its blanks arrive in a later run: a revision on the empty root, not a second collection.
   legacy_.write(kRunE, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
@@ -857,8 +927,6 @@ TEST_P(ProjectImportTest, TwoAnalysesWithOneRunIdIsIdentityClash) {
   legacy_.commit("<IMPORT> initial", kCollected);
   write_uuid_named(repo_, kG, "66052-03B");
   const std::string second = legacy_.commit("<IMPORT> initial", kDay2);
-  // And the first analysis once more, copied to a run-id path.
-  const std::string copied = legacy_.import_without_collection("66052-03B", kF.str(), kRefit);
   auto stats = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(stats) << err(stats.error());
   EXPECT_TRUE(stats->finished);
@@ -871,13 +939,61 @@ TEST_P(ProjectImportTest, TwoAnalysesWithOneRunIdIsIdentityClash) {
   EXPECT_EQ((*taken)->kind, ConflictKind::IdentityClash);
   EXPECT_EQ((*taken)->entity, std::optional<Uuid>{kF});
   EXPECT_EQ(json::parse((*taken)->detail_json).at("uuid"), kG.str());
-  auto copy = store().import_conflict(
-      ingest::conflict_id(kUrl, copied, LegacyRepoBuilder::path("66052-03B", FileKind::Record)));
-  ASSERT_TRUE(copy && copy->has_value());
-  EXPECT_EQ((*copy)->kind, ConflictKind::IdentityClash);
-  EXPECT_EQ(world_->conflicts(ConflictKind::IdentityClash).size(), 2u);
+  EXPECT_EQ(world_->conflicts(ConflictKind::IdentityClash).size(), 1u);
   // Every other file of the refused analysis is accounted for.
   EXPECT_EQ(world_->conflicts(ConflictKind::UnknownAnalysis).size(), 6u);
+}
+
+TEST_P(ProjectImportTest, SecondCopyInTheSameSourceIsMembershipOrIdentityClash) {
+  // The analysis F under its uuid, then twice more under run-id paths: once
+  // with the same record, byte for byte, once with an edited one.
+  write_uuid_named(repo_, kF, "66052-03B");
+  legacy_.commit("<IMPORT> initial", kCollected);
+  const auto copies = [&] {
+    legacy_.import_without_collection("66052-03B", kF.str(), kDay2);  // the same record text
+    legacy_.import_without_collection("66052-08A", kF.str(), kRefit);
+    auto record = json::parse(LegacyRepoBuilder::record_text("66052-03B", kF.str()));
+    record["comment"] = "edited in the copy";
+    legacy_.write("66052-08A", FileKind::Record, record.dump(4));
+    repo_.git({"add", "-A"});
+    repo_.git({"commit", "--quiet", "--amend", "-m", "<IMPORT> initial"}, kRefit);
+    return repo_.head();
+  };
+  const auto expect = [&](World& w, const std::string& edited, const std::string& what) {
+    EXPECT_EQ(w.count("analysis"), 1) << what;
+    EXPECT_EQ(w.count("repository_member"), 1) << what;
+    const auto conflicts = w.conflicts();
+    ASSERT_EQ(conflicts.size(), 1u) << what;
+    EXPECT_EQ(conflicts[0].kind, ConflictKind::IdentityClash) << what;
+    EXPECT_EQ(conflicts[0].uuid,
+              ingest::conflict_id(kUrl, edited, LegacyRepoBuilder::path("66052-08A", FileKind::Record)))
+        << what;
+    EXPECT_EQ(conflicts[0].entity, std::optional<Uuid>{kF}) << what;
+    EXPECT_EQ(w.revisions(kF).size(), 6u) << what;
+  };
+
+  // The copies arrive in a later run.
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const std::string edited = copies();
+  auto later = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(later) << err(later.error());
+  expect(*world_, edited, "copies in a later run");
+  const auto detail = world_->conflicts()[0].detail_json;
+
+  // All in one walk, in one batch and in several: the same.
+  for (const int batch_commits : {500, 1}) {
+    auto other = fresh_world();
+    auto stats = run_import(*other, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    expect(*other, edited, "one walk, batches of " + std::to_string(batch_commits));
+    EXPECT_EQ(json::parse(other->conflicts()[0].detail_json), json::parse(detail));
+  }
+  // Again: nothing.
+  const auto seq = *store().latest_change_seq();
+  auto replay = writer_config();
+  replay.replay = true;
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_), std::nullopt, replay));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
 TEST_P(ProjectImportTest, RunIdTakenInAnEarlierRunIsIdentityClash) {
@@ -1377,7 +1493,7 @@ TEST_P(ProjectImportTest, MergeCommitLinearizes) {
   EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{12.5});
   EXPECT_EQ(store().history(kE, Kind::Tags)->size(), 2u);
   EXPECT_EQ(world_->count("changeset"), 1 + 2);  // the collection, the refit, the tag; none for the merge
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_.head(), 6, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, repo_.head(), 6, true)});
 }
 
 TEST_P(ProjectImportTest, DeletedFileAddsNothing) {
@@ -1399,7 +1515,7 @@ TEST_P(ProjectImportTest, DeletedFileAddsNothing) {
   EXPECT_EQ(world_->counts(), counts);
   EXPECT_EQ(*store().latest_change_seq(), seq);
   EXPECT_EQ(std::get<P::TagValue>((*store().load_analysis(kE))->payloads.at(Kind::Tags)).name, "omit");
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(removed, 5, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, removed, 5, true)});
 }
 
 TEST_P(ProjectImportTest, GitTagBecomesBookmark) {
@@ -1489,7 +1605,7 @@ TEST_P(ProjectImportTest, NewCommitsAfterFinishAreImported) {
   ASSERT_EQ(history->size(), 2u);
   EXPECT_EQ((*history)[1].parent, std::optional<Uuid>{(*history)[0].uuid});
   EXPECT_EQ(world_->count("analysis"), 1);
-  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(refit, 4, true)});
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, refit, 4, true)});
   EXPECT_EQ(world_->source().head_sha, std::optional<std::string>{refit});
 
   // A second analysis, and a tag on the first that was collected before the token.
@@ -1711,6 +1827,446 @@ TEST_P(ProjectImportTest, OpenAndPlanErrors) {
   EXPECT_EQ(described->branch, "main");
   EXPECT_EQ(described->head, repo_.head());
   EXPECT_FALSE((*adapter)->next_batch());  // not planned
+}
+
+TEST_P(ProjectImportTest, RenumberedThenReusedRunIdAtEveryCut) {
+  // U is collected at 66052-02A and renumbered; V then takes 66052-02A.
+  legacy_.collect("66052-02A", kF.str(), kCollected);
+  repo_.write(LegacyRepoBuilder::path("66052-02A", FileKind::Record),
+              LegacyRepoBuilder::record_text("66052-07B", kF.str()));
+  legacy_.commit("<EDIT> RunID", kDay2);
+  const auto with_v = [&] {
+    write_uuid_named(repo_, kG, "66052-02A");
+    legacy_.commit("<IMPORT> initial", kRefit);
+  };
+  const auto expect = [&](World& w, const std::string& what) {
+    ASSERT_TRUE(w.store->load_analysis(kF)->has_value()) << what;
+    ASSERT_TRUE(w.store->load_analysis(kG)->has_value()) << what;
+    EXPECT_EQ((*w.store->load_analysis(kF))->summary.runid, "66052-07B") << what;
+    EXPECT_EQ((*w.store->load_analysis(kG))->summary.runid, "66052-02A") << what;
+    for (const auto& conflict : w.conflicts()) ADD_FAILURE() << what << ": " << conflict.path << " " << conflict.detail_json;
+  };
+  const auto replay = [&](World& w, const std::string& what) {
+    auto again = writer_config();
+    again.replay = true;
+    const auto seq = *w.store->latest_change_seq();
+    auto stats = run_import(w, adapter_config(repo_), std::nullopt, again);
+    ASSERT_TRUE(stats) << what << ": " << err(stats.error());
+    EXPECT_EQ(*w.store->latest_change_seq(), seq) << what;
+    expect(w, what + ", replayed");
+  };
+
+  // V arrives in a later run.
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  with_v();
+  auto later = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(later) << err(later.error());
+  expect(*world_, "V in a later run");
+  replay(*world_, "V in a later run");
+
+  for (const int batch_commits : {500, 3, 2, 1}) {
+    const std::string what = "batches of " + std::to_string(batch_commits);
+    auto cut = fresh_world();
+    auto stats = run_import(*cut, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << what << ": " << err(stats.error());
+    expect(*cut, what);
+    EXPECT_EQ(cut->revisions(kF), world_->revisions(kF)) << what;
+    EXPECT_EQ(cut->counts(), world_->counts()) << what;
+    replay(*cut, what);
+
+    // Stopped after every batch: a resume at each token there is.
+    auto resumed = fresh_world();
+    bool finished = false;
+    for (int runs = 0; !finished && runs < 30; ++runs) {
+      auto one = run_import(*resumed, adapter_config(repo_, batch_commits), 1);
+      ASSERT_TRUE(one) << what << ": " << err(one.error());
+      finished = one->finished;
+    }
+    EXPECT_TRUE(finished) << what;
+    expect(*resumed, what + ", resumed");
+    EXPECT_EQ(resumed->counts(), world_->counts()) << what;
+  }
+}
+
+TEST_P(ProjectImportTest, RenumberWhilePendingThenReuseOfTheRunId) {
+  // U's record is renumbered before its collection is complete, and V takes
+  // the old run id before U is folded.
+  legacy_.write_record_files("66052-02A", kF.str());
+  legacy_.commit("<COLLECTION>", kCollected);
+  repo_.write(LegacyRepoBuilder::path("66052-02A", FileKind::Record),
+              LegacyRepoBuilder::record_text("66052-07B", kF.str()));
+  const std::string edit = legacy_.commit("<EDIT> RunID", kCollected);
+  write_uuid_named(repo_, kG, "66052-02A");
+  legacy_.commit("<IMPORT> initial", kDay2);
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+    legacy_.write("66052-02A", kind, LegacyRepoBuilder::fixture_text(kind));
+  legacy_.commit("<ISOEVO> default collection fits", kDay2);
+
+  std::vector<std::string> first;
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_TRUE(world->conflicts().empty()) << batch_commits;
+    ASSERT_TRUE(world->store->load_analysis(kF)->has_value());
+    EXPECT_EQ((*world->store->load_analysis(kF))->summary.runid, "66052-07B");
+    EXPECT_EQ((*world->store->load_analysis(kG))->summary.runid, "66052-02A");
+    // Folded under the identity it had by then: no identity revision, and the
+    // rewrite is kept with its commit.
+    EXPECT_TRUE(world->store->history(kF, Kind::Identity)->empty());
+    EXPECT_EQ(json::parse(world->analysis_detail(kF)).at("identity_from"), edit);
+    const auto of_edit = world->store->provenance_for(ingest::changeset_id(kUrl, edit));
+    ASSERT_EQ(of_edit->size(), 1u);
+    EXPECT_EQ(json::parse(of_edit->front().detail_json.value()).at("rewrites")[0].at("changed").at("aliquot"),
+              json({{"old", 2}, {"new", 7}}));
+    const auto rows = snapshot_of(*world);
+    if (first.empty())
+      first = rows;
+    else
+      EXPECT_EQ(rows, first);
+  }
+}
+
+TEST_P(ProjectImportTest, RewritesOfACommitSplitByABatchAreAllKept) {
+  // One commit rewrites the record of E (collected: reported at once) and of
+  // P (pending: reported when P is folded, a batch later).
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const Uuid kP = *Uuid::parse("66666666-6666-4666-8666-666666666666");
+  legacy_.write_record_files("66052-03A", kP.str());
+  legacy_.commit("<COLLECTION>", kDay2);
+  auto of_e = json::parse(LegacyRepoBuilder::record_text(kRunE, kE.str()));
+  of_e["sample"] = "renamed by a sync";
+  legacy_.write(kRunE, FileKind::Record, of_e.dump(4));
+  auto of_p = json::parse(LegacyRepoBuilder::record_text("66052-03A", kP.str()));
+  of_p["sample"] = "renamed by a sync";
+  legacy_.write("66052-03A", FileKind::Record, of_p.dump(4));
+  const std::string sync = legacy_.commit("<SYNC> Synced repository with database", kDay2);
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+    legacy_.write("66052-03A", kind, LegacyRepoBuilder::fixture_text(kind));
+  legacy_.commit("<ISOEVO> default collection fits", kRefit);
+
+  std::string first;
+  for (const int batch_commits : {500, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    const auto rows = world->store->provenance_for(ingest::changeset_id(kUrl, sync));
+    ASSERT_TRUE(rows);
+    ASSERT_EQ(rows->size(), 1u);
+    const json detail = json::parse(rows->front().detail_json.value_or("{}"));
+    ASSERT_EQ(detail.value("rewrites", json::array()).size(), 2u) << batch_commits << ": " << detail.dump();
+    EXPECT_EQ(detail.at("rewrites")[0].at("path"), LegacyRepoBuilder::path(kRunE, FileKind::Record));
+    EXPECT_EQ(detail.at("rewrites")[1].at("path"), LegacyRepoBuilder::path("66052-03A", FileKind::Record));
+    EXPECT_EQ(detail.at("rewrites")[1].at("changed").at("sample").at("new"), "renamed by a sync");
+    if (first.empty())
+      first = detail.dump();
+    else
+      EXPECT_EQ(detail.dump(), first);
+
+    // A second run, and a replay, change nothing.
+    const auto seq = *world->store->latest_change_seq();
+    ASSERT_TRUE(run_import(*world, adapter_config(repo_, batch_commits)));
+    auto replay = writer_config();
+    replay.replay = true;
+    ASSERT_TRUE(run_import(*world, adapter_config(repo_, 2), std::nullopt, replay));
+    EXPECT_EQ(*world->store->latest_change_seq(), seq);
+    EXPECT_EQ(json::parse(world->store->provenance_for(ingest::changeset_id(kUrl, sync))->front().detail_json.value())
+                  .dump(),
+              first);
+  }
+}
+
+TEST_P(ProjectImportTest, FileRemovedAndRestoredAddsNothingAtAnyCut) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Extraction})
+    repo_.remove(LegacyRepoBuilder::path(kRunE, kind));
+  legacy_.commit("removed by hand", kRefit);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar40", 12.5));
+  legacy_.write(kRunE, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  legacy_.write(kRunE, FileKind::Extraction, LegacyRepoBuilder::fixture_text(FileKind::Extraction));
+  legacy_.commit("restored", kLater);
+
+  std::vector<std::string> first;
+  for (const int batch_commits : {500, 5, 1}) {
+    auto world = fresh_world();
+    auto stats = run_import(*world, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_EQ(world->store->history(kE, Kind::Intercepts)->size(), 2u) << batch_commits;
+    EXPECT_EQ(world->store->history(kE, Kind::Baselines)->size(), 1u) << batch_commits;
+    EXPECT_EQ(world->count("changeset"), 2) << batch_commits;  // the collection and the refit
+    EXPECT_TRUE(world->conflicts().empty());
+    const auto rows = snapshot_of(*world);
+    if (first.empty())
+      first = rows;
+    else
+      EXPECT_EQ(rows, first) << batch_commits;
+  }
+}
+
+TEST_P(ProjectImportTest, TagInsideAPendingCollectionDoesNotStallAStoppedRun) {
+  // The tag sits on the record commit of a collection that is not complete.
+  legacy_.write_record_files(kRunE, kE.str());
+  const std::string tagged = legacy_.commit("<COLLECTION>", kCollected);
+  repo_.tag("mid-collection");
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+    legacy_.write(kRunE, kind, LegacyRepoBuilder::fixture_text(kind));
+  legacy_.commit("<ISOEVO> default collection fits", kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
+
+  // One batch per run: the first ends at the tag with the analysis pending,
+  // and still moves the token.
+  auto first = run_import(*world_, adapter_config(repo_), 1);
+  ASSERT_TRUE(first) << err(first.error());
+  EXPECT_EQ(world_->count("analysis"), 0);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{token_at(repo_, tagged, 0)});
+  int runs = 1;
+  for (bool finished = false; !finished && runs < 10; ++runs) {
+    auto stats = run_import(*world_, adapter_config(repo_), 1);
+    ASSERT_TRUE(stats) << err(stats.error());
+    finished = stats->finished;
+  }
+  EXPECT_LE(runs, 4);
+  EXPECT_EQ(store().history(kE, Kind::Intercepts)->size(), 2u);
+  // Nothing was imported yet at the tagged commit: no bookmark, as in one run.
+  auto other = fresh_world();
+  ASSERT_TRUE(run_import(*other, adapter_config(repo_)));
+  EXPECT_EQ(snapshot_of(*world_), snapshot_of(*other));
+}
+
+TEST_P(ProjectImportTest, RenumberToAnIdentifierTheCatalogLacks) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  repo_.write(LegacyRepoBuilder::path(kRunE, FileKind::Record), LegacyRepoBuilder::record_text("66099-01A", kE.str()));
+  const std::string edit = legacy_.commit("<EDIT> RunID", kDay2);
+
+  // With a catalog that lacks 66099 the renumber waits for it.
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ((*store().load_analysis(kE))->summary.runid, kRunE);
+  auto waiting = store().import_conflict(
+      ingest::conflict_id(kUrl, edit, LegacyRepoBuilder::path(kRunE, FileKind::Record)));
+  ASSERT_TRUE(waiting && waiting->has_value());
+  EXPECT_EQ((*waiting)->kind, ConflictKind::UnknownAnalysis);
+  EXPECT_EQ((*waiting)->resolution, "pending");
+
+  // Without a catalog the identifier is made up from the record, as for a
+  // collected analysis, and reported the same way.
+  auto bare = fresh_world(false);
+  auto config = adapter_config(repo_);
+  config.catalog_from_repos = true;
+  auto made = run_import(*bare, config);
+  ASSERT_TRUE(made) << err(made.error());
+  EXPECT_EQ((*bare->store->load_analysis(kE))->summary.runid, "66099-01A");
+  EXPECT_TRUE(bare->store->find_identifier("66099")->has_value());
+  EXPECT_TRUE(bare->conflicts(ConflictKind::UnknownAnalysis).empty());
+  const auto synthesized = bare->conflicts(ConflictKind::IdentityClash);
+  ASSERT_EQ(synthesized.size(), 2u);  // 66052 and 66099
+  EXPECT_TRUE(bare->store->import_conflict(ingest::conflict_id(kUrl, "", "catalog/identifier/66099"))->has_value());
+}
+
+TEST_P(ProjectImportTest, LargeRewrittenValueIsKeptByReference) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  auto extraction = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Extraction));
+  const std::string small(64 * 1024 - 2, 'x');  // 64 KiB with its quotes: kept
+  const std::string large(64 * 1024 - 1, 'y');  // one byte more: a reference
+  extraction["measured_response"] = small;
+  extraction["requested_output"] = large;
+  legacy_.write(kRunE, FileKind::Extraction, extraction.dump(4));
+  const std::string edit = legacy_.commit("<MANUAL> response", kDay2);
+  const std::string blob =
+      repo_.git({"rev-parse", "HEAD:" + LegacyRepoBuilder::path(kRunE, FileKind::Extraction)}).substr(0, 40);
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+
+  const json changed =
+      json::parse(store().provenance_for(ingest::changeset_id(kUrl, edit))->front().detail_json.value())
+          .at("rewrites")[0]
+          .at("changed");
+  EXPECT_EQ(changed.at("measured_response").at("new"), small);
+  EXPECT_TRUE(changed.at("measured_response").at("old").is_string());
+  EXPECT_EQ(changed.at("requested_output").at("new"), json({{"blob_sha", blob}, {"bytes", 64 * 1024 + 1}}));
+  EXPECT_TRUE(changed.at("requested_output").at("old").is_string());  // the fixture's is small
+}
+
+// ---------------------------------------------------------------- one history, one result
+
+namespace {
+
+const Uuid kL = *Uuid::parse("55555555-5555-4555-8555-555555555555");
+const Uuid kP = *Uuid::parse("66666666-6666-4666-8666-666666666666");
+const Uuid kH = *Uuid::parse("77777777-7777-4777-8777-777777777777");
+
+// The commits a test needs to name.
+struct History {
+  std::string sync;  // rewrites the record of E (collected) and of P (still pending)
+};
+
+// One fixed history with everything that has gone wrong at a batch boundary.
+// Part 1 ends with nothing pending; part 2 is what a later run finds.
+void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& history) {
+  repo.write("README.md", "# IR1010\n");
+  legacy.commit("Initial commit", "2018-02-16T10:00:00-07:00");
+  // L never gets blanks or IC factors during part 1: folded by the bounded wait.
+  legacy.import_without_collection("66052-04A", kL.str(), "2018-02-19T10:00:00-07:00", false);
+  legacy.collect(kRunE, kE.str(), kCollected);
+  legacy.collect("66052-02A", kF.str(), kDay2);
+  legacy.refit(kRunE, "Ar40", 12.5, kDay2);
+  // F is renumbered; its old run id is taken by another analysis right after.
+  repo.write(LegacyRepoBuilder::path("66052-02A", FileKind::Record),
+             LegacyRepoBuilder::record_text("66052-07B", kF.str()));
+  legacy.commit("<EDIT> RunID", kDay2);
+  write_uuid_named(repo, kG, "66052-02A");
+  legacy.commit("<IMPORT> initial", kDay2);
+  // P's record arrives together with a refit of E; a tag sits on that commit.
+  legacy.write_record_files("66052-03A", kP.str());
+  legacy.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar39", 3.25));
+  legacy.commit("<COLLECTION>", kRefit);
+  repo.tag("while-pending");
+  // One commit rewrites E's record (collected), P's record and P's
+  // extraction (both still pending), and refits F.
+  auto of_e = json::parse(LegacyRepoBuilder::record_text(kRunE, kE.str()));
+  of_e["sample"] = "renamed by a sync";
+  legacy.write(kRunE, FileKind::Record, of_e.dump(4));
+  auto of_p = json::parse(LegacyRepoBuilder::record_text("66052-03A", kP.str()));
+  of_p["project"] = "renamed by a sync";
+  legacy.write("66052-03A", FileKind::Record, of_p.dump(4));
+  auto extraction = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Extraction));
+  extraction["extract_value"] = 5.0;
+  legacy.write("66052-03A", FileKind::Extraction, extraction.dump(4));
+  legacy.write("66052-02A", FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar38", 8.5));
+  history.sync = legacy.commit("<SYNC> Synced repository with database", kRefit);
+  legacy.write("66052-03A", FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy.write("66052-03A", FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  legacy.commit("<ISOEVO> default collection fits", kRefit);
+  legacy.write("66052-03A", FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy.commit("<BLANKS> preceding bu-FD-F-789", kRefit);
+  legacy.write("66052-03A", FileKind::IcFactors, LegacyRepoBuilder::fixture_text(FileKind::IcFactors));
+  legacy.commit("<ICFactor> default", kRefit);
+  // A merge that keeps the first parent's version, and one that keeps the other's.
+  repo.branch("side");
+  legacy.refit(kRunE, "Ar40", 11.0, kLater);
+  repo.checkout("side");
+  legacy.refit(kRunE, "Ar40", 22.0, kLater);
+  repo.checkout("main");
+  repo.git({"merge", "--quiet", "--no-ff", "-s", "ours", "-m", "Merge branch 'side'", "side"}, kLater);
+  repo.branch("side2");
+  legacy.refit("66052-03A", "Ar36", 5.0, kLater);
+  repo.checkout("side2");
+  legacy.refit("66052-03A", "Ar36", 6.0, kLater);
+  repo.checkout("main");
+  repo.git({"merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "Merge branch 'side2'", "side2"}, kLater);
+  // A file deleted and added again with what it had.
+  repo.remove(LegacyRepoBuilder::path("66052-03A", FileKind::Baselines));
+  legacy.commit("removed by hand", kLater);
+  legacy.write("66052-03A", FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  legacy.commit("restored", kLater);
+  repo.tag("part-one");
+}
+
+void build_part_two(GitFixture&, LegacyRepoBuilder& legacy) {
+  const char* const later = "2019-01-10T10:00:00-07:00";
+  legacy.collect("66052-05A", kH.str(), later);
+  // L's blanks arrive long after it was folded without them.
+  legacy.write("66052-04A", FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy.commit("<BLANKS> auto update blanks", later);
+  legacy.refit("66052-05A", "Ar40", 9.75, later);
+}
+
+// Where two snapshots first differ, for a readable failure.
+std::string first_difference(const std::vector<std::string>& got, const std::vector<std::string>& want) {
+  for (std::size_t i = 0; i < std::max(got.size(), want.size()); ++i) {
+    const std::string a = i < got.size() ? got[i] : "(nothing)";
+    const std::string b = i < want.size() ? want[i] : "(nothing)";
+    if (a != b) return "line " + std::to_string(i) + "\n  got:  " + a.substr(0, 600) + "\n  want: " + b.substr(0, 600);
+  }
+  return {};
+}
+
+}  // namespace
+
+TEST_P(ProjectImportTest, OneHistoryOneResult) {
+  History history;
+  build_part_one(repo_, legacy_, history);
+
+  // An incremental import: part one now, part two when it exists.
+  auto incremental = fresh_world();
+  auto half = run_import(*incremental, adapter_config(repo_));
+  ASSERT_TRUE(half) << err(half.error());
+  build_part_two(repo_, legacy_);
+  auto rest = run_import(*incremental, adapter_config(repo_));
+  ASSERT_TRUE(rest) << err(rest.error());
+
+  // The reference: the whole history in one uninterrupted batch.
+  auto whole = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(whole) << err(whole.error());
+  const auto want = snapshot_of(*world_);
+  ASSERT_FALSE(want.empty());
+
+  // What the reference must hold, whatever else it holds.
+  EXPECT_EQ((*store().load_analysis(kF))->summary.runid, "66052-07B");
+  ASSERT_TRUE(store().load_analysis(kG)->has_value());
+  EXPECT_EQ((*store().load_analysis(kG))->summary.runid, "66052-02A");  // the freed run id
+  for (const auto& conflict : world_->conflicts()) ADD_FAILURE() << conflict.path << " " << conflict.detail_json;
+  EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{11.0});  // the merge kept main's
+  EXPECT_EQ(head_intercept(*world_, kP, "Ar36"), std::optional<double>{6.0});   // the merge kept the side's
+  EXPECT_EQ(store().history(kP, Kind::Baselines)->size(), 1u);                  // removed and restored: nothing
+  EXPECT_EQ(store().history(kL, Kind::Blanks)->size(), 2u);                     // the late file is a revision
+  EXPECT_EQ(json::parse(world_->analysis_detail(kL)).at("synthetic_collection"), true);
+  EXPECT_EQ(world_->count("bookmark"), 2);
+  // All three rewrites of the <SYNC> commit, though two were held until P was folded.
+  const auto of_sync = store().provenance_for(ingest::changeset_id(kUrl, history.sync));
+  ASSERT_TRUE(of_sync);
+  ASSERT_EQ(of_sync->size(), 1u);
+  const json rewrites = json::parse(of_sync->front().detail_json.value_or("{}")).value("rewrites", json::array());
+  std::vector<std::string> rewritten;
+  for (const auto& entry : rewrites) rewritten.push_back(entry.at("path").get<std::string>());
+  EXPECT_EQ(rewritten, (std::vector<std::string>{LegacyRepoBuilder::path(kRunE, FileKind::Record),
+                                                 LegacyRepoBuilder::path("66052-03A", FileKind::Record),
+                                                 LegacyRepoBuilder::path("66052-03A", FileKind::Extraction)}));
+
+  const auto same = [&](World& w, const std::string& what) {
+    const auto got = snapshot_of(w);
+    EXPECT_TRUE(got == want) << what << ": " << first_difference(got, want);
+  };
+  const auto replayed = [&](World& w, const std::string& what, int batch_commits) {
+    auto replay = writer_config();
+    replay.replay = true;
+    const auto seq = *w.store->latest_change_seq();
+    auto again = run_import(w, adapter_config(repo_, batch_commits), std::nullopt, replay);
+    ASSERT_TRUE(again) << what << ": " << err(again.error());
+    EXPECT_EQ(*w.store->latest_change_seq(), seq) << what << ": the replay wrote something";
+    same(w, what + ", replayed");
+  };
+
+  replayed(*world_, "one batch", 500);
+  replayed(*world_, "one batch, replayed in batches of 2", 2);
+
+  // Analyses still incomplete when an incremental run ends are folded then
+  // (a known limit); this history has none at the end of part one.
+  same(*incremental, "part one, then part two");
+  replayed(*incremental, "part one, then part two", 3);
+
+  for (const int batch_commits : {1, 2, 3, 7}) {
+    const std::string what = "batches of " + std::to_string(batch_commits);
+    auto cut = fresh_world();
+    auto stats = run_import(*cut, adapter_config(repo_, batch_commits));
+    ASSERT_TRUE(stats) << what << ": " << err(stats.error());
+    EXPECT_TRUE(stats->finished);
+    same(*cut, what);
+    replayed(*cut, what, batch_commits == 1 ? 500 : 1);
+
+    // Stopped after every batch; each run is a new adapter resuming from the stored token.
+    auto resumed = fresh_world();
+    bool finished = false;
+    int runs = 0;
+    for (; !finished && runs < 200; ++runs) {
+      auto one = run_import(*resumed, adapter_config(repo_, batch_commits), 1);
+      ASSERT_TRUE(one) << what << ", run " << runs << ": " << err(one.error());
+      finished = one->finished;
+    }
+    EXPECT_TRUE(finished) << what << ": no end after " << runs << " runs";
+    same(*resumed, what + ", resumed after every batch");
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, ProjectImportTest, ::testing::ValuesIn(P::testing::engines()));

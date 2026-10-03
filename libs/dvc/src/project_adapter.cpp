@@ -8,36 +8,41 @@
 // the merge took from its first parent, and that the other side had changed,
 // is brought back to what the merge tree holds.
 //
-// Resume. The token is "<sha>@<index>": a commit and its place in the walk
-// order, with "+end" when the walk had reached the head. plan() computes the
-// order again. When the commit is still at that index the walk continues
-// after it: the commits before it are replayed through the Walk without
-// reading a file, which rebuilds what the earlier run knew (which file
-// belongs to which analysis, the blob each path was left with, which
-// collections were folded). When the commit is in the history at another
-// index the order changed, and the walk starts again from the first commit;
-// ids are derived from commit and path, so what is already stored is skipped.
-// When the commit is not in the history, the history was rewritten: an error.
+// Batches. A batch is batch_commits commits of the walk order. It ends
+// earlier after a tagged commit (the bookmark captures the heads as they are
+// once the batch is written) and after a commit that rewrites the record of
+// an analysis already folded (the rewrite can change a run identity, and the
+// writer stores a batch's analyses before its changesets: a later analysis
+// that takes the freed run id must come in a later batch). Where the cuts
+// fall does not change what is stored.
 //
-// The token of a batch is the last commit that has no pending analysis at or
-// before it. An analysis whose record is in but whose collection is not yet
-// complete holds the token before its record, for at most
-// collection_wait_commits commits. A replay leaves such an analysis pending,
-// and the resumed walk folds it again from the same files: the writer skips
-// what it has. At the end of the walk the analyses still pending are folded
-// with what they have and the token is the head; a later run that resumes
-// from that token treats them as folded.
+// Resume. The token of a batch is its last commit: "<sha>@<index>~<hash>",
+// the commit, its place in the walk order and a hash of the commits up to it,
+// with "+end" when the walk reached the head. plan() computes the order
+// again. Same commit at that index after the same commits: the walk continues
+// after it. The commits before it are first replayed through the Walk without
+// reading a file, which rebuilds what the earlier run knew: which file
+// belongs to which analysis, the blob each path was left with, which
+// collections were folded. An analysis still pending at the token stays
+// pending and is folded by the resumed walk, as an uninterrupted walk would.
+// Commit in the history but not there, or after other commits (the order
+// changed), or a token in an older format: the walk starts again from the
+// first commit; ids are derived from commit and path, so what is stored is
+// skipped. Commit not in the history: the history was rewritten, an error.
+//
+// At the end of the walk the analyses still pending are folded with what they
+// have. A later run that resumes from an "+end" token treats them as folded.
 
 #include "pychron/dvc/project_adapter.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
-#include <deque>
 #include <unordered_set>
 #include <utility>
 
 #include "project_import.hpp"
+#include "pychron/core/sha256.hpp"
 #include "pychron/ingest/ids.hpp"
 
 namespace pychron::dvc {
@@ -46,15 +51,14 @@ namespace {
 
 // Commits whose changes are listed in one git call while replaying.
 constexpr std::size_t kReplayChunk = 2000;
-// Analyses folded per batch at the end of the walk, so that a repository full
-// of analyses that never became complete is not read in one piece.
-constexpr std::size_t kTailCollects = 200;
-
 constexpr std::string_view kEnd = "+end";
+
+constexpr std::size_t kHashDigits = 16;
 
 struct Token {
   std::string sha;
-  std::optional<std::size_t> index;  // nullopt: the token does not say
+  std::optional<std::size_t> index;  // nullopt: an older format without one
+  std::string hash;                  // of the commits up to and including `sha`; empty: an older format
   bool end = false;                  // written by the last batch of a walk
 };
 
@@ -63,8 +67,20 @@ bool is_sha(std::string_view text) {
   return std::all_of(text.begin(), text.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
-std::string format_token(const std::string& sha, std::size_t index, bool end) {
-  return sha + "@" + std::to_string(index) + (end ? std::string(kEnd) : std::string());
+// A hash of the first `count` commits of the walk order.
+std::string prefix_hash(const std::vector<std::string>& order, std::size_t count) {
+  Sha256 hasher;
+  for (std::size_t i = 0; i < count; ++i) {
+    hasher.update(order[i]);
+    hasher.update(std::string_view("\n"));
+  }
+  const Sha256Digest digest = hasher.finish();
+  return to_hex(digest).substr(0, kHashDigits);
+}
+
+std::string format_token(const std::vector<std::string>& order, std::size_t index, bool end) {
+  return order[index] + "@" + std::to_string(index) + "~" + prefix_hash(order, index + 1) +
+         (end ? std::string(kEnd) : std::string());
 }
 
 // nullopt: not a token this adapter wrote.
@@ -78,6 +94,11 @@ std::optional<Token> parse_token(std::string_view text) {
   if (rest.ends_with(kEnd)) {
     token.end = true;
     rest.remove_suffix(kEnd.size());
+  }
+  if (const auto tilde = rest.find('~'); tilde != std::string_view::npos) {
+    token.hash = std::string(rest.substr(tilde + 1));
+    if (token.hash.empty()) return std::nullopt;
+    rest = rest.substr(0, tilde);
   }
   std::size_t index = 0;
   const auto [last, error] = std::from_chars(rest.data(), rest.data() + rest.size(), index);
@@ -105,8 +126,7 @@ class ProjectRepoAdapter::Impl {
     mapper_.emplace(config_, url_, reader_, walk_, state);
     order_.clear();
     tags_.clear();
-    tail_.clear();
-    walked_ = finished_ = planned_ = false;
+    finished_ = planned_ = false;
     first_ = next_ = 0;
 
     auto all = reader_.rev_list(std::nullopt);
@@ -117,7 +137,8 @@ class ProjectRepoAdapter::Impl {
     if (resume_token && !resume_token->empty()) {
       const auto token = parse_token(*resume_token);
       if (!token) return fail(ErrorKind::Config, "project adapter: '" + *resume_token + "' is not a resume token");
-      if (token->index && *token->index < order_.size() && order_[*token->index] == token->sha) {
+      if (token->index && !token->hash.empty() && *token->index < order_.size() &&
+          order_[*token->index] == token->sha && prefix_hash(order_, *token->index + 1) == token->hash) {
         first_ = *token->index + 1;
         resumed_at_end = token->end;
       } else if (std::find(order_.begin(), order_.end(), token->sha) == order_.end()) {
@@ -127,12 +148,13 @@ class ProjectRepoAdapter::Impl {
                                              token->sha + " is not in the history of " + config_.git.branch + " (" +
                                              reader_.head() + "); history was rewritten");
       }
-      // Otherwise the commit is in the history at another place: the order
-      // changed, and the walk starts again from the first commit.
+      // Otherwise the commit is in the history at another place or after
+      // other commits (the order changed), or the token is in an older
+      // format: the walk starts again from the first commit.
     }
 
     planned_ = true;
-    next_ = floor_ = first_;
+    next_ = first_;
     if (first_ == order_.size()) return 0;  // nothing new: no batch will be asked for
 
     for (std::size_t begin = 0; begin < first_; begin += kReplayChunk)
@@ -147,84 +169,46 @@ class ProjectRepoAdapter::Impl {
 
   Result<std::optional<ingest::ImportBatch>> next_batch() {
     if (!planned_) return fail(ErrorKind::Config, "project adapter: next_batch() before plan()");
-    if (finished_ || (!walked_ && next_ == order_.size())) return std::optional<ingest::ImportBatch>{};
+    if (finished_ || next_ == order_.size()) return std::optional<ingest::ImportBatch>{};
 
     ingest::ImportBatch batch;
     batch.head = reader_.head();
     batch.total = static_cast<int>(order_.size());
     std::vector<detail::Work> work;
 
-    if (!walked_) {
-      // A batch ends at a tagged commit: its bookmark captures the heads as
-      // they are once the batch is written.
-      std::size_t step = static_cast<std::size_t>(config_.batch_commits);
-      for (;;) {
-        std::size_t end = std::min(order_.size(), next_ + step);
-        for (std::size_t i = next_; i < end; ++i)
-          if (tagged(order_[i])) end = i + 1;
-        if (auto r = walk(next_, end, &work); !r) return fail(r.error());
-        next_ = end;
-        // A batch whose token could not move would be walked again by every
-        // interrupted run. The analysis that holds the token is folded within
-        // the bounded wait, so the batch goes on, at most that far, until the
-        // token can move.
-        if (next_ == order_.size() || tagged(order_[next_ - 1]) || config_.collection_wait_commits < 1) break;
-        if (token_end() > floor_) break;
-        step = 1;  // commit by commit: a collection is usually complete a few commits on
-      }
-      if (next_ == order_.size()) {
-        walked_ = true;
-        const auto pending = walk_.pending();
-        tail_.assign(pending.begin(), pending.end());
-      }
-    }
-    if (walked_) {
-      for (std::size_t n = 0; n < kTailCollects && !tail_.empty(); ++n) {
-        walk_.force(*tail_.front(), work);
-        tail_.pop_front();
-      }
-      if (tail_.empty()) {
-        walk_.orphans(work);
-        finished_ = true;
-      }
+    std::size_t end = std::min(order_.size(), next_ + static_cast<std::size_t>(config_.batch_commits));
+    for (std::size_t i = next_; i < end; ++i)
+      if (tagged(order_[i])) end = i + 1;
+    auto walked = walk(next_, end, &work);
+    if (!walked) return fail(walked.error());
+    next_ = *walked;
+    if (next_ == order_.size()) {
+      // The end of the walk: what is still pending is folded with what it has.
+      for (detail::Track* track : walk_.pending()) walk_.force(*track, work);
+      walk_.orphans(work);
+      finished_ = true;
     }
 
     if (auto r = mapper_->map(work, batch); !r) return fail(r.error());
+    for (const auto& tag : tags_)
+      if (tag.commit == order_[next_ - 1])
+        if (auto r = mapper_->bookmark(tag, batch); !r) return fail(r.error());
 
+    // Every batch moves the token: what is pending at it is rebuilt on resume.
     batch.done = static_cast<int>(next_);
-    // The bookmarks of the last commit wait for the last batch, which holds
-    // the analyses folded at the end of the walk.
-    if (finished_ || !walked_)
-      for (const auto& tag : tags_)
-        if (tag.commit == order_[next_ - 1])
-          if (auto r = mapper_->bookmark(tag, batch); !r) return fail(r.error());
-
-    if (finished_) {
-      batch.resume_token = format_token(order_.back(), order_.size() - 1, true);
-    } else if (!walked_) {
-      const std::size_t reached = token_end();
-      if (reached > floor_) {
-        batch.resume_token = format_token(order_[reached - 1], reached - 1, false);
-        floor_ = reached;
-      }
-    }
+    batch.resume_token = format_token(order_, next_ - 1, finished_);
     return std::optional<ingest::ImportBatch>{std::move(batch)};
   }
 
  private:
-  // One past the commit a token can name now: the record of the earliest
-  // pending analysis, or the next commit to walk when nothing is pending.
-  std::size_t token_end() const {
-    const auto pending = walk_.earliest_pending();
-    return pending ? static_cast<std::size_t>(*pending) : next_;
-  }
-
   bool tagged(const std::string& sha) const {
     return std::any_of(tags_.begin(), tags_.end(), [&](const GitTag& tag) { return tag.commit == sha; });
   }
 
-  // Applies commits [begin, end) of the walk order. `out` null: replay.
-  Result<void> walk(std::size_t begin, std::size_t end, std::vector<detail::Work>* out) {
+  // Applies commits [begin, end) of the walk order and returns one past the
+  // last commit applied: `end`, or earlier where a batch must end (Walk::apply).
+  // `out` null: a replay, which applies them all.
+  Result<std::size_t> walk(std::size_t begin, std::size_t end, std::vector<detail::Work>* out) {
     const std::span<const std::string> slice(order_.data() + begin, end - begin);
     auto commits = reader_.commits(slice);  // in the order asked
     if (!commits) return fail(commits.error());
@@ -239,7 +223,7 @@ class ProjectRepoAdapter::Impl {
       at = stop;
       const auto& parents = (*commits)[i - begin].parents;
       if (parents.size() < 2) {
-        walk_.apply(static_cast<int>(i), of_commit, out);
+        if (walk_.apply(static_cast<int>(i), of_commit, out) && out) return cut(i + 1, std::move(*commits));
         continue;
       }
       // A merge: what differs from its first parent, then, for each other
@@ -255,12 +239,18 @@ class ProjectRepoAdapter::Impl {
         for (auto& entry : *against)
           if (listed.insert(entry.path).second) merged.push_back(std::move(entry));
       }
-      walk_.apply(static_cast<int>(i), merged, out);
+      if (walk_.apply(static_cast<int>(i), merged, out) && out) return cut(i + 1, std::move(*commits));
     }
     if (out) mapper_->remember(std::move(*commits));
     if (at != changes->size())
       return fail(ErrorKind::Protocol, "git: changes of commit " + (*changes)[at].commit + " were not asked for");
-    return {};
+    return end;
+  }
+
+  // The batch ends before `end`: the commits already listed are still remembered.
+  std::size_t cut(std::size_t end, std::vector<GitCommit> commits) {
+    mapper_->remember(std::move(commits));
+    return end;
   }
 
   ProjectAdapterConfig config_;
@@ -271,12 +261,9 @@ class ProjectRepoAdapter::Impl {
   std::vector<std::string> order_;  // commits earlier runs walked, then those to walk
   std::size_t first_ = 0;           // the first commit to walk
   std::size_t next_ = 0;
-  std::size_t floor_ = 0;           // one past the last token given (or resumed from)
   std::vector<GitTag> tags_;
   detail::Walk walk_;
   std::optional<detail::Mapper> mapper_;
-  bool walked_ = false;                 // every commit is applied
-  std::deque<detail::Track*> tail_;     // analyses still pending when the walk ended
   bool finished_ = false;               // the last batch is built
 };
 
