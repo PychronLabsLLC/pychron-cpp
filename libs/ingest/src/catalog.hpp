@@ -6,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/batch.hpp"
@@ -22,11 +23,19 @@ class CatalogResolver {
  public:
   CatalogResolver(persistence::IStore& store, persistence::Uuid client) : store_(store), client_(client) {}
 
+  // The normalized url of the source being written; it names the source's
+  // interpreted ages.
+  void set_source(std::string url) { url_ = std::move(url); }
+
   Result<void> write(const CatalogItem& item);
 
   Result<persistence::Uuid> user(const std::string& name);
   Result<persistence::Uuid> repository(const std::string& name);
   Result<persistence::Uuid> ref_object(const RefObjectKey& key);
+
+  // The interpreted age `key` names; created bare, named after the key, when
+  // no InterpretedAgeItem came first.
+  Result<persistence::Uuid> interpreted_age(const InterpretedAgeKey& key);
 
   // The uuid of a reference object without touching the store: the one
   // resolved earlier, else the id this importer would create it with.
@@ -53,9 +62,11 @@ class CatalogResolver {
   Result<Uuid> position(const PositionItem& item);
   Result<Uuid> mass_spectrometer(persistence::MassSpectrometerSpec spec);
   Result<Uuid> ref_object(persistence::RefType type, const std::string& key, const RefObjectItem* scope);
+  Result<Uuid> interpreted_age(const InterpretedAgeItem& item);
 
   persistence::IStore& store_;
   Uuid client_;
+  std::string url_;
   std::map<std::string, Uuid> known_;  // "<table>\n<natural key>" -> uuid
 };
 

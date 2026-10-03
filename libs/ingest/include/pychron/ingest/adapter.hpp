@@ -5,11 +5,22 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/batch.hpp"
 
 namespace pychron::ingest {
+
+// How an analysis that is in the store got there, as far as one source can tell.
+struct AnalysisOrigin {
+  // Its collection changeset is the one this source derives for a record
+  // first added at the commit asked about: this source created it from there.
+  bool from_this_source = false;
+  // The git blob sha of the record it was created from; empty when it was not
+  // imported (or its provenance is not written yet).
+  std::string record_blob_sha;
+};
 
 // A read-only view of what is already imported, given to adapters.
 struct IImportState {
@@ -18,6 +29,10 @@ struct IImportState {
   // this source; nullopt when the head is not an import from it.
   virtual Result<std::optional<std::string>> head_blob_sha(const SubjectRef& subject, persistence::Kind kind) = 0;
   virtual Result<bool> analysis_exists(persistence::Uuid analysis) = 0;
+  // nullopt: the analysis is not in the store. `record_commit`: the commit
+  // that first adds its record in this source.
+  virtual Result<std::optional<AnalysisOrigin>> analysis_origin(persistence::Uuid analysis,
+                                                                std::string_view record_commit) = 0;
 };
 
 struct SourceDescription {

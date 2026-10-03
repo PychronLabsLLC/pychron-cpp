@@ -38,5 +38,7 @@ persistence::Uuid conflict_id(std::string_view url, std::string_view commit, std
 // A git tag's bookmark, and the analysis group the bookmark is scoped to.
 persistence::Uuid bookmark_id(std::string_view url, std::string_view tag);
 persistence::Uuid bookmark_group_id(std::string_view url, std::string_view tag);
+// An interpreted age, named by the path of its file in the source.
+persistence::Uuid interpreted_age_id(std::string_view url, std::string_view path);
 
 }  // namespace pychron::ingest

@@ -95,6 +95,7 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
           },
           [&](const RepositoryItem& i) { return done(repository(i.name)); },
           [&](const RefObjectItem& i) { return done(ref_object(i.type, i.key, &i)); },
+          [&](const InterpretedAgeItem& i) { return done(interpreted_age(i)); },
       },
       item);
 }
@@ -119,6 +120,41 @@ Result<Uuid> CatalogResolver::ref_object_id(const RefObjectKey& key) const {
   const std::string natural = join({P::to_string(*type), key.name});
   if (auto it = known_.find(join({"ref_object", natural})); it != known_.end()) return it->second;
   return catalog_id("ref_object", natural);
+}
+
+Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeKey& key) {
+  return interpreted_age(InterpretedAgeItem{key.name, key.name, std::nullopt, std::nullopt});
+}
+
+// The store cannot look an identifier up, and add_identifier would create a
+// bare one. An identifier is therefore linked only when an analysis uses it:
+// then it exists, and add_identifier returns it without writing.
+Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeItem& item) {
+  return cached("interpreted_age", join({url_, item.key}), [&](Uuid) -> Result<Uuid> {
+    P::InterpretedAgeSpec spec;
+    spec.name = item.name;
+    if (item.identifier) {
+      P::AnalysisQuery query;
+      query.identifier = *item.identifier;
+      query.limit = 1;
+      auto used = store_.find_analyses(query);
+      if (!used) return fail(used.error());
+      if (!used->empty()) {
+        P::IdentifierSpec identifier;
+        identifier.identifier = *item.identifier;
+        auto found = store_.add_identifier(client_, identifier);
+        if (!found) return fail(found.error());
+        spec.identifier = *found;
+      }
+    }
+    if (item.repository) {
+      auto repo = repository(*item.repository);
+      if (!repo) return fail(repo.error());
+      spec.repository = *repo;
+    }
+    spec.uuid = interpreted_age_id(url_, item.key);
+    return store_.add_interpreted_age(client_, spec);
+  });
 }
 
 Result<Uuid> CatalogResolver::principal_investigator(const PiItem& item) {

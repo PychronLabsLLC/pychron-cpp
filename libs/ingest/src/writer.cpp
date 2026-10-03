@@ -1,5 +1,6 @@
 #include "pychron/ingest/writer.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <set>
 #include <utility>
@@ -101,6 +102,15 @@ std::string with_members(std::string_view object, const JsonMembers& members) {
 
 std::string author_text(const GitWho& who) { return who.name + " <" + who.email + ">"; }
 
+std::string json_uuid_list(const std::vector<Uuid>& uuids) {
+  std::string out = "[";
+  for (const Uuid uuid : uuids) {
+    if (out.size() > 1) out += ',';
+    out += json_string(uuid.str());
+  }
+  return out + "]";
+}
+
 P::ProvenanceRow provenance(const char* entity_type, Uuid entity, const SourceKey& key, const GitWho& who,
                             std::optional<std::string> detail_json = std::nullopt) {
   return {entity_type, entity, key.path, key.commit, key.blob_sha, author_text(who), who.utc, std::move(detail_json)};
@@ -127,6 +137,7 @@ class BatchWriter::Impl final : public IImportState {
     auto described = adapter.describe();
     if (!described) return fail(described.error());
     url_ = normalize_source_url(described->url);
+    catalog_.set_source(url_);
 
     P::ImportSourceSpec spec;
     spec.uuid = source_id(described->kind, url_, described->branch);
@@ -181,6 +192,9 @@ class BatchWriter::Impl final : public IImportState {
     auto uuid = std::visit(Overloaded{
                                [](const Uuid& analysis) -> Result<Uuid> { return analysis; },
                                [&](const RefObjectKey& key) { return catalog_.ref_object_id(key); },
+                               [&](const InterpretedAgeKey& key) -> Result<Uuid> {
+                                 return interpreted_age_id(url_, key.name);
+                               },
                            },
                            subject);
     if (!uuid) return fail(uuid.error());
@@ -191,6 +205,25 @@ class BatchWriter::Impl final : public IImportState {
     auto view = store_.load_analysis(analysis);
     if (!view) return fail(view.error());
     return view->has_value();
+  }
+
+  Result<std::optional<AnalysisOrigin>> analysis_origin(Uuid analysis, std::string_view record_commit) override {
+    if (!source_) return fail(ErrorKind::Config, "import state: no source is open");
+    // Every analysis has a signals root, written by its collection changeset.
+    auto roots = store_.history(analysis, Kind::Signals);
+    if (!roots) return fail(roots.error());
+    if (roots->empty()) return std::optional<AnalysisOrigin>{};
+    AnalysisOrigin origin;
+    origin.from_this_source =
+        roots->front().changeset.uuid == collection_changeset_id(url_, record_commit, analysis);
+    auto rows = store_.provenance_for(analysis);
+    if (!rows) return fail(rows.error());
+    // A source that only made the analysis a member marks its row (stage_membership).
+    for (const auto& row : *rows)
+      if (row.entity_type == "analysis" &&
+          !(row.detail_json && row.detail_json->find("\"membership_only\"") != std::string::npos))
+        origin.record_blob_sha = row.git_blob_sha;
+    return std::optional<AnalysisOrigin>{std::move(origin)};
   }
 
  private:
@@ -288,8 +321,63 @@ class BatchWriter::Impl final : public IImportState {
                             if (!uuid) return fail(uuid.error());
                             return std::optional<Uuid>{*uuid};
                           },
+                          [&](const InterpretedAgeKey& key) -> Result<std::optional<Uuid>> {
+                            auto uuid = catalog_.interpreted_age(key);
+                            if (!uuid) return fail(uuid.error());
+                            return std::optional<Uuid>{*uuid};
+                          },
                       },
                       subject);
+  }
+
+  // ------------------------------------------------------------ references to analyses
+
+  // Whether an analysis another row points at can be pointed at. What is
+  // missing is remembered for the batch: one analysis is often named by many rows.
+  Result<bool> referable(Uuid analysis) {
+    if (absent_.contains(analysis)) return false;
+    auto present = analysis_present(analysis);
+    if (!present) return fail(present.error());
+    if (!*present) absent_.insert(analysis);
+    return *present;
+  }
+
+  static void note_unresolved(std::vector<Uuid>& unresolved, Uuid analysis) {
+    if (std::find(unresolved.begin(), unresolved.end(), analysis) == unresolved.end()) unresolved.push_back(analysis);
+  }
+
+  // Blank and IC-factor rows: clears each `ref_analysis` that is not in the store.
+  template <class Rows>
+  Result<void> clear_unresolved(Rows& rows, std::vector<Uuid>& unresolved) {
+    for (auto& row : rows)
+      for (auto& reference : row.references) {
+        if (!reference.ref_analysis) continue;
+        auto ok = referable(*reference.ref_analysis);
+        if (!ok) return fail(ok.error());
+        if (*ok) continue;
+        note_unresolved(unresolved, *reference.ref_analysis);
+        reference.ref_analysis.reset();
+      }
+    return {};
+  }
+
+  // batch.hpp, RevisionItem: what the payload names and the store does not have.
+  Result<void> drop_unresolved(P::RevisionPayload& payload, std::vector<Uuid>& unresolved) {
+    if (auto* blanks = std::get_if<P::Blanks>(&payload)) return clear_unresolved(*blanks, unresolved);
+    if (auto* icfactors = std::get_if<P::IcFactors>(&payload)) return clear_unresolved(*icfactors, unresolved);
+    if (auto* age = std::get_if<P::InterpretedAgeValue>(&payload)) {
+      std::vector<P::InterpretedAgeMember> kept;
+      for (auto& member : age->members) {
+        auto ok = referable(member.analysis);
+        if (!ok) return fail(ok.error());
+        if (*ok)
+          kept.push_back(std::move(member));
+        else
+          note_unresolved(unresolved, member.analysis);
+      }
+      age->members = std::move(kept);
+    }
+    return {};
   }
 
   // ------------------------------------------------------------ conflicts
@@ -369,9 +457,14 @@ class BatchWriter::Impl final : public IImportState {
   // ------------------------------------------------------------ writing
 
   Result<void> write_batch(const ImportBatch& batch, RunStats& stats, std::optional<P::ImportProgress>& walked) {
+    absent_.clear();
     // Step 1: writes that are idempotent on their own.
+    // An interpreted age links its identifier only when an analysis uses it,
+    // so those wait for the batch's analyses.
+    const auto is_age = [](const CatalogItem& item) { return std::holds_alternative<InterpretedAgeItem>(item); };
     for (const auto& item : batch.catalog)
-      if (auto r = catalog_.write(item); !r) return r;
+      if (!is_age(item))
+        if (auto r = catalog_.write(item); !r) return r;
     // Blobs go first so each analysis is ingested with its signals complete.
     for (const auto& item : batch.blobs) {
       auto ack = store_.ingest({revision_id(url_, item.key.commit, item.key.path),
@@ -384,6 +477,9 @@ class BatchWriter::Impl final : public IImportState {
       if (auto r = write_analysis(item, staged, memberships, stats); !r) return r;
     for (const auto& item : batch.memberships)
       if (auto r = stage_membership(item, staged, memberships, stats); !r) return r;
+    for (const auto& item : batch.catalog)
+      if (is_age(item))
+        if (auto r = catalog_.write(item); !r) return r;
     for (const auto& [name, members] : memberships) {
       auto repository = catalog_.repository(name);
       if (!repository) return fail(repository.error());
@@ -464,8 +560,9 @@ class BatchWriter::Impl final : public IImportState {
                        item.keys.record.path + "#" + std::string(P::to_string(root.kind)));
   }
 
-  std::string analysis_detail(const AnalysisItem& item) const {
+  std::string analysis_detail(const AnalysisItem& item, const std::vector<Uuid>& unresolved) const {
     JsonMembers members;
+    if (!unresolved.empty()) members.emplace_back("unresolved_references", json_uuid_list(unresolved));
     if (item.synthetic_collection) members.emplace_back("synthetic_collection", "true");
     JsonMembers commits;
     for (const auto& root : kRoots) {
@@ -490,6 +587,9 @@ class BatchWriter::Impl final : public IImportState {
     ingest.author_user = who->user;
     if (ingest.analyst.empty()) ingest.analyst = who->name;
     for (const auto& root : kRoots) ingest.roots.*root.id = root_id(item, root);
+    std::vector<Uuid> unresolved;
+    if (auto r = clear_unresolved(ingest.roots.blanks_rows, unresolved); !r) return r;
+    if (auto r = clear_unresolved(ingest.roots.icfactors_rows, unresolved); !r) return r;
 
     auto ack = store_.ingest({revision_id(url_, record.commit, record.path), sha256(std::string_view{record.blob_sha}),
                               client_, std::move(ingest)});
@@ -501,11 +601,12 @@ class BatchWriter::Impl final : public IImportState {
       return {};
     }
     present_.insert(analysis);
+    absent_.erase(analysis);
     ++stats.analyses;
     for (const auto& file : collection_files(item))
       if (auto r = supersede(file, staged); !r) return r;
 
-    staged.provenance.push_back(provenance("analysis", analysis, record, item.who, analysis_detail(item)));
+    staged.provenance.push_back(provenance("analysis", analysis, record, item.who, analysis_detail(item, unresolved)));
     for (const auto& root : kRoots)
       if (const SourceKey key = root_key(item, root); !key.path.empty())
         staged.provenance.push_back(provenance("revision", root_id(item, root), key, item.who));
@@ -563,8 +664,16 @@ class BatchWriter::Impl final : public IImportState {
       }
       if (auto r = supersede(revision.key, staged); !r) return r;
       const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
-      changeset.revisions.push_back({id, **subject, revision.kind, revision.payload});
-      staged.provenance.push_back(provenance("revision", id, revision.key, item.who));
+      P::RevisionPayload payload = revision.payload;
+      std::vector<Uuid> unresolved;
+      if (auto r = drop_unresolved(payload, unresolved); !r) return r;
+      JsonMembers notes;
+      if (!unresolved.empty()) notes.emplace_back("unresolved_references", json_uuid_list(unresolved));
+      std::optional<std::string> detail;
+      if (!notes.empty() || revision.detail_json.find_first_not_of("{} \t\r\n") != std::string::npos)
+        detail = with_members(revision.detail_json, notes);
+      changeset.revisions.push_back({id, **subject, revision.kind, std::move(payload)});
+      staged.provenance.push_back(provenance("revision", id, revision.key, item.who, std::move(detail)));
       ++stats.revisions;
     }
     // A changeset none of whose revisions could be written is not written.
@@ -709,6 +818,7 @@ class BatchWriter::Impl final : public IImportState {
 
   std::map<std::string, Author> authors_;  // by git email
   std::set<Uuid> present_;                 // analyses known to be in the store
+  std::set<Uuid> absent_;                  // analyses a row of this batch names that are not; see referable()
   std::optional<std::map<Uuid, KnownConflict>> conflicts_;  // of this source; see conflicts()
   bool catching_up_ = false;                                // a replay that has not reached the stored token
   // Dry run only.

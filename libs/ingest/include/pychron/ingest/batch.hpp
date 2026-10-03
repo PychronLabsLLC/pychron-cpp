@@ -124,9 +124,21 @@ struct RefObjectItem {
   std::optional<std::string> mass_spectrometer;
 };
 
+// An interpreted age. `key` is the path of its file in the source; with the
+// source url it is the object's identity (ids.hpp, interpreted_age_id), so the
+// item is safe to repeat. It differs from persistence::InterpretedAgeSpec in
+// naming its identifier and repository, as every catalog item does. An
+// `identifier` no analysis in the store uses is left unset rather than
+// created; the writer therefore writes these items after the batch's analyses. Send it before a revision whose subject is its InterpretedAgeKey;
+// otherwise the object is created bare, named after its key.
+struct InterpretedAgeItem {
+  std::string key, name;
+  std::optional<std::string> identifier, repository;
+};
+
 using CatalogItem = std::variant<PiItem, ProjectItem, MaterialItem, SampleItem, IrradiationItem, LevelItem, PositionItem,
                                  SpecialIdentifierItem, UserItem, MassSpecItem, ExtractDeviceItem, LoadItem,
-                                 RepositoryItem, RefObjectItem>;
+                                 RepositoryItem, RefObjectItem, InterpretedAgeItem>;
 
 // ---------------------------------------------------------------- history
 
@@ -135,8 +147,13 @@ struct RefObjectKey {
   std::string name;      // the object's key
 };
 
-// What a revision is about: an analysis uuid, or a reference object.
-using SubjectRef = std::variant<persistence::Uuid, RefObjectKey>;
+struct InterpretedAgeKey {
+  std::string name;  // the InterpretedAgeItem's key
+};
+
+// What a revision is about: an analysis uuid, a reference object, or an
+// interpreted age.
+using SubjectRef = std::variant<persistence::Uuid, RefObjectKey, InterpretedAgeKey>;
 
 // The file each root revision of an analysis came from. A kind the source has
 // no file for is left empty (its root revision is then keyed by the record).
@@ -170,11 +187,20 @@ struct BlobItem {
   persistence::BlobIngest blob;
 };
 
+// A payload may name other analyses: the references of blank and IC-factor
+// rows (`ref_analysis`) and the members of an interpreted age. Those are
+// foreign keys, and the analysis may live in a source that is not imported
+// yet. The writer therefore clears a `ref_analysis`, and drops a member, whose
+// analysis is not in the store when the revision is written, and lists the
+// uuids under "unresolved_references" in the revision's provenance detail
+// (for the roots of an AnalysisItem, in the analysis's). It is not a conflict;
+// the adapter keeps the reference verbatim in the row's extra or document.
 struct RevisionItem {
   SourceKey key;
   SubjectRef subject;
   persistence::Kind kind = persistence::Kind::Intercepts;
   persistence::RevisionPayload payload;
+  std::string detail_json = "{}";  // a JSON object, kept in the revision's provenance row when not empty
 };
 
 struct ChangesetItem {

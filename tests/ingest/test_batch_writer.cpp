@@ -1120,12 +1120,177 @@ TEST_P(BatchWriterTest, TagWithNoStoredAnalysisIsSkippedAndNotPending) {
   EXPECT_EQ(after->would_write, 0);
 }
 
+TEST_P(BatchWriterTest, InterpretedAgeIsEnsuredAndRevised) {
+  const std::string path = "665/ia/73.ia.json";
+  ImportBatch b = single_batch();
+  b.catalog.push_back(InterpretedAgeItem{path, "66573 plateau", "66573", "Henry_Hill"});
+  P::InterpretedAgeValue value;
+  value.age = 28.2;
+  value.age_err = 0.03;
+  value.age_kind = "Plateau";
+  value.nanalyses = 2;
+  value.doc_json = R"({"name":"66573 plateau"})";
+  value.members = {{kA, "66573-01", true, "ok"}, {kB, "66573-02", false, "omit"}};  // kB is in no source
+  ChangesetItem saved;
+  saved.commit = "c3";
+  saved.who = who(kAlice, "2016-03-06T00:00:00Z");
+  saved.message = "<IA> added interpreted age 73";
+  saved.revisions.push_back(
+      {{"c3", path, "ia-1"}, InterpretedAgeKey{path}, Kind::InterpretedAge, value, R"({"legacy_format":"flat"})"});
+  b.changesets.push_back(saved);
+  b.resume_token = "c3";
+  FakeAdapter adapter(description(), {b});
+  BatchWriter writer(store(), world_->client, config());
+  auto stats = writer.run(adapter, std::nullopt, {}, {});
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+
+  // One interpreted age, with the id derived from the source and the file path.
+  const Uuid age = interpreted_age_id(kUrl, path);
+  ASSERT_EQ(world_->count("interpreted_age"), 1);
+  auto row = world_->db->select_one(QStringLiteral("SELECT uuid, name, identifier_uuid, repository_uuid FROM interpreted_age"));
+  ASSERT_TRUE(row && *row);
+  EXPECT_EQ(pd::to_uuid((*row)->value("uuid")), age);
+  EXPECT_EQ(pd::to_std((*row)->value("name")), "66573 plateau");
+  EXPECT_FALSE((*row)->value("identifier_uuid").isNull());  // 66573 has an analysis
+  EXPECT_FALSE((*row)->value("repository_uuid").isNull());
+
+  auto history = store().history(age, Kind::InterpretedAge);
+  ASSERT_TRUE(history);
+  ASSERT_EQ(history->size(), 1u);
+  EXPECT_EQ(history->front().uuid, revision_id(kUrl, "c3", path));
+  EXPECT_EQ(history->front().changeset.message, "<IA> added interpreted age 73");
+  // The member that is not in the store is dropped and named in provenance.
+  auto payload = store().load_payload(history->front().uuid);
+  ASSERT_TRUE(payload && payload->has_value());
+  const auto& stored = std::get<P::InterpretedAgeValue>(**payload);
+  ASSERT_EQ(stored.members.size(), 1u);
+  EXPECT_EQ(stored.members.front().analysis, kA);
+  EXPECT_EQ(stored.age, std::optional<double>{28.2});
+  auto provenance = store().provenance_for(history->front().uuid);
+  ASSERT_TRUE(provenance);
+  ASSERT_EQ(provenance->size(), 1u);
+  const std::string detail = provenance->front().detail_json.value_or("");
+  EXPECT_NE(detail.find("unresolved_references"), std::string::npos) << detail;
+  EXPECT_NE(detail.find(kB.str()), std::string::npos) << detail;
+  EXPECT_EQ(detail.find(kA.str()), std::string::npos) << detail;
+  EXPECT_NE(detail.find("legacy_format"), std::string::npos) << detail;
+
+  auto head_blob = writer.state().head_blob_sha(SubjectRef{InterpretedAgeKey{path}}, Kind::InterpretedAge);
+  ASSERT_TRUE(head_blob) << err(head_blob.error());
+  EXPECT_EQ(*head_blob, std::optional<std::string>{"ia-1"});
+
+  // Again: no second interpreted age, nothing written.
+  const auto seq = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ(world_->count("interpreted_age"), 1);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+}
+
+TEST_P(BatchWriterTest, InterpretedAgeOfAnUnusedIdentifierHasNone) {
+  ImportBatch b;
+  b.catalog.push_back(InterpretedAgeItem{"999/ia/01.ia.json", "99901", "99901", std::nullopt});
+  FakeAdapter adapter(description(), {b});
+  ASSERT_TRUE(run_all(*world_, adapter));
+  auto row = world_->db->select_one(QStringLiteral("SELECT identifier_uuid FROM interpreted_age"));
+  ASSERT_TRUE(row && *row);
+  EXPECT_TRUE((*row)->value("identifier_uuid").isNull());
+  EXPECT_EQ(world_->count("identifier"), 0);  // not created as a side effect
+}
+
+TEST_P(BatchWriterTest, ReferencesToAnalysesNotInTheStoreAreClearedAndNoted) {
+  // The blanks of A name A itself (stored) and B (in no source), first in the
+  // collection root, then in a later revision.
+  P::BlankRow blank;
+  blank.isotope = "Ar40";
+  blank.value = 0.5;
+  blank.error = 0.05;
+  blank.fit = "Bracketing Interpolate";
+  blank.extra_json = R"({"references":[{"record_id":"bu-1","uuid":")" + kB.str() + R"("}]})";
+  blank.references = {{0, kB, "bu-1", false}};
+  ImportBatch b;
+  b.catalog = lab_catalog();
+  add_analysis(b, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  b.analyses[0].ingest.roots.blanks_rows = {blank};
+  blank.references = {{0, kA, "66573-01", false}, {1, kB, "bu-1", true}};
+  ChangesetItem later;
+  later.commit = "c2";
+  later.who = who(kAlice, "2016-03-05T00:00:00Z");
+  later.message = "<BLANKS> auto update blanks";
+  later.revisions.push_back({{"c2", kind_path("blanks", 1), "bla-c2"}, kA, Kind::Blanks, P::Blanks{blank}});
+  b.changesets.push_back(later);
+  b.resume_token = "c2";
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+  EXPECT_EQ(stats->revisions, 1);
+
+  auto history = store().history(kA, Kind::Blanks);
+  ASSERT_TRUE(history);
+  ASSERT_EQ(history->size(), 2u);
+  const auto root = std::get<P::Blanks>(**store().load_payload((*history)[0].uuid));
+  ASSERT_EQ(root.size(), 1u);
+  ASSERT_EQ(root[0].references.size(), 1u);
+  EXPECT_FALSE(root[0].references[0].ref_analysis.has_value());
+  EXPECT_EQ(root[0].references[0].record_id, std::optional<std::string>{"bu-1"});
+  ASSERT_TRUE(root[0].extra_json.has_value());
+  EXPECT_NE(root[0].extra_json->find(kB.str()), std::string::npos);  // verbatim, from the adapter
+  const auto head = std::get<P::Blanks>(**store().load_payload((*history)[1].uuid));
+  ASSERT_EQ(head[0].references.size(), 2u);
+  EXPECT_EQ(head[0].references[0].ref_analysis, std::optional<Uuid>{kA});
+  EXPECT_FALSE(head[0].references[1].ref_analysis.has_value());
+  EXPECT_TRUE(head[0].references[1].exclude);
+
+  const std::string of_analysis = store().provenance_for(kA)->front().detail_json.value_or("");
+  EXPECT_NE(of_analysis.find("unresolved_references"), std::string::npos) << of_analysis;
+  EXPECT_NE(of_analysis.find(kB.str()), std::string::npos) << of_analysis;
+  const std::string of_revision = store().provenance_for((*history)[1].uuid)->front().detail_json.value_or("");
+  EXPECT_NE(of_revision.find("unresolved_references"), std::string::npos) << of_revision;
+  EXPECT_NE(of_revision.find(kB.str()), std::string::npos) << of_revision;
+  EXPECT_EQ(of_revision.find(kA.str()), std::string::npos) << of_revision;
+}
+
+TEST_P(BatchWriterTest, AnalysisOriginTellsWhoCollectedIt) {
+  FakeAdapter adapter(description(), {single_batch()});
+  BatchWriter writer(store(), world_->client, config());
+  ASSERT_TRUE(writer.run(adapter, std::nullopt, {}, {}));
+
+  auto here = writer.state().analysis_origin(kA, "c1");
+  ASSERT_TRUE(here) << err(here.error());
+  ASSERT_TRUE(here->has_value());
+  EXPECT_TRUE((*here)->from_this_source);
+  EXPECT_EQ((*here)->record_blob_sha, "rec-1");
+  auto other_commit = writer.state().analysis_origin(kA, "c2");
+  ASSERT_TRUE(other_commit && other_commit->has_value());
+  EXPECT_FALSE((*other_commit)->from_this_source);
+  auto missing = writer.state().analysis_origin(kB, "c1");
+  ASSERT_TRUE(missing);
+  EXPECT_FALSE(missing->has_value());
+
+  // A second source that holds a copy: the analysis is not its own, and the
+  // record it was created from is still the first source's.
+  ImportBatch copy;
+  copy.memberships.push_back(
+      {kA, {"c1", record_path(1), "rec-copy"}, who("bob@example.org", "2017-01-01T00:00:00Z"), {"Other_Repo"}});
+  copy.resume_token = "c1";
+  FakeAdapter other_adapter(
+      {P::ImportSourceKind::ProjectRepo, "https://github.com/NMGRLData/Other_Repo", "main", "c1"}, {copy});
+  BatchWriter other(store(), world_->client, config());
+  ASSERT_TRUE(other.run(other_adapter, std::nullopt, {}, {}));
+  auto there = other.state().analysis_origin(kA, "c1");
+  ASSERT_TRUE(there && there->has_value());
+  EXPECT_FALSE((*there)->from_this_source);
+  EXPECT_EQ((*there)->record_blob_sha, "rec-1");
+}
+
 TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {
   BatchWriter writer(store(), world_->client, config());
   EXPECT_FALSE(writer.state().head_blob_sha(SubjectRef{kA}, Kind::Intercepts));
   auto exists = writer.state().analysis_exists(kA);
   ASSERT_TRUE(exists);
   EXPECT_FALSE(*exists);
+  EXPECT_FALSE(writer.state().analysis_origin(kA, "c1"));
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, BatchWriterTest, ::testing::ValuesIn(P::testing::engines()));

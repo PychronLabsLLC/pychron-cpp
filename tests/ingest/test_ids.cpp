@@ -80,4 +80,6 @@ TEST(IngestIds, KnownValue) {
             Uuid::v5(*ns, "collection\nu\nc\n11111111-1111-4111-8111-111111111111"));
   EXPECT_EQ(bookmark_id("u", "t"), Uuid::v5(*ns, "bookmark\nu\nt"));
   EXPECT_EQ(bookmark_group_id("u", "t"), Uuid::v5(*ns, "bookmark_group\nu\nt"));
+  EXPECT_EQ(interpreted_age_id("u", "660/ia/52.ia.json"), Uuid::v5(*ns, "interpreted_age\nu\n660/ia/52.ia.json"));
+  EXPECT_NE(interpreted_age_id("u", "660/ia/52.ia.json"), interpreted_age_id("u", "660/ia/52_00000.ia.json"));
 }

@@ -195,7 +195,7 @@ TEST_P(ReferenceTest, DerivedValuesAreServedOnlyForCurrentInputs) {
 
 TEST_P(ReferenceTest, InterpretedAgeRevisions) {
   const Uuid a = ingest(1), b = ingest(2);
-  auto ia = store_->add_interpreted_age(lab_.reduction_client, {"66573 plateau", lab_.identifier, std::nullopt});
+  auto ia = store_->add_interpreted_age(lab_.reduction_client, {"66573 plateau", lab_.identifier, std::nullopt, std::nullopt});
   ASSERT_TRUE(ia) << to_string(ia.error());
   InterpretedAgeValue v;
   v.age = 28.2;
@@ -219,6 +219,27 @@ TEST_P(ReferenceTest, InterpretedAgeRevisions) {
   ASSERT_TRUE(again->add_revision(*ia, Kind::InterpretedAge, v, *rev));
   ASSERT_TRUE(std::holds_alternative<Committed>(*again->commit(ChangesetKind::Reduction, "<IA>")));
   EXPECT_EQ(store_->history(*ia, Kind::InterpretedAge)->size(), 2u);
+}
+
+TEST_P(ReferenceTest, InterpretedAgeWithCallerIdIsEnsured) {
+  const Uuid id = *Uuid::parse("5a5a5a5a-1111-5111-8111-5a5a5a5a5a5a");
+  auto first = store_->add_interpreted_age(lab_.reduction_client, {"66573 plateau", lab_.identifier, std::nullopt, id});
+  ASSERT_TRUE(first) << to_string(first.error());
+  EXPECT_EQ(*first, id);
+  const auto seq = *store_->latest_change_seq();
+
+  // The same id again: the stored row is returned and nothing is written,
+  // whatever else the spec says.
+  auto again = store_->add_interpreted_age(lab_.reduction_client, {"renamed", std::nullopt, std::nullopt, id});
+  ASSERT_TRUE(again) << to_string(again.error());
+  EXPECT_EQ(*again, id);
+  EXPECT_EQ(*store_->latest_change_seq(), seq);
+
+  // Without an id every call still makes a new interpreted age.
+  auto other = store_->add_interpreted_age(lab_.reduction_client, {"66573 plateau", lab_.identifier, std::nullopt, std::nullopt});
+  ASSERT_TRUE(other);
+  EXPECT_NE(*other, id);
+  EXPECT_GT(*store_->latest_change_seq(), seq);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, ReferenceTest, ::testing::ValuesIn(engines()),

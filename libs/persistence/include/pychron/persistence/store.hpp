@@ -187,6 +187,10 @@ struct InterpretedAgeSpec {
   std::string name;
   std::optional<Uuid> identifier;
   std::optional<Uuid> repository;
+  // When set, the interpreted age is ensured by this id: an existing one with
+  // it is returned and nothing is written. Without it every call adds a row
+  // (the table has no natural key).
+  std::optional<Uuid> uuid;
 };
 
 // Bookmarks capture the heads of every analysis in a repository or a group

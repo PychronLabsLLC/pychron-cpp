@@ -313,7 +313,14 @@ class TinyStore final : public IStore {
     row["name"] = qv(spec.name);
     row["identifier_uuid"] = qv(spec.identifier);
     row["repository_uuid"] = qv(spec.repository);
-    return add_catalog_row(client, "interpreted_age", row, json_created({{"name", spec.name}}));
+    const std::string detail = json_created({{"name", spec.name}});
+    if (!spec.uuid) return add_catalog_row(client, "interpreted_age", row, detail);
+    WriteTx tx(*db_);
+    if (auto r = tx.begin(); !r) return fail(r.error());
+    auto stored = db_->select_one(QStringLiteral("SELECT uuid FROM interpreted_age WHERE uuid = ?"), {qv(*spec.uuid)});
+    if (!stored) return fail(stored.error());
+    if (*stored) return *spec.uuid;
+    return insert_catalog_row(tx, client, "interpreted_age", *spec.uuid, std::move(row), detail);
   }
 
   Result<Uuid> add_repository(Uuid client, const std::string& name) override {

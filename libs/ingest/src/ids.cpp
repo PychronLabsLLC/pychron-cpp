@@ -103,4 +103,6 @@ Uuid bookmark_id(std::string_view url, std::string_view tag) { return derive("bo
 
 Uuid bookmark_group_id(std::string_view url, std::string_view tag) { return derive("bookmark_group", {url, tag}); }
 
+Uuid interpreted_age_id(std::string_view url, std::string_view path) { return derive("interpreted_age", {url, path}); }
+
 }  // namespace pychron::ingest
