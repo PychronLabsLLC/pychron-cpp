@@ -35,21 +35,26 @@ namespace {
 // Fresh, unique temporary directory removed at scope exit.
 class TempDir {
  public:
-  TempDir() {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    path_ = fs::temp_directory_path() / ("pychron_log_hub_" + std::to_string(gen()));
+  TempDir() : path_(unique_path()) { fs::create_directories(path_); }
+  // For death tests. On Windows the child is a fresh run of the test rather
+  // than a fork, so it would pick a different random directory from the one
+  // the parent inspects: the parent publishes its directory in an environment
+  // variable keyed by `name`, and the child adopts it. The name is never part
+  // of the path, so concurrent runs of the same test (another checkout,
+  // another ctest) cannot remove each other's directory.
+  explicit TempDir(const std::string& name) : env_("PYCHRON_LOG_HUB_TMP_" + name) {
+    if (const char* inherited = std::getenv(env_.c_str()); inherited != nullptr && *inherited != '\0') {
+      path_ = inherited;
+      owner_ = false;
+      return;
+    }
+    path_ = unique_path();
     fs::create_directories(path_);
-  }
-  // Fixed name, emptied first. For death tests: on Windows the child is a fresh
-  // run of the test rather than a fork, so a random name would give it a
-  // different directory from the one the parent inspects.
-  explicit TempDir(const std::string& name) : path_(fs::temp_directory_path() / ("pychron_log_hub_" + name)) {
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-    fs::create_directories(path_);
+    set_env(path_.string());
   }
   ~TempDir() {
+    if (!owner_) return;
+    if (!env_.empty()) set_env("");
     std::error_code ec;
     fs::remove_all(path_, ec);
   }
@@ -59,7 +64,27 @@ class TempDir {
   const fs::path& path() const { return path_; }
 
  private:
+  static fs::path unique_path() {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    return fs::temp_directory_path() / ("pychron_log_hub_" + std::to_string(gen()));
+  }
+  // An empty value removes the variable.
+  void set_env(const std::string& value) const {
+#ifdef _WIN32
+    _putenv_s(env_.c_str(), value.c_str());
+#else
+    if (value.empty()) {
+      ::unsetenv(env_.c_str());
+    } else {
+      ::setenv(env_.c_str(), value.c_str(), 1);
+    }
+#endif
+  }
+
   fs::path path_;
+  std::string env_;  // empty: not shared with a death-test child
+  bool owner_ = true;
 };
 
 config::LoggingConfig config_for(const fs::path& dir) {
@@ -499,9 +524,9 @@ TEST(LogHub, ConcurrentWriteAndSetLevel) {
 
 // --- Crash and terminate handlers (spec 4.5) -------------------------------
 //
-// Each death test forks a child ("fast" style, so the child shares the
-// parent's temp dir path) that builds its own hub, crashes, and dies; the
-// parent then inspects pychron.log.
+// Each death test runs a child (a fork in "fast" style; TempDir(name) hands
+// it the parent's directory either way) that builds its own hub, crashes, and
+// dies; the parent then inspects pychron.log.
 
 namespace {
 
