@@ -22,6 +22,9 @@ struct RowSpec {
   std::string isotope;
   bool baseline = false;
   r::FitSpec fit;
+  bool auto_n = false;
+  std::int64_t n_threshold = 0;
+  r::FitKind n_true = r::FitKind::Parabolic, n_false = r::FitKind::Linear;
   std::optional<double> max_percent_error, max_outliers, max_slope, slope_intensity, max_curvature, min_rsquared,
       signal_to_baseline, signal_to_baseline_percent, max_signal_to_blank;
   double curvature_at = 0.5;
@@ -53,7 +56,11 @@ std::vector<RowSpec> row_specs(const Options& o) {
     RowSpec s;
     s.isotope = row.get_string("isotope");
     s.baseline = row.get_string("series") == "baseline";
+    s.auto_n = row.get_string("fit") == "auto_n";
     s.fit.kind = r::parse_fit_kind(row.get_string("fit")).value_or(r::FitKind::Linear);
+    s.n_threshold = row.get_int("n_threshold");
+    s.n_true = r::parse_fit_kind(row.get_string("n_true")).value_or(r::FitKind::Parabolic);
+    s.n_false = r::parse_fit_kind(row.get_string("n_false")).value_or(r::FitKind::Linear);
     s.fit.error = row.get_string("error") == "SD" ? r::ErrorType::Sd : r::ErrorType::Sem;
     s.fit.outliers.enabled = row.get_bool("filter_outliers");
     s.fit.outliers.iterations = static_cast<int>(row.get_int("iterations"));
@@ -89,7 +96,14 @@ SchemaPtr make_schema_impl() {
       {choice("series", "Series", "Fit", {"signal", "baseline"}, "signal"),
        text("isotope", "Isotope (detector for baselines)", "Fit", "Ar40",
             "Signals: a key (Ar40, H1:Ar40) or an isotope name; baselines: a detector"),
-       choice("fit", "Fit", "Fit", {"average", "linear", "parabolic", "cubic", "exponential"}, "linear"),
+       choice("fit", "Fit", "Fit", {"average", "linear", "parabolic", "cubic", "exponential", "auto_n"}, "linear"),
+       when(integer("n_threshold", "Auto: points at least", "Fit", 30, 0, 100000), "fit == auto_n"),
+       when(choice("n_true", "Auto: then", "Fit", {"average", "linear", "parabolic", "cubic", "exponential"},
+                   "parabolic"),
+            "fit == auto_n"),
+       when(choice("n_false", "Auto: else", "Fit", {"average", "linear", "parabolic", "cubic", "exponential"},
+                   "linear"),
+            "fit == auto_n"),
        choice("error", "Error", "Fit", {"SEM", "SD"}, "SEM"),
        boolean("filter_outliers", "Filter outliers", "Fit", false),
        when(integer("iterations", "Iterations", "Fit", 1, 1, 10), "filter_outliers"),
@@ -127,6 +141,12 @@ SchemaPtr make_schema_impl() {
                "Refit without the points each analysis already leaves out"),
        boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
                "Intercepts and baselines already marked reviewed are not refitted or saved"),
+       boolean("use_classifier", "Classify sniffs", "Classifier", false,
+               "Flag isotopes the trained classifier calls bad (legacy IsotopeClassifier)"),
+       when(text("classifier_file", "Training file", "Classifier", ""), "use_classifier"),
+       when(text("classifier_stamp", "Training version", "Classifier", "",
+                 "Changes when the training changes; set by the window"),
+            "use_classifier"),
        integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
        boolean("show_current", "Show current values", "Display", true)},
       {list}));
@@ -225,10 +245,21 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
   const bool keep_excluded = o.get_bool("keep_user_excluded");
   const bool skip_reviewed = o.get_bool("skip_reviewed");
   const double nsigma = static_cast<double>(o.get_int("nsigma"));
+  std::optional<IsotopeClassifier> classifier;
   const bool show_current = o.get_bool("show_current");
 
   IsotopeEvolutionFigure fig;
   fig.scene.kind = "isotope_evolution_fit";
+  if (o.get_bool("use_classifier")) {
+    auto loaded = IsotopeClassifier::load(o.get_string("classifier_file"));
+    if (!loaded) {
+      fig.fits.warnings.push_back("classifier: " + loaded.error().what);
+    } else if (loaded->empty()) {
+      fig.fits.warnings.push_back("classifier: no training samples yet");
+    } else {
+      classifier = std::move(*loaded);
+    }
+  }
   // Per spec row: (x, refitted, stored, uuid, flagged) for the panels.
   struct Point {
     double t;
@@ -295,13 +326,16 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     for (const auto& target : targets) {
       const RowSpec& spec = specs[target.row];
       const std::string label = target.kind == SeriesKind::Baseline ? target.key + " baseline" : target.key;
-      FitEdit edit{target.kind, target.key, spec.fit, keep_excluded ? target.excluded : std::vector<std::size_t>{}};
       const RawSeries* series = raw->find(target.kind, target.key);
       if (!series) {
         fig.fits.warnings.push_back(a.runid + " " + label + ": no raw data");
         continue;
       }
-      auto shape = fit_series(*series, spec.fit, edit.user_excluded);
+      r::FitSpec resolved = spec.fit;
+      if (spec.auto_n)
+        resolved.kind = static_cast<std::int64_t>(series->t.size()) >= spec.n_threshold ? spec.n_true : spec.n_false;
+      FitEdit edit{target.kind, target.key, resolved, keep_excluded ? target.excluded : std::vector<std::size_t>{}};
+      auto shape = fit_series(*series, resolved, edit.user_excluded);
       auto one = apply_fit_edits(a, *raw, {edit});
       if (!shape || !one) {
         fig.fits.warnings.push_back(a.runid + " " + (one ? shape.error().what : one.error().what));
@@ -333,6 +367,11 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
         flag("curvature", refit.curvature, *spec.max_curvature);
       if (spec.min_rsquared && refit.rsquared_adj && *refit.rsquared_adj <= *spec.min_rsquared)
         flag("rsquared", *refit.rsquared_adj, *spec.min_rsquared);
+      if (classifier && target.kind == SeriesKind::Signal) {
+        refit.classification = classifier->classify(make_isotope_sample(*raw, target.key, target.iso->isotope));
+        if (refit.classification && refit.classification->klass == 0)
+          flag("classifier", refit.classification->probability, 0.5);
+      }
       if (target.kind == SeriesKind::Signal && v != 0.0) {
         const double stb = std::abs(target.iso->baseline.error / v) * 100.0;
         if (spec.signal_to_baseline && spec.signal_to_baseline_percent && stb > *spec.signal_to_baseline &&
@@ -406,7 +445,11 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     }
     TextLayer t;
     char buf[160];
-    std::snprintf(buf, sizeof buf, "%s %s%s  %zu refitted, %d flagged", std::string(r::to_string(spec.fit.kind)).c_str(),
+    const std::string fit_name = spec.auto_n ? "auto (>= " + std::to_string(spec.n_threshold) + ": " +
+                                                   std::string(r::to_string(spec.n_true)) + ", else " +
+                                                   std::string(r::to_string(spec.n_false)) + ")"
+                                             : std::string(r::to_string(spec.fit.kind));
+    std::snprintf(buf, sizeof buf, "%s %s%s  %zu refitted, %d flagged", fit_name.c_str(),
                   spec.fit.error == r::ErrorType::Sd ? "SD" : "SEM", spec.fit.outliers.enabled ? " (outliers)" : "",
                   pts.size(), nflagged);
     t.lines.push_back(buf);

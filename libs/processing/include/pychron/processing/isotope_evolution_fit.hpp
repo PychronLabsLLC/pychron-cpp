@@ -10,7 +10,9 @@
 //   series      signal (isotope: a key "Ar40" or "H1:Ar40", or a name
 //               matching every key of it) or baseline (isotope names a
 //               detector; the refit applies to every isotope on it)
-//   fit, error, filter_outliers, iterations, std_devs
+//   fit, error, filter_outliers, iterations, std_devs; fit auto_n (legacy
+//   AUTO_N) picks n_true when the series has at least n_threshold raw
+//   points, else n_false (the concrete fit is what is saved)
 //   goodness, each optional (legacy IsoFilterFitAuxPlot):
 //     max_percent_error         flag when |error / value| x 100 exceeds it
 //     smart_filter "a,b,c,d"    flag when error >= a v^b + c v + d
@@ -26,6 +28,10 @@
 //                               baseline error is more than the first % of
 //                               the value, flag an error of the second % or more
 //     max_signal_to_blank       signals: flag blank / value x 100 at or above it
+// use_classifier, classifier_file, classifier_stamp: classify each refitted
+// signal's sniff with the IsotopeClassifier trained in classifier_file and
+// flag "classifier" when it says bad (value: the share of bad neighbours).
+// The stamp is part of the options so a retrained classifier reruns.
 // keep_user_excluded (refit without the points each analysis already
 // leaves out; default on), skip_reviewed (leave values marked reviewed
 // alone).
@@ -41,6 +47,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/processing/dataset.hpp"
 #include "pychron/processing/fit_edit.hpp"
+#include "pychron/processing/isotope_classifier.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/scene.hpp"
 
@@ -50,7 +57,7 @@ namespace pychron::processing {
 struct GoodnessFlag {
   std::string key;     // isotope key, or detector for baselines
   // "percent_error", "smart_filter", "outliers", "slope", "curvature",
-  // "rsquared", "signal_to_baseline", "signal_to_blank"
+  // "rsquared", "signal_to_baseline", "signal_to_blank", "classifier"
   std::string check;
   double value = 0.0;  // the measured quantity
   double threshold = 0.0;
@@ -63,6 +70,7 @@ struct IsotopeRefit {
   std::size_t outliers = 0;  // points the filter removed
   std::optional<double> rsquared_adj;  // absent for averages
   double curvature = 0.0;    // at the row's curvature_at
+  std::optional<Classification> classification;  // signals, with use_classifier
   std::string label() const;  // "Ar40", "H1 baseline"
 };
 
