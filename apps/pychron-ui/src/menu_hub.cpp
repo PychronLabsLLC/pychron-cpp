@@ -74,6 +74,11 @@ MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
     if (w->isMaximized()) w->showNormal();
     else w->showMaximized();
   });
+  for (const Menu menu : {Menu::Queue, Menu::Rows, Menu::Executor, Menu::Scripts}) {
+    auto* hint = new QAction(tr("Open View > Experiment to use this menu"), this);
+    hint->setEnabled(false);
+    placeholders_[slot(menu)] = hint;
+  }
   bring_all_ = new QAction(tr("Bring All to Front"), this);
   connect(bring_all_, &QAction::triggered, this, [this] {
     QWidget* front = current_window();
@@ -356,6 +361,8 @@ void MenuHub::rebuild(Bar& b) {
       if (!want.isEmpty()) want.append(nullptr);
       want.append(live);
     }
+    // An experiment menu with nothing in it yet keeps its place in the bar.
+    if (want.isEmpty() && placeholders_[slot(menu)] != nullptr) want.append(placeholders_[slot(menu)]);
     sync_menu(m, want);
     m->menuAction()->setVisible(!want.isEmpty());
   }

@@ -95,8 +95,11 @@ class TestMenuHub : public QObject {
                        static_cast<QWidget*>(&dialog)})
       w->show();
 
-    const QStringList expected{QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Window"),
-                               QStringLiteral("Help")};
+    // The whole bar, from launch: the experiment's menus are there before
+    // the experiment window is.
+    const QStringList expected{QStringLiteral("File"), QStringLiteral("Queue"), QStringLiteral("Rows"),
+                               QStringLiteral("Executor"), QStringLiteral("Scripts"), QStringLiteral("View"),
+                               QStringLiteral("Window"), QStringLiteral("Help")};
     QCOMPARE(shown(main), expected);
     QCOMPARE(shown(figure), expected);
     QCOMPARE(shown(recall), expected);
@@ -134,18 +137,19 @@ class TestMenuHub : public QObject {
     QVERIFY(main.menuWidget() == nullptr);
     QVERIFY(figure.menuWidget() == nullptr);
     QVERIFY(recall.layout()->menuBar() == nullptr);
-    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Window"),
-                                       QStringLiteral("Help")}));
+    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Queue"), QStringLiteral("Rows"),
+                               QStringLiteral("Executor"), QStringLiteral("Scripts"), QStringLiteral("View"),
+                               QStringLiteral("Window"), QStringLiteral("Help")}));
     QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
     QVERIFY(menu_of(main, Menu::Help)->actions().contains(main.about_action()));
 
-    // Another window's menus come and go in the same bar.
+    // Another window's actions come and go in the same bar.
     auto* owner = new QMainWindow;
     auto* save = new QAction(QStringLiteral("Save"), owner);
     hub.contribute(owner, Menu::Queue, {save}, Scope::Window);
-    QVERIFY(shown(figure).contains(QStringLiteral("Queue")));
+    QCOMPARE(texts(menu_of(figure, Menu::Queue)), QStringList{QStringLiteral("Save")});
     delete owner;
-    QTRY_VERIFY(!shown(figure).contains(QStringLiteral("Queue")));
+    QTRY_COMPARE(menu_of(figure, Menu::Queue)->actions(), QList<QAction*>{hub.placeholder(Menu::Queue)});
   }
 
   // On macOS taking Preferences, Quit or About out of a menu hides its item in
@@ -169,7 +173,8 @@ class TestMenuHub : public QObject {
       hub.contribute(owner, Menu::Queue, {last}, Scope::Window);
       QCOMPARE(texts(menu_of(figure, Menu::File)).last(), QStringLiteral("first"));
       delete owner;
-      QTRY_VERIFY(!shown(figure).contains(QStringLiteral("Queue")));  // the deferred rebuild has run
+      // the deferred rebuild has run: Queue is back to its greyed line
+      QTRY_COMPARE(menu_of(figure, Menu::Queue)->actions(), QList<QAction*>{hub.placeholder(Menu::Queue)});
       QVERIFY(!texts(menu_of(figure, Menu::File)).contains(QStringLiteral("first")));
 
       QCOMPARE(watch.removed, 0);
@@ -228,17 +233,31 @@ class TestMenuHub : public QObject {
     QCOMPARE(hub.minimize_action()->shortcut(), pychron::ui::key(pychron::ui::Shortcut::MinimizeWindow));
   }
 
-  void a_menu_appears_with_its_actions_and_goes_with_its_window() {
+  // The experiment's menus keep their place in the bar: one greyed line
+  // until a window fills them, and again when it has gone.
+  void an_experiment_menu_holds_a_greyed_line_until_a_window_fills_it() {
+    MenuHub& hub = MenuHub::instance();
     QMainWindow a;
     a.show();
-    QVERIFY(!shown(a).contains(QStringLiteral("Queue")));
+    for (const Menu menu : {Menu::Queue, Menu::Rows, Menu::Executor, Menu::Scripts}) {
+      QVERIFY(hub.placeholder(menu) != nullptr);
+      QVERIFY(!hub.placeholder(menu)->isEnabled());
+      QVERIFY(menu_of(a, menu)->menuAction()->isVisible());
+      QCOMPARE(menu_of(a, menu)->actions(), QList<QAction*>{hub.placeholder(menu)});
+    }
+    QVERIFY(hub.placeholder(Menu::File) == nullptr);  // only those four
+    QVERIFY(shown(a).contains(QStringLiteral("Queue")));
+
     auto* owner = new QMainWindow;
     auto* save = new QAction(QStringLiteral("Save"), owner);
-    MenuHub::instance().contribute(owner, Menu::Queue, {save}, Scope::Window);
-    QVERIFY(shown(a).contains(QStringLiteral("Queue")));  // at once, in a window that was already up
+    hub.contribute(owner, Menu::Queue, {save}, Scope::Window);
+    // at once, in a window that was already up; the greyed line makes way
     QCOMPARE(texts(menu_of(a, Menu::Queue)), QStringList{QStringLiteral("Save")});
     delete owner;
-    QTRY_VERIFY(!shown(a).contains(QStringLiteral("Queue")));
+    QTRY_COMPARE(menu_of(a, Menu::Queue)->actions(), QList<QAction*>{hub.placeholder(Menu::Queue)});
+    QVERIFY(shown(a).contains(QStringLiteral("Queue")));
+    // the greyed line is no command for the palette
+    for (const MenuHub::Command& c : hub.commands()) QVERIFY(c.action != hub.placeholder(c.menu));
   }
 
   void groups_are_separated_in_contribution_order() {

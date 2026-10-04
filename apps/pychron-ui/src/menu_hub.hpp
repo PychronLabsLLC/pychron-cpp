@@ -25,9 +25,13 @@
 // Per-window bars are installed when a window is first shown: every
 // QMainWindow, and any other top-level widget with a layout. Dialogs, popups
 // and the splash do not get one; nor does a window with the
-// "pychron_no_menubar" property. A menu with nothing in it is hidden, in
-// every window alike. Menus are updated in place: an action that stays is
-// never taken out and put back.
+// "pychron_no_menubar" property. Menus are updated in place: an action that
+// stays is never taken out and put back.
+//
+// The bar is the same from launch: Queue, Rows, Executor and Scripts, which
+// the experiment window fills, are there before it is, each holding one
+// greyed line saying where its commands come from. File, View and Help are
+// hidden only when nothing at all has contributed to them (no main window).
 
 #include <array>
 #include <vector>
@@ -93,6 +97,10 @@ class MenuHub : public QObject {
 
   static QString title(Menu menu);
 
+  // The greyed line an experiment menu (Queue, Rows, Executor, Scripts) holds
+  // while nothing has contributed to it; nullptr for the other menus.
+  QAction* placeholder(Menu menu) const { return placeholders_[static_cast<std::size_t>(menu)]; }
+
   // The Window menu's own actions (the same in every bar).
   QAction* minimize_action() const { return minimize_; }
   QAction* zoom_action() const { return zoom_; }
@@ -147,6 +155,7 @@ class MenuHub : public QObject {
     QPointer<QAction> action;
   };
   std::vector<Entry> windows_;
+  std::array<QAction*, kMenus> placeholders_{};
   QAction* minimize_ = nullptr;
   QAction* zoom_ = nullptr;
   QAction* bring_all_ = nullptr;
