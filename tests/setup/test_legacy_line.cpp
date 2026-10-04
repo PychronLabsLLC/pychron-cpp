@@ -316,7 +316,9 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <valve>A<translation>-5,0</translation></valve>\n"
           "  <valve>B<translation>5,0</translation></valve>\n"
           "  <manual_valve>MV<translation>0,10</translation></manual_valve>\n"
-          "  <spectrometer>Obama<translation>-2,-10</translation><dimension>4,2</dimension></spectrometer>\n"
+          "  <spectrometer>Obama<translation>-2,-10</translation><dimension>4,2</dimension>\n"
+          "    <connection orientation=\"vertical\"><start>MV</start><end>Obama</end></connection>\n"
+          "  </spectrometer>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -347,6 +349,9 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   EXPECT_EQ(connection(*drawing, "B", "Obama")->orientation, canvas::Orientation::Auto);
+  // a connection written inside the element it joins is still a connection
+  ASSERT_NE(connection(*drawing, "MV", "Obama"), nullptr);
+  EXPECT_EQ(connection(*drawing, "MV", "Obama")->orientation, canvas::Orientation::Vertical);
   // offset 1,0 on a 2 x 2 valve: the middle of its bottom edge, 1 unit
   // (16.67 px) below its centre.
   EXPECT_EQ(connection(*drawing, "B", "Obama")->start_offset, (canvas::Point{0, 17}));

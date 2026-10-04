@@ -238,6 +238,34 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
   return out;
 }
 
+// Legacy finds connections with //connection: at any depth, so one written
+// inside the element it belongs to (NMGRL's <tank>) counts too.
+void xml_connection(const XNode& c, std::vector<LConnection>& connections, std::vector<std::string>& notes) {
+  auto orientation = c.attrs.count("orientation") ? c.attrs.at("orientation") : std::string{};
+  // legacy reads the <corner> child, never a corner= attribute
+  connections.push_back({conn_kind(c.tag, orientation), c.child_text("start"), c.child_text("end"),
+                         c.child_text("left"), c.child_text("mid"), c.child_text("right"), c.child_text("corner"),
+                         {}, {}});
+  LConnection& made = connections.back();
+  bool tee_noted = false;
+  for (const auto& end : c.children) {
+    if (!end.attrs.count("offset")) continue;
+    if (end.tag == "start") made.start_offset = pair_of(end.attrs.at("offset"));
+    else if (end.tag == "end") made.end_offset = pair_of(end.attrs.at("offset"));
+    else if (!std::exchange(tee_noted, true))
+      notes.push_back("canvas: tee " + made.left + "-" + made.mid + "-" + made.right +
+                      ": end offset not carried over");
+  }
+}
+
+void nested_xml_connections(const XNode& parent, std::vector<LConnection>& connections,
+                            std::vector<std::string>& notes) {
+  for (const auto& c : parent.children) {
+    if (is_connection(c.tag)) xml_connection(c, connections, notes);
+    else nested_xml_connections(c, connections, notes);
+  }
+}
+
 LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
   LCanvas out;
   for (const auto& c : root.children) {
@@ -252,20 +280,7 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
     } else if (c.tag == "color" || c.tag == "connection_dimension") {
       continue;
     } else if (is_connection(c.tag)) {
-      auto orientation = c.attrs.count("orientation") ? c.attrs.at("orientation") : std::string{};
-      out.connections.push_back({conn_kind(c.tag, orientation), c.child_text("start"), c.child_text("end"),
-                                 c.child_text("left"), c.child_text("mid"), c.child_text("right"),
-                                 c.child_text("corner"), {}, {}});  // legacy reads the <corner> child, never a corner= attribute
-      LConnection& made = out.connections.back();
-      bool tee_noted = false;
-      for (const auto& end : c.children) {
-        if (!end.attrs.count("offset")) continue;
-        if (end.tag == "start") made.start_offset = pair_of(end.attrs.at("offset"));
-        else if (end.tag == "end") made.end_offset = pair_of(end.attrs.at("offset"));
-        else if (!std::exchange(tee_noted, true))
-          notes.push_back("canvas: tee " + made.left + "-" + made.mid + "-" + made.right +
-                          ": end offset not carried over");
-      }
+      xml_connection(c, out.connections, notes);
     } else if (c.tag == "image") {
       notes.push_back("canvas: image " + c.text + " not carried over");
     } else {
@@ -278,6 +293,7 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
       element_common(e, c.child_text("translation"), c.child_text("dimension"));
       if (e.kind == "label") e.text = c.text;
       out.elements.push_back(std::move(e));
+      nested_xml_connections(c, out.connections, notes);
     }
   }
   return out;

@@ -668,7 +668,17 @@ orientation = "v"
 
 [[connection]]
 start = "X"
+end = "Cocktail"
+orientation = "v"
+
+[[connection]]
+start = "X"
 end = "CocktailPipette"
+orientation = "v"
+
+[[connection]]
+start = "Z"
+end = "Air"
 orientation = "v"
 
 [[connection]]
