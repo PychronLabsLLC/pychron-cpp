@@ -421,6 +421,11 @@ class TestCanvasView : public QObject {
     ui::StageItem small("x", "x", {40, 20}, Qt::white);
     small.set_symbol(canvas::StageSymbol::Laser);
     QVERIFY(small.symbol_rect(label).isEmpty());  // no room: the name alone
+    ui::StageItem getter("NP-10C", "NP-10C", {58, 31}, Qt::white);
+    getter.set_symbol(canvas::StageSymbol::Getter);
+    // a name too wide to leave room beside it: the smallest glyph, the name
+    // shrunk into the rest
+    QCOMPARE(getter.symbol_rect(QSizeF(45, 16)), QRectF(-25, -11.5, 14, 23));
 
     // painted: dark strokes above the name that the plain box lacks
     auto dark_pixels = [&](ui::StageItem& item) {

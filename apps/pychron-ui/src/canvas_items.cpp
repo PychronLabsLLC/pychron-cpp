@@ -398,9 +398,26 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   if (glyph.width() >= inner.width()) {  // above the name
     painter->drawText(QRectF(inner.left(), glyph.bottom(), inner.width(), inner.bottom() - glyph.bottom()),
                       Qt::AlignCenter, label_);
-  } else {  // beside it
+  } else {  // beside it, the font shrunk if the name is wider than the room left
     const double left = glyph.right() + kSymbolGap;
-    painter->drawText(QRectF(left, inner.top(), inner.right() - left, inner.height()), Qt::AlignCenter, label_);
+    const QRectF room(left, inner.top(), inner.right() - left, inner.height());
+    painter->save();
+    QFont font = painter->font();
+    // Font sizes round, so step down until the name fits; elided past that.
+    for (double shrink = room.width() / label.width(); shrink < 1 && shrink > 0.3; shrink *= 0.95) {
+      if (painter->font().pointSizeF() > 0) {
+        font.setPointSizeF(painter->font().pointSizeF() * shrink);
+      } else {
+        font.setPixelSize(std::max(1, int(painter->font().pixelSize() * shrink)));
+      }
+      if (QFontMetricsF(font).horizontalAdvance(label_) <= room.width()) {
+        break;
+      }
+    }
+    painter->setFont(font);
+    painter->drawText(room, Qt::AlignCenter,
+                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, int(std::ceil(room.width()))));
+    painter->restore();
   }
   paint_symbol(*painter, symbol_, glyph, region_);
 }
@@ -420,8 +437,10 @@ QRectF StageItem::symbol_rect(QSizeF label) const {
   if (inner.height() - label.height() >= kSymbolMin) {
     return {inner.left(), inner.top(), inner.width(), inner.height() - label.height()};
   }
-  const double beside = inner.width() - label.width() - kSymbolGap;
-  if (inner.height() >= kSymbolMin && beside >= kSymbolMin) {
+  // Beside the name, in the width it leaves; a name too wide for that gives
+  // way to the smallest glyph and is shrunk to fit what is left.
+  const double beside = std::max(kSymbolMin, inner.width() - label.width() - kSymbolGap);
+  if (inner.height() >= kSymbolMin && inner.width() - kSymbolMin - kSymbolGap >= kSymbolMin) {
     return {inner.left(), inner.top(), std::min(inner.height(), beside), inner.height()};
   }
   return {};

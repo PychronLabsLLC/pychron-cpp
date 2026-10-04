@@ -122,8 +122,10 @@ class StageItem : public QGraphicsItem {
   StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent = nullptr);
 
   // A glyph drawn with the name, saying what the volume is: above the name
-  // when the box is tall enough, beside it when it is wide enough, else left
-  // out. The box itself, and so every pipe joining it, is unchanged.
+  // when the box is tall enough, else beside it, at its smallest with the
+  // name shrunk to the width left, and left out only when the box is too
+  // small for even that. The box itself, and so every pipe joining it, is
+  // unchanged.
   canvas::StageSymbol symbol() const noexcept { return symbol_; }
   void set_symbol(canvas::StageSymbol symbol);
   // Where paint() puts the glyph for a label this size; empty when it does not fit.
