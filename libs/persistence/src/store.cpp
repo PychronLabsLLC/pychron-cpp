@@ -9,6 +9,7 @@
 
 #include "migrate.hpp"
 #include "pychron/core/calendar.hpp"
+#include "sql/errors.hpp"
 #include "sql/statements.hpp"
 #include "store_impl.hpp"
 
@@ -29,9 +30,9 @@ std::string make_runid(const std::string& identifier, int aliquot, int increment
 
 namespace detail {
 
-// The start of the error for a fill a constraint keeps out of a row that
+// Error::code of a fill an integrity constraint keeps out of a row that
 // exists; is_refused_catalog_fill() recognises the error by it.
-constexpr std::string_view kFillRefused = "catalog fill refused: ";
+constexpr std::string_view kCodeRefusedFill = "refused_catalog_fill";
 
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject) {
   auto rows = db.select(sql::kSelectHeads, {qv(subject)});
@@ -671,8 +672,9 @@ class TinyStore final : public IStore {
   // as one UPDATE, audited as an update with its field diff (D6). A stored
   // value is never replaced and a key column never written. Nothing to fill:
   // no write, no change_log entry.
-  // An UPDATE a constraint refuses writes nothing and fails with the error
-  // is_refused_catalog_fill() names.
+  // An UPDATE an integrity constraint refuses writes nothing and fails with
+  // the error is_refused_catalog_fill() names; one that fails otherwise fails
+  // with the driver's error.
   Result<Uuid> fill_catalog_row(WriteTx& tx, Uuid client, const char* table, const NaturalKey& key, Uuid uuid,
                                 const Row& row) {
     const QString name = QString::fromUtf8(table);
@@ -701,13 +703,18 @@ class TinyStore final : public IStore {
                                      .arg(name, sets.join(QStringLiteral(", ")), guards.join(QString())),
                                  bindings);
     if (!filled) {
-      // A constraint keeps the values out. The row exists and is as it was;
-      // the error says so (is_refused_catalog_fill), whatever the driver's words.
-      if (filled.error().kind != ErrorKind::Protocol) return fail(filled.error());
-      return fail(ErrorKind::Protocol, std::string(kFillRefused) + table + ": " + filled.error().what,
-                  filled.error().device);
+      // An integrity constraint (by the driver's code: sql/errors.hpp) keeps
+      // the values out. The row exists and is as it was; the error's code says
+      // so (is_refused_catalog_fill). Any other failure is returned as it is.
+      if (filled.error().code != kCodeConstraint) return fail(filled.error());
+      Error refused = filled.error();
+      refused.what = std::string(table) + ": " + refused.what;
+      refused.code = std::string(kCodeRefusedFill);
+      return fail(std::move(refused));
     }
-    if (*filled != 1) return fail(ErrorKind::Protocol, std::string(table) + " " + uuid.str() + " changed under a fill");
+    // Nothing updated: another writer filled a column first. The value is
+    // there and the existing one wins, which is the rule; nothing to record.
+    if (*filled != 1) return uuid;
     return finish_catalog(tx, client,
                           {ChangeEntityRow{name, uuid, QStringLiteral("update"),
                                            QJsonDocument(diff).toJson(QJsonDocument::Compact).toStdString()}},
@@ -765,7 +772,7 @@ Result<void> check_sqlite(Db& db, bool file_backed) {
 }  // namespace detail
 
 bool is_refused_catalog_fill(const Error& error) noexcept {
-  return error.kind == ErrorKind::Protocol && std::string_view{error.what}.starts_with(detail::kFillRefused);
+  return error.code == detail::kCodeRefusedFill;
 }
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config) {

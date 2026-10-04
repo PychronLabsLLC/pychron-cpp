@@ -760,9 +760,17 @@ points. Where this section and an earlier one disagree, this section wins.
     position another identifier holds, a `special` identifier given a
     position, a spectrometer given a code another has. Bad data never stops
     an import. The store reports such a fill with an error of its own
-    (`persistence::is_refused_catalog_fill`; a constraint violation on the
-    update of a row that exists, never a lost connection or a busy
-    database) and writes nothing. The writer, not the store, turns it into
+    (`persistence::is_refused_catalog_fill`) and writes nothing. It is that
+    error only when the update of the existing row fails with an
+    integrity-constraint violation by the database's own code: SQLSTATE
+    class 23 on PostgreSQL, primary result code 19 (`SQLITE_CONSTRAINT`,
+    with its extended codes) on SQLite. The classification travels as
+    `Error::code`, not in the message. An update that fails for any other
+    reason (permission denied, an undefined column, a PostgreSQL trigger
+    that raises, SQL that does not run, a lost connection, a busy database)
+    is an ordinary error and stops the run. An update that changes no row,
+    because another writer filled the column first, is not an error: the
+    existing value wins and the row's uuid is returned. The writer, not the store, turns it into
     an `identity_clash` conflict marked `imported: true` (a warning: the row
     is in the store, only the extra values are not) at path
     `catalog-fill/<table>/<natural key>`, with the table, the natural key

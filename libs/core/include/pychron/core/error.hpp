@@ -13,6 +13,10 @@ struct Error {
   ErrorKind kind = ErrorKind::Io;
   std::string what;
   std::string device;
+  // A stable word a producer may add so that a caller can tell this failure
+  // from others of its kind without reading `what`; it survives a caller that
+  // rewrites `what`. Empty for most errors. Each library documents its codes.
+  std::string code = {};
 
   friend bool operator==(const Error&, const Error&) = default;
 };

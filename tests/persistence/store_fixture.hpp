@@ -201,6 +201,25 @@ inline IngestItem analysis_item(const Lab& lab, int aliquot, const Bytes& signal
                     std::move(a)};
 }
 
+// Makes every UPDATE of `table` fail with an error that is no constraint
+// violation, on either engine: a trigger that writes to a table that does
+// not exist (SQLite: SQLITE_ERROR; PostgreSQL: 42P01).
+inline Result<void> break_updates_of(detail::Db& db, const char* table) {
+  const QString name = QString::fromUtf8(table);
+  if (db.dialect() == Dialect::Sqlite)
+    return db.unprepared(QStringLiteral("CREATE TRIGGER pychron_test_break BEFORE UPDATE ON %1 BEGIN "
+                                        "INSERT INTO pychron_test_nowhere VALUES (1); END")
+                             .arg(name));
+  if (auto r = db.unprepared(QStringLiteral(
+          "CREATE FUNCTION pychron_test_break() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+          "INSERT INTO pychron_test_nowhere VALUES (1); RETURN NEW; END $$"));
+      !r)
+    return r;
+  return db.unprepared(QStringLiteral("CREATE TRIGGER pychron_test_break BEFORE UPDATE ON %1 FOR EACH ROW "
+                                      "EXECUTE FUNCTION pychron_test_break()")
+                           .arg(name));
+}
+
 class StoreTest : public ::testing::TestWithParam<std::string> {
  protected:
   void SetUp() override {

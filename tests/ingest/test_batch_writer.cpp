@@ -1959,6 +1959,26 @@ TEST_P(BatchWriterTest, FillThatCannotBeAppliedIsAConflictAndTheBatchGoesOn) {
   EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
+// Only a constraint makes a refused fill. A fill that fails for another
+// reason (here: a trigger that cannot run) stops the run, with no conflict.
+TEST_P(BatchWriterTest, FillThatFailsForAnotherReasonStopsTheRun) {
+  ImportBatch b;
+  b.catalog.push_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
+  b.resume_token = "t1";
+  FakeAdapter bare(description(), {b});
+  ASSERT_TRUE(run_all(*world_, bare));
+  auto broken = P::testing::break_updates_of(*world_->db, "mass_spectrometer");
+  ASSERT_TRUE(broken) << err(broken.error());
+
+  b.catalog.push_back(MassSpecItem{{"obama", "argus", "o", std::nullopt}});
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter, replay_config());
+  ASSERT_FALSE(stats);
+  EXPECT_FALSE(P::is_refused_catalog_fill(stats.error()));
+  EXPECT_EQ(world_->count("import_conflict"), 0);
+  EXPECT_EQ(world_->source().status, "failed");
+}
+
 // A new row the store refuses is still an error: only a fill is passed over.
 TEST_P(BatchWriterTest, InsertThatFailsStillStopsTheRun) {
   PositionItem first, second;

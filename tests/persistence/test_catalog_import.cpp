@@ -11,6 +11,7 @@
 
 #include <memory>
 
+#include "sql/errors.hpp"
 #include "store_fixture.hpp"
 
 using namespace pychron;
@@ -712,9 +713,58 @@ TEST_P(CatalogImportTest, FillsAConstraintKeepsOutAreRefusedFills) {
   EXPECT_TRUE(s.row("identifier", blank).value("position_uuid").isNull());
   EXPECT_GT(made, before);
 
-  // An error that is not a fill is not one.
+  // The error is known by its code, not its words: context a caller adds
+  // does not hide it, and the words alone do not make it one.
+  Error with_context = same_code.error();
+  with_context.what = "while importing: " + with_context.what;
+  EXPECT_TRUE(is_refused_catalog_fill(with_context));
+  EXPECT_FALSE(is_refused_catalog_fill(Error{ErrorKind::Protocol, same_code.error().what, "persistence"}));
   EXPECT_FALSE(is_refused_catalog_fill(Error{ErrorKind::Protocol, "unknown identifier 'x'", ""}));
-  EXPECT_FALSE(is_refused_catalog_fill(Error{ErrorKind::Io, "catalog fill refused: disk", ""}));
+}
+
+// Only an integrity constraint refuses a fill. An UPDATE that fails for any
+// other reason (no permission, a column that is gone, a trigger that raises,
+// SQL that does not run) is an error like any other.
+TEST_P(CatalogImportTest, FillThatFailsForAnotherReasonIsNotARefusedFill) {
+  Shared s(GetParam());
+  ASSERT_TRUE(s.store && s.db);
+  const Uuid c = s.client();
+  const Uuid bare = *s.store->add_mass_spectrometer(c, {"argus-3", std::nullopt, std::nullopt, std::nullopt});
+  const ChangeSeq before = *s.store->latest_change_seq();
+  auto broken = break_updates_of(*s.db, "mass_spectrometer");
+  ASSERT_TRUE(broken) << broken.error().what;
+  auto filled = s.store->add_mass_spectrometer(c, {"argus-3", "argus", "a3", std::nullopt});
+  ASSERT_FALSE(filled);
+  EXPECT_FALSE(is_refused_catalog_fill(filled.error())) << filled.error().what;
+  EXPECT_EQ(*s.store->latest_change_seq(), before);
+  EXPECT_TRUE(s.row("mass_spectrometer", bare).value("kind").isNull());
+}
+
+// The driver's code decides: SQLSTATE class 23, and SQLite's SQLITE_CONSTRAINT
+// (19) with its extended codes.
+TEST(SqlErrors, OnlyAnIntegrityConstraintViolationIsOne) {
+  using pd::is_constraint_violation;
+  for (const char* code : {"19", "2067", "1555", "787", "275", "1299", "1811", "3091"}) {
+    EXPECT_TRUE(is_constraint_violation(Dialect::Sqlite, code)) << code;
+  }
+  for (const char* code : {"", "1", "20", "5", "6", "8", "x19", "19x", "23505"}) {
+    EXPECT_FALSE(is_constraint_violation(Dialect::Sqlite, code)) << code;
+  }
+  for (const char* code : {"23505", "23514", "23503", "23502", "23P01", "23000"}) {
+    EXPECT_TRUE(is_constraint_violation(Dialect::PostgreSql, code)) << code;
+  }
+  for (const char* code : {"", "42501", "42703", "42P01", "P0001", "22P02", "40001", "0A000", "19", "2350", "235050"}) {
+    EXPECT_FALSE(is_constraint_violation(Dialect::PostgreSql, code)) << code;
+  }
+  // The error carries it; its kind is as before.
+  const Error unique = pd::sql_error(Dialect::PostgreSql, "23505", false, "duplicate key");
+  EXPECT_EQ(unique.kind, ErrorKind::Protocol);
+  EXPECT_EQ(unique.code, pd::kCodeConstraint);
+  const Error denied = pd::sql_error(Dialect::PostgreSql, "42501", false, "permission denied");
+  EXPECT_EQ(denied.kind, ErrorKind::Protocol);
+  EXPECT_TRUE(denied.code.empty());
+  EXPECT_EQ(pd::sql_error(Dialect::Sqlite, "2067", false, "UNIQUE constraint failed").code, pd::kCodeConstraint);
+  EXPECT_TRUE(pd::sql_error(Dialect::Sqlite, "1", false, "no such table").code.empty());
 }
 
 TEST_P(CatalogImportTest, UserLoadAndMassSpectrometerAreFilled) {

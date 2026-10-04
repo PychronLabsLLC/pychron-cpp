@@ -34,12 +34,21 @@ ErrorKind classify_sqlite(const std::string& code) {
 
 }  // namespace
 
+bool is_constraint_violation(Dialect dialect, const std::string& native_code) {
+  if (dialect == Dialect::PostgreSql) return native_code.size() == 5 && native_code.compare(0, 2, "23") == 0;
+  char* end = nullptr;
+  const long value = std::strtol(native_code.c_str(), &end, 10);
+  return !native_code.empty() && *end == '\0' && (value & 0xff) == 19;  // SQLITE_CONSTRAINT
+}
+
 Error sql_error(Dialect dialect, const std::string& native_code, bool connection_error, const std::string& what) {
   ErrorKind kind = dialect == Dialect::PostgreSql ? classify_sqlstate(native_code) : classify_sqlite(native_code);
   if (connection_error && kind == ErrorKind::Io) kind = ErrorKind::NotConnected;
   std::string message = what;
   if (!native_code.empty()) message = "[" + native_code + "] " + message;
-  return Error{kind, std::move(message), "persistence"};
+  Error error{kind, std::move(message), "persistence"};
+  if (is_constraint_violation(dialect, native_code)) error.code = std::string(kCodeConstraint);
+  return error;
 }
 
 }  // namespace pychron::persistence::detail

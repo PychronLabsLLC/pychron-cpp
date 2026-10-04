@@ -715,11 +715,17 @@ Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);
 bool is_unknown_catalog_reference(const Error& error) noexcept;
 
 // True for the error an add_* catalog call returns when the row it names
-// exists and a constraint keeps out the values the call would fill it with
-// (a position another identifier holds, a position for a special identifier,
-// a spectrometer code another spectrometer has). Nothing was written and the
-// row is as it was. A new row that is refused, and any failure that is not a
-// constraint (a lost connection, a busy database), is not this error.
+// exists and an integrity constraint keeps out the values the call would
+// fill it with (a position another identifier holds, a position for a special
+// identifier, a spectrometer code another spectrometer has). It is the
+// database's own code that decides: SQLSTATE class 23 on PostgreSQL, the
+// primary result code SQLITE_CONSTRAINT (19, with its extended codes, which
+// include a trigger's RAISE) on SQLite. Nothing was written and the row is as
+// it was. The error is known by Error::code, not by its words, so it stays
+// this error when a caller adds context to `what`. Not this error: a new row
+// that is refused, and an update that fails for any other reason (no
+// permission, a missing column, a PostgreSQL trigger that raises, bad SQL, a
+// lost connection, a busy database).
 bool is_refused_catalog_fill(const Error& error) noexcept;
 
 // identifier + "-" + two-digit aliquot + step letters (A..Z, AA, ...), as
