@@ -10,6 +10,7 @@ add_executable(pychron_core_tests
   test_scheduler.cpp
   test_clock_pump.cpp
   test_process.cpp
+  test_path_text.cpp
   test_sha256.cpp
   test_sha1.cpp
   test_calendar.cpp

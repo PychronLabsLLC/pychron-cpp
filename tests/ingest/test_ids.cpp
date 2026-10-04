@@ -21,10 +21,27 @@ TEST(IngestIds, NormalizeUrl) {
 
 TEST(IngestIds, NormalizeLocalPath) {
   const auto cwd = std::filesystem::current_path();
-  // A local path is made absolute; its case and a ".git" suffix are kept.
+  // A local path is made absolute; its case is kept.
   EXPECT_EQ(normalize_source_url("Repos/Foo/"), (cwd / "Repos" / "Foo").string());
-  EXPECT_EQ(normalize_source_url((cwd / "Repos" / "Foo.git").string()), (cwd / "Repos" / "Foo.git").string());
   EXPECT_EQ(normalize_source_url("Repos/./Foo"), normalize_source_url("Repos/Foo/"));
+  // A trailing ".git" goes, as from a url: a bare repository has one name,
+  // and so one set of ids, however it is written (fix wave F3).
+  EXPECT_EQ(normalize_source_url((cwd / "Repos" / "Foo.git").string()), (cwd / "Repos" / "Foo").string());
+  EXPECT_EQ(normalize_source_url("Repos/Foo.git/"), normalize_source_url("Repos/Foo"));
+  EXPECT_EQ(source_id(ImportSourceKind::ProjectRepo, normalize_source_url("Repos/Foo.git"), "main"),
+            source_id(ImportSourceKind::ProjectRepo, normalize_source_url("Repos/Foo/"), "main"));
+  // Only as a suffix of the last component.
+  EXPECT_EQ(normalize_source_url("Repos/Foo.git.d"), (cwd / "Repos" / "Foo.git.d").string());
+  EXPECT_EQ(normalize_source_url("Repos.git/Foo"), (cwd / "Repos.git" / "Foo").string());
+}
+
+// The text of a local path is UTF-8 in and out, whatever the platform's own
+// narrow encoding is: the ids of a source do not depend on the machine.
+TEST(IngestIds, LocalPathIsUtf8) {
+  const std::string name = "d\xC3\xA9p\xC3\xB4t \xC3\x9Cn\xC3\xAF" "code";
+  const auto cwd = std::filesystem::current_path();
+  const std::u8string joined = (cwd / std::filesystem::path(std::u8string(name.begin(), name.end())) / "IR1010").u8string();
+  EXPECT_EQ(normalize_source_url(name + "/IR1010.git"), std::string(joined.begin(), joined.end()));
 }
 
 TEST(IngestIds, IdsAreStableAndDistinct) {

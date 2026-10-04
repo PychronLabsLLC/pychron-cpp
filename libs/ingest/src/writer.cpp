@@ -8,6 +8,7 @@
 
 #include "catalog.hpp"
 #include "late_revision.hpp"
+#include "membership.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "rewrites.hpp"
 
@@ -168,6 +169,7 @@ class BatchWriter::Impl final : public IImportState {
     if (info.progress_token && info.progress_token->empty()) info.progress_token.reset();
 
     source_ = info.spec.uuid;
+    finished_once_ = info.finished.has_value();
     token_ = info.progress_token;
     done_ = info.done;
     total_ = info.total;
@@ -224,8 +226,7 @@ class BatchWriter::Impl final : public IImportState {
     if (!rows) return fail(rows.error());
     // A source that only made the analysis a member marks its row (stage_membership).
     for (const auto& row : *rows)
-      if (row.entity_type == "analysis" &&
-          !(row.detail_json && row.detail_json->find("\"membership_only\"") != std::string::npos)) {
+      if (row.entity_type == "analysis" && !detail::is_membership_only(row)) {
         origin.record_blob_sha = row.git_blob_sha;
         origin.in_this_source = row.source == *source_;
       }
@@ -251,9 +252,11 @@ class BatchWriter::Impl final : public IImportState {
     catching_up_ = config_.replay && token_.has_value();
     counted_pending_.clear();
     // Spec 10.34: a source with nothing stored before the run has nothing to
-    // be written behind, and is not asked about.
+    // be written behind, and is not asked about. One that has something
+    // stored but never finished (a first import that was stopped) is asked,
+    // except about heads it did not make: see StoredChains::begin_run.
     placing_ = !config_.dry_run && (token_.has_value() || done_ > 0);
-    if (placing_) chains_.begin_run(store_, adapter, *source_, url_);
+    if (placing_) chains_.begin_run(store_, adapter, *source_, url_, !finished_once_);
     std::optional<P::ImportProgress> walked;  // of the last batch written while catching up
     // A replay plans from the start, so plan() never sees the stored token:
     // a history rewritten under the import must still stop the run.
@@ -756,7 +759,7 @@ class BatchWriter::Impl final : public IImportState {
     auto who = author(item.who);
     if (!who) return fail(who.error());
     staged.provenance.push_back(
-        provenance("analysis", item.analysis, item.key, item.who, json_object({{"membership_only", "true"}})));
+        provenance("analysis", item.analysis, item.key, item.who, detail::membership_only_detail()));
     return join_repositories(item.analysis, item.key, false, who->user, item.repositories, memberships);
   }
 
@@ -1075,6 +1078,7 @@ class BatchWriter::Impl final : public IImportState {
   std::optional<std::string> token_;
   int done_ = 0, total_ = 0;
   std::optional<std::string> head_;
+  bool finished_once_ = false;  // a run of this source has reached the end of its stream before
 
   std::map<std::string, Author> authors_;  // by git email
   std::set<Uuid> present_;                 // analyses known to be in the store

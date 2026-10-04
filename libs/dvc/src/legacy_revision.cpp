@@ -281,7 +281,7 @@ Result<void> take_series(Json& doc, std::string_view list, std::string_view seri
 
 }  // namespace
 
-Result<ParsedData> parse_data(std::string_view json) {
+Result<ParsedData> parse_data(std::string_view json) try {
   auto parsed = parse_legacy(json);
   if (!parsed) return fail(parsed.error());
   Json doc = std::move(*parsed);
@@ -303,9 +303,11 @@ Result<ParsedData> parse_data(std::string_view json) {
   for (auto it = doc.begin(); it != doc.end(); ++it) extra[it.key()] = it.value();
   out.extra_json = extra_text(extra);
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
-Result<ParsedRevision> parse_revision(FileKind kind, std::string_view json) {
+Result<ParsedRevision> parse_revision(FileKind kind, std::string_view json) try {
   switch (kind) {
     case FileKind::Intercepts:
     case FileKind::Baselines:
@@ -340,6 +342,8 @@ Result<ParsedRevision> parse_revision(FileKind kind, std::string_view json) {
       return ParsedRevision{ps::CosmogenicValue{dump(doc)}, extra_text(extra)};
     }
   }
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 }  // namespace pychron::dvc

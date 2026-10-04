@@ -201,6 +201,9 @@ ProjectRepoAdapter::~ProjectRepoAdapter() = default;
 Result<std::unique_ptr<ProjectRepoAdapter>> ProjectRepoAdapter::open(ProjectAdapterConfig config) {
   if (config.repository_name.empty()) return fail(ErrorKind::Config, "project adapter: no repository name");
   if (config.url.empty()) return fail(ErrorKind::Config, "project adapter: no source url");
+  if (config.collection_wait_commits < 1)
+    return fail(ErrorKind::Config, "project adapter: collection_wait_commits must be at least 1 (got " +
+                                       std::to_string(config.collection_wait_commits) + ")");
   auto reader = GitReader::open(config.git);
   if (!reader) return fail(reader.error());
   return std::unique_ptr<ProjectRepoAdapter>(
@@ -210,20 +213,26 @@ Result<std::unique_ptr<ProjectRepoAdapter>> ProjectRepoAdapter::open(ProjectAdap
 Result<ingest::SourceDescription> ProjectRepoAdapter::describe() { return impl_->describe(); }
 
 Result<int> ProjectRepoAdapter::plan(std::optional<std::string> resume_token, ingest::IImportState& state) {
-  return impl_->plan(std::move(resume_token), state);
+  return detail::contained("project adapter", [&] { return impl_->plan(std::move(resume_token), state); });
 }
 
-Result<void> ProjectRepoAdapter::check_token(const std::string& resume_token) { return impl_->check_token(resume_token); }
+Result<void> ProjectRepoAdapter::check_token(const std::string& resume_token) {
+  return detail::contained("project adapter", [&] { return impl_->check_token(resume_token); });
+}
 
-Result<std::optional<ingest::ImportBatch>> ProjectRepoAdapter::next_batch() { return impl_->next_batch(); }
+Result<std::optional<ingest::ImportBatch>> ProjectRepoAdapter::next_batch() {
+  return detail::contained("project adapter", [&] { return impl_->next_batch(); });
+}
 
 Result<void> ProjectRepoAdapter::for_each_unit(ingest::IImportState& state,
                                                const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
-  return impl_->for_each_unit(state, visit);
+  return detail::contained("project adapter", [&] { return impl_->for_each_unit(state, visit); });
 }
 
 Result<std::optional<std::int64_t>> ProjectRepoAdapter::order_of(std::string_view commit) {
-  return impl_->order_of(commit);
+  return detail::contained("project adapter", [&]() -> Result<std::optional<std::int64_t>> {
+    return impl_->order_of(commit);
+  });
 }
 
 }  // namespace pychron::dvc

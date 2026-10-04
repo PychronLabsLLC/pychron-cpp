@@ -257,7 +257,7 @@ Result<void> merge_monitor(Json doc, const std::vector<NonFinite>& nonfinite, ps
 
 }  // namespace
 
-Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx) {
+Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -371,10 +371,12 @@ Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx
 
   if (auto kept = keep_leftover(a, "record", doc, nonfinite); !kept) return fail(kept.error());
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 Result<void> merge_satellite(FileKind kind, std::string_view json, persistence::AnalysisIngest& into,
-                             std::vector<persistence::BlobIngest>& blobs_out) {
+                             std::vector<persistence::BlobIngest>& blobs_out) try {
   if (kind != FileKind::Extraction && kind != FileKind::PeakCenter && kind != FileKind::Monitor)
     return fail(ErrorKind::Config, "not a satellite file kind");
   std::vector<NonFinite> nonfinite;
@@ -383,9 +385,11 @@ Result<void> merge_satellite(FileKind kind, std::string_view json, persistence::
   if (kind == FileKind::Extraction) return merge_extraction(std::move(*parsed), nonfinite, into);
   if (kind == FileKind::PeakCenter) return merge_peak_center(std::move(*parsed), nonfinite, into, blobs_out);
   return merge_monitor(std::move(*parsed), nonfinite, into, blobs_out);
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
-Result<persistence::SpectrometerSnapshot> parse_spectrometer(std::string_view json, std::string_view legacy_sha1) {
+Result<persistence::SpectrometerSnapshot> parse_spectrometer(std::string_view json, std::string_view legacy_sha1) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -407,6 +411,8 @@ Result<persistence::SpectrometerSnapshot> parse_spectrometer(std::string_view js
   if (!doc.empty()) settings["legacy_extra"] = std::move(doc);
   snapshot.settings_json = dump(settings);
   return snapshot;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 }  // namespace pychron::dvc

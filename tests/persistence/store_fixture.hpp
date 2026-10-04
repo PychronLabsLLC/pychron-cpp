@@ -7,12 +7,16 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <random>
 #include <string>
 #include <vector>
+
+#include <QCoreApplication>
 
 #include "pychron/core/env.hpp"
 #include "pychron/persistence/store.hpp"
@@ -36,8 +40,7 @@ class TestDatabase {
  public:
   // file_backed: SQLite in a temp file (several connections can share it).
   TestDatabase(const std::string& engine, bool file_backed) {
-    static std::atomic<int> counter{0};
-    const std::string tag = std::to_string(std::random_device{}() % 1000000) + "_" + std::to_string(counter.fetch_add(1));
+    const std::string tag = unique_tag();
     if (engine == "pg") {
       schema_ = "pychron_t_" + tag;
       const std::string base = pg_url();
@@ -47,7 +50,7 @@ class TestDatabase {
       (void)admin_->unprepared(detail::qs("CREATE SCHEMA " + schema_));
     } else if (file_backed) {
       path_ = std::filesystem::temp_directory_path() / ("pychron_store_" + tag + ".sqlite");
-      std::filesystem::remove(path_);
+      remove_sqlite_files(path_);  // a file a killed test left under the same name
       url_ = "sqlite:" + path_.string();
     } else {
       url_ = "sqlite::memory:";
@@ -56,9 +59,31 @@ class TestDatabase {
 
   ~TestDatabase() {
     if (admin_) (void)admin_->unprepared(detail::qs("DROP SCHEMA IF EXISTS " + schema_ + " CASCADE"));
-    if (!path_.empty()) {
-      std::error_code ec;
-      for (const char* suffix : {"", "-wal", "-shm"}) std::filesystem::remove(path_.string() + suffix, ec);
+    if (!path_.empty()) remove_sqlite_files(path_);
+  }
+
+  // "<pid>_<64 random bits, hex>_<n>": a name no other database of this
+  // process, and of no other test process running beside it, has. ctest runs
+  // one process per test, so the counter alone is always 0, and a short
+  // random number is shared sooner or later by two of the binaries that run
+  // in parallel.
+  static std::string unique_tag() {
+    static std::atomic<int> counter{0};
+    std::random_device device;
+    const std::uint64_t random = (static_cast<std::uint64_t>(device()) << 32) | static_cast<std::uint64_t>(device());
+    static const char kHex[] = "0123456789abcdef";
+    std::string hex(16, '0');
+    for (int i = 0; i < 16; ++i) hex[static_cast<std::size_t>(i)] = kHex[(random >> (60 - 4 * i)) & 0xf];
+    return std::to_string(QCoreApplication::applicationPid()) + "_" + hex + "_" + std::to_string(counter.fetch_add(1));
+  }
+
+  // A SQLite database file and the write-ahead log and shared-memory files
+  // SQLite keeps beside it: left behind, they would be replayed into the next
+  // database of that name.
+  static void remove_sqlite_files(const std::filesystem::path& database) {
+    for (const char* suffix : {"", "-wal", "-shm"}) {
+      std::error_code ignored;
+      std::filesystem::remove(database.string() + suffix, ignored);
     }
   }
 

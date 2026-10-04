@@ -21,4 +21,6 @@ if(TARGET pychron_persistence)
   target_link_libraries(pychron_elctl_tests PRIVATE nlohmann_json::nlohmann_json Qt6::Core Qt6::Sql)
 endif()
 pychron_set_warnings(pychron_elctl_tests)
-gtest_discover_tests(pychron_elctl_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+# The import tests build git repositories and stores; under sanitizers on a
+# loaded CI machine one can take minutes.
+gtest_discover_tests(pychron_elctl_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 300)

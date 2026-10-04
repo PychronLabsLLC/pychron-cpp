@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <new>
 
 #include "legacy_json.hpp"
 #include "project_import.hpp"
@@ -388,11 +389,15 @@ Result<void> Mapper::map(const std::vector<Work>& work, int first, ImportBatch& 
     if (!folded && std::find(unresolved.begin(), unresolved.end(), track) == unresolved.end())
       unresolved.push_back(track);
   }
-  // A spectrometer file must be told from one that comes too late for an
-  // analysis an earlier run folded: the records of those say which they name.
-  const bool settings_arrive = std::any_of(work.begin(), work.end(), [](const Work& item) {
+  // A spectrometer file that appears for the first time must be told from
+  // one that comes too late for an analysis an earlier run folded: the
+  // records of those say which they name. A later version of a file the walk
+  // already had is too late for nobody (change() says so only where the file
+  // first appears), and reads no record.
+  const bool settings_arrive = std::any_of(work.begin(), work.end(), [&](const Work& item) {
     const auto* file = std::get_if<Change>(&item);
-    return file && file->info.kind == FileKind::Spectrometer;
+    return file && file->info.kind == FileKind::Spectrometer &&
+           walk_.spectrometer_first(file->info.key) == file->ref.index;
   });
   if (settings_arrive)
     for (Track* track : walk_.flushed()) {
@@ -426,7 +431,21 @@ Result<void> Mapper::map(const std::vector<Work>& work, int first, ImportBatch& 
     if (const auto* fold = std::get_if<Collect>(&item)) {
       if (auto r = collect(*fold, reading, out); !r) return r;
     } else if (const auto* file = std::get_if<Change>(&item)) {
-      if (auto r = change(*file, out); !r) return r;
+      // The parsers return what they cannot read as an error. What the
+      // mapping itself does with a file's content (comparing versions,
+      // building the detail) can still meet something the JSON library
+      // throws on, or cannot hold: that is the file's fault too.
+      try {
+        if (auto r = change(*file, out); !r) return r;
+      } catch (const Json::exception& e) {
+        judge(file->ref, false);
+        out.conflict(file->ref, ConflictKind::Unparseable, std::nullopt, std::nullopt,
+                     reason(unexpected_content(e).what));
+      } catch (const std::bad_alloc& e) {
+        judge(file->ref, false);
+        out.conflict(file->ref, ConflictKind::Unparseable, std::nullopt, std::nullopt,
+                     reason(unexpected_content(e).what));
+      }
     } else {
       // A deletion of a file of no analysis, or of an analysis this source
       // imports. (The files of one it does not import have conflicts that say

@@ -14,6 +14,7 @@
 
 #include "cli.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/path_text.hpp"
 #include "pychron/ingest/adapter.hpp"
 #include "pychron/ingest/verify.hpp"
 #include "pychron/ingest/writer.hpp"
@@ -80,11 +81,9 @@ struct SourceSettings {
 };
 
 // A path as UTF-8 text, for messages and for the settings file (TOML is
-// UTF-8; fs::path::string() is the ANSI code page on Windows and can throw).
-// Never throws; "?" when the path cannot be converted.
-std::string utf8(const fs::path& path) noexcept;
-// The path UTF-8 text names; empty when the text is not UTF-8.
-fs::path path_from_utf8(std::string_view text) noexcept;
+// UTF-8), and back: pychron/core/path_text.hpp.
+using pychron::path_from_utf8;
+using pychron::utf8;
 
 fs::path settings_file(const fs::path& cache, P::Uuid uuid);
 Result<void> save_settings(const fs::path& cache, const SourceSettings& settings);
@@ -128,6 +127,10 @@ struct Source {
   P::ImportSourceInfo info;
   std::optional<SourceSettings> settings;
   std::string name;  // settings->name, else the last component of the url
+  // Why the settings file in the cache could not be read; empty: it was
+  // read, or is not there. Such a source is listed like one without
+  // settings, so that one damaged file does not stop commands on the others.
+  std::string settings_error = {};
 };
 
 // Every registered source in the order `run --all` imports them: the catalog,
@@ -178,8 +181,11 @@ int import_run(Context& ctx, const Flags& flags);
 int import_verify(Context& ctx, const Flags& flags);
 
 // "no settings for <name> …": what to do about a registered source whose
-// settings file is not in the cache.
+// settings file is not in the cache, or cannot be read.
 std::string missing_settings(const Context& ctx, const Source& source);
+// Says, on stderr, that `source` cannot be used and why ("elctl import:
+// <name>: …"). The command goes on to the next source and exits 2 at its end.
+void report_unusable(Io io, const std::string& message);
 
 // The age of an analysis as of an interpreted age of the project repository
 // `source` (spec 10.30 and 10.32), for ingest::verify: analysis revisions by

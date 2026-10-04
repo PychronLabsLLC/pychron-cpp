@@ -38,7 +38,9 @@ struct WriterConfig {
 // is not stored is written only when it comes after what is: no revision of
 // its subject and kind that this source stored is from a commit later in the
 // adapter's walk order, and the head of that subject and kind is this
-// source's. Otherwise the head stays and the revision is kept in a pending
+// source's (a head made elsewhere keeps nothing back until the source has
+// finished a run once: an interrupted first import stores what an
+// uninterrupted one does). Otherwise the head stays and the revision is kept in a pending
 // identity_clash conflict with reason `late_revision_not_applied` and its
 // content in the detail (spec 10.31, 10.34, 10.35). It is marked
 // "late": true, a warning, unless what it is behind is a stored revision from

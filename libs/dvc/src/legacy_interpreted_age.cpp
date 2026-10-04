@@ -54,7 +54,7 @@ std::string identifier_of_path_key(std::string_view key) {
 
 }  // namespace
 
-Result<ParsedInterpretedAge> parse_interpreted_age(std::string_view json, std::string_view path_key) {
+Result<ParsedInterpretedAge> parse_interpreted_age(std::string_view json, std::string_view path_key) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -124,10 +124,12 @@ Result<ParsedInterpretedAge> parse_interpreted_age(std::string_view json, std::s
     out.notes.push_back(std::move(note));
   }
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 Result<ParsedProduction> parse_frozen_production(std::string_view json, std::string_view irradiation,
-                                                 std::string_view level) {
+                                                 std::string_view level) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -165,6 +167,8 @@ Result<ParsedProduction> parse_frozen_production(std::string_view json, std::str
   }
   out.extra_json = extra_text(doc);
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 }  // namespace pychron::dvc

@@ -59,26 +59,14 @@ int kind_rank(P::ImportSourceKind kind) {
 
 }  // namespace
 
-std::string utf8(const fs::path& path) noexcept {
-  try {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
-  } catch (...) {
-    return "?";
-  }
-}
-
-fs::path path_from_utf8(std::string_view text) noexcept {
-  try {
-    return fs::path(std::u8string(text.begin(), text.end()));
-  } catch (...) {
-    return {};
-  }
-}
-
 fs::path settings_file(const fs::path& cache, P::Uuid uuid) { return cache / (uuid.str() + ".toml"); }
 
+void report_unusable(Io io, const std::string& message) { (void)fatal(io, message); }
+
 std::string missing_settings(const Context& ctx, const Source& source) {
+  if (!source.settings_error.empty())
+    return "the settings of " + source.name + " cannot be read: " + source.settings_error +
+           "; mend the file, or remove it and run elctl import add for the source again";
   return "no settings for " + source.name + " in " + utf8(ctx.cache) + " (" + source.info.spec.uuid.str() +
          ".toml); give the --cache it was added with, or run elctl import add for it again";
 }
@@ -202,9 +190,12 @@ Result<std::vector<Source>> registered_sources(Context& ctx) {
   std::vector<Source> out;
   for (auto& info : *stored) {
     Source s;
+    // A settings file that cannot be read is that source's trouble alone.
     auto settings = load_settings(ctx.cache, info.spec.uuid);
-    if (!settings) return fail(settings.error());
-    s.settings = std::move(*settings);
+    if (settings)
+      s.settings = std::move(*settings);
+    else
+      s.settings_error = one_line(settings.error().what);
     s.name = s.settings && !s.settings->name.empty() ? s.settings->name : last_segment(info.spec.url_or_path);
     s.info = std::move(info);
     out.push_back(std::move(s));

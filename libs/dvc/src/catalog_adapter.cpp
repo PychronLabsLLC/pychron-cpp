@@ -19,6 +19,7 @@
 
 #include "legacy_json.hpp"
 #include "pychron/core/calendar.hpp"
+#include "pychron/core/path_text.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/ingest/tz.hpp"
@@ -234,9 +235,9 @@ struct Manifest {
 
 Result<std::string> read_file(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
-  if (!in) return fail(ErrorKind::Io, "cannot read " + path.string());
+  if (!in) return fail(ErrorKind::Io, "cannot read " + utf8(path));
   std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  if (in.bad()) return fail(ErrorKind::Io, "cannot read " + path.string());
+  if (in.bad()) return fail(ErrorKind::Io, "cannot read " + utf8(path));
   return text;
 }
 
@@ -244,13 +245,13 @@ Result<Manifest> read_manifest(const std::filesystem::path& dir) {
   const auto path = dir / kManifestFile;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec))
-    return fail(ErrorKind::Io, dir.string() + ": no " + kManifestFile +
+    return fail(ErrorKind::Io, utf8(dir) + ": no " + kManifestFile +
                                    " (not the output of tools/legacy_dump_to_jsonl.py, or a conversion that did "
                                    "not finish)");
   auto text = read_file(path);
   if (!text) return fail(text.error());
   auto parsed = parse_legacy(*text);
-  const auto bad = [&](const std::string& why) { return fail(ErrorKind::Protocol, path.string() + ": " + why); };
+  const auto bad = [&](const std::string& why) { return fail(ErrorKind::Protocol, utf8(path) + ": " + why); };
   if (!parsed) return bad(parsed.error().what);
   const Json& j = *parsed;
   if (!j.is_object()) return bad("not a JSON object");
@@ -292,7 +293,7 @@ template <class Fn>
 Result<void> each_row(const std::filesystem::path& dir, const ManifestTable& table, Fn&& row) {
   const auto path = dir / table.file;
   std::ifstream in(path, std::ios::binary);
-  if (!in) return fail(ErrorKind::Io, "cannot read " + path.string() + " (" + kManifestFile + " lists it)");
+  if (!in) return fail(ErrorKind::Io, "cannot read " + utf8(path) + " (" + kManifestFile + " lists it)");
   std::string line;
   std::size_t number = 0;
   std::int64_t rows = 0;
@@ -303,9 +304,9 @@ Result<void> each_row(const std::filesystem::path& dir, const ManifestTable& tab
     ++rows;
     if (auto r = row(number, line); !r) return r;
   }
-  if (in.bad()) return fail(ErrorKind::Io, "cannot read " + path.string());
+  if (in.bad()) return fail(ErrorKind::Io, "cannot read " + utf8(path));
   if (rows != table.rows)
-    return fail(ErrorKind::Protocol, path.string() + " has " + std::to_string(rows) + " rows and " + kManifestFile +
+    return fail(ErrorKind::Protocol, utf8(path) + " has " + std::to_string(rows) + " rows and " + kManifestFile +
                                          " counts " + std::to_string(table.rows) +
                                          ": the directory is not one whole conversion");
   return {};
@@ -980,7 +981,7 @@ Result<std::unique_ptr<CatalogAdapter>> CatalogAdapter::open(CatalogAdapterConfi
       return fail(ErrorKind::Config, "catalog dump: unknown time zone '" + config.lab_time_zone + "'");
     std::error_code ec;
     if (!std::filesystem::is_directory(config.dir, ec))
-      return fail(ErrorKind::Io, "catalog dump: " + config.dir.string() + " is not a directory");
+      return fail(ErrorKind::Io, "catalog dump: " + utf8(config.dir) + " is not a directory");
     auto manifest = read_manifest(config.dir);
     if (!manifest) return fail(manifest.error());
 
@@ -990,7 +991,7 @@ Result<std::unique_ptr<CatalogAdapter>> CatalogAdapter::open(CatalogAdapterConfi
     auto impl = std::make_unique<Impl>();
     auto absolute = std::filesystem::absolute(config.dir, ec);
     if (ec) absolute = config.dir;
-    impl->url = absolute.lexically_normal().string();
+    impl->url = utf8(absolute.lexically_normal());
     while (impl->url.size() > 1 && (impl->url.back() == '/' || impl->url.back() == '\\')) impl->url.pop_back();
     impl->sha256 = manifest->sha256;
     if (!manifest->dump_completed)
@@ -1078,7 +1079,7 @@ Result<std::function<std::optional<std::string>(const persistence::Uuid&)>> load
     if (!std::filesystem::exists(dir / kManifestFile, ec)) {
       for (const char* file : {"AnalysisTbl.jsonl", "AnalysisChangeTbl.jsonl"})
         if (std::filesystem::exists(dir / file, ec))
-          return fail(ErrorKind::Io, "catalog dump: " + dir.string() + " has " + file + " but no " + kManifestFile +
+          return fail(ErrorKind::Io, "catalog dump: " + utf8(dir) + " has " + file + " but no " + kManifestFile +
                                          " (a conversion that did not finish)");
       return none;
     }

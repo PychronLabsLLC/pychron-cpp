@@ -137,7 +137,9 @@ int import_run(Context& ctx, const Flags& flags) {
   }
 
   const InterruptGuard guard;
-  bool blocking = false, paused = false;
+  // `unusable`: a source could not be opened. It is said, the others are
+  // imported, and the command exits 2.
+  bool blocking = false, paused = false, unusable = false;
   for (std::size_t i = 0; i < chosen->size(); ++i) {
     const Source& source = (*chosen)[i];
     // Stopped between two sources: the next one waits where it was.
@@ -146,17 +148,28 @@ int import_run(Context& ctx, const Flags& flags) {
       paused = true;
       break;
     }
-    if (!source.settings) return fatal(ctx.io, missing_settings(ctx, source));
+    if (!source.settings) {
+      report_unusable(ctx.io, missing_settings(ctx, source));
+      unusable = true;
+      continue;
+    }
     const SourceSettings& settings = *source.settings;
     // A dry run reads the mirror as it is: fetching would write to the cache.
     if (dry_run && settings.mirror) {
       std::error_code code;
-      if (!fs::is_directory(settings.path, code))
-        return fatal(ctx.io, source.name + ": the mirror of " + settings.url + " is not in the cache (" +
-                                 utf8(settings.path) + "), and a dry run fetches nothing; run the import first");
+      if (!fs::is_directory(settings.path, code)) {
+        report_unusable(ctx.io, source.name + ": the mirror of " + settings.url + " is not in the cache (" +
+                                    utf8(settings.path) + "), and a dry run fetches nothing; run the import first");
+        unusable = true;
+        continue;
+      }
     }
     auto opened = open_adapter(ctx, settings, *all, batch, !dry_run);
-    if (!opened) return fatal(ctx.io, opened.error());
+    if (!opened) {
+      report_unusable(ctx.io, source.name + ": " + one_line(opened.error().what));
+      unusable = true;
+      continue;
+    }
     for (const auto& line : opened->warnings) ctx.io.err << "warning: " << line << '\n';
 
     ingest::WriterConfig config = writer_config(settings);
@@ -212,6 +225,7 @@ int import_run(Context& ctx, const Flags& flags) {
                  << source.name << '\n';
     blocking = blocking || pending->blocking_total > 0;
   }
+  if (unusable) return kUsage;
   // A paused run is not a verdict on what it has imported so far.
   return blocking && !paused ? kFailed : kOk;
 }

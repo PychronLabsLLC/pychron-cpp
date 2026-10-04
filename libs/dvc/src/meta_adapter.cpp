@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <new>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -150,8 +151,18 @@ class Mapper {
     if (auto r = reader_.fetch_blobs(blobs); !r) return r;
 
     Output out{batch, commits, first, {}, {}, {}};
-    for (const auto& seen : work)
-      if (auto r = file(seen, out); !r) return r;
+    for (const auto& seen : work) {
+      // The parsers return what they cannot read as an error. Anything else
+      // the JSON library throws on in a file, or a file too large to hold,
+      // is that file's fault as well: a conflict, and the walk goes on.
+      try {
+        if (auto r = file(seen, out); !r) return r;
+      } catch (const Json::exception& e) {
+        refuse(seen, unexpected_content(e), out);
+      } catch (const std::bad_alloc& e) {
+        refuse(seen, unexpected_content(e), out);
+      }
+    }
     for (auto& [index, changeset] : out.changesets) {
       if (const auto gone = out.removed.find(index); gone != out.removed.end())
         changeset.detail_json = dump(Json{{"removed", gone->second}});
@@ -323,6 +334,16 @@ class Mapper {
     object(std::move(item), out);
     revision(seen, "", type, key, std::move(parsed->first), marked(std::move(parsed->second), origin, false), out);
     return {};
+  }
+
+  // A file whose content made the mapping throw: the conflict of
+  // unreadable(), without the bytes at hand.
+  void refuse(const Seen& seen, const Error& error, Output& out) {
+    out.batch.conflicts.push_back({{seen.commit, seen.path, seen.blob_sha},
+                                   std::nullopt,
+                                   ps::ConflictKind::Unparseable,
+                                   std::nullopt,
+                                   dump(Json{{"reason", error.what}})});
   }
 
   // A reference file that cannot be read: a conflict, and the walk goes on.
@@ -792,20 +813,26 @@ Result<std::unique_ptr<MetaRepoAdapter>> MetaRepoAdapter::open(MetaAdapterConfig
 Result<ingest::SourceDescription> MetaRepoAdapter::describe() { return impl_->describe(); }
 
 Result<int> MetaRepoAdapter::plan(std::optional<std::string> resume_token, ingest::IImportState&) {
-  return impl_->plan(resume_token);
+  return detail::contained("meta adapter", [&] { return impl_->plan(resume_token); });
 }
 
-Result<void> MetaRepoAdapter::check_token(const std::string& resume_token) { return impl_->check_token(resume_token); }
+Result<void> MetaRepoAdapter::check_token(const std::string& resume_token) {
+  return detail::contained("meta adapter", [&] { return impl_->check_token(resume_token); });
+}
 
-Result<std::optional<ingest::ImportBatch>> MetaRepoAdapter::next_batch() { return impl_->next_batch(); }
+Result<std::optional<ingest::ImportBatch>> MetaRepoAdapter::next_batch() {
+  return detail::contained("meta adapter", [&] { return impl_->next_batch(); });
+}
 
 Result<void> MetaRepoAdapter::for_each_unit(ingest::IImportState&,
                                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
-  return impl_->for_each_unit(visit);
+  return detail::contained("meta adapter", [&] { return impl_->for_each_unit(visit); });
 }
 
 Result<std::optional<std::int64_t>> MetaRepoAdapter::order_of(std::string_view commit) {
-  return impl_->order_of(commit);
+  return detail::contained("meta adapter", [&]() -> Result<std::optional<std::int64_t>> {
+    return impl_->order_of(commit);
+  });
 }
 
 }  // namespace pychron::dvc

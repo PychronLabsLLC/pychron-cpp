@@ -749,6 +749,48 @@ TEST_F(ImportCmd, ASourceWithoutItsSettingsFileIsNotRun) {
   EXPECT_EQ(import({"run"}).code, elctl::kOk);
 }
 
+// Fix wave F11. One source that cannot be opened (its repository is gone, its
+// settings file is damaged) does not stop the others: `run --all` and
+// `verify` say so, go on, and exit 2 at the end; `status` and `conflicts`
+// need no settings at all.
+TEST_F(ImportCmd, OneSourceThatCannotOpenDoesNotStopTheOthers) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const fs::path gone = named_copy(repo_, work_ / "sources" / "A_gone");
+  const fs::path good = named_copy(repo_, work_ / "sources" / "B_good");
+  const fs::path damaged = named_copy(repo_, work_ / "sources" / "C_damaged");
+  ASSERT_EQ(add_project(gone.string()).code, elctl::kOk);
+  ASSERT_EQ(add_project(good.string()).code, elctl::kOk);
+  const Outcome added = add_project(damaged.string());
+  ASSERT_EQ(added.code, elctl::kOk);
+  fs::remove_all(gone);
+  std::ofstream(cache_ / (lines(added.out).at(0) + ".toml"), std::ios::binary) << "kind = [not toml\n";
+
+  const Outcome status = import({"status"});
+  EXPECT_EQ(status.code, elctl::kOk) << status.err;
+  EXPECT_EQ(lines(status.out).size(), 3u) << status.out;
+  EXPECT_EQ(import({"conflicts"}).code, elctl::kOk);
+  EXPECT_EQ(import({"conflicts", "--source", "C_damaged"}).code, elctl::kOk);
+
+  const Outcome ran = import({"run", "--all"});
+  EXPECT_EQ(ran.code, elctl::kUsage) << ran.out << ran.err;
+  EXPECT_TRUE(contains(ran.out, "B_good: finished ")) << ran.out;
+  EXPECT_EQ(grep(ran.err, "elctl import: A_gone: ").size(), 1u) << ran.err;
+  EXPECT_EQ(grep(ran.err, "elctl import: the settings of C_damaged cannot be read: ").size(), 1u) << ran.err;
+  EXPECT_FALSE(contains(ran.out, "A_gone: finished")) << ran.out;
+  EXPECT_TRUE(contains(import({"status"}).out, " B_good finished ")) << import({"status"}).out;
+
+  // The one that can be opened, on its own: nothing is wrong.
+  EXPECT_EQ(import({"run", "--source", "B_good"}).code, elctl::kOk);
+  const Outcome one = import({"verify", "--source", "B_good"});
+  EXPECT_EQ(one.code, elctl::kOk) << one.out << one.err;
+
+  const Outcome verified = import({"verify"});
+  EXPECT_EQ(verified.code, elctl::kUsage) << verified.out << verified.err;
+  EXPECT_EQ(grep(verified.out, "  ok").size(), 1u) << verified.out;
+  EXPECT_EQ(grep(verified.err, "elctl import: A_gone: ").size(), 1u) << verified.err;
+  EXPECT_EQ(grep(verified.err, "elctl import: the settings of C_damaged cannot be read: ").size(), 1u) << verified.err;
+}
+
 // A dump registered after a project repository was imported: said at once.
 TEST_F(ImportCmd, AddOfADumpWarnsAboutProjectsAlreadyImported) {
   legacy_.collect(kRunE, kE.str(), kCollected);

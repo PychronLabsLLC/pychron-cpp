@@ -1,5 +1,6 @@
 #include "pychron/core/sha1.hpp"
 
+#include <cstddef>
 #include <cstring>
 #include <string>
 
@@ -57,7 +58,7 @@ std::array<std::uint8_t, 20> sha1(std::string_view bytes) {
   if (n > 0) std::memcpy(tail, p, n);
   tail[n] = 0x80;
   const std::size_t tail_len = n < 56 ? 64 : 128;
-  for (int i = 0; i < 8; ++i) tail[tail_len - 1 - i] = static_cast<std::uint8_t>(bits >> (8 * i));
+  for (std::size_t i = 0; i < 8; ++i) tail[tail_len - 1 - i] = static_cast<std::uint8_t>(bits >> (8 * i));
   for (std::size_t o = 0; o < tail_len; o += 64) compress(h, tail + o);
 
   std::array<std::uint8_t, 20> out{};

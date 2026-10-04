@@ -171,7 +171,8 @@ struct Ledger {
 class Walk {
  public:
   // `wait`: an analysis still pending this many commits after its record's
-  // commit is folded with what it has (less than 1: never).
+  // commit is folded with what it has. The adapter gives at least 1; less
+  // (the default, for a walk that is only replaced) folds nothing early.
   explicit Walk(int wait = 0) : wait_(wait) {}
 
   // Notes every change apply() is given in `ledger` (null: stop). The ledger
@@ -349,7 +350,6 @@ class UnitAccount {
   // The last unit of a path that was handed on, and what it settled as.
   struct Last {
     std::string commit;
-    bool settled = false;
     ingest::UnitDisposition disposition = ingest::UnitDisposition::Unclassified;
     std::vector<ingest::Evidence> evidence;
   };

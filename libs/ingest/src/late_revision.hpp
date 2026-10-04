@@ -47,8 +47,13 @@ struct Late {
 // does not show what a batch has staged.
 class StoredChains {
  public:
-  // `url`: the source's, normalized. All four outlive the run.
-  void begin_run(persistence::IStore& store, ISourceAdapter& adapter, persistence::Uuid source, std::string url);
+  // `url`: the source's, normalized. All four outlive the run. `first_import`:
+  // the source has never finished a run. A head it did not make then keeps
+  // nothing back, as in a first import that is not interrupted, which asks
+  // about no head at all: stopping a first import and resuming it must not
+  // change what it stores (spec 10.16).
+  void begin_run(persistence::IStore& store, ISourceAdapter& adapter, persistence::Uuid source, std::string url,
+                 bool first_import);
 
   // The run sent this revision as a root of an analysis of this source: it is
   // this source's, from `commit`, whether or not its provenance is stored yet.
@@ -83,6 +88,7 @@ class StoredChains {
   ISourceAdapter* adapter_ = nullptr;
   persistence::Uuid source_ = {};
   std::string url_;
+  bool first_import_ = false;
   std::map<std::pair<persistence::Uuid, persistence::Kind>, Chain> chains_;
   std::map<persistence::Uuid, Ours> roots_;  // see sent_root()
 };

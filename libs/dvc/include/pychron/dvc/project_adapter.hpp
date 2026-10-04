@@ -50,8 +50,8 @@ struct ProjectAdapterConfig {
   int batch_commits = 500;
   // An analysis whose collection is still incomplete this many commits after
   // the commit of its record is folded with the files it has; files that
-  // arrive later are ordinary revisions. Less than 1: it waits for the end of
-  // the walk.
+  // arrive later are ordinary revisions. At least 1: open() refuses less (an
+  // unbounded wait would hold an incomplete analysis for the whole walk).
   int collection_wait_commits = kDefaultCollectionWaitCommits;
   // No catalog dump: each record also yields the catalog rows its fields
   // imply, and one identity_clash conflict {"synthesized": true} per

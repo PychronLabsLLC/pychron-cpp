@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <initializer_list>
 
+#include "pychron/core/path_text.hpp"
+
 namespace pychron::ingest {
 
 using persistence::Uuid;
@@ -68,10 +70,13 @@ std::string normalize_source_url(std::string_view url) {
     return out;
   }
 
+  // A local path: UTF-8 text in and out, so that the ids of a source are
+  // the same whatever the machine's own narrow encoding is. A trailing ".git"
+  // goes as it does from a url: a bare repository has one name.
   std::error_code ec;
-  const auto absolute = std::filesystem::absolute(std::filesystem::path(out), ec);
-  if (!ec) out = absolute.lexically_normal().string();
-  strip_trailing_slashes(out);
+  const auto absolute = std::filesystem::absolute(path_from_utf8(out), ec);
+  if (!ec) out = utf8(absolute.lexically_normal());
+  strip_git_suffix(out);
   return out;
 }
 

@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "pychron/core/path_text.hpp"
 #include "pychron/core/sha256.hpp"
 
 namespace pychron::dvc::detail {
@@ -84,7 +85,7 @@ Result<ResumePoint> resume_point(const std::vector<std::string>& order, const st
   } else if (std::find(order.begin(), order.end(), parsed->sha) == order.end()) {
     // Every commit of the branch is in the list: the token's is not an
     // ancestor of the head any more, or was never in this repository.
-    return fail(ErrorKind::Protocol, "git repository " + git.repo.string() + ": resume token commit " + parsed->sha +
+    return fail(ErrorKind::Protocol, "git repository " + utf8(git.repo) + ": resume token commit " + parsed->sha +
                                          " is not in the history of " + git.branch + " (" + reader.head() +
                                          "); history was rewritten");
   }

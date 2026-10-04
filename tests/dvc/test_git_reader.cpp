@@ -987,6 +987,48 @@ TEST(GitReader, MirrorNamesAreStableAndDistinct) {
   EXPECT_FALSE(GitReader::mirror("", cache).has_value());
 }
 
+// Fix wave F3: a repository in a directory whose name is not ASCII is read
+// like any other, and named in errors by its UTF-8 text.
+TEST(GitReader, ReadsARepositoryInANonAsciiDirectory) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  const std::string name = "d\xC3\xA9p\xC3\xB4t \xC3\x9Cn\xC3\xAF" "code/r\xC3\xA9po.git";
+  const std::filesystem::path bare = repo.clone_bare(name);
+  ASSERT_TRUE(std::filesystem::is_directory(bare));
+
+  GitConfig config = config_for(repo);
+  config.repo = bare;
+  config.scratch = repo.temp("scr\xC3\xA4tch");
+  auto reader = GitReader::open(config);
+  ASSERT_OK(reader);
+  EXPECT_EQ(reader->head(), c1);
+  EXPECT_EQ(*reader->rev_list(std::nullopt), (std::vector<std::string>{c1}));
+  const auto changes = reader->changes(std::vector<std::string>{c1});
+  ASSERT_OK(changes);
+  ASSERT_EQ(changes->size(), 1u);
+  const std::vector<std::string> blobs{(*changes)[0].blob_sha};
+  ASSERT_OK(reader->fetch_blobs(blobs));
+  EXPECT_EQ(*reader->blob(blobs[0]), "1");
+
+  // A branch that is not there: the error names the directory as UTF-8 text.
+  config.branch = "absent";
+  const auto missing = GitReader::open(config);
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_NE(missing.error().what.find(name), std::string::npos) << missing.error().what;
+
+  // And a mirror kept under such a cache directory.
+  const auto mirrored = GitReader::mirror(repo.url(), repo.temp("c\xC3\xA2" "che"));
+  ASSERT_OK(mirrored);
+  config.repo = *mirrored;
+  config.branch = "main";
+  auto from_mirror = GitReader::open(config);
+  ASSERT_OK(from_mirror);
+  EXPECT_EQ(from_mirror->head(), c1);
+}
+
 // Fix wave D1. The clone and fetch of a mirror reach a remote, and need what
 // the user configured for that: a credential helper, a url rewrite, a proxy.
 // They read the user's git configuration; reading the mirror does not.

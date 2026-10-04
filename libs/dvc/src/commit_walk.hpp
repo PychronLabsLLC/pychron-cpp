@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <optional>
 #include <span>
@@ -64,5 +65,19 @@ Result<std::size_t> walk_commits(
     const GitReader& reader, const std::vector<std::string>& order, std::size_t begin, std::size_t end,
     std::vector<GitCommit>& commits,
     const std::function<bool(std::size_t index, std::span<const GitChange> changes)>& apply);
+
+// The exception boundary of an adapter: what its walk throws (the standard
+// library, the JSON library, a callback of the caller's) comes back as an
+// error naming the adapter, as every other failure does. A fault of one
+// file's content never gets here: the parsers return it as an error, which
+// is recorded as a conflict of that file.
+template <class Fn>
+auto contained(std::string_view adapter, Fn&& fn) -> decltype(fn()) {
+  try {
+    return fn();
+  } catch (const std::exception& e) {
+    return fail(ErrorKind::Io, std::string(adapter) + ": " + e.what());
+  }
+}
 
 }  // namespace pychron::dvc::detail

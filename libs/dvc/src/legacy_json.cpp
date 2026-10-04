@@ -207,6 +207,10 @@ Json nonfinite_under(const std::vector<NonFinite>& nonfinite, std::string_view p
 
 std::string pointer_of(std::string_view key) { return (Json::json_pointer() / std::string(key)).to_string(); }
 
+Error unexpected_content(const std::exception& e) {
+  return Error{ErrorKind::Protocol, std::string("unexpected content: ") + e.what(), {}};
+}
+
 std::optional<std::string> extra_text(const Json& object) {
   if (object.is_null() || (object.is_object() && object.empty())) return std::nullopt;
   return dump(object);

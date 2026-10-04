@@ -86,6 +86,27 @@ class ImportStoreTest : public ::testing::TestWithParam<std::string> {
     return row && *row ? (*row)->value("n").toLongLong() : -1;
   }
 
+  // The head of (subject, kind). A failed read or a missing head fails the
+  // test and gives a nil uuid, instead of dereferencing an empty Result.
+  Uuid head_of(Uuid subject, Kind kind) {
+    auto head = store_->head(subject, kind);
+    if (!head || !*head) {
+      ADD_FAILURE() << "no head of " << to_string(kind) << (head ? "" : ": " + to_string(head.error()));
+      return Uuid{};
+    }
+    return **head;
+  }
+
+  // The stored conflict; likewise checked.
+  ImportConflictRow conflict_row(Uuid conflict) {
+    auto row = store_->import_conflict(conflict);
+    if (!row || !*row) {
+      ADD_FAILURE() << "no conflict " << conflict.str() << (row ? "" : ": " + to_string(row.error()));
+      return ImportConflictRow{};
+    }
+    return **row;
+  }
+
   // Declared first so it is destroyed last: the connections point at it.
   std::unique_ptr<TestDatabase> database_;
   std::unique_ptr<IStore> store_;
@@ -98,7 +119,7 @@ class ImportStoreTest : public ::testing::TestWithParam<std::string> {
 }  // namespace
 
 TEST_P(ImportStoreTest, ImportedChangesetKeepsCallerIdsAndTime) {
-  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid previous = head_of(analysis_, Kind::Intercepts);
   const Uuid u = Uuid::v7(), r = Uuid::v7();
   auto uow = batch();
   ASSERT_TRUE(uow);
@@ -159,7 +180,7 @@ TEST_P(ImportStoreTest, RerunIsNoOp) {
 }
 
 TEST_P(ImportStoreTest, RevisionsOfOneSubjectChainInOrder) {
-  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid previous = head_of(analysis_, Kind::Intercepts);
   const Uuid r1 = Uuid::v7(), r2 = Uuid::v7(), r3 = Uuid::v7();
   auto uow = batch();
   // The second changeset is older than the first: order given wins.
@@ -172,6 +193,10 @@ TEST_P(ImportStoreTest, RevisionsOfOneSubjectChainInOrder) {
   EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r3});
   auto parent_of = [&](Uuid revision) {
     auto row = db_->select_one("SELECT parent_uuid FROM revision WHERE uuid = ?", {pd::qv(revision)});
+    if (!row || !*row) {
+      ADD_FAILURE() << "no revision " << revision.str();
+      return std::optional<Uuid>{};
+    }
     return pd::opt_uuid((**row).value("parent_uuid"));
   };
   EXPECT_EQ(parent_of(r1), std::optional<Uuid>{previous});
@@ -204,11 +229,12 @@ TEST_P(ImportStoreTest, ExistingChangesetStillTakesItsMissingRevisions) {
   EXPECT_EQ(*store_->head(analysis_, Kind::Intercepts), std::optional<Uuid>{r1});
   EXPECT_EQ(store_->history(analysis_, Kind::Intercepts)->size(), 2u);
   auto n = db_->select_one("SELECT count(*) AS n FROM changeset WHERE uuid = ?", {pd::qv(u)});
+  ASSERT_TRUE(n && *n);
   EXPECT_EQ((**n).value("n").toLongLong(), 1);
 }
 
 TEST_P(ImportStoreTest, ProvenanceAndConflictRoundTrip) {
-  const Uuid previous = **store_->head(analysis_, Kind::Intercepts);
+  const Uuid previous = head_of(analysis_, Kind::Intercepts);
   const Uuid u = Uuid::v7(), r = Uuid::v7();
   const auto digest = sha256(std::string_view{"file text"});
   auto write = [&] {
@@ -305,11 +331,11 @@ TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
   auto resolve = batch();
   ASSERT_TRUE(resolve->resolve_conflict(id, "superseded"));
   ASSERT_TRUE(resolve->resolve_conflict(Uuid::v7(), "superseded"));
-  EXPECT_EQ((*store_->import_conflict(id))->resolution, "pending") << "staged, not written";
+  EXPECT_EQ(conflict_row(id).resolution, "pending") << "staged, not written";
   ASSERT_TRUE(resolve->commit());
   EXPECT_EQ(*store_->latest_change_seq(), seq) << "a resolution alone is not a change";
-  EXPECT_EQ((*store_->import_conflict(id))->resolution, "superseded");
-  EXPECT_EQ((*store_->import_conflict(other))->resolution, "pending");
+  EXPECT_EQ(conflict_row(id).resolution, "superseded");
+  EXPECT_EQ(conflict_row(other).resolution, "pending");
 
   ConflictFilter pending;
   pending.source = source_.uuid;
@@ -329,7 +355,7 @@ TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
   ASSERT_TRUE(both->add_conflict(row));
   ASSERT_TRUE(both->resolve_conflict(fresh, "superseded"));
   ASSERT_TRUE(both->commit());
-  EXPECT_EQ((*store_->import_conflict(fresh))->resolution, "superseded");
+  EXPECT_EQ(conflict_row(fresh).resolution, "superseded");
 }
 
 // A conflict that leaves `pending` carries the time it did; resolving it again
@@ -420,7 +446,7 @@ TEST_P(ImportStoreTest, ConflictCanBeRestated) {
     row.resolution = "pending";
     ASSERT_TRUE(uow->restate_conflict(row));
   }
-  EXPECT_EQ((*store_->import_conflict(id))->kind, ConflictKind::UnknownAnalysis) << "staged, not written";
+  EXPECT_EQ(conflict_row(id).kind, ConflictKind::UnknownAnalysis) << "staged, not written";
   ASSERT_TRUE(uow->commit());
   EXPECT_EQ(*store_->latest_change_seq(), seq) << "a restated conflict is not a change";
   EXPECT_EQ(count("import_conflict"), 2);
@@ -449,7 +475,7 @@ TEST_P(ImportStoreTest, ConflictCanBeRestated) {
   row.kind = ConflictKind::IdentityClash;
   ASSERT_TRUE(both->restate_conflict(row));
   ASSERT_TRUE(both->commit());
-  EXPECT_EQ((*store_->import_conflict(fresh))->kind, ConflictKind::IdentityClash);
+  EXPECT_EQ(conflict_row(fresh).kind, ConflictKind::IdentityClash);
 }
 
 TEST_P(ImportStoreTest, ProgressIsStoredWithTheBatch) {
@@ -650,6 +676,7 @@ TEST_P(ImportStoreTest, IngestStampsImportSource) {
   EXPECT_EQ(pd::to_uuid((*row)->value("import_source_uuid")), source_.uuid);
   EXPECT_EQ(pd::to_uuid((*row)->value("author_user_uuid")), lab_.reducer);
   auto analyst = db_->select_one("SELECT analyst_user_uuid FROM analysis WHERE uuid = ?", {pd::qv(a.analysis)});
+  ASSERT_TRUE(analyst && *analyst);
   EXPECT_EQ(pd::to_uuid((**analyst).value("analyst_user_uuid")), lab_.analyst);
 
   // An ordinary ingest stamps neither.

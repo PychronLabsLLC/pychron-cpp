@@ -198,7 +198,7 @@ TEST(Process, StdoutFileKeepsWhatWasWrittenOnTimeout) {
   auto spec = shell("echo partial; sleep 30; true");
 #endif
   spec.stdout_file = out;
-  spec.timeout = 500ms;
+  spec.timeout = 2s;  // long enough for a loaded machine to start the shell and write the line
   auto r = run_process(spec);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);

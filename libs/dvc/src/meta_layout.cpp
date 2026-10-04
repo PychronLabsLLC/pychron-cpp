@@ -174,7 +174,7 @@ MetaPath classify_meta_path(std::string_view repo_path) {
 
 // ---------------------------------------------------------------- level file
 
-Result<ParsedLevel> parse_level(std::string_view json) {
+Result<ParsedLevel> parse_level(std::string_view json) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -207,6 +207,8 @@ Result<ParsedLevel> parse_level(std::string_view json) {
     ++index;
   }
   return level;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 ParsedFlux flux_value(const std::vector<MetaEntry>& entries) {
@@ -250,7 +252,7 @@ ParsedLevelZ level_z_value(const ParsedLevel& level) {
 
 // ---------------------------------------------------------------- productions.json
 
-Result<ParsedLevelProductions> parse_level_productions(std::string_view json) {
+Result<ParsedLevelProductions> parse_level_productions(std::string_view json) try {
   auto parsed = parse_legacy(json);
   if (!parsed) return fail(parsed.error());
   if (!parsed->is_object()) return fail(ErrorKind::Protocol, "productions.json is not a JSON object");
@@ -265,11 +267,13 @@ Result<ParsedLevelProductions> parse_level_productions(std::string_view json) {
       out.extra[it.key()] = *it;
   }
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 // ---------------------------------------------------------------- chronology
 
-Result<ParsedChronology> parse_chronology(std::string_view text, std::string_view lab_time_zone) {
+Result<ParsedChronology> parse_chronology(std::string_view text, std::string_view lab_time_zone) try {
   if (!ingest::known_zone(lab_time_zone))
     return fail(ErrorKind::Config, "chronology: unknown time zone '" + std::string(lab_time_zone) + "'");
   ParsedChronology out;
@@ -298,11 +302,13 @@ Result<ParsedChronology> parse_chronology(std::string_view text, std::string_vie
   }
   if (any && out.value.doses.empty()) return fail(ErrorKind::Protocol, "chronology has no line \"power,start,end\"");
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 // ---------------------------------------------------------------- spectrometers
 
-Result<ParsedGains> parse_gains(std::string_view json) {
+Result<ParsedGains> parse_gains(std::string_view json) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -316,9 +322,11 @@ Result<ParsedGains> parse_gains(std::string_view json) {
   }
   if (const Json tokens = nonfinite_under(nonfinite, ""); !tokens.is_null()) out.detail["nonfinite"] = tokens;
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
-Result<std::vector<MetaEntry>> parse_sensitivities(std::string_view json) {
+Result<std::vector<MetaEntry>> parse_sensitivities(std::string_view json) try {
   std::vector<NonFinite> nonfinite;
   auto parsed = parse_legacy(json, &nonfinite);
   if (!parsed) return fail(parsed.error());
@@ -331,6 +339,8 @@ Result<std::vector<MetaEntry>> parse_sensitivities(std::string_view json) {
       return fail(ErrorKind::Protocol, "sensitivity entry " + std::to_string(i) + " has no numeric \"sensitivity\"");
   }
   return entries;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 ParsedSensitivity sensitivity_value(const MetaEntry& entry, std::string_view lab_time_zone) {
@@ -348,7 +358,7 @@ ParsedSensitivity sensitivity_value(const MetaEntry& entry, std::string_view lab
 
 // ---------------------------------------------------------------- holders
 
-Result<ParsedHolder> parse_holder(std::string_view text) {
+Result<ParsedHolder> parse_holder(std::string_view text) try {
   const auto lines = lines_of(text);
   if (lines.empty()) return fail(ErrorKind::Protocol, "holder file is empty");
   const auto header = split(lines[0], ',');
@@ -390,6 +400,8 @@ Result<ParsedHolder> parse_holder(std::string_view text) {
     out.value.holes.push_back(std::move(hole));
   }
   return out;
+} catch (const std::exception& e) {
+  return fail(unexpected_content(e));
 }
 
 }  // namespace pychron::dvc

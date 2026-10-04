@@ -3,6 +3,7 @@
 // The tolerant JSON reader behind the legacy parsers. Private to pychron_dvc:
 // nlohmann_json must not reach a public header.
 
+#include <exception>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -61,5 +62,13 @@ std::string pointer_of(std::string_view key);
 // `object` as text for an extra column: nullopt when it is null or an empty
 // object.
 std::optional<std::string> extra_text(const Json& object);
+
+// What a parser returns when the JSON library, or the allocator, throws on a
+// file. A file can hold anything: a shape no parser foresaw (a scalar where
+// an object is indexed) and a size that cannot be held are faults of the
+// file. Every parser of a legacy file ends in a handler that returns this, so
+// the adapters record an `unparseable` conflict and go on. The message says
+// "unexpected content".
+Error unexpected_content(const std::exception& e);
 
 }  // namespace pychron::dvc

@@ -275,13 +275,21 @@ int import_verify(Context& ctx, const Flags& flags) {
 
   const bool as_json = flags.has("--json");
   Json listed = Json::array();
-  bool ok = true;
+  bool ok = true, unusable = false;  // unusable: a source could not be opened; said, and the others are checked
   for (const Source& source : *chosen) {
-    if (!source.settings) return fatal(ctx.io, missing_settings(ctx, source));
+    if (!source.settings) {
+      report_unusable(ctx.io, missing_settings(ctx, source));
+      unusable = true;
+      continue;
+    }
     const SourceSettings& settings = *source.settings;
     // The mirror is read as the last run left it: verify fetches nothing.
     auto opened = open_adapter(ctx, settings, *all, std::nullopt, false);
-    if (!opened) return fatal(ctx.io, opened.error());
+    if (!opened) {
+      report_unusable(ctx.io, source.name + ": " + one_line(opened.error().what));
+      unusable = true;
+      continue;
+    }
     for (const auto& line : opened->warnings) ctx.io.err << "warning: " << line << '\n';
     ingest::AgeFn age_fn;
     if (settings.kind == P::ImportSourceKind::ProjectRepo) {
@@ -296,6 +304,7 @@ int import_verify(Context& ctx, const Flags& flags) {
       print(ctx.io.out, source, *report, constants);
   }
   if (as_json) ctx.io.out << listed.dump(2, ' ', false, Json::error_handler_t::replace) << '\n';
+  if (unusable) return kUsage;
   return ok ? kOk : kFailed;
 }
 

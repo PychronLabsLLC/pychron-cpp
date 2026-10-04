@@ -14,10 +14,12 @@ namespace pychron::ingest {
 
 inline constexpr std::string_view kImportNamespace = "6f0e4c1a-9d7b-5c2e-8a41-70796368726e";
 
-// One spelling per source, so a repository cloned two ways gets one set of
+// One spelling per source, so a repository named two ways gets one set of
 // ids. A URL ("scheme://..." or scp-like "user@host:path") loses trailing
 // "/" and ".git" and has its scheme and host lower-cased. Anything else is a
-// local path: made absolute and lexically normal, trailing "/" removed,
+// local path, read and returned as UTF-8 text on every platform: made
+// absolute and lexically normal, trailing "/" and ".git" removed (a bare
+// repository "IR1010.git" and a url that ends in it are named alike),
 // otherwise untouched.
 std::string normalize_source_url(std::string_view url);
 

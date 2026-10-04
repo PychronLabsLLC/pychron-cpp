@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <sstream>
+#include <stdexcept>
 #include <map>
 #include <memory>
 #include <optional>
@@ -229,6 +230,26 @@ std::string resolution_of_conflict(World& w, const std::string& commit, const st
   return (*row)->resolution;
 }
 
+// A state that answers like NoState and counts what it is asked.
+struct CountingState final : ingest::IImportState {
+  int origins = 0;
+  Result<std::optional<std::string>> head_blob_sha(const ingest::SubjectRef&, Kind) override {
+    return std::optional<std::string>{};
+  }
+  Result<bool> analysis_exists(Uuid) override { return false; }
+  Result<std::optional<ingest::AnalysisOrigin>> analysis_origin(Uuid, std::string_view) override {
+    ++origins;
+    return std::optional<ingest::AnalysisOrigin>{};
+  }
+  Result<std::optional<Uuid>> analysis_with_runid(const std::string&, int, int) override {
+    return std::optional<Uuid>{};
+  }
+  Result<std::optional<std::string>> identifier_at(const std::string&, const std::string&, int) override {
+    return std::optional<std::string>{};
+  }
+  Result<bool> imported(std::string_view, std::string_view) override { return false; }
+};
+
 // The store's head of one intercept equals the value in the repository's work tree.
 double tree_intercept(GitFixture& repo, const std::string& runid, const std::string& isotope) {
   std::ifstream in(repo.path() / LegacyRepoBuilder::path(runid, FileKind::Intercepts), std::ios::binary);
@@ -272,6 +293,12 @@ std::vector<std::string> snapshot_of(World& w) {
   };
   rows("analysis", QStringLiteral("SELECT uuid, runid_text, aliquot, increment FROM analysis"),
        {"uuid", "runid_text", "aliquot", "increment"});
+  // The spectrometer settings each analysis was stored with, by the name of
+  // the legacy file they came from ("" for none).
+  rows("snapshot",
+       QStringLiteral("SELECT a.uuid AS uuid, s.legacy_sha1 AS legacy_sha1 FROM analysis a "
+                      "LEFT JOIN spectrometer_snapshot s ON s.sha256 = a.spectrometer_snapshot_sha"),
+       {"uuid", "legacy_sha1"});
   rows("revision", QStringLiteral("SELECT uuid, subject_uuid, kind, parent_uuid, changeset_uuid FROM revision"),
        {"uuid", "subject_uuid", "kind", "parent_uuid", "changeset_uuid"});
   rows("head", QStringLiteral("SELECT subject_uuid, kind, revision_uuid FROM head"),
@@ -1845,6 +1872,41 @@ TEST_P(ProjectImportTest, TagLookupSuppliesTheTagOfAnAnalysisWithoutATagsFile) {
   EXPECT_FALSE(json::parse(world_->analysis_detail(kF)).contains("tag_from_db"));
 }
 
+// Fix wave F1: a file the JSON library throws on is an unparseable conflict
+// of that file, and the import goes on; an exception that no file caused
+// (here: the tag lookup the caller supplied) fails the run with an error.
+TEST_P(ProjectImportTest, ContentTheParsersThrowOnIsAConflictAndOtherExceptionsAreErrors) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  json intercepts = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  intercepts["nonfinite"] = 1;
+  std::string text = intercepts.dump(4);
+  text.insert(text.rfind('}'), ", \"zz\": NaN");
+  legacy_.write(kRunE, FileKind::Intercepts, text);
+  const std::string odd = legacy_.commit("<ISOEVO> odd", kDay2);
+  const std::string refit = legacy_.refit(kRunE, "Ar39", 3.25, kRefit);
+
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  auto conflict = store().import_conflict(ingest::conflict_id(kUrl, odd, path));
+  ASSERT_TRUE(conflict && conflict->has_value());
+  EXPECT_EQ((*conflict)->kind, ConflictKind::Unparseable);
+  EXPECT_EQ((*conflict)->file_sha256, std::optional<Sha256Digest>{sha256(std::string_view{text})});
+  EXPECT_NE((*conflict)->detail_json.find("unexpected content"), std::string::npos) << (*conflict)->detail_json;
+  EXPECT_EQ((*conflict)->resolution, "superseded");  // the refit after it is readable
+  EXPECT_EQ(*store().head(kE, Kind::Intercepts), std::optional<Uuid>{ingest::revision_id(kUrl, refit, path)});
+
+  auto other = fresh_world();
+  auto config = adapter_config(repo_);
+  config.tag_lookup = [](const Uuid&) -> std::optional<std::string> { throw std::runtime_error("lookup broke"); };
+  auto failed = run_import(*other, config);
+  ASSERT_FALSE(failed);
+  EXPECT_NE(failed.error().what.find("lookup broke"), std::string::npos) << failed.error().what;
+  EXPECT_NE(failed.error().what.find("project adapter"), std::string::npos) << failed.error().what;
+  EXPECT_EQ(other->source().status, "failed");
+}
+
 TEST_P(ProjectImportTest, FilesThatAreNotDataAreSkippedAndUnknownOnesAreConflicts) {
   repo_.write("README.md", "# IR1010\n");
   repo_.write(".gitignore", "*.pyc\n");
@@ -1911,6 +1973,17 @@ TEST_P(ProjectImportTest, OpenAndPlanErrors) {
   EXPECT_EQ(described->branch, "main");
   EXPECT_EQ(described->head, repo_.head());
   EXPECT_FALSE((*adapter)->next_batch());  // not planned
+
+  // Fix wave F4: the bounded wait is at least one commit. "Never" would let
+  // one incomplete analysis hold its files for the whole walk (spec 10.14).
+  for (const int wait : {0, -1}) {
+    auto unbounded = adapter_config(repo_);
+    unbounded.collection_wait_commits = wait;
+    auto refused = ProjectRepoAdapter::open(unbounded);
+    ASSERT_FALSE(refused) << wait;
+    EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+    EXPECT_NE(refused.error().what.find("collection_wait_commits"), std::string::npos) << refused.error().what;
+  }
 }
 
 TEST_P(ProjectImportTest, RenumberedThenReusedRunIdAtEveryCut) {
@@ -2476,6 +2549,19 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
   EXPECT_EQ(store().history(kL, Kind::Blanks)->size(), 2u);                     // the late file is a revision
   EXPECT_EQ(json::parse(world_->analysis_detail(kL)).at("synthetic_collection"), true);
   EXPECT_EQ(world_->count("bookmark"), 2);
+  // Fix wave F9: one settings file, named by every record. Each analysis has
+  // its snapshot, not only the first that used the file.
+  {
+    auto with_settings = world_->db->select(
+        QStringLiteral("SELECT a.uuid AS uuid, s.legacy_sha1 AS legacy_sha1 FROM analysis a "
+                       "LEFT JOIN spectrometer_snapshot s ON s.sha256 = a.spectrometer_snapshot_sha"));
+    ASSERT_TRUE(with_settings);
+    EXPECT_EQ(with_settings->size(), 6u);  // E, F, G, P, L and H
+    for (const auto& row : *with_settings)
+      EXPECT_EQ(pd::to_std(row.value("legacy_sha1")), std::string(LegacyRepoBuilder::kSpecSha))
+          << pd::to_std(row.value("uuid"));
+    EXPECT_EQ(world_->count("spectrometer_snapshot"), 1);
+  }
   // All three rewrites of the <SYNC> commit, though two were held until P was folded.
   const auto of_sync = store().provenance_for(ingest::changeset_id(kUrl, history.sync));
   ASSERT_TRUE(of_sync);
@@ -2740,6 +2826,53 @@ TEST_P(ProjectImportTest, LateSpectrometerFileIsAConflict) {
   ASSERT_TRUE(run_import(*resumed, adapter_config(repo_, 1)));
   const auto rows = snapshot_of(*resumed);
   EXPECT_TRUE(rows == first) << first_difference(rows, first);
+}
+
+// Fix wave F8. A settings file that arrives after analyses were folded can be
+// too late for them, and to say which, the records of the analyses earlier
+// runs folded are read again. That is needed only where a settings file first
+// appears: a later version of a file the walk already has is too late for
+// nobody.
+TEST_P(ProjectImportTest, ChangedSettingsFileDoesNotResolveEarlierAnalyses) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.collect("66052-02A", kF.str(), kDay2);
+  const std::string spectrometer = std::string(LegacyRepoBuilder::kSpecSha) + ".json";
+  const auto incremental = [&](const std::string& token) -> std::pair<int, ingest::ImportBatch> {
+    auto adapter = ProjectRepoAdapter::open(adapter_config(repo_));
+    EXPECT_TRUE(adapter);
+    CountingState state;
+    EXPECT_TRUE((*adapter)->plan(token, state));
+    auto batch = (*adapter)->next_batch();
+    EXPECT_TRUE(batch && batch->has_value());
+    return {state.origins, batch && *batch ? **batch : ingest::ImportBatch{}};
+  };
+  std::string token;
+  {
+    auto adapter = ProjectRepoAdapter::open(adapter_config(repo_));
+    ASSERT_TRUE(adapter);
+    NoState state;
+    ASSERT_TRUE((*adapter)->plan(std::nullopt, state));
+    auto batch = (*adapter)->next_batch();
+    ASSERT_TRUE(batch && batch->has_value());
+    token = (*batch)->resume_token;
+  }
+
+  // The known settings file, written again in another layout.
+  repo_.write(spectrometer, json::parse(fixture(kUnknown + spectrometer)).dump(1));
+  legacy_.commit("settings, reformatted", kRefit);
+  auto [asked, changed] = incremental(token);
+  EXPECT_EQ(asked, 0) << "a changed settings file made the adapter read the records of earlier analyses";
+  EXPECT_TRUE(changed.conflicts.empty());
+  token = changed.resume_token;
+
+  // A settings file the walk has not seen before: now they are read (the two
+  // analyses earlier runs folded), and it is too late for neither, as neither
+  // names it.
+  repo_.write(std::string(40, 'b') + ".json", fixture(kUnknown + spectrometer));
+  legacy_.commit("other settings", kLater);
+  auto [asked_again, added] = incremental(token);
+  EXPECT_EQ(asked_again, 2);
+  EXPECT_TRUE(added.conflicts.empty());
 }
 
 // Good content after a version that could not be read is a revision at its

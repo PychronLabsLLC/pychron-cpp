@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "pychron/core/path_text.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/sha256.hpp"
 
@@ -122,16 +123,16 @@ bool resize_to(std::string& text, std::uintmax_t size) noexcept {
 
 Result<std::string> read_whole(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
-  if (!in) return fail(ErrorKind::Io, "cannot read " + path.string());
+  if (!in) return fail(ErrorKind::Io, "cannot read " + utf8(path));
   std::string text;
   in.seekg(0, std::ios::end);
   const std::streamoff size = in.tellg();
   if (size > 0) {
     if (!resize_to(text, static_cast<std::uintmax_t>(size)))
-      return fail(ErrorKind::Io, "out of memory reading " + std::to_string(size) + " bytes of " + path.string());
+      return fail(ErrorKind::Io, "out of memory reading " + std::to_string(size) + " bytes of " + utf8(path));
     in.seekg(0, std::ios::beg);
     in.read(text.data(), static_cast<std::streamsize>(text.size()));
-    if (static_cast<std::size_t>(in.gcount()) != text.size()) return fail(ErrorKind::Io, "short read of " + path.string());
+    if (static_cast<std::size_t>(in.gcount()) != text.size()) return fail(ErrorKind::Io, "short read of " + utf8(path));
   }
   return text;
 }
@@ -156,12 +157,12 @@ std::vector<std::pair<std::string, std::string>> environment(const std::filesyst
           {"GIT_CONFIG_GLOBAL", kNullDevice},
           {"GIT_TERMINAL_PROMPT", "0"},
           {"LC_ALL", "C"},
-          {"GIT_DIR", git_dir.string()},
-          {"GIT_COMMON_DIR", common_dir.string()},
-          {"GIT_OBJECT_DIRECTORY", (common_dir / "objects").string()},
+          {"GIT_DIR", utf8(git_dir)},
+          {"GIT_COMMON_DIR", utf8(common_dir)},
+          {"GIT_OBJECT_DIRECTORY", utf8(common_dir / "objects")},
           {"GIT_ALTERNATE_OBJECT_DIRECTORIES", ""},
-          {"GIT_INDEX_FILE", (git_dir / "index").string()},
-          {"GIT_WORK_TREE", work_tree.string()}};
+          {"GIT_INDEX_FILE", utf8(git_dir / "index")},
+          {"GIT_WORK_TREE", utf8(work_tree)}};
 }
 
 // What the clone and the fetch of a mirror get. They talk to a remote, so
@@ -213,13 +214,13 @@ Layout layout_of(const std::filesystem::path& repo) {
     constexpr std::string_view kPrefix = "gitdir: ";
     const std::string line = first_line(dot_git);
     if (line.starts_with(kPrefix)) {
-      const std::filesystem::path target(line.substr(kPrefix.size()));
+      const std::filesystem::path target = path_from_utf8(std::string_view(line).substr(kPrefix.size()));
       layout.git_dir = target.is_absolute() ? target : root / target;
     }
   }
   layout.common_dir = layout.git_dir;
   if (const std::string line = first_line(layout.git_dir / "commondir"); !line.empty()) {
-    const std::filesystem::path target(line);
+    const std::filesystem::path target = path_from_utf8(line);
     layout.common_dir = target.is_absolute() ? target : layout.git_dir / target;
   }
   return layout;
@@ -231,7 +232,7 @@ struct Site {
   std::chrono::milliseconds timeout;
 };
 
-std::string describe(const Site& site) { return "git repository " + site.repo.string(); }
+std::string describe(const Site& site) { return "git repository " + utf8(site.repo); }
 
 ProcessSpec spec_for(const Site& site, std::vector<std::string> args, std::string input) {
   ProcessSpec spec;
@@ -385,7 +386,7 @@ GitReader::GitReader(GitConfig config, std::filesystem::path git_dir, std::files
       head_(std::move(head_sha)) {}
 
 Result<GitReader> GitReader::open(GitConfig config) {
-  const std::string where = "git repository " + config.repo.string();
+  const std::string where = "git repository " + utf8(config.repo);
   if (config.branch.empty()) return fail(ErrorKind::Config, where + ": no branch given");
 
   std::error_code code;
@@ -393,7 +394,7 @@ Result<GitReader> GitReader::open(GitConfig config) {
   if (!code) std::filesystem::create_directories(config.scratch, code);
   if (code) {
     return fail(ErrorKind::Io,
-                where + ": cannot create scratch directory " + config.scratch.string() + ": " + code.message());
+                where + ": cannot create scratch directory " + utf8(config.scratch) + ": " + code.message());
   }
   Layout layout = layout_of(config.repo);
   const Site site{config.repo, layout.git_dir, layout.common_dir, config.scratch, config.timeout};
@@ -457,9 +458,9 @@ Result<std::filesystem::path> GitReader::mirror(std::string_view url, const std:
   if (url.empty() || url.front() == '-') return fail(ErrorKind::Config, "git mirror: not a url: '" + std::string(url) + "'");
   std::error_code code;
   std::filesystem::create_directories(cache_dir, code);
-  if (code) return fail(ErrorKind::Io, "git mirror: cannot create " + cache_dir.string() + ": " + code.message());
+  if (code) return fail(ErrorKind::Io, "git mirror: cannot create " + utf8(cache_dir) + ": " + code.message());
   std::filesystem::path directory = std::filesystem::absolute(cache_dir, code);
-  if (code) return fail(ErrorKind::Io, "git mirror: cannot resolve " + cache_dir.string() + ": " + code.message());
+  if (code) return fail(ErrorKind::Io, "git mirror: cannot resolve " + utf8(cache_dir) + ": " + code.message());
   directory /= mirror_name(url);
   const bool present = std::filesystem::exists(directory, code);
 
@@ -471,11 +472,11 @@ Result<std::filesystem::path> GitReader::mirror(std::string_view url, const std:
   else
     // The remote is "origin" whatever clone.defaultRemoteName the user set: the fetch above names it.
     spec.argv = {"git", "-c", "clone.defaultRemoteName=origin", "clone", "--mirror", "--quiet", "--",
-                 std::string(url), directory.string()};
+                 std::string(url), utf8(directory)};
   spec.env = mirror_environment(directory);
   spec.timeout = timeout;
   const auto result = run_process(spec);
-  const std::string what = std::string("git mirror of ") + std::string(url) + " in " + directory.string();
+  const std::string what = std::string("git mirror of ") + std::string(url) + " in " + utf8(directory);
   if (!result) return fail(result.error().kind, what + ": cannot run git: " + result.error().what);
   if (result->exit_code != 0) {
     return fail(ErrorKind::Io, what + ": git " + (present ? "fetch" : "clone") + " failed (exit " +
@@ -659,7 +660,7 @@ Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
 
     // For each object "<sha> <type> <size>\n<size bytes>\n", or "<sha> missing\n".
     std::ifstream in(file.path(), std::ios::binary);
-    if (!in) return fail(ErrorKind::Io, "cannot read " + file.path().string());
+    if (!in) return fail(ErrorKind::Io, "cannot read " + utf8(file.path()));
     fetched.reserve(wanted.size());
     for (const auto& sha : wanted) {
       std::string header;
@@ -709,7 +710,7 @@ Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
 Result<std::string_view> GitReader::blob(const std::string& blob_sha) {
   const auto cached = index_.find(blob_sha);
   if (cached == index_.end()) {
-    return fail(ErrorKind::Io, "git repository " + config_.repo.string() + ": blob " + blob_sha +
+    return fail(ErrorKind::Io, "git repository " + utf8(config_.repo) + ": blob " + blob_sha +
                                    " is not in the cache (not fetched, or evicted since)");
   }
   lru_.splice(lru_.begin(), lru_, cached->second);

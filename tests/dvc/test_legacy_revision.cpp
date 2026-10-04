@@ -586,6 +586,20 @@ TEST(Layout, TopLevelValueBesideTheEntriesGoesToExtra) {
   EXPECT_FALSE(parse_revision(FileKind::Intercepts, R"({"Ar40": {"value": 1.0}})")->extra_json.has_value());
 }
 
+// Fix wave F1. A top-level scalar named "nonfinite" beside a bare NaN: the
+// parser keeps both under one key of the extra, which the JSON library
+// refuses with an exception. A file can hold anything; that is an error of
+// the file, not a crash.
+TEST(Layout, ContentTheJsonLibraryThrowsOnIsAnError) {
+  json intercepts = json::parse(fixture(kUnknown + "660/intercepts/52-01E.inte.json"));
+  intercepts["nonfinite"] = 1;
+  std::string text = intercepts.dump(4);
+  text.insert(text.rfind('}'), ", \"zz\": NaN");
+  const auto parsed = parse_revision(FileKind::Intercepts, text);
+  ASSERT_FALSE(parsed.has_value());
+  EXPECT_NE(parsed.error().what.find("unexpected content"), std::string::npos) << parsed.error().what;
+}
+
 TEST(Layout, ParseRevisionRejectsKindsThatAreNotRevisions) {
   for (FileKind kind : {FileKind::Record, FileKind::Data, FileKind::PeakCenter, FileKind::Extraction,
                         FileKind::Monitor, FileKind::InterpretedAge, FileKind::Spectrometer,

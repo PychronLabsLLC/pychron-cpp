@@ -27,6 +27,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "membership.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "verify_parts.hpp"
 
@@ -60,10 +61,7 @@ Result<bool> imported_here(const VerifySource& source, Uuid analysis) {
   if (!rows) return fail(rows.error());
   for (const auto& row : *rows) {
     if (row.source != source.uuid || row.entity_type != "analysis") continue;
-    const Json detail = Json::parse(row.detail_json.value_or("{}"), nullptr, false);
-    const auto member = detail.is_object() ? detail.find("membership_only") : detail.end();
-    const bool membership = detail.is_object() && member != detail.end() && member->is_boolean() && member->get<bool>();
-    if (!membership) return true;
+    if (!is_membership_only(row)) return true;
   }
   return false;
 }

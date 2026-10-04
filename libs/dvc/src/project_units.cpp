@@ -23,7 +23,7 @@ Result<void> UnitAccount::repeat(SourceUnit unit, const Last& last) {
 
 Result<void> UnitAccount::close(Open& open) {
   if (auto r = visit_(open.unit); !r) return r;
-  Last settled{open.unit.commit, true, open.unit.disposition, open.unit.evidence};
+  Last settled{open.unit.commit, open.unit.disposition, open.unit.evidence};
   for (auto& unit : open.repeats)
     if (auto r = repeat(std::move(unit), settled); !r) return r;
   // Later repeats of the path are settled as this unit, unless the path has
@@ -66,7 +66,7 @@ Result<void> UnitAccount::settle(Ledger& ledger, const ingest::ImportBatch& batc
       case Ledger::Seen::Taken: {
         if (classify_path(unit.path).kind == FileKind::InterpretedAge) unit.interpreted_age = unit.path;
         Last& last = last_[unit.path];
-        last = Last{unit.commit, false, UnitDisposition::Unclassified, {}};
+        last = Last{unit.commit, UnitDisposition::Unclassified, {}};
         Key key{unit.commit, unit.path};
         open_.insert_or_assign(std::move(key), Open{std::move(unit), {}, false, false});
         break;

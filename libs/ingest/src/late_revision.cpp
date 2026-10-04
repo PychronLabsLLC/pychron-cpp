@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/core/sha256.hpp"
+#include "membership.hpp"
 #include "pychron/ingest/ids.hpp"
 
 namespace pychron::ingest::detail {
@@ -339,19 +340,11 @@ const char* cause_text(Late::Cause cause) {
   return "";
 }
 
-// An analysis provenance row of a source that only made the analysis a member
-// (writer.cpp, stage_membership).
-bool membership_only(const P::ProvenanceRow& row) {
-  if (!row.detail_json) return false;
-  const Json parsed = Json::parse(*row.detail_json, nullptr, false);
-  if (!parsed.is_object()) return false;
-  const auto flag = parsed.find("membership_only");
-  return flag != parsed.end() && flag->is_boolean() && flag->get<bool>();
-}
-
 }  // namespace
 
-void StoredChains::begin_run(P::IStore& store, ISourceAdapter& adapter, P::Uuid source, std::string url) {
+void StoredChains::begin_run(P::IStore& store, ISourceAdapter& adapter, P::Uuid source, std::string url,
+                             bool first_import) {
+  first_import_ = first_import;
   store_ = &store;
   adapter_ = &adapter;
   source_ = source;
@@ -388,7 +381,7 @@ Result<std::optional<StoredChains::Ours>> StoredChains::ours(const P::RevisionIn
   auto of_subject = store_->provenance_for(revision.subject);
   if (!of_subject) return fail(of_subject.error());
   for (const auto& row : *of_subject)
-    if (row.entity_type == "analysis" && row.source == source_ && !membership_only(row) &&
+    if (row.entity_type == "analysis" && row.source == source_ && !is_membership_only(row) &&
         revision.changeset.uuid == collection_changeset_id(url_, row.commit_sha, revision.subject))
       return placed(row.commit_sha);
   return std::optional<Ours>{};
@@ -426,7 +419,7 @@ Result<Late> StoredChains::late(P::Uuid subject, P::Kind kind, std::optional<std
   }
   const Chain& chain = found->second;
   if (chain.empty) return Late{};
-  if (!chain.head_ours) return Late{Late::Cause::HeadNotOfThisSource};
+  if (!chain.head_ours && !first_import_) return Late{Late::Cause::HeadNotOfThisSource};
   // A commit the walk does not have cannot be placed: it counts as later.
   if (!chain.unknown_commit.empty()) return Late{Late::Cause::StoredCommitUnknown, chain.unknown_commit};
   if (order && chain.last && *chain.last > *order) return Late{Late::Cause::LaterRevisionStored, chain.last_commit};

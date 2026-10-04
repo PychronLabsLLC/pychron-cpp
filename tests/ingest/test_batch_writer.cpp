@@ -1375,6 +1375,24 @@ TEST_P(BatchWriterTest, AnalysisOriginTellsWhoCollectedIt) {
   EXPECT_EQ((*there)->record_blob_sha, "rec-1");
 }
 
+// Fix wave F10: "membership only" is the top-level flag the writer sets, read
+// as JSON. The same words elsewhere in an analysis's detail (a key of the
+// record the adapter kept, a flag that is false) do not make the analysis a
+// mere member.
+TEST_P(BatchWriterTest, MembershipOnlyIsAFlagNotAWord) {
+  ImportBatch batch = single_batch();
+  batch.analyses[0].detail_json = R"({"membership_only":false,"notes":{"membership_only":true}})";
+  FakeAdapter adapter(description(), {batch});
+  BatchWriter writer(store(), world_->client, config());
+  ASSERT_TRUE(writer.run(adapter, std::nullopt, {}, {}));
+  auto here = writer.state().analysis_origin(kA, "c1");
+  ASSERT_TRUE(here) << err(here.error());
+  ASSERT_TRUE(here->has_value());
+  EXPECT_TRUE((*here)->from_this_source);
+  EXPECT_TRUE((*here)->in_this_source);
+  EXPECT_EQ((*here)->record_blob_sha, "rec-1");
+}
+
 TEST_P(BatchWriterTest, IdentityRevisionNamesItsIdentifier) {
   // A and B are 66573-01 and 66573-02. Later commits renumber A to 66573-07
   // (free), then to 66573-02 (B's), then to an identifier nobody knows.
@@ -2119,13 +2137,17 @@ TEST_P(BatchWriterTest, RecoveredRevisionDoesNotReplaceAHeadMadeOutsideTheSource
 // The same for a commit that is simply new: after a refit made in the
 // application, the source's next refit of that analysis is kept, not applied.
 TEST_P(BatchWriterTest, NewRevisionDoesNotReplaceAHeadMadeOutsideTheSource) {
-  auto batches = four_batches();  // the last refits A at c5
+  // The source has finished once (the first three batches are all it had
+  // then); the fourth batch, which refits A at c5, is a later commit.
+  auto batches = four_batches();
+  {
+    FakeAdapter at_first(description(), {batches[0], batches[1], batches[2]});
+    auto first = run_all(*world_, at_first);
+    ASSERT_TRUE(first) << err(first.error());
+    ASSERT_TRUE(first->finished);
+  }
   FakeAdapter adapter(description(), batches);
   adapter.honour_token(true);
-  {
-    BatchWriter writer(store(), world_->client, config());
-    ASSERT_TRUE(writer.run(adapter, 3, {}, {}));
-  }
   const Uuid user = *store().ensure_user(world_->client, "jross");
   const Uuid viewer = *store().register_client({"desk-1", "reduction", std::nullopt, "test"});
   auto uow = store().begin({user, viewer});
@@ -2144,8 +2166,6 @@ TEST_P(BatchWriterTest, NewRevisionDoesNotReplaceAHeadMadeOutsideTheSource) {
   EXPECT_NE((*late)->detail_json.find("head_not_of_this_source"), std::string::npos) << (*late)->detail_json;
 }
 
-// The position check reads history. A source with nothing stored has nothing
-// to be behind, and its first import asks for none.
 // ---------------------------------------------------------------- superseded conflicts (spec 10.37)
 
 namespace {
@@ -2332,6 +2352,92 @@ TEST_P(BatchWriterTest, SupersededNamesOnlyUnreadableOrRefusedFilesOfThisSource)
   EXPECT_FALSE(store().import_conflict(conflict_id(kUrl, "c2", "665/never.json"))->has_value());
 }
 
+// Fix wave F2. An uninterrupted first import does not ask whose head it
+// writes over (spec 10.34: a source with nothing stored needs no check). One
+// that was stopped and resumed must end the same: until the source has
+// finished once, a head made by a user or by another source does not keep a
+// revision back.
+TEST_P(BatchWriterTest, InterruptedFirstImportOverwritesAHeadMadeElsewhereAsAnUninterruptedOneDoes) {
+  const std::string path = "NM-300/productions/Triga.json";
+  const auto production = [&](const std::string& commit, const char* note) {
+    ChangesetItem c;
+    c.commit = commit;
+    c.kind = P::ChangesetKind::Reference;
+    c.who = who(kAlice, "2016-03-05T00:00:00Z");
+    c.message = "production " + commit;
+    P::ProductionValue value;
+    value.note = note;
+    c.revisions.push_back({{commit, path, "blob-" + commit},
+                           RefObjectKey{"production", "NM-300/Triga"},
+                           Kind::RefValue,
+                           P::RefPayload{std::move(value)}});
+    return c;
+  };
+  const auto script = [&](std::size_t batches) {
+    std::vector<ImportBatch> out(batches);
+    out[0].catalog = lab_catalog();
+    add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+    out[1].changesets.push_back(production("c2", "from the source"));
+    if (batches > 2) out[2].changesets.push_back(production("c3", "from the source, later"));
+    const char* tokens[] = {"c1", "c2", "c3"};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      out[i].resume_token = tokens[i];
+      out[i].done = static_cast<int>(i) + 1;
+      out[i].total = static_cast<int>(batches);
+    }
+    return out;
+  };
+  // The production exists before the import, with a value someone gave it.
+  const auto by_hand = [&](World& w, Uuid object, const char* note) {
+    const Uuid user = *w.store->ensure_user(w.client, "jross");
+    auto uow = w.store->begin({user, w.client});
+    ASSERT_TRUE(uow);
+    P::ProductionValue value;
+    value.note = note;
+    auto head = w.store->head(object, Kind::RefValue);
+    ASSERT_TRUE(head);
+    ASSERT_TRUE((*uow)->add_revision(object, Kind::RefValue, P::RefPayload{std::move(value)}, *head));
+    ASSERT_TRUE((*uow)->commit(P::ChangesetKind::Reference, "by hand"));
+  };
+  for (const bool interrupted : {false, true}) {
+    World w(GetParam());
+    ASSERT_TRUE(w.store && w.db);
+    const Uuid object =
+        *w.store->add_ref_object(w.client, {P::RefType::Production, "NM-300/Triga", {}, {}, {}, {}, {}});
+    by_hand(w, object, "by hand");
+    FakeAdapter adapter(description(), script(2));
+    adapter.honour_token(true);
+    if (interrupted) {
+      BatchWriter writer(*w.store, w.client, config());
+      auto first = writer.run(adapter, 1, {}, {});
+      ASSERT_TRUE(first) << err(first.error());
+      EXPECT_FALSE(first->finished);
+    }
+    auto stats = run_all(w, adapter);
+    ASSERT_TRUE(stats) << interrupted << ": " << err(stats.error());
+    EXPECT_TRUE(stats->finished);
+    EXPECT_EQ(stats->conflicts, 0) << interrupted;
+    EXPECT_EQ(w.count("import_conflict"), 0) << interrupted;
+    EXPECT_EQ(*w.store->head(object, Kind::RefValue), std::optional<Uuid>{revision_id(kUrl, "c2", path)})
+        << interrupted;
+
+    // The source has finished once: from now on a head it did not make stays.
+    by_hand(w, object, "by hand again");
+    const Uuid kept = **w.store->head(object, Kind::RefValue);
+    FakeAdapter later(description(), script(3));
+    later.honour_token(true);
+    auto more = run_all(w, later);
+    ASSERT_TRUE(more) << err(more.error());
+    EXPECT_EQ(more->conflicts, 1) << interrupted;
+    EXPECT_EQ(*w.store->head(object, Kind::RefValue), std::optional<Uuid>{kept}) << interrupted;
+    auto late = w.store->import_conflict(conflict_id(kUrl, "c3", path));
+    ASSERT_TRUE(late && late->has_value());
+    EXPECT_NE((*late)->detail_json.find("head_not_of_this_source"), std::string::npos) << (*late)->detail_json;
+  }
+}
+
+// The position check reads history. A source with nothing stored has nothing
+// to be behind, and its first import asks for none.
 TEST_P(BatchWriterTest, FirstImportAsksForNoHistory) {
   ForwardingStore counted(store());
   FakeAdapter adapter(description(), four_batches());
