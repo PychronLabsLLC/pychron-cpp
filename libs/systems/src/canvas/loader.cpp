@@ -250,7 +250,8 @@ class CanvasBuilder {
 
   // What makes an element a source of its region's colour.
   void read_source(const toml::table& t, Located& e, std::optional<int>& precedence,
-                   std::optional<std::string>& color) {
+                   std::optional<std::string>& color, std::optional<std::string>& tank) {
+    read(t, e, "tank", tank);
     if (t.contains("precedence")) {
       std::int64_t value = 0;
       if (const auto v = t["precedence"].value<std::int64_t>(); v && *v >= 0 && *v <= 1000000) {
@@ -371,7 +372,7 @@ class CanvasBuilder {
     StageElement s;
     begin(s, t, path);
     reject_unknown(t, s, Keys{"name", "pos", "size", "volume", "fill", "display_name", "use_symbol", "symbol", "kind",
-                             "precedence", "color"});
+                             "precedence", "color", "tank"});
     read(t, s, "name", s.name, true);
     read(t, s, "pos", s.pos, true);
     read(t, s, "size", s.size);
@@ -385,20 +386,20 @@ class CanvasBuilder {
       read_enum(t, s, "kind", kind, kSourceKinds);
       s.kind = kind;
     }
-    read_source(t, s, s.precedence, s.color);
+    read_source(t, s, s.precedence, s.color, s.tank);
     return s;
   }
 
   PipetteElement parse_pipette(const std::string& path, const toml::table& t) {
     PipetteElement p;
     begin(p, t, path);
-    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel", "display_name", "precedence", "color"});
+    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel", "display_name", "precedence", "color", "tank"});
     read(t, p, "name", p.name, true);
     read(t, p, "pos", p.pos, true);
     read(t, p, "size", p.size);
     read(t, p, "vlabel", p.vlabel, false);
     read(t, p, "display_name", p.display_name);
-    read_source(t, p, p.precedence, p.color);
+    read_source(t, p, p.precedence, p.color, p.tank);
     return p;
   }
 
@@ -485,6 +486,17 @@ std::vector<Diagnostic> validate(const Canvas& c) {
   for (const auto& g : c.gauges) declare(g, g.name, Role::Plumbing);
   for (const auto& s : c.stages) declare(s, s.name, Role::Plumbing);
   for (const auto& p : c.pipettes) declare(p, p.name, Role::Plumbing);
+
+  // A pipette's tank is a stage that is a tank.
+  auto tank = [&](const Located& e, const std::optional<std::string>& name) {
+    if (!name || name->empty()) return;
+    const bool found = std::any_of(c.stages.begin(), c.stages.end(), [&](const StageElement& s) {
+      return s.name == *name && source_kind(s) == SourceKind::Tank;
+    });
+    if (!found) out.push_back({e.where("tank"), e.path + ".tank", "'" + *name + "' is not a tank on this canvas"});
+  };
+  for (const auto& s : c.stages) tank(s, s.tank);
+  for (const auto& p : c.pipettes) tank(p, p.tank);
 
   auto endpoint = [&](const Located& e, const char* key, const std::string& name) {
     auto it = names.find(name);

@@ -11,7 +11,9 @@ connection_width = 5
 # A region of the line takes the colour of the source connected to it with
 # the highest precedence (as in legacy pychron): turbo and ion pump 120,
 # tank 110, pipette and laser 100, spectrometer 80, getter 70. Each tank has
-# a colour of its own, and what is open to a tank wears it. A stage's
+# a colour of its own, and what is open to a tank wears it. A pipette wears
+# the colour of the tank across its valve whether or not that valve is open
+# (`tank = "<name>"` names it outright; `tank = ""` gives it its own). A stage's
 # `symbol` or `kind` says what it is; `precedence = <n>` and
 # `color = "#rrggbb"` on a stage override. Bone, Minibone and Microbone are
 # plain volumes: neutral until something is open to them.

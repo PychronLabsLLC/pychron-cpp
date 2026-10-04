@@ -435,7 +435,10 @@ class TestCanvasView : public QObject {
     QVERIFY(air != CanvasView::isolated_color());
     QVERIFY(cocktail != CanvasView::isolated_color());
     QVERIFY(air != cocktail);
-    QVERIFY(colour("AirPipette") != air);  // Z is closed
+    // A pipette holds its tank's gas whether or not the valve between them
+    // is open: it wears the tank's colour either way.
+    QCOMPARE(colour("AirPipette"), air);
+    QCOMPARE(colour("CocktailPipette"), cocktail);
 
     bridge.actuate("Z", SwitchOp::Open);
     QTRY_COMPARE_WITH_TIMEOUT(view.valve("Z")->state(), ValveState::Open, 5000);
@@ -443,7 +446,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("AirPipette"), air);
     QCOMPARE(view.valve("Z")->fill_color(), air);  // the NMGRL canvas has open valves inherit
     QCOMPARE(colour("Cocktail"), cocktail);
-    QVERIFY(colour("CocktailPipette") != air);
+    QCOMPARE(colour("CocktailPipette"), cocktail);
     for (const ui::ConnectionItem* pipe : view.pipes()) {
       const auto& ends = pipe->endpoints();
       const bool on_air = std::find(ends.begin(), ends.end(), "Air") != ends.end() ||
@@ -508,14 +511,13 @@ class TestCanvasView : public QObject {
     auto colour = [&](const char* stage) { return view_->stage(stage)->region_color(); };
     const QColor none = CanvasView::isolated_color();
     const QColor pump = CanvasView::source_color(SourceKind::Pump);
-    const QColor pipette = CanvasView::source_color(SourceKind::Pipette);
     const QColor tank = CanvasView::source_color(SourceKind::Tank);
     const QColor spectrometer = CanvasView::source_color(SourceKind::Spectrometer);
 
     // everything closed: sources wear their own colour, plain volumes none
     QCOMPARE(colour("turbo"), pump);
     QCOMPARE(colour("air_tank"), tank);
-    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("air"), tank);  // the pipette wears its tank's colour, valve open or not
     QCOMPARE(colour("spec"), spectrometer);
     QCOMPARE(colour("bone"), none);
     QCOMPARE(colour("prep"), none);
@@ -562,12 +564,13 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("air"), tank);
 
     // the pipette into prep (P1; P2 must be closed for it): pipette 100 over
-    // spectrometer 80, and the tank is on its own again
+    // spectrometer 80
     open("P2", false);
     QCOMPARE(colour("air_tank"), tank);
-    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("air"), tank);
+    // the aliquot let into prep is still the tank's gas, and shows as it
     open("P1", true);
-    for (const char* stage : {"bone", "prep", "spec", "air"}) QCOMPARE(colour(stage), pipette);
+    for (const char* stage : {"bone", "prep", "spec", "air"}) QCOMPARE(colour(stage), tank);
   }
 
   // Each tank has a colour of its own, so the gas of one is never taken for

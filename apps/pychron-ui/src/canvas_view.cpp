@@ -344,9 +344,15 @@ void CanvasView::apply_regions() {
   for (const auto& region : regions) {
     const canvas::Source* source = canvas::dominant(sources_, region.volumes);
     if (source == nullptr) continue;
-    QColor color = source->color ? QColor(QString::fromStdString(*source->color))
-                                 : source_color(source->kind, source->ordinal);
-    if (!color.isValid()) color = source_color(source->kind, source->ordinal);
+    // A pipette holds its tank's gas: it is drawn as the tank is, unless
+    // the file gives it a colour of its own.
+    const canvas::Source* shown = source;
+    if (!source->color && !source->tank.empty()) {
+      if (auto tank = sources_.find(source->tank); tank != sources_.end()) shown = &tank->second;
+    }
+    QColor color = shown->color ? QColor(QString::fromStdString(*shown->color))
+                                : source_color(shown->kind, shown->ordinal);
+    if (!color.isValid()) color = source_color(shown->kind, shown->ordinal);
     for (const auto& volume : region.volumes) colors[volume] = color;
     for (const auto& valve : region.valves) colors[valve] = color;
   }

@@ -209,3 +209,138 @@ color = "#12345"
   EXPECT_TRUE(said("stage[2].color", "#rrggbb"));
   EXPECT_TRUE(said("pipette[0].color", "#rrggbb"));
 }
+
+// A pipette holds its tank's gas whether or not the valve between them is
+// open, so it is drawn in the tank's colour: the tank on the other side of a
+// valve it shares with exactly one tank, or the one the file names.
+namespace {
+
+const char* kPipettes = R"toml(
+[[valve]]
+name = "X"
+pos = [0, 0]
+[[valve]]
+name = "Z"
+pos = [0, 0]
+[[valve]]
+name = "W"
+pos = [0, 0]
+[[valve]]
+name = "V"
+pos = [0, 0]
+
+[[stage]]
+name = "Cocktail"
+pos = [0, 0]
+kind = "tank"
+[[stage]]
+name = "Air"
+pos = [0, 0]
+kind = "tank"
+[[stage]]
+name = "Minibone"
+pos = [0, 0]
+[[stage]]
+name = "CocktailPipette"
+pos = [0, 0]
+kind = "pipette"
+[[stage]]
+name = "Loose"
+pos = [0, 0]
+kind = "pipette"
+[[stage]]
+name = "Named"
+pos = [0, 0]
+kind = "pipette"
+tank = "Air"
+[[stage]]
+name = "Shared"
+pos = [0, 0]
+kind = "pipette"
+[[stage]]
+name = "OptedOut"
+pos = [0, 0]
+kind = "pipette"
+tank = ""
+
+[[pipette]]
+name = "AirPipette"
+pos = [0, 0]
+
+[[connection]]
+start = "X"
+end = "Cocktail"
+[[connection]]
+start = "CocktailPipette"
+end = "X"
+[[connection]]
+start = "W"
+end = "CocktailPipette"
+[[connection]]
+start = "W"
+end = "Minibone"
+[[elbow]]
+start = "Z"
+end = "Air"
+[[elbow]]
+start = "Z"
+end = "AirPipette"
+# a valve with both tanks on it: no telling whose pipette this is
+[[connection]]
+start = "V"
+end = "Air"
+[[connection]]
+start = "V"
+end = "Cocktail"
+[[connection]]
+start = "V"
+end = "Shared"
+[[connection]]
+start = "V"
+end = "OptedOut"
+)toml";
+
+}  // namespace
+
+TEST(CanvasSources, APipetteBelongsToTheTankAcrossItsValve) {
+  auto r = load_canvas_report_from_string(kPipettes, "canvas.toml");
+  ASSERT_TRUE(r.ok()) << (r.diagnostics.empty() ? "" : r.diagnostics.front().message);
+  const auto all = sources(*r.canvas);
+  EXPECT_EQ(all.at("CocktailPipette").tank, "Cocktail");  // through X; W leads to no tank
+  EXPECT_EQ(all.at("AirPipette").tank, "Air");            // a [[pipette]], joined by elbows
+  EXPECT_EQ(all.at("Named").tank, "Air");                 // the file says so
+  EXPECT_EQ(all.at("Loose").tank, "");                    // connected to nothing
+  EXPECT_EQ(all.at("Shared").tank, "");                   // two tanks on its valve
+  EXPECT_EQ(all.at("OptedOut").tank, "");                 // tank = "": asked not to
+  EXPECT_EQ(all.at("Air").tank, "");                      // a tank is its own
+  // it is still a pipette: precedence and kind are unchanged
+  EXPECT_EQ(all.at("AirPipette").kind, SourceKind::Pipette);
+  EXPECT_EQ(all.at("AirPipette").precedence, 100);
+}
+
+TEST(CanvasSources, ATankKeyMustNameATank) {
+  auto r = load_canvas_report_from_string(R"toml(
+[[stage]]
+name = "Bone"
+pos = [0, 0]
+[[stage]]
+name = "P"
+pos = [0, 0]
+kind = "pipette"
+tank = "Bone"
+[[pipette]]
+name = "Q"
+pos = [0, 0]
+tank = "Nowhere"
+)toml",
+                                          "canvas.toml");
+  EXPECT_FALSE(r.ok());
+  auto said = [&](const std::string& field, const std::string& part) {
+    for (const auto& d : r.diagnostics)
+      if (d.field == field && d.message.find(part) != std::string::npos) return true;
+    return false;
+  };
+  EXPECT_TRUE(said("stage[1].tank", "'Bone' is not a tank"));
+  EXPECT_TRUE(said("pipette[0].tank", "'Nowhere' is not a tank"));
+}
+

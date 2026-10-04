@@ -56,7 +56,9 @@ pos = [650, 380]
 
 # A region of the line takes the colour of the source connected to it with
 # the highest precedence: a pump (120) over a tank (110), a pipette or a
-# laser (100), a spectrometer (80), a getter (70). Each tank has its own colour. `kind` says what a stage is
+# laser (100), a spectrometer (80), a getter (70). Each tank has its own colour,
+# and a pipette wears the colour of the tank across its valve (`tank = "<name>"`
+# on the pipette names it outright; `tank = ""` gives the pipette its own). `kind` says what a stage is
 # (a `symbol` says it too); `precedence` and `color = "#rrggbb"` override.
 # A plain stage, like bone, is not a source and has no colour of its own.
 [[stage]]

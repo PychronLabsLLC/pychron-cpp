@@ -94,6 +94,10 @@ struct StageElement : Located {
   std::optional<SourceKind> kind;
   std::optional<int> precedence;     // unset: the kind's; 0: colours nothing
   std::optional<std::string> color;  // "#rrggbb"; unset: the theme's for the kind
+  // For a pipette: the tank whose gas it holds, and whose colour it wears.
+  // Unset: the one tank across a valve from it, if there is exactly one;
+  // "": none.
+  std::optional<std::string> tank;
 };
 
 SourceKind source_kind(const StageElement& stage) noexcept;
@@ -106,6 +110,7 @@ struct PipetteElement : Located {
   std::optional<std::string> display_name;  // as a stage's; unset = vlabel, else the name
   std::optional<int> precedence;            // unset: a pipette's (100)
   std::optional<std::string> color;         // "#rrggbb"
+  std::optional<std::string> tank;          // as a stage's
 };
 
 enum class Orientation { Auto, Horizontal, Vertical };
@@ -186,6 +191,10 @@ struct Source {
   // Its place among the canvas's sources of this kind, from 0, in the order
   // the canvas lists them: each tank is drawn in a colour of its own.
   int ordinal = 0;
+  // A pipette's tank (a name in the same map), empty if it has none: the
+  // pipette holds that tank's gas whether or not the valve between them is
+  // open, so it is drawn in the tank's colour unless it has its own.
+  std::string tank;
 };
 
 // The canvas's stages and pipettes with a precedence above 0, by name.
