@@ -301,13 +301,19 @@ bool QueueTableModel::move_down(std::vector<std::size_t> rows, std::vector<std::
 }
 
 bool QueueTableModel::set_conditionals(std::vector<std::size_t> rows, const std::vector<std::string>& names) {
+  RowConditionals per_row;
+  for (const std::size_t row : rows) per_row.emplace_back(row, names);
+  return set_conditionals(per_row);
+}
+
+bool QueueTableModel::set_conditionals(const RowConditionals& rows) {
   if (locked_ || rows.empty()) return false;
-  for (const std::size_t row : rows)
+  for (const auto& [row, names] : rows)
     if (row >= queue_.size() || !row_editable(row)) return false;
   experiment::ExperimentQueue next = queue_;
   bool changed = false;
-  for (const std::size_t row : rows) {
-    RunSpec r = queue_.runs()[row];
+  for (const auto& [row, names] : rows) {
+    RunSpec r = next.runs()[row];
     std::vector<experiment::ConditionalRef> refs;
     for (const auto& name : names) {
       const auto had = std::find_if(r.conditionals.begin(), r.conditionals.end(),

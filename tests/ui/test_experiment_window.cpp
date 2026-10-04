@@ -451,6 +451,62 @@ class TestExperimentWindow : public QObject {
     editor->close();
   }
 
+  void setConditionalsIsOneEditAndGivesUpIfTheQueueChanged() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    using States = QList<Qt::CheckState>;
+    QVERIFY(window.model().set_conditionals({0}, {"default_unknown"}));
+    window.table()->selectAll();
+    int edits = 0;
+    connect(&window.model(), &QueueTableModel::edited, this, [&] { ++edits; });
+    // Rows end up with different lists (row 0 keeps its own file too): still one edit.
+    window.set_pick_conditionals([](const QStringList&, const States&) {
+      return std::optional<States>(States{Qt::Checked, Qt::PartiallyChecked});
+    });
+    QVERIFY(window.edit_selected_conditionals());
+    QCOMPARE(edits, 1);
+    QCOMPARE(window.model().queue().runs[0].conditionals.size(), std::size_t{2});
+    QCOMPARE(window.model().queue().runs[2].conditionals.size(), std::size_t{1});
+
+    // The queue changes while the dialog is up (the executor inserts or removes runs):
+    // the answer was about other rows, so nothing is applied.
+    window.table()->selectAll();
+    window.set_pick_conditionals([&](const QStringList&, const States& states) {
+      [&] { QVERIFY(window.model().remove({0, 1})); }();
+      return std::optional<States>(States(states.size(), Qt::Unchecked));
+    });
+    QVERIFY(!window.edit_selected_conditionals());
+    QCOMPARE(window.model().rowCount(), 1);
+    QCOMPARE(window.model().queue().runs[0].conditionals.size(), std::size_t{1});
+    QVERIFY(!window.executor()->error_text().isEmpty());
+  }
+
+  void closingAsksAboutUnsavedConditionals() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    auto window = std::make_unique<ExperimentWindow>(bridge, true, settings());
+    QVERIFY(window->load_queue(queue_file(sim)));
+    auto* editor = window->open_conditionals_editor(QStringLiteral("system"));
+    editor->add_disable(QStringLiteral("anything"));
+    QVERIFY(editor->modified());
+    int asked = 0;
+    auto answer = pychron::ui::ConditionalsEditorWindow::Unsaved::Cancel;
+    editor->set_ask_unsaved([&](const QString&) {
+      ++asked;
+      return answer;
+    });
+    window->show();
+    QVERIFY(!window->close());
+    QCOMPARE(asked, 1);
+    QVERIFY(editor->modified());
+    answer = pychron::ui::ConditionalsEditorWindow::Unsaved::Discard;
+    QVERIFY(window->close());
+    QCOMPARE(asked, 2);
+    window.reset();
+  }
+
   void theQueueConditionalsAreFixedWhileRunning() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

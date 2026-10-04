@@ -287,6 +287,30 @@ class TestQueueTableModel : public QObject {
     QVERIFY(!m->set_conditionals({1}, {}));
   }
 
+  void setConditionalsPerRowIsOneEdit() {
+    auto m = model();
+    int offered = 0;
+    bool accept = true;
+    m->set_live(0, [&](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> {
+      ++offered;
+      if (!accept) return pychron::fail(pychron::ErrorKind::Config, "the queue changed");
+      return base + 1;
+    });
+    QSignalSpy edited(m.get(), &QueueTableModel::edited);
+    QVERIFY(m->set_conditionals({{0, {"system"}}, {1, {"system", "default_unknown"}}, {2, {}}}));
+    QCOMPARE(offered, 1);
+    QCOMPARE(edited.count(), 1);
+    QCOMPARE(m->queue().runs[0].conditionals.size(), std::size_t{1});
+    QCOMPARE(m->queue().runs[1].conditionals.size(), std::size_t{2});
+
+    // Refused by the executor: no row changes.
+    accept = false;
+    QVERIFY(!m->set_conditionals({{0, {}}, {1, {}}}));
+    QCOMPARE(m->queue().runs[0].conditionals.size(), std::size_t{1});
+    QCOMPARE(m->queue().runs[1].conditionals.size(), std::size_t{2});
+    QVERIFY(!m->set_conditionals({{0, {}}, {7, {}}}));  // a row that is not there
+  }
+
   void setQueueConditionals() {
     auto m = model();
     QSignalSpy edited(m.get(), &QueueTableModel::edited);

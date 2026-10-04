@@ -89,6 +89,9 @@ class QueueTableModel : public QAbstractTableModel {
   // already references keeps its reference (kind included). All rows or none:
   // false when locked or a row is not editable.
   bool set_conditionals(std::vector<std::size_t> rows, const std::vector<std::string>& names);
+  // The same with a list per row, as one edit: every row changes or none does.
+  using RowConditionals = std::vector<std::pair<std::size_t, std::vector<std::string>>>;
+  bool set_conditionals(const RowConditionals& rows);
   // The queue's conditionals file ("" for none). Refused while live: the
   // queue-wide checks are loaded when the queue starts.
   bool set_queue_conditionals(const std::string& name);

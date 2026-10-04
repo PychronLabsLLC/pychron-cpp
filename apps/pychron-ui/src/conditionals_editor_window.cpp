@@ -372,7 +372,9 @@ bool ConditionalsEditorWindow::new_file(const QString& name, QString* error) {
   };
   if (!experiment::ConditionalFiles::valid_name(name.toStdString()))
     return refuse(tr("'%1' is not a plain file name (no folders, no leading dot, no .toml)").arg(name));
-  if (file_names().contains(name)) return refuse(tr("%1 already exists").arg(name));
+  // The filesystem is asked too: on a case-insensitive one "System" is system.toml.
+  if (file_names().contains(name) || lab_.condition_files->exists(name.toStdString()))
+    return refuse(tr("%1 already exists").arg(name));
   if (!resolve_unsaved()) return refuse(QString());
   new_name_ = name;
   load(name);
@@ -421,6 +423,9 @@ bool ConditionalsEditorWindow::save(QString* error) {
       !confirm_(tr("%1.toml has comments; saving rewrites the file and drops them. Save?").arg(current_)))
     return refuse(QString());
   const std::string text = experiment::to_toml(model_.conditionals());
+  // Never write what would not load again.
+  if (auto back = experiment::parse_conditionals(text, current_.toStdString() + ".toml"); !back)
+    return refuse(tr("Not saved: %1").arg(QString::fromStdString(back.error().what)));
   if (auto r = lab_.condition_files->write(current_.toStdString(), text); !r)
     return refuse(QString::fromStdString(r.error().what));
   const bool created = current_ == new_name_;

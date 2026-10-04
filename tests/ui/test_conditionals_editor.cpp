@@ -672,6 +672,42 @@ class TestConditionalsEditor : public QObject {
 #endif
   }
 
+  void windowActionWithoutItsParametersBlocksSave() {
+    auto w = window();
+    const std::string before = read(file("system"));
+    w->add_conditional(ConditionalKind::Action);
+    type_into(child<QLineEdit>(*w->form(), "check"), QStringLiteral("Ar40 > 1"));
+    for (const char* action : {"set_param", "run_hook"}) {
+      choose(child<QComboBox>(*w->form(), "action"), QString::fromLatin1(action));
+      QVERIFY2(!w->model().error(w->current_row()).isEmpty(), action);
+      QVERIFY2(!w->save(), action);
+      QCOMPARE(read(file("system")), before);
+    }
+    type_into(child<QLineEdit>(*w->form(), "action_name"), QStringLiteral("warn"));
+    QVERIFY(w->model().error(w->current_row()).isEmpty());
+    QVERIFY(w->save());
+    QVERIFY(ex::parse_conditionals(read(file("system"))).has_value());
+
+    w->add_conditional(ConditionalKind::Modification);
+    type_into(child<QLineEdit>(*w->form(), "check"), QStringLiteral("Ar40 > 2"));
+    choose(child<QComboBox>(*w->form(), "action"), QStringLiteral("set_extract"));
+    QVERIFY(!w->save());
+    type_into(child<QLineEdit>(*w->form(), "action_steps"), QStringLiteral("1,2"));
+    QVERIFY(w->save());
+    QVERIFY(ex::parse_conditionals(read(file("system"))).has_value());
+  }
+
+  void windowNewFileNeverLandsOnAnExistingOne() {
+    if (!fs::exists(file("SYSTEM"))) QSKIP("the filesystem tells names apart by case");
+    auto w = window();
+    const std::string before = read(file("system"));
+    QString error;
+    QVERIFY(!w->new_file(QStringLiteral("System"), &error));
+    QVERIFY2(error.contains(QStringLiteral("exists")), qPrintable(error));
+    QCOMPARE(w->current_name(), QStringLiteral("system"));
+    QCOMPARE(read(file("system")), before);
+  }
+
   void windowDisableListSaved() {
     auto w = window();
     QVERIFY(w->open(QStringLiteral("default_unknown")));

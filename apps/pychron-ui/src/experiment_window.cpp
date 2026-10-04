@@ -342,8 +342,10 @@ void ExperimentWindow::sync_queue_conditionals() {
 
 bool ExperimentWindow::edit_selected_conditionals() {
   const auto rows = selected_rows();
-  if (rows.empty()) return false;
-  const auto& runs = model_.queue().runs;
+  // The dialog runs an event loop; the executor may change the queue under it.
+  const experiment::QueueSpec asked_about = model_.queue();
+  const auto& runs = asked_about.runs;
+  if (rows.empty() || rows.back() >= runs.size()) return false;
   auto has = [&](std::size_t row, const std::string& name) {
     const auto& c = runs[row].conditionals;
     return std::any_of(c.begin(), c.end(), [&](const auto& ref) { return ref.name == name; });
@@ -364,11 +366,14 @@ bool ExperimentWindow::edit_selected_conditionals() {
   }
   const auto wanted = pick_conditionals_(shown, states);
   if (!wanted || wanted->size() != states.size()) return false;
+  if (!(model_.queue() == asked_about)) {
+    pane_->show_error(tr("The queue changed while choosing; the conditionals were not applied"));
+    return false;
+  }
 
   // Per row: what it keeps, in its order, then what it gains, in list order.
-  std::map<std::vector<std::string>, std::vector<std::size_t>> by_result;
+  QueueTableModel::RowConditionals per_row;
   for (const std::size_t row : rows) {
-    if (!model_.row_editable(row)) return false;
     auto state_of = [&](const std::string& name) {
       const auto i = std::find(names.begin(), names.end(), name) - names.begin();
       return (*wanted)[static_cast<int>(i)];
@@ -378,10 +383,9 @@ bool ExperimentWindow::edit_selected_conditionals() {
       if (state_of(c.name) != Qt::Unchecked) result.push_back(c.name);
     for (const auto& name : names)
       if (state_of(name) == Qt::Checked && !has(row, name)) result.push_back(name);
-    by_result[result].push_back(row);
+    per_row.emplace_back(row, std::move(result));
   }
-  bool ok = true;
-  for (const auto& [result, group] : by_result) ok = model_.set_conditionals(group, result) && ok;
+  const bool ok = model_.set_conditionals(per_row);  // one edit: all rows or none
   select_rows(rows);
   return ok;
 }
@@ -552,7 +556,8 @@ void ExperimentWindow::update_state() {
 }
 
 void ExperimentWindow::closeEvent(QCloseEvent* event) {
-  if (!resolve_unsaved() || (script_editor_ != nullptr && script_editor_->isVisible() && !script_editor_->close())) {
+  if (!resolve_unsaved() || (script_editor_ != nullptr && script_editor_->isVisible() && !script_editor_->close()) ||
+      (conditionals_editor_ != nullptr && conditionals_editor_->isVisible() && !conditionals_editor_->close())) {
     event->ignore();
     return;
   }

@@ -36,11 +36,7 @@ std::string trim(std::string_view s) {
 
 Unexpected<Error> cfg(const std::string& m) { return fail(ErrorKind::Config, m); }
 
-bool parse_double(const std::string& s, double& out) {
-  char* end = nullptr;
-  out = std::strtod(s.c_str(), &end);
-  return !s.empty() && end == s.c_str() + s.size();
-}
+bool parse_double(const std::string& s, double& out) { return detail::parse_number(s, out); }
 
 std::string num(double v) { return detail::shortest(v); }
 
@@ -478,6 +474,13 @@ Result<Conditional> finalize(Conditional c) {
     case K::PostRun:
       if (!allowed) return cfg("a post_run action must be cancel or a queue action");
       break;
+  }
+  // The action must be one its text form can carry (a name, steps, a finite value).
+  if (c.action.type != T::None) {
+    const std::string text = to_string(c.action);
+    auto back = parse_action(text);
+    if (!back) return fail(back.error());
+    if (*back != c.action) return cfg("action '" + text + "' has parameters it cannot be written with");
   }
   return c;
 }

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "pychron/experiment/conditionals/conditional.hpp"
 
 using namespace pychron::experiment;
@@ -549,4 +551,29 @@ TEST(ConditionalKinds, FinalizeRejectsWhatTheParserRejects) {
   EXPECT_EQ(err(c), "");
   c.action.type = ActionSpec::Type::Notify;
   EXPECT_EQ(err(c), "a post_run action must be cancel or a queue action");
+}
+
+TEST(ConditionalKinds, FinalizeChecksActionParameters) {
+  using T = ActionSpec::Type;
+  auto err = [](ConditionalKind kind, ActionSpec a) {
+    Conditional c;
+    c.kind = kind;
+    c.check = "Ar40 > 1";
+    c.action = std::move(a);
+    auto r = finalize(std::move(c));
+    return r ? std::string() : r.error().what;
+  };
+  // What to_toml would write for these does not parse; they must not get that far.
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::SetParam}), "");
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::SetParam, .name = "a=b", .value = 1}), "");
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::RunHook}), "");
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::RunHook, .name = "two words"}), "");
+  EXPECT_NE(err(ConditionalKind::Modification, {.type = T::SetExtract}), "");
+  EXPECT_NE(err(ConditionalKind::PostRun, {.type = T::SkipN, .count = 0}), "");
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::SetParam, .name = "X", .value = std::nan("")}), "");
+  EXPECT_NE(err(ConditionalKind::Action, {.type = T::SetParam, .name = "X", .value = HUGE_VAL}), "");
+  EXPECT_EQ(err(ConditionalKind::Action, {.type = T::SetParam, .name = "X", .value = 0.1 + 0.2}), "");
+  EXPECT_EQ(err(ConditionalKind::Action, {.type = T::RunHook, .name = "warn"}), "");
+  EXPECT_EQ(err(ConditionalKind::Modification, {.type = T::SetExtract, .steps = {10, 20}, .percent = true}), "");
+  EXPECT_EQ(err(ConditionalKind::PostRun, {.type = T::SkipN, .count = 3}), "");
 }

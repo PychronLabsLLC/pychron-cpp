@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <clocale>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -217,4 +218,30 @@ TEST(ConditionalsWriter, LabFilesSurvive) {
     round_trip(parsed(slurp(e.path())));
   }
   EXPECT_GE(files, 2);
+}
+
+// Qt sets the C locale from the environment; numbers must not follow it.
+TEST(ConditionalsWriter, NumbersIgnoreTheLocale) {
+  const std::string before = std::setlocale(LC_NUMERIC, nullptr);
+  const char* comma = nullptr;
+  for (const char* name : {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "German_Germany.1252"})
+    if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+      comma = name;
+      break;
+    }
+  if (comma == nullptr) GTEST_SKIP() << "no comma-decimal locale installed";
+  ConditionalSet s;
+  auto t = make(ConditionalKind::Truncation, "Ar40 > 1");
+  t.abbreviated_count_ratio = 0.5;
+  s.items.push_back(t);
+  auto action = parse_action("set_param X=1.5");
+  const std::string text = to_toml(s);
+  std::setlocale(LC_NUMERIC, before.c_str());
+  EXPECT_NE(text.find("abbreviated_count_ratio = 0.5\n"), std::string::npos) << text;
+  ASSERT_TRUE(action) << action.error().what;
+  EXPECT_EQ(action->value, 1.5);
+  std::setlocale(LC_NUMERIC, comma);
+  const std::string written = to_string(*action);
+  std::setlocale(LC_NUMERIC, before.c_str());
+  EXPECT_EQ(written, "set_param X=1.5");
 }

@@ -15,7 +15,7 @@ schema, and attach them to a queue and to runs from the experiment window.
 
 Success: with `--lab configs/examples`, Experiment > Conditionals Editor opens
 `system.toml`; adding a truncation `Ar40 > 8e5` with `start = 20` and saving
-writes a file that `elctl exp conditionals check` accepts; choosing that file
+writes a file that `elctl conditionals-check` accepts; choosing that file
 as the queue's conditionals, or ticking it for a run, shows up in the queue
 file and the next run uses it.
 
@@ -47,7 +47,7 @@ Out:
 | D1 | Logic that does not need Qt lives in `libs/experiment`: the TOML writer and the file operations. The UI holds a `ConditionalSet` and calls them. |
 | D2 | Saving writes canonical TOML. Comments and layout of a hand-written file are lost; the editor warns once per file before the first save that would drop comments. |
 | D3 | The authored `check`, `window` and `mapper` are written, never the transformed expression. |
-| D4 | A file is not saved while any conditional in it fails to compile or breaks a per-kind rule. Validation warnings and catalog errors (unknown isotope, ...) are shown but do not block: a file may be written for a lab state that does not exist yet. |
+| D4 | A file is not saved while any conditional in it fails to compile, breaks a per-kind rule, or has an action whose parameters cannot be written (no name, no steps, a non-finite value); what would be written is parsed back before it replaces the file. Validation warnings and catalog errors (unknown isotope, ...) are shown but do not block: a file may be written for a lab state that does not exist yet. |
 | D5 | Files may be edited while a queue runs. `ConditionalLibrary` reads the run-level and plan-level files per run, so a saved edit applies from the next run; the queue-wide sets (system, queue file) are loaded when the queue starts and apply from the next start. The status bar says which. Nothing is swapped into a run in progress. |
 | D6 | Run assignment follows the queue table's existing edit rules (`row_editable`): frozen rows cannot change. The queue's conditionals file cannot change while the queue is live. |
 
@@ -248,7 +248,7 @@ goes into `FactoryForm` and from there into the runs Add inserts.
 | File does not parse | Listed; opening shows the message, no editing. |
 | Write fails | Message box with the OS error; the document stays modified. |
 | Bad file name on create | Refused with the rule (plain name). |
-| Name exists on create | Refused. |
+| Name exists on create | Refused, including a name that differs only by case on a case-insensitive filesystem. |
 | Duplicate conditional names in a file | The table model marks the later row with an error; blocks save like a `finalize` error. |
 | Referenced file deleted | The queue's validation reports it, as today. |
 
