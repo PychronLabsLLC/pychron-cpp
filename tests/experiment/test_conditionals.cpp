@@ -472,3 +472,81 @@ TEST(ConditionalsToml, PerKindRules) {
   EXPECT_NE(bad("[[truncations]]\ncheck = \"Ar40 > 1\"\nstart = 1.5\n"), "");
   EXPECT_EQ(bad("[[post_run]]\ncheck = \"Ar40 > 1\"\naction = \"skip_n 2\"\n"), "");
 }
+
+TEST(ConditionalKinds, FieldsOf) {
+  EXPECT_TRUE(fields_of(ConditionalKind::Truncation).ratio);
+  EXPECT_TRUE(fields_of(ConditionalKind::Action).resume);
+  EXPECT_TRUE(fields_of(ConditionalKind::Modification).run_flags);
+  EXPECT_TRUE(fields_of(ConditionalKind::Termination).actions.empty());
+  EXPECT_FALSE(fields_of(ConditionalKind::PreRun).gating);
+  EXPECT_EQ(fields_of(ConditionalKind::Modification).default_action, ActionSpec::Type::SkipNext);
+  EXPECT_EQ(table_name(ConditionalKind::Truncation), "truncations");
+  EXPECT_EQ(table_name(ConditionalKind::PreRun), "pre_run");
+}
+
+TEST(ConditionalKinds, FinalizeMatchesParser) {
+  Conditional c;
+  c.kind = ConditionalKind::Action;
+  c.check = "Ar40 > 1";
+  auto r = finalize(c);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().what, "an action conditional needs 'action'");
+  c.kind = ConditionalKind::Truncation;
+  auto ok = finalize(c);
+  ASSERT_TRUE(ok) << ok.error().what;
+  EXPECT_EQ(ok->name, default_name(ConditionalKind::Truncation, "Ar40 > 1"));
+  EXPECT_EQ(ok->name, "truncation:Ar40 > 1");
+  EXPECT_EQ(ok->action.type, ActionSpec::Type::Truncate);
+  ASSERT_TRUE(ok->expr);
+  c.resume = true;
+  EXPECT_EQ(finalize(c).error().what, "'resume' applies to actions only");
+  c = {};
+  c.kind = ConditionalKind::Modification;
+  c.check = "Ar40 < 1";
+  c.truncate = c.terminate = true;
+  EXPECT_EQ(finalize(c).error().what, "a modification may truncate or terminate, not both");
+  c = {};
+  c.check = "Ar40 >";
+  EXPECT_FALSE(finalize(c));
+  c = {};
+  EXPECT_EQ(finalize(c).error().what, "missing 'check'");
+}
+
+TEST(ConditionalKinds, FinalizeRejectsWhatTheParserRejects) {
+  auto err = [](Conditional c) {
+    auto r = finalize(std::move(c));
+    return r ? std::string() : r.error().what;
+  };
+  Conditional c;
+  c.check = "Ar40 > 1";
+  c.kind = ConditionalKind::Termination;
+  c.abbreviated_count_ratio = 0.5;
+  EXPECT_EQ(err(c), "'abbreviated_count_ratio' applies to truncations, modifications and equilibrations");
+  c.abbreviated_count_ratio = 1.0;
+  c.action.type = ActionSpec::Type::Cancel;
+  EXPECT_EQ(err(c), "'action' is not allowed on terminations");
+  c.action = {};
+  c.kind = ConditionalKind::Truncation;
+  c.abbreviated_count_ratio = 1.5;
+  EXPECT_EQ(err(c), "'abbreviated_count_ratio' must be a number in (0, 1]");
+  c.abbreviated_count_ratio = 1.0;
+  c.window = 0;
+  EXPECT_EQ(err(c), "'window' must be an integer >= 1");
+  c.window.reset();
+  c.frequency = 0;
+  EXPECT_EQ(err(c), "'frequency' must be an integer >= 1");
+  c.frequency = 1;
+  c.action.type = ActionSpec::Type::Cancel;
+  EXPECT_EQ(err(c), "a truncation's action must be truncate or truncate:quick");
+  c.kind = ConditionalKind::Modification;
+  EXPECT_EQ(err(c), "a modification's action must be a queue action (skip_next, run_blank, ...)");
+  c.kind = ConditionalKind::Action;
+  c.action.type = ActionSpec::Type::RunBlank;
+  EXPECT_EQ(err(c), "queue actions belong in [[modifications]] or [[post_run]]");
+  c.kind = ConditionalKind::PreRun;
+  EXPECT_EQ(err(c), "a pre_run conditional's action must be cancel");
+  c.kind = ConditionalKind::PostRun;
+  EXPECT_EQ(err(c), "");
+  c.action.type = ActionSpec::Type::Notify;
+  EXPECT_EQ(err(c), "a post_run action must be cancel or a queue action");
+}

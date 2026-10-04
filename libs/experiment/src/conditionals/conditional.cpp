@@ -8,6 +8,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "number.hpp"
 #include "pychron/experiment/record/sha256.hpp"
 
 namespace pychron::experiment {
@@ -41,11 +42,7 @@ bool parse_double(const std::string& s, double& out) {
   return !s.empty() && end == s.c_str() + s.size();
 }
 
-std::string num(double v) {
-  char b[40];
-  std::snprintf(b, sizeof b, "%.15g", v);
-  return b;
-}
+std::string num(double v) { return detail::shortest(v); }
 
 // "NAME=v"
 Result<ActionSpec> name_value(ActionSpec a, const std::string& arg, const std::string& what) {
@@ -90,6 +87,49 @@ std::optional<ConditionalKind> parse_conditional_kind(std::string_view table_nam
   for (const auto& e : kKinds)
     if (e.table == table_name) return e.kind;
   return std::nullopt;
+}
+
+std::string_view table_name(ConditionalKind k) noexcept {
+  for (const auto& e : kKinds)
+    if (e.kind == k) return e.table;
+  return "";
+}
+
+std::string default_name(ConditionalKind k, std::string_view check) {
+  return std::string(to_string(k)) + ":" + std::string(check);
+}
+
+const KindFields& fields_of(ConditionalKind k) {
+  using K = ConditionalKind;
+  using T = ActionSpec::Type;
+  static const std::vector<T> queue{T::SkipNext, T::SkipN,   T::SkipAliquot, T::SkipToLastInAliquot,
+                                    T::SetExtract, T::Repeat, T::RunBlank};
+  static const std::vector<T> post = [] {
+    std::vector<T> v{T::Cancel};
+    v.insert(v.end(), queue.begin(), queue.end());
+    return v;
+  }();
+  //                                       gating ratio  resume flags  actions  default
+  static const KindFields truncation{true, true, false, false, {T::Truncate}, T::Truncate};
+  static const KindFields termination{true, false, false, false, {}, T::Terminate};
+  static const KindFields cancelation{true, false, false, false, {}, T::Cancel};
+  static const KindFields action{
+      true, false, true, false, {T::Truncate, T::Terminate, T::Cancel, T::SetParam, T::RunHook, T::Notify}, T::None};
+  static const KindFields modification{true, true, false, true, queue, T::SkipNext};
+  static const KindFields equilibration{true, true, false, false, {}, T::None};
+  static const KindFields pre_run{false, false, false, false, {T::Cancel}, T::Cancel};
+  static const KindFields post_run{false, false, false, false, post, T::Cancel};
+  switch (k) {
+    case K::Truncation: return truncation;
+    case K::Termination: return termination;
+    case K::Cancelation: return cancelation;
+    case K::Action: return action;
+    case K::Modification: return modification;
+    case K::Equilibration: return equilibration;
+    case K::PreRun: return pre_run;
+    case K::PostRun: return post_run;
+  }
+  return truncation;
 }
 
 std::string_view to_string(ConditionalLevel l) noexcept {
@@ -382,6 +422,66 @@ std::optional<WhiffCheck::Action> evaluate_whiff(const Whiff& w, const MetricCon
   return std::nullopt;
 }
 
+Result<Conditional> finalize(Conditional c) {
+  using K = ConditionalKind;
+  using T = ActionSpec::Type;
+  const K kind = c.kind;
+  const KindFields& f = fields_of(kind);
+  auto at_least = [](const char* key, int v, int min) -> Result<void> {
+    if (v < min) return cfg("'" + std::string(key) + "' must be an integer >= " + std::to_string(min));
+    return {};
+  };
+  if (trim(c.check).empty()) return cfg("missing 'check'");
+  if (auto r = at_least("start", c.start, 0); !r) return fail(r.error());
+  if (auto r = at_least("frequency", c.frequency, 1); !r) return fail(r.error());
+  if (auto r = at_least("ntrips", c.ntrips, 1); !r) return fail(r.error());
+  if (c.window)
+    if (auto r = at_least("window", *c.window, 1); !r) return fail(r.error());
+  auto expr = compile_check(c.check, c.window, c.mapper);
+  if (!expr) return fail(expr.error());
+  c.expr = *expr;
+  if (c.name.empty()) c.name = default_name(kind, c.check);
+
+  if (!(c.abbreviated_count_ratio > 0 && c.abbreviated_count_ratio <= 1))
+    return cfg("'abbreviated_count_ratio' must be a number in (0, 1]");
+  if (c.abbreviated_count_ratio != 1.0 && !f.ratio)
+    return cfg("'abbreviated_count_ratio' applies to truncations, modifications and equilibrations");
+  if (c.resume && !f.resume) return cfg("'resume' applies to actions only");
+  if ((c.truncate || c.terminate) && !f.run_flags) return cfg("'truncate'/'terminate' apply to modifications only");
+  if (c.truncate && c.terminate) return cfg("a modification may truncate or terminate, not both");
+
+  // Which actions each kind may take.
+  const bool given = c.action.type != T::None;
+  if (!given) c.action.type = f.default_action;
+  const T at = c.action.type;
+  const bool allowed = std::find(f.actions.begin(), f.actions.end(), at) != f.actions.end();
+  switch (kind) {
+    case K::Truncation:
+      if (!allowed) return cfg("a truncation's action must be truncate or truncate:quick");
+      break;
+    case K::Termination:
+    case K::Cancelation:
+    case K::Equilibration:
+      if (given && c.action != ActionSpec{.type = f.default_action})
+        return cfg("'action' is not allowed on " + std::string(to_string(kind)) + "s");
+      break;
+    case K::Action:
+      if (at == T::None) return cfg("an action conditional needs 'action'");
+      if (is_queue_action(at)) return cfg("queue actions belong in [[modifications]] or [[post_run]]");
+      break;
+    case K::Modification:
+      if (!allowed) return cfg("a modification's action must be a queue action (skip_next, run_blank, ...)");
+      break;
+    case K::PreRun:
+      if (!allowed) return cfg("a pre_run conditional's action must be cancel");
+      break;
+    case K::PostRun:
+      if (!allowed) return cfg("a post_run action must be cancel or a queue action");
+      break;
+  }
+  return c;
+}
+
 // ---- TOML ---------------------------------------------------------------------
 
 namespace {
@@ -411,8 +511,6 @@ Result<bool> bool_key(const toml::table& t, std::string_view key) {
 }
 
 Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
-  using K = ConditionalKind;
-  using T = ActionSpec::Type;
   static const std::set<std::string_view> known{"check",  "name",  "start",  "frequency", "ntrips",
                                                 "action", "resume", "window", "mapper",    "analysis_types",
                                                 "abbreviated_count_ratio", "truncate", "terminate"};
@@ -440,13 +538,12 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
   auto mapper = str_key(t, "mapper");
   if (!mapper) return fail(mapper.error());
   c.mapper = *mapper;
-  auto expr = compile_check(c.check, c.window, c.mapper);
-  if (!expr) return fail(expr.error());
-  c.expr = *expr;
+  // Compiled here as well so a bad check is reported before the keys after it.
+  if (auto expr = compile_check(c.check, c.window, c.mapper); !expr) return fail(expr.error());
 
   auto name = str_key(t, "name");
   if (!name) return fail(name.error());
-  c.name = name->empty() ? std::string(to_string(kind)) + ":" + c.check : *name;
+  c.name = *name;
 
   if (auto* n = t.get("analysis_types")) {
     auto* arr = n->as_array();
@@ -462,7 +559,8 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
   if (auto* n = t.get("abbreviated_count_ratio")) {
     auto v = n->value<double>();
     if (!v || *v <= 0 || *v > 1) return cfg("'abbreviated_count_ratio' must be a number in (0, 1]");
-    if (kind != K::Truncation && kind != K::Modification && kind != K::Equilibration)
+    // The key itself is refused, even at its default value.
+    if (!fields_of(kind).ratio)
       return cfg("'abbreviated_count_ratio' applies to truncations, modifications and equilibrations");
     c.abbreviated_count_ratio = *v;
   }
@@ -471,23 +569,14 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
   if (!resume) return fail(resume.error());
   if (!trunc) return fail(trunc.error());
   if (!term) return fail(term.error());
-  if (*resume && kind != K::Action) return cfg("'resume' applies to actions only");
-  if ((*trunc || *term) && kind != K::Modification) return cfg("'truncate'/'terminate' apply to modifications only");
-  if (*trunc && *term) return cfg("a modification may truncate or terminate, not both");
   c.resume = *resume;
   c.truncate = *trunc;
   c.terminate = *term;
+  if (c.resume && !fields_of(kind).resume) return cfg("'resume' applies to actions only");
+  if ((c.truncate || c.terminate) && !fields_of(kind).run_flags)
+    return cfg("'truncate'/'terminate' apply to modifications only");
+  if (c.truncate && c.terminate) return cfg("a modification may truncate or terminate, not both");
 
-  // Default action per kind.
-  switch (kind) {
-    case K::Truncation: c.action.type = T::Truncate; break;
-    case K::Termination: c.action.type = T::Terminate; break;
-    case K::Cancelation: c.action.type = T::Cancel; break;
-    case K::Modification: c.action.type = T::SkipNext; break;
-    case K::PreRun:
-    case K::PostRun: c.action.type = T::Cancel; break;
-    default: break;
-  }
   auto act = str_key(t, "action");
   if (!act) return fail(act.error());
   if (!act->empty()) {
@@ -495,32 +584,10 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
     if (!a) return fail(a.error());
     c.action = *a;
   }
-  // Which actions each kind may take.
-  const T at = c.action.type;
-  switch (kind) {
-    case K::Truncation:
-      if (at != T::Truncate) return cfg("a truncation's action must be truncate or truncate:quick");
-      break;
-    case K::Termination:
-    case K::Cancelation:
-    case K::Equilibration:
-      if (t.contains("action")) return cfg("'action' is not allowed on " + std::string(to_string(kind)) + "s");
-      break;
-    case K::Action:
-      if (at == T::None) return cfg("an action conditional needs 'action'");
-      if (is_queue_action(at)) return cfg("queue actions belong in [[modifications]] or [[post_run]]");
-      break;
-    case K::Modification:
-      if (!is_queue_action(at)) return cfg("a modification's action must be a queue action (skip_next, run_blank, ...)");
-      break;
-    case K::PreRun:
-      if (at != T::Cancel) return cfg("a pre_run conditional's action must be cancel");
-      break;
-    case K::PostRun:
-      if (at != T::Cancel && !is_queue_action(at)) return cfg("a post_run action must be cancel or a queue action");
-      break;
-  }
-  return c;
+  // The key itself is refused where the kind has no action.
+  if (t.contains("action") && fields_of(kind).actions.empty())
+    return cfg("'action' is not allowed on " + std::string(to_string(kind)) + "s");
+  return finalize(std::move(c));
 }
 
 Result<toml::table> load_table(std::string_view text, std::string_view file) {

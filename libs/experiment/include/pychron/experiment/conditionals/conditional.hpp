@@ -77,9 +77,36 @@ struct Conditional {
   bool applies_to(std::string_view analysis_type) const;
 };
 
+// What a kind takes beyond the fields every conditional has (check, name,
+// ntrips, window, mapper, analysis_types). The parser and the editor share it.
+struct KindFields {
+  bool gating = false;     // start, frequency: evaluated per reading
+  bool ratio = false;      // abbreviated_count_ratio
+  bool resume = false;
+  bool run_flags = false;  // truncate / terminate
+  std::vector<ActionSpec::Type> actions;  // allowed; empty = no `action` key
+  ActionSpec::Type default_action = ActionSpec::Type::None;
+};
+const KindFields& fields_of(ConditionalKind k);
+std::string_view table_name(ConditionalKind k) noexcept;  // "truncations", "pre_run", ...
+// The name a conditional without one gets: "<kind>:<check>".
+std::string default_name(ConditionalKind k, std::string_view check);
+
+// Kinds in the order to_toml writes them.
+inline constexpr ConditionalKind kFileOrder[] = {
+    ConditionalKind::Truncation,   ConditionalKind::Termination,   ConditionalKind::Cancelation,
+    ConditionalKind::Action,       ConditionalKind::Modification,  ConditionalKind::Equilibration,
+    ConditionalKind::PreRun,       ConditionalKind::PostRun};
+
 // Parses `check`, then applies window and mapper. Errors name the check.
 Result<std::shared_ptr<const Expr>> compile_check(const std::string& check, std::optional<int> window,
                                                   const std::string& mapper);
+
+// A conditional built in code, made ready to use: compiles check, window and
+// mapper into `expr`, gives an empty name the default name and an action of
+// Type::None the kind's default, and applies the rules parse_conditionals
+// applies to a table (same messages).
+Result<Conditional> finalize(Conditional c);
 
 // One level's conditionals plus the upstream names it disables.
 struct ConditionalSet {
@@ -197,6 +224,11 @@ std::optional<WhiffCheck::Action> evaluate_whiff(const Whiff& w, const MetricCon
 
 // TOML: [[truncations]] ... [[post_run]] tables plus optional `disable = [...]`.
 Result<ConditionalSet> parse_conditionals(std::string_view toml_text, std::string_view file = "conditionals.toml");
+// Canonical TOML for one file: `disable`, then the conditionals grouped by
+// kind in kFileOrder, keys in a fixed order, defaults omitted. Writes what was
+// authored (check, window, mapper), so parse_conditionals(to_toml(s)) has the
+// same items and disable list as `s` (level and location aside).
+std::string to_toml(const ConditionalSet& set);
 // [whiff] sniff = N ; [[whiff.checks]] check = "...", action = "pump"
 Result<Whiff> parse_whiff(std::string_view toml_text, std::string_view file = "whiff.toml");
 
