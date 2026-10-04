@@ -442,6 +442,43 @@ class TestCanvasView : public QObject {
     QVERIFY(dark_pixels(tall) > 10);
   }
 
+  // A region keeps its colour when another region appears or goes away.
+  void regionsKeepTheirColourAsOthersComeAndGo() {
+    auto open = [&](const char* valve, bool on) {
+      bridge_->actuate(valve, on ? SwitchOp::Open : SwitchOp::Close);
+      QTRY_COMPARE_WITH_TIMEOUT(view_->valve(valve)->state(), on ? ValveState::Open : ValveState::Closed, 5000);
+    };
+    // turbo and its gauge are one region from the start; the air pipette's
+    // volumes make another once P2 opens; bone + prep a third with A.
+    open("P2", true);
+    const QColor turbo = view_->stage("turbo")->region_color();
+    const QColor tank = view_->stage("air_tank")->region_color();
+    QVERIFY(turbo != CanvasView::isolated_color());
+    QVERIFY(tank != CanvasView::isolated_color());
+    QVERIFY(turbo != tank);
+
+    open("A", true);
+    const QColor bone = view_->stage("bone")->region_color();
+    QVERIFY(bone != turbo && bone != tank && bone != CanvasView::isolated_color());
+    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
+    QCOMPARE(view_->stage("air_tank")->region_color(), tank);
+
+    // each goes away in turn: the others do not change
+    open("P2", false);
+    QCOMPARE(view_->stage("air_tank")->region_color(), CanvasView::isolated_color());
+    QCOMPARE(view_->stage("bone")->region_color(), bone);
+    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
+    open("P2", true);
+    open("A", false);
+    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
+    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
+
+    // joined (prep to turbo through C): one colour, one of the two it had
+    open("C", true);
+    QCOMPARE(view_->stage("prep")->region_color(), view_->stage("turbo")->region_color());
+    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
+  }
+
   void boxEntryFindsWhereALineCrossesIntoABox() {
     const QRectF box(80, -10, 40, 20);
     auto in = ui::box_entry({{0, 0}, {100, 0}}, box);

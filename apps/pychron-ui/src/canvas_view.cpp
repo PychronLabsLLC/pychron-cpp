@@ -317,21 +317,45 @@ void CanvasView::apply_regions() {
   // Volumes and the open valves joining them take the region colour; pipes
   // inherit it from whichever element they touch.
   std::map<std::string, QColor> colors;
-  std::size_t shared = 0;
+  // A region keeps its colour while other regions come and go: it takes the
+  // palette slot most of its volumes had last time, and only a region with no
+  // history (or whose slot a larger region claimed) gets a free one. Larger
+  // regions choose first, so on a merge or a split the bigger part keeps the
+  // colour.
+  const auto& palette = theme().regions;
+  std::vector<const systems::NetworkGraph::Region*> shared;
   for (const auto& region : regions) {
-    if (region.volumes.size() < 2) {
-      continue;
+    if (region.volumes.size() >= 2) shared.push_back(&region);
+  }
+  std::stable_sort(shared.begin(), shared.end(),
+                   [](const auto* a, const auto* b) { return a->volumes.size() > b->volumes.size(); });
+  std::vector<int> users(palette.size(), 0);
+  std::map<std::string, std::size_t> chosen;  // (`slots` is a Qt keyword)
+  for (const auto* region : shared) {
+    std::vector<int> votes(palette.size(), 0);
+    for (const auto& volume : region->volumes) {
+      if (auto it = region_slots_.find(volume); it != region_slots_.end()) ++votes[it->second];
     }
-    // Region fill colours, cycled by region index.
-    const auto& palette = theme().regions;
-    const QColor color = palette[shared++ % palette.size()];
-    for (const auto& volume : region.volumes) {
-      colors[volume] = color;
+    // Among the slots no larger region took this time: the one with most
+    // votes; with no votes, the least used, lowest first.
+    std::size_t slot = 0;
+    for (std::size_t i = 1; i < palette.size(); ++i) {
+      const bool free_i = users[i] == 0;
+      const bool free_s = users[slot] == 0;
+      const int vote_i = free_i ? votes[i] : 0;
+      const int vote_s = free_s ? votes[slot] : 0;
+      if (vote_i > vote_s || (vote_i == vote_s && users[i] < users[slot])) slot = i;
     }
-    for (const auto& valve : region.valves) {
-      colors[valve] = color;
+    ++users[slot];
+    for (const auto& volume : region->volumes) {
+      colors[volume] = palette[slot];
+      chosen[volume] = slot;
+    }
+    for (const auto& valve : region->valves) {
+      colors[valve] = palette[slot];
     }
   }
+  region_slots_ = std::move(chosen);
   // Open valves joining a shared region wear its colour when asked to; every
   // other valve keeps its state colour.
   for (auto& [name, item] : valves_) {

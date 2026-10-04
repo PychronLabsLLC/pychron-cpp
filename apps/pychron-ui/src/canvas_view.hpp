@@ -72,6 +72,7 @@ class CanvasView : public QGraphicsView {
   std::map<std::string, StageItem*> stages_;
   std::map<std::string, QRectF> boxes_;  // stages and pipettes, scene coordinates
   std::map<std::string, GaugeLabelItem*> gauges_;
+  std::map<std::string, std::size_t> region_slots_;  // volume -> palette slot at the last repaint
   std::vector<ConnectionItem*> pipes_;
   int connections_ = 0;
 };
