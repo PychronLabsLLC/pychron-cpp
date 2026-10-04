@@ -76,6 +76,11 @@ QString QueueTableModel::text(int row, int column) const {
       return QStringLiteral("%1 %2").arg(QString::number(r.extraction.value, 'g', 6), q(experiment::to_string(r.extraction.units)));
     case Script: return q(r.extraction.script);
     case Plan: return q(r.measurement.plan);
+    case Conditionals: {
+      QStringList names;
+      for (const auto& c : r.conditionals) names.append(q(c.name));
+      return names.join(QStringLiteral(", "));
+    }
     case Comment: return q(r.comment);
     case Estimate: {
       const auto& est = check_.report.run_estimates;
@@ -132,7 +137,7 @@ QVariant QueueTableModel::data(const QModelIndex& index, int role) const {
 QVariant QueueTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
   if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
   static const char* names[Count] = {"#",        "Status",  "Identifier", "Aliquot", "Step",    "Type",
-                                     "Position", "Extract", "Script",     "Plan",    "Comment", "Est."};
+                                     "Position", "Extract", "Script",     "Plan",    "Conditionals", "Comment", "Est."};
   return section >= 0 && section < Count ? tr(names[section]) : QVariant();
 }
 
@@ -293,6 +298,36 @@ bool QueueTableModel::move_down(std::vector<std::size_t> rows, std::vector<std::
     for (std::size_t i = 0; i < rows.size(); ++i) moved->push_back(first + i);
   }
   return true;
+}
+
+bool QueueTableModel::set_conditionals(std::vector<std::size_t> rows, const std::vector<std::string>& names) {
+  if (locked_ || rows.empty()) return false;
+  for (const std::size_t row : rows)
+    if (row >= queue_.size() || !row_editable(row)) return false;
+  experiment::ExperimentQueue next = queue_;
+  bool changed = false;
+  for (const std::size_t row : rows) {
+    RunSpec r = queue_.runs()[row];
+    std::vector<experiment::ConditionalRef> refs;
+    for (const auto& name : names) {
+      const auto had = std::find_if(r.conditionals.begin(), r.conditionals.end(),
+                                    [&](const auto& c) { return c.name == name; });
+      refs.push_back(had != r.conditionals.end() ? *had : experiment::ConditionalRef{name});
+    }
+    if (refs == r.conditionals) continue;
+    r.conditionals = std::move(refs);
+    if (!next.replace(row, std::move(r))) return false;
+    changed = true;
+  }
+  return !changed || adopt(std::move(next), false, -1);  // no reset: the selection stays
+}
+
+bool QueueTableModel::set_queue_conditionals(const std::string& name) {
+  if (locked_ || live()) return false;
+  if (queue_.spec().queue_conditionals == name) return true;
+  experiment::ExperimentQueue next = queue_;
+  next.header().queue_conditionals = name;
+  return adopt(std::move(next), false, -1);
 }
 
 bool QueueTableModel::duplicate(std::vector<std::size_t> rows) {

@@ -208,6 +208,109 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(offered.size(), 3u);  // not offered once the queue ended
   }
 
+  void conditionalsColumn() {
+    auto m = model();
+    QCOMPARE(m->headerData(QueueTableModel::Conditionals, Qt::Horizontal).toString(), QStringLiteral("Conditionals"));
+    QCOMPARE(m->headerData(QueueTableModel::Comment, Qt::Horizontal).toString(), QStringLiteral("Comment"));
+    QCOMPARE(m->headerData(QueueTableModel::Estimate, Qt::Horizontal).toString(), QStringLiteral("Est."));
+    QCOMPARE(cell(*m, 1, QueueTableModel::Conditionals), QString());
+    QueueSpec q = m->queue();
+    q.runs[1].conditionals = {{"system", "action"}, {"default_unknown", "truncate"}};
+    m->set_queue(q);
+    QCOMPARE(cell(*m, 1, QueueTableModel::Conditionals), QStringLiteral("system, default_unknown"));
+    QVERIFY(!(m->flags(m->index(1, QueueTableModel::Conditionals)) & Qt::ItemIsEditable));
+    QVERIFY(!m->setData(m->index(1, QueueTableModel::Conditionals), QStringLiteral("x")));
+  }
+
+  void setConditionals() {
+    auto m = model();
+    QSignalSpy edited(m.get(), &QueueTableModel::edited);
+    QSignalSpy validated(m.get(), &QueueTableModel::validated);
+    QVERIFY(m->set_conditionals({0, 1}, {"default_unknown"}));
+    QCOMPARE(edited.count(), 1);
+    QVERIFY(validated.count() >= 1);
+    const pychron::experiment::ConditionalRef ref{"default_unknown", "action"};
+    QCOMPARE(m->queue().runs[0].conditionals, std::vector{ref});
+    QCOMPARE(m->queue().runs[1].conditionals, std::vector{ref});
+    QVERIFY(m->queue().runs[2].conditionals.empty());
+    QVERIFY(m->runnable());
+    QVERIFY(m->set_conditionals({0}, {}));
+    QVERIFY(m->queue().runs[0].conditionals.empty());
+    QVERIFY(!m->set_conditionals({}, {"default_unknown"}));
+    QVERIFY(!m->set_conditionals({9}, {"default_unknown"}));
+
+    // A file the lab does not have is the row's error, as with a typed name.
+    QVERIFY(m->set_conditionals({2}, {"no_such_file"}));
+    QVERIFY(m->row_has_error(2));
+  }
+
+  void setConditionalsKeepsKind() {
+    auto m = model();
+    QueueSpec q = m->queue();
+    q.runs[0].conditionals = {{"system", "truncate"}};
+    m->set_queue(q);
+    QVERIFY(m->set_conditionals({0}, {"system", "default_unknown"}));
+    using Ref = pychron::experiment::ConditionalRef;
+    QCOMPARE(m->queue().runs[0].conditionals, (std::vector<Ref>{{"system", "truncate"}, {"default_unknown", "action"}}));
+  }
+
+  void setConditionalsKeepsAMissingReference() {
+    auto m = model();
+    QueueSpec q = m->queue();
+    q.runs[0].conditionals = {{"gone", "truncate"}};
+    m->set_queue(q);
+    QSignalSpy edited(m.get(), &QueueTableModel::edited);
+    QVERIFY(m->set_conditionals({0}, {"gone"}));  // unchanged: accepted, nothing to do
+    QCOMPARE(edited.count(), 0);
+    QCOMPARE(cell(*m, 0, QueueTableModel::Conditionals), QStringLiteral("gone"));
+    using Ref = pychron::experiment::ConditionalRef;
+    QCOMPARE(m->queue().runs[0].conditionals, (std::vector<Ref>{{"gone", "truncate"}}));
+  }
+
+  void setConditionalsFollowsTheFrozenRows() {
+    auto m = model();
+    int offered = 0;
+    m->set_live(1, [&](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> {
+      ++offered;
+      return base + 1;
+    });
+    QVERIFY(!m->set_conditionals({0}, {"default_unknown"}));
+    QVERIFY(!m->set_conditionals({0, 1}, {"default_unknown"}));  // all or nothing
+    QVERIFY(m->queue().runs[0].conditionals.empty());
+    QVERIFY(m->queue().runs[1].conditionals.empty());
+    QCOMPARE(offered, 0);
+    QVERIFY(m->set_conditionals({1, 2}, {"default_unknown"}));
+    QCOMPARE(offered, 1);
+    QCOMPARE(m->queue().runs[2].conditionals.size(), std::size_t{1});
+    m->end_live();
+    m->set_locked(true);
+    QVERIFY(!m->set_conditionals({1}, {}));
+  }
+
+  void setQueueConditionals() {
+    auto m = model();
+    QSignalSpy edited(m.get(), &QueueTableModel::edited);
+    QVERIFY(m->set_queue_conditionals("default_unknown"));
+    QCOMPARE(m->queue().queue_conditionals, std::string("default_unknown"));
+    QCOMPARE(edited.count(), 1);
+    QVERIFY(m->set_queue_conditionals("default_unknown"));  // unchanged
+    QCOMPARE(edited.count(), 1);
+    QCOMPARE(m->rowCount(), 3);
+
+    QVERIFY(m->set_queue_conditionals("no_such_file"));
+    QVERIFY(!m->runnable());
+    QVERIFY(!m->queue_diagnostics().isEmpty());
+    QVERIFY(m->set_queue_conditionals(""));
+    QVERIFY(m->runnable());
+
+    m->set_live(0, [](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> { return base + 1; });
+    QVERIFY(!m->set_queue_conditionals("default_unknown"));
+    QVERIFY(m->queue().queue_conditionals.empty());
+    m->end_live();
+    m->set_locked(true);
+    QVERIFY(!m->set_queue_conditionals("default_unknown"));
+  }
+
   void statusFollowsRunEvents() {
     auto m = model();
     m->on_run_started(exec::RunStarted{1, "uuid-1", "66001", {}});

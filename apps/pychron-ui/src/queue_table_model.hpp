@@ -41,7 +41,9 @@ class QueueTableModel : public QAbstractTableModel {
 
  public:
   // Status sits next to # so it stays in view on narrow windows.
-  enum Column { Row, Status, Identifier, Aliquot, Step, Type, Position, Extract, Script, Plan, Comment, Estimate, Count };
+  enum Column {
+    Row, Status, Identifier, Aliquot, Step, Type, Position, Extract, Script, Plan, Conditionals, Comment, Estimate, Count
+  };
 
   using Checker = std::function<experiment::lab::LabCheck(const experiment::QueueSpec&)>;
   // Offers a changed queue to the running executor: (base version, queue) -> new version.
@@ -83,6 +85,13 @@ class QueueTableModel : public QAbstractTableModel {
   bool replace_run(std::size_t row, experiment::RunSpec run);
   // Inserts `runs` before row `at` (size() appends).
   bool insert_runs(std::size_t at, const std::vector<experiment::RunSpec>& runs);
+  // Gives each row these conditionals files, in this order. A file a row
+  // already references keeps its reference (kind included). All rows or none:
+  // false when locked or a row is not editable.
+  bool set_conditionals(std::vector<std::size_t> rows, const std::vector<std::string>& names);
+  // The queue's conditionals file ("" for none). Refused while live: the
+  // queue-wide checks are loaded when the queue starts.
+  bool set_queue_conditionals(const std::string& name);
   // Expands frequency runs into the queue; how many were inserted, nullopt
   // when locked or the spec is bad.
   std::optional<std::size_t> add_frequency(const experiment::FrequencySpec& spec);
