@@ -581,3 +581,21 @@ points. Where this section and an earlier one disagree, this section wins.
     kind, the last revision whose source commit is at or before the
     interpreted age's commit in the walk order of that source. Members from
     another source are not comparable.
+31. **A replay never writes behind a stored revision.** When a replay meets
+    a revision that is not stored (it was refused earlier) while the same
+    subject and kind already hold a revision from a later commit of this
+    source, writing it now would put old content at the head. The writer
+    leaves the head alone and records a pending `identity_clash` conflict
+    with reason `late_revision_not_applied` and the content in detail.
+32. **Reference data as of an interpreted age.** Reference data lives in
+    another source, so walk order cannot be compared. For parity, a member is
+    not comparable (reason `reference_changed_after`) when any reference
+    object its reduction uses has a revision created after the interpreted
+    age's commit time; otherwise the current reference heads are used.
+33. **More known limits.** A git tag added later to an already imported
+    commit becomes a bookmark of the heads at the time of the replay that
+    sees it, and a plain incremental run does not see it. An analysis refused
+    in one run, then renumbered, whose old run id another analysis took, is
+    an `identity_clash` on replay. The merge rule of item 12 compares with
+    the blob the walk last saw for a path, which after an unreadable version
+    can repeat content in a new revision.
