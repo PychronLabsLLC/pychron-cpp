@@ -172,7 +172,8 @@ int import_verify(Context& ctx, const Flags& flags);
 std::string missing_settings(const Context& ctx, const Source& source);
 
 // The age of an analysis as of an interpreted age of the project repository
-// `source` (spec 10.30 and 10.32), for ingest::verify. `store` and `adapter`
+// `source` (spec 10.30 and 10.32), for ingest::verify: analysis revisions by
+// their place in the walk, reference data by the age's commit time. `store` and `adapter`
 // (the source's own, which knows the walk order) outlive the function.
 // `constants`: the preset the reduction uses for decay constants and
 // atmospheric ratios; every age carries "constants=<preset>" as its basis.

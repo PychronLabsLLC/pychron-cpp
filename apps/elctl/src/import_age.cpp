@@ -17,10 +17,18 @@
 // (processing::reduce_analysis), so nothing of the reduction is repeated here.
 //
 // Reference data (flux, production, chronology, gains) comes from another
-// source, whose walk cannot be compared with this one. The current reference
-// heads are used when no reference object of the analysis has a revision
-// made after the interpreted age's commit time; otherwise the analysis is
-// not comparable.
+// source, whose walk cannot be compared with this one; it is taken as of the
+// interpreted age's commit time t (AsOf::created). For each reference object
+// the reduction uses, the revision is the last one in the object's chain
+// whose changeset was created at or before t. The production is found
+// through the level's link, which is revisioned itself: the link as of t
+// names the production, and that production is taken as of t. An object that
+// had no revision by t was not defined yet. A revision that states an
+// absence (spec 10.21, "removed") is what the object held at t: no J, no
+// production, no chronology, and never the value before it or after it.
+// Gains play no part in the age: they are taken as of t when the object has
+// a revision by then, and left out otherwise. Level geometry and sensitivity
+// are not read by the reduction.
 //
 // Constants (decay constants, atmospheric ratios) are a preset of
 // libs/reduction, the same for every analysis: the store keeps none per
@@ -37,15 +45,22 @@
 //   revision_outside_source         a revision without a place in the walk lies
 //                                   before the one that would be used
 //   no_intercepts                   nothing to reduce at that point
-//   reference_changed_after         spec 10.32
+//   reference_not_yet_defined       the flux, the level's production link, the
+//                                   production it named or the chronology had
+//                                   no revision by the age's commit time
 //   no_j, no_production, no_chronology
+//                                   the analysis has no such reference, or
+//                                   what it had at that time says it was
+//                                   removed
 //   not_reducible                   the reduction refused its input
 //   age_undefined                   no age came out (1 + J F <= 0, no F)
 
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "import_impl.hpp"
 #include "pychron/processing/reduced.hpp"
@@ -145,17 +160,31 @@ class AgeAsOf {
     }
     if (!parts.heads.contains(P::Kind::Intercepts)) return no("no_intercepts");
 
-    auto refs = store_.resolve_refs(analysis, P::RefPolicy{});
+    // Reference data as of the age's commit time (spec 10.32). resolve_refs
+    // says which objects the analysis is scoped to; which revision of each is
+    // decided here, so pins and heads play no part.
+    auto refs = store_.resolve_refs(analysis, P::RefPolicy{false});
     if (!refs) return fail(refs.error());
     for (const auto& ref : refs->refs) {
-      auto history = store_.history(ref.ref_object, P::Kind::RefValue);
-      if (!history) return fail(history.error());
-      for (const auto& revision : *history)
-        if (revision.changeset.created > as_of.created) return no("reference_changed_after");
-      auto payload = store_.load_payload(ref.revision);
-      if (!payload) return fail(payload.error());
-      if (*payload)
-        if (const auto* value = std::get_if<P::RefPayload>(&**payload)) parts.refs.push_back(*value);
+      const bool required = ref.type == P::RefType::FluxPosition || ref.type == P::RefType::Chronology ||
+                            ref.type == P::RefType::LevelProduction;
+      if (!required && ref.type != P::RefType::Gains) continue;  // not read, or (a production) found through its link
+      auto value = value_as_of(ref.ref_object, as_of.created);
+      if (!value) return fail(value.error());
+      if (!*value) {
+        if (required) return no("reference_not_yet_defined");
+        continue;
+      }
+      const auto* link = std::get_if<P::LevelProductionValue>(&**value);
+      if (!link) {
+        parts.refs.push_back(std::move(**value));
+        continue;
+      }
+      // The production the level named then, as it stood then.
+      auto production = value_as_of(link->production, as_of.created);
+      if (!production) return fail(production.error());
+      if (!*production) return no("reference_not_yet_defined");
+      parts.refs.push_back(std::move(**production));
     }
 
     auto built = processing::analysis_from_store(parts);
@@ -183,6 +212,50 @@ class AgeAsOf {
   }
 
  private:
+  // The revisions of a reference object in chain order: each after its
+  // parent. The store lists them by change sequence, which is the same unless
+  // a changeset got revisions in more than one batch.
+  static std::vector<P::RevisionInfo> chain_of(std::vector<P::RevisionInfo> revisions) {
+    std::map<P::Uuid, const P::RevisionInfo*> child_of;
+    const P::RevisionInfo* root = nullptr;
+    for (const auto& revision : revisions) {
+      if (!revision.parent) {
+        if (root) return revisions;  // not one chain: as the store lists them
+        root = &revision;
+      } else if (!child_of.emplace(*revision.parent, &revision).second) {
+        return revisions;
+      }
+    }
+    std::vector<P::RevisionInfo> chain;
+    for (const P::RevisionInfo* at = root; at;) {
+      chain.push_back(*at);
+      const auto next = child_of.find(at->uuid);
+      at = next == child_of.end() ? nullptr : next->second;
+    }
+    return chain.size() == revisions.size() ? chain : revisions;
+  }
+
+  // What a reference object held at time `t`: the payload of the last
+  // revision of its chain whose changeset was created at or before `t`.
+  // nullopt: it had no revision by then. The chain is read once per run.
+  Result<std::optional<P::RefPayload>> value_as_of(P::Uuid object, P::UtcTime t) const {
+    auto known = chains_->find(object);
+    if (known == chains_->end()) {
+      auto history = store_.history(object, P::Kind::RefValue);
+      if (!history) return fail(history.error());
+      known = chains_->emplace(object, chain_of(std::move(*history))).first;
+    }
+    std::optional<P::Uuid> chosen;
+    for (const auto& revision : known->second)
+      if (revision.changeset.created <= t) chosen = revision.uuid;
+    if (!chosen) return std::optional<P::RefPayload>{};
+    auto payload = store_.load_payload(*chosen);
+    if (!payload) return fail(payload.error());
+    const auto* value = *payload ? std::get_if<P::RefPayload>(&**payload) : nullptr;
+    if (!value) return fail(ErrorKind::Protocol, "reference revision " + chosen->str() + " has no reference value");
+    return std::optional<P::RefPayload>{*value};
+  }
+
   // The place in the walk of the commit this source imported `entity` at;
   // nullopt: it has no provenance row of this source, or the commit is not
   // on the branch.
@@ -213,6 +286,9 @@ class AgeAsOf {
   // commit -> place in the import's walk order; shared by the copies std::function makes
   std::shared_ptr<std::unordered_map<std::string, std::optional<std::int64_t>>> places_ =
       std::make_shared<std::unordered_map<std::string, std::optional<std::int64_t>>>();
+  // reference object -> its revisions in chain order; shared like places_
+  std::shared_ptr<std::map<P::Uuid, std::vector<P::RevisionInfo>>> chains_ =
+      std::make_shared<std::map<P::Uuid, std::vector<P::RevisionInfo>>>();
   pychron::reduction::ConstantsPreset constants_;
 };
 

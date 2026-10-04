@@ -26,6 +26,7 @@ TEST(ImportCmd, StubWithoutPersistence) {
 #include <csignal>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -907,10 +908,21 @@ TEST_F(ImportCmd, VerifyListsTwentyUnaccountedUnitsAndCountsTheRest) {
 //     earlier file is rebuilt by dividing value and error by that scalar.
 //     That this is the state the age was computed from is supported by the
 //     result: with it the legacy age and error are reproduced to 5e-9.
-//   - The level file NM-293/G.json is the one at the 2025 head, committed
-//     here under a 2018 date. The reference_changed_after rule therefore
-//     does not see that it is newer; the same result says J of position 16
-//     has not changed.
+//   - The level file NM-293/G.json is the one at the 2025 head: the fixture
+//     has no earlier version. It is committed here under a date before the
+//     interpreted age, because reference data is taken as of the age's
+//     commit time (spec 10.32): a level file dated 2025 would not have been
+//     defined yet. That its J of position 16 is the one the age was computed
+//     with is supported by the same result.
+//
+// The history every test here starts from (build()):
+//   meta     2018-01-05  level G, productions.json, Triga_PR, chronology,
+//                        sensitivity (one commit)
+//   project  2018-02-20  the collection of 66052-01E (four commits)
+//            2018-06-05  IC factors before the rescale; then the interpreted
+//                        age (kSaved)
+//            2021-02-08  the bulk IC-factor edit
+// Tests of the as-of rule add meta commits before or after 2018-06-05.
 // The residual is 4.9e-9 on the age and 4.5e-9 on the error (computed
 // 24.033519881699085 +- 0.9085947748647962): inside the default tolerance of
 // 1e-6, outside 1e-9. Where the last 5e-9 comes from is not established (the
@@ -928,9 +940,13 @@ class ImportCmdParity : public ImportCmd {
     return before.dump(4);
   }
 
-  // collection, review, then the interpreted age and the bulk edit in the order asked.
-  void build(bool age_saved_before_rescale) {
-    write_meta(meta_, "2018-01-05T09:30:00-07:00");
+  // collection, review, then the interpreted age and the bulk edit in the
+  // order asked. `meta_history`: commits to the meta repository after its
+  // first, made before anything is imported.
+  void build(bool age_saved_before_rescale, const std::function<void()>& meta_history = {},
+             const char* meta_date = "2018-01-05T09:30:00-07:00") {
+    write_meta(meta_, meta_date);
+    if (meta_history) meta_history();
     legacy_.collect(kRunE, kE.str(), kCollected);
     legacy_.write(kRunE, FileKind::IcFactors, ic_factors_before_rescale());
     legacy_.commit("<ICFactor> auto update ic_factors, fits=L2(CDD)(Bracketing Interpolate)", kReviewed);
@@ -951,6 +967,56 @@ class ImportCmdParity : public ImportCmd {
     args.insert(args.end(), extra.begin(), extra.end());
     return import(std::move(args));
   }
+
+  // One commit to the meta repository.
+  void meta_commit(const std::string& path, const std::string& text, const char* date, const char* message) {
+    meta_.write(path, text);
+    meta_.commit(message, date);
+  }
+  void meta_remove(const std::string& path, const char* date, const char* message) {
+    meta_.remove(path);
+    meta_.commit(message, date);
+  }
+
+  // The fixture level file with J of position 16 scaled, or, with `scale` 0,
+  // without that position.
+  static std::string level_with_j16(double scale) {
+    const json fixed = json::parse(fixture("meta/NM-293/G.json"));
+    json level = fixed;
+    level["positions"] = json::array();
+    for (json position : fixed.at("positions")) {
+      if (position.value("position", 0) == 16) {
+        if (scale == 0) continue;
+        position["j"] = position.at("j").get<double>() * scale;
+      }
+      level["positions"].push_back(std::move(position));
+    }
+    return level.dump(4);
+  }
+
+  // The one member of the interpreted age that is in the store is not
+  // comparable, for `reason`.
+  void expect_not_comparable(const char* reason) const {
+    const Outcome verified = verify();
+    EXPECT_EQ(verified.code, elctl::kOk) << verified.out;
+    EXPECT_TRUE(contains(verified.out, "parity: 0 pass, 0 pass on age only, 0 fail, 13 not comparable"))
+        << verified.out;
+    EXPECT_TRUE(contains(verified.out, std::string(reason) + " 1")) << verified.out;
+    const json report = json::parse(verify({"--json"}).out, nullptr, false);
+    ASSERT_TRUE(report.is_array());
+    EXPECT_EQ(report[0].at("parity").at("not_comparable").value(reason, 0), 1);
+  }
+  void expect_reproduced() const {
+    const Outcome verified = verify();
+    EXPECT_EQ(verified.code, elctl::kOk) << verified.out;
+    EXPECT_TRUE(contains(verified.out, "parity: 1 pass, 0 pass on age only, 0 fail, 12 not comparable "))
+        << verified.out;
+    // The same residual as with nothing after the age: the same revisions were reduced.
+    EXPECT_TRUE(contains(verified.out, "    largest passing residual: age 4.9e-09, error 4.")) << verified.out;
+  }
+
+  static constexpr const char* kBeforeTheAge = "2018-03-01T10:00:00-07:00";
+  static constexpr const char* kAfterTheAge = "2019-03-01T10:00:00-07:00";
 
   GitFixture meta_;
 };
@@ -1102,25 +1168,101 @@ TEST_F(ImportCmdParity, AParentlessRevisionMadeLaterIsNotTheStateAsOfTheAge) {
   EXPECT_EQ(*after, *before);
 }
 
-// Reference data that changed after the interpreted age was saved: the state
-// the age was computed from is gone, and the member is not compared (10.32).
-TEST_F(ImportCmdParity, ReferenceDataChangedAfterTheAgeIsNotComparable) {
+// Spec 10.32 (ruling 52): reference data is taken as of the interpreted
+// age's commit time. Revisions made after it are not used: the flux of the
+// position, the production's ratios and the chronology all change in 2019,
+// and the age is reproduced as before.
+TEST_F(ImportCmdParity, ReferenceDataRevisedAfterTheAgeIsTakenAsOfTheAge) {
   build(true);
-  json level = json::parse(fixture("meta/NM-293/G.json"));
-  for (auto& position : level.at("positions"))
-    if (position.value("position", 0) == 16) position["j"] = position.at("j").get<double>() * 1.01;
-  meta_.write("NM-293/G.json", level.dump(4));
-  meta_.commit("<FLUX> refit", "2019-03-01T10:00:00-07:00");
+  meta_commit("NM-293/G.json", level_with_j16(1.01), kAfterTheAge, "<FLUX> refit");
+  json production = json::parse(fixture("meta/NM-293/productions/Triga_PR.json"));
+  production["K4039"] = json::array({0.0189, 0.0002});
+  meta_commit("NM-293/productions/Triga_PR.json", production.dump(4), kAfterTheAge, "modified - Triga_PR.json");
+  meta_commit("NM-293/chronology.txt",
+              fixture("meta/NM-293/chronology.txt") + "1.0,2017-12-22 06:28:00,2017-12-22 14:28:00\n", kAfterTheAge,
+              "second day");
   ASSERT_EQ(import({"run", "--all"}).code, elctl::kOk);
+  expect_reproduced();
 
-  const Outcome verified = verify();
-  EXPECT_EQ(verified.code, elctl::kOk) << verified.out;
-  EXPECT_TRUE(contains(verified.out, "parity: 0 pass, 0 pass on age only, 0 fail, 13 not comparable")) << verified.out;
-  EXPECT_TRUE(contains(verified.out, "not comparable: reference_changed_after 1")) << verified.out;
+  // The heads are the 2019 values: reduced from them the age would differ.
+  auto s = store();
+  ASSERT_TRUE(s);
+  auto refs = s->resolve_refs(kE, P::RefPolicy{});
+  ASSERT_TRUE(refs);
+  int revised = 0;
+  for (const auto& ref : refs->refs) {
+    auto history = s->history(ref.ref_object, Kind::RefValue);
+    ASSERT_TRUE(history);
+    if (ref.type == P::RefType::FluxPosition || ref.type == P::RefType::Production ||
+        ref.type == P::RefType::Chronology) {
+      EXPECT_EQ(history->size(), 2u) << ref.key;
+      EXPECT_EQ(ref.revision, history->back().uuid) << ref.key;
+      ++revised;
+    }
+  }
+  EXPECT_EQ(revised, 3);
+}
 
-  const json report = json::parse(import({"verify", "--source", "IR1010", "--json"}).out, nullptr, false);
-  ASSERT_TRUE(report.is_array());
-  EXPECT_EQ(report[0].at("parity").at("not_comparable").value("reference_changed_after", 0), 1);
+// The level-to-production link is revisioned too: the production used is the
+// one the level named at the age, as that production stood at the age.
+TEST_F(ImportCmdParity, LevelProductionChangedAfterTheAgeIsTakenAsOfTheAge) {
+  build(true);
+  json production = json::parse(fixture("meta/NM-293/productions/Triga_PR.json"));
+  production["K4039"] = json::array({0.0189, 0.0002});
+  meta_commit("NM-293/productions/Cd_shielded.json", production.dump(4), kAfterTheAge, "added Cd_shielded");
+  json map = json::parse(fixture("meta/NM-293/productions.json"));
+  map["G"] = "Cd_shielded";
+  meta_commit("NM-293/productions.json", map.dump(4), kAfterTheAge, "level G uses Cd_shielded");
+  ASSERT_EQ(import({"run", "--all"}).code, elctl::kOk);
+  expect_reproduced();
+}
+
+// A level that named, at the age, a production that had no value yet: the
+// file of that production came later. Not the production the level named
+// before, and not the later file.
+TEST_F(ImportCmdParity, ProductionNamedAtTheAgeButDefinedLaterIsNotComparable) {
+  build(true, [&] {
+    json map = json::parse(fixture("meta/NM-293/productions.json"));
+    map["G"] = "Cd_shielded";
+    meta_commit("NM-293/productions.json", map.dump(4), kBeforeTheAge, "level G uses Cd_shielded");
+    meta_commit("NM-293/productions/Cd_shielded.json", fixture("meta/NM-293/productions/Triga_PR.json"),
+                kAfterTheAge, "added Cd_shielded");
+  });
+  expect_not_comparable("reference_not_yet_defined");
+}
+
+// Reference data first written after the age was saved was not there to
+// compute it with.
+TEST_F(ImportCmdParity, ReferenceDataNotYetDefinedAtTheAgeIsNotComparable) {
+  build(true, {}, kAfterTheAge);
+  expect_not_comparable("reference_not_yet_defined");
+}
+
+// Spec 10.21: reference data removed before the age was saved has no value
+// as of the age. Not the value it had before, and not the one it got later.
+TEST_F(ImportCmdParity, FluxRemovedAsOfTheAgeIsNotComparable) {
+  build(true, [&] {
+    meta_commit("NM-293/G.json", level_with_j16(0), kBeforeTheAge, "position 16 emptied");
+    meta_commit("NM-293/G.json", level_with_j16(1), kAfterTheAge, "position 16 again");
+  });
+  expect_not_comparable("no_j");
+}
+
+TEST_F(ImportCmdParity, ProductionRemovedAsOfTheAgeIsNotComparable) {
+  build(true, [&] {
+    meta_remove("NM-293/productions/Triga_PR.json", kBeforeTheAge, "production removed");
+    meta_commit("NM-293/productions/Triga_PR.json", fixture("meta/NM-293/productions/Triga_PR.json"), kAfterTheAge,
+                "production again");
+  });
+  expect_not_comparable("no_production");
+}
+
+TEST_F(ImportCmdParity, ChronologyRemovedAsOfTheAgeIsNotComparable) {
+  build(true, [&] {
+    meta_remove("NM-293/chronology.txt", kBeforeTheAge, "chronology removed");
+    meta_commit("NM-293/chronology.txt", fixture("meta/NM-293/chronology.txt"), kAfterTheAge, "chronology again");
+  });
+  expect_not_comparable("no_chronology");
 }
 
 // Without the meta repository there is no J: not comparable, never a number.

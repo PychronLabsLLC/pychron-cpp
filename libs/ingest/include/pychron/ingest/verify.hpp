@@ -42,14 +42,17 @@ namespace pychron::ingest {
 // author dates tie and run out of order (spec 10.6 and 10.30). An age
 // function reduces the analysis from, for each kind, the last revision whose
 // source commit is at or before `commit` in the walk order of `source`, with
-// the reference data of that point.
+// the reference data as it stood at `created`.
 struct AsOf {
   persistence::Uuid interpreted_age;  // the interpreted age the legacy age is stored with
   persistence::Uuid revision;         // its head revision, which holds the age
   persistence::Uuid changeset;        // the changeset that stored that revision
   persistence::Uuid source;           // the import source the revision came from
   std::string commit;                 // the source commit of that revision, from its provenance row
-  persistence::UtcTime created;       // the changeset's time (the commit's author date): information only
+  // The changeset's time (the commit's author date). It does not order the
+  // revisions of `source` (the walk does); it is the time reference data of
+  // another source is taken as of (spec 10.32).
+  persistence::UtcTime created;
 };
 
 struct ComputedAge {
