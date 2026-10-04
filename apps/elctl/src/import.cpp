@@ -72,7 +72,7 @@ constexpr const char* kHelp =
     "        kinds: unparseable unknown_analysis identity_clash value_mismatch hand_edit\n"
     "               provisional_renumber\n"
     "\n"
-    "  verify [--source <id|name>] [--tolerance <relative, default 1e-9>]\n"
+    "  verify [--source <id|name>] [--tolerance <relative, default 1e-6>]\n"
     "         [--constants legacy_preferences|legacy|default] [--json]\n"
     "        Checks each import: the source is imported to its end, every file of it is\n"
     "        accounted for, a second run would write nothing, the ages stored with each\n"

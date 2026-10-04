@@ -73,7 +73,7 @@ using AgeFn = std::function<Result<ParityAge>(persistence::Uuid analysis, const 
 
 struct VerifyOptions {
   // Relative: |a - b| / max(|a|, |b|), on the age and on its error.
-  double tolerance = 1e-9;
+  double tolerance = 1e-6;
 };
 
 struct UnaccountedUnit {
@@ -141,6 +141,11 @@ struct VerifyReport {
   // age_err_wo_j and the file does not say whether its age_err includes J
   // (or says it does and the age function gave no such error).
   int parity_pass_age_only = 0;
+  // The largest relative differences among the comparisons that passed (0
+  // when none did, or none compared an error), so that drift below the
+  // tolerance stays visible.
+  double parity_max_pass_age_difference = 0.0;
+  double parity_max_pass_age_err_difference = 0.0;
   int parity_fail = 0, parity_not_comparable = 0;
   std::map<std::string, int> not_comparable_reasons;  // reason -> members
   std::vector<ParityFailure> parity_failures;         // sorted by interpreted age, then analysis

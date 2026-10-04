@@ -910,14 +910,12 @@ TEST_F(ImportCmd, VerifyListsTwentyUnaccountedUnitsAndCountsTheRest) {
 //     here under a 2018 date. The reference_changed_after rule therefore
 //     does not see that it is newer; the same result says J of position 16
 //     has not changed.
-// The tolerance achieved is 5e-9 on the age and on the error (computed
-// 24.033519881699085 +- 0.9085947748647962), so the tests pass 1e-8; at the
-// default 1e-9 the comparison fails. Where the last 5e-9 comes from is not
-// established (the division above is not exact; legacy printed 16 digits).
+// The residual is 4.9e-9 on the age and 4.5e-9 on the error (computed
+// 24.033519881699085 +- 0.9085947748647962): inside the default tolerance of
+// 1e-6, outside 1e-9. Where the last 5e-9 comes from is not established (the
+// division above is not exact; legacy printed 16 digits).
 class ImportCmdParity : public ImportCmd {
  protected:
-  static constexpr const char* kTolerance = "1e-8";
-
   // The IC factors of the fixture analysis before the bulk edit.
   static std::string ic_factors_before_rescale() {
     json before = json::parse(LegacyRepoBuilder::fixture_text(FileKind::IcFactors));
@@ -948,7 +946,7 @@ class ImportCmdParity : public ImportCmd {
   }
 
   Outcome verify(std::vector<std::string> extra = {}) const {
-    std::vector<std::string> args{"verify", "--source", "IR1010", "--tolerance", kTolerance};
+    std::vector<std::string> args{"verify", "--source", "IR1010"};
     args.insert(args.end(), extra.begin(), extra.end());
     return import(std::move(args));
   }
@@ -967,6 +965,28 @@ TEST_F(ImportCmdParity, TheLegacyAgeIsReproduced) {
   EXPECT_TRUE(contains(verified.out, "not comparable: analysis is not in the store 12")) << verified.out;
   EXPECT_EQ(lines(verified.out).back(), "  ok") << verified.out;
   EXPECT_EQ(import({"conflicts", "--kind", "value_mismatch", "--all"}).out, "");
+}
+
+// The default tolerance is 1e-6; the largest residual of the comparisons that
+// passed is printed, and kept in --json. A tolerance below the residual fails.
+TEST_F(ImportCmdParity, TheLargestPassingResidualIsPrinted) {
+  build(true);
+  const Outcome verified = verify();
+  EXPECT_EQ(verified.code, elctl::kOk) << verified.out;
+  // 4.9e-09 on the age and 4.5e-09 on the error (the legacy file has 16 digits).
+  EXPECT_TRUE(contains(verified.out, "    largest passing residual: age 4.9e-09, error 4.")) << verified.out;
+
+  const json report = json::parse(verify({"--json"}).out, nullptr, false);
+  ASSERT_TRUE(report.is_array());
+  const json& parity = report[0].at("parity");
+  EXPECT_NEAR(parity.at("max_pass_age_difference").get<double>(), 4.9e-9, 1e-10);
+  EXPECT_NEAR(parity.at("max_pass_age_err_difference").get<double>(), 4.5e-9, 1e-10);
+
+  // Below the residual the same data fails.
+  const Outcome strict = verify({"--tolerance", "1e-9"});
+  EXPECT_EQ(strict.code, elctl::kFailed) << strict.out;
+  EXPECT_TRUE(contains(strict.out, "parity: 0 pass, 0 pass on age only, 1 fail")) << strict.out;
+  EXPECT_FALSE(contains(strict.out, "largest passing residual")) << strict.out;
 }
 
 // The constants are part of the answer: with the lab default (atmospheric

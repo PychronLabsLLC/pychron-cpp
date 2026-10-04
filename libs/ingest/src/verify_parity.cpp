@@ -202,6 +202,8 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         // Written so that a NaN fails.
         if (age_difference <= options.tolerance && err_difference <= options.tolerance) {
           ++(legacy_err ? report.parity_pass : report.parity_pass_age_only);
+          report.parity_max_pass_age_difference = std::max(report.parity_max_pass_age_difference, age_difference);
+          report.parity_max_pass_age_err_difference = std::max(report.parity_max_pass_age_err_difference, err_difference);
           passed.insert(conflict);
           continue;
         }

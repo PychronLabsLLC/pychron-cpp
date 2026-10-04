@@ -2,6 +2,7 @@
 // found (legacy ingestion spec, sections 6 and 10.26 to 10.32).
 
 #include <cmath>
+#include <iomanip>
 #include <locale>
 #include <ostream>
 #include <sstream>
@@ -82,6 +83,14 @@ std::string number(double value) {
   return text.str();
 }
 
+// A relative residual: two significant digits, as in 4.9e-09.
+std::string residual(double value) {
+  std::ostringstream text;
+  text.imbue(std::locale::classic());
+  text << std::scientific << std::setprecision(1) << value;
+  return text.str();
+}
+
 std::string plural(int n, const char* noun) { return std::to_string(n) + " " + noun + (n == 1 ? "" : "s"); }
 
 // Why the report is not ok; empty: it is.
@@ -142,6 +151,11 @@ void print(std::ostream& out, const Source& source, const ingest::VerifyReport& 
     if (f.legacy_age_err) out << " +- " << number(*f.legacy_age_err);
     out << ", computed " << number(f.computed_age);
     if (f.legacy_age_err) out << " +- " << number(f.computed_age_err) << " (" << f.error_compared << ')';
+    out << '\n';
+  }
+  if (r.parity_pass + r.parity_pass_age_only > 0) {
+    out << "    largest passing residual: age " << residual(r.parity_max_pass_age_difference);
+    if (r.parity_pass > 0) out << ", error " << residual(r.parity_max_pass_age_err_difference);
     out << '\n';
   }
 
@@ -216,6 +230,8 @@ Json to_json(const Source& source, const ingest::VerifyReport& r, ConstantsPrese
         {"pass", r.parity_pass},
         {"pass_age_only", r.parity_pass_age_only},
         {"fail", r.parity_fail},
+        {"max_pass_age_difference", r.parity_max_pass_age_difference},
+        {"max_pass_age_err_difference", r.parity_max_pass_age_err_difference},
         {"not_comparable_total", r.parity_not_comparable},
         {"not_comparable", Json(r.not_comparable_reasons)},
         {"failures", std::move(failures)}}},

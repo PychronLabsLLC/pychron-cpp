@@ -875,7 +875,7 @@ TEST_P(VerifierTest, ParityPassFailNotComparable) {
   const AgeFn fn = [&](Uuid analysis, const AsOf& as_of) -> Result<ParityAge> {
     asked.push_back(as_of);
     if (analysis == kA) return ParityAge{ComputedAge{28.25, 0.125}};
-    return ParityAge{ComputedAge{28.5 * (1 + 1e-6), 0.25}};  // off by 1e-6, relative
+    return ParityAge{ComputedAge{28.5 * (1 + 1e-5), 0.25}};  // off by 1e-5, relative: beyond the default 1e-6
   };
   const auto report = check(batches, units_of(batches), fn);
   EXPECT_FALSE(report.ok());
@@ -906,8 +906,8 @@ TEST_P(VerifierTest, ParityPassFailNotComparable) {
   EXPECT_EQ(failure.interpreted_age, age);
   EXPECT_EQ(failure.conflict, parity_conflict(kB));
   EXPECT_DOUBLE_EQ(failure.legacy_age, 28.5);
-  EXPECT_DOUBLE_EQ(failure.computed_age, 28.5 * (1 + 1e-6));
-  EXPECT_NEAR(failure.age_difference, 1e-6, 1e-9);
+  EXPECT_DOUBLE_EQ(failure.computed_age, 28.5 * (1 + 1e-5));
+  EXPECT_NEAR(failure.age_difference, 1e-5, 1e-9);
   EXPECT_EQ(failure.age_err_difference, 0.0);
 
   const auto stored = conflict(parity_conflict(kB));
@@ -916,7 +916,7 @@ TEST_P(VerifierTest, ParityPassFailNotComparable) {
   EXPECT_EQ(stored.path, kAgePath);
   EXPECT_EQ(stored.entity, kB);
   EXPECT_EQ(stored.db_head_revision, revisions->front().uuid);
-  for (const char* part : {"\"check\"", "age_parity", "\"legacy\"", "28.5", "\"computed\"", "28.50002", "0.25",
+  for (const char* part : {"\"check\"", "age_parity", "\"legacy\"", "28.5", "\"computed\"", "28.5002", "0.25",
                            "\"relative_difference\"", "\"tolerance\"", "66573-02", "\"as_of\"", "\"commit\""})
     EXPECT_NE(stored.detail_json.find(part), std::string::npos) << part << " in " << stored.detail_json;
   EXPECT_NE(stored.detail_json.find(age.str()), std::string::npos);
@@ -936,7 +936,7 @@ TEST_P(VerifierTest, ToleranceIsRelative) {
   run_import(batches);
   resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
 
-  // 0.5 in 1e9 is 5e-10: inside 1e-9. Two zero errors are the same.
+  // 0.5 in 1e9 is 5e-10: inside the default 1e-6. Two zero errors are the same.
   auto report = check(batches, units_of(batches),
                       ages({{kA, ComputedAge{1e9 + 0.5, 1e3}}, {kB, ComputedAge{1e-9, 0.0}}}));
   EXPECT_EQ(report.parity_pass, 2);
@@ -958,6 +958,31 @@ TEST_P(VerifierTest, ToleranceIsRelative) {
   report = check(batches, units_of(batches),
                  ages({{kA, ComputedAge{std::numeric_limits<double>::quiet_NaN(), 1e3}}, {kB, ComputedAge{1e-9, 0.0}}}));
   EXPECT_EQ(report.parity_fail, 1);
+}
+
+// The default tolerance is 1e-6, and the largest relative differences among
+// the passing comparisons are reported, age and error apart.
+TEST_P(VerifierTest, DefaultToleranceAndLargestPassingResidual) {
+  const auto batches = history_with_age({{kA.str(), "66573-01", "100", "10"}, {kB.str(), "66573-02", "200", "20"}});
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  EXPECT_EQ(VerifyOptions{}.tolerance, 1e-6);
+
+  // A: age off by 5e-7, error exact. B: age exact, error off by 2e-7. Both pass.
+  auto report = check(batches, units_of(batches),
+                      ages({{kA, ComputedAge{100 * (1 + 5e-7), 10.0}}, {kB, ComputedAge{200.0, 20 * (1 + 2e-7)}}}));
+  EXPECT_EQ(report.parity_pass, 2);
+  EXPECT_EQ(report.parity_fail, 0);
+  EXPECT_NEAR(report.parity_max_pass_age_difference, 5e-7, 1e-10);
+  EXPECT_NEAR(report.parity_max_pass_age_err_difference, 2e-7, 1e-10);
+
+  // Off by 5e-6 fails; the failure does not count towards the maxima.
+  report = check(batches, units_of(batches),
+                 ages({{kA, ComputedAge{100 * (1 + 5e-6), 10.0}}, {kB, ComputedAge{200.0, 20.0}}}));
+  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.parity_fail, 1);
+  EXPECT_EQ(report.parity_max_pass_age_difference, 0.0);
+  EXPECT_EQ(report.parity_max_pass_age_err_difference, 0.0);
 }
 
 // The stored age was computed when the interpreted age was saved (c5). A's
