@@ -54,7 +54,7 @@ class ProjectRepoAdapter::Impl {
 
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) {
     walk_ = detail::Walk{config_.collection_wait_commits};
-    mapper_.emplace(config_, url_, reader_, walk_, state);
+    mapper_.emplace(config_, url_, reader_, walk_, order_, state);
     order_.clear();
     place_.clear();
     tags_.clear();
@@ -102,6 +102,7 @@ class ProjectRepoAdapter::Impl {
     batch.total = static_cast<int>(order_.size());
     std::vector<detail::Work> work;
 
+    const int first = static_cast<int>(next_);
     std::size_t end = std::min(order_.size(), next_ + static_cast<std::size_t>(config_.batch_commits));
     for (std::size_t i = next_; i < end; ++i)
       if (tagged(order_[i])) end = i + 1;
@@ -115,7 +116,7 @@ class ProjectRepoAdapter::Impl {
       finished_ = true;
     }
 
-    if (auto r = mapper_->map(work, batch); !r) return fail(r.error());
+    if (auto r = mapper_->map(work, first, batch); !r) return fail(r.error());
     for (const auto& tag : tags_)
       if (tag.commit == order_[next_ - 1])
         if (auto r = mapper_->bookmark(tag, batch); !r) return fail(r.error());

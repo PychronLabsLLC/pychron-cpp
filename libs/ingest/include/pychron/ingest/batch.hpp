@@ -285,6 +285,17 @@ struct ImportBatch {
   std::vector<MembershipItem> memberships;
   std::vector<ChangesetItem> changesets;  // in source order
   std::vector<ConflictItem> conflicts;
+  // Conflicts of earlier file versions that no longer apply (spec 10.37):
+  // the source key (commit and path; the blob sha is not used) of each
+  // version that could not be imported and that a later commit of the walk
+  // replaced with a readable version, or deleted. The adapter decides this
+  // from the walk alone. The writer sets the pending `unparseable` or
+  // `unknown_analysis` conflict at each key to `superseded`, after the
+  // batch's own conflicts are staged and in the same transaction, so the
+  // result is the same whether the bad version and the good one come in one
+  // batch or in two. A key with no such conflict is passed over, and a
+  // conflict already superseded stays so when a replay sends it again.
+  std::vector<SourceKey> superseded = {};
   std::vector<BookmarkItem> bookmarks;
   std::string resume_token;  // valid once this batch is committed
   int done = 0, total = 0;

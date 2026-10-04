@@ -249,6 +249,7 @@ class BatchWriter::Impl final : public IImportState {
     // A replay walks from the start. Until the walk reaches the stored token,
     // the batches it writes leave the stored progress as it is.
     catching_up_ = config_.replay && token_.has_value();
+    counted_pending_.clear();
     // Spec 10.34: a source with nothing stored before the run has nothing to
     // be written behind, and is not asked about.
     placing_ = !config_.dry_run && (token_.has_value() || done_ > 0);
@@ -434,8 +435,46 @@ class BatchWriter::Impl final : public IImportState {
     auto known = conflicts();
     if (!known) return fail(known.error());
     const auto [it, added] = (*known)->try_emplace(row.uuid, KnownConflict{row.kind, kPending});
-    if (added || it->second.resolution == kPending) ++stats.conflicts;
+    if (added || it->second.resolution == kPending) count_pending(row.uuid, stats);
     staged.conflicts.push_back(std::move(row));
+    return {};
+  }
+
+  // RunStats::conflicts counts the conflicts the run leaves pending, each
+  // once however often the run meets it (two files' worth of reasons can
+  // share one key).
+  void count_pending(Uuid conflict, RunStats& stats) {
+    if (counted_pending_.insert(conflict).second) ++stats.conflicts;
+  }
+  // The conflict is no longer pending: what this run counted for it is taken
+  // back. A conflict an earlier run counted was never in this run's number.
+  void uncount_pending(Uuid conflict, RunStats& stats) {
+    if (counted_pending_.erase(conflict) > 0) --stats.conflicts;
+  }
+
+  // Whether a conflict the adapter lists as superseded is one that a later
+  // version of its file can supersede: a file that could not be read, or was
+  // refused for want of its analysis. Anything else at that key (a late
+  // revision, an identity clash, a parity failure) says something a later
+  // file version does not answer.
+  static bool supersedable(P::ConflictKind kind) {
+    return kind == P::ConflictKind::Unparseable || kind == P::ConflictKind::UnknownAnalysis;
+  }
+
+  // Spec 10.37: the adapter says the file version at `key` was replaced by a
+  // readable one, or deleted, later in the walk. Its pending conflict becomes
+  // `superseded`. Called after the batch's own conflicts are staged, so the
+  // conflict may be one this batch brings. Idempotent: a conflict that is not
+  // pending (superseded before, or decided by someone) is left as it is.
+  Result<void> stage_superseded(const SourceKey& key, Staged& staged, RunStats& stats) {
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    const Uuid id = conflict_id(url_, key.commit, key.path);
+    const auto it = (*known)->find(id);
+    if (it == (*known)->end() || it->second.resolution != kPending || !supersedable(it->second.kind)) return {};
+    it->second.resolution = kSuperseded;
+    staged.resolutions.emplace_back(id, kSuperseded);
+    uncount_pending(id, stats);
     return {};
   }
 
@@ -488,7 +527,7 @@ class BatchWriter::Impl final : public IImportState {
 
   // The file at `key` is now written: a pending unknown_analysis conflict
   // about it no longer applies.
-  Result<void> supersede(const SourceKey& key, Staged& staged) {
+  Result<void> supersede(const SourceKey& key, Staged& staged, RunStats& stats) {
     auto known = conflicts();
     if (!known) return fail(known.error());
     const Uuid id = conflict_id(url_, key.commit, key.path);
@@ -498,6 +537,7 @@ class BatchWriter::Impl final : public IImportState {
       return {};
     it->second.resolution = kSuperseded;
     staged.resolutions.emplace_back(id, kSuperseded);
+    uncount_pending(id, stats);
     return {};
   }
 
@@ -553,6 +593,8 @@ class BatchWriter::Impl final : public IImportState {
                                   staged, stats);
           !r)
         return r;
+    for (const auto& key : batch.superseded)
+      if (auto r = stage_superseded(key, staged, stats); !r) return r;
 
     P::ImportProgress reached = progress(kRunning);
     if (!batch.resume_token.empty()) reached.token = batch.resume_token;
@@ -694,7 +736,7 @@ class BatchWriter::Impl final : public IImportState {
       for (const auto& root : kRoots)
         if (auto r = chains_.sent_root(root_id(item, root), root_key(item, root).commit); !r) return r;
     for (const auto& file : collection_files(item))
-      if (auto r = supersede(file, staged); !r) return r;
+      if (auto r = supersede(file, staged, stats); !r) return r;
 
     staged.provenance.push_back(provenance("analysis", analysis, record, item.who, analysis_detail(item, unresolved)));
     for (const auto& root : kRoots)
@@ -710,7 +752,7 @@ class BatchWriter::Impl final : public IImportState {
     if (!*present)
       return stage_unknown_analysis(item.key, item.analysis, "membership of an analysis that is not in the store",
                                     staged, stats);
-    if (auto r = supersede(item.key, staged); !r) return r;
+    if (auto r = supersede(item.key, staged, stats); !r) return r;
     auto who = author(item.who);
     if (!who) return fail(who.error());
     staged.provenance.push_back(
@@ -776,7 +818,7 @@ class BatchWriter::Impl final : public IImportState {
         if (!*named) continue;
       }
       if (auto r = name_production(revision, payload); !r) return r;
-      if (auto r = supersede(revision.key, staged); !r) return r;
+      if (auto r = supersede(revision.key, staged, stats); !r) return r;
       std::vector<Uuid> unresolved;
       if (auto r = drop_unresolved(payload, unresolved); !r) return r;
       JsonMembers notes;
@@ -979,9 +1021,27 @@ class BatchWriter::Impl final : public IImportState {
       auto known = conflicts();
       if (!known) return fail(known.error());
       const auto stored = (*known)->find(conflict);
-      if (stored == (*known)->end() || stored->second.resolution == kPending) ++stats.conflicts;
+      if (stored == (*known)->end() || stored->second.resolution == kPending) count_pending(conflict, stats);
+      if (stored == (*known)->end()) would_conflict_.insert_or_assign(conflict, item.kind);
       if (!counted_.insert(conflict).second) continue;
       if (stored == (*known)->end()) ++stats.would_write;
+    }
+    // As stage_superseded: a pending conflict the batch supersedes is a row a
+    // run would change, and is not left pending by it.
+    for (const auto& key : batch.superseded) {
+      const Uuid conflict = conflict_id(url_, key.commit, key.path);
+      auto known = conflicts();
+      if (!known) return fail(known.error());
+      const auto stored = (*known)->find(conflict);
+      if (stored != (*known)->end()) {
+        if (stored->second.resolution != kPending || !supersedable(stored->second.kind)) continue;
+        if (counted_superseded_.insert(conflict).second) ++stats.would_write;
+      } else {
+        // Not stored: one this run would write, and supersede with it.
+        const auto brought = would_conflict_.find(conflict);
+        if (brought == would_conflict_.end() || !supersedable(brought->second)) continue;
+      }
+      uncount_pending(conflict, stats);
     }
     // As write_bookmark: a tag is imported unless it is recorded already or
     // none of its analyses is, or would be, in the store.
@@ -1029,8 +1089,12 @@ class BatchWriter::Impl final : public IImportState {
   // Not kept for a source that had nothing stored when the run began.
   bool placing_ = false;
   detail::StoredChains chains_;
+  // The pending conflicts this run counted in RunStats::conflicts.
+  std::set<Uuid> counted_pending_;
   // Dry run only.
   std::set<Uuid> counted_;
+  std::set<Uuid> counted_superseded_;                // stored conflicts a run would supersede
+  std::map<Uuid, P::ConflictKind> would_conflict_;   // conflicts a run would write
   std::set<Uuid> importable_;  // analyses seen that are stored or would be
   std::set<Sha256Digest> counted_blobs_;
 };

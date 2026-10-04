@@ -277,13 +277,16 @@ inline const QString kRevisionExists = QStringLiteral("SELECT 1 AS present FROM 
 inline const QString kSetImportProgress = QStringLiteral(
     "UPDATE import_source SET progress_commit_sha = ?, commits_done = ?, commits_total = ?, status = ?%1 "
     "WHERE uuid = ?");
-inline const QString kResolveConflict =
-    QStringLiteral("UPDATE import_conflict SET resolution = ? WHERE uuid = ? AND import_source_uuid = ?");
+// A conflict that already has the resolution is left as it is, its time included.
+inline const QString kResolveConflict = QStringLiteral(
+    "UPDATE import_conflict SET resolution = ?, resolved_utc = ? "
+    "WHERE uuid = ? AND import_source_uuid = ? AND resolution <> ?");
 inline const QString kRestateConflict = QStringLiteral(
     "UPDATE import_conflict SET path = ?, entity_uuid = ?, conflict_kind = ?, db_head_revision_uuid = ?, "
-    "file_sha256 = ?, detail = ?, resolution = ? WHERE uuid = ? AND import_source_uuid = ?");
+    "file_sha256 = ?, detail = ?, resolution = ?, resolved_utc = ? WHERE uuid = ? AND import_source_uuid = ?");
+// %1: ts(dialect, "resolved_utc").
 inline const QString kImportConflicts = QStringLiteral(
-    "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution "
-    "FROM import_conflict");
+    "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution, "
+    "%1 AS resolved FROM import_conflict");
 
 }  // namespace pychron::persistence::detail::sql

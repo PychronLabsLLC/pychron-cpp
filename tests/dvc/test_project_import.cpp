@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <map>
 #include <memory>
@@ -220,6 +221,13 @@ struct NoState final : ingest::IImportState {
   }
   Result<bool> imported(std::string_view, std::string_view) override { return false; }
 };
+
+// The resolution of the conflict at (commit, path); "(none)" when there is no such conflict.
+std::string resolution_of_conflict(World& w, const std::string& commit, const std::string& path) {
+  auto row = w.store->import_conflict(ingest::conflict_id(kUrl, commit, path));
+  if (!row || !*row) return "(none)";
+  return (*row)->resolution;
+}
 
 // The store's head of one intercept equals the value in the repository's work tree.
 double tree_intercept(GitFixture& repo, const std::string& runid, const std::string& isotope) {
@@ -2292,7 +2300,14 @@ const Uuid kH = *Uuid::parse("77777777-7777-4777-8777-777777777777");
 // The commits a test needs to name.
 struct History {
   std::string sync;  // rewrites the record of E (collected) and of P (still pending)
+  // Spec 10.37. `broken`: E's blanks and IC factors and a frozen production
+  // become unreadable (the first two are mended in part one, the production
+  // in part two). `broken_again`: E's IC factors, unreadable at the head.
+  std::string broken, broken_again;
 };
+
+const char* const kUnreadable = "<<<<<<< HEAD";
+const char* const kFrozenProduction = "NM-293.G.production.json";
 
 // One fixed history with everything that has gone wrong at a batch boundary.
 // Part 1 ends with nothing pending; part 2 is what a later run finds.
@@ -2304,6 +2319,10 @@ void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& histor
   legacy.collect(kRunE, kE.str(), kCollected);
   legacy.collect("66052-02A", kF.str(), kDay2);
   legacy.refit(kRunE, "Ar40", 12.5, kDay2);
+  legacy.write(kRunE, FileKind::Blanks, kUnreadable);
+  legacy.write(kRunE, FileKind::IcFactors, kUnreadable);
+  repo.write(kFrozenProduction, kUnreadable);
+  history.broken = legacy.commit("a merge gone wrong", kDay2);
   // F is renumbered; its old run id is taken by another analysis right after.
   repo.write(LegacyRepoBuilder::path("66052-02A", FileKind::Record),
              LegacyRepoBuilder::record_text("66052-07B", kF.str()));
@@ -2327,6 +2346,9 @@ void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& histor
   extraction["extract_value"] = 5.0;
   legacy.write("66052-03A", FileKind::Extraction, extraction.dump(4));
   legacy.write("66052-02A", FileKind::Intercepts, LegacyRepoBuilder::intercepts_text("Ar38", 8.5));
+  // P's blanks are unreadable when they first appear, while P is pending; the
+  // <BLANKS> commit below brings a readable version before P is folded.
+  legacy.write("66052-03A", FileKind::Blanks, kUnreadable);
   history.sync = legacy.commit("<SYNC> Synced repository with database", kRefit);
   legacy.write("66052-03A", FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
   legacy.write("66052-03A", FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
@@ -2348,6 +2370,10 @@ void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& histor
   legacy.refit("66052-03A", "Ar36", 6.0, kLater);
   repo.checkout("main");
   repo.git({"merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "Merge branch 'side2'", "side2"}, kLater);
+  // E's blanks and IC factors are readable again.
+  legacy.write(kRunE, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks) + "\n");
+  legacy.write(kRunE, FileKind::IcFactors, LegacyRepoBuilder::fixture_text(FileKind::IcFactors) + "\n");
+  legacy.commit("mended", kLater);
   // A root file and a satellite file removed, added again with what they
   // had, and changed in a later commit.
   const std::string extraction_path = LegacyRepoBuilder::path("66052-03A", FileKind::Extraction);
@@ -2366,13 +2392,20 @@ void build_part_one(GitFixture& repo, LegacyRepoBuilder& legacy, History& histor
   repo.tag("part-one");
 }
 
-void build_part_two(GitFixture&, LegacyRepoBuilder& legacy) {
+void build_part_two(GitFixture& repo, LegacyRepoBuilder& legacy, History& history) {
   const char* const later = "2019-01-10T10:00:00-07:00";
+  // The frozen production is readable at last, in a later run than the one
+  // that met the unreadable version.
+  repo.write(kFrozenProduction, fixture("meta/NM-293/productions/Triga_PR.json"));
+  legacy.commit("<PR_FREEZE>", later);
   legacy.collect("66052-05A", kH.str(), later);
   // L's blanks arrive long after it was folded without them.
   legacy.write("66052-04A", FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
   legacy.commit("<BLANKS> auto update blanks", later);
   legacy.refit("66052-05A", "Ar40", 9.75, later);
+  // A bad version after a good one: it stays.
+  legacy.write(kRunE, FileKind::IcFactors, kUnreadable);
+  history.broken_again = legacy.commit("<ICFactor> interrupted", later);
 }
 
 // Where two snapshots first differ, for a readable failure.
@@ -2395,7 +2428,7 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
   auto incremental = fresh_world();
   auto half = run_import(*incremental, adapter_config(repo_));
   ASSERT_TRUE(half) << err(half.error());
-  build_part_two(repo_, legacy_);
+  build_part_two(repo_, legacy_, history);
   auto rest = run_import(*incremental, adapter_config(repo_));
   ASSERT_TRUE(rest) << err(rest.error());
 
@@ -2409,7 +2442,34 @@ TEST_P(ProjectImportTest, OneHistoryOneResult) {
   EXPECT_EQ((*store().load_analysis(kF))->summary.runid, "66052-07B");
   ASSERT_TRUE(store().load_analysis(kG)->has_value());
   EXPECT_EQ((*store().load_analysis(kG))->summary.runid, "66052-02A");  // the freed run id
-  for (const auto& conflict : world_->conflicts()) ADD_FAILURE() << conflict.path << " " << conflict.detail_json;
+  // The unreadable versions (spec 10.37): each followed by a readable one is
+  // superseded; the one at the head of the branch is not.
+  {
+    const std::string blanks = LegacyRepoBuilder::path(kRunE, FileKind::Blanks);
+    const std::string icfactors = LegacyRepoBuilder::path(kRunE, FileKind::IcFactors);
+    const std::string held = LegacyRepoBuilder::path("66052-03A", FileKind::Blanks);
+    std::map<Uuid, std::string> expected{
+        {ingest::conflict_id(kUrl, history.broken, blanks), "superseded"},
+        {ingest::conflict_id(kUrl, history.broken, icfactors), "superseded"},
+        {ingest::conflict_id(kUrl, history.broken, kFrozenProduction), "superseded"},
+        {ingest::conflict_id(kUrl, history.sync, held), "superseded"},
+        {ingest::conflict_id(kUrl, history.broken_again, icfactors), "pending"},
+    };
+    for (const auto& conflict : world_->conflicts()) {
+      EXPECT_EQ(conflict.kind, ConflictKind::Unparseable) << conflict.path;
+      const auto known = expected.find(conflict.uuid);
+      if (known == expected.end()) {
+        ADD_FAILURE() << conflict.path << " " << conflict.detail_json;
+        continue;
+      }
+      EXPECT_EQ(conflict.resolution, known->second) << conflict.path;
+      expected.erase(known);
+    }
+    EXPECT_TRUE(expected.empty()) << expected.size() << " expected conflicts are not there";
+    EXPECT_EQ(whole->conflicts, 1);
+    EXPECT_EQ(store().history(kE, Kind::Blanks)->size(), 2u);
+    EXPECT_EQ(store().history(kP, Kind::Blanks)->size(), 2u);  // the empty root and the version held with it
+  }
   EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{11.0});  // the merge kept main's
   EXPECT_EQ(head_intercept(*world_, kP, "Ar36"), std::optional<double>{6.0});   // the merge kept the side's
   EXPECT_EQ(store().history(kP, Kind::Baselines)->size(), 2u);  // removed and restored: nothing; then changed
@@ -2494,7 +2554,7 @@ ingest::VerifyReport verify_repo(World& w, const ProjectAdapterConfig& config,
 TEST_P(ProjectImportTest, VerifyAfterImportIsOk) {
   History history;
   build_part_one(repo_, legacy_, history);
-  build_part_two(repo_, legacy_);
+  build_part_two(repo_, legacy_, history);
   legacy_.add_interpreted_age("2019-02-01T10:00:00-07:00");
   repo_.write("660/logs/52-05A.logs.log", "run log\n");
   repo_.write("notes.txt", "not a legacy file\n");
@@ -2514,9 +2574,14 @@ TEST_P(ProjectImportTest, VerifyAfterImportIsOk) {
                     << static_cast<int>(open.unit.disposition) << ", " << open.missing.size() << " missing";
     EXPECT_EQ(report.would_write, 0) << batch_commits;
     EXPECT_EQ(report.replay_would_write, 0) << batch_commits;
-    // notes.txt is a pending conflict: that alone fails verify.
-    EXPECT_EQ(report.pending_blocking, 1) << batch_commits;
-    EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{ingest::conflict_id(kUrl, stray, "notes.txt")});
+    // notes.txt, and E's IC factors unreadable at the head, are pending
+    // conflicts: they alone fail verify. The unreadable versions a readable
+    // one followed do not (spec 10.37).
+    EXPECT_EQ(report.pending_blocking, 2) << batch_commits;
+    EXPECT_EQ(report.blocking_conflicts,
+              sorted_ids({ingest::conflict_id(kUrl, stray, "notes.txt"),
+                          ingest::conflict_id(kUrl, history.broken_again,
+                                              LegacyRepoBuilder::path(kRunE, FileKind::IcFactors))}));
     EXPECT_EQ(report.pending_warnings, 0);
     EXPECT_FALSE(report.ok());
     EXPECT_EQ(report.ignored, 2) << batch_commits;  // README.md and the run log
@@ -2691,7 +2756,10 @@ TEST_P(ProjectImportTest, VerifyLooksForGoodContentAfterAnUnreadableVersionAtIts
 
   auto report = verify_repo(*world_, adapter_config(repo_, 1));
   EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
-  EXPECT_EQ(report.pending_blocking, 1);  // the unreadable version
+  // The unreadable version is accounted for by its conflict, which the
+  // repair superseded (spec 10.37): nothing blocks.
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_EQ(resolution_of_conflict(*world_, bad, path), "superseded");
   ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",
                    {pd::qv(again), pd::qv(path)}),
             1);
@@ -2701,7 +2769,10 @@ TEST_P(ProjectImportTest, VerifyLooksForGoodContentAfterAnUnreadableVersionAtIts
     EXPECT_EQ(unaccounted_unit(report, again, path).unit.disposition, ingest::UnitDisposition::Imported);
   }
   (void)good;
-  (void)bad;
+  // Without the conflict of the unreadable version, that version is not accounted for either.
+  ASSERT_EQ(forget(*world_, "DELETE FROM import_conflict WHERE path = ?", {pd::qv(path)}), 1);
+  report = verify_repo(*world_, adapter_config(repo_));
+  EXPECT_EQ(unaccounted(report), sorted({unit_name(again, path), unit_name(bad, path)}));
 }
 
 // A file removed and restored unchanged repeats the unit before the removal:
@@ -2982,6 +3053,331 @@ TEST_P(ProjectImportTest, FileOfAFoldedCollectionRewrittenLaterBecomesTheHead) {
   EXPECT_EQ(*incremental->store->head(kE, Kind::Intercepts), std::optional<Uuid>{head});
   EXPECT_EQ(head_intercept(*incremental, kE, "Ar40"), std::optional<double>{33.0});
   EXPECT_EQ(incremental->revisions(kE), world_->revisions(kE));
+}
+
+// ---------------------------------------------------------------- a broken version followed by a good one (spec 10.37)
+
+namespace {
+
+std::string resolution_of(World& w, const std::string& commit, const std::string& path) {
+  return resolution_of_conflict(w, commit, path);
+}
+
+std::map<std::string, int> pending_by_kind(World& w) {
+  std::map<std::string, int> out;
+  for (const auto& row : w.conflicts())
+    if (row.resolution == "pending") ++out[std::string(P::to_string(row.kind))];
+  return out;
+}
+
+// same_at_every_cut (verify_support.hpp) for the history `repo` holds now.
+void same_at_every_cut(GitFixture& repo, const std::function<std::unique_ptr<World>()>& fresh_world,
+                       const std::function<void(World&, const std::string&)>& check) {
+  pychron::dvc::testing::same_at_every_cut(
+      fresh_world,
+      [&](World& w, int batch_commits, std::optional<int> max_batches, bool replay) {
+        auto writer = writer_config();
+        writer.replay = replay;
+        return run_import(w, adapter_config(repo, batch_commits), max_batches, writer);
+      },
+      [](World& w) { return snapshot_of(w); }, check);
+}
+
+const char* const kGarbage = "{\"Ar40\": ";
+
+}  // namespace
+
+TEST_P(ProjectImportTest, UnreadableVersionIsSupersededByAReadableOneOrADeletion) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string intercepts = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  const std::string baselines = LegacyRepoBuilder::path(kRunE, FileKind::Baselines);
+  const std::string blanks = LegacyRepoBuilder::path(kRunE, FileKind::Blanks);
+  const std::string tags = LegacyRepoBuilder::path(kRunE, FileKind::Tags);
+  // Intercepts: bad, good, bad. Baselines: bad, deleted. Blanks: bad, bad
+  // (another garbage), good. Tags: bad, and nothing after it.
+  legacy_.write(kRunE, FileKind::Intercepts, kGarbage);
+  legacy_.write(kRunE, FileKind::Baselines, kGarbage);
+  legacy_.write(kRunE, FileKind::Blanks, kGarbage);
+  const std::string broken = legacy_.commit("<ISOEVO> broken", kDay2);
+  legacy_.write(kRunE, FileKind::Blanks, "not json either");
+  const std::string broken_more = legacy_.commit("<BLANKS> broken", kDay2);
+  const std::string mended = legacy_.refit(kRunE, "Ar40", 12.5, kRefit);
+  repo_.remove(baselines);
+  legacy_.write(kRunE, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks) + "\n");
+  legacy_.write(kRunE, FileKind::Tags, kGarbage);
+  const std::string removed = legacy_.commit("removed the baselines, mended the blanks", kRefit);
+  legacy_.write(kRunE, FileKind::Intercepts, "garbage again");
+  const std::string broken_again = legacy_.commit("<ISOEVO> broken again", kLater);
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    EXPECT_EQ(resolution_of(w, broken, intercepts), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, broken_again, intercepts), "pending") << what;  // a bad version after a good one
+    EXPECT_EQ(resolution_of(w, broken, baselines), "superseded") << what;      // the file is gone
+    EXPECT_EQ(resolution_of(w, broken, blanks), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, broken_more, blanks), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, removed, tags), "pending") << what;
+    EXPECT_EQ(pending_by_kind(w), (std::map<std::string, int>{{"unparseable", 2}})) << what;
+    EXPECT_EQ(w.conflicts().size(), 6u) << what;
+    EXPECT_EQ(*w.store->head(kE, Kind::Intercepts),
+              std::optional<Uuid>{ingest::revision_id(kUrl, mended, intercepts)})
+        << what;
+    EXPECT_EQ(w.store->history(kE, Kind::Blanks)->size(), 2u) << what;
+    EXPECT_EQ(w.store->history(kE, Kind::Baselines)->size(), 1u) << what;
+  });
+
+  // Verify: every version is accounted for, the superseded ones by their
+  // conflicts; the two bad versions nothing followed block.
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_, 2)));
+  for (const int batch_commits : {1, 500}) {
+    const auto report = verify_repo(*world_, adapter_config(repo_, batch_commits));
+    EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
+    EXPECT_EQ(report.would_write, 0);
+    EXPECT_EQ(report.replay_would_write, 0);
+    EXPECT_EQ(report.blocking_conflicts, sorted_ids({ingest::conflict_id(kUrl, broken_again, intercepts),
+                                                     ingest::conflict_id(kUrl, removed, tags)}))
+        << batch_commits;
+    EXPECT_FALSE(report.ok());
+  }
+
+  // The source is mended at its head: the next run supersedes what is left,
+  // and verify is ok.
+  legacy_.refit(kRunE, "Ar40", 13.5, kLater);
+  legacy_.set_tag(kRunE, "omit", kLater);
+  auto rest = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(rest) << err(rest.error());
+  EXPECT_EQ(rest->conflicts, 0);
+  EXPECT_TRUE(pending_by_kind(*world_).empty());
+  const auto report = verify_repo(*world_, adapter_config(repo_));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_TRUE(report.ok());
+}
+
+// A file of a collection that cannot be read leaves an empty root and a
+// conflict; a later readable version, held with the collection or arriving
+// after it, supersedes the conflict. So does a deletion while pending.
+TEST_P(ProjectImportTest, UnreadableCollectionFileIsSupersededByALaterVersion) {
+  // E: baselines unreadable in the collection, mended after it was folded.
+  legacy_.import_without_collection(kRunE, kE.str(), kCollected);
+  legacy_.write(kRunE, FileKind::Baselines, "not json");
+  repo_.git({"add", "-A"});
+  repo_.git({"commit", "--quiet", "--amend", "-m", "<IMPORT> initial"}, kCollected);
+  const std::string first = repo_.head();
+  // F: intercepts unreadable when first written, mended while the collection
+  // is still pending. Its IC factors are garbage, then deleted, and never
+  // come back: it is folded without them.
+  const std::string run_f = "66052-02A";
+  legacy_.write_record_files(run_f, kF.str());
+  legacy_.write(run_f, FileKind::Intercepts, kGarbage);
+  legacy_.write(run_f, FileKind::IcFactors, kGarbage);
+  const std::string pending = legacy_.commit("<COLLECTION>", kDay2);
+  legacy_.write(run_f, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.write(run_f, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  repo_.remove(LegacyRepoBuilder::path(run_f, FileKind::IcFactors));
+  const std::string isoevo = legacy_.commit("<ISOEVO> default collection fits", kDay2);
+  legacy_.write(run_f, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy_.commit("<BLANKS> preceding bu-FD-F-789", kDay2);
+  const std::string mended = legacy_.commit("unrelated", kRefit);
+  legacy_.write(kRunE, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  const std::string later = legacy_.commit("<ISOEVO> baselines", kLater);
+  (void)mended;
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    EXPECT_EQ(resolution_of(w, first, LegacyRepoBuilder::path(kRunE, FileKind::Baselines)), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, pending, LegacyRepoBuilder::path(run_f, FileKind::Intercepts)), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, pending, LegacyRepoBuilder::path(run_f, FileKind::IcFactors)), "superseded") << what;
+    EXPECT_TRUE(pending_by_kind(w).empty()) << what;
+    EXPECT_EQ(w.conflicts().size(), 3u) << what;
+    // The mended files are revisions on top of the empty roots.
+    EXPECT_EQ(*w.store->head(kE, Kind::Baselines),
+              std::optional<Uuid>{ingest::revision_id(kUrl, later, LegacyRepoBuilder::path(kRunE, FileKind::Baselines))})
+        << what;
+    EXPECT_EQ(*w.store->head(kF, Kind::Intercepts),
+              std::optional<Uuid>{
+                  ingest::revision_id(kUrl, isoevo, LegacyRepoBuilder::path(run_f, FileKind::Intercepts))})
+        << what;
+  });
+}
+
+// Files that belong to no analysis: an interpreted age, a frozen production,
+// a spectrometer settings file.
+TEST_P(ProjectImportTest, UnreadableInterpretedAgeProductionAndSettingsAreSuperseded) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string age(LegacyRepoBuilder::kInterpretedAgePath);
+  const std::string production = "NM-293.G.production.json";
+  const std::string settings = std::string(40, 'a') + ".json";
+  repo_.write(age, kGarbage);
+  repo_.write(production, kGarbage);
+  repo_.write(settings, kGarbage);
+  const std::string broken = legacy_.commit("broken", kDay2);
+  legacy_.add_interpreted_age(kRefit);
+  repo_.remove(production);
+  repo_.write(settings, fixture(kUnknown + std::string(LegacyRepoBuilder::kSpecSha) + ".json"));
+  const std::string mended = legacy_.commit("mended", kLater);
+  (void)mended;
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    for (const std::string& path : {age, production, settings})
+      EXPECT_EQ(resolution_of(w, broken, path), "superseded") << what << " " << path;
+    EXPECT_TRUE(pending_by_kind(w).empty()) << what;
+    EXPECT_EQ(w.count("interpreted_age"), 1) << what;
+  });
+}
+
+// Spec 10.29 and 10.37: a settings file that came too late is not made good
+// by a later version of it, nor an unknown path by its removal.
+TEST_P(ProjectImportTest, LateSettingsFileAndUnknownPathAreNeverSuperseded) {
+  write_uuid_named(repo_, kF, "66052-03B");  // names kSpecSha; the file is not there
+  legacy_.commit("<IMPORT> initial", kCollected);
+  legacy_.commit("unrelated", kDay2);
+  const std::string spectrometer = std::string(LegacyRepoBuilder::kSpecSha) + ".json";
+  repo_.write(spectrometer, fixture(kUnknown + spectrometer));
+  repo_.write("notes.txt", "not a legacy file\n");
+  const std::string late = legacy_.commit("settings, late", kRefit);
+  repo_.write(spectrometer, json::parse(fixture(kUnknown + spectrometer)).dump(1));
+  repo_.write("notes.txt", "still not a legacy file\n");
+  const std::string again = legacy_.commit("settings, reformatted", kLater);
+  repo_.remove(spectrometer);
+  repo_.remove("notes.txt");
+  legacy_.commit("both removed", kLater);
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    EXPECT_EQ(resolution_of(w, late, spectrometer), "pending") << what;
+    EXPECT_EQ(resolution_of(w, late, "notes.txt"), "pending") << what;
+    EXPECT_EQ(resolution_of(w, again, "notes.txt"), "pending") << what;
+    EXPECT_EQ(pending_by_kind(w), (std::map<std::string, int>{{"unparseable", 3}})) << what;
+  });
+}
+
+// A file removed and put back with the bytes it had repeats that version
+// (FileRemovedAndRestoredAddsNothingAtAnyCut). When those bytes cannot be
+// read, the deletion superseded the first conflict, and the file is unreadable
+// at the head again: the restored version has a conflict of its own.
+TEST_P(ProjectImportTest, RestoredUnreadableFileIsPendingAgain) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string tags = LegacyRepoBuilder::path(kRunE, FileKind::Tags);
+  legacy_.write(kRunE, FileKind::Tags, kGarbage);
+  const std::string broken = legacy_.commit("<TAG> broken", kDay2);
+  repo_.remove(tags);
+  legacy_.commit("removed", kRefit);
+  legacy_.write(kRunE, FileKind::Tags, kGarbage);
+  const std::string restored = legacy_.commit("restored", kLater);
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    EXPECT_EQ(resolution_of(w, broken, tags), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, restored, tags), "pending") << what;
+  });
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const auto report = verify_repo(*world_, adapter_config(repo_, 1));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{ingest::conflict_id(kUrl, restored, tags)});
+}
+
+// An analysis whose first record cannot be read is not lost for good: the
+// first readable record starts its collection at that commit, with the files
+// the repository has had for it since.
+TEST_P(ProjectImportTest, ReadableRecordAfterAnUnreadableFirstRecordStartsTheCollection) {
+  const std::string record = LegacyRepoBuilder::path(kRunE, FileKind::Record);
+  const std::string intercepts = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  legacy_.write_record_files(kRunE, kE.str());
+  legacy_.write(kRunE, FileKind::Record, "{\"uuid\": ");
+  const std::string collection = legacy_.commit("<COLLECTION>", kCollected);
+  legacy_.write(kRunE, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.write(kRunE, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  const std::string isoevo = legacy_.commit("<ISOEVO> default collection fits", kCollected);
+  legacy_.write(kRunE, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy_.commit("<BLANKS> preceding bu-FD-F-789", kCollected);
+  legacy_.write(kRunE, FileKind::IcFactors, LegacyRepoBuilder::fixture_text(FileKind::IcFactors));
+  legacy_.commit("<ICFactor> default", kCollected);
+  // Folded with an unreadable record; a refit of the analysis that is not there.
+  const std::string refit_before = legacy_.refit(kRunE, "Ar40", 12.5, kDay2);
+  legacy_.write(kRunE, FileKind::Record, "still not a record");
+  const std::string still_broken = legacy_.commit("<EDIT> broken", kDay2);
+  legacy_.write(kRunE, FileKind::Record, LegacyRepoBuilder::record_text(kRunE, kE.str()));
+  const std::string readable = legacy_.commit("<EDIT> record restored from the database", kRefit);
+  const std::string refit_after = legacy_.refit(kRunE, "Ar40", 13.5, kLater);
+
+  // F: the record is mended while its collection is still pending. The
+  // collection is folded with the record it started with, which cannot be
+  // read, and starts again at the mended one, held with it.
+  const std::string run_f = "66052-02A";
+  const std::string record_f = LegacyRepoBuilder::path(run_f, FileKind::Record);
+  legacy_.write_record_files(run_f, kF.str());
+  legacy_.write(run_f, FileKind::Record, "{\"uuid\": ");
+  const std::string collection_f = legacy_.commit("<COLLECTION>", kLater);
+  legacy_.write(run_f, FileKind::Record, LegacyRepoBuilder::record_text(run_f, kF.str()));
+  const std::string mended_f = legacy_.commit("<EDIT> record written again", kLater);
+  legacy_.write(run_f, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.write(run_f, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  legacy_.commit("<ISOEVO> default collection fits", kLater);
+  legacy_.write(run_f, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy_.commit("<BLANKS> preceding bu-FD-F-789", kLater);
+  legacy_.write(run_f, FileKind::IcFactors, LegacyRepoBuilder::fixture_text(FileKind::IcFactors));
+  legacy_.commit("<ICFactor> default", kLater);
+
+  // G: its intercepts cannot be read either, and still cannot when the
+  // record is mended: the analysis is imported without them and their
+  // conflict stays, until they are mended too.
+  const std::string run_g = "66052-03A";
+  const std::string intercepts_g = LegacyRepoBuilder::path(run_g, FileKind::Intercepts);
+  legacy_.write_record_files(run_g, kG.str());
+  legacy_.write(run_g, FileKind::Record, "{\"uuid\": ");
+  legacy_.write(run_g, FileKind::Intercepts, kGarbage);
+  legacy_.write(run_g, FileKind::Baselines, LegacyRepoBuilder::fixture_text(FileKind::Baselines));
+  legacy_.write(run_g, FileKind::Blanks, LegacyRepoBuilder::fixture_text(FileKind::Blanks));
+  legacy_.write(run_g, FileKind::IcFactors, LegacyRepoBuilder::fixture_text(FileKind::IcFactors));
+  const std::string import_g = legacy_.commit("<IMPORT> initial", kLater);
+  legacy_.write(run_g, FileKind::Record, LegacyRepoBuilder::record_text(run_g, kG.str()));
+  legacy_.commit("<EDIT> record written again", kLater);
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    auto of_f = w.store->history(kF, Kind::Signals);
+    ASSERT_TRUE(of_f && of_f->size() == 1u) << what;
+    EXPECT_EQ(of_f->front().changeset.uuid, ingest::collection_changeset_id(kUrl, mended_f, kF)) << what;
+    EXPECT_EQ(resolution_of(w, collection_f, record_f), "superseded") << what;
+    for (const Kind kind : kSixKinds) EXPECT_EQ(w.store->history(kF, kind)->size(), 1u) << what;
+    ASSERT_TRUE(w.store->load_analysis(kG)->has_value()) << what;
+    EXPECT_TRUE(std::get<P::Intercepts>((*w.store->load_analysis(kG))->payloads.at(Kind::Intercepts)).empty()) << what;
+    EXPECT_EQ(resolution_of(w, import_g, intercepts_g), "pending") << what;
+    EXPECT_EQ(pending_by_kind(w).size(), 1u) << what;
+  });
+  // G's intercepts are mended: nothing is left pending from here on.
+  legacy_.write(run_g, FileKind::Intercepts, LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.commit("<ISOEVO> mended", kLater);
+
+  same_at_every_cut(repo_, [&] { return fresh_world(); }, [&](World& w, const std::string& what) {
+    EXPECT_EQ(resolution_of(w, import_g, intercepts_g), "superseded") << what;
+    EXPECT_EQ(w.store->history(kG, Kind::Intercepts)->size(), 2u) << what;
+    auto view = w.store->load_analysis(kE);
+    ASSERT_TRUE(view && view->has_value()) << what;
+    EXPECT_EQ((*view)->summary.runid, kRunE) << what;
+    EXPECT_EQ(json::parse(w.analysis_detail(kE)).at("synthetic_collection"), true) << what;
+    // Its collection is the readable record's commit.
+    auto signals = w.store->history(kE, Kind::Signals);
+    ASSERT_TRUE(signals && signals->size() == 1u) << what;
+    EXPECT_EQ(signals->front().changeset.uuid, ingest::collection_changeset_id(kUrl, readable, kE)) << what;
+    // The intercepts it had, the refit made while it was broken, the refit after.
+    auto history = w.store->history(kE, Kind::Intercepts);
+    ASSERT_TRUE(history) << what;
+    ASSERT_EQ(history->size(), 3u) << what;
+    EXPECT_EQ((*history)[0].uuid, ingest::revision_id(kUrl, isoevo, intercepts)) << what;
+    EXPECT_EQ((*history)[1].uuid, ingest::revision_id(kUrl, refit_before, intercepts)) << what;
+    EXPECT_EQ((*history)[2].uuid, ingest::revision_id(kUrl, refit_after, intercepts)) << what;
+    EXPECT_EQ(head_intercept(w, kE, "Ar40"), std::optional<double>{13.5}) << what;
+    // Nothing is left pending: the unreadable records and the files refused
+    // for want of the analysis are superseded.
+    EXPECT_EQ(resolution_of(w, collection, record), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, still_broken, record), "superseded") << what;
+    EXPECT_EQ(resolution_of(w, refit_before, intercepts), "superseded") << what;
+    EXPECT_TRUE(pending_by_kind(w).empty()) << what;
+    for (const auto& row : w.conflicts()) EXPECT_EQ(row.resolution, "superseded") << what << " " << row.path;
+  });
+
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_, 3)));
+  const auto report = verify_repo(*world_, adapter_config(repo_, 2));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.would_write, 0);
+  EXPECT_EQ(report.replay_would_write, 0);
+  EXPECT_TRUE(report.ok());
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, ProjectImportTest, ::testing::ValuesIn(P::testing::engines()));

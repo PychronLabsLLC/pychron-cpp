@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,6 +47,10 @@ inline std::vector<std::string> sorted(std::vector<std::string> names) {
   std::sort(names.begin(), names.end());
   return names;
 }
+inline std::vector<persistence::Uuid> sorted_ids(std::vector<persistence::Uuid> ids) {
+  std::sort(ids.begin(), ids.end());
+  return ids;
+}
 inline std::vector<std::string> unaccounted(const ingest::VerifyReport& report) {
   std::vector<std::string> out;
   for (const auto& open : report.unaccounted) out.push_back(unit_name(open.unit.commit, open.unit.path));
@@ -77,6 +83,82 @@ void resolve_pending(World& w, persistence::Uuid source) {
   ASSERT_TRUE(uow);
   for (const auto& row : *rows) ASSERT_TRUE((*uow)->resolve_conflict(row.uuid, "ignored"));
   ASSERT_TRUE((*uow)->commit());
+}
+
+// Where two snapshots first differ, for a readable failure.
+inline std::string rows_difference(const std::vector<std::string>& got, const std::vector<std::string>& want) {
+  for (std::size_t i = 0; i < std::max(got.size(), want.size()); ++i) {
+    const std::string a = i < got.size() ? got[i] : "(nothing)";
+    const std::string b = i < want.size() ? want[i] : "(nothing)";
+    if (a != b) return "line " + std::to_string(i) + "\n  got:  " + a.substr(0, 600) + "\n  want: " + b.substr(0, 600);
+  }
+  return {};
+}
+
+// One history, one result (spec 10.16) for the history a repository holds
+// now: imported in the largest batches (a batch still ends where the adapter
+// must end one), in small batches, stopped after every batch and resumed, and
+// each of those replayed at other batch sizes, every world ends with the same
+// rows. RunStats::conflicts of a whole run is what it leaves pending.
+//
+//   fresh()                                     a new, empty world (a unique_ptr)
+//   import(world, batch_commits, max_batches, replay)   one run -> Result<RunStats>
+//   snapshot(world)                             its rows -> std::vector<std::string>
+//   check(world, what)                          what every world must hold
+template <class Fresh, class Import, class Snapshot, class Check>
+void same_at_every_cut(const Fresh& fresh, const Import& import, const Snapshot& snapshot, const Check& check) {
+  auto reference = fresh();
+  auto whole = import(*reference, 500, std::optional<int>{}, false);
+  ASSERT_TRUE(whole) << to_string(whole.error());
+  const std::vector<std::string> want = snapshot(*reference);
+  ASSERT_FALSE(want.empty());
+  check(*reference, "largest batches");
+  int pending = 0;
+  {
+    auto rows = reference->store->import_conflicts({std::nullopt, std::nullopt, std::string("pending")});
+    ASSERT_TRUE(rows);
+    pending = static_cast<int>(rows->size());
+  }
+  EXPECT_EQ(whole->conflicts, pending) << "RunStats::conflicts counts what is left pending";
+
+  const auto same = [&](auto& w, const std::string& what) {
+    const std::vector<std::string> got = snapshot(w);
+    EXPECT_TRUE(got == want) << what << ": " << rows_difference(got, want);
+    check(w, what);
+  };
+  const auto replayed = [&](auto& w, const std::string& what, int batch_commits) {
+    const auto seq = *w.store->latest_change_seq();
+    auto again = import(w, batch_commits, std::optional<int>{}, true);
+    ASSERT_TRUE(again) << what << ": " << to_string(again.error());
+    EXPECT_EQ(*w.store->latest_change_seq(), seq) << what << ": the replay wrote something";
+    EXPECT_EQ(again->conflicts, pending) << what << ", replayed in " << batch_commits;
+    same(w, what + ", replayed in " + std::to_string(batch_commits));
+  };
+  replayed(*reference, "largest batches", 500);
+  replayed(*reference, "largest batches", 1);
+  for (const int batch_commits : {1, 2, 3}) {
+    const std::string what = "batches of " + std::to_string(batch_commits);
+    auto cut = fresh();
+    auto stats = import(*cut, batch_commits, std::optional<int>{}, false);
+    ASSERT_TRUE(stats) << what << ": " << to_string(stats.error());
+    EXPECT_EQ(stats->conflicts, pending) << what;
+    same(*cut, what);
+    replayed(*cut, what, batch_commits == 1 ? 500 : 1);
+
+    // Stopped after every batch; each run is a new adapter resuming from the stored token.
+    auto resumed = fresh();
+    bool finished = false;
+    for (int runs = 0; !finished && runs < 300; ++runs) {
+      auto one = import(*resumed, batch_commits, std::optional<int>{1}, false);
+      ASSERT_TRUE(one) << what << ", run " << runs << ": " << to_string(one.error());
+      EXPECT_GE(one->conflicts, 0) << what << ", run " << runs;
+      finished = one->finished;
+    }
+    EXPECT_TRUE(finished) << what;
+    same(*resumed, what + ", resumed after every batch");
+    for (const int replay_commits : {1, 2, 500})
+      replayed(*resumed, what + ", resumed after every batch", replay_commits);
+  }
 }
 
 }  // namespace pychron::dvc::testing

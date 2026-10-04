@@ -586,9 +586,12 @@ TEST_P(MetaImportTest, UnparseableLevelIsConflict) {
   commit_file(kLevel, level_text({{4, 0.0044}}), kDay4);
   auto later = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(later) << err(later.error());
-  EXPECT_EQ(later->conflicts, 1);
+  // Both unreadable versions were followed by a readable one: nothing is left
+  // pending (spec 10.37), and both conflicts are kept.
+  EXPECT_EQ(later->conflicts, 0);
   EXPECT_EQ(later->revisions, 23 + 1 + 1);
   EXPECT_EQ(world_->conflicts().size(), 2u);
+  for (const auto& row : world_->conflicts()) EXPECT_EQ(row.resolution, "superseded") << row.uuid.str();
   for (int position = 1; position <= 23; ++position)
     EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(position)).size(), position == 4 ? 2u : 1u) << position;
 }
@@ -806,7 +809,12 @@ TEST_P(MetaImportTest, DeletedFilesLeaveNoValue) {
   auto later = run_import(*world_, adapter_config(repo_));
   ASSERT_TRUE(later) << err(later.error());
   EXPECT_EQ(later->revisions, 0);
-  EXPECT_EQ(later->conflicts, 1);
+  // The unreadable version is a conflict, and the removal superseded it (spec 10.37).
+  EXPECT_EQ(later->conflicts, 0);
+  const auto conflicts = world_->conflicts();
+  ASSERT_EQ(conflicts.size(), 1u);
+  EXPECT_EQ(conflicts[0].path, "NM-293/productions/Other.json");
+  EXPECT_EQ(conflicts[0].resolution, "superseded");
   EXPECT_EQ(world_->count("ref_object", "WHERE key = 'NM-293/Other'"), 0);
 }
 
@@ -1119,6 +1127,10 @@ void build_part_one(GitFixture& repo) {
   json list = sensitivities(4);
   list[1]["sensitivity"] = 4.5e-16;
   put(kSens, list.dump(4), kDay4, "corrected sensitivity");
+  // The gains file is garbage, then back as it was: the garbage no longer
+  // counts. Part two breaks it again.
+  put("spectrometers/jan.gain.json", "<<<<<<< HEAD", kDay4, "a merge gone wrong");
+  put("spectrometers/jan.gain.json", fixture("meta/spectrometers/jan.gain.json"), kDay4, "gains restored");
   // A level moves to a production that has no file.
   json map = json::parse(fixture("meta/NM-293/productions.json"));
   map["G"] = "Cd_shielded";
@@ -1162,6 +1174,9 @@ void build_part_two(GitFixture& repo) {
   // A commit that leaves nothing but a note: the sensitivity list is deleted.
   repo.remove(kSens);
   repo.commit("sensitivities moved to the database", later);
+  // Unreadable at the branch head: nothing follows it.
+  repo.write("spectrometers/jan.gain.json", "<<<<<<< HEAD");
+  repo.commit("gains broken again", later);
 }
 
 }  // namespace
@@ -1212,10 +1227,17 @@ TEST_P(MetaImportTest, OneHistoryOneResult) {
   }
   EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(9)).size(), 2u);  // the garbage commit cost nothing
   EXPECT_EQ(world_->history(RefType::FluxPosition, flux_key(16)).size(), 2u);
-  const auto conflicts = world_->conflicts();
-  ASSERT_EQ(conflicts.size(), 1u);
-  EXPECT_EQ(conflicts[0].path, kLevel);
-  EXPECT_EQ(conflicts[0].kind, ConflictKind::Unparseable);
+  // Three unreadable versions: the level and the first garbage of the gains
+  // were followed by a readable version; the last garbage of the gains was not.
+  std::vector<std::string> conflicts;
+  for (const auto& conflict : world_->conflicts()) {
+    EXPECT_EQ(conflict.kind, ConflictKind::Unparseable);
+    conflicts.push_back(conflict.path + " " + conflict.resolution);
+  }
+  std::sort(conflicts.begin(), conflicts.end());
+  EXPECT_EQ(conflicts, (std::vector<std::string>{kLevel + " superseded", "spectrometers/jan.gain.json pending",
+                                                 "spectrometers/jan.gain.json superseded"}));
+  EXPECT_EQ(world_->history(RefType::Gains, "jan").size(), 2u);  // a file that is one object is stated again
   EXPECT_EQ(world_->head<P::SensitivityValue>(RefType::Sensitivity, "felix").sensitivity, 6e-16);
   EXPECT_EQ(world_->history(RefType::Sensitivity, "felix").size(), 2u + 2u + 2u + 1u);
   const auto production = world_->head<P::ProductionValue>(RefType::Production, "NM-293/Triga_PR");
@@ -1267,7 +1289,92 @@ TEST_P(MetaImportTest, OneHistoryOneResult) {
     }
     EXPECT_TRUE(finished) << what << ": no end after " << runs << " runs";
     same(*resumed, what + ", resumed after every batch");
+    for (const int replay_commits : {1, 2, 3, 500})
+      replayed(*resumed, what + ", resumed after every batch, replay in " + std::to_string(replay_commits),
+               replay_commits);
   }
+}
+
+// ---------------------------------------------------------------- a broken version followed by a good one (spec 10.37)
+
+namespace {
+
+std::string resolution_of(World& w, const std::string& commit, const std::string& path) {
+  auto row = w.store->import_conflict(ingest::conflict_id(kUrl, commit, path));
+  if (!row || !*row) return "(none)";
+  return (*row)->resolution;
+}
+
+}  // namespace
+
+TEST_P(MetaImportTest, UnreadableVersionIsSupersededByAReadableOneOrADeletion) {
+  const char* const garbage = "<<<<<<< HEAD";
+  const std::string production = "NM-293/productions/Triga_PR.json";
+  const std::string chronology = "NM-293/chronology.txt";
+  const std::string holder = "irradiation_holders/24_hole.txt";
+  const std::string gains = "spectrometers/jan.gain.json";
+  const std::string map = "NM-293/productions.json";
+  write_fixture_files(repo_);
+  repo_.write(gains, garbage);  // unreadable from its first version
+  const std::string added = repo_.commit("Added irradiation NM-293", kDay1);
+  for (const auto& path : {kLevel, production, chronology, holder, kSens, map}) repo_.write(path, garbage);
+  const std::string broken = repo_.commit("a merge gone wrong", kDay2);
+  repo_.write(kSens, "also not a list");
+  const std::string broken_more = repo_.commit("still wrong", kDay2);
+  // Mended. The level exactly as it was before, in another layout: it states
+  // nothing new, so there is no revision, and the garbage is superseded all
+  // the same. The production as it was (a file that is one object is stated
+  // again); the chronology is deleted; the holder as it was; the
+  // sensitivities as they were; the gains readable for the first time.
+  repo_.write(kLevel, json::parse(fixture("meta/NM-293/G.json")).dump(1));
+  repo_.write(production, fixture("meta/" + production));
+  repo_.remove(chronology);
+  repo_.write(holder, fixture("meta/" + holder));
+  repo_.write(kSens, fixture("meta/spectrometers/felix.sens.json"));
+  repo_.write(gains, fixture("meta/" + gains));
+  const std::string mended = repo_.commit("mended", kDay3);
+  // And the holder is broken again; the level-to-production map never mends.
+  repo_.write(holder, garbage);
+  const std::string broken_again = repo_.commit("holder broken again", kDay4);
+
+  same_at_every_cut(
+      [&] { return fresh_world(); },
+      [&](World& w, int batch_commits, std::optional<int> max_batches, bool replay) {
+        auto writer = writer_config();
+        writer.replay = replay;
+        return run_import(w, adapter_config(repo_, batch_commits), max_batches, writer);
+      },
+      [](World& w) { return snapshot_of(w); },
+      [&](World& w, const std::string& what) {
+        for (const auto& path : {kLevel, production, chronology, holder, kSens})
+          EXPECT_EQ(resolution_of(w, broken, path), "superseded") << what << " " << path;
+        EXPECT_EQ(resolution_of(w, broken_more, kSens), "superseded") << what;
+        EXPECT_EQ(resolution_of(w, added, gains), "superseded") << what;
+        // A bad version after a good one, and one nothing followed.
+        EXPECT_EQ(resolution_of(w, broken_again, holder), "pending") << what;
+        EXPECT_EQ(resolution_of(w, broken, map), "pending") << what;
+        EXPECT_EQ(w.conflicts().size(), 9u) << what;
+        // The level came back saying what it said: no revision, and still superseded.
+        for (int position = 1; position <= 23; ++position)
+          EXPECT_EQ(w.history(RefType::FluxPosition, flux_key(position)).size(), 1u) << what << " " << position;
+        EXPECT_EQ(w.history(RefType::Production, "NM-293/Triga_PR").size(), 2u) << what;
+        EXPECT_EQ(w.history(RefType::Sensitivity, "felix").size(), 4u) << what;
+        EXPECT_EQ(w.head<P::ChronologyValue>(RefType::Chronology, "NM-293"), P::ChronologyValue{}) << what;
+        EXPECT_EQ(w.history(RefType::Gains, "jan").size(), 1u) << what;
+      });
+  (void)mended;
+
+  // Verify: every version is accounted for; the two that are still unreadable block.
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_, 2)));
+  auto adapter = MetaRepoAdapter::open(adapter_config(repo_, 1));
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  const auto report = verify_source(*world_, **adapter);
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.would_write, 0);
+  EXPECT_EQ(report.replay_would_write, 0);
+  EXPECT_EQ(report.blocking_conflicts,
+            sorted_ids({ingest::conflict_id(kUrl, broken_again, holder), ingest::conflict_id(kUrl, broken, map)}));
+  EXPECT_FALSE(report.ok());
 }
 
 // ---------------------------------------------------------------- verify
@@ -1292,7 +1399,8 @@ TEST_P(MetaImportTest, VerifyAfterImportIsOk) {
     EXPECT_EQ(unaccounted(report), std::vector<std::string>{}) << batch_commits;
     EXPECT_EQ(report.would_write, 0);
     EXPECT_EQ(report.replay_would_write, 0);
-    // The garbage level file is a pending conflict: that alone fails verify.
+    // The gains file is unreadable at the branch head: that alone fails
+    // verify. The garbage a readable version followed does not (spec 10.37).
     EXPECT_EQ(report.pending_blocking, 1) << batch_commits;
     EXPECT_EQ(report.pending_warnings, 0);
     EXPECT_FALSE(report.ok());
@@ -1352,7 +1460,7 @@ TEST_P(MetaImportTest, VerifyReportsAMissingRevisionNoteOrConflict) {
   auto report = open();
   EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
   EXPECT_EQ(report.units, 6);
-  EXPECT_EQ(report.pending_blocking, 1);
+  EXPECT_EQ(report.pending_blocking, 0);  // the reformatted version followed the garbage (spec 10.37)
 
   // One revision of a file that holds many: the provenance row of position 3 at the fit.
   ASSERT_EQ(forget(*world_, "DELETE FROM import_provenance WHERE commit_sha = ? AND path = ?",

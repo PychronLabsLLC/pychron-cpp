@@ -332,6 +332,63 @@ TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
   EXPECT_EQ((*store_->import_conflict(fresh))->resolution, "superseded");
 }
 
+// A conflict that leaves `pending` carries the time it did; resolving it again
+// to what it already is changes nothing; pending again, the time is gone.
+TEST_P(ImportStoreTest, ResolvedConflictCarriesTheTimeItWasResolved) {
+  const Uuid id = Uuid::v5(source_.uuid, "conflict r.json");
+  const auto stored = [&]() -> ImportConflictRow {
+    auto row = store_->import_conflict(id);
+    EXPECT_TRUE(row && row->has_value());
+    return row && *row ? **row : ImportConflictRow{};
+  };
+  const auto resolve = [&](const char* resolution) {
+    auto uow = batch();
+    ASSERT_TRUE(uow->resolve_conflict(id, resolution));
+    ASSERT_TRUE(uow->commit());
+  };
+  {
+    auto uow = batch();
+    ImportConflictRow row;
+    row.uuid = id;
+    row.path = "r.json";
+    row.kind = ConflictKind::Unparseable;
+    row.resolved = UtcTime::now();  // ignored on write
+    ASSERT_TRUE(uow->add_conflict(row));
+    ASSERT_TRUE(uow->commit());
+  }
+  EXPECT_EQ(stored().resolution, "pending");
+  EXPECT_FALSE(stored().resolved.has_value());
+
+  const UtcTime before = UtcTime::now();
+  resolve("superseded");
+  const auto first = stored();
+  EXPECT_EQ(first.resolution, "superseded");
+  ASSERT_TRUE(first.resolved.has_value());
+  EXPECT_GE(first.resolved->micros, before.micros - 1000000);
+  EXPECT_LE(first.resolved->micros, UtcTime::now().micros + 1000000);
+
+  // Again, to the same resolution: the row is as it was.
+  resolve("superseded");
+  EXPECT_EQ(stored().resolved, first.resolved);
+
+  resolve("pending");
+  EXPECT_EQ(stored().resolution, "pending");
+  EXPECT_FALSE(stored().resolved.has_value());
+
+  // Restated, a resolved conflict is pending and has no time either.
+  resolve("ignored");
+  ASSERT_TRUE(stored().resolved.has_value());
+  auto uow = batch();
+  ImportConflictRow restated;
+  restated.uuid = id;
+  restated.path = "r.json";
+  restated.kind = ConflictKind::IdentityClash;
+  ASSERT_TRUE(uow->restate_conflict(restated));
+  ASSERT_TRUE(uow->commit());
+  EXPECT_EQ(stored().resolution, "pending");
+  EXPECT_FALSE(stored().resolved.has_value());
+}
+
 TEST_P(ImportStoreTest, ConflictCanBeRestated) {
   const Uuid id = Uuid::v5(source_.uuid, "conflict e.json");
   const Uuid resolved = Uuid::v5(source_.uuid, "conflict f.json");

@@ -51,23 +51,52 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
     if (entry.status == 'D') {
       // A deleted file adds nothing. What it held is remembered: added again
       // with the same content, it has not changed.
-      if (const auto gone = last_blob_.find(entry.path); gone != last_blob_.end()) gone->second.present = false;
       note(entry, Ledger::Seen::Deleted);
+      const auto had = versions_.find(entry.path);
+      if (had == versions_.end() || had->second.back().blob_sha.empty()) continue;  // never seen, or gone already
+      had->second.push_back({index, {}, Version::Read::Unknown});
+      // The deletion of a recognised file is handed on (Gone).
+      PathInfo gone = classify_path(entry.path);
+      FileRef at{index, entry.commit, entry.path, {}};
+      switch (gone.kind) {
+        case FileKind::Ignored:
+        case FileKind::Unknown:
+          continue;
+        case FileKind::Spectrometer:
+        case FileKind::InterpretedAge:
+        case FileKind::FrozenProduction:
+          if (out) out->push_back(Gone{std::move(gone), std::move(at), nullptr});
+          continue;
+        default:
+          break;
+      }
+      const auto owner = tracks_.find(gone.key);
+      if (owner == tracks_.end()) continue;
+      if (owner->second.flushed) {
+        if (out) out->push_back(Gone{std::move(gone), std::move(at), &owner->second});
+      } else {
+        owner->second.later.push_back({gone.kind, std::move(at)});  // with the collection, in walk order
+      }
       continue;
     }
     bool restored = false;
-    const auto [seen, first_time] = last_blob_.try_emplace(entry.path, LastSeen{entry.blob_sha, true});
-    if (!first_time) {
-      const bool same = seen->second.blob_sha == entry.blob_sha;
-      restored = same && !seen->second.present;
-      seen->second = LastSeen{entry.blob_sha, true};
-      if (same && !restored) {
+    auto& had = versions_[entry.path];
+    Version::Read known = Version::Read::Unknown;
+    if (!had.empty()) {
+      if (had.back().blob_sha == entry.blob_sha) {
         if (ledger_)
           note(entry, classify_path(entry.path).kind == FileKind::Ignored ? Ledger::Seen::Ignored
                                                                          : Ledger::Seen::Repeated);
         continue;
       }
+      // Gone, and back with the blob it had when it was removed. (A deletion
+      // always follows a version that was there.)
+      if (had.back().blob_sha.empty() && had[had.size() - 2].blob_sha == entry.blob_sha) {
+        restored = true;
+        known = had[had.size() - 2].read;
+      }
     }
+    had.push_back({index, entry.blob_sha, known});
 
     PathInfo info = classify_path(entry.path);
     FileRef ref{index, entry.commit, entry.path, entry.blob_sha};
@@ -146,8 +175,11 @@ void Walk::flush(Track& track, std::vector<Work>* out) {
     out->push_back(std::move(fold));
     for (auto& file : track.later) {
       PathInfo info = classify_path(file.ref.path);
-      out->push_back(
-          Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true, file.restored});
+      if (file.ref.blob_sha.empty())
+        out->push_back(Gone{std::move(info), std::move(file.ref), &track});
+      else
+        out->push_back(
+            Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true, file.restored});
     }
   }
   track.later.clear();
@@ -187,8 +219,22 @@ void Walk::orphans(std::vector<Work>& out) {
     if (track.icfactors) add(FileKind::IcFactors, *track.icfactors);
     if (track.tags) add(FileKind::Tags, *track.tags);
     for (const auto& file : track.satellites) add(file.kind, file.ref);
-    for (const auto& file : track.later) add(file.kind, file.ref);
+    for (const auto& file : track.later)
+      if (!file.ref.blob_sha.empty()) add(file.kind, file.ref);  // a deletion is not a file
   }
+}
+
+std::vector<Version>* Walk::versions(const std::string& path) {
+  const auto it = versions_.find(path);
+  return it == versions_.end() ? nullptr : &it->second;
+}
+
+std::vector<std::string> Walk::paths_of(const std::string& key) const {
+  std::vector<std::string> paths;
+  for (const auto& [path, versions] : versions_)
+    if (classify_path(path).key == key) paths.push_back(path);
+  std::sort(paths.begin(), paths.end());
+  return paths;
 }
 
 int Walk::spectrometer_first(const std::string& sha1) const {

@@ -92,6 +92,7 @@ Result<ImportConflictRow> conflict_from(const Row& r) {
   if (!r.value("file_sha256").isNull()) c.file_sha256 = to_digest(r.value("file_sha256"));
   c.detail_json = opt_str(r.value("detail")).value_or("{}");
   c.resolution = to_std(r.value("resolution"));
+  if (!r.value("resolved").isNull()) c.resolved = to_time(r.value("resolved"));
   return c;
 }
 
@@ -194,14 +195,18 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
           !r)
         return fail(r.error());
     if (auto r = write_conflicts(); !r) return fail(r.error());
+    const UtcTime now = UtcTime::now();
     for (const auto& c : restated_)
       if (auto r = db_.affecting(sql::kRestateConflict,
                                  {qv(c.path), qv(c.entity), qstr(to_string(c.kind)), qv(c.db_head_revision),
-                                  qv(c.file_sha256), qv(c.detail_json), qv(c.resolution), qv(c.uuid), qv(source_)});
+                                  qv(c.file_sha256), qv(c.detail_json), qv(c.resolution),
+                                  resolved_at(c.resolution, now), qv(c.uuid), qv(source_)});
           !r)
         return fail(r.error());
     for (const auto& [conflict, resolution] : resolutions_)
-      if (auto r = db_.affecting(sql::kResolveConflict, {qv(resolution), qv(conflict), qv(source_)}); !r)
+      if (auto r = db_.affecting(sql::kResolveConflict, {qv(resolution), resolved_at(resolution, now), qv(conflict),
+                                                         qv(source_), qv(resolution)});
+          !r)
         return fail(r.error());
     if (progress_)
       if (auto r = write_progress(*progress_); !r) return fail(r.error());
@@ -218,6 +223,11 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
   Result<void> check_open() const {
     if (done_) return fail(ErrorKind::Protocol, "import unit of work already committed");
     return {};
+  }
+
+  // import_conflict.resolved_utc: when a conflict left `pending`; null while it is pending.
+  static QVariant resolved_at(const std::string& resolution, UtcTime now) {
+    return resolution == "pending" ? QVariant{} : qv(now);
   }
 
   void note(std::vector<ChangeEntityRow>& entities, const QString& type, Uuid entity, const char* op) {
@@ -360,7 +370,7 @@ Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFi
     where << QStringLiteral("resolution = ?");
     b << qv(*filter.resolution);
   }
-  QString sql = sql::kImportConflicts;
+  QString sql = sql::kImportConflicts.arg(sql::ts(db.dialect(), QStringLiteral("resolved_utc")));
   if (!where.isEmpty()) sql += QStringLiteral(" WHERE ") + where.join(QStringLiteral(" AND "));
   sql += QStringLiteral(" ORDER BY path, uuid");
   auto rows = db.select(sql, b);
@@ -375,7 +385,9 @@ Result<std::vector<ImportConflictRow>> import_conflicts(Db& db, const ConflictFi
 }
 
 Result<std::optional<ImportConflictRow>> import_conflict(Db& db, Uuid conflict) {
-  auto row = db.select_one(sql::kImportConflicts + QStringLiteral(" WHERE uuid = ?"), {qv(conflict)});
+  auto row = db.select_one(sql::kImportConflicts.arg(sql::ts(db.dialect(), QStringLiteral("resolved_utc"))) +
+                               QStringLiteral(" WHERE uuid = ?"),
+                           {qv(conflict)});
   if (!row) return fail(row.error());
   if (!*row) return std::optional<ImportConflictRow>{};
   auto c = conflict_from(**row);

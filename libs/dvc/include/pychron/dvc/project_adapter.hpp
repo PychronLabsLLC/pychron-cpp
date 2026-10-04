@@ -13,7 +13,13 @@
 //   - interpreted ages and frozen productions as revisions of their own
 //     subjects, spectrometer settings as the snapshot of the analyses that
 //     name them, one bookmark per git tag;
-//   - a conflict for every file that cannot be imported.
+//   - a conflict for every file that cannot be imported; a file that could
+//     not be read is superseded by the next commit that brings a readable
+//     version of it, or deletes it (ImportBatch::superseded, spec 10.37). A
+//     bad version after a good one stays;
+//   - an analysis whose first record cannot be read starts its collection,
+//     as a synthetic one, at the first commit that brings a readable record,
+//     with the files the repository has had for it by then.
 //
 // It reads through GitReader and never touches the store; ingest::BatchWriter
 // writes what it produces. The layout it understands is described in

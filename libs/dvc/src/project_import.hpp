@@ -57,7 +57,8 @@ struct Track {
   std::optional<FileRef> record, data, intercepts, baselines, blanks, icfactors, tags;
   std::vector<SeenFile> satellites;  // extraction, peak center, monitor: the first of each
   // Seen while pending and not part of the collection: a second version of a
-  // file, or a kind that has no root. In walk order.
+  // file, a kind that has no root, or a deletion (ref.blob_sha empty). In
+  // walk order.
   std::vector<SeenFile> later;
   bool flushed = false;  // the collection was handed to the mapper, now or by an earlier run
   // The place in the walk of the commit that folded it: the commit that
@@ -76,6 +77,11 @@ struct Track {
     Broken     // could not be imported: its files are conflicts
   };
   Role role = Role::Unresolved;
+  // Broken because its record cannot be read. The first readable version of
+  // the record starts the collection at its own commit (Mapper::recover);
+  // `record` and `folded_at` then name that commit, and `recovered` is set.
+  bool record_unreadable = false;
+  bool recovered = false;
   persistence::Uuid uuid;
   std::optional<std::string> spec_sha;  // the spectrometer settings its record names
 
@@ -114,7 +120,29 @@ struct Change {
   bool restored = false;
 };
 
-using Work = std::variant<Collect, Change>;
+// A recognised file a commit deleted. Nothing is taken away by it (a deleted
+// analysis file leaves the analysis as it is); it is handed on because the
+// versions of the file that could not be read no longer wait for a readable
+// one (spec 10.37). `track` as in Change; a deletion seen while its analysis
+// was pending comes with the collection, after it.
+struct Gone {
+  PathInfo info;
+  FileRef ref;  // blob_sha empty
+  Track* track = nullptr;
+};
+
+using Work = std::variant<Collect, Change, Gone>;
+
+// What a commit left at a path: one entry per change the walk took, a
+// deletion included.
+struct Version {
+  int index = -1;        // the commit's place in the walk
+  std::string blob_sha;  // empty: the commit deleted the file
+  // Whether the file could be read, once a mapper has had to know: when it
+  // mapped the version, or when a later version made it look back.
+  enum class Read : signed char { Unknown, Yes, No };
+  Read read = Read::Unknown;
+};
 
 // What became of the files a walk was shown, written down only while the
 // adapter lists its units (ISourceAdapter::for_each_unit). The walk notes
@@ -176,6 +204,14 @@ class Walk {
   // The place in the walk of the commit that first had that file; -1: none.
   int spectrometer_first(const std::string& sha1) const;
 
+  // The versions `path` has had, oldest first; null: the walk never saw it.
+  // The mapper writes what it learns about each into Version::read.
+  std::vector<Version>* versions(const std::string& path);
+  // Every path the walk has seen whose path key is `key`, sorted. It looks at
+  // every path of the walk: for the rare analysis that has to be put together
+  // again (Mapper::recover), not for every file.
+  std::vector<std::string> paths_of(const std::string& key) const;
+
  private:
   void flush(Track& track, std::vector<Work>* out);
 
@@ -183,15 +219,14 @@ class Walk {
   Ledger* ledger_ = nullptr;
 
   std::map<std::string, Track> tracks_;  // by path key; nodes do not move
-  // The blob each path was last seen with, and whether the path is still
-  // there. A change that brings a path to the blob it already has (a merge
-  // repeating a side branch) is skipped; one that brings a removed path back
-  // with the blob it had is handed on as `restored`.
-  struct LastSeen {
-    std::string blob_sha;
-    bool present = true;
-  };
-  std::unordered_map<std::string, LastSeen> last_blob_;
+  // The versions each path has had. A change that brings a path to the blob
+  // it already has (a merge repeating a side branch) is skipped, as is the
+  // deletion of a path that is gone; a change that brings a removed path back
+  // with the blob it had is handed on as `restored`. The list is also what a
+  // readable version supersedes the unreadable ones before it by (spec
+  // 10.37): it is rebuilt from paths alone on resume, so the decision does
+  // not depend on where an earlier run stopped.
+  std::unordered_map<std::string, std::vector<Version>> versions_;
   std::map<std::string, FileRef> spectrometers_;
   std::map<std::string, int> spectrometer_first_;
   int applied_ = -1;  // the commit apply() was last given
@@ -205,9 +240,10 @@ class Walk {
 
 class Mapper {
  public:
-  // `config`, `reader` and `walk` outlive the mapper. `url` is normalized.
-  Mapper(const ProjectAdapterConfig& config, std::string url, GitReader& reader, const Walk& walk,
-         ingest::IImportState& state);
+  // `config`, `reader`, `walk` and `order` (the commits of the walk, by
+  // place) outlive the mapper. `url` is normalized.
+  Mapper(const ProjectAdapterConfig& config, std::string url, GitReader& reader, Walk& walk,
+         const std::vector<std::string>& order, ingest::IImportState& state);
 
   // Notes in `ledger` the files taken in without a row of their own (null:
   // stop). The ledger outlives the mapper or is taken away first.
@@ -217,8 +253,9 @@ class Mapper {
   void remember(std::vector<GitCommit> commits);
 
   // Turns the work of one batch into its items. Tracks are updated: role,
-  // uuid, and the collection files of a folded track are released.
-  Result<void> map(const std::vector<Work>& work, ingest::ImportBatch& batch);
+  // uuid, and the collection files of a folded track are released. `first`:
+  // the place in the walk of the batch's first commit.
+  Result<void> map(const std::vector<Work>& work, int first, ingest::ImportBatch& batch);
 
   // A bookmark of every analysis imported so far, for a tag on a commit the
   // batch ends at.
@@ -239,6 +276,15 @@ class Mapper {
 
   Result<void> collect(const Collect& fold, Reading& reading, Output& out);
   Result<void> change(const Change& item, Output& out);
+  // Spec 10.37. What the mapper found a version to be, and what follows from
+  // a readable version or a deletion for the unreadable versions before it.
+  void judge(const FileRef& ref, bool readable);
+  Result<void> check_readable(const PathInfo& info, std::string_view text) const;
+  Result<std::string_view> blob_text(const std::string& blob_sha);
+  Result<void> supersede_before(const FileRef& ref, ingest::ImportBatch& batch);
+  // The first readable record of an analysis whose record could not be read
+  // until now: its collection starts here.
+  Result<void> recover(const Change& item, ParsedRecord record, const Sha256Digest& digest, Output& out);
   Result<void> analysis_change(const Change& item, std::string_view text, Output& out);
   Result<void> rewritten(const Change& item, std::string_view text, Output& out);
   Result<ingest::ChangesetItem*> changeset_of(const FileRef& ref, Output& out);
@@ -256,10 +302,13 @@ class Mapper {
   const ProjectAdapterConfig& config_;
   std::string url_;
   GitReader& reader_;
-  const Walk& walk_;
+  Walk& walk_;
+  const std::vector<std::string>& order_;
   ingest::IImportState& state_;
   ParseContext context_;
   Ledger* ledger_ = nullptr;
+  int batch_first_ = 0;                   // the place of the first commit of the batch being mapped
+  std::vector<std::string> batch_blobs_;  // what map() fetched for it
 
   std::unordered_map<std::string, GitCommit> commits_;
   // Spectrometer settings by sha1: parsed, or nullopt when the file is bad.

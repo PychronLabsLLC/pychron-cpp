@@ -2146,6 +2146,192 @@ TEST_P(BatchWriterTest, NewRevisionDoesNotReplaceAHeadMadeOutsideTheSource) {
 
 // The position check reads history. A source with nothing stored has nothing
 // to be behind, and its first import asks for none.
+// ---------------------------------------------------------------- superseded conflicts (spec 10.37)
+
+namespace {
+
+ConflictItem unreadable(const std::string& commit, int aliquot) {
+  return {{commit, kind_path("intercepts", aliquot), "bad-" + commit},
+          kA,
+          P::ConflictKind::Unparseable,
+          sha256(std::string_view{"garbage"}),
+          R"({"reason":"not JSON"})"};
+}
+
+// A at c1; its intercepts unreadable at c2, readable at c3 (which says c2's
+// conflict no longer applies), unreadable again at c4.
+std::vector<ImportBatch> broken_then_mended(bool broken_again = true) {
+  std::vector<ImportBatch> out(broken_again ? 4 : 3);
+  out[0].catalog = lab_catalog();
+  add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  out[1].conflicts.push_back(unreadable("c2", 1));
+  out[2].changesets.push_back(refit("c3", kA, 1, 101.5, who(kAlice, "2016-03-06T00:00:00Z")));
+  out[2].superseded.push_back({"c2", kind_path("intercepts", 1), ""});
+  if (broken_again) out[3].conflicts.push_back(unreadable("c4", 1));
+  const char* tokens[] = {"c1", "c2", "c3", "c4"};
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    out[i].resume_token = tokens[i];
+    out[i].done = static_cast<int>(i) + 1;
+    out[i].total = static_cast<int>(out.size());
+  }
+  return out;
+}
+
+// The batches [first, last] as one.
+ImportBatch joined(const std::vector<ImportBatch>& batches, std::size_t first, std::size_t last) {
+  ImportBatch all;
+  for (std::size_t i = first; i <= last; ++i) {
+    const auto& b = batches[i];
+    all.catalog.insert(all.catalog.end(), b.catalog.begin(), b.catalog.end());
+    all.blobs.insert(all.blobs.end(), b.blobs.begin(), b.blobs.end());
+    all.analyses.insert(all.analyses.end(), b.analyses.begin(), b.analyses.end());
+    all.changesets.insert(all.changesets.end(), b.changesets.begin(), b.changesets.end());
+    all.conflicts.insert(all.conflicts.end(), b.conflicts.begin(), b.conflicts.end());
+    all.superseded.insert(all.superseded.end(), b.superseded.begin(), b.superseded.end());
+    all.resume_token = b.resume_token;
+    all.done = b.done;
+    all.total = b.total;
+  }
+  return all;
+}
+
+}  // namespace
+
+TEST_P(BatchWriterTest, SupersededConflictIsResolvedAndTheLaterOneStaysPending) {
+  FakeAdapter adapter(description(), broken_then_mended());
+  adapter.honour_token(true);
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  // Pending only: c2's conflict was written and superseded in this run.
+  EXPECT_EQ(stats->conflicts, 1);
+
+  auto mended = store().import_conflict(conflict_id(kUrl, "c2", kind_path("intercepts", 1)));
+  ASSERT_TRUE(mended && mended->has_value());
+  EXPECT_EQ((*mended)->kind, P::ConflictKind::Unparseable);
+  EXPECT_EQ((*mended)->resolution, "superseded");
+  EXPECT_TRUE((*mended)->resolved.has_value());
+  // A bad version after a good one is not superseded by the earlier good one.
+  auto broken = store().import_conflict(conflict_id(kUrl, "c4", kind_path("intercepts", 1)));
+  ASSERT_TRUE(broken && broken->has_value());
+  EXPECT_EQ((*broken)->resolution, "pending");
+  EXPECT_FALSE((*broken)->resolved.has_value());
+  EXPECT_EQ(world_->count("import_conflict"), 2);
+
+  // A replay sends both conflicts and the supersession again: nothing moves,
+  // the superseded one is not reopened, and its time stays.
+  const auto rows = rows_of(*world_);
+  const auto seq = *store().latest_change_seq();
+  for (int again = 0; again < 2; ++again) {
+    auto replayed = run_all(*world_, adapter, replay_config());
+    ASSERT_TRUE(replayed) << err(replayed.error());
+    EXPECT_EQ(replayed->conflicts, 1);
+    EXPECT_EQ(rows_of(*world_), rows);
+    EXPECT_EQ(*store().latest_change_seq(), seq);
+    EXPECT_EQ((*store().import_conflict((*mended)->uuid))->resolved, (*mended)->resolved);
+  }
+  // A dry run finds nothing to write, resuming or replaying.
+  for (const bool replay : {false, true}) {
+    auto dry = config();
+    dry.dry_run = true;
+    dry.replay = replay;
+    auto counted = run_all(*world_, adapter, dry);
+    ASSERT_TRUE(counted) << err(counted.error());
+    EXPECT_EQ(counted->would_write, 0) << replay;
+    EXPECT_EQ(counted->conflicts, replay ? 1 : 0) << replay;
+  }
+}
+
+// However the walk is cut, stopped or resumed, the rows are the same: the bad
+// version and the good one in one batch or in two.
+TEST_P(BatchWriterTest, SupersededConflictIsTheSameAtEveryCut) {
+  const auto script = broken_then_mended();
+  FakeAdapter by_commit(description(), script);
+  auto reference = run_all(*world_, by_commit);
+  ASSERT_TRUE(reference) << err(reference.error());
+  const auto want = rows_of(*world_);
+
+  const std::vector<std::vector<ImportBatch>> cuts = {
+      {joined(script, 0, 3)},
+      {joined(script, 0, 0), joined(script, 1, 2), joined(script, 3, 3)},  // bad and good in one batch
+      {joined(script, 0, 1), joined(script, 2, 3)},
+      {joined(script, 0, 2), joined(script, 3, 3)},
+  };
+  for (std::size_t n = 0; n < cuts.size(); ++n) {
+    World cut(GetParam());
+    ASSERT_TRUE(cut.store && cut.db);
+    FakeAdapter adapter(description(), cuts[n]);
+    auto stats = run_all(cut, adapter);
+    ASSERT_TRUE(stats) << n << ": " << err(stats.error());
+    EXPECT_EQ(stats->conflicts, 1) << n;
+    EXPECT_EQ(rows_of(cut), want) << "cut " << n;
+
+    // Stopped after every batch, each run resuming from the stored token.
+    World stopped(GetParam());
+    ASSERT_TRUE(stopped.store && stopped.db);
+    FakeAdapter resumed(description(), cuts[n]);
+    resumed.honour_token(true);
+    int pending = 0;
+    for (std::size_t run = 0; run <= cuts[n].size(); ++run) {
+      BatchWriter writer(*stopped.store, stopped.client, config());
+      auto one = writer.run(resumed, 1, {}, {});
+      ASSERT_TRUE(one) << n << ": " << err(one.error());
+      pending += one->conflicts;
+      EXPECT_GE(one->conflicts, 0) << n;  // never negative: a run does not take back another run's count
+    }
+    EXPECT_EQ(rows_of(stopped), want) << "cut " << n << ", resumed";
+    EXPECT_GE(pending, 1) << n;
+    FakeAdapter replay(description(), script);
+    ASSERT_TRUE(run_all(stopped, replay, replay_config()));
+    EXPECT_EQ(rows_of(stopped), want) << "cut " << n << ", resumed, replayed";
+  }
+}
+
+TEST_P(BatchWriterTest, SupersededNamesOnlyUnreadableOrRefusedFilesOfThisSource) {
+  auto script = broken_then_mended(false);
+  // A late revision's conflict, a conflict someone set aside, and a key with
+  // no conflict at all are named too: none of them is touched.
+  script[1].conflicts.push_back({{"c2", "665/x.json", "blob"},
+                                 kA,
+                                 P::ConflictKind::IdentityClash,
+                                 std::nullopt,
+                                 R"({"reason":"late_revision_not_applied","late":true})"});
+  script[1].conflicts.push_back({{"c2", "665/y.json", "blob"},
+                                 std::nullopt,
+                                 P::ConflictKind::Unparseable,
+                                 std::nullopt,
+                                 R"({"reason":"not JSON"})"});
+  script[2].superseded.push_back({"c2", "665/x.json", ""});
+  script[2].superseded.push_back({"c2", "665/y.json", ""});
+  script[2].superseded.push_back({"c2", "665/never.json", ""});
+  FakeAdapter adapter(description(), script);
+  adapter.honour_token(true);
+  {
+    BatchWriter writer(*world_->store, world_->client, config());
+    ASSERT_TRUE(writer.run(adapter, 2, {}, {}));
+  }
+  {
+    auto uow = store().begin_import_batch(source_id(P::ImportSourceKind::ProjectRepo, kUrl, "main"), world_->client);
+    ASSERT_TRUE(uow);
+    ASSERT_TRUE((*uow)->resolve_conflict(conflict_id(kUrl, "c2", "665/y.json"), "ignored"));
+    ASSERT_TRUE((*uow)->commit());
+  }
+  // What a run would do now: the revision of c3, its changeset's provenance
+  // and one supersession.
+  auto dry = config();
+  dry.dry_run = true;
+  auto counted = run_all(*world_, adapter, dry);
+  ASSERT_TRUE(counted) << err(counted.error());
+  EXPECT_EQ(counted->would_write, 3);
+
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);  // the conflict it superseded was counted by the run that wrote it
+  EXPECT_EQ((*store().import_conflict(conflict_id(kUrl, "c2", kind_path("intercepts", 1))))->resolution, "superseded");
+  EXPECT_EQ((*store().import_conflict(conflict_id(kUrl, "c2", "665/x.json")))->resolution, "pending");
+  EXPECT_EQ((*store().import_conflict(conflict_id(kUrl, "c2", "665/y.json")))->resolution, "ignored");
+  EXPECT_FALSE(store().import_conflict(conflict_id(kUrl, "c2", "665/never.json"))->has_value());
+}
+
 TEST_P(BatchWriterTest, FirstImportAsksForNoHistory) {
   ForwardingStore counted(store());
   FakeAdapter adapter(description(), four_batches());

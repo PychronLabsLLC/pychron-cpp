@@ -907,6 +907,23 @@ TEST_P(VerifierTest, RevisionBehindALostCommitIsBlocking) {
   EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{conflict_id(kUrl, "b1", "665/intercepts/73-01.json")});
 }
 
+// Spec 10.37: a conflict the import superseded still accounts for the file
+// version it is about, and does not fail verify.
+TEST_P(VerifierTest, SupersededConflictStillAccountsForItsUnit) {
+  auto batches = history();
+  batches.push_back({});
+  batches.back().superseded.push_back({"c4", "notes.txt", ""});
+  seal(batches);
+  run_import(batches);
+  EXPECT_EQ(conflict(conflict_id(kUrl, "c4", "notes.txt")).resolution, "superseded");
+  const auto report = check(batches, units_of(history()));
+  EXPECT_TRUE(report.unaccounted.empty());
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_EQ(report.would_write, 0);
+  EXPECT_EQ(report.replay_would_write, 0);
+  EXPECT_TRUE(report.ok());
+}
+
 // ---------------------------------------------------------------- age parity
 
 TEST_P(VerifierTest, ParityPassFailNotComparable) {

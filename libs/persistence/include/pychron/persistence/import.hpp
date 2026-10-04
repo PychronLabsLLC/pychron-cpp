@@ -63,6 +63,10 @@ struct ImportConflictRow {
   std::optional<Sha256Digest> file_sha256;
   std::string detail_json = "{}";
   std::string resolution = "pending";
+  // When the resolution last left `pending`; nullopt while it is pending. Set
+  // by the store (IImportUnitOfWork::resolve_conflict) and on read; ignored
+  // on write.
+  std::optional<UtcTime> resolved = std::nullopt;
 };
 
 struct ImportProgress {
@@ -120,8 +124,10 @@ class IImportUnitOfWork {
   // change_log entry.
   virtual Result<void> set_provenance_detail(std::string entity_type, Uuid entity, std::string detail_json) = 0;
   // Sets the resolution of a stored conflict (import_conflict is an updatable
-  // table), after this batch's own conflicts are written. A conflict that
-  // does not exist is left alone. Not a change_log entry.
+  // table), after this batch's own conflicts are written, and the time: now
+  // for any resolution but `pending`, none for `pending`. A conflict that
+  // does not exist is left alone, and so is one that already has the
+  // resolution (its time stays). Not a change_log entry.
   virtual Result<void> resolve_conflict(Uuid conflict, std::string resolution) = 0;
   // Replaces a stored conflict of this source with `row`: its path, entity,
   // kind, head revision, file hash, detail and resolution (a conflict that

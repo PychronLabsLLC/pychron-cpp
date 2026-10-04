@@ -46,7 +46,10 @@
 // Every other path is ignored: the repository holds scripts, experiment
 // templates and documents that are not reference data. A reference file that
 // cannot be read is an `unparseable` conflict, its objects keep what they
-// have, and the walk goes on.
+// have, and the walk goes on. The next commit that brings a readable version
+// of the file, or deletes it, supersedes that conflict
+// (ImportBatch::superseded, spec 10.37); an unreadable version after a
+// readable one stays.
 //
 // A level's z is kept in its level_geometry object only; the LevelItem sent
 // for the catalog row carries none.

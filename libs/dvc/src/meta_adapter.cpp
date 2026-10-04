@@ -12,6 +12,11 @@
 // result is the same however the walk is cut, and a replay sends exactly the
 // revisions that are stored (same ids), which the writer skips.
 //
+// A version that cannot be read is a conflict and changes nothing. The next
+// version that can be read, or the deletion of the file, supersedes that
+// conflict (spec 10.37): the mapper lists it in the batch, whether or not the
+// readable version yields a revision.
+//
 // What a file version yields is the difference between the objects it holds
 // and those of the version before it in the walk: a revision for each object
 // that is new or differs, and for each that is gone a revision without a
@@ -85,6 +90,7 @@ class Walk {
       auto& had = versions_[entry.path];
       if (deleted ? had.back().empty() : (!had.empty() && had.back() == entry.blob_sha)) continue;
       had.push_back(deleted ? std::string() : entry.blob_sha);
+      places_[entry.path].push_back(index);
       if (out)
         out->push_back({index, entry.commit, entry.path, had.back(), entry.old_blob_sha, std::move(info),
                         had.size() - 1});
@@ -98,9 +104,16 @@ class Walk {
     const auto it = versions_.find(path);
     return it == versions_.end() ? kNone : it->second;
   }
+  // The place in the walk of the commit of each of those versions.
+  const std::vector<int>& places(const std::string& path) const {
+    static const std::vector<int> kNone;
+    const auto it = places_.find(path);
+    return it == places_.end() ? kNone : it->second;
+  }
 
  private:
   std::unordered_map<std::string, std::vector<std::string>> versions_;
+  std::unordered_map<std::string, std::vector<int>> places_;
 };
 
 std::string lower(std::string text) {
@@ -116,9 +129,10 @@ struct Origin {
 
 class Mapper {
  public:
-  // `config`, `reader` and `walk` outlive the mapper.
-  Mapper(const MetaAdapterConfig& config, GitReader& reader, const Walk& walk)
-      : config_(config), reader_(reader), walk_(walk) {}
+  // `config`, `reader`, `walk` and `order` (the commits of the walk, by
+  // place) outlive the mapper.
+  Mapper(const MetaAdapterConfig& config, GitReader& reader, const Walk& walk, const std::vector<std::string>& order)
+      : config_(config), reader_(reader), walk_(walk), order_(order) {}
 
   // Turns the reference files of one batch into its items. `commits` are the
   // batch's, the first being commit `first` of the walk.
@@ -171,14 +185,22 @@ class Mapper {
   // What the objects of a file hold before `seen`: the version before it in
   // the walk, parsed; when that one cannot be read, the one before it, and so
   // on. nullopt: nothing (no earlier version, or the file was deleted).
+  //
+  // It is asked only for a version that can be read, or a deletion. The
+  // versions it passes over could not be read and no longer wait for a good
+  // one: their conflicts are listed as superseded (spec 10.37), whether or
+  // not `seen` yields a revision. This depends on the history alone, as
+  // everything the mapper does.
   template <class T, class Parse>
-  Result<std::optional<T>> previous(const Seen& seen, Parse&& parse) {
+  Result<std::optional<T>> previous(const Seen& seen, Parse&& parse, Output& out) {
     const auto& earlier = walk_.versions(seen.path);
+    const auto& walked_at = walk_.places(seen.path);
     for (std::size_t v = seen.version; v-- > 0;) {
       if (earlier[v].empty()) break;
       auto text = read(earlier[v]);
       if (!text) return fail(text.error());
       if (auto parsed = parse(*text)) return std::optional<T>{std::move(*parsed)};
+      out.batch.superseded.push_back({order_[static_cast<std::size_t>(walked_at[v])], seen.path, earlier[v]});
     }
     return std::optional<T>{};
   }
@@ -281,11 +303,12 @@ class Mapper {
   Result<void> whole(const Seen& seen, RefType type, const std::string& key, ingest::RefObjectItem item,
                      Parse&& parse, Output& out) {
     const Origin origin = origin_of(seen, out);
+    const auto readable = [&](std::string_view text) -> Result<bool> {
+      if (auto parsed = parse(text); !parsed) return fail(parsed.error());
+      return true;
+    };
     if (seen.blob_sha.empty()) {
-      auto before = previous<bool>(seen, [&](std::string_view text) -> Result<bool> {
-        if (auto parsed = parse(text); !parsed) return fail(parsed.error());
-        return true;
-      });
+      auto before = previous<bool>(seen, readable, out);
       if (!before) return fail(before.error());
       if (*before) revision(seen, "", type, key, Value{}, marked(removed(), origin, false), out);
       return {};
@@ -294,6 +317,8 @@ class Mapper {
     if (!text) return fail(text.error());
     auto parsed = parse(*text);
     if (!parsed) return unreadable(seen, *text, parsed.error(), out);
+    // Nothing of the version before is needed, but the unreadable ones are settled.
+    if (auto before = previous<bool>(seen, readable, out); !before) return fail(before.error());
     if (item.irradiation) irradiation(*item.irradiation, out);
     object(std::move(item), out);
     revision(seen, "", type, key, std::move(parsed->first), marked(std::move(parsed->second), origin, false), out);
@@ -323,7 +348,7 @@ class Mapper {
       now = std::move(*parsed);
       level(irradiation_name, name, out);
     }
-    auto before = previous<ParsedLevel>(seen, parse_level);
+    auto before = previous<ParsedLevel>(seen, parse_level, out);
     if (!before) return fail(before.error());
     const Origin origin = origin_of(seen, out);
     auto parent = at_parent<ParsedLevel>(seen, origin, parse_level);
@@ -379,7 +404,7 @@ class Mapper {
       now = std::move(*parsed);
       irradiation(irradiation_name, out);
     }
-    auto before = previous<ParsedLevelProductions>(seen, parse_level_productions);
+    auto before = previous<ParsedLevelProductions>(seen, parse_level_productions, out);
     if (!before) return fail(before.error());
     const Origin origin = origin_of(seen, out);
     auto parent = at_parent<ParsedLevelProductions>(seen, origin, parse_level_productions);
@@ -422,7 +447,7 @@ class Mapper {
       if (!parsed) return unreadable(seen, *text, parsed.error(), out);
       now = std::move(*parsed);
     }
-    auto before = previous<std::vector<MetaEntry>>(seen, parse_sensitivities);
+    auto before = previous<std::vector<MetaEntry>>(seen, parse_sensitivities, out);
     if (!before) return fail(before.error());
     if (now.empty()) {
       // A sensitivity value is a number and cannot say "none": the head
@@ -533,6 +558,7 @@ class Mapper {
   const MetaAdapterConfig& config_;
   GitReader& reader_;
   const Walk& walk_;
+  const std::vector<std::string>& order_;
 };
 
 }  // namespace
@@ -674,7 +700,7 @@ class MetaRepoAdapter::Impl {
     std::vector<Seen> work;
     std::vector<GitCommit> commits;
     if (auto r = walk(next_, end, &work, &commits, listed); !r) return fail(r.error());
-    Mapper mapper(config_, reader_, walk_);
+    Mapper mapper(config_, reader_, walk_, order_);
     if (auto r = mapper.map(work, commits, next_, batch); !r) return fail(r.error());
 
     next_ = end;

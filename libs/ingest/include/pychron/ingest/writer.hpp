@@ -50,9 +50,12 @@ struct RunStats {
   int analyses = 0;    // ingested or already present
   int changesets = 0;  // import and reference changesets, not collections
   int revisions = 0;   // of those changesets
-  int conflicts = 0;   // from the adapter and from the writer; a conflict stored as resolved is not counted
+  // From the adapter and from the writer, pending only: a conflict stored as
+  // resolved is not counted, nor one this run wrote and superseded (spec 10.37).
+  int conflicts = 0;
   // Dry run only: analyses, blobs, memberships, changesets, revisions,
-  // conflicts and bookmarks that are not in the store. An analysis or revision
+  // conflicts and bookmarks that are not in the store, and stored pending
+  // conflicts a run would supersede. An analysis or revision
   // with a pending unknown_analysis conflict is recorded, not missing. Catalog
   // rows are not counted: the store has no read that could tell.
   int would_write = 0;
