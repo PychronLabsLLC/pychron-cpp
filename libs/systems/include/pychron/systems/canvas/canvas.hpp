@@ -71,10 +71,12 @@ enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter, I
 
 // What a stage is to the gas in it. A source colours every volume connected
 // to it; when a region holds several, the one with the highest precedence
-// wins (legacy pychron's rule and numbers). The order here breaks a tie.
+// wins (legacy pychron's rule). The order here breaks a tie.
 enum class SourceKind { None, Pump, Pipette, Laser, Tank, Spectrometer, Getter };
 
-// Pump 120, pipette and laser 100, tank 90, spectrometer 80, getter 70, none 0.
+// Pump 120, tank 110, pipette and laser 100, spectrometer 80, getter 70,
+// none 0. Legacy pychron's numbers but for the tank (90 there): what is open
+// to a tank is that tank's gas, so it beats the pipette it fills.
 int default_precedence(SourceKind kind) noexcept;
 
 struct StageElement : Located {
@@ -181,6 +183,9 @@ struct Source {
   SourceKind kind = SourceKind::None;
   int precedence = 0;
   std::optional<std::string> color;  // the element's own; unset: the theme's for `kind`
+  // Its place among the canvas's sources of this kind, from 0, in the order
+  // the canvas lists them: each tank is drawn in a colour of its own.
+  int ordinal = 0;
 };
 
 // The canvas's stages and pipettes with a precedence above 0, by name.

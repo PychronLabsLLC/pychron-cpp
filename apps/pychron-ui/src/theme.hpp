@@ -101,7 +101,8 @@ struct Theme {
   std::array<QColor, 8> series;   // detector traces without a configured colour
   // Canvas regions take the colour of the source they are connected to.
   struct Sources {
-    QColor pump, pipette, laser, tank, spectrometer, getter;
+    QColor pump, pipette, laser, spectrometer, getter;
+    std::array<QColor, 6> tanks;  // each tank its own: its gas is not another's
   } sources;
 };
 

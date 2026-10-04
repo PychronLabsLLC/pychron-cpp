@@ -482,10 +482,10 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("bone"), none);
     QCOMPARE(colour("prep"), none);
 
-    // tank to pipette (P2): the pipette's 100 beats the tank's 90
+    // tank to pipette (P2): what is open to a tank is the tank's colour
     open("P2", true);
-    QCOMPARE(colour("air_tank"), pipette);
-    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("air_tank"), tank);
+    QCOMPARE(colour("air"), tank);
 
     // prep to the spectrometer (B), then bone joins (A): all the spectrometer's
     open("B", true);
@@ -495,7 +495,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("prep"), spectrometer);
     QCOMPARE(colour("spec"), spectrometer);
     // other regions were not touched by that
-    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("air"), tank);
     QCOMPARE(colour("turbo"), pump);
 
     // prep to the turbo (C; A must be closed for it): the pump's 120 takes the
@@ -504,7 +504,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("bone"), none);
     open("C", true);
     for (const char* stage : {"prep", "spec", "turbo"}) QCOMPARE(colour(stage), pump);
-    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("air"), tank);
 
     // and back: closing C gives the spectrometer its region again
     open("C", false);
@@ -520,14 +520,30 @@ class TestCanvasView : public QObject {
     open("B", true);
     QCOMPARE(colour("bone"), spectrometer);
     QCOMPARE(colour("prep"), spectrometer);
-    QCOMPARE(colour("air_tank"), pipette);
+    QCOMPARE(colour("air_tank"), tank);
+    QCOMPARE(colour("air"), tank);
 
     // the pipette into prep (P1; P2 must be closed for it): pipette 100 over
     // spectrometer 80, and the tank is on its own again
     open("P2", false);
     QCOMPARE(colour("air_tank"), tank);
+    QCOMPARE(colour("air"), pipette);
     open("P1", true);
     for (const char* stage : {"bone", "prep", "spec", "air"}) QCOMPARE(colour(stage), pipette);
+  }
+
+  // Each tank has a colour of its own, so the gas of one is never taken for
+  // another's; the other kinds have one colour each.
+  void eachTankHasItsOwnColour() {
+    using canvas::SourceKind;
+    QSet<QRgb> seen;
+    for (int i = 0; i < 4; ++i) seen.insert(CanvasView::source_color(SourceKind::Tank, i).rgb());
+    QCOMPARE(seen.size(), 4);
+    QCOMPARE(CanvasView::source_color(SourceKind::Tank), CanvasView::source_color(SourceKind::Tank, 0));
+    QCOMPARE(CanvasView::source_color(SourceKind::Pump, 3), CanvasView::source_color(SourceKind::Pump, 0));
+    for (auto kind : {SourceKind::Pump, SourceKind::Pipette, SourceKind::Laser, SourceKind::Spectrometer, SourceKind::Getter})
+      QVERIFY(!seen.contains(CanvasView::source_color(kind).rgb()));
+    QCOMPARE(view_->stage("air_tank")->region_color(), CanvasView::source_color(SourceKind::Tank, 0));
   }
 
   // A manual valve wears a handwheel on its face: nothing sticks out of the

@@ -37,13 +37,13 @@ QPointF project(QPointF p, QPointF a, QPointF b) {
 
 QColor CanvasView::isolated_color() { return theme().neutral_fill; }
 
-QColor CanvasView::source_color(canvas::SourceKind kind) {
+QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
   const auto& c = theme().sources;
   switch (kind) {
     case canvas::SourceKind::Pump: return c.pump;
     case canvas::SourceKind::Pipette: return c.pipette;
     case canvas::SourceKind::Laser: return c.laser;
-    case canvas::SourceKind::Tank: return c.tank;
+    case canvas::SourceKind::Tank: return c.tanks[static_cast<std::size_t>(ordinal < 0 ? 0 : ordinal) % c.tanks.size()];
     case canvas::SourceKind::Spectrometer: return c.spectrometer;
     case canvas::SourceKind::Getter: return c.getter;
     case canvas::SourceKind::None: break;
@@ -333,17 +333,20 @@ void CanvasView::apply_regions() {
   }
   const auto regions = network->connected_volumes(bridge_.state().valves);
   // A region takes the colour of the source connected to it with the highest
-  // precedence (legacy pychron's rule): a pump over a pipette or a laser,
-  // over a tank, over a spectrometer, over a getter. It depends on nothing
-  // but who is connected, so a region never changes colour because another
-  // one did. A region with no source stays neutral; a source alone wears its
-  // own colour. Open valves and pipes take the colour of what they join.
+  // precedence (legacy pychron's rule): a pump over a tank, over a pipette or
+  // a laser, over a spectrometer, over a getter. Each tank has a colour of
+  // its own, so what is open to a tank shows whose gas it is. It depends on
+  // nothing but who is connected, so a region never changes colour because
+  // another one did. A region with no source stays neutral; a source alone
+  // wears its own colour. Open valves and pipes take the colour of what they
+  // join.
   std::map<std::string, QColor> colors;
   for (const auto& region : regions) {
     const canvas::Source* source = canvas::dominant(sources_, region.volumes);
     if (source == nullptr) continue;
-    QColor color = source->color ? QColor(QString::fromStdString(*source->color)) : source_color(source->kind);
-    if (!color.isValid()) color = source_color(source->kind);
+    QColor color = source->color ? QColor(QString::fromStdString(*source->color))
+                                 : source_color(source->kind, source->ordinal);
+    if (!color.isValid()) color = source_color(source->kind, source->ordinal);
     for (const auto& volume : region.volumes) colors[volume] = color;
     for (const auto& valve : region.valves) colors[valve] = color;
   }

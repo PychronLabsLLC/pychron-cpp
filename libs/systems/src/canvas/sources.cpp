@@ -7,7 +7,7 @@ int default_precedence(SourceKind kind) noexcept {
     case SourceKind::Pump: return 120;
     case SourceKind::Pipette: return 100;
     case SourceKind::Laser: return 100;
-    case SourceKind::Tank: return 90;
+    case SourceKind::Tank: return 110;
     case SourceKind::Spectrometer: return 80;
     case SourceKind::Getter: return 70;
     case SourceKind::None: return 0;
@@ -31,14 +31,18 @@ SourceKind source_kind(const StageElement& stage) noexcept {
 
 std::map<std::string, Source, std::less<>> sources(const Canvas& canvas) {
   std::map<std::string, Source, std::less<>> out;
+  std::map<SourceKind, int> count;
+  const auto add = [&](const std::string& name, SourceKind kind, int precedence,
+                       const std::optional<std::string>& color) {
+    if (precedence <= 0 || out.contains(name)) return;
+    out.emplace(name, Source{name, kind, precedence, color, count[kind]++});
+  };
   for (const auto& s : canvas.stages) {
     const SourceKind kind = source_kind(s);
-    const int precedence = s.precedence.value_or(default_precedence(kind));
-    if (precedence > 0) out.insert_or_assign(s.name, Source{s.name, kind, precedence, s.color});
+    add(s.name, kind, s.precedence.value_or(default_precedence(kind)), s.color);
   }
   for (const auto& p : canvas.pipettes) {
-    const int precedence = p.precedence.value_or(default_precedence(SourceKind::Pipette));
-    if (precedence > 0) out.insert_or_assign(p.name, Source{p.name, SourceKind::Pipette, precedence, p.color});
+    add(p.name, SourceKind::Pipette, p.precedence.value_or(default_precedence(SourceKind::Pipette)), p.color);
   }
   return out;
 }

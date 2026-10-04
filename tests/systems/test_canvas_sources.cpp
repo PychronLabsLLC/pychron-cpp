@@ -1,6 +1,8 @@
 // What colours a region of the canvas: the connected element with the
-// highest precedence, as in legacy pychron (pump 120, pipette and laser 100,
-// tank 90, spectrometer 80, getter 70; a plain volume is not a source).
+// highest precedence. Legacy pychron's rule and numbers (pump 120, pipette
+// and laser 100, spectrometer 80, getter 70; a plain volume is not a source),
+// except that a tank (110, legacy 90) beats the pipette it fills: what is
+// open to a tank is that tank's gas.
 
 #include <gtest/gtest.h>
 
@@ -62,6 +64,11 @@ kind = "tank"
 color = "#00C3FF"
 
 [[stage]]
+name = "cocktail_tank"
+pos = [0, 0]
+kind = "tank"
+
+[[stage]]
 name = "felix"
 pos = [0, 0]
 symbol = "spectrometer"
@@ -112,7 +119,7 @@ TEST(CanvasSources, KindAndPrecedenceDefaultFromWhatTheStageIs) {
   EXPECT_EQ(of("air").kind, SourceKind::Pipette);
   EXPECT_EQ(of("air").precedence, 100);
   EXPECT_EQ(of("air_tank").kind, SourceKind::Tank);
-  EXPECT_EQ(of("air_tank").precedence, 90);
+  EXPECT_EQ(of("air_tank").precedence, 110);
   EXPECT_EQ(of("jan").kind, SourceKind::Spectrometer);
   EXPECT_EQ(of("jan").precedence, 80);
   EXPECT_EQ(of("quad").kind, SourceKind::Spectrometer);
@@ -141,10 +148,26 @@ TEST(CanvasSources, TheHighestPrecedenceInARegionWins) {
   EXPECT_EQ(winner(c, {"bone", "gp50"}), "gp50");
   EXPECT_EQ(winner(c, {"bone", "gp50", "jan"}), "jan");        // 80 over 70
   EXPECT_EQ(winner(c, {"bone", "jan", "ion_pump"}), "ion_pump");  // 120 over 80
-  EXPECT_EQ(winner(c, {"bone", "air_tank", "jan"}), "air_tank");  // 90 over 80
+  EXPECT_EQ(winner(c, {"bone", "air_tank", "jan"}), "air_tank");  // 110 over 80
+  EXPECT_EQ(winner(c, {"air_tank", "air"}), "air_tank");          // a tank over the pipette it fills
+  EXPECT_EQ(winner(c, {"air_tank", "air", "co2"}), "air_tank");
+  EXPECT_EQ(winner(c, {"air_tank", "air", "turbo"}), "turbo");    // a pump still takes everything
   EXPECT_EQ(winner(c, {"felix", "ion_pump", "turbo"}), "felix");  // 200, from the file
   EXPECT_EQ(winner(c, {"jan"}), "jan");                        // alone, it is its own
   EXPECT_EQ(winner(c, {"no-such-volume", "gp50"}), "gp50");
+}
+
+// Sources of one kind are numbered in the order the canvas lists them, so
+// that each tank can have a colour of its own.
+TEST(CanvasSources, SourcesOfAKindAreNumberedInCanvasOrder) {
+  const auto all = sources(fixture());
+  EXPECT_EQ(all.at("air_tank").ordinal, 0);
+  EXPECT_EQ(all.at("cocktail_tank").ordinal, 1);
+  EXPECT_EQ(all.at("jan").ordinal, 0);
+  EXPECT_EQ(all.at("quad").ordinal, 1);
+  EXPECT_EQ(all.at("felix").ordinal, 2);
+  EXPECT_EQ(all.at("air").ordinal, 0);
+  EXPECT_EQ(all.at("cocktail").ordinal, 1);
 }
 
 TEST(CanvasSources, TiesGoByKindThenName) {

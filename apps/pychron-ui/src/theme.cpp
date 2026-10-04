@@ -88,7 +88,7 @@ Theme light() {
   t.sources.pump = rgb(0x8fd3ff);
   t.sources.pipette = rgb(0xe3b6e0);
   t.sources.laser = rgb(0xffb3a7);
-  t.sources.tank = rgb(0xc9c3ff);
+  t.sources.tanks = {rgb(0xc9c3ff), rgb(0x8fe0d0), rgb(0xf2e08a), rgb(0xf5b8d0), rgb(0xa9c4f5), rgb(0xd9c7a3)};
   t.sources.spectrometer = rgb(0xb6e3a8);
   t.sources.getter = rgb(0xffd27f);
   return t;

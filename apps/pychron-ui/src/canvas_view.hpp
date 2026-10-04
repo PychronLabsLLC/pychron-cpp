@@ -45,8 +45,10 @@ class CanvasView : public QGraphicsView {
 
   // Colour of an isolated volume.
   static QColor isolated_color();
-  // The theme's colour for a kind of source (a region takes its source's).
-  static QColor source_color(canvas::SourceKind kind);
+  // The theme's colour for a source (a region takes its source's). Tanks
+  // differ by `ordinal`, their place among the canvas's tanks; the other
+  // kinds have one colour each.
+  static QColor source_color(canvas::SourceKind kind, int ordinal = 0);
 
  private:
   void build(const canvas::Canvas& canvas);
