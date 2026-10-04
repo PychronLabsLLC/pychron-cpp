@@ -163,9 +163,10 @@ constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 // `fill` is the box's own colour, for the parts gas reaches.
 void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area, const QColor& fill) {
   const bool spectrometer = symbol == canvas::StageSymbol::Spectrometer;
-  const QSizeF grid = spectrometer ? QSizeF(66, 62) : QSizeF(66, 34);
+  const bool quadrupole = symbol == canvas::StageSymbol::Quadrupole;
+  const QSizeF grid = spectrometer ? QSizeF(66, 62) : quadrupole ? QSizeF(40, 40) : QSizeF(66, 34);
   const double scale =
-      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : 0.7});
+      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : quadrupole ? 0.9 : 0.7});
   painter.save();
   painter.translate(area.center().x() - grid.width() * scale / 2, area.center().y() - grid.height() * scale / 2);
   painter.scale(scale, scale);
@@ -202,6 +203,20 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     for (const double y : {7.5, 14.0, 20.5}) {  // collector slits
       painter.drawLine(QPointF(collector.left() + 4, y), QPointF(collector.right() - 3, y));
     }
+  } else if (quadrupole) {
+    // A quadrupole mass filter seen end on: four rods, opposite pairs
+    // wired together (one pair shaded), the ion beam down the middle.
+    painter.setPen(line);
+    for (const QPointF& rod : {QPointF(10, 10), QPointF(30, 30)}) {
+      painter.setBrush(theme().inactive);
+      painter.drawEllipse(rod, 8.5, 8.5);
+    }
+    for (const QPointF& rod : {QPointF(30, 10), QPointF(10, 30)}) {
+      painter.setBrush(fill);
+      painter.drawEllipse(rod, 8.5, 8.5);
+    }
+    painter.setBrush(theme().text);
+    painter.drawEllipse(QPointF(20, 20), 2.5, 2.5);
   } else {
     // The laser hazard starburst: rays from a point, the beam the long one.
     painter.setBrush(Qt::NoBrush);

@@ -46,6 +46,7 @@ constexpr std::array kCorners{
 
 constexpr std::array kStageSymbols{
     std::pair<std::string_view, StageSymbol>{"spectrometer", StageSymbol::Spectrometer},
+    std::pair<std::string_view, StageSymbol>{"quadrupole", StageSymbol::Quadrupole},
     std::pair<std::string_view, StageSymbol>{"laser", StageSymbol::Laser},
 };
 

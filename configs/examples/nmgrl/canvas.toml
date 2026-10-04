@@ -1,8 +1,8 @@
 # Canvas of the NMGRL valve box (extraction_line.toml in this directory).
 # Converted from a legacy Pychron canvas by pychron setup: positions rescaled from
-# world units to pixels. Then made more compact by hand: the empty margins above
-# and below trimmed and the vertical spacing squeezed to 88%, so `elctl
-# import-line` no longer reproduces this file exactly.
+# world units to pixels. Then tools/rebuild_nmgrl_example.py trimmed the empty
+# margins above and below and squeezed the vertical spacing to 88%, so `elctl
+# import-line` alone no longer reproduces this file.
 
 [canvas]
 origin = [0, 0]
@@ -335,7 +335,7 @@ symbol = "spectrometer"
 name = "Quad"
 pos = [789, 596]
 size = [70, 31]
-symbol = "spectrometer"
+symbol = "quadrupole"
 
 [[stage]]
 name = "JanIonPump"

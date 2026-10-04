@@ -5,7 +5,8 @@
 
 Removes the controller endpoints from the comments, names the system, trims
 the canvas's empty margins, squeezes its vertical spacing to 88% and sets
-open_valve_color = "inherit". The legacy files themselves are not in the repo.
+open_valve_color = "inherit", and draws Quad as a quadrupole (legacy has one
+<spectrometer> kind). The legacy files themselves are not in the repo.
 """
 import re, sys, pathlib, tomllib
 src = pathlib.Path(sys.argv[1]); dst = pathlib.Path("configs/examples/nmgrl")
@@ -43,8 +44,11 @@ for l in text.splitlines():
     out.append(l)
 t = "\n".join(out) + "\n"
 old = "# world units to pixels. Check the drawing and adjust positions as needed.\n"; assert old in t
-t = t.replace(old, "# world units to pixels. Then made more compact by hand: the empty margins above\n# and below trimmed and the vertical spacing squeezed to 88%, so `elctl\n# import-line` no longer reproduces this file exactly.\n")
+t = t.replace(old, "# world units to pixels. Then tools/rebuild_nmgrl_example.py trimmed the empty\n# margins above and below and squeezed the vertical spacing to 88%, so `elctl\n# import-line` alone no longer reproduces this file.\n")
 old = "connection_width = 5\n"; assert old in t
 t = t.replace(old, old + '# an open valve wears the colour of the region it joins (default: "green")\nopen_valve_color = "inherit"\n')
+quad = re.search(r'name = "Quad"\n(?:(?!\n\n).)*?symbol = "spectrometer"\n', t, flags=re.S)
+assert quad, "Quad's symbol not found"
+t = t[:quad.start()] + quad.group(0).replace('symbol = "spectrometer"', 'symbol = "quadrupole"') + t[quad.end():]
 (dst/"canvas.toml").write_text("# Canvas of the NMGRL valve box (extraction_line.toml in this directory).\n" + t)
 print("canvas size", re.search(r"size = \[.*\]", t).group(0))

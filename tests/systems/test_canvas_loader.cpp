@@ -293,6 +293,29 @@ symbol = "toaster"
   EXPECT_TRUE(has_diag(r, "stage[0].symbol", "invalid value 'toaster'"));
 }
 
+TEST(CanvasLoader, StageSymbols) {
+  const auto r = load_canvas_from_string(R"toml(
+[[stage]]
+name = "a"
+pos = [0, 0]
+symbol = "spectrometer"
+[[stage]]
+name = "b"
+pos = [0, 0]
+symbol = "quadrupole"
+[[stage]]
+name = "c"
+pos = [0, 0]
+symbol = "laser"
+)toml",
+                                         "canvas.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_EQ(r->stages.size(), 3u);
+  EXPECT_EQ(r->stages[0].symbol, StageSymbol::Spectrometer);
+  EXPECT_EQ(r->stages[1].symbol, StageSymbol::Quadrupole);
+  EXPECT_EQ(r->stages[2].symbol, StageSymbol::Laser);
+}
+
 TEST(CanvasLoader, DuplicateNamesAcrossElementKinds) {
   auto r = load(R"toml(
 [[valve]]
