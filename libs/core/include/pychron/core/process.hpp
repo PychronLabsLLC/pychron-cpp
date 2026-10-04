@@ -24,7 +24,7 @@ struct ProcessSpec {
   std::string input;                                      // the child's stdin
   std::vector<std::pair<std::string, std::string>> env;   // set (or replaced) in the child
   std::chrono::milliseconds timeout{std::chrono::seconds(60)};
-  std::optional<std::filesystem::path> stdout_file;       // stdout here instead of in `output`
+  std::optional<std::filesystem::path> stdout_file{};     // stdout here instead of in `output`
 };
 
 struct ProcessResult {
