@@ -621,3 +621,13 @@ points. Where this section and an earlier one disagree, this section wins.
     that several workstations merge into, the revision history can lack
     intermediate revisions that one uninterrupted import of the final
     history would hold; heads agree.
+36. **Parity constants and tolerance.** Verify reduces with the
+    `legacy_preferences` constants by default (`--constants` selects
+    another); on the fixture analysis this reproduces the legacy age to
+    5e-9 and its error to 5e-9, where the library default differs by 2e-3.
+    The store keeps no per-analysis constants, so a lab whose legacy
+    preferences differed must pass its own. The default relative tolerance
+    is 1e-6 (the plan's 1e-9 was below what two independent floating-point
+    implementations reproduce); verify prints the largest residual among
+    passing comparisons so drift below the tolerance stays visible. Errors
+    are compared like with like (without J error against without J error).
