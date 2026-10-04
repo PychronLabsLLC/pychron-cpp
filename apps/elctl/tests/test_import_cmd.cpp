@@ -36,6 +36,7 @@ TEST(ImportCmd, StubWithoutPersistence) {
 
 #include "fixture_files.hpp"
 #include "git_fixture.hpp"
+#include "import_impl.hpp"
 #include "legacy_repo_builder.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "pychron/persistence/store.hpp"
@@ -330,17 +331,46 @@ TEST_F(ImportCmd, AddRejectsUnknownKind) {
 // A url that carries a user or a password is refused before anything is
 // fetched or stored, and the secret is not repeated.
 TEST_F(ImportCmd, AddRefusesAUrlWithCredentials) {
-  for (const char* url : {"https://alice:s3cret@example.org/lab/IR1010.git", "https://token@example.org/lab/IR1010"}) {
+  // A password on any scheme; any user on http and https (there it is a
+  // token as often as a name); a secret in the query string.
+  for (const char* url :
+       {"https://alice:s3cret@example.org/lab/IR1010.git", "https://token@example.org/lab/IR1010",
+        "http://token@example.org/lab/IR1010", "HTTPS://token@example.org/lab/IR1010",
+        "ssh://alice:s3cret@example.org/lab/IR1010.git", "git://alice:s3cret@example.org/lab/IR1010",
+        "https://example.org/lab/IR1010?private_token=s3cret", "https://example.org/lab/IR1010?access_TOKEN=s3cret",
+        "https://example.org/lab/IR1010?a=1&Password=s3cret", "ssh://example.org/lab/IR1010?secret=s3cret",
+        "https://example.org/lab/IR1010?api_key=s3cret"}) {
     const Outcome o = add_project(url);
     EXPECT_EQ(o.code, elctl::kUsage) << url;
     EXPECT_EQ(o.out, "");
     ASSERT_EQ(lines(o.err).size(), 1u) << o.err;
     EXPECT_TRUE(contains(o.err, "credential helper")) << o.err;
-    for (const char* secret : {"alice", "s3cret", "token", "example.org"}) EXPECT_FALSE(contains(o.err, secret)) << o.err;
+    for (const char* secret : {"alice", "s3cret", "example.org", "IR1010", "private_token", "api_key"})
+      EXPECT_FALSE(contains(o.err, secret)) << o.err;
   }
   EXPECT_EQ(import({"status"}).out, "");
   EXPECT_EQ(settings_files(), std::vector<std::string>{});
   EXPECT_FALSE(fs::exists(cache_ / "mirrors"));
+}
+
+// The rule itself, without a network: a user without a password is how ssh
+// names the account, and is not a secret.
+TEST(ImportUrl, CarriesCredentials) {
+  using elctl::import_detail::url_carries_credentials;
+  for (const char* url :
+       {"https://alice:s3cret@example.org/lab/IR1010.git", "https://token@example.org/lab/IR1010",
+        "http://token@example.org/x", "HtTpS://token@example.org/x", "ssh://alice:s3cret@example.org/x",
+        "git://alice:s3cret@example.org/x", "ftp://a:b@example.org/x", "https://example.org/x?private_token=abc",
+        "https://example.org/x?access_TOKEN=abc", "https://example.org/x?a=1&Password=abc",
+        "ssh://example.org/x?secret=abc", "https://example.org/x?api_key=abc", "https://example.org/x?KEY=abc",
+        "https://alice:@example.org/x", "git@example.org:lab/x?token=abc"})
+    EXPECT_TRUE(url_carries_credentials(url)) << url;
+  for (const char* url :
+       {"https://example.org/lab/IR1010.git", "ssh://git@example.org/lab/IR1010.git", "git@example.org:lab/IR1010.git",
+        "git://example.org/lab/IR1010", "ssh://git@example.org:2222/lab/IR1010", "https://example.org/lab/x?ref=main",
+        "https://example.org/lab/monkey?page=2", "https://example.org/a@b/c", "https://example.org/x#user:pw@frag",
+        "/home/me/repos/IR1010", "C:/repos/token/IR1010", "file:///home/me/key=/IR1010", "ssh://git@[::1]:22/x"})
+    EXPECT_FALSE(url_carries_credentials(url)) << url;
 }
 
 // The settings file is UTF-8 whatever the cache directory is called.

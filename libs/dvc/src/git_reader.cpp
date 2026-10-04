@@ -144,8 +144,8 @@ constexpr const char* kNullDevice = "NUL";
 constexpr const char* kNullDevice = "/dev/null";
 #endif
 
-// What every child gets: no system or global configuration, no prompt, and
-// the repository named outright. Each of the repository variables is set, so
+// What every child that reads a repository gets: no system or global
+// configuration, no prompt, and the repository named outright. Each of the repository variables is set, so
 // one inherited from the parent process is replaced rather than obeyed, and
 // git has nothing left to discover. `work_tree` is not read by any command
 // here; it is set only so that an inherited value is not used.
@@ -162,6 +162,24 @@ std::vector<std::pair<std::string, std::string>> environment(const std::filesyst
           {"GIT_ALTERNATE_OBJECT_DIRECTORIES", ""},
           {"GIT_INDEX_FILE", (git_dir / "index").string()},
           {"GIT_WORK_TREE", work_tree.string()}};
+}
+
+// What the clone and the fetch of a mirror get. They talk to a remote, so
+// they need what the user set up for that: a credential helper, a url
+// rewrite, a proxy, ssh options. The system and global configuration are
+// therefore read (GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL are left as the
+// process has them). Everything else is as for a read: no prompt (a missing
+// credential fails, it does not wait for a terminal), and the repository
+// named outright. Reading that configuration must not widen what a url can
+// do, so only the ordinary transports are allowed, whatever it says: not
+// ext:: or a remote helper, which run commands.
+std::vector<std::pair<std::string, std::string>> mirror_environment(const std::filesystem::path& directory) {
+  auto env = environment(directory, directory, directory);
+  std::erase_if(env, [](const auto& entry) {
+    return entry.first == "GIT_CONFIG_NOSYSTEM" || entry.first == "GIT_CONFIG_GLOBAL";
+  });
+  env.emplace_back("GIT_ALLOW_PROTOCOL", "file:git:http:https:ssh");
+  return env;
 }
 
 std::string first_line(const std::filesystem::path& file) {
@@ -451,8 +469,10 @@ Result<std::filesystem::path> GitReader::mirror(std::string_view url, const std:
   if (present)
     spec.argv = {"git", "fetch", "--prune", "--quiet", "origin"};
   else
-    spec.argv = {"git", "clone", "--mirror", "--quiet", "--", std::string(url), directory.string()};
-  spec.env = environment(directory, directory, directory);
+    // The remote is "origin" whatever clone.defaultRemoteName the user set: the fetch above names it.
+    spec.argv = {"git", "-c", "clone.defaultRemoteName=origin", "clone", "--mirror", "--quiet", "--",
+                 std::string(url), directory.string()};
+  spec.env = mirror_environment(directory);
   spec.timeout = timeout;
   const auto result = run_process(spec);
   const std::string what = std::string("git mirror of ") + std::string(url) + " in " + directory.string();

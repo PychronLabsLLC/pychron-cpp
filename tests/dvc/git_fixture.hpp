@@ -38,6 +38,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -55,6 +56,23 @@ namespace pychron::dvc::testing {
 
 class GitFixture {
  public:
+  // From here on no git child of this process reads the machine's or the
+  // user's git configuration. The fixture's own commands never did; this is
+  // for the code under test that leaves the choice to its environment
+  // (GitReader::mirror uses the user's configuration to reach a remote), so
+  // that a test does not depend on the gitconfig of whoever runs it. Called
+  // by the constructor; a test that wants a configuration sets
+  // GIT_CONFIG_GLOBAL itself afterwards.
+  static void ignore_user_git_configuration() {
+#ifdef _WIN32
+    _putenv_s("GIT_CONFIG_NOSYSTEM", "1");
+    _putenv_s("GIT_CONFIG_GLOBAL", "NUL");
+#else
+    ::setenv("GIT_CONFIG_NOSYSTEM", "1", 1);
+    ::setenv("GIT_CONFIG_GLOBAL", "/dev/null", 1);
+#endif
+  }
+
   static bool available() {
     ProcessSpec spec;
     spec.argv = {"git", "--version"};
@@ -63,6 +81,7 @@ class GitFixture {
   }
 
   GitFixture() {
+    ignore_user_git_configuration();
     std::random_device device;
     std::ostringstream name;
     name << "pychron-git-fixture-" << std::hex << device() << device();

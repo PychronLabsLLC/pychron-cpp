@@ -99,6 +99,16 @@ Result<std::map<std::string, std::string>> read_author_map(const fs::path& file)
 fs::path default_cache_dir();
 // True for "scheme://..." and scp-like "user@host:path"; a local path otherwise.
 bool is_url(std::string_view source);
+// Whether a source url carries a secret, or what may be one. It would be
+// written to the settings file and the store and shown by `status`, so `add`
+// refuses it:
+//   - "user:anything@host" on any scheme;
+//   - any "user@" on http and https, where the user is as often a token;
+//   - a query string that names a token, password, secret or key=.
+// A user without a password on any other scheme ("ssh://git@host/...") and
+// the scp-like "git@host:path" name an account, not a secret. A local path
+// carries nothing.
+bool url_carries_credentials(std::string_view url);
 // The last component of a normalized source url.
 std::string last_segment(std::string_view normalized_url);
 

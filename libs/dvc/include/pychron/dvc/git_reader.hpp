@@ -8,8 +8,9 @@
 // Nothing writes to the repository being read. mirror() is the only function
 // that writes at all, and only inside the cache directory it is given.
 //
-// The child environment is fixed: system and global configuration off, no
-// terminal prompt, C locale, no replace objects, no optional locks. git never
+// The child environment of every read is fixed: system and global
+// configuration off, no terminal prompt, C locale, no replace objects, no
+// optional locks. (mirror() alone reads the user's configuration; see there.) git never
 // discovers the repository: GIT_DIR, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY,
 // GIT_INDEX_FILE and GIT_WORK_TREE are set for every child from the path
 // given, so values inherited from the parent process (a git hook exports
@@ -98,6 +99,12 @@ class GitReader {
   // depends only on the url: cloned (`git clone --mirror`) when absent,
   // otherwise updated (`git fetch --prune`, which also drops refs deleted at
   // the source). Returns the directory, ready for open().
+  //
+  // The clone and the fetch reach a remote, so unlike every read they use the
+  // system and global git configuration: that is where a credential helper,
+  // a url rewrite or a proxy is set up. They still never prompt, and only the
+  // file, git, http, https and ssh transports are allowed, whatever the
+  // configuration says.
   static Result<std::filesystem::path> mirror(std::string_view url, const std::filesystem::path& cache_dir,
                                               std::chrono::milliseconds timeout = std::chrono::minutes(30));
 

@@ -3,7 +3,9 @@
 // GitReader::open: not a repository, no such branch, empty, shallow, git too
 // old) or the dump directory (no MANIFEST.json), the author map.
 
+#include <cctype>
 #include <ostream>
+#include <string>
 #include <system_error>
 
 #include "import_impl.hpp"
@@ -18,16 +20,32 @@ namespace ingest = pychron::ingest;
 
 namespace {
 
-// "scheme://user[:secret]@host/…": a url that carries credentials. They would
-// be written to the settings file and the store, and shown by `status`.
-bool has_userinfo(std::string_view url) {
-  const auto scheme = url.find("://");
-  if (scheme == std::string_view::npos) return false;
-  const auto authority = url.substr(scheme + 3, url.find_first_of("/?#", scheme + 3) - (scheme + 3));
-  return authority.find('@') != std::string_view::npos;
+std::string lower(std::string_view text) {
+  std::string out(text);
+  for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return out;
 }
 
 }  // namespace
+
+bool url_carries_credentials(std::string_view url) {
+  if (!is_url(url)) return false;
+  // "?query" up to "#fragment", wherever the url has one.
+  if (const auto question = url.find('?'); question != std::string_view::npos) {
+    const std::string query = lower(url.substr(question + 1, url.find('#', question) - (question + 1)));
+    for (const char* word : {"token", "password", "secret", "key="})
+      if (query.find(word) != std::string::npos) return true;
+  }
+  const auto scheme_end = url.find("://");
+  if (scheme_end == std::string_view::npos) return false;  // scp-like: "user@host:path" has no password
+  const std::string scheme = lower(url.substr(0, scheme_end));
+  const auto begin = scheme_end + 3;
+  const auto authority = url.substr(begin, url.find_first_of("/?#", begin) - begin);
+  const auto at = authority.rfind('@');
+  if (at == std::string_view::npos) return false;
+  const auto userinfo = authority.substr(0, at);
+  return userinfo.find(':') != std::string_view::npos || scheme == "http" || scheme == "https";
+}
 
 int import_add(Context& ctx, const Flags& flags) {
   const auto kind_text = flags.get("--kind");
@@ -40,9 +58,9 @@ int import_add(Context& ctx, const Flags& flags) {
   if (!tz) return fatal(ctx.io, "add needs --tz <IANA zone>, the lab's time zone (for example America/Denver)");
   if (!ingest::known_zone(*tz)) return fatal(ctx.io, "--tz: no time zone '" + *tz + "'");
   // Said without the url: it holds a secret.
-  if (has_userinfo(*source))
-    return fatal(ctx.io, "--source: the url names a user or a password; give it without them and let a git "
-                         "credential helper supply them");
+  if (url_carries_credentials(*source))
+    return fatal(ctx.io, "--source: the url carries a password or a token (in its user part or its query); give "
+                         "it without them and let a git credential helper supply them");
 
   const bool project = *kind == P::ImportSourceKind::ProjectRepo;
   const bool catalog = *kind == P::ImportSourceKind::LegacyDb;

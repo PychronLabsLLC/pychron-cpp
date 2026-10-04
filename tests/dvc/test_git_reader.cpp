@@ -987,5 +987,74 @@ TEST(GitReader, MirrorNamesAreStableAndDistinct) {
   EXPECT_FALSE(GitReader::mirror("", cache).has_value());
 }
 
+// Fix wave D1. The clone and fetch of a mirror reach a remote, and need what
+// the user configured for that: a credential helper, a url rewrite, a proxy.
+// They read the user's git configuration; reading the mirror does not.
+TEST(GitReader, MirrorUsesTheUsersGitConfiguration) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  const std::filesystem::path cache = repo.temp("mirrors");
+
+  // A name only the user's configuration can resolve stands in for a url
+  // only the user's credential helper can open.
+  // (It also names the remote of a clone something else, which must not
+  // break the fetch.)
+  const std::filesystem::path user_config = repo.temp("user.gitconfig");
+  {
+    std::ofstream out(user_config, std::ios::binary);
+    out << "[url \"" << repo.url() << "\"]\n\tinsteadOf = pychron-test-alias://lab/repo\n"
+        << "[clone]\n\tdefaultRemoteName = upstream\n";
+  }
+  ScopedEnv env;
+  env.set("GIT_CONFIG_GLOBAL", user_config.string());
+  const std::string url = "pychron-test-alias://lab/repo";
+
+  const auto cloned = GitReader::mirror(url, cache);
+  ASSERT_OK(cloned);
+  GitConfig config = config_for(repo);
+  config.repo = *cloned;
+  {
+    auto reader = GitReader::open(config);
+    ASSERT_OK(reader);
+    EXPECT_EQ(reader->head(), c1);
+  }
+  // The fetch of an existing mirror as well.
+  repo.write("a.json", "2");
+  const std::string c2 = repo.commit("two", "2016-03-05T05:06:07+00:00");
+  const auto fetched = GitReader::mirror(url, cache);
+  ASSERT_OK(fetched);
+  EXPECT_EQ(*fetched, *cloned);
+  auto reader = GitReader::open(config);
+  ASSERT_OK(reader);
+  EXPECT_EQ(reader->head(), c2);
+}
+
+#ifndef _WIN32
+// The configuration a mirror reads could allow a transport that runs a
+// command (ext::). Only the ordinary transports are let through, whatever
+// the configuration says.
+TEST(GitReader, MirrorAllowsOnlyOrdinaryTransports) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  const std::filesystem::path cache = repo.temp("mirrors");
+  const std::filesystem::path marker = repo.temp("ran-a-command");
+  const std::filesystem::path user_config = repo.temp("user.gitconfig");
+  {
+    std::ofstream out(user_config, std::ios::binary);
+    out << "[protocol \"ext\"]\n\tallow = always\n";
+  }
+  ScopedEnv env;
+  env.set("GIT_CONFIG_GLOBAL", user_config.string());
+
+  const auto refused = GitReader::mirror("ext::touch " + marker.string(), cache);
+  EXPECT_FALSE(refused.has_value());
+  EXPECT_FALSE(std::filesystem::exists(marker)) << "the transport ran its command";
+}
+#endif
+
 }  // namespace
 }  // namespace pychron::dvc
