@@ -159,30 +159,53 @@ namespace {
 constexpr double kSymbolPad = 4.0;   // between the glyph or name and the border
 constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 
-// Line glyphs, each drawn on its own design grid and scaled to fit `area`.
-void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area) {
+// Glyphs, each drawn on its own design grid and scaled to fit `area`.
+// `fill` is the box's own colour, for the parts gas reaches.
+void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area, const QColor& fill) {
   const bool spectrometer = symbol == canvas::StageSymbol::Spectrometer;
-  const QSizeF grid = spectrometer ? QSizeF(66, 64) : QSizeF(66, 34);
-  const double scale = std::min({area.width() / grid.width(), area.height() / grid.height(), 0.5});
+  const QSizeF grid = spectrometer ? QSizeF(66, 62) : QSizeF(66, 34);
+  const double scale =
+      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : 0.7});
   painter.save();
   painter.translate(area.center().x() - grid.width() * scale / 2, area.center().y() - grid.height() * scale / 2);
   painter.scale(scale, scale);
-  painter.setBrush(Qt::NoBrush);
-  painter.setPen(QPen(theme().text, 1.2 / scale, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  const QPen line(theme().text, 1.2 / scale, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
   if (spectrometer) {
-    // A magnetic sector: source, the beam bent a quarter turn, then fanned
-    // by mass onto the collectors.
-    painter.drawRoundedRect(QRectF(0, 52, 11, 11), 2, 2);
-    QPainterPath beam(QPointF(5.5, 52));
-    beam.arcTo(QRectF(5.5, 14, 76, 76), 180, -90);
-    painter.drawPath(beam);
-    for (const QPointF& end : {QPointF(62, 5), QPointF(63, 14), QPointF(62, 23)}) {
-      painter.drawLine(QPointF(43.5, 14), end);
+    // A magnetic sector instrument seen from above: the source, the flight
+    // tube turning a quarter circle through the magnet's poles, and the
+    // collector block the masses fan out onto.
+    const QColor metal = theme().inactive;
+    const QPointF centre(46, 48);
+    auto ring = [&](double r) { return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r); };
+    QPainterPath tube(QPointF(12, 56));
+    tube.lineTo(12, 48);
+    tube.arcTo(ring(34), 180, -90);
+    tube.lineTo(52, 14);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(theme().text, 9, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+    painter.drawPath(tube);
+    painter.setPen(QPen(fill, 9 - 2.4 / scale, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+    painter.drawPath(tube);
+
+    QPainterPath magnet;  // the pole piece: a wedge of the turn, wider than the tube
+    magnet.arcMoveTo(ring(46), 162);
+    magnet.arcTo(ring(46), 162, -54);
+    magnet.arcTo(ring(22), 108, 54);
+    magnet.closeSubpath();
+    painter.setPen(line);
+    painter.setBrush(metal);
+    painter.drawPath(magnet);
+
+    painter.drawRoundedRect(QRectF(3, 50, 18, 11), 2, 2);  // source
+    const QRectF collector(50, 1, 15, 26);
+    painter.drawRoundedRect(collector, 2, 2);
+    for (const double y : {7.5, 14.0, 20.5}) {  // collector slits
+      painter.drawLine(QPointF(collector.left() + 4, y), QPointF(collector.right() - 3, y));
     }
-    painter.setPen(QPen(theme().text, 2.0 / scale, Qt::SolidLine, Qt::FlatCap));
-    painter.drawLine(QPointF(65, 1), QPointF(65, 27));
   } else {
     // The laser hazard starburst: rays from a point, the beam the long one.
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(line);
     const QPointF c(16, 17);
     painter.drawLine(QPointF(0, 17), QPointF(66, 17));
     painter.drawLine(c + QPointF(0, -16), c + QPointF(0, 16));
@@ -251,7 +274,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->drawText(QRectF(glyph.right(), inner.top(), inner.right() - glyph.right(), inner.height()),
                       Qt::AlignCenter, label_);
   }
-  paint_symbol(*painter, symbol_, glyph);
+  paint_symbol(*painter, symbol_, glyph, region_);
 }
 
 void StageItem::set_symbol(canvas::StageSymbol symbol) {

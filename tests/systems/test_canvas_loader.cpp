@@ -61,6 +61,7 @@ symbol = "spectrometer"
 
 [[pipette]]
 name = "air"
+display_name = ""
 pos = [600, 400]
 vlabel = "Air Pipette"
 
@@ -146,6 +147,9 @@ TEST(CanvasLoader, ParsesEveryElementKind) {
   EXPECT_TRUE(c.stages[0].fill);
   EXPECT_FALSE(c.stages[0].use_symbol);
   EXPECT_EQ(c.stages[1].display_name, "Spectrometer");
+  EXPECT_EQ(c.stages[0].display_name, std::nullopt);  // unset: the name is the label
+  ASSERT_FALSE(c.pipettes.empty());
+  EXPECT_EQ(c.pipettes[0].display_name, "");  // set and empty: no label
   EXPECT_TRUE(c.stages[1].use_symbol);
   EXPECT_EQ(c.stages[0].symbol, StageSymbol::None);
   EXPECT_EQ(c.stages[1].symbol, StageSymbol::Spectrometer);

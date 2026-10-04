@@ -66,7 +66,8 @@ struct StageElement : Located {
   Size size{50, 50};
   std::optional<double> volume;  // cc; used by later volume logic
   bool fill = false;
-  std::string display_name;
+  // The label in the box: unset = the name; "" = no label.
+  std::optional<std::string> display_name;
   bool use_symbol = false;
   StageSymbol symbol = StageSymbol::None;
 };
@@ -76,6 +77,7 @@ struct PipetteElement : Located {
   Point pos;
   Size size{50, 50};
   std::string vlabel;
+  std::optional<std::string> display_name;  // as a stage's; unset = vlabel, else the name
 };
 
 enum class Orientation { Auto, Horizontal, Vertical };

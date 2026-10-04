@@ -239,11 +239,13 @@ class XmlParser {
         parent.children.push_back(element());
       } else {
         const auto next = s_.find('<', at_);
-        text += std::string(s_.substr(at_, next == std::string_view::npos ? std::string_view::npos : next - at_));
+        // Mixed content: the element's own text is what precedes its first
+        // child (legacy reads elem.text); text after a child is not part of it.
+        if (parent.children.empty())
+          text += std::string(s_.substr(at_, next == std::string_view::npos ? std::string_view::npos : next - at_));
         at_ = next == std::string_view::npos ? s_.size() : next;
       }
     }
-    // Mixed content: the element's own text is what precedes its children.
     parent.text = trim(text);
   }
 

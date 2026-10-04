@@ -102,10 +102,14 @@ TEST(LegacyLite, XmlTextChildrenAttributesAndAMalformedComment) {
       "  <valve query_state=\"false\">FD<address>F</address></valve>\n"
       "  <!--<<address>312</address>-->\n"
       "  <group>main<manual_valve>MV</manual_valve></group>\n"
+      "  <turbo display_name='Turbo'>FATurbo\n    <color>0,255,208</color>FATurbo\n  </turbo>\n"
       "</root>\n",
       skipped);
   ASSERT_EQ(root.tag, "root");
-  ASSERT_EQ(root.children.size(), 2u);
+  ASSERT_EQ(root.children.size(), 3u);
+  // text after a child (a stray repeat in a real file) is not the element's text
+  EXPECT_EQ(root.children[2].text, "FATurbo");
+  EXPECT_EQ(root.children[2].attrs.at("display_name"), "Turbo");
   const auto& v = root.children[0];
   EXPECT_EQ(v.tag, "valve");
   EXPECT_EQ(v.text, "FD");
@@ -319,8 +323,8 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <spectrometer>Obama<translation>-2,-10</translation><dimension>4,2</dimension>\n"
           "    <connection orientation=\"vertical\"><start>MV</start><end>Obama</end></connection>\n"
           "  </spectrometer>\n"
-          "  <laser use_symbol=\"True\">CO2<translation>10,-10</translation><dimension>4,4</dimension></laser>\n"
-          "  <laser use_symbol=\"False\">Furnace<translation>16,-10</translation><dimension>4,4</dimension></laser>\n"
+          "  <laser use_symbol=\"True\" display_name='Laser'>CO2<translation>10,-10</translation><dimension>4,4</dimension></laser>\n"
+          "  <laser use_symbol=\"False\" display_name=\"\">Furnace<translation>16,-10</translation><dimension>4,4</dimension></laser>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -354,10 +358,13 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
     return nullptr;
   };
   ASSERT_EQ(drawing->stages.size(), 3u);
-  EXPECT_EQ(stage("Obama")->display_name, "Obama");
+  EXPECT_EQ(stage("Obama")->display_name, std::nullopt);  // unset: the name is drawn
   EXPECT_EQ(stage("Obama")->symbol, canvas::StageSymbol::Spectrometer);
   EXPECT_EQ(stage("CO2")->symbol, canvas::StageSymbol::Laser);
   EXPECT_EQ(stage("Furnace")->symbol, canvas::StageSymbol::None);
+  // display_name is an attribute: a label other than the name, or "" for none
+  EXPECT_EQ(stage("CO2")->display_name, "Laser");
+  EXPECT_EQ(stage("Furnace")->display_name, "");
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   EXPECT_EQ(connection(*drawing, "B", "Obama")->orientation, canvas::Orientation::Auto);

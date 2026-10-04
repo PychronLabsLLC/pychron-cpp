@@ -44,7 +44,9 @@ struct LValves {
 struct LElement {
   std::string kind;  // valve, manual_valve, rough_valve, pipette, label, stage (anything drawn as a box)
   std::string legacy_kind;
-  std::string name, display_name, text;
+  std::string name, text;
+  // Legacy: unset = the name is drawn; "" = nothing is.
+  std::optional<std::string> display_name;
   double x = 0, y = 0;
   std::optional<double> w, h;
   bool use_symbol = false;
@@ -227,7 +229,7 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
       e.legacy_kind = kind;
       e.kind = element_kind(kind);
       e.name = item.text("name");
-      e.display_name = item.get("display_name") ? item.text("display_name") : std::string{};
+      if (item.get("display_name")) e.display_name = item.text("display_name");
       e.text = item.text("text");
       e.use_symbol = item.text("use_symbol") == "True" || item.text("use_symbol") == "true";
       e.no_symbol = item.get("use_symbol") && !e.use_symbol;
@@ -290,7 +292,9 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
       e.legacy_kind = c.tag;
       e.kind = element_kind(c.tag);
       e.name = c.text;
-      e.display_name = c.child_text("display_name");
+      // legacy reads the attribute; a child is accepted as well
+      if (c.attrs.count("display_name")) e.display_name = c.attrs.at("display_name");
+      else if (c.child("display_name")) e.display_name = c.child_text("display_name");
       e.use_symbol = c.child_text("use_symbol") == "True";
       if (c.attrs.count("use_symbol")) {
         e.use_symbol = c.attrs.at("use_symbol") == "True";
@@ -682,10 +686,9 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
     if (e.kind == "stage" || e.kind == "pipette") {
       if (e.w && e.h) cv << "size = [" << num(std::max(10.0, *e.w * scale)) << ", " << num(std::max(10.0, *e.h * scale)) << "]\n";
     }
+    if ((e.kind == "stage" || e.kind == "pipette") && e.display_name && *e.display_name != e.name)
+      cv << "display_name = " << q(*e.display_name) << "\n";
     if (e.kind == "stage") {
-      std::string display = e.display_name;
-      if (display.empty() && e.legacy_kind != "stage") display = e.name;
-      if (!display.empty()) cv << "display_name = " << q(display) << "\n";
       if (e.use_symbol) cv << "use_symbol = true\n";
       // A spectrometer or a laser is drawn as one, unless the legacy canvas
       // turned its symbol off.

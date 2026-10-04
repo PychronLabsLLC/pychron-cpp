@@ -191,6 +191,7 @@ pos = [889, 354]
 name = "FurnaceManifold"
 pos = [322, 257]
 size = [58, 31]
+display_name = ""
 
 [[stage]]
 name = "Bone"
@@ -211,165 +212,166 @@ size = [94, 51]
 name = "RoughingManifold"
 pos = [585, 63]
 size = [246, 31]
+display_name = "Roughing"
 
 [[stage]]
 name = "ATurboManifold"
 pos = [357, 596]
 size = [35, 31]
+display_name = ""
 
 [[stage]]
 name = "CO2"
 pos = [602, 236]
 size = [82, 72]
-display_name = "CO2"
+use_symbol = true
 symbol = "laser"
 
 [[stage]]
 name = "Diode"
 pos = [421, 61]
 size = [58, 72]
-display_name = "Diode"
+use_symbol = true
 symbol = "laser"
 
 [[stage]]
 name = "Furnace"
 pos = [193, 257]
 size = [94, 41]
-display_name = "Furnace"
 
 [[stage]]
 name = "ofurnace"
 pos = [158, 257]
 size = [47, 62]
+display_name = ""
 
 [[stage]]
 name = "RTurbo"
 pos = [532, 115]
 size = [58, 31]
-display_name = "RTurbo"
+display_name = "Turbo"
+use_symbol = true
 
 [[stage]]
 name = "ATurbo"
 pos = [357, 647]
 size = [58, 31]
-display_name = "ATurbo"
+display_name = "Turbo"
+use_symbol = true
 
 [[stage]]
 name = "BTurbo"
 pos = [743, 483]
 size = [58, 31]
-display_name = "BTurbo"
+display_name = "Turbo"
+use_symbol = true
 
 [[stage]]
 name = "FBTurbo"
 pos = [64, 313]
 size = [58, 31]
-display_name = "FBTurbo"
+display_name = "Turbo"
+use_symbol = true
 
 [[stage]]
-name = "FATurbo\n      FATurbo"
+name = "FATurbo"
 pos = [99, 179]
 size = [58, 31]
-display_name = "FATurbo\n      FATurbo"
+display_name = "Turbo"
+use_symbol = true
 
 [[stage]]
 name = "JanNP10"
 pos = [860, 427]
 size = [58, 31]
-display_name = "JanNP10"
+display_name = "NP10"
 
 [[stage]]
 name = "MiniBoneGP50"
 pos = [675, 427]
 size = [58, 31]
-display_name = "MiniBoneGP50"
+display_name = "GP50"
 
 [[stage]]
 name = "F GP-50"
 pos = [357, 118]
 size = [58, 31]
-display_name = "F GP-50"
+display_name = "GP50"
 
 [[stage]]
 name = "GP50"
 pos = [474, 262]
 size = [58, 31]
-display_name = "GP50"
 
 [[stage]]
 name = "NP-10C"
 pos = [684, 257]
 size = [58, 31]
-display_name = "NP-10C"
 
 [[stage]]
 name = "NP-10H"
 pos = [749, 226]
 size = [58, 31]
-display_name = "NP-10H"
 
 [[stage]]
 name = "GP502"
 pos = [749, 128]
 size = [58, 31]
-display_name = "GP502"
+display_name = "GP50"
 
 [[stage]]
 name = "Felix"
 pos = [216, 339]
 size = [58, 83]
-display_name = "Felix"
 symbol = "spectrometer"
 
 [[stage]]
 name = "Jan"
 pos = [936, 339]
 size = [58, 83]
-display_name = "Jan"
 symbol = "spectrometer"
 
 [[stage]]
 name = "Quad"
 pos = [789, 596]
 size = [70, 31]
-display_name = "Quad"
 symbol = "spectrometer"
 
 [[stage]]
 name = "JanIonPump"
 pos = [942, 478]
 size = [82, 31]
-display_name = "JanIonPump"
+display_name = "Ion Pump"
+use_symbol = true
 
 [[stage]]
 name = "FelixIonPump"
 pos = [234, 478]
 size = [82, 31]
-display_name = "FelixIonPump"
+display_name = "Ion Pump"
+use_symbol = true
 
 [[stage]]
 name = "Cocktail"
 pos = [573, 766]
 size = [58, 20]
-display_name = "Cocktail"
 
 [[stage]]
 name = "CocktailPipette"
 pos = [585, 694]
 size = [23, 20]
-display_name = "CocktailPipette"
+display_name = ""
 
 [[stage]]
 name = "Air"
 pos = [655, 766]
 size = [58, 20]
-display_name = "Air"
 
 [[stage]]
 name = "AirPipette"
 pos = [643, 694]
 size = [23, 20]
-display_name = "AirPipette"
+display_name = ""
 
 [[connection]]
 start = "MiniBoneGP5Manual"
@@ -427,6 +429,12 @@ start_offset = [0, 11]
 [[connection]]
 start = "FC"
 end = "FA"
+orientation = "h"
+start_offset = [6, 0]
+
+[[connection]]
+start = "FA"
+end = "FATurbo"
 orientation = "h"
 start_offset = [6, 0]
 

@@ -152,6 +152,14 @@ class CanvasBuilder {
     type_error(e, key, *n, "string");
   }
 
+  // Present, even when empty, is different from absent.
+  void read(const toml::table& t, Located& e, std::string_view key, std::optional<std::string>& out) {
+    if (!t.contains(key)) return;
+    std::string s;
+    read(t, e, key, s, false);
+    out = std::move(s);
+  }
+
   void read(const toml::table& t, Located& e, std::string_view key, bool& out) {
     const auto* n = find(t, e, key, false);
     if (n == nullptr) return;
@@ -329,7 +337,7 @@ class CanvasBuilder {
     read(t, s, "size", s.size);
     read(t, s, "volume", s.volume);
     read(t, s, "fill", s.fill);
-    read(t, s, "display_name", s.display_name, false);
+    read(t, s, "display_name", s.display_name);
     read(t, s, "use_symbol", s.use_symbol);
     read_enum(t, s, "symbol", s.symbol, kStageSymbols);
     return s;
@@ -338,11 +346,12 @@ class CanvasBuilder {
   PipetteElement parse_pipette(const std::string& path, const toml::table& t) {
     PipetteElement p;
     begin(p, t, path);
-    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel"});
+    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel", "display_name"});
     read(t, p, "name", p.name, true);
     read(t, p, "pos", p.pos, true);
     read(t, p, "size", p.size);
     read(t, p, "vlabel", p.vlabel, false);
+    read(t, p, "display_name", p.display_name);
     return p;
   }
 

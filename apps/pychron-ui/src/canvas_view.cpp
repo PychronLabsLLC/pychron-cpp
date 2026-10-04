@@ -79,7 +79,7 @@ void CanvasView::build(const canvas::Canvas& c) {
   }
   const QColor stage_color = color_or(c, "stage", isolated_color());
   for (const auto& s : c.stages) {
-    const std::string& label = s.display_name.empty() ? s.name : s.display_name;
+    const std::string& label = s.display_name ? *s.display_name : s.name;
     auto* item = new StageItem(s.name, QString::fromStdString(label), s.size, stage_color);
     item->set_symbol(s.symbol);
     item->setPos(to_qpoint(s.pos));
@@ -91,7 +91,7 @@ void CanvasView::build(const canvas::Canvas& c) {
   }
   const QColor pipette_color = color_or(c, "pipette", isolated_color());
   for (const auto& p : c.pipettes) {
-    const std::string& label = p.vlabel.empty() ? p.name : p.vlabel;
+    const std::string& label = p.display_name ? *p.display_name : p.vlabel.empty() ? p.name : p.vlabel;
     auto* item = new StageItem(p.name, QString::fromStdString(label), p.size, pipette_color);
     item->setPos(to_qpoint(p.pos));
     scene_.addItem(item);

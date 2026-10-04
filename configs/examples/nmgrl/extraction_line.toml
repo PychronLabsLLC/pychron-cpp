@@ -310,6 +310,5 @@ outer = "W"
 #   canvas: connection BTurbo-Microbone IG names an element that is not drawn; dropped
 #   canvas: connection MiniboneManual_Rough-Minibone names an element that is not drawn; dropped
 #   canvas: connection FBTurbo-FBTurbo IG names an element that is not drawn; dropped
-#   canvas: connection FA-FATurbo names an element that is not drawn; dropped
 #   canvas: connection FATurbo IG-FATurbo names an element that is not drawn; dropped
 #   canvas: connection Bone IG-ATurboManifold names an element that is not drawn; dropped

@@ -56,6 +56,10 @@ without one it uses `switch_controller`.
   what every valve from x -25 to 25 connects to. The view box comes from `canvas_config.xml`
   (`xview -50,50`) or the canvas file itself (`<xvidew>`: misspelt in a real
   file, so the reader accepts both).
+- `display_name` is an XML attribute (`<turbo display_name='Turbo'>`): the
+  label drawn instead of the name; `display_name=""` draws none. An
+  element's name is the text before its first child; real files have stray
+  text after one (`<color>…</color>FATurbo`), which legacy ignores.
 - Element kinds: `valve`, `manual_valve`, `rough_valve`, `stage`,
   `spectrometer`, `turbo`, `ionpump`, `getter`, `laser`, `tank`, `pipette`,
   `label`, and connections `connection` (XML, `orientation=` attribute),
