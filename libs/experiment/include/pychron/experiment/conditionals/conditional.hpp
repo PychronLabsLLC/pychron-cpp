@@ -35,10 +35,10 @@ struct ActionSpec {
   };
   Type type = Type::None;
   bool quick = false;           // truncate:quick
-  std::string name;             // set_param / run_hook name
+  std::string name{};           // set_param / run_hook name
   double value = 0;             // set_param value
   int count = 1;                // skip_n N
-  std::vector<double> steps;    // set_extract: successive increments
+  std::vector<double> steps{};  // set_extract: successive increments
   bool percent = false;         // set_extract: steps are percentages
 
   friend bool operator==(const ActionSpec&, const ActionSpec&) = default;
