@@ -416,6 +416,44 @@ class TestCanvasView : public QObject {
     QVERIFY(checked > 40);
   }
 
+  // On the NMGRL line: each tank has its own colour, and opening a tank's
+  // valve gives the pipette (and the pipes and the valve) the tank's colour.
+  void theNmgrlTanksColourWhatIsOpenToThem() {
+    const std::filesystem::path dir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
+    systems::ExtractionLine::Options options;
+    options.force_sim = true;
+    options.state_file = std::filesystem::path(QDir::tempPath().toStdString()) / "pychron-ui-test-nmgrl-tanks.state.toml";
+    std::filesystem::remove(options.state_file);
+    auto line = systems::ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", options);
+    QVERIFY2(line.has_value(), line ? "" : line.error().what.c_str());
+    QVERIFY((*line)->start());
+    CoreBridge bridge(**line);
+    CanvasView view(bridge);
+    auto colour = [&](const char* stage) { return view.stage(stage)->region_color(); };
+    const QColor air = colour("Air");
+    const QColor cocktail = colour("Cocktail");
+    QVERIFY(air != CanvasView::isolated_color());
+    QVERIFY(cocktail != CanvasView::isolated_color());
+    QVERIFY(air != cocktail);
+    QVERIFY(colour("AirPipette") != air);  // Z is closed
+
+    bridge.actuate("Z", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view.valve("Z")->state(), ValveState::Open, 5000);
+    QCOMPARE(colour("Air"), air);
+    QCOMPARE(colour("AirPipette"), air);
+    QCOMPARE(view.valve("Z")->fill_color(), air);  // the NMGRL canvas has open valves inherit
+    QCOMPARE(colour("Cocktail"), cocktail);
+    QVERIFY(colour("CocktailPipette") != air);
+    for (const ui::ConnectionItem* pipe : view.pipes()) {
+      const auto& ends = pipe->endpoints();
+      const bool on_air = std::find(ends.begin(), ends.end(), "Air") != ends.end() ||
+                          std::find(ends.begin(), ends.end(), "AirPipette") != ends.end();
+      if (on_air && std::find(ends.begin(), ends.end(), "Y") == ends.end()) QCOMPARE(pipe->region_color(), air);
+    }
+    (*line)->stop();
+    std::filesystem::remove(options.state_file);
+  }
+
   // A stage's symbol is a glyph inside its box, placed where it fits.
   void stageSymbolsFitInsideTheBox() {
     QCOMPARE(view_->stage("spec")->symbol(), canvas::StageSymbol::None);
