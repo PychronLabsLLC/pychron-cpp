@@ -108,11 +108,34 @@ class StageItem : public QGraphicsItem {
   QColor region_;
 };
 
+// Where a polyline that ends inside `box` crosses into it, walking back from
+// its last point: the crossing on the box edge and the unit direction
+// pointing in. Nothing when the last point is outside the box or the whole
+// line is inside it.
+struct BoxEntry {
+  QPointF edge;
+  QPointF inward;
+};
+std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box);
+
 // Plumbing drawn as a polyline through element centres. Remembers the names
 // of the elements it joins so the view can paint it in the colour of the
 // network region it belongs to.
+//
+// A pipe is bordered like every other component, as in legacy pychron. The
+// item itself is the fill; the border is outline(), the same path a border
+// wider on each side, which the view stacks beneath every pipe's fill so
+// pipes that meet (a tee, an elbow's corner) merge with no line between them.
+// Where a pipe enters a volume, a gap (add_gap) paints the pipe's fill over
+// the volume's border: the border is broken there.
 class ConnectionItem : public QGraphicsPathItem {
  public:
+  static constexpr double kBorderWidth = 1.0;
+  // Stacking: borders, then fills, then (above the volumes at z 1) gaps.
+  static constexpr double kOutlineZ = -1.0;
+  static constexpr double kFillZ = 0.0;
+  static constexpr double kGapZ = 1.5;
+
   ConnectionItem(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints,
                  QGraphicsItem* parent = nullptr);
 
@@ -122,8 +145,15 @@ class ConnectionItem : public QGraphicsPathItem {
   QColor region_color() const { return pen().color(); }
   void set_region_color(QColor color);
 
+  // Scene-level items the view adds beside this one (the scene owns them).
+  QGraphicsPathItem* outline() const noexcept { return outline_; }
+  const std::vector<QGraphicsPathItem*>& gaps() const noexcept { return gaps_; }
+  QGraphicsPathItem* add_gap(const BoxEntry& entry);
+
  private:
   std::vector<std::string> endpoints_;
+  QGraphicsPathItem* outline_ = nullptr;
+  std::vector<QGraphicsPathItem*> gaps_;
 };
 
 class LabelItem : public QGraphicsSimpleTextItem {

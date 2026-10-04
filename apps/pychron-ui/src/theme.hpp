@@ -51,7 +51,7 @@ struct Theme {
   QColor plot_bg;       // pychron's light yellow
   QColor overlay;       // translucent backing for legends and annotations
   QColor grid;
-  QColor outline;       // pipes
+  QColor outline;       // input hover border, scroll handle hover
   QColor neutral_fill;  // isolated volumes, pending steps
   QColor flash;
 

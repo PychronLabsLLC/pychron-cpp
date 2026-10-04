@@ -2,6 +2,7 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QCursor>
 #include <QAction>
@@ -195,11 +196,17 @@ ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width,
     }
   }
   setPath(path);
-  setPen(QPen(default_color(), width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-  setZValue(0);
+  // Flat caps: a pipe ends at an element centre or on another pipe's centre
+  // line, both covered. Mitred joins keep an elbow's corner square.
+  setPen(QPen(default_color(), width, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
+  setZValue(kFillZ);
+  outline_ = new QGraphicsPathItem(path);
+  outline_->setPen(QPen(theme().text, width + 2 * kBorderWidth, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
+  outline_->setZValue(kOutlineZ);
 }
 
-QColor ConnectionItem::default_color() { return theme().outline; }
+// An isolated pipe is filled like an isolated volume; the border tells them apart.
+QColor ConnectionItem::default_color() { return theme().neutral_fill; }
 
 void ConnectionItem::set_region_color(QColor color) {
   if (color == pen().color()) {
@@ -208,6 +215,46 @@ void ConnectionItem::set_region_color(QColor color) {
   QPen p = pen();
   p.setColor(color);
   setPen(p);
+  for (QGraphicsPathItem* gap : gaps_) {
+    QPen g = gap->pen();
+    g.setColor(color);
+    gap->setPen(g);
+  }
+}
+
+QGraphicsPathItem* ConnectionItem::add_gap(const BoxEntry& entry) {
+  // Just long enough to cover the volume's border, which is centred on the edge.
+  QPainterPath path;
+  path.moveTo(entry.edge - entry.inward * kBorderWidth);
+  path.lineTo(entry.edge + entry.inward * kBorderWidth);
+  auto* gap = new QGraphicsPathItem(path);
+  gap->setPen(QPen(pen().color(), pen().widthF(), Qt::SolidLine, Qt::FlatCap));
+  gap->setZValue(kGapZ);
+  gaps_.push_back(gap);
+  return gap;
+}
+
+std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box) {
+  if (points.size() < 2 || !box.contains(points.back())) {
+    return std::nullopt;
+  }
+  for (std::size_t i = points.size() - 1; i > 0; --i) {
+    const QPointF a = points[i - 1];
+    const QPointF b = points[i];
+    if (box.contains(a)) {
+      continue;
+    }
+    // a is outside, b inside: the latest of the slab crossings is the entry.
+    const QPointF d = b - a;
+    double t = 0;
+    if (d.x() > 0) t = std::max(t, (box.left() - a.x()) / d.x());
+    if (d.x() < 0) t = std::max(t, (box.right() - a.x()) / d.x());
+    if (d.y() > 0) t = std::max(t, (box.top() - a.y()) / d.y());
+    if (d.y() < 0) t = std::max(t, (box.bottom() - a.y()) / d.y());
+    const double len = std::hypot(d.x(), d.y());
+    return BoxEntry{a + t * d, d / len};
+  }
+  return std::nullopt;
 }
 
 // ---- LabelItem --------------------------------------------------------------

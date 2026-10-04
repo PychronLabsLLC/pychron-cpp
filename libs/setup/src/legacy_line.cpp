@@ -49,8 +49,9 @@ struct LElement {
   bool use_symbol = false;
 };
 struct LConnection {
-  std::string kind;  // connection, h, v, tee
+  std::string kind;  // connection, h, v, tee, elbow
   std::string start, end, left, mid, right;
+  std::string corner;  // elbow only
 };
 struct LCanvas {
   std::vector<LElement> elements;
@@ -182,6 +183,7 @@ bool is_connection(const std::string& k) {
 
 std::string conn_kind(const std::string& k, const std::string& orientation) {
   if (k == "tee_connection") return "tee";
+  if (k == "elbow" || k == "elbow_connection") return "elbow";
   if (k == "hconnection" || orientation == "horizontal") return "h";
   if (k == "vconnection" || orientation == "vertical") return "v";
   return "connection";
@@ -198,7 +200,7 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
       if (!item.is_map()) continue;
       if (is_connection(kind)) {
         LConnection c{conn_kind(kind, item.text("orientation")), item.text("start"), item.text("end"),
-                      item.text("left"),  item.text("mid"),   item.text("right")};
+                      item.text("left"),  item.text("mid"),   item.text("right"), item.text("corner")};
         out.connections.push_back(std::move(c));
         continue;
       }
@@ -236,7 +238,8 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
     } else if (is_connection(c.tag)) {
       auto orientation = c.attrs.count("orientation") ? c.attrs.at("orientation") : std::string{};
       out.connections.push_back({conn_kind(c.tag, orientation), c.child_text("start"), c.child_text("end"),
-                                 c.child_text("left"), c.child_text("mid"), c.child_text("right")});
+                                 c.child_text("left"), c.child_text("mid"), c.child_text("right"),
+                                 c.child_text("corner")});  // legacy reads the child, never a corner= attribute
       for (const auto& end : c.children)
         if (end.attrs.count("offset")) {
           notes.push_back("canvas: connection " + c.child_text("start") + "-" + c.child_text("end") +
@@ -630,6 +633,9 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
       if (e.use_symbol) cv << "use_symbol = true\n";
     }
   }
+  std::map<std::string, std::pair<double, double>> at;  // pixel positions as written
+  for (const auto& e : elements)
+    if (e.kind != "label") at[e.name] = {px(e.x), py(e.y)};
   for (const auto& c : canvas.connections) {
     if (c.kind == "tee") {
       const bool ok = drawn.contains(c.left) && drawn.contains(c.mid) && drawn.contains(c.right);
@@ -643,6 +649,21 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
     if (!drawn.contains(c.start) || !drawn.contains(c.end)) {
       out.notes.push_back("canvas: connection " + c.start + "-" + c.end + " names an element that is not drawn; dropped");
       continue;
+    }
+    if (c.kind == "elbow") {
+      // Legacy turns at (start.x, end.y), or at (end.x, start.y) for "lr",
+      // whatever else the corner says. canvas.toml names the corner of the
+      // ends' bounding box instead, so name the one legacy turned at.
+      const auto [sx, sy] = at[c.start];
+      const auto [ex, ey] = at[c.end];
+      if (num(sx) != num(ex) && num(sy) != num(ey)) {  // lined up as written: a plain connection
+        const bool lr = c.corner == "lr";
+        const bool left = lr ? ex < sx : sx < ex;
+        const bool upper = lr ? sy < ey : ey < sy;  // pixels: y down
+        cv << "\n[[elbow]]\nstart = " << q(c.start) << "\nend = " << q(c.end) << "\ncorner = "
+           << q(std::string(upper ? "u" : "l") + (left ? "l" : "r")) << "\n";
+        continue;
+      }
     }
     cv << "\n[[connection]]\nstart = " << q(c.start) << "\nend = " << q(c.end) << "\n";
     if (c.kind == "h" || c.kind == "v") cv << "orientation = " << q(c.kind) << "\n";

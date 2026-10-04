@@ -246,12 +246,12 @@ class TestCanvasView : public QObject {
     int coloured = 0;
     for (const ui::ConnectionItem* pipe : view_->pipes()) {
       if (touches(pipe, "bone") || touches(pipe, "A")) {
-        QCOMPARE(pipe->region_color(), region.darker(120));
+        QCOMPARE(pipe->region_color(), region);
         ++coloured;
       }
       // A pipe on the far side of the closed valve B never takes bone's colour.
       if (touches(pipe, "B") && touches(pipe, "spec")) {
-        QVERIFY(pipe->region_color() != region.darker(120));
+        QVERIFY(pipe->region_color() != region);
       }
     }
     QVERIFY(coloured >= 2);
@@ -284,6 +284,88 @@ class TestCanvasView : public QObject {
     // the example's own: P1 straight under prep
     QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{400, 200}, {400, 330}}));
     line->stop();
+  }
+
+  // An elbow turns at the named corner of its ends' bounding box. Named a
+  // corner one of its ends sits on, it turns level with the end instead.
+  void elbowsTurnOneSquareCorner() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    QTemporaryDir tmp;
+    const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
+    std::filesystem::copy_file(examples / "canvas.toml", canvas);
+    // B (550, 200), A (250, 200), turbo (650, 300), P2 (400, 510).
+    std::ofstream(canvas, std::ios::app) << "\n[[elbow]]\nstart = \"B\"\nend = \"turbo\"\ncorner = \"ur\"\n"
+                                         << "\n[[elbow]]\nstart = \"A\"\nend = \"turbo\"\ncorner = \"ul\"\n"
+                                         << "\n[[elbow]]\nstart = \"P1\"\nend = \"P2\"\ncorner = \"ll\"\n";
+    auto line = ui::test::make_example_line(canvas);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    auto route = [&](const char* a, const char* b) {
+      std::vector<QPointF> points;
+      for (const ui::ConnectionItem* pipe : view.pipes()) {
+        if (pipe->endpoints() != std::vector<std::string>{a, b} || pipe->path().elementCount() < 2) continue;
+        if (!points.empty()) points.clear();  // the last one added: the elbow
+        const QPainterPath path = pipe->path();
+        for (int i = 0; i < path.elementCount(); ++i) points.emplace_back(path.elementAt(i));
+      }
+      return points;
+    };
+    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {650, 200}, {650, 300}}));
+    QCOMPARE(route("A", "turbo"), (std::vector<QPointF>{{250, 200}, {250, 300}, {650, 300}}));
+    QCOMPARE(route("P1", "P2"), (std::vector<QPointF>{{400, 330}, {400, 510}}));  // lined up
+    line->stop();
+  }
+
+  // Pipes are bordered like every other component, and where one runs into
+  // a volume the volume's border is broken (legacy pychron's look).
+  void pipesAreBorderedAndBreakTheBorderOfVolumesTheyEnter() {
+    const ui::ConnectionItem* pipe = nullptr;
+    for (const ui::ConnectionItem* p : view_->pipes()) {
+      if (p->endpoints() == std::vector<std::string>{"prep", "P1"}) pipe = p;
+    }
+    QVERIFY(pipe != nullptr);
+    // the border: the same path, a border wider each side, under every fill
+    QVERIFY(pipe->outline()->scene() == pipe->scene());
+    QCOMPARE(pipe->outline()->path(), pipe->path());
+    QCOMPARE(pipe->outline()->pen().widthF(), pipe->pen().widthF() + 2 * ui::ConnectionItem::kBorderWidth);
+    QCOMPARE(pipe->outline()->pen().color(), ui::theme().text);
+    QVERIFY(pipe->outline()->zValue() < pipe->zValue());
+    for (const ui::ConnectionItem* other : view_->pipes()) QVERIFY(pipe->outline()->zValue() < other->zValue());
+
+    // one gap, at prep (a volume); none at P1 (a valve keeps its border)
+    QCOMPARE(pipe->gaps().size(), std::size_t{1});
+    const QGraphicsPathItem* gap = pipe->gaps().front();
+    QVERIFY(gap->scene() == pipe->scene());
+    QVERIFY(gap->zValue() > view_->stage("prep")->zValue());
+    QVERIFY(gap->zValue() < view_->valve("P1")->zValue());
+    // it straddles prep's bottom edge, on the pipe (x = 400)
+    const QRectF prep = view_->stage("prep")->sceneBoundingRect().adjusted(1, 1, -1, -1);
+    const QRectF across = gap->path().boundingRect();
+    QCOMPARE(across.center().x(), 400.0);
+    QVERIFY(across.top() < prep.bottom() && across.bottom() > prep.bottom());
+    QCOMPARE(gap->pen().widthF(), pipe->pen().widthF());
+
+    // and wears the pipe's colour as the region changes
+    QCOMPARE(gap->pen().color(), pipe->region_color());
+    bridge_->actuate("P1", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("P1")->state(), ValveState::Open, 5000);
+    QVERIFY(pipe->region_color() != ui::ConnectionItem::default_color());
+    QCOMPARE(gap->pen().color(), pipe->region_color());
+  }
+
+  void boxEntryFindsWhereALineCrossesIntoABox() {
+    const QRectF box(80, -10, 40, 20);
+    auto in = ui::box_entry({{0, 0}, {100, 0}}, box);
+    QVERIFY(in.has_value());
+    QCOMPARE(in->edge, QPointF(80, 0));
+    QCOMPARE(in->inward, QPointF(1, 0));
+    // round a corner that is already inside: the crossing is on the first run
+    in = ui::box_entry({{100, 50}, {100, 5}, {110, 5}}, box);
+    QVERIFY(in.has_value());
+    QCOMPARE(in->edge, QPointF(100, 10));
+    QCOMPARE(in->inward, QPointF(0, -1));
+    QVERIFY(!ui::box_entry({{0, 0}, {50, 0}}, box).has_value());       // ends outside
+    QVERIFY(!ui::box_entry({{90, 0}, {100, 0}}, box).has_value());     // never outside
   }
 
   void gaugeLabelTurnsRedOnAlarmAndClearsInLimits() {

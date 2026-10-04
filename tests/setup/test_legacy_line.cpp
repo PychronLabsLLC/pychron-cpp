@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -307,6 +308,9 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <spectrometer>Obama<translation>-2,-10</translation><dimension>4,2</dimension></spectrometer>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
+          "  <elbow><start>A</start><end>Obama</end></elbow>\n"
+          "  <elbow><corner>lr</corner><start>A</start><end>MV</end></elbow>\n"
+          "  <elbow corner=\"lr\"><start>B</start><end>MV</end></elbow>\n"
           "</root>\n");
   t.write("devices/switch_controller.cfg",
           "[General]\ntype = AgilentGPActuator\n[Communications]\ntype = serial\nport = /dev/ttyUSB0\nbaudrate = 19200\n");
@@ -332,6 +336,19 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   EXPECT_EQ(connection(*drawing, "B", "Obama")->orientation, canvas::Orientation::Auto);
+
+  // Elbows turn where legacy pychron turned them: level with the end, above
+  // or below the start; for "lr", level with the start. The corner is named
+  // as canvas.toml has it, by its place in the ends' bounding box.
+  auto corner_of = [&](const std::string& start, const std::string& end) -> std::optional<canvas::Corner> {
+    for (const auto& e : drawing->elbows)
+      if (e.start == start && e.end == end) return e.corner;
+    return std::nullopt;
+  };
+  ASSERT_EQ(drawing->elbows.size(), 3u);
+  EXPECT_EQ(corner_of("A", "Obama"), canvas::Corner::LowerLeft);   // A is left of and above Obama
+  EXPECT_EQ(corner_of("A", "MV"), canvas::Corner::LowerRight);     // lr: across from A, then up to MV
+  EXPECT_EQ(corner_of("B", "MV"), canvas::Corner::UpperRight);     // a corner= attribute is not read: the default
 
   const std::string notes = all_notes(*made);
   EXPECT_TRUE(has_note(*made, "query_state=\"false\" not carried over (1 valve: A)")) << notes;

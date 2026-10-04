@@ -129,10 +129,20 @@ void CanvasView::build(const canvas::Canvas& c) {
     if (!position(e.start, a) || !position(e.end, b)) {
       continue;
     }
+    if (a.x() == b.x() || a.y() == b.y()) {
+      add_pipe({a, b}, width, {e.start, e.end});  // lined up: nothing to turn
+      continue;
+    }
     const bool left = e.corner == canvas::Corner::UpperLeft || e.corner == canvas::Corner::LowerLeft;
     const bool upper = e.corner == canvas::Corner::UpperLeft || e.corner == canvas::Corner::UpperRight;
-    const QPointF corner(left ? std::min(a.x(), b.x()) : std::max(a.x(), b.x()),
-                         upper ? std::min(a.y(), b.y()) : std::max(a.y(), b.y()));
+    QPointF corner(left ? std::min(a.x(), b.x()) : std::max(a.x(), b.x()),
+                   upper ? std::min(a.y(), b.y()) : std::max(a.y(), b.y()));
+    // The ends sit on two opposite corners of their bounding box and the
+    // elbow turns at one of the other two. Asked for a corner an end is on,
+    // turn as legacy pychron does: straight up or down from the start.
+    if (corner == a || corner == b) {
+      corner = QPointF(a.x(), b.y());
+    }
     add_pipe({a, corner, b}, width, {e.start, e.end});
   }
   for (const auto& t : c.tees) {
@@ -186,6 +196,21 @@ ConnectionItem* CanvasView::add_pipe(const std::vector<QPointF>& points, double 
                                      std::vector<std::string> endpoints) {
   auto* item = new ConnectionItem(points, width, std::move(endpoints));
   scene_.addItem(item);
+  scene_.addItem(item->outline());
+  // Break the border of a volume the pipe runs into: the first point belongs
+  // to the first endpoint, the last to the second. Only volumes: valves keep
+  // a whole border, as in legacy pychron.
+  const auto& names = item->endpoints();
+  if (points.size() >= 2 && names.size() >= 2) {
+    const std::vector<QPointF> reversed(points.rbegin(), points.rend());
+    const std::array<std::pair<const std::vector<QPointF>*, const std::string*>, 2> ends{
+        {{&reversed, &names[0]}, {&points, &names[1]}}};
+    for (const auto& [run, name] : ends) {
+      auto box = boxes_.find(*name);
+      if (box == boxes_.end()) continue;
+      if (auto entry = box_entry(*run, box->second)) scene_.addItem(item->add_gap(*entry));
+    }
+  }
   pipes_.push_back(item);
   ++connections_;
   return item;
@@ -307,7 +332,7 @@ void CanvasView::apply_regions() {
     QColor color = ConnectionItem::default_color();
     for (const auto& endpoint : pipe->endpoints()) {
       if (auto it = colors.find(endpoint); it != colors.end()) {
-        color = it->second.darker(120);  // a shade deeper than the volume fill so pipes read as pipes
+        color = it->second;  // the volume's own fill: through the gap in its border they read as one
         break;
       }
     }

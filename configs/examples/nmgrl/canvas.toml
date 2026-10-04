@@ -440,9 +440,10 @@ start = "B"
 end = "Bone"
 orientation = "v"
 
-[[connection]]
+[[elbow]]
 start = "D"
 end = "Bone"
+corner = "lr"
 
 [[connection]]
 start = "C"
@@ -533,9 +534,10 @@ start = "Q"
 end = "Quad"
 orientation = "h"
 
-[[connection]]
+[[elbow]]
 start = "Minibone"
 end = "I"
+corner = "ur"
 
 [[connection]]
 start = "W"
@@ -592,9 +594,10 @@ start = "U"
 end = "BTurbo"
 orientation = "v"
 
-[[connection]]
+[[elbow]]
 start = "T"
 end = "Microbone"
+corner = "ll"
 
 [[connection]]
 start = "K"
