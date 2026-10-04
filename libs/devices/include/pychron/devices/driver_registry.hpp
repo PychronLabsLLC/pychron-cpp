@@ -38,6 +38,9 @@ struct DriverSchema {
   std::string kind;  // filled in by the registry
   std::string summary;
   std::vector<ConfigKey> keys;
+  // The driver is an extraction::IExtractionDevice: a queue's extract_device
+  // may name a [drivers.<name>] of this kind.
+  bool extraction_device = false;
 };
 
 // Everything a factory gets. `options` has already been checked against the

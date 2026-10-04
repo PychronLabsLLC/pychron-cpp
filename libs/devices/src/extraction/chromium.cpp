@@ -91,7 +91,8 @@ DriverSchema ChromiumLaser::schema() {
             "x, y, z speeds in microns per second; z may be 0 (never moved); default [5000, 5000, 100]"},
            {"in_position_um", KeyType::Float, false, "how near the target counts as arrived, microns; default 10"},
            {"use_enable", KeyType::Boolean, false,
-            "send Laser.Enable; false for a unit that refuses it; default true"}}};
+            "send Laser.Enable; false for a unit that refuses it; default true"}},
+          true};
 }
 
 Result<std::unique_ptr<ChromiumLaser>> ChromiumLaser::create(const DriverArgs& args) {
@@ -393,11 +394,6 @@ Result<bool> ChromiumLaser::is_firing() {
 
 // ---- stage -----------------------------------------------------------------------
 
-void ChromiumLaser::set_tray_lookup(TrayLookup lookup) {
-  std::lock_guard lock(state_);
-  lookup_ = std::move(lookup);
-}
-
 cr::Microns ChromiumLaser::to_wire(const StagePosition& mm) const {
   auto um = [&](double v, std::size_t axis) { return std::llround(v * 1000.0) * options_.signs[axis]; };
   return {um(mm.x, 0), um(mm.y, 1), um(mm.z, 2)};
@@ -471,17 +467,8 @@ Result<void> ChromiumLaser::move_to_position(std::string_view position, bool /*a
     good_polls_ = 0;
     return observe(Result<void>{});
   }
-  std::optional<StagePosition> hole;
-  std::string tray;
-  {
-    std::lock_guard lock(state_);
-    tray = tray_;
-    if (lookup_.find) hole = lookup_.find(tray_, position);
-  }
-  if (!hole) {
-    return refuse(ErrorKind::Config, "no position '" + std::string(position) + "' on tray '" + tray + "'");
-  }
-  return set_xy(hole->x, hole->y);
+  // A hole on a tray is the laser system's to resolve (pychron/laser).
+  return refuse(ErrorKind::Config, "'" + std::string(position) + "' is not a scan position (s<n>)");
 }
 
 Result<bool> ChromiumLaser::moving() {
@@ -540,19 +527,14 @@ Result<bool> ChromiumLaser::moving() {
   return observe(run());
 }
 
+// Trays are the laser system's; the driver keeps the name and nothing else.
 Result<void> ChromiumLaser::set_tray(std::string_view tray) {
   std::lock_guard lock(state_);
-  if (lookup_.names && lookup_.names(tray).empty()) {
-    return refuse(ErrorKind::Config, "no tray '" + std::string(tray) + "'");
-  }
   tray_ = std::string(tray);
   return {};
 }
 
-std::vector<std::string> ChromiumLaser::positions() const {
-  std::lock_guard lock(state_);
-  return lookup_.names ? lookup_.names(tray_) : std::vector<std::string>{};
-}
+std::vector<std::string> ChromiumLaser::positions() const { return {}; }
 
 }  // namespace pychron::extraction
 

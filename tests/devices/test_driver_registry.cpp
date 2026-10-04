@@ -196,6 +196,12 @@ TEST(DriverRegistryGlobal, StaticLibraryRegistrationSurvivesLinking) {
   EXPECT_TRUE(DriverRegistry::global().contains("test_archived_driver"));
 }
 
+TEST(DriverRegistryGlobal, OnlyExtractionDevicesAreMarkedSo) {
+  for (const auto& schema : DriverRegistry::global().schemas()) {
+    EXPECT_EQ(schema.extraction_device, schema.kind == "chromium") << schema.kind;
+  }
+}
+
 TEST(KeyTypeNames, Stable) {
   EXPECT_EQ(to_string(KeyType::String), "string");
   EXPECT_EQ(to_string(KeyType::Integer), "integer");

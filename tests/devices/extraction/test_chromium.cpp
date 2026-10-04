@@ -33,21 +33,6 @@ ChromiumOptions options() {
   return o;
 }
 
-// One tray, two holes: what the laser system's tray maps will supply.
-TrayLookup lookup() {
-  TrayLookup l;
-  l.find = [](std::string_view tray, std::string_view position) -> std::optional<StagePosition> {
-    if (tray != "221-hole") return std::nullopt;
-    if (position == "1") return StagePosition{1.5, -2.0, 0};
-    if (position == "2") return StagePosition{10, 10, 0};
-    return std::nullopt;
-  };
-  l.names = [](std::string_view tray) {
-    return tray == "221-hole" ? std::vector<std::string>{"1", "2"} : std::vector<std::string>{};
-  };
-  return l;
-}
-
 // Declared in the order they must be built and, reversed, torn down: the
 // driver holds the transport, the transport's hook holds the simulator.
 struct ChromiumHarness {
@@ -58,8 +43,6 @@ struct ChromiumHarness {
 
   ChromiumHarness() {
     EXPECT_TRUE(wire->open());
-    laser.set_tray_lookup(lookup());
-    EXPECT_TRUE(laser.set_tray("221-hole"));
   }
   IExtractionDevice& device() { return laser; }
   void advance() { clock.advance(250ms); }
@@ -77,7 +60,8 @@ struct ChromiumTest : ::testing::Test, ChromiumHarness {
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, ExtractionDeviceConformance, ::testing::Types<ChromiumHarness>);
 INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, LaserConformance, ::testing::Types<ChromiumHarness>);
-INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, StageConformance, ::testing::Types<ChromiumHarness>);
+// StageConformance needs named positions on a tray, which are the laser
+// system's: tests/laser/test_laser_system.cpp runs it over this driver.
 
 TEST_F(ChromiumTest, PrepareIdentifiesChromium) {
   EXPECT_TRUE(laser.chromium_id().empty());
@@ -411,23 +395,19 @@ TEST_F(ChromiumTest, AScanPositionMovesByScanNumber) {
   EXPECT_FALSE(*laser.moving());
 }
 
-TEST_F(ChromiumTest, AHolePositionIsLookedUpOnTheCurrentTray) {
-  ASSERT_TRUE(laser.move_to_position("2", true));  // autocenter is accepted
-  EXPECT_TRUE(logged("Stage.MoveTo 10000,10000,0,5000,5000,100"));
-  EXPECT_EQ(laser.move_to_position("3", false).error().kind, ErrorKind::Config);
+TEST_F(ChromiumTest, AHoleNameIsNotTheDriversToResolve) {
+  ASSERT_TRUE(laser.set_tray("221-hole"));  // any name: trays are the laser system's
+  const auto before = sim.log().size();
+  auto r = laser.move_to_position("12", false);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("12"), std::string::npos);
+  EXPECT_EQ(sim.log().size(), before);
+  EXPECT_FALSE(*laser.moving());
+  EXPECT_TRUE(laser.positions().empty());
 }
 
-TEST_F(ChromiumTest, AnUnknownTrayIsConfig) {
-  EXPECT_EQ(laser.set_tray("no-such-tray").error().kind, ErrorKind::Config);
-  EXPECT_EQ(laser.positions(), (std::vector<std::string>{"1", "2"}));  // unchanged
-}
-
-TEST_F(ChromiumTest, WithNoTrayLookupOnlyScansAndCoordinatesWork) {
-  ChromiumLaser bare{"co2", *wire, options()};
-  EXPECT_TRUE(bare.positions().empty());
-  EXPECT_EQ(bare.move_to_position("1", false).error().kind, ErrorKind::Config);
-  EXPECT_TRUE(bare.set_xy(1, 1));
-}
+TEST(ChromiumSchema, MarksAnExtractionDevice) { EXPECT_TRUE(ChromiumLaser::schema().extraction_device); }
 
 // --- registration -----------------------------------------------------------------
 
