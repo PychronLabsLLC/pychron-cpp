@@ -362,4 +362,4 @@ TEST_P(CatalogImportTest, FindCatalogRowByNaturalKey) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, CatalogImportTest, ::testing::ValuesIn(engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });

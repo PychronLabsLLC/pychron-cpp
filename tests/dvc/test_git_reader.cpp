@@ -462,8 +462,11 @@ TEST(GitReader, ChangesAddModifyDelete) {
 
   // The root commit against the empty tree.
   EXPECT_EQ(paths_of(*changes, c1), (std::vector<std::string>{"660/52-01E.json", "660/tags/52-01E.tags.json"}));
-  for (const auto& change : *changes)
-    if (change.commit == c1) EXPECT_EQ(change.status, 'A');
+  for (const auto& change : *changes) {
+    if (change.commit == c1) {
+      EXPECT_EQ(change.status, 'A');
+    }
+  }
 
   const GitChange* modified = find_change(*changes, c2, "660/52-01E.json");
   const GitChange* added = find_change(*changes, c2, "660/52-01F.json");

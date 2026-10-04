@@ -1291,7 +1291,9 @@ TEST_P(MetaImportTest, VerifyAfterImportIsOk) {
     // README.md and the script of the first commit.
     EXPECT_EQ(report.ignored, 2) << batch_commits;
     EXPECT_GT(report.units, 30) << batch_commits;
-    if (first) EXPECT_EQ(report.units, first->units) << batch_commits;
+    if (first) {
+      EXPECT_EQ(report.units, first->units) << batch_commits;
+    }
     first = report;
   }
   const auto after = snapshot_of(*world_);

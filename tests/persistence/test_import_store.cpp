@@ -473,8 +473,11 @@ TEST_P(ImportStoreTest, OneChangeLogEntryPerBatch) {
   int analyses = 0;
   for (const auto& e : page->entries[0].entities) analyses += e.entity_type == "analysis";
   EXPECT_EQ(analyses, 2);
-  for (const auto& revision : *store_->history(analysis_, Kind::Intercepts))
-    if (revision.changeset.kind == ChangesetKind::Import) EXPECT_EQ(revision.change_seq, *seq);
+  for (const auto& revision : *store_->history(analysis_, Kind::Intercepts)) {
+    if (revision.changeset.kind == ChangesetKind::Import) {
+      EXPECT_EQ(revision.change_seq, *seq);
+    }
+  }
 }
 
 TEST_P(ImportStoreTest, ImportedIdentityRevisionRenumbersTheAnalysis) {

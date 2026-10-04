@@ -90,12 +90,16 @@ TEST(Layout, DataFixtureRoundTrips) {
   EXPECT_EQ(count("baseline"), 5);
   EXPECT_EQ(count("sniff"), 5);
   for (const auto& r : d->refs) {
-    if (r.series_kind == "signal") EXPECT_EQ(r.n_points, 340) << r.series_key;
+    if (r.series_kind == "signal") {
+      EXPECT_EQ(r.n_points, 340) << r.series_key;
+    }
     if (r.series_kind == "baseline") {
       EXPECT_EQ(r.n_points, 60) << r.series_key;
       EXPECT_EQ(r.series_key, r.detector);  // a baseline has no isotope: keyed by detector
     }
-    if (r.series_kind == "sniff") EXPECT_EQ(r.n_points, 25) << r.series_key;
+    if (r.series_kind == "sniff") {
+      EXPECT_EQ(r.n_points, 25) << r.series_key;
+    }
   }
   // README 5.2: first baseline time, first sniff time.
   const auto baseline = std::find_if(d->refs.begin(), d->refs.end(), [](const auto& r) {

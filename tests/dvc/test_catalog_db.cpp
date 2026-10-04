@@ -773,8 +773,11 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
   ASSERT_TRUE(refused);
   auto uow = world_->store->begin_import_batch(world_->source().spec.uuid, world_->client);
   ASSERT_TRUE(uow);
-  for (const auto& row : *refused)
-    if (row.path.find('@') == std::string::npos) ASSERT_TRUE((*uow)->resolve_conflict(row.uuid, "ignored"));
+  for (const auto& row : *refused) {
+    if (row.path.find('@') == std::string::npos) {
+      ASSERT_TRUE((*uow)->resolve_conflict(row.uuid, "ignored"));
+    }
+  }
   ASSERT_TRUE((*uow)->commit());
   auto adapter = CatalogAdapter::open(adapter_config());
   ASSERT_TRUE(adapter) << err(adapter.error());
@@ -866,7 +869,7 @@ TEST_P(CatalogDb, VerifyReportsAMissingCatalogRowOrConflict) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, CatalogDb, ::testing::ValuesIn(P::testing::engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });
 
 // ---------------------------------------------------------------- the adapter alone
 

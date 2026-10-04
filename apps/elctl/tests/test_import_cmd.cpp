@@ -375,8 +375,9 @@ TEST_F(ImportCmd, AddRejectsNonRepo) {
   expect_refused(add_project(plain.string()), plain.string(), "not a git repository");
   EXPECT_EQ(import({"status"}).out, "");
   // No settings file either.
-  if (fs::exists(cache_))
+  if (fs::exists(cache_)) {
     for (const auto& entry : fs::directory_iterator(cache_)) EXPECT_NE(entry.path().extension(), ".toml") << entry.path();
+  }
 }
 
 TEST_F(ImportCmd, AddRejectsMissingBranch) {
