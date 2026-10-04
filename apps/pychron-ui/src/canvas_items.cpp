@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <QCursor>
+#include <QFontMetricsF>
 #include <QAction>
 #include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneMouseEvent>
@@ -95,9 +96,14 @@ void ValveItem::flash(const QString& what) {
   update();
 }
 
+QString ValveItem::shown_name(const QFontMetricsF& metrics) const {
+  return metrics.elidedText(QString::fromStdString(name_), Qt::ElideRight, kSize - 4);
+}
+
 QRectF ValveItem::boundingRect() const {
-  const double half = kSize / 2 + 4;  // room for the pending outline and badge
-  return {-half, -half, 2 * half, 2 * half};
+  const double half = kSize / 2 + 4;  // room for the pending outline and the lock border
+  const double handle = kind_ == canvas::ValveKind::Manual ? kHandleHeight : 0;
+  return {-half, -half - handle, 2 * half, 2 * half + handle};
 }
 
 void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
@@ -111,9 +117,14 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->drawRoundedRect(body, kCornerRadius, kCornerRadius);
   }
   if (kind_ == canvas::ValveKind::Manual) {
-    painter->drawLine(body.topLeft() + QPointF(3, 3), body.bottomRight() - QPointF(3, 3));
+    // stem up from the body, bar across it
+    const QPointF top(0, body.top() - kHandleHeight);
+    painter->setPen(QPen(theme().text, 2.5, Qt::SolidLine, Qt::RoundCap));
+    painter->drawLine(QPointF(0, body.top()), top);
+    painter->drawLine(top - QPointF(kHandleWidth / 2, 0), top + QPointF(kHandleWidth / 2, 0));
+    painter->setPen(QPen(theme().text, 1));
   }
-  painter->drawText(body, Qt::AlignCenter, QString::fromStdString(name_));
+  painter->drawText(body, Qt::AlignCenter, shown_name(QFontMetricsF(painter->font())));
 
   if (pending_) {
     painter->setBrush(Qt::NoBrush);

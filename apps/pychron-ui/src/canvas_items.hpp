@@ -12,6 +12,7 @@
 
 #include <QColor>
 #include <QFont>
+#include <QFontMetricsF>
 #include <QGraphicsObject>
 #include <QGraphicsPathItem>
 #include <QGraphicsSimpleTextItem>
@@ -29,19 +30,24 @@ namespace pychron::ui {
 QPointF to_qpoint(const canvas::Point& p);
 QColor valve_color(ValveState state);
 
-// Click -> actuate; colour by state; blue border when locked (context menu
-// locks/unlocks); pending indicator; flashes
-// and shows Error.what in its tooltip on rejection.
+// Click -> actuate; colour by state; thick blue border when locked (context
+// menu locks/unlocks); pending indicator; flashes and shows Error.what in its
+// tooltip on rejection. A manual valve wears a T handle on top; a name too
+// long for the body is cut short (the tooltip has it whole).
 class ValveItem : public QGraphicsObject {
   Q_OBJECT
 
  public:
   static constexpr double kSize = 30.0;
   static constexpr double kCornerRadius = 5.0;
-  static constexpr double kLockBorderWidth = 3.0;
+  static constexpr double kLockBorderWidth = 5.0;
+  // A manual valve's handle: a T standing on the body, the P&ID mark for a
+  // hand-operated valve.
+  static constexpr double kHandleHeight = 7.0;
+  static constexpr double kHandleWidth = 16.0;
 
   // Border colour of a software-locked valve.
-  static QColor lock_color() { return theme().accent; }
+  static QColor lock_color() { return theme().lock; }
 
   ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent = nullptr);
 
@@ -66,6 +72,9 @@ class ValveItem : public QGraphicsObject {
   // Called with the requested state when the user picks the context-menu
   // lock/unlock action. Manual valves have no menu.
   void set_on_lock_request(std::function<void(const std::string&, bool)> cb) { on_lock_request_ = std::move(cb); }
+
+  // The name as drawn: whole, or cut short with an ellipsis to fit the body.
+  QString shown_name(const QFontMetricsF& metrics) const;
 
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;

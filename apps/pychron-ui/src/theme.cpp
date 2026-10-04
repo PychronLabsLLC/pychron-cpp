@@ -34,6 +34,7 @@ Theme light() {
   t.error_text = rgb(0xb4232a);
   t.warning_text = rgb(0x8a5a00);
   t.accent = rgb(0x0b7a75);
+  t.lock = rgb(0x1f6feb);
 
   t.window = rgb(0xeef1f4);
   t.base = rgb(0xffffff);

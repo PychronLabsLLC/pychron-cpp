@@ -486,6 +486,43 @@ class TestCanvasView : public QObject {
     QCOMPARE(view_->stage("prep")->region_color(), view_->stage("turbo")->region_color());
   }
 
+  // A manual valve wears a T handle above its body, and any valve cuts a
+  // name too long for the body short; the tooltip keeps it whole.
+  void manualValvesWearAHandleAndLongNamesAreCutShort() {
+    ui::ValveItem manual("MiniBoneGP5Manual", canvas::ValveKind::Manual);
+    ui::ValveItem valve("A", canvas::ValveKind::Valve);
+    // room above the body for the handle, only on the manual valve
+    QCOMPARE(manual.boundingRect().top(), valve.boundingRect().top() - ui::ValveItem::kHandleHeight);
+    QCOMPARE(manual.boundingRect().bottom(), valve.boundingRect().bottom());
+
+    const QFontMetricsF metrics{QFont()};
+    const QString shown = manual.shown_name(metrics);
+    QVERIFY(shown != QStringLiteral("MiniBoneGP5Manual"));
+    QVERIFY(shown.endsWith(QChar(0x2026)));  // an ellipsis
+    QVERIFY(metrics.horizontalAdvance(shown) <= ui::ValveItem::kSize - 4);
+    QCOMPARE(manual.toolTip(), QStringLiteral("MiniBoneGP5Manual"));
+    QCOMPARE(valve.shown_name(metrics), QStringLiteral("A"));
+
+    // painted: the handle's bar, dark, above the body
+    QImage image(60, 70, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    painter.translate(30, 40);
+    manual.paint(&painter, nullptr, nullptr);
+    painter.end();
+    const int bar = 40 - static_cast<int>(ui::ValveItem::kSize / 2 + ui::ValveItem::kHandleHeight);
+    QVERIFY(image.pixelColor(30, bar).lightness() < 100);
+    QVERIFY(image.pixelColor(30 + 6, bar).lightness() < 100);
+    QVERIFY(image.pixelColor(30 + 14, bar).lightness() > 200);  // past the bar's end
+  }
+
+  // The lock border is blue and thick enough to read at a glance.
+  void lockBorderIsBlueAndThick() {
+    const QColor lock = ui::ValveItem::lock_color();
+    QVERIFY(lock.blue() > 200 && lock.blue() > lock.red() + 100 && lock.blue() > lock.green() + 80);
+    QVERIFY(ui::ValveItem::kLockBorderWidth >= 5.0);
+  }
+
   void boxEntryFindsWhereALineCrossesIntoABox() {
     const QRectF box(80, -10, 40, 20);
     auto in = ui::box_entry({{0, 0}, {100, 0}}, box);

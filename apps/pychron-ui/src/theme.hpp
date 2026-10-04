@@ -41,7 +41,8 @@ struct Theme {
   QColor faint_text;  // skipped rows, history, line numbers
   QColor error_text;
   QColor warning_text;
-  QColor accent;  // overridden, locked, selection
+  QColor accent;  // overridden, selection
+  QColor lock;    // a software-locked valve's border
 
   // Surfaces.
   QColor window;
