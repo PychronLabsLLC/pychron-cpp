@@ -945,6 +945,59 @@ TEST_P(ProjectImportTest, TwoAnalysesWithOneRunIdIsIdentityClash) {
   EXPECT_EQ(world_->conflicts(ConflictKind::UnknownAnalysis).size(), 6u);
 }
 
+// Fix wave E: two collections that become pending in one commit are folded
+// in the order of their path keys, not of where their tracks happen to sit in
+// memory, so the one that keeps a shared run id is the same in a fresh walk,
+// a resumed one, and at every batch size.
+TEST_P(ProjectImportTest, SameCommitPendingCollectionsFoldInKeyOrder) {
+  // G's track exists before F's (its intercepts come first), and both
+  // records, with one run id, arrive in the same commit. Neither completes.
+  repo_.write(uuid_file(kG, "intercepts/", ".inte.json"), LegacyRepoBuilder::fixture_text(FileKind::Intercepts));
+  legacy_.commit("<ISOEVO> early", kCollected);
+  repo_.write(uuid_file(kF, "", ".json"), LegacyRepoBuilder::record_text("66052-03B", kF.str()));
+  repo_.write(uuid_file(kG, "", ".json"), LegacyRepoBuilder::record_text("66052-03B", kG.str()));
+  const std::string both = legacy_.commit("<IMPORT> initial", kDay2);
+  for (int i = 0; i < 4; ++i) {
+    repo_.write("notes/" + std::to_string(i) + ".txt", "x");
+    legacy_.commit("note", kLater);
+  }
+
+  const auto check = [&](World& w, const std::string& what) {
+    EXPECT_TRUE(w.store->load_analysis(kF)->has_value()) << what;
+    EXPECT_FALSE(w.store->load_analysis(kG)->has_value()) << what;
+    auto taken = w.store->import_conflict(ingest::conflict_id(kUrl, both, uuid_file(kG, "", ".json")));
+    ASSERT_TRUE(taken && taken->has_value()) << what;
+    EXPECT_EQ((*taken)->entity, std::optional<Uuid>{kF}) << what;
+  };
+  for (const int wait : {2, 20}) {
+    auto config = adapter_config(repo_);
+    config.collection_wait_commits = wait;  // 2: folded by the bounded wait; 20: at the end of the walk
+    auto whole_world = fresh_world();
+    auto whole = run_import(*whole_world, config);
+    ASSERT_TRUE(whole) << err(whole.error());
+    check(*whole_world, "one batch, wait " + std::to_string(wait));
+    const auto expected = snapshot_of(*whole_world);
+
+    for (const int batch_commits : {1, 2, 3}) {
+      config.batch_commits = batch_commits;
+      const std::string what = "batches of " + std::to_string(batch_commits) + ", wait " + std::to_string(wait);
+      auto cut = fresh_world();
+      ASSERT_TRUE(run_import(*cut, config)) << what;
+      check(*cut, what);
+      EXPECT_EQ(snapshot_of(*cut), expected) << what;
+      // Stopped after every batch: each run rebuilds the walk from the token.
+      auto stopped = fresh_world();
+      for (int runs = 0; runs < 10; ++runs) {
+        auto stats = run_import(*stopped, config, 1);
+        ASSERT_TRUE(stats) << what << ": " << err(stats.error());
+        if (stats->finished) break;
+      }
+      check(*stopped, what + ", resumed");
+      EXPECT_EQ(snapshot_of(*stopped), expected) << what << ", resumed";
+    }
+  }
+}
+
 TEST_P(ProjectImportTest, SecondCopyInTheSameSourceIsMembershipOrIdentityClash) {
   // The analysis F under its uuid, then twice more under run-id paths: once
   // with the same record, byte for byte, once with an edited one.

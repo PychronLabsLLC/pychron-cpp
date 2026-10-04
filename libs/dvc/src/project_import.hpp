@@ -163,8 +163,8 @@ class Walk {
   // finished: the analyses still pending there were folded by that run.
   void assume_written();
 
-  // The pending analyses, earliest record first.
-  std::vector<Track*> pending() const;
+  // The pending analyses, earliest record first; of one commit, by path key.
+  std::vector<Track*> pending();
   // End of walk: folds a pending analysis with what it has.
   void force(Track& track, std::vector<Work>& out);
   // End of walk: the files of analyses that never got a record.
@@ -195,7 +195,11 @@ class Walk {
   std::map<std::string, FileRef> spectrometers_;
   std::map<std::string, int> spectrometer_first_;
   int applied_ = -1;  // the commit apply() was last given
-  std::set<std::pair<int, Track*>> pending_;  // (record commit index, track)
+  // (record commit index, track key): the pending analyses, earliest record
+  // first, those of one commit by key. Never by address: which of two
+  // analyses of one commit is folded first decides which keeps a run id they
+  // share, and must be the same in every walk of the history.
+  std::set<std::pair<int, std::string>> pending_;
   std::vector<Track*> flushed_;
 };
 

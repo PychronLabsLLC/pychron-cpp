@@ -108,7 +108,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
     }
     if (auto* slot = track.root_slot(kind)) {
       if (!*slot) {
-        if (kind == FileKind::Record) pending_.emplace(index, &track);
+        if (kind == FileKind::Record) pending_.emplace(index, track.key);
         *slot = std::move(ref);
       } else {
         track.later.push_back({kind, std::move(ref), std::move(previous), restored});
@@ -129,14 +129,14 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
   // The bounded wait: counted in commits of the walk, so the same analyses
   // are folded at the same commits however the walk is cut into batches.
   while (wait_ > 0 && !pending_.empty() && pending_.begin()->first + wait_ <= index)
-    flush(*pending_.begin()->second, out);
+    flush(tracks_.at(pending_.begin()->second), out);
   return record_rewritten;
 }
 
 void Walk::flush(Track& track, std::vector<Work>* out) {
   track.flushed = true;
   track.folded_at = applied_;
-  if (track.record) pending_.erase({track.record->index, &track});
+  if (track.record) pending_.erase({track.record->index, track.key});
   flushed_.push_back(&track);
   if (out) {
     Collect fold{&track, std::nullopt};
@@ -158,10 +158,10 @@ void Walk::assume_written() {
   for (const auto& entry : pending()) flush(*entry, nullptr);
 }
 
-std::vector<Track*> Walk::pending() const {
+std::vector<Track*> Walk::pending() {
   std::vector<Track*> tracks;
   tracks.reserve(pending_.size());
-  for (const auto& entry : pending_) tracks.push_back(entry.second);
+  for (const auto& entry : pending_) tracks.push_back(&tracks_.at(entry.second));
   return tracks;
 }
 
