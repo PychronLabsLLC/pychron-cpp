@@ -46,6 +46,8 @@ enum class Shortcut {
   CloseScriptTab,
   CheckScript,
   GoToGosub,
+  // The conditionals editor.
+  SaveConditionals,
   // The data browser.
   RecallNext,
   RecallPrevious,
@@ -53,7 +55,7 @@ enum class Shortcut {
 
 // Where a shortcut works. Everywhere overlaps every window; the others are
 // separate windows, so their keys may repeat between them.
-enum class ShortcutContext { Everywhere, ExperimentWindow, ScriptEditor, DataBrowser };
+enum class ShortcutContext { Everywhere, ExperimentWindow, ScriptEditor, ConditionalsEditor, DataBrowser };
 
 struct ShortcutEntry {
   Shortcut id;

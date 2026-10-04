@@ -122,6 +122,22 @@ TEST(FactoryForm, FieldsTheTypeDoesNotUseAreDropped) {
   EXPECT_NE(heat.error().what.find("heats"), std::string::npos) << heat.error().what;
 }
 
+TEST(FactoryForm, ConditionalsGoToEveryRun) {
+  FactoryForm f = unknown_form();
+  f.position = "1-3";
+  f.conditionals = {"default_unknown", "run_cdd"};
+  auto runs = build_runs(f, kIds);
+  ASSERT_TRUE(runs) << runs.error().what;
+  ASSERT_EQ(runs->size(), 3u);
+  const std::vector<ConditionalRef> want{{"default_unknown", "action"}, {"run_cdd", "action"}};
+  for (const auto& r : *runs) EXPECT_EQ(r.conditionals, want);
+
+  RunSpec run = runs->front();
+  run.conditionals = {{"a", "truncate"}, {"b", "action"}};
+  EXPECT_EQ(form_from_run(run).conditionals, (std::vector<std::string>{"a", "b"}));
+  EXPECT_TRUE(form_from_run(RunSpec{}).conditionals.empty());
+}
+
 TEST(FactoryForm, BadInputIsAConfigError) {
   auto f = unknown_form();
   f.identifier = " ";

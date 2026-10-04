@@ -6,11 +6,14 @@
 #include <memory>
 
 #include <QAction>
+#include <QComboBox>
 #include <QMenu>
 #include <QMenuBar>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include "conditionals_editor_window.hpp"
 #include "experiment_bridge.hpp"
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
@@ -323,6 +326,153 @@ class TestExperimentWindow : public QObject {
                                                     QStringLiteral("brand_new"), &error),
              qPrintable(error));
     QVERIFY(!window.model().row_has_error(1));
+  }
+
+  void queueConditionalsAreChosenFromTheLabsFiles() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QComboBox* combo = window.queue_conditionals_combo();
+    QStringList items;
+    for (int i = 0; i < combo->count(); ++i) items.append(combo->itemText(i));
+    QCOMPARE(items, (QStringList{QStringLiteral("(none)"), QStringLiteral("system"), QStringLiteral("default_unknown")}));
+    QCOMPARE(combo->currentIndex(), 0);
+    QVERIFY(!window.modified());
+
+    combo->setCurrentIndex(2);
+    emit combo->activated(2);
+    QCOMPARE(window.model().queue().queue_conditionals, std::string("default_unknown"));
+    QVERIFY(window.modified());
+
+    // It goes to the file and comes back selected.
+    const fs::path out = sim.dir / "with_conditionals.toml";
+    QVERIFY(window.save_as(out));
+    combo->setCurrentIndex(0);
+    emit combo->activated(0);
+    QVERIFY(window.model().queue().queue_conditionals.empty());
+    window.set_ask_unsaved([] { return ExperimentWindow::Unsaved::Discard; });
+    QVERIFY(window.load_queue(out));
+    QCOMPARE(combo->currentText(), QStringLiteral("default_unknown"));
+
+    // A queue naming a file the lab does not have: shown, not dropped.
+    pychron::experiment::QueueSpec bad = window.model().queue();
+    bad.queue_conditionals = "gone";
+    window.model().set_queue(bad);
+    QCOMPARE(combo->currentText(), QStringLiteral("gone"));
+    QCOMPARE(combo->count(), 4);
+    QCOMPARE(window.model().queue().queue_conditionals, std::string("gone"));
+  }
+
+  void rowsTakeConditionalsFromADialog() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    using States = QList<Qt::CheckState>;
+    QStringList offered;
+    States initial;
+    std::optional<States> answer;
+    int asked = 0;
+    window.set_pick_conditionals([&](const QStringList& names, const States& states) {
+      ++asked;
+      offered = names;
+      initial = states;
+      return answer;
+    });
+    QVERIFY(!window.edit_selected_conditionals());  // nothing selected
+    QCOMPARE(asked, 0);
+
+    // One row has a file (and one the lab lacks), the other has none.
+    auto run = window.model().queue().runs[0];
+    run.conditionals = {{"default_unknown", "truncate"}, {"gone", "action"}};
+    QVERIFY(window.model().replace_run(0, run));
+    window.select_row(0);
+    window.table()->selectionModel()->select(window.model().index(1, 0),
+                                             QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    answer = std::nullopt;  // cancelled
+    QVERIFY(!window.edit_selected_conditionals());
+    QCOMPARE(asked, 1);
+    QCOMPARE(offered, (QStringList{QStringLiteral("system"), QStringLiteral("default_unknown"), QStringLiteral("gone")}));
+    QCOMPARE(initial, (States{Qt::Unchecked, Qt::PartiallyChecked, Qt::PartiallyChecked}));
+    QCOMPARE(window.model().queue().runs[0].conditionals.size(), std::size_t{2});
+
+    // OK without touching anything changes nothing.
+    answer = initial;
+    QVERIFY(window.edit_selected_conditionals());
+    QCOMPARE(window.model().queue().runs[0].conditionals, run.conditionals);
+    QVERIFY(window.model().queue().runs[1].conditionals.empty());
+
+    // system for both; default_unknown left as each row had it; gone removed.
+    answer = States{Qt::Checked, Qt::PartiallyChecked, Qt::Unchecked};
+    QVERIFY(window.edit_selected_conditionals());
+    using Ref = pychron::experiment::ConditionalRef;
+    QCOMPARE(window.model().queue().runs[0].conditionals,
+             (std::vector<Ref>{{"default_unknown", "truncate"}, {"system", "action"}}));
+    QCOMPARE(window.model().queue().runs[1].conditionals, (std::vector<Ref>{{"system", "action"}}));
+    QVERIFY(window.model().queue().runs[2].conditionals.empty());
+    QVERIFY(window.modified());
+    QCOMPARE(window.model().data(window.model().index(0, QueueTableModel::Conditionals)).toString(),
+             QStringLiteral("default_unknown, system"));
+  }
+
+  void theConditionalsEditorOpensAndItsSavesRevalidate() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.conditionals_editor() == nullptr);
+    auto* editor = window.open_conditionals_editor(QStringLiteral("default_unknown"));
+    QVERIFY(editor != nullptr);
+    QCOMPARE(editor->current_name(), QStringLiteral("default_unknown"));
+    QCOMPARE(window.open_conditionals_editor(), editor);
+    QCOMPARE(editor->current_name(), QStringLiteral("default_unknown"));  // no file named: stays
+
+    // A run naming a file that does not exist yet; making it in the editor fixes the row.
+    QVERIFY(window.model().set_conditionals({1}, {"run_x"}));
+    QVERIFY(window.model().row_has_error(1));
+    QVERIFY(editor->new_file(QStringLiteral("run_x")));
+    QString error;
+    QVERIFY2(editor->save(&error), qPrintable(error));
+    QVERIFY(!window.model().row_has_error(1));
+    QVERIFY(window.queue_conditionals_combo()->findText(QStringLiteral("run_x")) >= 0);
+    QVERIFY(window.factory()->conditional_choices().contains(QStringLiteral("run_x")));
+
+    // Deleting says the open queue uses it; once gone the row is an error again.
+    QString asked;
+    editor->set_confirm([&](const QString& q) {
+      asked = q;
+      return true;
+    });
+    QVERIFY(editor->delete_file(QStringLiteral("run_x")));
+    QVERIFY2(asked.contains(QStringLiteral("queue")), qPrintable(asked));
+    QVERIFY(window.model().row_has_error(1));
+    QVERIFY(window.queue_conditionals_combo()->findText(QStringLiteral("run_x")) < 0);
+    editor->close();
+  }
+
+  void theQueueConditionalsAreFixedWhileRunning() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.queue_conditionals_combo()->isEnabled());
+    bool combo_enabled = true, queue_set = true, row_set = false;
+    connect(&bridge, &ExperimentBridge::runStarted, this, [&](const pychron::experiment::executor::RunStarted& e) {
+      if (e.row != 0) return;
+      window.model().set_frozen(1);
+      combo_enabled = window.queue_conditionals_combo()->isEnabled();
+      queue_set = window.model().set_queue_conditionals("default_unknown");
+      // Rows the executor has not reached still take conditionals.
+      row_set = window.model().set_conditionals({2}, {"default_unknown"});
+    });
+    window.executor()->request_start();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(!combo_enabled);
+    QVERIFY(!queue_set);
+    QVERIFY(row_set);
+    QCOMPARE(window.model().queue().runs[2].conditionals.size(), std::size_t{1});
+    QTRY_VERIFY(window.queue_conditionals_combo()->isEnabled());
   }
 
   void mainWindowOffersTheExperimentWindow() {

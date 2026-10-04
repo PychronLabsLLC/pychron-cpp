@@ -33,6 +33,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QToolButton;
 
 namespace pychron::ui {
 
@@ -63,6 +64,9 @@ class RunFactoryPanel : public QWidget {
   void set_frequency(experiment::AnalysisType type, int every, bool before, bool after);
   void set_block(const QString& name, int times);
   void set_locked(bool locked);
+  // The lab's conditionals files changed (the editor made or deleted one).
+  void refresh_conditionals();
+  void set_conditional_checked(const QString& name, bool on);
 
   // For tests.
   QString preview_text() const;
@@ -71,6 +75,8 @@ class RunFactoryPanel : public QWidget {
   QStringList plan_choices() const;
   QStringList script_choices() const;
   QStringList block_choices() const;
+  QStringList conditional_choices() const;
+  QString conditionals_text() const;  // the button: the ticked files or "(none)"
 
  signals:
   // Rows the panel just inserted (sorted), for the window to select.
@@ -96,6 +102,7 @@ class RunFactoryPanel : public QWidget {
   bool updating_ = false;  // set_form in progress: no per-field reactions
   experiment::AnalysisType last_type_ = experiment::AnalysisType::Unknown;
   experiment::FactoryForm overrides_carrier_;  // keeps overrides from defaults or a row
+  std::vector<std::string> conditionals_;      // the ticked conditionals files, in the order ticked
 
   QComboBox* type_;
   QLineEdit* identifier_;
@@ -115,6 +122,7 @@ class RunFactoryPanel : public QWidget {
   QComboBox* post_equilibration_;
   QComboBox* post_measurement_;
   QLineEdit* comment_;
+  QToolButton* conditionals_button_;
   QLabel* preview_;
   QPushButton* add_;
   QCheckBox* after_selection_;

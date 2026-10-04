@@ -107,6 +107,7 @@ Result<RunSpec> template_run(const FactoryForm& form, const IdentifierRules& ids
   if (auto s = trim(form.post_equilibration); !s.empty()) r.post_equilibration = s;
   if (auto s = trim(form.post_measurement); !s.empty()) r.post_measurement = s;
   r.comment = form.comment;
+  for (const auto& name : form.conditionals) r.conditionals.push_back(ConditionalRef{name});
   return r;
 }
 
@@ -157,6 +158,7 @@ FactoryForm form_from_run(const RunSpec& run) {
   f.post_equilibration = run.post_equilibration.value_or("");
   f.post_measurement = run.post_measurement.value_or("");
   f.comment = run.comment;
+  for (const auto& c : run.conditionals) f.conditionals.push_back(c.name);
   return f;
 }
 

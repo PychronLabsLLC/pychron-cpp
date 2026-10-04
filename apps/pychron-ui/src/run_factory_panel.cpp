@@ -15,9 +15,11 @@
 #include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "pychron/experiment/factory/blocks.hpp"
@@ -197,7 +199,14 @@ QWidget* RunFactoryPanel::build_measurement() {
   form->addRow(tr("Plan"), plan_);
   form->addRow(tr("Post-equilibration"), post_equilibration_);
   form->addRow(tr("Post-measurement"), post_measurement_);
+  conditionals_button_ = new QToolButton;
+  conditionals_button_->setObjectName(QStringLiteral("conditionals"));
+  conditionals_button_->setPopupMode(QToolButton::InstantPopup);
+  conditionals_button_->setMenu(new QMenu(conditionals_button_));
+  conditionals_button_->setToolTip(tr("Conditionals files every added run gets"));
+  form->addRow(tr("Conditionals"), conditionals_button_);
   form->addRow(tr("Comment"), comment_);
+  refresh_conditionals();
   for (auto* c : {plan_, post_equilibration_, post_measurement_})
     connect(c, &QComboBox::currentTextChanged, this, [this] { refresh(); });
   connect(comment_, &QLineEdit::textEdited, this, [this] { refresh(); });
@@ -312,6 +321,7 @@ FactoryForm RunFactoryPanel::form() const {
   f.post_measurement = s(post_measurement_->currentText());
   f.comment = comment_->text().toStdString();
   f.overrides = overrides_carrier_.overrides;
+  f.conditionals = conditionals_;
   return f;
 }
 
@@ -335,6 +345,8 @@ void RunFactoryPanel::set_form(const FactoryForm& f) {
   set_combo_text(post_measurement_, f.post_measurement);
   comment_->setText(q(f.comment));
   overrides_carrier_.overrides = f.overrides;
+  conditionals_ = f.conditionals;
+  refresh_conditionals();
   last_type_ = lab_.ids.classify(f.identifier);
   updating_ = false;
   refresh();
@@ -533,6 +545,48 @@ bool RunFactoryPanel::add_enabled() const { return add_->isEnabled(); }
 bool RunFactoryPanel::field_enabled(const char* name) const {
   const auto* w = findChild<QWidget*>(QString::fromLatin1(name));
   return w != nullptr && w->isEnabled();
+}
+
+void RunFactoryPanel::refresh_conditionals() {
+  QStringList names;
+  if (auto files = lab_.condition_files->list())
+    for (const auto& n : *files) names.append(q(n));
+  // A ticked file the lab no longer has stays listed, so it can be unticked.
+  for (const auto& n : conditionals_)
+    if (!names.contains(q(n))) names.append(q(n));
+  QMenu* menu = conditionals_button_->menu();
+  menu->clear();
+  for (const QString& name : names) {
+    QAction* a = menu->addAction(name);
+    a->setCheckable(true);
+    a->setChecked(std::find(conditionals_.begin(), conditionals_.end(), name.toStdString()) != conditionals_.end());
+    connect(a, &QAction::toggled, this, [this, name](bool on) { set_conditional_checked(name, on); });
+  }
+  conditionals_button_->setText(conditionals_text());
+}
+
+void RunFactoryPanel::set_conditional_checked(const QString& name, bool on) {
+  const std::string n = name.toStdString();
+  const auto it = std::find(conditionals_.begin(), conditionals_.end(), n);
+  if (on == (it != conditionals_.end())) return;
+  if (on) conditionals_.push_back(n);
+  else conditionals_.erase(it);
+  for (QAction* a : conditionals_button_->menu()->actions())
+    if (a->text() == name && a->isChecked() != on) a->setChecked(on);
+  conditionals_button_->setText(conditionals_text());
+  if (!updating_) refresh();
+}
+
+QStringList RunFactoryPanel::conditional_choices() const {
+  QStringList out;
+  for (const QAction* a : conditionals_button_->menu()->actions()) out.append(a->text());
+  return out;
+}
+
+QString RunFactoryPanel::conditionals_text() const {
+  QStringList names;
+  for (const auto& n : conditionals_) names.append(q(n));
+  return names.isEmpty() ? tr("(none)") : names.join(QStringLiteral(", "));
 }
 
 QStringList RunFactoryPanel::plan_choices() const {

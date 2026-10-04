@@ -39,6 +39,7 @@ struct FactoryForm {
   std::string step_heat;          // "" or step values: "5, 10, 15" or "5:2.5:4" (start:increment:count)
   std::string script, plan, post_equilibration, post_measurement, comment;
   ParamOverrides overrides;       // carried from defaults or a row; not edited in the form
+  std::vector<std::string> conditionals;  // the lab's conditionals files every run gets
   friend bool operator==(const FactoryForm&, const FactoryForm&) = default;
 };
 

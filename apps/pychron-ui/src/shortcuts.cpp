@@ -52,6 +52,8 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::CloseScriptTab, C::ScriptEditor, QStringLiteral("Close tab"), QKeySequence(QKeySequence::Close)},
       {S::CheckScript, C::ScriptEditor, QStringLiteral("Check now"), keys(Qt::Key_F7)},
       {S::GoToGosub, C::ScriptEditor, QStringLiteral("Go to the gosub under the cursor"), keys(Qt::Key_F2)},
+      {S::SaveConditionals, C::ConditionalsEditor, QStringLiteral("Save conditionals"),
+       QKeySequence(QKeySequence::Save)},
 
       {S::RecallNext, C::DataBrowser, QStringLiteral("Recall the next analysis"), keys(Qt::CTRL | Qt::Key_N)},
       {S::RecallPrevious, C::DataBrowser, QStringLiteral("Recall the previous analysis"), keys(Qt::CTRL | Qt::Key_B)},
@@ -73,6 +75,8 @@ QString context_name(ShortcutContext context) {
       return QStringLiteral("Experiment window");
     case ShortcutContext::ScriptEditor:
       return QStringLiteral("Script editor");
+    case ShortcutContext::ConditionalsEditor:
+      return QStringLiteral("Conditionals editor");
     case ShortcutContext::DataBrowser:
       break;
   }
@@ -102,7 +106,8 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
   const QFont keys_font = style::mono_font();
   const int line = fontMetrics().height();
   for (const ShortcutContext context : {ShortcutContext::Everywhere, ShortcutContext::ExperimentWindow,
-                                        ShortcutContext::ScriptEditor, ShortcutContext::DataBrowser}) {
+                                        ShortcutContext::ScriptEditor, ShortcutContext::ConditionalsEditor,
+                                        ShortcutContext::DataBrowser}) {
     auto* group = new QTreeWidgetItem(tree_, {context_name(context)});
     group->setFirstColumnSpanned(true);
     group->setFont(0, heading);

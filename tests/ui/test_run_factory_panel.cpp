@@ -2,6 +2,7 @@
 // QueueTableModel holding the example queue. No hardware.
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 
 #include <QLineEdit>
@@ -165,6 +166,41 @@ class TestRunFactoryPanel : public QObject {
     QVERIFY(!panel_->apply_defaults());
     QVERIFY(panel_->preview_text().contains(QStringLiteral("No defaults")));
     QCOMPARE(panel_->form(), before);
+  }
+
+  void conditionalsAreChosenFromTheLabsFiles() {
+    QCOMPARE(panel_->conditional_choices(), (QStringList{QStringLiteral("system"), QStringLiteral("default_unknown")}));
+    QVERIFY(panel_->form().conditionals.empty());
+    QCOMPARE(panel_->conditionals_text(), QStringLiteral("(none)"));
+    panel_->set_conditional_checked(QStringLiteral("default_unknown"), true);
+    QCOMPARE(panel_->form().conditionals, std::vector<std::string>{"default_unknown"});
+    QCOMPARE(panel_->conditionals_text(), QStringLiteral("default_unknown"));
+
+    FactoryForm f = with_identifier("20001", "1");
+    f.conditionals.clear();
+    panel_->set_form(f);  // the form's list replaces the ticks
+    QVERIFY(panel_->form().conditionals.empty());
+    QCOMPARE(panel_->conditionals_text(), QStringLiteral("(none)"));
+    f.conditionals = {"default_unknown", "gone"};  // one the lab no longer has: kept, shown
+    panel_->set_form(f);
+    QCOMPARE(panel_->form().conditionals, (std::vector<std::string>{"default_unknown", "gone"}));
+    QVERIFY(panel_->conditional_choices().contains(QStringLiteral("gone")));
+    panel_->set_conditional_checked(QStringLiteral("gone"), false);
+
+    QVERIFY(panel_->add());
+    const auto& run = model_->queue().runs.back();
+    QCOMPARE(run.id.identifier, std::string("20001"));
+    QCOMPARE(run.conditionals.size(), std::size_t{1});
+    QCOMPARE(run.conditionals[0].name, std::string("default_unknown"));
+    // The next run keeps the choice.
+    QCOMPARE(panel_->form().conditionals, std::vector<std::string>{"default_unknown"});
+
+    // A file made while the panel is up appears on refresh; ticks stay.
+    std::ofstream(dir_ / "conditionals" / "run_x.toml") << "";
+    panel_->refresh_conditionals();
+    QVERIFY(panel_->conditional_choices().contains(QStringLiteral("run_x")));
+    QCOMPARE(panel_->form().conditionals, std::vector<std::string>{"default_unknown"});
+    std::filesystem::remove(dir_ / "conditionals" / "run_x.toml");
   }
 
   void fromRowFillsTheForm() {

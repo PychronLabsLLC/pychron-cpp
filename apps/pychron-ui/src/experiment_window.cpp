@@ -9,15 +9,20 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QTableView>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -80,7 +85,28 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   auto* column = new QVBoxLayout(centre);
   column->setContentsMargins(0, 0, 0, 0);
   column->addWidget(diagnostics_);
+  queue_conditionals_ = new QComboBox;
+  queue_conditionals_->setObjectName(QStringLiteral("queue_conditionals"));
+  queue_conditionals_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  queue_conditionals_->setToolTip(tr("Conditionals checked for every run of this queue, with the lab's system file"));
+  auto* edit_conditionals = new QPushButton(tr("Edit..."));
+  auto* header = new QHBoxLayout;
+  header->setContentsMargins(6, 2, 6, 2);
+  header->addWidget(new QLabel(tr("Queue conditionals")));
+  header->addWidget(queue_conditionals_);
+  header->addWidget(edit_conditionals);
+  header->addStretch(1);
+  column->addLayout(header);
   column->addWidget(table_, 1);
+  connect(queue_conditionals_, &QComboBox::activated, this, [this](int i) {
+    if (!model_.set_queue_conditionals(queue_conditionals_->itemData(i).toString().toStdString()))
+      sync_queue_conditionals();  // refused: show what the queue has
+  });
+  connect(edit_conditionals, &QPushButton::clicked, this,
+          [this] { open_conditionals_editor(queue_conditionals_->currentData().toString()); });
+  pick_conditionals_ = [this](const QStringList& names, const QList<Qt::CheckState>& states) {
+    return pick_conditionals_dialog(names, states);
+  };
   setCentralWidget(centre);
 
   auto* executor_dock = new QDockWidget(tr("Executor"), this);
@@ -218,7 +244,10 @@ void ExperimentWindow::build_actions() {
   add_row_action(tr("Edit Post-Measurement Script"), {},
                  [this] { edit_row_script(scripting::ScriptKind::PostMeasurement); });
 
+  add_row_action(tr("Set Conditionals..."), {}, [this] { edit_selected_conditionals(); });
+
   add(Menu::Scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, key(Shortcut::ScriptEditor));
+  add(Menu::Scripts, tr("&Conditionals Editor..."), [this] { open_conditionals_editor(); });
 
   const Menu run = Menu::Executor;
   add(run, tr("Start"), [this] { pane_->request_start(); }, key(Shortcut::StartQueue));
@@ -261,6 +290,132 @@ ScriptEditorWindow* ExperimentWindow::open_script_editor() {
   script_editor_->raise();
   script_editor_->activateWindow();
   return script_editor_;
+}
+
+ConditionalsEditorWindow* ExperimentWindow::open_conditionals_editor(const QString& file) {
+  if (conditionals_editor_ == nullptr) {
+    // Its own settings object on the same store as this window's.
+    conditionals_editor_ = new ConditionalsEditorWindow(
+        bridge_.lab(), std::make_unique<QSettings>(settings_->fileName(), settings_->format()), this);
+    conditionals_editor_->setWindowFlag(Qt::Window);
+    // A saved, new or deleted file may fix (or break) the queue and rows that name it.
+    auto changed = [this] {
+      model_.revalidate();
+      factory_->refresh_conditionals();
+    };
+    connect(conditionals_editor_, &ConditionalsEditorWindow::saved, this, changed);
+    connect(conditionals_editor_, &ConditionalsEditorWindow::filesChanged, this, changed);
+    conditionals_editor_->set_referenced([this](const QString& name) {
+      const std::string n = name.toStdString();
+      const auto& queue = model_.queue();
+      if (queue.queue_conditionals == n) return true;
+      return std::any_of(queue.runs.begin(), queue.runs.end(), [&](const experiment::RunSpec& r) {
+        return std::any_of(r.conditionals.begin(), r.conditionals.end(), [&](const auto& c) { return c.name == n; });
+      });
+    });
+  }
+  if (!file.isEmpty()) conditionals_editor_->open(file);
+  conditionals_editor_->show();
+  conditionals_editor_->raise();
+  conditionals_editor_->activateWindow();
+  return conditionals_editor_;
+}
+
+void ExperimentWindow::sync_queue_conditionals() {
+  const QString current = QString::fromStdString(model_.queue().queue_conditionals);
+  const QSignalBlocker block(queue_conditionals_);
+  queue_conditionals_->clear();
+  queue_conditionals_->addItem(tr("(none)"), QString());
+  QStringList names;
+  if (auto files = bridge_.lab().condition_files->list())
+    for (const auto& n : *files) names.append(QString::fromStdString(n));
+  for (const QString& n : names) queue_conditionals_->addItem(n, n);
+  if (!current.isEmpty() && !names.contains(current)) {
+    // The queue names a file the lab does not have: shown, not dropped.
+    queue_conditionals_->addItem(current, current);
+    queue_conditionals_->setItemData(queue_conditionals_->count() - 1, QBrush(theme().error_text), Qt::ForegroundRole);
+  }
+  queue_conditionals_->setCurrentIndex(std::max(0, queue_conditionals_->findData(current)));
+  // The queue-wide checks are loaded when the queue starts.
+  queue_conditionals_->setEnabled(!model_.live() && !model_.locked());
+}
+
+bool ExperimentWindow::edit_selected_conditionals() {
+  const auto rows = selected_rows();
+  if (rows.empty()) return false;
+  const auto& runs = model_.queue().runs;
+  auto has = [&](std::size_t row, const std::string& name) {
+    const auto& c = runs[row].conditionals;
+    return std::any_of(c.begin(), c.end(), [&](const auto& ref) { return ref.name == name; });
+  };
+  // The lab's files, then names the rows reference that the lab lacks.
+  std::vector<std::string> names;
+  if (auto files = bridge_.lab().condition_files->list()) names = *files;
+  for (const std::size_t row : rows)
+    for (const auto& c : runs[row].conditionals)
+      if (std::find(names.begin(), names.end(), c.name) == names.end()) names.push_back(c.name);
+  QStringList shown;
+  QList<Qt::CheckState> states;
+  for (const auto& name : names) {
+    const auto n = static_cast<std::size_t>(
+        std::count_if(rows.begin(), rows.end(), [&](std::size_t row) { return has(row, name); }));
+    shown.append(QString::fromStdString(name));
+    states.append(n == 0 ? Qt::Unchecked : n == rows.size() ? Qt::Checked : Qt::PartiallyChecked);
+  }
+  const auto wanted = pick_conditionals_(shown, states);
+  if (!wanted || wanted->size() != states.size()) return false;
+
+  // Per row: what it keeps, in its order, then what it gains, in list order.
+  std::map<std::vector<std::string>, std::vector<std::size_t>> by_result;
+  for (const std::size_t row : rows) {
+    if (!model_.row_editable(row)) return false;
+    auto state_of = [&](const std::string& name) {
+      const auto i = std::find(names.begin(), names.end(), name) - names.begin();
+      return (*wanted)[static_cast<int>(i)];
+    };
+    std::vector<std::string> result;
+    for (const auto& c : runs[row].conditionals)
+      if (state_of(c.name) != Qt::Unchecked) result.push_back(c.name);
+    for (const auto& name : names)
+      if (state_of(name) == Qt::Checked && !has(row, name)) result.push_back(name);
+    by_result[result].push_back(row);
+  }
+  bool ok = true;
+  for (const auto& [result, group] : by_result) ok = model_.set_conditionals(group, result) && ok;
+  select_rows(rows);
+  return ok;
+}
+
+std::optional<QList<Qt::CheckState>> ExperimentWindow::pick_conditionals_dialog(const QStringList& names,
+                                                                                const QList<Qt::CheckState>& states) {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("Conditionals for the selected runs"));
+  auto* list = new QListWidget;
+  for (int i = 0; i < names.size(); ++i) {
+    auto* item = new QListWidgetItem(names[i], list);
+    Qt::ItemFlags flags = item->flags() | Qt::ItemIsUserCheckable;
+    // Only a file some rows have can stay "as each row has it".
+    if (states[i] == Qt::PartiallyChecked) flags |= Qt::ItemIsUserTristate;
+    item->setFlags(flags);
+    item->setCheckState(states[i]);
+  }
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  auto* edit = buttons->addButton(tr("Edit..."), QDialogButtonBox::ActionRole);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(edit, &QPushButton::clicked, &dialog, [&] {
+    const QString file = list->currentItem() != nullptr ? list->currentItem()->text() : QString();
+    dialog.reject();
+    open_conditionals_editor(file);
+  });
+  auto* layout = new QVBoxLayout(&dialog);
+  layout->addWidget(new QLabel(tr("A half-ticked file stays as each run has it.")));
+  layout->addWidget(list);
+  layout->addWidget(buttons);
+  if (dialog.exec() != QDialog::Accepted) return std::nullopt;
+  QList<Qt::CheckState> out;
+  for (int i = 0; i < list->count(); ++i) out.append(list->item(i)->checkState());
+  return out;
 }
 
 bool ExperimentWindow::edit_row_script(scripting::ScriptKind kind) {
@@ -393,6 +548,7 @@ void ExperimentWindow::update_state() {
   pane_->set_runnable(model_.runnable(), runnable_rows);
   const bool running = bridge_.running() || pane_->running();
   open_->setEnabled(!running);
+  sync_queue_conditionals();
 }
 
 void ExperimentWindow::closeEvent(QCloseEvent* event) {

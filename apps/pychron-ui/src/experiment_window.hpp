@@ -17,10 +17,12 @@
 #include <memory>
 #include <optional>
 
+#include <QList>
 #include <QMainWindow>
 #include <QSettings>
 #include <QString>
 
+#include "conditionals_editor_window.hpp"
 #include "evolutions_view.hpp"
 #include "executor_pane.hpp"
 #include "experiment_bridge.hpp"
@@ -30,6 +32,7 @@
 #include "script_editor_window.hpp"
 
 class QAction;
+class QComboBox;
 class QLabel;
 class QTableView;
 
@@ -58,6 +61,22 @@ class ExperimentWindow : public QMainWindow {
   // Opens the selected row's script of `kind` (extraction or post-measurement);
   // false without one selected row or script.
   bool edit_row_script(scripting::ScriptKind kind);
+
+  // The conditionals editor (conditionals-editor design 6.2). Null until first
+  // opened; `file` is opened when named and present.
+  ConditionalsEditorWindow* conditionals_editor() const noexcept { return conditionals_editor_; }
+  ConditionalsEditorWindow* open_conditionals_editor(const QString& file = {});
+  // The queue's conditionals file: "(none)" and the lab's files.
+  QComboBox* queue_conditionals_combo() const noexcept { return queue_conditionals_; }
+  // Asks which conditionals files the selected rows get and applies the
+  // answer; false without a selection, on cancel, or when a row cannot change.
+  bool edit_selected_conditionals();
+  // The question: the files and, per file, whether all (Checked), none
+  // (Unchecked) or some (PartiallyChecked) of the rows have it. The answer is
+  // the states wanted; a file left PartiallyChecked stays as each row has it.
+  using PickConditionals =
+      std::function<std::optional<QList<Qt::CheckState>>(const QStringList& names, const QList<Qt::CheckState>& states)>;
+  void set_pick_conditionals(PickConditionals pick) { pick_conditionals_ = std::move(pick); }
 
   // Replaces the queue; refused (false, with `error`) while running or when
   // the file does not parse. Asks about unsaved edits first.
@@ -90,6 +109,9 @@ class ExperimentWindow : public QMainWindow {
   void update_state();
   void open_dialog();
   void save_as_dialog();
+  void sync_queue_conditionals();  // the combo follows the queue and the lab's files
+  std::optional<QList<Qt::CheckState>> pick_conditionals_dialog(const QStringList& names,
+                                                                const QList<Qt::CheckState>& states);
 
   ExperimentBridge& bridge_;
   bool simulation_;
@@ -102,6 +124,9 @@ class ExperimentWindow : public QMainWindow {
   RunFactoryPanel* factory_;
   MeasurementPanel* measurement_;
   ScriptEditorWindow* script_editor_ = nullptr;
+  ConditionalsEditorWindow* conditionals_editor_ = nullptr;
+  QComboBox* queue_conditionals_ = nullptr;
+  PickConditionals pick_conditionals_;
   std::optional<std::filesystem::path> path_;
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;
