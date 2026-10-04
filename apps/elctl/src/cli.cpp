@@ -15,6 +15,7 @@
 
 #include "duration.hpp"
 #include "exp.hpp"
+#include "laser.hpp"
 #include "import.hpp"
 #include "pychron/setup/installer.hpp"
 #include "setup.hpp"
@@ -59,6 +60,9 @@ constexpr const char* kUsageText =
     "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
+    "  laser trays                 tray maps and their stage calibrations\n"
+    "  laser calibrate <device> <tray> point <hole>|center|right|show|clear [--x X --y Y]\n"
+    "  laser goto <device> <tray> <hole>   move the stage to a hole and report the miss\n"
     "\n"
     "Setup (no line needed):\n"
     "  init --list                 the setup profiles (argus, helix, ngx, data-reduction)\n"
@@ -174,6 +178,12 @@ class Session {
       e.config = g_.config;
       e.sim = g_.sim;
       return exp_command(args, e, io_);
+    }
+    if (cmd == "laser") {
+      ExpGlobals e = g_.exp;
+      e.config = g_.config;
+      e.sim = g_.sim;
+      return laser_command(args, e, io_);
     }
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
