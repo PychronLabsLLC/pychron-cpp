@@ -6,6 +6,8 @@
 origin = [0, 0]
 size = [1000, 936]
 connection_width = 5
+# an open valve wears the colour of the region it joins (default: "green")
+open_valve_color = "inherit"
 
 [[label]]
 text = "Upper Shutter"
