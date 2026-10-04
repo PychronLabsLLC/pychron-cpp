@@ -607,11 +607,14 @@ class IStore {
 
   // Catalog (not revisioned; every write is in change_entity with a field diff, D6).
   // Every add_* is ensure-by-natural-key (the table's UNIQUE columns): when the
-  // row exists its uuid is returned and nothing is written, whatever else the
-  // spec says. `uuid` in a spec is used only when the row is created.
+  // row exists its uuid is returned and every value it has is kept, whatever
+  // the spec says. What the row lacks (a NULL column that is not part of the
+  // key) and the spec has is filled, as one audited update; a fill that breaks
+  // a constraint fails as the insert would, and writes nothing. `uuid` in a
+  // spec is used only when the row is created.
   virtual Result<Uuid> register_client(const ClientRegistration& registration) = 0;
   virtual Result<Uuid> ensure_user(Uuid client, const std::string& name) = 0;
-  // As ensure_user, with the descriptive columns a new row gets.
+  // As ensure_user, with the descriptive columns.
   virtual Result<Uuid> add_user(Uuid client, const UserSpec& spec) = 0;
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
   virtual Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) = 0;

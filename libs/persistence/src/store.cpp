@@ -1,5 +1,9 @@
 #include "pychron/persistence/store.hpp"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 #include <algorithm>
 #include <cstdio>
 
@@ -646,16 +650,56 @@ class TinyStore final : public IStore {
     return std::optional<Uuid>{to_uuid((**found).value("uuid"))};
   }
 
-  // Ensure by natural key: an existing row wins untouched (no update, no
-  // change_log entry); otherwise `row` is inserted under `uuid` (or a new v7).
+  // Ensure by natural key. A missing row is inserted under `uuid` (or a new
+  // v7). A row that exists keeps every value it has; what it lacks and `row`
+  // has is filled (fill_catalog_row).
   Result<Uuid> ensure_catalog_row(Uuid client, const char* table, const NaturalKey& key, std::optional<Uuid> uuid,
                                   Row row, const std::string& detail) {
     WriteTx tx(*db_);
     if (auto r = tx.begin(); !r) return fail(r.error());
     auto existing = find_by_key(table, key);
     if (!existing) return fail(existing.error());
-    if (*existing) return **existing;
+    if (*existing) return fill_catalog_row(tx, client, table, key, **existing, row);
     return insert_catalog_row(tx, client, table, uuid.value_or(Uuid::v7()), std::move(row), detail);
+  }
+
+  // Writes the values of `row` into the columns the stored row holds NULL in,
+  // as one UPDATE, audited as an update with its field diff (D6). A stored
+  // value is never replaced and a key column never written. Nothing to fill:
+  // no write, no change_log entry.
+  Result<Uuid> fill_catalog_row(WriteTx& tx, Uuid client, const char* table, const NaturalKey& key, Uuid uuid,
+                                const Row& row) {
+    const QString name = QString::fromUtf8(table);
+    auto stored = db_->select_one(QStringLiteral("SELECT * FROM %1 WHERE uuid = ?").arg(name), {qv(uuid)});
+    if (!stored) return fail(stored.error());
+    if (!*stored) return fail(ErrorKind::Protocol, std::string(table) + " " + uuid.str() + " is gone");
+    const auto in_key = [&](const QString& column) {
+      return std::any_of(key.begin(), key.end(),
+                         [&](const auto& part) { return column == QString::fromUtf8(part.first); });
+    };
+    QStringList sets, guards;
+    Bindings bindings;
+    QJsonObject diff;
+    for (auto it = row.cbegin(); it != row.cend(); ++it) {
+      if (it.value().isNull() || in_key(it.key())) continue;
+      const auto held = (*stored)->constFind(it.key());
+      if (held == (*stored)->cend() || !held.value().isNull()) continue;
+      sets << QStringLiteral("\"%1\" = ?").arg(it.key());
+      guards << QStringLiteral(" AND \"%1\" IS NULL").arg(it.key());
+      bindings << it.value();
+      diff.insert(it.key(), QJsonArray{QJsonValue(QJsonValue::Null), QJsonValue::fromVariant(it.value())});
+    }
+    if (sets.isEmpty()) return uuid;
+    bindings << qv(uuid);
+    auto filled = db_->affecting(QStringLiteral("UPDATE %1 SET %2 WHERE uuid = ?%3")
+                                     .arg(name, sets.join(QStringLiteral(", ")), guards.join(QString())),
+                                 bindings);
+    if (!filled) return fail(filled.error());
+    if (*filled != 1) return fail(ErrorKind::Protocol, std::string(table) + " " + uuid.str() + " changed under a fill");
+    return finish_catalog(tx, client,
+                          {ChangeEntityRow{name, uuid, QStringLiteral("update"),
+                                           QJsonDocument(diff).toJson(QJsonDocument::Compact).toStdString()}},
+                          uuid);
   }
 
   // Inserts one catalog row with a fresh uuid and created_utc, audited (D6).
