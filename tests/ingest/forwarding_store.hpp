@@ -58,6 +58,19 @@ class ForwardingStore : public persistence::IStore {
   Result<Uuid> add_sample(Uuid client, const persistence::SampleSpec& spec) override { return inner_.add_sample(client, spec); }
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override { return inner_.add_irradiation(client, name); }
   Result<Uuid> add_irradiation(Uuid client, const persistence::IrradiationSpec& spec) override { return inner_.add_irradiation(client, spec); }
+  Result<std::vector<persistence::PrincipalInvestigatorRow>> principal_investigators() override { return inner_.principal_investigators(); }
+  Result<std::vector<persistence::ProjectRow>> projects(std::optional<Uuid> pi) override { return inner_.projects(pi); }
+  Result<std::vector<persistence::MaterialRow>> materials() override { return inner_.materials(); }
+  Result<std::vector<persistence::SampleRow>> samples(const persistence::SampleQuery& query) override { return inner_.samples(query); }
+  Result<std::vector<persistence::IrradiationRow>> irradiations() override { return inner_.irradiations(); }
+  Result<std::vector<persistence::LevelRow>> levels(Uuid irradiation) override { return inner_.levels(irradiation); }
+  Result<std::optional<persistence::LevelSheet>> level_sheet(Uuid level) override { return inner_.level_sheet(level); }
+  Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) override { return inner_.identifier_counter(scope); }
+  Result<std::int64_t> max_numeric_identifier() override { return inner_.max_numeric_identifier(); }
+  Result<std::optional<persistence::CatalogFields>> catalog_row(persistence::CatalogTable table, Uuid uuid) override { return inner_.catalog_row(table, uuid); }
+  Result<persistence::CatalogOutcome> apply_catalog_edits(Uuid client, const persistence::CatalogEditBatch& batch) override { return inner_.apply_catalog_edits(client, batch); }
+  Result<persistence::CatalogOutcome> apply_catalog_edits(const Actor& actor, const persistence::CatalogEditBatch& batch, persistence::IUnitOfWork& refs, persistence::ChangesetKind kind, std::string message) override { return inner_.apply_catalog_edits(actor, batch, refs, kind, std::move(message)); }
+  Result<persistence::AllocationOutcome> allocate_identifiers(Uuid client, const persistence::IdentifierAllocation& allocation) override { return inner_.allocate_identifiers(client, allocation); }
   Result<Uuid> add_level(Uuid client, const persistence::LevelSpec& spec) override { return inner_.add_level(client, spec); }
   Result<Uuid> add_irradiation_position(Uuid client, const persistence::PositionSpec& spec) override { return inner_.add_irradiation_position(client, spec); }
   Result<Uuid> add_ref_object(Uuid client, const persistence::RefObjectSpec& spec) override { return inner_.add_ref_object(client, spec); }

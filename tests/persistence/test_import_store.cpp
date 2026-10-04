@@ -745,7 +745,8 @@ TEST_P(ImportStoreTest, NullBranchRoundTripsAndKindsAreStored) {
 TEST_P(ImportStoreTest, SchemaStatusListsSecondMigration) {
   auto status = store_->schema_status();
   ASSERT_TRUE(status) << to_string(status.error());
-  EXPECT_EQ(status->size(), 2u);
+  ASSERT_GE(status->size(), 2u);
+  EXPECT_EQ((*status)[1].description, "import_detail");
 }
 
 TEST_P(ImportStoreTest, EmptyReads) {

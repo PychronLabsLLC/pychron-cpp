@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "catalog_impl.hpp"
 #include "migrate.hpp"
 #include "pychron/core/calendar.hpp"
 #include "sql/errors.hpp"
@@ -271,6 +272,11 @@ class TinyStore final : public IStore {
   Result<Uuid> add_irradiation(Uuid client, const IrradiationSpec& spec) override {
     Row row;
     row["name"] = qv(spec.name);
+    if (spec.kind) {
+      if (*spec.kind != "irradiation" && *spec.kind != "package")
+        return fail(ErrorKind::Protocol, "package '" + spec.name + "': kind '" + *spec.kind + "' is not irradiation or package");
+      row["kind"] = qv(*spec.kind);
+    }
     if (spec.created) row["created_utc"] = qv(*spec.created);
     return ensure_catalog_row(client, "irradiation", {{"name", qv(spec.name)}}, std::nullopt, row,
                               json_created({{"name", spec.name}}));
@@ -399,6 +405,7 @@ class TinyStore final : public IStore {
         case CatalogTable::LoadPosition: return {"load_position", {"load_uuid", "position", "identifier_uuid"}};
         case CatalogTable::Repository: return {"repository", {"name"}};
         case CatalogTable::RefObject: return {"ref_object", {"ref_type", "key"}};
+        case CatalogTable::Identifier: return {"identifier", {"identifier"}};
       }
       return {nullptr, {}};
     };
@@ -420,6 +427,39 @@ class TinyStore final : public IStore {
       natural.emplace_back(named.key[i], std::move(value));
     }
     return find_by_key(named.table, natural);
+  }
+
+  // ------------------------------------------------------------ entry (entry spec, section 5)
+
+  Result<std::vector<PrincipalInvestigatorRow>> principal_investigators() override {
+    return detail::principal_investigators(*db_);
+  }
+  Result<std::vector<ProjectRow>> projects(std::optional<Uuid> pi) override { return detail::projects(*db_, pi); }
+  Result<std::vector<MaterialRow>> materials() override { return detail::materials(*db_); }
+  Result<std::vector<SampleRow>> samples(const SampleQuery& query) override {
+    return detail::samples(*db_, dialect(), query);
+  }
+  Result<std::vector<IrradiationRow>> irradiations() override { return detail::irradiations(*db_, dialect()); }
+  Result<std::vector<LevelRow>> levels(Uuid irradiation) override { return detail::levels(*db_, irradiation); }
+  Result<std::optional<LevelSheet>> level_sheet(Uuid level) override { return detail::level_sheet(*db_, level); }
+  Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) override {
+    return detail::identifier_counter(*db_, scope);
+  }
+  Result<std::int64_t> max_numeric_identifier() override { return detail::max_numeric_identifier(*db_, dialect()); }
+  Result<std::optional<CatalogFields>> catalog_row(CatalogTable table, Uuid uuid) override {
+    return detail::catalog_row(*db_, table, uuid);
+  }
+  Result<CatalogOutcome> apply_catalog_edits(Uuid client, const CatalogEditBatch& batch) override {
+    return detail::apply_catalog_edits(*db_, client, batch, nullptr);
+  }
+  Result<CatalogOutcome> apply_catalog_edits(const Actor& actor, const CatalogEditBatch& batch, IUnitOfWork& refs,
+                                             ChangesetKind kind, std::string message) override {
+    auto staged = prepare_staged(refs, *db_, kind, std::move(message));
+    if (!staged) return fail(staged.error());
+    return detail::apply_catalog_edits(*db_, actor.client, batch, *staged);
+  }
+  Result<AllocationOutcome> allocate_identifiers(Uuid client, const IdentifierAllocation& allocation) override {
+    return detail::allocate_identifiers(*db_, dialect(), client, allocation);
   }
 
   Result<Uuid> add_repository(Uuid client, const std::string& name) override {

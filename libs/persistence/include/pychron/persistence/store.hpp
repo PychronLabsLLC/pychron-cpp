@@ -19,6 +19,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/persistence/blob.hpp"
+#include "pychron/persistence/catalog.hpp"
 #include "pychron/persistence/ids.hpp"
 #include "pychron/persistence/import.hpp"
 #include "pychron/persistence/model.hpp"
@@ -98,9 +99,11 @@ struct UserSpec {
   std::optional<std::string> email = std::nullopt, affiliation = std::nullopt, category = std::nullopt;
 };
 
+// A package (E13 of the entry spec): table `irradiation`.
 struct IrradiationSpec {
   std::string name;
   std::optional<UtcTime> created = std::nullopt;  // created_utc; the write time when unset
+  std::optional<std::string> kind = std::nullopt;  // irradiation (default) | package
 };
 
 struct IdentifierSpec {
@@ -543,43 +546,6 @@ struct BlobData {
   std::optional<int> n_points;
 };
 
-// The catalog tables that have a natural key, for IStore::find_catalog_row.
-// The key of each, in the order its parts are given:
-//   PrincipalInvestigator  last_name, first_initial
-//   Project                name, principal investigator (uuid, or none)
-//   Material               name, grainsize
-//   Sample                 name, project (uuid), material (uuid)
-//   Irradiation            name
-//   Level                  irradiation (uuid), name
-//   IrradiationPosition    level (uuid), position
-//   User                   name
-//   MassSpectrometer       name
-//   ExtractDevice          name
-//   Load                   name
-//   LoadPosition           load (uuid), position, identifier (uuid)
-//   Repository             name
-//   RefObject              ref_type (stored spelling), key
-enum class CatalogTable {
-  PrincipalInvestigator,
-  Project,
-  Material,
-  Sample,
-  Irradiation,
-  Level,
-  IrradiationPosition,
-  User,
-  MassSpectrometer,
-  ExtractDevice,
-  Load,
-  LoadPosition,
-  Repository,
-  RefObject
-};
-
-// One part of a natural key: text, a number, the uuid of a parent row, or
-// (monostate) no value, which matches a row that has none there.
-using CatalogKeyPart = std::variant<std::monostate, std::string, int, Uuid>;
-
 class IStore {
  public:
   virtual ~IStore() = default;
@@ -648,6 +614,35 @@ class IStore {
   // nullopt when there is none. A key with the wrong number of parts is an
   // error. This is the lookup every add_* makes before it writes.
   virtual Result<std::optional<Uuid>> find_catalog_row(CatalogTable table, const std::vector<CatalogKeyPart>& key) = 0;
+
+  // Entry reads (entry spec 5.1). Packages are listed newest first, levels
+  // by name, positions by position.
+  virtual Result<std::vector<PrincipalInvestigatorRow>> principal_investigators() = 0;
+  virtual Result<std::vector<ProjectRow>> projects(std::optional<Uuid> principal_investigator) = 0;
+  virtual Result<std::vector<MaterialRow>> materials() = 0;
+  virtual Result<std::vector<SampleRow>> samples(const SampleQuery& query) = 0;
+  virtual Result<std::vector<IrradiationRow>> irradiations() = 0;
+  virtual Result<std::vector<LevelRow>> levels(Uuid irradiation) = 0;
+  virtual Result<std::optional<LevelSheet>> level_sheet(Uuid level) = 0;
+  // The current value of identifier_counter's `scope`; nullopt before the first allocation.
+  virtual Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) = 0;
+  // The largest identifier that is all ASCII digits (no leading zero, at most
+  // 18 of them); 0 when there is none. What the counter is seeded from.
+  virtual Result<std::int64_t> max_numeric_identifier() = 0;
+  // The current values of one catalog row's columns; nullopt when it is gone.
+  virtual Result<std::optional<CatalogFields>> catalog_row(CatalogTable table, Uuid uuid) = 0;
+
+  // Entry writes (entry spec 5.2-5.4). One transaction each: a stale row, a
+  // refusal or a lost reference CAS writes nothing and reports every one found.
+  virtual Result<CatalogOutcome> apply_catalog_edits(Uuid client, const CatalogEditBatch& batch) = 0;
+  // The batch and the revisions staged in `refs` (a unit of work from begin()
+  // of this store), committed together as one `kind` changeset. `refs` is
+  // consumed as by commit().
+  virtual Result<CatalogOutcome> apply_catalog_edits(const Actor& actor, const CatalogEditBatch& batch,
+                                                     IUnitOfWork& refs, ChangesetKind kind,
+                                                     std::string message) = 0;
+  // Sequential identifiers from identifier_counter (scope kIdentifierScope).
+  virtual Result<AllocationOutcome> allocate_identifiers(Uuid client, const IdentifierAllocation& allocation) = 0;
 
   // Groups, repositories, bookmarks (sections 3.6, 5.5).
   virtual Result<Uuid> add_repository(Uuid client, const std::string& name) = 0;

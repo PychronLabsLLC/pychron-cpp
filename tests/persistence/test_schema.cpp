@@ -133,12 +133,14 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     ASSERT_TRUE(store);
     auto status = store->schema_status();
     ASSERT_TRUE(status) << to_string(status.error());
-    ASSERT_EQ(status->size(), 2u);
+    ASSERT_EQ(status->size(), 3u);
     EXPECT_EQ((*status)[0].version, 1);
     EXPECT_EQ((*status)[0].description, "init");
     EXPECT_EQ((*status)[0].checksum_hex.size(), 64u);
     EXPECT_EQ((*status)[1].version, 2);
     EXPECT_EQ((*status)[1].description, "import_detail");
+    EXPECT_EQ((*status)[2].version, 3);
+    EXPECT_EQ((*status)[2].description, "entry");
   }
   // Reopen: nothing pending, so migrate = false opens fine.
   auto again = open_store(StoreConfig{tdb.url(), false});
