@@ -3,6 +3,7 @@
 #include "command_palette.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
+#include "theme.hpp"
 
 #include <utility>
 
@@ -24,7 +25,8 @@ namespace pychron::ui {
 
 QIcon MainWindow::view_icon(View view) {
   // Line glyphs on an 18 pt square, drawn at 2x. A mask (template) icon: the
-  // platform colours it to suit the menu, light or dark.
+  // platform colours it to suit the menu, light or dark; where it does not,
+  // it is drawn in the theme's text colour.
   constexpr int kPoints = 18;
   constexpr int kScale = 2;
   QPixmap pixmap(kPoints * kScale, kPoints * kScale);
@@ -32,7 +34,8 @@ QIcon MainWindow::view_icon(View view) {
   pixmap.fill(Qt::transparent);
   QPainter p(&pixmap);
   p.setRenderHint(QPainter::Antialiasing);
-  p.setPen(QPen(Qt::black, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  const QColor ink = theme().text;
+  p.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   p.setBrush(Qt::NoBrush);
   switch (view) {
     case View::ExtractionLine:
@@ -56,10 +59,10 @@ QIcon MainWindow::view_icon(View view) {
       tube.lineTo(12, 48);
       tube.arcTo(ring(34), 180, -90);
       tube.lineTo(52, 14);
-      p.setPen(QPen(Qt::black, 11, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+      p.setPen(QPen(ink, 11, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
       p.drawPath(tube);
       p.setCompositionMode(QPainter::CompositionMode_Clear);  // hollow it out
-      p.setPen(QPen(Qt::black, 4, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+      p.setPen(QPen(ink, 4, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
       p.drawPath(tube);
       p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 
@@ -71,10 +74,10 @@ QIcon MainWindow::view_icon(View view) {
       magnet.arcTo(ring(46), 162, -54);
       magnet.arcTo(ring(22), 108, 54);
       magnet.closeSubpath();
-      const QPen outline(Qt::black, 3.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+      const QPen outline(ink, 3.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
       p.setCompositionMode(QPainter::CompositionMode_Clear);
       p.setPen(Qt::NoPen);
-      p.setBrush(Qt::black);
+      p.setBrush(ink);
       p.drawPath(magnet);
       p.setCompositionMode(QPainter::CompositionMode_SourceOver);
       p.setBrush(Qt::NoBrush);
@@ -82,7 +85,7 @@ QIcon MainWindow::view_icon(View view) {
       p.drawPath(magnet);
 
       p.setPen(Qt::NoPen);
-      p.setBrush(Qt::black);
+      p.setBrush(ink);
       p.drawRoundedRect(QRectF(2, 50, 20, 12), 2, 2);  // source
 
       const QRectF collector(51, 1.5, 13, 25);
@@ -92,7 +95,7 @@ QIcon MainWindow::view_icon(View view) {
       p.setBrush(Qt::NoBrush);
       p.setPen(outline);
       p.drawRoundedRect(collector, 2, 2);
-      p.setPen(QPen(Qt::black, 3.2, Qt::SolidLine, Qt::FlatCap));
+      p.setPen(QPen(ink, 3.2, Qt::SolidLine, Qt::FlatCap));
       for (const double y : {10.0, 18.0}) p.drawLine(QPointF(collector.left() + 3.5, y), QPointF(collector.right() - 3.5, y));
       p.restore();
       break;
@@ -103,7 +106,7 @@ QIcon MainWindow::view_icon(View view) {
       play.lineTo(6, 4.75);
       play.lineTo(2, 7);
       play.closeSubpath();
-      p.setBrush(Qt::black);
+      p.setBrush(ink);
       p.drawPath(play);
       p.setBrush(Qt::NoBrush);
       p.drawLine(QPointF(8.5, 4.75), QPointF(16, 4.75));
@@ -117,7 +120,7 @@ QIcon MainWindow::view_icon(View view) {
       // axes and the points of a signal decaying toward its intercept
       p.drawLine(QPointF(2.5, 2), QPointF(2.5, 15.5));
       p.drawLine(QPointF(2.5, 15.5), QPointF(16.5, 15.5));
-      p.setBrush(Qt::black);
+      p.setBrush(ink);
       p.setPen(Qt::NoPen);
       for (const QPointF& point : {QPointF(5.5, 4.5), QPointF(8.5, 8.5), QPointF(12, 10.8), QPointF(15.5, 11.8)}) {
         p.drawEllipse(point, 1.3, 1.3);
