@@ -144,7 +144,9 @@ TEST_P(PlanStoreTest, PlanAllocateReadBack) {
   for (const auto& a : plan.assignments)
     for (const auto& s : *sheets)
       for (const auto& p : s.positions)
-        if (p.uuid == a.position) EXPECT_EQ(p.identifier, std::to_string(a.number));
+        if (p.uuid == a.position) {
+          EXPECT_EQ(p.identifier, std::to_string(a.number));
+        }
   EXPECT_EQ(*current_last(*store_), 66577);
   EXPECT_TRUE(plan_identifiers(*sheets, 66577, false).assignments.empty());
 }

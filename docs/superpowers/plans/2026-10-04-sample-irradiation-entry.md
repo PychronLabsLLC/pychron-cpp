@@ -484,6 +484,10 @@ and `tests/ui/test_level_sheet_pdf.cpp`.
       ad hoc UPDATEs; identifiers only through `allocate_identifiers`.
 - [x] Priorities plan: add row 8a "Sample/irradiation entry", pointing at the
       spec and this plan.
-- [ ] Full build and test on `dev` and `dev-ui`, persistence on PostgreSQL
+- [x] Full build and test on `dev` and `dev-ui`, persistence on PostgreSQL
       (`PYCHRON_TEST_PG_URL`), gcc 14 and clang 18 with ASan/UBSan.
+      (2026-10-04: the whole `dev-ui` suite on clang 18 with PostgreSQL 16;
+      the persistence, entry, `elctl entry` and entry UI tests under
+      clang 18 ASan/UBSan and under gcc 14; a `PYCHRON_PERSISTENCE=OFF`
+      build of elctl and the UI.)
 - [ ] Rebase on `origin/main`, merge, push. (Session branch pushed; merging to `main` is the owner's.)
