@@ -109,6 +109,10 @@ field table, and the window starts the scan when it opens:
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
 ```
 
+On macOS the program is built as `build/dev-ui/apps/pychron-ui/Pychron.app`
+(its menus, Preferences and Dock icon need the bundle); `pychron-ui` beside
+it is a script that runs `Pychron.app/Contents/MacOS/Pychron`.
+
 Use `--spectrometer <file>` to load another spectrometer config (the menu
 item stays disabled when neither flag is given or the file fails to load; the
 error goes to the log dock). Window layout and graph settings are saved per

@@ -76,6 +76,13 @@ if(TARGET pychron-ui)
     set(_pychron_icns "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.icns")
     set_source_files_properties("${_pychron_icns}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_sources(pychron-ui PRIVATE "${_pychron_icns}")
+    # The documented dev command, <build>/apps/pychron-ui/pychron-ui, would
+    # otherwise run whatever binary was left there before the bundle: a script
+    # that runs the bundle's program takes its place.
+    file(GENERATE
+      OUTPUT "$<PATH:GET_PARENT_PATH,$<TARGET_BUNDLE_DIR:pychron-ui>>/pychron-ui"
+      CONTENT "#!/bin/sh\nexec \"$<TARGET_FILE:pychron-ui>\" \"$@\"\n"
+      FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
   elseif(WIN32)
     set_target_properties(pychron-ui PROPERTIES WIN32_EXECUTABLE ON)
     target_sources(pychron-ui PRIVATE "${PROJECT_SOURCE_DIR}/packaging/windows/pychron.rc")
