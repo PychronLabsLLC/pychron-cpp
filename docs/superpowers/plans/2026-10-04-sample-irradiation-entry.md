@@ -1,6 +1,6 @@
 # Sample and Package Entry Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Enter and edit PIs, projects, materials, samples, packages (an
 irradiation is a package of kind `irradiation`), chronologies, levels, productions and positions in the DVC store,
@@ -15,6 +15,8 @@ planner. `apps/elctl` and `apps/pychron-ui` are thin layers over it.
 **Tech Stack:** C++20, TinyORM over QtSql (private to persistence),
 nlohmann_json, Qt 6 Widgets (UI only; `QPdfWriter` for the level sheet),
 GoogleTest (+ QtTest in `tests/ui`).
+
+**Status (2026-10-04):** implemented; deviations are recorded in spec section 14.
 
 **Spec:** `docs/superpowers/specs/2026-10-04-sample-irradiation-entry-design.md`
 (section numbers below refer to it). Schema background:
@@ -102,18 +104,18 @@ Nothing blocks any task.
 **Files:** `0003_entry.sql`, `catalog.hpp`, `store.hpp`, `src/sql/catalog.hpp`,
 `src/catalog_read.cpp`, `forwarding_store.hpp`; test `tests/persistence/test_catalog_read.cpp`.
 
-- [ ] Write `0003_entry.sql`: `irradiation.kind text NOT NULL DEFAULT 'irradiation'
+- [x] Write `0003_entry.sql`: `irradiation.kind text NOT NULL DEFAULT 'irradiation'
       CHECK (kind IN ('irradiation','package'))`, `CREATE INDEX sample_name_lower_ix
       ON sample (lower(name));` and `project_name_lower_ix`. Run
       `python3 tools/ddl_sqlite.py` (check it handles `ADD COLUMN ... CHECK`;
       extend it if not). Confirm the schema parity test passes on both
       engines. Add `kind` to `IrradiationSpec` and `add_irradiation`, with a
       test that an existing irradiation keeps its kind (ensure semantics).
-- [ ] Declare the row structs and the read methods of spec 5.1 in `catalog.hpp`
+- [x] Declare the row structs and the read methods of spec 5.1 in `catalog.hpp`
       and `IStore`. `SampleFields` reuses the optional members of `SampleSpec`.
       Move them into a shared struct that `SampleSpec` embeds, without
       breaking callers.
-- [ ] Failing tests first, on a store seeded with two PIs, three projects, two
+- [x] Failing tests first, on a store seeded with two PIs, three projects, two
       materials, five samples, one irradiation with levels B and A (inserted
       in that order), positions, identifiers, one analysis and one flux
       revision:
@@ -127,12 +129,12 @@ Nothing blocks any task.
   - `CounterAbsentIsNullopt`.
   - `MaxNumericIdentifier`, with `01234`, `bu-FD-J`, `12a`, `999`,
     `50001` and a 19-digit text: 50001. An empty store gives 0.
-- [ ] Implement. One statement per method, no N+1. J comes from the
+- [x] Implement. One statement per method, no N+1. J comes from the
       `flux_value` of the head revision of the position's `flux_position`
       ref. Numeric identifiers: PostgreSQL `identifier ~ '^[1-9][0-9]*$'`,
       SQLite `identifier NOT GLOB '*[^0-9]*' AND identifier NOT LIKE '0%' AND
       identifier <> ''`, cast to bigint. Lengths over 18 digits are ignored.
-- [ ] Add forwarders. Run persistence and ingest tests on SQLite and
+- [x] Add forwarders. Run persistence and ingest tests on SQLite and
       PostgreSQL. Commit.
 
 ### Task 2: Catalog edit batch (spec 5.2)
@@ -140,10 +142,10 @@ Nothing blocks any task.
 **Files:** `catalog.hpp`, `store.hpp`, `src/sql/catalog.hpp`,
 `src/catalog_edit.cpp`; test `tests/persistence/test_catalog_edit.cpp`.
 
-- [ ] Declare `CatalogValue`, `CatalogFields`, the three edit structs,
+- [x] Declare `CatalogValue`, `CatalogFields`, the three edit structs,
       `CatalogEditBatch`, `StaleRow`, `Refusal`, `CatalogApplied`,
       `CatalogOutcome` and `apply_catalog_edits(Uuid client, const CatalogEditBatch&)`.
-- [ ] Write the allowlist in `src/sql/catalog.hpp`: table name, then the
+- [x] Write the allowlist in `src/sql/catalog.hpp`: table name, then the
       editable columns and their value types:
 
   | Table | Editable columns |
@@ -157,7 +159,7 @@ Nothing blocks any task.
   | `irradiation_position` | `level_uuid`, `position`, `sample_uuid`, `weight`, `packet`, `note` |
   | `identifier` | `identifier`, `position_uuid` (update and delete only; inserts go through Task 4) |
 
-- [ ] Failing tests:
+- [x] Failing tests:
   - `InsertUpdateDeleteRoundTrip`: one test per table, parameterized.
   - `UnknownColumnIsError`, `WrongTypeIsError`.
   - `StaleWhenExpectedDiffers`: the stale row's `actual` holds the current
@@ -181,35 +183,35 @@ Nothing blocks any task.
     `change_log` row of kind `catalog` per batch.
   - `LaterEditNamesEarlierInsert`: a new project then a sample in it, in one
     batch.
-- [ ] Implement in one transaction (`BEGIN IMMEDIATE` on SQLite):
+- [x] Implement in one transaction (`BEGIN IMMEDIATE` on SQLite):
       validate every edit against the allowlist before any SQL; apply in
       order; collect stale rows and refusals instead of stopping at the
       first; check the rule queries before each statement they guard; roll
       back if anything was collected; else write the audit rows and take the
       change cursor. `IS NOT DISTINCT FROM` on PostgreSQL, `IS` on SQLite.
-- [ ] Map unique violations with the existing error classification in
+- [x] Map unique violations with the existing error classification in
       `src/sql/errors.cpp` (SQLSTATE 23505, SQLITE_CONSTRAINT_UNIQUE) to
       `Refusal{rule = "unique"}`. Other errors stay `Error`s.
-- [ ] Both engines; forwarders; commit.
+- [x] Both engines; forwarders; commit.
 
 ### Task 3: Catalog edits with reference revisions (spec 5.3)
 
 **Files:** `store.hpp`, `src/catalog_edit.cpp`, `src/unit_of_work.cpp`; test
 `tests/persistence/test_catalog_edit.cpp` (add).
 
-- [ ] Add the `Conflict` alternative to `CatalogOutcome` and the overload
+- [x] Add the `Conflict` alternative to `CatalogOutcome` and the overload
       `apply_catalog_edits(const Actor&, const CatalogEditBatch&, IUnitOfWork&, ChangesetKind, std::string)`.
-- [ ] Refactor `UnitOfWork::commit` so its body (payload inserts, ordered CAS,
+- [x] Refactor `UnitOfWork::commit` so its body (payload inserts, ordered CAS,
       `head_move`) can run inside a transaction it did not open. Keep
       `commit()` behaviour identical. The existing revision and property
       tests are the guard.
-- [ ] Failing tests:
+- [x] Failing tests:
   - `LevelSaveWithRefs`: a position sample change plus a new
     `level_geometry` revision, one `change_log` row.
   - `RefConflictRollsBackCatalog`: a stale level_geometry head leaves the
     position unchanged.
   - `StaleCatalogRollsBackRefs`.
-- [ ] Implement: catalog edits, then the unit of work's staged revisions and
+- [x] Implement: catalog edits, then the unit of work's staged revisions and
       CAS, then one cursor entry of kind `changeset` that names both. Commit.
 
 ### Task 4: Identifier allocation (spec 5.4)
@@ -217,9 +219,9 @@ Nothing blocks any task.
 **Files:** `catalog.hpp`, `store.hpp`, `src/identifier_alloc.cpp`; test
 `tests/persistence/test_identifier_allocation.cpp`.
 
-- [ ] Declare `IdentifierAssignment`, `IdentifierAllocation`,
+- [x] Declare `IdentifierAssignment`, `IdentifierAllocation`,
       `AllocationStale`, `AllocationOutcome`, `allocate_identifiers`.
-- [ ] Failing tests:
+- [x] Failing tests:
   - `SeedRules`: an absent counter seeds from the numeric maximum (Task 1's
     set of identifiers), or 0 in an empty store.
   - `StaleCounter`: `expected_last` lower than the counter returns the
@@ -233,7 +235,7 @@ Nothing blocks any task.
   - `OverwrittenNumbersNotReused`.
   - `AfterImportContinuesAboveMax`: run the catalog import fixture
     (`tests/persistence/test_catalog_import.cpp` helpers), then allocate.
-- [ ] Implement: lock with `SELECT ... FOR UPDATE` (insert the seeded row first
+- [x] Implement: lock with `SELECT ... FOR UPDATE` (insert the seeded row first
       with `ON CONFLICT DO NOTHING`, then lock). Identifier text is the decimal
       number. Audit each identifier insert or replace in `change_entity`.
       Commit.
@@ -244,10 +246,10 @@ Nothing blocks any task.
 `src/*.cpp`, root `CMakeLists.txt`, `tests/entry/CMakeLists.txt`,
 `tests/entry/test_{names,sample_fields,csv}.cpp`.
 
-- [ ] CMake: `pychron_entry` static, returns early without
+- [x] CMake: `pychron_entry` static, returns early without
       `PYCHRON_PERSISTENCE_ENABLED`; links `pychron::persistence`, `pychron::core`,
       and privately `pychron::dvc`. Tests are globbed, like `tests/ingest`.
-- [ ] `names`, table-driven tests from the spec 6 rules:
+- [x] `names`, table-driven tests from the spec 6 rules:
   - PI: `Ross`, `Ross, J` and `Ross,J` pass; `Jake Ross` and `ross` fail;
     `NMGRL` passes when allowed; `"Ross, J"` parses into last name and
     initial.
@@ -257,32 +259,32 @@ Nothing blocks any task.
     with the prefix gives `NM-001`. A name with whitespace is invalid.
   - Level letters: `A`→`B`, `Z`→`AA`, `AZ`→`BA`.
   - Packets: `P7`→`P8`, `9`→`10`, `P09`→`P10`.
-- [ ] `sample_fields`:
+- [x] `sample_fields`:
   - Lat/lon ranges and the both-or-neither rule.
   - UTM to WGS84 against at least four published points, one per
     hemisphere and quadrant, to 1e-6 degrees. Zone letters below `N` are
     southern.
-- [ ] `csv`:
+- [x] `csv`:
   - Quoted fields with embedded delimiters, quotes and newlines.
   - BOM, CRLF and a trailing empty line.
   - Delimiter sniffing for `, ; \t |`, and a tie broken in that order.
   - Ragged rows reported with their line numbers.
-- [ ] Implement; commit.
+- [x] Implement; commit.
 
 ### Task 6: Sample import and search (spec 6, 9.2)
 
 **Files:** `include/pychron/entry/{sample_import,sample_search}.hpp`, `src/*.cpp`;
 tests `tests/entry/test_sample_import.cpp`, `test_sample_search.cpp`.
 
-- [ ] `SampleImportPlan plan_sample_import(const CsvTable&, const ColumnMapping&,
+- [x] `SampleImportPlan plan_sample_import(const CsvTable&, const ColumnMapping&,
       const CatalogSnapshot&, ImportOptions)`. `CatalogSnapshot` holds the
       PI, project, material and sample rows read through Task 1. It is
       plain data, so the planner is pure and tests need no store.
-- [ ] `default_mapping(headers)` with the alias table (`importer.py:36-69`).
-- [ ] `template_csv()`.
-- [ ] `to_batch(plan)`: inserts in foreign-key order with client-generated
+- [x] `default_mapping(headers)` with the alias table (`importer.py:36-69`).
+- [x] `template_csv()`.
+- [x] `to_batch(plan)`: inserts in foreign-key order with client-generated
       UUIDv7s, and updates (with `expected`) only when `update_existing`.
-- [ ] Failing tests:
+- [x] Failing tests:
   - One per row state.
   - Every error message for a row is listed.
   - Required fields: sample, project, PI and material.
@@ -293,9 +295,9 @@ tests `tests/entry/test_sample_import.cpp`, `test_sample_search.cpp`.
   - UTM rows, and UTM ignored when lat/lon are present.
   - `exists` versus `update`.
   - `TemplateParsesBack`.
-- [ ] `near_duplicates(name, samples)`: `FC-2` matches `fc 2` and `FC_2`;
+- [x] `near_duplicates(name, samples)`: `FC-2` matches `fc 2` and `FC_2`;
       the result includes rows from other projects.
-- [ ] Store round trip: one integration test applies a plan to a SQLite
+- [x] Store round trip: one integration test applies a plan to a SQLite
       store and re-plans the same file. Every row then reads `exists`.
       Commit.
 
@@ -304,16 +306,16 @@ tests `tests/entry/test_sample_import.cpp`, `test_sample_search.cpp`.
 **Files:** `include/pychron/entry/{settings,identifier_plan}.hpp`, `src/*.cpp`;
 tests `test_settings.cpp`, `test_identifier_plan.cpp`.
 
-- [ ] `EntrySettings` with JSON read and write (nlohmann_json): defaults for
+- [x] `EntrySettings` with JSON read and write (nlohmann_json): defaults for
       missing keys, an unknown key kept, and an error for a wrong type.
       `load_settings(IStore&)` and `save_settings(IStore&, Actor, settings,
       expected_head)` go through the `document` reference.
-- [ ] `IdentifierPlan plan_identifiers(const std::vector<LevelSheet>&, std::int64_t last,
+- [x] `IdentifierPlan plan_identifiers(const std::vector<LevelSheet>&, std::int64_t last,
       bool overwrite)`: the section 8 pseudo-code. The plan carries the
       assignments, `expected_last` and the resulting last.
-- [ ] `human_error_checks(sheets, settings, irradiation_name)`: the two
+- [x] `human_error_checks(sheets, settings, irradiation_name)`: the two
       warnings of section 8.
-- [ ] Failing tests, with hand-worked expected numbers:
+- [x] Failing tests, with hand-worked expected numbers:
   - Two levels: numbers run on from A into B with no gap.
   - Monitors and unknowns interleave in position order.
   - Overwrite on and off; with overwrite, replaced positions get new
@@ -321,12 +323,12 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
   - An analyzed identifier is never overwritten.
   - Positions without a sample are skipped.
   - Level order comes from names, not input order.
-- [ ] Property test (seeded, 500 cases): random sheets give exactly
+- [x] Property test (seeded, 500 cases): random sheets give exactly
       `last + 1 ... last + k` in (level name, position) order. Applying a plan and re-planning
       without overwrite yields no assignments.
-- [ ] Store test: plan, `allocate_identifiers`, read back. The level sheets
+- [x] Store test: plan, `allocate_identifiers`, read back. The level sheets
       show exactly the planned identifiers.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 8: Level sheet, irradiation edit, holders, export (spec 6)
 
@@ -335,10 +337,10 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
 `test_level_sheet.cpp`, `test_package_edit.cpp`, `test_holder_import.cpp`,
 `test_export.cpp`.
 
-- [ ] Move the declarations of `parse_holder`, `parse_chronology` and their
+- [x] Move the declarations of `parse_holder`, `parse_chronology` and their
       result structs from `libs/dvc/src/meta_layout.hpp` into the public
       `meta_files.hpp`. `meta_layout.hpp` includes it. Run the dvc tests.
-- [ ] `LevelSheetEdit` (operations as spec 6). `to_batch()` emits changed
+- [x] `LevelSheetEdit` (operations as spec 6). `to_batch()` emits changed
       fields only, with loaded values as `expected`. `stage_refs(IUnitOfWork&)`
       stages z and production revisions with the loaded heads. Failing tests:
   - `ClearKeepsIdentifier`.
@@ -350,7 +352,7 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
   - `OrphansAfterHolderShrink`: kept and listed, never deleted.
   - `HolesFromHolderOrdinal`: position n is ordinal n-1, and `hole_id` is
     shown.
-- [ ] `NewPackage` (`package_edit.hpp`): name, package kind, doses, reactor, levels. `validate()`
+- [x] `NewPackage` (`package_edit.hpp`): name, package kind, doses, reactor, levels. `validate()`
       covers dose order, `end > start` and `power > 0`, and the reactor is
       required for kind `irradiation`; kind `package` writes no chronology or production
       (test `PackageWritesNoRefs`). `set_kind` is a catalog edit that leaves
@@ -359,10 +361,10 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
       level z values. Store test: one call creates the whole irradiation,
       and its `resolve_refs` for a position returns chronology and
       production. Also test the estimated-J helper.
-- [ ] `import_holder(text, name)`: legacy files with and without hole
+- [x] `import_holder(text, name)`: legacy files with and without hole
       numbers, `#` and blank lines (which still advance the implicit id,
       `meta_object.py:260-299`), duplicate hole ids refused.
-- [ ] `export_level_csv`, `export_package_csv` round-trip through
+- [x] `export_level_csv`, `export_package_csv` round-trip through
       `positions import`. Commit.
 
 ### Task 9: `elctl entry` (spec 10)
@@ -372,13 +374,13 @@ without persistence, prints "built without persistence", like
 `import_stub.cpp`), `cli.cpp`, `apps/elctl/CMakeLists.txt`; tests
 `apps/elctl/tests/test_entry.cpp`.
 
-- [ ] Subcommands as listed in spec 10, each parsing into a struct, then one
+- [x] Subcommands as listed in spec 10, each parsing into a struct, then one
       function calling `libs/entry` and the store. User and client come
       from `--user` (default `$USER`) and the hostname, with role
       `reduction`.
-- [ ] Output: one line per created, updated, stale or refused row. Exit codes
+- [x] Output: one line per created, updated, stale or refused row. Exit codes
       0, 1 and 2.
-- [ ] Tests on a temp SQLite store:
+- [x] Tests on a temp SQLite store:
   - `samples import --dry-run` writes nothing and prints the plan.
   - An import, then a re-import, which reports everything as existing.
   - `package add P-1 --kind package` writes no chronology.
@@ -387,7 +389,7 @@ without persistence, prints "built without persistence", like
   - `positions import`, then `identifiers generate --dry-run`, then the real
     run. The printed plan equals the stored identifiers.
   - A stale run exits with 2.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 10: UI bridge, Entry menu, samples window, import dialog (spec 9, 9.1, 9.2)
 
@@ -397,30 +399,30 @@ without persistence, prints "built without persistence", like
 (explicit source list, under `PYCHRON_UI_HAS_STORE`), `tests/ui/test_samples_window.cpp`,
 `tests/ui/CMakeLists.txt`.
 
-- [ ] `EntryBridge`: one worker thread that opens its own store (the
+- [x] `EntryBridge`: one worker thread that opens its own store (the
       `StoreSource::Impl::call` pattern) and exposes async calls. Each call
       takes a callback, and the callback runs on the GUI thread through
       `QMetaObject::invokeMethod(..., Qt::QueuedConnection)`. It is
       destroyed before the windows that use it are, so declare it first.
-- [ ] Entry menu in both main windows when a store URL is known. The actions
+- [x] Entry menu in both main windows when a store URL is known. The actions
       open singleton windows.
-- [ ] `SampleTableModel`: rows from `samples()`, edits kept as
+- [x] `SampleTableModel`: rows from `samples()`, edits kept as
       `CatalogUpdate`s keyed by uuid with the loaded values as `expected`,
       and a new-row sentinel. PI, project and material delegates accept new
       text, which becomes an insert.
-- [ ] `SamplesWindow`: filters, table, detail form (with the UTM mode),
+- [x] `SamplesWindow`: filters, table, detail form (with the UTM mode),
       Save, Revert, Delete (enabled only when there are no positions or
       identifiers), and paste into the import dialog. Stale rows are tinted,
       with a tooltip naming the other client's values.
-- [ ] `SampleImportDialog`: mapping table, preview with the state filter,
+- [x] `SampleImportDialog`: mapping table, preview with the state filter,
       error export, template, Import.
-- [ ] Headless tests on a SQLite store:
+- [x] Headless tests on a SQLite store:
   - Edit two cells and save. The store has them and the model is clean.
   - Concurrent edit: change the row through a second store, then save. The
     row is tinted and nothing is written.
   - A new sample with a new project and PI.
   - A TSV paste opens the preview with the expected states.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 11: Packages window and its dialogs (spec 9.3)
 
@@ -429,32 +431,32 @@ without persistence, prints "built without persistence", like
 editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
 `tests/ui/test_packages_window.cpp`.
 
-- [ ] Tree model over `irradiations()` and `levels()`, the package kind shown
+- [x] Tree model over `irradiations()` and `levels()`, the package kind shown
       as an icon.
-- [ ] `LevelGridModel` over a `LevelSheetEdit`: the columns of 9.3, analyzed
+- [x] `LevelGridModel` over a `LevelSheetEdit`: the columns of 9.3, analyzed
       rows tinted, orphans marked. Edits to weight, packet and note go
       through `LevelSheetEdit`.
-- [ ] Sample picker dock that reuses the samples filters. "Assign to
+- [x] Sample picker dock that reuses the samples filters. "Assign to
       selected" confirms once, with the analysis count, when any selected
       row is analyzed.
-- [ ] Level dock (holder, z, production, note) and chronology dock (hidden
+- [x] Level dock (holder, z, production, note) and chronology dock (hidden
       for kind `package`), with times in the lab's zone converted with
       `ingest::tz` helpers or `std::chrono::zoned_time`, whichever the tree
       already uses.
-- [ ] Dialogs as spec 9.3, New Package with the kind choice. It commits
+- [x] Dialogs as spec 9.3, New Package with the kind choice. It commits
       in one call. A kind switch on the Level dock asks for confirmation and
       shows or hides the chronology and production editors.
-- [ ] Generate Identifiers dialog: settings summary, overwrite, warnings,
+- [x] Generate Identifiers dialog: settings summary, overwrite, warnings,
       preview over every level, Commit, and re-preview on stale.
-- [ ] Unsaved-edits prompt on level change and on close.
-- [ ] Headless tests:
+- [x] Unsaved-edits prompt on level change and on close.
+- [x] Headless tests:
   - Create an irradiation through the dialog and check it in the store.
   - Assign, save and reload.
   - Generate, then compare the preview to the stored identifiers.
   - Stale generate: bump the counter through a second store, and the
     dialog re-previews.
   - Switching level with edits prompts.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 12: Holder view, holders dialog, PDF (spec 9.3, 9.4, 9.5)
 
@@ -462,26 +464,26 @@ editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
 `level_sheet_pdf.{hpp,cpp}`; tests in `tests/ui/test_packages_window.cpp`
 and `tests/ui/test_level_sheet_pdf.cpp`.
 
-- [ ] Holder view: holes from `HolderValue`, filled by project colour,
+- [x] Holder view: holes from `HolderValue`, filled by project colour,
       selection synced both ways with the grid (click and rubber-band).
-- [ ] Holders dialog: list, preview, import `.txt` through `import_holder`.
-- [ ] PDF via `QPdfWriter` and `QPainter`: a summary page and one page per
+- [x] Holders dialog: list, preview, import `.txt` through `import_holder`.
+- [x] PDF via `QPdfWriter` and `QPainter`: a summary page and one page per
       level, with a row for every hole. Test: the file is written, the page
       count is 1 + the number of levels, and the text (through
       `QTextDocument` when the table is built as one) contains every
       identifier.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 13: Docs, full verification, merge
 
-- [ ] `docs/entry.md`: user guide for samples, packages, identifiers,
+- [x] `docs/entry.md`: user guide for samples, packages, identifiers,
       settings, `elctl entry`, and the rule that a lab migrates its legacy
       database before using entry (spec E1).
-- [ ] AGENTS.md: one bullet under Build and test: `libs/entry` builds only
+- [x] AGENTS.md: one bullet under Build and test: `libs/entry` builds only
       with persistence; catalog edits go through `apply_catalog_edits`, never
       ad hoc UPDATEs; identifiers only through `allocate_identifiers`.
-- [ ] Priorities plan: add row 8a "Sample/irradiation entry", pointing at the
+- [x] Priorities plan: add row 8a "Sample/irradiation entry", pointing at the
       spec and this plan.
 - [ ] Full build and test on `dev` and `dev-ui`, persistence on PostgreSQL
       (`PYCHRON_TEST_PG_URL`), gcc 14 and clang 18 with ASan/UBSan.
-- [ ] Rebase on `origin/main`, merge, push.
+- [ ] Rebase on `origin/main`, merge, push. (Session branch pushed; merging to `main` is the owner's.)

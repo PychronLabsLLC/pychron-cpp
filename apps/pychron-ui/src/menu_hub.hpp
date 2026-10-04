@@ -2,7 +2,7 @@
 
 // MenuHub: one menu bar for the whole application. Every top-level window
 // shows the same menus in the same order (File, Queue, Rows, Executor,
-// Scripts, View, Window, Help).
+// Scripts, View, Entry, Window, Help). Entry is there only when a store is.
 //
 // View holds what windows contribute to it: the actions that open the
 // application's main views. Window is the hub's own, the usual one: Minimize,
@@ -53,7 +53,9 @@ class MenuHub : public QObject {
   Q_OBJECT
 
  public:
-  enum class Menu { File, Queue, Rows, Executor, Scripts, View, Window, Help };
+  // Entry comes last so the slots of the others keep their values; kOrder
+  // places it between View and Window.
+  enum class Menu { File, Queue, Rows, Executor, Scripts, View, Window, Help, Entry };
   enum class Scope {
     App,     // works from every window
     Window,  // enabled only while `owner`'s window is active
@@ -62,7 +64,7 @@ class MenuHub : public QObject {
     PerWindow,  // each window shows its own copy of the bar
     Shared,     // one parentless bar for every window (macOS)
   };
-  static constexpr std::size_t kMenus = 8;
+  static constexpr std::size_t kMenus = 9;
 
   // The application's hub (created on first use; needs a QApplication).
   static MenuHub& instance();

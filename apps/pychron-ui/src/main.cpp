@@ -84,6 +84,7 @@
 #undef signals
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
+#include "entry_actions.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -186,6 +187,10 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
       install.root / "figures");
   pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
+#ifdef PYCHRON_UI_HAS_STORE
+  // Entry: samples and packages in the install's database (parented to the window).
+  if (!url.empty()) new pychron::ui::EntryActions(&window, url);
+#endif
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
   window.resize(1200, 800);
   window.show();
@@ -379,6 +384,9 @@ int main(int argc, char** argv) {
       window.log_dock()->load_history(dir / "pychron.log");
     }
     window.set_data(&data_source, &presets);
+#ifdef PYCHRON_UI_HAS_STORE
+    if (cli->db) new pychron::ui::EntryActions(&window, *cli->db);  // the Entry menu, parented to the window
+#endif
     window.show();
     if (spectrometer_error) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +

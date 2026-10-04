@@ -124,6 +124,30 @@ target_compile_definitions(pychron_ui_lib PRIVATE PYCHRON_VERSION="${PROJECT_VER
 if(TARGET pychron_processing_store)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::processing_store)
   target_compile_definitions(pychron_ui_lib PUBLIC PYCHRON_UI_HAS_STORE=1)
+  # Sample and package entry (entry spec, section 9) writes the same store.
+  target_sources(pychron_ui_lib PRIVATE
+    src/entry_actions.cpp
+    src/entry_bridge.cpp
+    src/holder_view.cpp
+    src/level_grid_model.cpp
+    src/level_sheet_pdf.cpp
+    src/package_dialogs.cpp
+    src/packages_window.cpp
+    src/sample_import_dialog.cpp
+    src/sample_table_model.cpp
+    src/samples_window.cpp
+    src/entry_actions.hpp
+    src/entry_bridge.hpp
+    src/entry_headers.hpp
+    src/holder_view.hpp
+    src/level_grid_model.hpp
+    src/level_sheet_pdf.hpp
+    src/package_dialogs.hpp
+    src/packages_window.hpp
+    src/sample_import_dialog.hpp
+    src/sample_table_model.hpp
+    src/samples_window.hpp)
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::entry)
 endif()
 
 add_executable(pychron-ui src/main.cpp)

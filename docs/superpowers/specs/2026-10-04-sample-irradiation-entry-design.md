@@ -1,7 +1,7 @@
 # Sample and package entry
 
 Date: 2026-10-04
-Status: Accepted (owner decisions on the open questions recorded 2026-10-04, section 11)
+Status: Implemented (owner decisions in section 11; implementation notes in section 14)
 Owner: Jake Ross
 Depends on: `2026-10-01-dvc-schema-design.md` (catalog tables 3.1-3.3,
 reference data 6, identifier reservation 8.6, catalog audit D6, roles 11.2),
@@ -488,8 +488,9 @@ elctl entry holders import <file.txt> [--name <name>]
 elctl entry settings show|set <key> <value>
 ```
 
-Exit code 0 on success, 1 on error, 2 when a save is stale or refused
-(nothing written). Refusals and stale rows are listed one per line.
+Exit code 0 on success; 1 when nothing was written because a row was stale,
+refused or invalid (each listed one per line); 2 for a usage or fatal error,
+as the other elctl commands.
 
 ## 11. Owner decisions (2026-10-04)
 
@@ -551,3 +552,42 @@ identifiers (a browse filter will cover it).
 - `tests/ui` (headless): samples table edit and save; stale highlighting;
   packages window assign, save and generate on a SQLite store; the unsaved
   edits prompt.
+
+## 14. Implementation notes (2026-10-04)
+
+What the implementation settled or changed against the sections above.
+
+- **Store surface.** Besides 5.1-5.4, `IStore` has `catalog_row(table,
+  uuid)` (the editable columns of one row, for stale reports) and
+  `ref_objects(type, package)` (productions, holders and chronologies with
+  their heads). A combined save's lost reference CAS is reported as
+  `std::vector<RefConflict>` (subject, expected, actual), not the unit of
+  work's `Conflict`.
+- **Catalog edit batch.** It also inserts the `ref_object` rows entry
+  creates: `level_geometry`, `level_production`, `production`, `chronology`,
+  `irradiation_holder` and `document` only. These rows are insert-only in a
+  batch; their keys change only through a rename (E11). Edits of one row in
+  one batch merge into one audit row. A row inserted and deleted in the same
+  batch leaves no audit row.
+- **Refusal rules.** `allocate_identifiers` adds `stale_identifier`: the
+  position no longer holds the identifier the plan replaces. A position
+  whose identifier is analyzed cannot move (`analyzed_identifier`).
+- **`SampleFields`** is its own struct in `catalog.hpp`. `SampleSpec` is
+  unchanged.
+- **`libs/entry`** also has `positions_import.hpp`, and `add_level`,
+  `save_production` and `save_chronology` in `package_edit.hpp`. In a
+  positions CSV an empty project, PI, material or grainsize cell matches any
+  value.
+- **Samples window.** New samples come from a form above the table rather
+  than a row inside it. Pasted rows go through the Import dialog. There is
+  no separate detail form: the table holds the location fields, and UTM
+  entry is in the import.
+- **Packages window.** The right dock has Samples, Level, Chronology and
+  Holder tabs. Moving a position is in `LevelSheetEdit::move` and not yet in
+  the UI.
+- **Entry menu.** It sits between View and Window and appears only when the
+  app has a store.
+- **Not done.** `create_irradiation_project` (making the monitor project of
+  a new irradiation) is a setting with no effect yet. The setting needs a
+  PI to own that project, and the lab has none by default.
+

@@ -58,6 +58,11 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
   Never edit an applied migration; add `NNNN_<name>.sql`.
+- `libs/entry` (sample and package entry) builds only with persistence, like
+  `libs/ingest`. Entry writes catalog rows only through
+  `IStore::apply_catalog_edits` (field-value compare-and-swap, one
+  transaction) and identifiers only through `allocate_identifiers`; never
+  through ad hoc UPDATEs. User guide: `docs/entry.md`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang
