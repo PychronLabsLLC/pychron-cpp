@@ -325,6 +325,8 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  </spectrometer>\n"
           "  <laser use_symbol=\"True\" display_name='Laser'>CO2<translation>10,-10</translation><dimension>4,4</dimension></laser>\n"
           "  <laser use_symbol=\"False\" display_name=\"\">Furnace<translation>16,-10</translation><dimension>4,4</dimension></laser>\n"
+          "  <turbo use_symbol=\"True\" display_name='Turbo'>T1<translation>10,5</translation><dimension>5,3</dimension></turbo>\n"
+          "  <getter>NP10<translation>18,5</translation><dimension>5,3</dimension></getter>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -357,7 +359,10 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
       if (s.name == name) return &s;
     return nullptr;
   };
-  ASSERT_EQ(drawing->stages.size(), 3u);
+  ASSERT_EQ(drawing->stages.size(), 5u);
+  EXPECT_EQ(stage("T1")->symbol, canvas::StageSymbol::Turbo);
+  EXPECT_EQ(stage("T1")->display_name, "Turbo");
+  EXPECT_EQ(stage("NP10")->symbol, canvas::StageSymbol::Getter);
   EXPECT_EQ(stage("Obama")->display_name, std::nullopt);  // unset: the name is drawn
   EXPECT_EQ(stage("Obama")->symbol, canvas::StageSymbol::Spectrometer);
   EXPECT_EQ(stage("CO2")->symbol, canvas::StageSymbol::Laser);

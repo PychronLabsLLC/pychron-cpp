@@ -690,9 +690,10 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
       cv << "display_name = " << q(*e.display_name) << "\n";
     if (e.kind == "stage") {
       if (e.use_symbol) cv << "use_symbol = true\n";
-      // A spectrometer or a laser is drawn as one, unless the legacy canvas
-      // turned its symbol off.
-      if ((e.legacy_kind == "spectrometer" || e.legacy_kind == "laser") && !e.no_symbol)
+      // A spectrometer, laser, turbo or getter is drawn as one, unless the
+      // legacy canvas turned its symbol off.
+      static const std::set<std::string> symbols{"spectrometer", "laser", "turbo", "getter"};
+      if (symbols.contains(e.legacy_kind) && !e.no_symbol)
         cv << "symbol = " << q(e.legacy_kind) << "\n";
     }
   }

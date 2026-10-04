@@ -251,6 +251,7 @@ pos = [532, 115]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "ATurbo"
@@ -258,6 +259,7 @@ pos = [357, 647]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "BTurbo"
@@ -265,6 +267,7 @@ pos = [743, 483]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "FBTurbo"
@@ -272,6 +275,7 @@ pos = [64, 313]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "FATurbo"
@@ -279,45 +283,53 @@ pos = [99, 179]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "JanNP10"
 pos = [860, 427]
 size = [58, 31]
 display_name = "NP10"
+symbol = "getter"
 
 [[stage]]
 name = "MiniBoneGP50"
 pos = [675, 427]
 size = [58, 31]
 display_name = "GP50"
+symbol = "getter"
 
 [[stage]]
 name = "F GP-50"
 pos = [357, 118]
 size = [58, 31]
 display_name = "GP50"
+symbol = "getter"
 
 [[stage]]
 name = "GP50"
 pos = [474, 262]
 size = [58, 31]
+symbol = "getter"
 
 [[stage]]
 name = "NP-10C"
 pos = [684, 257]
 size = [58, 31]
+symbol = "getter"
 
 [[stage]]
 name = "NP-10H"
 pos = [749, 226]
 size = [58, 31]
+symbol = "getter"
 
 [[stage]]
 name = "GP502"
 pos = [749, 128]
 size = [58, 31]
 display_name = "GP50"
+symbol = "getter"
 
 [[stage]]
 name = "Felix"

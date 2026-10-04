@@ -307,10 +307,20 @@ symbol = "quadrupole"
 name = "c"
 pos = [0, 0]
 symbol = "laser"
+[[stage]]
+name = "d"
+pos = [0, 0]
+symbol = "turbo"
+[[stage]]
+name = "e"
+pos = [0, 0]
+symbol = "getter"
 )toml",
                                          "canvas.toml");
   ASSERT_TRUE(r) << r.error().what;
-  ASSERT_EQ(r->stages.size(), 3u);
+  ASSERT_EQ(r->stages.size(), 5u);
+  EXPECT_EQ(r->stages[3].symbol, StageSymbol::Turbo);
+  EXPECT_EQ(r->stages[4].symbol, StageSymbol::Getter);
   EXPECT_EQ(r->stages[0].symbol, StageSymbol::Spectrometer);
   EXPECT_EQ(r->stages[1].symbol, StageSymbol::Quadrupole);
   EXPECT_EQ(r->stages[2].symbol, StageSymbol::Laser);

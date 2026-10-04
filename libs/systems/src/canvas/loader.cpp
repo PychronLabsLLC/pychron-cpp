@@ -48,6 +48,8 @@ constexpr std::array kStageSymbols{
     std::pair<std::string_view, StageSymbol>{"spectrometer", StageSymbol::Spectrometer},
     std::pair<std::string_view, StageSymbol>{"quadrupole", StageSymbol::Quadrupole},
     std::pair<std::string_view, StageSymbol>{"laser", StageSymbol::Laser},
+    std::pair<std::string_view, StageSymbol>{"turbo", StageSymbol::Turbo},
+    std::pair<std::string_view, StageSymbol>{"getter", StageSymbol::Getter},
 };
 
 constexpr std::array kOpenValveColors{

@@ -157,6 +157,7 @@ void ValveItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
 constexpr double kSymbolPad = 4.0;   // between the glyph or name and the border
 constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 
@@ -165,9 +166,12 @@ constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area, const QColor& fill) {
   const bool spectrometer = symbol == canvas::StageSymbol::Spectrometer;
   const bool quadrupole = symbol == canvas::StageSymbol::Quadrupole;
-  const QSizeF grid = spectrometer ? QSizeF(66, 62) : quadrupole ? QSizeF(40, 40) : QSizeF(67, 34);
+  const bool turbo = symbol == canvas::StageSymbol::Turbo;
+  const bool getter = symbol == canvas::StageSymbol::Getter;
+  const bool square = quadrupole || turbo || getter;
+  const QSizeF grid = spectrometer ? QSizeF(66, 62) : square ? QSizeF(40, 40) : QSizeF(67, 34);
   const double scale =
-      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : quadrupole ? 0.9 : 0.85});
+      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : square ? 0.9 : 0.85});
   painter.save();
   painter.translate(area.center().x() - grid.width() * scale / 2, area.center().y() - grid.height() * scale / 2);
   painter.scale(scale, scale);
@@ -218,6 +222,33 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     }
     painter.setBrush(theme().text);
     painter.drawEllipse(QPointF(20, 20), 2.5, 2.5);
+  } else if (turbo) {
+    // A turbomolecular pump from above: the housing and the rotor's swept
+    // blades round the hub.
+    painter.setPen(line);
+    painter.setBrush(theme().inactive);
+    painter.drawEllipse(QPointF(20, 20), 18.5, 18.5);
+    painter.setBrush(Qt::NoBrush);
+    for (int i = 0; i < 8; ++i) {
+      const double a = i * kPi / 4;
+      auto at = [](double angle, double r) { return QPointF(20 + r * std::cos(angle), 20 + r * std::sin(angle)); };
+      QPainterPath blade(at(a, 5));
+      blade.quadTo(at(a + 0.25, 11), at(a + 0.8, 15.5));
+      painter.drawPath(blade);
+    }
+    painter.setBrush(fill);
+    painter.drawEllipse(QPointF(20, 20), 5, 5);
+  } else if (getter) {
+    // A getter pump cartridge from the side: its flange, and the stack of
+    // getter discs on the heater rod.
+    painter.setPen(line);
+    painter.setBrush(fill);
+    painter.drawRect(QRectF(18, 7, 4, 31));
+    painter.setBrush(theme().inactive);
+    painter.drawRoundedRect(QRectF(3, 2, 34, 6), 1.5, 1.5);
+    for (int i = 0; i < 4; ++i) {
+      painter.drawRoundedRect(QRectF(8, 12 + i * 6.5, 24, 4.2), 1.5, 1.5);
+    }
   } else {
     // A laser from the side: the head with its cooling fins, the beam out of
     // the aperture, a lens, and the beam brought to a focus on the sample.
@@ -242,7 +273,7 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
 
     const QPointF focus(60, 17);  // where it lands: the hazard starburst
     for (int i = 0; i < 8; ++i) {
-      const double angle = i * 3.14159265358979 / 4;
+      const double angle = i * kPi / 4;
       const double reach = i % 2 == 0 ? 6.0 : 4.2;
       painter.drawLine(focus, focus + reach * QPointF(std::cos(angle), std::sin(angle)));
     }
@@ -461,6 +492,42 @@ void GaugeLabelItem::set_value(double value, const std::string& units) {
 void GaugeLabelItem::set_alarm(bool alarm) {
   alarm_ = alarm;
   refresh();
+}
+
+// The dial sits left of the reading, as tall as the text.
+QRectF GaugeLabelItem::dial_rect() const {
+  const QRectF text = QGraphicsSimpleTextItem::boundingRect();
+  const double side = text.height();
+  return {text.left() - side - 4, text.top(), side, side};
+}
+
+QRectF GaugeLabelItem::boundingRect() const {
+  return QGraphicsSimpleTextItem::boundingRect().united(dial_rect().adjusted(-1, -1, 1, 1));
+}
+
+void GaugeLabelItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) {
+  QGraphicsSimpleTextItem::paint(painter, option, widget);
+  // A pressure gauge's dial: face, scale ticks round the top, a needle.
+  const QRectF dial = dial_rect();
+  const QColor ink = brush().color();  // red with the reading while in alarm
+  const QPointF c = dial.center();
+  const double r = dial.width() / 2;
+  painter->setRenderHint(QPainter::Antialiasing, true);
+  painter->setPen(QPen(ink, 1.2));
+  painter->setBrush(theme().base);
+  painter->drawEllipse(c, r, r);
+  painter->setPen(QPen(ink, 1.0));
+  for (int i = 0; i < 5; ++i) {
+    const double a = kPi * (1.0 + i / 4.0);  // left, round the top, to right
+    const QPointF dir(std::cos(a), std::sin(a));
+    painter->drawLine(c + dir * (r * 0.62), c + dir * (r * 0.88));
+  }
+  const double needle = kPi * 1.68;
+  painter->setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::RoundCap));
+  painter->drawLine(c, c + QPointF(std::cos(needle), std::sin(needle)) * (r * 0.7));
+  painter->setPen(Qt::NoPen);
+  painter->setBrush(ink);
+  painter->drawEllipse(c, 1.5, 1.5);
 }
 
 void GaugeLabelItem::refresh() {

@@ -500,6 +500,16 @@ class TestCanvasView : public QObject {
     QVERIFY(!ui::box_entry({{90, 0}, {100, 0}}, box).has_value());     // never outside
   }
 
+  // A gauge's reading has a small dial to its left, inside the item's bounds.
+  void gaugesWearADial() {
+    const ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    const QRectF dial = ig->dial_rect();
+    QCOMPARE(dial.width(), dial.height());
+    QVERIFY(dial.width() > 8);
+    QVERIFY(dial.right() < 0);  // left of the text, which starts at x = 0
+    QVERIFY(ig->boundingRect().contains(dial));
+  }
+
   void gaugeLabelTurnsRedOnAlarmAndClearsInLimits() {
     std::thread([this] {
       line_->bus().publish(PressureSample{"IG1", 5e-3, "torr", {}});

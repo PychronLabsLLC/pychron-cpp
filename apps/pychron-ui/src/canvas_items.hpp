@@ -182,7 +182,7 @@ class LabelItem : public QGraphicsSimpleTextItem {
   static QFont parse_font(const QString& spec);
 };
 
-// Gauge value + units; red while in alarm.
+// Gauge dial, value + units; red while in alarm.
 class GaugeLabelItem : public QGraphicsSimpleTextItem {
  public:
   explicit GaugeLabelItem(std::string name, QGraphicsItem* parent = nullptr);
@@ -191,6 +191,11 @@ class GaugeLabelItem : public QGraphicsSimpleTextItem {
   bool in_alarm() const noexcept { return alarm_; }
   void set_value(double value, const std::string& units);
   void set_alarm(bool alarm);
+
+  // A small dial drawn left of the reading marks it as a gauge.
+  QRectF dial_rect() const;
+  QRectF boundingRect() const override;
+  void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
 
  private:
   void refresh();
