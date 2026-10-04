@@ -157,6 +157,21 @@ the UI (Qt 6.4). If qcustomplot.com is unreachable, point
 `FETCHCONTENT_SOURCE_DIR_QCUSTOMPLOT` at an unpacked QCustomPlot 2.1.1 source
 (Debian's `qcustomplot_2.1.1+dfsg1.orig.tar.xz` has the same two files).
 
+### Importing legacy data
+
+`elctl import` brings legacy pychron repositories (and a converted database
+dump) into a store; see `docs/legacy_import.md` for how to run it. A real run
+against three public NMGRLData repositories is
+`tools/import_fixture_check.sh build/dev` (needs network; not part of CI).
+
+`libs/ingest` and `libs/dvc` build with persistence only. Their tests (and
+`elctl`'s import tests) build git repositories and need `git` >= 2.32 on
+`PATH`. Time zones come from `libs/ingest/src/tz.cpp`, which uses
+`std::chrono`'s tz database where the standard library has one and Howard
+Hinnant's `date` library otherwise; both need the system time-zone database
+(`tzdata`, for example `apt install tzdata`; minimal container images often
+lack it) on every platform path.
+
 ### Running against a Thermo instrument
 
 The `thermo_qtegra` driver (Argus, Helix, through Qtegra's

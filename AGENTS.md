@@ -31,6 +31,10 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - Persistence tests always run on SQLite. Set
   `PYCHRON_TEST_PG_URL=postgresql://user:pw@host/db` to run them on
   PostgreSQL as well (each test uses a throwaway schema).
+- `libs/ingest` and `libs/dvc` build only with persistence; their tests (and
+  `elctl`'s import tests) need `git` >= 2.32 on PATH and `tzdata`. The
+  real-data check is `tools/import_fixture_check.sh build/dev` (network, not
+  in CI); user docs are in `docs/legacy_import.md`.
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
   Never edit an applied migration; add `NNNN_<name>.sql`.
