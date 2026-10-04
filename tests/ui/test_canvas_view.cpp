@@ -381,6 +381,30 @@ class TestCanvasView : public QObject {
     delete pipe.outline();
   }
 
+  // Every pipe on the NMGRL line breaks the border of each volume it joins:
+  // ends that legacy offsets put on a volume's far edge (D into Bone) or a
+  // fraction of a pixel short of it (J into FurnaceManifold) included.
+  void everyPipeIntoAVolumeBreaksItsBorder() {
+    const std::filesystem::path dir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
+    systems::ExtractionLine::Options options;
+    options.force_sim = true;
+    options.run_scheduler = false;
+    options.state_file = std::filesystem::path(QDir::tempPath().toStdString()) / "pychron-ui-test-nmgrl.state.toml";
+    auto line = systems::ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", options);
+    QVERIFY2(line.has_value(), line ? "" : line.error().what.c_str());
+    CoreBridge bridge(**line);
+    CanvasView view(bridge);
+    int checked = 0;
+    for (const ui::ConnectionItem* pipe : view.pipes()) {
+      const auto& ends = pipe->endpoints();
+      if (ends.size() != 2) continue;  // a tee's arms name all three
+      const std::size_t volumes = (view.stage(ends[0]) != nullptr) + (view.stage(ends[1]) != nullptr);
+      QVERIFY2(pipe->gaps().size() == volumes, (ends[0] + " - " + ends[1]).c_str());
+      checked += static_cast<int>(volumes);
+    }
+    QVERIFY(checked > 40);
+  }
+
   void boxEntryFindsWhereALineCrossesIntoABox() {
     const QRectF box(80, -10, 40, 20);
     auto in = ui::box_entry({{0, 0}, {100, 0}}, box);
@@ -392,7 +416,13 @@ class TestCanvasView : public QObject {
     QVERIFY(in.has_value());
     QCOMPARE(in->edge, QPointF(100, 10));
     QCOMPARE(in->inward, QPointF(0, -1));
-    QVERIFY(!ui::box_entry({{0, 0}, {50, 0}}, box).has_value());       // ends outside
+    // through to the far edge and a hair beyond (a rounded legacy offset)
+    in = ui::box_entry({{200, 50}, {200, 0}, {79.5, 0}}, box);
+    QVERIFY(in.has_value());
+    QCOMPARE(in->edge, QPointF(120, 0));
+    QCOMPARE(in->inward, QPointF(-1, 0));
+    QVERIFY(!ui::box_entry({{0, 0}, {50, 0}}, box).has_value());       // stops short
+    QVERIFY(!ui::box_entry({{0, 20}, {200, 20}}, box).has_value());    // passes by
     QVERIFY(!ui::box_entry({{90, 0}, {100, 0}}, box).has_value());     // never outside
   }
 

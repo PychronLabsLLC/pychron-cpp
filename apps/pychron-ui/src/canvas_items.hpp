@@ -87,10 +87,10 @@ class ValveItem : public QGraphicsObject {
   std::function<void(const std::string&, bool)> on_lock_request_;
 };
 
-// Where a polyline that ends inside `box` crosses into it, walking back from
-// its last point: the crossing on the box edge and the unit direction
-// pointing in. Nothing when the last point is outside the box or the whole
-// line is inside it.
+// Where a polyline first crosses into `box`, walking from its first point:
+// the crossing on the box edge and the unit direction of travel there. A
+// pipe need not stop inside the box (a legacy offset can put its end on the
+// far edge). Nothing when it starts inside the box or never reaches it.
 struct BoxEntry {
   QPointF edge;
   QPointF inward;

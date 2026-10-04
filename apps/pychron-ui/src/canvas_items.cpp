@@ -2,6 +2,7 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <QCursor>
@@ -252,24 +253,32 @@ QGraphicsPathItem* ConnectionItem::add_gap(const BoxEntry& entry, double depth) 
 }
 
 std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box) {
-  if (points.size() < 2 || !box.contains(points.back())) {
-    return std::nullopt;
-  }
-  for (std::size_t i = points.size() - 1; i > 0; --i) {
-    const QPointF a = points[i - 1];
-    const QPointF b = points[i];
-    if (box.contains(a)) {
+  for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+    const QPointF a = points[i];
+    const QPointF d = points[i + 1] - a;
+    if (box.contains(a) || d.isNull()) {
       continue;
     }
-    // a is outside, b inside: the latest of the slab crossings is the entry.
-    const QPointF d = b - a;
-    double t = 0;
-    if (d.x() > 0) t = std::max(t, (box.left() - a.x()) / d.x());
-    if (d.x() < 0) t = std::max(t, (box.right() - a.x()) / d.x());
-    if (d.y() > 0) t = std::max(t, (box.top() - a.y()) / d.y());
-    if (d.y() < 0) t = std::max(t, (box.bottom() - a.y()) / d.y());
-    const double len = std::hypot(d.x(), d.y());
-    return BoxEntry{a + t * d, d / len};
+    // Clip the segment to the box (Liang-Barsky): it runs inside for t0..t1.
+    double t0 = 0;
+    double t1 = 1;
+    bool crosses = true;
+    const std::array<std::pair<double, double>, 4> slabs{{{-d.x(), a.x() - box.left()},
+                                                          {d.x(), box.right() - a.x()},
+                                                          {-d.y(), a.y() - box.top()},
+                                                          {d.y(), box.bottom() - a.y()}}};
+    for (const auto& [p, q] : slabs) {
+      if (p == 0) {
+        crosses = crosses && q >= 0;
+      } else if (p < 0) {
+        t0 = std::max(t0, q / p);
+      } else {
+        t1 = std::min(t1, q / p);
+      }
+    }
+    if (crosses && t0 <= t1) {
+      return BoxEntry{a + t0 * d, d / std::hypot(d.x(), d.y())};
+    }
   }
   return std::nullopt;
 }

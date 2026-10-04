@@ -215,7 +215,12 @@ ConnectionItem* CanvasView::add_pipe(const std::vector<QPointF>& points, double 
     for (const auto& [run, name] : ends) {
       auto box = boxes_.find(*name);
       if (box == boxes_.end()) continue;
-      if (auto entry = box_entry(*run, box->second)) {
+      // Positions are whole pixels, so an end meant for the edge can stop a
+      // fraction short of it: look for the crossing a border's width out,
+      // then step back in to the edge.
+      const double reach = ConnectionItem::kBorderWidth;
+      if (auto entry = box_entry(*run, box->second.adjusted(-reach, -reach, reach, reach))) {
+        entry->edge += entry->inward * reach;
         scene_.addItem(item->add_gap(*entry, StageItem::border_inset(box->second, *entry, width)));
       }
     }
