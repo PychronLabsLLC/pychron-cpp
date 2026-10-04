@@ -9,12 +9,85 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialog>
+#include <QIcon>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QStatusBar>
 
 namespace pychron::ui {
+
+// ---- View menu glyphs ---------------------------------------------------------
+
+QIcon MainWindow::view_icon(View view) {
+  // Line glyphs on an 18 pt square, drawn at 2x. A mask (template) icon: the
+  // platform colours it to suit the menu, light or dark.
+  constexpr int kPoints = 18;
+  constexpr int kScale = 2;
+  QPixmap pixmap(kPoints * kScale, kPoints * kScale);
+  pixmap.setDevicePixelRatio(kScale);
+  pixmap.fill(Qt::transparent);
+  QPainter p(&pixmap);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(QPen(Qt::black, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  p.setBrush(Qt::NoBrush);
+  switch (view) {
+    case View::ExtractionLine:
+      // a valve in a run of pipe, a volume hanging off it
+      p.drawLine(QPointF(1, 6), QPointF(5, 6));
+      p.drawRoundedRect(QRectF(5, 3, 6, 6), 1.5, 1.5);
+      p.drawLine(QPointF(11, 6), QPointF(17, 6));
+      p.drawLine(QPointF(14, 6), QPointF(14, 10));
+      p.drawRoundedRect(QRectF(10.5, 10, 7, 6), 1.5, 1.5);
+      break;
+    case View::Spectrometer: {
+      // a magnetic sector: source, the beam bent a quarter turn, collectors
+      p.drawRoundedRect(QRectF(1.5, 13, 4, 3.5), 1, 1);
+      QPainterPath beam(QPointF(3.5, 13));
+      beam.arcTo(QRectF(3.5, 3.5, 19, 19), 180, -90);
+      p.drawPath(beam);
+      p.drawLine(QPointF(13, 3.5), QPointF(16, 1.8));
+      p.drawLine(QPointF(13, 3.5), QPointF(16, 5.2));
+      p.setPen(QPen(Qt::black, 2.0, Qt::SolidLine, Qt::FlatCap));
+      p.drawLine(QPointF(16.5, 0.8), QPointF(16.5, 6.2));
+      break;
+    }
+    case View::Experiment: {
+      // a queue of runs, the first one going
+      QPainterPath play(QPointF(2, 2.5));
+      play.lineTo(6, 4.75);
+      play.lineTo(2, 7);
+      play.closeSubpath();
+      p.setBrush(Qt::black);
+      p.drawPath(play);
+      p.setBrush(Qt::NoBrush);
+      p.drawLine(QPointF(8.5, 4.75), QPointF(16, 4.75));
+      for (const double y : {10.0, 14.5}) {
+        p.drawLine(QPointF(2.5, y), QPointF(5, y));
+        p.drawLine(QPointF(8.5, y), QPointF(16, y));
+      }
+      break;
+    }
+    case View::Data: {
+      // axes and the points of a signal decaying toward its intercept
+      p.drawLine(QPointF(2.5, 2), QPointF(2.5, 15.5));
+      p.drawLine(QPointF(2.5, 15.5), QPointF(16.5, 15.5));
+      p.setBrush(Qt::black);
+      p.setPen(Qt::NoPen);
+      for (const QPointF& point : {QPointF(5.5, 4.5), QPointF(8.5, 8.5), QPointF(12, 10.8), QPointF(15.5, 11.8)}) {
+        p.drawEllipse(point, 1.3, 1.3);
+      }
+      break;
+    }
+  }
+  p.end();
+  QIcon icon(pixmap);
+  icon.setIsMask(true);
+  return icon;
+}
 
 MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
     : QMainWindow(parent),
@@ -61,6 +134,14 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   });
   data_action_->setShortcut(key(Shortcut::DataWindow));
   data_action_->setEnabled(false);
+  // A glyph each (macOS hides menu icons unless an action asks for its own).
+  for (const auto& [action, view] : {std::pair{line_window, View::ExtractionLine},
+                                     std::pair{spectrometer_action_, View::Spectrometer},
+                                     std::pair{experiment_action_, View::Experiment},
+                                     std::pair{data_action_, View::Data}}) {
+    action->setIcon(view_icon(view));
+    action->setIconVisibleInMenu(true);
+  }
   auto& menus = MenuHub::instance();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);

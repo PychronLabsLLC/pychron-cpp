@@ -11,6 +11,7 @@
 
 #include <QAction>
 #include <QList>
+#include <QIcon>
 #include <QMainWindow>
 #include <QPointer>
 #include <QSettings>
@@ -37,6 +38,11 @@ class MainWindow : public QMainWindow {
 
  public:
   explicit MainWindow(systems::ExtractionLine& line, QWidget* parent = nullptr);
+
+  // The glyph beside each View menu item: a line drawing, a mask icon the
+  // platform colours to suit its menus.
+  enum class View { ExtractionLine, Spectrometer, Experiment, Data };
+  static QIcon view_icon(View view);
   // Closes the data windows before the processing bridge they use goes.
   ~MainWindow() override;
 

@@ -113,6 +113,20 @@ class TestMenuHub : public QObject {
     QVERIFY(menu_of(recall, Menu::View)->actions().contains(main.spectrometer_action()));
     QCOMPARE(texts(menu_of(figure, Menu::View)).first(), QStringLiteral("Extraction Line"));
     QVERIFY(menu_of(figure, Menu::Help)->actions().contains(main.about_action()));
+
+    // Every View item wears a glyph, shown in the menu even where the
+    // platform hides menu icons (macOS), and no two are the same drawing.
+    QList<QImage> glyphs;
+    for (const QAction* action : menu_of(figure, Menu::View)->actions()) {
+      if (action->isSeparator()) continue;
+      QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
+      QVERIFY2(action->isIconVisibleInMenu(), qPrintable(action->text()));
+      QVERIFY(action->icon().isMask());
+      const QImage image = action->icon().pixmap(18, 18).toImage();
+      QVERIFY(!glyphs.contains(image));
+      glyphs.append(image);
+    }
+    QCOMPARE(glyphs.size(), 4);
   }
 
   void shared_one_bar_serves_every_window() {
