@@ -87,43 +87,43 @@ struct ClientRegistration {
 
 struct MassSpectrometerSpec {
   std::string name;
-  std::optional<std::string> kind;
-  std::optional<std::string> code;
-  std::optional<Uuid> uuid;  // used when the row is created; ignored when it exists
+  std::optional<std::string> kind = std::nullopt;
+  std::optional<std::string> code = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;  // used when the row is created; ignored when it exists
 };
 
 // A user (table `app_user`); `name` is its natural key.
 struct UserSpec {
   std::string name;
-  std::optional<std::string> email, affiliation, category;
+  std::optional<std::string> email = std::nullopt, affiliation = std::nullopt, category = std::nullopt;
 };
 
 struct IrradiationSpec {
   std::string name;
-  std::optional<UtcTime> created;  // created_utc; the write time when unset
+  std::optional<UtcTime> created = std::nullopt;  // created_utc; the write time when unset
 };
 
 struct IdentifierSpec {
   std::string identifier;
   std::string kind = "unknown";               // unknown | special
-  std::optional<std::string> analysis_type;  // required for special identifiers
-  std::optional<Uuid> mass_spectrometer;
-  std::optional<Uuid> position;              // irradiation_position (unknowns only)
-  std::optional<Uuid> sample;                // when there is no irradiation position
-  std::optional<Uuid> uuid;
+  std::optional<std::string> analysis_type = std::nullopt;  // required for special identifiers
+  std::optional<Uuid> mass_spectrometer = std::nullopt;
+  std::optional<Uuid> position = std::nullopt;  // irradiation_position (unknowns only)
+  std::optional<Uuid> sample = std::nullopt;  // when there is no irradiation position
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 struct PrincipalInvestigatorSpec {
   std::string last_name;
-  std::string first_initial;
-  std::optional<std::string> affiliation, email;
-  std::optional<Uuid> uuid;
+  std::string first_initial{};
+  std::optional<std::string> affiliation = std::nullopt, email = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 struct ProjectSpec {
   std::string name;
-  std::optional<Uuid> principal_investigator;
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> principal_investigator = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
   // A calendar date, "YYYY-MM-DD"; anything else is an error.
   std::optional<std::string> checkin_date = std::nullopt;
   std::optional<std::string> comment = std::nullopt, lab_contact = std::nullopt, institution = std::nullopt;
@@ -131,21 +131,22 @@ struct ProjectSpec {
 
 struct MaterialSpec {
   std::string name;
-  std::string grainsize;
-  std::optional<Uuid> uuid;
+  std::string grainsize{};
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 struct SampleSpec {
   std::string name;
   Uuid project;
   Uuid material;
-  std::optional<std::string> note, igsn;
-  std::optional<double> lat, lon;
-  std::optional<double> elevation;
-  std::optional<std::string> storage_location, location, unit;
-  std::optional<std::string> lithology, lithology_class, lithology_type, lithology_group;
-  std::optional<double> approximate_age;
-  std::optional<Uuid> uuid;
+  std::optional<std::string> note = std::nullopt, igsn = std::nullopt;
+  std::optional<double> lat = std::nullopt, lon = std::nullopt;
+  std::optional<double> elevation = std::nullopt;
+  std::optional<std::string> storage_location = std::nullopt, location = std::nullopt, unit = std::nullopt;
+  std::optional<std::string> lithology = std::nullopt, lithology_class = std::nullopt;
+  std::optional<std::string> lithology_type = std::nullopt, lithology_group = std::nullopt;
+  std::optional<double> approximate_age = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
   std::optional<UtcTime> created = std::nullopt;  // created_utc; the write time when unset
   std::optional<UtcTime> updated = std::nullopt;  // updated_utc; `created`, else the write time, when unset
 };
@@ -153,19 +154,19 @@ struct SampleSpec {
 struct LevelSpec {
   Uuid irradiation;
   std::string name;
-  std::optional<Uuid> holder;  // ref_object of type irradiation_holder
-  std::optional<double> z;
-  std::optional<std::string> note;
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> holder = std::nullopt;  // ref_object of type irradiation_holder
+  std::optional<double> z = std::nullopt;
+  std::optional<std::string> note = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 struct PositionSpec {
   Uuid level;
   int position = 0;
-  std::optional<Uuid> sample;
-  std::optional<double> weight;
-  std::optional<std::string> packet, note;
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> sample = std::nullopt;
+  std::optional<double> weight = std::nullopt;
+  std::optional<std::string> packet = std::nullopt, note = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 // A reference object (section 6.1). `key` is unique per ref_type; the scope
@@ -173,19 +174,20 @@ struct PositionSpec {
 struct RefObjectSpec {
   RefType type = RefType::Document;
   std::string key;  // "<irrad>/<level>/<pos>", "<irrad>", "<ms>", ...
-  std::optional<Uuid> irradiation, level, position, mass_spectrometer;
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> irradiation = std::nullopt, level = std::nullopt;
+  std::optional<Uuid> position = std::nullopt, mass_spectrometer = std::nullopt;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 // A sample load (table `load`); `name` is its natural key.
 struct LoadSpec {
   std::string name;
-  std::optional<Uuid> holder;           // ref_object of type load_holder
-  std::optional<Uuid> holder_revision;  // the holder's value revision the load was made against
-  std::optional<Uuid> created_by_user;
+  std::optional<Uuid> holder = std::nullopt;  // ref_object of type load_holder
+  std::optional<Uuid> holder_revision = std::nullopt;  // the holder's value revision the load was made against
+  std::optional<Uuid> created_by_user = std::nullopt;
   bool archived = false;
-  std::optional<UtcTime> created;       // created_utc; the write time when unset
-  std::optional<Uuid> uuid;
+  std::optional<UtcTime> created = std::nullopt;  // created_utc; the write time when unset
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 // One tray position of a load (table `load_position`); (load, position,
@@ -194,31 +196,31 @@ struct LoadPositionSpec {
   Uuid load;
   int position = 0;
   Uuid identifier;
-  std::optional<double> weight;
-  std::optional<int> nxtals;
-  std::optional<std::string> note;
+  std::optional<double> weight = std::nullopt;
+  std::optional<int> nxtals = std::nullopt;
+  std::optional<std::string> note = std::nullopt;
 };
 
 struct InterpretedAgeSpec {
   std::string name;
-  std::optional<Uuid> identifier;
-  std::optional<Uuid> repository;
+  std::optional<Uuid> identifier = std::nullopt;
+  std::optional<Uuid> repository = std::nullopt;
   // When set, the interpreted age is ensured by this id: an existing one with
   // it is returned and nothing is written. Without it every call adds a row
   // (the table has no natural key).
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 // Bookmarks capture the heads of every analysis in a repository or a group
 // (section 5.5). Exactly one scope must be set.
 struct BookmarkSpec {
   std::string name;
-  std::optional<std::string> message;
-  std::optional<Uuid> repository;
-  std::optional<Uuid> group;
+  std::optional<std::string> message = std::nullopt;
+  std::optional<Uuid> repository = std::nullopt;
+  std::optional<Uuid> group = std::nullopt;
   // When set, the bookmark is ensured by this id: an existing bookmark with
   // it is returned and nothing is written.
-  std::optional<Uuid> uuid;
+  std::optional<Uuid> uuid = std::nullopt;
 };
 
 // ---------------------------------------------------------------- ingest (5.3, 8.3)
