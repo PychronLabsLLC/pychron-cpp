@@ -2,7 +2,9 @@
 
 Date: 2026-10-04
 Status: Survey (sections 1-6) and proposal (sections 7-9). Nothing is decided;
-section 10 lists what has to be answered before a plan is written.
+section 10 lists what is still open. Revised the same day against the vendor's
+command reference (section 2a), which settled most of what the first draft
+could only infer.
 Owner: Jake Ross
 Scope: the Photon Machines / Teledyne "Chromium" laser-ablation software as
 legacy Pychron drives it: one TCP text protocol covering laser output, stage
@@ -17,9 +19,22 @@ Source: Python Pychron `main` at `26e77ad17`, read only:
 `hardware/pychron_device.py`, `hardware/core/communicators/ethernet_communicator.py`,
 `lasers/stage_managers/remote_stage_manger.py`,
 `experiment/utilities/position_regex.py`; and the two lab configs that have a
-Chromium (melbourne, ASU). Nothing was run and no Chromium was available:
-**everything about what Chromium replies is inferred from how Pychron parses
-it**, and is tagged **[inferred]**. No vendor document was read.
+Chromium (melbourne, ASU). Nothing was run and no Chromium was available.
+
+Vendor documents, on the owner's Drive under
+`PychronConsulting/labs/support/chromium/` (not copied into the repo):
+
+| Document | Date | Gives |
+|---|---|---|
+| *Chromium Software Command Interface Reference* (Photon Machines, S. Pinkham; "software 2013.12.30 or later") | 2013-12-30 | syntax, terminators, error codes, the whole command list |
+| *Setting up a Chromium Laser System for Remote Control over RS232* | 2012-12-03 | serial setup, the Remote Control window, `sys.id?` as the link test |
+| *Chromium 2.1 New Features and Changes* (addendum, 35 pp.) | 2014-09-17 | release notes; a few lines on the remote interface |
+
+Also the Pychron wiki page "Chromium Laser" (setup and the scan workflow). A
+web search found no public copy of the command reference.
+
+Where the vendor reference and Pychron's behaviour disagree, both are stated.
+What is still only inferred is tagged **[inferred]**.
 
 ## 1. What Chromium is to Pychron
 
@@ -35,21 +50,61 @@ Three legacy classes, one behaviour:
 | `ChromiumDiodeManager` | `chromium` | none |
 | `ChromiumUVManager` | `chromium_uv` | `warmup()` runs the active scan |
 
-## 2. Transport and framing
+## 2a. What the vendor reference says
+
+Syntax: `<component>.<command> [value1,value2,...]<TERM>`. The first value
+follows a space; values are comma separated. Commands are **not
+case-sensitive**. Everything is 8-bit ASCII, numbers in decimal.
+
+| Item | Vendor reference |
+|---|---|
+| Links | RS232 (19200 8N1, no handshaking), TCP/IP socket, or ActiveX COM scripting |
+| TCP port | 1234 by default |
+| Command terminator | **LF** (10) over TCP; **CR** (13) over RS232 |
+| Reply terminator | **CR** |
+| When Chromium replies | "only ... when requested by a command": queries (`...?`) answer; an action command answers nothing unless it fails |
+| Error reply | `?<n>` + CR: `0` unimplemented, `1` unknown component, `2` unknown command, `3` bad or missing parameter, `4` execution error or not supported by the hardware |
+| Enabling | Chromium must be running with the TCP/IP (or serial) interface ticked in its Remote Control window |
+
+Command families (the reference lists each command; summarised here):
+
+| Component | Sets | Queries |
+|---|---|---|
+| `Laser` | `Enable 0/1`, `Fire`, `Stop`, `Output <0-100 %>`, `Shutter 0/1`, `Mode` (Continuous, Burst, 1 Shot), `Burst <shots>`, `BurstTime <s>`, `Rate <Hz>`, `SpotSize <123um>`, `Slit` | `Enable?`, `Output?`, `Shutter?`, `Mode?`, `Rate?`, `Meter?` (power or energy, if fitted), `SpotSize?`, `SpotSizes?`, `Status?` (0 when every interlock is satisfied), `Interlocks?` (the tripped ones, comma separated) |
+| `Stage` | `MoveTo X,Y,Z,SpeedX,SpeedY,SpeedZ`, `Step dX,dY,dZ,speeds`, `Jog speeds` (µm/s), `Home <X\|Y\|Z>`, `Stop` | `Pos?` (`X,Y,Z` µm), `Status?` (limit switches: 0, -1, +1 per axis), `Home?` (`Done`) |
+| `Scans` | `MoveTo <n>`, `Run <n>`, `RunAll`, `Stop`, `Load <file>` (answers `OK`), `Save <file>`, `Clear`, `Settings <n>,<k=v;k=v>`, `Status_Verbosity <v>`; `Scan.Name <n>,<text>` | `Count?`, `Info? <n>`, `InPos? <n>` (1 or 0), `Pos? <n>`, `Settings? <n>` (`Laser.Output=27;LineSpacing=110`), `Status?`; `Scan.Name? <n>` |
+| `PID` | `On`, `Off`, `Setpoint <°C>`, gains, `MaxOutput <%>`, `SeekErrLimit`, `SeekTimeout` | `Status?` (`OFF`, `SEEKING`, `LOCKED`, `TIMEOUT`), `Setpoint?`, gains |
+| `Pyro` | `Emiss <%>` | `Temp?` (°C), `Emiss?` |
+| `Gas` | `Mode` (Online, Bypass, Purge, Evacuate), `AutoFlow`, `MFC <n>,<l/min>` | `Mode?`, `AutoFlow?`, `MFC? <n>`, `MFC_Count` |
+| `Sys` | `Msg <text>` (a pop-up on the laser PC) | `ID?` (`CHROMIUM 2013.1.1.0`), `Ver?`, `Time?` |
+| `Svc` | `Home_Mtr <0 zoom \| 1 attenuator \| 2 spot>` | `Home_Mtr? <n>` |
+
+Scan numbers are 1-based. From the 2.1 addendum: `Scans.InPos?`, the homing
+commands and the PID gain commands were added in 2.x; commands for the optical
+zoom and the lights exist but are **not in the reference we have**, so a newer
+command set document exists; "problems with TCP/IP socket connections not
+closing properly" were fixed in 2.x; a pre-ablation pass at 0 % output is how
+Chromium itself warms a laser.
+
+## 2. Transport and framing (as Pychron does it)
 
 | Item | Value | Where from |
 |---|---|---|
 | Transport | TCP | both lab `initialization.xml`: `<kind>TCP</kind>` |
 | Port | 1234 | both labs |
 | Host | the laser PC (`excite_laser_pc…` at ASU; `setMe` at melbourne, plugin disabled) | lab config |
-| Write terminator | `\r\n` | `setup_communicator` |
-| Read terminator | `\r\n` | `setup_communicator` |
+| Write terminator | `\r\n` (vendor: LF; the CR is tolerated, evidently) | `setup_communicator` |
+| Read terminator | `\r\n` (vendor: replies end in CR only, so this never matches and the read ends on the timeout **[inferred]**) | `setup_communicator` |
 | Connection | **opened for each command and closed after its reply** | `<use_end>True</use_end>`: the communicator resets the socket after every `ask` |
 | Reply | one line, whitespace stripped | communicator `strip = True` |
 | Timeout | the plugin's `timeout`; communicator default 1 s | |
 
-One command, one reply, always: every call goes through `_ask`. No unsolicited
-messages are read.
+One command, one read, always: every call goes through `_ask`. But per the
+vendor reference an action command (`laser.fire`, `stage.moveto`, ...) sends
+**nothing back**, so each of those reads waits out the timeout (4 s in the
+wiki's setup) before Pychron moves on **[inferred]**. That, with a connection
+per command, is why the legacy client is slow, and why its "replies" to those
+commands are discarded: there are none.
 
 ## 3. Commands
 
@@ -57,7 +112,7 @@ Exactly these twelve verbs are sent. Arguments are shown as Python formats them.
 
 | Command | Sent when | Reply as Pychron uses it |
 |---|---|---|
-| `laser.output <v>` | set the output; `<v>` is percent, `str(float)` (`12.5`, `0`) | parsed as a float and compared with `<v>` within 0.1: an echo of the setpoint **[inferred]**. A reply that is not a number is ignored |
+| `laser.output <v>` | set the output; `<v>` is percent, `str(float)` (`12.5`, `0`) | parsed as a float and compared with `<v>` within 0.1; a reply that is not a number is ignored. The vendor reference documents no reply to the set form (`Laser.Output?` is the query), so the comparison probably never runs **[inferred]** |
 | `laser.fire` | open the beam | ignored |
 | `laser.stop` | close the beam | ignored |
 | `stage.pos?` | read position | `x,y,z` in **microns** |
@@ -65,7 +120,7 @@ Exactly these twelve verbs are sent. Arguments are shown as Python formats them.
 | `stage.stop` | stop motion | ignored |
 | `Scans.Status_Verbosity 1` | once, when the connection is first proved | ignored |
 | `Scans.MoveTo <id>` | go to scan `<id>`'s start | ignored |
-| `Scans.InPos? <id>` | poll after `MoveTo` | an integer; non-zero means in position **[inferred]** |
+| `Scans.InPos? <id>` | poll after `MoveTo` | `1` in position, `0` not (vendor) |
 | `Scans.Run <id>` | UV `warmup()` | ignored |
 | `Scans.Status?` | poll after `Run` | free text; two values are known (below) |
 | `Scans.Stop` | on `disable_laser` | ignored |
@@ -82,12 +137,16 @@ Known `Scans.Status?` texts, compared case-insensitively:
 | Move to a hole or an (x, y) | integers (`{:0.0f}`), mm × 1000, sign-corrected | `5000,5000,100` |
 | Single axis (`set_x` / `set_y` / `set_z`) | **unformatted floats** (`v * 1000`, so `12500.0`), not sign-corrected | `10,10,0` |
 
-The speed units are not stated anywhere **[unknown]**; µm/s is the natural
-reading. A z speed of `0` on axis moves is as written.
+The vendor reference says of `Stage.MoveTo` only "all values are in microns";
+`Stage.Jog` speeds are µm/s, so µm/s is the reading for these **[inferred]**.
+For `Stage.Step` "if the speed ... is 0, the stage is not moved": the `0` z
+speed Pychron sends on axis moves presumably means z stays put.
 
-What is never sent: any query of laser state, interlocks, errors or firmware;
-any UV-specific setting (energy, repetition rate, spot size); any camera
-command. Those live in Chromium's own UI and in its scan lists.
+What Pychron never sends, though Chromium has it (§2a): `Laser.Enable`, any
+interlock or status query, `Sys.ID?`, `Laser.Output?`, the shutter, firing
+mode, repetition rate and spot size, limit-switch status, PID temperature
+control, the pyrometer, scan settings. `enable_laser` in particular only sets
+a flag in Pychron.
 
 ## 4. Behaviour around the commands
 
@@ -156,8 +215,10 @@ status is `Running: Warming up laser...`. With no active scan it does nothing.
 
 The scan-running `extract` for UV (run the scan, wait for `Idle: Idle`, up to
 300 s) is **commented out** in this revision: a UV extraction today is
-`laser.output` + `laser.fire` like the others. Whether that is intended is an
-open question (§10).
+`laser.output` + `laser.fire` like the others. The Pychron wiki describes the
+scan workflow as the way a UV is used (positions `s1,s2,s3`; move, then
+`warmup(block=True)`, then `extract()` runs the scan), so the live code and
+the documented workflow disagree (§10).
 
 ## 5. Configuration
 
@@ -183,9 +244,12 @@ No lab tree surveyed has an extraction script written for a Chromium.
 
 ## 6. Hazards in the legacy client
 
-- **Silent failure.** Replies to `fire`, `stop`, `moveto` and the scan verbs
-  are discarded; a refused command is indistinguishable from an accepted one.
-  A timed-out move is only a log line.
+- **Silent failure.** Chromium answers a refused command with `?<n>`; Pychron
+  never looks, so a refused `fire` or `moveto` is indistinguishable from an
+  accepted one. A timed-out move is only a log line.
+- **No interlock or enable check.** `Laser.Status?`, `Laser.Interlocks?` and
+  `Laser.Enable` exist and are not used.
+- **Every action command costs a timeout** (§2).
 - **Stale z.** Hole moves send the cached z, not a freshly read one.
 - **No state read-back.** "Firing" and "enabled" are Pychron's own flags.
 - **Inconsistent number formats and sign handling** between hole and axis moves
@@ -198,14 +262,17 @@ No lab tree surveyed has an extraction script written for a Chromium.
 
 | Interface | Method | Chromium |
 |---|---|---|
-| `IExtractionDevice` | `enable` | no wire command; proves the link with `stage.pos?` |
-| | `disable` | `laser.stop`, `Scans.Stop` |
-| | `extract(v, Percent)` | `laser.output v` |
-| | `extract(v, Watts)` | calibration → percent → `laser.output`; unsupported with no calibration |
-| | `end_extract` | `laser.stop`, `laser.output 0` |
+| `IExtractionDevice` | `prepare` | `Sys.ID?` (the link, and which Chromium), `Scans.Status_Verbosity 1` |
+| | `enable` | `Laser.Status?` must be 0, else an Interlock error naming `Laser.Interlocks?`; then `Laser.Enable 1`, confirmed with `Laser.Enable?` |
+| | `disable` | `Laser.Stop`, `Scans.Stop`, `Laser.Enable 0` |
+| | `is_enabled` | `Laser.Enable?` |
+| | `extract(v, Percent)` | `Laser.Output v`, confirmed with `Laser.Output?` |
+| | `extract(v, Watts)` | calibration → percent → as above; unsupported with no calibration |
+| | `extract(v, Celsius)` | `PID.Setpoint v`, `PID.On`: only where a pyrometer is fitted (a `?4` says it is not) |
+| | `end_extract` | `Laser.Stop`, `PID.Off` if it was on, `Laser.Output 0` |
 | | `output` | the last accepted setpoint |
-| `ILaserDevice` | `fire_laser` / `stop_laser` | `laser.fire` / `laser.stop` |
-| | `is_firing` | tracked, not read: there is no query |
+| `ILaserDevice` | `fire_laser` / `stop_laser` | `Laser.Fire` / `Laser.Stop` |
+| | `is_firing` | tracked: the reference has no firing query (`Laser.Shutter?` may serve, §10) |
 | | `warmup` | UV with an active scan: `Scans.Run`; otherwise nothing |
 | `IStage` | `move_to_position("s12")` | `Scans.MoveTo 12` |
 | | `move_to_position(hole)` | tray lookup → `stage.moveto` |
@@ -219,6 +286,21 @@ No lab tree surveyed has an extraction script written for a Chromium.
 The interfaces say "start, then poll `moving()`", which fits: the driver does
 one poll per `moving()` call and the caller owns the wait, the cancel token and
 the timeout. The three-in-a-row rule moves into `moving()` as a small counter.
+There is no "moving?" query in the reference, so arrival is still position
+against target; `Stage.Status?` adds a limit-switch check.
+
+**Action commands answer nothing**, so the codec has two kinds of exchange:
+
+- a *query*: write, read one CR-terminated line; `?<n>` is an error.
+- an *action*: write, then confirm with the matching query where one exists
+  (`Output?`, `Enable?`, `Shutter?`, `PID.Status?`). Where none exists (`Fire`,
+  `Stop`, `MoveTo`, `Scans.Run`), read with a short timeout: silence is
+  success, `?<n>` is the error. (Or follow with any cheap query and take an
+  error line that arrives first; §10.)
+
+Error mapping: `?1`/`?2` → Protocol (the driver sent something Chromium does
+not know: a version mismatch), `?3` → Config (a bad value), `?4` → Io, with
+"not supported by this hardware" in the message, `?0` → Protocol.
 
 ## 8. Driver shape [proposal]
 
@@ -242,7 +324,8 @@ kind = "tcp"
 host = "laser-pc.lab"
 port = 1234
 timeout_ms = 1000
-connect_per_request = true    # Chromium closes after each reply (§2)
+# one connection, kept open, unless a real Chromium proves to need one per
+# command as legacy Pychron does (§10)
 
 [drivers.laser]
 kind = "chromium"             # or chromium_uv
@@ -255,8 +338,8 @@ move_speed = [5000, 5000, 100]
 in_position_um = 10
 ```
 
-`connect_per_request` does not exist on the TCP transport today and would be
-added, unless Chromium turns out to keep a connection open (§10).
+Framing is the vendor's: commands end in LF, replies in CR. A serial transport
+(19200 8N1, CR both ways) is the same driver with a different terminator.
 
 Deliberate departures from legacy:
 
@@ -266,7 +349,9 @@ Deliberate departures from legacy:
 - One number format for every move (integers, microns) and signs applied on
   every path.
 - z for a hole move is read, not remembered.
-- A non-numeric reply to `laser.output` is a `Protocol` error.
+- The laser is enabled, its interlocks checked and its output confirmed on
+  the wire, none of which legacy does.
+- `?<n>` replies are errors, not ignored.
 
 ## 9. What this does not cover
 
@@ -278,23 +363,26 @@ library's frame source.
 
 ## 10. Open questions
 
-Needed from someone with a Chromium, its API document, or a packet capture:
+Settled by the vendor reference: reply and error conventions, terminators, the
+percent scale of `Laser.Output`, `Scans.InPos?` values, and that enable,
+interlock, status and identity queries exist.
 
-1. **Replies.** What does Chromium answer to `laser.fire`, `laser.stop`,
-   `stage.moveto`, `stage.stop`, `Scans.MoveTo`, `Scans.Run`, `Scans.Stop`? Is
-   there an `OK` / error convention the driver can check?
-2. **Errors.** What comes back for a refused command (interlock open, out of
-   range, unknown scan)?
-3. **Connection.** Does Chromium require a new connection per command, or does
-   Pychron just happen to do that?
-4. **`laser.output`.** Is the reply the setpoint echoed, or the achieved
-   output? Percent of what?
-5. **Speeds.** Units of the three `stage.moveto` speeds; is `0` "default"?
-6. **Scan status.** The full set of `Scans.Status?` texts, and what
-   `Status_Verbosity 1` changes.
-7. **UV.** Should a UV extraction run the scan (the commented-out path) or fire
-   at a fixed output? Are energy and repetition rate ever set from Pychron?
-8. **More of the API.** Is there a state/interlock query, a firing query or a
-   moving query that would replace the client-side flags and position polling?
-9. **Which Chromium first**: CO2 (melbourne, disabled), UV (ASU), or another
-   lab's?
+Still open (a real Chromium, or the person who runs one, answers these):
+
+1. **Silence after an action command.** How long to wait for a possible `?<n>`
+   before calling it success? Is an error line ever late?
+2. **Connection.** Does Chromium hold one TCP connection open across commands
+   and across hours? Legacy opens one per command; 2.x release notes mention
+   sockets "not closing properly", fixed.
+3. **CR vs CRLF.** Pychron sends CRLF over TCP where the reference says LF.
+   Does the stray CR matter on any version?
+4. **`Scans.Status?` texts.** Only two are known, from Pychron's code
+   (`Running: Warming up laser...`, `Idle: Idle`). The full set at verbosity 1?
+5. **UV extraction.** Run the scan (`Scans.Run`, wait for idle: the wiki's
+   workflow, commented out in the code) or fixed output and fire?
+6. **Firing state.** Does `Laser.Shutter?` or anything else report "firing"?
+7. **Newer command set.** The reference is from 2013; zoom and light commands
+   were added after. Is there a later document?
+8. **Which Chromium first**: CO2 (melbourne, disabled), UV (ASU), or another
+   lab's? It decides whether scans or stage moves and PID matter most.
+9. **Speeds.** µm/s is inferred for `Stage.MoveTo`; confirm on a stage.
