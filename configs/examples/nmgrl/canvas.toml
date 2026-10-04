@@ -1,367 +1,369 @@
 # Canvas of the NMGRL valve box (extraction_line.toml in this directory).
 # Converted from a legacy Pychron canvas by pychron setup: positions rescaled from
-# world units to pixels. Check the drawing and adjust positions as needed.
+# world units to pixels. Then made more compact by hand: the empty margins above
+# and below trimmed and the vertical spacing squeezed to 88%, so `elctl
+# import-line` no longer reproduces this file exactly.
 
 [canvas]
 origin = [0, 0]
-size = [1000, 936]
+size = [1000, 796]
 connection_width = 5
 # an open valve wears the colour of the region it joins (default: "green")
 open_valve_color = "inherit"
 
 [[label]]
 text = "Upper Shutter"
-pos = [199, 94]
+pos = [199, 61]
 
 [[label]]
 text = "Lower Shutter"
-pos = [199, 187]
+pos = [199, 143]
 
 [[label]]
 text = "Gate"
-pos = [199, 140]
+pos = [199, 102]
 
 [[label]]
 text = "Dumper"
-pos = [219, 47]
+pos = [219, 20]
 
 [[valve]]
 name = "FE"
-pos = [292, 82]
+pos = [292, 51]
 
 [[valve]]
 name = "FF"
-pos = [292, 175]
+pos = [292, 133]
 
 [[valve]]
 name = "FG"
-pos = [292, 129]
+pos = [292, 92]
 
 [[valve]]
 name = "FD"
-pos = [339, 234]
+pos = [339, 185]
 
 [[valve]]
 name = "FH"
-pos = [269, 316]
+pos = [269, 257]
 
 [[valve]]
 name = "F"
-pos = [538, 292]
+pos = [538, 236]
 
 [[valve]]
 name = "O"
-pos = [942, 497]
+pos = [942, 416]
 
 [[valve]]
 name = "V"
-pos = [205, 497]
+pos = [205, 416]
 
 [[valve]]
 name = "H"
-pos = [275, 427]
+pos = [275, 354]
 
 [[valve]]
 name = "B"
-pos = [386, 363]
+pos = [386, 298]
 
 [[valve]]
 name = "D"
-pos = [538, 363]
+pos = [538, 298]
 
 [[valve]]
 name = "C"
-pos = [357, 491]
+pos = [357, 411]
 
 [[valve]]
 name = "N"
-pos = [491, 363]
+pos = [491, 298]
 
 [[valve]]
 name = "E"
-pos = [491, 485]
+pos = [491, 405]
 
 [[valve]]
 name = "I"
-pos = [491, 532]
+pos = [491, 447]
 
 [[valve]]
 name = "J"
-pos = [339, 363]
+pos = [339, 298]
 
 [[valve]]
 name = "K"
-pos = [690, 357]
+pos = [690, 293]
 
 [[valve]]
 name = "M"
-pos = [737, 357]
+pos = [737, 293]
 
 [[valve]]
 name = "P"
-pos = [497, 702]
+pos = [497, 596]
 
 [[valve]]
 name = "Q"
-pos = [708, 702]
+pos = [708, 596]
 
 [[valve]]
 name = "W"
-pos = [585, 778]
+pos = [585, 663]
 
 [[valve]]
 name = "X"
-pos = [585, 848]
+pos = [585, 725]
 
 [[valve]]
 name = "Y"
-pos = [643, 778]
+pos = [643, 663]
 
 [[valve]]
 name = "Z"
-pos = [643, 848]
+pos = [643, 725]
 
 [[valve]]
 name = "L"
-pos = [632, 444]
+pos = [632, 369]
 
 [[valve]]
 name = "R"
-pos = [813, 427]
+pos = [813, 354]
 
 [[valve]]
 name = "S"
-pos = [778, 427]
+pos = [778, 354]
 
 [[valve]]
 name = "T"
-pos = [632, 363]
+pos = [632, 298]
 
 [[valve]]
 name = "U"
-pos = [737, 497]
+pos = [737, 416]
 
 [[valve]]
 name = "FC"
-pos = [304, 234]
+pos = [304, 185]
 
 [[rough_valve]]
 name = "FB"
-pos = [58, 327]
+pos = [58, 266]
 
 [[rough_valve]]
 name = "FA"
-pos = [199, 234]
+pos = [199, 185]
 
 [[rough_valve]]
 name = "G"
-pos = [620, 222]
+pos = [620, 174]
 
 [[manual_valve]]
 name = "ADiode"
-pos = [389, 222]
+pos = [389, 174]
 
 [[manual_valve]]
 name = "RDiode"
-pos = [480, 222]
+pos = [480, 174]
 
 [[manual_valve]]
 name = "NP-10CRough"
-pos = [690, 211]
+pos = [690, 164]
 
 [[manual_valve]]
 name = "GP50Manual"
-pos = [737, 234]
+pos = [737, 185]
 
 [[manual_valve]]
 name = "GP50Manual_Rough"
-pos = [737, 96]
+pos = [737, 63]
 
 [[manual_valve]]
 name = "MiniBoneGP5Manual"
-pos = [661, 620]
+pos = [661, 524]
 
 [[manual_valve]]
 name = "MSManual"
-pos = [889, 427]
+pos = [889, 354]
 
 [[stage]]
 name = "FurnaceManifold"
-pos = [322, 316]
-size = [58, 35]
+pos = [322, 257]
+size = [58, 31]
 
 [[stage]]
 name = "Bone"
-pos = [409, 427]
-size = [187, 58]
+pos = [409, 354]
+size = [187, 51]
 
 [[stage]]
 name = "Minibone"
-pos = [602, 690]
-size = [140, 58]
+pos = [602, 586]
+size = [140, 51]
 
 [[stage]]
 name = "Microbone"
-pos = [713, 427]
-size = [94, 58]
+pos = [713, 354]
+size = [94, 51]
 
 [[stage]]
 name = "RoughingManifold"
-pos = [585, 96]
-size = [246, 35]
+pos = [585, 63]
+size = [246, 31]
 
 [[stage]]
 name = "ATurboManifold"
-pos = [357, 702]
-size = [35, 35]
+pos = [357, 596]
+size = [35, 31]
 
 [[stage]]
 name = "CO2"
-pos = [602, 292]
-size = [82, 82]
+pos = [602, 236]
+size = [82, 72]
 display_name = "CO2"
 
 [[stage]]
 name = "Diode"
-pos = [421, 94]
-size = [58, 82]
+pos = [421, 61]
+size = [58, 72]
 display_name = "Diode"
 
 [[stage]]
 name = "Furnace"
-pos = [193, 316]
-size = [94, 47]
+pos = [193, 257]
+size = [94, 41]
 display_name = "Furnace"
 
 [[stage]]
 name = "ofurnace"
-pos = [158, 316]
-size = [47, 70]
+pos = [158, 257]
+size = [47, 62]
 
 [[stage]]
 name = "RTurbo"
-pos = [532, 155]
-size = [58, 35]
+pos = [532, 115]
+size = [58, 31]
 display_name = "RTurbo"
 
 [[stage]]
 name = "ATurbo"
-pos = [357, 760]
-size = [58, 35]
+pos = [357, 647]
+size = [58, 31]
 display_name = "ATurbo"
 
 [[stage]]
 name = "BTurbo"
-pos = [743, 573]
-size = [58, 35]
+pos = [743, 483]
+size = [58, 31]
 display_name = "BTurbo"
 
 [[stage]]
 name = "FBTurbo"
-pos = [64, 380]
-size = [58, 35]
+pos = [64, 313]
+size = [58, 31]
 display_name = "FBTurbo"
 
 [[stage]]
 name = "FATurbo\n      FATurbo"
-pos = [99, 228]
-size = [58, 35]
+pos = [99, 179]
+size = [58, 31]
 display_name = "FATurbo\n      FATurbo"
 
 [[stage]]
 name = "JanNP10"
-pos = [860, 509]
-size = [58, 35]
+pos = [860, 427]
+size = [58, 31]
 display_name = "JanNP10"
 
 [[stage]]
 name = "MiniBoneGP50"
-pos = [675, 509]
-size = [58, 35]
+pos = [675, 427]
+size = [58, 31]
 display_name = "MiniBoneGP50"
 
 [[stage]]
 name = "F GP-50"
-pos = [357, 158]
-size = [58, 35]
+pos = [357, 118]
+size = [58, 31]
 display_name = "F GP-50"
 
 [[stage]]
 name = "GP50"
-pos = [474, 322]
-size = [58, 35]
+pos = [474, 262]
+size = [58, 31]
 display_name = "GP50"
 
 [[stage]]
 name = "NP-10C"
-pos = [684, 316]
-size = [58, 35]
+pos = [684, 257]
+size = [58, 31]
 display_name = "NP-10C"
 
 [[stage]]
 name = "NP-10H"
-pos = [749, 281]
-size = [58, 35]
+pos = [749, 226]
+size = [58, 31]
 display_name = "NP-10H"
 
 [[stage]]
 name = "GP502"
-pos = [749, 170]
-size = [58, 35]
+pos = [749, 128]
+size = [58, 31]
 display_name = "GP502"
 
 [[stage]]
 name = "Felix"
-pos = [216, 409]
-size = [58, 94]
+pos = [216, 339]
+size = [58, 83]
 display_name = "Felix"
 
 [[stage]]
 name = "Jan"
-pos = [936, 409]
-size = [58, 94]
+pos = [936, 339]
+size = [58, 83]
 display_name = "Jan"
 
 [[stage]]
 name = "Quad"
-pos = [789, 702]
-size = [70, 35]
+pos = [789, 596]
+size = [70, 31]
 display_name = "Quad"
 
 [[stage]]
 name = "JanIonPump"
-pos = [942, 567]
-size = [82, 35]
+pos = [942, 478]
+size = [82, 31]
 display_name = "JanIonPump"
 
 [[stage]]
 name = "FelixIonPump"
-pos = [234, 567]
-size = [82, 35]
+pos = [234, 478]
+size = [82, 31]
 display_name = "FelixIonPump"
 
 [[stage]]
 name = "Cocktail"
-pos = [573, 895]
-size = [58, 23]
+pos = [573, 766]
+size = [58, 20]
 display_name = "Cocktail"
 
 [[stage]]
 name = "CocktailPipette"
-pos = [585, 813]
-size = [23, 23]
+pos = [585, 694]
+size = [23, 20]
 display_name = "CocktailPipette"
 
 [[stage]]
 name = "Air"
-pos = [655, 895]
-size = [58, 23]
+pos = [655, 766]
+size = [58, 20]
 display_name = "Air"
 
 [[stage]]
 name = "AirPipette"
-pos = [643, 813]
-size = [23, 23]
+pos = [643, 694]
+size = [23, 20]
 display_name = "AirPipette"
 
 [[connection]]
@@ -388,7 +390,7 @@ orientation = "v"
 start = "GP502"
 end = "GP50Manual_Rough"
 orientation = "v"
-start_offset = [-12, 18]
+start_offset = [-12, 16]
 
 [[connection]]
 start = "FH"
@@ -409,24 +411,24 @@ orientation = "h"
 start = "FB"
 end = "FBTurbo"
 orientation = "v"
-start_offset = [6, 12]
+start_offset = [6, 11]
 
 [[connection]]
 start = "FC"
 end = "FurnaceManifold"
 orientation = "v"
-start_offset = [0, 12]
+start_offset = [0, 11]
 
 [[connection]]
 start = "FC"
 end = "FA"
 orientation = "h"
-start_offset = [6, -0]
+start_offset = [6, 0]
 
 [[connection]]
 start = "FD"
 end = "FurnaceManifold"
-end_offset = [18, 18]
+end_offset = [18, 16]
 
 [[connection]]
 start = "FD"
@@ -436,7 +438,7 @@ orientation = "v"
 [[connection]]
 start = "J"
 end = "FurnaceManifold"
-end_offset = [18, 18]
+end_offset = [18, 16]
 
 [[connection]]
 start = "H"
@@ -452,7 +454,7 @@ orientation = "v"
 start = "D"
 end = "Bone"
 corner = "lr"
-end_offset = [-94, -18]
+end_offset = [-94, -16]
 
 [[connection]]
 start = "C"
@@ -468,7 +470,7 @@ orientation = "v"
 start = "ATurbo"
 end = "ATurboManifold"
 orientation = "v"
-start_offset = [0, 18]
+start_offset = [0, 16]
 
 [[connection]]
 start = "N"
@@ -523,7 +525,7 @@ orientation = "v"
 start = "G"
 end = "CO2"
 orientation = "v"
-start_offset = [6, 12]
+start_offset = [6, 11]
 
 [[connection]]
 start = "P"
@@ -549,7 +551,7 @@ orientation = "h"
 start = "Minibone"
 end = "I"
 corner = "ur"
-start_offset = [-41, 29]
+start_offset = [-41, 26]
 
 [[connection]]
 start = "W"
@@ -610,7 +612,7 @@ orientation = "v"
 start = "T"
 end = "Microbone"
 corner = "ll"
-end_offset = [-47, -18]
+end_offset = [-47, -16]
 
 [[connection]]
 start = "K"
@@ -661,7 +663,7 @@ orientation = "v"
 start = "NP-10H"
 end = "GP50Manual"
 orientation = "v"
-start_offset = [-12, 18]
+start_offset = [-12, 16]
 
 [[connection]]
 start = "GP50Manual"
