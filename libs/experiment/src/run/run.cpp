@@ -178,15 +178,19 @@ Result<void> Run::prepare() {
   timestamp_ = s_.timestamp ? s_.timestamp() : utc_now();
   // This run's extraction device: the one set directly, else the lab's by
   // name. Its stage is told the queue's tray before any script runs, so a
-  // hole name means a hole on that tray.
+  // hole name means a hole on that tray and no other.
   device_ = s_.line.device;
   if (device_ == nullptr && s_.devices) {
     const std::string& name = spec_.extraction.device.empty() ? queue_.extract_device : spec_.extraction.device;
     if (!name.empty()) device_ = s_.devices(name);
   }
-  if (device_ != nullptr && !queue_.tray.empty()) {
+  if (device_ != nullptr) {
     if (auto* stage = device_->stage()) {
-      if (auto r = stage->set_tray(queue_.tray); !r) return fail(r.error());
+      // With no tray the stage's is cleared: the device outlives the queue,
+      // and the last queue's tray must not give this one's hole names a
+      // meaning. A device that cannot clear its tray is left as it is.
+      auto r = stage->set_tray(queue_.tray);
+      if (!r && !queue_.tray.empty()) return fail(r.error());
     }
   }
   if (s_.aliquots != nullptr) {

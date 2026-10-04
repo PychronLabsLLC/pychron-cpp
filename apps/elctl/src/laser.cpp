@@ -88,6 +88,7 @@ class Laser {
           case laser::CalibrationState::Ok:
             io_.out << "calibrated (" << status.solution->points << (status.solution->points == 1 ? " point" : " points")
                     << ", rms " << num(status.solution->rms_mm) << " mm)\n";
+            for (const auto& c : cautions_of(map, device)) io_.out << "    check: " << c << '\n';
             break;
           case laser::CalibrationState::Missing:
             io_.out << "not calibrated\n";
@@ -131,6 +132,7 @@ class Laser {
       return kFailed;
     }
     io_.out << describe(*status.solution) << '\n';
+    for (const auto& c : cautions_of(*map_, device_)) io_.err << "warning: " << c << '\n';
     return kOk;
   }
 
@@ -178,6 +180,7 @@ class Laser {
     const auto status = lab_.calibrations->status(*map_, device_);
     if (!status.solution) return failed(status.why);
     io_.out << describe(*status.solution) << '\n';
+    for (const auto& c : cautions_of(*map_, device_)) io_.err << "warning: " << c << '\n';
     if (status.solution->rms_mm > map_->dimension()) {
       io_.err << "warning: the points miss by more than a hole (" << num(map_->dimension())
               << " mm); check which holes they were taken on\n";
@@ -261,6 +264,15 @@ class Laser {
   int failed(const std::string& what) {
     io_.err << "error: " << what << '\n';
     return kFailed;
+  }
+
+  // What the stored calibration cannot rule out (laser::cautions).
+  std::vector<std::string> cautions_of(const laser::TrayMap& map, const std::string& device) {
+    const auto loaded = lab_.calibrations->load(device, map.name());
+    if (!loaded || !loaded->has_value()) return {};
+    const auto solved = laser::solve(map, (*loaded)->points);
+    if (!solved) return {};
+    return laser::cautions(map, (*loaded)->points, *solved);
   }
 
   // The line, started, and the device on it. The line is kept for as long

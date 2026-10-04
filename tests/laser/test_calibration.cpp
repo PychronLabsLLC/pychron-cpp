@@ -184,27 +184,84 @@ INSTANTIATE_TEST_SUITE_P(
                       BadSet{"nan", {{"1", 0, 0}, {"3", 5, std::numeric_limits<double>::quiet_NaN()}}, "finite"}));
 
 // Two holes exchanged by mistake must not give a calibration that looks good.
-TEST(Solve, SwappedHolesDoNotPassSilently) {
+TEST(Solve, SwappedHolesAmongManyAreRefused) {
   const auto map = small();
   const Transform truth{12, 8, 2 * kDeg, 1};
   std::vector<CalibrationPoint> points{at(map, truth, "1"), at(map, truth, "2"), at(map, truth, "3"),
                                        at(map, truth, "4"), at(map, truth, "5")};
   std::swap(points[1].hole, points[3].hole);
   const auto s = solve(map, points);
-  if (s) EXPECT_GT(s->rms_mm, 1);
+  ASSERT_FALSE(s);
+  EXPECT_NE(s.error().what.find("scale"), std::string::npos) << s.error().what;
 }
 
-// Points on one line fix rotation and scale along it and say nothing across
-// it; they are still a calibration, and a miss still shows.
+// Points on one line fix rotation and scale along it; they are still a
+// calibration, and a miss still shows.
 TEST(Solve, CollinearPointsSolveAndAMissShows) {
   const auto map = small();
   const Transform truth{12, 8, 5 * kDeg, 1};
   std::vector<CalibrationPoint> points{at(map, truth, "5"), at(map, truth, "1"), at(map, truth, "3", 0, 0.6)};
   const auto s = solve(map, points);
-  if (s) {
-    EXPECT_GT(s->rms_mm, 0.1);
-    const auto far = s->transform.to_stage(0, 5);  // hole 2, off the line
-    const auto want = truth.to_stage(0, 5);
-    EXPECT_LT(std::hypot(far.x - want.x, far.y - want.y), 1.0);
-  }
+  ASSERT_TRUE(s) << s.error().what;
+  EXPECT_GT(s->rms_mm, 0.1);
+  const auto far = s->transform.to_stage(0, 5);  // hole 2, off the line
+  const auto want = truth.to_stage(0, 5);
+  EXPECT_LT(std::hypot(far.x - want.x, far.y - want.y), 1.0);
+}
+
+// What the points cannot rule out. Two points exchanged fit perfectly with
+// the tray turned half way round, and points on one line fit as well with
+// the other axis mirrored: neither shows in the rms, so both are said.
+TEST(Cautions, TwoExchangedPointsLookLikeAHalfTurn) {
+  const auto map = small();
+  const std::vector<CalibrationPoint> swapped{{"1", 30, 25}, {"3", 25, 25}};  // truly 1 at 25, 3 at 30
+  const auto s = solve(map, swapped);
+  ASSERT_TRUE(s);
+  EXPECT_NEAR(s->rms_mm, 0, 1e-9);
+  const auto said = cautions(map, swapped, *s);
+  ASSERT_FALSE(said.empty());
+  bool turned = false;
+  for (const auto& c : said) turned = turned || c.find("180") != std::string::npos;
+  EXPECT_TRUE(turned) << ::testing::PrintToString(said);
+}
+
+TEST(Cautions, PointsOnOneLineCannotShowAMirroredAxis) {
+  const auto map = small();
+  const Transform truth{12, 8, 0, 1};
+  const std::vector<CalibrationPoint> two{at(map, truth, "1"), at(map, truth, "3")};
+  const std::vector<CalibrationPoint> line{at(map, truth, "5"), at(map, truth, "1"), at(map, truth, "3")};
+  const std::vector<CalibrationPoint> spread{at(map, truth, "1"), at(map, truth, "3"), at(map, truth, "2")};
+  const std::vector<CalibrationPoint> one{at(map, truth, "1")};
+  const auto mirror = [&](const std::vector<CalibrationPoint>& points) {
+    const auto s = solve(map, points);
+    EXPECT_TRUE(s);
+    for (const auto& c : cautions(map, points, *s))
+      if (c.find("mirror") != std::string::npos) return true;
+    return false;
+  };
+  EXPECT_TRUE(mirror(two));
+  EXPECT_TRUE(mirror(line));
+  EXPECT_FALSE(mirror(spread));
+  EXPECT_TRUE(mirror(one));
+  const auto s = solve(map, spread);
+  EXPECT_TRUE(cautions(map, spread, *s).empty());  // a good, spread fit says nothing
+}
+
+TEST(Cautions, AQuarterTurnIsSaid) {
+  const auto map = small();
+  const Transform truth{12, 8, 90 * kDeg, 1};
+  const std::vector<CalibrationPoint> points{at(map, truth, "1"), at(map, truth, "3"), at(map, truth, "2")};
+  const auto s = solve(map, points);
+  ASSERT_TRUE(s);
+  const auto said = cautions(map, points, *s);
+  ASSERT_EQ(said.size(), 1u);
+  EXPECT_NE(said[0].find("90"), std::string::npos) << said[0];
+}
+
+TEST(Solve, ErrorTextDoesNotDependOnTheLocale) {
+  const auto map = small();
+  const std::vector<CalibrationPoint> points{{"1", 0, 0}, {"3", 5.25, 0}, {"2", 0, 5.25}};
+  const auto s = solve(map, points);
+  ASSERT_FALSE(s);
+  EXPECT_NE(s.error().what.find("1.050"), std::string::npos) << s.error().what;
 }

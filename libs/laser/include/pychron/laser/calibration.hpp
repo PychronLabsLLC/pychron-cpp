@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/laser/tray_map.hpp"
@@ -60,5 +61,15 @@ inline constexpr double kMaxScaleError = 0.02;
 // given twice, a coordinate that is not finite, two points at the same stage
 // position, or a scale outside the rule above.
 Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> points);
+
+// What a solved calibration cannot rule out, as sentences for the operator;
+// empty when there is nothing to say. None of these show in rms_mm:
+//   - the tray turned more than 45 degrees from the map: either it is, or two
+//     holes were exchanged (two exchanged points fit perfectly, half a turn
+//     round);
+//   - fewer than three points, or all of them on one line: a mirrored axis
+//     fits as well, and only a hole off that line can show it.
+std::vector<std::string> cautions(const TrayMap& map, std::span<const CalibrationPoint> points,
+                                  const Solution& solution);
 
 }  // namespace pychron::laser

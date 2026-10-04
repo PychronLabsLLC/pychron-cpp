@@ -137,8 +137,29 @@ INSTANTIATE_TEST_SUITE_P(Rows, TrayMapBad,
                                            BadRow{"circle,1\n\n\n1,2,r0\n", 4},             // no size
                                            BadRow{"triangle,1\n\n\n1,2\n", 1},              // shape
                                            BadRow{"circle,-1\n\n\n1,2\n", 1},               // dimension
-                                           BadRow{"circle,1\n\n1,2,3\n1,2\n", 3},           // 3 calibration holes
-                                           BadRow{"circle,1\n\n9,9,9,9,9\n1,2\n", 3}));     // calibration hole not on the map
+                                           BadRow{"circle,1\n\n\n1,2,r\n", 4}));            // no size
+
+// Legacy pychron never checked the calibration line, so old maps have all
+// sorts in it. One that is not five holes of the map means "none", and the
+// map still loads.
+TEST(TrayMap, ACalibrationLineThatIsNotFiveHolesMeansNone) {
+  for (const char* text : {"circle,1\n\n1,2,3\n0,0\n1,0\n2,0\n", "circle,1\n\n9,9,9,9,9\n0,0\n",
+                           "circle,1\n\n1,,1,1,1\n0,0\n"}) {
+    auto map = TrayMap::parse(text, "old");
+    ASSERT_TRUE(map) << text << ": " << map.error().what;
+    EXPECT_EQ(map->center_hole(), std::nullopt);
+    EXPECT_EQ(map->right_hole(), std::nullopt);
+  }
+}
+
+// As legacy did: a # ends a line anywhere, not only at its start.
+TEST(TrayMap, CommentsMayFollowData) {
+  auto map = TrayMap::parse("circle,1.0 # mm\n1,2 # valid\n2,2,2,2,1 # n e s w c\n0,0 # first\n5,0\n", "t");
+  ASSERT_TRUE(map) << map.error().what;
+  EXPECT_DOUBLE_EQ(map->dimension(), 1.0);
+  ASSERT_EQ(map->holes().size(), 2u);
+  EXPECT_EQ(map->center_hole(), std::optional<std::string>("1"));
+}
 
 TEST(TrayMap, AFileWithoutItsHeaderIsAnError) {
   for (const char* text : {"", "# nothing\n", "circle,1\n", "circle,1\n\n"}) {
@@ -187,6 +208,8 @@ TEST(TrayLibrary, LoadsADirectoryAndReportsWhatDidNot) {
   fs::copy_file(data("small.txt"), dir / "good.txt");
   std::ofstream(dir / "bad.txt") << "circle,1\n\n\n1,x\n";
   std::ofstream(dir / "notes.md") << "not a tray\n";
+  std::ofstream(dir / "._good.txt") << "\x00\x05\x16\x07 macOS resource fork";  // on network and exFAT volumes
+  fs::create_directories(dir / "folder.txt");
 
   const auto lib = TrayLibrary::load(dir);
   EXPECT_EQ(lib.names(), (std::vector<std::string>{"good"}));

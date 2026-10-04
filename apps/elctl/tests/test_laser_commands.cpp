@@ -127,6 +127,21 @@ TEST_F(LaserCmd, CenterAndRightUseTheMapsHoles) {
   EXPECT_NE(o.out.find("rotation 90.000 deg"), std::string::npos) << o.out;
 }
 
+// Centre and right exchanged fit perfectly, half a turn round: it must be said.
+TEST_F(LaserCmd, ExchangedPointsAreWarnedAbout) {
+  ASSERT_EQ(calibrate({"clear"}).code, 0);
+  ASSERT_EQ(calibrate({"center", "--x", "30", "--y", "25"}).code, 0);
+  const auto o = calibrate({"right", "--x", "25", "--y", "25"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("rms 0.000 mm"), std::string::npos) << o.out;
+  EXPECT_NE(o.err.find("warning"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("180"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("mirror"), std::string::npos) << o.err;
+  // and it is still said later
+  EXPECT_NE(calibrate({"show"}).err.find("180"), std::string::npos);
+  EXPECT_NE(laser({"trays"}).out.find("check"), std::string::npos);
+}
+
 TEST_F(LaserCmd, CenterWithoutCalibrationHolesIsAnError) {
   std::ofstream(lab("tray_maps") / "plain.txt") << "circle,1\n\n\n0,0\n1,0\n";
   const auto o = laser({"calibrate", "co2", "plain", "center", "--x", "1", "--y", "1"});

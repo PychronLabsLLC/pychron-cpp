@@ -12,7 +12,9 @@
 //
 // A row without an id is named by its place among the holes, from 1. The
 // three header lines are the first three lines that are not comments; after
-// them blank lines are skipped. Line ends may be LF or CRLF.
+// them blank lines are skipped. A # ends a line wherever it is. Line ends may
+// be LF or CRLF. A calibration line that is not five holes of the map means
+// the map names none (legacy never checked it).
 
 #include <filesystem>
 #include <map>

@@ -353,11 +353,13 @@ TEST_F(RunDeviceTest, SetsTheQueuesTrayBeforeTheScript) {
   EXPECT_TRUE(diode_.fake_stage.trays().empty());
 }
 
-TEST_F(RunDeviceTest, WithNoTrayTheStageIsLeftAlone) {
+// The device outlives the queue: a tray left set by the last queue must not
+// give this one's hole names a meaning.
+TEST_F(RunDeviceTest, WithNoTrayTheStagesTrayIsCleared) {
   queue_.extract_device = "co2";
   AutomatedRun run(unknown_run("12345"), queue_, by_name());
   ASSERT_EQ(run.execute(control_).state, RunState::Success);
-  EXPECT_TRUE(co2_.fake_stage.trays().empty());
+  EXPECT_EQ(co2_.fake_stage.trays(), (std::vector<std::string>{""}));
 }
 
 TEST_F(RunDeviceTest, EndsOnlyItsOwnDevice) {

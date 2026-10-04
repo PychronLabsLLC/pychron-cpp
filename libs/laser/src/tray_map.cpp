@@ -53,9 +53,11 @@ Result<TrayMap> TrayMap::parse(std::string_view text, std::string name) {
   std::vector<Line> lines;  // every line that is not a comment
   for (int number = 1; !rest.empty(); ++number) {
     const auto end = rest.find('\n');
-    const std::string_view line = trim(rest.substr(0, end));
+    const std::string_view whole = trim(rest.substr(0, end));
     rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
-    if (!line.starts_with('#')) lines.push_back({number, line});
+    if (whole.starts_with('#')) continue;
+    // A # after data ends the line, as in legacy pychron.
+    lines.push_back({number, trim(whole.substr(0, whole.find('#')))});
   }
   if (lines.size() < 3) {
     return fail(ErrorKind::Config, map.name_ + ": a tray map starts with three header lines (shape and dimension, "
@@ -74,11 +76,11 @@ Result<TrayMap> TrayMap::parse(std::string_view text, std::string name) {
     map.dimension_ = *d;
   }
   // The valid-holes line (lines[1]) is read and not enforced: legacy never did.
-  if (!lines[2].text.empty()) {
-    const auto f = split(lines[2].text);
-    if (f.size() != 5 || std::any_of(f.begin(), f.end(), [](std::string_view s) { return s.empty(); })) {
-      return bad(lines[2].number, "expected five calibration holes: north, east, south, west, centre");
-    }
+  // Five calibration holes, or none: legacy never checked this line, so an
+  // old map may hold anything here. Whether they are on the map is settled
+  // once the holes are read.
+  if (const auto f = split(lines[2].text);
+      f.size() == 5 && std::none_of(f.begin(), f.end(), [](std::string_view s) { return s.empty(); })) {
     for (auto s : f) map.calibration_.emplace_back(s);
   }
 
@@ -125,8 +127,9 @@ Result<TrayMap> TrayMap::parse(std::string_view text, std::string name) {
     map.holes_.push_back(std::move(hole));
   }
   if (map.holes_.empty()) return fail(ErrorKind::Config, map.name_ + ": the tray map has no holes");
-  for (const auto& id : map.calibration_) {
-    if (!map.index_.contains(id)) return bad(lines[2].number, "calibration hole '" + id + "' is not on the map");
+  if (std::any_of(map.calibration_.begin(), map.calibration_.end(),
+                  [&map](const std::string& id) { return !map.index_.contains(id); })) {
+    map.calibration_.clear();
   }
   return map;
 }
@@ -159,8 +162,15 @@ TrayLibrary TrayLibrary::load(const fs::path& dir) {
   std::error_code ec;
   if (!fs::is_directory(dir, ec)) return lib;
   std::vector<fs::path> files;
-  for (const auto& e : fs::directory_iterator(dir, ec)) {
-    if (e.path().extension() == ".txt") files.push_back(e.path());
+  // Incremented with the error code: a listing that fails part way ends it,
+  // it does not throw.
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const fs::path& path = it->path();
+    // Not hidden files: macOS leaves "._<name>.txt" beside files on network
+    // and exFAT volumes.
+    if (path.extension() != ".txt" || path.filename().string().starts_with('.')) continue;
+    std::error_code type;
+    if (fs::is_regular_file(path, type)) files.push_back(path);
   }
   std::sort(files.begin(), files.end());  // directory order is unspecified
   for (const auto& file : files) {

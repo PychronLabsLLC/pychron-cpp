@@ -1,6 +1,10 @@
 #include "pychron/laser/calibration.hpp"
 
 #include <cmath>
+#include <iomanip>
+#include <locale>
+#include <numbers>
+#include <sstream>
 #include <vector>
 
 namespace pychron::laser {
@@ -9,6 +13,14 @@ namespace {
 
 // Stage positions nearer than this are the same place.
 constexpr double kSamePlaceMm = 1e-6;
+
+// Fixed-point text that does not depend on the process locale.
+std::string fixed(double value, int places) {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::fixed << std::setprecision(places) << value;
+  return out.str();
+}
 
 Unexpected<Error> bad(const TrayMap& map, const std::string& what) {
   return fail(ErrorKind::Config, "calibration of tray " + map.name() + ": " + what);
@@ -96,7 +108,7 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
   }
 
   if (!(std::abs(fitted_scale - 1.0) <= kMaxScaleError)) {
-    return bad(map, "the points fit a scale of " + std::to_string(fitted_scale) +
+    return bad(map, "the points fit a scale of " + fixed(fitted_scale, 3) +
                         "; stage and map are both in mm, so a scale more than 2% from 1 means a wrong hole or map");
   }
   t.scale = fitted_scale;
@@ -109,6 +121,35 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
     sum += (s.x - points[i].x) * (s.x - points[i].x) + (s.y - points[i].y) * (s.y - points[i].y);
   }
   out.rms_mm = std::sqrt(sum / n);
+  return out;
+}
+
+std::vector<std::string> cautions(const TrayMap& map, std::span<const CalibrationPoint> points,
+                                  const Solution& solution) {
+  std::vector<std::string> out;
+  const double turned = std::abs(solution.transform.rotation) * 180.0 / std::numbers::pi;
+  if (turned > 45.0) {
+    out.push_back("the tray is turned " + fixed(turned, 0) +
+                  " degrees from its map; if it is not, two of the holes were exchanged");
+  }
+  // On one line: every point's map position is along the line through the
+  // first two.
+  bool one_line = true;
+  if (points.size() >= 3) {
+    const Hole* a = map.find(points[0].hole);
+    const Hole* b = map.find(points[1].hole);
+    for (std::size_t i = 2; one_line && a != nullptr && b != nullptr && i < points.size(); ++i) {
+      const Hole* c = map.find(points[i].hole);
+      if (c == nullptr) continue;
+      const double cross = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+      const double size = std::hypot(b->x - a->x, b->y - a->y) * std::hypot(c->x - a->x, c->y - a->y);
+      if (std::abs(cross) > 1e-3 * size) one_line = false;
+    }
+  }
+  if (one_line) {
+    out.push_back(std::string(points.size() < 3 ? "fewer than three points" : "points on one line") +
+                  " cannot show a mirrored axis; check a hole off that line (elctl laser goto)");
+  }
   return out;
 }
 

@@ -231,7 +231,7 @@ All take the lab directory and the line config the way `elctl exp` does.
 | `calibrate <device> <tray> point <hole> [--x X --y Y]` | records the stage position at a hole: read from the device unless both `--x` and `--y` are given (then no hardware is opened). Replaces an earlier point on the same hole. Prints the solution. |
 | `calibrate <device> <tray> center` / `right` | `point` at the map's centre / east calibration hole; an error if the map names none |
 | `calibrate <device> <tray> show` / `clear` | print points and solution / delete the file |
-| `goto <device> <tray> <hole>` | move there, wait for arrival (Ctrl-C stops the stage), print where it is and the miss in mm |
+| `goto <device> <tray> <hole>` | move there, wait for arrival (Ctrl-C stops the waiting, not the stage: section 11), print where it is and the miss in mm |
 
 A point that makes the set unsolvable (§3.2) is refused and the file left as
 it was.
@@ -295,3 +295,17 @@ positions (a run with several holes passes the first to its script, as now).
   `LaserSystem` on the driver.
 - `SimSystem::chromium(driver)` reaches a simulated laser by driver name.
 - Laser end-to-end tests need embedded Python and are skipped without it.
+- **A tray map that does not load stops only the queues that name it**, not
+  every queue in the lab (the final review: a folder of old legacy maps must
+  not stop an air queue). The parser is as lenient as legacy where legacy
+  was: a `#` ends a line anywhere, a calibration line that is not five holes
+  of the map means "none", hidden files and directories in `tray_maps` are
+  skipped. An unknown tray is reported only when a run will use it.
+- **`cautions()`**: a calibration says what its points cannot rule out. Two
+  exchanged points fit perfectly half a turn round, and points on one line
+  (centre and right) cannot show a mirrored axis; neither shows in the rms.
+  `elctl laser calibrate` and `trays` print them. The check is `elctl laser
+  goto` on a hole off the line.
+- **A queue with no tray clears the device's tray**, so a tray left by an
+  earlier queue never gives a later one's hole names a meaning.
+

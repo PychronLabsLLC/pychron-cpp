@@ -375,6 +375,11 @@ elctl -c extraction_line.toml laser goto co2 221-hole 17
 elctl -c extraction_line.toml laser trays
 ```
 
+Centre and right lie on one line, so they cannot show a mirrored axis, and
+two exchanged holes fit perfectly with the tray half a turn round; neither
+shows in the rms. `calibrate` and `trays` say so. Always check a new
+calibration with `goto` on a hole off that line before firing.
+
 What refuses to guess: a queue is not started if its device is unknown, its
 tray has no map, a run's hole is not on the tray, or the tray is not
 calibrated for the device. A calibration made before the tray map file was

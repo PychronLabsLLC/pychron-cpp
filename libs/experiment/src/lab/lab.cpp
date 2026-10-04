@@ -98,8 +98,9 @@ Lab load_lab(const LabPaths& paths) {
     else lab.problems.push_back(data.error().what);
   }
   if (lab.line) lab.aliases = std::make_unique<measurement::SystemConfigAliases>(*lab.line);
+  // A map that does not load is not a lab problem: it stops the queues that
+  // name it (check_lab_queue), not every queue.
   lab.trays = laser::TrayLibrary::load(dir / "tray_maps");
-  for (const auto& p : lab.trays.problems()) lab.problems.push_back(p);
   lab.calibrations = std::make_unique<laser::CalibrationStore>(dir / "stage_calibrations");
   if (lab.line) {
     for (const auto& [name, driver] : lab.line->drivers) {  // a map: sorted
@@ -181,11 +182,18 @@ std::string joined(const std::vector<std::string>& names) {
 void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagnostic>& out) {
   if (lab.extract_devices.empty()) return;
   const laser::TrayMap* tray = queue.tray.empty() ? nullptr : lab.trays.find(queue.tray);
-  if (!queue.tray.empty() && tray == nullptr) {
-    out.push_back({Severity::Error, -1, "tray",
-                   "no tray map '" + queue.tray + "' in " + (lab.paths.dir / "tray_maps").string() +
-                       " (known: " + joined(lab.trays.names()) + ")"});
-  }
+  // Said once, about the queue, and only if a run will use the tray.
+  bool tray_said = false;
+  const auto unknown_tray = [&] {
+    if (tray_said) return;
+    tray_said = true;
+    std::string why = "no tray map '" + queue.tray + "' in " + (lab.paths.dir / "tray_maps").string() +
+                      " (known: " + joined(lab.trays.names()) + ")";
+    for (const auto& p : lab.trays.problems()) {
+      if (p.starts_with(queue.tray + ":")) why = "tray map " + p;  // it is there and did not load
+    }
+    out.push_back({Severity::Error, -1, "tray", std::move(why)});
+  };
   std::set<std::string> reported;
   std::map<std::string, laser::CalibrationStatus> calibration;  // by device, for `tray`
   const auto say = [&](int row, std::string message) {
@@ -205,6 +213,8 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
       say(row, "unknown extraction device '" + device + "' (the line has: " + joined(lab.extract_devices) + ")");
       continue;
     }
+    // The run sets the queue's tray on its device before any script.
+    if (!queue.tray.empty() && tray == nullptr) unknown_tray();
     if (!e.position || e.position->holes.empty()) continue;
     if (queue.tray.empty()) {
       say(row, "the run names a hole and the queue has no tray");

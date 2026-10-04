@@ -92,12 +92,24 @@ TEST_F(LabExtractionTest, ALabWithNoLineHasAStoreAndNoDevices) {
   EXPECT_EQ(l.trays.names(), (std::vector<std::string>{"small"}));
 }
 
-TEST_F(LabExtractionTest, ABadTrayMapIsALabProblem) {
+// A map that does not load stops the queues that name it, and no others: a
+// folder of old maps copied from legacy pychron must not stop an air queue.
+TEST_F(LabExtractionTest, ABadTrayMapStopsOnlyQueuesThatUseIt) {
   std::ofstream(dir_ / "tray_maps" / "broken.txt") << "circle,1\n\n\n1,x\n";
   const Lab l = lab();
-  ASSERT_EQ(l.problems.size(), 1u);
-  EXPECT_NE(l.problems[0].find("broken:4"), std::string::npos) << l.problems[0];
-  EXPECT_FALSE(check_lab_queue(l, queue(l)).ok());
+  EXPECT_TRUE(l.problems.empty());
+  ASSERT_EQ(l.trays.problems().size(), 1u);
+  calibrate(l);
+  for (const auto& d : check_lab_queue(l, queue(l)).all()) {
+    if (d.field == "extraction" || d.field == "tray" || d.field == "lab") ADD_FAILURE() << describe(d);
+  }
+  auto q = queue(l);
+  q.tray = "broken";
+  bool said = false;
+  for (const auto& d : check_lab_queue(l, q).all()) {
+    if (d.field == "tray" && d.severity == Severity::Error && d.message.find("broken:4") != std::string::npos) said = true;
+  }
+  EXPECT_TRUE(said);
 }
 
 TEST_F(LabExtractionTest, ALaserRunThatCanRunHasNoErrors) {
@@ -220,7 +232,10 @@ TEST_F(LabExtractionTest, ARunWithNoDeviceIsNotChecked) {
   const Lab l = lab();
   auto q = queue(l);
   q.extract_device.clear();
-  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+  q.tray = "left-over-from-an-old-queue";  // nothing will use it
+  const auto check = check_lab_queue(l, q);
+  EXPECT_TRUE(extraction(check).empty());
+  for (const auto& d : check.all()) EXPECT_NE(d.field, "tray") << describe(d);
 }
 
 // The example lab's own line config, and every lab before lasers: with no
