@@ -1,0 +1,662 @@
+# Canvas of the NMGRL valve box (extraction_line.toml in this directory).
+# Converted from a legacy Pychron canvas by pychron setup: positions rescaled from
+# world units to pixels. Check the drawing and adjust positions as needed.
+
+[canvas]
+origin = [0, 0]
+size = [1000, 936]
+connection_width = 5
+
+[[label]]
+text = "Upper Shutter"
+pos = [199, 94]
+
+[[label]]
+text = "Lower Shutter"
+pos = [199, 187]
+
+[[label]]
+text = "Gate"
+pos = [199, 140]
+
+[[label]]
+text = "Dumper"
+pos = [219, 47]
+
+[[valve]]
+name = "FE"
+pos = [281, 94]
+
+[[valve]]
+name = "FF"
+pos = [281, 187]
+
+[[valve]]
+name = "FG"
+pos = [281, 140]
+
+[[valve]]
+name = "FD"
+pos = [327, 246]
+
+[[valve]]
+name = "FH"
+pos = [257, 327]
+
+[[valve]]
+name = "F"
+pos = [526, 304]
+
+[[valve]]
+name = "O"
+pos = [930, 509]
+
+[[valve]]
+name = "V"
+pos = [193, 509]
+
+[[valve]]
+name = "H"
+pos = [263, 439]
+
+[[valve]]
+name = "B"
+pos = [374, 374]
+
+[[valve]]
+name = "D"
+pos = [526, 374]
+
+[[valve]]
+name = "C"
+pos = [345, 503]
+
+[[valve]]
+name = "N"
+pos = [480, 374]
+
+[[valve]]
+name = "E"
+pos = [480, 497]
+
+[[valve]]
+name = "I"
+pos = [480, 544]
+
+[[valve]]
+name = "J"
+pos = [327, 374]
+
+[[valve]]
+name = "K"
+pos = [678, 368]
+
+[[valve]]
+name = "M"
+pos = [725, 368]
+
+[[valve]]
+name = "P"
+pos = [485, 713]
+
+[[valve]]
+name = "Q"
+pos = [696, 713]
+
+[[valve]]
+name = "W"
+pos = [573, 789]
+
+[[valve]]
+name = "X"
+pos = [573, 860]
+
+[[valve]]
+name = "Y"
+pos = [632, 789]
+
+[[valve]]
+name = "Z"
+pos = [632, 860]
+
+[[valve]]
+name = "L"
+pos = [620, 456]
+
+[[valve]]
+name = "R"
+pos = [801, 439]
+
+[[valve]]
+name = "S"
+pos = [766, 439]
+
+[[valve]]
+name = "T"
+pos = [620, 374]
+
+[[valve]]
+name = "U"
+pos = [725, 509]
+
+[[valve]]
+name = "FC"
+pos = [292, 246]
+
+[[rough_valve]]
+name = "FB"
+pos = [47, 339]
+
+[[rough_valve]]
+name = "FA"
+pos = [187, 246]
+
+[[rough_valve]]
+name = "G"
+pos = [608, 234]
+
+[[manual_valve]]
+name = "ADiode"
+pos = [377, 234]
+
+[[manual_valve]]
+name = "RDiode"
+pos = [468, 234]
+
+[[manual_valve]]
+name = "NP-10CRough"
+pos = [678, 222]
+
+[[manual_valve]]
+name = "GP50Manual"
+pos = [725, 246]
+
+[[manual_valve]]
+name = "GP50Manual_Rough"
+pos = [725, 108]
+
+[[manual_valve]]
+name = "MiniBoneGP5Manual"
+pos = [649, 632]
+
+[[manual_valve]]
+name = "MSManual"
+pos = [877, 439]
+
+[[stage]]
+name = "FurnaceManifold"
+pos = [322, 316]
+size = [58, 35]
+
+[[stage]]
+name = "Bone"
+pos = [409, 427]
+size = [187, 58]
+
+[[stage]]
+name = "Minibone"
+pos = [602, 690]
+size = [140, 58]
+
+[[stage]]
+name = "Microbone"
+pos = [713, 427]
+size = [94, 58]
+
+[[stage]]
+name = "RoughingManifold"
+pos = [585, 96]
+size = [246, 35]
+
+[[stage]]
+name = "ATurboManifold"
+pos = [357, 702]
+size = [35, 35]
+
+[[stage]]
+name = "CO2"
+pos = [602, 292]
+size = [82, 82]
+display_name = "CO2"
+
+[[stage]]
+name = "Diode"
+pos = [421, 94]
+size = [58, 82]
+display_name = "Diode"
+
+[[stage]]
+name = "Furnace"
+pos = [193, 316]
+size = [94, 47]
+display_name = "Furnace"
+
+[[stage]]
+name = "ofurnace"
+pos = [158, 316]
+size = [47, 70]
+
+[[stage]]
+name = "RTurbo"
+pos = [532, 155]
+size = [58, 35]
+display_name = "RTurbo"
+
+[[stage]]
+name = "ATurbo"
+pos = [357, 760]
+size = [58, 35]
+display_name = "ATurbo"
+
+[[stage]]
+name = "BTurbo"
+pos = [743, 573]
+size = [58, 35]
+display_name = "BTurbo"
+
+[[stage]]
+name = "FBTurbo"
+pos = [64, 380]
+size = [58, 35]
+display_name = "FBTurbo"
+
+[[stage]]
+name = "FATurbo\n      FATurbo"
+pos = [99, 228]
+size = [58, 35]
+display_name = "FATurbo\n      FATurbo"
+
+[[stage]]
+name = "JanNP10"
+pos = [860, 509]
+size = [58, 35]
+display_name = "JanNP10"
+
+[[stage]]
+name = "MiniBoneGP50"
+pos = [675, 509]
+size = [58, 35]
+display_name = "MiniBoneGP50"
+
+[[stage]]
+name = "F GP-50"
+pos = [357, 158]
+size = [58, 35]
+display_name = "F GP-50"
+
+[[stage]]
+name = "GP50"
+pos = [474, 322]
+size = [58, 35]
+display_name = "GP50"
+
+[[stage]]
+name = "NP-10C"
+pos = [684, 316]
+size = [58, 35]
+display_name = "NP-10C"
+
+[[stage]]
+name = "NP-10H"
+pos = [749, 281]
+size = [58, 35]
+display_name = "NP-10H"
+
+[[stage]]
+name = "GP502"
+pos = [749, 170]
+size = [58, 35]
+display_name = "GP502"
+
+[[stage]]
+name = "Felix"
+pos = [216, 409]
+size = [58, 94]
+display_name = "Felix"
+
+[[stage]]
+name = "Jan"
+pos = [936, 409]
+size = [58, 94]
+display_name = "Jan"
+
+[[stage]]
+name = "Quad"
+pos = [789, 702]
+size = [70, 35]
+display_name = "Quad"
+
+[[stage]]
+name = "JanIonPump"
+pos = [942, 567]
+size = [82, 35]
+display_name = "JanIonPump"
+
+[[stage]]
+name = "FelixIonPump"
+pos = [234, 567]
+size = [82, 35]
+display_name = "FelixIonPump"
+
+[[stage]]
+name = "Cocktail"
+pos = [573, 895]
+size = [58, 23]
+display_name = "Cocktail"
+
+[[stage]]
+name = "CocktailPipette"
+pos = [585, 813]
+size = [23, 23]
+display_name = "CocktailPipette"
+
+[[stage]]
+name = "Air"
+pos = [655, 895]
+size = [58, 23]
+display_name = "Air"
+
+[[stage]]
+name = "AirPipette"
+pos = [643, 813]
+size = [23, 23]
+display_name = "AirPipette"
+
+[[connection]]
+start = "MiniBoneGP5Manual"
+end = "Minibone"
+orientation = "v"
+
+[[connection]]
+start = "MiniBoneGP5Manual"
+end = "MiniBoneGP50"
+orientation = "v"
+
+[[tee]]
+left = "R"
+right = "MSManual"
+mid = "JanNP10"
+
+[[connection]]
+start = "NP-10CRough"
+end = "NP-10C"
+orientation = "v"
+
+[[connection]]
+start = "GP502"
+end = "GP50Manual_Rough"
+orientation = "v"
+
+[[connection]]
+start = "FH"
+end = "FurnaceManifold"
+orientation = "h"
+
+[[connection]]
+start = "FH"
+end = "Furnace"
+orientation = "h"
+
+[[connection]]
+start = "FB"
+end = "ofurnace"
+orientation = "h"
+
+[[connection]]
+start = "FB"
+end = "FBTurbo"
+orientation = "v"
+
+[[connection]]
+start = "FC"
+end = "FurnaceManifold"
+orientation = "v"
+
+[[connection]]
+start = "FC"
+end = "FA"
+orientation = "h"
+
+[[connection]]
+start = "FD"
+end = "FurnaceManifold"
+
+[[connection]]
+start = "FD"
+end = "F GP-50"
+orientation = "v"
+
+[[connection]]
+start = "J"
+end = "FurnaceManifold"
+
+[[connection]]
+start = "H"
+end = "Felix"
+orientation = "h"
+
+[[connection]]
+start = "B"
+end = "Bone"
+orientation = "v"
+
+[[connection]]
+start = "D"
+end = "Bone"
+
+[[connection]]
+start = "C"
+end = "Bone"
+orientation = "v"
+
+[[connection]]
+start = "C"
+end = "ATurboManifold"
+orientation = "v"
+
+[[connection]]
+start = "ATurbo"
+end = "ATurboManifold"
+orientation = "v"
+
+[[connection]]
+start = "N"
+end = "Bone"
+orientation = "v"
+
+[[connection]]
+start = "H"
+end = "Bone"
+orientation = "h"
+
+[[connection]]
+start = "E"
+end = "Bone"
+orientation = "v"
+
+[[connection]]
+start = "E"
+end = "I"
+orientation = "v"
+
+[[connection]]
+start = "J"
+end = "Bone"
+orientation = "v"
+
+[[tee]]
+left = "ADiode"
+right = "RDiode"
+mid = "Diode"
+
+[[connection]]
+start = "B"
+end = "ADiode"
+orientation = "v"
+
+[[connection]]
+start = "F"
+end = "D"
+orientation = "v"
+
+[[connection]]
+start = "F"
+end = "CO2"
+
+[[connection]]
+start = "T"
+end = "CO2"
+orientation = "v"
+
+[[connection]]
+start = "G"
+end = "CO2"
+orientation = "v"
+
+[[connection]]
+start = "P"
+end = "ATurboManifold"
+orientation = "h"
+
+[[connection]]
+start = "P"
+end = "Minibone"
+orientation = "h"
+
+[[connection]]
+start = "Q"
+end = "Minibone"
+orientation = "h"
+
+[[connection]]
+start = "Q"
+end = "Quad"
+orientation = "h"
+
+[[connection]]
+start = "Minibone"
+end = "I"
+
+[[connection]]
+start = "W"
+end = "Minibone"
+orientation = "v"
+
+[[connection]]
+start = "Y"
+end = "Minibone"
+orientation = "v"
+
+[[connection]]
+start = "W"
+end = "CocktailPipette"
+orientation = "v"
+
+[[connection]]
+start = "Y"
+end = "AirPipette"
+orientation = "v"
+
+[[connection]]
+start = "S"
+end = "Microbone"
+orientation = "h"
+
+[[connection]]
+start = "L"
+end = "Minibone"
+orientation = "v"
+
+[[connection]]
+start = "L"
+end = "Microbone"
+orientation = "h"
+
+[[connection]]
+start = "S"
+end = "R"
+orientation = "h"
+
+[[connection]]
+start = "MSManual"
+end = "Jan"
+orientation = "h"
+
+[[connection]]
+start = "U"
+end = "Microbone"
+orientation = "v"
+
+[[connection]]
+start = "U"
+end = "BTurbo"
+orientation = "v"
+
+[[connection]]
+start = "T"
+end = "Microbone"
+
+[[connection]]
+start = "K"
+end = "Microbone"
+orientation = "v"
+
+[[connection]]
+start = "M"
+end = "Microbone"
+orientation = "v"
+
+[[connection]]
+start = "O"
+end = "Jan"
+orientation = "v"
+
+[[connection]]
+start = "V"
+end = "Felix"
+orientation = "v"
+
+[[connection]]
+start = "O"
+end = "JanIonPump"
+orientation = "v"
+
+[[connection]]
+start = "V"
+end = "FelixIonPump"
+orientation = "v"
+
+[[connection]]
+start = "N"
+end = "GP50"
+orientation = "v"
+
+[[connection]]
+start = "K"
+end = "NP-10C"
+orientation = "v"
+
+[[connection]]
+start = "M"
+end = "NP-10H"
+orientation = "v"
+
+[[connection]]
+start = "NP-10H"
+end = "GP50Manual"
+orientation = "v"
+
+[[connection]]
+start = "GP50Manual"
+end = "GP502"
+orientation = "v"
+
+[[connection]]
+start = "X"
+end = "CocktailPipette"
+orientation = "v"
+
+[[connection]]
+start = "Z"
+end = "AirPipette"
+orientation = "v"

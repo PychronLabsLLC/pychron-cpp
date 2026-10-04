@@ -5,6 +5,11 @@ Surveyed read-only on 2026-10-03 from `PychronConsulting/setupfiles` on Drive
 earlier surveys, no lab file was copied into the repo: the importer's tests
 use synthetic files in the same formats.
 
+One exception since: `configs/examples/nmgrl/` is the importer's output for
+the NMGRL valve box (`valve/setupfiles`), kept as a full-size example line
+with the controller endpoints removed. The legacy files themselves are still
+not in the repo.
+
 Files read: melbourne `extractionline/valves.yaml`, `canvas2D/canvas.yaml`,
 `canvas2D/canvas_config.xml`, `devices/switch_controller.cfg`,
 `devices/QtegraGPActuator.cfg` (Argus VI, Jan 2026); an NMGRL

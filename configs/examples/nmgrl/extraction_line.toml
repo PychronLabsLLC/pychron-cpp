@@ -1,0 +1,329 @@
+# The NMGRL valve box: a real, full-size extraction line (33 valves on five
+# controllers, furnace, two bones, pipettes), converted from its legacy Pychron
+# setupfiles with `elctl import-line`. Every controller is simulated, so it runs
+# with no hardware: `pychron-ui extraction_line.toml canvas.toml` from this directory.
+# Drawn by canvas.toml in this directory.
+#
+# Converted from a legacy Pychron setup (setupfiles) by pychron setup.
+# Read: extractionline/valves.xml, canvas2D/canvas.xml, canvas2D/canvas_config.xml, devices/furnace_switch_controller.cfg, devices/NMGRLFurnaceActuator.cfg, devices/switch_controller.cfg, devices/AgilentGPActuator.cfg, devices/arduino_valve_controller.cfg, devices/ArduinoGPActuator.cfg, devices/felix_helix_valve_controller.cfg, devices/ObamaQtegraGPActuator.cfg, devices/jan_argus_valve_controller.cfg, devices/JanQtegraGPActuator.cfg
+# Review before running on hardware: the notes at the end say what was not carried over.
+
+[system]
+name = "nmgrl_valve"
+scan_interval_ms = 1000
+
+# legacy NMGRLFurnaceActuator: pychron-cpp has no driver for it yet; simulated
+[transports."furnace_switch_controller"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."furnace_switch_controller"]
+kind = "sim_valves"
+transport = "furnace_switch_controller"
+
+# legacy AgilentGPActuator: pychron-cpp has no driver for it yet; simulated
+[transports."switch_controller"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."switch_controller"]
+kind = "sim_valves"
+transport = "switch_controller"
+
+# legacy ArduinoGPActuator: pychron-cpp has no driver for it yet; simulated
+[transports."arduino_valve_controller"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."arduino_valve_controller"]
+kind = "sim_valves"
+transport = "arduino_valve_controller"
+
+# legacy ObamaQtegraGPActuator: pychron-cpp has no driver for it yet; simulated
+[transports."felix_helix_valve_controller"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."felix_helix_valve_controller"]
+kind = "sim_valves"
+transport = "felix_helix_valve_controller"
+
+# legacy JanQtegraGPActuator: pychron-cpp has no driver for it yet; simulated
+[transports."jan_argus_valve_controller"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."jan_argus_valve_controller"]
+kind = "sim_valves"
+transport = "jan_argus_valve_controller"
+
+[[valves]]
+name = "FD"
+description = "Furnace Getter"
+actuator = "furnace_switch_controller"
+address = "FD"
+
+[[valves]]
+name = "FA"
+description = "FATurbo Safety"
+actuator = "furnace_switch_controller"
+address = "FA"
+
+[[valves]]
+name = "FB"
+description = "FBTurbo Safety"
+actuator = "furnace_switch_controller"
+address = "FB"
+
+[[valves]]
+name = "FC"
+description = "Furnace Turbo"
+actuator = "furnace_switch_controller"
+address = "FC"
+
+[[valves]]
+name = "FH"
+description = "Furnace Isolation"
+actuator = "furnace_switch_controller"
+address = "FH"
+
+[[valves]]
+name = "FG"
+description = "Furnace Gate"
+actuator = "furnace_switch_controller"
+address = "FG"
+
+[[valves]]
+name = "FE"
+description = "Upper Shutter"
+actuator = "furnace_switch_controller"
+address = "FE"
+
+[[valves]]
+name = "FF"
+description = "Lower Shutter"
+actuator = "furnace_switch_controller"
+address = "FF"
+
+[[valves]]
+name = "F"
+description = "CO2 Laser to Obama"
+actuator = "switch_controller"
+address = "308"
+
+[[valves]]
+name = "G"
+description = "CO2 Laser to Roughing"
+actuator = "switch_controller"
+address = "307"
+
+[[valves]]
+name = "C"
+description = "Bone to Turbo"
+actuator = "switch_controller"
+address = "316"
+
+[[valves]]
+name = "B"
+description = "Bone to Diode Laser"
+actuator = "switch_controller"
+address = "311"
+
+[[valves]]
+name = "E"
+description = "Bone to Minibone"
+actuator = "switch_controller"
+address = "309"
+
+[[valves]]
+name = "D"
+description = "Bone to CO2 Laser"
+actuator = "switch_controller"
+address = "310"
+
+[[valves]]
+name = "H"
+description = "Felix Inlet"
+actuator = "switch_controller"
+address = "306"
+
+[[valves]]
+name = "N"
+description = "Bone to Getter GP-50"
+actuator = "switch_controller"
+address = "304"
+
+[[valves]]
+name = "J"
+description = "Bone to APIS"
+actuator = "switch_controller"
+address = "305"
+
+[[valves]]
+name = "I"
+description = "Minibone to Bone"
+actuator = "arduino_valve_controller"
+address = "5"
+
+[[valves]]
+name = "P"
+description = "Minibone to Turbo"
+actuator = "switch_controller"
+address = "315"
+
+[[valves]]
+name = "W"
+description = "Outer Pipette 1"
+actuator = "switch_controller"
+address = "317"
+interlocks = ["X"]
+
+[[valves]]
+name = "X"
+description = "Inner Pipette 1"
+actuator = "switch_controller"
+address = "318"
+interlocks = ["W"]
+
+[[valves]]
+name = "Y"
+description = "Outer Pipette 2"
+actuator = "switch_controller"
+address = "319"
+interlocks = ["Z"]
+
+[[valves]]
+name = "Z"
+description = "Inner Pipette 2"
+actuator = "switch_controller"
+address = "320"
+interlocks = ["Y"]
+
+[[valves]]
+name = "Q"
+description = "Quad Inlet"
+actuator = "switch_controller"
+address = "303"
+
+[[valves]]
+name = "R"
+description = "Mass Spec Inlet"
+actuator = "arduino_valve_controller"
+address = "1"
+
+[[valves]]
+name = "S"
+description = "Microbone to Inlet Pipette"
+actuator = "arduino_valve_controller"
+address = "2"
+
+[[valves]]
+name = "L"
+description = "Microbone to Minibone"
+actuator = "arduino_valve_controller"
+address = "3"
+
+[[valves]]
+name = "M"
+description = "Microbone to Getter NP-10H"
+actuator = "switch_controller"
+address = "302"
+
+[[valves]]
+name = "U"
+description = "Microbone to Turbo"
+actuator = "switch_controller"
+address = "314"
+
+[[valves]]
+name = "T"
+description = "Microbone to Laser"
+actuator = "arduino_valve_controller"
+address = "6"
+
+[[valves]]
+name = "K"
+description = "Microbone to Getter NP-10C"
+actuator = "arduino_valve_controller"
+address = "4"
+
+[[valves]]
+name = "V"
+description = "Felix Ion Pump"
+actuator = "felix_helix_valve_controller"
+address = "Valve Ion Pump Set"
+
+[[valves]]
+name = "O"
+description = "Jan Ion Pump"
+actuator = "jan_argus_valve_controller"
+address = "Valve Ion Pump Set"
+
+[[manual_valves]]
+name = "ADiode"
+
+[[manual_valves]]
+name = "RDiode"
+
+[[manual_valves]]
+name = "NP-10CRough"
+
+[[manual_valves]]
+name = "GP50Manual"
+
+[[manual_valves]]
+name = "GP50Manual_Rough"
+
+[[manual_valves]]
+name = "MiniBoneGP5Manual"
+
+[[manual_valves]]
+name = "MSManual"
+
+[[pipettes]]
+name = "Air"
+inner = "Z"
+outer = "Y"
+
+[[pipettes]]
+name = "Cocktail"
+inner = "X"
+outer = "W"
+
+# Notes from the conversion:
+#   check_actuation_delay not carried over (8 valves: FD, FA, FB, FC, FH, FG, FE, FF)
+#   check_actuation_enabled not carried over (1 valve: R)
+#   query_state="false" not carried over (33 valves: FD, FA, FB, FC, FH, FG, FE, FF, ...)
+#   canvas: connection -: end offset not carried over
+#   canvas: connection GP502-GP50Manual_Rough: end offset not carried over
+#   canvas: connection FB-FBTurbo: end offset not carried over
+#   canvas: connection FC-FurnaceManifold: end offset not carried over
+#   canvas: connection FC-FA: end offset not carried over
+#   canvas: connection FA-FATurbo: end offset not carried over
+#   canvas: connection FD-FurnaceManifold: end offset not carried over
+#   canvas: connection J-FurnaceManifold: end offset not carried over
+#   canvas: connection Bone IG-ATurboManifold: end offset not carried over
+#   canvas: connection D-Bone: end offset not carried over
+#   canvas: connection ATurbo-ATurboManifold: end offset not carried over
+#   canvas: connection -: end offset not carried over
+#   canvas: connection G-CO2: end offset not carried over
+#   canvas: connection Minibone-I: end offset not carried over
+#   canvas: connection T-Microbone: end offset not carried over
+#   canvas: connection NP-10H-GP50Manual: end offset not carried over
+#   actuator furnace_switch_controller (NMGRLFurnaceActuator): no pychron-cpp driver yet; simulated by sim_valves
+#   actuator switch_controller (AgilentGPActuator): no pychron-cpp driver yet; simulated by sim_valves
+#   actuator arduino_valve_controller (ArduinoGPActuator): no pychron-cpp driver yet; simulated by sim_valves
+#   actuator felix_helix_valve_controller (ObamaQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
+#   actuator jan_argus_valve_controller (JanQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
+#   canvas: manual_valve MiniboneManual_Rough is not in the valve file; dropped
+#   canvas: gauge FBTurbo IG dropped (legacy gauge controllers are not imported yet)
+#   canvas: gauge FATurbo IG dropped (legacy gauge controllers are not imported yet)
+#   canvas: gauge Microbone IG dropped (legacy gauge controllers are not imported yet)
+#   canvas: gauge Roughing IG dropped (legacy gauge controllers are not imported yet)
+#   canvas: gauge Bone IG dropped (legacy gauge controllers are not imported yet)
+#   canvas: connection BTurbo-Microbone IG names an element that is not drawn; dropped
+#   canvas: connection MiniboneManual_Rough-Minibone names an element that is not drawn; dropped
+#   canvas: connection FBTurbo-FBTurbo IG names an element that is not drawn; dropped
+#   canvas: connection FA-FATurbo names an element that is not drawn; dropped
+#   canvas: connection FATurbo IG-FATurbo names an element that is not drawn; dropped
+#   canvas: connection Bone IG-ATurboManifold names an element that is not drawn; dropped

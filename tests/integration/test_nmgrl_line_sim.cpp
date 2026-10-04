@@ -1,0 +1,41 @@
+// The NMGRL valve box (configs/examples/nmgrl): a full-size line converted
+// from its legacy setupfiles, every controller simulated. The files load as
+// committed, the canvas matches the line, and valves on each of the five
+// controllers actuate with the pipette interlocks enforced.
+
+#include <filesystem>
+
+#include <gtest/gtest.h>
+
+#include "pychron/systems/extraction_line.hpp"
+
+namespace {
+
+using namespace pychron;
+using namespace pychron::systems;
+
+const std::filesystem::path kDir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
+
+TEST(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", {});
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  ASSERT_TRUE(line.start());
+  EXPECT_EQ(line.snapshot().valves.size(), 40u);  // 33 actuated, 7 manual
+
+  // one valve per legacy controller (furnace, Agilent, Arduino, the two Qtegra
+  // boxes), then pipette 1's outer valve
+  for (const char* valve : {"FD", "Q", "I", "V", "O", "W"}) {
+    ASSERT_TRUE(line.actuate(valve, SwitchOp::Open, "test")) << valve;
+    EXPECT_EQ(line.snapshot().valves.at(valve), ValveState::Open) << valve;
+  }
+
+  // pipette 1: outer W is open, so inner X is refused
+  auto inner = line.actuate("X", SwitchOp::Open, "test");
+  ASSERT_FALSE(inner);
+  EXPECT_EQ(inner.error().kind, ErrorKind::Interlock);
+
+  line.stop();
+}
+
+}  // namespace
