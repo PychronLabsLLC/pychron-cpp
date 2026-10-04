@@ -35,19 +35,20 @@ struct GitWho {
 // the store yet is created bare (key columns only), so every item is safe to
 // repeat and to send before or after a restart.
 //
-// Order matters for the other columns: an existing row always wins, and the
-// writer does not look at an item again once its row is known. Send the full
-// item before anything that names it, or its columns stay empty:
-//   PiItem before ProjectItem, SampleItem, PositionItem naming that PI;
-//   SampleItem before a PositionItem naming the sample;
-//   LevelItem before any PositionItem or RefObjectItem of that level;
-//   PositionItem before a RefObjectItem scoped to that position, and before
-//   a LoadPositionItem naming its identifier;
-//   UserItem before a LoadItem naming that user;
-//   LoadItem before a LoadPositionItem of that load;
-//   MassSpecItem before a SpecialIdentifierItem or RefObjectItem naming it;
-//   RefObjectItem before a LevelItem or LoadItem naming it as holder, and
-//   before a revision whose subject is its RefObjectKey.
+// Order does not matter for the other columns: a row keeps every value it
+// has, and a later item fills what the row lacks (a level a position made
+// bare takes holder, z and note from a later LevelItem; a position a
+// reference object made bare takes its sample from a later PositionItem).
+// Where two items give different values for one column, the first stays.
+//
+// Order still matters for what is part of a key or cannot be absent:
+//   a project is keyed by its principal investigator: an item that names the
+//   project without one names another project;
+//   the kind of an identifier (unknown or special) and the times a row was
+//   made with (IrradiationItem::created, SampleSpec::created, LoadSpec::created)
+//   and LoadSpec::archived are set when the row is made: send the item that
+//   has them first;
+//   RefObjectItem before a revision whose subject is its RefObjectKey.
 
 struct PiItem {
   std::string last_name, first_initial;

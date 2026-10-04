@@ -63,6 +63,13 @@ reference is kept unlinked, and it stays unlinked even after the other
 repository is imported later. Importing the reference-run repositories first
 is what links them.
 
+Catalog rows (samples, positions, levels, projects, identifiers, loads,
+users, spectrometers) do not depend on the order in the same way. A row that
+exists keeps every value it has, and a later source fills what the row lacks:
+a position MetaData made without a sample gets its sample from the catalog
+dump or, with `--catalog-from-repos`, from the project repository, whichever
+is imported later. Where two sources give different values, the first stays.
+
 Use one `--cache` directory for the whole import. It holds the settings of
 each source (`<source id>.toml`: time zone, branch, flags) and the mirrors of
 remote repositories. Those files are part of the import's state: keep them
@@ -101,8 +108,10 @@ elctl import add --db sqlite:store.db --kind project_repo --source ~/data/IR1010
 - `--author-map file.toml` maps git author emails to user names, one line
   each: `"ann@example.org" = "Ann Author"`.
 - `--catalog-from-repos` (project repositories, for use without a dump) makes
-  identifiers, positions and spectrometers from the analysis records. Each
-  identifier made up this way leaves one warning conflict (`synthesized`).
+  identifiers, positions, samples, projects, materials and spectrometers
+  from the analysis records. Each identifier made up this way leaves one
+  warning conflict (`synthesized`). Principal investigators exist only in
+  the legacy MySQL database: an import from repositories alone has none.
 - `--reference-runs` marks a repository of blanks, airs and cocktails.
 
 ### run
@@ -326,10 +335,11 @@ might expect. Section 10 of the design spec has the full wording.
 - **Refused, then renumbered.** An analysis refused in one run, then
   renumbered, whose old run id another analysis took, is an `identity_clash`
   on replay.
-- **The catalog's existing rows win.** When a catalog row already exists in the
-  store, verify cannot tell that the dump's other columns were not applied.
-  For a catalog, `ok` means the dump was imported, not that every column of
-  every row was.
+- **The catalog's existing values win.** When a catalog row already exists in
+  the store it keeps every value it has; a later source only fills what the
+  row lacks. Verify cannot tell that a value of the dump was not applied
+  because the row already had another. For a catalog, `ok` means the dump
+  was imported, not that every column of every row holds the dump's value.
 - **Reference data that cannot say "removed".** When a position, a
   production, a chronology, a gains or a holder file, or a level's geometry
   is deleted from MetaData the importer writes a revision that says there is

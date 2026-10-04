@@ -5,6 +5,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -14,11 +15,13 @@
 
 namespace pychron::ingest::detail {
 
-// Every lookup is an ensure-by-natural-key store call: an existing row wins
-// and is not written; a missing one is created, with an id derived from its
-// natural key where the store accepts one. Results are remembered for the
-// resolver's lifetime (catalog rows are never deleted), so a name used by
-// every item of a run costs one store call.
+// Every lookup is an ensure-by-natural-key store call: a missing row is
+// created, with an id derived from its natural key where the store accepts
+// one; an existing row keeps its values and is filled with what it lacks.
+// Results are remembered for the resolver's lifetime (catalog rows are never
+// deleted), so a name used by every item of a run costs one store call. A
+// call that brings optional values reaches the store once for each distinct
+// set of them: the row may have been made without.
 class CatalogResolver {
  public:
   CatalogResolver(persistence::IStore& store, persistence::Uuid client) : store_(store), client_(client) {}
@@ -49,8 +52,10 @@ class CatalogResolver {
     std::optional<std::string> pi_last_name, pi_first_initial;
   };
 
+  // `values`: the optional values the call brings (catalog.cpp, Values);
+  // empty for a bare one, which is answered from memory once the row is known.
   template <class Ensure>
-  Result<Uuid> cached(const char* table, const std::string& key, Ensure&& ensure);
+  Result<Uuid> cached(const char* table, const std::string& key, const std::string& values, Ensure&& ensure);
 
   Result<Uuid> principal_investigator(const PiItem& item);
   // `full`: the item that describes the project; nullptr creates it bare.
@@ -72,6 +77,7 @@ class CatalogResolver {
   Uuid client_;
   std::string url_;
   std::map<std::string, Uuid> known_;  // "<table>\n<natural key>" -> uuid
+  std::set<std::string> sent_;         // "<table>\n<natural key>\n\n<values>" the store has seen
 };
 
 }  // namespace pychron::ingest::detail

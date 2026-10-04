@@ -1,5 +1,7 @@
 #include "catalog.hpp"
 
+#include <cstdio>
+#include <string_view>
 #include <utility>
 
 #include "pychron/ingest/ids.hpp"
@@ -36,14 +38,50 @@ Result<void> done(const Result<Uuid>& r) {
   return {};
 }
 
+// The optional values a call brings, as text: "" when it brings none.
+class Values {
+ public:
+  Values& operator()(std::string_view name, const std::optional<std::string>& value) {
+    if (value) add(name, *value);
+    return *this;
+  }
+  Values& operator()(std::string_view name, const std::optional<double>& value) {
+    if (value) {
+      char buf[32];
+      std::snprintf(buf, sizeof buf, "%.17g", *value);
+      add(name, buf);
+    }
+    return *this;
+  }
+  Values& operator()(std::string_view name, const std::optional<Uuid>& value) {
+    if (value) add(name, value->str());
+    return *this;
+  }
+  const std::string& text() const { return text_; }
+
+ private:
+  void add(std::string_view name, std::string_view value) {
+    text_ += name;
+    text_ += '=';
+    text_ += value;
+    text_ += '\n';
+  }
+  std::string text_;
+};
+
 }  // namespace
 
 template <class Ensure>
-Result<Uuid> CatalogResolver::cached(const char* table, const std::string& key, Ensure&& ensure) {
-  std::string cache_key = join({table, key});
-  if (auto it = known_.find(cache_key); it != known_.end()) return it->second;
+Result<Uuid> CatalogResolver::cached(const char* table, const std::string& key, const std::string& values,
+                                     Ensure&& ensure) {
+  const std::string cache_key = join({table, key});
+  const std::string sent_key = cache_key + "\n\n" + values;
+  if (auto it = known_.find(cache_key); it != known_.end() && (values.empty() || sent_.contains(sent_key)))
+    return it->second;
   Result<Uuid> uuid = ensure(catalog_id(table, key));
-  if (uuid) known_.emplace(std::move(cache_key), *uuid);
+  if (!uuid) return uuid;
+  known_.insert_or_assign(cache_key, *uuid);
+  if (!values.empty()) sent_.insert(sent_key);
   return uuid;
 }
 
@@ -60,7 +98,9 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
           [&](const LevelItem& i) { return done(level(i)); },
           [&](const PositionItem& i) { return done(position(i)); },
           [&](const SpecialIdentifierItem& i) {
-            return done(cached("identifier", i.identifier, [&](Uuid id) -> Result<Uuid> {
+            const std::string values =
+                Values()("analysis_type", std::optional<std::string>{i.analysis_type})("ms", i.mass_spectrometer).text();
+            return done(cached("identifier", i.identifier, values, [&](Uuid id) -> Result<Uuid> {
               P::IdentifierSpec spec;
               spec.identifier = i.identifier;
               spec.kind = "special";
@@ -77,7 +117,7 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
           [&](const UserItem& i) { return done(user(i)); },
           [&](const MassSpecItem& i) { return done(mass_spectrometer(i.spec)); },
           [&](const ExtractDeviceItem& i) {
-            return done(cached("extract_device", i.name,
+            return done(cached("extract_device", i.name, "",
                                [&](Uuid) { return store_.add_extract_device(client_, i.name); }));
           },
           [&](const LoadItem& i) { return done(load(i)); },
@@ -98,17 +138,22 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
 }
 
 Result<Uuid> CatalogResolver::user(const std::string& name) {
-  return cached("app_user", name, [&](Uuid) { return store_.ensure_user(client_, name); });
+  return cached("app_user", name, "", [&](Uuid) { return store_.ensure_user(client_, name); });
 }
 
 Result<Uuid> CatalogResolver::user(const UserItem& item) {
-  return cached("app_user", item.name, [&](Uuid) {
+  const std::string values =
+      Values()("email", item.email)("affiliation", item.affiliation)("category", item.category).text();
+  return cached("app_user", item.name, values, [&](Uuid) {
     return store_.add_user(client_, {item.name, item.email, item.affiliation, item.category});
   });
 }
 
 Result<Uuid> CatalogResolver::load(const LoadItem& item) {
-  return cached("load", item.spec.name, [&](Uuid id) -> Result<Uuid> {
+  const std::string values = Values()("holder", item.holder_name)("holder_revision", item.spec.holder_revision)(
+      "created_by", item.created_by)("created_by_user", item.spec.created_by_user)
+                                 .text();
+  return cached("load", item.spec.name, values, [&](Uuid id) -> Result<Uuid> {
     P::LoadSpec spec = item.spec;
     spec.holder.reset();
     if (item.holder_name) {
@@ -129,7 +174,7 @@ Result<Uuid> CatalogResolver::load(const LoadItem& item) {
 // An identifier named by something loaded: the one a PositionItem or
 // SpecialIdentifierItem made, else a bare unknown.
 Result<Uuid> CatalogResolver::identifier(const std::string& name) {
-  return cached("identifier", name, [&](Uuid id) {
+  return cached("identifier", name, "", [&](Uuid id) {
     P::IdentifierSpec spec;
     spec.identifier = name;
     spec.uuid = id;
@@ -138,7 +183,7 @@ Result<Uuid> CatalogResolver::identifier(const std::string& name) {
 }
 
 Result<Uuid> CatalogResolver::repository(const std::string& name) {
-  return cached("repository", name, [&](Uuid) { return store_.add_repository(client_, name); });
+  return cached("repository", name, "", [&](Uuid) { return store_.add_repository(client_, name); });
 }
 
 Result<Uuid> CatalogResolver::ref_object(const RefObjectKey& key) {
@@ -163,7 +208,7 @@ Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeKey& key) {
 // bare one. An identifier is therefore linked only when an analysis uses it:
 // then it exists, and add_identifier returns it without writing.
 Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeItem& item) {
-  return cached("interpreted_age", join({url_, item.key}), [&](Uuid) -> Result<Uuid> {
+  return cached("interpreted_age", join({url_, item.key}), "", [&](Uuid) -> Result<Uuid> {
     P::InterpretedAgeSpec spec;
     spec.name = item.name;
     if (item.identifier) {
@@ -191,7 +236,8 @@ Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeItem& item) {
 }
 
 Result<Uuid> CatalogResolver::principal_investigator(const PiItem& item) {
-  return cached("principal_investigator", join({item.last_name, item.first_initial}), [&](Uuid id) {
+  const std::string values = Values()("affiliation", item.affiliation)("email", item.email).text();
+  return cached("principal_investigator", join({item.last_name, item.first_initial}), values, [&](Uuid id) {
     return store_.add_principal_investigator(client_,
                                              {item.last_name, item.first_initial, item.affiliation, item.email, id});
   });
@@ -200,7 +246,11 @@ Result<Uuid> CatalogResolver::principal_investigator(const PiItem& item) {
 Result<Uuid> CatalogResolver::project(const ProjectKey& key, const ProjectItem* full) {
   const std::string last = key.pi_last_name.value_or("");
   const std::string first = key.pi_first_initial.value_or("");
-  return cached("project", join({key.name, last, first}), [&](Uuid id) -> Result<Uuid> {
+  Values values;
+  if (full)
+    values("checkin_date", full->checkin_date)("comment", full->comment)("lab_contact", full->lab_contact)(
+        "institution", full->institution);
+  return cached("project", join({key.name, last, first}), values.text(), [&](Uuid id) -> Result<Uuid> {
     std::optional<Uuid> pi;
     if (key.pi_last_name) {
       auto found = principal_investigator({last, first, std::nullopt, std::nullopt});
@@ -219,7 +269,7 @@ Result<Uuid> CatalogResolver::project(const ProjectKey& key, const ProjectItem* 
 }
 
 Result<Uuid> CatalogResolver::material(const std::string& name, const std::string& grainsize) {
-  return cached("material", join({name, grainsize}),
+  return cached("material", join({name, grainsize}), "",
                 [&](Uuid id) { return store_.add_material(client_, {name, grainsize, id}); });
 }
 
@@ -227,7 +277,14 @@ Result<Uuid> CatalogResolver::sample(P::SampleSpec fields, const ProjectKey& pro
                                      const std::string& grainsize) {
   const std::string key = join({fields.name, project_key.name, project_key.pi_last_name.value_or(""),
                                 project_key.pi_first_initial.value_or(""), material_name, grainsize});
-  return cached("sample", key, [&](Uuid id) -> Result<Uuid> {
+  const std::string values =
+      Values()("note", fields.note)("igsn", fields.igsn)("lat", fields.lat)("lon", fields.lon)(
+          "elevation", fields.elevation)("storage_location", fields.storage_location)("location", fields.location)(
+          "unit", fields.unit)("lithology", fields.lithology)("lithology_class", fields.lithology_class)(
+          "lithology_type", fields.lithology_type)("lithology_group", fields.lithology_group)(
+          "approximate_age", fields.approximate_age)
+          .text();
+  return cached("sample", key, values, [&](Uuid id) -> Result<Uuid> {
     auto p = project(project_key);
     if (!p) return fail(p.error());
     auto m = material(material_name, grainsize);
@@ -240,12 +297,14 @@ Result<Uuid> CatalogResolver::sample(P::SampleSpec fields, const ProjectKey& pro
 }
 
 Result<Uuid> CatalogResolver::irradiation(const std::string& name, std::optional<P::UtcTime> created) {
-  return cached("irradiation", name,
+  // The time an irradiation was made is a value it always has: nothing to fill.
+  return cached("irradiation", name, "",
                 [&](Uuid) { return store_.add_irradiation(client_, P::IrradiationSpec{name, created}); });
 }
 
 Result<Uuid> CatalogResolver::level(const LevelItem& item) {
-  return cached("level", join({item.irradiation, item.name}), [&](Uuid id) -> Result<Uuid> {
+  const std::string values = Values()("holder", item.holder)("z", item.z)("note", item.note).text();
+  return cached("level", join({item.irradiation, item.name}), values, [&](Uuid id) -> Result<Uuid> {
     auto irrad = irradiation(item.irradiation);
     if (!irrad) return fail(irrad.error());
     P::LevelSpec spec;
@@ -265,7 +324,12 @@ Result<Uuid> CatalogResolver::level(const LevelItem& item) {
 
 Result<Uuid> CatalogResolver::position(const PositionItem& item) {
   const std::string key = join({item.irradiation, item.level, std::to_string(item.position)});
-  auto position = cached("irradiation_position", key, [&](Uuid id) -> Result<Uuid> {
+  Values values;
+  values("weight", item.weight)("packet", item.packet)("note", item.note);
+  if (item.sample)
+    values("sample", item.sample)("project", item.project)("material", item.material)("grainsize", item.grainsize)(
+        "pi_last_name", item.pi_last_name)("pi_first_initial", item.pi_first_initial);
+  auto position = cached("irradiation_position", key, values.text(), [&](Uuid id) -> Result<Uuid> {
     auto lvl = level({item.irradiation, item.level, std::nullopt, std::nullopt, std::nullopt});
     if (!lvl) return fail(lvl.error());
     P::PositionSpec spec;
@@ -291,7 +355,8 @@ Result<Uuid> CatalogResolver::position(const PositionItem& item) {
   });
   if (!position || item.identifier.empty()) return position;
 
-  auto identifier = cached("identifier", item.identifier, [&](Uuid id) {
+  const std::string at = Values()("position", std::optional<Uuid>{*position}).text();
+  auto identifier = cached("identifier", item.identifier, at, [&](Uuid id) {
     P::IdentifierSpec spec;
     spec.identifier = item.identifier;
     spec.kind = "unknown";
@@ -304,7 +369,8 @@ Result<Uuid> CatalogResolver::position(const PositionItem& item) {
 }
 
 Result<Uuid> CatalogResolver::mass_spectrometer(P::MassSpectrometerSpec spec) {
-  return cached("mass_spectrometer", spec.name, [&](Uuid id) {
+  const std::string values = Values()("kind", spec.kind)("code", spec.code).text();
+  return cached("mass_spectrometer", spec.name, values, [&](Uuid id) {
     spec.uuid = id;
     return store_.add_mass_spectrometer(client_, spec);
   });
@@ -312,7 +378,12 @@ Result<Uuid> CatalogResolver::mass_spectrometer(P::MassSpectrometerSpec spec) {
 
 // `scope`: the item that names the object's scope; nullptr creates it unscoped.
 Result<Uuid> CatalogResolver::ref_object(P::RefType type, const std::string& key, const RefObjectItem* scope) {
-  return cached("ref_object", join({P::to_string(type), key}), [&](Uuid id) -> Result<Uuid> {
+  Values values;
+  if (scope) {
+    values("irradiation", scope->irradiation)("level", scope->level)("ms", scope->mass_spectrometer);
+    if (scope->position) values("position", std::optional<std::string>{std::to_string(*scope->position)});
+  }
+  return cached("ref_object", join({P::to_string(type), key}), values.text(), [&](Uuid id) -> Result<Uuid> {
     P::RefObjectSpec spec;
     spec.type = type;
     spec.key = key;

@@ -689,3 +689,20 @@ points. Where this section and an earlier one disagree, this section wins.
     transports; a source url may name an ssh user but no password or token.
     (f) Pending collections of one commit are folded in the order of their
     path keys. (g) `collection_wait_commits` is at least 1.
+39. **Ensuring a catalog row fills what it lacks.** Ensure-by-natural-key
+    keeps every value a row has. A column that is NULL in the row, is not
+    part of its key and has a value in the spec being ensured is filled, in
+    one update recorded in the change log as `update` with the field diff;
+    the uuid is the row's. A value that is there is never replaced, so of
+    two sources that disagree the first stays. A fill that breaks a
+    constraint (a position another identifier holds) fails as the insert
+    would and writes nothing. With nothing to fill nothing is written. The
+    writer's per-run memory of a row does not keep a fuller item from the
+    store. This is what gives a position its sample when MetaData, which
+    makes every position bare, is imported before the source that names the
+    sample (the catalog dump, or a project repository with
+    `--catalog-from-repos`). A project's principal investigator is part of
+    its key and is not filled; principal investigators come only from the
+    legacy database. Replaces "an existing row always wins" for the other
+    columns; which identifier takes a position is decided as before
+    (the known limit on `--catalog-from-repos` and run cuts stands).

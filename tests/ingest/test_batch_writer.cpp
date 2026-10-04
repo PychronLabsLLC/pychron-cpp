@@ -1762,6 +1762,123 @@ TEST_P(BatchWriterTest, CatalogItemsCarryTheirDescriptiveColumns) {
   EXPECT_EQ(world_->count("app_user"), users);
 }
 
+namespace {
+
+// What a meta repository brings for NM-300/A/1: the level and the position,
+// both bare, under a flux object scoped to the position.
+ImportBatch bare_position_batch() {
+  ImportBatch b;
+  b.catalog.push_back(IrradiationItem{"NM-300"});
+  b.catalog.push_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
+  b.catalog.push_back(RefObjectItem{P::RefType::FluxPosition, "NM-300/A/1", "NM-300", "A", 1, std::nullopt});
+  b.resume_token = "m1";
+  return b;
+}
+
+// What a project repository's record implies for the same position.
+ImportBatch sampled_position_batch() {
+  PositionItem position;
+  position.irradiation = "NM-300";
+  position.level = "A";
+  position.position = 1;
+  position.identifier = "66573";
+  position.sample = "HH-1";
+  position.project = "Henry Hill";
+  position.material = "sanidine";
+  ImportBatch b;
+  b.catalog.push_back(position);
+  b.resume_token = "p1";
+  return b;
+}
+
+// "<identifier> | <sample> | <project> | <material>" of every position, by position.
+std::vector<std::string> placed(World& w) {
+  auto rows = w.db->select(QStringLiteral(
+      "SELECT i.identifier AS identifier, s.name AS sample, pr.name AS project, m.name AS material "
+      "FROM irradiation_position p LEFT JOIN identifier i ON i.position_uuid = p.uuid "
+      "LEFT JOIN sample s ON s.uuid = p.sample_uuid LEFT JOIN project pr ON pr.uuid = s.project_uuid "
+      "LEFT JOIN material m ON m.uuid = s.material_uuid ORDER BY p.position"));
+  EXPECT_TRUE(rows);
+  std::vector<std::string> out;
+  if (!rows) return out;
+  for (const auto& r : *rows)
+    out.push_back(pd::to_std(r.value("identifier")) + " | " + pd::to_std(r.value("sample")) + " | " +
+                  pd::to_std(r.value("project")) + " | " + pd::to_std(r.value("material")));
+  return out;
+}
+
+}  // namespace
+
+// A position made bare by one source gets its sample from a later one.
+TEST_P(BatchWriterTest, PositionMadeBareIsFilledByALaterSource) {
+  FakeAdapter meta({P::ImportSourceKind::MetaRepo, "https://github.com/NMGRLData/MetaData", "main", "head-sha"},
+                   {bare_position_batch()});
+  ASSERT_TRUE(run_all(*world_, meta));
+  EXPECT_EQ(placed(*world_), std::vector<std::string>{" |  |  | "});
+  FakeAdapter project(description(), {sampled_position_batch()});
+  ASSERT_TRUE(run_all(*world_, project));
+  EXPECT_EQ(placed(*world_), std::vector<std::string>{"66573 | HH-1 | Henry Hill | sanidine"});
+  EXPECT_EQ(world_->count("irradiation_position"), 1);
+
+  // Again: nothing is left to fill.
+  const auto seq = *store().latest_change_seq();
+  FakeAdapter again(description(), {sampled_position_batch()});
+  ASSERT_TRUE(run_all(*world_, again, replay_config()));
+  auto entries = store().changes_since(seq, 100);
+  ASSERT_TRUE(entries);
+  for (const auto& entry : entries->entries) EXPECT_NE(entry.kind, "catalog");
+}
+
+// The same in one run, in two batches and in one: the writer's memory of a
+// row it made bare does not keep a fuller item from the store.
+TEST_P(BatchWriterTest, PositionMadeBareIsFilledWithinARun) {
+  FakeAdapter two(description(), {bare_position_batch(), sampled_position_batch()});
+  ASSERT_TRUE(run_all(*world_, two));
+  EXPECT_EQ(placed(*world_), std::vector<std::string>{"66573 | HH-1 | Henry Hill | sanidine"});
+
+  World one(GetParam());
+  ASSERT_TRUE(one.store && one.db);
+  FakeAdapter merged_run(description(), {merged({bare_position_batch(), sampled_position_batch()})});
+  ASSERT_TRUE(run_all(one, merged_run));
+  EXPECT_EQ(placed(one), std::vector<std::string>{"66573 | HH-1 | Henry Hill | sanidine"});
+}
+
+// The other order: the bare items change nothing.
+TEST_P(BatchWriterTest, PositionWithItsSampleIsKeptByALaterBareItem) {
+  FakeAdapter project(description(), {sampled_position_batch()});
+  ASSERT_TRUE(run_all(*world_, project));
+  const auto seq = *store().latest_change_seq();
+  FakeAdapter meta({P::ImportSourceKind::MetaRepo, "https://github.com/NMGRLData/MetaData", "main", "head-sha"},
+                   {bare_position_batch()});
+  ASSERT_TRUE(run_all(*world_, meta));
+  EXPECT_EQ(placed(*world_), std::vector<std::string>{"66573 | HH-1 | Henry Hill | sanidine"});
+  EXPECT_EQ(world_->count("irradiation_position"), 1);
+  auto row = world_->db->select_one(QStringLiteral(
+      "SELECT count(*) AS n FROM change_entity WHERE op = 'update' AND change_seq > %1").arg(seq));
+  ASSERT_TRUE(row && *row);
+  EXPECT_EQ((*row)->value("n").toInt(), 0);
+}
+
+// A level a position made bare takes its holder, z and note from a later
+// LevelItem; a second LevelItem with other values changes nothing.
+TEST_P(BatchWriterTest, LevelMadeBareIsFilledByALaterLevelItem) {
+  ImportBatch first = sampled_position_batch();
+  ImportBatch second;
+  second.catalog.push_back(LevelItem{"NM-300", "A", "24-hole", 0.5, "top"});
+  second.catalog.push_back(LevelItem{"NM-300", "A", "48-hole", 9.0, "other"});
+  second.resume_token = "p2";
+  FakeAdapter adapter(description(), {first, second});
+  ASSERT_TRUE(run_all(*world_, adapter));
+  auto row = world_->db->select_one(QStringLiteral(
+      "SELECT l.z AS z, l.note AS note, o.key AS holder FROM level l "
+      "LEFT JOIN ref_object o ON o.uuid = l.holder_ref_uuid"));
+  ASSERT_TRUE(row && *row);
+  EXPECT_DOUBLE_EQ((*row)->value("z").toDouble(), 0.5);
+  EXPECT_EQ(pd::to_std((*row)->value("note")), "top");
+  EXPECT_EQ(pd::to_std((*row)->value("holder")), "24-hole");
+  EXPECT_EQ(world_->count("level"), 1);
+}
+
 // Spec 10.31. The first import refuses the renumber at c5 and stores the one
 // at c9. Once the identifier exists, a replay could write c5: behind c9.
 TEST_P(BatchWriterTest, ReplayDoesNotWriteAnIdentityBehindAStoredOne) {
