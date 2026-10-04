@@ -10,6 +10,7 @@ add_library(pychron_ingest STATIC
   src/catalog.cpp
   src/catalog_find.cpp
   src/ids.cpp
+  src/late_revision.cpp
   src/rewrites.cpp
   src/tz.cpp
   src/verify.cpp

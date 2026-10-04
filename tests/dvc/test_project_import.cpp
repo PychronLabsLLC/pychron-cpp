@@ -2137,6 +2137,56 @@ TEST_P(ProjectImportTest, RenumberToAnIdentifierTheCatalogLacks) {
   EXPECT_TRUE(bare->store->import_conflict(ingest::conflict_id(kUrl, "", "catalog/identifier/66099"))->has_value());
 }
 
+// Spec 10.31. The renumber to 66099 is refused, a later one to a known
+// identifier is stored. With 66099 in the catalog a replay could write the
+// first: it would take the analysis back to a run id it has since left.
+TEST_P(ProjectImportTest, ReplayDoesNotApplyARefusedRenumberBehindALaterOne) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Record);
+  repo_.write(path, LegacyRepoBuilder::record_text("66099-01A", kE.str()));
+  const std::string refused = legacy_.commit("<EDIT> RunID", kDay2);
+  repo_.write(path, LegacyRepoBuilder::record_text("66052-07B", kE.str()));
+  const std::string stored = legacy_.commit("<EDIT> RunID", kRefit);
+
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  EXPECT_EQ((*store().load_analysis(kE))->summary.runid, "66052-07B");
+  const Uuid head = ingest::revision_id(kUrl, stored, path);
+  ASSERT_EQ(*store().head(kE, Kind::Identity), std::optional<Uuid>{head});
+  const Uuid conflict = ingest::conflict_id(kUrl, refused, path);
+  EXPECT_EQ((**store().import_conflict(conflict)).kind, ConflictKind::UnknownAnalysis);
+
+  P::IdentifierSpec identifier;
+  identifier.identifier = "66099";
+  ASSERT_TRUE(store().add_identifier(world_->client, identifier));
+  const auto seq = *store().latest_change_seq();
+
+  auto replay = writer_config();
+  replay.replay = true;
+  for (const std::optional<int> batch : {std::optional<int>{1}, std::optional<int>{}}) {
+    auto config = adapter_config(repo_);
+    if (batch) config.batch_commits = *batch;
+    auto stats = run_import(*world_, config, std::nullopt, replay);
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_TRUE(stats->finished);
+    EXPECT_EQ((*store().load_analysis(kE))->summary.runid, "66052-07B");
+    EXPECT_EQ(*store().head(kE, Kind::Identity), std::optional<Uuid>{head});
+    EXPECT_EQ(store().history(kE, Kind::Identity)->size(), 1u);
+    EXPECT_EQ(*store().latest_change_seq(), seq);
+    const auto conflicts = world_->conflicts();
+    ASSERT_EQ(conflicts.size(), 1u);
+    EXPECT_EQ(conflicts[0].uuid, conflict);
+    EXPECT_EQ(conflicts[0].kind, ConflictKind::IdentityClash);
+    EXPECT_EQ(conflicts[0].resolution, "pending");
+    const json detail = json::parse(conflicts[0].detail_json);
+    EXPECT_EQ(detail.at("reason"), "late_revision_not_applied");
+    EXPECT_EQ(detail.at("commit"), refused);
+    EXPECT_EQ(detail.at("path"), path);
+    EXPECT_EQ(detail.at("kind"), "identity");
+    EXPECT_EQ(detail.at("content").at("identifier"), "66099");
+    EXPECT_EQ(detail.at("content").at("aliquot"), 1);
+  }
+}
+
 TEST_P(ProjectImportTest, LargeRewrittenValueIsKeptByReference) {
   legacy_.collect(kRunE, kE.str(), kCollected);
   auto extraction = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Extraction));

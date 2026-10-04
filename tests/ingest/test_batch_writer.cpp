@@ -205,6 +205,89 @@ Result<RunStats> run_all(World& w, ISourceAdapter& adapter, WriterConfig cfg = c
   return writer.run(adapter, std::nullopt, {}, {});
 }
 
+// A later commit that renumbers `analysis`, whose record is the file of `file`.
+ChangesetItem renumber(const std::string& commit, Uuid analysis, int file, const std::string& identifier,
+                       int aliquot) {
+  ChangesetItem c;
+  c.commit = commit;
+  c.who = who(kAlice, "2016-03-05T00:00:00Z");
+  c.message = "<EDIT> RunID";
+  RevisionItem revision{{commit, record_path(file), "rec-" + commit}, analysis, Kind::Identity,
+                        P::IdentityValue{Uuid{}, aliquot, -1, "legacy record rewritten"}};
+  revision.identifier = identifier;
+  c.revisions.push_back(std::move(revision));
+  return c;
+}
+
+// A is 66573-01 at c1. c5 renumbers it to 66599-02, an identifier the catalog
+// lacks; c9, when `with_c9`, renumbers it to 66573-03.
+std::vector<ImportBatch> renumbered_twice(bool with_c9 = true) {
+  std::vector<ImportBatch> out(with_c9 ? 3 : 2);
+  out[0].catalog = lab_catalog();
+  add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  out[0].resume_token = "c1";
+  out[1].changesets.push_back(renumber("c5", kA, 1, "66599", 2));
+  out[1].resume_token = "c5";
+  if (with_c9) {
+    out[2].changesets.push_back(renumber("c9", kA, 1, "66573", 3));
+    out[2].resume_token = "c9";
+  }
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    out[i].done = static_cast<int>(i) + 1;
+    out[i].total = static_cast<int>(out.size());
+  }
+  return out;
+}
+
+// The batches as one.
+ImportBatch merged(const std::vector<ImportBatch>& batches) {
+  ImportBatch all;
+  for (const auto& b : batches) {
+    all.catalog.insert(all.catalog.end(), b.catalog.begin(), b.catalog.end());
+    all.blobs.insert(all.blobs.end(), b.blobs.begin(), b.blobs.end());
+    all.analyses.insert(all.analyses.end(), b.analyses.begin(), b.analyses.end());
+    all.changesets.insert(all.changesets.end(), b.changesets.begin(), b.changesets.end());
+    all.resume_token = b.resume_token;
+    all.done = b.done;
+    all.total = b.total;
+  }
+  return all;
+}
+
+WriterConfig replay_config() {
+  auto c = config();
+  c.replay = true;
+  return c;
+}
+
+// The rows a replay could change, in a fixed order.
+std::vector<std::string> rows_of(World& w) {
+  std::vector<std::string> out;
+  const auto rows = [&](const char* label, const QString& sql, const std::vector<const char*>& columns) {
+    auto found = w.db->select(sql);
+    ASSERT_TRUE(found) << label;
+    std::vector<std::string> lines;
+    for (const auto& row : *found) {
+      std::string line = label;
+      for (const char* column : columns) line += " | " + pd::to_std(row.value(column));
+      lines.push_back(std::move(line));
+    }
+    std::sort(lines.begin(), lines.end());
+    out.insert(out.end(), lines.begin(), lines.end());
+  };
+  rows("analysis", QStringLiteral("SELECT uuid, runid_text FROM analysis"), {"uuid", "runid_text"});
+  rows("revision", QStringLiteral("SELECT uuid, subject_uuid, kind, parent_uuid, changeset_uuid FROM revision"),
+       {"uuid", "subject_uuid", "kind", "parent_uuid", "changeset_uuid"});
+  rows("head", QStringLiteral("SELECT subject_uuid, kind, revision_uuid FROM head"),
+       {"subject_uuid", "kind", "revision_uuid"});
+  rows("changeset", QStringLiteral("SELECT uuid, message FROM changeset"), {"uuid", "message"});
+  rows("provenance", QStringLiteral("SELECT entity_type, entity_uuid, path, commit_sha FROM import_provenance"),
+       {"entity_type", "entity_uuid", "path", "commit_sha"});
+  rows("conflict", QStringLiteral("SELECT uuid, path, conflict_kind, resolution, detail FROM import_conflict"),
+       {"uuid", "path", "conflict_kind", "resolution", "detail"});
+  return out;
+}
+
 class BatchWriterTest : public ::testing::TestWithParam<std::string> {
  protected:
   void SetUp() override {
@@ -596,7 +679,12 @@ TEST_P(BatchWriterTest, ReplayImportsWhatWasRefused) {
   auto all = store().import_conflicts({source, std::nullopt, std::nullopt});
   ASSERT_TRUE(all);
   EXPECT_EQ(all->size(), 14u);
-  for (const auto& c : *all) EXPECT_EQ(c.resolution, "superseded") << c.path;
+  for (const auto& c : *all) {
+    EXPECT_EQ(c.resolution, "superseded") << c.path;
+    // Every revision of a refused analysis is written in order: none is late.
+    EXPECT_EQ(c.kind, P::ConflictKind::UnknownAnalysis) << c.path;
+    EXPECT_EQ(c.detail_json.find("late_revision_not_applied"), std::string::npos) << c.path;
+  }
 
   // The history is what a clean import of a source with a complete catalog gives.
   World clean(GetParam());
@@ -1651,6 +1739,190 @@ TEST_P(BatchWriterTest, CatalogItemsCarryTheirDescriptiveColumns) {
   EXPECT_EQ(world_->count("load_position"), 2);
   EXPECT_EQ(world_->count("load"), 2);
   EXPECT_EQ(world_->count("app_user"), users);
+}
+
+// Spec 10.31. The first import refuses the renumber at c5 and stores the one
+// at c9. Once the identifier exists, a replay could write c5: behind c9.
+TEST_P(BatchWriterTest, ReplayDoesNotWriteAnIdentityBehindAStoredOne) {
+  FakeAdapter adapter(description(), renumbered_twice());
+  adapter.honour_token(true);
+  auto first = run_all(*world_, adapter);
+  ASSERT_TRUE(first) << err(first.error());
+  EXPECT_EQ(first->revisions, 1);
+  EXPECT_EQ(first->conflicts, 1);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-03");
+  const Uuid c5 = conflict_id(kUrl, "c5", record_path(1));
+  const Uuid head = revision_id(kUrl, "c9", record_path(1));
+  auto refused = store().import_conflict(c5);
+  ASSERT_TRUE(refused && refused->has_value());
+  EXPECT_EQ((*refused)->kind, P::ConflictKind::UnknownAnalysis);
+  EXPECT_EQ(*store().head(kA, Kind::Identity), std::optional<Uuid>{head});
+
+  ASSERT_TRUE(store().add_identifier(world_->client, {"66599", "unknown", {}, {}, {}, {}, {}}));
+  const auto seq = *store().latest_change_seq();
+  const auto revisions = world_->count("revision");
+
+  auto replayed = run_all(*world_, adapter, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_TRUE(replayed->finished);
+  EXPECT_EQ(replayed->batches, 3);
+  EXPECT_EQ(replayed->revisions, 1);  // c9, already stored
+  EXPECT_EQ(replayed->conflicts, 1);
+
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-03");
+  EXPECT_EQ(*store().head(kA, Kind::Identity), std::optional<Uuid>{head});
+  auto history = store().history(kA, Kind::Identity);
+  ASSERT_TRUE(history);
+  ASSERT_EQ(history->size(), 1u);
+  EXPECT_EQ(history->front().uuid, head);
+  EXPECT_FALSE(*store().has_revision(revision_id(kUrl, "c5", record_path(1))));
+  EXPECT_EQ(world_->count("revision"), revisions);
+  // A conflict is not a change: nothing else was written.
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+
+  // The conflict of c5 now says what became of it, and what it held.
+  const Uuid source = source_id(P::ImportSourceKind::ProjectRepo, kUrl, "main");
+  auto conflicts = store().import_conflicts({source, std::nullopt, std::nullopt});
+  ASSERT_TRUE(conflicts);
+  ASSERT_EQ(conflicts->size(), 1u);
+  const auto& late = conflicts->front();
+  EXPECT_EQ(late.uuid, c5);
+  EXPECT_EQ(late.kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ(late.resolution, "pending");
+  EXPECT_EQ(late.entity, std::optional<Uuid>{kA});
+  EXPECT_EQ(late.path, record_path(1));
+  EXPECT_EQ(late.file_sha256, std::optional<Sha256Digest>{sha256(std::string_view{"rec-c5"})});
+  for (const char* text : {"late_revision_not_applied", "\"c5\"", "\"identity\"", "66599", "rec-c5",
+                           "legacy record rewritten"})
+    EXPECT_NE(late.detail_json.find(text), std::string::npos) << text << " in " << late.detail_json;
+  EXPECT_NE(late.detail_json.find(record_path(1)), std::string::npos) << late.detail_json;
+
+  // Recorded, so neither a dry run nor a dry replay has anything left to write.
+  for (const bool replay : {false, true}) {
+    auto dry = config();
+    dry.dry_run = true;
+    dry.replay = replay;
+    auto counted = run_all(*world_, adapter, dry);
+    ASSERT_TRUE(counted) << err(counted.error());
+    EXPECT_EQ(counted->would_write, 0) << replay;
+  }
+
+  // A second replay changes nothing and does not record the conflict twice.
+  const auto settled = rows_of(*world_);
+  auto again = run_all(*world_, adapter, replay_config());
+  ASSERT_TRUE(again) << err(again.error());
+  EXPECT_EQ(again->conflicts, 1);
+  EXPECT_EQ(rows_of(*world_), settled);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->count("import_conflict"), 1);
+}
+
+// What a replay is for: with nothing stored after it, the refused renumber is written.
+TEST_P(BatchWriterTest, ReplayWritesARefusedIdentityThatNothingFollows) {
+  FakeAdapter adapter(description(), renumbered_twice(false));
+  adapter.honour_token(true);
+  ASSERT_TRUE(run_all(*world_, adapter));
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-01");
+  ASSERT_TRUE(store().add_identifier(world_->client, {"66599", "unknown", {}, {}, {}, {}, {}}));
+
+  auto replayed = run_all(*world_, adapter, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 0);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66599-02");
+  EXPECT_EQ(*store().head(kA, Kind::Identity), std::optional<Uuid>{revision_id(kUrl, "c5", record_path(1))});
+  auto conflict = store().import_conflict(conflict_id(kUrl, "c5", record_path(1)));
+  ASSERT_TRUE(conflict && conflict->has_value());
+  EXPECT_EQ((*conflict)->kind, P::ConflictKind::UnknownAnalysis);
+  EXPECT_EQ((*conflict)->resolution, "superseded");
+
+  const auto seq = *store().latest_change_seq();
+  ASSERT_TRUE(run_all(*world_, adapter, replay_config()));
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+}
+
+// The rule is not about identities: a refit at c5 of an analysis that was not
+// in the store then, with the analysis and a refit at c9 stored since.
+TEST_P(BatchWriterTest, ReplayDoesNotWriteARevisionBehindAStoredOne) {
+  std::vector<ImportBatch> script(3);
+  script[0].catalog = lab_catalog();
+  script[0].changesets.push_back(refit("c5", kA, 1, 55.5, who(kAlice, "2016-03-05T00:00:00Z")));
+  add_analysis(script[1], kA, 1, "c6", who(kAlice, "2016-03-06T00:00:00Z"));
+  script[2].changesets.push_back(refit("c9", kA, 1, 99.5, who(kAlice, "2016-03-09T00:00:00Z")));
+  const char* tokens[] = {"c5", "c6", "c9"};
+  for (std::size_t i = 0; i < script.size(); ++i) script[i].resume_token = tokens[i];
+  FakeAdapter adapter(description(), script);
+  adapter.honour_token(true);
+  auto first = run_all(*world_, adapter);
+  ASSERT_TRUE(first) << err(first.error());
+  EXPECT_EQ(first->conflicts, 1);
+  const Uuid head = revision_id(kUrl, "c9", kind_path("intercepts", 1));
+  ASSERT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+  const auto seq = *store().latest_change_seq();
+  const auto revisions = world_->count("revision");
+
+  auto replayed = run_all(*world_, adapter, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 1);
+  EXPECT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+  EXPECT_EQ(store().history(kA, Kind::Intercepts)->size(), 2u);  // the root and c9
+  EXPECT_EQ(world_->count("revision"), revisions);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  const auto value = std::get<P::Intercepts>(**store().load_payload(**store().head(kA, Kind::Intercepts)));
+  EXPECT_EQ(value.front().value, std::optional<double>{99.5});
+
+  auto late = store().import_conflict(conflict_id(kUrl, "c5", kind_path("intercepts", 1)));
+  ASSERT_TRUE(late && late->has_value());
+  EXPECT_EQ((*late)->kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ((*late)->resolution, "pending");
+  EXPECT_EQ((*late)->entity, std::optional<Uuid>{kA});
+  for (const char* text : {"late_revision_not_applied", "\"c5\"", "\"intercepts\"", "55.5", "Ar40", "parabolic"})
+    EXPECT_NE((*late)->detail_json.find(text), std::string::npos) << text << " in " << (*late)->detail_json;
+  EXPECT_EQ(world_->count("import_conflict"), 1);
+
+  const auto settled = rows_of(*world_);
+  ASSERT_TRUE(run_all(*world_, adapter, replay_config()));
+  EXPECT_EQ(rows_of(*world_), settled);
+}
+
+// Spec 10.16: the replay decides the same however it is cut, and when it is
+// stopped after the batch that holds c5 and started again.
+TEST_P(BatchWriterTest, LateRevisionIsDecidedTheSameAtAnyCutOfTheReplay) {
+  const auto imported = [&](World& w) {
+    FakeAdapter adapter(description(), renumbered_twice());
+    adapter.honour_token(true);
+    EXPECT_TRUE(run_all(w, adapter));
+    EXPECT_TRUE(w.store->add_identifier(w.client, {"66599", "unknown", {}, {}, {}, {}, {}}));
+  };
+  // Three batches, one commit each.
+  imported(*world_);
+  FakeAdapter by_commit(description(), renumbered_twice());
+  ASSERT_TRUE(run_all(*world_, by_commit, replay_config()));
+  const auto expected = rows_of(*world_);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-03");
+
+  // One batch.
+  World whole(GetParam());
+  ASSERT_TRUE(whole.store && whole.db);
+  imported(whole);
+  FakeAdapter at_once(description(), {merged(renumbered_twice())});
+  ASSERT_TRUE(run_all(whole, at_once, replay_config()));
+  EXPECT_EQ(rows_of(whole), expected);
+
+  // Stopped after c5, then replayed again from the start.
+  World stopped(GetParam());
+  ASSERT_TRUE(stopped.store && stopped.db);
+  imported(stopped);
+  FakeAdapter interrupted(description(), renumbered_twice());
+  {
+    BatchWriter writer(*stopped.store, stopped.client, replay_config());
+    auto partial = writer.run(interrupted, 2, {}, {});
+    ASSERT_TRUE(partial) << err(partial.error());
+    EXPECT_EQ(partial->batches, 2);
+    EXPECT_FALSE(partial->finished);
+  }
+  EXPECT_EQ((*stopped.store->load_analysis(kA))->summary.runid, "66573-03");
+  ASSERT_TRUE(run_all(stopped, interrupted, replay_config()));
+  EXPECT_EQ(rows_of(stopped), expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, BatchWriterTest, ::testing::ValuesIn(P::testing::engines()));

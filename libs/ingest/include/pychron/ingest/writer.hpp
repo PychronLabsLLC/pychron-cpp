@@ -29,6 +29,10 @@ struct WriterConfig {
   // Everything already imported is a no-op; analyses refused earlier for a
   // missing catalog row, and their later revisions, are written in order and
   // their conflicts become `superseded`. The stored token never moves back.
+  // A revision refused earlier is not written when a later commit of this
+  // source has since stored a revision of the same subject and kind: the head
+  // stays and the revision is a pending identity_clash conflict with reason
+  // `late_revision_not_applied` and its content in the detail (spec 10.31).
   bool replay = false;
 };
 

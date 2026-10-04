@@ -279,6 +279,9 @@ inline const QString kSetImportProgress = QStringLiteral(
     "WHERE uuid = ?");
 inline const QString kResolveConflict =
     QStringLiteral("UPDATE import_conflict SET resolution = ? WHERE uuid = ? AND import_source_uuid = ?");
+inline const QString kRestateConflict = QStringLiteral(
+    "UPDATE import_conflict SET path = ?, entity_uuid = ?, conflict_kind = ?, db_head_revision_uuid = ?, "
+    "file_sha256 = ?, detail = ? WHERE uuid = ? AND import_source_uuid = ?");
 inline const QString kImportConflicts = QStringLiteral(
     "SELECT uuid, path, entity_uuid, conflict_kind, db_head_revision_uuid, file_sha256, detail, resolution "
     "FROM import_conflict");

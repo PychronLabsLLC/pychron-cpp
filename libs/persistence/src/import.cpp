@@ -166,6 +166,12 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     return {};
   }
 
+  Result<void> restate_conflict(ImportConflictRow row) override {
+    if (auto r = check_open(); !r) return r;
+    restated_.push_back(std::move(row));
+    return {};
+  }
+
   Result<void> set_progress(ImportProgress progress) override {
     if (auto r = check_open(); !r) return r;
     progress_ = std::move(progress);
@@ -188,6 +194,12 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
           !r)
         return fail(r.error());
     if (auto r = write_conflicts(); !r) return fail(r.error());
+    for (const auto& c : restated_)
+      if (auto r = db_.affecting(sql::kRestateConflict,
+                                 {qv(c.path), qv(c.entity), qstr(to_string(c.kind)), qv(c.db_head_revision),
+                                  qv(c.file_sha256), qv(c.detail_json), qv(c.uuid), qv(source_)});
+          !r)
+        return fail(r.error());
     for (const auto& [conflict, resolution] : resolutions_)
       if (auto r = db_.affecting(sql::kResolveConflict, {qv(resolution), qv(conflict), qv(source_)}); !r)
         return fail(r.error());
@@ -302,6 +314,7 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
   std::vector<ImportedChangeset> changesets_;
   std::vector<ProvenanceRow> provenance_;
   std::vector<ImportConflictRow> conflicts_;
+  std::vector<ImportConflictRow> restated_;
   struct Detail {
     std::string entity_type;
     Uuid entity;

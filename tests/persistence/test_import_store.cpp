@@ -332,6 +332,68 @@ TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
   EXPECT_EQ((*store_->import_conflict(fresh))->resolution, "superseded");
 }
 
+TEST_P(ImportStoreTest, ConflictCanBeRestatedAndKeepsItsResolution) {
+  const Uuid id = Uuid::v5(source_.uuid, "conflict e.json");
+  const Uuid resolved = Uuid::v5(source_.uuid, "conflict f.json");
+  {
+    auto uow = batch();
+    for (const Uuid uuid : {id, resolved}) {
+      ImportConflictRow row;
+      row.uuid = uuid;
+      row.path = "e.json";
+      row.kind = ConflictKind::UnknownAnalysis;
+      row.detail_json = R"({"reason":"x"})";
+      ASSERT_TRUE(uow->add_conflict(row));
+    }
+    ASSERT_TRUE(uow->resolve_conflict(resolved, "ignored"));
+    ASSERT_TRUE(uow->commit());
+  }
+
+  const auto seq = *store_->latest_change_seq();
+  const auto digest = sha256(std::string_view{"e"});
+  auto uow = batch();
+  for (const Uuid uuid : {id, resolved, Uuid::v7()}) {  // the last is not stored: left alone
+    ImportConflictRow row;
+    row.uuid = uuid;
+    row.path = "e.json";
+    row.entity = analysis_;
+    row.kind = ConflictKind::IdentityClash;
+    row.file_sha256 = digest;
+    row.detail_json = R"({"reason":"y"})";
+    row.resolution = "pending";
+    ASSERT_TRUE(uow->restate_conflict(row));
+  }
+  EXPECT_EQ((*store_->import_conflict(id))->kind, ConflictKind::UnknownAnalysis) << "staged, not written";
+  ASSERT_TRUE(uow->commit());
+  EXPECT_EQ(*store_->latest_change_seq(), seq) << "a restated conflict is not a change";
+  EXPECT_EQ(count("import_conflict"), 2);
+
+  auto stored = store_->import_conflict(id);
+  ASSERT_TRUE(stored && stored->has_value());
+  EXPECT_EQ((*stored)->kind, ConflictKind::IdentityClash);
+  EXPECT_EQ((*stored)->entity, std::optional<Uuid>{analysis_});
+  EXPECT_EQ((*stored)->file_sha256, std::optional<Sha256Digest>{digest});
+  EXPECT_NE((*stored)->detail_json.find("\"y\""), std::string::npos);
+  EXPECT_EQ((*stored)->resolution, "pending");
+  auto kept = store_->import_conflict(resolved);
+  ASSERT_TRUE(kept && kept->has_value());
+  EXPECT_EQ((*kept)->kind, ConflictKind::IdentityClash);
+  EXPECT_EQ((*kept)->resolution, "ignored");
+
+  // A conflict added and restated in one batch ends restated.
+  const Uuid fresh = Uuid::v5(source_.uuid, "conflict g.json");
+  auto both = batch();
+  ImportConflictRow row;
+  row.uuid = fresh;
+  row.path = "g.json";
+  row.kind = ConflictKind::UnknownAnalysis;
+  ASSERT_TRUE(both->add_conflict(row));
+  row.kind = ConflictKind::IdentityClash;
+  ASSERT_TRUE(both->restate_conflict(row));
+  ASSERT_TRUE(both->commit());
+  EXPECT_EQ((*store_->import_conflict(fresh))->kind, ConflictKind::IdentityClash);
+}
+
 TEST_P(ImportStoreTest, ProgressIsStoredWithTheBatch) {
   auto uow = batch();
   ASSERT_TRUE(uow->set_progress({"abc", 3, 10, "head", "running"}));
