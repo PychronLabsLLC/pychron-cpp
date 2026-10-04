@@ -112,3 +112,26 @@ TEST_F(ChromiumSimTest, ScansAreNumberedFromOne) {
   sim.put_on_limit('y', 0);
   EXPECT_EQ(ask("Stage.Status?"), "0,0,0\r");
 }
+
+// Faults an error code does not cover, for driver tests.
+TEST_F(ChromiumSimTest, CommandsCanBeSwallowedSilencedOrArriveTooLate) {
+  ask("Laser.Enable 1");
+  sim.swallow_next("Laser.Output");
+  EXPECT_EQ(ask("Laser.Output 10"), "");
+  EXPECT_EQ(sim.output(), 0.0);          // accepted, nothing done
+  EXPECT_EQ(ask("Laser.Output 10"), "");
+  EXPECT_EQ(sim.output(), 10.0);         // once only
+
+  sim.silence_next("Laser.Output?", 1);  // the second one from now
+  EXPECT_EQ(ask("Laser.Output?"), "10\r");
+  EXPECT_EQ(ask("Laser.Output?"), "");
+  EXPECT_EQ(ask("Laser.Output?"), "10\r");
+  sim.silence_next("Laser.Output 20");
+  EXPECT_EQ(ask("Laser.Output 20"), "");
+  EXPECT_EQ(sim.output(), 20.0);         // silenced, but carried out
+
+  sim.trip_on_next("Laser.Fire", "Door");
+  EXPECT_EQ(ask("Laser.Fire"), "");      // no error...
+  EXPECT_FALSE(sim.firing());            // ...and no beam
+  EXPECT_EQ(ask("Laser.Status?"), "1\r");
+}

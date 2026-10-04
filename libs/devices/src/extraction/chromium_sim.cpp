@@ -26,14 +26,8 @@ std::string_view trim(std::string_view s) {
   return s;
 }
 
-std::optional<double> number(std::string_view s) {
-  s = trim(s);
-  if (s.empty()) return std::nullopt;
-  double v = 0;
-  const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
-  if (ec != std::errc{} || end != s.data() + s.size() || !std::isfinite(v)) return std::nullopt;
-  return v;
-}
+// Not std::from_chars: its floating-point overloads are missing from older libc++.
+std::optional<double> number(std::string_view s) { return codec::parse_decimal(trim(s)); }
 
 // Every comma-separated value, or nullopt if any is not a number.
 std::optional<std::vector<double>> numbers(std::string_view s) {
@@ -116,7 +110,22 @@ void ChromiumSim::set_id(std::string id) {
 
 void ChromiumSim::fail_next(std::string command_prefix, int code) {
   std::lock_guard lock(mutex_);
-  refusals_.push_back({lower(command_prefix), code});
+  refusals_.push_back({lower(command_prefix), code, Fault::Refuse, 0, {}});
+}
+
+void ChromiumSim::swallow_next(std::string command_prefix, int skip) {
+  std::lock_guard lock(mutex_);
+  refusals_.push_back({lower(command_prefix), 0, Fault::Swallow, skip, {}});
+}
+
+void ChromiumSim::silence_next(std::string command_prefix, int skip) {
+  std::lock_guard lock(mutex_);
+  refusals_.push_back({lower(command_prefix), 0, Fault::Silence, skip, {}});
+}
+
+void ChromiumSim::trip_on_next(std::string command_prefix, std::string interlock) {
+  std::lock_guard lock(mutex_);
+  refusals_.push_back({lower(command_prefix), 0, Fault::Trip, 0, std::move(interlock)});
 }
 
 bool ChromiumSim::enabled() const {
@@ -177,13 +186,34 @@ bool ChromiumSim::at_rest() const {
 
 std::string ChromiumSim::handle(std::string_view command) {
   const std::string lowered = lower(command);
+  bool silenced = false;
   for (auto it = refusals_.begin(); it != refusals_.end(); ++it) {
-    if (lowered.starts_with(it->prefix)) {
-      const int code = it->code;
-      refusals_.erase(it);
-      return error(code);
+    if (!lowered.starts_with(it->prefix)) continue;
+    if (it->skip > 0) {
+      --it->skip;
+      continue;
     }
+    const Refusal fault = *it;
+    refusals_.erase(it);
+    switch (fault.fault) {
+      case Fault::Refuse: return error(fault.code);
+      case Fault::Swallow: return kSilent;
+      case Fault::Trip:
+        interlocks_.push_back(fault.interlock);
+        firing_ = false;
+        return kSilent;
+      case Fault::Silence: silenced = true; break;
+    }
+    break;
   }
+  if (silenced) {
+    (void)dispatch(lowered);
+    return kSilent;
+  }
+  return dispatch(lowered);
+}
+
+std::string ChromiumSim::dispatch(const std::string& lowered) {
   const auto dot = lowered.find('.');
   if (dot == std::string::npos) return error(1);
   const std::string_view component = std::string_view(lowered).substr(0, dot);

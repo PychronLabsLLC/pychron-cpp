@@ -11,6 +11,14 @@
 // action failed (and the query's reply is read and dropped); otherwise it is
 // the query's reply and the action stood. Nothing waits on silence.
 //
+// Chromium's replies carry no echo of the command, so a reply that arrives
+// after its read timed out cannot be told from the next command's. Input left
+// unread is discarded before every query and every action, which covers a
+// line that is late by less than the gap between commands; a line later than
+// that would be read as the next query's answer. After a failure whose effect
+// is unknown (a fire or an output whose confirm never came), the driver
+// stops the beam or zeroes the output rather than guess.
+//
 // What the driver checks that legacy pychron did not: that the program on
 // the port is a Chromium (prepare), that no interlock is tripped (enable and
 // every fire), and that an output setpoint took (read back).
@@ -108,6 +116,8 @@ class ChromiumLaser final : public Device, public IExtractionDevice, public ILas
   Result<Bytes> query(const codec::Command& q);
   // `action`, then `confirm`'s reply. See the header comment.
   Result<Bytes> act(const codec::Command& action, const codec::Command& confirm);
+  // Laser.Output 0, and the read-back says 0.
+  Result<void> zero_output();
   // Interlock error naming what is tripped, if anything is.
   Result<void> check_interlocks(std::string_view doing);
   // A refusal made here, before anything is sent: not a device failure.

@@ -216,6 +216,123 @@ TEST_F(ChromiumTest, HealthFollowsTheWire) {
   EXPECT_NE(laser.health().state, DeviceState::Ok);
 }
 
+// --- when Chromium does not do as it was told --------------------------------------
+
+// An interlock that trips after the check, with a Chromium that simply does
+// not fire rather than answering ?4: the confirm shows it.
+TEST_F(ChromiumTest, FireThatAnInterlockStoppedIsNotReportedAsFiring) {
+  ASSERT_TRUE(laser.enable());
+  ASSERT_TRUE(laser.extract(10, ExtractUnits::Percent));
+  sim.trip_on_next("Laser.Fire", "Door");
+  auto r = laser.fire_laser();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
+  EXPECT_NE(r.error().what.find("Door"), std::string::npos);
+  EXPECT_FALSE(*laser.is_firing());
+  EXPECT_EQ(sim.log().back(), "Sys.ID?");  // Laser.Stop went out after it, and was confirmed
+  EXPECT_TRUE(logged("Laser.Stop"));
+}
+
+TEST_F(ChromiumTest, ARefusedFireIsAnError) {
+  ASSERT_TRUE(laser.enable());
+  sim.fail_next("Laser.Fire", 4);
+  auto r = laser.fire_laser();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_NE(r.error().what.find("Laser.Fire"), std::string::npos);
+  EXPECT_FALSE(*laser.is_firing());
+  EXPECT_FALSE(sim.firing());
+}
+
+// The beam may be on when the confirm never comes: stop it, do not guess.
+TEST_F(ChromiumTest, AFireWhoseConfirmNeverComesStopsTheBeam) {
+  ASSERT_TRUE(laser.enable());
+  sim.silence_next("Laser.Status?", 1);  // the first is the interlock check
+  auto r = laser.fire_laser();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(*laser.is_firing());
+  ASSERT_TRUE(laser.fire_laser());  // and the wire is in step for the next command
+  EXPECT_TRUE(sim.firing());
+}
+
+TEST_F(ChromiumTest, AnOutputWhoseConfirmNeverComesIsZeroed) {
+  ASSERT_TRUE(laser.enable());
+  sim.silence_next("Laser.Output?");
+  auto r = laser.extract(40, ExtractUnits::Percent);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(sim.output(), 0.0);  // not left at 40 with the caller told it failed
+  EXPECT_EQ(*laser.output(), 0.0);
+  ASSERT_TRUE(laser.extract(5, ExtractUnits::Percent));
+  EXPECT_EQ(sim.output(), 5.0);
+}
+
+TEST_F(ChromiumTest, AnOutputThatDidNotTakeIsAnErrorAndIsZeroed) {
+  ASSERT_TRUE(laser.enable());
+  ASSERT_TRUE(laser.extract(10, ExtractUnits::Percent));
+  sim.swallow_next("Laser.Output 40");
+  auto r = laser.extract(40, ExtractUnits::Percent);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(sim.output(), 0.0);
+  EXPECT_EQ(*laser.output(), 0.0);
+}
+
+// The shutdown paths check that the output went to 0 and the laser disabled.
+TEST_F(ChromiumTest, EndExtractAndDisableVerifyWhatTheyDid) {
+  ASSERT_TRUE(laser.enable());
+  ASSERT_TRUE(laser.extract(10, ExtractUnits::Percent));
+  sim.swallow_next("Laser.Output 0");
+  auto ended = laser.end_extract();
+  ASSERT_FALSE(ended);
+  EXPECT_EQ(ended.error().kind, ErrorKind::Io);
+  EXPECT_NE(ended.error().what.find("10"), std::string::npos);  // what Chromium still reports
+
+  sim.swallow_next("Laser.Enable 0");
+  auto disabled = laser.disable();
+  ASSERT_FALSE(disabled);
+  EXPECT_EQ(disabled.error().kind, ErrorKind::Io);
+  EXPECT_EQ(sim.output(), 0.0);  // the other steps still ran
+  ASSERT_TRUE(laser.disable());
+  EXPECT_FALSE(sim.enabled());
+}
+
+TEST_F(ChromiumTest, DisableTriesEveryStepAndReportsTheFirstFailure) {
+  ASSERT_TRUE(laser.enable());
+  ASSERT_TRUE(laser.extract(10, ExtractUnits::Percent));
+  ASSERT_TRUE(laser.fire_laser());
+  sim.fail_next("Laser.Stop", 4);
+  auto r = laser.disable();
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("Laser.Stop"), std::string::npos);
+  EXPECT_EQ(sim.output(), 0.0);
+  EXPECT_FALSE(sim.enabled());  // which also shuts the beam
+  EXPECT_FALSE(sim.firing());
+}
+
+// A unit with no scan list (it answers ?1 to Scans.*) is still a laser.
+TEST_F(ChromiumTest, AChromiumWithoutScansStillPreparesAndDisables) {
+  sim.fail_next("Scans.Status_Verbosity", 1);
+  ASSERT_TRUE(laser.prepare());
+  ASSERT_TRUE(laser.enable());
+  sim.fail_next("Scans.Stop", 1);
+  ASSERT_TRUE(laser.disable());
+  EXPECT_FALSE(sim.enabled());
+}
+
+// When the confirming query is the one refused, the action is not blamed.
+TEST_F(ChromiumTest, ARefusedConfirmIsNotBlamedOnTheAction) {
+  ASSERT_TRUE(laser.enable());
+  sim.fail_next("Laser.Output?", 4);
+  auto r = laser.extract(10, ExtractUnits::Percent);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("Laser.Output?"), std::string::npos) << r.error().what;
+  EXPECT_EQ(r.error().what.find("Laser.Output 10"), std::string::npos) << r.error().what;
+  ASSERT_TRUE(laser.extract(5, ExtractUnits::Percent));  // in step
+}
+
 // --- stage ----------------------------------------------------------------------
 
 TEST_F(ChromiumTest, TheDeviceHasAStageAndNoPatternRunner) {
@@ -347,6 +464,7 @@ TEST(ChromiumRegistry, CreatesFromConfigAndRejectsBadOptions) {
   // the message names the key at fault
   RegistryWire w;
   auto made = reg.create("chromium", *w.wire, toml::parse("signs = [1, 2, 1]"), DriverContext{"laser", &w.clock});
+  ASSERT_FALSE(made);
   EXPECT_NE(made.error().what.find("signs"), std::string::npos) << made.error().what;
 }
 

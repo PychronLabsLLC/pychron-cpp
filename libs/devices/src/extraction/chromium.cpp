@@ -1,5 +1,6 @@
 #include "pychron/devices/extraction/chromium.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -16,6 +17,13 @@ namespace {
 constexpr Duration kDrain = std::chrono::milliseconds(1);
 constexpr int kDrainLimit = 16;
 constexpr double kOutputTolerance = 0.1;  // percent
+// Error::code when the query after an action was refused, not the action.
+constexpr std::string_view kConfirmRefused = "chromium-confirm?";
+
+// True when Chromium refused the action itself: nothing was changed.
+bool action_refused(const Error& e) { return e.code.starts_with("chromium?"); }
+// True for any "?<n>" from Chromium: it answered, and said no.
+bool refused(const Error& e) { return e.code.starts_with("chromium"); }
 constexpr int kArrivedAfter = 3;          // good polls in a row
 constexpr std::array<std::string_view, 3> kAxes{"x", "y", "z"};
 
@@ -35,6 +43,16 @@ std::string text_of(const codec::Command& command) {
   std::string text = pychron::to_string(command.tx);
   while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
   return text;
+}
+
+// A percentage for a message: as the codec would send it (no locale).
+std::string percent(double value) {
+  if (auto command = cr::laser_output(std::clamp(value, 0.0, 100.0)); command && value >= 0 && value <= 100) {
+    std::string text = pychron::to_string(command->tx);
+    text.pop_back();  // the LF
+    return text.substr(text.find(' ') + 1);
+  }
+  return std::to_string(value);
 }
 
 std::string joined(const std::vector<std::string>& names) {
@@ -147,9 +165,14 @@ Result<Bytes> ChromiumLaser::act(const codec::Command& action, const codec::Comm
     auto first = transport_.read(*confirm.reply);
     if (!first) return fail(std::move(first).error());
     if (const auto code = cr::error_code(*first)) {
-      // The action was refused. The confirm's own reply follows: take it off the wire.
-      (void)transport_.poll(*confirm.reply);
-      return fail(cr::to_error(*code, text_of(action)));
+      // Whose refusal? If the action's, the confirm's own reply follows it:
+      // take that off the wire. If nothing follows, the action stood and it
+      // was the confirm that Chromium refused.
+      auto second = transport_.poll(*confirm.reply);
+      if (second && second->has_value()) return fail(cr::to_error(*code, text_of(action)));
+      Error e = cr::to_error(*code, text_of(confirm));
+      e.code = std::string(kConfirmRefused) + std::to_string(*code);
+      return fail(std::move(e));
     }
     return first;
   });
@@ -178,8 +201,9 @@ Result<void> ChromiumLaser::prepare() {
       std::lock_guard lock(state_);
       id_ = *id;
     }
+    // A nicety, and a unit with no scan list refuses it: only a dead wire fails here.
     auto verbose = act(cr::scans_status_verbosity(1), cr::sys_id());
-    if (!verbose) return fail(std::move(verbose).error());
+    if (!verbose && !refused(verbose.error())) return fail(std::move(verbose).error());
     return {};
   };
   return observe(run());
@@ -202,16 +226,46 @@ Result<void> ChromiumLaser::enable() {
   return observe(run());
 }
 
+Result<void> ChromiumLaser::zero_output() {
+  auto zero = cr::laser_output(0);
+  if (!zero) return fail(std::move(zero).error());
+  auto reply = act(*zero, cr::laser_output_query());
+  if (!reply) return fail(std::move(reply).error());
+  auto set = cr::decode_number(*reply);
+  if (!set) return fail(std::move(set).error());
+  if (std::abs(*set) > kOutputTolerance) {
+    return fail(ErrorKind::Io, "asked for 0 % output, Chromium still reports " + percent(*set) + " %");
+  }
+  return {};
+}
+
 Result<void> ChromiumLaser::disable() {
   // Everything is tried; the first failure is what is reported.
   Result<void> first;
-  auto attempt = [&](Result<Bytes> r) {
-    if (!r && first) first = fail(std::move(r).error());
+  auto keep = [&](Result<void> r) {
+    if (!r && first) first = std::move(r);
   };
-  attempt(act(cr::laser_stop(), cr::sys_id()));
-  attempt(act(cr::scans_stop(), cr::sys_id()));
-  if (auto zero = cr::laser_output(0)) attempt(act(*zero, cr::laser_output_query()));
-  if (options_.use_enable) attempt(act(cr::laser_enable(false), cr::laser_enabled()));
+  auto done = [](Result<Bytes> r) -> Result<void> {
+    if (!r) return fail(std::move(r).error());
+    return {};
+  };
+  keep(done(act(cr::laser_stop(), cr::sys_id())));
+  // A unit with no scan list refuses this; that is not a failure to disable.
+  if (auto stopped = act(cr::scans_stop(), cr::sys_id()); !stopped && !refused(stopped.error())) {
+    keep(fail(std::move(stopped).error()));
+  }
+  keep(zero_output());
+  if (options_.use_enable) {
+    auto off = [&]() -> Result<void> {
+      auto reply = act(cr::laser_enable(false), cr::laser_enabled());
+      if (!reply) return fail(std::move(reply).error());
+      auto on = cr::decode_flag(*reply);
+      if (!on) return fail(std::move(on).error());
+      if (*on) return fail(ErrorKind::Io, "Chromium did not disable the laser");
+      return {};
+    };
+    keep(off());
+  }
   {
     std::lock_guard lock(state_);
     enabled_ = false;
@@ -255,23 +309,28 @@ Result<void> ChromiumLaser::extract(double value, ExtractUnits units) {
     auto set = cr::decode_number(*reply);
     if (!set) return fail(std::move(set).error());
     if (std::abs(*set - value) > kOutputTolerance) {
-      return fail(ErrorKind::Protocol, "asked for " + std::to_string(value) + " % output, Chromium reports " +
-                                           std::to_string(*set) + " %");
+      return fail(ErrorKind::Protocol,
+                  "asked for " + percent(value) + " % output, Chromium reports " + percent(*set) + " %");
     }
     std::lock_guard lock(state_);
     output_ = value;
     return {};
   };
-  return observe(run());
+  auto result = run();
+  if (!result && !action_refused(result.error())) {
+    // The command went out and what the output is now is not known: it must
+    // not be left at a setpoint the caller was told had failed.
+    (void)zero_output();
+    std::lock_guard lock(state_);
+    output_ = 0;
+  }
+  return observe(std::move(result));
 }
 
 Result<void> ChromiumLaser::end_extract() {
   Result<void> first;
-  auto attempt = [&](Result<Bytes> r) {
-    if (!r && first) first = fail(std::move(r).error());
-  };
-  attempt(act(cr::laser_stop(), cr::sys_id()));
-  if (auto zero = cr::laser_output(0)) attempt(act(*zero, cr::laser_output_query()));
+  if (auto stopped = act(cr::laser_stop(), cr::sys_id()); !stopped) first = fail(std::move(stopped).error());
+  if (auto zeroed = zero_output(); !zeroed && first) first = std::move(zeroed);
   {
     std::lock_guard lock(state_);
     firing_ = false;
@@ -290,15 +349,31 @@ Result<void> ChromiumLaser::fire_laser() {
     std::lock_guard lock(state_);
     if (!enabled_) return refuse(ErrorKind::Interlock, "the laser is not enabled");
   }
+  if (auto ok = observe(check_interlocks("fire")); !ok) return ok;
   auto run = [&]() -> Result<void> {
-    if (auto ok = check_interlocks("fire"); !ok) return ok;
     auto reply = act(cr::laser_fire(), cr::laser_status());
     if (!reply) return fail(std::move(reply).error());
-    std::lock_guard lock(state_);
-    firing_ = true;
+    // An interlock can trip between the check and the command, and a Chromium
+    // that then simply does not fire says so only here.
+    auto status = cr::decode_number(*reply);
+    if (!status) return fail(std::move(status).error());
+    if (*status != 0) return check_interlocks("fire");
     return {};
   };
-  return observe(run());
+  auto result = run();
+  if (!result) {
+    // Laser.Fire may have gone out. Whatever went wrong after it, the beam
+    // is not left on behind an error (a refused Laser.Fire never opened it).
+    if (!action_refused(result.error())) (void)act(cr::laser_stop(), cr::sys_id());
+    std::lock_guard lock(state_);
+    firing_ = false;
+    return observe(std::move(result));
+  }
+  {
+    std::lock_guard lock(state_);
+    firing_ = true;
+  }
+  return observe(std::move(result));
 }
 
 Result<void> ChromiumLaser::stop_laser() {

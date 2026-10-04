@@ -24,16 +24,9 @@ std::string_view trim(std::string_view s) {
   return s;
 }
 
-// Locale-free; the whole of `s` must be the number.
-std::optional<double> number(std::string_view s) {
-  s = trim(s);
-  if (!s.empty() && s.front() == '+') s.remove_prefix(1);  // from_chars takes no '+'
-  if (s.empty()) return std::nullopt;
-  double value = 0;
-  const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
-  if (ec != std::errc{} || end != s.data() + s.size() || !std::isfinite(value)) return std::nullopt;
-  return value;
-}
+// Locale-free; the whole of `s` must be the number. Not std::from_chars:
+// its floating-point overloads are missing from older libc++.
+std::optional<double> number(std::string_view s) { return codec::parse_decimal(trim(s)); }
 
 std::vector<std::string_view> split(std::string_view s, char by) {
   std::vector<std::string_view> out;

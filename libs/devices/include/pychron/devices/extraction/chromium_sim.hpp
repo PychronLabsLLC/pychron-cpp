@@ -45,6 +45,12 @@ class ChromiumSim {
   // The next command starting with `command_prefix` (case-insensitive) is
   // refused with ?<code>, once.
   void fail_next(std::string command_prefix, int code);
+  // Faults a real Chromium can show that an error code does not cover. Each
+  // applies once, to the next matching command after `skip` earlier matches.
+  void swallow_next(std::string command_prefix, int skip = 0);  // accepted, silently does nothing
+  void silence_next(std::string command_prefix, int skip = 0);  // carried out, but its reply never comes
+  // The command arrives too late: `interlock` trips first, and it does nothing.
+  void trip_on_next(std::string command_prefix, std::string interlock);
 
   // State.
   bool enabled() const;
@@ -55,6 +61,7 @@ class ChromiumSim {
 
  private:
   std::string handle(std::string_view command);
+  std::string dispatch(const std::string& lowered);
   std::string laser(std::string_view command, std::string_view args);
   std::string stage(std::string_view command, std::string_view args);
   std::string scans(std::string_view command, std::string_view args);
@@ -75,9 +82,13 @@ class ChromiumSim {
   TimePoint advanced_{};
   std::array<int, 3> limits_{};
   std::vector<Microns> scans_;
+  enum class Fault { Refuse, Swallow, Silence, Trip };
   struct Refusal {
     std::string prefix;
     int code = 0;
+    Fault fault = Fault::Refuse;
+    int skip = 0;
+    std::string interlock;
   };
   std::vector<Refusal> refusals_;
   std::vector<std::string> log_;
