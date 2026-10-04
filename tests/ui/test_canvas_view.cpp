@@ -178,22 +178,31 @@ class TestCanvasView : public QObject {
 
   void inheritModeColoursOpenValveWithItsRegion() {
     view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
-    ui::ValveItem* a = view_->valve("A");
-    bridge_->actuate("A", SwitchOp::Open);
-    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
-    const QColor region = view_->stage("bone")->region_color();
-    QVERIFY(region != CanvasView::isolated_color());
-    QCOMPARE(a->fill_color(), region);
-    QVERIFY(a->fill_color() != ui::valve_color(ValveState::Open));
+    ui::ValveItem* b = view_->valve("B");  // joins prep to the spectrometer
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(b->state(), ValveState::Open, 5000);
+    const QColor region = view_->stage("prep")->region_color();
+    QCOMPARE(region, CanvasView::source_color(canvas::SourceKind::Spectrometer));
+    QCOMPARE(b->fill_color(), region);
+    QVERIFY(b->fill_color() != ui::valve_color(ValveState::Open));
 
-    bridge_->actuate("A", SwitchOp::Close);
-    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Closed, 5000);
-    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Closed));
+    bridge_->actuate("B", SwitchOp::Close);
+    QTRY_COMPARE_WITH_TIMEOUT(b->state(), ValveState::Closed, 5000);
+    QCOMPARE(b->fill_color(), ui::valve_color(ValveState::Closed));
 
     view_->set_open_valve_color(canvas::OpenValveColor::Green);
-    bridge_->actuate("A", SwitchOp::Open);
-    QTRY_COMPARE_WITH_TIMEOUT(a->state(), ValveState::Open, 5000);
-    QCOMPARE(a->fill_color(), ui::valve_color(ValveState::Open));
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(b->state(), ValveState::Open, 5000);
+    QCOMPARE(b->fill_color(), ui::valve_color(ValveState::Open));
+  }
+
+  // A valve joining volumes with no source among them has no colour to take.
+  void inheritModeLeavesAValveInASourcelessRegionGreen() {
+    view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
+    bridge_->actuate("A", SwitchOp::Open);  // bone to prep: two plain volumes
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
+    QCOMPARE(view_->valve("A")->fill_color(), ui::valve_color(ValveState::Open));
+    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
   }
 
   void inheritModeLeavesIsolatedOpenValveGreen() {
@@ -218,14 +227,16 @@ class TestCanvasView : public QObject {
   }
 
   void openValveJoinsRegionColours() {
-    ui::StageItem* bone = view_->stage("bone");
     ui::StageItem* prep = view_->stage("prep");
-    QVERIFY(bone->region_color() != prep->region_color() || bone->region_color() == CanvasView::isolated_color());
-    bridge_->actuate("A", SwitchOp::Open);
-    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
-    QVERIFY(bone->region_color() != CanvasView::isolated_color());
-    QCOMPARE(bone->region_color(), prep->region_color());
-    QVERIFY(view_->stage("spec")->region_color() != bone->region_color());
+    ui::StageItem* spec = view_->stage("spec");
+    const QColor spectrometer = CanvasView::source_color(canvas::SourceKind::Spectrometer);
+    QCOMPARE(prep->region_color(), CanvasView::isolated_color());
+    QCOMPARE(spec->region_color(), spectrometer);  // a source wears its own colour, alone or not
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("B")->state(), ValveState::Open, 5000);
+    QCOMPARE(prep->region_color(), spectrometer);
+    QCOMPARE(spec->region_color(), spectrometer);
+    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());  // behind the closed A
   }
 
   void pipesInheritRegionColour() {
@@ -233,25 +244,25 @@ class TestCanvasView : public QObject {
       const auto& ends = pipe->endpoints();
       return std::find(ends.begin(), ends.end(), name) != ends.end();
     };
-    // bone is isolated until A opens, so its pipes are neutral.
-    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
+    // prep is connected to no source until B opens, so its pipes are neutral.
+    QCOMPARE(view_->stage("prep")->region_color(), CanvasView::isolated_color());
     for (const ui::ConnectionItem* pipe : view_->pipes()) {
-      if (touches(pipe, "bone")) {
+      if (touches(pipe, "prep")) {
         QCOMPARE(pipe->region_color(), ui::ConnectionItem::default_color());
       }
     }
-    bridge_->actuate("A", SwitchOp::Open);
-    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
-    const QColor region = view_->stage("bone")->region_color();
-    QVERIFY(region != CanvasView::isolated_color());
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE_WITH_TIMEOUT(view_->valve("B")->state(), ValveState::Open, 5000);
+    const QColor region = view_->stage("prep")->region_color();
+    QCOMPARE(region, CanvasView::source_color(canvas::SourceKind::Spectrometer));
     int coloured = 0;
     for (const ui::ConnectionItem* pipe : view_->pipes()) {
-      if (touches(pipe, "bone") || touches(pipe, "A")) {
+      if (touches(pipe, "prep") || touches(pipe, "B")) {
         QCOMPARE(pipe->region_color(), region);
         ++coloured;
       }
-      // A pipe on the far side of the closed valve B never takes bone's colour.
-      if (touches(pipe, "B") && touches(pipe, "spec")) {
+      // A pipe on the far side of the closed valve A never takes the colour.
+      if (touches(pipe, "bone")) {
         QVERIFY(pipe->region_color() != region);
       }
     }
@@ -447,48 +458,76 @@ class TestCanvasView : public QObject {
     QVERIFY(dark_pixels(tall) > 10);
   }
 
-  // A region keeps its colour when another region appears or goes away.
-  void regionsKeepTheirColourAsOthersComeAndGo() {
+  // A region takes the colour of the source connected to it with the highest
+  // precedence, and of nothing else: not of the order valves were opened in,
+  // nor of what other regions exist.
+  void aRegionTakesTheColourOfItsHighestPrecedenceSource() {
+    using canvas::SourceKind;
     auto open = [&](const char* valve, bool on) {
       bridge_->actuate(valve, on ? SwitchOp::Open : SwitchOp::Close);
       QTRY_COMPARE_WITH_TIMEOUT(view_->valve(valve)->state(), on ? ValveState::Open : ValveState::Closed, 5000);
     };
-    // A gauge on a volume is not a second volume: turbo and IG1 alone are
-    // not a region.
-    QCOMPARE(view_->stage("turbo")->region_color(), CanvasView::isolated_color());
+    auto colour = [&](const char* stage) { return view_->stage(stage)->region_color(); };
+    const QColor none = CanvasView::isolated_color();
+    const QColor pump = CanvasView::source_color(SourceKind::Pump);
+    const QColor pipette = CanvasView::source_color(SourceKind::Pipette);
+    const QColor tank = CanvasView::source_color(SourceKind::Tank);
+    const QColor spectrometer = CanvasView::source_color(SourceKind::Spectrometer);
 
-    // three regions: the air pipette's volumes (P2), turbo + rough (M1),
-    // bone + prep (A)
+    // everything closed: sources wear their own colour, plain volumes none
+    QCOMPARE(colour("turbo"), pump);
+    QCOMPARE(colour("air_tank"), tank);
+    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("spec"), spectrometer);
+    QCOMPARE(colour("bone"), none);
+    QCOMPARE(colour("prep"), none);
+
+    // tank to pipette (P2): the pipette's 100 beats the tank's 90
     open("P2", true);
-    open("M1", true);
-    const QColor turbo = view_->stage("turbo")->region_color();
-    const QColor tank = view_->stage("air_tank")->region_color();
-    QVERIFY(turbo != CanvasView::isolated_color());
-    QVERIFY(tank != CanvasView::isolated_color());
-    QVERIFY(turbo != tank);
+    QCOMPARE(colour("air_tank"), pipette);
+    QCOMPARE(colour("air"), pipette);
 
+    // prep to the spectrometer (B), then bone joins (A): all the spectrometer's
+    open("B", true);
+    QCOMPARE(colour("prep"), spectrometer);
     open("A", true);
-    const QColor bone = view_->stage("bone")->region_color();
-    QVERIFY(bone != turbo && bone != tank && bone != CanvasView::isolated_color());
-    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
-    QCOMPARE(view_->stage("air_tank")->region_color(), tank);
+    QCOMPARE(colour("bone"), spectrometer);
+    QCOMPARE(colour("prep"), spectrometer);
+    QCOMPARE(colour("spec"), spectrometer);
+    // other regions were not touched by that
+    QCOMPARE(colour("air"), pipette);
+    QCOMPARE(colour("turbo"), pump);
 
-    // each goes away in turn: the others do not change
-    open("P2", false);
-    QCOMPARE(view_->stage("air_tank")->region_color(), CanvasView::isolated_color());
-    QCOMPARE(view_->stage("bone")->region_color(), bone);
-    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
-    open("P2", true);
-    open("M1", false);
-    QCOMPARE(view_->stage("turbo")->region_color(), CanvasView::isolated_color());
-    QCOMPARE(view_->stage("bone")->region_color(), bone);
-    open("M1", true);
+    // prep to the turbo (C; A must be closed for it): the pump's 120 takes the
+    // region, spectrometer included, and bone is cut off again
     open("A", false);
-    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
-
-    // joined (prep to turbo through C): one colour, the larger region's
+    QCOMPARE(colour("bone"), none);
     open("C", true);
-    QCOMPARE(view_->stage("prep")->region_color(), view_->stage("turbo")->region_color());
+    for (const char* stage : {"prep", "spec", "turbo"}) QCOMPARE(colour(stage), pump);
+    QCOMPARE(colour("air"), pipette);
+
+    // and back: closing C gives the spectrometer its region again
+    open("C", false);
+    QCOMPARE(colour("prep"), spectrometer);
+    QCOMPARE(colour("spec"), spectrometer);
+    QCOMPARE(colour("turbo"), pump);
+
+    // the same state reached in another order has the same colours
+    open("B", false);
+    open("P2", false);
+    open("A", true);
+    open("P2", true);
+    open("B", true);
+    QCOMPARE(colour("bone"), spectrometer);
+    QCOMPARE(colour("prep"), spectrometer);
+    QCOMPARE(colour("air_tank"), pipette);
+
+    // the pipette into prep (P1; P2 must be closed for it): pipette 100 over
+    // spectrometer 80, and the tank is on its own again
+    open("P2", false);
+    QCOMPARE(colour("air_tank"), tank);
+    open("P1", true);
+    for (const char* stage : {"bone", "prep", "spec", "air"}) QCOMPARE(colour(stage), pipette);
   }
 
   // A manual valve wears a handwheel on its face: nothing sticks out of the

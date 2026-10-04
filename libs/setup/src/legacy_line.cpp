@@ -707,8 +707,17 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
                                                               {"turbo", "turbo"},
                                                               {"getter", "getter"},
                                                               {"ionpump", "ion_pump"}};
-      if (auto symbol = symbols.find(e.legacy_kind); symbol != symbols.end() && !e.no_symbol)
-        cv << "symbol = " << q(symbol->second) << "\n";
+      const auto symbol = symbols.find(e.legacy_kind);
+      const bool has_glyph = symbol != symbols.end() && !e.no_symbol;
+      if (has_glyph) cv << "symbol = " << q(symbol->second) << "\n";
+      // What it is still decides the colour of the region it is connected
+      // to (legacy precedence): said outright where no symbol says it.
+      static const std::map<std::string, std::string> kinds{{"spectrometer", "spectrometer"}, {"laser", "laser"},
+                                                            {"turbo", "pump"},                {"getter", "getter"},
+                                                            {"ionpump", "pump"},              {"tank", "tank"},
+                                                            {"pipette", "pipette"}};
+      if (auto kind = kinds.find(e.legacy_kind); kind != kinds.end() && !has_glyph)
+        cv << "kind = " << q(kind->second) << "\n";
     }
   }
   std::map<std::string, std::pair<double, double>> at;  // pixel positions as written

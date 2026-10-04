@@ -44,6 +44,16 @@ constexpr std::array kCorners{
     std::pair<std::string_view, Corner>{"lr", Corner::LowerRight},
 };
 
+constexpr std::array kSourceKinds{
+    std::pair<std::string_view, SourceKind>{"volume", SourceKind::None},
+    std::pair<std::string_view, SourceKind>{"pump", SourceKind::Pump},
+    std::pair<std::string_view, SourceKind>{"pipette", SourceKind::Pipette},
+    std::pair<std::string_view, SourceKind>{"laser", SourceKind::Laser},
+    std::pair<std::string_view, SourceKind>{"tank", SourceKind::Tank},
+    std::pair<std::string_view, SourceKind>{"spectrometer", SourceKind::Spectrometer},
+    std::pair<std::string_view, SourceKind>{"getter", SourceKind::Getter},
+};
+
 constexpr std::array kStageSymbols{
     std::pair<std::string_view, StageSymbol>{"spectrometer", StageSymbol::Spectrometer},
     std::pair<std::string_view, StageSymbol>{"quadrupole", StageSymbol::Quadrupole},
@@ -238,6 +248,30 @@ class CanvasBuilder {
     read_pair(t, e, key, out.width, out.height, false, true);
   }
 
+  // What makes an element a source of its region's colour.
+  void read_source(const toml::table& t, Located& e, std::optional<int>& precedence,
+                   std::optional<std::string>& color) {
+    if (t.contains("precedence")) {
+      std::int64_t value = 0;
+      if (const auto v = t["precedence"].value<std::int64_t>(); v && *v >= 0 && *v <= 1000000) {
+        value = *v;
+        precedence = static_cast<int>(value);
+      } else {
+        error(e.where("precedence"), field(e, "precedence"), "expected a whole number, 0 or more");
+      }
+    }
+    read(t, e, "color", color);
+    if (color) {
+      const std::string& c = *color;
+      const bool hex = c.size() == 7 && c[0] == '#' &&
+                       std::all_of(c.begin() + 1, c.end(), [](unsigned char ch) { return std::isxdigit(ch) != 0; });
+      if (!hex) {
+        error(e.where("color"), field(e, "color"), "invalid value '" + c + "' (expected \"#rrggbb\")");
+        color.reset();
+      }
+    }
+  }
+
   template <class E, std::size_t N>
   void read_enum(const toml::table& t, Located& e, std::string_view key, E& out,
                  const std::array<std::pair<std::string_view, E>, N>& table) {
@@ -336,7 +370,8 @@ class CanvasBuilder {
   StageElement parse_stage(const std::string& path, const toml::table& t) {
     StageElement s;
     begin(s, t, path);
-    reject_unknown(t, s, Keys{"name", "pos", "size", "volume", "fill", "display_name", "use_symbol", "symbol"});
+    reject_unknown(t, s, Keys{"name", "pos", "size", "volume", "fill", "display_name", "use_symbol", "symbol", "kind",
+                             "precedence", "color"});
     read(t, s, "name", s.name, true);
     read(t, s, "pos", s.pos, true);
     read(t, s, "size", s.size);
@@ -345,18 +380,25 @@ class CanvasBuilder {
     read(t, s, "display_name", s.display_name);
     read(t, s, "use_symbol", s.use_symbol);
     read_enum(t, s, "symbol", s.symbol, kStageSymbols);
+    if (t.contains("kind")) {
+      SourceKind kind = SourceKind::None;
+      read_enum(t, s, "kind", kind, kSourceKinds);
+      s.kind = kind;
+    }
+    read_source(t, s, s.precedence, s.color);
     return s;
   }
 
   PipetteElement parse_pipette(const std::string& path, const toml::table& t) {
     PipetteElement p;
     begin(p, t, path);
-    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel", "display_name"});
+    reject_unknown(t, p, Keys{"name", "pos", "size", "vlabel", "display_name", "precedence", "color"});
     read(t, p, "name", p.name, true);
     read(t, p, "pos", p.pos, true);
     read(t, p, "size", p.size);
     read(t, p, "vlabel", p.vlabel, false);
     read(t, p, "display_name", p.display_name);
+    read_source(t, p, p.precedence, p.color);
     return p;
   }
 

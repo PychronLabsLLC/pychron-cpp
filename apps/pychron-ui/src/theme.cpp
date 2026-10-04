@@ -85,7 +85,12 @@ Theme light() {
 
   t.series = {rgb(0x1f77b4), rgb(0xd62728), rgb(0x2ca02c), rgb(0xff7f0e),
               rgb(0x9467bd), rgb(0x8c564b), rgb(0x17becf), rgb(0x000000)};
-  t.regions = {rgb(0x8fd3ff), rgb(0xffd27f), rgb(0xb6e3a8), rgb(0xe3b6e0), rgb(0xffb3a7), rgb(0xc9c3ff)};
+  t.sources.pump = rgb(0x8fd3ff);
+  t.sources.pipette = rgb(0xe3b6e0);
+  t.sources.laser = rgb(0xffb3a7);
+  t.sources.tank = rgb(0xc9c3ff);
+  t.sources.spectrometer = rgb(0xb6e3a8);
+  t.sources.getter = rgb(0xffd27f);
   return t;
 }
 

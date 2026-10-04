@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,14 @@ struct GaugeElement : Located {
 // What a stage is, for the glyph drawn inside its box; None draws the name only.
 enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter, IonPump };
 
+// What a stage is to the gas in it. A source colours every volume connected
+// to it; when a region holds several, the one with the highest precedence
+// wins (legacy pychron's rule and numbers). The order here breaks a tie.
+enum class SourceKind { None, Pump, Pipette, Laser, Tank, Spectrometer, Getter };
+
+// Pump 120, pipette and laser 100, tank 90, spectrometer 80, getter 70, none 0.
+int default_precedence(SourceKind kind) noexcept;
+
 struct StageElement : Located {
   std::string name;
   Point pos;
@@ -78,7 +87,14 @@ struct StageElement : Located {
   std::optional<std::string> display_name;
   bool use_symbol = false;
   StageSymbol symbol = StageSymbol::None;
+  // Unset: what the symbol says (a turbo or an ion pump is a pump, ...); a
+  // stage with neither is a plain volume.
+  std::optional<SourceKind> kind;
+  std::optional<int> precedence;     // unset: the kind's; 0: colours nothing
+  std::optional<std::string> color;  // "#rrggbb"; unset: the theme's for the kind
 };
+
+SourceKind source_kind(const StageElement& stage) noexcept;
 
 struct PipetteElement : Located {
   std::string name;
@@ -86,6 +102,8 @@ struct PipetteElement : Located {
   Size size{50, 50};
   std::string vlabel;
   std::optional<std::string> display_name;  // as a stage's; unset = vlabel, else the name
+  std::optional<int> precedence;            // unset: a pipette's (100)
+  std::optional<std::string> color;         // "#rrggbb"
 };
 
 enum class Orientation { Auto, Horizontal, Vertical };
@@ -156,5 +174,22 @@ struct Canvas {
   std::vector<Image> images;
   std::optional<Legend> legend;
 };
+
+// An element that colours the region it is connected to.
+struct Source {
+  std::string name;
+  SourceKind kind = SourceKind::None;
+  int precedence = 0;
+  std::optional<std::string> color;  // the element's own; unset: the theme's for `kind`
+};
+
+// The canvas's stages and pipettes with a precedence above 0, by name.
+std::map<std::string, Source, std::less<>> sources(const Canvas& canvas);
+
+// The source that colours a region holding `volumes`: the highest
+// precedence, then the kind's place in SourceKind, then the name. Null when
+// the region has none. Depends on nothing but who is connected.
+const Source* dominant(const std::map<std::string, Source, std::less<>>& sources,
+                       const std::set<std::string>& volumes);
 
 }  // namespace pychron::canvas

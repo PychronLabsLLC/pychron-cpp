@@ -37,6 +37,20 @@ QPointF project(QPointF p, QPointF a, QPointF b) {
 
 QColor CanvasView::isolated_color() { return theme().neutral_fill; }
 
+QColor CanvasView::source_color(canvas::SourceKind kind) {
+  const auto& c = theme().sources;
+  switch (kind) {
+    case canvas::SourceKind::Pump: return c.pump;
+    case canvas::SourceKind::Pipette: return c.pipette;
+    case canvas::SourceKind::Laser: return c.laser;
+    case canvas::SourceKind::Tank: return c.tank;
+    case canvas::SourceKind::Spectrometer: return c.spectrometer;
+    case canvas::SourceKind::Getter: return c.getter;
+    case canvas::SourceKind::None: break;
+  }
+  return isolated_color();
+}
+
 CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(parent), bridge_(bridge) {
   setScene(&scene_);
   setRenderHint(QPainter::Antialiasing);
@@ -65,6 +79,7 @@ CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(pare
 }
 
 void CanvasView::build(const canvas::Canvas& c) {
+  sources_ = canvas::sources(c);
   const QPointF origin = to_qpoint(c.canvas.origin);
   scene_.setSceneRect(origin.x(), origin.y(), c.canvas.size.width, c.canvas.size.height);
 
@@ -317,52 +332,21 @@ void CanvasView::apply_regions() {
     return;
   }
   const auto regions = network->connected_volumes(bridge_.state().valves);
-  // Volumes and the open valves joining them take the region colour; pipes
-  // inherit it from whichever element they touch.
+  // A region takes the colour of the source connected to it with the highest
+  // precedence (legacy pychron's rule): a pump over a pipette or a laser,
+  // over a tank, over a spectrometer, over a getter. It depends on nothing
+  // but who is connected, so a region never changes colour because another
+  // one did. A region with no source stays neutral; a source alone wears its
+  // own colour. Open valves and pipes take the colour of what they join.
   std::map<std::string, QColor> colors;
-  // A region keeps its colour while other regions come and go: it takes the
-  // palette slot most of its volumes had last time, and only a region with no
-  // history (or whose slot a larger region claimed) gets a free one. Larger
-  // regions choose first, so on a merge or a split the bigger part keeps the
-  // colour.
-  const auto& palette = theme().regions;
-  std::vector<const systems::NetworkGraph::Region*> shared;
-  // Shared means two volumes that hold gas: a gauge on a volume is part of
-  // it, not a second volume, so a turbo and its gauge alone stay neutral.
   for (const auto& region : regions) {
-    const auto holding = std::count_if(region.volumes.begin(), region.volumes.end(),
-                                       [this](const std::string& v) { return !gauges_.contains(v); });
-    if (holding >= 2) shared.push_back(&region);
+    const canvas::Source* source = canvas::dominant(sources_, region.volumes);
+    if (source == nullptr) continue;
+    QColor color = source->color ? QColor(QString::fromStdString(*source->color)) : source_color(source->kind);
+    if (!color.isValid()) color = source_color(source->kind);
+    for (const auto& volume : region.volumes) colors[volume] = color;
+    for (const auto& valve : region.valves) colors[valve] = color;
   }
-  std::stable_sort(shared.begin(), shared.end(),
-                   [](const auto* a, const auto* b) { return a->volumes.size() > b->volumes.size(); });
-  std::vector<int> users(palette.size(), 0);
-  std::map<std::string, std::size_t> chosen;  // (`slots` is a Qt keyword)
-  for (const auto* region : shared) {
-    std::vector<int> votes(palette.size(), 0);
-    for (const auto& volume : region->volumes) {
-      if (auto it = region_slots_.find(volume); it != region_slots_.end()) ++votes[it->second];
-    }
-    // Among the slots no larger region took this time: the one with most
-    // votes; with no votes, the least used, lowest first.
-    std::size_t slot = 0;
-    for (std::size_t i = 1; i < palette.size(); ++i) {
-      const bool free_i = users[i] == 0;
-      const bool free_s = users[slot] == 0;
-      const int vote_i = free_i ? votes[i] : 0;
-      const int vote_s = free_s ? votes[slot] : 0;
-      if (vote_i > vote_s || (vote_i == vote_s && users[i] < users[slot])) slot = i;
-    }
-    ++users[slot];
-    for (const auto& volume : region->volumes) {
-      colors[volume] = palette[slot];
-      chosen[volume] = slot;
-    }
-    for (const auto& valve : region->valves) {
-      colors[valve] = palette[slot];
-    }
-  }
-  region_slots_ = std::move(chosen);
   // Open valves joining a shared region wear its colour when asked to; every
   // other valve keeps its state colour.
   for (auto& [name, item] : valves_) {

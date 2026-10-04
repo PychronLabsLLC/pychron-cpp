@@ -45,6 +45,8 @@ class CanvasView : public QGraphicsView {
 
   // Colour of an isolated volume.
   static QColor isolated_color();
+  // The theme's colour for a kind of source (a region takes its source's).
+  static QColor source_color(canvas::SourceKind kind);
 
  private:
   void build(const canvas::Canvas& canvas);
@@ -72,7 +74,7 @@ class CanvasView : public QGraphicsView {
   std::map<std::string, StageItem*> stages_;
   std::map<std::string, QRectF> boxes_;  // stages and pipettes, scene coordinates
   std::map<std::string, GaugeLabelItem*> gauges_;
-  std::map<std::string, std::size_t> region_slots_;  // volume -> palette slot at the last repaint
+  std::map<std::string, canvas::Source, std::less<>> sources_;  // what colours the region it is in
   std::vector<ConnectionItem*> pipes_;
   int connections_ = 0;
 };

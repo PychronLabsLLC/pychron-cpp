@@ -54,6 +54,11 @@ pos = [450, 380]
 name = "PG1"
 pos = [650, 380]
 
+# A region of the line takes the colour of the source connected to it with
+# the highest precedence: a pump (120) over a pipette or a laser (100), a
+# tank (90), a spectrometer (80), a getter (70). `kind` says what a stage is
+# (a `symbol` says it too); `precedence` and `color = "#rrggbb"` override.
+# A plain stage, like bone, is not a source and has no colour of its own.
 [[stage]]
 name = "bone"
 pos = [100, 200]
@@ -73,21 +78,25 @@ pos = [800, 200]
 size = [120, 60]
 display_name = "Spectrometer"
 use_symbol = true
+kind = "spectrometer"
 
 [[stage]]
 name = "turbo"
 pos = [650, 300]
 size = [60, 40]
+kind = "pump"
 
 [[stage]]
 name = "rough"
 pos = [880, 300]
 size = [60, 40]
+kind = "pump"
 
 [[stage]]
 name = "air_tank"
 pos = [400, 600]
 size = [80, 40]
+kind = "tank"
 
 [[pipette]]
 name = "air"

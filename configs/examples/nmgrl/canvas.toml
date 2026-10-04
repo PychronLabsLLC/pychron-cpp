@@ -8,6 +8,12 @@
 origin = [0, 0]
 size = [1000, 817]
 connection_width = 5
+# A region of the line takes the colour of the source connected to it with
+# the highest precedence (as in legacy pychron): turbo and ion pump 120,
+# pipette and laser 100, tank 90, spectrometer 80, getter 70. A stage's
+# `symbol` or `kind` says what it is; `precedence = <n>` and
+# `color = "#rrggbb"` on a stage override. Bone, Minibone and Microbone are
+# plain volumes: neutral until something is open to them.
 # an open valve wears the colour of the region it joins (default: "green")
 open_valve_color = "inherit"
 
@@ -238,6 +244,7 @@ symbol = "laser"
 name = "Furnace"
 pos = [193, 278]
 size = [94, 41]
+kind = "laser"
 
 [[stage]]
 name = "ofurnace"
@@ -389,23 +396,27 @@ symbol = "ion_pump"
 name = "Cocktail"
 pos = [573, 787]
 size = [58, 20]
+kind = "tank"
 
 [[stage]]
 name = "CocktailPipette"
 pos = [585, 715]
 size = [23, 20]
 display_name = ""
+kind = "pipette"
 
 [[stage]]
 name = "Air"
 pos = [655, 787]
 size = [58, 20]
+kind = "tank"
 
 [[stage]]
 name = "AirPipette"
 pos = [643, 715]
 size = [23, 20]
 display_name = ""
+kind = "pipette"
 
 [[connection]]
 start = "BTurbo"

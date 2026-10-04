@@ -47,7 +47,7 @@ t = "\n".join(out) + "\n"
 old = "# world units to pixels. Check the drawing and adjust positions as needed.\n"; assert old in t
 t = t.replace(old, "# world units to pixels. Then tools/rebuild_nmgrl_example.py trimmed the empty\n# margins above and below and squeezed the vertical spacing to 88%, so `elctl\n# import-line` alone no longer reproduces this file.\n")
 old = "connection_width = 5\n"; assert old in t
-t = t.replace(old, old + '# an open valve wears the colour of the region it joins (default: "green")\nopen_valve_color = "inherit"\n')
+t = t.replace(old, old + '# A region of the line takes the colour of the source connected to it with\n# the highest precedence (as in legacy pychron): turbo and ion pump 120,\n# pipette and laser 100, tank 90, spectrometer 80, getter 70. A stage\'s\n# `symbol` or `kind` says what it is; `precedence = <n>` and\n# `color = "#rrggbb"` on a stage override. Bone, Minibone and Microbone are\n# plain volumes: neutral until something is open to them.\n# an open valve wears the colour of the region it joins (default: "green")\nopen_valve_color = "inherit"\n')
 quad = re.search(r'name = "Quad"\n(?:(?!\n\n).)*?symbol = "spectrometer"\n', t, flags=re.S)
 assert quad, "Quad's symbol not found"
 t = t[:quad.start()] + quad.group(0).replace('symbol = "spectrometer"', 'symbol = "quadrupole"') + t[quad.end():]

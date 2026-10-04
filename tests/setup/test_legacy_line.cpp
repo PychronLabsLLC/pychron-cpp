@@ -332,6 +332,7 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <turbo use_symbol=\"True\" display_name='Turbo'>T1<translation>10,5</translation><dimension>5,3</dimension></turbo>\n"
           "  <getter>NP10<translation>18,5</translation><dimension>5,3</dimension></getter>\n"
           "  <ionpump use_symbol=\"True\" display_name=\"Ion Pump\">IP<translation>24,5</translation><dimension>5,3</dimension></ionpump>\n"
+          "  <tank>Air<translation>24,-10</translation><dimension>4,2</dimension></tank>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -364,7 +365,13 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
       if (s.name == name) return &s;
     return nullptr;
   };
-  ASSERT_EQ(drawing->stages.size(), 6u);
+  ASSERT_EQ(drawing->stages.size(), 7u);
+  // What colours a region is what a stage is, symbol or no symbol: a laser
+  // drawn as a plain box is still a laser, and a tank is a tank.
+  EXPECT_EQ(canvas::source_kind(*stage("Furnace")), canvas::SourceKind::Laser);
+  EXPECT_EQ(canvas::source_kind(*stage("Air")), canvas::SourceKind::Tank);
+  EXPECT_EQ(canvas::source_kind(*stage("T1")), canvas::SourceKind::Pump);
+  EXPECT_EQ(stage("T1")->kind, std::nullopt);  // the symbol already says it
   EXPECT_EQ(stage("IP")->symbol, canvas::StageSymbol::IonPump);
   EXPECT_EQ(stage("T1")->symbol, canvas::StageSymbol::Turbo);
   EXPECT_EQ(stage("T1")->display_name, "Turbo");
