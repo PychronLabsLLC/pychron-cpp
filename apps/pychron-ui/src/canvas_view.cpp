@@ -215,7 +215,9 @@ ConnectionItem* CanvasView::add_pipe(const std::vector<QPointF>& points, double 
     for (const auto& [run, name] : ends) {
       auto box = boxes_.find(*name);
       if (box == boxes_.end()) continue;
-      if (auto entry = box_entry(*run, box->second)) scene_.addItem(item->add_gap(*entry));
+      if (auto entry = box_entry(*run, box->second)) {
+        scene_.addItem(item->add_gap(*entry, StageItem::border_inset(box->second, *entry, width)));
+      }
     }
   }
   pipes_.push_back(item);

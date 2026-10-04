@@ -87,6 +87,16 @@ class ValveItem : public QGraphicsObject {
   std::function<void(const std::string&, bool)> on_lock_request_;
 };
 
+// Where a polyline that ends inside `box` crosses into it, walking back from
+// its last point: the crossing on the box edge and the unit direction
+// pointing in. Nothing when the last point is outside the box or the whole
+// line is inside it.
+struct BoxEntry {
+  QPointF edge;
+  QPointF inward;
+};
+std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box);
+
 // A stage or pipette volume; filled with its network region colour.
 class StageItem : public QGraphicsItem {
  public:
@@ -95,6 +105,13 @@ class StageItem : public QGraphicsItem {
   StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent = nullptr);
 
   const std::string& name() const noexcept { return name_; }
+  // The corner radius of a volume this size: scaled down with the smaller
+  // side so thin volumes stay pill-like without swallowing the whole shape.
+  static double corner_radius(QSizeF size);
+  // How far inside `box`'s straight edge its rounded border runs where a
+  // pipe `width` wide crosses at `entry`: 0 along the straight part, up to
+  // the corner radius inside a corner.
+  static double border_inset(const QRectF& box, const BoxEntry& entry, double width);
   QColor region_color() const noexcept { return region_; }
   void set_region_color(QColor color);
 
@@ -107,16 +124,6 @@ class StageItem : public QGraphicsItem {
   QRectF rect_;
   QColor region_;
 };
-
-// Where a polyline that ends inside `box` crosses into it, walking back from
-// its last point: the crossing on the box edge and the unit direction
-// pointing in. Nothing when the last point is outside the box or the whole
-// line is inside it.
-struct BoxEntry {
-  QPointF edge;
-  QPointF inward;
-};
-std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box);
 
 // Plumbing drawn as a polyline through element centres. Remembers the names
 // of the elements it joins so the view can paint it in the colour of the
@@ -148,7 +155,10 @@ class ConnectionItem : public QGraphicsPathItem {
   // Scene-level items the view adds beside this one (the scene owns them).
   QGraphicsPathItem* outline() const noexcept { return outline_; }
   const std::vector<QGraphicsPathItem*>& gaps() const noexcept { return gaps_; }
-  QGraphicsPathItem* add_gap(const BoxEntry& entry);
+  // `depth`: how far in from the edge the volume's border lies at its
+  // deepest across the pipe's width (more than the border itself only
+  // inside a rounded corner; see StageItem::border_inset).
+  QGraphicsPathItem* add_gap(const BoxEntry& entry, double depth = 0);
 
  private:
   std::vector<std::string> endpoints_;

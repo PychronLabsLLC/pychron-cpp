@@ -3,6 +3,7 @@
 // gauge values and alarm colouring.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -356,6 +357,28 @@ class TestCanvasView : public QObject {
     QTRY_COMPARE_WITH_TIMEOUT(view_->valve("P1")->state(), ValveState::Open, 5000);
     QVERIFY(pipe->region_color() != ui::ConnectionItem::default_color());
     QCOMPARE(gap->pen().color(), pipe->region_color());
+  }
+
+  // A pipe that lands in a volume's rounded corner: the border curves in
+  // from the edge there, and the gap reaches in as far as it does.
+  void gapReachesRoundAVolumesCorner() {
+    const QRectF box(60, 180, 80, 40);  // the example's bone: radius 8
+    const ui::BoxEntry mid{{140, 200}, {-1, 0}};
+    QCOMPARE(ui::StageItem::border_inset(box, mid, 6), 0.0);
+    // 4 below the top-right corner, 6 wide: its upper side is 1 from the corner
+    const ui::BoxEntry corner{{140, 184}, {-1, 0}};
+    const double inset = ui::StageItem::border_inset(box, corner, 6);
+    QVERIFY(std::abs(inset - (8 - std::sqrt(64.0 - 49.0))) < 1e-9);
+    // through the top edge, by the left corner
+    QVERIFY(std::abs(ui::StageItem::border_inset(box, {{64, 180}, {0, 1}}, 6) - inset) < 1e-9);
+
+    ui::ConnectionItem pipe({{250, 184}, {100, 184}}, 6, {"A", "bone"});
+    const QGraphicsPathItem* gap = pipe.add_gap(corner, inset);
+    const QRectF across = gap->path().boundingRect();
+    QCOMPARE(across.right(), 140 + ui::ConnectionItem::kBorderWidth);
+    QVERIFY(std::abs(across.left() - (140 - inset - ui::ConnectionItem::kBorderWidth)) < 1e-9);
+    delete gap;
+    delete pipe.outline();
   }
 
   void boxEntryFindsWhereALineCrossesIntoABox() {

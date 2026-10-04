@@ -170,12 +170,28 @@ void StageItem::set_region_color(QColor color) {
   }
 }
 
+double StageItem::corner_radius(QSizeF size) {
+  return std::min(kCornerRadius, std::min(size.width(), size.height()) / 4);
+}
+
+double StageItem::border_inset(const QRectF& box, const BoxEntry& entry, double width) {
+  const double r = corner_radius(box.size());
+  // Distance along the crossed edge from the pipe's nearer side to the
+  // nearer corner of the box.
+  const bool through_side = std::abs(entry.inward.x()) >= std::abs(entry.inward.y());
+  const double along = through_side ? std::min(entry.edge.y() - box.top(), box.bottom() - entry.edge.y())
+                                    : std::min(entry.edge.x() - box.left(), box.right() - entry.edge.x());
+  const double d = std::max(0.0, along - width / 2);
+  if (d >= r) {
+    return 0;
+  }
+  return r - std::sqrt(r * r - (r - d) * (r - d));  // the arc, d along from the corner
+}
+
 QRectF StageItem::boundingRect() const { return rect_.adjusted(-1, -1, 1, 1); }
 
 void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
-  // Corner radius scales with the smaller side so thin volumes stay pill-like
-  // without swallowing the whole shape.
-  const double radius = std::min(kCornerRadius, std::min(rect_.width(), rect_.height()) / 4);
+  const double radius = corner_radius(rect_.size());
   painter->setRenderHint(QPainter::Antialiasing, true);
   painter->setPen(QPen(theme().text, 1));
   painter->setBrush(region_);
@@ -222,11 +238,12 @@ void ConnectionItem::set_region_color(QColor color) {
   }
 }
 
-QGraphicsPathItem* ConnectionItem::add_gap(const BoxEntry& entry) {
-  // Just long enough to cover the volume's border, which is centred on the edge.
+QGraphicsPathItem* ConnectionItem::add_gap(const BoxEntry& entry, double depth) {
+  // Just long enough to cover the volume's border: centred on the edge, or
+  // up to `depth` inside it round a corner.
   QPainterPath path;
   path.moveTo(entry.edge - entry.inward * kBorderWidth);
-  path.lineTo(entry.edge + entry.inward * kBorderWidth);
+  path.lineTo(entry.edge + entry.inward * (depth + kBorderWidth));
   auto* gap = new QGraphicsPathItem(path);
   gap->setPen(QPen(pen().color(), pen().widthF(), Qt::SolidLine, Qt::FlatCap));
   gap->setZValue(kGapZ);
