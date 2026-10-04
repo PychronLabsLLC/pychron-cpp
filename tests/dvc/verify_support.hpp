@@ -102,13 +102,13 @@ inline std::string rows_difference(const std::vector<std::string>& got, const st
 // rows. RunStats::conflicts of a whole run is what it leaves pending.
 //
 //   fresh()                                     a new, empty world (a unique_ptr)
-//   import(world, batch_commits, max_batches, replay)   one run -> Result<RunStats>
+//   run_once(world, batch_commits, max_batches, replay) one run -> Result<RunStats>
 //   snapshot(world)                             its rows -> std::vector<std::string>
 //   check(world, what)                          what every world must hold
-template <class Fresh, class Import, class Snapshot, class Check>
-void same_at_every_cut(const Fresh& fresh, const Import& import, const Snapshot& snapshot, const Check& check) {
+template <class Fresh, class RunOnce, class Snapshot, class Check>
+void same_at_every_cut(const Fresh& fresh, const RunOnce& run_once, const Snapshot& snapshot, const Check& check) {
   auto reference = fresh();
-  auto whole = import(*reference, 500, std::optional<int>{}, false);
+  auto whole = run_once(*reference, 500, std::optional<int>{}, false);
   ASSERT_TRUE(whole) << to_string(whole.error());
   const std::vector<std::string> want = snapshot(*reference);
   ASSERT_FALSE(want.empty());
@@ -128,7 +128,7 @@ void same_at_every_cut(const Fresh& fresh, const Import& import, const Snapshot&
   };
   const auto replayed = [&](auto& w, const std::string& what, int batch_commits) {
     const auto seq = *w.store->latest_change_seq();
-    auto again = import(w, batch_commits, std::optional<int>{}, true);
+    auto again = run_once(w, batch_commits, std::optional<int>{}, true);
     ASSERT_TRUE(again) << what << ": " << to_string(again.error());
     EXPECT_EQ(*w.store->latest_change_seq(), seq) << what << ": the replay wrote something";
     EXPECT_EQ(again->conflicts, pending) << what << ", replayed in " << batch_commits;
@@ -139,7 +139,7 @@ void same_at_every_cut(const Fresh& fresh, const Import& import, const Snapshot&
   for (const int batch_commits : {1, 2, 3}) {
     const std::string what = "batches of " + std::to_string(batch_commits);
     auto cut = fresh();
-    auto stats = import(*cut, batch_commits, std::optional<int>{}, false);
+    auto stats = run_once(*cut, batch_commits, std::optional<int>{}, false);
     ASSERT_TRUE(stats) << what << ": " << to_string(stats.error());
     EXPECT_EQ(stats->conflicts, pending) << what;
     same(*cut, what);
@@ -149,7 +149,7 @@ void same_at_every_cut(const Fresh& fresh, const Import& import, const Snapshot&
     auto resumed = fresh();
     bool finished = false;
     for (int runs = 0; !finished && runs < 300; ++runs) {
-      auto one = import(*resumed, batch_commits, std::optional<int>{1}, false);
+      auto one = run_once(*resumed, batch_commits, std::optional<int>{1}, false);
       ASSERT_TRUE(one) << what << ", run " << runs << ": " << to_string(one.error());
       EXPECT_GE(one->conflicts, 0) << what << ", run " << runs;
       finished = one->finished;
