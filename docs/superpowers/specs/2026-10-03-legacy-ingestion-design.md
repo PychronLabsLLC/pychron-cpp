@@ -631,3 +631,12 @@ points. Where this section and an earlier one disagree, this section wins.
     implementations reproduce); verify prints the largest residual among
     passing comparisons so drift below the tolerance stays visible. Errors
     are compared like with like (without J error against without J error).
+37. **A broken version followed by a good one.** Rulings from the first
+    real import and the final review, implemented in the final fix wave
+    (details in the plan workspace's fix-wave notes): an `unparseable`
+    conflict is superseded when a later commit brings a readable version of
+    the same file or deletes it, decided by the adapter from the walk; a bad
+    version after a good one stays blocking. Reference data for age parity
+    is taken as of the interpreted age's commit time (item 32 as revised by
+    the fix wave). Warning markers are producer-exclusive, and a stored
+    revision from a commit no longer in the history is blocking.
