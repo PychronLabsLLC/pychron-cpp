@@ -6,6 +6,11 @@
 #
 # Add the two tables below to a line's extraction_line.toml. With
 # kind = "sim" the driver talks to the built-in Chromium simulator instead.
+#
+# The driver's name is the device's name in a queue: [drivers.co2] here is
+# extract_device = "co2". Tray maps go in <lab>/tray_maps, and
+# `elctl laser calibrate co2 <tray> center` records where a tray sits on the
+# stage (docs/dev_setup.md, "Trays, calibration and a laser queue").
 
 [transports.laser_pc]
 kind = "tcp"
@@ -13,7 +18,7 @@ host = "laser-pc.lab"
 port = 1234
 timeout_ms = 2000
 
-[drivers.laser]
+[drivers.co2]
 kind = "chromium"
 transport = "laser_pc"
 # Stage travel in mm: a move outside it is refused before it is sent.

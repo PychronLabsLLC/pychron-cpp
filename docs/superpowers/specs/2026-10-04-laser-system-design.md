@@ -1,7 +1,7 @@
 # Laser system design, part 2a: trays, calibration, wiring
 
 Date: 2026-10-04
-Status: Design, approved in conversation; not implemented
+Status: Implemented (section 11 lists what was decided differently). Not run against a real Chromium.
 Owner: Jake Ross
 Scope: sub-project 2 of the laser program (2026-10-03-vision-design.md §2),
 first of three parts.
@@ -272,3 +272,26 @@ Patterns (2b); autocenter, corrections and dragonfly (2c); the laser UI and
 the calibration procedure on screen (sub-project 3); watts and temperature;
 points, lines, polygons and transects; a z per tray or per hole; multi-hole
 positions (a run with several holes passes the first to its script, as now).
+
+## 11. As built
+
+- **An unknown tray is one queue-level diagnostic** (`queue.tray`), not a
+  per-run one, and is reported whenever the lab has extraction devices, even
+  if no run names a hole: the run's `set_tray` would fail every run.
+- **`elctl laser goto` cannot stop the stage.** `IStage` has no stop and the
+  Chromium driver exposes none. Ctrl-C and `--timeout` stop the waiting and
+  say the stage may still be moving.
+- **`point` against an edited map starts again**: the earlier points belong
+  to another version of the map and are dropped with a warning.
+- **A poor fit is saved with a warning** when its rms is more than the hole
+  dimension. Two points the wrong distance apart are never an error (scale is
+  not fitted from two), so the warning is what shows it.
+- **The run sets the queue's tray on every run** whose device has a stage,
+  not only on runs with a hole.
+- **A hole name wins over a driver name**: a tray with a hole called `s1`
+  hides Chromium's scan 1 while that tray is set.
+- **The Chromium driver alone no longer passes the stage conformance suite**
+  (it has no named positions of its own to list); the suite runs over
+  `LaserSystem` on the driver.
+- `SimSystem::chromium(driver)` reaches a simulated laser by driver name.
+- Laser end-to-end tests need embedded Python and are skipped without it.

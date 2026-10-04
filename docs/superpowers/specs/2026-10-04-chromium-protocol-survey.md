@@ -278,11 +278,11 @@ No lab tree surveyed has an extraction script written for a Chromium.
 | | `is_firing` | tracked: the reference has no firing query (`Laser.Shutter?` may serve, §10) |
 | | `warmup` | UV with an active scan: `Scans.Run`; otherwise nothing |
 | `IStage` | `move_to_position("s12")` | `Scans.MoveTo 12` |
-| | `move_to_position(hole)` | tray lookup → `stage.moveto` |
+| | `move_to_position(hole)` | not the driver's: the laser system (`pychron/laser`) resolves the hole and calls `set_xy` |
 | | `set_axis` / `set_xy` | `stage.moveto` |
 | | `position` | `stage.pos?` |
 | | `moving` | one poll: `stage.pos?` against the target (or `Scans.InPos?`) |
-| | `set_tray` / `positions` | tray maps: the laser system's (sub-project 2) |
+| | `set_tray` / `positions` | the laser system's; the driver keeps the name and lists nothing |
 | `IPatternRunner` | — | not the driver's: the laser system runs patterns over `IStage` |
 | `IImaging` | — | not the driver's: screen capture is a vision frame source |
 

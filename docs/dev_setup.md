@@ -328,17 +328,70 @@ line's `extraction_line.toml`; `elctl list-drivers` lists the keys.
   is a Chromium, that no interlock is tripped before enabling and before each
   firing, that an output setpoint took, and that a move stays inside the
   configured travel. A command Chromium refuses (`?<n>`) is an error.
-- A position is a scan Chromium has defined (`s3`) or a hole on a tray. Tray
-  maps are not built yet, so hole names resolve only where a test supplies
-  them.
+- The driver's own named positions are the scans Chromium has defined
+  (`s3`). Holes on a tray are resolved above the driver (next section).
 - With `kind = "sim"` on its transport the driver talks to a Chromium
   simulator (`ChromiumSim`).
 
-Nothing uses the device in a queue yet: the laser system that wires an
-extraction device into a run is the next sub-project (see
-`docs/superpowers/specs/2026-10-03-vision-design.md`, section 2). It has not
-been run against a real Chromium; the protocol is from the vendor's command
-reference (`docs/superpowers/specs/2026-10-04-chromium-protocol-survey.md`).
+It has not been run against a real Chromium; the protocol is from the vendor's
+command reference (`docs/superpowers/specs/2026-10-04-chromium-protocol-survey.md`).
+
+### Trays, calibration and a laser queue
+
+A driver that is an extraction device (today: `chromium`) is named in a queue
+by its driver name: `[drivers.co2]` in `extraction_line.toml` is
+`extract_device = "co2"`. A line may have several. The lab directory holds
+what turns a hole number into a stage position:
+
+- `tray_maps/<tray>.txt`: the tray, in legacy Pychron's tray map format (copy
+  the files from `setupfiles/tray_maps`). A queue's `tray` is the file's name
+  without `.txt`.
+- `stage_calibrations/<device>.<tray>.toml`: where that tray sits on that
+  device's stage. Written by `elctl laser calibrate`; legacy calibrations
+  (pickles) cannot be read and are made again.
+
+To calibrate a tray, jog the stage onto a hole with the laser's own software
+(Chromium), then record it:
+
+```bash
+elctl -c extraction_line.toml laser calibrate co2 221-hole center
+```
+
+```bash
+elctl -c extraction_line.toml laser calibrate co2 221-hole right
+```
+
+`center` and `right` are the tray map's centre and east calibration holes;
+`point <hole>` records any hole. One point places the tray, two also turn it
+(the legacy "Tray" calibration), three or more are fitted and report an rms.
+`--x` and `--y` give the position instead of reading it, with no hardware
+opened. Then check it:
+
+```bash
+elctl -c extraction_line.toml laser goto co2 221-hole 17
+```
+
+```bash
+elctl -c extraction_line.toml laser trays
+```
+
+What refuses to guess: a queue is not started if its device is unknown, its
+tray has no map, a run's hole is not on the tray, or the tray is not
+calibrated for the device. A calibration made before the tray map file was
+edited is stale and must be made again. A fitted scale more than 2% from 1 is
+refused (stage and map are both millimetres, so it means a wrong hole).
+
+`configs/examples` has a simulated laser: `experiment.laser.toml` heats two
+holes of `tray_maps/example-9.txt` with `scripts/extraction/laser_extract.py`.
+
+```bash
+elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/experiment.laser.toml --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
+```
+
+Not done yet: patterns, autocenter and per-hole corrections, the laser window
+and on-screen calibration, watts and temperature. `elctl laser goto` cannot
+stop a stage that is moving (Ctrl-C only stops waiting for it). A hole move
+does not change z.
 
 ## 6. Set up an install
 
