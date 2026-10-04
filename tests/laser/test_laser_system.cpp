@@ -97,6 +97,9 @@ struct FlippedXTest : LaserSystemTest {
 INSTANTIATE_TYPED_TEST_SUITE_P(LaserSystem, ExtractionDeviceConformance, ::testing::Types<LaserHarness>);
 INSTANTIATE_TYPED_TEST_SUITE_P(LaserSystem, LaserConformance, ::testing::Types<LaserHarness>);
 INSTANTIATE_TYPED_TEST_SUITE_P(LaserSystem, StageConformance, ::testing::Types<LaserHarness>);
+// conformance.hpp also defines suites for features this device does not have.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(PatternConformance);
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(FurnaceConformance);
 
 TEST_F(LaserSystemTest, AHoleLandsOnItsCalibratedPosition) {
   ASSERT_TRUE(system.set_axis(IStage::Axis::Z, 1.5));
