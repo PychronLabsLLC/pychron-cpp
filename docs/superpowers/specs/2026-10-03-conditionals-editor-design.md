@@ -1,7 +1,7 @@
 # Conditionals editor and assignment
 
 Date: 2026-10-03
-Status: Draft for implementation
+Status: Implemented
 Owner: Jake Ross
 Depends on: `2026-10-02-conditionals-design.md` (model, files, levels,
 validation; its section 9 left UI editors out of scope),
@@ -229,9 +229,9 @@ Both go through the existing edit path, so the queue is revalidated and
   files; shows a missing name in the error colour rather than dropping it.
   An "Edit..." button opens the editor on the chosen file.
 - Context menu on selected rows: "Set conditionals...", a dialog with the
-  lab's files as a checkable list (tri-state when the rows differ) and an
-  "Edit..." button.
-- Experiment menu: "Conditionals Editor".
+  lab's files as a checkable list (tri-state when the rows differ; a file left
+  half-ticked stays as each row has it) and an "Edit..." button.
+- Scripts menu, beside the script editor: "Conditionals Editor...".
 - One editor window per experiment window, created on first use.
 
 ### 6.3 RunFactoryPanel

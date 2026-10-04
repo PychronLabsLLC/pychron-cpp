@@ -25,7 +25,7 @@ spectrometers, runs automated experiment queues, and stores the results.
 | `libs/persistence` | Database-backed store for analyses (TinyORM on QtSql) |
 | `libs/processing` | Browsing, recall and figures: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures |
 | `apps/elctl` | Command-line tool: validate configs, drive the line, run experiments |
-| `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window, data browser, recall and figure windows |
+| `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window, script and conditionals editors, data browser, recall and figure windows |
 | `configs/examples` | An example lab: line, canvas, spectrometers, plans, scripts, a three-run queue; `nmgrl/` is a full-size line (the NMGRL valve box, simulated) |
 | `docs/superpowers/specs` | Design specs; `docs/superpowers/plans` holds implementation plans |
 | `tools/spec_router` | Splits the specs into work units and runs them through coding agents |

@@ -1,7 +1,7 @@
 # Conditionals: full port
 
 Date: 2026-10-02
-Status: Draft for implementation
+Status: Implemented
 Depends on: `2026-09-29-experiment-system-design.md` section 7 (grammar and
 kinds, already implemented as the first cut) and section 4.2 (MeasurementEngine).
 Reference: legacy `pychron/experiment/conditional/*`, `automated_run/*`,
@@ -286,4 +286,5 @@ errors[]:    { name, message }
 ## 9. Out of scope
 
 Blank subtraction in-run,
-the executor itself (it consumes 6.2), UI editors.
+the executor itself (it consumes 6.2). UI editors were out of scope here and
+are specified in `2026-10-03-conditionals-editor-design.md`.
