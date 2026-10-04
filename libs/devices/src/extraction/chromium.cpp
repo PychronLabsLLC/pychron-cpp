@@ -45,6 +45,76 @@ std::string joined(const std::vector<std::string>& names) {
 
 }  // namespace
 
+namespace {
+
+// The numbers under `key`, if present: exactly `count` of them.
+Result<std::optional<std::vector<double>>> numbers(const toml::table& options, std::string_view key, std::size_t count) {
+  const toml::array* array = options[key].as_array();
+  if (array == nullptr) return std::optional<std::vector<double>>{};
+  std::vector<double> out;
+  for (const auto& node : *array) out.push_back(node.value<double>().value_or(0));
+  if (out.size() != count) {
+    return fail(ErrorKind::Config, std::string(key) + " must have " + std::to_string(count) + " values");
+  }
+  return std::optional<std::vector<double>>(std::move(out));
+}
+
+}  // namespace
+
+DriverSchema ChromiumLaser::schema() {
+  return {"",
+          "Photon Machines Chromium laser system over TCP: output (percent), firing, interlocks, XYZ stage, scan "
+          "positions",
+          {{"x_limits", KeyType::FloatArray, false, "stage travel in x, mm: [low, high]; default [0, 50]"},
+           {"y_limits", KeyType::FloatArray, false, "stage travel in y, mm; default [0, 50]"},
+           {"z_limits", KeyType::FloatArray, false, "stage travel in z, mm; default [0, 50]"},
+           {"signs", KeyType::IntegerArray, false, "1 or -1 per axis: stage mm times this is sent; default [1, 1, 1]"},
+           {"move_speed", KeyType::IntegerArray, false,
+            "x, y, z speeds in microns per second; z may be 0 (never moved); default [5000, 5000, 100]"},
+           {"in_position_um", KeyType::Float, false, "how near the target counts as arrived, microns; default 10"},
+           {"use_enable", KeyType::Boolean, false,
+            "send Laser.Enable; false for a unit that refuses it; default true"}}};
+}
+
+Result<std::unique_ptr<ChromiumLaser>> ChromiumLaser::create(const DriverArgs& args) {
+  ChromiumOptions o;
+  const std::array<std::string_view, 3> limit_keys{"x_limits", "y_limits", "z_limits"};
+  for (std::size_t i = 0; i < 3; ++i) {
+    auto limits = numbers(args.options, limit_keys[i], 2);
+    if (!limits) return fail(std::move(limits).error());
+    if (!*limits) continue;
+    if (!((**limits)[0] < (**limits)[1])) {
+      return fail(ErrorKind::Config, std::string(limit_keys[i]) + " must be [low, high] with low below high");
+    }
+    o.limits_mm[i] = {(**limits)[0], (**limits)[1]};
+  }
+  if (auto signs = numbers(args.options, "signs", 3); !signs) {
+    return fail(std::move(signs).error());
+  } else if (*signs) {
+    for (std::size_t i = 0; i < 3; ++i) {
+      if ((**signs)[i] != 1 && (**signs)[i] != -1) return fail(ErrorKind::Config, "signs must each be 1 or -1");
+      o.signs[i] = static_cast<int>((**signs)[i]);
+    }
+  }
+  if (auto speed = numbers(args.options, "move_speed", 3); !speed) {
+    return fail(std::move(speed).error());
+  } else if (*speed) {
+    if ((**speed)[0] <= 0 || (**speed)[1] <= 0 || (**speed)[2] < 0) {
+      return fail(ErrorKind::Config, "move_speed must be positive in x and y, and not negative in z");
+    }
+    o.move_speed = {static_cast<std::int64_t>((**speed)[0]), static_cast<std::int64_t>((**speed)[1]),
+                    static_cast<std::int64_t>((**speed)[2])};
+  }
+  if (const auto near = args.options["in_position_um"].value<double>()) {
+    if (!(*near > 0)) return fail(ErrorKind::Config, "in_position_um must be above 0");
+    o.in_position_um = *near;
+  }
+  o.use_enable = args.options["use_enable"].value_or(true);
+  DeviceOptions device;
+  device.clock = args.clock;
+  return std::make_unique<ChromiumLaser>(args.name, args.transport, o, device);
+}
+
 ChromiumLaser::ChromiumLaser(std::string name, Transport& transport, ChromiumOptions options, DeviceOptions device)
     : Device(std::move(name), device), transport_(transport), options_(options) {}
 
@@ -410,3 +480,5 @@ std::vector<std::string> ChromiumLaser::positions() const {
 }
 
 }  // namespace pychron::extraction
+
+REGISTER_DRIVER("chromium", pychron::extraction::ChromiumLaser);

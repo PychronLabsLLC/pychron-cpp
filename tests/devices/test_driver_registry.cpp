@@ -199,6 +199,7 @@ TEST(DriverRegistryGlobal, StaticLibraryRegistrationSurvivesLinking) {
 TEST(KeyTypeNames, Stable) {
   EXPECT_EQ(to_string(KeyType::String), "string");
   EXPECT_EQ(to_string(KeyType::Integer), "integer");
+  EXPECT_EQ(to_string(KeyType::FloatArray), "array<float>");
   EXPECT_EQ(to_string(KeyType::Float), "float");
   EXPECT_EQ(to_string(KeyType::Boolean), "boolean");
   EXPECT_EQ(to_string(KeyType::IntegerArray), "array<integer>");

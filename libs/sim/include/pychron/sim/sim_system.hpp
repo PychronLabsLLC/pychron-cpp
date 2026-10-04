@@ -40,6 +40,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
@@ -106,6 +107,8 @@ class SimSystem {
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
+  //   chromium            a ChromiumSim on this system's clock: the laser
+  //                       PC, with its stage, output and interlocks.
   //   anything else       a silent wire (the driver sees timeouts).
   // Models built here live as long as this SimSystem, which must outlive
   // the transport.
@@ -133,6 +136,7 @@ class SimSystem {
   mutable TimePoint last_{};
   mutable std::mt19937_64 rng_;
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
+  std::vector<std::unique_ptr<extraction::ChromiumSim>> lasers_;
 };
 
 }  // namespace pychron::sim

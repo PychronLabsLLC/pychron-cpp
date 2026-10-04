@@ -256,3 +256,29 @@ TEST(SimSystem, UnknownDriverKindGetsSilentWire) {
 }
 
 }  // namespace
+
+// A chromium driver on a sim transport talks to a Chromium simulator, whose
+// stage moves on the system's clock.
+TEST(SimSystem, AChromiumDriverGetsAChromiumSimulator) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+
+[transports.laser_pc]
+kind = "sim"
+
+[drivers.laser]
+kind = "chromium"
+transport = "laser_pc"
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, {}, quiet());
+  auto hook = sim.hook_for(cfg->drivers.at("laser"), *cfg);
+  ASSERT_TRUE(hook);
+  EXPECT_EQ(to_string(hook(to_bytes("Sys.ID?\n"))), "CHROMIUM 2013.12.30.0\r");
+  EXPECT_EQ(to_string(hook(to_bytes("Stage.MoveTo 5000,0,0,5000,5000,100\n"))), "");
+  clock.advance(std::chrono::seconds(1));
+  EXPECT_EQ(to_string(hook(to_bytes("Stage.Pos?\n"))), "5000,0,0\r");
+}

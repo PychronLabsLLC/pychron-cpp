@@ -67,6 +67,10 @@ class ChromiumLaser final : public Device, public IExtractionDevice, public ILas
  public:
   ChromiumLaser(std::string name, Transport& transport, ChromiumOptions options = {}, DeviceOptions device = {});
 
+  static DriverSchema schema();
+  // Config error, naming the key, for an option out of range.
+  static Result<std::unique_ptr<ChromiumLaser>> create(const DriverArgs& args);
+
   // What Sys.ID? answered; empty before prepare().
   std::string chromium_id() const;
   void set_tray_lookup(TrayLookup lookup);

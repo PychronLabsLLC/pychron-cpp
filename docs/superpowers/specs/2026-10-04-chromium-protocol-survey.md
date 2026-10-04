@@ -4,7 +4,10 @@ Date: 2026-10-04
 Status: Survey (sections 1-6) and proposal (sections 7-9). Nothing is decided;
 section 10 lists what is still open. Revised the same day against the vendor's
 command reference (section 2a), which settled most of what the first draft
-could only infer.
+could only infer. The driver of sections 7-8 is built for CO2
+(`libs/devices/.../extraction/chromium.hpp`, plan
+`docs/superpowers/plans/2026-10-04-chromium-driver.md`), against a simulator
+only: no real Chromium has been on the other end.
 Owner: Jake Ross
 Scope: the Photon Machines / Teledyne "Chromium" laser-ablation software as
 legacy Pychron drives it: one TCP text protocol covering laser output, stage
@@ -371,8 +374,9 @@ Still open (a real Chromium, or the person who runs one, answers these):
 
 1. **Silence after an action command.** How long to wait for a possible `?<n>`
    before calling it success? Is an error line ever late?
-2. **Connection.** Does Chromium hold one TCP connection open across commands
-   and across hours? Legacy opens one per command; 2.x release notes mention
+2. **Connection.** *Decided: the driver keeps one connection open.* Still to
+   be seen on a real unit: does Chromium hold it across commands and across
+   hours? Legacy opens one per command; 2.x release notes mention
    sockets "not closing properly", fixed.
 3. **CR vs CRLF.** Pychron sends CRLF over TCP where the reference says LF.
    Does the stray CR matter on any version?
@@ -383,6 +387,6 @@ Still open (a real Chromium, or the person who runs one, answers these):
 6. **Firing state.** Does `Laser.Shutter?` or anything else report "firing"?
 7. **Newer command set.** The reference is from 2013; zoom and light commands
    were added after. Is there a later document?
-8. **Which Chromium first**: CO2 (melbourne, disabled), UV (ASU), or another
-   lab's? It decides whether scans or stage moves and PID matter most.
+8. **Which Chromium first.** *Decided: CO2.* UV (running scans, burst, rate,
+   spot size) and temperature control are not built.
 9. **Speeds.** µm/s is inferred for `Stage.MoveTo`; confirm on a stage.

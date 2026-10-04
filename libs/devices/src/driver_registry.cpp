@@ -21,6 +21,11 @@ bool matches(const toml::node& node, KeyType type) {
     case KeyType::Boolean: return node.is_boolean();
     case KeyType::IntegerArray:
       return node.is_array() && all_elements(*node.as_array(), &toml::node::is_integer);
+    case KeyType::FloatArray:
+      // an integer is a float here, as for KeyType::Float
+      return node.is_array() && std::all_of(node.as_array()->begin(), node.as_array()->end(), [](const toml::node& n) {
+        return n.is_floating_point() || n.is_integer();
+      });
     case KeyType::StringArray:
       return node.is_array() && all_elements(*node.as_array(), &toml::node::is_string);
   }
@@ -36,6 +41,7 @@ std::string_view article(KeyType type) {
 std::string type_phrase(KeyType type) {
   switch (type) {
     case KeyType::IntegerArray: return "array of integers";
+    case KeyType::FloatArray: return "array of numbers";
     case KeyType::StringArray: return "array of strings";
     default: return std::string(to_string(type));
   }
@@ -57,6 +63,7 @@ std::string_view to_string(KeyType type) noexcept {
     case KeyType::Float: return "float";
     case KeyType::Boolean: return "boolean";
     case KeyType::IntegerArray: return "array<integer>";
+    case KeyType::FloatArray: return "array<float>";
     case KeyType::StringArray: return "array<string>";
   }
   return "string";

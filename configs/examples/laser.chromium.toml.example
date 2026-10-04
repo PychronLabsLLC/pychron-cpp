@@ -1,0 +1,30 @@
+# A Photon Machines Chromium CO2 laser system, driven over TCP.
+#
+# On the laser PC, in Chromium: View > Control Panels > Show/Hide Remote
+# Control Window, then tick "TCP/IP Interface" (port 1234). Chromium must be
+# running; pychron keeps one connection open to it.
+#
+# Add the two tables below to a line's extraction_line.toml. With
+# kind = "sim" the driver talks to the built-in Chromium simulator instead.
+
+[transports.laser_pc]
+kind = "tcp"
+host = "laser-pc.lab"
+port = 1234
+timeout_ms = 2000
+
+[drivers.laser]
+kind = "chromium"
+transport = "laser_pc"
+# Stage travel in mm: a move outside it is refused before it is sent.
+x_limits = [0, 50]
+y_limits = [0, 50]
+z_limits = [0, 50]
+# 1 or -1 per axis, for a stage whose axes run the other way.
+signs = [1, 1, 1]
+# x, y, z speeds in microns per second.
+move_speed = [5000, 5000, 100]
+# How near the target counts as arrived, in microns.
+in_position_um = 10
+# false for a unit that refuses Laser.Enable.
+# use_enable = true

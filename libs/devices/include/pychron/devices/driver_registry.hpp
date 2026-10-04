@@ -21,7 +21,7 @@
 
 namespace pychron {
 
-enum class KeyType { String, Integer, Float, Boolean, IntegerArray, StringArray };
+enum class KeyType { String, Integer, Float, Boolean, IntegerArray, FloatArray, StringArray };
 
 std::string_view to_string(KeyType type) noexcept;
 

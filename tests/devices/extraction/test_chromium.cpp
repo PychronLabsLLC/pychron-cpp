@@ -311,3 +311,73 @@ TEST_F(ChromiumTest, WithNoTrayLookupOnlyScansAndCoordinatesWork) {
   EXPECT_EQ(bare.move_to_position("1", false).error().kind, ErrorKind::Config);
   EXPECT_TRUE(bare.set_xy(1, 1));
 }
+
+// --- registration -----------------------------------------------------------------
+
+namespace {
+
+struct RegistryWire {
+  ManualClock clock;
+  ChromiumSim sim{clock};
+  std::unique_ptr<SimTransport> wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "w", .clock = &clock});
+};
+
+}  // namespace
+
+TEST(ChromiumRegistry, CreatesFromConfigAndRejectsBadOptions) {
+  auto& reg = DriverRegistry::global();
+  ASSERT_TRUE(reg.contains("chromium"));
+  const auto ok = toml::parse("x_limits = [-10, 10.5]\nsigns = [1, -1, 1]\nmove_speed = [2000, 2000, 0]\n"
+                              "in_position_um = 5\nuse_enable = false\n");
+  {
+    RegistryWire w;
+    auto made = reg.create("chromium", *w.wire, ok, DriverContext{"laser", &w.clock});
+    ASSERT_TRUE(made) << made.error().what;
+    EXPECT_EQ((*made)->name(), "laser");
+  }
+  for (const char* bad : {"signs = [1, 2, 1]", "signs = [1, 1]", "x_limits = [10, -10]", "x_limits = [0]",
+                          "y_limits = [5, 5]", "move_speed = [0, 5000, 100]", "move_speed = [5000, 5000, -1]",
+                          "in_position_um = 0", "bogus = 1", "use_enable = 1"}) {
+    RegistryWire w;
+    const auto t = toml::parse(bad);
+    auto made = reg.create("chromium", *w.wire, t, DriverContext{"laser", &w.clock});
+    ASSERT_FALSE(made) << bad;
+    EXPECT_EQ(made.error().kind, ErrorKind::Config) << bad;
+  }
+  // the message names the key at fault
+  RegistryWire w;
+  auto made = reg.create("chromium", *w.wire, toml::parse("signs = [1, 2, 1]"), DriverContext{"laser", &w.clock});
+  EXPECT_NE(made.error().what.find("signs"), std::string::npos) << made.error().what;
+}
+
+TEST(ChromiumRegistry, OptionsFromConfigReachTheDriver) {
+  RegistryWire w;
+  ASSERT_TRUE(w.wire->open());
+  const auto t = toml::parse("x_limits = [-10, 10]\nsigns = [-1, 1, 1]\nmove_speed = [2000, 3000, 50]\n");
+  auto made = DriverRegistry::global().create("chromium", *w.wire, t, DriverContext{"laser", &w.clock});
+  ASSERT_TRUE(made) << made.error().what;
+  auto* device = dynamic_cast<IExtractionDevice*>(made->get());
+  ASSERT_NE(device, nullptr);
+  ASSERT_TRUE(device->stage()->set_xy(2.0, 3.0));
+  const auto log = w.sim.log();
+  EXPECT_NE(std::find(log.begin(), log.end(), "Stage.MoveTo -2000,3000,0,2000,3000,50"), log.end());
+  EXPECT_EQ(device->stage()->set_xy(10.5, 0).error().kind, ErrorKind::Config);
+}
+
+TEST(ChromiumRegistry, TheDeviceExposesItsCapabilities) {
+  RegistryWire w;
+  auto made = DriverRegistry::global().create("chromium", *w.wire, toml::table{}, DriverContext{"laser", &w.clock});
+  ASSERT_TRUE(made) << made.error().what;
+  auto* device = dynamic_cast<IExtractionDevice*>(made->get());
+  ASSERT_NE(device, nullptr);
+  EXPECT_EQ(device->device_name(), "laser");
+  EXPECT_NE(device->laser(), nullptr);
+  EXPECT_NE(device->stage(), nullptr);
+  EXPECT_EQ(device->pattern_runner(), nullptr);
+  EXPECT_EQ(device->furnace(), nullptr);
+  EXPECT_TRUE(device->supports(ExtractUnits::Percent));
+  EXPECT_FALSE(device->supports(ExtractUnits::Watts));
+  const DriverSchema* schema = DriverRegistry::global().schema("chromium");
+  ASSERT_NE(schema, nullptr);
+  EXPECT_NE(schema->summary.find("Chromium"), std::string::npos);
+}

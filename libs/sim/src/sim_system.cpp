@@ -167,6 +167,14 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
+  if (driver.kind == "chromium") {
+    auto laser = std::make_unique<extraction::ChromiumSim>(clock_);
+    auto hook = laser->hook();
+    std::lock_guard lock(mutex_);
+    lasers_.push_back(std::move(laser));
+    return hook;
+  }
+
   if (driver.kind == "ngx_valves") {
     // The NGX simulator answers (Login, SAB, valves); actuations move the
     // simulated line's valves.

@@ -312,6 +312,34 @@ message when a run fails and when the queue ends. Email and webhooks need the
 `password_env`. `elctl exp notify --lab .` sends a test message on each
 channel (the experiment window: Executor > Send Test Notification).
 
+### A Chromium laser
+
+`kind = "chromium"` drives a Photon Machines Chromium laser system (CO2
+first): the Chromium program on the laser PC owns the laser, stage and camera,
+and the driver sends it commands over one TCP connection it keeps open.
+`configs/examples/laser.chromium.toml.example` has the two tables to add to a
+line's `extraction_line.toml`; `elctl list-drivers` lists the keys.
+
+- In Chromium, tick "TCP/IP Interface" in the Remote Control window (port
+  1234).
+- Output is percent, the only unit. Watts needs a power calibration and
+  temperature a pyrometer; neither is done.
+- The driver checks what legacy Pychron did not: that the program on the port
+  is a Chromium, that no interlock is tripped before enabling and before each
+  firing, that an output setpoint took, and that a move stays inside the
+  configured travel. A command Chromium refuses (`?<n>`) is an error.
+- A position is a scan Chromium has defined (`s3`) or a hole on a tray. Tray
+  maps are not built yet, so hole names resolve only where a test supplies
+  them.
+- With `kind = "sim"` on its transport the driver talks to a Chromium
+  simulator (`ChromiumSim`).
+
+Nothing uses the device in a queue yet: the laser system that wires an
+extraction device into a run is the next sub-project (see
+`docs/superpowers/specs/2026-10-03-vision-design.md`, section 2). It has not
+been run against a real Chromium; the protocol is from the vendor's command
+reference (`docs/superpowers/specs/2026-10-04-chromium-protocol-survey.md`).
+
 ## 6. Set up an install
 
 `elctl init` installs a setup profile (`profiles/`: `argus`, `helix`, `ngx`,
