@@ -184,6 +184,17 @@ std::optional<std::string> take_text(Json& object, std::string_view key) {
   return take<std::string>(object, key, as_text);
 }
 
+bool is_legacy_none(std::string_view text) { return text == kLegacyNone || trim(text).empty(); }
+
+std::optional<std::string> take_name(Json& object, std::string_view key) {
+  if (object.is_object())
+    if (const auto it = object.find(key); it != object.end() && it->is_string()) {
+      const auto& text = it->get_ref<const std::string&>();
+      if (!text.empty() && is_legacy_none(text)) return std::nullopt;
+    }
+  return take_text(object, key);
+}
+
 std::optional<std::string> take_json(Json& object, std::string_view key) {
   if (!object.is_object()) return std::nullopt;
   const auto it = object.find(key);

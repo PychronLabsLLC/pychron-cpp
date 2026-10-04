@@ -42,6 +42,16 @@ analyses that have no tags file, `AnalysisTbl` and `AnalysisChangeTbl`. Every
 other table of the dump is converted too and stays in the JSON-lines
 directory, unread: keep the directory.
 
+Legacy pychron writes `---------` (nine hyphens) where a value is absent. In
+an analysis record and its extraction file, and in the text columns of the
+dump that hold an optional link or free text, that string, or one that is
+empty or only white space, means "not set": an extract device, load, tray,
+pattern, sample, material, project, irradiation, analyst, comment or note so
+written is absent, not a name to look up. The analysis keeps the original
+string in its legacy JSON. It is taken as written for an analysis's
+identifier, uuid and mass spectrometer, and for the names that are a catalog
+row's key (a material called `---------` stays a material).
+
 ## 2. The recommended order
 
 1. **Catalog** (`legacy_db`), if you have a dump. It gives the importer the

@@ -706,3 +706,20 @@ points. Where this section and an earlier one disagree, this section wins.
     legacy database. Replaces "an existing row always wins" for the other
     columns; which identifier takes a position is decided as before
     (the known limit on `--catalog-from-repos` and run cuts stands).
+40. **The legacy "none".** Legacy pychron writes `---------` (`NULL_STR`,
+    nine hyphens) where a value is absent. A string that is exactly that, or
+    is empty or only white space, means "not set" in the optional names and
+    free text of an analysis record and its extraction file (extract device,
+    units, pattern, tray, load name and holder, experiment type, laboratory,
+    instrument name, user and analyst, comment, spectrometer file name,
+    script names, and the sample, material, project, principal investigator,
+    repository, irradiation and level the record carries) and in the text
+    columns of the catalog dump that hold an optional link or free text. The
+    original string stays in the analysis's legacy JSON. It is never "not
+    set" for the identifier, uuid or mass spectrometer of an analysis (such
+    an analysis is refused as before), nor for a name that is a catalog
+    row's natural key (principal investigator, project, material and its
+    grainsize, sample, irradiation, level, user, spectrometer, extract
+    device, load: the row is kept under the name the dump gives). No other
+    spelling is treated so: the fixtures hold no `"None"`, `"none"` or
+    `"null"` string in such a field.

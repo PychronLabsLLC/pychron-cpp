@@ -2258,6 +2258,44 @@ TEST_P(ProjectImportTest, TagInsideAPendingCollectionDoesNotStallAStoppedRun) {
   EXPECT_EQ(snapshot_of(*world_), snapshot_of(*other));
 }
 
+// Legacy pychron writes "---------" (NULL_STR) for no extract device: the
+// analysis has none. The same hyphens for a spectrometer name nothing.
+TEST_P(ProjectImportTest, LegacyNoneExtractDeviceImportsWithoutADevice) {
+  legacy_.write_record_files(kRunE, kE.str());
+  auto extraction = json::parse(LegacyRepoBuilder::fixture_text(FileKind::Extraction));
+  extraction["extract_device"] = "---------";
+  legacy_.write(kRunE, FileKind::Extraction, extraction.dump(4));
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+    legacy_.write(kRunE, kind, LegacyRepoBuilder::fixture_text(kind));
+  legacy_.commit("<IMPORT> initial", kCollected);
+
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->analyses, 1);
+  EXPECT_EQ(stats->conflicts, 0);
+  EXPECT_TRUE(world_->conflicts().empty());
+  auto row = store().load_analysis_detail(kE);
+  ASSERT_TRUE(row && row->has_value());
+  EXPECT_TRUE((*row)->row.extract_device.empty());
+  EXPECT_EQ((*row)->extraction.extract_value, std::optional<double>{4.0});
+  auto meta = world_->db->select_one(QStringLiteral("SELECT legacy FROM analysis_meta"));
+  ASSERT_TRUE(meta && *meta);
+  EXPECT_EQ(json::parse(pd::to_std((*meta)->value("legacy"))).at("extraction").at("extract_device"), "---------");
+
+  // A record whose spectrometer is the hyphens is still refused.
+  auto record = json::parse(LegacyRepoBuilder::record_text("66052-02A", kF.str()));
+  record["mass_spectrometer"] = "---------";
+  legacy_.write_record_files("66052-02A", kF.str());
+  repo_.write(LegacyRepoBuilder::path("66052-02A", FileKind::Record), record.dump(4));
+  legacy_.commit("<IMPORT> initial", kDay2);
+  auto bare = fresh_world();
+  auto refused = run_import(*bare, adapter_config(repo_));
+  ASSERT_TRUE(refused) << err(refused.error());
+  EXPECT_EQ(bare->count("analysis"), 1);
+  EXPECT_FALSE(bare->store->load_analysis(kF)->has_value());
+  EXPECT_FALSE(bare->conflicts(ConflictKind::UnknownAnalysis).empty());
+}
+
 TEST_P(ProjectImportTest, RenumberToAnIdentifierTheCatalogLacks) {
   legacy_.collect(kRunE, kE.str(), kCollected);
   repo_.write(LegacyRepoBuilder::path(kRunE, FileKind::Record), LegacyRepoBuilder::record_text("66099-01A", kE.str()));

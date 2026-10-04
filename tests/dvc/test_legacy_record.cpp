@@ -424,6 +424,96 @@ TEST(Layout, ExtractionOlderDurationNames) {
   EXPECT_EQ(legacy(b)["nonfinite"]["extraction"], json::parse(R"({"/cleanup_duration": "NaN"})"));
 }
 
+// Legacy pychron writes NULL_STR, nine hyphens, where a value is absent.
+TEST(Layout, LegacyNoneInTheExtractionIsNotSet) {
+  ps::AnalysisIngest a;
+  std::vector<ps::BlobIngest> blobs;
+  auto ok = merge_satellite(FileKind::Extraction,
+                            R"({"extract_device": "---------", "load_name": "---------", "load_holder": "  ",
+                                "pattern": "---------", "tray": "---------", "extract_units": " \t",
+                                "extract_value": 4.0})",
+                            a, blobs);
+  ASSERT_TRUE(ok.has_value()) << ok.error().what;
+  EXPECT_FALSE(a.extract_device.has_value());
+  EXPECT_FALSE(a.load_name.has_value());
+  EXPECT_FALSE(a.load_holder.has_value());
+  EXPECT_FALSE(a.extraction.pattern.has_value());
+  EXPECT_FALSE(a.extraction.tray.has_value());
+  EXPECT_FALSE(a.extraction.extract_units.has_value());
+  EXPECT_EQ(a.extraction.extract_value, 4.0);
+  // What the file said is kept.
+  const json rest = legacy(a)["extraction"];
+  EXPECT_EQ(rest["extract_device"], "---------");
+  EXPECT_EQ(rest["load_name"], "---------");
+  EXPECT_EQ(rest["load_holder"], "  ");
+  EXPECT_EQ(rest["pattern"], "---------");
+  EXPECT_EQ(rest["tray"], "---------");
+
+  // Only the whole value: hyphens inside a name, or another count of them, are a name.
+  ps::AnalysisIngest b;
+  ASSERT_TRUE(merge_satellite(FileKind::Extraction, R"({"extract_device": "--------", "load_name": "L---------1"})", b,
+                              blobs)
+                  .has_value());
+  EXPECT_EQ(b.extract_device, "--------");
+  EXPECT_EQ(b.load_name, "L---------1");
+}
+
+TEST(Layout, LegacyNoneInTheRecordIsNotSet) {
+  auto r = parse_record(record(R"("sample": "---------", "material": " ", "project": "---------",
+                                  "principal_investigator": "---------", "irradiation": "---------",
+                                  "irradiation_level": "---------", "username": "---------",
+                                  "laboratory": "---------", "instrument_name": "---------",
+                                  "comment": "---------", "experiment_type": "---------")"),
+                        kDenver);
+  ASSERT_TRUE(r.has_value()) << r.error().what;
+  EXPECT_FALSE(r->catalog.sample.has_value());
+  EXPECT_FALSE(r->catalog.material.has_value());
+  EXPECT_FALSE(r->catalog.project.has_value());
+  EXPECT_FALSE(r->catalog.principal_investigator.has_value());
+  EXPECT_FALSE(r->catalog.irradiation.has_value());
+  EXPECT_FALSE(r->catalog.irradiation_level.has_value());
+  EXPECT_FALSE(r->comment.has_value());
+  EXPECT_TRUE(r->ingest.analyst.empty());
+  EXPECT_FALSE(r->ingest.laboratory.has_value());
+  EXPECT_FALSE(r->ingest.instrument_name.has_value());
+  EXPECT_FALSE(r->ingest.experiment_type.has_value());
+  const json rest = legacy(r->ingest)["record"];
+  for (const char* key : {"sample", "project", "irradiation", "username", "laboratory", "comment"}) {
+    EXPECT_EQ(rest[key], "---------") << key;
+  }
+  EXPECT_EQ(rest["material"], " ");
+
+  // A user of that name does not hide the analyst name.
+  auto named = parse_record(record(R"("username": "---------", "analyst_name": "ann")"), kDenver);
+  ASSERT_TRUE(named.has_value()) << named.error().what;
+  EXPECT_EQ(named->ingest.analyst, "ann");
+}
+
+// An analysis is nothing without its identifier, uuid and spectrometer: there
+// the hyphens are taken as written, so that the analysis is refused.
+TEST(Layout, LegacyNoneIsNeverAnIdentity) {
+  auto identifier = parse_record(R"({"identifier": "---------", "aliquot": 1, "timestamp": "2018-02-20T00:27:08",
+                                     "mass_spectrometer": "Felix"})",
+                                 kDenver);
+  ASSERT_TRUE(identifier.has_value()) << identifier.error().what;
+  EXPECT_EQ(identifier->ingest.identifier, "---------");
+
+  auto spectrometer = parse_record(R"({"identifier": "66052", "aliquot": 1, "timestamp": "2018-02-20T00:27:08",
+                                       "mass_spectrometer": "---------"})",
+                                   kDenver);
+  ASSERT_TRUE(spectrometer.has_value()) << spectrometer.error().what;
+  EXPECT_EQ(spectrometer->ingest.mass_spectrometer, "---------");
+
+  auto uuid = parse_record(R"({"uuid": "---------", "identifier": "66052", "aliquot": 1,
+                               "timestamp": "2018-02-20T00:27:08", "mass_spectrometer": "Felix"})",
+                           kDenver);
+  ASSERT_TRUE(uuid.has_value()) << uuid.error().what;
+  EXPECT_FALSE(uuid->had_uuid);
+  ASSERT_EQ(uuid->notes.size(), 1u);  // reported, unlike a uuid that is absent
+  EXPECT_NE(uuid->notes[0].find("is not a uuid"), std::string::npos);
+  EXPECT_EQ(legacy(uuid->ingest)["record"]["uuid"], "---------");
+}
+
 TEST(Layout, SatellitesKeepWhatTheRecordPutInLegacyJson) {
   auto r = parse_record(fixture(kUnknown + "660/52-01E.json"), kDenver);
   ASSERT_TRUE(r.has_value()) << r.error().what;

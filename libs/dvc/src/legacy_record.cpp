@@ -18,12 +18,12 @@ namespace ps = pychron::persistence;
 
 namespace {
 
-// A copy of `key` as text, leaving it in the object ("" and null: nullopt).
+// A copy of `key` as text, leaving it in the object (null and a legacy none: nullopt).
 std::optional<std::string> peek_text(const Json& object, std::string_view key) {
   const auto it = object.find(key);
   if (it == object.end()) return std::nullopt;
   auto text = as_text(*it);
-  if (text && text->empty()) return std::nullopt;
+  if (text && is_legacy_none(*text)) return std::nullopt;
   return text;
 }
 
@@ -114,9 +114,9 @@ Result<void> merge_extraction(Json doc, const std::vector<NonFinite>& nonfinite,
   if (!doc.is_object()) return fail(ErrorKind::Protocol, "extraction file is not a JSON object");
   auto& x = a.extraction;
   auto& meta = meta_of(a);
-  if (auto v = take_text(doc, "extract_device")) a.extract_device = std::move(v);
+  if (auto v = take_name(doc, "extract_device")) a.extract_device = std::move(v);
   x.extract_value = take_double(doc, "extract_value");
-  x.extract_units = take_text(doc, "extract_units");
+  x.extract_units = take_name(doc, "extract_units");
   // Older files say `duration` and `cleanup`; the current names win.
   x.extract_duration = take_double(doc, "extract_duration");
   if (!x.extract_duration && !doc.contains("extract_duration")) x.extract_duration = take_double(doc, "duration");
@@ -127,13 +127,13 @@ Result<void> merge_extraction(Json doc, const std::vector<NonFinite>& nonfinite,
   x.cryo_temperature = take_double(doc, "cryo_temperature");
   x.weight = take_double(doc, "weight");
   x.beam_diameter = take_double(doc, "beam_diameter");
-  x.pattern = take_text(doc, "pattern");
+  x.pattern = take_name(doc, "pattern");
   x.ramp_duration = take_double(doc, "ramp_duration");
   x.ramp_rate = take_double(doc, "ramp_rate");
   x.light_value = take_double(doc, "light_value");
-  x.tray = take_text(doc, "tray");
-  if (auto v = take_text(doc, "load_name")) a.load_name = std::move(v);
-  if (auto v = take_text(doc, "load_holder")) a.load_holder = std::move(v);
+  x.tray = take_name(doc, "tray");
+  if (auto v = take_name(doc, "load_name")) a.load_name = std::move(v);
+  if (auto v = take_name(doc, "load_holder")) a.load_holder = std::move(v);
   meta.extraction_context_json = take_json(doc, "extraction_context");
   meta.snapshots_json = take_json(doc, "snapshots");
   meta.videos_json = take_json(doc, "videos");
@@ -298,7 +298,7 @@ Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx
   auto analysis_type = take_text(doc, "analysis_type");
   if (analysis_type && *analysis_type == "sample") doc["analysis_type"] = *analysis_type;
   a.analysis_type = !analysis_type || *analysis_type == "sample" ? "unknown" : std::move(*analysis_type);
-  if (auto v = take_text(doc, "experiment_type")) a.experiment_type = std::move(v);
+  if (auto v = take_name(doc, "experiment_type")) a.experiment_type = std::move(v);
 
   const auto timestamp = take_text(doc, "timestamp");
   if (!timestamp) return fail(ErrorKind::Protocol, "analysis record has no timestamp");
@@ -318,11 +318,11 @@ Result<ParsedRecord> parse_record(std::string_view json, const ParseContext& ctx
   a.mass_spectrometer = *mass_spectrometer;
   for (auto& c : a.mass_spectrometer) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   if (a.mass_spectrometer != *mass_spectrometer) doc["mass_spectrometer"] = *mass_spectrometer;
-  a.laboratory = take_text(doc, "laboratory");
-  a.instrument_name = take_text(doc, "instrument_name");
-  if (auto username = take_text(doc, "username")) {
+  a.laboratory = take_name(doc, "laboratory");
+  a.instrument_name = take_name(doc, "instrument_name");
+  if (auto username = take_name(doc, "username")) {
     a.analyst = std::move(*username);
-  } else if (auto analyst_name = take_text(doc, "analyst_name")) {
+  } else if (auto analyst_name = take_name(doc, "analyst_name")) {
     a.analyst = std::move(*analyst_name);
   }
 

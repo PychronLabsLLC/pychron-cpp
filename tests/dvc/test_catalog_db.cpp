@@ -1386,6 +1386,42 @@ TEST(CatalogDbAdapter, StringKeysMatchWithoutCaseOrTrailingSpaces) {
                      }));
 }
 
+// Legacy pychron writes "---------" (NULL_STR) for no value. In an optional
+// link or free text that is no value; a name that is a natural key is kept.
+TEST(CatalogDbAdapter, LegacyNoneIsNoValueExceptInANaturalKey) {
+  DumpDir dir;
+  dir.table("MaterialTbl", {R"({"id":1,"name":"---------","grainsize":null})"})
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1,"holder":"---------","note":"  "})"})
+      .table("IrradiationPositionTbl",
+             {R"({"id":1,"identifier":"---------","sampleID":null,"levelID":1,"position":1,"packet":"---------"})"})
+      .table("UserTbl", {R"({"name":"ann","email":"---------","affiliation":" ","category":null})"})
+      .table("LoadTbl",
+             {R"({"name":"L","create_date":null,"archived":0,"username":"---------","holderName":"---------"})"})
+      .done();
+  const auto batch = only_batch(dir);
+  EXPECT_TRUE(batch.conflicts.empty());
+  const auto materials = items_of<ingest::MaterialItem>(batch);
+  ASSERT_EQ(materials.size(), 1u);
+  EXPECT_EQ(materials[0].name, "---------");
+  const auto levels = items_of<ingest::LevelItem>(batch);
+  ASSERT_EQ(levels.size(), 1u);
+  EXPECT_FALSE(levels[0].holder.has_value());
+  EXPECT_FALSE(levels[0].note.has_value());
+  const auto positions = items_of<ingest::PositionItem>(batch);
+  ASSERT_EQ(positions.size(), 1u);
+  EXPECT_TRUE(positions[0].identifier.empty());
+  EXPECT_FALSE(positions[0].packet.has_value());
+  const auto users = items_of<ingest::UserItem>(batch);
+  ASSERT_EQ(users.size(), 1u);
+  EXPECT_FALSE(users[0].email.has_value());
+  EXPECT_FALSE(users[0].affiliation.has_value());
+  const auto loads = items_of<ingest::LoadItem>(batch);
+  ASSERT_EQ(loads.size(), 1u);
+  EXPECT_FALSE(loads[0].created_by.has_value());
+  EXPECT_FALSE(loads[0].holder_name.has_value());
+}
+
 TEST(CatalogDbAdapter, WarnsWhenTheDumpHasNoCompletionMarker) {
   auto whole = CatalogAdapter::open(adapter_config());
   ASSERT_TRUE(whole) << err(whole.error());

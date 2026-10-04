@@ -360,6 +360,15 @@ class Fields {
     return out;
   }
 
+  // An optional link or free text: the legacy "none" (kLegacyNone, or nothing
+  // but white space) is no value. Not for a name that is a natural key, which
+  // is kept as the dump writes it.
+  std::optional<std::string> optional_text(std::string_view column) {
+    auto read = text(column);
+    if (read && is_legacy_none(*read)) return std::nullopt;
+    return read;
+  }
+
   // The column's text; refused when there is none.
   std::string required(std::string_view column) {
     const std::size_t before = problems_.size();
@@ -661,8 +670,8 @@ class Reader {
     const auto id = f.integer("id");
     item.last_name = f.required("last_name");
     item.first_initial = f.text("first_initial").value_or("");
-    item.affiliation = f.text("affiliation");
-    item.email = f.text("email");
+    item.affiliation = f.optional_text("affiliation");
+    item.email = f.optional_text("email");
     if (f.ok() && id) {
       const PiKey key{item.last_name, item.first_initial};
       pis_.emplace(*id, key);
@@ -677,9 +686,9 @@ class Reader {
     item.name = f.required("name");
     const PiKey* investigator = parent(f, "principal_investigatorID", kPi, pis_, Link::Optional);
     item.checkin_date = date(f, "checkin_date");
-    item.comment = f.text("comment");
-    item.lab_contact = f.text("lab_contact");
-    item.institution = f.text("institution");
+    item.comment = f.optional_text("comment");
+    item.lab_contact = f.optional_text("lab_contact");
+    item.institution = f.optional_text("institution");
     if (f.ok() && id) {
       ProjectKey key{item.name, std::nullopt};
       Json compared = signature(row);
@@ -715,18 +724,18 @@ class Reader {
     s.name = f.required("name");
     const MaterialKey* of = parent(f, "materialID", kMaterial, materials_, Link::Required);
     const ProjectKey* in = parent(f, "projectID", kProject, projects_, Link::Required);
-    s.note = f.text("note");
-    s.igsn = f.text("igsn");
+    s.note = f.optional_text("note");
+    s.igsn = f.optional_text("igsn");
     s.lat = f.number("lat");
     s.lon = f.number("lon");
     s.elevation = f.number("elevation");
-    s.storage_location = f.text("storage_location");
-    s.location = f.text("location");
-    s.unit = f.text("unit");
-    s.lithology = f.text("lithology");
-    s.lithology_class = f.text("lithology_class");
-    s.lithology_type = f.text("lithology_type");
-    s.lithology_group = f.text("lithology_group");
+    s.storage_location = f.optional_text("storage_location");
+    s.location = f.optional_text("location");
+    s.unit = f.optional_text("unit");
+    s.lithology = f.optional_text("lithology");
+    s.lithology_class = f.optional_text("lithology_class");
+    s.lithology_type = f.optional_text("lithology_type");
+    s.lithology_group = f.optional_text("lithology_group");
     s.approximate_age = f.number("approximate_age");
     s.created = time(f, "create_date", "datetime");
     s.updated = time(f, "update_date", "datetime");
@@ -765,9 +774,9 @@ class Reader {
     const auto id = f.integer("id");
     item.name = f.required("name");
     const std::string* in = parent(f, "irradiationID", kIrradiation, irradiations_, Link::Required);
-    item.holder = f.text("holder");
+    item.holder = f.optional_text("holder");
     item.z = f.number("z");
-    item.note = f.text("note");
+    item.note = f.optional_text("note");
     if (f.ok() && id && in) {
       item.irradiation = *in;
       const LevelKey key{*in, item.name};
@@ -784,10 +793,10 @@ class Reader {
     const LevelKey* in = parent(f, "levelID", kLevel, levels_, Link::Required);
     const SampleKey* of = parent(f, "sampleID", kSample, samples_, Link::Optional);
     const auto hole = f.required_integer("position");
-    item.identifier = f.text("identifier").value_or("");
+    item.identifier = f.optional_text("identifier").value_or("");
     item.weight = f.number("weight");
-    item.packet = f.text("packet");
-    item.note = f.text("note");
+    item.packet = f.optional_text("packet");
+    item.note = f.optional_text("note");
     if (f.ok() && in && hole) {
       item.irradiation = in->irradiation;
       item.level = in->name;
@@ -823,9 +832,9 @@ class Reader {
   ingest::CatalogItem user(const Json& row, Fields& f, const std::string& legacy_id) {
     ingest::UserItem item;
     item.name = f.required("name");
-    item.email = f.text("email");
-    item.affiliation = f.text("affiliation");
-    item.category = f.text("category");
+    item.email = f.optional_text("email");
+    item.affiliation = f.optional_text("affiliation");
+    item.category = f.optional_text("category");
     if (f.ok()) item.name = named(f, kUser, users_, item.name, row, legacy_id);
     return item;
   }
@@ -834,7 +843,7 @@ class Reader {
     ingest::MassSpecItem item;
     // Lower case, as the analysis and reference imports name spectrometers.
     item.spec.name = lower(f.required("name"));
-    item.spec.kind = f.text("kind");
+    item.spec.kind = f.optional_text("kind");
     if (f.ok()) item.spec.name = named(f, kMassSpec, spectrometers_, item.spec.name, row, legacy_id);
     return item;
   }
@@ -851,9 +860,9 @@ class Reader {
     item.spec.name = f.required("name");
     item.spec.created = time(f, "create_date", "timestamp");
     item.spec.archived = f.flag("archived").value_or(false);
-    item.holder_name = f.text("holderName");
+    item.holder_name = f.optional_text("holderName");
     Json compared = row;
-    if (const auto by = f.text("username")) {
+    if (const auto by = f.optional_text("username")) {
       if (const auto creator = users_.find(fold(*by)); creator != users_.end()) {
         item.created_by = creator->second;
         compared["username"] = creator->second;
@@ -887,7 +896,7 @@ class Reader {
     const auto hole = f.required_integer("position");
     item.weight = f.number("weight");
     item.nxtals = f.integer("nxtals");
-    item.note = f.text("note");
+    item.note = f.optional_text("note");
     if (f.ok() && hole) {
       item.position = *hole;
       once(f, kLoadPosition, item.load + "\n" + std::to_string(*hole) + "\n" + item.identifier, compared, legacy_id);
