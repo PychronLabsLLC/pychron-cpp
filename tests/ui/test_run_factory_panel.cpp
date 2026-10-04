@@ -69,7 +69,7 @@ class TestRunFactoryPanel : public QObject {
     QCOMPARE(f.post_measurement, std::string("sim_pump"));
     QCOMPARE(f.value, 5.0);
     QCOMPARE(panel_->plan_choices(), QStringList{QStringLiteral("sim_multicollect")});
-    QCOMPARE(panel_->script_choices(), QStringList{QStringLiteral("sim_extract")});
+    QCOMPARE(panel_->script_choices(), (QStringList{QStringLiteral("laser_extract"), QStringLiteral("sim_extract")}));
     QCOMPARE(panel_->block_choices(), QStringList{QStringLiteral("blank_pair")});
     // No identifier yet: nothing to add.
     QVERIFY(!panel_->add_enabled());
