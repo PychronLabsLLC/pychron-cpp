@@ -814,10 +814,13 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
       position.level = *names.irradiation_level;
       position.position = *names.irradiation_position;
       position.identifier = analysis.identifier;
-      if (names.sample && names.project && names.material) {
+      if (names.sample && names.project) {
         position.sample = names.sample;
         position.project = names.project;
-        position.material = names.material;
+        // A record without a material: the sample goes under the placeholder,
+        // as the catalog dump's does (spec section 10.41).
+        position.material = names.material.value_or(ingest::kPlaceholderMaterial);
+        if (!names.material) detail["placeholder_material"] = ingest::kPlaceholderMaterial;
       }
       catalog.push_back(std::move(position));
       detail["irradiation"] = *names.irradiation;

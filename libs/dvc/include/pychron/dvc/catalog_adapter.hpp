@@ -30,9 +30,9 @@
 //
 // One row is one unit, and yields its item or one conflict. A row the store
 // cannot hold is refused: an `identity_clash` conflict, and the import goes
-// on. Refused are a row whose required parent (a sample's project and
-// material, a level's irradiation, a position's level, a load position's load
-// and identifier) is missing or was itself refused, a row without a required
+// on. Refused are a row whose required parent (a sample's project, a level's
+// irradiation, a position's level, a load position's load and identifier) is
+// missing or was itself refused, a row without a required
 // value, one with a value that cannot be read, an identifier already placed
 // elsewhere, and a row with the natural key of an earlier row and other
 // values (the earlier row is kept). The conflict's path is
@@ -45,6 +45,18 @@
 // path "<file>#<legacy id>@<column>" whose detail also holds the column, its
 // value and "imported": true. So one sample that cannot be stored does not
 // take its positions, their identifiers and their loads with it.
+//
+// A sample's material is such a link in the legacy database and required in
+// the store: a sample that names no material, or none that can be used, is
+// sent under the material ingest::kPlaceholderMaterial (grainsize ""), with
+// the same kind of conflict at "<file>#<legacy id>@materialID" (spec 10.41).
+//
+// A text column that holds an optional link or free text and reads
+// "---------" (legacy NULL_STR) or only white space has no value; a name
+// that is a natural key is kept as written (spec 10.40).
+//
+// Each batch also lists, as `superseded`, the conflicts its rows could have
+// and do not: a store imported under an older rule may hold them.
 //
 // A row that repeats an earlier one exactly is not a conflict. Rows that name
 // a refused duplicate resolve to the row that was kept.

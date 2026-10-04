@@ -1824,6 +1824,36 @@ TEST_P(ProjectImportTest, CatalogFromReposSynthesizes) {
   EXPECT_TRUE(pending->empty());
 }
 
+// A record with a sample and a project but no material: the sample is made
+// under the placeholder material, as the catalog dump's is (spec 10.41).
+TEST_P(ProjectImportTest, CatalogFromReposPutsASampleWithoutAMaterialUnderThePlaceholder) {
+  auto record = json::parse(LegacyRepoBuilder::record_text(kRunE, kE.str()));
+  record["material"] = "---------";
+  legacy_.write_record_files(kRunE, kE.str());
+  repo_.write(LegacyRepoBuilder::path(kRunE, FileKind::Record), record.dump(4));
+  for (const FileKind kind : {FileKind::Intercepts, FileKind::Baselines, FileKind::Blanks, FileKind::IcFactors})
+    legacy_.write(kRunE, kind, LegacyRepoBuilder::fixture_text(kind));
+  legacy_.commit("<IMPORT> initial", kCollected);
+
+  auto bare = fresh_world(false);
+  auto config = adapter_config(repo_);
+  config.catalog_from_repos = true;
+  auto stats = run_import(*bare, config);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->analyses, 1);
+  auto row = bare->store->load_analysis_detail(kE);
+  ASSERT_TRUE(row && row->has_value());
+  EXPECT_EQ((*row)->row.sample, "SB15-03");
+  EXPECT_EQ((*row)->row.project, "IR1010");
+  EXPECT_EQ((*row)->row.material, "unknown");
+  EXPECT_EQ(bare->count("material"), 1);
+  const auto conflicts = bare->conflicts();
+  ASSERT_EQ(conflicts.size(), 1u);  // the synthesized identifier; it says what was made up
+  const json detail = json::parse(conflicts[0].detail_json);
+  EXPECT_EQ(detail.at("synthesized"), true);
+  EXPECT_EQ(detail.at("placeholder_material"), "unknown");
+}
+
 TEST_P(ProjectImportTest, InterpretedAgeBecomesARevision) {
   legacy_.collect(kRunE, kE.str(), kCollected);
   const std::string saved = legacy_.add_interpreted_age(kRefit);

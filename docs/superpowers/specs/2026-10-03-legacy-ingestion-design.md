@@ -723,3 +723,28 @@ points. Where this section and an earlier one disagree, this section wins.
     device, load: the row is kept under the name the dump gives). No other
     spelling is treated so: the fixtures hold no `"None"`, `"none"` or
     `"null"` string in such a field.
+41. **Samples without a material.** The legacy database allows a sample with
+    no material (`SampleTbl.materialID` NULL); the store requires one. Such a
+    sample, and one whose `materialID` names a row that is missing or was
+    refused, is imported under the placeholder material `unknown`
+    (grainsize empty; one named constant, `ingest::kPlaceholderMaterial`),
+    made through the usual ensure, with an `identity_clash` conflict at
+    `SampleTbl.jsonl#<id>@materialID` marked `imported: true` (a warning)
+    whose reason names the missing or dangling id. Its positions keep the
+    sample. The natural key of a sample is (name, project, material), so two
+    legacy samples of one name and project, one with a material and one
+    without, are two samples. A sample without a project is refused as
+    before; no placeholder project is made. With `--catalog-from-repos` a
+    record with a sample and a project but no material gives the same
+    sample, noted in the identifier's `synthesized` conflict
+    (`placeholder_material`). Revises item 23 for a sample's material.
+    A store imported under the old rule holds the refusals of those samples
+    and the warnings of the positions that lost them. So that a replay
+    clears them, the catalog adapter lists for every row, as `superseded`
+    (item 37), the conflict keys the row could have and does not have as the
+    dump is read now: `<file>#<id>` when the row is imported, and
+    `<file>#<id>@<column>` for a link it did not lose. The writer supersedes
+    a pending `identity_clash` at such a key when its stored detail carries
+    the `imported` marker, true or false; one that was decided, or carries
+    no marker, is left alone. Verify's dry run counts each as a row a replay
+    would change.

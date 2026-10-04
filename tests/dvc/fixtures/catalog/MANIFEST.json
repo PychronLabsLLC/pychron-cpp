@@ -139,12 +139,12 @@
     "UserTbl": "UserTbl.jsonl"
   },
   "non_utf8_values": 0,
-  "sha256": "1bee1d45ac60acff2e45d1bcc94dc8b36e4a8b0438ab57d698e841925b5258b4",
+  "sha256": "787c0632a2fa29ee0e4c8e8af2c05cd8246b93456e40160399beb1d2e63dc3a7",
   "tables": {
     "AnalysisChangeTbl": 5,
     "AnalysisTbl": 4,
     "ExtractDeviceTbl": 2,
-    "IrradiationPositionTbl": 7,
+    "IrradiationPositionTbl": 8,
     "IrradiationTbl": 2,
     "LevelTbl": 4,
     "LoadPositionTbl": 6,
@@ -154,7 +154,7 @@
     "PrincipalInvestigatorTbl": 3,
     "ProjectTbl": 4,
     "RepositoryTbl": 1,
-    "SampleTbl": 5,
+    "SampleTbl": 6,
     "UserTbl": 2
   },
   "time_zone": "+00:00"

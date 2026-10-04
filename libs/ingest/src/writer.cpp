@@ -6,9 +6,12 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "catalog.hpp"
 #include "late_revision.hpp"
 #include "membership.hpp"
+#include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "rewrites.hpp"
 
@@ -464,6 +467,23 @@ class BatchWriter::Impl final : public IImportState {
     return kind == P::ConflictKind::Unparseable || kind == P::ConflictKind::UnknownAnalysis;
   }
 
+  // The same for a stored conflict, which may also be a catalog row's: an
+  // identity_clash whose detail carries the `imported` marker, true or false
+  // (the row's refusal, or a link it lost). The catalog adapter lists such a
+  // key only when the row, as the dump is read now, has no such conflict
+  // (spec 10.41). An identity clash without the marker is never superseded.
+  Result<bool> supersedable(Uuid conflict, P::ConflictKind kind) {
+    if (supersedable(kind)) return true;
+    if (kind != P::ConflictKind::IdentityClash) return false;
+    auto stored = store_.import_conflict(conflict);
+    if (!stored) return fail(stored.error());
+    if (!*stored) return false;  // staged in this batch: one the source has now
+    const auto detail = nlohmann::json::parse((*stored)->detail_json, nullptr, false);
+    if (!detail.is_object()) return false;
+    const auto marker = detail.find(kMarkerImported);
+    return marker != detail.end() && marker->is_boolean();
+  }
+
   // Spec 10.37: the adapter says the file version at `key` was replaced by a
   // readable one, or deleted, later in the walk. Its pending conflict becomes
   // `superseded`. Called after the batch's own conflicts are staged, so the
@@ -474,7 +494,10 @@ class BatchWriter::Impl final : public IImportState {
     if (!known) return fail(known.error());
     const Uuid id = conflict_id(url_, key.commit, key.path);
     const auto it = (*known)->find(id);
-    if (it == (*known)->end() || it->second.resolution != kPending || !supersedable(it->second.kind)) return {};
+    if (it == (*known)->end() || it->second.resolution != kPending) return {};
+    auto can = supersedable(id, it->second.kind);
+    if (!can) return fail(can.error());
+    if (!*can) return {};
     it->second.resolution = kSuperseded;
     staged.resolutions.emplace_back(id, kSuperseded);
     uncount_pending(id, stats);
@@ -1037,7 +1060,10 @@ class BatchWriter::Impl final : public IImportState {
       if (!known) return fail(known.error());
       const auto stored = (*known)->find(conflict);
       if (stored != (*known)->end()) {
-        if (stored->second.resolution != kPending || !supersedable(stored->second.kind)) continue;
+        if (stored->second.resolution != kPending) continue;
+        auto can = supersedable(conflict, stored->second.kind);
+        if (!can) return fail(can.error());
+        if (!*can) continue;
         if (counted_superseded_.insert(conflict).second) ++stats.would_write;
       } else {
         // Not stored: one this run would write, and supersede with it.

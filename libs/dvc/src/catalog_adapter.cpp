@@ -52,22 +52,23 @@ enum TableIndex : std::size_t {
 
 struct TableInfo {
   const char* name;
-  const char* key;  // the primary key column
+  const char* key;   // the primary key column
+  const char* link;  // the column of the link a row is imported without when it is broken; nullptr: none
 };
 
 constexpr std::array<TableInfo, kTableCount> kTables{{
-    {"PrincipalInvestigatorTbl", "id"},
-    {"ProjectTbl", "id"},
-    {"MaterialTbl", "id"},
-    {"SampleTbl", "id"},
-    {"IrradiationTbl", "id"},
-    {"LevelTbl", "id"},
-    {"IrradiationPositionTbl", "id"},
-    {"UserTbl", "name"},
-    {"MassSpectrometerTbl", "name"},
-    {"ExtractDeviceTbl", "name"},
-    {"LoadTbl", "name"},
-    {"LoadPositionTbl", "id"},
+    {"PrincipalInvestigatorTbl", "id", nullptr},
+    {"ProjectTbl", "id", "principal_investigatorID"},
+    {"MaterialTbl", "id", nullptr},
+    {"SampleTbl", "id", "materialID"},
+    {"IrradiationTbl", "id", nullptr},
+    {"LevelTbl", "id", nullptr},
+    {"IrradiationPositionTbl", "id", "sampleID"},
+    {"UserTbl", "name", nullptr},
+    {"MassSpectrometerTbl", "name", nullptr},
+    {"ExtractDeviceTbl", "name", nullptr},
+    {"LoadTbl", "name", "username"},
+    {"LoadPositionTbl", "id", nullptr},
 }};
 
 // ---------------------------------------------------------------- text
@@ -325,11 +326,14 @@ class Fields {
   const std::vector<std::string>& problems() const { return problems_; }
 
   // A link the store can do without names no usable parent: the row is
-  // imported without it, and the link is reported.
+  // imported without it, and the link is reported. `outcome`: what became of
+  // the row, as the conflict's reason ends.
   struct BrokenLink {
-    std::string column, why;
+    std::string column, why, outcome;
   };
-  void unlink(std::string_view column, std::string why) { links_.push_back({std::string(column), std::move(why)}); }
+  void unlink(std::string_view column, std::string why, std::string outcome = "imported without it") {
+    links_.push_back({std::string(column), std::move(why), std::move(outcome)});
+  }
   const std::vector<BrokenLink>& broken_links() const { return links_; }
 
   std::optional<std::string> text(std::string_view column) {
@@ -421,6 +425,9 @@ class Fields {
 struct Unit {
   std::optional<ingest::CatalogItem> item;
   std::vector<ingest::ConflictItem> conflicts;
+  // The conflicts a row of this table can have and this one has not: a store
+  // imported under an older rule may hold them (ImportBatch::superseded).
+  std::vector<ingest::SourceKey> answered;
   std::string path;  // "<file>#<legacy id>": the row's name in this source
   std::string blob;  // SHA-256 of its line, as text
 };
@@ -546,8 +553,12 @@ class Reader {
       Unit unit;
       unit.path = source.file + "#" + legacy_id;
       unit.blob = to_hex(digest);
+      const auto answered = [&](const std::string& path) {
+        unit.answered.push_back({manifest_.sha256, path, to_hex(digest)});
+      };
       if (problems.empty()) {
         unit.item = std::move(item);
+        answered(unit.path);
         // The row is stored; each link it lost is a conflict of its own, named
         // by the column, so it is never taken for a refusal of the row.
         for (const auto& link : links) {
@@ -555,10 +566,14 @@ class Reader {
           about[ingest::kMarkerImported] = true;
           about["column"] = link.column;
           about["value"] = detail["row"].value(link.column, Json());
-          about["reason"] = link.why + "; imported without it";
+          about["reason"] = link.why + "; " + link.outcome;
           unit.conflicts.push_back(conflict(source.file + "#" + legacy_id + "@" + link.column, std::move(about)));
         }
+        if (const char* column = kTables[index].link;
+            column && std::none_of(links.begin(), links.end(), [&](const auto& l) { return l.column == column; }))
+          answered(unit.path + "@" + column);
       } else {
+        if (const char* column = kTables[index].link) answered(unit.path + "@" + column);
         std::string reason;
         for (const auto& problem : problems) reason += (reason.empty() ? "" : "; ") + problem;
         for (const auto& link : links) reason += "; " + link.why;
@@ -722,7 +737,22 @@ class Reader {
     const auto id = f.integer("id");
     auto& s = item.fields;
     s.name = f.required("name");
-    const MaterialKey* of = parent(f, "materialID", kMaterial, materials_, Link::Required);
+    // Legacy allows a sample without a material and the store does not: one
+    // that names none, or none that can be used, is imported under the
+    // placeholder material and reported (spec section 10.41).
+    const MaterialKey placeholder{ingest::kPlaceholderMaterial, ""};
+    const std::string under = std::string("imported under material '") + ingest::kPlaceholderMaterial + "'";
+    const MaterialKey* of = &placeholder;
+    const std::size_t problems = f.problems().size();
+    if (const auto material_id = f.integer("materialID")) {
+      if (const auto it = materials_.find(*material_id); it != materials_.end())
+        of = &it->second;
+      else
+        f.unlink("materialID",
+                 missing("materialID " + std::to_string(*material_id), kMaterial, std::to_string(*material_id)), under);
+    } else if (f.problems().size() == problems) {  // not one that cannot be read, which refuses the row
+      f.unlink("materialID", "materialID is missing", under);
+    }
     const ProjectKey* in = parent(f, "projectID", kProject, projects_, Link::Required);
     s.note = f.optional_text("note");
     s.igsn = f.optional_text("igsn");
@@ -739,7 +769,7 @@ class Reader {
     s.approximate_age = f.number("approximate_age");
     s.created = time(f, "create_date", "datetime");
     s.updated = time(f, "update_date", "datetime");
-    if (f.ok() && id && of && in) {
+    if (f.ok() && id && in) {
       item.project = in->name;
       item.material = of->name;
       item.grainsize = of->grainsize;
@@ -1038,6 +1068,7 @@ Result<std::optional<ingest::ImportBatch>> CatalogAdapter::next_batch() {
     for (std::size_t i = d.next; i < end; ++i) {
       if (d.units[i].item) batch.catalog.push_back(*d.units[i].item);
       for (const auto& conflict : d.units[i].conflicts) batch.conflicts.push_back(conflict);
+      for (const auto& key : d.units[i].answered) batch.superseded.push_back(key);
     }
     d.next = end;
     batch.resume_token = d.token(end);

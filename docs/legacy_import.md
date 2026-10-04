@@ -52,6 +52,16 @@ string in its legacy JSON. It is taken as written for an analysis's
 identifier, uuid and mass spectrometer, and for the names that are a catalog
 row's key (a material called `---------` stays a material).
 
+The legacy database allows a sample without a material; the store does not.
+A `SampleTbl` row whose `materialID` is empty, or names a material that is
+not in the dump or was refused, is imported under a placeholder material
+named `unknown` (no grainsize), and its irradiation positions keep the
+sample. Each such sample gets an `identity_clash` warning (`imported`) at
+`SampleTbl.jsonl#<id>@materialID` that says why. A sample of the same name
+and project that has a real material is another sample. A sample without a
+project is still refused. `--catalog-from-repos` does the same for a record
+that names a sample and a project but no material.
+
 ## 2. The recommended order
 
 1. **Catalog** (`legacy_db`), if you have a dump. It gives the importer the
@@ -190,13 +200,17 @@ fails on blocking ones only.
 No command resolves a blocking conflict by decree: there is no "ignore". A
 blocking conflict goes away (becomes `superseded`) when what it complains
 about is mended in the source and imported, and until then `verify` is not ok
-for that source. What mends each kind is in the table.
+for that source. What mends each kind is in the table. A catalog dump is
+never mended, but the importer's rules can change: `run --replay` of a dump
+supersedes the pending conflicts of its rows that the dump, as it is read
+now, no longer has (the refusal of a row that is now imported, a link a row
+now keeps).
 
 | Kind | Meaning |
 |---|---|
 | `unparseable` | A file could not be read (the reason is in the detail: invalid JSON, a chronology line that cannot be read, content the reader did not expect), a path is not a file of a legacy repository, or a spectrometer file appeared after the analysis it belongs to. Blocking. A file that could not be read is superseded by the next run that imports a later commit with a readable version of that file, or one that deletes it; an unreadable version that follows a readable one is not. So the conflict stays, and `verify` stays not ok, for as long as the file is unreadable at the head of the branch: mend it in the source repository and run again. The other two reasons are never superseded: an unknown path and a late spectrometer file stay as they are. |
 | `unknown_analysis` | A file was refused because its analysis is not in the store. Blocking. The detail says which case it is: (1) the catalog has no such identifier, or names no such spectrometer or extraction device: fix the catalog and `run --replay`; (2) the analysis was refused for another reason (its run id is taken: see its `identity_clash`): mend that, then `run --replay`; (3) the record of the analysis cannot be read: superseded, without a replay, by the run that imports a commit with a readable record (the analysis then starts at that commit); (4) the repository has files for an analysis but never its record: superseded by the run that imports the record, if one is ever committed; (5) a membership or a revision of an analysis another source has not imported yet: import that source, then `run --replay`. |
-| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link (`imported`), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). The last is blocking instead when the stored revision it is behind comes from a commit the repository no longer has (`"cause": "stored_commit_unknown"`): the history was rewritten after it was imported. |
+| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link, or a sample under the placeholder material `unknown` (`imported`), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). The last is blocking instead when the stored revision it is behind comes from a commit the repository no longer has (`"cause": "stored_commit_unknown"`): the history was rewritten after it was imported. |
 | `value_mismatch` | The age verify recomputed does not match the legacy age (the detail has both values and what was used). Blocking. |
 | `hand_edit` | Reserved: a published repository changed by hand. Not written yet. |
 | `provisional_renumber` | Reserved; the importer does not write it. |

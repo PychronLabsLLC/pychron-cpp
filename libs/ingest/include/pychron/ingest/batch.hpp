@@ -67,6 +67,11 @@ struct MaterialItem {
   std::string name, grainsize;
 };
 
+// The material of a sample whose source names none (grainsize ""): legacy
+// allows a sample without a material, the store does not (spec 10.41). Every
+// producer of such a sample uses this name, so they agree on the row.
+inline constexpr char kPlaceholderMaterial[] = "unknown";
+
 struct SampleItem {
   // name, the descriptive columns and the two times; project, material and uuid are ignored
   persistence::SampleSpec fields;
@@ -296,6 +301,10 @@ struct ImportBatch {
   // result is the same whether the bad version and the good one come in one
   // batch or in two. A key with no such conflict is passed over, and a
   // conflict already superseded stays so when a replay sends it again.
+  // The catalog adapter lists here, for every row, the conflicts the row
+  // does not have as the dump is read now (its refusal when it is imported,
+  // a link it did not lose): the writer supersedes a pending `identity_clash`
+  // at such a key when its detail carries the `imported` marker (spec 10.41).
   std::vector<SourceKey> superseded = {};
   std::vector<BookmarkItem> bookmarks;
   std::string resume_token;  // valid once this batch is committed

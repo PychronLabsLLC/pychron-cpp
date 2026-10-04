@@ -43,7 +43,7 @@ namespace {
 const std::filesystem::path kFixture = std::filesystem::path(PYCHRON_DVC_FIXTURES_DIR) / "catalog";
 const char* const kZone = "America/Denver";
 // Rows of the fixture's catalog tables: one unit each.
-constexpr int kRows = 44;
+constexpr int kRows = 46;
 
 std::string err(const Error& e) { return to_string(e); }
 
@@ -348,13 +348,14 @@ TEST_P(CatalogDb, ImportsInForeignKeyOrder) {
   ASSERT_TRUE(stats) << err(stats.error());
   EXPECT_TRUE(stats->finished);
   EXPECT_EQ(stats->batches, 1);
-  EXPECT_EQ(stats->conflicts, 10);
+  EXPECT_EQ(stats->conflicts, 11);
 
+  // The third material is the placeholder of the sample that has none.
   const std::map<std::string, long long> want{
-      {"principal_investigator", 3}, {"project", 4},  {"material", 2},          {"sample", 3},
-      {"irradiation", 2},            {"level", 3},    {"irradiation_position", 5}, {"identifier", 4},
+      {"principal_investigator", 3}, {"project", 4},  {"material", 3},          {"sample", 4},
+      {"irradiation", 2},            {"level", 3},    {"irradiation_position", 6}, {"identifier", 5},
       {"app_user", 2},               {"mass_spectrometer", 2}, {"extract_device", 2}, {"load", 4},
-      {"load_position", 4},          {"ref_object", 2}, {"import_conflict", 10}};
+      {"load_position", 4},          {"ref_object", 2}, {"import_conflict", 11}};
   for (const auto& [table, n] : want) EXPECT_EQ(world_->count(table.c_str()), n) << table;
 
   // A sample is linked to its project (and that to its investigator) and its material.
@@ -524,6 +525,7 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
        "principal_investigatorID 99 is not in PrincipalInvestigatorTbl; imported without it"},
       {"SampleTbl.jsonl#3", "projectID 42 is not in ProjectTbl"},
       {"SampleTbl.jsonl#5", "has the natural key of SampleTbl 1 and other values; that row is kept"},
+      {"SampleTbl.jsonl#6@materialID", "materialID is missing; imported under material 'unknown'"},
       {"LevelTbl.jsonl#4", "irradiationID 7 is not in IrradiationTbl"},
       {"IrradiationPositionTbl.jsonl#5@sampleID",
        "sampleID 3 names a SampleTbl row that was not imported; imported without it"},
@@ -562,8 +564,15 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
   ASSERT_NE(lost, conflicts.end());
   EXPECT_EQ(json::parse(lost->detail_json).at("row").at("name"), "Lost");
   // Nothing of a refused row is stored, nor made up for it.
-  EXPECT_EQ(world_->count("sample"), 3);
+  EXPECT_EQ(world_->count("sample"), 4);
   EXPECT_EQ(world_->text("SELECT note AS v FROM sample WHERE name = 'HH-1'"), "collected at the base, north side");
+  // A sample without a material is stored under the placeholder, and its position keeps it.
+  EXPECT_EQ(world_->text("SELECT m.name AS v FROM sample s JOIN material m ON m.uuid = s.material_uuid "
+                         "WHERE s.name = 'NoMat'"),
+            "unknown");
+  EXPECT_EQ(world_->text("SELECT s.name AS v FROM identifier d JOIN irradiation_position p ON p.uuid = "
+                         "d.position_uuid JOIN sample s ON s.uuid = p.sample_uuid WHERE d.identifier = '66602'"),
+            "NoMat");
   EXPECT_EQ(world_->one("SELECT count(*) AS n FROM sample WHERE name = 'Lost'").value("n").toInt(), 0);
   EXPECT_EQ(world_->one("SELECT count(*) AS n FROM identifier WHERE identifier IN ('66700', '99999')")
                 .value("n")
@@ -598,13 +607,13 @@ TEST_P(CatalogDb, BrokenOptionalLinkIsImportedWithoutIt) {
   EXPECT_EQ(pd::to_time(r.value("created_utc")).iso(), "2018-05-01T18:00:00.000000Z");
 }
 
-// One sample that cannot be stored (no material) does not take its positions,
+// One sample that cannot be stored (no project) does not take its positions,
 // their identifiers and the loads they sit in with it.
 TEST_P(CatalogDb, RefusedSampleKeepsItsPositionsAndLoads) {
   DumpDir dir;
   dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
       .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
-      .table("SampleTbl", {R"({"id":1,"name":"S","materialID":null,"projectID":1})"})
+      .table("SampleTbl", {R"({"id":1,"name":"S","materialID":1,"projectID":null})"})
       .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
       .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
       .table("IrradiationPositionTbl",
@@ -627,7 +636,7 @@ TEST_P(CatalogDb, RefusedSampleKeepsItsPositionsAndLoads) {
   for (const auto& conflict : world_->conflicts())
     reasons[conflict.path] = json::parse(conflict.detail_json).at("reason").get<std::string>();
   EXPECT_EQ(reasons, (std::map<std::string, std::string>{
-                         {"SampleTbl.jsonl#1", "materialID is missing"},
+                         {"SampleTbl.jsonl#1", "projectID is missing"},
                          {"IrradiationPositionTbl.jsonl#1@sampleID",
                           "sampleID 1 names a SampleTbl row that was not imported; imported without it"},
                          {"IrradiationPositionTbl.jsonl#2@sampleID",
@@ -656,6 +665,186 @@ TEST_P(CatalogDb, RefusedSampleKeepsItsPositionsAndLoads) {
   replay.replay = true;
   ASSERT_TRUE(run_import(*world_, adapter_config(dir.path()), std::nullopt, replay));
   EXPECT_EQ(world_->count("import_conflict"), 3);
+}
+
+// Legacy allows a sample without a material; the store does not. Such a
+// sample is imported under the placeholder material and reported, and so is
+// one whose material is not in the dump (spec section 10.41).
+TEST_P(CatalogDb, SampleWithoutMaterialIsImportedUnderThePlaceholder) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
+      .table("SampleTbl",
+             {
+                 R"({"id":1,"name":"S","materialID":null,"projectID":1,"note":"a note"})",
+                 R"({"id":2,"name":"T","materialID":77,"projectID":1})",
+                 R"({"id":3,"name":"S","materialID":1,"projectID":1})",
+                 R"({"id":4,"name":"U","materialID":null,"projectID":null})",
+             })
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","sampleID":1,"levelID":1,"position":1})",
+                 R"({"id":2,"identifier":"101","sampleID":2,"levelID":1,"position":2})",
+             })
+      .done();
+  auto stats = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->conflicts, 3);
+
+  std::map<std::string, json> details;
+  for (const auto& conflict : world_->conflicts()) {
+    EXPECT_EQ(conflict.kind, ConflictKind::IdentityClash) << conflict.path;
+    details[conflict.path] = json::parse(conflict.detail_json);
+  }
+  ASSERT_EQ(details.size(), 3u);
+  // One warning for each sample; a sample without a project is still refused.
+  const json& none = details.at("SampleTbl.jsonl#1@materialID");
+  EXPECT_EQ(none.at("imported"), true);
+  EXPECT_EQ(none.at("table"), "SampleTbl");
+  EXPECT_EQ(none.at("legacy_id"), "1");
+  EXPECT_EQ(none.at("column"), "materialID");
+  EXPECT_EQ(none.at("reason"), "materialID is missing; imported under material 'unknown'");
+  const json& dangling = details.at("SampleTbl.jsonl#2@materialID");
+  EXPECT_EQ(dangling.at("imported"), true);
+  EXPECT_EQ(dangling.at("legacy_id"), "2");
+  EXPECT_EQ(dangling.at("value"), 77);
+  EXPECT_EQ(dangling.at("reason"), "materialID 77 is not in MaterialTbl; imported under material 'unknown'");
+  const json& refused = details.at("SampleTbl.jsonl#4");
+  EXPECT_EQ(refused.at("imported"), false);
+  EXPECT_EQ(refused.at("reason"), "projectID is missing; materialID is missing");
+
+  // The placeholder is one material, made the way any material is.
+  EXPECT_EQ(world_->count("material"), 2);
+  EXPECT_EQ(world_->text("SELECT grainsize AS v FROM material WHERE name = 'unknown'"), "");
+  EXPECT_EQ(world_->text("SELECT uuid AS v FROM material WHERE name = 'unknown'"),
+            ingest::catalog_id("material", std::string("unknown") + "\n").str());
+  // The sample of that name with a material is another sample.
+  EXPECT_EQ(world_->count("sample"), 3);
+  auto r = world_->one("SELECT s.note AS note, p.name AS project FROM sample s JOIN material m ON m.uuid = "
+                       "s.material_uuid JOIN project p ON p.uuid = s.project_uuid "
+                       "WHERE s.name = 'S' AND m.name = 'unknown'");
+  EXPECT_EQ(pd::to_std(r.value("note")), "a note");
+  EXPECT_EQ(pd::to_std(r.value("project")), "P");
+  EXPECT_EQ(world_->text("SELECT m.name AS v FROM sample s JOIN material m ON m.uuid = s.material_uuid "
+                         "WHERE s.name = 'T'"),
+            "unknown");
+  // The positions keep their samples.
+  for (const auto& [identifier, sample] : std::map<std::string, std::string>{{"100", "S"}, {"101", "T"}}) {
+    r = world_->one("SELECT s.name AS sample, m.name AS material FROM identifier d "
+                    "JOIN irradiation_position p ON p.uuid = d.position_uuid JOIN sample s ON s.uuid = p.sample_uuid "
+                    "JOIN material m ON m.uuid = s.material_uuid WHERE d.identifier = '" +
+                    identifier + "'");
+    EXPECT_EQ(pd::to_std(r.value("sample")), sample) << identifier;
+    EXPECT_EQ(pd::to_std(r.value("material")), "unknown") << identifier;
+  }
+
+  // Verify counts the two under warnings and the refusal as blocking.
+  {
+    auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    const auto report = dvc::testing::verify_source(*world_, **adapter);
+    EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{});
+    EXPECT_EQ(report.pending_warnings, 2);
+    EXPECT_EQ(report.pending_blocking, 1);
+    EXPECT_EQ(report.replay_would_write, 0);
+  }
+
+  // A replay writes nothing.
+  const auto before = snapshot_of(*world_);
+  const auto seq = *world_->store->latest_change_seq();
+  auto replay = writer_config();
+  replay.replay = true;
+  auto replayed = run_import(*world_, adapter_config(dir.path()), std::nullopt, replay);
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 3);
+  const auto after = snapshot_of(*world_);
+  EXPECT_TRUE(after == before) << first_difference(after, before);
+  EXPECT_EQ(*world_->store->latest_change_seq(), seq);
+  EXPECT_EQ(world_->count("import_conflict"), 3);
+}
+
+// A store imported before a rule changed holds conflicts the dump, as it is
+// read now, no longer has: the refusal of a row that is now imported, the
+// link a row lost and now keeps. A replay supersedes them; it leaves alone
+// what someone decided and what is not a catalog row's conflict.
+TEST_P(CatalogDb, ReplaySupersedesConflictsTheDumpNoLongerHas) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("SampleTbl", {R"({"id":1,"name":"S","materialID":null,"projectID":1})"})
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","sampleID":1,"levelID":1,"position":1})",
+                 R"({"id":2,"identifier":"100","sampleID":null,"levelID":1,"position":2})",
+             })
+      .done();
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path())));
+  const auto source = world_->source();
+  const std::string sha(64, 'a');
+  const auto id = [&](const std::string& path) { return ingest::conflict_id(source.spec.url_or_path, sha, path); };
+  const auto resolution = [&](const std::string& path) {
+    auto row = world_->store->import_conflict(id(path));
+    return row && *row ? (*row)->resolution : std::string("absent");
+  };
+  ASSERT_EQ(resolution("SampleTbl.jsonl#1@materialID"), "pending");
+  ASSERT_EQ(resolution("IrradiationPositionTbl.jsonl#2"), "pending");
+
+  // What the importer wrote before samples without a material were imported.
+  const auto digest = sha256(std::string_view{"row"});
+  const auto old_row = [&](const std::string& path, const std::string& detail) {
+    return P::ImportConflictRow{id(path), path, std::nullopt, ConflictKind::IdentityClash, std::nullopt, digest, detail,
+                                "pending"};
+  };
+  {
+    auto uow = world_->store->begin_import_batch(source.spec.uuid, world_->client);
+    ASSERT_TRUE(uow);
+    ASSERT_TRUE((*uow)->add_conflict(
+        old_row("SampleTbl.jsonl#1", R"({"table":"SampleTbl","imported":false,"reason":"materialID is missing"})")));
+    ASSERT_TRUE((*uow)->add_conflict(old_row(
+        "IrradiationPositionTbl.jsonl#1@sampleID",
+        R"({"table":"IrradiationPositionTbl","imported":true,"column":"sampleID","reason":"imported without it"})")));
+    // Decided by someone: left as it is.
+    ASSERT_TRUE((*uow)->add_conflict(old_row("ProjectTbl.jsonl#1", R"({"table":"ProjectTbl","imported":false})")));
+    ASSERT_TRUE((*uow)->resolve_conflict(id("ProjectTbl.jsonl#1"), "accepted"));
+    ASSERT_TRUE((*uow)->commit());
+  }
+  {
+    auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    const auto report = dvc::testing::verify_source(*world_, **adapter);
+    EXPECT_EQ(report.pending_blocking, 2);
+    EXPECT_EQ(report.pending_warnings, 2);
+    EXPECT_EQ(report.replay_would_write, 2);  // the two a replay would supersede
+  }
+
+  auto replay = writer_config();
+  replay.replay = true;
+  auto replayed = run_import(*world_, adapter_config(dir.path()), std::nullopt, replay);
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 2);  // what the run leaves pending
+  EXPECT_EQ(resolution("SampleTbl.jsonl#1"), "superseded");
+  EXPECT_EQ(resolution("IrradiationPositionTbl.jsonl#1@sampleID"), "superseded");
+  EXPECT_EQ(resolution("ProjectTbl.jsonl#1"), "accepted");
+  // What the dump still has stays pending.
+  EXPECT_EQ(resolution("SampleTbl.jsonl#1@materialID"), "pending");
+  EXPECT_EQ(resolution("IrradiationPositionTbl.jsonl#2"), "pending");
+
+  auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  const auto report = dvc::testing::verify_source(*world_, **adapter);
+  EXPECT_EQ(report.pending_blocking, 1);
+  EXPECT_EQ(report.pending_warnings, 1);
+  EXPECT_EQ(report.replay_would_write, 0);
+
+  // Again: nothing changes.
+  const auto seq = *world_->store->latest_change_seq();
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path()), std::nullopt, replay));
+  EXPECT_EQ(resolution("SampleTbl.jsonl#1"), "superseded");
+  EXPECT_EQ(*world_->store->latest_change_seq(), seq);
 }
 
 TEST_P(CatalogDb, ResumeFromToken) {
@@ -713,7 +902,7 @@ TEST_P(CatalogDb, SecondRunIsNoOp) {
 TEST_P(CatalogDb, OneHistoryOneResult) {
   import_fixture();
   const auto want = snapshot_of(*world_);
-  ASSERT_EQ(want.size(), 53u);  // every stored row and the source
+  ASSERT_EQ(want.size(), 58u);  // every stored row and the source
 
   for (const int batch_rows : {1, 2, 2000}) {
     {
@@ -721,7 +910,7 @@ TEST_P(CatalogDb, OneHistoryOneResult) {
       auto stats = run_import(*w, adapter_config(kFixture, batch_rows));
       ASSERT_TRUE(stats) << batch_rows << ": " << err(stats.error());
       EXPECT_TRUE(stats->finished);
-      EXPECT_EQ(stats->conflicts, 10) << batch_rows;
+      EXPECT_EQ(stats->conflicts, 11) << batch_rows;
       const auto got = snapshot_of(*w);
       EXPECT_TRUE(got == want) << "batch_rows " << batch_rows << ": " << first_difference(got, want);
     }
@@ -760,9 +949,10 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
     EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{}) << batch_rows;
     EXPECT_EQ(report.would_write, 0);
     EXPECT_EQ(report.replay_would_write, 0);
-    // Seven rows were refused; three were imported without a link.
+    // Seven rows were refused; three were imported without a link and one
+    // under the placeholder material.
     EXPECT_EQ(report.pending_blocking, 7) << batch_rows;
-    EXPECT_EQ(report.pending_warnings, 3) << batch_rows;
+    EXPECT_EQ(report.pending_warnings, 4) << batch_rows;
     EXPECT_FALSE(report.ok());
     EXPECT_EQ(report.parity_pass + report.parity_fail + report.parity_not_comparable, 0);
   }
@@ -784,7 +974,7 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
   const auto report = dvc::testing::verify_source(*world_, **adapter);
   EXPECT_TRUE(report.ok());
   EXPECT_EQ(report.pending_blocking, 0);
-  EXPECT_EQ(report.pending_warnings, 3);
+  EXPECT_EQ(report.pending_warnings, 4);
 }
 
 // Catalog rows are found by natural key, whoever made them, and a dry run does
@@ -895,7 +1085,7 @@ TEST(CatalogDbAdapter, SendsParentsBeforeChildren) {
   EXPECT_EQ(order, (std::vector<std::string>{"pi", "project", "material", "sample", "irradiation", "level", "position",
                                               "user", "mass_spectrometer", "extract_device", "load", "load_position"}));
   EXPECT_EQ(rows_of(batches[0]), static_cast<std::size_t>(kRows));
-  EXPECT_EQ(batches[0].conflicts.size(), 10u);
+  EXPECT_EQ(batches[0].conflicts.size(), 11u);
   EXPECT_EQ(batches[0].done, kRows);
   EXPECT_EQ(batches[0].total, kRows);
   EXPECT_EQ(batches[0].head, fixture_sha());
@@ -1066,12 +1256,17 @@ TEST(CatalogDbAdapter, RowThatCannotBeReadIsConflictAndTheRestGoesOn) {
       .done();
   const auto batch = only_batch(dir);
   const auto samples = items_of<ingest::SampleItem>(batch);
-  ASSERT_EQ(samples.size(), 2u);
+  ASSERT_EQ(samples.size(), 3u);
   EXPECT_EQ(samples[0].fields.name, "good");
-  EXPECT_EQ(samples[1].fields.name, "numbers as text");
-  EXPECT_EQ(samples[1].fields.lat, std::optional<double>{34.5});
-  EXPECT_EQ(samples[1].fields.lon, std::nullopt);
-  EXPECT_EQ(samples[1].project, "P");
+  EXPECT_EQ(samples[0].material, "M");
+  // No material: imported under the placeholder, and reported (below).
+  EXPECT_EQ(samples[1].fields.name, "no material");
+  EXPECT_EQ(samples[1].material, ingest::kPlaceholderMaterial);
+  EXPECT_EQ(samples[1].grainsize, "");
+  EXPECT_EQ(samples[2].fields.name, "numbers as text");
+  EXPECT_EQ(samples[2].fields.lat, std::optional<double>{34.5});
+  EXPECT_EQ(samples[2].fields.lon, std::nullopt);
+  EXPECT_EQ(samples[2].project, "P");
 
   std::map<std::string, json> details;
   for (const auto& conflict : batch.conflicts) {
@@ -1084,7 +1279,7 @@ TEST(CatalogDbAdapter, RowThatCannotBeReadIsConflictAndTheRestGoesOn) {
       {"SampleTbl.jsonl#line3", "the line is not a JSON object"},
       {"SampleTbl.jsonl#4", "name is missing"},
       {"SampleTbl.jsonl#5", "name is missing"},
-      {"SampleTbl.jsonl#6", "materialID is missing"},
+      {"SampleTbl.jsonl#6@materialID", "materialID is missing; imported under material 'unknown'"},
       {"SampleTbl.jsonl#7", "lat is not a number; lon is not a number"},
       {"SampleTbl.jsonl#8", "create_date 'last tuesday' is not a time"},
       {"SampleTbl.jsonl#9", "note holds a NUL character"},

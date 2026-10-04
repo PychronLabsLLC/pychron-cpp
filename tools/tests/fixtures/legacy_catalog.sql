@@ -89,12 +89,12 @@ CREATE TABLE `SampleTbl` (
   PRIMARY KEY (`id`),
   KEY `materialID` (`materialID`),
   KEY `projectID` (`projectID`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8;
 
 -- 3: refused, no such project. 5: refused, it is sample 1 again with another
--- note.
+-- note. 6: no material, imported under the placeholder material.
 LOCK TABLES `SampleTbl` WRITE;
-INSERT INTO `SampleTbl` VALUES (1,'HH-1',1,1,'collected at the base, north side','IGSN001',34.0722,-106.905,'shelf 3','ignimbrite','Tuff of Henry Hill','volcanic','pyroclastic','Mogollon','Socorro, NM',28.2,1890.5,'2016-03-01 09:30:00','2016-11-06 01:30:00'),(2,'FC-2',3,2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(3,'Lost',1,42,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Orphan-1',1,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'HH-1',1,1,'another note',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `SampleTbl` VALUES (1,'HH-1',1,1,'collected at the base, north side','IGSN001',34.0722,-106.905,'shelf 3','ignimbrite','Tuff of Henry Hill','volcanic','pyroclastic','Mogollon','Socorro, NM',28.2,1890.5,'2016-03-01 09:30:00','2016-11-06 01:30:00'),(2,'FC-2',3,2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(3,'Lost',1,42,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Orphan-1',1,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'HH-1',1,1,'another note',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(6,'NoMat',NULL,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `IrradiationTbl`;
@@ -142,12 +142,13 @@ CREATE TABLE `IrradiationPositionTbl` (
   UNIQUE KEY `identifier` (`identifier`),
   KEY `sampleID` (`sampleID`),
   KEY `levelID` (`levelID`)
-) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8;
 
 -- 3: an empty hole. 5: imported without its sample, which was refused.
 -- 6: refused, 66573 already sits at NM-300 A 1. 7: refused, no position.
+-- 8: holds the sample that has no material.
 LOCK TABLES `IrradiationPositionTbl` WRITE;
-INSERT INTO `IrradiationPositionTbl` VALUES (1,'66573',1,1,1,'chipped',12.5,0.00125,2.1e-06,'p1'),(2,'66574',2,1,2,NULL,NULL,NULL,NULL,NULL),(3,NULL,NULL,1,3,NULL,NULL,NULL,NULL,NULL),(4,'66600',1,2,1,NULL,NULL,NULL,NULL,NULL),(5,'66601',3,2,2,NULL,NULL,NULL,NULL,NULL),(6,'66573',1,3,1,NULL,NULL,NULL,NULL,NULL),(7,'66700',NULL,2,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `IrradiationPositionTbl` VALUES (1,'66573',1,1,1,'chipped',12.5,0.00125,2.1e-06,'p1'),(2,'66574',2,1,2,NULL,NULL,NULL,NULL,NULL),(3,NULL,NULL,1,3,NULL,NULL,NULL,NULL,NULL),(4,'66600',1,2,1,NULL,NULL,NULL,NULL,NULL),(5,'66601',3,2,2,NULL,NULL,NULL,NULL,NULL),(6,'66573',1,3,1,NULL,NULL,NULL,NULL,NULL),(7,'66700',NULL,2,NULL,NULL,NULL,NULL,NULL,NULL),(8,'66602',6,2,9,NULL,NULL,NULL,NULL,NULL);
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `UserTbl`;

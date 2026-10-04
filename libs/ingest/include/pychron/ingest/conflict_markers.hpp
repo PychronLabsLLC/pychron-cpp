@@ -11,7 +11,9 @@
 // Each marker has one producer:
 //
 //   kMarkerImported      the catalog adapter: a row imported without an
-//                        optional link that is broken in the dump
+//                        optional link that is broken in the dump, or a
+//                        sample imported under the placeholder material
+//                        (false on the refusal of a row: blocking)
 //   kMarkerSynthesized   the project adapter with catalog_from_repos: a
 //                        catalog row made from repository contents
 //   kMarkerLate          the writer: a revision not written behind a stored
