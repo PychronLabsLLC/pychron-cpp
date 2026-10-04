@@ -44,15 +44,57 @@ QIcon MainWindow::view_icon(View view) {
       p.drawRoundedRect(QRectF(10.5, 10, 7, 6), 1.5, 1.5);
       break;
     case View::Spectrometer: {
-      // a magnetic sector: source, the beam bent a quarter turn, collectors
-      p.drawRoundedRect(QRectF(1.5, 13, 4, 3.5), 1, 1);
-      QPainterPath beam(QPointF(3.5, 13));
-      beam.arcTo(QRectF(3.5, 3.5, 19, 19), 180, -90);
-      p.drawPath(beam);
-      p.drawLine(QPointF(13, 3.5), QPointF(16, 1.8));
-      p.drawLine(QPointF(13, 3.5), QPointF(16, 5.2));
-      p.setPen(QPen(Qt::black, 2.0, Qt::SolidLine, Qt::FlatCap));
-      p.drawLine(QPointF(16.5, 0.8), QPointF(16.5, 6.2));
+      // The canvas's spectrometer glyph, on its 66 x 62 grid, as a
+      // silhouette: source, the hollow flight tube turning a quarter circle
+      // through the magnet's pole piece, and the slitted collector block.
+      p.save();
+      p.scale(kPoints / 66.0, kPoints / 66.0);
+      p.translate(0, 2);
+      const QPointF centre(46, 48);
+      auto ring = [&](double r) { return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r); };
+      QPainterPath tube(QPointF(12, 56));
+      tube.lineTo(12, 48);
+      tube.arcTo(ring(34), 180, -90);
+      tube.lineTo(52, 14);
+      p.setPen(QPen(Qt::black, 11, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+      p.drawPath(tube);
+      p.setCompositionMode(QPainter::CompositionMode_Clear);  // hollow it out
+      p.setPen(QPen(Qt::black, 4, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+      p.drawPath(tube);
+      p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+      // The magnet and the collector in outline, so each part reads apart
+      // from the tube at menu size; the tube is hidden where it passes
+      // between the poles.
+      QPainterPath magnet;
+      magnet.arcMoveTo(ring(46), 162);
+      magnet.arcTo(ring(46), 162, -54);
+      magnet.arcTo(ring(22), 108, 54);
+      magnet.closeSubpath();
+      const QPen outline(Qt::black, 3.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+      p.setCompositionMode(QPainter::CompositionMode_Clear);
+      p.setPen(Qt::NoPen);
+      p.setBrush(Qt::black);
+      p.drawPath(magnet);
+      p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+      p.setBrush(Qt::NoBrush);
+      p.setPen(outline);
+      p.drawPath(magnet);
+
+      p.setPen(Qt::NoPen);
+      p.setBrush(Qt::black);
+      p.drawRoundedRect(QRectF(2, 50, 20, 12), 2, 2);  // source
+
+      const QRectF collector(51, 1.5, 13, 25);
+      p.setCompositionMode(QPainter::CompositionMode_Clear);
+      p.drawRect(collector);
+      p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+      p.setBrush(Qt::NoBrush);
+      p.setPen(outline);
+      p.drawRoundedRect(collector, 2, 2);
+      p.setPen(QPen(Qt::black, 3.2, Qt::SolidLine, Qt::FlatCap));
+      for (const double y : {10.0, 18.0}) p.drawLine(QPointF(collector.left() + 3.5, y), QPointF(collector.right() - 3.5, y));
+      p.restore();
       break;
     }
     case View::Experiment: {
