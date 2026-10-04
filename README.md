@@ -56,6 +56,9 @@ ctest --preset dev-ui
 Python for the scripting host and PostgreSQL for the persistence tests. CI
 builds on macOS, Linux (gcc and clang with sanitizers) and Windows.
 
+To install it on a lab computer, configure it and bring legacy pychron data
+across, follow [docs/installation_runbook.md](docs/installation_runbook.md).
+
 ## Try it in simulation
 
 Open the extraction-line window and the spectrometer strip chart
