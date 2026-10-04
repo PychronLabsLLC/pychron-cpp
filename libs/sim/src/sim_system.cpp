@@ -171,7 +171,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     auto laser = std::make_unique<extraction::ChromiumSim>(clock_);
     auto hook = laser->hook();
     std::lock_guard lock(mutex_);
-    lasers_.push_back(std::move(laser));
+    lasers_.insert_or_assign(driver.name, std::move(laser));
     return hook;
   }
 
@@ -244,6 +244,12 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
   }
 
   return [](const Bytes&) { return Bytes{}; };
+}
+
+extraction::ChromiumSim* SimSystem::chromium(std::string_view driver) const {
+  std::lock_guard lock(mutex_);
+  const auto it = lasers_.find(driver);
+  return it == lasers_.end() ? nullptr : it->second.get();
 }
 
 }  // namespace pychron::sim

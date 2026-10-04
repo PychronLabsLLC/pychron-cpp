@@ -1,0 +1,22 @@
+# Where the example-9 tray sits on the co2 laser's stage. Written by
+#   elctl laser calibrate co2 example-9 center --x 25 --y 25
+#   elctl laser calibrate co2 example-9 right --x 30 --y 25
+# Only the points are read back; the rest is for the reader.
+schema_version = 1
+device = "co2"
+tray = "example-9"
+tray_sha256 = "8b726ba3a146ea4a8b0c865daa2c345b0978d41449506e34fe81e3b692554ccb"
+center = [ 25.0, 25.0 ]
+rotation_deg = 0.0
+scale = 1.0
+rms_mm = 0.0
+
+[[points]]
+hole = "5"
+x = 25.0
+y = 25.0
+
+[[points]]
+hole = "6"
+x = 30.0
+y = 25.0

@@ -290,4 +290,133 @@ TEST_F(RunTest, ResourceHooksWrapPhasesAndCanCancel) {
   EXPECT_EQ(spec_.readings.load(), readings);
 }
 
+// --- the run's extraction device (laser system design, section 5) -----------
+
+class RunDeviceTest : public RunTest {
+ protected:
+  // No device set directly: the run asks for its own by name.
+  RunServices by_name() {
+    RunServices s = services();
+    s.line.device = nullptr;
+    s.devices = [this](std::string_view name) -> extraction::IExtractionDevice* {
+      asked_.emplace_back(name);
+      if (name == "co2") return &co2_;
+      if (name == "diode") return &diode_;
+      return nullptr;
+    };
+    return s;
+  }
+  void extract_on_the_bound_device() {
+    host_.bodies["extract"] = [this](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+      if (env.line.device == nullptr) return fail(ErrorKind::Config, "no extraction device");
+      trays_at_script_ = co2_.fake_stage.trays();
+      if (auto r = env.line.device->enable(); !r) return r;
+      return env.line.device->extract(5, extraction::ExtractUnits::Percent);
+    };
+  }
+
+  FakeDevice co2_{"co2", true};
+  FakeDevice diode_{"diode", true};
+  std::vector<std::string> asked_;
+  std::vector<std::string> trays_at_script_;
+};
+
+TEST_F(RunDeviceTest, BindsTheDeviceItsSpecNames) {
+  queue_.extract_device = "co2";
+  extract_on_the_bound_device();
+  auto spec = unknown_run("12345");
+  spec.extraction.device = "diode";
+  AutomatedRun run(std::move(spec), queue_, by_name());
+  const auto r = run.execute(control_);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  EXPECT_EQ(diode_.extracts.load(), 1);
+  EXPECT_EQ(co2_.extracts.load(), 0);
+  EXPECT_EQ(asked_, (std::vector<std::string>{"diode"}));  // resolved once
+}
+
+TEST_F(RunDeviceTest, TheQueuesDeviceIsTheDefault) {
+  queue_.extract_device = "co2";
+  extract_on_the_bound_device();
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_EQ(co2_.extracts.load(), 1);
+  EXPECT_EQ(diode_.extracts.load(), 0);
+}
+
+TEST_F(RunDeviceTest, SetsTheQueuesTrayBeforeTheScript) {
+  queue_.extract_device = "co2";
+  queue_.tray = "small";
+  extract_on_the_bound_device();
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_EQ(trays_at_script_, (std::vector<std::string>{"small"}));
+  EXPECT_TRUE(diode_.fake_stage.trays().empty());
+}
+
+TEST_F(RunDeviceTest, WithNoTrayTheStageIsLeftAlone) {
+  queue_.extract_device = "co2";
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_TRUE(co2_.fake_stage.trays().empty());
+}
+
+TEST_F(RunDeviceTest, EndsOnlyItsOwnDevice) {
+  queue_.extract_device = "co2";
+  extract_on_the_bound_device();
+  auto spec = unknown_run("12345");
+  spec.extraction.device = "diode";
+  AutomatedRun run(std::move(spec), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_GE(diode_.end_extracts.load(), 1);
+  EXPECT_GE(diode_.disables.load(), 1);
+  EXPECT_FALSE(diode_.enabled.load());
+  EXPECT_EQ(co2_.end_extracts.load(), 0);
+  EXPECT_EQ(co2_.disables.load(), 0);
+}
+
+TEST_F(RunDeviceTest, AnUnknownTrayFailsTheRunBeforeAnyScript) {
+  queue_.extract_device = "co2";
+  queue_.tray = "no-such-tray";
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  const auto r = run.execute(control_);
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("no-such-tray"), std::string::npos);
+  EXPECT_TRUE(host_.ran_scripts().empty());
+  EXPECT_EQ(co2_.extracts.load(), 0);
+}
+
+TEST_F(RunDeviceTest, ADeviceSetDirectlyWins) {
+  queue_.extract_device = "co2";
+  extract_on_the_bound_device();
+  RunServices s = by_name();
+  s.line.device = &device_;
+  AutomatedRun run(unknown_run("12345"), queue_, s);
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_EQ(co2_.extracts.load(), 0);
+  EXPECT_GE(device_.end_extracts.load(), 1);
+  EXPECT_TRUE(asked_.empty());
+}
+
+TEST_F(RunDeviceTest, AnUnknownNameLeavesTheRunWithoutADevice) {
+  queue_.extract_device = "furnace";
+  bool had_device = true;
+  host_.bodies["extract"] = [&](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    had_device = env.line.device != nullptr;
+    return {};
+  };
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_FALSE(had_device);
+}
+
+TEST_F(RunDeviceTest, NoResolverAndNoDeviceIsAsBefore) {
+  queue_.extract_device = "co2";
+  queue_.tray = "small";
+  RunServices s = services();
+  s.line.device = nullptr;
+  AutomatedRun run(unknown_run("12345"), queue_, s);
+  EXPECT_EQ(run.execute(control_).state, RunState::Success);
+}
+
 }  // namespace

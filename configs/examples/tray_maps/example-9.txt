@@ -1,0 +1,18 @@
+# A 3 x 3 example tray in legacy pychron's tray map format: holes 5 mm apart,
+# numbered left to right, top to bottom.
+#
+#   shape, hole dimension (mm)
+#   valid holes
+#   calibration holes: north, east, south, west, centre
+circle,2.0
+1,2,3,4,5,6,7,8,9
+2,6,8,4,5
+1,-5,5
+2,0,5
+3,5,5
+4,-5,0
+5,0,0
+6,5,0
+7,-5,-5
+8,0,-5
+9,5,-5

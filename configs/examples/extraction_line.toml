@@ -29,6 +29,12 @@ timeout_ms = 500
 kind = "sim"
 timeout_ms = 500
 
+# The laser PC. With kind = "sim" the Chromium driver talks to a simulated
+# Chromium; a real one is kind = "tcp" (see laser.chromium.toml.example).
+[transports.laser_pc]
+kind = "sim"
+timeout_ms = 2000
+
 [drivers.actuator1]
 kind = "proxr_relay"
 transport = "valve_bus"
@@ -37,6 +43,12 @@ transport = "valve_bus"
 kind = "pfeiffer_maxigauge"
 transport = "gauge_net"
 channels = [1, 2]
+
+# An extraction device: a queue's extract_device = "co2" means this driver.
+# Trays are in tray_maps/, their place on this stage in stage_calibrations/.
+[drivers.co2]
+kind = "chromium"
+transport = "laser_pc"
 
 [[valves]]
 name = "A"

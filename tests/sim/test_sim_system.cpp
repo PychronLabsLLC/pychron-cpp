@@ -281,4 +281,9 @@ transport = "laser_pc"
   EXPECT_EQ(to_string(hook(to_bytes("Stage.MoveTo 5000,0,0,5000,5000,100\n"))), "");
   clock.advance(std::chrono::seconds(1));
   EXPECT_EQ(to_string(hook(to_bytes("Stage.Pos?\n"))), "5000,0,0\r");
+  // the simulator is reachable by its driver's name
+  ASSERT_NE(sim.chromium("laser"), nullptr);
+  EXPECT_EQ(sim.chromium("laser")->position().x, 5000);
+  EXPECT_EQ(sim.chromium("laser_pc"), nullptr);
+  EXPECT_EQ(sim.chromium("nope"), nullptr);
 }

@@ -96,9 +96,38 @@ class FakeValves final : public measurement::IValvePort {
   std::map<std::string, bool> state;
 };
 
+// A stage that only records the trays it was given; "no-such-tray" is refused.
+class FakeStage final : public extraction::IStage {
+ public:
+  Result<void> move_to_position(std::string_view, bool) override { return {}; }
+  Result<void> set_axis(Axis, double) override { return {}; }
+  Result<void> set_xy(double, double) override { return {}; }
+  Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
+  Result<bool> moving() override { return false; }
+  Result<void> set_tray(std::string_view tray) override {
+    if (tray == "no-such-tray") return fail(ErrorKind::Config, "no tray map 'no-such-tray'");
+    std::lock_guard lock(mutex_);
+    trays_.emplace_back(tray);
+    return {};
+  }
+  std::vector<std::string> positions() const override { return {}; }
+  std::vector<std::string> trays() const {
+    std::lock_guard lock(mutex_);
+    return trays_;
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::vector<std::string> trays_;
+};
+
 class FakeDevice final : public extraction::IExtractionDevice {
  public:
+  FakeDevice() = default;
+  explicit FakeDevice(std::string name, bool with_stage = false) : has_stage(with_stage), name_(std::move(name)) {}
+
   const std::string& device_name() const override { return name_; }
+  extraction::IStage* stage() override { return has_stage ? &fake_stage : nullptr; }
   Result<void> enable() override {
     enabled = true;
     return {};
@@ -111,6 +140,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
   Result<bool> is_enabled() override { return enabled.load(); }
   Result<void> extract(double value, extraction::ExtractUnits) override {
     output_ = value;
+    ++extracts;
     return {};
   }
   Result<void> end_extract() override {
@@ -122,7 +152,9 @@ class FakeDevice final : public extraction::IExtractionDevice {
   bool supports(extraction::ExtractUnits) const override { return true; }
 
   std::atomic<bool> enabled{false};
-  std::atomic<int> disables{0}, end_extracts{0};
+  std::atomic<int> disables{0}, end_extracts{0}, extracts{0};
+  bool has_stage = false;
+  FakeStage fake_stage;
 
  private:
   std::string name_ = "fake_laser";

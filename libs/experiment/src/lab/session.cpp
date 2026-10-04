@@ -1,10 +1,14 @@
 #include "pychron/experiment/lab/session.hpp"
 
+#include <map>
+#include <string>
 #include <utility>
 
 #include "pychron/core/events.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
+#include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/persist/persister.hpp"
+#include "pychron/laser/laser_system.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
@@ -37,6 +41,17 @@ struct LabSession::Services {
     s.scripts = host.get();
     s.resolver = &lab.scripts->resolver();
     s.line.valves = &script_valves;
+    // One laser system per driver of the line that is an extraction device,
+    // under the driver's name: what a queue's extract_device names.
+    for (const auto& [name, driver] : hw.line.config().drivers) {
+      auto* device = dynamic_cast<extraction::IExtractionDevice*>(hw.line.device(name));
+      if (device == nullptr) continue;
+      lasers.emplace(name, std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations));
+    }
+    s.devices = [this](std::string_view name) -> extraction::IExtractionDevice* {
+      const auto it = lasers.find(name);
+      return it == lasers.end() ? nullptr : it->second.get();
+    };
     s.spectrometer = port ? &*port : nullptr;
     s.valves = &valves;
     s.peak_center = peak_center ? &*peak_center : nullptr;
@@ -59,6 +74,9 @@ struct LabSession::Services {
 
   std::unique_ptr<scripting::IScriptHost> host;
   systems::SwitchValveService script_valves;
+  // By device name; they refer to the line's drivers and the lab's trays and
+  // calibrations, all of which outlive the session.
+  std::map<std::string, std::unique_ptr<laser::LaserSystem>, std::less<>> lasers;
   std::optional<measurement::SpectrometerPort> port;
   measurement::ExtractionLineValves valves;
   measurement::InstrumentMetrics instrument;

@@ -195,7 +195,7 @@ TEST(FactoryForm, TheExampleLabsDefaultsBlocksAndListings) {
   const auto lab = lab::load_lab({dir, dir / "extraction_line.toml", dir / "spectrometer.sim-integrated.toml"});
   ASSERT_TRUE(lab.problems.empty()) << lab.problems.front();
   EXPECT_EQ(lab.plans->names(), std::vector<std::string>{"sim_multicollect"});
-  EXPECT_EQ(lab.scripts->names(scripting::ScriptKind::Extraction), std::vector<std::string>{"sim_extract"});
+  EXPECT_EQ(lab.scripts->names(scripting::ScriptKind::Extraction), (std::vector<std::string>{"laser_extract", "sim_extract"}));
   EXPECT_EQ(lab.scripts->names(scripting::ScriptKind::PostMeasurement), std::vector<std::string>{"sim_pump"});
   EXPECT_TRUE(lab.scripts->names(scripting::ScriptKind::PostEquilibration).empty());
   ASSERT_TRUE(lab.blocks.contains("blank_pair"));

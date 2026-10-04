@@ -114,6 +114,11 @@ class SimSystem {
   // the transport.
   SimTransport::Hook hook_for(const config::DriverConfig& driver, const config::SystemConfig& system);
 
+  // The Chromium simulator hook_for built for the driver named `driver`;
+  // null if there is none. For tests and tools that look at what the
+  // simulated laser was told.
+  extraction::ChromiumSim* chromium(std::string_view driver) const;
+
  private:
   struct Node {
     bool valve = false;
@@ -136,7 +141,7 @@ class SimSystem {
   mutable TimePoint last_{};
   mutable std::mt19937_64 rng_;
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
-  std::vector<std::unique_ptr<extraction::ChromiumSim>> lasers_;
+  std::map<std::string, std::unique_ptr<extraction::ChromiumSim>, std::less<>> lasers_;  // by driver name
 };
 
 }  // namespace pychron::sim

@@ -176,6 +176,19 @@ Result<scripting::Script> Run::resolve(const std::string& name, scripting::Scrip
 
 Result<void> Run::prepare() {
   timestamp_ = s_.timestamp ? s_.timestamp() : utc_now();
+  // This run's extraction device: the one set directly, else the lab's by
+  // name. Its stage is told the queue's tray before any script runs, so a
+  // hole name means a hole on that tray.
+  device_ = s_.line.device;
+  if (device_ == nullptr && s_.devices) {
+    const std::string& name = spec_.extraction.device.empty() ? queue_.extract_device : spec_.extraction.device;
+    if (!name.empty()) device_ = s_.devices(name);
+  }
+  if (device_ != nullptr && !queue_.tray.empty()) {
+    if (auto* stage = device_->stage()) {
+      if (auto r = stage->set_tray(queue_.tray); !r) return fail(r.error());
+    }
+  }
   if (s_.aliquots != nullptr) {
     auto a = s_.aliquots->allocate(spec_.id);
     if (!a) return fail(a.error());
@@ -257,6 +270,7 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
                              std::function<void()> on_pump_time_start) {
   scripting::ScriptEnvironment env;
   env.line = s_.line;
+  env.line.device = device_;
   env.resources = s_.resources;
   env.resolver = s_.resolver;
   env.clock = s_.clock;
@@ -278,9 +292,9 @@ void Run::note(std::string message) {
 }
 
 void Run::end_extraction() {
-  if (s_.line.device == nullptr) return;
-  if (auto r = s_.line.device->end_extract(); !r) note("end_extract: " + r.error().what);
-  if (auto r = s_.line.device->disable(); !r) note("disable: " + r.error().what);
+  if (device_ == nullptr) return;
+  if (auto r = device_->end_extract(); !r) note("end_extract: " + r.error().what);
+  if (auto r = device_->disable(); !r) note("disable: " + r.error().what);
 }
 
 Result<void> Run::extract(RunControl& control) {

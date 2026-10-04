@@ -3,19 +3,26 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "pychron/core/clock_pump.hpp"
+#include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -44,6 +51,7 @@ class LabSessionTest : public ::testing::Test {
            ("pychron-session-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
+    prepare_lab();
 
     systems::ExtractionLine::Options options;
     options.clock = &clock_;
@@ -84,6 +92,23 @@ class LabSessionTest : public ::testing::Test {
       ended_.push_back(e);
     }));
     subs_.push_back(line_->bus().subscribe<executor::RunStarted>([this](const executor::RunStarted&) { ++started_; }));
+  }
+
+  // Changes to the scratch lab before anything is loaded from it.
+  virtual void prepare_lab() {}
+
+  QueueSpec laser_queue() {
+    auto q = load_queue_file((dir_ / "experiment.laser.toml").string(), lab_.ids);
+    EXPECT_TRUE(q) << q.error().what;
+    return q ? *q : QueueSpec{};
+  }
+  extraction::ChromiumSim& laser_sim(std::string_view driver) {
+    auto* sim = line_->sim() != nullptr ? line_->sim()->chromium(driver) : nullptr;
+    if (sim == nullptr) throw std::logic_error("no simulated Chromium for " + std::string(driver));
+    return *sim;
+  }
+  static int count(const std::vector<std::string>& log, std::string_view command) {
+    return static_cast<int>(std::count(log.begin(), log.end(), command));
   }
 
   void TearDown() override {
@@ -148,6 +173,126 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Completed);
   EXPECT_TRUE(scan_->running());
   EXPECT_FALSE(scan_->paused());
+}
+
+// --- laser queues (laser system design, sections 5 and 7) --------------------
+
+TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto& sim = laser_sim("co2");
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(result->runs.size(), 2u);
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+
+  // example-9 is calibrated with its centre at stage (25, 25): hole 3 is at
+  // (30, 30) mm, hole 7 at (20, 20).
+  const auto log = sim.log();
+  EXPECT_EQ(count(log, "Stage.MoveTo 30000,30000,0,5000,5000,100"), 1) << ::testing::PrintToString(log);
+  EXPECT_EQ(count(log, "Stage.MoveTo 20000,20000,0,5000,5000,100"), 1);
+  EXPECT_EQ(count(log, "Laser.Output 20"), 2);
+  EXPECT_EQ(count(log, "Laser.Fire"), 2);
+  EXPECT_EQ(sim.position().x, 20000);
+  EXPECT_EQ(sim.position().y, 20000);
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_DOUBLE_EQ(sim.output(), 0);
+}
+
+TEST_F(LabSessionTest, AnUncalibratedTrayIsRefusedAtStart) {
+  ASSERT_TRUE(lab_.calibrations->clear("co2", "example-9"));
+  const auto before = laser_sim("co2").log();
+  const auto started = session_->start(laser_queue());
+  ASSERT_FALSE(started);
+  EXPECT_EQ(started.error().kind, ErrorKind::Config);
+  EXPECT_NE(started.error().what.find("example-9"), std::string::npos) << started.error().what;
+  EXPECT_NE(started.error().what.find("not calibrated"), std::string::npos) << started.error().what;
+  EXPECT_FALSE(session_->running());
+  EXPECT_EQ(laser_sim("co2").log(), before);
+}
+
+TEST_F(LabSessionTest, ARunWhoseHoleIsOutOfTravelFailsAndTheLaserStaysOff) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  // The tray calibrated at the edge of the stage: hole 3 is then at x = 54,
+  // past the 50 mm travel. The queue checks; the move is the driver's to refuse.
+  const std::vector<laser::CalibrationPoint> points{{"5", 49, 25}, {"6", 54, 25}};
+  ASSERT_TRUE(lab_.calibrations->save(*lab_.trays.find("example-9"), "co2", points));
+  auto& sim = laser_sim("co2");
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_FALSE(result->runs.empty());
+  EXPECT_EQ(result->runs.front().state, run::RunState::Failed);
+  EXPECT_NE(result->runs.front().error.value_or("").find("hole 3"), std::string::npos)
+      << result->runs.front().error.value_or("");
+  EXPECT_EQ(count(sim.log(), "Laser.Fire"), 0);
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_EQ(sim.position().x, 0);
+}
+
+// Two lasers on one line: each run ends its own, and the first is off before
+// the second run starts.
+class TwoLaserSessionTest : public LabSessionTest {
+ protected:
+  void prepare_lab() override {
+    std::ofstream(dir_ / "extraction_line.toml", std::ios::app)
+        << "\n[transports.diode_pc]\nkind = \"sim\"\ntimeout_ms = 2000\n"
+           "\n[drivers.diode]\nkind = \"chromium\"\ntransport = \"diode_pc\"\n";
+    // The same tray, somewhere else on the diode's stage.
+    std::ifstream in(dir_ / "stage_calibrations" / "co2.example-9.toml");
+    std::stringstream text;
+    text << in.rdbuf();
+    std::string diode = text.str();
+    const std::string from = "device = \"co2\"";
+    diode.replace(diode.find(from), from.size(), "device = \"diode\"");
+    for (const char* x : {"x = 25.0", "x = 30.0"}) {
+      const auto at = diode.find(x);
+      diode.replace(at, 6, x[4] == '2' ? "x = 10" : "x = 15");
+    }
+    std::ofstream(dir_ / "stage_calibrations" / "diode.example-9.toml") << diode;
+  }
+};
+
+TEST_F(TwoLaserSessionTest, TwoDevicesInOneQueueEachEndTheirOwn) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  EXPECT_EQ(lab_.extract_devices, (std::vector<std::string>{"co2", "diode"}));
+  auto& co2 = laser_sim("co2");
+  auto& diode = laser_sim("diode");
+
+  auto q = laser_queue();
+  q.runs.at(1).extraction.device = "diode";
+
+  // What the co2 laser is doing when the second run starts.
+  std::atomic<int> seen{0};
+  std::atomic<bool> co2_on_at_second{true};
+  std::atomic<int> diode_commands_at_second{-1};
+  subs_.push_back(line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted&) {
+    if (++seen != 2) return;
+    co2_on_at_second = co2.firing() || co2.enabled() || co2.output() != 0;
+    diode_commands_at_second = count(diode.log(), "Laser.Fire") + count(diode.log(), "Laser.Enable 1");
+  }));
+
+  ASSERT_TRUE(session_->start(q));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+
+  EXPECT_EQ(seen.load(), 2);
+  EXPECT_FALSE(co2_on_at_second.load());
+  EXPECT_EQ(diode_commands_at_second.load(), 0);
+  EXPECT_EQ(count(co2.log(), "Laser.Fire"), 1);
+  EXPECT_EQ(count(diode.log(), "Laser.Fire"), 1);
+  EXPECT_EQ(count(co2.log(), "Stage.MoveTo 30000,30000,0,5000,5000,100"), 1);   // hole 3 on co2
+  EXPECT_EQ(count(diode.log(), "Stage.MoveTo 5000,20000,0,5000,5000,100"), 1);   // hole 7 on diode
+  for (auto* sim : {&co2, &diode}) {
+    EXPECT_FALSE(sim->firing());
+    EXPECT_FALSE(sim->enabled());
+    EXPECT_DOUBLE_EQ(sim->output(), 0);
+  }
 }
 
 TEST_F(LabSessionTest, AQueueThatDoesNotCheckIsRefused) {

@@ -68,6 +68,11 @@ struct RunServices {
   scripting::IScriptHost* scripts = nullptr;
   const scripting::IScriptResolver* resolver = nullptr;
   extraction::ExtractionServices line;
+  // The lab's extraction devices by name. A run asks once, for its own
+  // device (its spec's, else the queue's), and uses the answer as
+  // line.device for its scripts and for ending the extraction. A null
+  // result leaves the run without one. line.device, when set, wins.
+  std::function<extraction::IExtractionDevice*(std::string_view name)> devices;
   scripting::IResourceService* resources = nullptr;
 
   measurement::ISpectrometerPort* spectrometer = nullptr;
@@ -165,6 +170,7 @@ class Run {
   RunSpec spec_;
   const QueueSpec& queue_;
   RunServices s_;
+  extraction::IExtractionDevice* device_ = nullptr;  // this run's; bound in prepare()
   RunHooks hooks_;
   int run_index_;
   std::string run_id_;
