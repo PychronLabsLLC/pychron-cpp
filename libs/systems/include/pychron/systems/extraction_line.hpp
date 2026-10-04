@@ -24,6 +24,7 @@
 // Events leave only through bus(). Commands (actuate, read_gauge) block the
 // caller for the transport round trips and valve settle time.
 
+#include <atomic>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -61,9 +62,15 @@ struct ExtractionLineOptions {
   std::filesystem::path trace_dir = "traces";
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
-  // Where software locks persist (`locked = ["A", ...]` TOML). Empty: locks
-  // live in memory only. load() defaults it to `<system file stem>.state.toml`
-  // beside the config.
+  // Where software locks and valve states persist between runs (TOML:
+  // `locked = ["A", ...]`, `[valves] A = "open"`). Empty: they live in memory
+  // only. load() defaults it to `<system file stem>.state.toml` beside the
+  // config.
+  //
+  // On the first start() the hardware is read back and is the truth: a
+  // remembered state never moves a real valve. It is restored only where
+  // nothing can report it: manual valves (the operator's last report) and
+  // valves on simulated controllers, which start closed every run.
   std::filesystem::path state_file;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
   // Optional override. When null the line creates one from [logging]. Every
@@ -136,13 +143,19 @@ class ExtractionLine {
   void record_pressure(const std::string& gauge, double value);
   void log(LogLevel level, std::string message);
   void log_to(const std::optional<Logger>& logger, std::string_view name, LogLevel level, std::string message);
-  void load_locks();
-  void save_locks();
+  void load_state();
+  void save_state();
+  void restore_valves();
+  bool simulated(const std::string& name) const;
 
   config::SystemConfig config_;
   std::optional<canvas::Canvas> canvas_;
   std::optional<NetworkGraph> network_;
   std::vector<config::Diagnostic> warnings_;
+  // Valve states read from the state file, until the first start() has
+  // restored them; from then on the file follows the line.
+  std::map<std::string, ValveState> remembered_;
+  std::atomic<bool> restored_{false};
   Options options_;
 
   // Declaration order is construction order; teardown runs in reverse, so

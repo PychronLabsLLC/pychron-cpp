@@ -163,7 +163,7 @@ Result<void> ExtractionLine::build() {
       SwitchManagerOptions{clock_, &bus_});
   if (!switches) return fail(switches.error());
   switches_ = std::move(*switches);
-  load_locks();
+  load_state();
 
   scheduler_ = std::make_unique<Scheduler>(*clock_, &bus_, options_.scheduler, log_hub_);
 
@@ -174,6 +174,14 @@ Result<void> ExtractionLine::build() {
   // The hub publishes Log from inside these handlers; the bus allows that.
   subscriptions_.push_back(bus_.subscribe<ValveChanged>([this](const ValveChanged& e) {
     log_to(switches_logger_, "switches", LogLevel::Info, "valve " + e.valve + " " + state_name(e.state));
+  }));
+  // Remember where every valve is, for the next run. Not before the first
+  // start() has restored the last run's states: its read-back would
+  // overwrite them.
+  subscriptions_.push_back(bus_.subscribe<ValveChanged>([this](const ValveChanged&) {
+    if (!restored_) return;
+    std::lock_guard lock(locks_mutex_);
+    save_state();
   }));
   subscriptions_.push_back(bus_.subscribe<ActuationFailed>([this](const ActuationFailed& e) {
     log_to(switches_logger_, "switches", LogLevel::Warn,
@@ -213,6 +221,7 @@ Result<void> ExtractionLine::start() {
   if (auto refreshed = switches_->refresh(); !refreshed) {
     log(LogLevel::Warn, "switch read-back failed: " + refreshed.error().what);
   }
+  restore_valves();
   read_all_gauges();
 
   scanner_ = std::make_unique<GaugeScanner>(*scheduler_, bus_, *clock_);
@@ -332,7 +341,7 @@ Result<void> ExtractionLine::set_locked(std::string_view name, bool locked) {
     if (info->locked == locked) return {};
     auto changed = locked ? switches_->lock(name) : switches_->unlock(name);
     if (!changed) return changed;
-    save_locks();
+    save_state();
   }
   bus_.publish(SwitchLockChanged{std::string(name), locked, clock_->now()});
   return {};
@@ -343,39 +352,64 @@ bool ExtractionLine::is_locked(std::string_view name) const {
   return info && info->locked;
 }
 
-// The state file is `locked = ["A", "B"]`. A missing file means no locks; a
+// The state file is `locked = ["A", "B"]` and a `[valves]` table of
+// "open" / "closed". A missing file means no locks and nothing remembered; a
 // corrupt one or a name that no longer exists is reported in warnings() and
 // skipped, never fatal.
-void ExtractionLine::load_locks() {
+void ExtractionLine::load_state() {
   if (options_.state_file.empty() || !std::filesystem::exists(options_.state_file)) return;
   const std::string file = options_.state_file.string();
   auto parsed = toml::parse_file(file);
   if (!parsed) {
     warnings_.push_back({config::SourceLoc{file, 0, 0}, "locked",
-                         "cannot read lock state, all valves start unlocked: " + std::string(parsed.error().description())});
+                         "cannot read saved state, all valves start unlocked: " +
+                             std::string(parsed.error().description())});
     return;
   }
-  const auto* names = parsed.table()["locked"].as_array();
-  if (names == nullptr) return;
-  for (const auto& node : *names) {
-    const auto name = node.value<std::string>();
-    if (!name) continue;
-    if (auto info = switches_->info(*name); !info || info->kind == SwitchKind::ManualValve) {
-      warnings_.push_back({config::SourceLoc{file, 0, 0}, "locked", "saved lock for unknown valve '" + *name + "' ignored"});
-      continue;
+  if (const auto* names = parsed.table()["locked"].as_array()) {
+    for (const auto& node : *names) {
+      const auto name = node.value<std::string>();
+      if (!name) continue;
+      if (auto info = switches_->info(*name); !info || info->kind == SwitchKind::ManualValve) {
+        warnings_.push_back(
+            {config::SourceLoc{file, 0, 0}, "locked", "saved lock for unknown valve '" + *name + "' ignored"});
+        continue;
+      }
+      (void)switches_->lock(*name);
     }
-    (void)switches_->lock(*name);
+  }
+  if (const auto* valves = parsed.table()["valves"].as_table()) {
+    for (const auto& [key, node] : *valves) {
+      const std::string name(key.str());
+      const auto state = node.value<std::string>();
+      if (!switches_->contains(name) || !state || (*state != "open" && *state != "closed")) {
+        warnings_.push_back(
+            {config::SourceLoc{file, 0, 0}, "valves", "saved state for '" + name + "' ignored: unknown valve or state"});
+        continue;
+      }
+      remembered_[name] = *state == "open" ? ValveState::Open : ValveState::Closed;
+    }
   }
 }
 
-void ExtractionLine::save_locks() {
+// Callers hold locks_mutex_ (or run before any other thread can).
+void ExtractionLine::save_state() {
   if (options_.state_file.empty()) return;
   toml::array names;
+  toml::table valves;
   for (const auto& info : switches_->list()) {
     if (info.locked) names.push_back(info.name);
+    // Until the last run's states are restored, they are what is remembered.
+    ValveState state = info.state;
+    if (!restored_) {
+      auto it = remembered_.find(info.name);
+      state = it == remembered_.end() ? ValveState::Unknown : it->second;
+    }
+    if (state != ValveState::Unknown) valves.insert(info.name, state == ValveState::Open ? "open" : "closed");
   }
   toml::table table;
   table.insert("locked", std::move(names));
+  table.insert("valves", std::move(valves));
 
   // Write beside the target and rename so a crash never leaves a torn file.
   const auto tmp = std::filesystem::path(options_.state_file).concat(".tmp");
@@ -387,12 +421,62 @@ void ExtractionLine::save_locks() {
     std::ofstream out(tmp, std::ios::out | std::ios::trunc);
     if (out) out << table << '\n';
     if (!out) {
-      log(LogLevel::Warn, "cannot persist valve locks to " + options_.state_file.string());
+      log(LogLevel::Warn, "cannot persist valve state to " + options_.state_file.string());
       return;
     }
   }
   std::filesystem::rename(tmp, options_.state_file, ec);
-  if (ec) log(LogLevel::Warn, "cannot persist valve locks to " + options_.state_file.string() + ": " + ec.message());
+  if (ec) log(LogLevel::Warn, "cannot persist valve state to " + options_.state_file.string() + ": " + ec.message());
+}
+
+// Whether the valve or switch `name` is driven through a simulated transport.
+bool ExtractionLine::simulated(const std::string& name) const {
+  std::string actuator;
+  for (const auto& v : config_.valves)
+    if (v.name == name) actuator = v.actuator;
+  for (const auto& s : config_.switches)
+    if (s.name == name) actuator = s.actuator;
+  auto driver = config_.drivers.find(actuator);
+  if (driver == config_.drivers.end()) return false;
+  if (options_.force_sim) return true;
+  auto transport = config_.transports.find(driver->second.transport);
+  return transport != config_.transports.end() && transport->second.kind == config::TransportKind::Sim;
+}
+
+// First start() only, after the read-back. See Options::state_file.
+void ExtractionLine::restore_valves() {
+  if (restored_) return;
+  std::map<std::string, ValveState> pending;
+  for (const auto& [name, state] : remembered_) {
+    auto info = switches_->info(name);
+    if (!info || info->state == state) continue;
+    if (info->kind == SwitchKind::ManualValve || simulated(name)) pending[name] = state;
+  }
+  // A valve with a positive interlock opens only after its prerequisite:
+  // keep going round while any restore succeeds.
+  std::string last_error;
+  for (bool progress = true; progress && !pending.empty();) {
+    progress = false;
+    for (auto it = pending.begin(); it != pending.end();) {
+      auto done = switches_->restore(it->first, it->second == ValveState::Open ? SwitchOp::Open : SwitchOp::Close);
+      if (done) {
+        it = pending.erase(it);
+        progress = true;
+      } else {
+        last_error = done.error().what;
+        ++it;
+      }
+    }
+  }
+  for (const auto& [name, state] : pending) {
+    log(LogLevel::Warn, "valve " + name + " not restored to its saved state: " + last_error);
+  }
+  {
+    std::lock_guard lock(locks_mutex_);
+    remembered_.clear();
+    restored_ = true;
+    save_state();
+  }
 }
 
 void ExtractionLine::log(LogLevel level, std::string message) {

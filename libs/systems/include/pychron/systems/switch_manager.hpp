@@ -118,6 +118,11 @@ class SwitchManager {
   // See the header comment for the full sequence. Unknown name is Config.
   Result<void> actuate(std::string_view name, SwitchOp op, std::string_view actor);
 
+  // Puts a switch back in a state it held before (a line resuming where it
+  // left off): actuate() without the software lock and ownership checks,
+  // which guard against commands. Interlocks still apply.
+  Result<void> restore(std::string_view name, SwitchOp op);
+
   // Reads every actuated switch back from hardware and records the result;
   // publishes ValveChanged for each state that changed. Read errors leave
   // that switch Unknown and are returned together (first kind wins).
@@ -143,6 +148,7 @@ class SwitchManager {
   SwitchManager(std::vector<std::unique_ptr<Entry>> entries, Options options);
 
   Entry* find(std::string_view name) const;
+  Result<void> command(std::string_view name, SwitchOp op, const std::string_view* actor);
   Result<void> check_access(const Entry& e, std::string_view actor) const;
   Result<void> check_interlocks(const Entry& e) const;
   Result<void> drive(Entry& e, SwitchOp op);

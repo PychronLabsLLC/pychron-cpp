@@ -17,7 +17,12 @@ using namespace pychron::systems;
 const std::filesystem::path kDir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
 
 TEST(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
-  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", {});
+  // Valve states and locks persist beside the config by default: keep the
+  // test out of the repo, and out of the state of anyone running this line.
+  ExtractionLine::Options options;
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-nmgrl-line.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
   ASSERT_TRUE(made) << made.error().what;
   auto& line = **made;
   ASSERT_TRUE(line.start());

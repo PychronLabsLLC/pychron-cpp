@@ -7,7 +7,7 @@ cmake-build-*/
 .spec_router/
 .worktrees/
 
-# persisted runtime state (valve locks) written beside a config
+# persisted runtime state (valve locks and states) written beside a config
 *.state.toml
 
 # machine-local config overrides (site hosts and ports)

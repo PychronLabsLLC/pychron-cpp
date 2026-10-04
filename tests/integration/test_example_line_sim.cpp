@@ -203,6 +203,10 @@ TEST_F(ExampleLineSim, PipetteValvesNeverOpenTogether) {
 TEST(ExampleLineSimRealTime, ScansAndActuatesOnSchedulerThreads) {
   ExtractionLine::Options options;
   options.sim = lab();
+  // Valve states and locks persist beside the config by default: keep the
+  // test out of the repo and independent of earlier runs.
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line.state.toml";
+  std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
   ASSERT_TRUE(made) << made.error().what;
   auto& line = **made;

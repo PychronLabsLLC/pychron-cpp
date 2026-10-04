@@ -160,6 +160,76 @@ TEST_F(LineLocks, SnapshotCarriesLocks) {
   EXPECT_EQ(s.locked.count("A"), 0u);
 }
 
+// Valve states are remembered between runs, like locks. A simulated
+// controller starts every run closed and a manual valve is only ever what
+// the operator last reported, so the line puts both back.
+TEST_F(LineLocks, ValveStatesSurviveARestart) {
+  {
+    auto line = make();
+    ASSERT_TRUE(line->start());
+    ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "ui"));
+    ASSERT_TRUE(line->actuate("M1", SwitchOp::Open, "ui"));
+    ASSERT_TRUE(line->actuate("S1", SwitchOp::Open, "ui"));
+    ASSERT_TRUE(line->actuate("S1", SwitchOp::Close, "ui"));
+    line->stop();
+  }
+  auto line = make();
+  // not before start(): nothing has been read back or restored yet
+  EXPECT_EQ(line->snapshot().valves.at("M1"), ValveState::Unknown);
+  std::vector<ValveChanged> events;
+  auto sub = line->bus().subscribe<ValveChanged>([&](const ValveChanged& e) { events.push_back(e); });
+  ASSERT_TRUE(line->start());
+  const auto valves = line->snapshot().valves;
+  EXPECT_EQ(valves.at("A"), ValveState::Open);
+  EXPECT_EQ(valves.at("B"), ValveState::Closed);
+  EXPECT_EQ(valves.at("M1"), ValveState::Open);
+  EXPECT_EQ(valves.at("S1"), ValveState::Closed);
+  // the simulated relay was really driven, not just the record changed
+  EXPECT_TRUE(line->sim()->valve_open("A"));
+  bool announced = false;
+  for (const auto& e : events) announced |= e.valve == "A" && e.state == ValveState::Open;
+  EXPECT_TRUE(announced);
+}
+
+TEST_F(LineLocks, ALockedValveIsRestoredAndStaysLocked) {
+  {
+    auto line = make();
+    ASSERT_TRUE(line->start());
+    ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "ui"));
+    ASSERT_TRUE(line->set_locked("A", true));
+    line->stop();
+  }
+  auto line = make();
+  ASSERT_TRUE(line->start());
+  EXPECT_EQ(line->snapshot().valves.at("A"), ValveState::Open);
+  EXPECT_TRUE(line->is_locked("A"));
+  EXPECT_FALSE(line->actuate("A", SwitchOp::Close, "ui"));
+}
+
+TEST_F(LineLocks, ALockChangeBeforeStartKeepsTheRememberedValves) {
+  std::ofstream(state_file_) << "locked = []\n[valves]\nA = \"open\"\nM1 = \"closed\"\n";
+  {
+    auto line = make();
+    ASSERT_TRUE(line->set_locked("B", true));  // never started
+  }
+  auto line = make();
+  EXPECT_TRUE(line->is_locked("B"));
+  ASSERT_TRUE(line->start());
+  EXPECT_EQ(line->snapshot().valves.at("A"), ValveState::Open);
+  EXPECT_EQ(line->snapshot().valves.at("M1"), ValveState::Closed);
+}
+
+TEST_F(LineLocks, SavedValveStatesThatMakeNoSenseAreIgnoredAndWarned) {
+  std::ofstream(state_file_) << "[valves]\nA = \"ajar\"\nGONE = \"open\"\nB = \"open\"\n";
+  auto line = make();
+  int warned = 0;
+  for (const auto& w : line->warnings()) warned += w.field == "valves";
+  EXPECT_EQ(warned, 2);
+  ASSERT_TRUE(line->start());
+  EXPECT_EQ(line->snapshot().valves.at("A"), ValveState::Closed);
+  EXPECT_EQ(line->snapshot().valves.at("B"), ValveState::Open);
+}
+
 TEST_F(LineLocks, NoStateFileMeansNothingIsWritten) {
   auto line = make(/*with_state=*/false);
   ASSERT_TRUE(line->set_locked("A", true));

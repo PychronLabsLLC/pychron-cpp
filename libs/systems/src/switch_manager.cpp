@@ -177,6 +177,13 @@ SwitchManager::Entry* SwitchManager::find(std::string_view name) const {
 }
 
 Result<void> SwitchManager::actuate(std::string_view name, SwitchOp op, std::string_view actor) {
+  return command(name, op, &actor);
+}
+
+Result<void> SwitchManager::restore(std::string_view name, SwitchOp op) { return command(name, op, nullptr); }
+
+// `actor` null: a restore, which the lock and ownership do not stop.
+Result<void> SwitchManager::command(std::string_view name, SwitchOp op, const std::string_view* actor) {
   Entry* e = find(name);
   if (!e) {
     Error error{ErrorKind::Config, "unknown switch '" + std::string(name) + "'", std::string(name)};
@@ -188,7 +195,7 @@ Result<void> SwitchManager::actuate(std::string_view name, SwitchOp op, std::str
   Result<void> allowed;
   {
     std::lock_guard lk(state_);
-    allowed = check_access(*e, actor);
+    if (actor) allowed = check_access(*e, *actor);
     if (allowed && op == SwitchOp::Open) allowed = check_interlocks(*e);
   }
   // Published outside state_ so handlers may query the manager.
