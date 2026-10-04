@@ -29,6 +29,7 @@ add_executable(pychron_devices_tests
   spectrometer/legacy/test_sim_legacy_config.cpp
   extraction/test_capability.cpp
   extraction/test_conformance_fake.cpp
+  extraction/test_chromium_sim.cpp
 )
 # spectrometer/ and extraction/ conformance.hpp and fakes
 target_include_directories(pychron_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

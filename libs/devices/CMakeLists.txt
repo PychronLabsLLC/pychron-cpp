@@ -26,6 +26,7 @@ add_library(pychron_devices STATIC
   src/spectrometer/thermo_qtegra.cpp
   src/spectrometer/thermo_qtegra_sim.cpp
   src/extraction/capability.cpp
+  src/extraction/chromium_sim.cpp
 )
 
 target_include_directories(pychron_devices PUBLIC
