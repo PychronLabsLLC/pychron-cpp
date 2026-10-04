@@ -364,8 +364,8 @@ class Fields {
     return out;
   }
 
-  // An optional link or free text: the legacy "none" (kLegacyNone, or nothing
-  // but white space) is no value. Not for a name that is a natural key, which
+  // An optional link or free text: the legacy "none" (nothing but hyphens, or
+  // nothing but white space) is no value. Not for a name that is a natural key, which
   // is kept as the dump writes it.
   std::optional<std::string> optional_text(std::string_view column) {
     auto read = text(column);

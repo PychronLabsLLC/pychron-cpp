@@ -449,13 +449,20 @@ TEST(Layout, LegacyNoneInTheExtractionIsNotSet) {
   EXPECT_EQ(rest["pattern"], "---------");
   EXPECT_EQ(rest["tray"], "---------");
 
-  // Only the whole value: hyphens inside a name, or another count of them, are a name.
+  // Any run of hyphens says the same ("---" is in real load holder names);
+  // hyphens inside a name are part of the name.
   ps::AnalysisIngest b;
-  ASSERT_TRUE(merge_satellite(FileKind::Extraction, R"({"extract_device": "--------", "load_name": "L---------1"})", b,
-                              blobs)
+  ASSERT_TRUE(merge_satellite(FileKind::Extraction,
+                              R"({"extract_device": "---", "tray": " - ", "pattern": "--------",
+                                  "load_name": "L---------1", "load_holder": "-a-"})",
+                              b, blobs)
                   .has_value());
-  EXPECT_EQ(b.extract_device, "--------");
+  EXPECT_FALSE(b.extract_device.has_value());
+  EXPECT_FALSE(b.extraction.tray.has_value());
+  EXPECT_FALSE(b.extraction.pattern.has_value());
   EXPECT_EQ(b.load_name, "L---------1");
+  EXPECT_EQ(b.load_holder, "-a-");
+  EXPECT_EQ(legacy(b)["extraction"]["extract_device"], "---");
 }
 
 TEST(Layout, LegacyNoneInTheRecordIsNotSet) {

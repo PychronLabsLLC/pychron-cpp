@@ -1663,7 +1663,11 @@ TEST(CatalogDbAdapter, LegacyNoneIsNoValueExceptInANaturalKey) {
              {R"({"id":1,"identifier":"---------","sampleID":null,"levelID":1,"position":1,"packet":"---------"})"})
       .table("UserTbl", {R"({"name":"ann","email":"---------","affiliation":" ","category":null})"})
       .table("LoadTbl",
-             {R"({"name":"L","create_date":null,"archived":0,"username":"---------","holderName":"---------"})"})
+             {
+                 R"({"name":"L","create_date":null,"archived":0,"username":"---------","holderName":"---------"})",
+                 R"({"name":"L2","create_date":null,"archived":0,"username":null,"holderName":"---"})",
+                 R"({"name":"-","create_date":null,"archived":0,"username":null,"holderName":" - "})",
+             })
       .done();
   const auto batch = only_batch(dir);
   EXPECT_TRUE(batch.conflicts.empty());
@@ -1683,9 +1687,12 @@ TEST(CatalogDbAdapter, LegacyNoneIsNoValueExceptInANaturalKey) {
   EXPECT_FALSE(users[0].email.has_value());
   EXPECT_FALSE(users[0].affiliation.has_value());
   const auto loads = items_of<ingest::LoadItem>(batch);
-  ASSERT_EQ(loads.size(), 1u);
+  ASSERT_EQ(loads.size(), 3u);
   EXPECT_FALSE(loads[0].created_by.has_value());
-  EXPECT_FALSE(loads[0].holder_name.has_value());
+  for (const auto& load : loads) {
+    EXPECT_FALSE(load.holder_name.has_value()) << load.spec.name;  // any run of hyphens
+  }
+  EXPECT_EQ(loads[2].spec.name, "-");  // a natural key is kept as written
 }
 
 TEST(CatalogDbAdapter, WarnsWhenTheDumpHasNoCompletionMarker) {

@@ -52,8 +52,9 @@
 // the same kind of conflict at "<file>#<legacy id>@materialID" (spec 10.41).
 //
 // A text column that holds an optional link or free text and reads
-// "---------" (legacy NULL_STR) or only white space has no value; a name
-// that is a natural key is kept as written (spec 10.40).
+// "---------" (legacy NULL_STR), any run of hyphens, or only white space has
+// no value; a name that is a natural key is kept as written (spec 10.40). A
+// position whose identifier reads so is an empty hole.
 //
 // Each batch also lists, as `superseded`, the conflicts its rows could have
 // and do not: a store imported under an older rule may hold them.

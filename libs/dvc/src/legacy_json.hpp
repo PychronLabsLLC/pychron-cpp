@@ -48,11 +48,12 @@ std::optional<double> take_double(Json& object, std::string_view key);
 std::optional<int> take_int(Json& object, std::string_view key);
 std::optional<bool> take_bool(Json& object, std::string_view key);
 std::optional<std::string> take_text(Json& object, std::string_view key);
-// Legacy pychron writes NULL_STR, nine hyphens, where a value is absent.
-inline constexpr std::string_view kLegacyNone = "---------";
-// Whether `text` says "no value" the legacy way: NULL_STR, or nothing but
-// white space. For optional names and free text only: an identifier, a uuid
-// or a spectrometer that reads so is taken as written, and refused.
+// Legacy pychron writes NULL_STR, nine hyphens, where a value is absent, and
+// real data has shorter runs ("---" as a load's holder).
+// Whether `text` says "no value" the legacy way: after trimming white space,
+// nothing, or nothing but hyphens. For optional names and free text only: an
+// identifier, a uuid or a spectrometer that reads so is taken as written, and
+// refused.
 bool is_legacy_none(std::string_view text);
 // take_text for an optional name or free text: a legacy none gives nullopt
 // and, unless it is "", stays in the object, so that it is kept in the

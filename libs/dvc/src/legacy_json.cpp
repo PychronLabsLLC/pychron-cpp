@@ -184,7 +184,9 @@ std::optional<std::string> take_text(Json& object, std::string_view key) {
   return take<std::string>(object, key, as_text);
 }
 
-bool is_legacy_none(std::string_view text) { return text == kLegacyNone || trim(text).empty(); }
+bool is_legacy_none(std::string_view text) {
+  return trim(text).find_first_not_of('-') == std::string_view::npos;  // nothing, or nothing but hyphens
+}
 
 std::optional<std::string> take_name(Json& object, std::string_view key) {
   if (object.is_object())

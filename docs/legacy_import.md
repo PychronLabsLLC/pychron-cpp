@@ -44,8 +44,8 @@ directory, unread: keep the directory.
 
 Legacy pychron writes `---------` (nine hyphens) where a value is absent. In
 an analysis record and its extraction file, and in the text columns of the
-dump that hold an optional link or free text, that string, or one that is
-empty or only white space, means "not set": an extract device, load, tray,
+dump that hold an optional link or free text, that string, any other run of
+hyphens (`---`), or one that is empty or only white space, means "not set": an extract device, load, tray,
 pattern, sample, material, project, irradiation, analyst, comment or note so
 written is absent, not a name to look up. The analysis keeps the original
 string in its legacy JSON. It is taken as written for an analysis's
