@@ -38,6 +38,7 @@ add_library(pychron_ui_lib STATIC
   src/script_editor_window.cpp
   src/conditional_table_model.cpp
   src/conditional_form.cpp
+  src/conditionals_editor_window.cpp
   src/scene_view.cpp
   src/options_editor.cpp
   src/processing_bridge.cpp
@@ -88,6 +89,7 @@ add_library(pychron_ui_lib STATIC
   src/script_editor_window.hpp
   src/conditional_table_model.hpp
   src/conditional_form.hpp
+  src/conditionals_editor_window.hpp
   src/scene_view.hpp
   src/options_editor.hpp
   src/processing_bridge.hpp
