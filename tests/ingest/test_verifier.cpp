@@ -861,6 +861,52 @@ TEST_P(VerifierTest, LateRevisionIsAWarning) {
   EXPECT_EQ(report.warning_conflicts, std::vector<Uuid>{conflict_id(kUrl, "b1", "665/intercepts/73-01.json")});
 }
 
+// Fix wave A3: a marker counts only on the kind its producer writes, and
+// "late" only with the reason the writer gives it.
+TEST(WarningConflict, MarkersAreProducerExclusive) {
+  const auto row = [](P::ConflictKind kind, const char* detail) {
+    return P::ImportConflictRow{Uuid{}, "a/path", std::nullopt, kind, std::nullopt, std::nullopt, detail, "pending"};
+  };
+  using P::ConflictKind;
+  EXPECT_TRUE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"imported":true,"column":"projectID"})")));
+  EXPECT_TRUE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"synthesized":true})")));
+  EXPECT_TRUE(
+      is_warning_conflict(row(ConflictKind::IdentityClash, R"({"reason":"late_revision_not_applied","late":true})")));
+  // The same words on another kind, or without their reason, are not warnings.
+  for (const ConflictKind kind : {ConflictKind::Unparseable, ConflictKind::UnknownAnalysis, ConflictKind::ValueMismatch,
+                                  ConflictKind::HandEdit, ConflictKind::ProvisionalRenumber}) {
+    EXPECT_FALSE(is_warning_conflict(row(kind, R"({"imported":true})"))) << P::to_string(kind);
+    EXPECT_FALSE(is_warning_conflict(row(kind, R"({"synthesized":true})"))) << P::to_string(kind);
+    EXPECT_FALSE(is_warning_conflict(row(kind, R"({"reason":"late_revision_not_applied","late":true})")))
+        << P::to_string(kind);
+  }
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"late":true})")));
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"reason":"something else","late":true})")));
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"reason":"late_revision_not_applied"})")));
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"imported":false})")));
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, R"({"imported":"true"})")));
+  EXPECT_FALSE(is_warning_conflict(row(ConflictKind::IdentityClash, "not json")));
+}
+
+// A revision kept back because a stored revision comes from a commit the walk
+// no longer has (cause stored_commit_unknown) carries no "late" marker: the
+// history was rewritten, and verify is not ok (fix wave A1).
+TEST_P(VerifierTest, RevisionBehindALostCommitIsBlocking) {
+  auto batches = history();
+  batches[0].conflicts.push_back(
+      {{"b1", "665/intercepts/73-01.json", "blob"},
+       kA,
+       P::ConflictKind::IdentityClash,
+       std::nullopt,
+       R"({"reason":"late_revision_not_applied","cause":"stored_commit_unknown","behind":"x9","commit":"b1"})"});
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "superseded");
+  const auto report = check(batches, units_of(history()));
+  EXPECT_FALSE(report.ok());
+  EXPECT_EQ(report.pending_warnings, 0);
+  EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{conflict_id(kUrl, "b1", "665/intercepts/73-01.json")});
+}
+
 // ---------------------------------------------------------------- age parity
 
 TEST_P(VerifierTest, ParityPassFailNotComparable) {
@@ -1096,8 +1142,11 @@ TEST_P(VerifierTest, ConflictOfADroppedMemberIsSuperseded) {
   EXPECT_EQ(report.parity_fail, 0);
   EXPECT_EQ(conflict(parity_conflict(kB)).resolution, "superseded");
   EXPECT_EQ(conflict(other).resolution, "pending");
-  EXPECT_EQ(report.pending_blocking, 0);
-  EXPECT_TRUE(report.ok());
+  // It is all that is left pending. A marker does not make a value_mismatch a
+  // warning (markers are producer-exclusive), so it blocks.
+  EXPECT_EQ(report.blocking_conflicts, std::vector<Uuid>{other});
+  EXPECT_EQ(report.pending_warnings, 0);
+  EXPECT_FALSE(report.ok());
 }
 
 // An interpreted age whose document lists no analyses is said so: it is not

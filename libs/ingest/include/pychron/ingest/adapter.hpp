@@ -134,6 +134,15 @@ class ISourceAdapter {
   // Positions the stream after `resume_token` (nullopt: at the start) and
   // returns the units remaining. `state` outlives the adapter's batches.
   virtual Result<int> plan(std::optional<std::string> resume_token, IImportState& state) = 0;
+  // Whether a token an earlier run stored still names a place in this source,
+  // for a run that does not resume from it (a replay plans from the start and
+  // would otherwise never look). An adapter whose plan() refuses a token of a
+  // rewritten history refuses it here with the same error, whose message
+  // contains "history was rewritten". The default accepts every token.
+  virtual Result<void> check_token(const std::string& resume_token) {
+    (void)resume_token;
+    return {};
+  }
   // nullopt: end of stream.
   virtual Result<std::optional<ImportBatch>> next_batch() = 0;
   // Walks the whole source again, read-only, and hands every unit it holds to

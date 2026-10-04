@@ -448,8 +448,8 @@ void StoredChains::written(P::Uuid subject, P::Kind kind, std::optional<std::int
 
 std::string late_revision_detail(const RevisionItem& revision, const Late& late) {
   Json out = Json::object();
-  out["reason"] = std::string(kLateRevisionNotApplied);
-  out["late"] = true;
+  out[kDetailReason] = kReasonLateRevisionNotApplied;
+  if (late.cause != Late::Cause::StoredCommitUnknown) out[kMarkerLate] = true;
   out["cause"] = cause_text(late.cause);
   if (!late.behind.empty()) out["behind"] = late.behind;
   out["commit"] = revision.key.commit;
@@ -468,9 +468,9 @@ std::string late_revision_detail(const RevisionItem& revision, const Late& late)
 bool is_late_revision_detail(std::string_view detail_json) {
   const Json parsed = Json::parse(detail_json, nullptr, false);
   if (!parsed.is_object()) return false;
-  const auto reason = parsed.find("reason");
+  const auto reason = parsed.find(kDetailReason);
   return reason != parsed.end() && reason->is_string() &&
-         reason->get_ref<const std::string&>() == kLateRevisionNotApplied;
+         reason->get_ref<const std::string&>() == kReasonLateRevisionNotApplied;
 }
 
 }  // namespace pychron::ingest::detail

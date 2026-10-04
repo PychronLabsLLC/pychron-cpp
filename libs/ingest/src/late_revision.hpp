@@ -23,11 +23,10 @@
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/adapter.hpp"
 #include "pychron/ingest/batch.hpp"
+#include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/persistence/store.hpp"
 
 namespace pychron::ingest::detail {
-
-inline constexpr std::string_view kLateRevisionNotApplied = "late_revision_not_applied";
 
 // Why a revision that is not stored is not written. `behind`: the commit of
 // the stored revision that decides it, when there is one.
@@ -88,10 +87,12 @@ class StoredChains {
   std::map<persistence::Uuid, Ours> roots_;  // see sent_root()
 };
 
-// The detail of the conflict of a late revision: the reason, "late": true
-// (verify lists it as a warning), why, the commit, path and kind, the git blob
-// sha, and under "content" what the revision held. A content larger than
-// 64 KiB is left out; the blob sha names it.
+// The detail of the conflict of a late revision: the reason, why, the commit,
+// path and kind, the git blob sha, and under "content" what the revision
+// held. A content larger than 64 KiB is left out; the blob sha names it.
+// "late": true marks it as a warning for verify (conflict_markers.hpp), except
+// for StoredCommitUnknown: a stored revision from a commit the walk no longer
+// has means the history was rewritten, and that conflict is blocking.
 std::string late_revision_detail(const RevisionItem& revision, const Late& late);
 
 // Whether a conflict's detail is one late_revision_detail() made.

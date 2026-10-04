@@ -85,6 +85,14 @@ class ProjectRepoAdapter::Impl {
     return static_cast<int>(order_.size() - first_);
   }
 
+  Result<void> check_token(const std::string& resume_token) const {
+    auto all = reader_.rev_list(std::nullopt);
+    if (!all) return fail(all.error());
+    const auto resume = detail::resume_point(*all, resume_token, reader_, config_.git, "project adapter");
+    if (!resume) return fail(resume.error());
+    return {};
+  }
+
   Result<std::optional<ingest::ImportBatch>> next_batch() {
     if (!planned_) return fail(ErrorKind::Config, "project adapter: next_batch() before plan()");
     if (finished_ || next_ == order_.size()) return std::optional<ingest::ImportBatch>{};
@@ -203,6 +211,8 @@ Result<ingest::SourceDescription> ProjectRepoAdapter::describe() { return impl_-
 Result<int> ProjectRepoAdapter::plan(std::optional<std::string> resume_token, ingest::IImportState& state) {
   return impl_->plan(std::move(resume_token), state);
 }
+
+Result<void> ProjectRepoAdapter::check_token(const std::string& resume_token) { return impl_->check_token(resume_token); }
 
 Result<std::optional<ingest::ImportBatch>> ProjectRepoAdapter::next_batch() { return impl_->next_batch(); }
 

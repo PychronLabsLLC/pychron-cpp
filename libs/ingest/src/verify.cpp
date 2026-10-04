@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "verify_parts.hpp"
 
@@ -24,7 +25,8 @@ namespace {
 // A conflict that only annotates what is in the store: a catalog row imported
 // without an optional link, a catalog row made from repository contents (spec
 // 10.26), a revision kept out of a chain it would have been written behind
-// (spec 10.35; the head is right).
+// (spec 10.35; the head is right). Not one kept back behind a commit the walk
+// no longer has: that history was rewritten.
 bool is_annotation(const P::ImportConflictRow& row) { return is_warning_conflict(row); }
 
 // The pending conflicts of the source: those that fail verify and those that
@@ -50,13 +52,21 @@ Result<void> count_pending(const detail::VerifySource& source, VerifyReport& rep
 }  // namespace
 
 bool is_warning_conflict(const P::ImportConflictRow& row) {
+  // Every marker is written on an identity_clash and nowhere else
+  // (conflict_markers.hpp): the same word in the detail of another kind (a
+  // key of a file that could not be read, say) does not make it a warning.
+  if (row.kind != P::ConflictKind::IdentityClash) return false;
   const Json detail = Json::parse(row.detail_json, nullptr, false);
   if (!detail.is_object()) return false;
-  for (const char* key : {"imported", "synthesized", "late"}) {
+  const auto marked = [&](const char* key) {
     const auto flag = detail.find(key);
-    if (flag != detail.end() && flag->is_boolean() && flag->get<bool>()) return true;
-  }
-  return false;
+    return flag != detail.end() && flag->is_boolean() && flag->get<bool>();
+  };
+  if (marked(kMarkerImported) || marked(kMarkerSynthesized)) return true;
+  if (!marked(kMarkerLate)) return false;
+  const auto reason = detail.find(kDetailReason);
+  return reason != detail.end() && reason->is_string() &&
+         reason->get_ref<const std::string&>() == kReasonLateRevisionNotApplied;
 }
 
 Result<VerifyReport> verify(P::IStore& store, P::Uuid client, ISourceAdapter& adapter, const WriterConfig& config,

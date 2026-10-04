@@ -20,6 +20,7 @@
 #include "legacy_json.hpp"
 #include "pychron/core/calendar.hpp"
 #include "pychron/core/sha256.hpp"
+#include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/ingest/tz.hpp"
 
 namespace pychron::dvc {
@@ -541,7 +542,7 @@ class Reader {
         // by the column, so it is never taken for a refusal of the row.
         for (const auto& link : links) {
           Json about = detail;
-          about["imported"] = true;
+          about[ingest::kMarkerImported] = true;
           about["column"] = link.column;
           about["value"] = detail["row"].value(link.column, Json());
           about["reason"] = link.why + "; imported without it";
@@ -551,7 +552,7 @@ class Reader {
         std::string reason;
         for (const auto& problem : problems) reason += (reason.empty() ? "" : "; ") + problem;
         for (const auto& link : links) reason += "; " + link.why;
-        detail["imported"] = false;
+        detail[ingest::kMarkerImported] = false;
         detail["reason"] = reason;
         unit.conflicts.push_back(conflict(source.file + "#" + legacy_id, std::move(detail)));
       }

@@ -131,7 +131,7 @@ struct VerifyReport {
 
   // Pending conflicts of this source, parity failures of this run included.
   int pending_blocking = 0;  // data was not imported, or does not agree
-  int pending_warnings = 0;  // detail has "imported": true or "synthesized": true
+  int pending_warnings = 0;  // they only annotate a row that was imported: is_warning_conflict()
   std::vector<persistence::Uuid> blocking_conflicts, warning_conflicts;  // sorted
 
   // Age parity. Each interpreted age is compared by its head revision only;
@@ -166,7 +166,9 @@ struct VerifyReport {
 // walked several times; plan it again before using it for an import.
 // Whether a pending conflict only annotates what is in the store (a warning)
 // rather than saying data is missing or disagrees (blocking): spec 10.26 and
-// 10.35. The rule VerifyReport's two counts are made with.
+// 10.35. The rule VerifyReport's two counts are made with: an identity_clash
+// whose detail carries a marker of conflict_markers.hpp, written by that
+// marker's one producer.
 bool is_warning_conflict(const persistence::ImportConflictRow& row);
 
 Result<VerifyReport> verify(persistence::IStore& store, persistence::Uuid client, ISourceAdapter& adapter,

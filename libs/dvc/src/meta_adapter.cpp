@@ -570,6 +570,14 @@ class MetaRepoAdapter::Impl {
     return static_cast<int>(order_.size() - first_);
   }
 
+  Result<void> check_token(const std::string& resume_token) const {
+    auto all = reader_.rev_list(std::nullopt);
+    if (!all) return fail(all.error());
+    const auto resume = detail::resume_point(*all, resume_token, reader_, config_.git, "meta adapter");
+    if (!resume) return fail(resume.error());
+    return {};
+  }
+
   Result<std::optional<ingest::ImportBatch>> next_batch() { return build(nullptr); }
 
   std::optional<std::int64_t> order_of(std::string_view commit) const { return detail::place_of(place_, commit); }
@@ -760,6 +768,8 @@ Result<ingest::SourceDescription> MetaRepoAdapter::describe() { return impl_->de
 Result<int> MetaRepoAdapter::plan(std::optional<std::string> resume_token, ingest::IImportState&) {
   return impl_->plan(resume_token);
 }
+
+Result<void> MetaRepoAdapter::check_token(const std::string& resume_token) { return impl_->check_token(resume_token); }
 
 Result<std::optional<ingest::ImportBatch>> MetaRepoAdapter::next_batch() { return impl_->next_batch(); }
 

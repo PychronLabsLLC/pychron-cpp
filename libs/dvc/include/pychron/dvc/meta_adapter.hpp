@@ -90,6 +90,10 @@ class MetaRepoAdapter final : public ingest::ISourceAdapter {
   // asked anything: what a commit yields depends on the history alone.
   // Returns the commits to walk.
   Result<int> plan(std::optional<std::string> resume_token, ingest::IImportState& state) override;
+  // The error plan() gives for a token whose commit is not in the history
+  // ("history was rewritten"), without planning. Any other token is accepted:
+  // one whose place merely changed makes plan() start from the first commit.
+  Result<void> check_token(const std::string& resume_token) override;
   Result<std::optional<ingest::ImportBatch>> next_batch() override;
   // One unit per file a commit adds, changes or deletes (for a merge: as the
   // walk sees it). The state is not asked anything.

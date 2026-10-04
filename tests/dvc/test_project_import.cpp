@@ -1643,6 +1643,23 @@ TEST_P(ProjectImportTest, RewrittenHistoryStops) {
   EXPECT_EQ(world_->source().progress_token, token);
   EXPECT_EQ(world_->source().status, "failed");
 
+  // A replay walks from the first commit, and still refuses: the stored
+  // token names a commit this history does not have (fix wave A2).
+  auto replay = writer_config();
+  replay.replay = true;
+  auto replayed = run_import(*world_, adapter_config(repo_), std::nullopt, replay);
+  ASSERT_FALSE(replayed);
+  EXPECT_NE(replayed.error().what.find("history was rewritten"), std::string::npos) << replayed.error().what;
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->counts(), counts);
+  EXPECT_EQ(world_->revisions(kE), revisions);
+  EXPECT_EQ(world_->source().progress_token, token);
+  // Nor does a dry-run replay count it as nothing to write.
+  replay.dry_run = true;
+  auto counted = run_import(*world_, adapter_config(repo_), std::nullopt, replay);
+  ASSERT_FALSE(counted);
+  EXPECT_NE(counted.error().what.find("history was rewritten"), std::string::npos) << counted.error().what;
+
   // The same url now points at a repository that never had the token's commit.
   GitFixture replaced;
   replaced.init();

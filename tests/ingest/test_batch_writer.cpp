@@ -10,7 +10,10 @@
 
 #include "fake_adapter.hpp"
 #include "forwarding_store.hpp"
+#include <nlohmann/json.hpp>
+
 #include "pychron/ingest/ids.hpp"
+#include "pychron/ingest/verify.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "store_fixture.hpp"
 
@@ -1890,6 +1893,42 @@ TEST_P(BatchWriterTest, ReplayDoesNotWriteARevisionBehindAStoredOne) {
   const auto settled = rows_of(*world_);
   ASSERT_TRUE(run_all(*world_, adapter, replay_config()));
   EXPECT_EQ(rows_of(*world_), settled);
+}
+
+// A stored revision from a commit the walk no longer has means the history
+// was rewritten under the import. A revision kept back for that reason is not
+// a warning: verify must not say ok (fix wave A1).
+TEST_P(BatchWriterTest, RevisionBehindACommitTheWalkLostIsBlocking) {
+  ImportBatch first = single_batch();  // A at c1, refit at c2
+  FakeAdapter imported(description(), {first});
+  ASSERT_TRUE(run_all(*world_, imported));
+  const Uuid head = revision_id(kUrl, "c2", kind_path("intercepts", 1));
+  ASSERT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+
+  // The source now holds c1 and c3: c2 is gone.
+  ImportBatch second;
+  second.catalog = lab_catalog();
+  add_analysis(second, kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+  second.changesets.push_back(refit("c3", kA, 1, 77.5, who(kAlice, "2016-03-06T00:00:00Z")));
+  second.resume_token = "c3";
+  second.done = second.total = 2;
+  FakeAdapter rewritten(description(), {second});
+  rewritten.walk({"c1", "c3"});
+  auto stats = run_all(*world_, rewritten);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 1);
+  EXPECT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+
+  auto kept = store().import_conflict(conflict_id(kUrl, "c3", kind_path("intercepts", 1)));
+  ASSERT_TRUE(kept && kept->has_value());
+  EXPECT_EQ((*kept)->kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ((*kept)->resolution, "pending");
+  const auto detail = nlohmann::json::parse((*kept)->detail_json);
+  EXPECT_EQ(detail.at("reason"), "late_revision_not_applied");
+  EXPECT_EQ(detail.at("cause"), "stored_commit_unknown");
+  EXPECT_EQ(detail.at("behind"), "c2");
+  EXPECT_FALSE(detail.contains("late")) << (*kept)->detail_json;
+  EXPECT_FALSE(is_warning_conflict(**kept));
 }
 
 // Spec 10.16: the replay decides the same however it is cut, and when it is

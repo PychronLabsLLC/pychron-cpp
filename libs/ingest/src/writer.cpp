@@ -254,6 +254,10 @@ class BatchWriter::Impl final : public IImportState {
     placing_ = !config_.dry_run && (token_.has_value() || done_ > 0);
     if (placing_) chains_.begin_run(store_, adapter, *source_, url_);
     std::optional<P::ImportProgress> walked;  // of the last batch written while catching up
+    // A replay plans from the start, so plan() never sees the stored token:
+    // a history rewritten under the import must still stop the run.
+    if (config_.replay && token_)
+      if (auto known = adapter.check_token(*token_); !known) return fail(known.error());
     if (auto planned = adapter.plan(config_.replay ? std::nullopt : token_, *this); !planned)
       return fail(planned.error());
     for (;;) {

@@ -29,6 +29,8 @@ struct WriterConfig {
   // Everything already imported is a no-op; analyses refused earlier for a
   // missing catalog row, and their later revisions, are written in order and
   // their conflicts become `superseded`. The stored token never moves back.
+  // The stored token is still checked against the source first
+  // (ISourceAdapter::check_token): a rewritten history is an error here too.
   bool replay = false;
 };
 
@@ -37,8 +39,10 @@ struct WriterConfig {
 // its subject and kind that this source stored is from a commit later in the
 // adapter's walk order, and the head of that subject and kind is this
 // source's. Otherwise the head stays and the revision is kept in a pending
-// identity_clash conflict with reason `late_revision_not_applied`,
-// "late": true, and its content in the detail (spec 10.31, 10.34, 10.35).
+// identity_clash conflict with reason `late_revision_not_applied` and its
+// content in the detail (spec 10.31, 10.34, 10.35). It is marked
+// "late": true, a warning, unless what it is behind is a stored revision from
+// a commit the walk no longer has: that one is blocking.
 
 // Items handled in this run, whether or not they were already stored.
 struct RunStats {

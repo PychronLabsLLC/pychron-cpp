@@ -1000,6 +1000,14 @@ TEST_P(MetaImportTest, ResumeTokenAndRewrittenHistory) {
   EXPECT_NE(stats.error().what.find("history was rewritten"), std::string::npos) << stats.error().what;
   EXPECT_EQ(*store().latest_change_seq(), seq);
   EXPECT_EQ(world_->source().status, "failed");
+
+  // Nor with --replay, which walks from the first commit (fix wave A2).
+  auto replay = writer_config();
+  replay.replay = true;
+  auto replayed = run_import(*world_, adapter_config(repo_), std::nullopt, replay);
+  ASSERT_FALSE(replayed);
+  EXPECT_NE(replayed.error().what.find("history was rewritten"), std::string::npos) << replayed.error().what;
+  EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
 TEST_P(MetaImportTest, OpenAndPlanErrors) {

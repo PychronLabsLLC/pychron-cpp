@@ -7,6 +7,7 @@
 #include "legacy_json.hpp"
 #include "project_import.hpp"
 #include "pychron/core/sha256.hpp"
+#include "pychron/ingest/conflict_markers.hpp"
 #include "pychron/ingest/ids.hpp"
 
 namespace pychron::dvc::detail {
@@ -619,7 +620,7 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
   if (!once("identifier\n" + analysis.identifier)) return {};
 
   const auto& names = record.catalog;
-  Json detail{{"synthesized", true}, {"table", "identifier"}, {"identifier", analysis.identifier}};
+  Json detail{{ingest::kMarkerSynthesized, true}, {"table", "identifier"}, {"identifier", analysis.identifier}};
   detail["from"] = Json{{"commit", from.commit}, {"path", from.path}};
   bool placed = false;
   const bool irradiated = names.irradiation && names.irradiation_level && names.irradiation_position;
@@ -744,7 +745,7 @@ Result<void> Mapper::change(const Change& item, Output& out) {
         if (track->role == Track::Role::Imported && track->spec_sha == item.info.key && track->folded_at < ref.index)
           late.push_back(track->uuid.str());
       if (!late.empty()) {
-        Json detail = reason("spectrometer_file_after_collection");
+        Json detail = reason(ingest::kReasonSpectrometerFileAfterCollection);
         detail["analyses"] = std::move(late);
         out.conflict(ref, ConflictKind::Unparseable, std::nullopt, sha256(*text), detail);
       }
