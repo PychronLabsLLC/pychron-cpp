@@ -108,6 +108,9 @@ Mapping:
   controllers are not imported yet: gauge elements are left off the canvas).
 - Connection-end offsets become `start_offset` / `end_offset`, in pixels
   from the element's centre; an elbow names the corner legacy turned at.
+- A legacy `spectrometer` or `laser` becomes a stage with
+  `symbol = "spectrometer"` / `"laser"` (a glyph inside its box), unless
+  the legacy element says `use_symbol="False"`.
 - The canvas is rescaled from world units to pixels (y flipped) over the
   view box; elements a connection names but nobody draws, and canvas valves
   the valve file does not have, are dropped and reported.

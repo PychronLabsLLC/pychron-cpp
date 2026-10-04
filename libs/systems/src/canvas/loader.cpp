@@ -44,6 +44,11 @@ constexpr std::array kCorners{
     std::pair<std::string_view, Corner>{"lr", Corner::LowerRight},
 };
 
+constexpr std::array kStageSymbols{
+    std::pair<std::string_view, StageSymbol>{"spectrometer", StageSymbol::Spectrometer},
+    std::pair<std::string_view, StageSymbol>{"laser", StageSymbol::Laser},
+};
+
 constexpr std::array kOpenValveColors{
     std::pair<std::string_view, OpenValveColor>{"green", OpenValveColor::Green},
     std::pair<std::string_view, OpenValveColor>{"inherit", OpenValveColor::Inherit},
@@ -318,7 +323,7 @@ class CanvasBuilder {
   StageElement parse_stage(const std::string& path, const toml::table& t) {
     StageElement s;
     begin(s, t, path);
-    reject_unknown(t, s, Keys{"name", "pos", "size", "volume", "fill", "display_name", "use_symbol"});
+    reject_unknown(t, s, Keys{"name", "pos", "size", "volume", "fill", "display_name", "use_symbol", "symbol"});
     read(t, s, "name", s.name, true);
     read(t, s, "pos", s.pos, true);
     read(t, s, "size", s.size);
@@ -326,6 +331,7 @@ class CanvasBuilder {
     read(t, s, "fill", s.fill);
     read(t, s, "display_name", s.display_name, false);
     read(t, s, "use_symbol", s.use_symbol);
+    read_enum(t, s, "symbol", s.symbol, kStageSymbols);
     return s;
   }
 

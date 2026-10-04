@@ -154,6 +154,46 @@ void ValveItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {
 
 // ---- StageItem --------------------------------------------------------------
 
+namespace {
+
+constexpr double kSymbolPad = 4.0;   // between the glyph or name and the border
+constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
+
+// Line glyphs, each drawn on its own design grid and scaled to fit `area`.
+void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area) {
+  const bool spectrometer = symbol == canvas::StageSymbol::Spectrometer;
+  const QSizeF grid = spectrometer ? QSizeF(66, 64) : QSizeF(66, 34);
+  const double scale = std::min({area.width() / grid.width(), area.height() / grid.height(), 0.5});
+  painter.save();
+  painter.translate(area.center().x() - grid.width() * scale / 2, area.center().y() - grid.height() * scale / 2);
+  painter.scale(scale, scale);
+  painter.setBrush(Qt::NoBrush);
+  painter.setPen(QPen(theme().text, 1.2 / scale, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  if (spectrometer) {
+    // A magnetic sector: source, the beam bent a quarter turn, then fanned
+    // by mass onto the collectors.
+    painter.drawRoundedRect(QRectF(0, 52, 11, 11), 2, 2);
+    QPainterPath beam(QPointF(5.5, 52));
+    beam.arcTo(QRectF(5.5, 14, 76, 76), 180, -90);
+    painter.drawPath(beam);
+    for (const QPointF& end : {QPointF(62, 5), QPointF(63, 14), QPointF(62, 23)}) {
+      painter.drawLine(QPointF(43.5, 14), end);
+    }
+    painter.setPen(QPen(theme().text, 2.0 / scale, Qt::SolidLine, Qt::FlatCap));
+    painter.drawLine(QPointF(65, 1), QPointF(65, 27));
+  } else {
+    // The laser hazard starburst: rays from a point, the beam the long one.
+    const QPointF c(16, 17);
+    painter.drawLine(QPointF(0, 17), QPointF(66, 17));
+    painter.drawLine(c + QPointF(0, -16), c + QPointF(0, 16));
+    painter.drawLine(c + QPointF(-11.5, -11.5), c + QPointF(11.5, 11.5));
+    painter.drawLine(c + QPointF(11.5, -11.5), c + QPointF(-11.5, 11.5));
+  }
+  painter.restore();
+}
+
+}  // namespace
+
 StageItem::StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent)
     : QGraphicsItem(parent),
       name_(std::move(name)),
@@ -197,7 +237,42 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   painter->setPen(QPen(theme().text, 1));
   painter->setBrush(region_);
   painter->drawRoundedRect(rect_, radius, radius);
-  painter->drawText(rect_, Qt::AlignCenter, label_);
+  const QSizeF label = painter->fontMetrics().size(Qt::TextSingleLine, label_);
+  const QRectF glyph = symbol_rect(label);
+  if (glyph.isEmpty()) {
+    painter->drawText(rect_, Qt::AlignCenter, label_);
+    return;
+  }
+  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
+  if (glyph.width() >= inner.width()) {  // above the name
+    painter->drawText(QRectF(inner.left(), glyph.bottom(), inner.width(), inner.bottom() - glyph.bottom()),
+                      Qt::AlignCenter, label_);
+  } else {  // beside it
+    painter->drawText(QRectF(glyph.right(), inner.top(), inner.right() - glyph.right(), inner.height()),
+                      Qt::AlignCenter, label_);
+  }
+  paint_symbol(*painter, symbol_, glyph);
+}
+
+void StageItem::set_symbol(canvas::StageSymbol symbol) {
+  if (symbol != symbol_) {
+    symbol_ = symbol;
+    update();
+  }
+}
+
+QRectF StageItem::symbol_rect(QSizeF label) const {
+  if (symbol_ == canvas::StageSymbol::None) {
+    return {};
+  }
+  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
+  if (inner.height() - label.height() >= kSymbolMin) {
+    return {inner.left(), inner.top(), inner.width(), inner.height() - label.height()};
+  }
+  if (inner.height() >= kSymbolMin && inner.width() - label.width() >= kSymbolMin) {
+    return {inner.left(), inner.top(), std::min(inner.height(), inner.width() - label.width()), inner.height()};
+  }
+  return {};
 }
 
 // ---- ConnectionItem ---------------------------------------------------------

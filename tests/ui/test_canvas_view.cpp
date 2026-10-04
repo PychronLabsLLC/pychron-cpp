@@ -405,6 +405,43 @@ class TestCanvasView : public QObject {
     QVERIFY(checked > 40);
   }
 
+  // A stage's symbol is a glyph inside its box, placed where it fits.
+  void stageSymbolsFitInsideTheBox() {
+    QCOMPARE(view_->stage("spec")->symbol(), canvas::StageSymbol::None);
+    const QSizeF label(40, 16);
+    ui::StageItem tall("Jan", "Jan", {58, 83}, Qt::white);
+    QVERIFY(tall.symbol_rect(label).isEmpty());  // no symbol asked for
+    tall.set_symbol(canvas::StageSymbol::Spectrometer);
+    // above the name: the box's width, the height the name leaves
+    QCOMPARE(tall.symbol_rect(label), QRectF(-25, -37.5, 50, 59));
+    ui::StageItem wide("Quad", "Quad", {70, 31}, Qt::white);
+    wide.set_symbol(canvas::StageSymbol::Spectrometer);
+    // too short for both: a square beside the name
+    QCOMPARE(wide.symbol_rect(label), QRectF(-31, -11.5, 22, 23));
+    ui::StageItem small("x", "x", {40, 20}, Qt::white);
+    small.set_symbol(canvas::StageSymbol::Laser);
+    QVERIFY(small.symbol_rect(label).isEmpty());  // no room: the name alone
+
+    // painted: dark strokes above the name that the plain box lacks
+    auto dark_pixels = [&](ui::StageItem& item) {
+      QImage image(58, 83, QImage::Format_ARGB32);
+      image.fill(Qt::white);
+      QPainter painter(&image);
+      painter.translate(29, 41.5);
+      item.paint(&painter, nullptr, nullptr);
+      const QRectF area = tall.symbol_rect(painter.fontMetrics().size(Qt::TextSingleLine, "Jan")).translated(29, 41.5);
+      painter.end();
+      int dark = 0;
+      // the upper part only: a plain box centres its name lower down
+      for (int y = int(area.top()) + 2; y < int(area.center().y()) - 8; ++y)
+        for (int x = int(area.left()) + 2; x < int(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
+      return dark;
+    };
+    ui::StageItem plain("Jan", "Jan", {58, 83}, Qt::white);
+    QCOMPARE(dark_pixels(plain), 0);
+    QVERIFY(dark_pixels(tall) > 10);
+  }
+
   void boxEntryFindsWhereALineCrossesIntoABox() {
     const QRectF box(80, -10, 40, 20);
     auto in = ui::box_entry({{0, 0}, {100, 0}}, box);

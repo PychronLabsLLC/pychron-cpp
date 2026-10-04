@@ -319,6 +319,8 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <spectrometer>Obama<translation>-2,-10</translation><dimension>4,2</dimension>\n"
           "    <connection orientation=\"vertical\"><start>MV</start><end>Obama</end></connection>\n"
           "  </spectrometer>\n"
+          "  <laser use_symbol=\"True\">CO2<translation>10,-10</translation><dimension>4,4</dimension></laser>\n"
+          "  <laser use_symbol=\"False\">Furnace<translation>16,-10</translation><dimension>4,4</dimension></laser>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -344,8 +346,18 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   ASSERT_TRUE(drawing) << drawing.error().what;
   // 60 wide -> clamp(1000/60) = 16.67 px per unit.
   EXPECT_EQ(drawing->canvas.size, (canvas::Size{1000, 667}));
-  ASSERT_EQ(drawing->stages.size(), 1u);
-  EXPECT_EQ(drawing->stages[0].display_name, "Obama");
+  // A spectrometer and a laser say what they are; a laser whose legacy
+  // symbol is turned off is a plain volume.
+  auto stage = [&](const std::string& name) -> const canvas::StageElement* {
+    for (const auto& s : drawing->stages)
+      if (s.name == name) return &s;
+    return nullptr;
+  };
+  ASSERT_EQ(drawing->stages.size(), 3u);
+  EXPECT_EQ(stage("Obama")->display_name, "Obama");
+  EXPECT_EQ(stage("Obama")->symbol, canvas::StageSymbol::Spectrometer);
+  EXPECT_EQ(stage("CO2")->symbol, canvas::StageSymbol::Laser);
+  EXPECT_EQ(stage("Furnace")->symbol, canvas::StageSymbol::None);
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   EXPECT_EQ(connection(*drawing, "B", "Obama")->orientation, canvas::Orientation::Auto);

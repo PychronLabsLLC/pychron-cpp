@@ -57,6 +57,7 @@ pos = [800, 300]
 size = [120, 60]
 display_name = "Spectrometer"
 use_symbol = true
+symbol = "spectrometer"
 
 [[pipette]]
 name = "air"
@@ -146,6 +147,8 @@ TEST(CanvasLoader, ParsesEveryElementKind) {
   EXPECT_FALSE(c.stages[0].use_symbol);
   EXPECT_EQ(c.stages[1].display_name, "Spectrometer");
   EXPECT_TRUE(c.stages[1].use_symbol);
+  EXPECT_EQ(c.stages[0].symbol, StageSymbol::None);
+  EXPECT_EQ(c.stages[1].symbol, StageSymbol::Spectrometer);
   EXPECT_FALSE(c.stages[1].volume.has_value());
 
   ASSERT_EQ(c.pipettes.size(), 1u);
@@ -276,9 +279,14 @@ orientation = "diagonal"
 start = "A"
 end = "B"
 corner = "middle"
+[[stage]]
+name = "S"
+pos = [0, 0]
+symbol = "toaster"
 )toml");
   EXPECT_TRUE(has_diag(r, "connection[0].orientation", "invalid value 'diagonal'"));
   EXPECT_TRUE(has_diag(r, "elbow[0].corner", "invalid value 'middle'"));
+  EXPECT_TRUE(has_diag(r, "stage[0].symbol", "invalid value 'toaster'"));
 }
 
 TEST(CanvasLoader, DuplicateNamesAcrossElementKinds) {

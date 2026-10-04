@@ -222,12 +222,14 @@ name = "CO2"
 pos = [602, 236]
 size = [82, 72]
 display_name = "CO2"
+symbol = "laser"
 
 [[stage]]
 name = "Diode"
 pos = [421, 61]
 size = [58, 72]
 display_name = "Diode"
+symbol = "laser"
 
 [[stage]]
 name = "Furnace"
@@ -317,18 +319,21 @@ name = "Felix"
 pos = [216, 339]
 size = [58, 83]
 display_name = "Felix"
+symbol = "spectrometer"
 
 [[stage]]
 name = "Jan"
 pos = [936, 339]
 size = [58, 83]
 display_name = "Jan"
+symbol = "spectrometer"
 
 [[stage]]
 name = "Quad"
 pos = [789, 596]
 size = [70, 31]
 display_name = "Quad"
+symbol = "spectrometer"
 
 [[stage]]
 name = "JanIonPump"

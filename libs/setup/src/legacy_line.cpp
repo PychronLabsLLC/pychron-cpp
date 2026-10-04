@@ -48,6 +48,7 @@ struct LElement {
   double x = 0, y = 0;
   std::optional<double> w, h;
   bool use_symbol = false;
+  bool no_symbol = false;  // use_symbol="False" written out
 };
 struct LConnection {
   std::string kind;  // connection, h, v, tee, elbow
@@ -229,6 +230,7 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
       e.display_name = item.get("display_name") ? item.text("display_name") : std::string{};
       e.text = item.text("text");
       e.use_symbol = item.text("use_symbol") == "True" || item.text("use_symbol") == "true";
+      e.no_symbol = item.get("use_symbol") && !e.use_symbol;
       element_common(e, item.text("translation"), item.text("dimension"));
       if (item.get("vlabel")) notes.push_back("canvas: " + e.name + " vlabel not carried over");
       if (e.kind == "label" && e.text.empty()) e.text = e.name;
@@ -290,6 +292,10 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
       e.name = c.text;
       e.display_name = c.child_text("display_name");
       e.use_symbol = c.child_text("use_symbol") == "True";
+      if (c.attrs.count("use_symbol")) {
+        e.use_symbol = c.attrs.at("use_symbol") == "True";
+        e.no_symbol = !e.use_symbol;
+      }
       element_common(e, c.child_text("translation"), c.child_text("dimension"));
       if (e.kind == "label") e.text = c.text;
       out.elements.push_back(std::move(e));
@@ -681,6 +687,10 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
       if (display.empty() && e.legacy_kind != "stage") display = e.name;
       if (!display.empty()) cv << "display_name = " << q(display) << "\n";
       if (e.use_symbol) cv << "use_symbol = true\n";
+      // A spectrometer or a laser is drawn as one, unless the legacy canvas
+      // turned its symbol off.
+      if ((e.legacy_kind == "spectrometer" || e.legacy_kind == "laser") && !e.no_symbol)
+        cv << "symbol = " << q(e.legacy_kind) << "\n";
     }
   }
   std::map<std::string, std::pair<double, double>> at;  // pixel positions as written

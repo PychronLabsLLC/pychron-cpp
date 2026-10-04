@@ -57,6 +57,9 @@ struct GaugeElement : Located {
   Point pos;
 };
 
+// What a stage is, for the glyph drawn inside its box; None draws the name only.
+enum class StageSymbol { None, Spectrometer, Laser };
+
 struct StageElement : Located {
   std::string name;
   Point pos;
@@ -65,6 +68,7 @@ struct StageElement : Located {
   bool fill = false;
   std::string display_name;
   bool use_symbol = false;
+  StageSymbol symbol = StageSymbol::None;
 };
 
 struct PipetteElement : Located {

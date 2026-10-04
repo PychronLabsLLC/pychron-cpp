@@ -104,6 +104,14 @@ class StageItem : public QGraphicsItem {
 
   StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent = nullptr);
 
+  // A glyph drawn with the name, saying what the volume is: above the name
+  // when the box is tall enough, beside it when it is wide enough, else left
+  // out. The box itself, and so every pipe joining it, is unchanged.
+  canvas::StageSymbol symbol() const noexcept { return symbol_; }
+  void set_symbol(canvas::StageSymbol symbol);
+  // Where paint() puts the glyph for a label this size; empty when it does not fit.
+  QRectF symbol_rect(QSizeF label) const;
+
   const std::string& name() const noexcept { return name_; }
   // The corner radius of a volume this size: scaled down with the smaller
   // side so thin volumes stay pill-like without swallowing the whole shape.
@@ -123,6 +131,7 @@ class StageItem : public QGraphicsItem {
   QString label_;
   QRectF rect_;
   QColor region_;
+  canvas::StageSymbol symbol_ = canvas::StageSymbol::None;
 };
 
 // Plumbing drawn as a polyline through element centres. Remembers the names

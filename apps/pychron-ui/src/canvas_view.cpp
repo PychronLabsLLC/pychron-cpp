@@ -81,6 +81,7 @@ void CanvasView::build(const canvas::Canvas& c) {
   for (const auto& s : c.stages) {
     const std::string& label = s.display_name.empty() ? s.name : s.display_name;
     auto* item = new StageItem(s.name, QString::fromStdString(label), s.size, stage_color);
+    item->set_symbol(s.symbol);
     item->setPos(to_qpoint(s.pos));
     scene_.addItem(item);
     stages_[s.name] = item;
