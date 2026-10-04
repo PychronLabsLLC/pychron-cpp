@@ -10,6 +10,7 @@
 #include <sstream>
 #include <system_error>
 #include <tuple>
+#include <utility>
 
 #include "legacy/lite.hpp"
 #include "pychron/core/config/loader.hpp"
@@ -52,12 +53,16 @@ struct LConnection {
   std::string kind;  // connection, h, v, tee, elbow
   std::string start, end, left, mid, right;
   std::string corner;  // elbow only
+  // Where an end meets its element, from the element's lower-left corner in
+  // world units; unset = its centre.
+  std::optional<std::pair<double, double>> start_offset, end_offset;
 };
 struct LCanvas {
   std::vector<LElement> elements;
   std::vector<LConnection> connections;
   std::optional<std::pair<double, double>> xview, yview;
   double ox = 0, oy = 0;
+  double valve_w = 2, valve_h = 2;  // <valve_dimension>
   bool pixels = false;  // valves2D.cfg: window pixels, y up
   double window_w = 800, window_h = 800;
 };
@@ -200,7 +205,16 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
       if (!item.is_map()) continue;
       if (is_connection(kind)) {
         LConnection c{conn_kind(kind, item.text("orientation")), item.text("start"), item.text("end"),
-                      item.text("left"),  item.text("mid"),   item.text("right"), item.text("corner")};
+                      item.text("left"),  item.text("mid"),   item.text("right"), item.text("corner"), {}, {}};
+        // an end is a name, or {name: X, offset: "dx,dy"}
+        if (const YNode* s = item.get("start")) c.start_offset = pair_of(s->text("offset"));
+        if (const YNode* e = item.get("end")) c.end_offset = pair_of(e->text("offset"));
+        for (const char* arm : {"left", "mid", "right"})
+          if (const YNode* a = item.get(arm); a && a->get("offset")) {
+            notes.push_back("canvas: tee " + item.text("left") + "-" + item.text("mid") + "-" + item.text("right") +
+                            ": end offset not carried over");
+            break;
+          }
         out.connections.push_back(std::move(c));
         continue;
       }
@@ -233,19 +247,25 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
       out.xview = pair_of(c.text);
     } else if (c.tag == "yview") {
       out.yview = pair_of(c.text);
-    } else if (c.tag == "color" || c.tag == "connection_dimension" || c.tag == "valve_dimension") {
+    } else if (c.tag == "valve_dimension") {
+      if (auto p = pair_of(c.text)) std::tie(out.valve_w, out.valve_h) = *p;
+    } else if (c.tag == "color" || c.tag == "connection_dimension") {
       continue;
     } else if (is_connection(c.tag)) {
       auto orientation = c.attrs.count("orientation") ? c.attrs.at("orientation") : std::string{};
       out.connections.push_back({conn_kind(c.tag, orientation), c.child_text("start"), c.child_text("end"),
                                  c.child_text("left"), c.child_text("mid"), c.child_text("right"),
-                                 c.child_text("corner")});  // legacy reads the child, never a corner= attribute
-      for (const auto& end : c.children)
-        if (end.attrs.count("offset")) {
-          notes.push_back("canvas: connection " + c.child_text("start") + "-" + c.child_text("end") +
+                                 c.child_text("corner"), {}, {}});  // legacy reads the <corner> child, never a corner= attribute
+      LConnection& made = out.connections.back();
+      bool tee_noted = false;
+      for (const auto& end : c.children) {
+        if (!end.attrs.count("offset")) continue;
+        if (end.tag == "start") made.start_offset = pair_of(end.attrs.at("offset"));
+        else if (end.tag == "end") made.end_offset = pair_of(end.attrs.at("offset"));
+        else if (!std::exchange(tee_noted, true))
+          notes.push_back("canvas: tee " + made.left + "-" + made.mid + "-" + made.right +
                           ": end offset not carried over");
-          break;
-        }
+      }
     } else if (c.tag == "image") {
       notes.push_back("canvas: image " + c.text + " not carried over");
     } else {
@@ -289,6 +309,8 @@ void apply_canvas_config(const XNode& root, LCanvas& canvas) {
       if (auto p = pair_of(c.text)) canvas.xview = p;
     } else if (c.tag == "yview") {
       if (auto p = pair_of(c.text)) canvas.yview = p;
+    } else if (c.tag == "valve_dimension") {
+      if (auto p = pair_of(c.text)) std::tie(canvas.valve_w, canvas.valve_h) = *p;
     }
   }
 }
@@ -572,15 +594,27 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
     }
   }
 
-  // A legacy box's translation is its lower-left corner (a valve's is its
-  // centre): the 55-wide melbourne stage at -26 is the one every valve
-  // from -25 to 25 connects to.
+  // A legacy element's translation is its lower-left corner, a valve's too
+  // (valve_dimension square unless it has its own): the 55-wide melbourne
+  // stage at -26 is the one every valve from -25 to 25 connects to.
+  // `extent` keeps each element's legacy size: connection offsets are
+  // measured from the same corner.
+  std::map<std::string, std::pair<double, double>> extent;
   if (!canvas.pixels)
-    for (auto& e : elements)
-      if (e.w && e.h && !switchable().contains(e.kind) && e.kind != "label") {
-        e.x += *e.w / 2;
-        e.y += *e.h / 2;
+    for (auto& e : elements) {
+      if (e.kind == "label") continue;
+      if (switchable().contains(e.kind)) {
+        if (!e.w || !e.h) {
+          e.w = canvas.valve_w;
+          e.h = canvas.valve_h;
+        }
+      } else if (!e.w || !e.h) {
+        continue;
       }
+      e.x += *e.w / 2;
+      e.y += *e.h / 2;
+      extent[e.name] = {*e.w, *e.h};
+    }
 
   // World units (y up) -> pixels (y down).
   double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
@@ -636,6 +670,25 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   std::map<std::string, std::pair<double, double>> at;  // pixel positions as written
   for (const auto& e : elements)
     if (e.kind != "label") at[e.name] = {px(e.x), py(e.y)};
+  // A legacy offset is from the element's lower-left corner, y up;
+  // canvas.toml's is from its centre, in pixels, y down.
+  using Offset = std::optional<std::pair<double, double>>;
+  auto shift = [&](const std::string& name, const Offset& o) -> std::pair<double, double> {
+    if (!o) return {0, 0};
+    const auto [w, h] = extent.contains(name) ? extent.at(name) : std::pair{0.0, 0.0};
+    return {(o->first - w / 2) * scale, -(o->second - h / 2) * scale};
+  };
+  auto meet = [&](const std::string& name, const Offset& o) -> std::pair<double, double> {
+    const auto [dx, dy] = shift(name, o);
+    return {at[name].first + dx, at[name].second + dy};
+  };
+  auto offsets = [&](const LConnection& c) {
+    for (const auto& [key, name, o] : {std::tuple{"start_offset", &c.start, &c.start_offset},
+                                       std::tuple{"end_offset", &c.end, &c.end_offset}}) {
+      const auto [dx, dy] = shift(*name, *o);
+      if (num(dx) != "0" || num(dy) != "0") cv << key << " = [" << num(dx) << ", " << num(dy) << "]\n";
+    }
+  };
   for (const auto& c : canvas.connections) {
     if (c.kind == "tee") {
       const bool ok = drawn.contains(c.left) && drawn.contains(c.mid) && drawn.contains(c.right);
@@ -654,19 +707,21 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
       // Legacy turns at (start.x, end.y), or at (end.x, start.y) for "lr",
       // whatever else the corner says. canvas.toml names the corner of the
       // ends' bounding box instead, so name the one legacy turned at.
-      const auto [sx, sy] = at[c.start];
-      const auto [ex, ey] = at[c.end];
+      const auto [sx, sy] = meet(c.start, c.start_offset);
+      const auto [ex, ey] = meet(c.end, c.end_offset);
       if (num(sx) != num(ex) && num(sy) != num(ey)) {  // lined up as written: a plain connection
         const bool lr = c.corner == "lr";
         const bool left = lr ? ex < sx : sx < ex;
         const bool upper = lr ? sy < ey : ey < sy;  // pixels: y down
         cv << "\n[[elbow]]\nstart = " << q(c.start) << "\nend = " << q(c.end) << "\ncorner = "
            << q(std::string(upper ? "u" : "l") + (left ? "l" : "r")) << "\n";
+        offsets(c);
         continue;
       }
     }
     cv << "\n[[connection]]\nstart = " << q(c.start) << "\nend = " << q(c.end) << "\n";
     if (c.kind == "h" || c.kind == "v") cv << "orientation = " << q(c.kind) << "\n";
+    offsets(c);
   }
 
   if (!out.notes.empty()) {

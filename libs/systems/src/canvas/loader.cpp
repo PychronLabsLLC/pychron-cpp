@@ -343,9 +343,11 @@ class CanvasBuilder {
   Connection parse_connection(const std::string& path, const toml::table& t) {
     Connection c;
     begin(c, t, path);
-    reject_unknown(t, c, Keys{"start", "end", "orientation"});
+    reject_unknown(t, c, Keys{"start", "end", "orientation", "start_offset", "end_offset"});
     read(t, c, "start", c.start, true);
     read(t, c, "end", c.end, true);
+    read(t, c, "start_offset", c.start_offset, false);
+    read(t, c, "end_offset", c.end_offset, false);
     read_enum(t, c, "orientation", c.orientation, kOrientations);
     return c;
   }
@@ -353,9 +355,11 @@ class CanvasBuilder {
   Elbow parse_elbow(const std::string& path, const toml::table& t) {
     Elbow e;
     begin(e, t, path);
-    reject_unknown(t, e, Keys{"start", "end", "corner"});
+    reject_unknown(t, e, Keys{"start", "end", "corner", "start_offset", "end_offset"});
     read(t, e, "start", e.start, true);
     read(t, e, "end", e.end, true);
+    read(t, e, "start_offset", e.start_offset, false);
+    read(t, e, "end_offset", e.end_offset, false);
     read_enum(t, e, "corner", e.corner, kCorners);
     return e;
   }

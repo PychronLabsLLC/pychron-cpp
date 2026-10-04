@@ -49,9 +49,10 @@ without one it uses `switch_controller`.
 
 ### Canvas
 
-- World units, y up. A valve's `translation` is its centre; a box's
-  (stage, spectrometer, turbo, ...) is its lower-left corner, with
-  `dimension: 8,3` its size: melbourne's 55-wide stage `S1` at `-26,0` is
+- World units, y up. Every element's `translation` is its lower-left corner:
+  a box's (stage, spectrometer, turbo, ...) with `dimension: 8,3` its size,
+  and a valve's too, `valve_dimension` square (2 x 2 unless the canvas or
+  `canvas_config.xml` says otherwise; real files use 3 and 4): melbourne's 55-wide stage `S1` at `-26,0` is
   what every valve from x -25 to 25 connects to. The view box comes from `canvas_config.xml`
   (`xview -50,50`) or the canvas file itself (`<xvidew>`: misspelt in a real
   file, so the reader accepts both).
@@ -60,7 +61,12 @@ without one it uses `switch_controller`.
   `label`, and connections `connection` (XML, `orientation=` attribute),
   `hconnection`, `vconnection`, `tee_connection` (`left`/`mid`/`right`).
 - Connections reference elements that are commented out or never drawn;
-  connection ends can carry an `offset`.
+  connection ends can carry an `offset` (`<start offset="1.5,0">`, or
+  `{name: X, offset: "1.5,0"}` in YAML): where the pipe meets the element,
+  from the element's lower-left corner. Without one it meets the centre.
+- An `elbow` turns at (start.x, end.y), or at (end.x, start.y) when its
+  `<corner>` child says `lr`; no other corner value, and no `corner=`
+  attribute, changes anything.
 - `pipette` carries a `vlabel` with a Python format string (`Shots={:04d}`).
 - `valves2D.cfg` is the oldest form: pixel positions only, no connections.
 
@@ -97,9 +103,11 @@ Mapping:
   driver is still needed. An actuator whose cfg is missing gets the same
   stand-in and a warning; it never falls back to another controller.
 - Not carried over, and listed in the report: `invert`, `query_state`,
-  `check_actuation_*`, connection-end offsets, pipette `vlabel` formats,
+  `check_actuation_*`, offsets on a tee's arms, pipette `vlabel` formats,
   colours other than the background, images, and gauges (legacy gauge
   controllers are not imported yet: gauge elements are left off the canvas).
+- Connection-end offsets become `start_offset` / `end_offset`, in pixels
+  from the element's centre; an elbow names the corner legacy turned at.
 - The canvas is rescaled from world units to pixels (y flipped) over the
   view box; elements a connection names but nobody draws, and canvas valves
   the valve file does not have, are dropped and reported.

@@ -294,22 +294,8 @@ outer = "W"
 #   check_actuation_delay not carried over (8 valves: FD, FA, FB, FC, FH, FG, FE, FF)
 #   check_actuation_enabled not carried over (1 valve: R)
 #   query_state="false" not carried over (33 valves: FD, FA, FB, FC, FH, FG, FE, FF, ...)
-#   canvas: connection -: end offset not carried over
-#   canvas: connection GP502-GP50Manual_Rough: end offset not carried over
-#   canvas: connection FB-FBTurbo: end offset not carried over
-#   canvas: connection FC-FurnaceManifold: end offset not carried over
-#   canvas: connection FC-FA: end offset not carried over
-#   canvas: connection FA-FATurbo: end offset not carried over
-#   canvas: connection FD-FurnaceManifold: end offset not carried over
-#   canvas: connection J-FurnaceManifold: end offset not carried over
-#   canvas: connection Bone IG-ATurboManifold: end offset not carried over
-#   canvas: connection D-Bone: end offset not carried over
-#   canvas: connection ATurbo-ATurboManifold: end offset not carried over
-#   canvas: connection -: end offset not carried over
-#   canvas: connection G-CO2: end offset not carried over
-#   canvas: connection Minibone-I: end offset not carried over
-#   canvas: connection T-Microbone: end offset not carried over
-#   canvas: connection NP-10H-GP50Manual: end offset not carried over
+#   canvas: tee R-JanNP10-MSManual: end offset not carried over
+#   canvas: tee ADiode-Diode-RDiode: end offset not carried over
 #   actuator furnace_switch_controller (NMGRLFurnaceActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator switch_controller (AgilentGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator arduino_valve_controller (ArduinoGPActuator): no pychron-cpp driver yet; simulated by sim_valves

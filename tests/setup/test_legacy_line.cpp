@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <random>
 #include <string>
 #include <variant>
 #include <vector>
@@ -27,8 +28,11 @@ namespace fs = std::filesystem;
 namespace {
 
 struct Tmp {
+  // ctest runs each test in its own process, several at once: the clock
+  // alone can name two of them the same directory.
   fs::path dir = fs::temp_directory_path() /
-                 ("pychron-legacy-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                 ("pychron-legacy-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                  std::to_string(std::random_device{}()));
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
   void write(const fs::path& rel, const std::string& text) const {
@@ -167,7 +171,9 @@ struct YamlLine : ::testing::Test {
             "    end: B\n"
             "vconnection:\n"
             "  - start: A\n"
-            "    end: S1\n"
+            "    end:\n"
+            "      name: S1\n"
+            "      offset: 4,3\n"
             "connection:\n"
             "  - start: B\n"
             "    end: D\n"
@@ -235,7 +241,8 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
   // View box x -50..50 -> 10 px per unit; y up -> y down over -25..25.
   EXPECT_EQ(drawing->canvas.size, (canvas::Size{1000, 500}));
   ASSERT_NE(drawn_valve(*drawing, "A"), nullptr);
-  EXPECT_EQ(drawn_valve(*drawing, "A")->pos, (canvas::Point{300, 200}));
+  // A: lower-left (-20, 5), valve_dimension 2 x 2 -> centre (-19, 6).
+  EXPECT_EQ(drawn_valve(*drawing, "A")->pos, (canvas::Point{310, 190}));
   ASSERT_EQ(drawing->stages.size(), 1u);
   // S1: lower-left (-26, 0), 55 x 3 -> centre (1.5, 1.5).
   EXPECT_EQ(drawing->stages[0].pos, (canvas::Point{515, 235}));
@@ -250,6 +257,10 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   ASSERT_NE(connection(*drawing, "A", "S1"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "S1")->orientation, canvas::Orientation::Vertical);
+  // The end meets S1 4 right and 3 up from its lower-left corner (its top
+  // edge): from its centre (27.5, 1.5), that is 23.5 left and 1.5 up.
+  EXPECT_EQ(connection(*drawing, "A", "S1")->end_offset, (canvas::Point{-235, -15}));
+  EXPECT_EQ(connection(*drawing, "A", "S1")->start_offset, (canvas::Point{0, 0}));
   EXPECT_EQ(connection(*drawing, "B", "D"), nullptr);
   ASSERT_EQ(drawing->tees.size(), 1u);
   EXPECT_EQ(drawing->tees[0].mid, "C");
@@ -336,6 +347,9 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
   EXPECT_EQ(connection(*drawing, "B", "Obama")->orientation, canvas::Orientation::Auto);
+  // offset 1,0 on a 2 x 2 valve: the middle of its bottom edge, 1 unit
+  // (16.67 px) below its centre.
+  EXPECT_EQ(connection(*drawing, "B", "Obama")->start_offset, (canvas::Point{0, 17}));
 
   // Elbows turn where legacy pychron turned them: level with the end, above
   // or below the start; for "lr", level with the start. The corner is named
@@ -353,7 +367,7 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   const std::string notes = all_notes(*made);
   EXPECT_TRUE(has_note(*made, "query_state=\"false\" not carried over (1 valve: A)")) << notes;
   EXPECT_TRUE(has_note(*made, "check_actuation_enabled not carried over")) << notes;
-  EXPECT_TRUE(has_note(*made, "B-Obama: end offset not carried over")) << notes;
+  EXPECT_FALSE(has_note(*made, "offset not carried over")) << notes;
   EXPECT_TRUE(has_note(*made, "devices/furnace.cfg not found")) << notes;
 }
 

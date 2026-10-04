@@ -116,8 +116,13 @@ void CanvasView::build(const canvas::Canvas& c) {
   for (const auto& conn : c.connections) {
     QPointF a;
     QPointF b;
-    if (conn.orientation == canvas::Orientation::Auto || !position(conn.start, a) || !position(conn.end, b)) {
-      add_path({conn.start, conn.end}, width);
+    if (!position(conn.start, a) || !position(conn.end, b)) {
+      continue;
+    }
+    a += to_qpoint(conn.start_offset);
+    b += to_qpoint(conn.end_offset);
+    if (conn.orientation == canvas::Orientation::Auto) {
+      add_pipe({a, b}, width, {conn.start, conn.end});
       continue;
     }
     add_pipe(oriented(a, conn.start, b, conn.end, conn.orientation == canvas::Orientation::Vertical), width,
@@ -129,6 +134,8 @@ void CanvasView::build(const canvas::Canvas& c) {
     if (!position(e.start, a) || !position(e.end, b)) {
       continue;
     }
+    a += to_qpoint(e.start_offset);
+    b += to_qpoint(e.end_offset);
     if (a.x() == b.x() || a.y() == b.y()) {
       add_pipe({a, b}, width, {e.start, e.end});  // lined up: nothing to turn
       continue;

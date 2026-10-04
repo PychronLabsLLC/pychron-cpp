@@ -25,163 +25,163 @@ pos = [219, 47]
 
 [[valve]]
 name = "FE"
-pos = [281, 94]
+pos = [292, 82]
 
 [[valve]]
 name = "FF"
-pos = [281, 187]
+pos = [292, 175]
 
 [[valve]]
 name = "FG"
-pos = [281, 140]
+pos = [292, 129]
 
 [[valve]]
 name = "FD"
-pos = [327, 246]
+pos = [339, 234]
 
 [[valve]]
 name = "FH"
-pos = [257, 327]
+pos = [269, 316]
 
 [[valve]]
 name = "F"
-pos = [526, 304]
+pos = [538, 292]
 
 [[valve]]
 name = "O"
-pos = [930, 509]
+pos = [942, 497]
 
 [[valve]]
 name = "V"
-pos = [193, 509]
+pos = [205, 497]
 
 [[valve]]
 name = "H"
-pos = [263, 439]
+pos = [275, 427]
 
 [[valve]]
 name = "B"
-pos = [374, 374]
+pos = [386, 363]
 
 [[valve]]
 name = "D"
-pos = [526, 374]
+pos = [538, 363]
 
 [[valve]]
 name = "C"
-pos = [345, 503]
+pos = [357, 491]
 
 [[valve]]
 name = "N"
-pos = [480, 374]
+pos = [491, 363]
 
 [[valve]]
 name = "E"
-pos = [480, 497]
+pos = [491, 485]
 
 [[valve]]
 name = "I"
-pos = [480, 544]
+pos = [491, 532]
 
 [[valve]]
 name = "J"
-pos = [327, 374]
+pos = [339, 363]
 
 [[valve]]
 name = "K"
-pos = [678, 368]
+pos = [690, 357]
 
 [[valve]]
 name = "M"
-pos = [725, 368]
+pos = [737, 357]
 
 [[valve]]
 name = "P"
-pos = [485, 713]
+pos = [497, 702]
 
 [[valve]]
 name = "Q"
-pos = [696, 713]
+pos = [708, 702]
 
 [[valve]]
 name = "W"
-pos = [573, 789]
+pos = [585, 778]
 
 [[valve]]
 name = "X"
-pos = [573, 860]
+pos = [585, 848]
 
 [[valve]]
 name = "Y"
-pos = [632, 789]
+pos = [643, 778]
 
 [[valve]]
 name = "Z"
-pos = [632, 860]
+pos = [643, 848]
 
 [[valve]]
 name = "L"
-pos = [620, 456]
+pos = [632, 444]
 
 [[valve]]
 name = "R"
-pos = [801, 439]
+pos = [813, 427]
 
 [[valve]]
 name = "S"
-pos = [766, 439]
+pos = [778, 427]
 
 [[valve]]
 name = "T"
-pos = [620, 374]
+pos = [632, 363]
 
 [[valve]]
 name = "U"
-pos = [725, 509]
+pos = [737, 497]
 
 [[valve]]
 name = "FC"
-pos = [292, 246]
+pos = [304, 234]
 
 [[rough_valve]]
 name = "FB"
-pos = [47, 339]
+pos = [58, 327]
 
 [[rough_valve]]
 name = "FA"
-pos = [187, 246]
+pos = [199, 234]
 
 [[rough_valve]]
 name = "G"
-pos = [608, 234]
+pos = [620, 222]
 
 [[manual_valve]]
 name = "ADiode"
-pos = [377, 234]
+pos = [389, 222]
 
 [[manual_valve]]
 name = "RDiode"
-pos = [468, 234]
+pos = [480, 222]
 
 [[manual_valve]]
 name = "NP-10CRough"
-pos = [678, 222]
+pos = [690, 211]
 
 [[manual_valve]]
 name = "GP50Manual"
-pos = [725, 246]
+pos = [737, 234]
 
 [[manual_valve]]
 name = "GP50Manual_Rough"
-pos = [725, 108]
+pos = [737, 96]
 
 [[manual_valve]]
 name = "MiniBoneGP5Manual"
-pos = [649, 632]
+pos = [661, 620]
 
 [[manual_valve]]
 name = "MSManual"
-pos = [877, 439]
+pos = [889, 427]
 
 [[stage]]
 name = "FurnaceManifold"
@@ -386,6 +386,7 @@ orientation = "v"
 start = "GP502"
 end = "GP50Manual_Rough"
 orientation = "v"
+start_offset = [-12, 18]
 
 [[connection]]
 start = "FH"
@@ -406,20 +407,24 @@ orientation = "h"
 start = "FB"
 end = "FBTurbo"
 orientation = "v"
+start_offset = [6, 12]
 
 [[connection]]
 start = "FC"
 end = "FurnaceManifold"
 orientation = "v"
+start_offset = [0, 12]
 
 [[connection]]
 start = "FC"
 end = "FA"
 orientation = "h"
+start_offset = [6, -0]
 
 [[connection]]
 start = "FD"
 end = "FurnaceManifold"
+end_offset = [18, 18]
 
 [[connection]]
 start = "FD"
@@ -429,6 +434,7 @@ orientation = "v"
 [[connection]]
 start = "J"
 end = "FurnaceManifold"
+end_offset = [18, 18]
 
 [[connection]]
 start = "H"
@@ -444,6 +450,7 @@ orientation = "v"
 start = "D"
 end = "Bone"
 corner = "lr"
+end_offset = [-94, -18]
 
 [[connection]]
 start = "C"
@@ -459,6 +466,7 @@ orientation = "v"
 start = "ATurbo"
 end = "ATurboManifold"
 orientation = "v"
+start_offset = [0, 18]
 
 [[connection]]
 start = "N"
@@ -513,6 +521,7 @@ orientation = "v"
 start = "G"
 end = "CO2"
 orientation = "v"
+start_offset = [6, 12]
 
 [[connection]]
 start = "P"
@@ -538,6 +547,7 @@ orientation = "h"
 start = "Minibone"
 end = "I"
 corner = "ur"
+start_offset = [-41, 29]
 
 [[connection]]
 start = "W"
@@ -598,6 +608,7 @@ orientation = "v"
 start = "T"
 end = "Microbone"
 corner = "ll"
+end_offset = [-47, -18]
 
 [[connection]]
 start = "K"
@@ -648,6 +659,7 @@ orientation = "v"
 start = "NP-10H"
 end = "GP50Manual"
 orientation = "v"
+start_offset = [-12, 18]
 
 [[connection]]
 start = "GP50Manual"

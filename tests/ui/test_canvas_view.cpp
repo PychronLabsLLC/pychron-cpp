@@ -267,6 +267,10 @@ class TestCanvasView : public QObject {
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
     // B (550, 200) and turbo (650, 300; 60 x 40) do not line up either way.
     std::ofstream(canvas, std::ios::app) << "\n[[connection]]\nstart = \"B\"\nend = \"turbo\"\norientation = \"v\"\n";
+    // offsets move where a pipe meets its element: A (250, 200) to the top
+    // edge of bone (100, 200; 80 x 40), 30 left of its centre
+    std::ofstream(canvas, std::ios::app)
+        << "\n[[connection]]\nstart = \"A\"\nend = \"bone\"\nstart_offset = [0, -15]\nend_offset = [-30, -20]\n";
     auto line = ui::test::make_example_line(canvas);
     CoreBridge bridge(*line);
     CanvasView view(bridge);
@@ -281,6 +285,7 @@ class TestCanvasView : public QObject {
     };
     // down first, then across
     QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {550, 300}, {650, 300}}));
+    QCOMPARE(route("A", "bone"), (std::vector<QPointF>{{250, 185}, {70, 180}}));
     // the example's own: P1 straight under prep
     QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{400, 200}, {400, 330}}));
     line->stop();

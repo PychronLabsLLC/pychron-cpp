@@ -76,10 +76,14 @@ struct PipetteElement : Located {
 
 enum class Orientation { Auto, Horizontal, Vertical };
 
+// start_offset / end_offset move where the pipe meets its element, in pixels
+// from the element's centre (so a pipe can join a wide volume off-centre).
 struct Connection : Located {
   std::string start;
   std::string end;
   Orientation orientation = Orientation::Auto;
+  Point start_offset;
+  Point end_offset;
 };
 
 enum class Corner { UpperLeft, UpperRight, LowerLeft, LowerRight };
@@ -88,6 +92,8 @@ struct Elbow : Located {
   std::string start;
   std::string end;
   Corner corner = Corner::UpperLeft;
+  Point start_offset;
+  Point end_offset;
 };
 
 // Junctions: every listed endpoint is joined to every other with no valve
