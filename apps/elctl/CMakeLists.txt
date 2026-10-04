@@ -5,15 +5,30 @@
 file(GLOB PYCHRON_ELCTL_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
+# `elctl import` (legacy ingestion spec, section 5) needs the DVC store. With
+# persistence its sources are src/import*.cpp; without, only import_stub.cpp,
+# which says so and exits 2. Never both.
+set(PYCHRON_ELCTL_IMPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/import_stub.cpp")
+if(TARGET pychron_persistence)
+  list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}")
+else()
+  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/import[^/]*\\.cpp$")
+  list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}")
+endif()
+
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
 target_include_directories(pychron_elctl_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(pychron_elctl_lib PUBLIC cxx_std_20)
 target_link_libraries(pychron_elctl_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::devices
   pychron::transport pychron::core)
-# A data reduction install's local database is created with the DVC store.
 if(TARGET pychron_persistence)
-  target_link_libraries(pychron_elctl_lib PUBLIC pychron_persistence)
-  target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1)
+  # A data reduction install's local database is created with the DVC store.
+  # processing_store: the reduction `import verify` compares legacy ages with.
+  target_link_libraries(pychron_elctl_lib PUBLIC pychron_persistence pychron::dvc pychron::ingest
+    pychron::processing_store pychron::processing
+    PRIVATE nlohmann_json::nlohmann_json)
+  target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1 PYCHRON_ELCTL_IMPORT
+    PRIVATE PYCHRON_ELCTL_VERSION="${PROJECT_VERSION}")
 endif()
 pychron_set_warnings(pychron_elctl_lib)
 

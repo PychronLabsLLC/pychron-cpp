@@ -15,6 +15,7 @@
 
 #include "duration.hpp"
 #include "exp.hpp"
+#include "import.hpp"
 #include "pychron/setup/installer.hpp"
 #include "setup.hpp"
 #include "line.hpp"
@@ -69,6 +70,14 @@ constexpr const char* kUsageText =
     "  import-line <folder> [--out DIR] [--force]\n"
     "                              convert a legacy Pychron setupfiles extraction line and canvas\n"
     "  --install NAME              before a command: use that install's files (see doctor)\n"
+    "\n"
+    "Legacy data (elctl import help lists every option):\n"
+    "  import add --db <url> --kind legacy_db|meta_repo|project_repo --source <path|url> --tz <zone>\n"
+    "                              register a legacy database dump or repository\n"
+    "  import run --db <url> [--source <id|name> | --all] [--replay] [--dry-run]\n"
+    "                              import, resuming where the last run stopped\n"
+    "  import status|conflicts|verify --db <url>\n"
+    "                              progress, what could not be imported, and whether to trust it\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
@@ -166,6 +175,7 @@ class Session {
       e.sim = g_.sim;
       return exp_command(args, e, io_);
     }
+    if (cmd == "import") return import_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();
