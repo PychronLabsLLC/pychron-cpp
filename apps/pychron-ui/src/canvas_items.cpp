@@ -43,7 +43,7 @@ QColor valve_color(ValveState state) {
 // ---- ValveItem --------------------------------------------------------------
 
 ValveItem::ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* parent)
-    : QGraphicsObject(parent), name_(std::move(name)), kind_(kind) {
+    : QGraphicsObject(parent), name_(std::move(name)), label_(QString::fromStdString(name_)), kind_(kind) {
   setZValue(2);
   setCursor(Qt::PointingHandCursor);
   setToolTip(QString::fromStdString(name_));
@@ -96,8 +96,13 @@ void ValveItem::flash(const QString& what) {
   update();
 }
 
+void ValveItem::set_label(QString label) {
+  label_ = std::move(label);
+  update();
+}
+
 QString ValveItem::shown_name(const QFontMetricsF& metrics) const {
-  return metrics.elidedText(QString::fromStdString(name_), Qt::ElideRight, kSize - 4);
+  return metrics.elidedText(label_, Qt::ElideRight, kSize - 4);
 }
 
 QRectF ValveItem::boundingRect() const {

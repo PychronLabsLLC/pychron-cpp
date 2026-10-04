@@ -317,9 +317,10 @@ class CanvasBuilder {
     ValveElement v;
     begin(v, t, path);
     v.kind = kind;
-    reject_unknown(t, v, Keys{"name", "pos"});
+    reject_unknown(t, v, Keys{"name", "pos", "display_name"});
     read(t, v, "name", v.name, true);
     read(t, v, "pos", v.pos, true);
+    read(t, v, "display_name", v.display_name);
     return v;
   }
 

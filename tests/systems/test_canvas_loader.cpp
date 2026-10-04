@@ -293,6 +293,41 @@ symbol = "toaster"
   EXPECT_TRUE(has_diag(r, "stage[0].symbol", "invalid value 'toaster'"));
 }
 
+TEST(CanvasLoader, ValveLabels) {
+  const auto r = load_canvas_from_string(R"toml(
+[[valve]]
+name = "A"
+pos = [0, 0]
+[[valve]]
+name = "B"
+pos = [0, 0]
+display_name = "Bee"
+[[manual_valve]]
+name = "M1"
+pos = [0, 0]
+[[manual_valve]]
+name = "M2"
+pos = [0, 0]
+display_name = "R"
+[[valve]]
+name = "C"
+pos = [0, 0]
+display_name = ""
+)toml",
+                                         "canvas.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  auto label = [&](const std::string& name) {
+    for (const auto& v : r->valves)
+      if (v.name == name) return v.label();
+    return std::string("?");
+  };
+  EXPECT_EQ(label("A"), "A");      // a valve: its name
+  EXPECT_EQ(label("B"), "Bee");
+  EXPECT_EQ(label("M1"), "");      // a manual valve: blank
+  EXPECT_EQ(label("M2"), "R");
+  EXPECT_EQ(label("C"), "");       // any valve can be blanked
+}
+
 TEST(CanvasLoader, StageSymbols) {
   const auto r = load_canvas_from_string(R"toml(
 [[stage]]

@@ -49,6 +49,14 @@ struct ValveElement : Located {
   std::string name;
   ValveKind kind = ValveKind::Valve;
   Point pos;
+  // The label on the valve's face. Unset: the name, except on a manual
+  // valve, whose face is blank (its handle marks it; the tooltip names it).
+  std::optional<std::string> display_name;
+
+  const std::string& label() const {
+    static const std::string none;
+    return display_name ? *display_name : kind == ValveKind::Manual ? none : name;
+  }
 };
 
 // A gauge readout placed on the plumbing; its value arrives as PressureSample.

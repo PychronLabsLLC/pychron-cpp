@@ -71,6 +71,7 @@ void CanvasView::build(const canvas::Canvas& c) {
   for (const auto& v : c.valves) {
     auto* item = new ValveItem(v.name, v.kind);
     item->setPos(to_qpoint(v.pos));
+    item->set_label(QString::fromStdString(v.label()));
     item->set_on_click([this](const std::string& name) { on_click(name); });
     item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
     scene_.addItem(item);

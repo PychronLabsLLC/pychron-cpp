@@ -503,6 +503,12 @@ class TestCanvasView : public QObject {
     QCOMPARE(manual.toolTip(), QStringLiteral("MiniBoneGP5Manual"));
     QCOMPARE(valve.shown_name(metrics), QStringLiteral("A"));
 
+    // On the canvas a manual valve's face is blank unless it is given a
+    // display_name; other valves show their name.
+    QCOMPARE(view_->valve("M1")->label(), QString());
+    QCOMPARE(view_->valve("M1")->toolTip(), QStringLiteral("M1"));
+    QCOMPARE(view_->valve("A")->label(), QStringLiteral("A"));
+
     // painted: the handle's bar, dark, above the body
     QImage image(60, 70, QImage::Format_ARGB32);
     image.fill(Qt::white);

@@ -32,8 +32,8 @@ QColor valve_color(ValveState state);
 
 // Click -> actuate; colour by state; thick blue border when locked (context
 // menu locks/unlocks); pending indicator; flashes and shows Error.what in its
-// tooltip on rejection. A manual valve wears a T handle on top; a name too
-// long for the body is cut short (the tooltip has it whole).
+// tooltip on rejection. A manual valve wears a T handle on top; a label too
+// long for the body is cut short (the tooltip has the name whole).
 class ValveItem : public QGraphicsObject {
   Q_OBJECT
 
@@ -73,7 +73,10 @@ class ValveItem : public QGraphicsObject {
   // lock/unlock action. Manual valves have no menu.
   void set_on_lock_request(std::function<void(const std::string&, bool)> cb) { on_lock_request_ = std::move(cb); }
 
-  // The name as drawn: whole, or cut short with an ellipsis to fit the body.
+  // What is written on the face: the name unless set otherwise; may be empty.
+  const QString& label() const noexcept { return label_; }
+  void set_label(QString label);
+  // The label as drawn: whole, or cut short with an ellipsis to fit the body.
   QString shown_name(const QFontMetricsF& metrics) const;
 
   QRectF boundingRect() const override;
@@ -85,6 +88,7 @@ class ValveItem : public QGraphicsObject {
 
  private:
   std::string name_;
+  QString label_;
   canvas::ValveKind kind_;
   ValveState state_ = ValveState::Unknown;
   bool locked_ = false;
