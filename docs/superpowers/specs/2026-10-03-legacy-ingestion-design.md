@@ -599,3 +599,25 @@ points. Where this section and an earlier one disagree, this section wins.
     an `identity_clash` on replay. The merge rule of item 12 compares with
     the blob the walk last saw for a path, which after an unreadable version
     can repeat content in a new revision.
+34. **"Later" is decided by walk position** (this refines item 31 and
+    applies to every run, not only `--replay`). Each revision an adapter
+    sends carries its position in the source's current walk order, and the
+    adapter can give the position of any commit of the source. A revision
+    that is not stored is written only when no stored revision of the same
+    subject and kind comes from a commit later in the walk, and the current
+    head of that subject and kind was not made outside this source (a user's
+    edit). Otherwise the head stays and the content is kept in a
+    `late_revision_not_applied` conflict. This covers three cases alike: a
+    revision refused in an earlier run; commits of a branch that a later
+    merge places earlier in the walk than commits already imported (the
+    usual result of two workstations pulling from each other); and a
+    collection folded again from a later file. A source with nothing stored
+    before the run needs no check.
+35. **Late revisions are warnings.** A `late_revision_not_applied` conflict
+    means history that could not be inserted into an immutable chain; the
+    head is unaffected and the content is kept in the conflict. It is a
+    warning for verify (item 26), set to `pending` whenever it is written.
+    Consequence, a known limit: after incremental imports of a repository
+    that several workstations merge into, the revision history can lack
+    intermediate revisions that one uninterrupted import of the final
+    history would hold; heads agree.
