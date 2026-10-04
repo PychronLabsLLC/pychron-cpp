@@ -74,7 +74,10 @@ if(TARGET pychron-ui)
       MACOSX_BUNDLE_ICON_FILE pychron.icns)
     # The icon files are the application icon rendered by tools/make_icons.py.
     set(_pychron_icns "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.icns")
-    set_source_files_properties("${_pychron_icns}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    # TARGET_DIRECTORY: source properties belong to a directory, and the target
+    # is made in apps/pychron-ui, not here; without it the icon is not copied.
+    set_source_files_properties("${_pychron_icns}" TARGET_DIRECTORY pychron-ui
+      PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_sources(pychron-ui PRIVATE "${_pychron_icns}")
   elseif(WIN32)
     set_target_properties(pychron-ui PROPERTIES WIN32_EXECUTABLE ON)
