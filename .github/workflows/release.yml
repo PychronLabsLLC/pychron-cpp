@@ -115,7 +115,7 @@ jobs:
           hdiutil detach /Volumes/Pychron
           app="$RUNNER_TEMP/Pychron.app/Contents/MacOS"
           "$app/elctl" --version
-          QT_QPA_PLATFORM=offscreen "$app/Pychron" --self-test
+          "$app/Pychron" --self-test  # macdeployqt ships the cocoa platform plugin only
           export PYCHRON_SITE_CONFIG="$RUNNER_TEMP/site.toml"
           "$app/elctl" init argus --root "$RUNNER_TEMP/argus" --yes
           "$app/elctl" --install argus exp run experiment.toml --sim-speed 200

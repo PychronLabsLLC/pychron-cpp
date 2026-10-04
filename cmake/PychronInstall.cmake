@@ -152,7 +152,7 @@ endif()
 if(PYCHRON_DEPLOY_QT AND TARGET pychron-ui)
   if(UNIX AND NOT APPLE AND Qt6_VERSION VERSION_LESS 6.5)
     message(WARNING "PYCHRON_DEPLOY_QT: Qt ${Qt6_VERSION} cannot deploy on Linux (needs 6.5); skipped")
-  elseif(COMMAND qt_generate_deploy_script)
+  elseif(COMMAND qt6_generate_deploy_script)
     # pychron-ui and elctl share one copy of Qt (elctl uses QtSql for the store).
     if(APPLE)
       set(_pychron_ui_exe "\${QT_DEPLOY_PREFIX}/${PYCHRON_INSTALL_BIN}/Pychron")
@@ -163,7 +163,10 @@ if(PYCHRON_DEPLOY_QT AND TARGET pychron-ui)
     if(TARGET elctl)
       set(_pychron_extra "ADDITIONAL_EXECUTABLES \"\${QT_DEPLOY_PREFIX}/${PYCHRON_INSTALL_BIN}/$<TARGET_FILE_NAME:elctl>\"")
     endif()
-    qt_generate_deploy_script(
+    # qt6_, not qt_: the versionless name is a macro that forwards ${ARGV}, so
+    # CMake expands ${QT_DEPLOY_PREFIX} at configure time (to nothing) and the
+    # deploy tool is handed "/Pychron.app".
+    qt6_generate_deploy_script(
       TARGET pychron-ui
       OUTPUT_SCRIPT _pychron_deploy_script
       CONTENT "
@@ -175,7 +178,7 @@ qt_deploy_runtime_dependencies(
     # Its own component: the install test (tests/setup) skips it.
     install(SCRIPT "${_pychron_deploy_script}" COMPONENT pychron_qt)
   else()
-    message(WARNING "PYCHRON_DEPLOY_QT: this Qt has no qt_generate_deploy_script (Qt >= 6.5); skipped")
+    message(WARNING "PYCHRON_DEPLOY_QT: this Qt has no qt6_generate_deploy_script (Qt >= 6.5); skipped")
   endif()
 endif()
 

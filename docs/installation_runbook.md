@@ -72,7 +72,20 @@ cmake --build build/pkg
 (cd build/pkg && cpack)
 ```
 
-Then install the package `cpack` wrote as in 1.1. Without Qt 6 (Core and Sql)
+Then install the package `cpack` wrote as in 1.1.
+
+On macOS `macdeployqt` prints `ERROR: Cannot resolve rpath ...` lines for
+optional Qt modules (virtual keyboard, PDF, WebP) and a codesign verification
+error. The `.dmg` is still written and the application runs; judge the build
+by 1.3, not by those lines.
+
+A package built this way uses the Python it was built against (on macOS,
+Homebrew's), so it runs extraction scripts only on a computer that has the
+same Python in the same place. To make a package for another computer, bundle
+Python as the release workflow does: unpack a python-build-standalone
+`install_only` archive and add
+`-DPython_ROOT_DIR=<dir> -DPYCHRON_BUNDLE_PYTHON=<dir>` to the configure line
+([dev_setup.md](dev_setup.md) section 7). Without Qt 6 (Core and Sql)
 at configure time the database library is left out: `elctl import` is missing
 and `doctor` reports the database as "not checked".
 
@@ -86,13 +99,14 @@ Prints the version and the `profiles:` and `examples:` directories it found.
 If those two lines are missing, the package is incomplete.
 
 ```bash
-QT_QPA_PLATFORM=offscreen pychron-ui --self-test
+pychron-ui --self-test
 ```
 
-Checks the profiles, the setup wizard and the database plugin without opening
-a window. On macOS the program is
-`/Applications/Pychron.app/Contents/MacOS/Pychron`; on Windows leave
-`QT_QPA_PLATFORM` unset.
+Checks the profiles, the setup wizard and the database plugin, and prints one
+`OK` line each. On macOS the program is
+`/Applications/Pychron.app/Contents/MacOS/Pychron`. On a Linux machine with no
+display, prefix it with `QT_QPA_PLATFORM=offscreen`; the macOS and Windows
+packages carry only their native platform plugin, so leave it unset there.
 
 ## Part 2. Configure
 
@@ -456,3 +470,6 @@ Single-developer project. Open an issue at
   stand-alone "create schema" command for a lab starting with no legacy data.
 - The importer is not built or tested on Windows in CI.
 - Packages are unsigned.
+- A macOS package built with Homebrew's Qt carries the SQLite database driver
+  only: it cannot open a PostgreSQL store unless Qt's QPSQL plugin was
+  installed when it was built.
