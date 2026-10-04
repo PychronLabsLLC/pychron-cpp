@@ -18,8 +18,9 @@ struct CrossReport {
 
 // Checks a loaded canvas against its system config (spec section 6):
 //  - errors: canvas `valve`/`rough_valve` not a system [[valves]] entry,
-//    `manual_valve` not a [[manual_valves]] entry, `gauge` not a [[gauges]]
-//    entry, `pipette` not a [[pipettes]] entry
+//    `manual_valve` not a [[manual_valves]] entry, `pipette` not a
+//    [[pipettes]] entry. A `gauge` need not be a [[gauges]] entry: one that
+//    is not is drawn for illustration and shows no reading.
 //  - warnings: system valves and manual valves not drawn on the canvas
 // Switches have no system counterpart yet and are not checked.
 CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& system);

@@ -102,6 +102,8 @@ void CanvasView::build(const canvas::Canvas& c) {
   }
   for (const auto& g : c.gauges) {
     auto* item = new GaugeLabelItem(g.name);
+    const auto& defined = bridge_.config().gauges;
+    item->set_wired(std::any_of(defined.begin(), defined.end(), [&](const auto& d) { return d.name == g.name; }));
     item->setPos(to_qpoint(g.pos));
     scene_.addItem(item);
     gauges_[g.name] = item;
@@ -324,8 +326,12 @@ void CanvasView::apply_regions() {
   // colour.
   const auto& palette = theme().regions;
   std::vector<const systems::NetworkGraph::Region*> shared;
+  // Shared means two volumes that hold gas: a gauge on a volume is part of
+  // it, not a second volume, so a turbo and its gauge alone stay neutral.
   for (const auto& region : regions) {
-    if (region.volumes.size() >= 2) shared.push_back(&region);
+    const auto holding = std::count_if(region.volumes.begin(), region.volumes.end(),
+                                       [this](const std::string& v) { return !gauges_.contains(v); });
+    if (holding >= 2) shared.push_back(&region);
   }
   std::stable_sort(shared.begin(), shared.end(),
                    [](const auto* a, const auto* b) { return a->volumes.size() > b->volumes.size(); });

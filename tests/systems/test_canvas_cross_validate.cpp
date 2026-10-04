@@ -132,7 +132,8 @@ pos = [0, 0]
   EXPECT_TRUE(has(r.errors, "manual_valve[0].name", "manual valve 'A' is not defined"));
 }
 
-TEST(CanvasCrossValidate, UnknownGaugeAndPipetteAreErrors) {
+// A gauge may be drawn for illustration only; a pipette names real valves.
+TEST(CanvasCrossValidate, UnknownPipetteIsAnErrorAnUnknownGaugeIsNot) {
   const auto r = cross_validate(canvas(R"toml(
 [[gauge]]
 name = "IG9"
@@ -142,7 +143,8 @@ name = "cocktail"
 pos = [0, 0]
 )toml"),
                                 system());
-  EXPECT_TRUE(has(r.errors, "gauge[0].name", "gauge 'IG9' is not defined"));
+  EXPECT_FALSE(has(r.errors, "gauge[0].name", "IG9"));
+  EXPECT_FALSE(has(r.warnings, "gauge[0].name", "IG9"));
   EXPECT_TRUE(has(r.errors, "pipette[0].name", "pipette 'cocktail' is not defined"));
 }
 

@@ -158,6 +158,8 @@ void ValveItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kDialGap = 4.0;  // between a gauge's dial and its reading
+constexpr double kSymbolGap = 3.0;   // between a glyph and the name beside it
 constexpr double kSymbolPad = 4.0;   // between the glyph or name and the border
 constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 
@@ -168,7 +170,8 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
   const bool quadrupole = symbol == canvas::StageSymbol::Quadrupole;
   const bool turbo = symbol == canvas::StageSymbol::Turbo;
   const bool getter = symbol == canvas::StageSymbol::Getter;
-  const bool square = quadrupole || turbo || getter;
+  const bool ion_pump = symbol == canvas::StageSymbol::IonPump;
+  const bool square = quadrupole || turbo || getter || ion_pump;
   const QSizeF grid = spectrometer ? QSizeF(66, 62) : square ? QSizeF(40, 40) : QSizeF(67, 34);
   const double scale =
       std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : square ? 0.9 : 0.85});
@@ -248,6 +251,20 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     painter.drawRoundedRect(QRectF(3, 2, 34, 6), 1.5, 1.5);
     for (int i = 0; i < 4; ++i) {
       painter.drawRoundedRect(QRectF(8, 12 + i * 6.5, 24, 4.2), 1.5, 1.5);
+    }
+  } else if (ion_pump) {
+    // A sputter ion pump from the side: the flange, the body with its anode
+    // cells, and the magnets either side of it.
+    painter.setPen(line);
+    painter.setBrush(theme().inactive);
+    painter.drawRoundedRect(QRectF(9, 1.5, 22, 5), 1.5, 1.5);
+    painter.drawRect(QRectF(1.5, 14, 6.5, 21));
+    painter.drawRect(QRectF(32, 14, 6.5, 21));
+    painter.setBrush(fill);
+    painter.drawRect(QRectF(16.5, 6.5, 7, 5.5));
+    painter.drawRoundedRect(QRectF(8, 12, 24, 25), 2, 2);
+    for (const QPointF& cell : {QPointF(15, 19.5), QPointF(25, 19.5), QPointF(15, 29.5), QPointF(25, 29.5)}) {
+      painter.drawEllipse(cell, 3.6, 3.6);
     }
   } else {
     // A laser from the side: the head with its cooling fins, the beam out of
@@ -337,8 +354,8 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->drawText(QRectF(inner.left(), glyph.bottom(), inner.width(), inner.bottom() - glyph.bottom()),
                       Qt::AlignCenter, label_);
   } else {  // beside it
-    painter->drawText(QRectF(glyph.right(), inner.top(), inner.right() - glyph.right(), inner.height()),
-                      Qt::AlignCenter, label_);
+    const double left = glyph.right() + kSymbolGap;
+    painter->drawText(QRectF(left, inner.top(), inner.right() - left, inner.height()), Qt::AlignCenter, label_);
   }
   paint_symbol(*painter, symbol_, glyph, region_);
 }
@@ -358,8 +375,9 @@ QRectF StageItem::symbol_rect(QSizeF label) const {
   if (inner.height() - label.height() >= kSymbolMin) {
     return {inner.left(), inner.top(), inner.width(), inner.height() - label.height()};
   }
-  if (inner.height() >= kSymbolMin && inner.width() - label.width() >= kSymbolMin) {
-    return {inner.left(), inner.top(), std::min(inner.height(), inner.width() - label.width()), inner.height()};
+  const double beside = inner.width() - label.width() - kSymbolGap;
+  if (inner.height() >= kSymbolMin && beside >= kSymbolMin) {
+    return {inner.left(), inner.top(), std::min(inner.height(), beside), inner.height()};
   }
   return {};
 }
@@ -478,6 +496,11 @@ QFont LabelItem::parse_font(const QString& spec) {
 GaugeLabelItem::GaugeLabelItem(std::string name, QGraphicsItem* parent)
     : QGraphicsSimpleTextItem(parent), name_(std::move(name)) {
   setZValue(3);
+  // A little smaller than the rest: a gauge is a fitting on a volume, and
+  // its chip should not crowd the volume it sits beside.
+  QFont small = font();
+  small.setPointSizeF(small.pointSizeF() * 0.85);
+  setFont(small);
   refresh();
 }
 
@@ -498,21 +521,30 @@ void GaugeLabelItem::set_alarm(bool alarm) {
 QRectF GaugeLabelItem::dial_rect() const {
   const QRectF text = QGraphicsSimpleTextItem::boundingRect();
   const double side = text.height();
-  return {text.left() - side - 4, text.top(), side, side};
+  return {text.left() - side - kDialGap, text.top(), side, side};
 }
 
-QRectF GaugeLabelItem::boundingRect() const {
-  return QGraphicsSimpleTextItem::boundingRect().united(dial_rect().adjusted(-1, -1, 1, 1));
+// The chip behind the dial and the reading: a gauge is a bordered component
+// like the rest, and a pipe drawn to it ends under the chip.
+QRectF GaugeLabelItem::chip_rect() const {
+  return QGraphicsSimpleTextItem::boundingRect().united(dial_rect()).adjusted(-5, -3, 5, 3);
 }
+
+QRectF GaugeLabelItem::boundingRect() const { return chip_rect().adjusted(-1, -1, 1, 1); }
 
 void GaugeLabelItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) {
+  const QColor ink = brush().color();  // red with the reading while in alarm
+  painter->setRenderHint(QPainter::Antialiasing, true);
+  const QRectF chip = chip_rect();
+  painter->setPen(QPen(ink, 1));
+  painter->setBrush(theme().base);
+  painter->drawRoundedRect(chip, chip.height() / 2, chip.height() / 2);
   QGraphicsSimpleTextItem::paint(painter, option, widget);
+
   // A pressure gauge's dial: face, scale ticks round the top, a needle.
   const QRectF dial = dial_rect();
-  const QColor ink = brush().color();  // red with the reading while in alarm
   const QPointF c = dial.center();
   const double r = dial.width() / 2;
-  painter->setRenderHint(QPainter::Antialiasing, true);
   painter->setPen(QPen(ink, 1.2));
   painter->setBrush(theme().base);
   painter->drawEllipse(c, r, r);
@@ -530,12 +562,23 @@ void GaugeLabelItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
   painter->drawEllipse(c, 1.5, 1.5);
 }
 
+void GaugeLabelItem::set_wired(bool wired) {
+  if (wired != wired_) {
+    wired_ = wired;
+    refresh();
+  }
+}
+
 void GaugeLabelItem::refresh() {
-  setText(QStringLiteral("%1: %2").arg(QString::fromStdString(name_), value_));
+  prepareGeometryChange();
+  // A gauge the line does not define is there for illustration: its name only.
+  setText(wired_ ? QStringLiteral("%1: %2").arg(QString::fromStdString(name_), value_) : QString::fromStdString(name_));
   setBrush(alarm_ ? theme().error_text : theme().text);
-  // Centre on the element position the view assigns with setPos().
+  // Centre the chip (dial and text) on the element position the view assigns
+  // with setPos(); the text itself starts at x = 0.
   const QRectF r = QGraphicsSimpleTextItem::boundingRect();
-  setTransform(QTransform::fromTranslate(-r.width() / 2, -r.height() / 2));
+  const double dial = r.height() + kDialGap;
+  setTransform(QTransform::fromTranslate(-(r.width() - dial) / 2, -r.height() / 2));
 }
 
 }  // namespace pychron::ui

@@ -58,7 +58,7 @@ struct GaugeElement : Located {
 };
 
 // What a stage is, for the glyph drawn inside its box; None draws the name only.
-enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter };
+enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter, IonPump };
 
 struct StageElement : Located {
   std::string name;

@@ -255,7 +255,10 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
   EXPECT_NE(drawn_valve(*drawing, "C"), nullptr);
   EXPECT_NE(drawn_valve(*drawing, "M1"), nullptr);
   EXPECT_EQ(drawn_valve(*drawing, "X"), nullptr);
-  EXPECT_TRUE(drawing->gauges.empty());
+  // a gauge is kept, for illustration: G1 at (20, 5), no dimension
+  ASSERT_EQ(drawing->gauges.size(), 1u);
+  EXPECT_EQ(drawing->gauges[0].name, "G1");
+  EXPECT_EQ(drawing->gauges[0].pos, (canvas::Point{700, 200}));
 
   ASSERT_NE(connection(*drawing, "A", "B"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "B")->orientation, canvas::Orientation::Horizontal);
@@ -271,7 +274,8 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
 
   const std::string notes = all_notes(*made);
   EXPECT_TRUE(has_note(*made, "valve X is not in the valve file; dropped")) << notes;
-  EXPECT_TRUE(has_note(*made, "gauge G1 dropped")) << notes;
+  EXPECT_TRUE(has_note(*made, "1 gauges drawn for illustration, with no reading")) << notes;
+  EXPECT_TRUE(has_note(*made, ": G1")) << notes;
   EXPECT_TRUE(has_note(*made, "connection B-D names an element that is not drawn")) << notes;
   EXPECT_TRUE(has_note(*made, "placed in a row")) << notes;
 }
@@ -327,6 +331,7 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
           "  <laser use_symbol=\"False\" display_name=\"\">Furnace<translation>16,-10</translation><dimension>4,4</dimension></laser>\n"
           "  <turbo use_symbol=\"True\" display_name='Turbo'>T1<translation>10,5</translation><dimension>5,3</dimension></turbo>\n"
           "  <getter>NP10<translation>18,5</translation><dimension>5,3</dimension></getter>\n"
+          "  <ionpump use_symbol=\"True\" display_name=\"Ion Pump\">IP<translation>24,5</translation><dimension>5,3</dimension></ionpump>\n"
           "  <connection orientation=\"horizontal\"><start>A</start><end>B</end></connection>\n"
           "  <connection><start offset=\"1,0\">B</start><end>Obama</end></connection>\n"
           "  <elbow><start>A</start><end>Obama</end></elbow>\n"
@@ -359,7 +364,8 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
       if (s.name == name) return &s;
     return nullptr;
   };
-  ASSERT_EQ(drawing->stages.size(), 5u);
+  ASSERT_EQ(drawing->stages.size(), 6u);
+  EXPECT_EQ(stage("IP")->symbol, canvas::StageSymbol::IonPump);
   EXPECT_EQ(stage("T1")->symbol, canvas::StageSymbol::Turbo);
   EXPECT_EQ(stage("T1")->display_name, "Turbo");
   EXPECT_EQ(stage("NP10")->symbol, canvas::StageSymbol::Getter);

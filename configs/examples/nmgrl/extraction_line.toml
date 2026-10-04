@@ -302,13 +302,5 @@ outer = "W"
 #   actuator felix_helix_valve_controller (ObamaQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator jan_argus_valve_controller (JanQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   canvas: manual_valve MiniboneManual_Rough is not in the valve file; dropped
-#   canvas: gauge FBTurbo IG dropped (legacy gauge controllers are not imported yet)
-#   canvas: gauge FATurbo IG dropped (legacy gauge controllers are not imported yet)
-#   canvas: gauge Microbone IG dropped (legacy gauge controllers are not imported yet)
-#   canvas: gauge Roughing IG dropped (legacy gauge controllers are not imported yet)
-#   canvas: gauge Bone IG dropped (legacy gauge controllers are not imported yet)
-#   canvas: connection BTurbo-Microbone IG names an element that is not drawn; dropped
+#   canvas: 5 gauges drawn for illustration, with no reading (legacy gauge controllers are not imported): FBTurbo IG, FATurbo IG, Microbone IG, Roughing IG, Bone IG
 #   canvas: connection MiniboneManual_Rough-Minibone names an element that is not drawn; dropped
-#   canvas: connection FBTurbo-FBTurbo IG names an element that is not drawn; dropped
-#   canvas: connection FATurbo IG-FATurbo names an element that is not drawn; dropped
-#   canvas: connection Bone IG-ATurboManifold names an element that is not drawn; dropped

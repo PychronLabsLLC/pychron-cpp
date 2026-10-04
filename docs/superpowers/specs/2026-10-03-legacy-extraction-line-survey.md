@@ -108,13 +108,16 @@ Mapping:
   stand-in and a warning; it never falls back to another controller.
 - Not carried over, and listed in the report: `invert`, `query_state`,
   `check_actuation_*`, offsets on a tee's arms, pipette `vlabel` formats,
-  colours other than the background, images, and gauges (legacy gauge
-  controllers are not imported yet: gauge elements are left off the canvas).
+  colours other than the background, images, and gauge controllers (so a
+  legacy gauge is drawn but shows no reading).
 - Connection-end offsets become `start_offset` / `end_offset`, in pixels
   from the element's centre; an elbow names the corner legacy turned at.
-- A legacy `spectrometer` or `laser` becomes a stage with
-  `symbol = "spectrometer"` / `"laser"` (a glyph inside its box), unless
-  the legacy element says `use_symbol="False"`.
+- A legacy `spectrometer`, `laser`, `turbo`, `getter` or `ionpump` becomes a
+  stage with `symbol = "<kind>"` (`ion_pump` for the last; a glyph inside
+  its box), unless the legacy element says `use_symbol="False"`.
+- A legacy `gauge` becomes a canvas `[[gauge]]` with no gauge in the line
+  config: drawn for illustration (a dial and its name), with no reading
+  until the line defines a gauge of that name.
 - The canvas is rescaled from world units to pixels (y flipped) over the
   view box; elements a connection names but nobody draws, and canvas valves
   the valve file does not have, are dropped and reported.

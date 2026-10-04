@@ -6,248 +6,248 @@
 
 [canvas]
 origin = [0, 0]
-size = [1000, 796]
+size = [1000, 817]
 connection_width = 5
 # an open valve wears the colour of the region it joins (default: "green")
 open_valve_color = "inherit"
 
 [[label]]
 text = "Upper Shutter"
-pos = [199, 61]
+pos = [199, 82]
 
 [[label]]
 text = "Lower Shutter"
-pos = [199, 143]
+pos = [199, 164]
 
 [[label]]
 text = "Gate"
-pos = [199, 102]
+pos = [199, 123]
 
 [[label]]
 text = "Dumper"
-pos = [219, 20]
+pos = [219, 41]
 
 [[valve]]
 name = "FE"
-pos = [292, 51]
+pos = [292, 72]
 
 [[valve]]
 name = "FF"
-pos = [292, 133]
+pos = [292, 154]
 
 [[valve]]
 name = "FG"
-pos = [292, 92]
+pos = [292, 113]
 
 [[valve]]
 name = "FD"
-pos = [339, 185]
+pos = [339, 206]
 
 [[valve]]
 name = "FH"
-pos = [269, 257]
+pos = [269, 278]
 
 [[valve]]
 name = "F"
-pos = [538, 236]
+pos = [538, 257]
 
 [[valve]]
 name = "O"
-pos = [942, 416]
+pos = [942, 437]
 
 [[valve]]
 name = "V"
-pos = [205, 416]
+pos = [205, 437]
 
 [[valve]]
 name = "H"
-pos = [275, 354]
+pos = [275, 376]
 
 [[valve]]
 name = "B"
-pos = [386, 298]
+pos = [386, 319]
 
 [[valve]]
 name = "D"
-pos = [538, 298]
+pos = [538, 319]
 
 [[valve]]
 name = "C"
-pos = [357, 411]
+pos = [357, 432]
 
 [[valve]]
 name = "N"
-pos = [491, 298]
+pos = [491, 319]
 
 [[valve]]
 name = "E"
-pos = [491, 405]
+pos = [491, 427]
 
 [[valve]]
 name = "I"
-pos = [491, 447]
+pos = [491, 468]
 
 [[valve]]
 name = "J"
-pos = [339, 298]
+pos = [339, 319]
 
 [[valve]]
 name = "K"
-pos = [690, 293]
+pos = [690, 314]
 
 [[valve]]
 name = "M"
-pos = [737, 293]
+pos = [737, 314]
 
 [[valve]]
 name = "P"
-pos = [497, 596]
+pos = [497, 618]
 
 [[valve]]
 name = "Q"
-pos = [708, 596]
+pos = [708, 618]
 
 [[valve]]
 name = "W"
-pos = [585, 663]
+pos = [585, 684]
 
 [[valve]]
 name = "X"
-pos = [585, 725]
+pos = [585, 746]
 
 [[valve]]
 name = "Y"
-pos = [643, 663]
+pos = [643, 684]
 
 [[valve]]
 name = "Z"
-pos = [643, 725]
+pos = [643, 746]
 
 [[valve]]
 name = "L"
-pos = [632, 369]
+pos = [632, 390]
 
 [[valve]]
 name = "R"
-pos = [813, 354]
+pos = [813, 376]
 
 [[valve]]
 name = "S"
-pos = [778, 354]
+pos = [778, 376]
 
 [[valve]]
 name = "T"
-pos = [632, 298]
+pos = [632, 319]
 
 [[valve]]
 name = "U"
-pos = [737, 416]
+pos = [737, 437]
 
 [[valve]]
 name = "FC"
-pos = [304, 185]
+pos = [304, 206]
 
 [[rough_valve]]
 name = "FB"
-pos = [58, 266]
+pos = [58, 288]
 
 [[rough_valve]]
 name = "FA"
-pos = [199, 185]
+pos = [199, 206]
 
 [[rough_valve]]
 name = "G"
-pos = [620, 174]
+pos = [620, 195]
 
 [[manual_valve]]
 name = "ADiode"
-pos = [389, 174]
+pos = [389, 195]
 
 [[manual_valve]]
 name = "RDiode"
-pos = [480, 174]
+pos = [480, 195]
 
 [[manual_valve]]
 name = "NP-10CRough"
-pos = [690, 164]
+pos = [690, 185]
 
 [[manual_valve]]
 name = "GP50Manual"
-pos = [737, 185]
+pos = [737, 206]
 
 [[manual_valve]]
 name = "GP50Manual_Rough"
-pos = [737, 63]
+pos = [737, 84]
 
 [[manual_valve]]
 name = "MiniBoneGP5Manual"
-pos = [661, 524]
+pos = [661, 545]
 
 [[manual_valve]]
 name = "MSManual"
-pos = [889, 354]
+pos = [889, 376]
 
 [[stage]]
 name = "FurnaceManifold"
-pos = [322, 257]
+pos = [322, 278]
 size = [58, 31]
 display_name = ""
 
 [[stage]]
 name = "Bone"
-pos = [409, 354]
+pos = [409, 376]
 size = [187, 51]
 
 [[stage]]
 name = "Minibone"
-pos = [602, 586]
+pos = [602, 607]
 size = [140, 51]
 
 [[stage]]
 name = "Microbone"
-pos = [713, 354]
+pos = [713, 376]
 size = [94, 51]
 
 [[stage]]
 name = "RoughingManifold"
-pos = [585, 63]
+pos = [585, 84]
 size = [246, 31]
 display_name = "Roughing"
 
 [[stage]]
 name = "ATurboManifold"
-pos = [357, 596]
+pos = [357, 618]
 size = [35, 31]
 display_name = ""
 
 [[stage]]
 name = "CO2"
-pos = [602, 236]
+pos = [602, 257]
 size = [82, 72]
 use_symbol = true
 symbol = "laser"
 
 [[stage]]
 name = "Diode"
-pos = [421, 61]
+pos = [421, 82]
 size = [58, 72]
 use_symbol = true
 symbol = "laser"
 
 [[stage]]
 name = "Furnace"
-pos = [193, 257]
+pos = [193, 278]
 size = [94, 41]
 
 [[stage]]
 name = "ofurnace"
-pos = [158, 257]
+pos = [158, 278]
 size = [47, 62]
 display_name = ""
 
 [[stage]]
 name = "RTurbo"
-pos = [532, 115]
+pos = [532, 136]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
@@ -255,7 +255,7 @@ symbol = "turbo"
 
 [[stage]]
 name = "ATurbo"
-pos = [357, 647]
+pos = [357, 669]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
@@ -263,7 +263,7 @@ symbol = "turbo"
 
 [[stage]]
 name = "BTurbo"
-pos = [743, 483]
+pos = [743, 504]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
@@ -271,7 +271,7 @@ symbol = "turbo"
 
 [[stage]]
 name = "FBTurbo"
-pos = [64, 313]
+pos = [64, 334]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
@@ -279,7 +279,7 @@ symbol = "turbo"
 
 [[stage]]
 name = "FATurbo"
-pos = [99, 179]
+pos = [99, 200]
 size = [58, 31]
 display_name = "Turbo"
 use_symbol = true
@@ -287,103 +287,130 @@ symbol = "turbo"
 
 [[stage]]
 name = "JanNP10"
-pos = [860, 427]
+pos = [860, 448]
 size = [58, 31]
 display_name = "NP10"
 symbol = "getter"
 
 [[stage]]
 name = "MiniBoneGP50"
-pos = [675, 427]
+pos = [675, 448]
 size = [58, 31]
 display_name = "GP50"
 symbol = "getter"
 
 [[stage]]
 name = "F GP-50"
-pos = [357, 118]
+pos = [357, 139]
 size = [58, 31]
 display_name = "GP50"
 symbol = "getter"
 
 [[stage]]
 name = "GP50"
-pos = [474, 262]
+pos = [474, 283]
 size = [58, 31]
 symbol = "getter"
 
 [[stage]]
 name = "NP-10C"
-pos = [684, 257]
+pos = [684, 278]
 size = [58, 31]
 symbol = "getter"
 
 [[stage]]
 name = "NP-10H"
-pos = [749, 226]
+pos = [749, 247]
 size = [58, 31]
 symbol = "getter"
 
 [[stage]]
 name = "GP502"
-pos = [749, 128]
+pos = [749, 149]
 size = [58, 31]
 display_name = "GP50"
 symbol = "getter"
 
+[[gauge]]
+name = "FBTurbo IG"
+pos = [140, 334]
+
+[[gauge]]
+name = "FATurbo IG"
+pos = [99, 144]
+
+[[gauge]]
+name = "Microbone IG"
+pos = [813, 504]
+
+[[gauge]]
+name = "Roughing IG"
+pos = [532, 31]
+
+[[gauge]]
+name = "Bone IG"
+pos = [289, 618]
+
 [[stage]]
 name = "Felix"
-pos = [216, 339]
+pos = [216, 360]
 size = [58, 83]
 symbol = "spectrometer"
 
 [[stage]]
 name = "Jan"
-pos = [936, 339]
+pos = [936, 360]
 size = [58, 83]
 symbol = "spectrometer"
 
 [[stage]]
 name = "Quad"
-pos = [789, 596]
+pos = [789, 618]
 size = [70, 31]
 symbol = "quadrupole"
 
 [[stage]]
 name = "JanIonPump"
-pos = [942, 478]
+pos = [942, 499]
 size = [82, 31]
 display_name = "Ion Pump"
 use_symbol = true
+symbol = "ion_pump"
 
 [[stage]]
 name = "FelixIonPump"
-pos = [234, 478]
+pos = [234, 499]
 size = [82, 31]
 display_name = "Ion Pump"
 use_symbol = true
+symbol = "ion_pump"
 
 [[stage]]
 name = "Cocktail"
-pos = [573, 766]
+pos = [573, 787]
 size = [58, 20]
 
 [[stage]]
 name = "CocktailPipette"
-pos = [585, 694]
+pos = [585, 715]
 size = [23, 20]
 display_name = ""
 
 [[stage]]
 name = "Air"
-pos = [655, 766]
+pos = [655, 787]
 size = [58, 20]
 
 [[stage]]
 name = "AirPipette"
-pos = [643, 694]
+pos = [643, 715]
 size = [23, 20]
 display_name = ""
+
+[[connection]]
+start = "BTurbo"
+end = "Microbone IG"
+orientation = "h"
 
 [[connection]]
 start = "MiniBoneGP5Manual"
@@ -433,6 +460,11 @@ orientation = "v"
 start_offset = [6, 11]
 
 [[connection]]
+start = "FBTurbo"
+end = "FBTurbo IG"
+orientation = "h"
+
+[[connection]]
 start = "FC"
 end = "FurnaceManifold"
 orientation = "v"
@@ -451,6 +483,11 @@ orientation = "h"
 start_offset = [6, 0]
 
 [[connection]]
+start = "FATurbo IG"
+end = "FATurbo"
+orientation = "v"
+
+[[connection]]
 start = "FD"
 end = "FurnaceManifold"
 end_offset = [18, 16]
@@ -463,6 +500,12 @@ orientation = "v"
 [[connection]]
 start = "J"
 end = "FurnaceManifold"
+end_offset = [18, 16]
+
+[[connection]]
+start = "Bone IG"
+end = "ATurboManifold"
+orientation = "h"
 end_offset = [18, 16]
 
 [[connection]]

@@ -416,8 +416,8 @@ class TestCanvasView : public QObject {
     QCOMPARE(tall.symbol_rect(label), QRectF(-25, -37.5, 50, 59));
     ui::StageItem wide("Quad", "Quad", {70, 31}, Qt::white);
     wide.set_symbol(canvas::StageSymbol::Spectrometer);
-    // too short for both: a square beside the name
-    QCOMPARE(wide.symbol_rect(label), QRectF(-31, -11.5, 22, 23));
+    // too short for both: beside the name, in the width the name and a gap leave
+    QCOMPARE(wide.symbol_rect(label), QRectF(-31, -11.5, 19, 23));
     ui::StageItem small("x", "x", {40, 20}, Qt::white);
     small.set_symbol(canvas::StageSymbol::Laser);
     QVERIFY(small.symbol_rect(label).isEmpty());  // no room: the name alone
@@ -448,9 +448,14 @@ class TestCanvasView : public QObject {
       bridge_->actuate(valve, on ? SwitchOp::Open : SwitchOp::Close);
       QTRY_COMPARE_WITH_TIMEOUT(view_->valve(valve)->state(), on ? ValveState::Open : ValveState::Closed, 5000);
     };
-    // turbo and its gauge are one region from the start; the air pipette's
-    // volumes make another once P2 opens; bone + prep a third with A.
+    // A gauge on a volume is not a second volume: turbo and IG1 alone are
+    // not a region.
+    QCOMPARE(view_->stage("turbo")->region_color(), CanvasView::isolated_color());
+
+    // three regions: the air pipette's volumes (P2), turbo + rough (M1),
+    // bone + prep (A)
     open("P2", true);
+    open("M1", true);
     const QColor turbo = view_->stage("turbo")->region_color();
     const QColor tank = view_->stage("air_tank")->region_color();
     QVERIFY(turbo != CanvasView::isolated_color());
@@ -469,14 +474,16 @@ class TestCanvasView : public QObject {
     QCOMPARE(view_->stage("bone")->region_color(), bone);
     QCOMPARE(view_->stage("turbo")->region_color(), turbo);
     open("P2", true);
+    open("M1", false);
+    QCOMPARE(view_->stage("turbo")->region_color(), CanvasView::isolated_color());
+    QCOMPARE(view_->stage("bone")->region_color(), bone);
+    open("M1", true);
     open("A", false);
     QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
-    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
 
-    // joined (prep to turbo through C): one colour, one of the two it had
+    // joined (prep to turbo through C): one colour, the larger region's
     open("C", true);
     QCOMPARE(view_->stage("prep")->region_color(), view_->stage("turbo")->region_color());
-    QCOMPARE(view_->stage("turbo")->region_color(), turbo);
   }
 
   void boxEntryFindsWhereALineCrossesIntoABox() {
@@ -508,6 +515,31 @@ class TestCanvasView : public QObject {
     QVERIFY(dial.width() > 8);
     QVERIFY(dial.right() < 0);  // left of the text, which starts at x = 0
     QVERIFY(ig->boundingRect().contains(dial));
+    // dial and reading sit on a chip, centred on the gauge's position
+    QVERIFY(ig->chip_rect().contains(dial));
+    QVERIFY(std::abs(ig->mapToScene(ig->chip_rect().center()).x() - ig->pos().x()) < 0.5);
+    QVERIFY(ig->wired());
+    QVERIFY(ig->text().startsWith(QStringLiteral("IG1: ")));
+  }
+
+  // A gauge the line does not define is drawn for illustration: the canvas
+  // loads, and the gauge shows its name and no reading.
+  void aGaugeTheLineDoesNotDefineIsDrawnWithoutAReading() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    QTemporaryDir tmp;
+    const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
+    std::filesystem::copy_file(examples / "canvas.toml", canvas);
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n"
+                                         << "\n[[connection]]\nstart = \"bone\"\nend = \"Bone IG\"\n";
+    auto line = ui::test::make_example_line(canvas);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    QVERIFY(gauge != nullptr);
+    QVERIFY(!gauge->wired());
+    QCOMPARE(gauge->text(), QStringLiteral("Bone IG"));
+    QVERIFY(view.gauge("IG1")->wired());
+    line->stop();
   }
 
   void gaugeLabelTurnsRedOnAlarmAndClearsInLimits() {

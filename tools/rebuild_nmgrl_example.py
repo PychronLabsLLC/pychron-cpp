@@ -25,6 +25,7 @@ for k in ("stage","pipette"):
     for e in c.get(k, []):
         h = e.get("size",[50,50])[1]; iv.append((e["pos"][1]-h/2, e["pos"][1]+h/2))
 for e in c.get("label", []): iv.append((e["pos"][1], e["pos"][1]+16))
+for e in c.get("gauge", []): iv.append((e["pos"][1]-12, e["pos"][1]+12))
 TOP = min(a for a,b in iv); BOTTOM = max(b for a,b in iv)
 S, MARGIN = 0.88, 20
 n_ = lambda v: str(int(round(v)))

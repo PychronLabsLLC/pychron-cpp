@@ -315,10 +315,15 @@ symbol = "turbo"
 name = "e"
 pos = [0, 0]
 symbol = "getter"
+[[stage]]
+name = "f"
+pos = [0, 0]
+symbol = "ion_pump"
 )toml",
                                          "canvas.toml");
   ASSERT_TRUE(r) << r.error().what;
-  ASSERT_EQ(r->stages.size(), 5u);
+  ASSERT_EQ(r->stages.size(), 6u);
+  EXPECT_EQ(r->stages[5].symbol, StageSymbol::IonPump);
   EXPECT_EQ(r->stages[3].symbol, StageSymbol::Turbo);
   EXPECT_EQ(r->stages[4].symbol, StageSymbol::Getter);
   EXPECT_EQ(r->stages[0].symbol, StageSymbol::Spectrometer);

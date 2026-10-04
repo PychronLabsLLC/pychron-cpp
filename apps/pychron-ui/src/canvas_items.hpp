@@ -182,7 +182,7 @@ class LabelItem : public QGraphicsSimpleTextItem {
   static QFont parse_font(const QString& spec);
 };
 
-// Gauge dial, value + units; red while in alarm.
+// A gauge: a chip holding a dial, the name and the value + units; red while in alarm.
 class GaugeLabelItem : public QGraphicsSimpleTextItem {
  public:
   explicit GaugeLabelItem(std::string name, QGraphicsItem* parent = nullptr);
@@ -192,8 +192,14 @@ class GaugeLabelItem : public QGraphicsSimpleTextItem {
   void set_value(double value, const std::string& units);
   void set_alarm(bool alarm);
 
-  // A small dial drawn left of the reading marks it as a gauge.
+  // False for a gauge the line does not define: drawn for illustration, its
+  // name with no reading.
+  bool wired() const noexcept { return wired_; }
+  void set_wired(bool wired);
+
+  // A small dial left of the reading marks it as a gauge; both sit on a chip.
   QRectF dial_rect() const;
+  QRectF chip_rect() const;
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
 
@@ -203,6 +209,7 @@ class GaugeLabelItem : public QGraphicsSimpleTextItem {
   std::string name_;
   QString value_ = QStringLiteral("--");
   bool alarm_ = false;
+  bool wired_ = true;
 };
 
 }  // namespace pychron::ui

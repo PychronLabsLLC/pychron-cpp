@@ -570,6 +570,7 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   // Keep what the line knows; draw the rest as boxes; drop what cannot be drawn.
   std::vector<LElement> elements;
   std::set<std::string> drawn;
+  std::vector<std::string> illustrated;  // gauges drawn without a reading
   for (auto e : canvas.elements) {
     if (e.name.empty() && e.kind != "label") continue;
     if (e.kind != "label" && drawn.contains(e.name)) {
@@ -586,12 +587,21 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
     } else if (e.kind == "pipette" && !pipette_names.contains(e.name)) {
       e.kind = "stage";
     }
+    // A gauge is drawn, for illustration: legacy gauge controllers are not
+    // imported, so it shows no reading until the line defines it.
     if (e.legacy_kind == "gauge") {
-      out.notes.push_back("canvas: gauge " + e.name + " dropped (legacy gauge controllers are not imported yet)");
-      continue;
+      e.kind = "gauge";
+      illustrated.push_back(e.name);
     }
     if (e.kind != "label") drawn.insert(e.name);
     elements.push_back(std::move(e));
+  }
+  if (!illustrated.empty()) {
+    std::string names;
+    for (const auto& n : illustrated) names += (names.empty() ? "" : ", ") + n;
+    out.notes.push_back("canvas: " + std::to_string(illustrated.size()) +
+                        " gauges drawn for illustration, with no reading (legacy gauge controllers are not imported): " +
+                        names);
   }
   // Valves the canvas does not draw go in a row along the bottom.
   {
@@ -692,9 +702,13 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
       if (e.use_symbol) cv << "use_symbol = true\n";
       // A spectrometer, laser, turbo or getter is drawn as one, unless the
       // legacy canvas turned its symbol off.
-      static const std::set<std::string> symbols{"spectrometer", "laser", "turbo", "getter"};
-      if (symbols.contains(e.legacy_kind) && !e.no_symbol)
-        cv << "symbol = " << q(e.legacy_kind) << "\n";
+      static const std::map<std::string, std::string> symbols{{"spectrometer", "spectrometer"},
+                                                              {"laser", "laser"},
+                                                              {"turbo", "turbo"},
+                                                              {"getter", "getter"},
+                                                              {"ionpump", "ion_pump"}};
+      if (auto symbol = symbols.find(e.legacy_kind); symbol != symbols.end() && !e.no_symbol)
+        cv << "symbol = " << q(symbol->second) << "\n";
     }
   }
   std::map<std::string, std::pair<double, double>> at;  // pixel positions as written

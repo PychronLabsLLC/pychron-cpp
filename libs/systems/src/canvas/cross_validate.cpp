@@ -24,7 +24,6 @@ CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& sys
   const auto valves = names_of(system.valves);
   const auto manual = names_of(system.manual_valves);
   const auto switches = names_of(system.switches);
-  const auto gauges = names_of(system.gauges);
   const auto pipettes = names_of(system.pipettes);
 
   auto missing = [&](const Located& e, const std::string& what, const std::string& name, std::string hint = {}) {
@@ -55,9 +54,8 @@ CrossReport cross_validate(const Canvas& canvas, const config::SystemConfig& sys
         break;
     }
   }
-  for (const auto& g : canvas.gauges) {
-    if (!gauges.contains(g.name)) missing(g, "gauge", g.name);
-  }
+  // A gauge the system does not define is allowed: it is drawn for
+  // illustration and shows no reading.
   for (const auto& p : canvas.pipettes) {
     if (!pipettes.contains(p.name)) missing(p, "pipette", p.name);
   }
