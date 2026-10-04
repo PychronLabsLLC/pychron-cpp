@@ -20,11 +20,12 @@ GoogleTest (+ QtTest in `tests/ui`).
 (section numbers below refer to it). Schema background:
 `docs/superpowers/specs/2026-10-01-dvc-schema-design.md`.
 
-## Before starting
+## Owner decisions (spec section 11)
 
-The owner answers spec section 11 Q2 (identifier stream floors, offsets)
-before Task 7's defaults are final, and Q1 before Task 10 ships the menu to a
-lab still on legacy acquisition. Tasks 1-6 do not wait on either.
+Legacy Python acquisition is not supported (labs migrate first); identifiers
+are one sequential counter (no NMGRL streams or offsets); changing the sample
+of an analyzed position stays behind a confirmation; package mode is per
+irradiation (`irradiation.kind`). Nothing blocks any task.
 
 ## Global Constraints
 
@@ -59,8 +60,9 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
    updated, deleted or replaced, through either `apply_catalog_edits` or
    `allocate_identifiers` (Task 2 `AnalyzedIdentifierProtected`, Task 4
    `ReplaceAnalyzedRefused`).
-4. Counter seeding ignores `01234`, `bu-FD-J`, `12a` and anything at or above
-   the ceiling (Task 4 `SeedRules`).
+4. Counter seeding ignores `01234`, `bu-FD-J`, `12a` and 19-digit text, and
+   an allocation whose numbers are not exactly `last + 1 ... last + k` is an
+   error (Task 4 `SeedRules`, `NonSequentialIsError`).
 5. The planner's preview and its commit are the same assignments, and
    re-planning a numbered irradiation assigns nothing (Task 7 property test).
 6. Clearing a position's sample keeps its identifier (Task 8
@@ -75,7 +77,7 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
 
 | File | Responsibility |
 |---|---|
-| `libs/persistence/migrations/pg/0003_entry.sql` (create), `migrations/sqlite/0003_entry.sql` (generated) | lower(name) indexes on sample and project |
+| `libs/persistence/migrations/pg/0003_entry.sql` (create), `migrations/sqlite/0003_entry.sql` (generated) | `irradiation.kind`; lower(name) indexes on sample and project |
 | `libs/persistence/include/pychron/persistence/catalog.hpp` (create) | row structs, `SampleQuery`, `LevelSheet`, `CatalogEdit*`, `CatalogOutcome`, `IdentifierAllocation`, `AllocationOutcome` |
 | `libs/persistence/include/pychron/persistence/store.hpp` (modify) | the new `IStore` methods |
 | `libs/persistence/src/sql/catalog.hpp` (create) | read statements, editable-column allowlist, rule queries |
@@ -97,9 +99,13 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
 **Files:** `0003_entry.sql`, `catalog.hpp`, `store.hpp`, `src/sql/catalog.hpp`,
 `src/catalog_read.cpp`, `forwarding_store.hpp`; test `tests/persistence/test_catalog_read.cpp`.
 
-- [ ] Write `0003_entry.sql`: `CREATE INDEX sample_name_lower_ix ON sample (lower(name));`
-      and `project_name_lower_ix`. Run `python3 tools/ddl_sqlite.py`. Confirm
-      the schema parity test passes on both engines.
+- [ ] Write `0003_entry.sql`: `irradiation.kind text NOT NULL DEFAULT 'argon'
+      CHECK (kind IN ('argon','package'))`, `CREATE INDEX sample_name_lower_ix
+      ON sample (lower(name));` and `project_name_lower_ix`. Run
+      `python3 tools/ddl_sqlite.py` (check it handles `ADD COLUMN ... CHECK`;
+      extend it if not). Confirm the schema parity test passes on both
+      engines. Add `kind` to `IrradiationSpec` and `add_irradiation`, with a
+      test that an existing irradiation keeps its kind (ensure semantics).
 - [ ] Declare the row structs and the read methods of spec 5.1 in `catalog.hpp`
       and `IStore`. `SampleFields` reuses the optional members of `SampleSpec`.
       Move them into a shared struct that `SampleSpec` embeds, without
@@ -114,10 +120,10 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
   - `LevelSheetJoinsEverything`: the sample, project, PI, material,
     identifier, analysis count, `in_load` and head J of each position; `z`
     and production from the ref heads.
-  - `IrradiationCounts`.
+  - `IrradiationCounts` (and `kind`).
   - `CounterAbsentIsNullopt`.
-  - `MaxNumericIdentifier`, with `01234`, `bu-FD-J`, `12a`, `999` and
-    `50001` against floor 1, ceiling 50000.
+  - `MaxNumericIdentifier`, with `01234`, `bu-FD-J`, `12a`, `999`,
+    `50001` and a 19-digit text: 50001. An empty store gives 0.
 - [ ] Implement. One statement per method, no N+1. J comes from the
       `flux_value` of the head revision of the position's `flux_position`
       ref. Numeric identifiers: PostgreSQL `identifier ~ '^[1-9][0-9]*$'`,
@@ -143,7 +149,7 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
   | `project` | `name`, `pi_uuid`, `checkin_date`, `comment`, `lab_contact`, `institution` |
   | `material` | `name`, `grainsize` |
   | `sample` | `name`, `project_uuid`, `material_uuid` and the `SampleFields` columns |
-  | `irradiation` | `name` |
+  | `irradiation` | `name`, `kind` |
   | `level` | `name`, `holder_ref_uuid`, `note` |
   | `irradiation_position` | `level_uuid`, `position`, `sample_uuid`, `weight`, `packet`, `note` |
   | `identifier` | `identifier`, `position_uuid` (update and delete only; inserts go through Task 4) |
@@ -211,15 +217,17 @@ lab still on legacy acquisition. Tasks 1-6 do not wait on either.
 - [ ] Declare `IdentifierAssignment`, `IdentifierAllocation`,
       `AllocationStale`, `AllocationOutcome`, `allocate_identifiers`.
 - [ ] Failing tests:
-  - `SeedRules`: an absent counter seeds from the numeric maximum in
-    `[floor, ceiling)` (Task 1's set of identifiers), or `floor - 1`.
+  - `SeedRules`: an absent counter seeds from the numeric maximum (Task 1's
+    set of identifiers), or 0 in an empty store.
   - `StaleCounter`: `expected_last` lower than the counter returns the
     actual value and writes nothing.
   - `RaceOneWins`: two threads, the same `expected_last`.
-  - `OutOfStreamRefused`, `AtOrBelowLastRefused`, `DuplicateTextRefused`.
+  - `NonSequentialIsError` (a gap, a repeat, a number at or below last),
+    `DuplicateTextRefused` (a hand-entered numeric identifier in the way).
   - `ReplaceInPlaceKeepsUuid`, `ReplaceAnalyzedRefused`.
-  - `TwoStreamsOneTransaction`: monitor and unknown, the second refused, so
-    the first is not written either.
+  - `OneRefusalWritesNothing`: the third of five assignments refused, so
+    none is written and the counter is unchanged.
+  - `OverwrittenNumbersNotReused`.
   - `AfterImportContinuesAboveMax`: run the catalog import fixture
     (`tests/persistence/test_catalog_import.cpp` helpers), then allocate.
 - [ ] Implement: lock with `SELECT ... FOR UPDATE` (insert the seeded row first
@@ -297,25 +305,21 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
       missing keys, an unknown key kept, and an error for a wrong type.
       `load_settings(IStore&)` and `save_settings(IStore&, Actor, settings,
       expected_head)` go through the `document` reference.
-- [ ] `IdentifierPlan plan_identifiers(const std::vector<LevelSheet>&, const EntrySettings&,
-      const std::map<std::string, std::int64_t>& last, bool overwrite)`: the
-      section 8 pseudo-code. The plan carries assignments,
-      `expected_last` per stream and warnings.
+- [ ] `IdentifierPlan plan_identifiers(const std::vector<LevelSheet>&, std::int64_t last,
+      bool overwrite)`: the section 8 pseudo-code. The plan carries the
+      assignments, `expected_last` and the resulting last.
 - [ ] `human_error_checks(sheets, settings, irradiation_name)`: the two
       warnings of section 8.
 - [ ] Failing tests, with hand-worked expected numbers:
-  - offset 5 and level_offset 1.
-  - level_offset 3, with gaps between levels.
-  - Monitors first, then unknowns.
-  - Consecutive mode.
-  - Overwrite on and off.
+  - Two levels: numbers run on from A into B with no gap.
+  - Monitors and unknowns interleave in position order.
+  - Overwrite on and off; with overwrite, replaced positions get new
+    numbers above `last`.
   - An analyzed identifier is never overwritten.
   - Positions without a sample are skipped.
   - Level order comes from names, not input order.
-  - Offsets below 1 are clamped.
-- [ ] Property test (seeded, 500 cases): random sheets give numbers that are
-      unique and strictly increasing in (level name, position) order within
-      each stream, and all above `last`. Applying a plan and re-planning
+- [ ] Property test (seeded, 500 cases): random sheets give exactly
+      `last + 1 ... last + k` in (level name, position) order. Applying a plan and re-planning
       without overwrite yields no assignments.
 - [ ] Store test: plan, `allocate_identifiers`, read back. The level sheets
       show exactly the planned identifiers.
@@ -343,9 +347,11 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
   - `OrphansAfterHolderShrink`: kept and listed, never deleted.
   - `HolesFromHolderOrdinal`: position n is ordinal n-1, and `hole_id` is
     shown.
-- [ ] `NewIrradiation`: name, doses, reactor, levels. `validate()` covers
-      dose order, `end > start` and `power > 0`, and the reactor is
-      required in argon mode. `to_batch()` and `stage_refs()` cover the
+- [ ] `NewIrradiation`: name, kind, doses, reactor, levels. `validate()`
+      covers dose order, `end > start` and `power > 0`, and the reactor is
+      required for `argon`; a `package` writes no chronology or production
+      (test `PackageWritesNoRefs`). `set_kind` is a catalog edit that leaves
+      reference data alone (test `KindChangeKeepsRefs`). `to_batch()` and `stage_refs()` cover the
       chronology, the copied production, the level productions and the
       level z values. Store test: one call creates the whole irradiation,
       and its `resolve_refs` for a position returns chronology and
@@ -372,6 +378,7 @@ without persistence, prints "built without persistence", like
 - [ ] Tests on a temp SQLite store:
   - `samples import --dry-run` writes nothing and prints the plan.
   - An import, then a re-import, which reports everything as existing.
+  - `irradiation add P-1 --kind package` writes no chronology.
   - `irradiation add NM-001 --levels A-C --holder 24-hole`, after
     `holders import`.
   - `positions import`, then `identifiers generate --dry-run`, then the real
@@ -427,10 +434,12 @@ editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
       selected" confirms once, with the analysis count, when any selected
       row is analyzed.
 - [ ] Level dock (holder, z, production, note) and chronology dock (hidden
-      in package mode), with times in the lab's zone converted with
+      for a `package` irradiation), with times in the lab's zone converted with
       `ingest::tz` helpers or `std::chrono::zoned_time`, whichever the tree
       already uses.
-- [ ] Dialogs as spec 9.3. New Irradiation commits in one call.
+- [ ] Dialogs as spec 9.3, New Irradiation with the kind choice. It commits
+      in one call. A kind switch on the Level dock asks for confirmation and
+      shows or hides the chronology and production editors.
 - [ ] Generate Identifiers dialog: settings summary, overwrite, warnings,
       preview over every level, Commit, and re-preview on stale.
 - [ ] Unsaved-edits prompt on level change and on close.
@@ -462,8 +471,8 @@ and `tests/ui/test_level_sheet_pdf.cpp`.
 ### Task 13: Docs, full verification, merge
 
 - [ ] `docs/entry.md`: user guide for samples, irradiations, identifiers,
-      settings, `elctl entry`, and the legacy-acquisition caveat (spec 11
-      Q1, as answered).
+      settings, `elctl entry`, and the rule that a lab migrates its legacy
+      database before using entry (spec E1).
 - [ ] AGENTS.md: one bullet under Build and test: `libs/entry` builds only
       with persistence; catalog edits go through `apply_catalog_edits`, never
       ad hoc UPDATEs; identifiers only through `allocate_identifiers`.

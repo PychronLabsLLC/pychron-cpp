@@ -32,7 +32,7 @@ library decisions each depends on.
 | 6a | Data browsing, recall, figures | High | L | V1 done | Browser, recall, time-series figures with presets and composable units (`2026-10-02-data-browsing-visualization-design.md`). Next: ideogram, spectrum, isochron; database source. |
 | 7 | Preferences window | Medium | M | Not started | Typed preferences model in core first (TOML, schema, defaults, overrides per instrument-control design section 5.4); UI dialog generated from the schema. The same model feeds the wizard. |
 | 8 | Sample/irradiation persistence | High (long term) | L | In progress | Schema spec written (`2026-10-01-dvc-schema-design.md`). D1 (schema) and D2 (store core) landed on TinyORM; see `2026-10-02-dvc-persistence.md` for what remains. |
-| 8a | Sample/irradiation (package) entry | High | L | Spec'd | `2026-10-04-sample-irradiation-entry-design.md`, plan `2026-10-04-sample-irradiation-entry.md`. Catalog edit batch with field-value CAS, identifier allocation on `identifier_counter`, `libs/entry`, `elctl entry`, Samples and Irradiations windows. Waits on owner answers to spec section 11 Q1-Q2 for rollout. |
+| 8a | Sample/irradiation (package) entry | High | L | Spec'd | `2026-10-04-sample-irradiation-entry-design.md`, plan `2026-10-04-sample-irradiation-entry.md`. Catalog edit batch with field-value CAS, identifier allocation on `identifier_counter`, `libs/entry`, `elctl entry`, Samples and Irradiations windows. Owner decisions recorded 2026-10-04 (sequential identifiers, package kind per irradiation, no legacy-acquisition support). |
 | 9 | Installation wizard | Medium | M | Blocked | Config schema still moving. Start as `elctl init` (scaffold config, device check); Qt wizard later. |
 
 ## Library decisions

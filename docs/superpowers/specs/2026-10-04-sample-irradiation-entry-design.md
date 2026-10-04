@@ -1,7 +1,7 @@
 # Sample and irradiation (package) entry
 
 Date: 2026-10-04
-Status: Proposed
+Status: Accepted (owner decisions on the open questions recorded 2026-10-04, section 11)
 Owner: Jake Ross
 Depends on: `2026-10-01-dvc-schema-design.md` (catalog tables 3.1-3.3,
 reference data 6, identifier reservation 8.6, catalog audit D6, roles 11.2),
@@ -58,18 +58,19 @@ anywhere in `entry/`.
 
 | # | Decision |
 |---|---|
-| E1 | **The store is the only place entry writes.** No meta-repo files, no git. The publisher (DVC spec D5) mirrors irradiations to the meta repo when it lands. Section 11 Q1 covers labs that still run legacy acquisition. |
+| E1 | **The store is the only place entry writes.** No meta-repo files, no git, no legacy MySQL. Labs on legacy Python acquisition are not supported: a lab migrates its legacy database into the store (`elctl import`) before it uses pychron-cpp, and from then on the store is its catalog (section 11 Q1). The publisher (DVC spec D5) mirrors irradiations to the meta repo for archiving when it lands. |
 | E2 | **Catalog edits use optimistic concurrency on field values.** Catalog rows are not revisioned (D6) and have no head to compare. An edit carries the values it was made against; the update matches on them (`IS NOT DISTINCT FROM`). If another client changed any of those fields first, the whole save is refused and the stale rows are returned with their current values. There is no silent last-writer-wins path. |
 | E3 | **A save is one transaction.** A level sheet, a sample import or an identifier generation either lands entirely or not at all, with one `change_log` entry (kind `catalog`) and a field diff per row in `change_entity.detail` (D6). |
 | E4 | **Reference data stays revisioned.** Chronology, productions, the level's production assignment, the level's z and holder geometry are `ref_object` revisions with CAS on the head (DVC spec 6), staged through the existing unit of work. A level save that changes both catalog rows and references commits them in one transaction (section 5.3). |
 | E5 | **What has been analyzed is protected.** An identifier with analyses, a load position or a lease keeps its text and its position forever; it cannot be deleted, overwritten or moved. Clearing a position's sample never deletes its identifier. Changing the sample of an analyzed position is allowed, because legacy needs it to fix entry mistakes, but only with an explicit flag that the UI asks for, naming the number of analyses affected. |
-| E6 | **Identifiers come from `identifier_counter`** (DVC spec 8.6), with a CAS on the counter value the preview was made from. Preview and commit run the same pure planner, so the preview is what gets written. A counter that moved since the preview refuses the commit and the UI re-previews. Entry requires the server; nothing is allocated offline. |
+| E6 | **Identifiers are sequential.** One counter, `identifier_counter` scope `identifier` (DVC spec 8.6), hands out `last + 1, last + 2, ...` in (level name, position) order. The legacy monitor and unknown streams, `offset` and `level_offset` are dropped (section 11 Q2). The commit carries a CAS on the counter value the preview was made from. Preview and commit run the same pure planner, so the preview is what gets written. A counter that moved since the preview refuses the commit and the UI re-previews. Entry requires the server; nothing is allocated offline. |
 | E7 | **Deterministic order.** Levels are numbered in name order and positions in position order. Nothing depends on row order from the database. |
 | E8 | **Qt-free core.** Validation, CSV parsing, the identifier planner, name increments and the level-sheet edit model live in a new `libs/entry` (depends on `persistence` and `core`; holder text parsing from `dvc`). The UI and `elctl` are thin. |
 | E9 | **No XLS.** Bulk input is CSV or TSV, from a file or pasted from a spreadsheet. Export is CSV and a PDF level sheet. |
 | E10 | **A level's z lives only in its `level_geometry` reference**, as the importer already does (`libs/dvc/src/meta_adapter.cpp:258-263`). The `level.z` column is left NULL by entry. |
 | E11 | **Renames are cheap until the first analysis.** An irradiation or level can be renamed while no identifier in it has an analysis. The rename rewrites the `ref_object.key` of every reference scoped to it in the same transaction. After the first analysis a rename is refused. |
-| E12 | **Lab entry settings are shared.** The identifier streams, irradiation prefix, monitor sample and other options (section 7) are one `document` reference, `pychron/entry_settings.json`, so every client numbers the same way and changes are audited. |
+| E12 | **Lab entry settings are shared.** The irradiation prefix, monitor sample and other options (section 7) are one `document` reference, `pychron/entry_settings.json`, so every client behaves the same way and changes are audited. |
+| E13 | **Package mode is per irradiation.** `irradiation.kind` is `argon` (chronology, productions, flux) or `package` (positions and samples only), chosen when the irradiation is created and editable later (section 11 Q4). Changing it hides or shows the chronology and production editors; it never deletes reference data. |
 
 ## 4. Data model use
 
@@ -81,7 +82,7 @@ No new tables. Entry writes these existing rows:
 | Project | `project` | (`name`, `pi_uuid`) |
 | Material | `material` | (`name`, `grainsize`) |
 | Sample | `sample` (+ `updated_utc`) | (`name`, `project_uuid`, `material_uuid`) |
-| Irradiation | `irradiation` | `name` |
+| Irradiation | `irradiation` (`kind`, new in `0003_entry.sql`) | `name` |
 | Chronology | `ref_object` `chronology` `<irrad>` + `chronology_dose` revisions | |
 | Production | `ref_object` `production` `<irrad>/<name>` + `production_meta`, `production_value` | |
 | Level | `level` (`holder_ref_uuid`, `note`) | (`irradiation_uuid`, `name`) |
@@ -126,7 +127,7 @@ struct SampleQuery {
   std::optional<Uuid> pi, project, material;
   int limit = 500;
 };
-struct IrradiationRow { Uuid uuid; std::string name; UtcTime created; int n_levels = 0;
+struct IrradiationRow { Uuid uuid; std::string name; std::string kind; UtcTime created; int n_levels = 0;
                         int n_positions = 0; int n_analyzed = 0; bool has_chronology = false; };
 struct LevelRow { Uuid uuid; std::string name; std::optional<Uuid> holder; std::optional<std::string> holder_name;
                   std::optional<std::string> note; };
@@ -154,7 +155,7 @@ Result<std::vector<IrradiationRow>> irradiations();        // newest first
 Result<std::vector<LevelRow>> levels(Uuid irradiation);    // by name
 Result<std::optional<LevelSheet>> level_sheet(Uuid level);
 Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope);
-Result<std::int64_t> max_numeric_identifier(std::int64_t floor, std::optional<std::int64_t> ceiling);
+Result<std::int64_t> max_numeric_identifier();             // 0 when there is none
 ```
 
 Counts come from joins in one statement each (no N+1). All SQL in
@@ -244,40 +245,53 @@ Result<CatalogOutcome> apply_catalog_edits(const Actor&, const CatalogEditBatch&
 ```cpp
 struct IdentifierAssignment { Uuid position; std::int64_t number; std::optional<Uuid> replaces; };
 struct IdentifierAllocation {
-  std::string scope;                        // "unknown", "monitor" (section 7)
-  std::int64_t floor = 1;                   // the stream's first number
-  std::optional<std::int64_t> ceiling;      // exclusive; the next stream's floor
   std::int64_t expected_last = 0;           // the counter value the plan was made from
   std::vector<IdentifierAssignment> assignments;
 };
 struct AllocationStale { std::int64_t actual_last = 0; };
 using AllocationOutcome = std::variant<CatalogApplied, AllocationStale, std::vector<Refusal>>;
-Result<AllocationOutcome> allocate_identifiers(Uuid client, const std::vector<IdentifierAllocation>&);
+Result<AllocationOutcome> allocate_identifiers(Uuid client, const IdentifierAllocation&);
 ```
 
-In one transaction, per allocation in scope order:
+In one transaction:
 
-1. Lock the counter row (`SELECT ... FOR UPDATE`; the SQLite transaction is
-   already `BEGIN IMMEDIATE`). When the row is absent, seed it: `last_value =
-   max(floor - 1, max numeric identifier in [floor, ceiling))`, where numeric
-   means the text is all ASCII digits without a leading zero, compared as an
-   integer. This replaces legacy `ORDER BY abs(identifier)`.
+1. Lock the counter row, scope `identifier` (`SELECT ... FOR UPDATE`; the
+   SQLite transaction is already `BEGIN IMMEDIATE`). When the row is absent,
+   seed it with the largest numeric identifier in the store (0 if none),
+   where numeric means the text is all ASCII digits without a leading zero,
+   at most 18 of them, compared as an integer. This replaces legacy
+   `ORDER BY abs(identifier)`. Special identifiers (`bu-FD-J`) and any
+   non-numeric text never count.
 2. `last_value != expected_last`: `AllocationStale`, roll back.
-3. For each assignment: a number outside `[floor, ceiling)`, a number at or
-   below `expected_last`, or a text already in `identifier` is a refusal. A
+3. The numbers must be exactly `expected_last + 1 ... expected_last + k`
+   (sequential, no gaps); anything else is an `Error` (`Protocol`), since
+   only the planner makes allocations. A text already in `identifier` is a
+   refusal (a hand-entered identifier that happens to be numeric). A
    `replaces` identifier must be the position's current one and must pass
    the `analyzed_identifier` rule; it is updated in place (same uuid, new
    text), so nothing else that names it changes. Otherwise a new `identifier`
    row is inserted.
-4. `last_value = max(number)` of the allocation.
+4. `last_value = expected_last + k`.
 
-The importer does not touch `identifier_counter`, so after an import the
-first allocation seeds from the imported identifiers. A test pins that.
+Numbers replaced by overwrite are not reused; the counter only moves up.
+The importer does not touch `identifier_counter`, so after the legacy
+database is migrated the first allocation seeds above the imported
+identifiers, whatever numbering scheme the lab used before. A test pins
+that.
 
 ### 5.5 Migration
 
-`0003_entry.sql`: an index for sample search, `CREATE INDEX sample_name_lower_ix
-ON sample (lower(name))`, and the same on `project`. Additive (11.4).
+`0003_entry.sql`:
+
+- `ALTER TABLE irradiation ADD COLUMN kind text NOT NULL DEFAULT 'argon'
+  CHECK (kind IN ('argon','package'))` (E13). Imported irradiations are
+  `argon`; an admin can switch a legacy package afterwards.
+- An index for sample search, `CREATE INDEX sample_name_lower_ix ON sample
+  (lower(name))`, and the same on `project`.
+
+Both are additive (11.4).
+`IrradiationSpec` gains `std::optional<std::string> kind` (default `argon`)
+so `add_irradiation` can set it.
 Regenerate the SQLite file with `tools/ddl_sqlite.py`.
 
 ## 6. `libs/entry` (Qt-free)
@@ -308,51 +322,40 @@ The document (comments here are explanations, not part of the file):
 ```json
 {
   "irradiation_prefix": "NM-",
-  "mode": "argon",                      // "argon" | "package"; package hides chronology and productions
-  "pi_names_allowed": ["NMGRL"],
+  "default_irradiation_kind": "argon",  // pre-selected in New Irradiation; each irradiation has its own kind
+  "pi_names_allowed": [],
   "monitor": {"sample": "FC-2", "material": "sanidine"},
   "irradiation_project_prefix": "Irradiation-",
   "create_irradiation_project": true,   // project <prefix><irrad> with the monitor sample, legacy :1091-1127
-  "identifiers": {
-    "consecutive": false,               // one stream for monitors and unknowns
-    "streams": {"monitor": {"floor": 1}, "unknown": {"floor": 50000}},
-    "offset": 5,
-    "level_offset": 1
-  },
   "j_multiplier": 1e-4,
   "null_identifier_rows": "allow"       // legacy allow_multiple_null_identifiers; "packet" requires packets
 }
 ```
 
-The defaults above are placeholders. Section 11 Q2 asks the owner for the
-NMGRL values. The stream floors are lab data and must be set before the first
-generation. Until they are, Generate Identifiers is disabled with that reason.
+Every key has a default, so a lab with no settings document can enter and
+generate immediately. The monitor is used only for the warnings of section 8
+and the irradiation project; it has no effect on numbering.
 
 ## 8. Identifier planner
 
 Input: the irradiation's levels, sorted by name (E7), each with its
-positions sorted by position; the settings; per stream the counter value
-`last` (from `identifier_counter`, or the seed of 5.4 step 1 computed by a
-read when the row is absent); `overwrite`.
+positions sorted by position; the counter value `last` (from
+`identifier_counter`, or the seed of 5.4 step 1 computed by a read when the
+row is absent); `overwrite`.
 
 ```
-for each stream s (monitor, then unknown; one stream "unknown" when consecutive):
-  n = last[s] + offset - 1         # the first number is last + offset (legacy start + offset)
-  for each level L in name order:
-    i = 0
-    for each position p of L in position order:
-      skip if p has no sample
-      skip if p is not in s        # monitor: sample name and material equal the settings' monitor
-      skip if p has an identifier and (not overwrite or it is analyzed)
-      i += 1; assign n + i
-    n += i + level_offset - 1      # level_offset 1: no gap between levels
+n = last
+for each level L in name order:
+  for each position p of L in position order:
+    skip if p has no sample
+    skip if p has an identifier and (not overwrite or it is analyzed)
+    n += 1; assign n (replacing p's identifier when it has one)
 ```
 
-This is `identifier_generator.py:289-356` with the level order fixed, analyzed
-identifiers never overwritten, and `offset` and `level_offset` clamped to at
-least 1 as legacy does. With `level_offset = 1` and a level with no new
-positions, nothing is added for that level. The planner returns the
-assignments and, per stream, `expected_last` and the resulting last.
+Monitors and unknowns share the sequence. There are no offsets and no gaps
+between levels (legacy `identifier_generator.py:242-356` had both, section
+11 Q2). The planner returns the assignments, `expected_last = last`, and the
+resulting last.
 
 Before planning, the UI runs the legacy "human error" checks
 (`labnumber_entry.py:464-534`) as warnings: a level with no monitor
@@ -418,7 +421,7 @@ File or clipboard, column mapping table, preview with a filter
     ask once, naming the analysis count (E5).
   - Level: holder (combo of `irradiation_holder` refs), z, production
     (combo of the irradiation's productions, with Edit…), note.
-  - Chronology (hidden in package mode): dose table with power, start and
+  - Chronology (hidden for a `package` irradiation): dose table with power, start and
     end in the lab's local time, stored as UTC (P4); duration helper; total
     hours and estimated J.
   - Holder view: the holes drawn from the holder geometry, filled holes
@@ -434,8 +437,9 @@ File or clipboard, column mapping table, preview with a filter
 New Irradiation dialog: name (pre-filled by the prefix increment), the
 chronology table, a reactor from `reactors.json` (whose production is
 copied into the irradiation as `<irrad>/<reactor>`), and the levels to
-create (count, first letter, holder, z). In argon mode a reactor is
-required. Unlike legacy, everything entered in this dialog is written in one
+create (count, first letter, holder, z), and the kind (`argon` or
+`package`, pre-selected from the settings). For `argon` a reactor is
+required; for `package` the chronology and reactor are hidden. Unlike legacy, everything entered in this dialog is written in one
 transaction.
 
 New Level dialog: next letter, last level's holder, z and production
@@ -446,8 +450,7 @@ Production editor: the nine ratios (`K4039`, `K3839`, `K3739`, `Ca3937`,
 Saving writes a new revision of that production. Copy from reactor default.
 "Set as reactor default" writes a new revision of `reactors.json`.
 
-Generate Identifiers dialog: stream settings shown read-only with a link to
-Entry Settings, overwrite checkbox, the warnings of section 8, and a preview
+Generate Identifiers dialog: the current last identifier, overwrite checkbox, the warnings of section 8, and a preview
 table of every level (position, sample, current identifier, new identifier).
 Commit, or re-preview when stale.
 
@@ -474,8 +477,9 @@ what it would write or what it wrote.
 elctl entry samples import <file.csv> [--update-existing] [--errors <out.csv>]
 elctl entry samples template <out.csv>
 elctl entry samples list [--pi ..] [--project ..] [--material ..] [--text ..]
-elctl entry irradiation add <name> [--chronology <file>] [--reactor <name>] [--levels A-C --holder <name> --z <z>]
+elctl entry irradiation add <name> [--kind argon|package] [--chronology <file>] [--reactor <name>] [--levels A-C --holder <name> --z <z>]
 elctl entry irradiation show <name> [--level <L>] [--csv]
+elctl entry irradiation set-kind <name> argon|package
 elctl entry positions import <irradiation> <file.csv>
 elctl entry identifiers generate <irradiation> [--overwrite]   # --dry-run prints the plan
 elctl entry holders import <file.txt> [--name <name>]
@@ -485,23 +489,19 @@ elctl entry settings show|set <key> <value>
 Exit code 0 on success, 1 on error, 2 when a save is stale or refused
 (nothing written). Refusals and stale rows are listed one per line.
 
-## 11. Open questions
+## 11. Owner decisions (2026-10-04)
 
-1. **Legacy acquisition during migration (E1).** Python pychron reads
-   identifiers from the legacy MySQL database and level files from the meta
-   repo. An irradiation entered here is invisible to it until the publisher
-   exists, and the publisher writes only the meta repo, never MySQL.
-   Recommendation: entry here is for labs whose acquisition already uses the
-   store. Labs still on Python acquisition keep entering in legacy and
-   re-import (`elctl import run`). Entry Settings shows a banner when the
-   store has a `legacy_db` import source.
-2. **NMGRL identifier streams.** What are the monitor and unknown floors
-   (and is consecutive numbering used), and what are the defaults for
-   `offset` and `level_offset`?
-3. **Changing the sample of an analyzed position (E5).** Keep it, behind the
-   confirmation, or make it admin-only?
-4. **Irradiation mode per lab or per irradiation?** Legacy has it per lab.
-   Some labs irradiate both Ar/Ar packages and other packages.
+1. **Q1 Legacy acquisition: not supported.** A lab using pychron-cpp
+   migrates its legacy database into the store first; entry never writes
+   MySQL or the meta repo (E1).
+2. **Q2 Identifier numbering: sequential.** The NMGRL monitor/unknown
+   streams with `offset` and `level_offset` are dropped in favour of one
+   sequential counter (E6, sections 5.4 and 8).
+3. **Q3 Sample change on an analyzed position: kept behind the
+   confirmation** that names the number of analyses (E5). No admin role is
+   needed.
+4. **Q4 Package mode: per irradiation** (`irradiation.kind`, E13), not per
+   lab.
 
 ## 12. Not in this spec
 
@@ -522,8 +522,8 @@ identifiers (a browse filter will cover it).
   - Audit rows hold before and after.
   - Two threads racing to update one field: exactly one applied.
 - Allocation (`tests/persistence/test_identifier_allocation.cpp`):
-  - The seed ignores non-numeric and leading-zero identifiers and respects
-    the ceiling.
+  - The seed ignores non-numeric, leading-zero and over-long identifiers.
+  - Numbers that are not exactly `expected_last + 1 ... + k` are an error.
   - CAS: two allocators racing get one applied and one stale.
   - `replaces` an analyzed identifier is refused.
   - After an import, the first allocation continues above the imported
@@ -535,11 +535,12 @@ identifiers (a browse filter will cover it).
   - Import plan for each row state.
   - Level sheet edit to batch: only changed fields, expected values as
     loaded.
-  - The planner: the legacy cases (offset, level_offset, monitors first,
-    overwrite, skip analyzed) and the guarantee that the preview equals the
-    commit. Property test: random sheets give unique, increasing numbers
-    within each stream, and re-planning a fully numbered irradiation with
-    overwrite off assigns nothing.
+  - The planner: sequential order across levels and positions, monitors
+    and unknowns in one sequence, overwrite on and off, analyzed
+    identifiers skipped, and the guarantee that the preview equals the
+    commit. Property test: random sheets give numbers `last + 1 ... last + k`
+    in (level name, position) order, and re-planning a fully numbered
+    irradiation with overwrite off assigns nothing.
 - `apps/elctl/tests`: `entry samples import --dry-run` output and an end-to-end
   import on SQLite.
 - `tests/ui` (headless): samples table edit and save; stale highlighting;
