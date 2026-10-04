@@ -46,7 +46,7 @@ class MainWindow : public QMainWindow {
   AlarmDock* alarm_dock() const noexcept { return alarms_; }
   HealthBar* health_bar() const noexcept { return health_; }
 
-  // Enables Window > Spectrometer for `bridge` (null disables it and closes
+  // Enables View > Spectrometer for `bridge` (null disables it and closes
   // the window). The bridge must outlive the main window or be cleared first.
   // `settings` makes the window's QSettings (default: the application's);
   // tests pass a temp file.
@@ -56,7 +56,7 @@ class MainWindow : public QMainWindow {
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
 
-  // Enables Window > Experiment for `bridge` (null disables it and closes the
+  // Enables View > Experiment for `bridge` (null disables it and closes the
   // window). `queue` is opened the first time the window shows. Same
   // lifetime and settings rules as set_spectrometer.
   void set_experiment(ExperimentBridge* bridge, bool simulation, std::optional<std::filesystem::path> queue = {},
@@ -64,7 +64,7 @@ class MainWindow : public QMainWindow {
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
 
-  // Enables Window > Data (browser, recall and figure windows) over `source`
+  // Enables View > Data (browser, recall and figure windows) over `source`
   // with figure presets from `presets` (null disables it and closes every data
   // window). Both must outlive the main window or be cleared first.
   void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);

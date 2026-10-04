@@ -28,6 +28,7 @@ enum class Shortcut {
   DataWindow,
   KeyboardShortcuts,
   CommandPalette,
+  MinimizeWindow,
   // The experiment window.
   OpenQueue,
   SaveQueue,

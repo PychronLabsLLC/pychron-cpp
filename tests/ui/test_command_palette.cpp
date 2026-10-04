@@ -51,7 +51,7 @@ class TestCommandPalette : public QObject {
     QVERIFY(fuzzy_score(QStringLiteral("Queue › Save"), QStringLiteral("QS")) >= 0);  // any case
     QVERIFY(fuzzy_score(QStringLiteral("Queue › Save"), QStringLiteral("q s")) >= 0);  // spaces ignored
     // Word starts beat letters buried in a word.
-    QVERIFY(fuzzy_score(QStringLiteral("Window › Extraction Line"), QStringLiteral("exl")) >
+    QVERIFY(fuzzy_score(QStringLiteral("View › Extraction Line"), QStringLiteral("exl")) >
             fuzzy_score(QStringLiteral("Executor › Cancel"), QStringLiteral("exl")));
     // Typed as written beats scattered.
     QVERIFY(fuzzy_score(QStringLiteral("Queue › Save"), QStringLiteral("save")) >
@@ -75,16 +75,16 @@ class TestCommandPalette : public QObject {
     CommandPalette* palette = open(main);
     QVERIFY(palette != nullptr);
     const QStringList shown = palette->shown();
-    QVERIFY(shown.contains(QStringLiteral("Window › Extraction Line")));
+    QVERIFY(shown.contains(QStringLiteral("View › Extraction Line")));
     QVERIFY(shown.contains(QStringLiteral("File › Preferences")));
     QVERIFY(shown.contains(QStringLiteral("Help › About pychron")));
-    QVERIFY(!shown.contains(QStringLiteral("Window › Spectrometer")));      // disabled: none loaded
+    QVERIFY(!shown.contains(QStringLiteral("View › Spectrometer")));      // disabled: none loaded
     QVERIFY(!shown.contains(QStringLiteral("File › Installations")));       // hidden
     QVERIFY(!shown.contains(QStringLiteral("Help › Command Palette")));     // not itself
     QVERIFY(palette->filter()->hasFocus() || !QApplication::focusWidget());
 
     palette->filter()->setText(QStringLiteral("exl"));
-    QCOMPARE(palette->shown().first(), QStringLiteral("Window › Extraction Line"));
+    QCOMPARE(palette->shown().first(), QStringLiteral("View › Extraction Line"));
     palette->filter()->setText(QStringLiteral("qqqq"));
     QVERIFY(palette->shown().isEmpty());
   }

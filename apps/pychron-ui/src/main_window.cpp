@@ -64,7 +64,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   auto& menus = MenuHub::instance();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
-  menus.contribute(this, MenuHub::Menu::Window, {line_window, spectrometer_action_, experiment_action_, data_action_},
+  menus.contribute(this, MenuHub::Menu::View, {line_window, spectrometer_action_, experiment_action_, data_action_},
                    MenuHub::Scope::App);
   MenuHub::instance().contribute(this, MenuHub::Menu::Help,
                                  {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);

@@ -20,6 +20,7 @@
 #include "experiment_window.hpp"
 #include "main_window.hpp"
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 #include "ui_fixture.hpp"
 
 using pychron::ui::MenuHub;
@@ -94,7 +95,8 @@ class TestMenuHub : public QObject {
                        static_cast<QWidget*>(&dialog)})
       w->show();
 
-    const QStringList expected{QStringLiteral("File"), QStringLiteral("Window"), QStringLiteral("Help")};
+    const QStringList expected{QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Window"),
+                               QStringLiteral("Help")};
     QCOMPARE(shown(main), expected);
     QCOMPARE(shown(figure), expected);
     QCOMPARE(shown(recall), expected);
@@ -105,8 +107,8 @@ class TestMenuHub : public QObject {
     // The same actions, not copies: File > Preferences in the figure window
     // is the main window's.
     QVERIFY(menu_of(figure, Menu::File)->actions().contains(main.preferences_action()));
-    QVERIFY(menu_of(recall, Menu::Window)->actions().contains(main.spectrometer_action()));
-    QCOMPARE(texts(menu_of(figure, Menu::Window)).first(), QStringLiteral("Extraction Line"));
+    QVERIFY(menu_of(recall, Menu::View)->actions().contains(main.spectrometer_action()));
+    QCOMPARE(texts(menu_of(figure, Menu::View)).first(), QStringLiteral("Extraction Line"));
     QVERIFY(menu_of(figure, Menu::Help)->actions().contains(main.about_action()));
   }
 
@@ -132,7 +134,8 @@ class TestMenuHub : public QObject {
     QVERIFY(main.menuWidget() == nullptr);
     QVERIFY(figure.menuWidget() == nullptr);
     QVERIFY(recall.layout()->menuBar() == nullptr);
-    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Window"),
+                                       QStringLiteral("Help")}));
     QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
     QVERIFY(menu_of(main, Menu::Help)->actions().contains(main.about_action()));
 
@@ -178,6 +181,53 @@ class TestMenuHub : public QObject {
     }
   }
 
+  // Window is the usual one: Minimize, Zoom, Bring All to Front, then every
+  // open window by title. Dialogs are not windows to switch to.
+  void the_window_menu_lists_the_open_windows() {
+    MenuHub& hub = MenuHub::instance();
+    QMainWindow a;
+    a.setWindowTitle(QStringLiteral("Extraction Line"));
+    PlainWindow b;
+    b.setWindowTitle(QStringLiteral("Recall"));
+    QDialog dialog;
+    dialog.setWindowTitle(QStringLiteral("Preferences"));
+    a.show();
+    b.show();
+    dialog.show();
+    auto titles = [&] {
+      QStringList out;
+      for (const QAction* action : hub.window_actions()) out.append(action->text());
+      return out;
+    };
+    const QStringList both{QStringLiteral("Extraction Line"), QStringLiteral("Recall")};
+    QTRY_COMPARE(titles(), both);
+    // in the menu of every window, after the three fixed entries
+    for (QWidget* w : {static_cast<QWidget*>(&a), static_cast<QWidget*>(&b)}) {
+      QCOMPARE(texts(menu_of(*w, Menu::Window)),
+               (QStringList{QStringLiteral("Minimize"), QStringLiteral("Zoom"), QStringLiteral("|"),
+                            QStringLiteral("Bring All to Front"), QStringLiteral("|"),
+                            QStringLiteral("Extraction Line"), QStringLiteral("Recall")}));
+    }
+    QVERIFY(shown(a).contains(QStringLiteral("Window")));
+
+    // a new title shows; a closed window leaves; a minimized one stays
+    b.setWindowTitle(QStringLiteral("Recall 12345"));
+    QTRY_COMPARE(titles(), (QStringList{QStringLiteral("Extraction Line"), QStringLiteral("Recall 12345")}));
+    b.showMinimized();
+    QCoreApplication::processEvents();
+    QCOMPARE(titles().size(), 2);
+    b.close();
+    QTRY_COMPARE(titles(), QStringList{QStringLiteral("Extraction Line")});
+
+    // choosing a window brings it back and forward
+    a.showMinimized();
+    QTRY_VERIFY(a.isMinimized());
+    hub.window_actions().first()->trigger();
+    QTRY_VERIFY(!a.isMinimized());
+
+    QCOMPARE(hub.minimize_action()->shortcut(), pychron::ui::key(pychron::ui::Shortcut::MinimizeWindow));
+  }
+
   void a_menu_appears_with_its_actions_and_goes_with_its_window() {
     QMainWindow a;
     a.show();
@@ -219,7 +269,7 @@ class TestMenuHub : public QObject {
     connect(app, &QAction::triggered, this, [&] { ++everywhere; });
     MenuHub::instance().contribute(&a, Menu::Queue, {save_a}, Scope::Window);
     MenuHub::instance().contribute(&b, Menu::Scripts, {save_b}, Scope::Window);
-    MenuHub::instance().contribute(&a, Menu::Window, {app}, Scope::App);
+    MenuHub::instance().contribute(&a, Menu::View, {app}, Scope::App);
     a.show();
     b.show();
 
@@ -269,8 +319,9 @@ class TestMenuHub : public QObject {
     pychron::ui::ExperimentWindow window(
         bridge, true, std::make_unique<QSettings>(tmp_.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
     window.show();
+    // Window is the hub's own and always there.
     QCOMPARE(shown(window), (QStringList{QStringLiteral("Queue"), QStringLiteral("Rows"), QStringLiteral("Executor"),
-                                         QStringLiteral("Scripts")}));
+                                         QStringLiteral("Scripts"), QStringLiteral("Window")}));
     QVERIFY(texts(menu_of(window, Menu::Queue)).contains(QStringLiteral("&Save")));
     QVERIFY(texts(menu_of(window, Menu::Executor)).contains(QStringLiteral("Start")));
     QVERIFY(texts(menu_of(window, Menu::Scripts)).contains(QStringLiteral("Script &Editor...")));

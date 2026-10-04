@@ -14,18 +14,18 @@
 // does --sim when nothing is installed.
 //
 // --sim forces every extraction-line transport to kind = "sim".
-// --spectrometer loads that spectrometer config for Window > Spectrometer;
+// --spectrometer loads that spectrometer config for View > Spectrometer;
 // with --sim and no file the example sim-integrated spectrometer is used.
 // --sim never rewrites a spectrometer config: one that is not simulated is
 // refused.
 //
-// Window > Experiment runs queues against the lab directory (--lab, default
+// View > Experiment runs queues against the lab directory (--lab, default
 // the install folder or the line config's directory; records under --data,
 // default <lab>/data). --queue opens a queue there. --sim-speed (with --sim)
 // puts the whole app on simulated time running that many times faster than
 // real time.
 //
-// Window > Data browses the records under the data directory
+// View > Data browses the records under the data directory
 // (<data>/records) and plots them; with --db it browses that DVC store
 // instead ("postgresql://user:pw@host/db" or "sqlite:/path/to/file.db"; the
 // schema must be current, it is never migrated from here). Figure presets

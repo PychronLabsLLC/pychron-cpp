@@ -2,7 +2,12 @@
 
 // MenuHub: one menu bar for the whole application. Every top-level window
 // shows the same menus in the same order (File, Queue, Rows, Executor,
-// Scripts, Window, Help).
+// Scripts, View, Window, Help).
+//
+// View holds what windows contribute to it: the actions that open the
+// application's main views. Window is the hub's own, the usual one: Minimize,
+// Zoom, Bring All to Front, then every open window, the one in front ticked;
+// choosing one brings it forward.
 //
 // On macOS there is literally one bar: a parentless QMenuBar, which Qt makes
 // the global menu bar for every window (Bars::Shared). Per-window bars there
@@ -11,7 +16,7 @@
 // each window shows its own copy of the bar (Bars::PerWindow).
 //
 // Windows keep owning their actions and contribute them here. App actions
-// (Preferences, Window > Spectrometer, About) work from every window.
+// (Preferences, View > Spectrometer, About) work from every window.
 // Window actions (Save queue, Delete rows, Start) are enabled only while
 // their window is active, so the same shortcut can mean Save queue in the
 // experiment window and Save script in the script editor; the action's own
@@ -44,7 +49,7 @@ class MenuHub : public QObject {
   Q_OBJECT
 
  public:
-  enum class Menu { File, Queue, Rows, Executor, Scripts, Window, Help };
+  enum class Menu { File, Queue, Rows, Executor, Scripts, View, Window, Help };
   enum class Scope {
     App,     // works from every window
     Window,  // enabled only while `owner`'s window is active
@@ -53,7 +58,7 @@ class MenuHub : public QObject {
     PerWindow,  // each window shows its own copy of the bar
     Shared,     // one parentless bar for every window (macOS)
   };
-  static constexpr std::size_t kMenus = 7;
+  static constexpr std::size_t kMenus = 8;
 
   // The application's hub (created on first use; needs a QApplication).
   static MenuHub& instance();
@@ -87,6 +92,14 @@ class MenuHub : public QObject {
   QList<Command> commands() const;
 
   static QString title(Menu menu);
+
+  // The Window menu's own actions (the same in every bar).
+  QAction* minimize_action() const { return minimize_; }
+  QAction* zoom_action() const { return zoom_; }
+  QAction* bring_all_action() const { return bring_all_; }
+  // One per open window that takes a bar, in the order they were first
+  // shown: its title, ticked when it is the active one.
+  QList<QAction*> window_actions() const;
   // The menus `bar` shows, in order (hidden ones included); empty if `bar`
   // is not one of the hub's.
   QList<QMenu*> menus(const QMenuBar* bar) const;
@@ -118,12 +131,25 @@ class MenuHub : public QObject {
   void rebuild(Bar& bar);
   void schedule_rebuild();
   void update_gates();
+  // The window Minimize and Zoom act on: the active one, if it takes a bar.
+  QWidget* current_window() const;
+  void add_window(QWidget* window);
+  void refresh_windows();
+  QList<QAction*> window_menu() const;  // nullptr: a separator
 
   Bars mode_;
   QPointer<QMenuBar> shared_;
   std::vector<Group> groups_;
   std::vector<Bar> bars_;
   std::vector<Gate> gates_;
+  struct Entry {
+    QPointer<QWidget> window;
+    QPointer<QAction> action;
+  };
+  std::vector<Entry> windows_;
+  QAction* minimize_ = nullptr;
+  QAction* zoom_ = nullptr;
+  QAction* bring_all_ = nullptr;
   bool rebuild_pending_ = false;
 };
 

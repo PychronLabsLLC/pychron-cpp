@@ -26,7 +26,7 @@ struct CommandLine {
   std::optional<std::filesystem::path> data;   // default: <lab>/data
   std::optional<std::filesystem::path> queue;  // opened in the experiment window
   double sim_speed = 0;                        // 0: real time
-  std::optional<std::string> db;  // DVC store url: Window > Data browses it instead of the records
+  std::optional<std::string> db;  // DVC store url: View > Data browses it instead of the records
   std::optional<std::string> install;  // an install from the site config
   bool setup = false;                  // run the setup wizard first
   bool examples = false;               // the shipped example configs (development)

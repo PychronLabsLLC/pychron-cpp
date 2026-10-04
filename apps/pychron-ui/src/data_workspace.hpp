@@ -2,7 +2,7 @@
 
 // The data windows over one analysis source: the browser, recall windows and
 // figure windows, and the ProcessingBridge the figures use. The instrument's
-// MainWindow holds one behind Window > Data; a data-reduction install's
+// MainWindow holds one behind View > Data; a data-reduction install's
 // DataMainWindow holds one as its whole UI.
 
 #include <functional>

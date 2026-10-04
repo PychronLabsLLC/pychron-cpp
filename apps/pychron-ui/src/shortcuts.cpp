@@ -34,6 +34,7 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::KeyboardShortcuts, C::Everywhere, QStringLiteral("Keyboard shortcuts (this list)"),
        QKeySequence(QKeySequence::HelpContents)},
       {S::CommandPalette, C::Everywhere, QStringLiteral("Command palette"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_P)},
+      {S::MinimizeWindow, C::Everywhere, QStringLiteral("Minimize the window in front"), keys(Qt::CTRL | Qt::Key_M)},
 
       {S::OpenQueue, C::ExperimentWindow, QStringLiteral("Open queue…"), QKeySequence(QKeySequence::Open)},
       {S::SaveQueue, C::ExperimentWindow, QStringLiteral("Save queue"), QKeySequence(QKeySequence::Save)},

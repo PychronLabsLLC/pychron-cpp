@@ -59,7 +59,7 @@ builds on macOS, Linux (gcc and clang with sanitizers) and Windows.
 ## Try it in simulation
 
 Open the extraction-line window and the spectrometer strip chart
-(Window > Spectrometer):
+(View > Spectrometer):
 
 ```bash
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
@@ -72,7 +72,7 @@ Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
 build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
 ```
 
-Browse and plot the records a queue wrote (Window > Data): filter, double-click
+Browse and plot the records a queue wrote (View > Data): filter, double-click
 to recall an analysis, or select runs and choose a figure from "Plot" (time
 series, ideogram, age spectrum, inverse isochron). Figure
 options are edited in the dock and saved as named presets.

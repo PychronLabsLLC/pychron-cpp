@@ -1,5 +1,7 @@
 #include "menu_hub.hpp"
 
+#include "shortcuts.hpp"
+
 #include <algorithm>
 
 #include <QAction>
@@ -19,8 +21,8 @@ namespace pychron::ui {
 namespace {
 
 constexpr std::array<MenuHub::Menu, MenuHub::kMenus> kOrder{
-    MenuHub::Menu::File,    MenuHub::Menu::Queue,  MenuHub::Menu::Rows, MenuHub::Menu::Executor,
-    MenuHub::Menu::Scripts, MenuHub::Menu::Window, MenuHub::Menu::Help};
+    MenuHub::Menu::File,    MenuHub::Menu::Queue,  MenuHub::Menu::Rows,   MenuHub::Menu::Executor,
+    MenuHub::Menu::Scripts, MenuHub::Menu::View,   MenuHub::Menu::Window, MenuHub::Menu::Help};
 
 std::size_t slot(MenuHub::Menu menu) { return static_cast<std::size_t>(menu); }
 
@@ -54,7 +56,31 @@ MenuHub& MenuHub::reset(Bars bars) {
 
 MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
   QCoreApplication::instance()->installEventFilter(this);
-  connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] { update_gates(); });
+  connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] {
+    update_gates();
+    refresh_windows();
+  });
+  // The Window menu's own actions, shared by every bar. Created before any
+  // bar is: make_bar() fills the menu from them.
+  minimize_ = new QAction(tr("Minimize"), this);
+  minimize_->setShortcut(key(Shortcut::MinimizeWindow));
+  connect(minimize_, &QAction::triggered, this, [this] {
+    if (QWidget* w = current_window()) w->showMinimized();
+  });
+  zoom_ = new QAction(tr("Zoom"), this);
+  connect(zoom_, &QAction::triggered, this, [this] {
+    QWidget* w = current_window();
+    if (w == nullptr) return;
+    if (w->isMaximized()) w->showNormal();
+    else w->showMaximized();
+  });
+  bring_all_ = new QAction(tr("Bring All to Front"), this);
+  connect(bring_all_, &QAction::triggered, this, [this] {
+    QWidget* front = current_window();
+    for (const Entry& e : windows_)
+      if (e.window != nullptr && e.window != front && !e.window->isMinimized()) e.window->raise();
+    if (front != nullptr) front->raise();
+  });
   if (mode_ == Bars::Shared) {
     // No parent: on macOS the bar of every window that has none of its own.
     shared_ = new QMenuBar(nullptr);
@@ -80,6 +106,8 @@ QString MenuHub::title(Menu menu) {
       return tr("&Executor");
     case Menu::Scripts:
       return tr("S&cripts");
+    case Menu::View:
+      return tr("&View");
     case Menu::Window:
       return tr("&Window");
     case Menu::Help:
@@ -175,11 +203,83 @@ void MenuHub::contribute(QWidget* owner, Menu menu, const QList<QAction*>& actio
 }
 
 bool MenuHub::eventFilter(QObject* watched, QEvent* event) {
-  if (event->type() == QEvent::Show && watched->isWidgetType()) {
-    auto* w = static_cast<QWidget*>(watched);
-    if (mode_ == Bars::PerWindow && w->isWindow() && takes_bar(w)) install(w);
+  if (!watched->isWidgetType()) return false;
+  auto* w = static_cast<QWidget*>(watched);
+  switch (event->type()) {
+    case QEvent::Show:
+      if (mode_ == Bars::PerWindow && w->isWindow() && takes_bar(w)) install(w);
+      // Listed in the order they are shown: noted now, not at the rebuild.
+      if (w->isWindow() && takes_bar(w)) add_window(w);
+      [[fallthrough]];
+    case QEvent::Hide:
+    case QEvent::WindowTitleChange:
+    case QEvent::WindowStateChange:
+      // The Window menu lists the open windows: keep up with them.
+      if (w->isWindow() && takes_bar(w)) schedule_rebuild();
+      break;
+    default:
+      break;
   }
   return false;
+}
+
+QWidget* MenuHub::current_window() const {
+  QWidget* active = QApplication::activeWindow();
+  return active != nullptr && takes_bar(active) ? active : nullptr;
+}
+
+QList<QAction*> MenuHub::window_actions() const {
+  QList<QAction*> out;
+  for (const Entry& e : windows_)
+    if (e.window != nullptr && e.action != nullptr) out.append(e.action.data());
+  return out;
+}
+
+void MenuHub::add_window(QWidget* w) {
+  if (std::any_of(windows_.begin(), windows_.end(), [&](const Entry& e) { return e.window == w; })) return;
+  auto* action = new QAction(this);
+  action->setCheckable(true);
+  QPointer<QWidget> window(w);
+  connect(action, &QAction::triggered, this, [this, window] {
+    if (window == nullptr) return;
+    if (window->isMinimized()) window->showNormal();
+    window->raise();
+    window->activateWindow();
+    refresh_windows();  // the tick follows the window, not the click
+  });
+  windows_.push_back({window, action});
+}
+
+// Brings windows_ in step with the open windows: one action each, kept while
+// its window stays open (so the menus are not rebuilt for a change of title
+// or of the window in front).
+void MenuHub::refresh_windows() {
+  std::erase_if(windows_, [](const Entry& e) {
+    const bool gone = e.window == nullptr || !e.window->isVisible();
+    if (gone) delete e.action.data();
+    return gone;
+  });
+  for (QWidget* w : QApplication::topLevelWidgets()) {
+    if (w->isVisible() && takes_bar(w)) add_window(w);  // any shown before the hub was watching
+  }
+  const QWidget* front = current_window();
+  for (const Entry& e : windows_) {
+    e.action->setText(e.window->windowTitle().isEmpty() ? QCoreApplication::applicationName() : e.window->windowTitle());
+    e.action->setChecked(e.window == front);
+  }
+  minimize_->setEnabled(front != nullptr);
+  zoom_->setEnabled(front != nullptr);
+  bring_all_->setEnabled(!windows_.empty());
+}
+
+QList<QAction*> MenuHub::window_menu() const {
+  QList<QAction*> want{minimize_, zoom_, nullptr, bring_all_};
+  const QList<QAction*> open = window_actions();
+  if (!open.isEmpty()) {
+    want.append(nullptr);
+    want.append(open);
+  }
+  return want;
 }
 
 void MenuHub::schedule_rebuild() {
@@ -198,6 +298,7 @@ void MenuHub::rebuild() {
   std::erase_if(groups_, [](const Group& g) { return g.owner == nullptr; });
   std::erase_if(bars_, [](const Bar& b) { return b.bar == nullptr; });
   std::erase_if(gates_, [](const Gate& g) { return g.owner == nullptr || g.group == nullptr; });
+  refresh_windows();
   for (Bar& b : bars_) rebuild(b);
 }
 
@@ -245,6 +346,7 @@ void MenuHub::rebuild(Bar& b) {
     QMenu* m = b.menus[slot(menu)];
     if (m == nullptr) continue;
     QList<QAction*> want;  // the actions belong to their windows
+    if (menu == Menu::Window) want = window_menu();  // the hub's own, first
     for (const Group& g : groups_) {
       if (g.menu != menu || g.owner == nullptr) continue;
       QList<QAction*> live;

@@ -1,5 +1,5 @@
 // ExperimentWindow end to end on the sim lab (pumped 400x): open the example
-// queue, run it, follow it; confirmations, saving, and Window > Experiment.
+// queue, run it, follow it; confirmations, saving, and View > Experiment.
 
 #include <atomic>
 #include <filesystem>

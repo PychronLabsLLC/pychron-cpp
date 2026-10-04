@@ -101,7 +101,7 @@ ctest --preset dev-ui
 ```
 
 To try the spectrometer window in simulation, run the app with `--sim` and
-open Window > Spectrometer (Ctrl+Shift+S); the example
+open View > Spectrometer (Ctrl+Shift+S); the example
 `spectrometer.sim-integrated.toml` is loaded with a beam that follows its
 field table, and the window starts the scan when it opens:
 
@@ -114,7 +114,7 @@ item stays disabled when neither flag is given or the file fails to load; the
 error goes to the log dock). Window layout and graph settings are saved per
 spectrometer under the `PychronLabs` organization in `QSettings`.
 
-Window > Experiment (Ctrl+Shift+E) runs experiment queues against a lab
+View > Experiment (Ctrl+Shift+E) runs experiment queues against a lab
 directory, as `elctl exp run` does: open a queue (Queue > Open, or
 `--queue <file>`), edit it (rows revalidate as you type; red rows have
 errors, see their tooltips), then Start (F5) from the selected row. The lab
@@ -135,7 +135,7 @@ real time:
 build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
 ```
 
-Window > Data browses the records under `<data>/records`. With
+View > Data browses the records under `<data>/records`. With
 `--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
 `postgresql://user:pw@host/db`; the schema must already be current, since
 the UI never migrates it). Rescan picks up new analyses and revisions from
@@ -209,7 +209,7 @@ them work.
    started from (`traces/<transport name>.trace`; the directory is created on
    demand). The trace file is truncated every time the app starts, so copy a
    capture you want to keep somewhere else before restarting.
-4. Run the app on that config and open Window > Spectrometer:
+4. Run the app on that config and open View > Spectrometer:
 
    ```bash
    build/dev-ui/apps/pychron-ui/pychron-ui --spectrometer <dir>/spectrometer.qtegra.toml
