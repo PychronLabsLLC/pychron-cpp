@@ -10,9 +10,13 @@
 # outside the temporary directory; no credentials are used.
 #
 # Exit status: the worst exit code of `import verify` (0 ok, 1 not ok,
-# 2 error); 2 also when the script itself could not run.
+# 2 error), once the import has run. Anything that fails before that (a
+# clone, `import add`, `import status`) ends the script at once with exit
+# status 2, whatever the failing command returned. A non-zero `import run` is
+# reported ("run exit code") and does not end the script.
 
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "$0: failed at line $LINENO" >&2; exit 2' ERR
 
 BASE_URL=https://github.com/NMGRLData
 META_NAME=MetaData

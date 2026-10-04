@@ -35,6 +35,26 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `elctl`'s import tests) need `git` >= 2.32 on PATH and `tzdata`. The
   real-data check is `tools/import_fixture_check.sh build/dev` (network, not
   in CI); user docs are in `docs/legacy_import.md`.
+- Importer rules that are easy to break (spec section 10 of
+  `docs/superpowers/specs/2026-10-03-legacy-ingestion-design.md`): the store
+  must end the same however a walk is cut, stopped, resumed or replayed, so
+  an adapter decides from the walk (paths and commits), never from what an
+  earlier run happened to leave in memory, and never orders anything by
+  address. Each adapter's `OneHistoryOneResult` test holds one history with
+  everything that has gone wrong at a batch boundary; a change to a walk or
+  to the writer adds its case there (`same_at_every_cut` in
+  `tests/dvc/verify_support.hpp` does the same for a small history). Ids
+  derive from the normalized source url and from commit and path: changing
+  `normalize_source_url` or an id recipe orphans every existing import. The
+  words that make a conflict a warning live in
+  `libs/ingest/include/pychron/ingest/conflict_markers.hpp`.
+- `GitFixture` switches the user's and the machine's git configuration off
+  for the test process (`GitReader::mirror` reads it); a test that wants one
+  sets `GIT_CONFIG_GLOBAL` itself. No test may run git against this
+  repository.
+- One importer at a time per database. Windows CI builds without
+  persistence, so `libs/ingest`, `libs/dvc` and `elctl import` are not built
+  or tested there.
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
   Never edit an applied migration; add `NNNN_<name>.sql`.

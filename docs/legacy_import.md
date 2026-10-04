@@ -34,6 +34,14 @@ python3 tools/legacy_dump_to_jsonl.py pychrondvc.sql catalog/
 directory is what `--source` takes for a `legacy_db`. If you have no dump you
 can still import project repositories with `--catalog-from-repos` (below).
 
+The importer reads these tables: `PrincipalInvestigatorTbl`, `ProjectTbl`,
+`MaterialTbl`, `SampleTbl`, `IrradiationTbl`, `LevelTbl`,
+`IrradiationPositionTbl`, `UserTbl`, `MassSpectrometerTbl`,
+`ExtractDeviceTbl`, `LoadTbl`, `LoadPositionTbl`, and, for the tags of
+analyses that have no tags file, `AnalysisTbl` and `AnalysisChangeTbl`. Every
+other table of the dump is converted too and stays in the JSON-lines
+directory, unread: keep the directory.
+
 ## 2. The recommended order
 
 1. **Catalog** (`legacy_db`), if you have a dump. It gives the importer the
@@ -72,8 +80,12 @@ that exists.
 
 ### add
 
-Registers a source and prints its id. Registering the same source again
-changes nothing, and nothing is stored if any check fails.
+Registers a source and prints its id. Nothing is stored if any check fails.
+Registering the same source again (same kind, source and branch) keeps its id
+and everything imported from it; it replaces the settings the cache holds for
+it with those of the new command: `--reference-runs`, `--author-map`, and
+the path it is read from. The time zone and `--catalog-from-repos` cannot
+change (they decide what was imported): `add` with other values is refused.
 
 ```bash
 elctl import add --db sqlite:store.db --kind legacy_db --source catalog/ --tz America/Denver
@@ -109,18 +121,27 @@ goes to stdout with what was written and the conflicts pending.
   finishes the batch being written and stops with the message
   `paused: <name> at <done>/<total>`; run the command again to go on. A
   second Ctrl-C ends the program at once. `--limit N` does the same after N
-  batches (`--batch` sets the batch size, default 500 commits).
+  batches (`--batch` sets the batch size; default 500 commits, 2000 rows for
+  a dump).
 - **`--replay`.** Walks the source again from the start. What is already
   imported is left alone; analyses that were refused earlier are imported
   now. Use it after you have fixed the catalog (for example after importing
   the dump you had left out): the summary tells you so when
   `unknown_analysis` conflicts are pending. The conflicts it resolves become
-  `superseded`.
+  `superseded`. A replay does not resolve an `unparseable` conflict, and it
+  refuses a source whose history was rewritten, as a plain run does.
+- **`--all`** imports every source in order. A source that cannot be opened
+  (its repository or dump is gone, its settings file in the cache is damaged
+  or missing) is reported on stderr and skipped; the others are imported.
 - **`--dry-run`.** Writes nothing and fetches nothing; prints how many rows a
   run would write. It needs an existing database and, for a url source, a
   mirror already in the cache.
+- The conflict count in the progress lines and the summary is what the run
+  leaves pending; a conflict it wrote and superseded in the same run is not
+  counted.
 - Exit code: 0 when finished or paused, 1 when a source finished with
-  blocking conflicts pending, 2 on an error.
+  blocking conflicts pending, 2 on an error, and 2 when a source could not be
+  opened (after the others were imported).
 
 ### status
 
@@ -147,11 +168,16 @@ Conflicts are **blocking** when data was not imported or does not agree, and
 **warnings** when they only annotate something that was imported. Verify
 fails on blocking ones only.
 
+No command resolves a blocking conflict by decree: there is no "ignore". A
+blocking conflict goes away (becomes `superseded`) when what it complains
+about is mended in the source and imported, and until then `verify` is not ok
+for that source. What mends each kind is in the table.
+
 | Kind | Meaning |
 |---|---|
-| `unparseable` | A file could not be read (the reason is in the detail: invalid JSON, a chronology line that cannot be read, a spectrometer file that appeared after the analysis it belongs to). Blocking. |
-| `unknown_analysis` | An analysis, or a later file of it, was refused because the catalog has no such identifier. Blocking until `run --replay` imports it. |
-| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link (`imported`), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). |
+| `unparseable` | A file could not be read (the reason is in the detail: invalid JSON, a chronology line that cannot be read, content the reader did not expect), a path is not a file of a legacy repository, or a spectrometer file appeared after the analysis it belongs to. Blocking. A file that could not be read is superseded by the next run that imports a later commit with a readable version of that file, or one that deletes it; an unreadable version that follows a readable one is not. So the conflict stays, and `verify` stays not ok, for as long as the file is unreadable at the head of the branch: mend it in the source repository and run again. The other two reasons are never superseded: an unknown path and a late spectrometer file stay as they are. |
+| `unknown_analysis` | A file was refused because its analysis is not in the store. Blocking. The detail says which case it is: (1) the catalog has no such identifier, or names no such spectrometer or extraction device: fix the catalog and `run --replay`; (2) the analysis was refused for another reason (its run id is taken: see its `identity_clash`): mend that, then `run --replay`; (3) the record of the analysis cannot be read: superseded, without a replay, by the run that imports a commit with a readable record (the analysis then starts at that commit); (4) the repository has files for an analysis but never its record: superseded by the run that imports the record, if one is ever committed; (5) a membership or a revision of an analysis another source has not imported yet: import that source, then `run --replay`. |
+| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link (`imported`), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). The last is blocking instead when the stored revision it is behind comes from a commit the repository no longer has (`"cause": "stored_commit_unknown"`): the history was rewritten after it was imported. |
 | `value_mismatch` | The age verify recomputed does not match the legacy age (the detail has both values and what was used). Blocking. |
 | `hand_edit` | Reserved: a published repository changed by hand. Not written yet. |
 | `provisional_renumber` | Reserved; the importer does not write it. |
@@ -174,11 +200,17 @@ For each source, `verify` checks:
 4. **Age parity.** For each interpreted age in the repository, every analysis
    it lists is reduced again from the imported data, as the data stood when
    the interpreted age was saved, and the age and its error are compared
-   with the legacy ones. Each is reported as `pass`, `pass on age only` (the
-   file does not say which kind of error it holds), `fail` or `not
-   comparable`, with the reason for the last (for example an analysis in
-   another repository, reference data changed since, no J). A failure is also
-   stored as a `value_mismatch` conflict. The output ends with the largest
+   with the legacy ones. The analysis's own files are taken as of the
+   interpreted age's commit in the repository's history; reference data
+   (flux, production, chronology) as of that commit's time: for each, the
+   last revision made at or before it, whatever was changed later. Each
+   member is reported as `pass`, `pass on age only` (the file does not say
+   which kind of error it holds), `fail` or `not comparable`, with the
+   reason for the last: for example `other_source` (an analysis of another
+   repository), `reference_not_yet_defined` (the flux, production or
+   chronology was first written after the age was saved), `no_j`,
+   `no_production`, `no_chronology` (there is none, or it had been removed by
+   then). A failure is also stored as a `value_mismatch` conflict. The output ends with the largest
    residual among the passes, so a drift that is still inside the tolerance
    stays visible.
 5. **No blocking conflict is pending.**
@@ -200,18 +232,44 @@ Options:
 - `--source` limits the check to one source; `--json` prints a report per
   source for scripts.
 
-Exit code: 0 when every source checked is ok, 1 when one is not, 2 on an error
-or when nothing is registered.
+A source whose history was rewritten after it was imported is not verified:
+`verify` fails with `history was rewritten`, as `run` does.
+
+Exit code: 0 when every source checked is ok, 1 when one is not, 2 on an
+error, when nothing is registered, or when a source could not be opened (the
+others are still checked).
 
 ## 4. Credentials
 
-A source url must not contain a user or a password: `elctl import add` refuses
-`https://user:token@host/...` and `ssh://git@host/...` before it fetches
-anything, and never prints the url it refused. Let a git credential helper
-supply them (`git config --global credential.helper ...`), or use the scp-like
-form `git@host:path` with an ssh agent. The database url may hold a password
-for PostgreSQL; prefer a password file or the environment your PostgreSQL
-client reads.
+A source url must not carry a secret: it would be written to the settings
+file and the store, and shown by `status`. `elctl import add` refuses, before
+it fetches anything and without printing the url,
+
+- `scheme://user:password@host/...` on any scheme;
+- any `user@` on `http` and `https`, where the user is often a token
+  (`https://token@host/...`);
+- a query string that names a `token`, `password`, `secret` or `key=`.
+
+A user without a password on `ssh://` (`ssh://git@host/path`) and the
+scp-like form `git@host:path` name an account, not a secret, and are allowed;
+use them with an ssh agent.
+
+For `http` and `https`, let git supply the credentials: the clone and the
+fetch of a mirror run with your own git configuration (system and global), so
+a credential helper works as it does for `git clone`:
+
+```bash
+git config --global credential.helper osxkeychain   # or manager, libsecret, store
+```
+
+The same goes for a url rewrite (`url.<base>.insteadOf`) or a proxy set there.
+The import never prompts: without a working helper the fetch fails with git's
+message. Only the `file`, `git`, `http`, `https` and `ssh` transports are
+allowed, whatever the configuration says. Everything else the importer runs
+(reading a repository or a mirror) ignores your git configuration.
+
+The database url may hold a password for PostgreSQL; prefer a password file
+or the environment your PostgreSQL client reads.
 
 ## 5. Known limits
 
@@ -222,8 +280,10 @@ might expect. Section 10 of the design spec has the full wording.
   in the new application, the legacy source no longer updates it. A later
   edit to the same item in the legacy repository arrives as a warning
   (`late_revision_not_applied`) with its content kept in the conflict. The
-  opposite holds for the first import of a source: it overwrites the heads
-  that already exist for the items it brings.
+  opposite holds for the first import of a source: until it has finished
+  once, it overwrites the heads that already exist for the items it brings,
+  whether a user made them or another source did. This is so whether the
+  first import runs in one go or is stopped and resumed.
 - **Several workstations.** When a repository is merged from several
   workstations and imported in more than one run, the revision history can
   lack intermediate revisions that one uninterrupted import of the final
@@ -232,11 +292,33 @@ might expect. Section 10 of the design spec has the full wording.
   has not been merged yet before an unrelated merge. A bookmark made from a
   git tag on that merge can then include a value from the unmerged branch;
   heads are right once the branch is merged. A git tag added later to a
-  commit already imported becomes a bookmark only when a replay sees it.
+  commit already imported becomes a bookmark only when a replay sees it, and
+  it then bookmarks the values current at the time of that replay, not those
+  at the tagged commit.
+- **Three or more branches at once.** Where more than two lines of work are
+  merged one after another, the current value of an item can differ, right
+  after an intermediate merge, from what that merge's tree holds; it is
+  right again once the last of the branches is merged.
+- **After an unreadable version, a merge can repeat content.** A merge is
+  compared with the version of a file the walk last saw. When that version
+  could not be read, the merge can write content that is already imported
+  again, as a new revision with the same values.
 - **Analyses still being collected.** An analysis whose files are incomplete
   when an incremental run ends is imported as it stands (a synthetic
   collection); one longer uninterrupted import would have found it complete.
-  The later files arrive as revisions.
+  The later files arrive as revisions. Within one run the wait is bounded
+  too: an analysis still incomplete 20 commits after its record is imported
+  with the files it has.
+- **Renumbered while being collected.** An analysis whose run id is changed
+  before its collection is complete is imported under the later run id, with
+  no revision for the renumbering; the rewrite is kept in the provenance of
+  its commit.
+- **An unreadable first record.** An analysis whose record cannot be read is
+  not imported until a commit brings a readable record; it then starts at
+  that commit (a synthetic collection) with the files the repository has had
+  for it. If one of those files could not be read either, its conflict keeps
+  the kind and wording it got while the record was unreadable
+  (`unknown_analysis`), and stays until the file is mended.
 - **Several analyses in one commit.** Two analyses that swap run ids in one
   commit both become `identity_clash`. A collection in the same commit as the
   renumbering that frees its run id is refused until a replay. A record
@@ -248,14 +330,40 @@ might expect. Section 10 of the design spec has the full wording.
   store, verify cannot tell that the dump's other columns were not applied.
   For a catalog, `ok` means the dump was imported, not that every column of
   every row was.
-- **Reference data that cannot say "removed".** When a position, a production
-  or a flux entry is deleted from MetaData the importer writes a revision
-  that says there is no value. A kind of reference data that cannot express
-  absence keeps its old value as head; the removal is recorded only in the
-  changeset's provenance note.
-- **Ages can only be checked against the same repository's data.** Members
-  imported from another source, and members whose reference data (flux,
-  production, chronology) changed after the interpreted age was saved, are
-  reported as not comparable, not as passes.
+- **Reference data that cannot say "removed".** When a position, a
+  production, a chronology, a gains or a holder file, or a level's geometry
+  is deleted from MetaData the importer writes a revision that says there is
+  no value. Two kinds cannot say that: the link from a level to its
+  production (a level dropped from `productions.json`) and the sensitivity
+  of a spectrometer (an emptied or deleted list). They keep their old value
+  as the current one; the removal is recorded only in the provenance note of
+  the commit's changeset.
+- **Ages are checked against the data as of the interpreted age.** A member
+  imported from another source is not comparable: its history cannot be
+  placed in this repository's. Reference data is taken by time, not by place
+  in a history: the last revision of the flux, of the level's production
+  link and the production it named, and of the chronology made at or before
+  the interpreted age's commit time. This relies on the commit dates of the
+  two repositories; where the MetaData commit that the age was computed with
+  carries a later date than the interpreted age's commit, the member is
+  `reference_not_yet_defined`, or is compared with the revision before it.
+  Reference data that had been removed by then gives `no_j`, `no_production`
+  or `no_chronology`, never an earlier value.
+- **Spectrometer names are lower-cased**, as the legacy database and the
+  MetaData repository name them (`Felix` in a record is `felix`); the
+  spelling in the file is kept with the analysis.
+- **Files MetaData holds that are not reference data** (scripts, experiment
+  templates, documents) are ignored. They are not conflicts and are not
+  counted.
+- **`--catalog-from-repos` rows can depend on where runs were cut.** The
+  catalog rows made from the records (which identifier sits at which
+  position, which gets a position at all) are decided when each record is
+  first imported; two repositories that claim one position, or runs stopped
+  at different places, can leave different rows. Import a database dump when
+  you have one.
+- **One importer at a time.** Two `elctl import run` on one database at the
+  same time are not supported; nothing stops them.
+- **Windows.** The importer is not built or tested on Windows in CI (the
+  store needs Qt, which the Windows job does not have).
 - **Run logs** (`logs/*.logs.log`) are not imported; they count as accounted
   for.

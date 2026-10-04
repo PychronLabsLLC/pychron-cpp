@@ -31,7 +31,8 @@ constexpr const char* kHelp =
     "\n"
     "  add --kind legacy_db|meta_repo|project_repo --source <path|url> --tz <IANA zone>\n"
     "      [--branch <b>] [--author-map <file.toml>] [--catalog-from-repos] [--reference-runs]\n"
-    "        Register a source; prints its id. Registering it again changes nothing.\n"
+    "        Register a source; prints its id. Registering it again keeps what was\n"
+    "        imported and replaces its --reference-runs and --author-map settings.\n"
     "        --source            legacy_db: the directory tools/legacy_dump_to_jsonl.py wrote;\n"
     "                            a repository: a local path, read in place and never\n"
     "                            modified, or a url, mirrored into the cache with your\n"
@@ -90,7 +91,8 @@ constexpr const char* kHelp =
     "\n"
     "Exit codes: 0 ok, also for a paused run and one that left only warnings;\n"
     "            1 verify is not ok, or a run finished with blocking conflicts pending;\n"
-    "            2 usage or fatal error.\n";
+    "            2 usage or fatal error, or a source could not be opened (the others\n"
+    "              are still run or verified).\n";
 
 int usage(Io io, const std::string& message) {
   io.err << "elctl import: " << message << '\n' << kShortUsage;

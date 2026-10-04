@@ -587,11 +587,23 @@ points. Where this section and an earlier one disagree, this section wins.
     source, writing it now would put old content at the head. The writer
     leaves the head alone and records a pending `identity_clash` conflict
     with reason `late_revision_not_applied` and the content in detail.
-32. **Reference data as of an interpreted age.** Reference data lives in
-    another source, so walk order cannot be compared. For parity, a member is
-    not comparable (reason `reference_changed_after`) when any reference
-    object its reduction uses has a revision created after the interpreted
-    age's commit time; otherwise the current reference heads are used.
+32. **Reference data as of an interpreted age** (revised by the final fix
+    wave; the first rule made a member not comparable whenever any of its
+    reference objects had a later revision, which on real data was every
+    member). Reference data lives in another source, so walk order cannot be
+    compared; time is used instead. Let t be the commit time of the
+    interpreted age. For each reference object the reduction uses (the flux
+    of the position, the level's production link, the production, the
+    chronology) the revision reduced with is the last one in the object's
+    chain whose changeset was created at or before t. The production is
+    found through the link: the link as of t names it, and it is then taken
+    as of t itself. An object with no revision by t makes the member not
+    comparable (`reference_not_yet_defined`). A revision that states an
+    absence (item 21) is what the object held at t: the member is not
+    comparable (`no_j`, `no_production`, `no_chronology`), and neither the
+    value before the removal nor a later one is used. Gains play no part in
+    the age and are taken as of t when there are any. Known limit: this
+    trusts the commit dates of two repositories against each other.
 33. **More known limits.** A git tag added later to an already imported
     commit becomes a bookmark of the heads at the time of the replay that
     sees it, and a plain incremental run does not see it. An analysis refused
@@ -631,12 +643,49 @@ points. Where this section and an earlier one disagree, this section wins.
     implementations reproduce); verify prints the largest residual among
     passing comparisons so drift below the tolerance stays visible. Errors
     are compared like with like (without J error against without J error).
-37. **A broken version followed by a good one.** Rulings from the first
-    real import and the final review, implemented in the final fix wave
-    (details in the plan workspace's fix-wave notes): an `unparseable`
-    conflict is superseded when a later commit brings a readable version of
-    the same file or deletes it, decided by the adapter from the walk; a bad
-    version after a good one stays blocking. Reference data for age parity
-    is taken as of the interpreted age's commit time (item 32 as revised by
-    the fix wave). Warning markers are producer-exclusive, and a stored
-    revision from a commit no longer in the history is blocking.
+37. **A broken version followed by a good one.** An `unparseable` conflict
+    about a file that could not be read is superseded when a later commit of
+    the walk brings a readable version of that file, or deletes it. A bad
+    version after a good one is not superseded by the earlier good one: it
+    stays blocking until the file is mended at the source. The adapter
+    decides, from the walk alone and never from the store: for each readable
+    version or deletion it lists the unreadable versions before it, back to
+    the last readable one, in the batch (`superseded`); a resumed walk
+    rebuilds what it needs from paths and reads an earlier version again
+    only to learn whether it could be read. The writer sets the listed
+    conflicts to `superseded`, with the time, after staging the batch's own
+    conflicts and in the same transaction, so the bad and the good version
+    in one batch or in two leave the same rows; a superseded conflict that a
+    replay sends again stays superseded. It applies to files the adapters
+    recognise, in project and meta repositories; not to a path that is no
+    legacy file, and not to a spectrometer file that came after its analysis
+    (item 29). In a meta repository the readable version may state nothing
+    new and yield no revision; the supersession is listed all the same. A
+    file removed and put back with the same unreadable bytes is a conflict
+    again where it comes back. A superseded conflict still accounts for its
+    unit, and a run's conflict count is what it leaves pending.
+    An analysis whose first record cannot be read is no longer lost: the
+    first later commit with a readable record starts its collection there,
+    as a synthetic collection, from the files the walk has had for the
+    analysis (the first version of each as its root, later ones as
+    revisions), and the conflicts that refused those files are superseded.
+    Known limit: a file of such an analysis that cannot be read keeps the
+    `unknown_analysis` conflict it got while the record was unreadable.
+38. **Other rulings of the final fix wave.** (a) Verify is not ok on a
+    rewritten history: a revision kept back behind a stored revision whose
+    commit the walk no longer has is a blocking conflict, not a warning
+    (item 35 covers the other causes), and `--replay` checks the stored token
+    against the source before it walks, failing as a resume does. (b) A
+    conflict is a warning only as an `identity_clash` whose detail carries
+    the marker its one producer writes (`imported`, `synthesized`, or `late`
+    with reason `late_revision_not_applied`); the same words on another kind
+    do not count (refines item 26). (c) Until a source has finished a run
+    once, a head it did not make keeps no revision back, so a first import
+    that is stopped and resumed stores what an uninterrupted one does
+    (refines item 34). (d) A local source path is UTF-8 text on every
+    platform and loses a trailing `.git` as a url does; ids derive from that
+    form. (e) The clone and fetch of a mirror use the user's git
+    configuration, restricted to the file, git, http, https and ssh
+    transports; a source url may name an ssh user but no password or token.
+    (f) Pending collections of one commit are folded in the order of their
+    path keys. (g) `collection_wait_commits` is at least 1.
