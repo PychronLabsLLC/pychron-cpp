@@ -146,6 +146,96 @@ Result<CreatedPackage> create_package(ps::IStore& store, const ps::Actor& actor,
   return fail(ErrorKind::Config, "package " + p.name + ": another client changed the catalog; try again");
 }
 
+namespace {
+
+// Commits `batch` with the revisions staged on `uow` (or alone when none were).
+Result<void> commit_with_refs(ps::IStore& store, const ps::Actor& actor, const ps::CatalogEditBatch& batch,
+                              ps::IUnitOfWork& uow, bool staged, const std::string& message) {
+  Result<ps::CatalogOutcome> outcome = staged
+      ? store.apply_catalog_edits(actor, batch, uow, ps::ChangesetKind::Reference, message)
+      : store.apply_catalog_edits(actor.client, batch);
+  if (!outcome) return fail(outcome.error());
+  if (std::holds_alternative<ps::CatalogApplied>(*outcome)) return {};
+  if (const auto* refused = std::get_if<std::vector<ps::Refusal>>(&*outcome))
+    return fail(ErrorKind::Config, message + ": " + (refused->empty() ? std::string("refused") : refused->front().what));
+  return fail(ErrorKind::Config, message + ": another client saved first; reload and try again");
+}
+
+}  // namespace
+
+Result<ps::Uuid> add_level(ps::IStore& store, const ps::Actor& actor, const ps::IrradiationRow& package,
+                           const NewLevel& level, std::optional<ps::Uuid> production) {
+  if (trim(level.name).empty()) return fail(ErrorKind::Config, "the level has no name");
+  const ps::Uuid id = ps::Uuid::v7();
+  ps::CatalogEditBatch batch;
+  batch.message = "new level " + package.name + "/" + level.name;
+  ps::CatalogFields values{{"irradiation_uuid", package.uuid}, {"name", level.name}};
+  if (level.holder) values["holder_ref_uuid"] = *level.holder;
+  if (level.note) values["note"] = *level.note;
+  batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::Level, id, std::move(values)});
+  auto uow = store.begin(actor);
+  if (!uow) return fail(uow.error());
+  bool staged = false;
+  const std::string key = package.name + "/" + level.name;
+  const auto stage = [&](const char* type, ps::RefPayload value) -> Result<void> {
+    const ps::Uuid object = ps::Uuid::v7();
+    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, object,
+                                            {{"ref_type", std::string(type)}, {"key", key},
+                                             {"irradiation_uuid", package.uuid}, {"level_uuid", id}}});
+    auto r = (*uow)->add_revision(object, ps::Kind::RefValue, ps::RevisionPayload{std::move(value)}, std::nullopt);
+    if (!r) return fail(r.error());
+    staged = true;
+    return {};
+  };
+  if (production)
+    if (auto r = stage("level_production", ps::LevelProductionValue{*production, std::nullopt}); !r) return fail(r.error());
+  if (level.z)
+    if (auto r = stage("level_geometry", ps::LevelZValue{level.z}); !r) return fail(r.error());
+  if (auto r = commit_with_refs(store, actor, batch, **uow, staged, batch.message); !r) return fail(r.error());
+  return id;
+}
+
+Result<ps::Uuid> save_production(ps::IStore& store, const ps::Actor& actor, const ps::IrradiationRow& package,
+                                 const std::string& name, const ps::ProductionValue& value,
+                                 std::optional<ps::Uuid> object, std::optional<ps::Uuid> expected_head) {
+  if (trim(name).empty()) return fail(ErrorKind::Config, "the production has no name");
+  ps::CatalogEditBatch batch;
+  batch.message = "production " + package.name + "/" + name;
+  const ps::Uuid id = object.value_or(ps::Uuid::v7());
+  if (!object)
+    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
+                                            {{"ref_type", std::string("production")},
+                                             {"key", package.name + "/" + name},
+                                             {"irradiation_uuid", package.uuid}}});
+  auto uow = store.begin(actor);
+  if (!uow) return fail(uow.error());
+  if (auto r = (*uow)->add_revision(id, ps::Kind::RefValue, ps::RevisionPayload{ps::RefPayload{value}}, expected_head); !r)
+    return fail(r.error());
+  if (auto r = commit_with_refs(store, actor, batch, **uow, true, batch.message); !r) return fail(r.error());
+  return id;
+}
+
+Result<void> save_chronology(ps::IStore& store, const ps::Actor& actor, const ps::IrradiationRow& package,
+                             std::vector<ps::Dose> doses, const PackageChronology& loaded) {
+  ps::CatalogEditBatch batch;
+  batch.message = "chronology " + package.name;
+  const ps::Uuid id = loaded.ref_object.value_or(ps::Uuid::v7());
+  if (!loaded.ref_object)
+    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
+                                            {{"ref_type", std::string("chronology")}, {"key", package.name},
+                                             {"irradiation_uuid", package.uuid}}});
+  ps::ChronologyValue value;
+  for (std::size_t i = 0; i < doses.size(); ++i) {
+    doses[i].ordinal = static_cast<int>(i);
+    value.doses.push_back(doses[i]);
+  }
+  auto uow = store.begin(actor);
+  if (!uow) return fail(uow.error());
+  if (auto r = (*uow)->add_revision(id, ps::Kind::RefValue, ps::RevisionPayload{ps::RefPayload{value}}, loaded.head); !r)
+    return fail(r.error());
+  return commit_with_refs(store, actor, batch, **uow, true, batch.message);
+}
+
 double dose_hours(const std::vector<ps::Dose>& doses) {
   double seconds = 0;
   for (const auto& d : doses)

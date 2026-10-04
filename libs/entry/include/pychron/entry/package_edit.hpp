@@ -52,6 +52,28 @@ struct CreatedPackage {
 Result<CreatedPackage> create_package(persistence::IStore& store, const persistence::Actor& actor,
                                       const NewPackage& package);
 
+// A level added to an existing package, with its z and production
+// assignment when given, in one changeset. Returns the level.
+Result<persistence::Uuid> add_level(persistence::IStore& store, const persistence::Actor& actor,
+                                    const persistence::IrradiationRow& package, const NewLevel& level,
+                                    std::optional<persistence::Uuid> production);
+
+// The next value of production `name` of a package: on `expected_head` of
+// `object` when it exists, else a new reference "<package>/<name>". A
+// conflict (someone saved first) is an error saying so.
+Result<persistence::Uuid> save_production(persistence::IStore& store, const persistence::Actor& actor,
+                                          const persistence::IrradiationRow& package, const std::string& name,
+                                          const persistence::ProductionValue& value,
+                                          std::optional<persistence::Uuid> object,
+                                          std::optional<persistence::Uuid> expected_head);
+
+struct PackageChronology;
+
+// The next chronology of a package, on the head it was loaded at.
+Result<void> save_chronology(persistence::IStore& store, const persistence::Actor& actor,
+                             const persistence::IrradiationRow& package, std::vector<persistence::Dose> doses,
+                             const PackageChronology& loaded);
+
 // Hours of dose and the J the legacy entry estimated from them
 // (hours x j_multiplier; labnumber_entry.py:1163-1177). Display only.
 double dose_hours(const std::vector<persistence::Dose>& doses);

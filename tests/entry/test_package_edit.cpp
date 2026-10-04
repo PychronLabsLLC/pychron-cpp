@@ -149,3 +149,66 @@ TEST_P(PackageStoreTest, DuplicateNameIsAnError) {
 
 INSTANTIATE_TEST_SUITE_P(Engines, PackageStoreTest, ::testing::ValuesIn(engines()),
                          [](const auto& p) { return p.param; });
+
+namespace {
+class PackageLaterEditsTest : public StoreTest {
+ protected:
+  Actor actor() const { return Actor{lab_.reducer, lab_.reduction_client}; }
+  IrradiationRow row(const std::string& name) {
+    const auto rows = store_->irradiations();  // held: a range-for over *temporary dangles
+    for (const auto& r : *rows)
+      if (r.name == name) return r;
+    ADD_FAILURE() << "no package " << name;
+    return {};
+  }
+};
+}  // namespace
+
+TEST_P(PackageLaterEditsTest, AddLevelProductionAndChronology) {
+  ASSERT_TRUE(create_package(*store_, actor(), irradiation("NM-310")));
+  const IrradiationRow pkg = row("NM-310");
+  auto productions = *package_productions(*store_, pkg.uuid, pkg.name);
+  ASSERT_EQ(productions.size(), 1u);
+
+  auto level = add_level(*store_, actor(), pkg, {"C", std::nullopt, 1.5, std::nullopt}, productions[0].ref_object);
+  ASSERT_TRUE(level) << to_string(level.error());
+  auto sheet = **store_->level_sheet(*level);
+  EXPECT_EQ(sheet.z->z, 1.5);
+  EXPECT_EQ(sheet.production_value->production, productions[0].ref_object);
+  EXPECT_FALSE(add_level(*store_, actor(), pkg, {"C", std::nullopt, std::nullopt, std::nullopt}, std::nullopt));
+
+  // A new production, then a revision of it; a stale head is refused.
+  ProductionValue v;
+  v.ratios = {{"K4039", 0.01, 0.001}};
+  auto made = save_production(*store_, actor(), pkg, "Cd-lined", v, std::nullopt, std::nullopt);
+  ASSERT_TRUE(made) << to_string(made.error());
+  productions = *package_productions(*store_, pkg.uuid, pkg.name);
+  ASSERT_EQ(productions.size(), 2u);
+  const auto& cd = productions[0].name == "Cd-lined" ? productions[0] : productions[1];
+  v.ratios[0].value = 0.02;
+  ASSERT_TRUE(save_production(*store_, actor(), pkg, "Cd-lined", v, cd.ref_object, cd.head));
+  EXPECT_FALSE(save_production(*store_, actor(), pkg, "Cd-lined", v, cd.ref_object, cd.head));
+
+  auto chronology = *package_chronology(*store_, pkg.uuid, pkg.name);
+  ASSERT_EQ(chronology.value.doses.size(), 2u);
+  std::vector<Dose> doses = chronology.value.doses;
+  doses.pop_back();
+  ASSERT_TRUE(save_chronology(*store_, actor(), pkg, doses, chronology));
+  EXPECT_EQ(package_chronology(*store_, pkg.uuid, pkg.name)->value.doses.size(), 1u);
+  EXPECT_FALSE(save_chronology(*store_, actor(), pkg, doses, chronology));  // stale
+}
+
+TEST_P(PackageLaterEditsTest, ChronologyForAPackageWithoutOne) {
+  NewPackage p;
+  p.name = "P-9";
+  p.kind = "package";
+  ASSERT_TRUE(create_package(*store_, actor(), p));
+  const IrradiationRow pkg = row("P-9");
+  auto none = *package_chronology(*store_, pkg.uuid, pkg.name);
+  EXPECT_FALSE(none.ref_object);
+  ASSERT_TRUE(save_chronology(*store_, actor(), pkg, {dose("2026-09-01T15:00:00Z", "2026-09-01T16:00:00Z")}, none));
+  EXPECT_EQ(package_chronology(*store_, pkg.uuid, pkg.name)->value.doses.size(), 1u);
+}
+
+INSTANTIATE_TEST_SUITE_P(Engines, PackageLaterEditsTest, ::testing::ValuesIn(engines()),
+                         [](const auto& p) { return p.param; });
