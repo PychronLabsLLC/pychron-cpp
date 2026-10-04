@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "duration.hpp"
+#include "entry.hpp"
 #include "exp.hpp"
 #include "laser.hpp"
 #include "import.hpp"
@@ -82,6 +83,16 @@ constexpr const char* kUsageText =
     "                              import, resuming where the last run stopped\n"
     "  import status|conflicts|verify --db <url>\n"
     "                              progress, what could not be imported, and whether to trust it\n"
+    "\n"
+    "Sample and package entry (elctl entry help lists every option):\n"
+    "  entry samples import <file.csv> --db <url> [--dry-run]\n"
+    "                              add samples with their PIs, projects and materials\n"
+    "  entry package add|show|set-kind <name> --db <url>\n"
+    "                              packages (irradiations) and their levels\n"
+    "  entry positions import <package> <file.csv> --db <url>\n"
+    "                              put samples in a package's positions\n"
+    "  entry identifiers generate <package> --db <url> [--dry-run]\n"
+    "                              number the positions with the next identifiers\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
@@ -186,6 +197,7 @@ class Session {
       return laser_command(args, e, io_);
     }
     if (cmd == "import") return import_command(args, io_);
+    if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();

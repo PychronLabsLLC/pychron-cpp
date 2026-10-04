@@ -64,7 +64,7 @@ PositionImportResult apply_position_import(const CsvTable& table, const CatalogS
         if (!project.empty() && s.project_name != project) continue;
         if (!pi.empty() && s.principal_investigator_name != pi) continue;
         if (!material.empty() && s.material_name != material) continue;
-        if (column.count("grainsize") && s.grainsize != grainsize) continue;
+        if (!grainsize.empty() && s.grainsize != grainsize) continue;
         found = &s;
         ++matches;
       }
