@@ -8,6 +8,12 @@
 // rows of the payload carry no age, and lose the members whose analysis is
 // not in the store, so the document is what is read.
 //
+// Which error. A legacy age_err includes the error of J or not, as the file
+// was saved. Like is compared with like: the member's age_err_wo_j with the
+// computed error without J when the member has one; otherwise its age_err
+// with the computed error the file's include_j_error_in_individual_analyses
+// names. A member with neither is compared by age alone.
+//
 // What is compared. The head revision of each interpreted age, as of the
 // source commit that saved it (AsOf). A member whose analysis this source did
 // not import is not comparable: the walk order of another source says nothing
@@ -121,6 +127,11 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         not_comparable("interpreted age lists no analyses");
         continue;
       }
+      // Whether the per-analysis errors of this file include the error of J;
+      // nullopt: the file does not say.
+      std::optional<bool> errors_include_j;
+      if (const auto flag = doc.find("include_j_error_in_individual_analyses"); flag != doc.end() && flag->is_boolean())
+        errors_include_j = flag->get<bool>();
       for (const auto& member : *analyses) {
         if (!member.is_object()) {
           not_comparable("member has no uuid");
@@ -136,7 +147,6 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
         }
         if (!members.second.insert(*analysis).second) continue;  // listed twice: one comparison
         const auto legacy_age = number(member, "age");
-        const auto legacy_err = number(member, "age_err");
         if (!legacy_age) {
           not_comparable("no legacy age");
           continue;
@@ -168,8 +178,26 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
           continue;
         }
         const ComputedAge& age = std::get<ComputedAge>(*computed);
+        // The legacy error and the computed error of the same kind.
+        std::optional<double> legacy_err, computed_err;
+        std::string error_compared;
+        if (const auto without_j = number(member, "age_err_wo_j")) {
+          legacy_err = without_j;
+          computed_err = age.age_err;
+          error_compared = "age_err_wo_j";
+        } else if (const auto stated = number(member, "age_err"); stated && errors_include_j) {
+          if (!*errors_include_j) {
+            legacy_err = stated;
+            computed_err = age.age_err;
+            error_compared = "age_err";
+          } else if (age.age_err_w_j) {
+            legacy_err = stated;
+            computed_err = age.age_err_w_j;
+            error_compared = "age_err_w_j";
+          }
+        }
         const double age_difference = relative_difference(*legacy_age, age.age);
-        const double err_difference = legacy_err ? relative_difference(*legacy_err, age.age_err) : 0.0;
+        const double err_difference = legacy_err ? relative_difference(*legacy_err, *computed_err) : 0.0;
         const Uuid conflict = conflict_id(source.url, "parity", analysis->str() + "/" + subject.str());
         // Written so that a NaN fails.
         if (age_difference <= options.tolerance && err_difference <= options.tolerance) {
@@ -178,21 +206,24 @@ Result<void> check_parity(const VerifySource& source, Uuid client, const std::se
           continue;
         }
         ++report.parity_fail;
-        report.parity_failures.push_back({*analysis, subject, conflict, *legacy_age, age.age, legacy_err, age.age_err,
-                                          age_difference, err_difference});
+        report.parity_failures.push_back({*analysis, subject, conflict, *legacy_age, age.age, legacy_err,
+                                          computed_err.value_or(age.age_err), age_difference, err_difference,
+                                          error_compared, age.basis});
         Json detail{{"check", "age_parity"},
                     {"interpreted_age", subject.str()},
                     {"interpreted_age_revision", latest.uuid.str()},
                     {"as_of",
                      {{"changeset", as_of.changeset.str()}, {"commit", as_of.commit}, {"created", as_of.created.iso()}}},
                     {"legacy", {{"age", *legacy_age}}},
-                    {"computed", {{"age", age.age}, {"age_err", age.age_err}}},
+                    {"computed", {{"age", age.age}, {"age_err", computed_err.value_or(age.age_err)}}},
                     {"relative_difference", {{"age", age_difference}}},
                     {"tolerance", options.tolerance}};
         if (legacy_err) {
           detail["legacy"]["age_err"] = *legacy_err;
           detail["relative_difference"]["age_err"] = err_difference;
+          detail["error_compared"] = error_compared;
         }
+        if (!age.basis.empty()) detail["basis"] = age.basis;
         if (const auto record = member.find("record_id"); record != member.end() && record->is_string())
           detail["record_id"] = *record;
         failed.insert_or_assign(

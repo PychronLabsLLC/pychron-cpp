@@ -25,15 +25,7 @@ namespace {
 // without an optional link, a catalog row made from repository contents (spec
 // 10.26), a revision kept out of a chain it would have been written behind
 // (spec 10.35; the head is right).
-bool is_annotation(const P::ImportConflictRow& row) {
-  const Json detail = Json::parse(row.detail_json, nullptr, false);
-  if (!detail.is_object()) return false;
-  for (const char* key : {"imported", "synthesized", "late"}) {
-    const auto flag = detail.find(key);
-    if (flag != detail.end() && flag->is_boolean() && flag->get<bool>()) return true;
-  }
-  return false;
-}
+bool is_annotation(const P::ImportConflictRow& row) { return is_warning_conflict(row); }
 
 // The pending conflicts of the source: those that fail verify and those that
 // do not. Resolved and superseded rows are not counted.
@@ -56,6 +48,16 @@ Result<void> count_pending(const detail::VerifySource& source, VerifyReport& rep
 }
 
 }  // namespace
+
+bool is_warning_conflict(const P::ImportConflictRow& row) {
+  const Json detail = Json::parse(row.detail_json, nullptr, false);
+  if (!detail.is_object()) return false;
+  for (const char* key : {"imported", "synthesized", "late"}) {
+    const auto flag = detail.find(key);
+    if (flag != detail.end() && flag->is_boolean() && flag->get<bool>()) return true;
+  }
+  return false;
+}
 
 Result<VerifyReport> verify(P::IStore& store, P::Uuid client, ISourceAdapter& adapter, const WriterConfig& config,
                             const AgeFn& age_fn, VerifyOptions options) {

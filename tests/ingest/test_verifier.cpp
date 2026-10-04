@@ -183,15 +183,22 @@ struct Member {
   std::string uuid;  // empty: the entry has none
   std::string record_id;
   std::string age = "null", age_err = "null";  // JSON text
+  std::string age_err_wo_j = {};               // JSON text; empty: the entry has none
 };
 
-std::string age_document(const std::vector<Member>& members) {
-  std::string doc = R"({"name":"66573 plateau","analyses":[)";
+// `errors_include_j`: the file's include_j_error_in_individual_analyses, JSON
+// text; empty: the file does not say. Most tests are not about which error is
+// compared: their files say "false", so age_err is the error without J.
+std::string age_document(const std::vector<Member>& members, const std::string& errors_include_j = "false") {
+  std::string doc = R"({"name":"66573 plateau",)";
+  if (!errors_include_j.empty()) doc += "\"include_j_error_in_individual_analyses\":" + errors_include_j + ",";
+  doc += R"("analyses":[)";
   for (std::size_t i = 0; i < members.size(); ++i) {
     const auto& m = members[i];
     if (i) doc += ",";
     doc += "{";
     if (!m.uuid.empty()) doc += "\"uuid\":\"" + m.uuid + "\",";
+    if (!m.age_err_wo_j.empty()) doc += "\"age_err_wo_j\":" + m.age_err_wo_j + ",";
     doc += "\"record_id\":\"" + m.record_id + "\",\"age\":" + m.age + ",\"age_err\":" + m.age_err + "}";
   }
   return doc + "]}";
@@ -312,9 +319,9 @@ class VerifierTest : public ::testing::TestWithParam<std::string> {
 };
 
 // The history with an interpreted age of A and B saved at c5.
-std::vector<ImportBatch> history_with_age(const std::vector<Member>& members) {
+std::vector<ImportBatch> history_with_age(const std::vector<Member>& members, const std::string& document = {}) {
   auto batches = history();
-  batches.push_back(age_batch("c5", "2016-03-08T00:00:00Z", members));
+  batches.push_back(age_batch("c5", "2016-03-08T00:00:00Z", members, document));
   seal(batches);
   return batches;
 }
@@ -1201,6 +1208,89 @@ TEST_P(VerifierTest, AgeFunctionErrorIsReturned) {
   auto report = verify(store(), world_->client, adapter, config(), broken, {});
   ASSERT_FALSE(report);
   EXPECT_NE(report.error().what.find("boom"), std::string::npos);
+}
+
+// A legacy error includes the error of J or not. The member's own
+// age_err_wo_j is compared with the computed error without J, whatever the
+// file says about age_err.
+TEST_P(VerifierTest, ParityComparesTheErrorWithoutJWhenTheMemberHasOne) {
+  const std::vector<Member> members{{kA.str(), "66573-01", "28.25", "0.5", "0.125"}};
+  const auto batches = history_with_age(members, age_document(members, "true"));
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  const auto units = units_of(batches);
+
+  // age_err (0.5, with J) is not what is compared: a computed 9.0 with J does not matter.
+  auto report = check(batches, units, ages({{kA, ComputedAge{28.25, 0.125, 9.0}}}));
+  EXPECT_EQ(report.parity_pass, 1);
+  EXPECT_EQ(report.parity_fail, 0);
+
+  report = check(batches, units, ages({{kA, ComputedAge{28.25, 0.25, 0.5, "constants=test"}}}));
+  ASSERT_EQ(report.parity_failures.size(), 1u);
+  EXPECT_EQ(report.parity_failures[0].error_compared, "age_err_wo_j");
+  EXPECT_EQ(report.parity_failures[0].legacy_age_err, 0.125);
+  EXPECT_EQ(report.parity_failures[0].computed_age_err, 0.25);
+  EXPECT_EQ(report.parity_failures[0].basis, "constants=test");
+  const std::string detail = conflict(parity_conflict(kA)).detail_json;
+  for (const char* part : {R"("error_compared":"age_err_wo_j")", R"("basis":"constants=test")",
+                           R"("legacy":{"age":28.25,"age_err":0.125})", R"("computed":{"age":28.25,"age_err":0.25})"})
+    EXPECT_NE(detail.find(part), std::string::npos) << part << " in " << detail;
+}
+
+// Without age_err_wo_j the file's flag says which computed error age_err is
+// compared with.
+TEST_P(VerifierTest, ParityComparesAgeErrAsTheFileSaysItWasComputed) {
+  const std::vector<Member> members{{kA.str(), "66573-01", "28.25", "0.5"}};
+  for (const bool with_j : {true, false}) {
+    SCOPED_TRACE(with_j);
+    SetUp();  // a fresh store for each file
+    const auto batches = history_with_age(members, age_document(members, with_j ? "true" : "false"));
+    run_import(batches);
+    resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+    const auto units = units_of(batches);
+
+    const ComputedAge matches = with_j ? ComputedAge{28.25, 0.125, 0.5} : ComputedAge{28.25, 0.5, 0.75};
+    auto report = check(batches, units, ages({{kA, matches}}));
+    EXPECT_EQ(report.parity_pass, 1);
+    EXPECT_EQ(report.parity_fail, 0);
+
+    // The other error holding the legacy value is not a match.
+    const ComputedAge swapped = with_j ? ComputedAge{28.25, 0.5, 0.125} : ComputedAge{28.25, 0.75, 0.5};
+    report = check(batches, units, ages({{kA, swapped}}));
+    ASSERT_EQ(report.parity_failures.size(), 1u);
+    EXPECT_EQ(report.parity_failures[0].error_compared, with_j ? "age_err_w_j" : "age_err");
+    EXPECT_EQ(report.parity_failures[0].legacy_age_err, 0.5);
+    EXPECT_EQ(report.parity_failures[0].computed_age_err, with_j ? 0.125 : 0.75);
+  }
+}
+
+// Neither age_err_wo_j nor the flag: nothing says what age_err holds, so the
+// age alone is compared. The same when the file's errors include J and the
+// age function computed none with J.
+TEST_P(VerifierTest, ParityComparesTheAgeAloneWhenTheKindOfErrorIsUnknown) {
+  const std::vector<Member> members{{kA.str(), "66573-01", "28.25", "0.5"}};
+  auto batches = history_with_age(members, age_document(members, ""));
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  auto report = check(batches, units_of(batches), ages({{kA, ComputedAge{28.25, 7.0, 9.0}}}));
+  EXPECT_TRUE(report.ok());
+  EXPECT_EQ(report.parity_pass, 0);
+  EXPECT_EQ(report.parity_pass_age_only, 1);
+  EXPECT_EQ(report.parity_fail, 0);
+
+  // The age itself still has to agree, and the failure names no error.
+  report = check(batches, units_of(batches), ages({{kA, ComputedAge{30.0, 0.5, 0.5}}}));
+  ASSERT_EQ(report.parity_failures.size(), 1u);
+  EXPECT_EQ(report.parity_failures[0].error_compared, "");
+  EXPECT_FALSE(report.parity_failures[0].legacy_age_err);
+
+  SetUp();
+  batches = history_with_age(members, age_document(members, "true"));
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "ignored");
+  report = check(batches, units_of(batches), ages({{kA, ComputedAge{28.25, 7.0}}}));
+  EXPECT_EQ(report.parity_pass_age_only, 1);
+  EXPECT_EQ(report.parity_fail, 0);
 }
 
 // An interpreted age that was not imported has nothing to compare: the
