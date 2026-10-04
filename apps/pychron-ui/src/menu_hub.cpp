@@ -24,17 +24,48 @@ constexpr std::array<MenuHub::Menu, MenuHub::kMenus> kOrder{
 
 std::size_t slot(MenuHub::Menu menu) { return static_cast<std::size_t>(menu); }
 
+QPointer<MenuHub>& the_hub() {
+  static QPointer<MenuHub> hub;
+  return hub;
+}
+
 }  // namespace
 
 MenuHub& MenuHub::instance() {
-  static QPointer<MenuHub> hub;
-  if (hub == nullptr) hub = new MenuHub(QCoreApplication::instance());  // goes with the application
+  QPointer<MenuHub>& hub = the_hub();
+  if (hub == nullptr) hub = new MenuHub(platform_bars(), QCoreApplication::instance());  // goes with the application
   return *hub;
 }
 
-MenuHub::MenuHub(QObject* parent) : QObject(parent) {
+MenuHub::Bars MenuHub::platform_bars() {
+#ifdef Q_OS_MACOS
+  return Bars::Shared;
+#else
+  return Bars::PerWindow;
+#endif
+}
+
+MenuHub& MenuHub::reset(Bars bars) {
+  QPointer<MenuHub>& hub = the_hub();
+  delete hub.data();
+  hub = new MenuHub(bars, QCoreApplication::instance());
+  return *hub;
+}
+
+MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
   QCoreApplication::instance()->installEventFilter(this);
   connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] { update_gates(); });
+  if (mode_ == Bars::Shared) {
+    // No parent: on macOS the bar of every window that has none of its own.
+    shared_ = new QMenuBar(nullptr);
+    bars_.push_back(make_bar(shared_));
+  }
+}
+
+MenuHub::~MenuHub() {
+  // At application exit the platform is already gone, and with it any use in
+  // tidying the bar; a hub replaced by reset() deletes its own.
+  if (!QCoreApplication::closingDown()) delete shared_.data();
 }
 
 QString MenuHub::title(Menu menu) {
@@ -68,9 +99,8 @@ bool MenuHub::takes_bar(const QWidget* window) {
 }
 
 QMenuBar* MenuHub::install(QWidget* window) {
-  for (const Bar& b : bars_)
-    if (b.bar != nullptr && b.bar->parentWidget() == window) return b.bar;
-  if (!takes_bar(window)) return nullptr;
+  if (QMenuBar* bar = bar_for(window)) return bar;
+  if (mode_ == Bars::Shared || !takes_bar(window)) return nullptr;
 
   auto* bar = new QMenuBar(window);
   if (auto* main = qobject_cast<QMainWindow*>(window)) {
@@ -82,12 +112,24 @@ QMenuBar* MenuHub::install(QWidget* window) {
     }
     window->layout()->setMenuBar(bar);
   }
+  bars_.push_back(make_bar(bar));
+  return bar;
+}
+
+QMenuBar* MenuHub::bar_for(const QWidget* window) const {
+  if (window == nullptr) return nullptr;
+  if (mode_ == Bars::Shared) return takes_bar(window) ? shared_.data() : nullptr;
+  for (const Bar& b : bars_)
+    if (b.bar != nullptr && b.bar->parentWidget() == window) return b.bar;
+  return nullptr;
+}
+
+MenuHub::Bar MenuHub::make_bar(QMenuBar* bar) {
   Bar b;
   b.bar = bar;
   for (const Menu menu : kOrder) b.menus[slot(menu)] = bar->addMenu(title(menu));
   rebuild(b);
-  bars_.push_back(b);
-  return bar;
+  return b;
 }
 
 QList<QMenu*> MenuHub::menus(const QMenuBar* bar) const {
@@ -135,7 +177,7 @@ void MenuHub::contribute(QWidget* owner, Menu menu, const QList<QAction*>& actio
 bool MenuHub::eventFilter(QObject* watched, QEvent* event) {
   if (event->type() == QEvent::Show && watched->isWidgetType()) {
     auto* w = static_cast<QWidget*>(watched);
-    if (w->isWindow() && takes_bar(w)) install(w);
+    if (mode_ == Bars::PerWindow && w->isWindow() && takes_bar(w)) install(w);
   }
   return false;
 }
@@ -159,23 +201,61 @@ void MenuHub::rebuild() {
   for (Bar& b : bars_) rebuild(b);
 }
 
+namespace {
+
+// Brings `m` to `want` (nullptr: a separator) without taking out an action
+// that stays: on macOS a Preferences, Quit or About action taken out of a menu
+// hides the application menu's item until the bar is next switched.
+void sync_menu(QMenu* m, const QList<QAction*>& want) {
+  QList<QAction*> separators;  // the menu's own, reused in order
+  for (QAction* a : m->actions())
+    if (a->isSeparator() && a->parent() == m) separators.append(a);
+  QList<QAction*> target;
+  qsizetype used = 0;
+  for (QAction* a : want) {
+    if (a != nullptr) {
+      target.append(a);
+    } else if (used < separators.size()) {
+      target.append(separators.at(used++));
+    } else {
+      auto* separator = new QAction(m);
+      separator->setSeparator(true);
+      target.append(separator);
+    }
+  }
+  // Not QList ==: Qt 6.4 memcmps two empty lists' null data (UBSan).
+  const QList<QAction*> current = m->actions();
+  if (std::equal(current.begin(), current.end(), target.begin(), target.end())) return;
+  for (QAction* a : current) {
+    if (target.contains(a)) continue;
+    m->removeAction(a);
+    if (a->isSeparator() && a->parent() == m) delete a;
+  }
+  for (qsizetype i = 0; i < target.size(); ++i) {
+    const QList<QAction*> now = m->actions();
+    if (i < now.size() && now.at(i) == target.at(i)) continue;
+    m->insertAction(i < now.size() ? now.at(i) : nullptr, target.at(i));  // moves it if already there
+  }
+}
+
+}  // namespace
+
 void MenuHub::rebuild(Bar& b) {
   for (const Menu menu : kOrder) {
     QMenu* m = b.menus[slot(menu)];
     if (m == nullptr) continue;
-    m->clear();  // the actions belong to their windows; only separators go
-    bool any = false;
+    QList<QAction*> want;  // the actions belong to their windows
     for (const Group& g : groups_) {
       if (g.menu != menu || g.owner == nullptr) continue;
       QList<QAction*> live;
       for (const auto& a : g.actions)
         if (a != nullptr) live.append(a);
       if (live.isEmpty()) continue;
-      if (any) m->addSeparator();
-      m->addActions(live);
-      any = true;
+      if (!want.isEmpty()) want.append(nullptr);
+      want.append(live);
     }
-    m->menuAction()->setVisible(any);
+    sync_menu(m, want);
+    m->menuAction()->setVisible(!want.isEmpty());
   }
 }
 

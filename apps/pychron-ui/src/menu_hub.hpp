@@ -2,8 +2,13 @@
 
 // MenuHub: one menu bar for the whole application. Every top-level window
 // shows the same menus in the same order (File, Queue, Rows, Executor,
-// Scripts, Window, Help); on macOS that makes the global bar the same
-// whichever window is in front.
+// Scripts, Window, Help).
+//
+// On macOS there is literally one bar: a parentless QMenuBar, which Qt makes
+// the global menu bar for every window (Bars::Shared). Per-window bars there
+// would each merge Preferences, Quit and About into the one application menu,
+// and Qt hides that shared item whenever any of those copies goes. Elsewhere
+// each window shows its own copy of the bar (Bars::PerWindow).
 //
 // Windows keep owning their actions and contribute them here. App actions
 // (Preferences, Window > Spectrometer, About) work from every window.
@@ -12,10 +17,12 @@
 // experiment window and Save script in the script editor; the action's own
 // enabled state still applies on top.
 //
-// Bars are installed when a window is first shown: every QMainWindow, and
-// any other top-level widget with a layout. Dialogs, popups and the splash
-// do not get one; nor does a window with the "pychron_no_menubar" property.
-// A menu with nothing in it is hidden, in every window alike.
+// Per-window bars are installed when a window is first shown: every
+// QMainWindow, and any other top-level widget with a layout. Dialogs, popups
+// and the splash do not get one; nor does a window with the
+// "pychron_no_menubar" property. A menu with nothing in it is hidden, in
+// every window alike. Menus are updated in place: an action that stays is
+// never taken out and put back.
 
 #include <array>
 #include <vector>
@@ -42,10 +49,21 @@ class MenuHub : public QObject {
     App,     // works from every window
     Window,  // enabled only while `owner`'s window is active
   };
+  enum class Bars {
+    PerWindow,  // each window shows its own copy of the bar
+    Shared,     // one parentless bar for every window (macOS)
+  };
   static constexpr std::size_t kMenus = 7;
 
   // The application's hub (created on first use; needs a QApplication).
   static MenuHub& instance();
+  // The platform's way: Shared on macOS, PerWindow elsewhere.
+  static Bars platform_bars();
+  // Replaces the hub with a fresh one using `bars` (tests; no window may
+  // have contributed to or be showing the old one's menus).
+  static MenuHub& reset(Bars bars);
+
+  Bars bars() const { return mode_; }
 
   // Adds `actions` to `menu` as one group, separated from the other groups,
   // in contribution order, for as long as `owner` lives. `owner` is the
@@ -53,8 +71,12 @@ class MenuHub : public QObject {
   void contribute(QWidget* owner, Menu menu, const QList<QAction*>& actions, Scope scope);
 
   // Gives `window` the unified bar now, if it is a window that takes one and
-  // has none yet (normally done when it is first shown). Returns the bar.
+  // has none yet (normally done when it is first shown). Returns the bar it
+  // shows: its own, or the shared one.
   QMenuBar* install(QWidget* window);
+  // The bar `window` shows the menus in, or nullptr (a dialog, or a window
+  // not shown yet with Bars::PerWindow).
+  QMenuBar* bar_for(const QWidget* window) const;
 
   // Every contributed action, in menu order then contribution order (for the
   // command palette); hidden and disabled ones included.
@@ -73,7 +95,8 @@ class MenuHub : public QObject {
   bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
-  explicit MenuHub(QObject* parent);
+  MenuHub(Bars bars, QObject* parent);
+  ~MenuHub() override;
 
   struct Group {
     QPointer<QWidget> owner;
@@ -90,11 +113,14 @@ class MenuHub : public QObject {
   };
 
   static bool takes_bar(const QWidget* window);
+  Bar make_bar(QMenuBar* bar);
   void rebuild();
   void rebuild(Bar& bar);
   void schedule_rebuild();
   void update_gates();
 
+  Bars mode_;
+  QPointer<QMenuBar> shared_;
   std::vector<Group> groups_;
   std::vector<Bar> bars_;
   std::vector<Gate> gates_;

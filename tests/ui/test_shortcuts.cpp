@@ -35,7 +35,7 @@ namespace {
 
 QList<QAction*> menu_actions(QMainWindow& w) {
   QList<QAction*> out;
-  for (QMenu* m : MenuHub::instance().menus(qobject_cast<QMenuBar*>(w.menuWidget())))
+  for (QMenu* m : MenuHub::instance().menus(MenuHub::instance().bar_for(&w)))
     for (QAction* a : m->actions())
       if (!a->isSeparator()) out << a;
   return out;
@@ -156,7 +156,7 @@ class TestShortcuts : public QObject {
     QMainWindow figure;
     figure.show();
     QList<QAction*> help;
-    for (QMenu* m : MenuHub::instance().menus(qobject_cast<QMenuBar*>(figure.menuWidget())))
+    for (QMenu* m : MenuHub::instance().menus(MenuHub::instance().bar_for(&figure)))
       if (m->title().remove(QLatin1Char('&')) == QStringLiteral("Help")) help = m->actions();
     QCOMPARE(help.size(), 4);  // Command Palette…, Keyboard Shortcuts, separator, About
     QCOMPARE(help.at(1)->text(), QStringLiteral("Keyboard Shortcuts"));

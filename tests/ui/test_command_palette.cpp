@@ -25,7 +25,7 @@ using pychron::ui::MenuHub;
 namespace {
 
 QAction* palette_action(pychron::ui::MainWindow& main) {
-  for (QMenu* m : MenuHub::instance().menus(qobject_cast<QMenuBar*>(main.menuWidget())))
+  for (QMenu* m : MenuHub::instance().menus(MenuHub::instance().bar_for(&main)))
     for (QAction* a : m->actions())
       if (a->text() == QStringLiteral("Command Palette…")) return a;
   return nullptr;

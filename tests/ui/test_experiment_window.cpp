@@ -356,7 +356,7 @@ class TestExperimentWindow : public QObject {
     ExperimentWindow* window = main.experiment_window();
     pychron::ui::ScriptEditorWindow* editor = window->open_script_editor();
     const auto file_menu = [](QMainWindow* w) {
-      auto* bar = qobject_cast<QMenuBar*>(w->menuWidget());
+      QMenuBar* bar = pychron::ui::MenuHub::instance().bar_for(w);
       return pychron::ui::MenuHub::instance().menus(bar).at(static_cast<int>(pychron::ui::MenuHub::Menu::File));
     };
     QAction* action = main.preferences_action();

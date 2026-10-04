@@ -6,6 +6,7 @@
 #include <QtTest/QtTest>
 
 #include <QAction>
+#include <QActionEvent>
 #include <QApplication>
 #include <QDialog>
 #include <QMainWindow>
@@ -27,10 +28,18 @@ using Scope = MenuHub::Scope;
 
 namespace {
 
-QMenuBar* bar_of(QWidget& w) {
-  if (auto* main = qobject_cast<QMainWindow*>(&w)) return qobject_cast<QMenuBar*>(main->menuWidget());
-  return w.layout() != nullptr ? qobject_cast<QMenuBar*>(w.layout()->menuBar()) : nullptr;
-}
+QMenuBar* bar_of(QWidget& w) { return MenuHub::instance().bar_for(&w); }
+
+// Counts `action` being taken out of the menus it is in.
+struct RemovalWatch : QObject {
+  QAction* action;
+  int removed = 0;
+  explicit RemovalWatch(QAction* a) : action(a) {}
+  bool eventFilter(QObject*, QEvent* e) override {
+    if (e->type() == QEvent::ActionRemoved && static_cast<QActionEvent*>(e)->action() == action) ++removed;
+    return false;
+  }
+};
 
 // The titles of the menus `w` shows, without mnemonics.
 QStringList shown(QWidget& w) {
@@ -69,6 +78,10 @@ class TestMenuHub : public QObject {
 
  private slots:
   void init() { QCoreApplication::processEvents(); }  // the last test's windows leave the menus
+  void cleanup() {
+    QCoreApplication::processEvents();
+    if (MenuHub::instance().bars() != MenuHub::platform_bars()) MenuHub::reset(MenuHub::platform_bars());
+  }
 
   void every_window_shows_the_same_menus() {
     auto line = pychron::ui::test::make_example_line();
@@ -86,6 +99,8 @@ class TestMenuHub : public QObject {
     QCOMPARE(shown(figure), expected);
     QCOMPARE(shown(recall), expected);
     QVERIFY(bar_of(dialog) == nullptr);  // dialogs keep no bar
+    // One bar on macOS, a copy per window elsewhere.
+    QCOMPARE(bar_of(figure) == bar_of(main), MenuHub::platform_bars() == MenuHub::Bars::Shared);
 
     // The same actions, not copies: File > Preferences in the figure window
     // is the main window's.
@@ -93,6 +108,74 @@ class TestMenuHub : public QObject {
     QVERIFY(menu_of(recall, Menu::Window)->actions().contains(main.spectrometer_action()));
     QCOMPARE(texts(menu_of(figure, Menu::Window)).first(), QStringLiteral("Extraction Line"));
     QVERIFY(menu_of(figure, Menu::Help)->actions().contains(main.about_action()));
+  }
+
+  void shared_one_bar_serves_every_window() {
+    MenuHub& hub = MenuHub::reset(MenuHub::Bars::Shared);
+    auto line = pychron::ui::test::make_example_line();
+    pychron::ui::MainWindow main(*line);
+    QMainWindow figure;
+    PlainWindow recall;
+    QDialog dialog;
+    new QVBoxLayout(&dialog);
+    for (QWidget* w : {static_cast<QWidget*>(&main), static_cast<QWidget*>(&figure), static_cast<QWidget*>(&recall),
+                       static_cast<QWidget*>(&dialog)})
+      w->show();
+
+    QMenuBar* bar = hub.bar_for(&main);
+    QVERIFY(bar != nullptr);
+    QVERIFY(bar->parentWidget() == nullptr);  // Qt's global bar on macOS
+    QCOMPARE(hub.bar_for(&figure), bar);
+    QCOMPARE(hub.bar_for(&recall), bar);
+    QVERIFY(hub.bar_for(&dialog) == nullptr);
+    // No window has a bar of its own.
+    QVERIFY(main.menuWidget() == nullptr);
+    QVERIFY(figure.menuWidget() == nullptr);
+    QVERIFY(recall.layout()->menuBar() == nullptr);
+    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Window"), QStringLiteral("Help")}));
+    QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
+    QVERIFY(menu_of(main, Menu::Help)->actions().contains(main.about_action()));
+
+    // Another window's menus come and go in the same bar.
+    auto* owner = new QMainWindow;
+    auto* save = new QAction(QStringLiteral("Save"), owner);
+    hub.contribute(owner, Menu::Queue, {save}, Scope::Window);
+    QVERIFY(shown(figure).contains(QStringLiteral("Queue")));
+    delete owner;
+    QTRY_VERIFY(!shown(figure).contains(QStringLiteral("Queue")));
+  }
+
+  // On macOS taking Preferences, Quit or About out of a menu hides its item in
+  // the application menu, so a change elsewhere must leave them in place.
+  void actions_that_stay_are_never_taken_out() {
+    for (const auto bars : {MenuHub::Bars::PerWindow, MenuHub::Bars::Shared}) {
+      MenuHub& hub = MenuHub::reset(bars);
+      auto line = pychron::ui::test::make_example_line();
+      pychron::ui::MainWindow main(*line);
+      QMainWindow figure;
+      main.show();
+      figure.show();
+      RemovalWatch watch(main.preferences_action());
+      for (QMenu* m : hub.menus(hub.bar_for(&figure))) m->installEventFilter(&watch);
+      for (QMenu* m : hub.menus(hub.bar_for(&main))) m->installEventFilter(&watch);
+
+      auto* owner = new QMainWindow;
+      auto* first = new QAction(QStringLiteral("first"), owner);
+      auto* last = new QAction(QStringLiteral("last"), owner);
+      hub.contribute(owner, Menu::File, {first}, Scope::App);  // after Preferences' group
+      hub.contribute(owner, Menu::Queue, {last}, Scope::Window);
+      QCOMPARE(texts(menu_of(figure, Menu::File)).last(), QStringLiteral("first"));
+      delete owner;
+      QTRY_VERIFY(!shown(figure).contains(QStringLiteral("Queue")));  // the deferred rebuild has run
+      QVERIFY(!texts(menu_of(figure, Menu::File)).contains(QStringLiteral("first")));
+
+      QCOMPARE(watch.removed, 0);
+      QVERIFY(menu_of(figure, Menu::File)->actions().contains(main.preferences_action()));
+      QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
+      QVERIFY(!menu_of(figure, Menu::File)->actions().last()->isSeparator());  // no stray separator
+      QCoreApplication::processEvents();
+      if (bars != MenuHub::platform_bars()) MenuHub::reset(MenuHub::platform_bars());
+    }
   }
 
   void a_menu_appears_with_its_actions_and_goes_with_its_window() {
