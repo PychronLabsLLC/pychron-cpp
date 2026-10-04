@@ -714,6 +714,14 @@ Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);
 // Nothing was written; the item can be ingested once the row exists.
 bool is_unknown_catalog_reference(const Error& error) noexcept;
 
+// True for the error an add_* catalog call returns when the row it names
+// exists and a constraint keeps out the values the call would fill it with
+// (a position another identifier holds, a position for a special identifier,
+// a spectrometer code another spectrometer has). Nothing was written and the
+// row is as it was. A new row that is refused, and any failure that is not a
+// constraint (a lost connection, a busy database), is not this error.
+bool is_refused_catalog_fill(const Error& error) noexcept;
+
 // identifier + "-" + two-digit aliquot + step letters (A..Z, AA, ...), as
 // legacy make_runid.
 std::string make_runid(const std::string& identifier, int aliquot, int increment);

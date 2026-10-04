@@ -29,6 +29,10 @@ std::string make_runid(const std::string& identifier, int aliquot, int increment
 
 namespace detail {
 
+// The start of the error for a fill a constraint keeps out of a row that
+// exists; is_refused_catalog_fill() recognises the error by it.
+constexpr std::string_view kFillRefused = "catalog fill refused: ";
+
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject) {
   auto rows = db.select(sql::kSelectHeads, {qv(subject)});
   if (!rows) return fail(rows.error());
@@ -667,6 +671,8 @@ class TinyStore final : public IStore {
   // as one UPDATE, audited as an update with its field diff (D6). A stored
   // value is never replaced and a key column never written. Nothing to fill:
   // no write, no change_log entry.
+  // An UPDATE a constraint refuses writes nothing and fails with the error
+  // is_refused_catalog_fill() names.
   Result<Uuid> fill_catalog_row(WriteTx& tx, Uuid client, const char* table, const NaturalKey& key, Uuid uuid,
                                 const Row& row) {
     const QString name = QString::fromUtf8(table);
@@ -694,7 +700,13 @@ class TinyStore final : public IStore {
     auto filled = db_->affecting(QStringLiteral("UPDATE %1 SET %2 WHERE uuid = ?%3")
                                      .arg(name, sets.join(QStringLiteral(", ")), guards.join(QString())),
                                  bindings);
-    if (!filled) return fail(filled.error());
+    if (!filled) {
+      // A constraint keeps the values out. The row exists and is as it was;
+      // the error says so (is_refused_catalog_fill), whatever the driver's words.
+      if (filled.error().kind != ErrorKind::Protocol) return fail(filled.error());
+      return fail(ErrorKind::Protocol, std::string(kFillRefused) + table + ": " + filled.error().what,
+                  filled.error().device);
+    }
     if (*filled != 1) return fail(ErrorKind::Protocol, std::string(table) + " " + uuid.str() + " changed under a fill");
     return finish_catalog(tx, client,
                           {ChangeEntityRow{name, uuid, QStringLiteral("update"),
@@ -751,6 +763,10 @@ Result<void> check_sqlite(Db& db, bool file_backed) {
 
 }  // namespace
 }  // namespace detail
+
+bool is_refused_catalog_fill(const Error& error) noexcept {
+  return error.kind == ErrorKind::Protocol && std::string_view{error.what}.starts_with(detail::kFillRefused);
+}
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config) {
   auto db = detail::Db::open(config);

@@ -748,3 +748,19 @@ points. Where this section and an earlier one disagree, this section wins.
     the `imported` marker, true or false; one that was decided, or carries
     no marker, is left alone. Verify's dry run counts each as a row a replay
     would change.
+42. **A fill that cannot be applied.** Item 39 lets ensure fill a row that
+    exists, and a fill can break a constraint: an identifier given a
+    position another identifier holds, a `special` identifier given a
+    position, a spectrometer given a code another has. Bad data never stops
+    an import. The store reports such a fill with an error of its own
+    (`persistence::is_refused_catalog_fill`; a constraint violation on the
+    update of a row that exists, never a lost connection or a busy
+    database) and writes nothing. The writer, not the store, turns it into
+    an `identity_clash` conflict marked `imported: true` (a warning: the row
+    is in the store, only the extra values are not) at path
+    `catalog-fill/<table>/<natural key>`, with the table, the natural key
+    and the store's reason, and goes on with the batch. The id derives from
+    the path, so a replay meets the same conflict and writes nothing. The
+    insert of a new row that the store refuses is an error and stops the
+    run, as before. Revises the sentence of item 39 on a fill that breaks a
+    constraint.

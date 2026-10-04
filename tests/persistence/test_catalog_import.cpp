@@ -667,6 +667,10 @@ TEST_P(CatalogImportTest, FillingAPositionAnotherIdentifierHoldsFailsAsAnInsertW
   auto as_fill = s.store->add_identifier(c, filled);
   ASSERT_FALSE(as_fill);
   EXPECT_EQ(as_fill.error().kind, as_insert.error().kind);
+  // The two are told apart: the row a fill is refused for exists.
+  EXPECT_TRUE(is_refused_catalog_fill(as_fill.error())) << as_fill.error().what;
+  EXPECT_FALSE(is_refused_catalog_fill(as_insert.error())) << as_insert.error().what;
+  EXPECT_NE(as_fill.error().what.find("identifier"), std::string::npos) << as_fill.error().what;
 
   EXPECT_EQ(*s.store->latest_change_seq(), before);
   const Row r = s.row("identifier", bare);
@@ -676,6 +680,41 @@ TEST_P(CatalogImportTest, FillingAPositionAnotherIdentifierHoldsFailsAsAnInsertW
   EXPECT_TRUE(s.updates(bare).empty());
   // The store is still usable.
   EXPECT_EQ(*s.store->add_identifier(c, {.identifier = "70014"}), bare);
+}
+
+// The other fills a constraint keeps out: a position for a special identifier
+// (CHECK) and a spectrometer code another spectrometer has (UNIQUE).
+TEST_P(CatalogImportTest, FillsAConstraintKeepsOutAreRefusedFills) {
+  Shared s(GetParam());
+  ASSERT_TRUE(s.store && s.db);
+  const Uuid c = s.client();
+  const Uuid position = *s.store->add_irradiation_position(c, {.level = s.lab.level, .position = 14});
+  IdentifierSpec special{.identifier = "bu-XX"};
+  special.kind = "special";
+  special.analysis_type = "blank_unknown";
+  const Uuid blank = *s.store->add_identifier(c, special);
+  const ChangeSeq before = *s.store->latest_change_seq();
+
+  IdentifierSpec placed = special;
+  placed.position = position;
+  auto at_a_position = s.store->add_identifier(c, placed);
+  ASSERT_FALSE(at_a_position);
+  EXPECT_TRUE(is_refused_catalog_fill(at_a_position.error())) << at_a_position.error().what;
+
+  ASSERT_TRUE(s.store->add_mass_spectrometer(c, {"argus-1", "argus", "a1", std::nullopt}));
+  const Uuid bare = *s.store->add_mass_spectrometer(c, {"argus-2", std::nullopt, std::nullopt, std::nullopt});
+  const ChangeSeq made = *s.store->latest_change_seq();
+  auto same_code = s.store->add_mass_spectrometer(c, {"argus-2", "argus", "a1", std::nullopt});
+  ASSERT_FALSE(same_code);
+  EXPECT_TRUE(is_refused_catalog_fill(same_code.error())) << same_code.error().what;
+  EXPECT_EQ(*s.store->latest_change_seq(), made);
+  EXPECT_TRUE(s.row("mass_spectrometer", bare).value("kind").isNull());
+  EXPECT_TRUE(s.row("identifier", blank).value("position_uuid").isNull());
+  EXPECT_GT(made, before);
+
+  // An error that is not a fill is not one.
+  EXPECT_FALSE(is_refused_catalog_fill(Error{ErrorKind::Protocol, "unknown identifier 'x'", ""}));
+  EXPECT_FALSE(is_refused_catalog_fill(Error{ErrorKind::Io, "catalog fill refused: disk", ""}));
 }
 
 TEST_P(CatalogImportTest, UserLoadAndMassSpectrometerAreFilled) {

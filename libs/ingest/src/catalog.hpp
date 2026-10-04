@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/ingest/batch.hpp"
@@ -21,7 +22,8 @@ namespace pychron::ingest::detail {
 // Results are remembered for the resolver's lifetime (catalog rows are never
 // deleted), so a name used by every item of a run costs one store call. A
 // call that brings optional values reaches the store once for each distinct
-// set of them: the row may have been made without.
+// set of them: the row may have been made without. A fill the store refuses
+// fails the write; take_refused_fill() then names the row (spec 10.42).
 class CatalogResolver {
  public:
   CatalogResolver(persistence::IStore& store, persistence::Uuid client) : store_(store), client_(client) {}
@@ -39,6 +41,17 @@ class CatalogResolver {
   // The interpreted age `key` names; created bare, named after the key, when
   // no InterpretedAgeItem came first.
   Result<persistence::Uuid> interpreted_age(const InterpretedAgeKey& key);
+
+  // The fill the store refused for a row that exists (persistence,
+  // is_refused_catalog_fill), when that is why the last write() failed: the
+  // row's table, its natural key in parts, and the store's reason. The
+  // row is in the store as it was. Asking clears it.
+  struct RefusedFill {
+    std::string table;
+    std::vector<std::string> natural_key;
+    std::string reason;
+  };
+  std::optional<RefusedFill> take_refused_fill() { return std::exchange(refused_, std::nullopt); }
 
   // The uuid of a reference object without touching the store: the one
   // resolved earlier, else the id this importer would create it with.
@@ -78,6 +91,7 @@ class CatalogResolver {
   std::string url_;
   std::map<std::string, Uuid> known_;  // "<table>\n<natural key>" -> uuid
   std::set<std::string> sent_;         // "<table>\n<natural key>\n\n<values>" the store has seen
+  std::optional<RefusedFill> refused_;  // of the write() under way: the innermost row
 };
 
 }  // namespace pychron::ingest::detail

@@ -1879,6 +1879,106 @@ TEST_P(BatchWriterTest, LevelMadeBareIsFilledByALaterLevelItem) {
   EXPECT_EQ(world_->count("level"), 1);
 }
 
+// Spec 10.42. The row exists and the store will not take the values an item
+// brings for it: an identifier given a position another identifier holds, a
+// spectrometer given a code another has. Bad data never stops an import: a
+// warning conflict says what was not applied, and the batch goes on.
+TEST_P(BatchWriterTest, FillThatCannotBeAppliedIsAConflictAndTheBatchGoesOn) {
+  const auto at = [](int hole, const char* identifier) {
+    PositionItem position;
+    position.irradiation = "NM-300";
+    position.level = "A";
+    position.position = hole;
+    position.identifier = identifier;
+    return position;
+  };
+  ImportBatch b;
+  b.catalog.push_back(at(1, "66573"));
+  b.catalog.push_back(LoadPositionItem{"L-1", 1, "66574", std::nullopt, std::nullopt, std::nullopt});  // 66574, bare
+  b.catalog.push_back(at(1, "66574"));  // the hole 66573 sits in
+  b.catalog.push_back(MassSpecItem{{"jan", "argus", "j", std::nullopt}});
+  b.catalog.push_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
+  b.catalog.push_back(MassSpecItem{{"obama", "argus", "j", std::nullopt}});  // the code jan has
+  b.catalog.push_back(ExtractDeviceItem{"Fusions CO2"});
+  b.catalog.push_back(at(2, "66575"));
+  b.resume_token = "t1";
+  b.done = b.total = 1;
+
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->conflicts, 2);
+  EXPECT_EQ(world_->source().status, "finished");
+
+  // The rows are as they were; what came after them was written.
+  EXPECT_EQ(*store().identifier_at("NM-300", "A", 1), std::optional<std::string>{"66573"});
+  EXPECT_EQ(*store().identifier_at("NM-300", "A", 2), std::optional<std::string>{"66575"});
+  auto row = world_->db->select_one(QStringLiteral("SELECT position_uuid FROM identifier WHERE identifier = '66574'"));
+  ASSERT_TRUE(row && *row);
+  EXPECT_TRUE((*row)->value("position_uuid").isNull());
+  row = world_->db->select_one(QStringLiteral("SELECT kind, code FROM mass_spectrometer WHERE name = 'obama'"));
+  ASSERT_TRUE(row && *row);
+  EXPECT_TRUE((*row)->value("kind").isNull());
+  EXPECT_TRUE((*row)->value("code").isNull());
+  EXPECT_EQ(world_->count("extract_device"), 1);
+
+  auto conflicts = store().import_conflicts({std::nullopt, std::nullopt, std::nullopt});
+  ASSERT_TRUE(conflicts);
+  ASSERT_EQ(conflicts->size(), 2u);
+  std::map<std::string, nlohmann::json> details;
+  for (const auto& conflict : *conflicts) {
+    EXPECT_EQ(conflict.kind, P::ConflictKind::IdentityClash) << conflict.path;
+    EXPECT_EQ(conflict.resolution, "pending") << conflict.path;
+    EXPECT_EQ(conflict.uuid, conflict_id(kUrl, "", conflict.path)) << conflict.path;
+    EXPECT_TRUE(is_warning_conflict(conflict)) << conflict.path;
+    details[conflict.path] = nlohmann::json::parse(conflict.detail_json);
+  }
+  ASSERT_TRUE(details.contains("catalog-fill/identifier/66574"));
+  const auto& identifier = details.at("catalog-fill/identifier/66574");
+  EXPECT_EQ(identifier.at("imported"), true);
+  EXPECT_EQ(identifier.at("table"), "identifier");
+  EXPECT_EQ(identifier.at("natural_key"), nlohmann::json::array({"66574"}));
+  EXPECT_TRUE(identifier.at("reason").is_string());
+  EXPECT_NE(identifier.at("reason").get<std::string>().find("identifier"), std::string::npos);
+  ASSERT_TRUE(details.contains("catalog-fill/mass_spectrometer/obama"));
+  const auto& spectrometer = details.at("catalog-fill/mass_spectrometer/obama");
+  EXPECT_EQ(spectrometer.at("imported"), true);
+  EXPECT_EQ(spectrometer.at("table"), "mass_spectrometer");
+  EXPECT_EQ(spectrometer.at("natural_key"), nlohmann::json::array({"obama"}));
+
+  // Again, from the start: the same two conflicts and nothing new.
+  const auto before = world_->counts();
+  const auto seq = *store().latest_change_seq();
+  FakeAdapter again(description(), {b});
+  auto replayed = run_all(*world_, again, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_TRUE(replayed->finished);
+  EXPECT_EQ(replayed->conflicts, 2);
+  EXPECT_EQ(world_->counts(), before);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+}
+
+// A new row the store refuses is still an error: only a fill is passed over.
+TEST_P(BatchWriterTest, InsertThatFailsStillStopsTheRun) {
+  PositionItem first, second;
+  first.irradiation = second.irradiation = "NM-300";
+  first.level = second.level = "A";
+  first.position = second.position = 1;
+  first.identifier = "66573";
+  second.identifier = "66574";  // a new identifier, in the hole 66573 sits in
+  ImportBatch b;
+  b.catalog.push_back(first);
+  b.catalog.push_back(second);
+  b.resume_token = "t1";
+  FakeAdapter adapter(description(), {b});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_FALSE(stats);
+  EXPECT_FALSE(P::is_refused_catalog_fill(stats.error()));
+  EXPECT_EQ(world_->count("import_conflict"), 0);
+  EXPECT_EQ(world_->source().status, "failed");
+}
+
 // Spec 10.31. The first import refuses the renumber at c5 and stores the one
 // at c9. Once the identifier exists, a replay could write c5: behind c9.
 TEST_P(BatchWriterTest, ReplayDoesNotWriteAnIdentityBehindAStoredOne) {

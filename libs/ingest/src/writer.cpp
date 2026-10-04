@@ -585,16 +585,16 @@ class BatchWriter::Impl final : public IImportState {
     // An interpreted age links its identifier only when an analysis uses it,
     // so those wait for the batch's analyses.
     const auto is_age = [](const CatalogItem& item) { return std::holds_alternative<InterpretedAgeItem>(item); };
+    Staged staged;
     for (const auto& item : batch.catalog)
       if (!is_age(item))
-        if (auto r = catalog_.write(item); !r) return r;
+        if (auto r = write_catalog(item, staged, stats); !r) return r;
     // Blobs go first so each analysis is ingested with its signals complete.
     for (const auto& item : batch.blobs) {
       auto ack = store_.ingest({revision_id(url_, item.key.commit, item.key.path),
                                 P::blob_sha256(item.blob.codec, item.blob.bytes), client_, item.blob});
       if (!ack) return fail(ack.error());
     }
-    Staged staged;
     Memberships memberships;
     for (const auto& item : batch.analyses)
       if (auto r = write_analysis(item, staged, memberships, stats); !r) return r;
@@ -602,7 +602,7 @@ class BatchWriter::Impl final : public IImportState {
       if (auto r = stage_membership(item, staged, memberships, stats); !r) return r;
     for (const auto& item : batch.catalog)
       if (is_age(item))
-        if (auto r = catalog_.write(item); !r) return r;
+        if (auto r = write_catalog(item, staged, stats); !r) return r;
     for (const auto& [name, members] : memberships) {
       auto repository = catalog_.repository(name);
       if (!repository) return fail(repository.error());
@@ -652,6 +652,30 @@ class BatchWriter::Impl final : public IImportState {
       adopt(next);
     }
     return {};
+  }
+
+  // Writes a catalog item. Bad data never stops an import (spec 10.42): when
+  // the item's row exists and a constraint keeps out the values the item
+  // would fill it with, the row stays as it is, a conflict says what was not
+  // applied, and the batch goes on. The conflict is a warning (the row is in
+  // the store) keyed by the row, so there is one however often the import
+  // meets it. A new row the store refuses is an error, as before.
+  Result<void> write_catalog(const CatalogItem& item, Staged& staged, RunStats& stats) {
+    auto written = catalog_.write(item);
+    if (written) return written;
+    const auto refused = catalog_.take_refused_fill();
+    if (!refused || !P::is_refused_catalog_fill(written.error())) return written;
+    std::string path = "catalog-fill/" + refused->table;
+    for (const auto& part : refused->natural_key) path += "/" + part;
+    nlohmann::json detail;
+    detail["table"] = refused->table;
+    detail["natural_key"] = refused->natural_key;
+    detail[kMarkerImported] = true;
+    detail[kDetailReason] = refused->reason;
+    return stage_conflict({conflict_id(url_, "", path), path, std::nullopt, P::ConflictKind::IdentityClash,
+                           std::nullopt, sha256(std::string_view{path}),
+                           detail.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), kPending},
+                          staged, stats);
   }
 
   Result<void> commit(Staged staged, const P::ImportProgress* next) {

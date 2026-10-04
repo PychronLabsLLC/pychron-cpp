@@ -14,6 +14,8 @@
 //                        optional link that is broken in the dump, or a
 //                        sample imported under the placeholder material
 //                        (false on the refusal of a row: blocking)
+//                        and the writer: values a catalog row that exists
+//                        could not be filled with (spec 10.42)
 //   kMarkerSynthesized   the project adapter with catalog_from_repos: a
 //                        catalog row made from repository contents
 //   kMarkerLate          the writer: a revision not written behind a stored

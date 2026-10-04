@@ -79,13 +79,28 @@ Result<Uuid> CatalogResolver::cached(const char* table, const std::string& key, 
   if (auto it = known_.find(cache_key); it != known_.end() && (values.empty() || sent_.contains(sent_key)))
     return it->second;
   Result<Uuid> uuid = ensure(catalog_id(table, key));
-  if (!uuid) return uuid;
+  if (!uuid) {
+    // The row a fill was refused for is the innermost one: a row that names
+    // it fails with the same error and is not it.
+    if (!refused_ && P::is_refused_catalog_fill(uuid.error())) {
+      RefusedFill refused{table, {}, uuid.error().what};
+      for (std::size_t from = 0;;) {
+        const auto end = key.find('\n', from);
+        refused.natural_key.push_back(key.substr(from, end == std::string::npos ? end : end - from));
+        if (end == std::string::npos) break;
+        from = end + 1;
+      }
+      refused_ = std::move(refused);
+    }
+    return uuid;
+  }
   known_.insert_or_assign(cache_key, *uuid);
   if (!values.empty()) sent_.insert(sent_key);
   return uuid;
 }
 
 Result<void> CatalogResolver::write(const CatalogItem& item) {
+  refused_.reset();
   return std::visit(
       Overloaded{
           [&](const PiItem& i) { return done(principal_investigator(i)); },
