@@ -53,7 +53,7 @@ messages are read.
 
 ## 3. Commands
 
-Exactly these nine verbs are sent. Arguments are shown as Python formats them.
+Exactly these twelve verbs are sent. Arguments are shown as Python formats them.
 
 | Command | Sent when | Reply as Pychron uses it |
 |---|---|---|
