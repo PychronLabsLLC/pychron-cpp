@@ -473,7 +473,9 @@ TEST_P(ImportStoreTest, OneChangeLogEntryPerBatch) {
   int analyses = 0;
   for (const auto& e : page->entries[0].entities) analyses += e.entity_type == "analysis";
   EXPECT_EQ(analyses, 2);
-  for (const auto& revision : *store_->history(analysis_, Kind::Intercepts)) {
+  const auto history = store_->history(analysis_, Kind::Intercepts);  // named: a range-for does not keep it alive
+  ASSERT_TRUE(history);
+  for (const auto& revision : *history) {
     if (revision.changeset.kind == ChangesetKind::Import) {
       EXPECT_EQ(revision.change_seq, *seq);
     }
