@@ -204,7 +204,7 @@ for that source. What mends each kind is in the table. A catalog dump is
 never mended, but the importer's rules can change: `run --replay` of a dump
 supersedes the pending conflicts of its rows that the dump, as it is read
 now, no longer has (the refusal of a row that is now imported, a link a row
-now keeps).
+now keeps), and rewrites a pending one whose reason is no longer the reason.
 
 | Kind | Meaning |
 |---|---|

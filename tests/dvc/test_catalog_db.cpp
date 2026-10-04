@@ -847,6 +847,77 @@ TEST_P(CatalogDb, ReplaySupersedesConflictsTheDumpNoLongerHas) {
   EXPECT_EQ(*world_->store->latest_change_seq(), seq);
 }
 
+// The other half: a row refused under an old rule and refused still, for
+// another reason, keeps its conflict, which then says the reason of today;
+// and a conflict that was superseded and that the dump has again is pending
+// again. What someone decided is not touched.
+TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("SampleTbl",
+             {
+                 R"({"id":1,"name":"S","materialID":null,"projectID":1,"note":"one"})",
+                 R"({"id":2,"name":"S","materialID":null,"projectID":1,"note":"two"})",
+                 R"({"id":3,"name":"S","materialID":null,"projectID":1,"note":"three"})",
+             })
+      .done();
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path())));
+  const auto source = world_->source();
+  const std::string sha(64, 'a');
+  const auto id = [&](const std::string& path) { return ingest::conflict_id(source.spec.url_or_path, sha, path); };
+  const auto stored = [&](const std::string& path) {
+    auto row = world_->store->import_conflict(id(path));
+    EXPECT_TRUE(row && *row) << path;
+    return row && *row ? **row : P::ImportConflictRow{};
+  };
+  const std::string repeats =
+      "has the natural key of SampleTbl 1 and other values; that row is kept; materialID is missing";
+  ASSERT_EQ(json::parse(stored("SampleTbl.jsonl#2").detail_json).at("reason"), repeats);
+
+  // As a store imported under the old rule has them, one of them set aside.
+  {
+    auto uow = world_->store->begin_import_batch(source.spec.uuid, world_->client);
+    ASSERT_TRUE(uow);
+    for (const char* path : {"SampleTbl.jsonl#2", "SampleTbl.jsonl#3"}) {
+      auto row = stored(path);
+      row.detail_json = R"({"table":"SampleTbl","imported":false,"reason":"materialID is missing"})";
+      ASSERT_TRUE((*uow)->restate_conflict(row));
+    }
+    ASSERT_TRUE((*uow)->resolve_conflict(id("SampleTbl.jsonl#3"), "ignored"));
+    ASSERT_TRUE((*uow)->resolve_conflict(id("SampleTbl.jsonl#1@materialID"), "superseded"));
+    ASSERT_TRUE((*uow)->commit());
+  }
+  {
+    auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    EXPECT_EQ(dvc::testing::verify_source(*world_, **adapter).replay_would_write, 2);
+  }
+
+  auto replay = writer_config();
+  replay.replay = true;
+  auto replayed = run_import(*world_, adapter_config(dir.path()), std::nullopt, replay);
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 2);
+  auto row = stored("SampleTbl.jsonl#2");
+  EXPECT_EQ(row.resolution, "pending");
+  EXPECT_EQ(json::parse(row.detail_json).at("reason"), repeats);
+  EXPECT_EQ(json::parse(row.detail_json).at("legacy_id"), "2");
+  row = stored("SampleTbl.jsonl#3");
+  EXPECT_EQ(row.resolution, "ignored");
+  EXPECT_EQ(json::parse(row.detail_json).at("reason"), "materialID is missing");
+  EXPECT_EQ(stored("SampleTbl.jsonl#1@materialID").resolution, "pending");
+
+  // Again: nothing changes.
+  const auto seq = *world_->store->latest_change_seq();
+  const auto before = snapshot_of(*world_);
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path()), std::nullopt, replay));
+  EXPECT_EQ(snapshot_of(*world_), before);
+  EXPECT_EQ(*world_->store->latest_change_seq(), seq);
+  auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+  ASSERT_TRUE(adapter) << err(adapter.error());
+  EXPECT_EQ(dvc::testing::verify_source(*world_, **adapter).replay_would_write, 0);
+}
+
 TEST_P(CatalogDb, ResumeFromToken) {
   auto first = run_import(*world_, adapter_config(kFixture, 2), 1);
   ASSERT_TRUE(first) << err(first.error());

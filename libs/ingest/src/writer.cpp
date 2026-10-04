@@ -478,10 +478,37 @@ class BatchWriter::Impl final : public IImportState {
     auto stored = store_.import_conflict(conflict);
     if (!stored) return fail(stored.error());
     if (!*stored) return false;  // staged in this batch: one the source has now
-    const auto detail = nlohmann::json::parse((*stored)->detail_json, nullptr, false);
+    return about_a_catalog_row((*stored)->detail_json);
+  }
+
+  // Whether the detail of a conflict carries the `imported` marker, true or
+  // false: a catalog row's refusal, or a note on a row that was imported.
+  static bool about_a_catalog_row(const std::string& detail_json) {
+    const auto detail = nlohmann::json::parse(detail_json, nullptr, false);
     if (!detail.is_object()) return false;
     const auto marker = detail.find(kMarkerImported);
     return marker != detail.end() && marker->is_boolean();
+  }
+
+  // Whether a catalog row's conflict the source brings is stored saying
+  // something else (spec 10.41): stored pending with another detail (the
+  // rule that refused the row changed and another refuses it now), or stored
+  // superseded (it applies again). Such a row is restated, pending, as the
+  // source has it now. One that someone decided is left as it is.
+  Result<bool> restated_by(const ConflictItem& item, Uuid id) {
+    if (item.kind != P::ConflictKind::IdentityClash) return false;
+    auto known = conflicts();
+    if (!known) return fail(known.error());
+    const auto it = (*known)->find(id);
+    if (it == (*known)->end() || it->second.kind != P::ConflictKind::IdentityClash) return false;
+    if (it->second.resolution != kPending && it->second.resolution != kSuperseded) return false;
+    if (!about_a_catalog_row(item.detail_json)) return false;
+    auto stored = store_.import_conflict(id);
+    if (!stored) return fail(stored.error());
+    if (!*stored || !about_a_catalog_row((*stored)->detail_json)) return false;  // not stored: staged in this batch
+    return it->second.resolution == kSuperseded ||
+           nlohmann::json::parse((*stored)->detail_json, nullptr, false) !=
+               nlohmann::json::parse(item.detail_json, nullptr, false);
   }
 
   // Spec 10.37: the adapter says the file version at `key` was replaced by a
@@ -613,12 +640,17 @@ class BatchWriter::Impl final : public IImportState {
     // Step 2: one transaction.
     for (const auto& item : batch.changesets)
       if (auto r = stage_changeset(item, staged, stats); !r) return r;
-    for (const auto& item : batch.conflicts)
-      if (auto r = stage_conflict({conflict_id(url_, item.key.commit, item.key.path), item.key.path, item.entity,
-                                   item.kind, std::nullopt, item.file_sha256, item.detail_json, kPending},
-                                  staged, stats);
-          !r)
-        return r;
+    for (const auto& item : batch.conflicts) {
+      P::ImportConflictRow row{conflict_id(url_, item.key.commit, item.key.path), item.key.path, item.entity,
+                               item.kind, std::nullopt, item.file_sha256, item.detail_json, kPending};
+      auto restated = restated_by(item, row.uuid);
+      if (!restated) return fail(restated.error());
+      if (*restated) {
+        (*conflicts_)[row.uuid] = KnownConflict{row.kind, kPending};
+        staged.restated.push_back(row);
+      }
+      if (auto r = stage_conflict(std::move(row), staged, stats); !r) return r;
+    }
     for (const auto& key : batch.superseded)
       if (auto r = stage_superseded(key, staged, stats); !r) return r;
 
@@ -1071,10 +1103,14 @@ class BatchWriter::Impl final : public IImportState {
       auto known = conflicts();
       if (!known) return fail(known.error());
       const auto stored = (*known)->find(conflict);
-      if (stored == (*known)->end() || stored->second.resolution == kPending) count_pending(conflict, stats);
+      // As write_batch: a stored conflict a run would restate is a row it changes.
+      auto restated = restated_by(item, conflict);
+      if (!restated) return fail(restated.error());
+      if (stored == (*known)->end() || stored->second.resolution == kPending || *restated)
+        count_pending(conflict, stats);
       if (stored == (*known)->end()) would_conflict_.insert_or_assign(conflict, item.kind);
       if (!counted_.insert(conflict).second) continue;
-      if (stored == (*known)->end()) ++stats.would_write;
+      if (stored == (*known)->end() || *restated) ++stats.would_write;
     }
     // As stage_superseded: a pending conflict the batch supersedes is a row a
     // run would change, and is not left pending by it.

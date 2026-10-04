@@ -746,8 +746,12 @@ points. Where this section and an earlier one disagree, this section wins.
     `<file>#<id>@<column>` for a link it did not lose. The writer supersedes
     a pending `identity_clash` at such a key when its stored detail carries
     the `imported` marker, true or false; one that was decided, or carries
-    no marker, is left alone. Verify's dry run counts each as a row a replay
-    would change.
+    no marker, is left alone. A row that the old rule refused and another
+    rule refuses now keeps its conflict id: the writer restates the stored
+    row (detail and all, pending) when both details carry the marker and
+    differ, and when the stored one was superseded and the dump has it
+    again; never one that was decided. Verify's dry run counts each
+    supersession and each restatement as a row a replay would change.
 42. **A fill that cannot be applied.** Item 39 lets ensure fill a row that
     exists, and a fill can break a constraint: an identifier given a
     position another identifier holds, a `special` identifier given a
