@@ -9,8 +9,10 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -27,7 +29,23 @@ namespace {
 
 ChromiumOptions options() {
   ChromiumOptions o;
+  o.limits_mm = {{{-50, 50}, {-50, 50}, {-50, 50}}};
   return o;
+}
+
+// One tray, two holes: what the laser system's tray maps will supply.
+TrayLookup lookup() {
+  TrayLookup l;
+  l.find = [](std::string_view tray, std::string_view position) -> std::optional<StagePosition> {
+    if (tray != "221-hole") return std::nullopt;
+    if (position == "1") return StagePosition{1.5, -2.0, 0};
+    if (position == "2") return StagePosition{10, 10, 0};
+    return std::nullopt;
+  };
+  l.names = [](std::string_view tray) {
+    return tray == "221-hole" ? std::vector<std::string>{"1", "2"} : std::vector<std::string>{};
+  };
+  return l;
 }
 
 // Declared in the order they must be built and, reversed, torn down: the
@@ -38,7 +56,11 @@ struct ChromiumHarness {
   std::unique_ptr<SimTransport> wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "laser_pc", .clock = &clock});
   ChromiumLaser laser{"co2", *wire, options()};
 
-  ChromiumHarness() { EXPECT_TRUE(wire->open()); }
+  ChromiumHarness() {
+    EXPECT_TRUE(wire->open());
+    laser.set_tray_lookup(lookup());
+    EXPECT_TRUE(laser.set_tray("221-hole"));
+  }
   IExtractionDevice& device() { return laser; }
   void advance() { clock.advance(250ms); }
 };
@@ -48,12 +70,14 @@ struct ChromiumTest : ::testing::Test, ChromiumHarness {
     const auto log = sim.log();
     return std::find(log.begin(), log.end(), command) != log.end();
   }
+  void settle() { ASSERT_TRUE(conformance::settles(*this, [&] { return laser.moving(); })); }
 };
 
 }  // namespace
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, ExtractionDeviceConformance, ::testing::Types<ChromiumHarness>);
 INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, LaserConformance, ::testing::Types<ChromiumHarness>);
+INSTANTIATE_TYPED_TEST_SUITE_P(Chromium, StageConformance, ::testing::Types<ChromiumHarness>);
 
 TEST_F(ChromiumTest, PrepareIdentifiesChromium) {
   EXPECT_TRUE(laser.chromium_id().empty());
@@ -190,4 +214,100 @@ TEST_F(ChromiumTest, HealthFollowsTheWire) {
   wire->drop_next(3);
   EXPECT_FALSE(laser.prepare());
   EXPECT_NE(laser.health().state, DeviceState::Ok);
+}
+
+// --- stage ----------------------------------------------------------------------
+
+TEST_F(ChromiumTest, TheDeviceHasAStageAndNoPatternRunner) {
+  EXPECT_EQ(laser.stage(), static_cast<IStage*>(&laser));
+  EXPECT_EQ(laser.pattern_runner(), nullptr);
+}
+
+TEST_F(ChromiumTest, AnXyMoveKeepsZAndSendsIntegerMicrons) {
+  ASSERT_TRUE(laser.set_axis(IStage::Axis::Z, 0.5));
+  settle();
+  ASSERT_TRUE(laser.set_xy(1.5, -2.0));
+  EXPECT_EQ(sim.log().back(), "Stage.Pos?");  // the confirm
+  EXPECT_TRUE(logged("Stage.MoveTo 1500,-2000,500,5000,5000,100"));
+}
+
+TEST_F(ChromiumTest, MoveOutsideLimitsIsConfigAndSendsNothing) {
+  const auto before = sim.log().size();
+  EXPECT_EQ(laser.set_xy(50.001, 0).error().kind, ErrorKind::Config);
+  EXPECT_EQ(laser.set_xy(0, -50.001).error().kind, ErrorKind::Config);
+  EXPECT_EQ(laser.set_axis(IStage::Axis::Z, -50.5).error().kind, ErrorKind::Config);
+  EXPECT_EQ(laser.set_xy(std::nan(""), 0).error().kind, ErrorKind::Config);
+  EXPECT_EQ(sim.log().size(), before);
+  EXPECT_NE(laser.set_xy(50.001, 0).error().what.find("x"), std::string::npos);
+  ASSERT_TRUE(laser.set_xy(50, -50));  // the limits themselves are in range
+}
+
+TEST_F(ChromiumTest, MovingNeedsThreeGoodPollsInARow) {
+  ASSERT_TRUE(laser.set_xy(1.0, 0));  // 1000 microns at 5000 per second
+  EXPECT_TRUE(*laser.moving());       // not there yet
+  clock.advance(1s);                  // there
+  EXPECT_TRUE(*laser.moving());
+  EXPECT_TRUE(*laser.moving());
+  EXPECT_FALSE(*laser.moving());      // the third in a row
+  const auto n = sim.log().size();
+  EXPECT_FALSE(*laser.moving());      // no target: nothing sent
+  EXPECT_EQ(sim.log().size(), n);
+}
+
+TEST_F(ChromiumTest, LimitSwitchWhileMovingIsAnError) {
+  ASSERT_TRUE(laser.set_xy(10, 0));
+  sim.put_on_limit('x', +1);
+  auto r = laser.moving();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_NE(r.error().what.find("x"), std::string::npos);
+  EXPECT_NE(r.error().what.find("positive"), std::string::npos);
+  EXPECT_FALSE(*laser.moving());  // target cleared
+}
+
+TEST_F(ChromiumTest, SignsAreAppliedBothWays) {
+  ChromiumOptions o = options();
+  o.signs = {-1, 1, 1};
+  ChromiumLaser flipped{"co2", *wire, o};
+  ASSERT_TRUE(flipped.set_xy(2.0, 3.0));
+  EXPECT_TRUE(logged("Stage.MoveTo -2000,3000,0,5000,5000,100"));
+  clock.advance(5s);
+  auto at = flipped.position();
+  ASSERT_TRUE(at);
+  EXPECT_NEAR(at->x, 2.0, 1e-9);
+  EXPECT_NEAR(at->y, 3.0, 1e-9);
+}
+
+TEST_F(ChromiumTest, AScanPositionMovesByScanNumber) {
+  sim.add_scan({2000, 3000, 0});
+  ASSERT_TRUE(laser.move_to_position("s1", false));
+  EXPECT_TRUE(logged("Scans.MoveTo 1"));
+  EXPECT_TRUE(*laser.moving());
+  clock.advance(5s);
+  EXPECT_TRUE(*laser.moving());
+  EXPECT_TRUE(*laser.moving());
+  EXPECT_FALSE(*laser.moving());
+  // a scan Chromium does not have: its ?3 is a Config error
+  auto missing = laser.move_to_position("S9", false);
+  ASSERT_FALSE(missing);
+  EXPECT_EQ(missing.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(*laser.moving());
+}
+
+TEST_F(ChromiumTest, AHolePositionIsLookedUpOnTheCurrentTray) {
+  ASSERT_TRUE(laser.move_to_position("2", true));  // autocenter is accepted
+  EXPECT_TRUE(logged("Stage.MoveTo 10000,10000,0,5000,5000,100"));
+  EXPECT_EQ(laser.move_to_position("3", false).error().kind, ErrorKind::Config);
+}
+
+TEST_F(ChromiumTest, AnUnknownTrayIsConfig) {
+  EXPECT_EQ(laser.set_tray("no-such-tray").error().kind, ErrorKind::Config);
+  EXPECT_EQ(laser.positions(), (std::vector<std::string>{"1", "2"}));  // unchanged
+}
+
+TEST_F(ChromiumTest, WithNoTrayLookupOnlyScansAndCoordinatesWork) {
+  ChromiumLaser bare{"co2", *wire, options()};
+  EXPECT_TRUE(bare.positions().empty());
+  EXPECT_EQ(bare.move_to_position("1", false).error().kind, ErrorKind::Config);
+  EXPECT_TRUE(bare.set_xy(1, 1));
 }

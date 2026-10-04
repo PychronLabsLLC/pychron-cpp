@@ -1,5 +1,6 @@
 #include "pychron/devices/extraction/chromium.hpp"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 
@@ -15,6 +16,19 @@ namespace {
 constexpr Duration kDrain = std::chrono::milliseconds(1);
 constexpr int kDrainLimit = 16;
 constexpr double kOutputTolerance = 0.1;  // percent
+constexpr int kArrivedAfter = 3;          // good polls in a row
+constexpr std::array<std::string_view, 3> kAxes{"x", "y", "z"};
+
+// "s3" / "S3": scan 3 of Chromium's scan list.
+std::optional<int> scan_number(std::string_view position) {
+  if (position.size() < 2 || (position[0] != 's' && position[0] != 'S')) return std::nullopt;
+  int n = 0;
+  for (const char c : position.substr(1)) {
+    if (c < '0' || c > '9' || n > 100000) return std::nullopt;
+    n = n * 10 + (c - '0');
+  }
+  return n;
+}
 
 // The command as sent, without its terminator, for error messages.
 std::string text_of(const codec::Command& command) {
@@ -230,6 +244,169 @@ Result<void> ChromiumLaser::stop_laser() {
 Result<bool> ChromiumLaser::is_firing() {
   std::lock_guard lock(state_);
   return firing_;
+}
+
+// ---- stage -----------------------------------------------------------------------
+
+void ChromiumLaser::set_tray_lookup(TrayLookup lookup) {
+  std::lock_guard lock(state_);
+  lookup_ = std::move(lookup);
+}
+
+cr::Microns ChromiumLaser::to_wire(const StagePosition& mm) const {
+  auto um = [&](double v, std::size_t axis) { return std::llround(v * 1000.0) * options_.signs[axis]; };
+  return {um(mm.x, 0), um(mm.y, 1), um(mm.z, 2)};
+}
+
+StagePosition ChromiumLaser::from_wire(const cr::Microns& um) const {
+  auto mm = [&](std::int64_t v, std::size_t axis) { return static_cast<double>(v * options_.signs[axis]) / 1000.0; };
+  return {mm(um.x, 0), mm(um.y, 1), mm(um.z, 2)};
+}
+
+Result<StagePosition> ChromiumLaser::read_position() {
+  auto reply = query(cr::stage_position());
+  if (!reply) return fail(std::move(reply).error());
+  auto at = cr::decode_position(*reply);
+  if (!at) return fail(std::move(at).error());
+  return from_wire(*at);
+}
+
+Result<StagePosition> ChromiumLaser::position() { return observe(read_position()); }
+
+Result<void> ChromiumLaser::check_travel(std::size_t axis, double mm) const {
+  const auto [low, high] = options_.limits_mm[axis];
+  if (std::isfinite(mm) && mm >= low && mm <= high) return {};
+  return refuse(ErrorKind::Config, std::string(kAxes[axis]) + " = " + std::to_string(mm) +
+                                       " mm is outside the stage's travel (" + std::to_string(low) + " to " +
+                                       std::to_string(high) + " mm)");
+}
+
+Result<void> ChromiumLaser::start_move(const StagePosition& to) {
+  const std::array<double, 3> wanted{to.x, to.y, to.z};
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (auto ok = check_travel(i, wanted[i]); !ok) return ok;
+  }
+  const cr::Microns wire = to_wire(to);
+  auto reply = act(cr::stage_move_to(wire, options_.move_speed), cr::stage_position());
+  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
+  std::lock_guard lock(state_);
+  target_ = Target{std::nullopt, wire};
+  good_polls_ = 0;
+  return observe(Result<void>{});
+}
+
+Result<void> ChromiumLaser::set_xy(double x, double y) {
+  // Checked before the read, so a move that cannot be made sends nothing.
+  if (auto ok = check_travel(0, x); !ok) return ok;
+  if (auto ok = check_travel(1, y); !ok) return ok;
+  // z stays where it is: read, not remembered.
+  auto at = observe(read_position());
+  if (!at) return fail(std::move(at).error());
+  return start_move({x, y, at->z});
+}
+
+Result<void> ChromiumLaser::set_axis(Axis axis, double value) {
+  if (auto ok = check_travel(axis == Axis::X ? 0 : axis == Axis::Y ? 1 : 2, value); !ok) return ok;
+  auto at = observe(read_position());
+  if (!at) return fail(std::move(at).error());
+  StagePosition to = *at;
+  (axis == Axis::X ? to.x : axis == Axis::Y ? to.y : to.z) = value;
+  return start_move(to);
+}
+
+Result<void> ChromiumLaser::move_to_position(std::string_view position, bool /*autocenter*/) {
+  if (const auto scan = scan_number(position)) {
+    auto move = cr::scan_move_to(*scan);
+    auto in_position = cr::scan_in_position(*scan);
+    if (!move || !in_position) return refuse(ErrorKind::Config, "no scan " + std::string(position));
+    auto reply = act(*move, *in_position);
+    if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
+    std::lock_guard lock(state_);
+    target_ = Target{*scan, {}};
+    good_polls_ = 0;
+    return observe(Result<void>{});
+  }
+  std::optional<StagePosition> hole;
+  std::string tray;
+  {
+    std::lock_guard lock(state_);
+    tray = tray_;
+    if (lookup_.find) hole = lookup_.find(tray_, position);
+  }
+  if (!hole) {
+    return refuse(ErrorKind::Config, "no position '" + std::string(position) + "' on tray '" + tray + "'");
+  }
+  return set_xy(hole->x, hole->y);
+}
+
+Result<bool> ChromiumLaser::moving() {
+  std::optional<Target> target;
+  {
+    std::lock_guard lock(state_);
+    target = target_;
+  }
+  if (!target) return false;
+
+  auto clear = [&] {
+    std::lock_guard lock(state_);
+    target_.reset();
+    good_polls_ = 0;
+  };
+  auto run = [&]() -> Result<bool> {
+    // A stage on a limit switch is not going to arrive.
+    auto status = query(cr::stage_limits());
+    if (!status) return fail(std::move(status).error());
+    auto limits = cr::decode_limits(*status);
+    if (!limits) return fail(std::move(limits).error());
+    const std::array<int, 3> on{limits->x, limits->y, limits->z};
+    for (std::size_t i = 0; i < 3; ++i) {
+      if (on[i] != 0) {
+        clear();
+        return fail(ErrorKind::Io, "the stage hit its " + std::string(on[i] > 0 ? "positive" : "negative") + " " +
+                                       std::string(kAxes[i]) + " limit switch");
+      }
+    }
+    bool arrived = false;
+    if (target->scan) {
+      auto ask = cr::scan_in_position(*target->scan);
+      if (!ask) return fail(std::move(ask).error());
+      auto reply = query(*ask);
+      if (!reply) return fail(std::move(reply).error());
+      auto there = cr::decode_flag(*reply);
+      if (!there) return fail(std::move(there).error());
+      arrived = *there;
+    } else {
+      auto reply = query(cr::stage_position());
+      if (!reply) return fail(std::move(reply).error());
+      auto at = cr::decode_position(*reply);
+      if (!at) return fail(std::move(at).error());
+      auto near = [&](std::int64_t a, std::int64_t b) {
+        return std::abs(static_cast<double>(a - b)) <= options_.in_position_um;
+      };
+      arrived = near(at->x, target->at.x) && near(at->y, target->at.y) && near(at->z, target->at.z);
+    }
+    std::lock_guard lock(state_);
+    good_polls_ = arrived ? good_polls_ + 1 : 0;
+    if (good_polls_ < kArrivedAfter) return true;
+    target_.reset();
+    good_polls_ = 0;
+    return false;
+  };
+  return observe(run());
+}
+
+Result<void> ChromiumLaser::set_tray(std::string_view tray) {
+  std::lock_guard lock(state_);
+  if (lookup_.names && lookup_.names(tray).empty()) {
+    return refuse(ErrorKind::Config, "no tray '" + std::string(tray) + "'");
+  }
+  tray_ = std::string(tray);
+  return {};
+}
+
+std::vector<std::string> ChromiumLaser::positions() const {
+  std::lock_guard lock(state_);
+  return lookup_.names ? lookup_.names(tray_) : std::vector<std::string>{};
 }
 
 }  // namespace pychron::extraction
