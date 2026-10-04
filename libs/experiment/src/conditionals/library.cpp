@@ -1,5 +1,6 @@
 #include "pychron/experiment/conditionals/library.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -42,6 +43,81 @@ Result<std::optional<std::string>> MapConditionalSource::text(std::string_view n
   auto it = files_.find(name);
   if (it == files_.end()) return std::optional<std::string>{};
   return std::optional<std::string>(it->second);
+}
+
+bool ConditionalFiles::valid_name(std::string_view name) {
+  return plain_name(name) && name.front() != '.' && !name.ends_with(".toml");
+}
+
+std::filesystem::path ConditionalFiles::path(std::string_view name) const {
+  return dir_ / (std::string(name) + ".toml");
+}
+
+bool ConditionalFiles::exists(std::string_view name) const {
+  std::error_code ec;
+  return valid_name(name) && std::filesystem::is_regular_file(path(name), ec);
+}
+
+Result<std::vector<std::string>> ConditionalFiles::list() const {
+  namespace fs = std::filesystem;
+  std::vector<std::string> names;
+  std::error_code ec;
+  if (!fs::is_directory(dir_, ec)) return names;
+  for (fs::directory_iterator it(dir_, ec), end; !ec && it != end; it.increment(ec)) {
+    if (!it->is_regular_file(ec) || it->path().extension() != ".toml") continue;
+    std::string name = it->path().stem().string();
+    if (valid_name(name)) names.push_back(std::move(name));
+  }
+  if (ec) return fail(ErrorKind::Io, "cannot list " + dir_.string() + ": " + ec.message());
+  std::sort(names.begin(), names.end());
+  if (auto it = std::find(names.begin(), names.end(), "system"); it != names.end())
+    std::rotate(names.begin(), it, it + 1);
+  return names;
+}
+
+Result<std::string> ConditionalFiles::read(std::string_view name) const {
+  if (!valid_name(name)) return cfg("conditionals name '" + std::string(name) + "' must be a plain file name");
+  const auto p = path(name);
+  std::ifstream in(p, std::ios::binary);
+  if (!in) return fail(ErrorKind::Io, "cannot read " + p.string());
+  std::stringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
+
+Result<void> ConditionalFiles::write(std::string_view name, std::string_view text) const {
+  namespace fs = std::filesystem;
+  if (!valid_name(name)) return cfg("conditionals name '" + std::string(name) + "' must be a plain file name");
+  std::error_code ec;
+  fs::create_directories(dir_, ec);
+  if (ec) return fail(ErrorKind::Io, "cannot create " + dir_.string() + ": " + ec.message());
+  const auto target = path(name);
+  const auto tmp = dir_ / ("." + std::string(name) + ".toml.tmp");
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    out.flush();
+    if (!out) {
+      fs::remove(tmp, ec);
+      return fail(ErrorKind::Io, "cannot write " + target.string());
+    }
+  }
+  fs::rename(tmp, target, ec);
+  if (ec) {
+    const std::string why = ec.message();
+    fs::remove(tmp, ec);
+    return fail(ErrorKind::Io, "cannot write " + target.string() + ": " + why);
+  }
+  return {};
+}
+
+Result<void> ConditionalFiles::remove(std::string_view name) const {
+  if (!valid_name(name)) return cfg("conditionals name '" + std::string(name) + "' must be a plain file name");
+  const auto p = path(name);
+  std::error_code ec;
+  if (!std::filesystem::remove(p, ec) || ec)
+    return fail(ErrorKind::Io, "cannot delete " + p.string() + (ec ? ": " + ec.message() : ": no such file"));
+  return {};
 }
 
 Result<ConditionalSet> plan_truncations(const plan::MeasurementPlan& plan) {

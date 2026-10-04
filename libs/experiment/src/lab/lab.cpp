@@ -111,6 +111,7 @@ Lab load_lab(const LabPaths& paths) {
   }
   lab.condition_source = std::make_unique<DirectoryConditionalSource>(dir / "conditionals");
   lab.conditionals = std::make_unique<ConditionalLibrary>(*lab.condition_source);
+  lab.condition_files = std::make_unique<ConditionalFiles>(dir / "conditionals");
   lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
   lab.scripts = std::make_unique<LabScripts>(dir / "scripts");
   if (fs::exists(dir / "peak_center.toml", ec)) {

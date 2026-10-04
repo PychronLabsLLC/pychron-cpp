@@ -80,6 +80,7 @@ struct Lab {
   std::unique_ptr<plan::PlanLibrary> plans;
   std::unique_ptr<DirectoryConditionalSource> condition_source;
   std::unique_ptr<ConditionalLibrary> conditionals;
+  std::unique_ptr<ConditionalFiles> condition_files;  // the same directory, for the editor
   std::unique_ptr<LabScripts> scripts;
   std::unique_ptr<LabConditionals> condition_names;
   std::map<std::string, jobs::PeakCenterConfig> peak_centers;

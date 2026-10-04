@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/conditionals/queue_actions.hpp"
@@ -53,6 +54,27 @@ class MapConditionalSource final : public IConditionalSource {
 
  private:
   std::map<std::string, std::string, std::less<>> files_;
+};
+
+// The files of <lab>/conditionals, for the editor. Names are plain: no path
+// separators, no "..", no leading '.', no ".toml" suffix.
+class ConditionalFiles {
+ public:
+  explicit ConditionalFiles(std::filesystem::path dir) : dir_(std::move(dir)) {}
+
+  // Names without ".toml", sorted, "system" first; empty when the directory is missing.
+  Result<std::vector<std::string>> list() const;
+  Result<std::string> read(std::string_view name) const;
+  // Creates the directory. The text goes to a temporary file that is then
+  // renamed, so a failed write leaves the old file (or none).
+  Result<void> write(std::string_view name, std::string_view text) const;
+  Result<void> remove(std::string_view name) const;
+  bool exists(std::string_view name) const;
+  std::filesystem::path path(std::string_view name) const;
+  static bool valid_name(std::string_view name);
+
+ private:
+  std::filesystem::path dir_;
 };
 
 // The plan's inline [conditionals].truncations as a set (names
