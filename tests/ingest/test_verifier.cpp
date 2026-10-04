@@ -2,6 +2,7 @@
 // name the rows it left (or rows it did not), and a fake age function.
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "fake_adapter.hpp"
@@ -1256,10 +1258,18 @@ TEST_P(VerifierTest, ParityComparesTheErrorWithoutJWhenTheMemberHasOne) {
   EXPECT_EQ(report.parity_failures[0].legacy_age_err, 0.125);
   EXPECT_EQ(report.parity_failures[0].computed_age_err, 0.25);
   EXPECT_EQ(report.parity_failures[0].basis, "constants=test");
-  const std::string detail = conflict(parity_conflict(kA)).detail_json;
-  for (const char* part : {R"("error_compared":"age_err_wo_j")", R"("basis":"constants=test")",
-                           R"("legacy":{"age":28.25,"age_err":0.125})", R"("computed":{"age":28.25,"age_err":0.25})"})
-    EXPECT_NE(detail.find(part), std::string::npos) << part << " in " << detail;
+  // Parsed, not searched as text: PostgreSQL hands jsonb back with its own
+  // whitespace and key order (persistence/model.hpp).
+  const std::string text = conflict(parity_conflict(kA)).detail_json;
+  const auto detail = nlohmann::json::parse(text, nullptr, false);
+  ASSERT_TRUE(detail.is_object()) << text;
+  EXPECT_EQ(detail.value("error_compared", ""), "age_err_wo_j") << text;
+  EXPECT_EQ(detail.value("basis", ""), "constants=test") << text;
+  for (const auto& [key, expected] : {std::pair{"legacy", R"({"age":28.25,"age_err":0.125})"},
+                                      std::pair{"computed", R"({"age":28.25,"age_err":0.25})"}}) {
+    ASSERT_TRUE(detail.contains(key)) << text;
+    EXPECT_EQ(detail.at(key), nlohmann::json::parse(expected)) << key << " in " << text;
+  }
 }
 
 // Without age_err_wo_j the file's flag says which computed error age_err is

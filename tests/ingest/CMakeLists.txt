@@ -12,7 +12,7 @@ target_include_directories(pychron_ingest_tests PRIVATE
   "${PROJECT_SOURCE_DIR}/tests/persistence"
   "${PROJECT_SOURCE_DIR}/libs/persistence/src")
 target_compile_definitions(pychron_ingest_tests PRIVATE QT_NO_KEYWORDS)
-target_link_libraries(pychron_ingest_tests PRIVATE pychron::ingest pychron::persistence TinyOrm::TinyOrm Qt6::Core
-  Qt6::Sql GTest::gtest_main)
+target_link_libraries(pychron_ingest_tests PRIVATE pychron::ingest pychron::persistence nlohmann_json::nlohmann_json
+  TinyOrm::TinyOrm Qt6::Core Qt6::Sql GTest::gtest_main)
 pychron_set_warnings(pychron_ingest_tests)
 gtest_discover_tests(pychron_ingest_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
