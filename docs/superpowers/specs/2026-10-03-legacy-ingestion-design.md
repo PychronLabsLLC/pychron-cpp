@@ -779,3 +779,30 @@ points. Where this section and an earlier one disagree, this section wins.
     insert of a new row that the store refuses is an error and stops the
     run, as before. Revises the sentence of item 39 on a fill that breaks a
     constraint.
+43. **Repeated natural keys in the dump.** Rows of a catalog table with one
+    natural key are one row. They used to be compared as the dump writes
+    them, every column but `id`, and any difference refused the later row.
+    They are compared now by what would be imported, column by column:
+    after the none rule (item 40), the time-zone conversion and the
+    resolution of links. (a) A later row whose values equal those the
+    earlier rows gave is a plain repeat: no conflict. (b) A later row that
+    has a value where the earlier rows have none is no clash: it is sent,
+    and the store fills what its row lacks (item 39), so the row is the
+    union. (c) A later row that gives a different value for a column keeps
+    nothing of that column: the first value stays, the value is taken out
+    of what is sent, and the row gets an `identity_clash` conflict at
+    `<file>#<id>` marked `imported: true` (a warning: the row's identity is
+    in the store and only the losing values are not, and the conflict keeps
+    them) with `repeats` (the legacy id of the first row) and `columns`
+    (`kept` and `given` for each). The other values of such a row are sent
+    as in (b). An irradiation position's identifier is such a column: a
+    hole keeps the identifier of its first row, another one given for it is
+    reported and not created, and a load position that names it is refused
+    as before. A repeat is refused (blocking) only for the reasons any row
+    is. Limits, as item 39 and batch.hpp have them: the times a row is made
+    with and a load's `archived` flag are set when the row is made, so a
+    later row's time where the first has none is not applied, and is not
+    reported. A store imported under the old rule holds the refusals: a
+    replay supersedes those of rows that now have no conflict and restates
+    the others as the warning (item 41). Replaces "a row with the natural
+    key of an earlier row and other values is refused".

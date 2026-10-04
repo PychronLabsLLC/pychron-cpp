@@ -43,7 +43,7 @@ namespace {
 const std::filesystem::path kFixture = std::filesystem::path(PYCHRON_DVC_FIXTURES_DIR) / "catalog";
 const char* const kZone = "America/Denver";
 // Rows of the fixture's catalog tables: one unit each.
-constexpr int kRows = 46;
+constexpr int kRows = 47;
 
 std::string err(const Error& e) { return to_string(e); }
 
@@ -290,11 +290,11 @@ std::vector<Item> items_of(const ingest::ImportBatch& batch) {
 json detail_of(const ingest::ConflictItem& conflict) { return json::parse(conflict.detail_json); }
 
 // The rows a batch accounts for: a row is an item (with a conflict for each
-// link it lost, path "...@<column>") or a refusal.
+// thing of it that was not applied, "imported": true) or a refusal.
 std::size_t rows_of(const ingest::ImportBatch& batch) {
   std::size_t refusals = 0;
   for (const auto& conflict : batch.conflicts)
-    if (conflict.key.path.find('@') == std::string::npos) ++refusals;
+    if (detail_of(conflict).at("imported") == false) ++refusals;
   return batch.catalog.size() + refusals;
 }
 
@@ -524,7 +524,7 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
       {"ProjectTbl.jsonl#3@principal_investigatorID",
        "principal_investigatorID 99 is not in PrincipalInvestigatorTbl; imported without it"},
       {"SampleTbl.jsonl#3", "projectID 42 is not in ProjectTbl"},
-      {"SampleTbl.jsonl#5", "has the natural key of SampleTbl 1 and other values; that row is kept"},
+      {"SampleTbl.jsonl#5", "has the natural key of SampleTbl 1 and other values for note; those of that row are kept"},
       {"SampleTbl.jsonl#6@materialID", "materialID is missing; imported under material 'unknown'"},
       {"LevelTbl.jsonl#4", "irradiationID 7 is not in IrradiationTbl"},
       {"IrradiationPositionTbl.jsonl#5@sampleID",
@@ -552,7 +552,13 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
         << conflict.path;
     EXPECT_EQ(detail.at("reason"), expected->second) << conflict.path;
     EXPECT_TRUE(detail.at("row").is_object()) << conflict.path;
-    EXPECT_EQ(detail.at("imported"), link != std::string::npos) << conflict.path;
+    // A row that repeats another with other values is imported too: only those values are not.
+    const bool repeat = conflict.path == "SampleTbl.jsonl#5";
+    EXPECT_EQ(detail.at("imported"), link != std::string::npos || repeat) << conflict.path;
+    if (repeat) {
+      EXPECT_EQ(detail.at("columns"),
+                json::parse(R"({"note":{"kept":"collected at the base, north side","given":"another note"}})"));
+    }
     if (link != std::string::npos) {
       EXPECT_EQ(detail.at("column"), conflict.path.substr(link + 1)) << conflict.path;
       EXPECT_EQ(detail.at("value"), detail.at("row").at(conflict.path.substr(link + 1))) << conflict.path;
@@ -565,6 +571,8 @@ TEST_P(CatalogDb, DanglingForeignKeyIsConflict) {
   EXPECT_EQ(json::parse(lost->detail_json).at("row").at("name"), "Lost");
   // Nothing of a refused row is stored, nor made up for it.
   EXPECT_EQ(world_->count("sample"), 4);
+  // A repeat that brings what the first row lacks fills it.
+  EXPECT_EQ(world_->text("SELECT igsn AS v FROM sample WHERE name = 'FC-2'"), "IGSN002");
   EXPECT_EQ(world_->text("SELECT note AS v FROM sample WHERE name = 'HH-1'"), "collected at the base, north side");
   // A sample without a material is stored under the placeholder, and its position keeps it.
   EXPECT_EQ(world_->text("SELECT m.name AS v FROM sample s JOIN material m ON m.uuid = s.material_uuid "
@@ -847,8 +855,8 @@ TEST_P(CatalogDb, ReplaySupersedesConflictsTheDumpNoLongerHas) {
   EXPECT_EQ(*world_->store->latest_change_seq(), seq);
 }
 
-// The other half: a row refused under an old rule and refused still, for
-// another reason, keeps its conflict, which then says the reason of today;
+// The other half: a row refused under an old rule whose conflict says
+// something else today keeps its conflict, which then says what is so today;
 // and a conflict that was superseded and that the dump has again is pending
 // again. What someone decided is not touched.
 TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
@@ -870,8 +878,7 @@ TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
     EXPECT_TRUE(row && *row) << path;
     return row && *row ? **row : P::ImportConflictRow{};
   };
-  const std::string repeats =
-      "has the natural key of SampleTbl 1 and other values; that row is kept; materialID is missing";
+  const std::string repeats = "has the natural key of SampleTbl 1 and other values for note; those of that row are kept";
   ASSERT_EQ(json::parse(stored("SampleTbl.jsonl#2").detail_json).at("reason"), repeats);
 
   // As a store imported under the old rule has them, one of them set aside.
@@ -897,10 +904,12 @@ TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
   replay.replay = true;
   auto replayed = run_import(*world_, adapter_config(dir.path()), std::nullopt, replay);
   ASSERT_TRUE(replayed) << err(replayed.error());
-  EXPECT_EQ(replayed->conflicts, 2);
+  // Pending after it: the repeat that was restated, and the placeholder material of all three.
+  EXPECT_EQ(replayed->conflicts, 4);
   auto row = stored("SampleTbl.jsonl#2");
   EXPECT_EQ(row.resolution, "pending");
   EXPECT_EQ(json::parse(row.detail_json).at("reason"), repeats);
+  EXPECT_EQ(json::parse(row.detail_json).at("imported"), true);
   EXPECT_EQ(json::parse(row.detail_json).at("legacy_id"), "2");
   row = stored("SampleTbl.jsonl#3");
   EXPECT_EQ(row.resolution, "ignored");
@@ -918,6 +927,103 @@ TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
   EXPECT_EQ(dvc::testing::verify_source(*world_, **adapter).replay_would_write, 0);
 }
 
+// Rows with one natural key are one row (spec section 10.43). What decides
+// is what would be imported, not the text of the dump: a repeat that says the
+// same, or brings what the first lacks, is no conflict; one that says
+// something else for a column is imported without that value, with a warning.
+TEST_P(CatalogDb, RepeatedRowsAreOneRowWithTheUnionOfTheirValues) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
+      .table("SampleTbl",
+             {
+                 R"({"id":1,"name":"S","materialID":1,"projectID":1,"note":"one","igsn":null,"lat":34.5})",
+                 // The same after the none rule: "---------" and NULL are both no value.
+                 R"({"id":2,"name":"S","materialID":1,"projectID":1,"note":"---------","igsn":"","lat":"34.5"})",
+                 R"({"id":3,"name":"S","materialID":1,"projectID":1,"note":null,"igsn":null,"lat":null})",
+                 // Brings what the first lacks.
+                 R"({"id":4,"name":"S","materialID":1,"projectID":1,"note":null,"igsn":"IG-1"})",
+                 // Says something else, and brings a location.
+                 R"({"id":5,"name":"S","materialID":1,"projectID":1,"note":"five","igsn":"IG-1","location":"here"})",
+             })
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl",
+             {
+                 R"({"id":1,"identifier":"100","sampleID":null,"levelID":1,"position":1,"weight":null})",
+                 R"({"id":2,"identifier":"100","sampleID":5,"levelID":1,"position":1,"weight":2.5})",
+                 // Another identifier for the hole: the hole keeps the first.
+                 R"({"id":3,"identifier":"200","sampleID":5,"levelID":1,"position":1,"weight":2.5})",
+             })
+      .done();
+  auto stats = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->conflicts, 2);
+
+  EXPECT_EQ(world_->count("sample"), 1);
+  auto r = world_->one("SELECT note, igsn, lat, location FROM sample");
+  EXPECT_EQ(pd::to_std(r.value("note")), "one");
+  EXPECT_EQ(pd::to_std(r.value("igsn")), "IG-1");
+  EXPECT_DOUBLE_EQ(r.value("lat").toDouble(), 34.5);
+  EXPECT_EQ(pd::to_std(r.value("location")), "here");
+  EXPECT_EQ(world_->count("irradiation_position"), 1);
+  EXPECT_EQ(world_->count("identifier"), 1);
+  r = world_->one("SELECT d.identifier AS identifier, p.weight AS weight, s.name AS sample FROM irradiation_position p "
+                  "JOIN identifier d ON d.position_uuid = p.uuid JOIN sample s ON s.uuid = p.sample_uuid");
+  EXPECT_EQ(pd::to_std(r.value("identifier")), "100");
+  EXPECT_DOUBLE_EQ(r.value("weight").toDouble(), 2.5);
+  EXPECT_EQ(pd::to_std(r.value("sample")), "S");
+
+  std::map<std::string, json> details;
+  for (const auto& conflict : world_->conflicts()) {
+    EXPECT_EQ(conflict.kind, ConflictKind::IdentityClash) << conflict.path;
+    EXPECT_TRUE(ingest::is_warning_conflict(conflict)) << conflict.path;
+    details[conflict.path] = json::parse(conflict.detail_json);
+  }
+  ASSERT_EQ(details.size(), 2u);
+  const json& sample = details.at("SampleTbl.jsonl#5");
+  EXPECT_EQ(sample.at("imported"), true);
+  EXPECT_EQ(sample.at("table"), "SampleTbl");
+  EXPECT_EQ(sample.at("legacy_id"), "5");
+  EXPECT_EQ(sample.at("repeats"), "1");
+  EXPECT_EQ(sample.at("columns"), json::parse(R"({"note":{"kept":"one","given":"five"}})"));
+  EXPECT_EQ(sample.at("reason"), "has the natural key of SampleTbl 1 and other values for note; those of that row are kept");
+  const json& hole = details.at("IrradiationPositionTbl.jsonl#3");
+  EXPECT_EQ(hole.at("imported"), true);
+  EXPECT_EQ(hole.at("columns"), json::parse(R"({"identifier":{"kept":"100","given":"200"}})"));
+
+  {
+    auto adapter = CatalogAdapter::open(adapter_config(dir.path()));
+    ASSERT_TRUE(adapter) << err(adapter.error());
+    const auto report = dvc::testing::verify_source(*world_, **adapter);
+    EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{});
+    EXPECT_EQ(report.pending_blocking, 0);
+    EXPECT_EQ(report.pending_warnings, 2);
+    EXPECT_EQ(report.replay_would_write, 0);
+    EXPECT_TRUE(report.ok());
+  }
+
+  // A replay writes nothing, and one row at a time ends the same.
+  const auto before = snapshot_of(*world_);
+  const auto seq = *world_->store->latest_change_seq();
+  auto replay = writer_config();
+  replay.replay = true;
+  ASSERT_TRUE(run_import(*world_, adapter_config(dir.path()), std::nullopt, replay));
+  const auto after = snapshot_of(*world_);
+  EXPECT_TRUE(after == before) << first_difference(after, before);
+  EXPECT_EQ(*world_->store->latest_change_seq(), seq);
+  auto other = fresh_world();
+  for (bool finished = false; !finished;) {
+    auto step = run_import(*other, adapter_config(dir.path(), 1), 1);
+    ASSERT_TRUE(step) << err(step.error());
+    finished = step->finished;
+  }
+  // The two worlds read the dump from one directory: the same source, the same ids.
+  const auto cut = snapshot_of(*other);
+  EXPECT_TRUE(cut == before) << first_difference(cut, before);
+}
+
 TEST_P(CatalogDb, ResumeFromToken) {
   auto first = run_import(*world_, adapter_config(kFixture, 2), 1);
   ASSERT_TRUE(first) << err(first.error());
@@ -933,7 +1039,7 @@ TEST_P(CatalogDb, ResumeFromToken) {
   auto rest = run_import(*world_, adapter_config(kFixture, 2));
   ASSERT_TRUE(rest) << err(rest.error());
   EXPECT_TRUE(rest->finished);
-  EXPECT_EQ(rest->batches, (kRows - 2) / 2);
+  EXPECT_EQ(rest->batches, (kRows - 2 + 1) / 2);
   EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"12:0@" + fixture_sha()});
 
   auto whole = fresh_world();
@@ -1020,10 +1126,10 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
     EXPECT_EQ(dvc::testing::unaccounted(report), std::vector<std::string>{}) << batch_rows;
     EXPECT_EQ(report.would_write, 0);
     EXPECT_EQ(report.replay_would_write, 0);
-    // Seven rows were refused; three were imported without a link and one
-    // under the placeholder material.
-    EXPECT_EQ(report.pending_blocking, 7) << batch_rows;
-    EXPECT_EQ(report.pending_warnings, 4) << batch_rows;
+    // Six rows were refused; three were imported without a link, one under
+    // the placeholder material and one without a value an earlier row has.
+    EXPECT_EQ(report.pending_blocking, 6) << batch_rows;
+    EXPECT_EQ(report.pending_warnings, 5) << batch_rows;
     EXPECT_FALSE(report.ok());
     EXPECT_EQ(report.parity_pass + report.parity_fail + report.parity_not_comparable, 0);
   }
@@ -1035,7 +1141,7 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
   auto uow = world_->store->begin_import_batch(world_->source().spec.uuid, world_->client);
   ASSERT_TRUE(uow);
   for (const auto& row : *refused) {
-    if (row.path.find('@') == std::string::npos) {
+    if (!ingest::is_warning_conflict(row)) {
       ASSERT_TRUE((*uow)->resolve_conflict(row.uuid, "ignored"));
     }
   }
@@ -1045,7 +1151,7 @@ TEST_P(CatalogDb, VerifyAfterImportIsOk) {
   const auto report = dvc::testing::verify_source(*world_, **adapter);
   EXPECT_TRUE(report.ok());
   EXPECT_EQ(report.pending_blocking, 0);
-  EXPECT_EQ(report.pending_warnings, 4);
+  EXPECT_EQ(report.pending_warnings, 5);
 }
 
 // Catalog rows are found by natural key, whoever made them, and a dry run does
@@ -1399,23 +1505,34 @@ TEST(CatalogDbAdapter, RepeatedNaturalKeys) {
              })
       .done();
   const auto batch = only_batch(dir);
+  // A repeat with another value is imported; the value is reported and not sent.
   ASSERT_EQ(batch.conflicts.size(), 2u);
   EXPECT_EQ(batch.conflicts[0].key.path, "PrincipalInvestigatorTbl.jsonl#3");
-  EXPECT_EQ(detail_of(batch.conflicts[0]).at("reason"),
-            "has the natural key of PrincipalInvestigatorTbl 1 and other values; that row is kept");
+  json detail = detail_of(batch.conflicts[0]);
+  EXPECT_EQ(detail.at("reason"), "has the natural key of PrincipalInvestigatorTbl 1 and other values for affiliation; "
+                                 "those of that row are kept");
+  EXPECT_EQ(detail.at("imported"), true);
+  EXPECT_EQ(detail.at("columns"), json::parse(R"({"affiliation":{"kept":"NMT","given":"UNM"}})"));
   EXPECT_EQ(batch.conflicts[1].key.path, "MassSpectrometerTbl.jsonl#JAN");
-  EXPECT_EQ(detail_of(batch.conflicts[1]).at("reason"),
-            "has the natural key of MassSpectrometerTbl Jan and other values; that row is kept");
-  // A row that names the refused repeat means the investigator that was kept.
+  detail = detail_of(batch.conflicts[1]);
+  EXPECT_EQ(detail.at("reason"),
+            "has the natural key of MassSpectrometerTbl Jan and other values for kind; those of that row are kept");
+  EXPECT_EQ(detail.at("columns"), json::parse(R"({"kind":{"kept":"Argus","given":"Helix"}})"));
+  const auto investigators = items_of<ingest::PiItem>(batch);
+  ASSERT_EQ(investigators.size(), 3u);
+  EXPECT_EQ(investigators[1].affiliation, std::optional<std::string>{"NMT"});
+  EXPECT_FALSE(investigators[2].affiliation.has_value());
+  // A row that names the repeat means the investigator that was kept.
   const auto projects = items_of<ingest::ProjectItem>(batch);
   ASSERT_EQ(projects.size(), 3u);
   EXPECT_EQ(projects[2].name, "Q");
   EXPECT_EQ(projects[2].pi_last_name, std::optional<std::string>{"Ross"});
   EXPECT_EQ(projects[2].pi_first_initial, std::optional<std::string>{"J"});
   const auto spectrometers = items_of<ingest::MassSpecItem>(batch);
-  ASSERT_EQ(spectrometers.size(), 2u);
-  EXPECT_EQ(spectrometers[0].spec.name, "jan");
-  EXPECT_EQ(spectrometers[1].spec.name, "jan");
+  ASSERT_EQ(spectrometers.size(), 3u);
+  for (const auto& spectrometer : spectrometers) EXPECT_EQ(spectrometer.spec.name, "jan");
+  EXPECT_EQ(spectrometers[1].spec.kind, std::optional<std::string>{"Argus"});
+  EXPECT_FALSE(spectrometers[2].spec.kind.has_value());
 }
 
 TEST(CatalogDbAdapter, TimesFollowTheColumnTypeAndTheDumpsZone) {
@@ -1621,16 +1738,18 @@ TEST(CatalogDbAdapter, StringKeysMatchWithoutCaseOrTrailingSpaces) {
   const auto batch = only_batch(dir);
 
   const auto users = items_of<ingest::UserItem>(batch);
-  ASSERT_EQ(users.size(), 3u);
+  ASSERT_EQ(users.size(), 4u);
   EXPECT_EQ(users[0].name, "jross");
   EXPECT_EQ(users[1].name, "jross");  // the first row's spelling
-  EXPECT_EQ(users[2].name, " jross");
+  EXPECT_EQ(users[2].name, "jross");
+  EXPECT_FALSE(users[2].affiliation.has_value());  // another one than the first row's: not sent
+  EXPECT_EQ(users[3].name, " jross");
   const auto devices = items_of<ingest::ExtractDeviceItem>(batch);
   ASSERT_EQ(devices.size(), 2u);
   EXPECT_EQ(devices[1].name, "Fusions CO2");
   // A reference is stored in its parent's own spelling.
   const auto loads = items_of<ingest::LoadItem>(batch);
-  ASSERT_EQ(loads.size(), 4u);
+  ASSERT_EQ(loads.size(), 5u);
   EXPECT_EQ(loads[0].spec.name, "L-1");
   EXPECT_EQ(loads[2].spec.name, "L-2");
   for (const auto& load : loads) EXPECT_EQ(load.created_by, std::optional<std::string>{"jross"}) << load.spec.name;
@@ -1646,8 +1765,11 @@ TEST(CatalogDbAdapter, StringKeysMatchWithoutCaseOrTrailingSpaces) {
   EXPECT_EQ(reasons, (std::map<std::string, std::string>{
                          {"IrradiationPositionTbl.jsonl#2",
                           "identifier BA-01  already sits at the position of IrradiationPositionTbl 1"},
-                         {"UserTbl.jsonl#JROSS  ", "has the natural key of UserTbl jross and other values; that row is kept"},
-                         {"LoadTbl.jsonl#l-3 ", "has the natural key of LoadTbl L-3 and other values; that row is kept"},
+                         {"UserTbl.jsonl#JROSS  ",
+                          "has the natural key of UserTbl jross and other values for affiliation; those of that row are "
+                          "kept"},
+                         {"LoadTbl.jsonl#l-3 ",
+                          "has the natural key of LoadTbl L-3 and other values for archived; those of that row are kept"},
                          {"LoadPositionTbl.jsonl#3", "identifier  ba-01 is not in IrradiationPositionTbl"},
                      }));
 }

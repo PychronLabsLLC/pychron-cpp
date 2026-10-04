@@ -89,12 +89,13 @@ CREATE TABLE `SampleTbl` (
   PRIMARY KEY (`id`),
   KEY `materialID` (`materialID`),
   KEY `projectID` (`projectID`)
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8;
 
--- 3: refused, no such project. 5: refused, it is sample 1 again with another
--- note. 6: no material, imported under the placeholder material.
+-- 3: refused, no such project. 5: sample 1 again with another note, which is
+-- reported and not applied. 6: no material, imported under the placeholder
+-- material. 7: sample 2 again, with an IGSN it lacks: filled.
 LOCK TABLES `SampleTbl` WRITE;
-INSERT INTO `SampleTbl` VALUES (1,'HH-1',1,1,'collected at the base, north side','IGSN001',34.0722,-106.905,'shelf 3','ignimbrite','Tuff of Henry Hill','volcanic','pyroclastic','Mogollon','Socorro, NM',28.2,1890.5,'2016-03-01 09:30:00','2016-11-06 01:30:00'),(2,'FC-2',3,2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(3,'Lost',1,42,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Orphan-1',1,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'HH-1',1,1,'another note',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(6,'NoMat',NULL,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `SampleTbl` VALUES (1,'HH-1',1,1,'collected at the base, north side','IGSN001',34.0722,-106.905,'shelf 3','ignimbrite','Tuff of Henry Hill','volcanic','pyroclastic','Mogollon','Socorro, NM',28.2,1890.5,'2016-03-01 09:30:00','2016-11-06 01:30:00'),(2,'FC-2',3,2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(3,'Lost',1,42,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Orphan-1',1,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'HH-1',1,1,'another note',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(6,'NoMat',NULL,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(7,'FC-2',3,2,NULL,'IGSN002',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `IrradiationTbl`;

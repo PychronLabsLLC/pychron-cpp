@@ -33,9 +33,8 @@
 // on. Refused are a row whose required parent (a sample's project, a level's
 // irradiation, a position's level, a load position's load and identifier) is
 // missing or was itself refused, a row without a required
-// value, one with a value that cannot be read, an identifier already placed
-// elsewhere, and a row with the natural key of an earlier row and other
-// values (the earlier row is kept). The conflict's path is
+// value, one with a value that cannot be read, and an identifier already
+// placed elsewhere. The conflict's path is
 // "<file>#<legacy id>" at commit <manifest sha256>; its detail holds the
 // table, the legacy id, the reason and the row.
 //
@@ -59,8 +58,17 @@
 // Each batch also lists, as `superseded`, the conflicts its rows could have
 // and do not: a store imported under an older rule may hold them.
 //
-// A row that repeats an earlier one exactly is not a conflict. Rows that name
-// a refused duplicate resolve to the row that was kept.
+// Rows with one natural key are one row (spec 10.43). They are compared by
+// what would be imported (after the none rule, the time zone and the
+// resolution of links), column by column. A later row that gives the same
+// values, or values the earlier rows lack, is sent and is no conflict: the
+// store fills what its row lacks. A value that differs from the one an
+// earlier row gave is not sent (the first stays); the row is sent without
+// it, with an `identity_clash` conflict at "<file>#<legacy id>" whose detail
+// has "imported": true, "repeats" (the legacy id of the first row) and
+// "columns": {"<column>": {"kept": ..., "given": ...}}. A hole keeps the
+// identifier of its first row; another row's identifier for it is such a
+// value, and is not made. Rows that name a repeat resolve to the one row.
 //
 // Times: a TIMESTAMP column is UTC when the dump set the session time zone to
 // +00:00, as mysqldump does. The type is the one the dump's CREATE TABLE

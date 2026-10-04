@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -336,6 +337,15 @@ class Fields {
   }
   const std::vector<BrokenLink>& broken_links() const { return links_; }
 
+  // The row has the natural key of an earlier one and gives other values for
+  // some columns: it is imported without them, and they are reported.
+  struct Repeat {
+    std::string of;  // legacy id of the row that was kept
+    Json columns;    // {"<column>": {"kept": <its value>, "given": <this row's>}}
+  };
+  void repeats(std::string of, Json columns) { repeat_ = Repeat{std::move(of), std::move(columns)}; }
+  const std::optional<Repeat>& repeat() const { return repeat_; }
+
   std::optional<std::string> text(std::string_view column) {
     std::string out;
     if (const Json* v = value(column)) {
@@ -418,7 +428,26 @@ class Fields {
   const Json& row_;
   std::vector<std::string> problems_;
   std::vector<BrokenLink> links_;
+  std::optional<Repeat> repeat_;
 };
+
+// A value a row would give its catalog row, beyond the natural key: as it
+// would be imported (after the none rule, the time zone, the link's
+// resolution), and how to take it out of the item.
+struct Carried {
+  std::string column;  // as the dump names it
+  Json value;
+  std::function<void()> drop;
+};
+using Values = std::vector<Carried>;
+
+template <class T>
+void carry(Values& out, const char* column, std::optional<T>& field) {
+  if (field) out.push_back({column, Json(*field), [&field] { field.reset(); }});
+}
+void carry(Values& out, const char* column, std::optional<P::UtcTime>& field) {
+  if (field) out.push_back({column, Json(field->iso()), [&field] { field.reset(); }});
+}
 
 // One row of a catalog table: what it becomes. A refused row is one conflict;
 // an imported row is its item and one conflict per link it lost.
@@ -507,6 +536,7 @@ class Reader {
       std::string legacy_id = "line" + std::to_string(number);
       std::vector<std::string> problems;
       std::vector<Fields::BrokenLink> links;
+      std::optional<Fields::Repeat> repeat;
       std::optional<ingest::CatalogItem> item;
       Json detail = Json::object();
       detail["table"] = source.name;
@@ -536,6 +566,7 @@ class Reader {
           item = to_item(row, fields, legacy_id);
           problems = fields.problems();
           links = fields.broken_links();
+          repeat = fields.repeat();
           if (!problems.empty()) refused_[index].insert(fold(legacy_id));
         }
       }
@@ -558,7 +589,21 @@ class Reader {
       };
       if (problems.empty()) {
         unit.item = std::move(item);
-        answered(unit.path);
+        if (repeat) {
+          // The row is one with an earlier row; the values it gives and that
+          // row has otherwise are not sent, and are kept here.
+          std::string columns;
+          for (const auto& [column, values] : repeat->columns.items()) columns += (columns.empty() ? "" : ", ") + column;
+          Json about = detail;
+          about[ingest::kMarkerImported] = true;
+          about["repeats"] = repeat->of;
+          about["columns"] = repeat->columns;
+          about["reason"] = std::string("has the natural key of ") + kTables[index].name + " " + repeat->of +
+                            " and other values for " + columns + "; those of that row are kept";
+          unit.conflicts.push_back(conflict(unit.path, std::move(about)));
+        } else {
+          answered(unit.path);
+        }
         // The row is stored; each link it lost is a conflict of its own, named
         // by the column, so it is never taken for a refusal of the row.
         for (const auto& link : links) {
@@ -615,16 +660,24 @@ class Reader {
                                             : what + " is not in " + name;
   }
 
-  // A row with the natural key of an earlier one adds nothing: silently when
-  // the two say the same, refused when they differ.
-  void once(Fields& f, TableIndex index, const std::string& natural_key, const Json& signature,
+  // Rows with one natural key are one row (spec section 10.43), and what is
+  // compared is what would be imported, not the dump's text. A later row that
+  // gives the values the earlier ones gave, or values they lack, is sent as
+  // it is: the store fills what the row lacks. A value that differs from the
+  // one an earlier row gave is taken out of the item (the first stays) and
+  // reported by the row's conflict.
+  void once(Fields& f, TableIndex index, const std::string& natural_key, Values values,
             const std::string& legacy_id) {
     if (!f.ok()) return;
-    std::string text = dump(signature);
-    const auto [it, inserted] = seen_[index].try_emplace(natural_key, text, legacy_id);
-    if (inserted || it->second.first == text) return;
-    f.refuse(std::string("has the natural key of ") + kTables[index].name + " " + it->second.second +
-             " and other values; that row is kept");
+    Seen& seen = seen_[index].try_emplace(natural_key, Seen{legacy_id, {}}).first->second;
+    Json clashes = Json::object();
+    for (auto& carried : values) {
+      const auto [held, fresh] = seen.values.try_emplace(carried.column, carried.value);
+      if (fresh || held->second == carried.value) continue;
+      clashes[carried.column] = Json{{"kept", held->second}, {"given", carried.value}};
+      carried.drop();
+    }
+    if (!clashes.empty()) f.repeats(seen.legacy_id, std::move(clashes));
   }
 
   // A row of a table whose key is a name. Names that differ by case or
@@ -632,19 +685,11 @@ class Reader {
   // (once()), and the name everything is stored under is the first row's
   // spelling, which is returned. `known`: the table's names, folded.
   std::string named(Fields& f, TableIndex index, std::map<std::string, std::string>& known,
-                    const std::string& spelling, Json compared, const std::string& legacy_id) {
+                    const std::string& spelling, Values values, const std::string& legacy_id) {
     const std::string key = fold(spelling);
-    compared["name"] = key;
     const std::string kept = known.try_emplace(key, spelling).first->second;
-    once(f, index, key, compared, legacy_id);
+    once(f, index, key, std::move(values), legacy_id);
     return kept;
-  }
-
-  // The row without its surrogate key: what two rows are compared by.
-  static Json signature(const Json& row) {
-    Json out = row;
-    out.erase("id");
-    return out;
   }
 
   // `declared`: the column's type in the legacy ORM (fixtures/README.md,
@@ -680,7 +725,7 @@ class Reader {
 
   // ------------------------------------------------------------ the tables
 
-  ingest::CatalogItem pi(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem pi(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::PiItem item;
     const auto id = f.integer("id");
     item.last_name = f.required("last_name");
@@ -690,12 +735,15 @@ class Reader {
     if (f.ok() && id) {
       const PiKey key{item.last_name, item.first_initial};
       pis_.emplace(*id, key);
-      once(f, kPi, natural(key), signature(row), legacy_id);
+      Values values;
+      carry(values, "affiliation", item.affiliation);
+      carry(values, "email", item.email);
+      once(f, kPi, natural(key), std::move(values), legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem project(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem project(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::ProjectItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
@@ -706,20 +754,23 @@ class Reader {
     item.institution = f.optional_text("institution");
     if (f.ok() && id) {
       ProjectKey key{item.name, std::nullopt};
-      Json compared = signature(row);
       if (investigator) {
         key.pi = *investigator;
         item.pi_last_name = investigator->last;
         item.pi_first_initial = investigator->first;
-        compared["principal_investigatorID"] = natural(*investigator);
       }
       projects_.emplace(*id, key);
-      once(f, kProject, natural(key), compared, legacy_id);
+      Values values;
+      carry(values, "checkin_date", item.checkin_date);
+      carry(values, "comment", item.comment);
+      carry(values, "lab_contact", item.lab_contact);
+      carry(values, "institution", item.institution);
+      once(f, kProject, natural(key), std::move(values), legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem material(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem material(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::MaterialItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
@@ -727,12 +778,12 @@ class Reader {
     if (f.ok() && id) {
       const MaterialKey key{item.name, item.grainsize};
       materials_.emplace(*id, key);
-      once(f, kMaterial, natural(key), signature(row), legacy_id);
+      once(f, kMaterial, natural(key), {}, legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem sample(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem sample(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::SampleItem item;
     const auto id = f.integer("id");
     auto& s = item.fields;
@@ -779,27 +830,42 @@ class Reader {
       }
       const SampleKey key{s.name, *in, *of};
       samples_.emplace(*id, key);
-      Json compared = signature(row);
-      compared["materialID"] = natural(*of);
-      compared["projectID"] = natural(*in);
-      once(f, kSample, natural(key), compared, legacy_id);
+      Values values;
+      carry(values, "note", s.note);
+      carry(values, "igsn", s.igsn);
+      carry(values, "lat", s.lat);
+      carry(values, "lon", s.lon);
+      carry(values, "elevation", s.elevation);
+      carry(values, "storage_location", s.storage_location);
+      carry(values, "location", s.location);
+      carry(values, "unit", s.unit);
+      carry(values, "lithology", s.lithology);
+      carry(values, "lithology_class", s.lithology_class);
+      carry(values, "lithology_type", s.lithology_type);
+      carry(values, "lithology_group", s.lithology_group);
+      carry(values, "approximate_age", s.approximate_age);
+      carry(values, "create_date", s.created);
+      carry(values, "update_date", s.updated);
+      once(f, kSample, natural(key), std::move(values), legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem irradiation(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem irradiation(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::IrradiationItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
     item.created = time(f, "create_date", "timestamp");
     if (f.ok() && id) {
       irradiations_.emplace(*id, item.name);
-      once(f, kIrradiation, item.name, signature(row), legacy_id);
+      Values values;
+      carry(values, "create_date", item.created);
+      once(f, kIrradiation, item.name, std::move(values), legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem level(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem level(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::LevelItem item;
     const auto id = f.integer("id");
     item.name = f.required("name");
@@ -811,14 +877,16 @@ class Reader {
       item.irradiation = *in;
       const LevelKey key{*in, item.name};
       levels_.emplace(*id, key);
-      Json compared = signature(row);
-      compared["irradiationID"] = *in;
-      once(f, kLevel, natural(key), compared, legacy_id);
+      Values values;
+      carry(values, "holder", item.holder);
+      carry(values, "z", item.z);
+      carry(values, "note", item.note);
+      once(f, kLevel, natural(key), std::move(values), legacy_id);
     }
     return item;
   }
 
-  ingest::CatalogItem position(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem position(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::PositionItem item;
     const LevelKey* in = parent(f, "levelID", kLevel, levels_, Link::Required);
     const SampleKey* of = parent(f, "sampleID", kSample, samples_, Link::Optional);
@@ -831,8 +899,16 @@ class Reader {
       item.irradiation = in->irradiation;
       item.level = in->name;
       item.position = *hole;
-      Json compared = signature(row);
-      compared["levelID"] = natural(*in);
+      Values values;
+      if (!item.identifier.empty())
+        // The hole keeps the identifier of its first row; another is not made.
+        values.push_back({"identifier", Json(fold(item.identifier)), [&] {
+                            refused_identifiers_.insert(fold(item.identifier));
+                            item.identifier.clear();
+                          }});
+      carry(values, "weight", item.weight);
+      carry(values, "packet", item.packet);
+      carry(values, "note", item.note);
       if (of) {
         item.sample = of->name;
         item.project = of->project.name;
@@ -842,10 +918,20 @@ class Reader {
           item.pi_last_name = of->project.pi->last;
           item.pi_first_initial = of->project.pi->first;
         }
-        compared["sampleID"] = natural(*of);
+        Json named{{"sample", of->name}, {"project", of->project.name}, {"material", of->material.name}};
+        if (!of->material.grainsize.empty()) named["grainsize"] = of->material.grainsize;
+        if (of->project.pi) named["principal_investigator"] = of->project.pi->last + ", " + of->project.pi->first;
+        values.push_back({"sampleID", std::move(named), [&] {
+                            item.sample.reset();
+                            item.project.reset();
+                            item.material.reset();
+                            item.grainsize.reset();
+                            item.pi_last_name.reset();
+                            item.pi_first_initial.reset();
+                          }});
       }
       const std::string where = natural(*in) + "\n" + std::to_string(*hole);
-      once(f, kPosition, where, compared, legacy_id);
+      once(f, kPosition, where, std::move(values), legacy_id);
       if (f.ok() && !item.identifier.empty()) {
         // An identifier sits at one position.
         const auto [it, inserted] =
@@ -859,64 +945,80 @@ class Reader {
     return item;
   }
 
-  ingest::CatalogItem user(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem user(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::UserItem item;
     item.name = f.required("name");
     item.email = f.optional_text("email");
     item.affiliation = f.optional_text("affiliation");
     item.category = f.optional_text("category");
-    if (f.ok()) item.name = named(f, kUser, users_, item.name, row, legacy_id);
+    if (f.ok()) {
+      Values values;
+      carry(values, "email", item.email);
+      carry(values, "affiliation", item.affiliation);
+      carry(values, "category", item.category);
+      item.name = named(f, kUser, users_, item.name, std::move(values), legacy_id);
+    }
     return item;
   }
 
-  ingest::CatalogItem mass_spectrometer(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem mass_spectrometer(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::MassSpecItem item;
     // Lower case, as the analysis and reference imports name spectrometers.
     item.spec.name = lower(f.required("name"));
     item.spec.kind = f.optional_text("kind");
-    if (f.ok()) item.spec.name = named(f, kMassSpec, spectrometers_, item.spec.name, row, legacy_id);
+    if (f.ok()) {
+      Values values;
+      carry(values, "kind", item.spec.kind);
+      item.spec.name = named(f, kMassSpec, spectrometers_, item.spec.name, std::move(values), legacy_id);
+    }
     return item;
   }
 
-  ingest::CatalogItem extract_device(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem extract_device(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::ExtractDeviceItem item;
     item.name = f.required("name");
-    if (f.ok()) item.name = named(f, kExtractDevice, devices_, item.name, row, legacy_id);
+    if (f.ok()) item.name = named(f, kExtractDevice, devices_, item.name, {}, legacy_id);
     return item;
   }
 
-  ingest::CatalogItem load(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem load(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::LoadItem item;
     item.spec.name = f.required("name");
     item.spec.created = time(f, "create_date", "timestamp");
-    item.spec.archived = f.flag("archived").value_or(false);
+    const auto archived = f.flag("archived");
+    item.spec.archived = archived.value_or(false);
     item.holder_name = f.optional_text("holderName");
-    Json compared = row;
     if (const auto by = f.optional_text("username")) {
       if (const auto creator = users_.find(fold(*by)); creator != users_.end()) {
         item.created_by = creator->second;
-        compared["username"] = creator->second;
       } else {
         f.unlink("username", missing("username '" + *by + "'", kUser, *by));
       }
     }
-    if (f.ok()) item.spec.name = named(f, kLoad, loads_, item.spec.name, compared, legacy_id);
+    if (f.ok()) {
+      Values values;
+      carry(values, "create_date", item.spec.created);
+      // A load always has the flag in the store: there is nothing to take out.
+      if (archived) values.push_back({"archived", Json(*archived), [] {}});
+      carry(values, "holderName", item.holder_name);
+      carry(values, "username", item.created_by);
+      item.spec.name = named(f, kLoad, loads_, item.spec.name, std::move(values), legacy_id);
+    }
     return item;
   }
 
-  ingest::CatalogItem load_position(const Json& row, Fields& f, const std::string& legacy_id) {
+  ingest::CatalogItem load_position(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::LoadPositionItem item;
-    Json compared = signature(row);
     // Both parents are stored in their own spelling.
     if (const std::string tray = f.required("loadName"); !tray.empty()) {
       if (const auto found = loads_.find(fold(tray)); found != loads_.end())
-        compared["loadName"] = item.load = found->second;
+        item.load = found->second;
       else
         f.refuse(missing("loadName '" + tray + "'", kLoad, tray));
     }
     if (const std::string loaded = f.required("identifier"); !loaded.empty()) {
       if (const auto found = identifiers_.find(fold(loaded)); found != identifiers_.end())
-        compared["identifier"] = item.identifier = found->second.spelling;
+        item.identifier = found->second.spelling;
       else
         f.refuse("identifier " + loaded +
                  (refused_identifiers_.contains(fold(loaded))
@@ -929,7 +1031,12 @@ class Reader {
     item.note = f.optional_text("note");
     if (f.ok() && hole) {
       item.position = *hole;
-      once(f, kLoadPosition, item.load + "\n" + std::to_string(*hole) + "\n" + item.identifier, compared, legacy_id);
+      Values values;
+      carry(values, "weight", item.weight);
+      carry(values, "nxtals", item.nxtals);
+      carry(values, "note", item.note);
+      once(f, kLoadPosition, item.load + "\n" + std::to_string(*hole) + "\n" + item.identifier, std::move(values),
+           legacy_id);
     }
     return item;
   }
@@ -941,8 +1048,12 @@ class Reader {
 
   std::array<std::vector<Unit>, kTableCount> units_;
   std::array<std::set<std::string>, kTableCount> refused_;  // legacy ids of refused rows, folded
-  // natural key -> (what the first row with it says, its legacy id)
-  std::array<std::map<std::string, std::pair<std::string, std::string>>, kTableCount> seen_;
+  // What the rows with one natural key have given so far, and the legacy id of the first.
+  struct Seen {
+    std::string legacy_id;
+    std::map<std::string, Json> values;  // by column
+  };
+  std::array<std::map<std::string, Seen>, kTableCount> seen_;
 
   // Rows that later tables may name, by legacy id.
   std::map<int, PiKey> pis_;

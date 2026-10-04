@@ -12,7 +12,9 @@
 //
 //   kMarkerImported      the catalog adapter: a row imported without an
 //                        optional link that is broken in the dump, or a
-//                        sample imported under the placeholder material
+//                        sample imported under the placeholder material,
+//                        or a repeat of a row imported without the values
+//                        an earlier row gave otherwise
 //                        (false on the refusal of a row: blocking)
 //                        and the writer: values a catalog row that exists
 //                        could not be filled with (spec 10.42)

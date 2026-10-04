@@ -139,7 +139,7 @@
     "UserTbl": "UserTbl.jsonl"
   },
   "non_utf8_values": 0,
-  "sha256": "787c0632a2fa29ee0e4c8e8af2c05cd8246b93456e40160399beb1d2e63dc3a7",
+  "sha256": "b7e4bd4ec35ca6f3f14caf9faf069ceeba2bec35510ce1da13f06a691f93758a",
   "tables": {
     "AnalysisChangeTbl": 5,
     "AnalysisTbl": 4,
@@ -154,7 +154,7 @@
     "PrincipalInvestigatorTbl": 3,
     "ProjectTbl": 4,
     "RepositoryTbl": 1,
-    "SampleTbl": 6,
+    "SampleTbl": 7,
     "UserTbl": 2
   },
   "time_zone": "+00:00"
