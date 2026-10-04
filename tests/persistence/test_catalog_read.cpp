@@ -180,6 +180,25 @@ TEST_P(CatalogReadTest, IrradiationCountsAndKind) {
   EXPECT_EQ(find("NM-300").n_levels, 1);
 }
 
+TEST_P(CatalogReadTest, RefObjectsByTypeAndPackage) {
+  const Uuid triga = *store_->add_ref_object(client(), {RefType::Production, "NM-301/Triga", cat_.nm301, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+  const Uuid other = *store_->add_ref_object(client(), {RefType::Production, "NM-300/Triga", lab_.irradiation, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+  auto uow = *store_->begin(reducer());
+  auto rev = uow->add_revision(triga, Kind::RefValue, RevisionPayload{RefPayload{ProductionValue{}}}, std::nullopt);
+  ASSERT_TRUE(rev);
+  ASSERT_TRUE(uow->commit(ChangesetKind::Reference, "p"));
+  auto mine = store_->ref_objects(RefType::Production, cat_.nm301);
+  ASSERT_TRUE(mine);
+  ASSERT_EQ(mine->size(), 1u);
+  EXPECT_EQ(mine->front().key, "NM-301/Triga");
+  EXPECT_EQ(mine->front().head, *rev);
+  auto all = store_->ref_objects(RefType::Production, std::nullopt);
+  ASSERT_TRUE(all);
+  ASSERT_EQ(all->size(), 2u);
+  EXPECT_EQ(all->front().uuid, other);
+  EXPECT_FALSE(all->front().head);
+}
+
 TEST_P(CatalogReadTest, CounterAbsentIsNullopt) {
   auto counter = store_->identifier_counter(std::string(kIdentifierScope));
   ASSERT_TRUE(counter);

@@ -121,6 +121,18 @@ const std::vector<TableRules>& rules() {
        {{"identifier", T::Text, true, true}, {"position_uuid", T::Id, false, false}},
        {"identifier"},
        false},
+      // Reference objects entry creates with a package, a level or a holder;
+      // their values are revisions. Keys change only with a rename (E11).
+      {CatalogTable::RefObject,
+       {{"ref_type", T::Text, true, true},
+        {"key", T::Text, true, true},
+        {"irradiation_uuid", T::Id, false, false},
+        {"level_uuid", T::Id, false, false},
+        {"position_uuid", T::Id, false, false}},
+       {"ref_type", "key"},
+       true,
+       false,
+       false},
   };
   return all;
 }
@@ -179,6 +191,13 @@ Result<void> check_value(const TableRules& t, const Column& c, const CatalogValu
       break;
   }
   if (!ok) return fail(ErrorKind::Protocol, where + ": " + describe(v) + " is not a value of this column");
+  if (t.table == CatalogTable::RefObject && std::string(c.name) == "ref_type") {
+    const auto& type = std::get<std::string>(v);
+    static const char* const kEntryTypes[] = {"level_geometry", "level_production", "production", "chronology",
+                                              "irradiation_holder", "document"};
+    if (std::none_of(std::begin(kEntryTypes), std::end(kEntryTypes), [&](const char* k) { return type == k; }))
+      return fail(ErrorKind::Protocol, where + ": entry does not create " + describe(v) + " references");
+  }
   if (t.table == CatalogTable::Irradiation && std::string(c.name) == "kind") {
     const auto& kind = std::get<std::string>(v);
     if (kind != "irradiation" && kind != "package")
@@ -431,6 +450,8 @@ class EditRun {
     auto t = table(e.table, "update");
     if (!t) return fail(t.error());
     const TableRules& rules = **t;
+    if (!rules.update)
+      return fail(ErrorKind::Protocol, std::string(table_name(e.table)) + " rows are not updated by a catalog edit");
     if (auto r = check_fields(rules, e.expected); !r) return r;
     if (auto r = check_fields(rules, e.values); !r) return r;
     auto now = current(rules, e.uuid);
@@ -485,6 +506,8 @@ class EditRun {
     auto t = table(e.table, "delete");
     if (!t) return fail(t.error());
     const TableRules& rules = **t;
+    if (!rules.remove)
+      return fail(ErrorKind::Protocol, std::string(table_name(e.table)) + " rows are not deleted by a catalog edit");
     if (auto r = check_fields(rules, e.expected); !r) return r;
     auto now = current(rules, e.uuid);
     if (!now) return fail(now.error());
@@ -872,6 +895,25 @@ Result<std::optional<LevelSheet>> level_sheet(Db& db, Uuid level) {
   return std::optional<LevelSheet>{std::move(sheet)};
 }
 
+Result<std::vector<RefObjectRow>> ref_objects(Db& db, RefType type, std::optional<Uuid> irradiation) {
+  QString sql = QStringLiteral(
+      "SELECT o.uuid, o.key, o.irradiation_uuid, o.level_uuid, h.revision_uuid FROM ref_object o "
+      "LEFT JOIN head h ON h.subject_uuid = o.uuid AND h.kind = 'value' WHERE o.ref_type = ?");
+  Bindings b{qstr(to_string(type))};
+  if (irradiation) {
+    sql += QStringLiteral(" AND o.irradiation_uuid = ?");
+    b << qv(*irradiation);
+  }
+  sql += QStringLiteral(" ORDER BY o.key, o.uuid");
+  auto rows = db.select(sql, b);
+  if (!rows) return fail(rows.error());
+  std::vector<RefObjectRow> out;
+  for (const auto& r : *rows)
+    out.push_back(RefObjectRow{to_uuid(r.value("uuid")), type, to_std(r.value("key")), opt_uuid(r.value("irradiation_uuid")),
+                               opt_uuid(r.value("level_uuid")), opt_uuid(r.value("revision_uuid"))});
+  return out;
+}
+
 Result<std::optional<std::int64_t>> identifier_counter(Db& db, const std::string& scope) {
   auto row = db.select_one(sql::kIdentifierCounter, {qv(scope)});
   if (!row) return fail(row.error());
@@ -925,6 +967,15 @@ Result<CatalogOutcome> apply_catalog_edits(Db& db, Uuid client, const CatalogEdi
     }
     changeset = refs->changeset();
     kind = QStringLiteral("changeset");
+    // A reference object inserted by the batch is also a subject of the
+    // changeset: one change_entity row each.
+    std::vector<ChangeEntityRow> unique;
+    for (auto& e : entities)
+      if (std::none_of(unique.begin(), unique.end(), [&](const ChangeEntityRow& u) {
+            return u.entity_type == e.entity_type && u.entity == e.entity;
+          }))
+        unique.push_back(std::move(e));
+    entities = std::move(unique);
   }
   if (entities.empty() && !changeset) return CatalogOutcome{CatalogApplied{0}};
   auto seq = take_change(db, kind, changeset, client, entities);

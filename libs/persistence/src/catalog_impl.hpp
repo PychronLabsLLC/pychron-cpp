@@ -35,6 +35,7 @@ Result<std::vector<SampleRow>> samples(Db& db, Dialect dialect, const SampleQuer
 Result<std::vector<IrradiationRow>> irradiations(Db& db, Dialect dialect);
 Result<std::vector<LevelRow>> levels(Db& db, Uuid irradiation);
 Result<std::optional<LevelSheet>> level_sheet(Db& db, Uuid level);
+Result<std::vector<RefObjectRow>> ref_objects(Db& db, RefType type, std::optional<Uuid> irradiation);
 Result<std::optional<std::int64_t>> identifier_counter(Db& db, const std::string& scope);
 Result<std::int64_t> max_numeric_identifier(Db& db, Dialect dialect);
 Result<std::optional<CatalogFields>> catalog_row(Db& db, CatalogTable table, Uuid uuid);

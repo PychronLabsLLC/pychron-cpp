@@ -624,6 +624,8 @@ class IStore {
   virtual Result<std::vector<IrradiationRow>> irradiations() = 0;
   virtual Result<std::vector<LevelRow>> levels(Uuid irradiation) = 0;
   virtual Result<std::optional<LevelSheet>> level_sheet(Uuid level) = 0;
+  // The reference objects of `type`, scoped to `irradiation` when given, by key.
+  virtual Result<std::vector<RefObjectRow>> ref_objects(RefType type, std::optional<Uuid> irradiation) = 0;
   // The current value of identifier_counter's `scope`; nullopt before the first allocation.
   virtual Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) = 0;
   // The largest identifier that is all ASCII digits (no leading zero, at most

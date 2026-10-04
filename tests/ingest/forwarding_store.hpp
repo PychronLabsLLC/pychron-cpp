@@ -65,6 +65,7 @@ class ForwardingStore : public persistence::IStore {
   Result<std::vector<persistence::IrradiationRow>> irradiations() override { return inner_.irradiations(); }
   Result<std::vector<persistence::LevelRow>> levels(Uuid irradiation) override { return inner_.levels(irradiation); }
   Result<std::optional<persistence::LevelSheet>> level_sheet(Uuid level) override { return inner_.level_sheet(level); }
+  Result<std::vector<persistence::RefObjectRow>> ref_objects(persistence::RefType type, std::optional<Uuid> irradiation) override { return inner_.ref_objects(type, irradiation); }
   Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) override { return inner_.identifier_counter(scope); }
   Result<std::int64_t> max_numeric_identifier() override { return inner_.max_numeric_identifier(); }
   Result<std::optional<persistence::CatalogFields>> catalog_row(persistence::CatalogTable table, Uuid uuid) override { return inner_.catalog_row(table, uuid); }

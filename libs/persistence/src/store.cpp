@@ -442,6 +442,9 @@ class TinyStore final : public IStore {
   Result<std::vector<IrradiationRow>> irradiations() override { return detail::irradiations(*db_, dialect()); }
   Result<std::vector<LevelRow>> levels(Uuid irradiation) override { return detail::levels(*db_, irradiation); }
   Result<std::optional<LevelSheet>> level_sheet(Uuid level) override { return detail::level_sheet(*db_, level); }
+  Result<std::vector<RefObjectRow>> ref_objects(RefType type, std::optional<Uuid> irradiation) override {
+    return detail::ref_objects(*db_, type, irradiation);
+  }
   Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope) override {
     return detail::identifier_counter(*db_, scope);
   }

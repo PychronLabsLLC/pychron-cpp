@@ -126,6 +126,28 @@ TEST_P(CatalogEditTest, UnknownColumnWrongTypeAndMissingRequiredAreErrors) {
   EXPECT_FALSE(store_->apply_catalog_edits(client(), h));
 }
 
+TEST_P(CatalogEditTest, RefObjectsAreInsertedOnly) {
+  const Uuid geom = Uuid::v7();
+  CatalogEditBatch batch;
+  batch.edits = {CatalogInsert{CatalogTable::RefObject, geom,
+                               {{"ref_type", text("level_geometry")}, {"key", text("NM-301/A")},
+                                {"irradiation_uuid", cat_.nm301}, {"level_uuid", cat_.level_a}}}};
+  ASSERT_TRUE(applied(apply(batch)));
+  EXPECT_EQ(*store_->find_catalog_row(CatalogTable::RefObject, {std::string("level_geometry"), std::string("NM-301/A")}), geom);
+  CatalogEditBatch again;
+  again.edits = {CatalogInsert{CatalogTable::RefObject, Uuid::v7(), {{"ref_type", text("level_geometry")}, {"key", text("NM-301/A")}}}};
+  EXPECT_EQ(refusals(apply(again)).front().rule, "unique");
+  CatalogEditBatch flux;
+  flux.edits = {CatalogInsert{CatalogTable::RefObject, Uuid::v7(), {{"ref_type", text("flux_position")}, {"key", text("x")}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), flux));
+  CatalogEditBatch update;
+  update.edits = {CatalogUpdate{CatalogTable::RefObject, geom, {}, {{"key", text("y")}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), update));
+  CatalogEditBatch remove;
+  remove.edits = {CatalogDelete{CatalogTable::RefObject, geom, {}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), remove));
+}
+
 TEST_P(CatalogEditTest, StaleWhenExpectedDiffers) {
   CatalogEditBatch batch;
   batch.edits = {CatalogUpdate{CatalogTable::Sample, cat_.s1, {{"name", text("bt-9")}, {"note", CatalogValue{}}},

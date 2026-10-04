@@ -19,6 +19,7 @@ add_library(pychron_dvc STATIC
   src/legacy_record.cpp
   src/legacy_revision.cpp
   src/meta_adapter.cpp
+  src/meta_files.cpp
   src/meta_layout.cpp
   src/project_adapter.cpp
   src/project_map.cpp

@@ -161,6 +161,16 @@ struct RefHead {
   friend bool operator==(const RefHead&, const RefHead&) = default;
 };
 
+// A reference object and its head (entry reads of productions, holders).
+struct RefObjectRow {
+  Uuid uuid;
+  RefType type = RefType::Document;
+  std::string key;
+  std::optional<Uuid> irradiation, level;
+  std::optional<Uuid> head;  // nullopt: no value yet
+  friend bool operator==(const RefObjectRow&, const RefObjectRow&) = default;
+};
+
 struct LevelSheet {
   LevelRow level;
   std::string irradiation_name;
