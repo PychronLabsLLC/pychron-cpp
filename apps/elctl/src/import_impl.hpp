@@ -18,6 +18,7 @@
 #include "pychron/ingest/verify.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/reduction/arar_types.hpp"
 
 namespace elctl::import_detail {
 
@@ -55,6 +56,7 @@ Result<int> positive_int(std::string_view flag, const std::string& text);
 //   kind = "project_repo"            # legacy_db | meta_repo | project_repo
 //   name = "IR1010"                  # shown; a project repo's repository name
 //   url = "https://github.com/NMGRLData/IR1010"   # the --source given to add
+//                                    # (a local path: absolute)
 //   branch = "master"                # repositories only
 //   path = "/home/me/.cache/pychron/import/mirrors/IR1010-1a2b3c4d"
 //                                    # what is read: the repository, the
@@ -76,6 +78,13 @@ struct SourceSettings {
   bool catalog_from_repos = false, reference_runs = false;
   std::map<std::string, std::string> author_map;
 };
+
+// A path as UTF-8 text, for messages and for the settings file (TOML is
+// UTF-8; fs::path::string() is the ANSI code page on Windows and can throw).
+// Never throws; "?" when the path cannot be converted.
+std::string utf8(const fs::path& path) noexcept;
+// The path UTF-8 text names; empty when the text is not UTF-8.
+fs::path path_from_utf8(std::string_view text) noexcept;
 
 fs::path settings_file(const fs::path& cache, P::Uuid uuid);
 Result<void> save_settings(const fs::path& cache, const SourceSettings& settings);
@@ -129,15 +138,16 @@ struct OpenedAdapter {
 
 // The adapter of a source as its import configured it. `all` supplies the
 // tag lookup of a project repository: the dump of every registered legacy_db
-// source. `batch`: commits (rows, for a catalog) per batch; nullopt: the
-// adapter's default. `fetch`: update the mirror of a remote source first.
+// source; a dump that cannot be read gives no tags and one warning, it does
+// not fail the project. `batch`: commits (rows, for a catalog) per batch;
+// nullopt: the adapter's default. `fetch`: update the mirror of a remote
+// source first.
 Result<OpenedAdapter> open_adapter(Context& ctx, const SourceSettings& settings, const std::vector<Source>& all,
                                    std::optional<int> batch, bool fetch);
 
-// A pending conflict that only annotates a row that was imported (spec
-// 10.26): it does not fail verify, and does not make `run` exit 1.
-bool is_warning(const P::ImportConflictRow& row);
-// "1 blocking (unparseable 1), 2 warnings (identity_clash 2)".
+// The pending conflicts of a source, split as verify splits them
+// (ingest::is_warning_conflict): blocking ones make `run` exit 1.
+// describe(): "1 blocking (unparseable 1), 2 warnings (identity_clash 2)".
 struct PendingConflicts {
   std::map<std::string, int> blocking, warnings;  // kind -> rows
   int blocking_total = 0, warnings_total = 0;
@@ -157,8 +167,16 @@ int import_add(Context& ctx, const Flags& flags);
 int import_run(Context& ctx, const Flags& flags);
 int import_verify(Context& ctx, const Flags& flags);
 
-// The age of an analysis as of an interpreted age of this project repository
-// (spec 10.30 and 10.32), for ingest::verify. `store` outlives the function.
-Result<pychron::ingest::AgeFn> make_age_fn(P::IStore& store, const SourceSettings& settings, const fs::path& scratch);
+// "no settings for <name> …": what to do about a registered source whose
+// settings file is not in the cache.
+std::string missing_settings(const Context& ctx, const Source& source);
+
+// The age of an analysis as of an interpreted age of the project repository
+// `source` (spec 10.30 and 10.32), for ingest::verify. `store` and `adapter`
+// (the source's own, which knows the walk order) outlive the function.
+// `constants`: the preset the reduction uses for decay constants and
+// atmospheric ratios; every age carries "constants=<preset>" as its basis.
+pychron::ingest::AgeFn make_age_fn(P::IStore& store, P::Uuid source, pychron::ingest::ISourceAdapter& adapter,
+                                   pychron::reduction::ConstantsPreset constants);
 
 }  // namespace elctl::import_detail

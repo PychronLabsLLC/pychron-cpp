@@ -18,6 +18,14 @@ namespace {
 
 using Json = nlohmann::json;
 
+using pychron::reduction::ConstantsPreset;
+constexpr ConstantsPreset kConstantsPresets[] = {ConstantsPreset::Default, ConstantsPreset::Legacy,
+                                                 ConstantsPreset::LegacyPreferences};
+// The preset that reproduces the ages legacy pychron stored: its preference
+// defaults (atmospheric 40Ar/36Ar 295.5). Measured on the IR1010 fixture:
+// age to 5e-9, error to 5e-9; `default` (298.56) is 2.4e-3 off.
+constexpr ConstantsPreset kDefaultConstants = ConstantsPreset::LegacyPreferences;
+
 // Unaccounted units printed before "and N more" (--json lists them all).
 constexpr std::size_t kListed = 20;
 
@@ -95,7 +103,7 @@ std::vector<std::string> reasons(const ingest::VerifyReport& r) {
   return out;
 }
 
-void print(std::ostream& out, const Source& source, const ingest::VerifyReport& r) {
+void print(std::ostream& out, const Source& source, const ingest::VerifyReport& r, ConstantsPreset constants) {
   out << source.name << " (" << P::to_string(source.info.spec.kind) << ") " << source.info.spec.uuid.str() << '\n';
 
   out << "  import: ";
@@ -125,13 +133,16 @@ void print(std::ostream& out, const Source& source, const ingest::VerifyReport& 
 
   out << "  parity: " << r.parity_pass << " pass, " << r.parity_pass_age_only << " pass on age only, " << r.parity_fail
       << " fail, " << r.parity_not_comparable
-      << " not comparable (members of each interpreted age's head revision, as of the commit that saved it)\n";
+      << " not comparable (constants " << pychron::reduction::to_string(constants)
+      << "; members of each interpreted age's head revision, as of the commit that saved it)\n";
   for (const auto& [reason, members] : r.not_comparable_reasons)
     out << "    not comparable: " << reason << ' ' << members << '\n';
   for (const auto& f : r.parity_failures) {
     out << "    fail " << f.analysis.str() << " in " << f.interpreted_age.str() << ": legacy " << number(f.legacy_age);
     if (f.legacy_age_err) out << " +- " << number(*f.legacy_age_err);
-    out << ", computed " << number(f.computed_age) << " +- " << number(f.computed_age_err) << '\n';
+    out << ", computed " << number(f.computed_age);
+    if (f.legacy_age_err) out << " +- " << number(f.computed_age_err) << " (" << f.error_compared << ')';
+    out << '\n';
   }
 
   out << "  conflicts pending: " << r.pending_blocking << " blocking, " << plural(r.pending_warnings, "warning") << '\n';
@@ -146,7 +157,7 @@ void print(std::ostream& out, const Source& source, const ingest::VerifyReport& 
   out << '\n';
 }
 
-Json to_json(const Source& source, const ingest::VerifyReport& r) {
+Json to_json(const Source& source, const ingest::VerifyReport& r, ConstantsPreset constants) {
   Json unaccounted = Json::array();
   for (const auto& open : r.unaccounted) {
     Json missing = Json::array();
@@ -174,7 +185,11 @@ Json to_json(const Source& source, const ingest::VerifyReport& r) {
              {"computed_age_err", f.computed_age_err},
              {"age_difference", f.age_difference},
              {"age_err_difference", f.age_err_difference}};
-    if (f.legacy_age_err) row["legacy_age_err"] = *f.legacy_age_err;
+    if (f.legacy_age_err) {
+      row["legacy_age_err"] = *f.legacy_age_err;
+      row["error_compared"] = f.error_compared;
+    }
+    if (!f.basis.empty()) row["basis"] = f.basis;
     failures.push_back(std::move(row));
   }
   const auto ids = [](const std::vector<P::Uuid>& uuids) {
@@ -197,7 +212,8 @@ Json to_json(const Source& source, const ingest::VerifyReport& r) {
       {"accounting", {{"units", r.units}, {"ignored", r.ignored}, {"unaccounted", std::move(unaccounted)}}},
       {"idempotence", {{"would_write", r.would_write}, {"replay_would_write", r.replay_would_write}}},
       {"parity",
-       {{"pass", r.parity_pass},
+       {{"constants", std::string(pychron::reduction::to_string(constants))},
+        {"pass", r.parity_pass},
         {"pass_age_only", r.parity_pass_age_only},
         {"fail", r.parity_fail},
         {"not_comparable_total", r.parity_not_comparable},
@@ -223,6 +239,16 @@ int import_verify(Context& ctx, const Flags& flags) {
       return fatal(ctx.io, "--tolerance takes a relative difference, 0 or more; got '" + *text + "'");
     options.tolerance = value;
   }
+  auto constants = kDefaultConstants;
+  if (const auto text = flags.get("--constants")) {
+    bool known = false;
+    for (const auto preset : kConstantsPresets)
+      if (pychron::reduction::to_string(preset) == *text) {
+        constants = preset;
+        known = true;
+      }
+    if (!known) return fatal(ctx.io, "--constants is default, legacy or legacy_preferences; got '" + *text + "'");
+  }
   auto all = registered_sources(ctx);
   if (!all) return fatal(ctx.io, all.error());
   auto chosen = select_sources(ctx, flags.get("--source"));
@@ -235,9 +261,7 @@ int import_verify(Context& ctx, const Flags& flags) {
   Json listed = Json::array();
   bool ok = true;
   for (const Source& source : *chosen) {
-    if (!source.settings)
-      return fatal(ctx.io, "no settings for " + source.name + " in " + ctx.cache.string() +
-                               "; was it added with another --cache?");
+    if (!source.settings) return fatal(ctx.io, missing_settings(ctx, source));
     const SourceSettings& settings = *source.settings;
     // The mirror is read as the last run left it: verify fetches nothing.
     auto opened = open_adapter(ctx, settings, *all, std::nullopt, false);
@@ -245,17 +269,15 @@ int import_verify(Context& ctx, const Flags& flags) {
     for (const auto& line : opened->warnings) ctx.io.err << "warning: " << line << '\n';
     ingest::AgeFn age_fn;
     if (settings.kind == P::ImportSourceKind::ProjectRepo) {
-      auto made = make_age_fn(*ctx.store, settings, ctx.scratch());
-      if (!made) return fatal(ctx.io, made.error());
-      age_fn = std::move(*made);
+      age_fn = make_age_fn(*ctx.store, settings.uuid, *opened->adapter, constants);
     }
     auto report = ingest::verify(*ctx.store, *client, *opened->adapter, writer_config(settings), age_fn, options);
     if (!report) return fatal(ctx.io, source.name + ": " + report.error().what);
     ok = ok && report->ok();
     if (as_json)
-      listed.push_back(to_json(source, *report));
+      listed.push_back(to_json(source, *report, constants));
     else
-      print(ctx.io.out, source, *report);
+      print(ctx.io.out, source, *report, constants);
   }
   if (as_json) ctx.io.out << listed.dump(2, ' ', false, Json::error_handler_t::replace) << '\n';
   return ok ? kOk : kFailed;

@@ -4,6 +4,7 @@
 #include "import.hpp"
 
 #include <charconv>
+#include <exception>
 #include <ostream>
 
 #include <nlohmann/json.hpp>
@@ -33,7 +34,11 @@ constexpr const char* kHelp =
     "        Register a source; prints its id. Registering it again changes nothing.\n"
     "        --source            legacy_db: the directory tools/legacy_dump_to_jsonl.py wrote;\n"
     "                            a repository: a local path, read in place and never\n"
-    "                            modified, or a url, mirrored into the cache\n"
+    "                            modified, or a url, mirrored into the cache. A url with\n"
+    "                            a user or password in it is refused: use a git\n"
+    "                            credential helper. Register the dump before importing\n"
+    "                            project repositories: it holds the tags of analyses\n"
+    "                            that have no tags file\n"
     "        --tz                the lab's time zone; legacy times are naive local times\n"
     "        --branch            default: the branch the repository's HEAD names\n"
     "        --author-map        TOML, one line per author: \"git email\" = \"user name\"\n"
@@ -56,7 +61,7 @@ constexpr const char* kHelp =
     "        --replay            walk the source again from its start: what is imported\n"
     "                            is left alone, analyses refused earlier (unknown_analysis)\n"
     "                            are imported now that the catalog has their identifier\n"
-    "        --dry-run           write nothing; print what a run would write\n"
+    "        --dry-run           write nothing, fetch nothing; print what a run would write\n"
     "\n"
     "  status\n"
     "        One line per source: id kind name status done/total head\n"
@@ -67,11 +72,17 @@ constexpr const char* kHelp =
     "        kinds: unparseable unknown_analysis identity_clash value_mismatch hand_edit\n"
     "               provisional_renumber\n"
     "\n"
-    "  verify [--source <id|name>] [--tolerance <relative, default 1e-9>] [--json]\n"
+    "  verify [--source <id|name>] [--tolerance <relative, default 1e-9>]\n"
+    "         [--constants legacy_preferences|legacy|default] [--json]\n"
     "        Checks each import: the source is imported to its end, every file of it is\n"
     "        accounted for, a second run would write nothing, the ages stored with each\n"
     "        interpreted age are reproduced from the imported data, and no conflict that\n"
     "        means missing or disagreeing data is pending.\n"
+    "        --constants         decay constants and atmospheric ratios the ages are\n"
+    "                            computed with; default legacy_preferences, the values\n"
+    "                            legacy pychron used unless a lab changed them\n"
+    "\n"
+    "  status, conflicts, verify and run --dry-run need a database that exists.\n"
     "\n"
     "  --cache <dir>   settings of each source (<id>.toml) and mirrors of remote\n"
     "                  repositories; default: the user's cache directory, pychron/import\n"
@@ -121,7 +132,7 @@ int conflicts(Context& ctx, const Flags& flags) {
                         {"path", row.path},
                         {"entity", row.entity ? Json(row.entity->str()) : Json(nullptr)},
                         {"resolution", row.resolution},
-                        {"blocking", row.resolution == "pending" && !is_warning(row)},
+                        {"blocking", row.resolution == "pending" && !pychron::ingest::is_warning_conflict(row)},
                         {"detail", detail.is_discarded() ? Json(row.detail_json) : detail}});
       continue;
     }
@@ -212,7 +223,7 @@ int import_command(const std::vector<std::string>& args, Io io) {
     spec.with_value.insert(spec.with_value.end(), {"--source", "--kind"});
     spec.switches = {"--all", "--json"};
   } else if (verb == "verify") {
-    spec.with_value.insert(spec.with_value.end(), {"--source", "--tolerance"});
+    spec.with_value.insert(spec.with_value.end(), {"--source", "--tolerance", "--constants"});
     spec.switches = {"--json"};
   } else if (verb != "status") {
     return usage(io, "unknown subcommand '" + verb + "'");
@@ -222,18 +233,38 @@ int import_command(const std::vector<std::string>& args, Io io) {
   const auto db = flags->get("--db");
   if (!db) return usage(io, verb + " needs --db <url>");
 
-  Context ctx{io, {}, nullptr};
-  const auto cache = flags->get("--cache");
-  ctx.cache = cache ? fs::path(*cache) : default_cache_dir();
-  auto store = P::open_store(P::StoreConfig{*db, true});
-  if (!store) return fatal(io, store.error());
-  ctx.store = std::move(*store);
+  // No exception leaves a library, but std::filesystem and the standard
+  // containers used here can throw: a fatal error like any other.
+  try {
+    Context ctx{io, {}, nullptr};
+    const auto cache = flags->get("--cache");
+    ctx.cache = cache ? fs::path(*cache) : default_cache_dir();
 
-  if (verb == "add") return import_add(ctx, *flags);
-  if (verb == "run") return import_run(ctx, *flags);
-  if (verb == "status") return status(ctx);
-  if (verb == "conflicts") return conflicts(ctx, *flags);
-  return import_verify(ctx, *flags);
+    // Only add and a real run may create or migrate a database. The others
+    // read one that exists (verify also records what it found in it), so a
+    // mistyped path is an error, not a new empty store.
+    const bool creates = verb == "add" || (verb == "run" && !flags->has("--dry-run"));
+    constexpr std::string_view kSqlite = "sqlite:";
+    if (!creates && db->starts_with(kSqlite) && *db != "sqlite::memory:") {
+      std::error_code code;
+      const fs::path file(db->substr(kSqlite.size()));
+      if (!fs::is_regular_file(file, code)) return fatal(io, "no database at " + db->substr(kSqlite.size()));
+      // SQLite would take an empty file for a new database and write to it.
+      if (fs::file_size(file, code) == 0 && !code)
+        return fatal(io, db->substr(kSqlite.size()) + " is empty: not a pychron store");
+    }
+    auto store = P::open_store(P::StoreConfig{*db, creates});
+    if (!store) return fatal(io, store.error());
+    ctx.store = std::move(*store);
+
+    if (verb == "add") return import_add(ctx, *flags);
+    if (verb == "run") return import_run(ctx, *flags);
+    if (verb == "status") return status(ctx);
+    if (verb == "conflicts") return conflicts(ctx, *flags);
+    return import_verify(ctx, *flags);
+  } catch (const std::exception& e) {
+    return fatal(io, e.what());
+  }
 }
 
 }  // namespace elctl

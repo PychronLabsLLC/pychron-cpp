@@ -3,13 +3,17 @@
 // it stood when an interpreted age was saved.
 //
 // "As it stood" is a place in the walk of the project repository, not a time
-// (git author dates tie and run out of order). For each kind the reduction
-// reads (intercepts, baselines, blanks, IC factors, tags) the revision used
-// is the last one this source imported at or before the interpreted age's
-// commit in that walk; a root revision without a provenance row of its own
-// belongs to the commit of its analysis. The analysis is then built from
-// those payloads by the same function the Data browser uses for the heads
-// (processing::analysis_from_store) and reduced the same way
+// (git author dates tie and run out of order); the adapter of the source
+// gives the place of a commit (ISourceAdapter::order_of). For each kind the
+// reduction reads (intercepts, baselines, blanks, IC factors, tags) the
+// revision used is the last one this source imported at or before the
+// interpreted age's commit. A root revision has no provenance row of its
+// own when it was made with the analysis: it then sits in the analysis's
+// collection changeset and takes the place of the analysis's record. Any
+// other revision without a provenance row of this source (an edit made in
+// the store, another source's) has no place in the walk. The analysis is
+// then built from the chosen payloads by the function the Data browser uses
+// for the heads (processing::analysis_from_store) and reduced the same way
 // (processing::reduce_analysis), so nothing of the reduction is repeated here.
 //
 // Reference data (flux, production, chronology, gains) comes from another
@@ -18,13 +22,19 @@
 // made after the interpreted age's commit time; otherwise the analysis is
 // not comparable.
 //
+// Constants (decay constants, atmospheric ratios) are a preset of
+// libs/reduction, the same for every analysis: the store keeps none per
+// analysis. The preset is named in the basis of every age.
+//
 // Whatever cannot be reproduced is NotComparable with a fixed reason, never
 // a number made from defaults:
 //   as_of_commit_not_in_walk        the interpreted age's commit is not on the branch
+//   analysis_not_placed             the analysis has no provenance row of this
+//                                   source on the branch
 //   analysis_imported_after         the analysis entered the repository after it
 //   identity_changed_after          the analysis was renumbered after it: its
 //                                   irradiation position may be another one
-//   revision_outside_source         a revision this source did not import lies
+//   revision_outside_source         a revision without a place in the walk lies
 //                                   before the one that would be used
 //   no_intercepts                   nothing to reduce at that point
 //   reference_changed_after         spec 10.32
@@ -33,17 +43,16 @@
 //   age_undefined                   no age came out (1 + J F <= 0, no F)
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 
 #include "import_impl.hpp"
-#include "pychron/dvc/git_reader.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
 
 namespace elctl::import_detail {
 
-namespace dvc = pychron::dvc;
 namespace ingest = pychron::ingest;
 namespace processing = pychron::processing;
 
@@ -59,20 +68,32 @@ constexpr P::Kind kReductionKinds[] = {P::Kind::Intercepts, P::Kind::Baselines, 
 
 class AgeAsOf {
  public:
-  AgeAsOf(P::IStore& store, P::Uuid source, std::unordered_map<std::string, std::size_t> walk)
-      : store_(store), source_(source), walk_(std::move(walk)) {}
+  AgeAsOf(P::IStore& store, P::Uuid source, ingest::ISourceAdapter& adapter,
+          pychron::reduction::ConstantsPreset constants)
+      : store_(store), source_(source), adapter_(adapter), constants_(constants) {}
 
   Result<ParityAge> operator()(P::Uuid analysis, const ingest::AsOf& as_of) const {
     const auto no = [](const char* reason) { return ParityAge{NotComparable{reason}}; };
     if (as_of.source != source_) return no("other_source");
-    const auto at = walk_.find(as_of.commit);
-    if (at == walk_.end()) return no("as_of_commit_not_in_walk");
-    const std::size_t limit = at->second;
+    auto at = order_of(as_of.commit);
+    if (!at) return fail(at.error());
+    if (!*at) return no("as_of_commit_not_in_walk");
+    const std::int64_t limit = **at;
 
-    // Where the analysis itself entered the walk: the place of its root revisions.
+    // Where the analysis itself entered the walk: the place of the revisions
+    // made with it.
     auto collected = place_of(analysis, "analysis");
     if (!collected) return fail(collected.error());
-    if (!*collected || **collected > limit) return no("analysis_imported_after");
+    if (!*collected) return no("analysis_not_placed");
+    if (**collected > limit) return no("analysis_imported_after");
+    // The changeset that made the analysis: the one of its signals root.
+    std::optional<P::Uuid> collection;
+    {
+      auto signals = store_.history(analysis, P::Kind::Signals);
+      if (!signals) return fail(signals.error());
+      for (const auto& revision : *signals)
+        if (!revision.parent) collection = revision.changeset.uuid;
+    }
 
     auto renumbered = store_.history(analysis, P::Kind::Identity);
     if (!renumbered) return fail(renumbered.error());
@@ -94,13 +115,15 @@ class AgeAsOf {
       // The last revision at or before the interpreted age in walk order;
       // among those of one commit, the later in the store's order.
       std::optional<P::Uuid> chosen;
-      std::size_t chosen_place = 0;
+      std::int64_t chosen_place = 0;
       bool unplaced_before = false, unplaced = false;
       for (const auto& revision : *history) {
         auto place = place_of(revision.uuid, "revision");
         if (!place) return fail(place.error());
-        std::optional<std::size_t> where = *place;
-        if (!where && !revision.parent) where = *collected;  // a root made with the analysis
+        std::optional<std::int64_t> where = *place;
+        // A root made with the analysis. A first revision of a kind made
+        // later in the store is parentless too, and is not this.
+        if (!where && !revision.parent && collection && revision.changeset.uuid == *collection) where = *collected;
         if (!where) {
           unplaced = true;  // an edit made in the store, or by another source
           continue;
@@ -110,7 +133,9 @@ class AgeAsOf {
         chosen_place = *where;
         unplaced_before = unplaced;
       }
-      if (unplaced_before) return no("revision_outside_source");
+      // Also when nothing could be chosen and an unplaced revision exists:
+      // whether it was there at the interpreted age cannot be told.
+      if (unplaced_before || (!chosen && unplaced)) return no("revision_outside_source");
       if (!chosen) continue;  // the analysis had none of this kind then
       auto payload = store_.load_payload(*chosen);
       if (!payload) return fail(payload.error());
@@ -138,51 +163,64 @@ class AgeAsOf {
     if (!built->context.flux) return no("no_j");
     if (!built->context.production) return no("no_production");
     if (built->context.chronology.empty()) return no("no_chronology");
+    processing::ReductionSettings reduction;
+    reduction.preset = constants_;
     const auto reduced =
-        processing::reduce_analysis(std::make_shared<const processing::Analysis>(std::move(*built)), {});
+        processing::reduce_analysis(std::make_shared<const processing::Analysis>(std::move(*built)), reduction);
     if (!reduced || !reduced->arar) return no("not_reducible");
     if (!reduced->arar->ages) return no("age_undefined");
-    // The analytical error (no J error): what the legacy file stores as age_err.
-    const auto& age = reduced->arar->ages->age;
-    if (!std::isfinite(age.nominal()) || !std::isfinite(age.std_dev())) return no("age_undefined");
-    return ParityAge{ingest::ComputedAge{age.nominal(), age.std_dev()}};
+    // Both errors: the verifier compares the one the legacy file stored.
+    const auto& age = reduced->arar->ages->age;                // J without its error
+    const auto& with_j = reduced->arar->ages->age_w_j_err;
+    if (!std::isfinite(age.nominal()) || !std::isfinite(age.std_dev()) || !std::isfinite(with_j.std_dev()))
+      return no("age_undefined");
+    ingest::ComputedAge computed;
+    computed.age = age.nominal();
+    computed.age_err = age.std_dev();
+    computed.age_err_w_j = with_j.std_dev();
+    computed.basis = "constants=" + std::string(pychron::reduction::to_string(constants_));
+    return ParityAge{std::move(computed)};
   }
 
  private:
   // The place in the walk of the commit this source imported `entity` at;
   // nullopt: it has no provenance row of this source, or the commit is not
   // on the branch.
-  Result<std::optional<std::size_t>> place_of(P::Uuid entity, std::string_view entity_type) const {
+  Result<std::optional<std::int64_t>> place_of(P::Uuid entity, std::string_view entity_type) const {
     auto rows = store_.provenance_for(entity);
     if (!rows) return fail(rows.error());
     for (const auto& row : *rows) {
       if (row.source != source_ || row.entity_type != entity_type) continue;
-      const auto at = walk_.find(row.commit_sha);
-      if (at != walk_.end()) return std::optional<std::size_t>{at->second};
+      auto at = order_of(row.commit_sha);
+      if (!at) return fail(at.error());
+      if (*at) return *at;
     }
-    return std::optional<std::size_t>{};
+    return std::optional<std::int64_t>{};
+  }
+
+  // The adapter's answer, asked once per commit.
+  Result<std::optional<std::int64_t>> order_of(const std::string& commit) const {
+    if (const auto known = places_->find(commit); known != places_->end()) return known->second;
+    auto place = adapter_.order_of(commit);
+    if (!place) return fail(place.error());
+    places_->emplace(commit, *place);
+    return *place;
   }
 
   P::IStore& store_;
   P::Uuid source_;
-  std::unordered_map<std::string, std::size_t> walk_;  // commit -> place in the import's walk order
+  ingest::ISourceAdapter& adapter_;
+  // commit -> place in the import's walk order; shared by the copies std::function makes
+  std::shared_ptr<std::unordered_map<std::string, std::optional<std::int64_t>>> places_ =
+      std::make_shared<std::unordered_map<std::string, std::optional<std::int64_t>>>();
+  pychron::reduction::ConstantsPreset constants_;
 };
 
 }  // namespace
 
-Result<ingest::AgeFn> make_age_fn(P::IStore& store, const SourceSettings& settings, const fs::path& scratch) {
-  dvc::GitConfig git;
-  git.repo = settings.path;
-  git.branch = settings.branch;
-  git.scratch = scratch;
-  auto reader = dvc::GitReader::open(std::move(git));
-  if (!reader) return fail(reader.error());
-  auto order = reader->rev_list(std::nullopt);
-  if (!order) return fail(order.error());
-  std::unordered_map<std::string, std::size_t> walk;
-  walk.reserve(order->size());
-  for (std::size_t i = 0; i < order->size(); ++i) walk.emplace((*order)[i], i);
-  return ingest::AgeFn(AgeAsOf(store, settings.uuid, std::move(walk)));
+ingest::AgeFn make_age_fn(P::IStore& store, P::Uuid source, ingest::ISourceAdapter& adapter,
+                          pychron::reduction::ConstantsPreset constants) {
+  return ingest::AgeFn(AgeAsOf(store, source, adapter, constants));
 }
 
 }  // namespace elctl::import_detail

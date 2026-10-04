@@ -16,6 +16,19 @@ namespace elctl::import_detail {
 namespace dvc = pychron::dvc;
 namespace ingest = pychron::ingest;
 
+namespace {
+
+// "scheme://user[:secret]@host/…": a url that carries credentials. They would
+// be written to the settings file and the store, and shown by `status`.
+bool has_userinfo(std::string_view url) {
+  const auto scheme = url.find("://");
+  if (scheme == std::string_view::npos) return false;
+  const auto authority = url.substr(scheme + 3, url.find_first_of("/?#", scheme + 3) - (scheme + 3));
+  return authority.find('@') != std::string_view::npos;
+}
+
+}  // namespace
+
 int import_add(Context& ctx, const Flags& flags) {
   const auto kind_text = flags.get("--kind");
   const auto source = flags.get("--source");
@@ -26,6 +39,10 @@ int import_add(Context& ctx, const Flags& flags) {
   if (!source || source->empty()) return fatal(ctx.io, "add needs --source <path|url>");
   if (!tz) return fatal(ctx.io, "add needs --tz <IANA zone>, the lab's time zone (for example America/Denver)");
   if (!ingest::known_zone(*tz)) return fatal(ctx.io, "--tz: no time zone '" + *tz + "'");
+  // Said without the url: it holds a secret.
+  if (has_userinfo(*source))
+    return fatal(ctx.io, "--source: the url names a user or a password; give it without them and let a git "
+                         "credential helper supply them");
 
   const bool project = *kind == P::ImportSourceKind::ProjectRepo;
   const bool catalog = *kind == P::ImportSourceKind::LegacyDb;
@@ -50,7 +67,8 @@ int import_add(Context& ctx, const Flags& flags) {
     std::error_code code;
     settings.path = fs::absolute(fs::path(*source), code).lexically_normal();
     if (code) return fatal(ctx.io, "cannot resolve " + *source + ": " + code.message());
-    if (catalog) settings.url = settings.path.string();
+    // A local source is registered by its absolute path, as UTF-8.
+    settings.url = utf8(settings.path);
   } else {
     auto mirrored = dvc::GitReader::mirror(*source, ctx.mirrors());
     if (!mirrored) return fatal(ctx.io, mirrored.error());
@@ -76,7 +94,7 @@ int import_add(Context& ctx, const Flags& flags) {
   }
 
   // A project repository's analyses become members of the repository of this name.
-  settings.name = last_segment(ingest::normalize_source_url(catalog ? settings.path.string() : settings.url));
+  settings.name = last_segment(ingest::normalize_source_url(settings.url));
   if (settings.name.ends_with(".git")) settings.name.resize(settings.name.size() - 4);
   if (settings.name.empty()) return fatal(ctx.io, "cannot name the source " + *source);
 
@@ -103,6 +121,15 @@ int import_add(Context& ctx, const Flags& flags) {
     ctx.io.out << settings.uuid.str() << '\n';
     return kOk;
   }
+
+  // A dump registered after project repositories were imported: their
+  // analyses without a tags file took the default tag, and a replay would
+  // now give them the dump's.
+  if (catalog)
+    for (const auto& other : *all)
+      if (other.info.spec.kind == P::ImportSourceKind::ProjectRepo && other.info.status != "registered")
+        ctx.io.err << "warning: " << other.name
+                   << " was imported without this dump; its tags may change on the next --replay\n";
 
   auto client = importer_client(*ctx.store);
   if (!client) return fatal(ctx.io, client.error());

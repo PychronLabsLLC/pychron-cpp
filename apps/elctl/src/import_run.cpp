@@ -25,8 +25,13 @@ namespace elctl {
 
 namespace {
 
-// Set by Ctrl-C while a run is going; read after each batch.
+// Set by Ctrl-C while a run is going; read after each batch. Written from a
+// signal handler, so it must not take a lock.
+static_assert(std::atomic<bool>::is_always_lock_free);
 std::atomic<bool> g_interrupted{false};
+// What handled SIGINT before the run: a second Ctrl-C is handed to it.
+static_assert(std::atomic<void (*)(int)>::is_always_lock_free);
+std::atomic<void (*)(int)> g_previous_handler{SIG_DFL};
 
 std::function<void()>& batch_hook() {
   static std::function<void()> hook;
@@ -39,15 +44,28 @@ void set_import_batch_hook(std::function<void()> hook) { batch_hook() = std::mov
 
 }  // namespace elctl
 
-extern "C" void elctl_import_on_interrupt(int) { elctl::g_interrupted.store(true); }
+// The first Ctrl-C asks the run to stop after the batch it is writing. The
+// second does not wait (a fetch or a batch can take long): the handler that
+// was there before the run is put back and the signal raised again, which by
+// default ends the process. The batch in flight is one transaction: it is
+// either stored or not.
+extern "C" void elctl_import_on_interrupt(int signal_number) {
+  if (!elctl::g_interrupted.exchange(true)) {
+    std::signal(signal_number, elctl_import_on_interrupt);  // where the C library resets a handler once it ran
+    return;
+  }
+  std::signal(signal_number, elctl::g_previous_handler.load());
+  std::raise(signal_number);
+}
 
 #ifdef _WIN32
 namespace {
-// Runs on a thread of its own. TRUE: handled, the process goes on.
+// Runs on a thread of its own. TRUE: handled, the process goes on. FALSE on
+// the second event: the next handler, by default the one that ends the
+// process, takes it.
 BOOL WINAPI elctl_import_on_console_event(DWORD event) {
   if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) return FALSE;
-  elctl::g_interrupted.store(true);
-  return TRUE;
+  return elctl::g_interrupted.exchange(true) ? FALSE : TRUE;
 }
 }  // namespace
 #endif
@@ -64,6 +82,7 @@ class InterruptGuard {
   InterruptGuard() {
     g_interrupted.store(false);
     previous_ = std::signal(SIGINT, elctl_import_on_interrupt);
+    g_previous_handler.store(previous_ == SIG_ERR ? SIG_DFL : previous_);
 #ifdef _WIN32
     SetConsoleCtrlHandler(elctl_import_on_console_event, TRUE);
 #endif
@@ -108,31 +127,42 @@ int import_run(Context& ctx, const Flags& flags) {
     ctx.io.err << "no source is registered; see elctl import add\n";
     return kOk;
   }
-  auto client = importer_client(*ctx.store);
-  if (!client) return fatal(ctx.io, client.error());
+  // A dry run writes nothing, the importer's client row included; the
+  // writer does not use the client then.
+  P::Uuid client;
+  if (!dry_run) {
+    auto registered = importer_client(*ctx.store);
+    if (!registered) return fatal(ctx.io, registered.error());
+    client = *registered;
+  }
 
   const InterruptGuard guard;
-  bool blocking = false;
+  bool blocking = false, paused = false;
   for (std::size_t i = 0; i < chosen->size(); ++i) {
     const Source& source = (*chosen)[i];
     // Stopped between two sources: the next one waits where it was.
     if (g_interrupted.load() || (limit && *limit == 0)) {
       print_paused(ctx.io, source.name, source.info.done, source.info.total);
+      paused = true;
       break;
     }
-    if (!source.settings)
-      return fatal(ctx.io, "no settings for " + source.name + " in " + ctx.cache.string() +
-                               " (" + settings_file(ctx.cache, source.info.spec.uuid).filename().string() +
-                               "); was it added with another --cache?");
+    if (!source.settings) return fatal(ctx.io, missing_settings(ctx, source));
     const SourceSettings& settings = *source.settings;
-    auto opened = open_adapter(ctx, settings, *all, batch, true);
+    // A dry run reads the mirror as it is: fetching would write to the cache.
+    if (dry_run && settings.mirror) {
+      std::error_code code;
+      if (!fs::is_directory(settings.path, code))
+        return fatal(ctx.io, source.name + ": the mirror of " + settings.url + " is not in the cache (" +
+                                 utf8(settings.path) + "), and a dry run fetches nothing; run the import first");
+    }
+    auto opened = open_adapter(ctx, settings, *all, batch, !dry_run);
     if (!opened) return fatal(ctx.io, opened.error());
     for (const auto& line : opened->warnings) ctx.io.err << "warning: " << line << '\n';
 
     ingest::WriterConfig config = writer_config(settings);
     config.dry_run = dry_run;
     config.replay = flags.has("--replay");
-    ingest::BatchWriter writer(*ctx.store, *client, std::move(config));
+    ingest::BatchWriter writer(*ctx.store, client, std::move(config));
     const char* units = units_of(settings.kind);
     int done = source.info.done, total = source.info.total;
     auto stats = writer.run(
@@ -154,6 +184,7 @@ int import_run(Context& ctx, const Flags& flags) {
       ctx.io.out << source.name << ": dry run, would write " << stats->would_write << " rows (" << counts << ")\n";
       if (!stats->finished) {
         print_paused(ctx.io, source.name, done, total);
+        paused = true;
         break;
       }
       continue;
@@ -167,6 +198,7 @@ int import_run(Context& ctx, const Flags& flags) {
         }
     if (!stats->finished) {
       print_paused(ctx.io, source.name, done, total);
+      paused = true;
       break;
     }
     auto pending = pending_conflicts(*ctx.store, source.info.spec.uuid);
@@ -180,7 +212,8 @@ int import_run(Context& ctx, const Flags& flags) {
                  << source.name << '\n';
     blocking = blocking || pending->blocking_total > 0;
   }
-  return blocking ? kFailed : kOk;
+  // A paused run is not a verdict on what it has imported so far.
+  return blocking && !paused ? kFailed : kOk;
 }
 
 }  // namespace elctl::import_detail

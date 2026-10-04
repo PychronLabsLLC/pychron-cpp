@@ -10,7 +10,7 @@
 //                     [--replay] [--dry-run]
 //   elctl import status    --db <url>
 //   elctl import conflicts --db <url> [--source <s>] [--kind <k>] [--all] [--json]
-//   elctl import verify    --db <url> [--source <s>] [--tolerance 1e-9] [--json]
+//   elctl import verify    --db <url> [--source <s>] [--tolerance 1e-9] [--constants <preset>] [--json]
 //
 // Every subcommand takes --cache <dir>: where the settings of each source and
 // the mirrors of remote repositories are kept (default: the user's cache

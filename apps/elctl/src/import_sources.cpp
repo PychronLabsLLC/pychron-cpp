@@ -7,7 +7,6 @@
 #include <system_error>
 #include <tuple>
 
-#include <nlohmann/json.hpp>
 #include <toml++/toml.hpp>
 
 #include "import_impl.hpp"
@@ -31,7 +30,7 @@ namespace {
 
 Result<std::string> read_text(const fs::path& file) {
   std::ifstream in(file, std::ios::binary);
-  if (!in) return fail(ErrorKind::Io, "cannot read " + file.string());
+  if (!in) return fail(ErrorKind::Io, "cannot read " + utf8(file));
   std::ostringstream text;
   text << in.rdbuf();
   return text.str();
@@ -41,7 +40,7 @@ Result<toml::table> read_toml(const fs::path& file) {
   auto text = read_text(file);
   if (!text) return fail(text.error());
   auto parsed = toml::parse(*text);
-  if (!parsed) return fail(ErrorKind::Config, file.string() + ": " + std::string(parsed.error().description()));
+  if (!parsed) return fail(ErrorKind::Config, utf8(file) + ": " + std::string(parsed.error().description()));
   return std::move(parsed).table();
 }
 
@@ -60,19 +59,41 @@ int kind_rank(P::ImportSourceKind kind) {
 
 }  // namespace
 
+std::string utf8(const fs::path& path) noexcept {
+  try {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+  } catch (...) {
+    return "?";
+  }
+}
+
+fs::path path_from_utf8(std::string_view text) noexcept {
+  try {
+    return fs::path(std::u8string(text.begin(), text.end()));
+  } catch (...) {
+    return {};
+  }
+}
+
 fs::path settings_file(const fs::path& cache, P::Uuid uuid) { return cache / (uuid.str() + ".toml"); }
+
+std::string missing_settings(const Context& ctx, const Source& source) {
+  return "no settings for " + source.name + " in " + utf8(ctx.cache) + " (" + source.info.spec.uuid.str() +
+         ".toml); give the --cache it was added with, or run elctl import add for it again";
+}
 
 Result<void> save_settings(const fs::path& cache, const SourceSettings& s) {
   std::error_code code;
   fs::create_directories(cache, code);
-  if (code) return fail(ErrorKind::Io, "cannot create " + cache.string() + ": " + code.message());
+  if (code) return fail(ErrorKind::Io, "cannot create " + utf8(cache) + ": " + code.message());
 
   toml::table root;
   root.insert("kind", std::string(P::to_string(s.kind)));
   root.insert("name", s.name);
   root.insert("url", s.url);
   if (!s.branch.empty()) root.insert("branch", s.branch);
-  root.insert("path", s.path.string());
+  root.insert("path", utf8(s.path));
   root.insert("mirror", s.mirror);
   root.insert("tz", s.tz);
   root.insert("catalog_from_repos", s.catalog_from_repos);
@@ -85,7 +106,7 @@ Result<void> save_settings(const fs::path& cache, const SourceSettings& s) {
   std::ofstream out(file, std::ios::binary | std::ios::trunc);
   out << "# elctl import: the settings of one source. Written by `elctl import add`.\n" << root << '\n';
   out.flush();
-  if (!out) return fail(ErrorKind::Io, "cannot write " + file.string());
+  if (!out) return fail(ErrorKind::Io, "cannot write " + utf8(file));
   return {};
 }
 
@@ -100,22 +121,22 @@ Result<std::optional<SourceSettings>> load_settings(const fs::path& cache, P::Uu
   SourceSettings s;
   s.uuid = uuid;
   const auto kind = P::parse_import_source_kind(text("kind"));
-  if (!kind) return fail(ErrorKind::Config, file.string() + ": no source kind '" + text("kind") + "'");
+  if (!kind) return fail(ErrorKind::Config, utf8(file) + ": no source kind '" + text("kind") + "'");
   s.kind = *kind;
   s.name = text("name");
   s.url = text("url");
   s.branch = text("branch");
-  s.path = fs::path(text("path"));
+  s.path = path_from_utf8(text("path"));
   s.mirror = (*root)["mirror"].value<bool>().value_or(false);
   s.tz = text("tz");
   s.catalog_from_repos = (*root)["catalog_from_repos"].value<bool>().value_or(false);
   s.reference_runs = (*root)["reference_runs"].value<bool>().value_or(false);
   if (s.url.empty() || s.path.empty() || s.tz.empty())
-    return fail(ErrorKind::Config, file.string() + ": url, path and tz are required");
+    return fail(ErrorKind::Config, utf8(file) + ": url, path and tz are required");
   if (const auto* authors = (*root)["author_map"].as_table())
     for (const auto& [email, name] : *authors) {
       const auto value = name.value<std::string>();
-      if (!value) return fail(ErrorKind::Config, file.string() + ": author_map: " + std::string(email.str()) + " is not a name");
+      if (!value) return fail(ErrorKind::Config, utf8(file) + ": author_map: " + std::string(email.str()) + " is not a name");
       s.author_map.emplace(std::string(email.str()), *value);
     }
   return std::optional<SourceSettings>{std::move(s)};
@@ -129,7 +150,7 @@ Result<std::map<std::string, std::string>> read_author_map(const fs::path& file)
     const auto value = name.value<std::string>();
     if (!value)
       return fail(ErrorKind::Config,
-                  file.string() + ": " + std::string(email.str()) + " must be a user name in quotes");
+                  utf8(file) + ": " + std::string(email.str()) + " must be a user name in quotes");
     out.emplace(std::string(email.str()), *value);
   }
   return out;
@@ -279,9 +300,22 @@ Result<OpenedAdapter> open_adapter(Context& ctx, const SourceSettings& settings,
   std::vector<Lookup> lookups;
   for (const auto& other : all) {
     if (other.info.spec.kind != P::ImportSourceKind::LegacyDb) continue;
-    const fs::path dir = other.settings ? other.settings->path : fs::path(other.info.spec.url_or_path);
+    const fs::path dir = other.settings ? other.settings->path : path_from_utf8(other.info.spec.url_or_path);
+    // A dump that was moved or deleted must not stop every project.
+    const auto no_tags = [&](const std::string& why) {
+      out.warnings.push_back("no tags from the database dump " + other.name + ": " + why +
+                             "; analyses without a tags file get the default tag");
+    };
+    std::error_code code;
+    if (dir.empty() || !fs::is_directory(dir, code)) {
+      no_tags(utf8(dir) + " is not there any more");
+      continue;
+    }
     auto lookup = dvc::load_tag_lookup(dir);
-    if (!lookup) return fail(lookup.error());
+    if (!lookup) {
+      no_tags(one_line(lookup.error().what));
+      continue;
+    }
     lookups.push_back(std::move(*lookup));
   }
   if (!lookups.empty())
@@ -296,22 +330,12 @@ Result<OpenedAdapter> open_adapter(Context& ctx, const SourceSettings& settings,
   return out;
 }
 
-bool is_warning(const P::ImportConflictRow& row) {
-  const auto detail = nlohmann::json::parse(row.detail_json, nullptr, false);
-  if (!detail.is_object()) return false;
-  for (const char* key : {"imported", "synthesized"}) {
-    const auto flag = detail.find(key);
-    if (flag != detail.end() && flag->is_boolean() && flag->get<bool>()) return true;
-  }
-  return false;
-}
-
 Result<PendingConflicts> pending_conflicts(P::IStore& store, P::Uuid source) {
   auto rows = store.import_conflicts({source, std::nullopt, std::string("pending")});
   if (!rows) return fail(rows.error());
   PendingConflicts out;
   for (const auto& row : *rows) {
-    const bool warning = is_warning(row);
+    const bool warning = ingest::is_warning_conflict(row);
     ++(warning ? out.warnings : out.blocking)[std::string(P::to_string(row.kind))];
     ++(warning ? out.warnings_total : out.blocking_total);
   }
