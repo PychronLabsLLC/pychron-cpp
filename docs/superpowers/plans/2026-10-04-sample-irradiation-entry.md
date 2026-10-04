@@ -1,9 +1,9 @@
-# Sample and Irradiation Entry Implementation Plan
+# Sample and Package Entry Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enter and edit PIs, projects, materials, samples, irradiations
-("packages"), chronologies, levels, productions and positions in the DVC store,
+**Goal:** Enter and edit PIs, projects, materials, samples, packages (an
+irradiation is a package of kind `irradiation`), chronologies, levels, productions and positions in the DVC store,
 and generate identifiers, from `elctl entry` and two `pychron-ui` windows.
 
 **Architecture:** `libs/persistence` gains catalog reads, an all-or-nothing
@@ -24,8 +24,11 @@ GoogleTest (+ QtTest in `tests/ui`).
 
 Legacy Python acquisition is not supported (labs migrate first); identifiers
 are one sequential counter (no NMGRL streams or offsets); changing the sample
-of an analyzed position stays behind a confirmation; package mode is per
-irradiation (`irradiation.kind`). Nothing blocks any task.
+of an analyzed position stays behind a confirmation; the package kind
+(`irradiation` or `package`) is per package, stored in the new
+`irradiation.kind` column. Entry, `elctl entry` and the UI say "package";
+store names (`irradiation` table, `IrradiationSpec`, `irradiations()`) stay.
+Nothing blocks any task.
 
 ## Global Constraints
 
@@ -77,19 +80,19 @@ irradiation (`irradiation.kind`). Nothing blocks any task.
 
 | File | Responsibility |
 |---|---|
-| `libs/persistence/migrations/pg/0003_entry.sql` (create), `migrations/sqlite/0003_entry.sql` (generated) | `irradiation.kind`; lower(name) indexes on sample and project |
+| `libs/persistence/migrations/pg/0003_entry.sql` (create), `migrations/sqlite/0003_entry.sql` (generated) | `irradiation.kind` (package kind); lower(name) indexes on sample and project |
 | `libs/persistence/include/pychron/persistence/catalog.hpp` (create) | row structs, `SampleQuery`, `LevelSheet`, `CatalogEdit*`, `CatalogOutcome`, `IdentifierAllocation`, `AllocationOutcome` |
 | `libs/persistence/include/pychron/persistence/store.hpp` (modify) | the new `IStore` methods |
 | `libs/persistence/src/sql/catalog.hpp` (create) | read statements, editable-column allowlist, rule queries |
 | `libs/persistence/src/catalog_read.cpp`, `catalog_edit.cpp`, `identifier_alloc.cpp` (create) | implementations |
 | `libs/persistence/src/store_impl.hpp`, `store.cpp`, `CMakeLists.txt` (modify) | wiring |
 | `libs/dvc/include/pychron/dvc/meta_files.hpp` (create), `libs/dvc/src/meta_layout.hpp` (modify) | `parse_holder`, `parse_chronology` made public |
-| `libs/entry/` (create) | `names`, `sample_fields`, `csv`, `sample_import`, `sample_search`, `settings`, `identifier_plan`, `level_sheet`, `irradiation_edit`, `holder_import`, `export` |
+| `libs/entry/` (create) | `names`, `sample_fields`, `csv`, `sample_import`, `sample_search`, `settings`, `identifier_plan`, `level_sheet`, `package_edit`, `holder_import`, `export` |
 | `CMakeLists.txt` (modify) | add `entry` to `PYCHRON_LIBS` after `dvc` |
 | `tests/persistence/test_catalog_read.cpp`, `test_catalog_edit.cpp`, `test_identifier_allocation.cpp` (create) | store tests |
 | `tests/entry/` (create) | one `test_<unit>.cpp` per unit |
 | `apps/elctl/src/entry*.cpp` (create), `apps/elctl/tests/test_entry*.cpp` (create) | `elctl entry` |
-| `apps/pychron-ui/src/entry_bridge.*`, `samples_window.*`, `sample_import_dialog.*`, `irradiations_window.*`, `level_grid_model.*`, `holder_view.*`, `irradiation_dialogs.*`, `identifier_dialog.*`, `level_sheet_pdf.*` (create) | UI |
+| `apps/pychron-ui/src/entry_bridge.*`, `samples_window.*`, `sample_import_dialog.*`, `packages_window.*`, `level_grid_model.*`, `holder_view.*`, `package_dialogs.*`, `identifier_dialog.*`, `level_sheet_pdf.*` (create) | UI |
 | `docs/entry.md` (create), `AGENTS.md`, `docs/superpowers/plans/2026-09-30-implementation-priorities.md` (modify) | docs |
 
 ---
@@ -99,8 +102,8 @@ irradiation (`irradiation.kind`). Nothing blocks any task.
 **Files:** `0003_entry.sql`, `catalog.hpp`, `store.hpp`, `src/sql/catalog.hpp`,
 `src/catalog_read.cpp`, `forwarding_store.hpp`; test `tests/persistence/test_catalog_read.cpp`.
 
-- [ ] Write `0003_entry.sql`: `irradiation.kind text NOT NULL DEFAULT 'argon'
-      CHECK (kind IN ('argon','package'))`, `CREATE INDEX sample_name_lower_ix
+- [ ] Write `0003_entry.sql`: `irradiation.kind text NOT NULL DEFAULT 'irradiation'
+      CHECK (kind IN ('irradiation','package'))`, `CREATE INDEX sample_name_lower_ix
       ON sample (lower(name));` and `project_name_lower_ix`. Run
       `python3 tools/ddl_sqlite.py` (check it handles `ADD COLUMN ... CHECK`;
       extend it if not). Confirm the schema parity test passes on both
@@ -327,9 +330,9 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
 
 ### Task 8: Level sheet, irradiation edit, holders, export (spec 6)
 
-**Files:** `include/pychron/entry/{level_sheet,irradiation_edit,holder_import,export}.hpp`,
+**Files:** `include/pychron/entry/{level_sheet,package_edit,holder_import,export}.hpp`,
 `src/*.cpp`; `libs/dvc/include/pychron/dvc/meta_files.hpp`; tests
-`test_level_sheet.cpp`, `test_irradiation_edit.cpp`, `test_holder_import.cpp`,
+`test_level_sheet.cpp`, `test_package_edit.cpp`, `test_holder_import.cpp`,
 `test_export.cpp`.
 
 - [ ] Move the declarations of `parse_holder`, `parse_chronology` and their
@@ -347,9 +350,9 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
   - `OrphansAfterHolderShrink`: kept and listed, never deleted.
   - `HolesFromHolderOrdinal`: position n is ordinal n-1, and `hole_id` is
     shown.
-- [ ] `NewIrradiation`: name, kind, doses, reactor, levels. `validate()`
+- [ ] `NewPackage` (`package_edit.hpp`): name, package kind, doses, reactor, levels. `validate()`
       covers dose order, `end > start` and `power > 0`, and the reactor is
-      required for `argon`; a `package` writes no chronology or production
+      required for kind `irradiation`; kind `package` writes no chronology or production
       (test `PackageWritesNoRefs`). `set_kind` is a catalog edit that leaves
       reference data alone (test `KindChangeKeepsRefs`). `to_batch()` and `stage_refs()` cover the
       chronology, the copied production, the level productions and the
@@ -359,7 +362,7 @@ tests `test_settings.cpp`, `test_identifier_plan.cpp`.
 - [ ] `import_holder(text, name)`: legacy files with and without hole
       numbers, `#` and blank lines (which still advance the implicit id,
       `meta_object.py:260-299`), duplicate hole ids refused.
-- [ ] `export_level_csv`, `export_irradiation_csv` round-trip through
+- [ ] `export_level_csv`, `export_package_csv` round-trip through
       `positions import`. Commit.
 
 ### Task 9: `elctl entry` (spec 10)
@@ -378,8 +381,8 @@ without persistence, prints "built without persistence", like
 - [ ] Tests on a temp SQLite store:
   - `samples import --dry-run` writes nothing and prints the plan.
   - An import, then a re-import, which reports everything as existing.
-  - `irradiation add P-1 --kind package` writes no chronology.
-  - `irradiation add NM-001 --levels A-C --holder 24-hole`, after
+  - `package add P-1 --kind package` writes no chronology.
+  - `package add NM-001 --levels A-C --holder 24-hole`, after
     `holders import`.
   - `positions import`, then `identifiers generate --dry-run`, then the real
     run. The printed plan equals the stored identifiers.
@@ -419,14 +422,15 @@ without persistence, prints "built without persistence", like
   - A TSV paste opens the preview with the expected states.
 - [ ] Commit.
 
-### Task 11: Irradiations window and its dialogs (spec 9.3)
+### Task 11: Packages window and its dialogs (spec 9.3)
 
-**Files:** `irradiations_window.{hpp,cpp}`, `level_grid_model.{hpp,cpp}`,
-`irradiation_dialogs.{hpp,cpp}` (new irradiation, new level, production
+**Files:** `packages_window.{hpp,cpp}`, `level_grid_model.{hpp,cpp}`,
+`package_dialogs.{hpp,cpp}` (new package, new level, production
 editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
-`tests/ui/test_irradiations_window.cpp`.
+`tests/ui/test_packages_window.cpp`.
 
-- [ ] Tree model over `irradiations()` and `levels()`.
+- [ ] Tree model over `irradiations()` and `levels()`, the package kind shown
+      as an icon.
 - [ ] `LevelGridModel` over a `LevelSheetEdit`: the columns of 9.3, analyzed
       rows tinted, orphans marked. Edits to weight, packet and note go
       through `LevelSheetEdit`.
@@ -434,10 +438,10 @@ editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
       selected" confirms once, with the analysis count, when any selected
       row is analyzed.
 - [ ] Level dock (holder, z, production, note) and chronology dock (hidden
-      for a `package` irradiation), with times in the lab's zone converted with
+      for kind `package`), with times in the lab's zone converted with
       `ingest::tz` helpers or `std::chrono::zoned_time`, whichever the tree
       already uses.
-- [ ] Dialogs as spec 9.3, New Irradiation with the kind choice. It commits
+- [ ] Dialogs as spec 9.3, New Package with the kind choice. It commits
       in one call. A kind switch on the Level dock asks for confirmation and
       shows or hides the chronology and production editors.
 - [ ] Generate Identifiers dialog: settings summary, overwrite, warnings,
@@ -455,7 +459,7 @@ editor, clear fields, fill packets), `identifier_dialog.{hpp,cpp}`,
 ### Task 12: Holder view, holders dialog, PDF (spec 9.3, 9.4, 9.5)
 
 **Files:** `holder_view.{hpp,cpp}` (QGraphicsView), `holders_dialog.{hpp,cpp}`,
-`level_sheet_pdf.{hpp,cpp}`; tests in `tests/ui/test_irradiations_window.cpp`
+`level_sheet_pdf.{hpp,cpp}`; tests in `tests/ui/test_packages_window.cpp`
 and `tests/ui/test_level_sheet_pdf.cpp`.
 
 - [ ] Holder view: holes from `HolderValue`, filled by project colour,
@@ -470,7 +474,7 @@ and `tests/ui/test_level_sheet_pdf.cpp`.
 
 ### Task 13: Docs, full verification, merge
 
-- [ ] `docs/entry.md`: user guide for samples, irradiations, identifiers,
+- [ ] `docs/entry.md`: user guide for samples, packages, identifiers,
       settings, `elctl entry`, and the rule that a lab migrates its legacy
       database before using entry (spec E1).
 - [ ] AGENTS.md: one bullet under Build and test: `libs/entry` builds only

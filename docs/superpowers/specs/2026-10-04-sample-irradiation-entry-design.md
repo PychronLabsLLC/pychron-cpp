@@ -1,4 +1,4 @@
-# Sample and irradiation (package) entry
+# Sample and package entry
 
 Date: 2026-10-04
 Status: Accepted (owner decisions on the open questions recorded 2026-10-04, section 11)
@@ -9,8 +9,8 @@ reference data 6, identifier reservation 8.6, catalog audit D6, roles 11.2),
 the catalog), `2026-10-02-data-browsing-visualization-design.md` (the store
 worker-thread pattern of `StoreSource`).
 Scope: entering and editing principal investigators, projects, materials and
-samples; entering irradiations ("packages"), their chronology, levels,
-productions and positions; assigning samples to positions; generating
+samples; entering packages (an irradiation is a package of kind
+`irradiation`), their chronology, levels, productions and positions; assigning samples to positions; generating
 identifiers (labnumbers). Store additions, a Qt-free `libs/entry`, `elctl
 entry` commands and two `pychron-ui` windows.
 Out of scope: flux fitting and monitor ages (J is shown, never edited here),
@@ -28,7 +28,7 @@ runs afterwards resolves to the right sample.
 
 Success: from an empty SQLite store, `elctl entry samples import
 samples.csv` creates 40 samples with their PIs, projects and materials;
-Entry > Irradiations creates `NM-301` with a chronology and levels A-C on a
+Entry > Packages creates irradiation package `NM-301` with a chronology and levels A-C on a
 24-hole holder; samples are assigned to positions; Generate Identifiers
 numbers them continuing from the highest identifier already in the store;
 and the data browser filtered by irradiation `NM-301` lists those samples
@@ -69,8 +69,8 @@ anywhere in `entry/`.
 | E9 | **No XLS.** Bulk input is CSV or TSV, from a file or pasted from a spreadsheet. Export is CSV and a PDF level sheet. |
 | E10 | **A level's z lives only in its `level_geometry` reference**, as the importer already does (`libs/dvc/src/meta_adapter.cpp:258-263`). The `level.z` column is left NULL by entry. |
 | E11 | **Renames are cheap until the first analysis.** An irradiation or level can be renamed while no identifier in it has an analysis. The rename rewrites the `ref_object.key` of every reference scoped to it in the same transaction. After the first analysis a rename is refused. |
-| E12 | **Lab entry settings are shared.** The irradiation prefix, monitor sample and other options (section 7) are one `document` reference, `pychron/entry_settings.json`, so every client behaves the same way and changes are audited. |
-| E13 | **Package mode is per irradiation.** `irradiation.kind` is `argon` (chronology, productions, flux) or `package` (positions and samples only), chosen when the irradiation is created and editable later (section 11 Q4). Changing it hides or shows the chronology and production editors; it never deletes reference data. |
+| E12 | **Lab entry settings are shared.** The package name prefix, monitor sample and other options (section 7) are one `document` reference, `pychron/entry_settings.json`, so every client behaves the same way and changes are audited. |
+| E13 | **A package is the generic thing; its kind says what it is.** The package kind is `irradiation` (chronology, productions, flux) or `package` (positions and samples only), chosen when the package is created and editable later (section 11 Q4). Changing it hides or shows the chronology and production editors; it never deletes reference data. Entry, `elctl entry` and the UI say "package". The store keeps its existing names (table `irradiation`, `level`, `irradiation_position`, the `irradiation` browse filter and ref keys) and gains a `kind` column, so nothing below entry is renamed (section 11 Q5). |
 
 ## 4. Data model use
 
@@ -82,7 +82,7 @@ No new tables. Entry writes these existing rows:
 | Project | `project` | (`name`, `pi_uuid`) |
 | Material | `material` | (`name`, `grainsize`) |
 | Sample | `sample` (+ `updated_utc`) | (`name`, `project_uuid`, `material_uuid`) |
-| Irradiation | `irradiation` (`kind`, new in `0003_entry.sql`) | `name` |
+| Package | `irradiation` (`kind`, the package kind, new in `0003_entry.sql`) | `name` |
 | Chronology | `ref_object` `chronology` `<irrad>` + `chronology_dose` revisions | |
 | Production | `ref_object` `production` `<irrad>/<name>` + `production_meta`, `production_value` | |
 | Level | `level` (`holder_ref_uuid`, `note`) | (`irradiation_uuid`, `name`) |
@@ -151,7 +151,7 @@ Result<std::vector<PrincipalInvestigatorRow>> principal_investigators();
 Result<std::vector<ProjectRow>> projects(std::optional<Uuid> pi);
 Result<std::vector<MaterialRow>> materials();
 Result<std::vector<SampleRow>> samples(const SampleQuery&);
-Result<std::vector<IrradiationRow>> irradiations();        // newest first
+Result<std::vector<IrradiationRow>> irradiations();        // packages, newest first (store names stay, E13)
 Result<std::vector<LevelRow>> levels(Uuid irradiation);    // by name
 Result<std::optional<LevelSheet>> level_sheet(Uuid level);
 Result<std::optional<std::int64_t>> identifier_counter(const std::string& scope);
@@ -283,14 +283,15 @@ that.
 
 `0003_entry.sql`:
 
-- `ALTER TABLE irradiation ADD COLUMN kind text NOT NULL DEFAULT 'argon'
-  CHECK (kind IN ('argon','package'))` (E13). Imported irradiations are
-  `argon`; an admin can switch a legacy package afterwards.
+- `ALTER TABLE irradiation ADD COLUMN kind text NOT NULL DEFAULT 'irradiation'
+  CHECK (kind IN ('irradiation','package'))`, the package kind (E13).
+  Imported packages are `irradiation`; a legacy package that was never
+  irradiated can be switched to `package` afterwards.
 - An index for sample search, `CREATE INDEX sample_name_lower_ix ON sample
   (lower(name))`, and the same on `project`.
 
 Both are additive (11.4).
-`IrradiationSpec` gains `std::optional<std::string> kind` (default `argon`)
+`IrradiationSpec` gains `std::optional<std::string> kind` (default `irradiation`)
 so `add_irradiation` can set it.
 Regenerate the SQLite file with `tools/ddl_sqlite.py`.
 
@@ -310,10 +311,10 @@ and `pychron::core`, and `pychron::dvc` privately for `parse_holder` and
 | `sample_search.hpp` | the near-duplicate check before a new sample: same name ignoring case, spaces, `-` and `_`, in any project. It warns and never blocks (`sample_entry.py:948-960`). |
 | `level_sheet.hpp` | `LevelSheetEdit`: an editable copy of a `LevelSheet` with the holder's holes. Operations: assign sample to positions, clear fields of positions (choose which, `entry/tasks/labnumber/task.py:54-113`), set weight, note and packet, fill packet sequence, move a position's contents to another hole (only if it has no analyzed identifier), set level note, z, holder, production. `dirty()`, `validate()` (a row with an identifier needs a sample; packets match; positions inside the holder unless orphaned) and `to_batch()` that emits only changed fields with their loaded values as `expected`. |
 | `identifier_plan.hpp` | the pure planner (section 8). |
-| `irradiation_edit.hpp` | new irradiation: name, chronology doses, reactor and production defaults, levels; validation (doses ordered, `end > start`, power > 0); emits one batch plus a unit of work for the chronology and productions. Duration helper and estimated J (`hours x j_multiplier`, `labnumber_entry.py:1163-1177`), display only. |
+| `package_edit.hpp` | `NewPackage`: name, package kind, chronology doses (kind `irradiation` only), reactor and production defaults, levels; validation (doses ordered, `end > start`, power > 0); emits one batch plus a unit of work for the chronology and productions. Duration helper and estimated J (`hours x j_multiplier`, `labnumber_entry.py:1163-1177`), display only. |
 | `holder_import.hpp` | reads a legacy holder text file through `parse_holder` and stages an `irradiation_holder` revision. Hole ids must be unique and positions numbered `1..n`. |
 | `settings.hpp` | `EntrySettings` (section 7) read from and written to the `pychron/entry_settings.json` document reference, with defaults when absent. |
-| `export.hpp` | level and irradiation CSV export (the columns of section 9.2). |
+| `export.hpp` | level and package CSV export (the columns of section 9.2). |
 
 ## 7. Settings
 
@@ -321,8 +322,8 @@ The document (comments here are explanations, not part of the file):
 
 ```json
 {
-  "irradiation_prefix": "NM-",
-  "default_irradiation_kind": "argon",  // pre-selected in New Irradiation; each irradiation has its own kind
+  "package_prefix": "NM-",
+  "default_package_kind": "irradiation",  // pre-selected in New Package; each package has its own kind
   "pi_names_allowed": [],
   "monitor": {"sample": "FC-2", "material": "sanidine"},
   "irradiation_project_prefix": "Irradiation-",
@@ -372,7 +373,7 @@ seen.
 
 An **Entry** menu, present when the app has a store (`PYCHRON_UI_HAS_STORE`
 and a `--db` or a data install), in both `MainWindow` and `DataMainWindow`:
-Samples…, Irradiations…, Import Samples…, Holders…, Entry Settings….
+Samples…, Packages…, Import Samples…, Holders…, Entry Settings….
 All store calls go through an `EntryBridge` that owns one worker thread with
 its own store (as `StoreSource` does). It registers the client with role
 `reduction` (11.2 lets that role write catalog rows) and returns results to
@@ -406,10 +407,10 @@ File or clipboard, column mapping table, preview with a filter
 "Write template", and Import, which sends one batch. Same core as
 `elctl entry samples import`.
 
-### 9.3 Irradiations window
+### 9.3 Packages window
 
-- Left: tree of irradiations (newest first) and their levels, with counts.
-  New Irradiation… and New Level… buttons.
+- Left: tree of packages (newest first, the kind as an icon) and their
+  levels, with counts. New Package… and New Level… buttons.
 - Centre: positions grid for the selected level. Rows are holder holes and
   orphans. Columns: analyzed marker (count in tooltip), Position, Packet,
   Identifier, Sample, Project, PI, Material, Grainsize, Weight, J, ±J, Note.
@@ -421,7 +422,7 @@ File or clipboard, column mapping table, preview with a filter
     ask once, naming the analysis count (E5).
   - Level: holder (combo of `irradiation_holder` refs), z, production
     (combo of the irradiation's productions, with Edit…), note.
-  - Chronology (hidden for a `package` irradiation): dose table with power, start and
+  - Chronology (hidden for kind `package`): dose table with power, start and
     end in the lab's local time, stored as UTC (P4); duration helper; total
     hours and estimated J.
   - Holder view: the holes drawn from the holder geometry, filled holes
@@ -430,17 +431,18 @@ File or clipboard, column mapping table, preview with a filter
 - Toolbar: Save, Revert, Generate Identifiers…, Clear Fields…, Fill Packets…,
   Import Positions… (CSV: level, position, sample, project, PI, material,
   grainsize, weight, packet, note), Export CSV, Save PDF.
-- Switching level or irradiation with unsaved edits asks Save, Discard or
+- Switching level or package with unsaved edits asks Save, Discard or
   Cancel (`labnumber_entry.py:1179-1189`).
 - Stale rows after a save are shown as in the samples window.
 
-New Irradiation dialog: name (pre-filled by the prefix increment), the
-chronology table, a reactor from `reactors.json` (whose production is
-copied into the irradiation as `<irrad>/<reactor>`), and the levels to
-create (count, first letter, holder, z), and the kind (`argon` or
-`package`, pre-selected from the settings). For `argon` a reactor is
-required; for `package` the chronology and reactor are hidden. Unlike legacy, everything entered in this dialog is written in one
-transaction.
+New Package dialog: the package kind (`irradiation` or `package`,
+pre-selected from the settings), name (pre-filled by the prefix increment),
+the levels to create (count, first letter, holder, z) and, for kind
+`irradiation`, the chronology table and a reactor from `reactors.json` (whose
+production is copied into the package as `<name>/<reactor>`). The reactor is
+required for kind `irradiation`; for kind `package` the chronology and
+reactor are hidden. Unlike legacy, everything entered in this dialog is
+written in one transaction.
 
 New Level dialog: next letter, last level's holder, z and production
 pre-filled (`package_level_editor.py:161-178`).
@@ -477,11 +479,11 @@ what it would write or what it wrote.
 elctl entry samples import <file.csv> [--update-existing] [--errors <out.csv>]
 elctl entry samples template <out.csv>
 elctl entry samples list [--pi ..] [--project ..] [--material ..] [--text ..]
-elctl entry irradiation add <name> [--kind argon|package] [--chronology <file>] [--reactor <name>] [--levels A-C --holder <name> --z <z>]
-elctl entry irradiation show <name> [--level <L>] [--csv]
-elctl entry irradiation set-kind <name> argon|package
-elctl entry positions import <irradiation> <file.csv>
-elctl entry identifiers generate <irradiation> [--overwrite]   # --dry-run prints the plan
+elctl entry package add <name> [--kind irradiation|package] [--chronology <file>] [--reactor <name>] [--levels A-C --holder <name> --z <z>]
+elctl entry package show <name> [--level <L>] [--csv]
+elctl entry package set-kind <name> irradiation|package
+elctl entry positions import <package> <file.csv>
+elctl entry identifiers generate <package> [--overwrite]   # --dry-run prints the plan
 elctl entry holders import <file.txt> [--name <name>]
 elctl entry settings show|set <key> <value>
 ```
@@ -500,8 +502,11 @@ Exit code 0 on success, 1 on error, 2 when a save is stale or refused
 3. **Q3 Sample change on an analyzed position: kept behind the
    confirmation** that names the number of analyses (E5). No admin role is
    needed.
-4. **Q4 Package mode: per irradiation** (`irradiation.kind`, E13), not per
-   lab.
+4. **Q4 Package kind: per package**, not per lab. A package is the generic
+   idea of an irradiation; its kind is `irradiation` or `package` (E13).
+5. **Q5 Names: entry only.** Entry, `elctl entry` and the UI say "package";
+   the store's `irradiation` table and its dependents keep their names, and
+   the package kind is the new `irradiation.kind` column (E13).
 
 ## 12. Not in this spec
 
@@ -544,5 +549,5 @@ identifiers (a browse filter will cover it).
 - `apps/elctl/tests`: `entry samples import --dry-run` output and an end-to-end
   import on SQLite.
 - `tests/ui` (headless): samples table edit and save; stale highlighting;
-  irradiation window assign, save and generate on a SQLite store; the unsaved
+  packages window assign, save and generate on a SQLite store; the unsaved
   edits prompt.
