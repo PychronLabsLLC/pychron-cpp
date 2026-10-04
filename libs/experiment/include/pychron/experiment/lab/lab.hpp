@@ -13,6 +13,9 @@
 //   <lab>/defaults.toml           run factory defaults per (analysis type, device) (optional)
 //   <lab>/blocks/*.toml           reusable run sequences for the run factory (optional)
 //   <lab>/notifications.toml      email, webhook and command notifications (optional)
+//   <lab>/tray_maps/*.txt         sample trays, in legacy pychron's format (optional)
+//   <lab>/stage_calibrations/     where each tray sits on each extraction device's stage
+//                                 (<device>.<tray>.toml, written by `elctl laser calibrate`)
 
 #include <filesystem>
 #include <map>
@@ -32,6 +35,8 @@
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
 #include "pychron/experiment/plan/plan_library.hpp"
+#include "pychron/laser/calibration_store.hpp"
+#include "pychron/laser/tray_map.hpp"
 #include "pychron/scripting/services.hpp"
 #include "pychron/systems/jobs/peak_center.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
@@ -87,6 +92,11 @@ struct Lab {
   DefaultsTable defaults;               // <lab>/defaults.toml: what a new run starts with
   std::map<std::string, Block> blocks;  // <lab>/blocks/*.toml by block name
   NotificationConfig notifications;     // <lab>/notifications.toml; no channels when absent
+  laser::TrayLibrary trays;             // <lab>/tray_maps
+  std::unique_ptr<laser::CalibrationStore> calibrations;  // <lab>/stage_calibrations; never null
+  // The line config's drivers that are extraction devices, sorted: what a
+  // queue's or a run's extract_device may name. Empty: the name is free text.
+  std::vector<std::string> extract_devices;
   std::vector<std::string> problems;  // files that did not load
 
   QueueResolvers resolvers() const { return {plans.get(), scripts.get(), condition_names.get()}; }
@@ -106,7 +116,11 @@ struct LabCheck {
 
 // check_queue plus what only the lab knows: files that did not load, plans
 // naming a peak-center config the lab lacks, and each run's conditionals
-// checked against the metric catalog (each distinct message once).
+// checked against the metric catalog (each distinct message once). In a lab
+// with extraction devices, also what would stop a run reaching its hole: an
+// unknown device or tray, a hole the tray lacks, a tray that is not
+// calibrated for the device (field "extraction"; an unknown tray is
+// queue-level, field "tray").
 LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue);
 
 // "runs[3].plan: unknown plan 'x'", "queue.delays: ...", "lab: ...".

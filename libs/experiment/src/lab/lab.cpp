@@ -1,5 +1,7 @@
 #include "pychron/experiment/lab/lab.hpp"
 
+#include "pychron/devices/driver_registry.hpp"
+
 #include <algorithm>
 #include <fstream>
 #include <set>
@@ -96,6 +98,15 @@ Lab load_lab(const LabPaths& paths) {
     else lab.problems.push_back(data.error().what);
   }
   if (lab.line) lab.aliases = std::make_unique<measurement::SystemConfigAliases>(*lab.line);
+  lab.trays = laser::TrayLibrary::load(dir / "tray_maps");
+  for (const auto& p : lab.trays.problems()) lab.problems.push_back(p);
+  lab.calibrations = std::make_unique<laser::CalibrationStore>(dir / "stage_calibrations");
+  if (lab.line) {
+    for (const auto& [name, driver] : lab.line->drivers) {  // a map: sorted
+      const DriverSchema* schema = DriverRegistry::global().schema(driver.kind);
+      if (schema != nullptr && schema->extraction_device) lab.extract_devices.push_back(name);
+    }
+  }
   if (lab.spectrometer) lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(lab.spectrometer->config);
   lab.plans = std::make_unique<plan::PlanLibrary>(plan::PlanResolvers{lab.aliases.get(), lab.catalog.get()});
   if (fs::is_directory(dir / "plans", ec)) {
@@ -156,10 +167,73 @@ std::vector<Diagnostic> LabCheck::all() const {
   return out;
 }
 
+namespace {
+
+std::string joined(const std::vector<std::string>& names) {
+  std::string out;
+  for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
+  return out.empty() ? "none" : out;
+}
+
+// What would stop a run reaching its hole (laser system design, section 5).
+// Only in a lab whose line config has extraction devices: without them the
+// device name is free text, as it always was.
+void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagnostic>& out) {
+  if (lab.extract_devices.empty()) return;
+  const laser::TrayMap* tray = queue.tray.empty() ? nullptr : lab.trays.find(queue.tray);
+  if (!queue.tray.empty() && tray == nullptr) {
+    out.push_back({Severity::Error, -1, "tray",
+                   "no tray map '" + queue.tray + "' in " + (lab.paths.dir / "tray_maps").string() +
+                       " (known: " + joined(lab.trays.names()) + ")"});
+  }
+  std::set<std::string> reported;
+  std::map<std::string, laser::CalibrationStatus> calibration;  // by device, for `tray`
+  const auto say = [&](int row, std::string message) {
+    if (reported.insert(message).second) out.push_back({Severity::Error, row, "extraction", std::move(message)});
+  };
+  for (std::size_t i = 0; i < queue.runs.size(); ++i) {
+    const auto& r = queue.runs[i];
+    const int row = static_cast<int>(i);
+    if (r.skip) continue;
+    const auto& e = r.extraction;
+    ExtractionSpec nothing;
+    nothing.device = e.device;
+    if (e == nothing) continue;  // the run extracts nothing
+    const std::string& device = e.device.empty() ? queue.extract_device : e.device;
+    if (device.empty()) continue;
+    if (std::find(lab.extract_devices.begin(), lab.extract_devices.end(), device) == lab.extract_devices.end()) {
+      say(row, "unknown extraction device '" + device + "' (the line has: " + joined(lab.extract_devices) + ")");
+      continue;
+    }
+    if (!e.position || e.position->holes.empty()) continue;
+    if (queue.tray.empty()) {
+      say(row, "the run names a hole and the queue has no tray");
+      continue;
+    }
+    if (tray == nullptr) continue;  // said above
+    bool on_tray = true;
+    for (int hole : e.position->holes) {
+      if (tray->find(std::to_string(hole)) == nullptr) {
+        say(row, "no hole " + std::to_string(hole) + " on tray " + tray->name());
+        on_tray = false;
+      }
+    }
+    if (!on_tray) continue;
+    auto it = calibration.find(device);
+    if (it == calibration.end()) it = calibration.emplace(device, lab.calibrations->status(*tray, device)).first;
+    if (it->second.state != laser::CalibrationState::Ok) {
+      say(row, it->second.why + " (elctl laser calibrate " + device + " " + tray->name() + " ...)");
+    }
+  }
+}
+
+}  // namespace
+
 LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
   LabCheck out;
   for (const auto& p : lab.problems) out.extra.push_back({Severity::Error, -1, "lab", p});
   out.report = check_queue(queue, lab.ids, lab.resolvers());
+  check_extraction(lab, queue, out.extra);
 
   const auto catalog = lab.metric_catalog();
   std::set<std::string> reported;
