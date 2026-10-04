@@ -105,10 +105,21 @@ QString ValveItem::shown_name(const QFontMetricsF& metrics) const {
   return metrics.elidedText(label_, Qt::ElideRight, kSize - 4);
 }
 
+QRectF ValveItem::wheel_rect() const {
+  if (kind_ != canvas::ValveKind::Manual) {
+    return {};
+  }
+  if (label_.isEmpty()) {
+    return {-kWheelRadius, -kWheelRadius, 2 * kWheelRadius, 2 * kWheelRadius};
+  }
+  const double r = kCornerWheelRadius;
+  const QPointF c(kSize / 2 - r - 2.5, -kSize / 2 + r + 2.5);
+  return {c.x() - r, c.y() - r, 2 * r, 2 * r};
+}
+
 QRectF ValveItem::boundingRect() const {
   const double half = kSize / 2 + 4;  // room for the pending outline and the lock border
-  const double handle = kind_ == canvas::ValveKind::Manual ? kHandleHeight : 0;
-  return {-half, -half - handle, 2 * half, 2 * half + handle};
+  return {-half, -half, 2 * half, 2 * half};
 }
 
 void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
@@ -122,14 +133,32 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->drawRoundedRect(body, kCornerRadius, kCornerRadius);
   }
   if (kind_ == canvas::ValveKind::Manual) {
-    // stem up from the body, bar across it
-    const QPointF top(0, body.top() - kHandleHeight);
-    painter->setPen(QPen(theme().text, 2.5, Qt::SolidLine, Qt::RoundCap));
-    painter->drawLine(QPointF(0, body.top()), top);
-    painter->drawLine(top - QPointF(kHandleWidth / 2, 0), top + QPointF(kHandleWidth / 2, 0));
-    painter->setPen(QPen(theme().text, 1));
+    // A handwheel: rim, hub and four spokes, set on the diagonal so it does
+    // not read as a crosshair.
+    const QRectF wheel = wheel_rect();
+    const QPointF c = wheel.center();
+    const double r = wheel.width() / 2;
+    const bool small = r < kWheelRadius;
+    painter->save();
+    painter->setBrush(Qt::NoBrush);
+    painter->setPen(QPen(theme().text, small ? 1.2 : 2.0));
+    painter->drawEllipse(c, r, r);
+    painter->setPen(QPen(theme().text, small ? 1.0 : 1.6, Qt::SolidLine, Qt::RoundCap));
+    const double d = r * 0.7071;
+    for (const QPointF& spoke : {QPointF(d, d), QPointF(d, -d)}) {
+      painter->drawLine(c - spoke, c + spoke);
+    }
+    if (!small) {
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(theme().text);
+      painter->drawEllipse(c, 2.6, 2.6);
+    }
+    painter->restore();
   }
-  painter->drawText(body, Qt::AlignCenter, shown_name(QFontMetricsF(painter->font())));
+  // A labelled manual valve keeps its label clear of the wheel in the corner.
+  const bool under_wheel = kind_ == canvas::ValveKind::Manual && !label_.isEmpty();
+  painter->drawText(body.adjusted(0, 0, 0, -1), under_wheel ? Qt::AlignHCenter | Qt::AlignBottom : Qt::AlignCenter,
+                    shown_name(QFontMetricsF(painter->font())));
 
   if (pending_) {
     painter->setBrush(Qt::NoBrush);

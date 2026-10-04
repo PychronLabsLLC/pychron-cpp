@@ -486,14 +486,15 @@ class TestCanvasView : public QObject {
     QCOMPARE(view_->stage("prep")->region_color(), view_->stage("turbo")->region_color());
   }
 
-  // A manual valve wears a T handle above its body, and any valve cuts a
-  // name too long for the body short; the tooltip keeps it whole.
-  void manualValvesWearAHandleAndLongNamesAreCutShort() {
+  // A manual valve wears a handwheel on its face: nothing sticks out of the
+  // body, so pipes can join any side. Any valve cuts a label too long for
+  // the body short; the tooltip keeps the name whole.
+  void manualValvesWearAHandwheelAndLongLabelsAreCutShort() {
     ui::ValveItem manual("MiniBoneGP5Manual", canvas::ValveKind::Manual);
     ui::ValveItem valve("A", canvas::ValveKind::Valve);
-    // room above the body for the handle, only on the manual valve
-    QCOMPARE(manual.boundingRect().top(), valve.boundingRect().top() - ui::ValveItem::kHandleHeight);
-    QCOMPARE(manual.boundingRect().bottom(), valve.boundingRect().bottom());
+    QCOMPARE(manual.boundingRect(), valve.boundingRect());
+    QVERIFY(valve.wheel_rect().isEmpty());
+    const QRectF body(-ui::ValveItem::kSize / 2, -ui::ValveItem::kSize / 2, ui::ValveItem::kSize, ui::ValveItem::kSize);
 
     const QFontMetricsF metrics{QFont()};
     const QString shown = manual.shown_name(metrics);
@@ -503,23 +504,34 @@ class TestCanvasView : public QObject {
     QCOMPARE(manual.toolTip(), QStringLiteral("MiniBoneGP5Manual"));
     QCOMPARE(valve.shown_name(metrics), QStringLiteral("A"));
 
+    // labelled: a small wheel in the top-right corner, clear of the label
+    const QRectF corner = manual.wheel_rect();
+    QVERIFY(body.contains(corner));
+    QVERIFY(corner.left() > 0 && corner.bottom() < 0);
+    // blank: the wheel fills the face
+    manual.set_label(QString());
+    const QRectF wheel = manual.wheel_rect();
+    QCOMPARE(wheel.center(), QPointF(0, 0));
+    QCOMPARE(wheel.width(), 2 * ui::ValveItem::kWheelRadius);
+    QVERIFY(body.contains(wheel));
+
+    // painted: the dark hub at the centre and rim to its right, on a blank face
+    QImage image(60, 60, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    painter.translate(30, 30);
+    manual.paint(&painter, nullptr, nullptr);
+    painter.end();
+    QVERIFY(image.pixelColor(30, 30).lightness() < 100);
+    QVERIFY(image.pixelColor(30 + static_cast<int>(ui::ValveItem::kWheelRadius), 30).lightness() < 110);
+    QVERIFY(image.pixelColor(30 + 4, 30 - 4).lightness() < 110);  // a spoke, on the diagonal
+    QVERIFY(image.pixelColor(30 + 6, 30).lightness() > 120);      // between the spokes: the face
+
     // On the canvas a manual valve's face is blank unless it is given a
     // display_name; other valves show their name.
     QCOMPARE(view_->valve("M1")->label(), QString());
     QCOMPARE(view_->valve("M1")->toolTip(), QStringLiteral("M1"));
     QCOMPARE(view_->valve("A")->label(), QStringLiteral("A"));
-
-    // painted: the handle's bar, dark, above the body
-    QImage image(60, 70, QImage::Format_ARGB32);
-    image.fill(Qt::white);
-    QPainter painter(&image);
-    painter.translate(30, 40);
-    manual.paint(&painter, nullptr, nullptr);
-    painter.end();
-    const int bar = 40 - static_cast<int>(ui::ValveItem::kSize / 2 + ui::ValveItem::kHandleHeight);
-    QVERIFY(image.pixelColor(30, bar).lightness() < 100);
-    QVERIFY(image.pixelColor(30 + 6, bar).lightness() < 100);
-    QVERIFY(image.pixelColor(30 + 14, bar).lightness() > 200);  // past the bar's end
   }
 
   // The lock border is blue and thick enough to read at a glance.

@@ -32,7 +32,8 @@ QColor valve_color(ValveState state);
 
 // Click -> actuate; colour by state; thick blue border when locked (context
 // menu locks/unlocks); pending indicator; flashes and shows Error.what in its
-// tooltip on rejection. A manual valve wears a T handle on top; a label too
+// tooltip on rejection. A manual valve wears a handwheel on its face
+// (nothing sticks out of the body, so pipes can join any side); a label too
 // long for the body is cut short (the tooltip has the name whole).
 class ValveItem : public QGraphicsObject {
   Q_OBJECT
@@ -41,10 +42,10 @@ class ValveItem : public QGraphicsObject {
   static constexpr double kSize = 30.0;
   static constexpr double kCornerRadius = 5.0;
   static constexpr double kLockBorderWidth = 5.0;
-  // A manual valve's handle: a T standing on the body, the P&ID mark for a
-  // hand-operated valve.
-  static constexpr double kHandleHeight = 7.0;
-  static constexpr double kHandleWidth = 16.0;
+  // A manual valve's mark: a handwheel on its face, filling a blank face
+  // and tucked into the top-right corner of a labelled one.
+  static constexpr double kWheelRadius = 9.0;
+  static constexpr double kCornerWheelRadius = 4.5;
 
   // Border colour of a software-locked valve.
   static QColor lock_color() { return theme().lock; }
@@ -78,6 +79,9 @@ class ValveItem : public QGraphicsObject {
   void set_label(QString label);
   // The label as drawn: whole, or cut short with an ellipsis to fit the body.
   QString shown_name(const QFontMetricsF& metrics) const;
+  // Where a manual valve's handwheel is drawn, in item coordinates; empty
+  // for other kinds.
+  QRectF wheel_rect() const;
 
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
