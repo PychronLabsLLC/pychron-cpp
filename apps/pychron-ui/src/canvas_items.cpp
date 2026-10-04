@@ -13,6 +13,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
+#include <QPolygonF>
 #include <QStringList>
 
 namespace pychron::ui {
@@ -164,9 +165,9 @@ constexpr double kSymbolMin = 14.0;  // a glyph smaller than this is a smudge
 void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& area, const QColor& fill) {
   const bool spectrometer = symbol == canvas::StageSymbol::Spectrometer;
   const bool quadrupole = symbol == canvas::StageSymbol::Quadrupole;
-  const QSizeF grid = spectrometer ? QSizeF(66, 62) : quadrupole ? QSizeF(40, 40) : QSizeF(66, 34);
+  const QSizeF grid = spectrometer ? QSizeF(66, 62) : quadrupole ? QSizeF(40, 40) : QSizeF(67, 34);
   const double scale =
-      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : quadrupole ? 0.9 : 0.7});
+      std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : quadrupole ? 0.9 : 0.85});
   painter.save();
   painter.translate(area.center().x() - grid.width() * scale / 2, area.center().y() - grid.height() * scale / 2);
   painter.scale(scale, scale);
@@ -218,14 +219,33 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     painter.setBrush(theme().text);
     painter.drawEllipse(QPointF(20, 20), 2.5, 2.5);
   } else {
-    // The laser hazard starburst: rays from a point, the beam the long one.
-    painter.setBrush(Qt::NoBrush);
+    // A laser from the side: the head with its cooling fins, the beam out of
+    // the aperture, a lens, and the beam brought to a focus on the sample.
+    const QColor beam = theme().error;
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(beam);
+    painter.drawRect(QRectF(29, 13, 15, 8));
+    painter.drawPolygon(QPolygonF({QPointF(44, 13), QPointF(44, 21), QPointF(60, 17)}));
+
     painter.setPen(line);
-    const QPointF c(16, 17);
-    painter.drawLine(QPointF(0, 17), QPointF(66, 17));
-    painter.drawLine(c + QPointF(0, -16), c + QPointF(0, 16));
-    painter.drawLine(c + QPointF(-11.5, -11.5), c + QPointF(11.5, 11.5));
-    painter.drawLine(c + QPointF(11.5, -11.5), c + QPointF(-11.5, 11.5));
+    painter.setBrush(theme().inactive);
+    painter.drawRoundedRect(QRectF(0.5, 7, 25, 20), 2.5, 2.5);  // head
+    painter.drawRect(QRectF(25.5, 11.5, 3.5, 11));              // aperture
+    for (const double x : {5.5, 9.5, 13.5}) {
+      painter.drawLine(QPointF(x, 11), QPointF(x, 23));
+    }
+    QPainterPath lens(QPointF(44, 4));
+    lens.quadTo(QPointF(49.5, 17), QPointF(44, 30));
+    lens.quadTo(QPointF(38.5, 17), QPointF(44, 4));
+    painter.setBrush(fill);
+    painter.drawPath(lens);
+
+    const QPointF focus(60, 17);  // where it lands: the hazard starburst
+    for (int i = 0; i < 8; ++i) {
+      const double angle = i * 3.14159265358979 / 4;
+      const double reach = i % 2 == 0 ? 6.0 : 4.2;
+      painter.drawLine(focus, focus + reach * QPointF(std::cos(angle), std::sin(angle)));
+    }
   }
   painter.restore();
 }
