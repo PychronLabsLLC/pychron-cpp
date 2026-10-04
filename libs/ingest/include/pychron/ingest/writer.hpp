@@ -29,12 +29,16 @@ struct WriterConfig {
   // Everything already imported is a no-op; analyses refused earlier for a
   // missing catalog row, and their later revisions, are written in order and
   // their conflicts become `superseded`. The stored token never moves back.
-  // A revision refused earlier is not written when a later commit of this
-  // source has since stored a revision of the same subject and kind: the head
-  // stays and the revision is a pending identity_clash conflict with reason
-  // `late_revision_not_applied` and its content in the detail (spec 10.31).
   bool replay = false;
 };
+
+// In every run of a source that already has something stored, a revision that
+// is not stored is written only when it comes after what is: no revision of
+// its subject and kind that this source stored is from a commit later in the
+// adapter's walk order, and the head of that subject and kind is this
+// source's. Otherwise the head stays and the revision is kept in a pending
+// identity_clash conflict with reason `late_revision_not_applied`,
+// "late": true, and its content in the detail (spec 10.31, 10.34, 10.35).
 
 // Items handled in this run, whether or not they were already stored.
 struct RunStats {

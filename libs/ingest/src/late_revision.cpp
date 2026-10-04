@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/core/sha256.hpp"
+#include "pychron/ingest/ids.hpp"
 
 namespace pychron::ingest::detail {
 
@@ -328,24 +329,129 @@ Json content_of(const RevisionItem& revision) {
 
 std::string dump(const Json& json) { return json.dump(-1, ' ', false, Json::error_handler_t::replace); }
 
-}  // namespace
-
-Result<bool> ReplayOrder::behind_stored(P::IStore& store, P::Uuid source, P::Uuid subject, P::Kind kind) const {
-  auto stored = store.history(subject, kind);
-  if (!stored) return fail(stored.error());
-  for (const auto& revision : *stored) {
-    if (passed_.contains(revision.uuid)) continue;
-    auto rows = store.provenance_for(revision.uuid);
-    if (!rows) return fail(rows.error());
-    for (const auto& row : *rows)
-      if (row.entity_type == "revision" && row.source == source) return true;
+const char* cause_text(Late::Cause cause) {
+  switch (cause) {
+    case Late::Cause::HeadNotOfThisSource: return "head_not_of_this_source";
+    case Late::Cause::LaterRevisionStored: return "later_revision_stored";
+    case Late::Cause::StoredCommitUnknown: return "stored_commit_unknown";
+    case Late::Cause::No: break;
   }
-  return false;
+  return "";
 }
 
-std::string late_revision_detail(const RevisionItem& revision) {
+// An analysis provenance row of a source that only made the analysis a member
+// (writer.cpp, stage_membership).
+bool membership_only(const P::ProvenanceRow& row) {
+  if (!row.detail_json) return false;
+  const Json parsed = Json::parse(*row.detail_json, nullptr, false);
+  if (!parsed.is_object()) return false;
+  const auto flag = parsed.find("membership_only");
+  return flag != parsed.end() && flag->is_boolean() && flag->get<bool>();
+}
+
+}  // namespace
+
+void StoredChains::begin_run(P::IStore& store, ISourceAdapter& adapter, P::Uuid source, std::string url) {
+  store_ = &store;
+  adapter_ = &adapter;
+  source_ = source;
+  url_ = std::move(url);
+  chains_.clear();
+  roots_.clear();
+}
+
+Result<void> StoredChains::sent_root(P::Uuid revision, std::string_view commit) {
+  auto order = adapter_->order_of(commit);
+  if (!order) return fail(order.error());
+  roots_.insert_or_assign(revision, Ours{*order, std::string(commit)});
+  return {};
+}
+
+// The commit a stored revision comes from and its place in the walk, when the
+// revision is this source's:
+//   - a root this run sent (its provenance may not be stored yet);
+//   - a revision with a provenance row of this source;
+//   - a root without a file of its own (it has no provenance row) of an
+//     analysis this source created: it is of the record's commit.
+Result<std::optional<StoredChains::Ours>> StoredChains::ours(const P::RevisionInfo& revision) {
+  if (const auto sent = roots_.find(revision.uuid); sent != roots_.end()) return std::optional<Ours>{sent->second};
+  const auto placed = [&](const std::string& commit) -> Result<std::optional<Ours>> {
+    auto order = adapter_->order_of(commit);
+    if (!order) return fail(order.error());
+    return std::optional<Ours>{Ours{*order, commit}};
+  };
+  auto rows = store_->provenance_for(revision.uuid);
+  if (!rows) return fail(rows.error());
+  for (const auto& row : *rows)
+    if (row.entity_type == "revision" && row.source == source_) return placed(row.commit_sha);
+  if (revision.parent || P::subject_type_of(revision.kind) != P::SubjectType::Analysis) return std::optional<Ours>{};
+  auto of_subject = store_->provenance_for(revision.subject);
+  if (!of_subject) return fail(of_subject.error());
+  for (const auto& row : *of_subject)
+    if (row.entity_type == "analysis" && row.source == source_ && !membership_only(row) &&
+        revision.changeset.uuid == collection_changeset_id(url_, row.commit_sha, revision.subject))
+      return placed(row.commit_sha);
+  return std::optional<Ours>{};
+}
+
+Result<StoredChains::Chain> StoredChains::load(P::Uuid subject, P::Kind kind) {
+  Chain chain;
+  auto stored = store_->history(subject, kind);
+  if (!stored) return fail(stored.error());
+  if (stored->empty()) return chain;
+  chain.empty = false;
+  auto head = store_->head(subject, kind);
+  if (!head) return fail(head.error());
+  for (const auto& revision : *stored) {
+    auto mine = ours(revision);
+    if (!mine) return fail(mine.error());
+    if (!*mine) continue;
+    if (*head && **head == revision.uuid) chain.head_ours = true;
+    if (!(*mine)->order) {
+      chain.unknown_commit = (*mine)->commit;
+    } else if (!chain.last || *(*mine)->order > *chain.last) {
+      chain.last = (*mine)->order;
+      chain.last_commit = (*mine)->commit;
+    }
+  }
+  return chain;
+}
+
+Result<Late> StoredChains::late(P::Uuid subject, P::Kind kind, std::optional<std::int64_t> order) {
+  auto found = chains_.find({subject, kind});
+  if (found == chains_.end()) {
+    auto chain = load(subject, kind);
+    if (!chain) return fail(chain.error());
+    found = chains_.emplace(std::make_pair(subject, kind), std::move(*chain)).first;
+  }
+  const Chain& chain = found->second;
+  if (chain.empty) return Late{};
+  if (!chain.head_ours) return Late{Late::Cause::HeadNotOfThisSource};
+  // A commit the walk does not have cannot be placed: it counts as later.
+  if (!chain.unknown_commit.empty()) return Late{Late::Cause::StoredCommitUnknown, chain.unknown_commit};
+  if (order && chain.last && *chain.last > *order) return Late{Late::Cause::LaterRevisionStored, chain.last_commit};
+  return Late{};
+}
+
+void StoredChains::written(P::Uuid subject, P::Kind kind, std::optional<std::int64_t> order,
+                           std::string_view commit) {
+  const auto found = chains_.find({subject, kind});
+  if (found == chains_.end()) return;  // not asked about in this run: loaded from the store when it is
+  Chain& chain = found->second;
+  chain.empty = false;
+  chain.head_ours = true;
+  if (order && (!chain.last || *order >= *chain.last)) {
+    chain.last = order;
+    chain.last_commit = std::string(commit);
+  }
+}
+
+std::string late_revision_detail(const RevisionItem& revision, const Late& late) {
   Json out = Json::object();
   out["reason"] = std::string(kLateRevisionNotApplied);
+  out["late"] = true;
+  out["cause"] = cause_text(late.cause);
+  if (!late.behind.empty()) out["behind"] = late.behind;
   out["commit"] = revision.key.commit;
   out["path"] = revision.key.path;
   out["kind"] = std::string(P::to_string(revision.kind));

@@ -56,6 +56,7 @@ class ProjectRepoAdapter::Impl {
     walk_ = detail::Walk{config_.collection_wait_commits};
     mapper_.emplace(config_, url_, reader_, walk_, state);
     order_.clear();
+    place_.clear();
     tags_.clear();
     finished_ = planned_ = false;
     first_ = next_ = 0;
@@ -63,6 +64,7 @@ class ProjectRepoAdapter::Impl {
     auto all = reader_.rev_list(std::nullopt);
     if (!all) return fail(all.error());
     order_ = std::move(*all);
+    place_ = detail::places(order_);
 
     const auto resume = detail::resume_point(order_, resume_token, reader_, config_.git, "project adapter");
     if (!resume) return fail(resume.error());
@@ -146,6 +148,8 @@ class ProjectRepoAdapter::Impl {
     return done;
   }
 
+  std::optional<std::int64_t> order_of(std::string_view commit) const { return detail::place_of(place_, commit); }
+
  private:
   bool tagged(const std::string& sha) const {
     return std::any_of(tags_.begin(), tags_.end(), [&](const GitTag& tag) { return tag.commit == sha; });
@@ -173,6 +177,7 @@ class ProjectRepoAdapter::Impl {
 
   bool planned_ = false;
   std::vector<std::string> order_;  // commits earlier runs walked, then those to walk
+  detail::Places place_;            // of each commit in order_
   std::size_t first_ = 0;           // the first commit to walk
   std::size_t next_ = 0;
   std::vector<GitTag> tags_;
@@ -204,6 +209,10 @@ Result<std::optional<ingest::ImportBatch>> ProjectRepoAdapter::next_batch() { re
 Result<void> ProjectRepoAdapter::for_each_unit(ingest::IImportState& state,
                                                const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
   return impl_->for_each_unit(state, visit);
+}
+
+Result<std::optional<std::int64_t>> ProjectRepoAdapter::order_of(std::string_view commit) {
+  return impl_->order_of(commit);
 }
 
 }  // namespace pychron::dvc

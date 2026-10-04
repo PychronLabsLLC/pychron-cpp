@@ -704,7 +704,7 @@ Result<void> Mapper::add_revision(const FileRef& ref, ingest::SubjectRef subject
   auto changeset = changeset_of(ref, out);
   if (!changeset) return fail(changeset.error());
   (*changeset)->revisions.push_back({key_of(ref), std::move(subject), kind, std::move(payload),
-                                     std::move(detail_json), std::move(identifier)});
+                                     std::move(detail_json), std::move(identifier), {}, std::int64_t{ref.index}});
   return {};
 }
 

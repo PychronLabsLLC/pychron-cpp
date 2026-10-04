@@ -3,6 +3,7 @@
 // A source adapter knows one source format and never touches the store
 // (legacy ingestion spec, section 2.1).
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -142,6 +143,11 @@ class ISourceAdapter {
   // next_batch(). An error from `visit` stops the walk and is returned.
   virtual Result<void> for_each_unit(IImportState& state,
                                      const std::function<Result<void>(const SourceUnit&)>& visit) = 0;
+  // The place of `commit` in the walk order plan() last built: the number
+  // RevisionItem::order holds for a revision of that commit. It answers for
+  // every commit of the source, whether or not this plan sends it. nullopt:
+  // the commit is not in the walk, or the source has no order (a catalog).
+  virtual Result<std::optional<std::int64_t>> order_of(std::string_view commit) = 0;
 };
 
 }  // namespace pychron::ingest

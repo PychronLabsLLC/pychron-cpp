@@ -123,10 +123,11 @@ class IImportUnitOfWork {
   // table), after this batch's own conflicts are written. A conflict that
   // does not exist is left alone. Not a change_log entry.
   virtual Result<void> resolve_conflict(Uuid conflict, std::string resolution) = 0;
-  // Replaces what a stored conflict of this source says: its path, entity,
-  // kind, head revision, file hash and detail. Its resolution is kept. Applied
-  // after this batch's own conflicts are written; a conflict that does not
-  // exist is left alone. Not a change_log entry.
+  // Replaces a stored conflict of this source with `row`: its path, entity,
+  // kind, head revision, file hash, detail and resolution (a conflict that
+  // says something else is not resolved by what was decided about the old
+  // one). Applied after this batch's own conflicts are written; a conflict
+  // that does not exist is left alone. Not a change_log entry.
   virtual Result<void> restate_conflict(ImportConflictRow row) = 0;
   // The source's resume token and counters. A nullopt head_sha keeps the
   // stored one; status "finished" also stamps the finish time.

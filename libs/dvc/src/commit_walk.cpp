@@ -94,6 +94,19 @@ Result<ResumePoint> resume_point(const std::vector<std::string>& order, const st
   return point;
 }
 
+Places places(const std::vector<std::string>& order) {
+  Places out;
+  out.reserve(order.size());
+  for (std::size_t i = 0; i < order.size(); ++i) out.emplace(order[i], static_cast<std::int64_t>(i));
+  return out;
+}
+
+std::optional<std::int64_t> place_of(const Places& places, std::string_view commit) {
+  const auto found = places.find(std::string(commit));
+  if (found == places.end()) return std::nullopt;
+  return found->second;
+}
+
 Result<std::size_t> walk_commits(
     const GitReader& reader, const std::vector<std::string>& order, std::size_t begin, std::size_t end,
     std::vector<GitCommit>& commits,

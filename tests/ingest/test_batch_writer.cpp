@@ -1792,8 +1792,8 @@ TEST_P(BatchWriterTest, ReplayDoesNotWriteAnIdentityBehindAStoredOne) {
   EXPECT_EQ(late.entity, std::optional<Uuid>{kA});
   EXPECT_EQ(late.path, record_path(1));
   EXPECT_EQ(late.file_sha256, std::optional<Sha256Digest>{sha256(std::string_view{"rec-c5"})});
-  for (const char* text : {"late_revision_not_applied", "\"c5\"", "\"identity\"", "66599", "rec-c5",
-                           "legacy record rewritten"})
+  for (const char* text : {"late_revision_not_applied", "\"late\"", "\"c5\"", "\"identity\"", "66599", "rec-c5",
+                           "legacy record rewritten", "\"c9\""})
     EXPECT_NE(late.detail_json.find(text), std::string::npos) << text << " in " << late.detail_json;
   EXPECT_NE(late.detail_json.find(record_path(1)), std::string::npos) << late.detail_json;
 
@@ -1857,6 +1857,14 @@ TEST_P(BatchWriterTest, ReplayDoesNotWriteARevisionBehindAStoredOne) {
   EXPECT_EQ(first->conflicts, 1);
   const Uuid head = revision_id(kUrl, "c9", kind_path("intercepts", 1));
   ASSERT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+  // Someone set the first refusal aside. Restated, the conflict says something
+  // else, and is pending again (spec 10.35).
+  {
+    auto uow = store().begin_import_batch(source_id(P::ImportSourceKind::ProjectRepo, kUrl, "main"), world_->client);
+    ASSERT_TRUE(uow);
+    ASSERT_TRUE((*uow)->resolve_conflict(conflict_id(kUrl, "c5", kind_path("intercepts", 1)), "ignored"));
+    ASSERT_TRUE((*uow)->commit());
+  }
   const auto seq = *store().latest_change_seq();
   const auto revisions = world_->count("revision");
 
@@ -1923,6 +1931,206 @@ TEST_P(BatchWriterTest, LateRevisionIsDecidedTheSameAtAnyCutOfTheReplay) {
   EXPECT_EQ((*stopped.store->load_analysis(kA))->summary.runid, "66573-03");
   ASSERT_TRUE(run_all(stopped, interrupted, replay_config()));
   EXPECT_EQ(rows_of(stopped), expected);
+}
+
+// Spec 10.34, the pull-merge shape. Main is c1 c2 c3 c4 and is imported. A
+// line b1 b2 forked at c2 is merged in, and the walk becomes
+// c1 c2 b1 b2 c3 c4 m: the token no longer fits, the adapter walks from the
+// first commit, and this is a plain run. b1 and b2 refit what c3 and c4 refit.
+TEST_P(BatchWriterTest, CommitsMergedInEarlierInTheWalkAreNotWrittenBehind) {
+  const auto main_line = [] {
+    std::vector<ImportBatch> out(4);
+    out[0].catalog = lab_catalog();
+    add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+    add_analysis(out[1], kB, 2, "c2", who(kAlice, "2016-03-05T00:00:00Z"));
+    out[2].changesets.push_back(refit("c3", kA, 1, 103.0, who(kAlice, "2016-03-08T00:00:00Z")));
+    out[3].changesets.push_back(refit("c4", kA, 1, 104.0, who(kAlice, "2016-03-09T00:00:00Z")));
+    const char* tokens[] = {"c1", "c2", "c3", "c4"};
+    for (std::size_t i = 0; i < out.size(); ++i) out[i].resume_token = tokens[i];
+    return out;
+  };
+  FakeAdapter before(description(), main_line());
+  ASSERT_TRUE(run_all(*world_, before));
+  const Uuid head = revision_id(kUrl, "c4", kind_path("intercepts", 1));
+  ASSERT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+  const auto seq = *store().latest_change_seq();
+  const auto revisions = world_->count("revision");
+  const auto changesets = world_->count("changeset");
+
+  auto merged_in = main_line();
+  ImportBatch b1, b2, m;
+  b1.changesets.push_back(refit("b1", kA, 1, 201.0, who(kAlice, "2016-03-06T00:00:00Z")));
+  b1.resume_token = "b1";
+  b2.changesets.push_back(refit("b2", kA, 1, 202.0, who(kAlice, "2016-03-07T00:00:00Z")));
+  b2.resume_token = "b2";
+  m.resume_token = "m";  // the merge keeps c4's file: it changes nothing
+  merged_in.insert(merged_in.begin() + 2, {b1, b2});
+  merged_in.push_back(m);
+  FakeAdapter after(description(), merged_in);  // rewinds: the token does not fit the new order
+  auto stats = run_all(*world_, after);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->conflicts, 2);
+
+  EXPECT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{head});
+  const auto value = std::get<P::Intercepts>(**store().load_payload(head));
+  EXPECT_EQ(value.front().value, std::optional<double>{104.0});
+  EXPECT_EQ(store().history(kA, Kind::Intercepts)->size(), 3u);  // the root, c3, c4
+  EXPECT_EQ(world_->count("revision"), revisions);
+  EXPECT_EQ(world_->count("changeset"), changesets);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  EXPECT_EQ(world_->source().progress_token, std::optional<std::string>{"m"});
+  for (const char* commit : {"b1", "b2"}) {
+    auto late = store().import_conflict(conflict_id(kUrl, commit, kind_path("intercepts", 1)));
+    ASSERT_TRUE(late && late->has_value()) << commit;
+    EXPECT_EQ((*late)->kind, P::ConflictKind::IdentityClash);
+    EXPECT_EQ((*late)->resolution, "pending");
+    EXPECT_NE((*late)->detail_json.find("late_revision_not_applied"), std::string::npos);
+    EXPECT_NE((*late)->detail_json.find(commit == std::string("b1") ? "201" : "202"), std::string::npos);
+  }
+  EXPECT_EQ(world_->count("import_conflict"), 2);
+
+  // Again, and replayed: the same rows.
+  const auto settled = rows_of(*world_);
+  ASSERT_TRUE(run_all(*world_, after));
+  EXPECT_EQ(rows_of(*world_), settled);
+  ASSERT_TRUE(run_all(*world_, after, replay_config()));
+  EXPECT_EQ(rows_of(*world_), settled);
+}
+
+// A is folded at the end of the first walk with the intercepts file of c9.
+// History grows: c11 rewrites that file. A walk from the start now folds A
+// with the c11 file and sends it as a revision too (the root is stored under
+// the id of c9); an incremental run sends the revision alone. Either way c11
+// is later than c9 and becomes the head.
+TEST_P(BatchWriterTest, CollectionFoldedAgainFromALaterFileMovesTheHead) {
+  const std::string path = kind_path("intercepts", 1);
+  const auto script = [&](bool grown) {
+    std::vector<ImportBatch> out(grown ? 2 : 1);
+    out[0].catalog = lab_catalog();
+    add_analysis(out[0], kA, 1, "c1", who(kAlice, "2016-03-04T05:06:07Z"));
+    out[0].analyses[0].keys.intercepts = grown ? SourceKey{"c11", path, "int-c11"} : SourceKey{"c9", path, "int-c9"};
+    out[0].resume_token = "c9";
+    if (grown) {
+      out[1].changesets.push_back(refit("c11", kA, 1, 111.0, who(kAlice, "2016-03-11T00:00:00Z")));
+      out[1].resume_token = "c11";
+    }
+    return out;
+  };
+  const Uuid c11 = revision_id(kUrl, "c11", path);
+  for (const bool replay : {true, false}) {
+    World w(GetParam());
+    ASSERT_TRUE(w.store && w.db);
+    FakeAdapter first(description(), script(false));
+    first.walk({"c1", "c9"});
+    ASSERT_TRUE(run_all(w, first));
+    ASSERT_EQ(*w.store->head(kA, Kind::Intercepts), std::optional<Uuid>{revision_id(kUrl, "c9", path)});
+
+    FakeAdapter grown(description(), script(true));
+    grown.walk({"c1", "c9", "c11"});
+    grown.honour_token(true);
+    auto stats = run_all(w, grown, replay ? replay_config() : config());
+    ASSERT_TRUE(stats) << err(stats.error());
+    EXPECT_EQ(stats->batches, replay ? 2 : 1);
+    EXPECT_EQ(stats->conflicts, 0) << replay;
+    EXPECT_EQ(*w.store->head(kA, Kind::Intercepts), std::optional<Uuid>{c11}) << replay;
+    const auto value = std::get<P::Intercepts>(**w.store->load_payload(c11));
+    EXPECT_EQ(value.front().value, std::optional<double>{111.0});
+    EXPECT_EQ(w.count("import_conflict"), 0) << replay;
+  }
+}
+
+// A renumber refused at c5; then someone renumbers the analysis in the
+// application. The identifier arrives and a replay could write c5: over a
+// head this source did not make.
+TEST_P(BatchWriterTest, RecoveredRevisionDoesNotReplaceAHeadMadeOutsideTheSource) {
+  FakeAdapter adapter(description(), renumbered_twice(false));
+  adapter.honour_token(true);
+  ASSERT_TRUE(run_all(*world_, adapter));
+  const Uuid user = *store().ensure_user(world_->client, "jross");
+  const Uuid viewer = *store().register_client({"desk-1", "reduction", std::nullopt, "test"});
+  Uuid by_hand;
+  {
+    auto uow = store().begin({user, viewer});
+    ASSERT_TRUE(uow);
+    auto added = (*uow)->add_revision(
+        kA, Kind::Identity, P::IdentityValue{**store().find_identifier("66573"), 9, -1, "admin_repair"}, std::nullopt);
+    ASSERT_TRUE(added) << err(added.error());
+    by_hand = *added;
+    ASSERT_TRUE((*uow)->commit(P::ChangesetKind::Admin, "renumber"));
+  }
+  ASSERT_EQ((*store().load_analysis(kA))->summary.runid, "66573-09");
+  ASSERT_TRUE(store().add_identifier(world_->client, {"66599", "unknown", {}, {}, {}, {}, {}}));
+  const auto seq = *store().latest_change_seq();
+
+  auto replayed = run_all(*world_, adapter, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 1);
+  EXPECT_EQ((*store().load_analysis(kA))->summary.runid, "66573-09");
+  EXPECT_EQ(*store().head(kA, Kind::Identity), std::optional<Uuid>{by_hand});
+  EXPECT_EQ(*store().latest_change_seq(), seq);
+  auto late = store().import_conflict(conflict_id(kUrl, "c5", record_path(1)));
+  ASSERT_TRUE(late && late->has_value());
+  EXPECT_EQ((*late)->kind, P::ConflictKind::IdentityClash);
+  EXPECT_EQ((*late)->resolution, "pending");
+  for (const char* text : {"late_revision_not_applied", "head_not_of_this_source", "66599"})
+    EXPECT_NE((*late)->detail_json.find(text), std::string::npos) << text << " in " << (*late)->detail_json;
+}
+
+// The same for a commit that is simply new: after a refit made in the
+// application, the source's next refit of that analysis is kept, not applied.
+TEST_P(BatchWriterTest, NewRevisionDoesNotReplaceAHeadMadeOutsideTheSource) {
+  auto batches = four_batches();  // the last refits A at c5
+  FakeAdapter adapter(description(), batches);
+  adapter.honour_token(true);
+  {
+    BatchWriter writer(store(), world_->client, config());
+    ASSERT_TRUE(writer.run(adapter, 3, {}, {}));
+  }
+  const Uuid user = *store().ensure_user(world_->client, "jross");
+  const Uuid viewer = *store().register_client({"desk-1", "reduction", std::nullopt, "test"});
+  auto uow = store().begin({user, viewer});
+  ASSERT_TRUE(uow);
+  auto by_hand = (*uow)->add_revision(kA, Kind::Intercepts, intercepts(77.0), *store().head(kA, Kind::Intercepts));
+  ASSERT_TRUE(by_hand) << err(by_hand.error());
+  ASSERT_TRUE((*uow)->commit(P::ChangesetKind::Reduction, "refit by hand"));
+
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->batches, 1);
+  EXPECT_EQ(stats->conflicts, 1);
+  EXPECT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{*by_hand});
+  auto late = store().import_conflict(conflict_id(kUrl, "c5", kind_path("intercepts", 1)));
+  ASSERT_TRUE(late && late->has_value());
+  EXPECT_NE((*late)->detail_json.find("head_not_of_this_source"), std::string::npos) << (*late)->detail_json;
+}
+
+// The position check reads history. A source with nothing stored has nothing
+// to be behind, and its first import asks for none.
+TEST_P(BatchWriterTest, FirstImportAsksForNoHistory) {
+  ForwardingStore counted(store());
+  FakeAdapter adapter(description(), four_batches());
+  BatchWriter writer(counted, world_->client, config());
+  auto stats = writer.run(adapter, std::nullopt, {}, {});
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->revisions, 3);
+  EXPECT_EQ(counted.history_calls(), 0);
+  EXPECT_EQ(counted.provenance_calls(), 0);
+
+  // A later run of the same source does check: here a new refit of A.
+  auto more = four_batches();
+  more.push_back({});
+  more.back().changesets.push_back(refit("c6", kA, 1, 106.0, who(kAlice, "2016-03-09T00:00:00Z")));
+  more.back().resume_token = "c6";
+  FakeAdapter grown(description(), more);
+  grown.honour_token(true);
+  BatchWriter again(counted, world_->client, config());
+  stats = again.run(grown, std::nullopt, {}, {});
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->revisions, 1);
+  EXPECT_EQ(stats->conflicts, 0);
+  EXPECT_EQ(counted.history_calls(), 1);
+  EXPECT_EQ(*store().head(kA, Kind::Intercepts), std::optional<Uuid>{revision_id(kUrl, "c6", kind_path("intercepts", 1))});
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, BatchWriterTest, ::testing::ValuesIn(P::testing::engines()));

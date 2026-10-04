@@ -261,6 +261,7 @@ class Mapper {
                               ps::RevisionPayload{std::move(payload)},
                               dump(detail)};
     item.production_key = std::move(production_key);
+    item.order = seen.index;
     changeset_of(seen, out).revisions.push_back(std::move(item));
   }
 
@@ -549,12 +550,14 @@ class MetaRepoAdapter::Impl {
   Result<int> plan(const std::optional<std::string>& resume_token) {
     walk_ = Walk{};
     order_.clear();
+    place_.clear();
     planned_ = false;
     first_ = next_ = 0;
 
     auto all = reader_.rev_list(std::nullopt);
     if (!all) return fail(all.error());
     order_ = std::move(*all);
+    place_ = detail::places(order_);
     const auto resume = detail::resume_point(order_, resume_token, reader_, config_.git, "meta adapter");
     if (!resume) return fail(resume.error());
     first_ = next_ = resume->first;
@@ -568,6 +571,8 @@ class MetaRepoAdapter::Impl {
   }
 
   Result<std::optional<ingest::ImportBatch>> next_batch() { return build(nullptr); }
+
+  std::optional<std::int64_t> order_of(std::string_view commit) const { return detail::place_of(place_, commit); }
 
   // The walk an import makes from the first commit. What a file version
   // yields depends on the history alone, so each unit is settled by what the
@@ -731,6 +736,7 @@ class MetaRepoAdapter::Impl {
 
   bool planned_ = false;
   std::vector<std::string> order_;  // commits earlier runs walked, then those to walk
+  detail::Places place_;            // of each commit in order_
   std::size_t first_ = 0;           // the first commit to walk
   std::size_t next_ = 0;
   Walk walk_;
@@ -760,6 +766,10 @@ Result<std::optional<ingest::ImportBatch>> MetaRepoAdapter::next_batch() { retur
 Result<void> MetaRepoAdapter::for_each_unit(ingest::IImportState&,
                                             const std::function<Result<void>(const ingest::SourceUnit&)>& visit) {
   return impl_->for_each_unit(visit);
+}
+
+Result<std::optional<std::int64_t>> MetaRepoAdapter::order_of(std::string_view commit) {
+  return impl_->order_of(commit);
 }
 
 }  // namespace pychron::dvc

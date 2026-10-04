@@ -2806,4 +2806,112 @@ TEST_P(ProjectImportTest, VerifyComparesTheStoredAgeOfAMember) {
   EXPECT_EQ(json::parse(conflicts[0].detail_json).at("record_id").get<std::string>(), kRunE);
 }
 
+// Spec 10.34, two workstations. Main is imported up to c4. A line that forked
+// before c3 refits the same analysis twice, pulls main (keeping main's file)
+// and main fast-forwards to the merge. The walk now has b1 b2 before c3 c4,
+// so the stored token does not fit and a plain run walks from the first
+// commit. b1 and b2 were never sent; written now they would cover c4.
+TEST_P(ProjectImportTest, BranchMergedInEarlierInTheWalkIsNotWrittenBehind) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  repo_.branch("station");
+  const std::string c3 = legacy_.refit(kRunE, "Ar40", 11.0, kDay2);
+  const std::string c4 = legacy_.refit(kRunE, "Ar40", 12.0, kDay2);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  const std::string path = LegacyRepoBuilder::path(kRunE, FileKind::Intercepts);
+  const Uuid head = ingest::revision_id(kUrl, c4, path);
+  ASSERT_EQ(*store().head(kE, Kind::Intercepts), std::optional<Uuid>{head});
+  const auto revisions = world_->count("revision");
+
+  repo_.checkout("station");
+  const std::string b1 = legacy_.refit(kRunE, "Ar40", 21.0, kRefit);
+  const std::string b2 = legacy_.refit(kRunE, "Ar40", 22.0, kRefit);
+  repo_.git({"merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "Merge branch 'main'", "main"}, kLater);
+  const std::string merge = repo_.head();
+  repo_.checkout("main");
+  repo_.git({"merge", "--quiet", "--ff-only", "station"});
+  ASSERT_EQ(repo_.head(), merge);
+  ASSERT_EQ(tree_intercept(repo_, kRunE, "Ar40"), 12.0);
+  const auto order = walk_order(repo_);
+  const auto place = [&](const std::string& sha) { return std::find(order.begin(), order.end(), sha) - order.begin(); };
+  ASSERT_LT(place(b2), place(c3)) << "the merge puts the station's commits before main's";
+
+  auto stats = run_import(*world_, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->batches, 1) << "walked from the first commit";
+  // The head is what the merge tree holds; nothing was written behind it.
+  EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{12.0});
+  EXPECT_EQ(*store().head(kE, Kind::Intercepts), std::optional<Uuid>{head});
+  EXPECT_EQ(world_->count("revision"), revisions);
+  const auto conflicts = world_->conflicts();
+  ASSERT_EQ(conflicts.size(), 2u);
+  for (const auto& conflict : conflicts) {
+    EXPECT_EQ(conflict.kind, ConflictKind::IdentityClash);
+    EXPECT_EQ(conflict.resolution, "pending");
+    const json detail = json::parse(conflict.detail_json);
+    EXPECT_EQ(detail.at("reason"), "late_revision_not_applied");
+    EXPECT_EQ(detail.at("late"), true);
+    EXPECT_EQ(detail.at("cause"), "later_revision_stored");
+    EXPECT_EQ(detail.at("behind"), c4);
+    EXPECT_TRUE(detail.at("commit") == b1 || detail.at("commit") == b2);
+    EXPECT_TRUE(detail.at("content").is_array());
+  }
+  EXPECT_TRUE(store().import_conflict(ingest::conflict_id(kUrl, b1, path))->has_value());
+  EXPECT_TRUE(store().import_conflict(ingest::conflict_id(kUrl, b2, path))->has_value());
+
+  // Verify: every file accounted for, nothing left to write, two warnings.
+  const auto report = verify_repo(*world_, adapter_config(repo_));
+  EXPECT_EQ(unaccounted(report), std::vector<std::string>{});
+  EXPECT_EQ(report.would_write, 0);
+  EXPECT_EQ(report.replay_would_write, 0);
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_EQ(report.pending_warnings, 2);
+  EXPECT_TRUE(report.ok());
+
+  // Again, and replayed: nothing moves.
+  const auto rows = snapshot_of(*world_);
+  auto replay = writer_config();
+  replay.replay = true;
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_, 1), std::nullopt, replay));
+  EXPECT_EQ(snapshot_of(*world_), rows);
+
+  // One import of the final history has the station's revisions in the chain
+  // (the known limit of 10.35); the heads agree.
+  auto whole = fresh_world();
+  ASSERT_TRUE(run_import(*whole, adapter_config(repo_)));
+  EXPECT_EQ(head_intercept(*whole, kE, "Ar40"), std::optional<double>{12.0});
+  EXPECT_TRUE(whole->conflicts().empty());
+}
+
+// An analysis whose collection never completed is folded at the end of the
+// first walk with the intercepts file it had. A later commit rewrites that
+// file. A replay folds the analysis again, now with the later file, whose
+// revision is not stored; an incremental run sends it as a change. Either way
+// it is later in the walk than the stored root and becomes the head.
+TEST_P(ProjectImportTest, FileOfAFoldedCollectionRewrittenLaterBecomesTheHead) {
+  legacy_.import_without_collection(kRunE, kE.str(), kCollected, false);
+  ASSERT_TRUE(run_import(*world_, adapter_config(repo_)));
+  auto incremental = fresh_world();
+  ASSERT_TRUE(run_import(*incremental, adapter_config(repo_)));
+
+  const std::string rewritten = legacy_.refit(kRunE, "Ar40", 33.0, kRefit);
+  const Uuid head = ingest::revision_id(kUrl, rewritten, LegacyRepoBuilder::path(kRunE, FileKind::Intercepts));
+  auto replay = writer_config();
+  replay.replay = true;
+  auto stats = run_import(*world_, adapter_config(repo_), std::nullopt, replay);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+  EXPECT_TRUE(world_->conflicts().empty());
+  EXPECT_EQ(*store().head(kE, Kind::Intercepts), std::optional<Uuid>{head});
+  EXPECT_EQ(head_intercept(*world_, kE, "Ar40"), std::optional<double>{33.0});
+
+  stats = run_import(*incremental, adapter_config(repo_));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(incremental->conflicts().empty());
+  EXPECT_EQ(*incremental->store->head(kE, Kind::Intercepts), std::optional<Uuid>{head});
+  EXPECT_EQ(head_intercept(*incremental, kE, "Ar40"), std::optional<double>{33.0});
+  EXPECT_EQ(incremental->revisions(kE), world_->revisions(kE));
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, ProjectImportTest, ::testing::ValuesIn(P::testing::engines()));

@@ -835,6 +835,23 @@ TEST_P(VerifierTest, WarningsDoNotFailBlockingConflictsDo) {
   EXPECT_EQ(report.blocking_conflicts[0], conflict_id(kUrl, "c6", "SampleTbl.jsonl#8"));
 }
 
+// Spec 10.35: a revision kept in a late_revision_not_applied conflict is
+// history that could not be inserted; the head is right.
+TEST_P(VerifierTest, LateRevisionIsAWarning) {
+  auto batches = history();
+  batches[0].conflicts.push_back({{"b1", "665/intercepts/73-01.json", "blob"},
+                                  kA,
+                                  P::ConflictKind::IdentityClash,
+                                  std::nullopt,
+                                  R"({"reason":"late_revision_not_applied","late":true,"commit":"b1"})"});
+  run_import(batches);
+  resolve(conflict_id(kUrl, "c4", "notes.txt"), "superseded");
+  const auto report = check(batches, units_of(history()));
+  EXPECT_TRUE(report.ok());
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_EQ(report.warning_conflicts, std::vector<Uuid>{conflict_id(kUrl, "b1", "665/intercepts/73-01.json")});
+}
+
 // ---------------------------------------------------------------- age parity
 
 TEST_P(VerifierTest, ParityPassFailNotComparable) {

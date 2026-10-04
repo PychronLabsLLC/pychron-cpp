@@ -15,11 +15,13 @@
 // with "+end" when the walk reached the head.
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -45,6 +47,11 @@ struct ResumePoint {
 // rewritten". Text that is no token: an error naming `adapter`.
 Result<ResumePoint> resume_point(const std::vector<std::string>& order, const std::optional<std::string>& token,
                                  const GitReader& reader, const GitConfig& git, std::string_view adapter);
+
+// The place of every commit of a walk order (ISourceAdapter::order_of).
+using Places = std::unordered_map<std::string, std::int64_t>;
+Places places(const std::vector<std::string>& order);
+std::optional<std::int64_t> place_of(const Places& places, std::string_view commit);
 
 // Lists the commits [begin, end) of `order` into `commits` (in that order)
 // and hands the changes of each to `apply`, oldest first: what differs from

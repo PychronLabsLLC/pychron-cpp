@@ -21,13 +21,14 @@ using Json = nlohmann::json;
 
 namespace {
 
-// A conflict that only annotates a row that is in the store: a catalog row
-// imported without an optional link, a catalog row made from repository
-// contents (spec 10.26).
+// A conflict that only annotates what is in the store: a catalog row imported
+// without an optional link, a catalog row made from repository contents (spec
+// 10.26), a revision kept out of a chain it would have been written behind
+// (spec 10.35; the head is right).
 bool is_annotation(const P::ImportConflictRow& row) {
   const Json detail = Json::parse(row.detail_json, nullptr, false);
   if (!detail.is_object()) return false;
-  for (const char* key : {"imported", "synthesized"}) {
+  for (const char* key : {"imported", "synthesized", "late"}) {
     const auto flag = detail.find(key);
     if (flag != detail.end() && flag->is_boolean() && flag->get<bool>()) return true;
   }

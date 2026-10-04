@@ -41,7 +41,7 @@ class ForwardingStore : public persistence::IStore {
   Result<std::vector<persistence::ImportSourceInfo>> import_sources() override { return inner_.import_sources(); }
   Result<std::vector<persistence::ImportConflictRow>> import_conflicts(const persistence::ConflictFilter& filter) override { return inner_.import_conflicts(filter); }
   Result<std::optional<persistence::ImportConflictRow>> import_conflict(Uuid conflict) override { return inner_.import_conflict(conflict); }
-  Result<std::vector<persistence::ProvenanceRow>> provenance_for(Uuid entity) override { return inner_.provenance_for(entity); }
+  Result<std::vector<persistence::ProvenanceRow>> provenance_for(Uuid entity) override { ++provenance_calls_; return inner_.provenance_for(entity); }
   Result<bool> has_provenance(Uuid source, std::string_view commit_sha, std::string_view path) override { return inner_.has_provenance(source, commit_sha, path); }
   Result<bool> has_provenance_blob(Uuid source, std::string_view path, std::string_view git_blob_sha) override { return inner_.has_provenance_blob(source, path, git_blob_sha); }
   Result<bool> has_conflict(Uuid source, std::string_view path, const Sha256Digest& file_sha256) override { return inner_.has_conflict(source, path, file_sha256); }
@@ -83,7 +83,7 @@ class ForwardingStore : public persistence::IStore {
   Result<persistence::IngestAck> ingest(const persistence::IngestItem& item) override { return inner_.ingest(item); }
   Result<std::optional<Uuid>> head(Uuid subject, Kind kind) override { return inner_.head(subject, kind); }
   Result<std::vector<persistence::HeadInfo>> heads(Uuid subject) override { return inner_.heads(subject); }
-  Result<std::vector<persistence::RevisionInfo>> history(Uuid subject, Kind kind) override { return inner_.history(subject, kind); }
+  Result<std::vector<persistence::RevisionInfo>> history(Uuid subject, Kind kind) override { ++history_calls_; return inner_.history(subject, kind); }
   Result<bool> has_revision(Uuid revision) override { return inner_.has_revision(revision); }
   Result<std::optional<persistence::RevisionPayload>> load_payload(Uuid revision) override { return inner_.load_payload(revision); }
   Result<std::optional<persistence::AnalysisView>> load_analysis(Uuid analysis) override { return inner_.load_analysis(analysis); }
@@ -95,9 +95,15 @@ class ForwardingStore : public persistence::IStore {
   Result<persistence::ChangePage> changes_since(persistence::ChangeSeq cursor, int limit) override { return inner_.changes_since(cursor, limit); }
   Result<persistence::ChangeSeq> latest_change_seq() override { return inner_.latest_change_seq(); }
 
+  // How often history() and provenance_for() were asked.
+  int history_calls() const { return history_calls_; }
+  int provenance_calls() const { return provenance_calls_; }
+
  private:
   persistence::IStore& inner_;
   int import_batches_ = 0;
+  int history_calls_ = 0;
+  int provenance_calls_ = 0;
 };
 // clang-format on
 

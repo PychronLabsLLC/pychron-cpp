@@ -5,6 +5,7 @@
 // path, git blob sha) and by natural key; the only uuids in it are analysis
 // uuids. The writer derives every other id and resolves every natural key.
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -234,6 +235,11 @@ struct RevisionItem {
   // LevelProductionValue::production from it, creating the object bare when
   // the store does not have it. Set on any other payload it is an error.
   std::string production_key = {};
+  // The place of the revision's commit in the source's walk order as the
+  // adapter has it now (ISourceAdapter::order_of of key.commit). The writer
+  // does not write a revision behind one a later commit left (spec 10.34).
+  // nullopt: the adapter has no order, and the revision is not compared.
+  std::optional<std::int64_t> order = std::nullopt;
 };
 
 // A file a commit rewrote that is not revisioned (an analysis record or

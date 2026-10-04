@@ -332,7 +332,7 @@ TEST_P(ImportStoreTest, ConflictIsReadByUuidAndResolved) {
   EXPECT_EQ((*store_->import_conflict(fresh))->resolution, "superseded");
 }
 
-TEST_P(ImportStoreTest, ConflictCanBeRestatedAndKeepsItsResolution) {
+TEST_P(ImportStoreTest, ConflictCanBeRestated) {
   const Uuid id = Uuid::v5(source_.uuid, "conflict e.json");
   const Uuid resolved = Uuid::v5(source_.uuid, "conflict f.json");
   {
@@ -375,10 +375,11 @@ TEST_P(ImportStoreTest, ConflictCanBeRestatedAndKeepsItsResolution) {
   EXPECT_EQ((*stored)->file_sha256, std::optional<Sha256Digest>{digest});
   EXPECT_NE((*stored)->detail_json.find("\"y\""), std::string::npos);
   EXPECT_EQ((*stored)->resolution, "pending");
-  auto kept = store_->import_conflict(resolved);
-  ASSERT_TRUE(kept && kept->has_value());
-  EXPECT_EQ((*kept)->kind, ConflictKind::IdentityClash);
-  EXPECT_EQ((*kept)->resolution, "ignored");
+  // It says something else now: what it was resolved as does not carry over.
+  auto reopened = store_->import_conflict(resolved);
+  ASSERT_TRUE(reopened && reopened->has_value());
+  EXPECT_EQ((*reopened)->kind, ConflictKind::IdentityClash);
+  EXPECT_EQ((*reopened)->resolution, "pending");
 
   // A conflict added and restated in one batch ends restated.
   const Uuid fresh = Uuid::v5(source_.uuid, "conflict g.json");

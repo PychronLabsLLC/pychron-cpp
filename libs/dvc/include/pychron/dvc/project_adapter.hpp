@@ -93,6 +93,8 @@ class ProjectRepoAdapter final : public ingest::ISourceAdapter {
   //   a spectrometer file no imported analysis names        Ignored
   Result<void> for_each_unit(ingest::IImportState& state,
                              const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
+  // The commit's index in the walk order of the last plan().
+  Result<std::optional<std::int64_t>> order_of(std::string_view commit) override;
 
  private:
   class Impl;

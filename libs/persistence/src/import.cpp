@@ -197,7 +197,7 @@ class ImportUnitOfWork final : public IImportUnitOfWork {
     for (const auto& c : restated_)
       if (auto r = db_.affecting(sql::kRestateConflict,
                                  {qv(c.path), qv(c.entity), qstr(to_string(c.kind)), qv(c.db_head_revision),
-                                  qv(c.file_sha256), qv(c.detail_json), qv(c.uuid), qv(source_)});
+                                  qv(c.file_sha256), qv(c.detail_json), qv(c.resolution), qv(c.uuid), qv(source_)});
           !r)
         return fail(r.error());
     for (const auto& [conflict, resolution] : resolutions_)

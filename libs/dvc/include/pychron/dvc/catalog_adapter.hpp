@@ -108,6 +108,8 @@ class CatalogAdapter final : public ingest::ISourceAdapter {
   // A row that repeats an earlier one exactly names the same catalog row.
   Result<void> for_each_unit(ingest::IImportState& state,
                              const std::function<Result<void>(const ingest::SourceUnit&)>& visit) override;
+  // A dump has no walk order, and its batches hold no revisions: always nullopt.
+  Result<std::optional<std::int64_t>> order_of(std::string_view commit) override;
 
   // What is worth telling the operator about the dump without stopping the
   // import, one line each. Now: the manifest says the dump has no

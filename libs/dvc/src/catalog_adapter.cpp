@@ -1039,6 +1039,10 @@ Result<std::optional<ingest::ImportBatch>> CatalogAdapter::next_batch() {
   }
 }
 
+Result<std::optional<std::int64_t>> CatalogAdapter::order_of(std::string_view) {
+  return std::optional<std::int64_t>{};
+}
+
 // A row that was sent is accounted for by the catalog row its item names, and
 // by the conflict of each link it lost; a refused row by its conflict.
 Result<void> CatalogAdapter::for_each_unit(ingest::IImportState&,

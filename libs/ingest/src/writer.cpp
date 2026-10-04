@@ -249,7 +249,10 @@ class BatchWriter::Impl final : public IImportState {
     // A replay walks from the start. Until the walk reaches the stored token,
     // the batches it writes leave the stored progress as it is.
     catching_up_ = config_.replay && token_.has_value();
-    walk_.clear();  // a replay starts at the first commit, and so does what it has passed
+    // Spec 10.34: a source with nothing stored before the run has nothing to
+    // be written behind, and is not asked about.
+    placing_ = !config_.dry_run && (token_.has_value() || done_ > 0);
+    if (placing_) chains_.begin_run(store_, adapter, *source_, url_);
     std::optional<P::ImportProgress> walked;  // of the last batch written while catching up
     if (auto planned = adapter.plan(config_.replay ? std::nullopt : token_, *this); !planned)
       return fail(planned.error());
@@ -453,15 +456,17 @@ class BatchWriter::Impl final : public IImportState {
                           staged, stats);
   }
 
-  // A revision a replay does not write (spec 10.31): the head of its subject
-  // and kind holds content of a later commit. The file has one conflict id, so
-  // a conflict stored when the revision was first refused is restated; its
-  // resolution is kept.
-  Result<void> stage_late_revision(const RevisionItem& revision, Uuid subject, Staged& staged, RunStats& stats) {
+  // A revision that is not written (spec 10.34): it would land behind what is
+  // stored, or over a head this source did not make. A warning, pending
+  // whenever it is recorded (spec 10.35). The file has one conflict id, so a
+  // conflict stored when the revision was first refused is restated: it says
+  // something else now, and what was decided about it no longer holds.
+  Result<void> stage_late_revision(const RevisionItem& revision, Uuid subject, const detail::Late& late, Staged& staged,
+                                   RunStats& stats) {
     const Uuid id = conflict_id(url_, revision.key.commit, revision.key.path);
     P::ImportConflictRow row{id, revision.key.path, subject, P::ConflictKind::IdentityClash, std::nullopt,
-                             sha256(std::string_view{revision.key.blob_sha}), detail::late_revision_detail(revision),
-                             kPending};
+                             sha256(std::string_view{revision.key.blob_sha}),
+                             detail::late_revision_detail(revision, late), kPending};
     auto known = conflicts();
     if (!known) return fail(known.error());
     if (auto it = (*known)->find(id); it != (*known)->end()) {
@@ -470,7 +475,7 @@ class BatchWriter::Impl final : public IImportState {
       // Not stored: staged earlier in this batch, where the first row is the one kept.
       if (*stored && !((*stored)->kind == P::ConflictKind::IdentityClash &&
                        detail::is_late_revision_detail((*stored)->detail_json))) {
-        it->second.kind = P::ConflictKind::IdentityClash;
+        it->second = KnownConflict{P::ConflictKind::IdentityClash, kPending};
         staged.restated.push_back(row);
       }
     }
@@ -638,10 +643,7 @@ class BatchWriter::Impl final : public IImportState {
     ingest.import_source = *source_;
     ingest.author_user = who->user;
     if (ingest.analyst.empty()) ingest.analyst = who->name;
-    for (const auto& root : kRoots) {
-      ingest.roots.*root.id = root_id(item, root);
-      if (config_.replay) walk_.pass(ingest.roots.*root.id);
-    }
+    for (const auto& root : kRoots) ingest.roots.*root.id = root_id(item, root);
     std::vector<Uuid> unresolved;
     if (auto r = clear_unresolved(ingest.roots.blanks_rows, unresolved); !r) return r;
     if (auto r = clear_unresolved(ingest.roots.icfactors_rows, unresolved); !r) return r;
@@ -682,6 +684,11 @@ class BatchWriter::Impl final : public IImportState {
     present_.insert(analysis);
     absent_.erase(analysis);
     ++stats.analyses;
+    // Its roots are this source's, at their files' commits; their provenance
+    // is stored only with the batch.
+    if (placing_)
+      for (const auto& root : kRoots)
+        if (auto r = chains_.sent_root(root_id(item, root), root_key(item, root).commit); !r) return r;
     for (const auto& file : collection_files(item))
       if (auto r = supersede(file, staged); !r) return r;
 
@@ -746,17 +753,14 @@ class BatchWriter::Impl final : public IImportState {
       const Uuid id = revision_id(url_, revision.key.commit, revision.key.path);
       auto exists = store_.has_revision(id);
       if (!exists) return fail(exists.error());
-      if (config_.replay) {
-        // Spec 10.31: a revision refused earlier is not written behind what
-        // later commits of this source have stored since.
-        walk_.pass(id);
-        if (!*exists) {
-          auto late = walk_.behind_stored(store_, *source_, **subject, revision.kind);
-          if (!late) return fail(late.error());
-          if (*late) {
-            if (auto r = stage_late_revision(revision, **subject, staged, stats); !r) return r;
-            continue;
-          }
+      if (placing_ && !*exists) {
+        // Spec 10.34: not behind what a later commit of the walk left, nor
+        // over a head this source did not make.
+        auto late = chains_.late(**subject, revision.kind, revision.order);
+        if (!late) return fail(late.error());
+        if (*late) {
+          if (auto r = stage_late_revision(revision, **subject, *late, staged, stats); !r) return r;
+          continue;
         }
       }
       if (!*exists) ++fresh;
@@ -777,6 +781,7 @@ class BatchWriter::Impl final : public IImportState {
       if (!notes.empty() || revision.detail_json.find_first_not_of("{} \t\r\n") != std::string::npos)
         detail = with_members(revision.detail_json, notes);
       changeset.revisions.push_back({id, **subject, revision.kind, std::move(payload)});
+      if (placing_ && !*exists) chains_.written(**subject, revision.kind, revision.order, revision.key.commit);
       staged.provenance.push_back(provenance("revision", id, revision.key, item.who, std::move(detail)));
       ++stats.revisions;
     }
@@ -1016,7 +1021,10 @@ class BatchWriter::Impl final : public IImportState {
   std::map<std::string, Uuid> taken_;
   std::optional<std::map<Uuid, KnownConflict>> conflicts_;  // of this source; see conflicts()
   bool catching_up_ = false;                                // a replay that has not reached the stored token
-  detail::ReplayOrder walk_;                                // a replay only: the revisions it has passed
+  // What is stored for the subjects this run decides about (spec 10.34).
+  // Not kept for a source that had nothing stored when the run began.
+  bool placing_ = false;
+  detail::StoredChains chains_;
   // Dry run only.
   std::set<Uuid> counted_;
   std::set<Uuid> importable_;  // analyses seen that are stored or would be
