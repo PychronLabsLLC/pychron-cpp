@@ -264,6 +264,26 @@ TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {
   EXPECT_EQ(f.rec.failed[0].error.kind, ErrorKind::Protocol);
 }
 
+// Commands carried out and commands that failed are counted; a refusal sends
+// nothing and counts as neither.
+TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
+  Fixture f({valve("A", "1"), valve("B", "2", {"A"}), manual("M")});
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(f.mgr->info("A")->stats, SwitchStats{});
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));  // sent again, though already open
+  ASSERT_FALSE(f.mgr->actuate("B", SwitchOp::Open, "op"));  // interlocked: refused
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
+  ASSERT_TRUE(f.mgr->actuate("M", SwitchOp::Open, "op"));
+  f.act.stick("1");
+  ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  f.act.fail_commands(ErrorKind::Timeout);
+  ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  EXPECT_EQ(f.mgr->info("A")->stats, (SwitchStats{2, 1, 2}));
+  EXPECT_EQ(f.mgr->info("B")->stats, SwitchStats{});
+  EXPECT_EQ(f.mgr->info("M")->stats, (SwitchStats{1, 0, 0}));
+}
+
 TEST(SwitchManager, CommandFailureLeavesUnknownAndPublishes) {
   Fixture f({valve("A", "1")});
   f.act.fail_commands(ErrorKind::Timeout);

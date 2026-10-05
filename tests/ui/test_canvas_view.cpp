@@ -98,9 +98,33 @@ class TestCanvasView : public QObject {
     bridge_->actuate("A", SwitchOp::Open);
     ui::ValveItem* a = view_->valve("A");
     QTRY_VERIFY(a->is_flashing());
-    QVERIFY(a->toolTip().contains(QStringLiteral("A: ")));
-    QVERIFY(a->toolTip().size() > 3);
+    QVERIFY(a->toolTip().contains(QStringLiteral("Last failure: ")));
+    QVERIFY(a->toolTip().contains(QStringLiteral("interlocked")));
     QCOMPARE(a->state(), ValveState::Closed);
+  }
+
+  // The tooltip says what the valve is, its state and since when, and what
+  // it has been asked to do.
+  void tooltipShowsStateAndActuationCounts() {
+    ui::ValveItem* b = view_->valve("B");
+    // Counts are the session's: earlier tests have used this valve.
+    const auto counts = [b] {
+      const auto m = QRegularExpression(QStringLiteral("opened (\\d+), closed (\\d+), failed (\\d+)")).match(b->toolTip());
+      return std::array<int, 3>{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt()};
+    };
+    QVERIFY(view_->valve("P1")->toolTip().contains(QStringLiteral("Not actuated this session")));
+    QVERIFY(!view_->valve("P1")->toolTip().contains(QStringLiteral("since")));
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE(b->state(), ValveState::Open);
+    QTRY_VERIFY(!b->is_pending());
+    bridge_->actuate("B", SwitchOp::Close);
+    QTRY_VERIFY(b->toolTip().contains(QStringLiteral("Closed since ")));
+    QTRY_VERIFY(!b->is_pending());
+    const auto before = counts();
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_VERIFY(b->toolTip().contains(QStringLiteral("Open since ")));
+    QCOMPARE(counts(), (std::array<int, 3>{before[0] + 1, before[1], before[2]}));
+    QVERIFY(b->toolTip().contains(QStringLiteral("Prep to spectrometer")));
   }
 
   void lockedValveDrawsBlueBorderAndUnlockClearsIt() {
@@ -631,7 +655,7 @@ class TestCanvasView : public QObject {
     // On the canvas a manual valve's face is blank unless it is given a
     // display_name; other valves show their name.
     QCOMPARE(view_->valve("M1")->label(), QString());
-    QCOMPARE(view_->valve("M1")->toolTip(), QStringLiteral("M1"));
+    QVERIFY(view_->valve("M1")->toolTip().contains(QStringLiteral(">M1<")));
     QCOMPARE(view_->valve("A")->label(), QStringLiteral("A"));
   }
 

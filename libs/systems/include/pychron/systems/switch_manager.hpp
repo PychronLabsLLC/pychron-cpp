@@ -75,6 +75,14 @@ struct SwitchSpec {
   Duration settle{};
 };
 
+// What a switch has done since the manager was built. In memory only.
+struct SwitchStats {
+  int opens = 0;     // commands carried out (a manual valve: reports taken)
+  int closes = 0;
+  int failures = 0;  // commands sent that failed or read back wrong; a refusal sends nothing and is not one
+  friend bool operator==(const SwitchStats&, const SwitchStats&) = default;
+};
+
 // Point-in-time copy of one switch, safe to hand across threads.
 struct SwitchInfo {
   std::string name;
@@ -83,6 +91,7 @@ struct SwitchInfo {
   ValveState state = ValveState::Unknown;
   bool locked = false;
   std::string owner;  // empty if unclaimed
+  SwitchStats stats;
 };
 
 // Resolves an actuator (driver) name to its IValveActuator, or nullptr. The
@@ -154,6 +163,7 @@ class SwitchManager {
   Result<void> drive(Entry& e, SwitchOp op);
   void settle(Duration d) const;
   bool record(Entry& e, ValveState s);  // true if the state changed
+  void count(Entry& e, int SwitchStats::* what);
   Result<void> failed(const Entry& e, Error error);
 
   const Clock* clock_;

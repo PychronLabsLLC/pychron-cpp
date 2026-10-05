@@ -22,6 +22,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QDateTime>
 #include <QThread>
 
 #include "pychron/core/events.hpp"
@@ -42,6 +43,10 @@ class CoreBridge : public QObject {
     std::map<std::string, TransportHealth> health;
     std::map<std::string, systems::SwitchInfo> switches;  // lock / owner badges
     std::set<std::string> pending;                        // actuations in flight
+    // When a valve was last seen to change state, by this machine's clock.
+    // Absent until it changes from a known state: how long it held the one
+    // it was first read in is not known.
+    std::map<std::string, QDateTime> changed_at;
   };
 
   // Actor name the UI actuates as.
@@ -103,6 +108,7 @@ class CoreBridge : public QObject {
   void on_finished(const std::string& name, const Result<void>& result,
                    const std::vector<systems::SwitchInfo>& switches);
   void set_switches(const std::vector<systems::SwitchInfo>& switches);
+  void refresh_stats(const std::string& name);
 
   systems::ExtractionLine& line_;
   State state_;

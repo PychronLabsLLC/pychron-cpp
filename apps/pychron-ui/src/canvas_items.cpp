@@ -89,8 +89,22 @@ void ValveItem::set_pending(bool pending) {
   update();
 }
 
+void ValveItem::set_details(const QStringList& lines) {
+  if (lines == details_) return;
+  details_ = lines;
+  update_tip();
+}
+
+void ValveItem::update_tip() {
+  QStringList lines{QString::fromStdString(name_)};
+  lines += details_;
+  if (!last_failure_.isEmpty()) lines += tr("Last failure: %1").arg(last_failure_);
+  setToolTip(style::tip_text(lines.join(QLatin1Char('\n'))));
+}
+
 void ValveItem::flash(const QString& what) {
-  setToolTip(QStringLiteral("%1: %2").arg(QString::fromStdString(name_), what));
+  last_failure_ = what;
+  update_tip();
   flash_ticks_ = kFlashTicks;
   flash_timer_.start();
   update();

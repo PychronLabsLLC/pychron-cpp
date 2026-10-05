@@ -33,8 +33,9 @@ struct SwitchManager::Entry {
   ValveState state = ValveState::Unknown;
   bool locked = false;
   std::string owner;
+  SwitchStats stats;
 
-  SwitchInfo info() const { return {spec.name, spec.description, spec.kind, state, locked, owner}; }
+  SwitchInfo info() const { return {spec.name, spec.description, spec.kind, state, locked, owner, stats}; }
 };
 
 namespace {
@@ -204,6 +205,7 @@ Result<void> SwitchManager::command(std::string_view name, SwitchOp op, const st
   const auto target = target_of(op);
   if (e->spec.kind == SwitchKind::ManualValve) {
     record(*e, target);
+    count(*e, op == SwitchOp::Open ? &SwitchStats::opens : &SwitchStats::closes);
     if (bus_) bus_->publish(ValveChanged{e->spec.name, target, clock_->now()});
     return {};
   }
@@ -246,6 +248,7 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   if (!sent) {
     // The command may or may not have reached the valve.
     record(e, ValveState::Unknown);
+    count(e, &SwitchStats::failures);
     return failed(e, std::move(sent).error());
   }
 
@@ -254,9 +257,13 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   auto read = e.actuator->read(e.spec.address);
   if (!read) {
     record(e, ValveState::Unknown);
+    count(e, &SwitchStats::failures);
     return failed(e, std::move(read).error());
   }
   const bool changed = record(e, *read);
+  // Counted before the event goes out, so a handler that asks sees it.
+  count(e, *read != target ? &SwitchStats::failures
+                           : op == SwitchOp::Open ? &SwitchStats::opens : &SwitchStats::closes);
   if (*read != target) {
     if (changed && bus_) bus_->publish(ValveChanged{e.spec.name, *read, clock_->now()});
     return failed(e, Error{ErrorKind::Protocol,
@@ -280,6 +287,11 @@ void SwitchManager::settle(Duration d) const {
 bool SwitchManager::record(Entry& e, ValveState s) {
   std::lock_guard lk(state_);
   return std::exchange(e.state, s) != s;
+}
+
+void SwitchManager::count(Entry& e, int SwitchStats::* what) {
+  std::lock_guard lk(state_);
+  ++(e.stats.*what);
 }
 
 Result<void> SwitchManager::failed(const Entry& e, Error error) {

@@ -1,6 +1,8 @@
 #include "canvas_view.hpp"
 #include "theme.hpp"
 
+#include <QLocale>
+
 #include <algorithm>
 #include <array>
 
@@ -62,6 +64,7 @@ CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(pare
   connect(&bridge_, &CoreBridge::snapshot, this, [this](const Snapshot&) { apply_state(); });
   connect(&bridge_, &CoreBridge::valveChanged, this, [this](const ValveChanged&) { apply_state(); });
   connect(&bridge_, &CoreBridge::lockChanged, this, [this](const QString&, bool) { apply_state(); });
+  connect(&bridge_, &CoreBridge::actuationFailed, this, [this](const ActuationFailed&) { apply_state(); });
   confirm_unlock_ = [this](const QString& name) {
     return QMessageBox::question(this, tr("Unlock valve"),
                                  tr("Unlock %1? It will accept open and close commands again.").arg(name),
@@ -298,6 +301,39 @@ bool CanvasView::request_lock(const std::string& name, bool locked) {
   return true;
 }
 
+namespace {
+
+// The lines of a valve's tooltip under its name: what it is, the state it is
+// in and since when, and what it has been asked to do this session.
+QStringList valve_details(const CoreBridge::State& state, const std::string& name) {
+  QStringList lines;
+  const auto info = state.switches.find(name);
+  if (info != state.switches.end() && !info->second.description.empty())
+    lines += QString::fromStdString(info->second.description);
+
+  const auto at = state.valves.find(name);
+  QString now;
+  switch (at == state.valves.end() ? ValveState::Unknown : at->second) {
+    case ValveState::Open: now = CanvasView::tr("Open"); break;
+    case ValveState::Closed: now = CanvasView::tr("Closed"); break;
+    default: now = CanvasView::tr("State unknown"); break;
+  }
+  if (const auto changed = state.changed_at.find(name); changed != state.changed_at.end())
+    now += CanvasView::tr(" since %1").arg(QLocale().toString(changed->second.time(), QStringLiteral("HH:mm:ss")));
+  if (info == state.switches.end()) return lines << now;
+  if (info->second.locked) now += CanvasView::tr(", locked");
+  if (!info->second.owner.empty()) now += CanvasView::tr(", owned by %1").arg(QString::fromStdString(info->second.owner));
+  lines += now;
+
+  const systems::SwitchStats& n = info->second.stats;
+  lines += n == systems::SwitchStats{}
+               ? CanvasView::tr("Not actuated this session")
+               : CanvasView::tr("This session: opened %1, closed %2, failed %3").arg(n.opens).arg(n.closes).arg(n.failures);
+  return lines;
+}
+
+}  // namespace
+
 void CanvasView::apply_state() {
   const auto& state = bridge_.state();
   for (auto& [name, item] : valves_) {
@@ -308,6 +344,7 @@ void CanvasView::apply_state() {
       item->set_locked(it->second.locked);
     }
     item->set_pending(bridge_.pending(name));
+    item->set_details(valve_details(state, name));
   }
   for (auto& [name, item] : gauges_) {
     if (auto it = state.pressures.find(name); it != state.pressures.end()) {

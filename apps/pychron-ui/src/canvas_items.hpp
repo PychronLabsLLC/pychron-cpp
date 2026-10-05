@@ -31,8 +31,9 @@ QPointF to_qpoint(const canvas::Point& p);
 QColor valve_color(ValveState state);
 
 // Click -> actuate; colour by state; thick blue border when locked (context
-// menu locks/unlocks); pending indicator; flashes and shows Error.what in its
-// tooltip on rejection. A manual valve wears a handwheel on its face
+// menu locks/unlocks); pending indicator; flashes on rejection. The tooltip
+// is the name, then what CanvasView knows of it (set_details), then the last
+// rejection's Error.what. A manual valve wears a handwheel on its face
 // (nothing sticks out of the body, so pipes can join any side); a label too
 // long for the body is cut short (the tooltip has the name whole).
 class ValveItem : public QGraphicsObject {
@@ -66,8 +67,10 @@ class ValveItem : public QGraphicsObject {
   // when canvas.toml says open_valve_color = "inherit"); nullopt = state colour.
   void set_inherited_color(std::optional<QColor> color);
   void set_pending(bool pending);
-  // Rejection feedback: blink for ~1 s and show `what` as the tooltip.
+  // Rejection feedback: blink for ~1 s and keep `what` in the tooltip.
   void flash(const QString& what);
+  // The tooltip's lines under the name: description, state, counts.
+  void set_details(const QStringList& lines);
 
   void set_on_click(std::function<void(const std::string&)> on_click) { on_click_ = std::move(on_click); }
   // Called with the requested state when the user picks the context-menu
@@ -98,6 +101,10 @@ class ValveItem : public QGraphicsObject {
   bool locked_ = false;
   std::optional<QColor> inherited_;
   bool pending_ = false;
+  void update_tip();
+
+  QStringList details_;
+  QString last_failure_;
   int flash_ticks_ = 0;
   QTimer flash_timer_;
   std::function<void(const std::string&)> on_click_;

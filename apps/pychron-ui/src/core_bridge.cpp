@@ -125,10 +125,17 @@ void CoreBridge::drain() {
 }
 
 void CoreBridge::on_valve(const ValveChanged& e) {
+  // Out of Unknown is a first reading, not a change: no time is claimed for it.
+  if (auto it = state_.valves.find(e.valve); it == state_.valves.end() || it->second == ValveState::Unknown) {
+    state_.changed_at.erase(e.valve);
+  } else if (it->second != e.state) {
+    state_.changed_at[e.valve] = QDateTime::currentDateTime();
+  }
   state_.valves[e.valve] = e.state;
   if (auto it = state_.switches.find(e.valve); it != state_.switches.end()) {
     it->second.state = e.state;
   }
+  refresh_stats(e.valve);
   emit valveChanged(e);
 }
 
@@ -172,7 +179,18 @@ void CoreBridge::on_lock(const SwitchLockChanged& e) {
   emit lockChanged(QString::fromStdString(e.name), e.locked);
 }
 
-void CoreBridge::on_failed(const ActuationFailed& e) { emit actuationFailed(e); }
+void CoreBridge::on_failed(const ActuationFailed& e) {
+  refresh_stats(e.valve);
+  emit actuationFailed(e);
+}
+
+// A script's or another client's command moves the counts too, and only the
+// manager has them.
+void CoreBridge::refresh_stats(const std::string& name) {
+  auto it = state_.switches.find(name);
+  if (it == state_.switches.end()) return;
+  if (const auto info = line_.switches().info(name)) it->second.stats = info->stats;
+}
 
 void CoreBridge::on_finished(const std::string& name, const Result<void>& result,
                              const std::vector<systems::SwitchInfo>& switches) {
