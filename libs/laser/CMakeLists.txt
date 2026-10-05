@@ -12,6 +12,6 @@ target_include_directories(pychron_laser PUBLIC
 )
 
 target_compile_features(pychron_laser PUBLIC cxx_std_20)
-target_link_libraries(pychron_laser PUBLIC pychron::devices pychron::core)
+target_link_libraries(pychron_laser PUBLIC pychron::devices pychron::vision pychron::core)
 
 pychron_set_warnings(pychron_laser)
