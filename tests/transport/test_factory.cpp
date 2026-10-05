@@ -9,6 +9,7 @@
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
+#include "pychron/transport/udp_transport.hpp"
 #include "pychron/transport/trace.hpp"
 #include "pychron/transport/trace_recorder.hpp"
 
@@ -71,6 +72,16 @@ TEST(TransportFactory, SerialAndTcpAreBuiltClosed) {
   ASSERT_NE(tcp, nullptr);
   EXPECT_EQ(tcp->settings().host, "10.0.0.5");
   EXPECT_EQ(tcp->settings().port, 4001);
+}
+
+TEST(TransportFactory, UdpIsBuiltClosed) {
+  auto t = make_transport(cfg("qtegra", config::TransportKind::Udp, config::UdpParams{"10.0.0.7", 1069}));
+  ASSERT_TRUE(t);
+  auto* udp = dynamic_cast<UdpTransport*>(t->get());
+  ASSERT_NE(udp, nullptr);
+  EXPECT_EQ(udp->settings().host, "10.0.0.7");
+  EXPECT_EQ(udp->settings().port, 1069);
+  EXPECT_EQ((*t)->health().state, HealthState::Down);
 }
 
 TEST(TransportFactory, ModbusIsNotYetSupported) {

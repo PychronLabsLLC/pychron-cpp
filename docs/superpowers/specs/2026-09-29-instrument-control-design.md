@@ -213,7 +213,7 @@ name = "jan"
 scan_interval_ms = 1000
 
 [transports.valve_bus]
-kind = "serial"            # serial | tcp | modbus_rtu | modbus_tcp | sim
+kind = "serial"            # serial | tcp | udp | modbus_rtu | modbus_tcp | sim | link
 port = "/dev/tty.usbserial-A1"   # "COM4" on Windows
 baud = 9600
 timeout_ms = 500

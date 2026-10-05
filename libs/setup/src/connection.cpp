@@ -23,7 +23,8 @@ std::string describe(const spectrometer::cfg::SpectrometerConfig& c) {
     std::string where;
     if (auto t = c.transports.find(d.transport); t != c.transports.end()) {
       const auto& tc = t->second;
-      if (tc.kind == spectrometer::cfg::TransportKind::Tcp || tc.kind == spectrometer::cfg::TransportKind::ModbusTcp) {
+      if (tc.kind == spectrometer::cfg::TransportKind::Tcp || tc.kind == spectrometer::cfg::TransportKind::Udp ||
+          tc.kind == spectrometer::cfg::TransportKind::ModbusTcp) {
         where = " at " + tc.host + ":" + std::to_string(tc.tcp_port);
       } else if (!tc.serial_port.empty()) {
         where = " on " + tc.serial_port;

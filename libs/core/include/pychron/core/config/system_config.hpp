@@ -21,7 +21,7 @@ struct SystemSection : Located {
   std::int64_t scan_interval_ms = 1000;
 };
 
-enum class TransportKind { Serial, Tcp, ModbusRtu, ModbusTcp, Sim, Link };
+enum class TransportKind { Serial, Tcp, Udp, ModbusRtu, ModbusTcp, Sim, Link };
 
 enum class Parity { None, Even, Odd };
 
@@ -34,6 +34,12 @@ struct SerialParams {
 };
 
 struct TcpParams {
+  std::string host;
+  std::int64_t port = 0;
+};
+
+// A connected UDP socket to one peer (Qtegra over UDP).
+struct UdpParams {
   std::string host;
   std::int64_t port = 0;
 };
@@ -54,7 +60,7 @@ struct LinkParams {
 };
 
 using TransportParams =
-    std::variant<SerialParams, TcpParams, ModbusRtuParams, ModbusTcpParams, SimParams, LinkParams>;
+    std::variant<SerialParams, TcpParams, UdpParams, ModbusRtuParams, ModbusTcpParams, SimParams, LinkParams>;
 
 struct TransportConfig : Located {
   std::string name;

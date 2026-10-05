@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"
+#include "pychron/transport/link_transport.hpp"
 
 namespace pychron::spectrometer {
 
@@ -67,11 +68,26 @@ Unexpected<Error> out_of_range(std::string_view what, double value, const Range&
 QtegraSpectrometer::QtegraSpectrometer(std::string name, Transport& transport, QtegraOptions options,
                                        const Clock* clock)
     : Device(std::move(name), DeviceOptions{clock}),
-      transport_(transport),
       options_(std::move(options)),
       clock_(clock != nullptr ? *clock : steady_),
-      reconnector_(transport_, clock_),
-      params_(source_specs()) {}
+      link_(std::make_shared<QtegraLink>(transport, options_.terminator, clock_)),
+      params_(source_specs()) {
+  link_->set_handshake([this](Transport& t) { return handshake(t); });
+}
+
+QtegraSpectrometer::QtegraSpectrometer(std::string name, QtegraLinkHandle handle, QtegraOptions options,
+                                       const Clock* clock)
+    : Device(std::move(name), DeviceOptions{clock}),
+      options_(std::move(options)),
+      clock_(clock != nullptr ? *clock : steady_),
+      handle_(std::move(handle)),
+      link_(*handle_->get()),
+      params_(source_specs()) {
+  link_->set_handshake([this](Transport& t) { return handshake(t); });
+}
+
+// A borrower may still hold the link: stop it calling back into this driver.
+QtegraSpectrometer::~QtegraSpectrometer() { link_->set_handshake({}); }
 
 DriverSchema QtegraSpectrometer::schema() {
   return {"",
@@ -84,7 +100,10 @@ DriverSchema QtegraSpectrometer::schema() {
            {"limit_max", KeyType::Float, false, "upper magnet DAC limit in volts; default 10"},
            {"terminator", KeyType::String, false, "write terminator: cr (default), lf or crlf"},
            {"settle_periods", KeyType::Float, false,
-            "integration periods to wait after an integration change, 0 to 100; default 2"}}};
+            "integration periods to wait after an integration change, 0 to 100; default 2"},
+           {"link", KeyType::String, false,
+            "name the shared Qtegra connection is registered under, for qtegra_valves and qtegra_gauges on a "
+            "kind = \"link\" transport; default: the driver name"}}};
 }
 
 Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const DriverArgs& args) {
@@ -113,13 +132,21 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
       options.settle_periods > kMaxSettlePeriods) {
     return fail(ErrorKind::Config, "settle_periods must be between 0 and 100");
   }
-  return std::make_unique<QtegraSpectrometer>(args.name, args.transport, std::move(options), args.clock);
+  if (dynamic_cast<const LinkTransport*>(&args.transport) != nullptr) {
+    return fail(ErrorKind::Config,
+                "thermo_qtegra owns its Qtegra connection: give it a tcp or udp transport, not kind = \"link\"");
+  }
+  static const SteadyClock steady;
+  auto handle = make_qtegra_link(args.transport, o["link"].value_or(args.name), options.terminator,
+                                 args.clock != nullptr ? *args.clock : steady);
+  if (!handle) return fail(std::move(handle).error());
+  return std::make_unique<QtegraSpectrometer>(args.name, std::move(*handle), std::move(options), args.clock);
 }
 
-Result<void> QtegraSpectrometer::handshake() {
+Result<void> QtegraSpectrometer::handshake(Transport& transport) {
   auto cmd = q::get_integration_time(options_.terminator);
   if (!cmd) return fail(std::move(cmd).error());
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+  auto reply = transport.exchange(cmd->tx, *cmd->reply);
   if (!reply) return fail(std::move(reply).error());
   auto seconds = q::decode_number(*reply);
   if (!seconds) return fail(std::move(seconds).error());
@@ -129,8 +156,7 @@ Result<void> QtegraSpectrometer::handshake() {
 
 Result<Bytes> QtegraSpectrometer::exchange(Result<codec::Command> cmd) {
   if (!cmd) return fail(std::move(cmd).error());
-  return reconnector_.run<Bytes>([&] { return transport_.exchange(cmd->tx, *cmd->reply); },
-                                 [this] { return handshake(); });
+  return link_->exchange(*cmd);
 }
 
 Result<void> QtegraSpectrometer::command_ack(Result<codec::Command> cmd) {
@@ -156,7 +182,7 @@ Result<void> QtegraSpectrometer::check_channel(const ChannelId& channel) const {
   return fail(ErrorKind::Config, "thermo_qtegra: unknown channel \"" + channel + "\"");
 }
 
-Result<void> QtegraSpectrometer::connect() { return observe(handshake()); }
+Result<void> QtegraSpectrometer::connect() { return observe(link_->handshake()); }
 
 // --- IMassPositioner -----------------------------------------------------------
 

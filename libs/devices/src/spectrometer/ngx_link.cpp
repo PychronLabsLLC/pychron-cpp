@@ -292,65 +292,13 @@ Result<std::string> NgxLink::ask(std::string_view command, std::optional<Duratio
   return reply;
 }
 
-// --- registry ---------------------------------------------------------------
-
-NgxLinkRegistry& NgxLinkRegistry::global() {
-  static NgxLinkRegistry registry;
-  return registry;
-}
-
-Result<void> NgxLinkRegistry::add(const std::string& name, const std::shared_ptr<NgxLink>& link) {
-  std::lock_guard lock(mutex_);
-  auto it = links_.find(name);
-  if (it != links_.end() && !it->second.expired()) {
-    return fail(ErrorKind::Config, "NGX link '" + name +
-                                       "' is already open; declare its transport once and use kind = \"link\" "
-                                       "elsewhere");
-  }
-  links_[name] = link;
-  return {};
-}
-
-void NgxLinkRegistry::remove(const std::string& name, const NgxLink* link) {
-  std::lock_guard lock(mutex_);
-  auto it = links_.find(name);
-  if (it == links_.end()) return;
-  auto live = it->second.lock();
-  if (!live || live.get() == link) links_.erase(it);
-}
-
-Result<std::shared_ptr<NgxLink>> NgxLinkRegistry::find(const std::string& name) const {
-  std::lock_guard lock(mutex_);
-  auto it = links_.find(name);
-  if (it != links_.end()) {
-    if (auto live = it->second.lock()) return live;
-  }
-  return fail(ErrorKind::NotConnected, "NGX link '" + name + "' is not running (is the config that owns it loaded?)");
-}
-
 // --- handle -----------------------------------------------------------------
 
-Result<NgxLinkHandle> NgxLinkHandle::make(Transport& transport, const std::string& name, NgxLinkOptions options,
-                                          const Clock& clock) {
-  NgxLinkHandle h;
-  if (const auto* link = dynamic_cast<const LinkTransport*>(&transport)) {
-    h.name_ = link->link();
-    return h;
-  }
-  h.name_ = name;
-  auto owned = std::make_shared<NgxLink>(transport, std::move(options), clock);
-  if (auto added = NgxLinkRegistry::global().add(name, owned); !added) return fail(std::move(added).error());
-  h.owned_ = std::move(owned);
-  return h;
-}
-
-NgxLinkHandle::~NgxLinkHandle() {
-  if (owned_) NgxLinkRegistry::global().remove(name_, owned_.get());
-}
-
-Result<std::shared_ptr<NgxLink>> NgxLinkHandle::get() const {
-  if (owned_) return owned_;
-  return NgxLinkRegistry::global().find(name_);
+Result<NgxLinkHandle> make_ngx_link(Transport& transport, const std::string& name, NgxLinkOptions options,
+                                    const Clock& clock) {
+  return NgxLinkHandle::make(transport, name, [&](Transport& t) {
+    return std::make_shared<NgxLink>(t, std::move(options), clock);
+  });
 }
 
 }  // namespace pychron::spectrometer

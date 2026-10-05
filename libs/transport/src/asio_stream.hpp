@@ -12,6 +12,7 @@
 #include <chrono>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
@@ -55,8 +56,10 @@ Result<void> write_all(asio::io_context& io, Stream& stream, const Bytes& tx, Du
 }
 
 // Reads until `pending` holds a complete frame per `spec`, returns it and
-// leaves any following bytes in `pending` for the next read.
-template <class Stream>
+// leaves any following bytes in `pending` for the next read. `ChunkSize` is
+// the most one receive takes; a datagram stream needs room for a whole
+// datagram, since what does not fit is lost.
+template <std::size_t ChunkSize = 512, class Stream>
 Result<Bytes> read_frame(asio::io_context& io, Stream& stream, Bytes& pending, const ReadSpec& spec,
                          Duration timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -73,7 +76,7 @@ Result<Bytes> read_frame(asio::io_context& io, Stream& stream, Bytes& pending, c
                                           " within " + millis(timeout));
     }
 
-    std::array<std::uint8_t, 512> buf{};
+    std::vector<std::uint8_t> buf(ChunkSize);
     bool done = false;
     asio::error_code ec;
     std::size_t got = 0;

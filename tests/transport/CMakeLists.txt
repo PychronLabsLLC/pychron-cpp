@@ -7,6 +7,7 @@ add_executable(pychron_transport_tests
   test_trace_recorder.cpp
   test_transaction.cpp
   test_tcp_transport.cpp
+  test_udp_transport.cpp
   test_serial_transport.cpp
   test_factory.cpp
 )

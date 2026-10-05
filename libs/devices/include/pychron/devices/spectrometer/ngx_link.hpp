@@ -31,6 +31,7 @@
 #include "pychron/codecs/isotopx_ngx.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/devices/link_registry.hpp"
 #include "pychron/transport/transport.hpp"
 
 namespace pychron::spectrometer {
@@ -51,6 +52,8 @@ struct NgxLinkOptions {
 
 class NgxLink {
  public:
+  static constexpr std::string_view kLabel = "NGX";
+
   // Called on the reader thread for every ACQ / ACQ.B line: the frame, the
   // host clock when it was read, and the session it arrived in.
   using EventSink = std::function<void(const codec::ngx::AcqFrame&, TimePoint, std::uint64_t session)>;
@@ -119,42 +122,14 @@ class NgxLink {
   std::thread thread_;
 };
 
-// Process-wide NGX links by name, so a driver whose transport is a
-// LinkTransport finds the link another config file's driver owns.
-class NgxLinkRegistry {
- public:
-  static NgxLinkRegistry& global();
-  // Config when `name` is already registered to a live link.
-  Result<void> add(const std::string& name, const std::shared_ptr<NgxLink>& link);
-  void remove(const std::string& name, const NgxLink* link);
-  // NotConnected when no live link has that name.
-  Result<std::shared_ptr<NgxLink>> find(const std::string& name) const;
+// Process-wide NGX links by name (see link_registry.hpp).
+using NgxLinkRegistry = LinkRegistry<NgxLink>;
+using NgxLinkHandle = LinkHandle<NgxLink>;
 
- private:
-  mutable std::mutex mutex_;
-  std::map<std::string, std::weak_ptr<NgxLink>> links_;
-};
-
-// The link a driver should use: its own on a real transport (created and
-// registered under `name`), or the registered one when `transport` is a
-// LinkTransport. Owned links unregister when the returned handle is released.
-class NgxLinkHandle {
- public:
-  static Result<NgxLinkHandle> make(Transport& transport, const std::string& name, NgxLinkOptions options,
+// The link a driver should use: its own NgxLink on a real transport,
+// registered under `name`, or the registered one when `transport` is a
+// LinkTransport.
+Result<NgxLinkHandle> make_ngx_link(Transport& transport, const std::string& name, NgxLinkOptions options,
                                     const Clock& clock);
-  NgxLinkHandle(NgxLinkHandle&&) noexcept = default;
-  NgxLinkHandle& operator=(NgxLinkHandle&&) noexcept = default;
-  ~NgxLinkHandle();
-
-  // The link to use now (a borrowed one is looked up on every call).
-  Result<std::shared_ptr<NgxLink>> get() const;
-  bool owner() const noexcept { return static_cast<bool>(owned_); }
-  const std::string& name() const noexcept { return name_; }
-
- private:
-  NgxLinkHandle() = default;
-  std::string name_;
-  std::shared_ptr<NgxLink> owned_;
-};
 
 }  // namespace pychron::spectrometer

@@ -152,7 +152,7 @@ TEST(ConfigLoader, InvalidEnumValues) {
       "[transports.s]\nkind = \"serial\"\nport = \"COM4\"\nparity = \"mark\"\n";
   auto rep = load_report_from_string(text, "f.toml");
   EXPECT_TRUE(has(rep.diagnostics,
-                  "f.toml:4:transports.t.kind: invalid value 'usb' (expected serial | tcp | modbus_rtu | modbus_tcp | sim | link)"));
+                  "f.toml:4:transports.t.kind: invalid value 'usb' (expected serial | tcp | udp | modbus_rtu | modbus_tcp | sim | link)"));
   EXPECT_TRUE(has(rep.diagnostics, "f.toml:8:transports.s.parity: invalid value 'mark' (expected none | even | odd)"));
 }
 
@@ -175,6 +175,23 @@ TEST(ConfigLoader, TransportKeysDependOnKind) {
   const std::string text = "[system]\nname = \"x\"\n[transports.t]\nkind = \"tcp\"\nhost = \"h\"\nport = 1\nbaud = 9600\n";
   auto rep = load_report_from_string(text, "f.toml");
   EXPECT_TRUE(has(rep.diagnostics, "f.toml:7:transports.t.baud: unknown field"));
+}
+
+TEST(ConfigLoader, UdpNeedsHostAndPort) {
+  const std::string text =
+      "[system]\nname = \"x\"\n"
+      "[transports.q]\nkind = \"udp\"\nhost = \"qtegra\"\nport = 1069\n"
+      "[transports.bad]\nkind = \"udp\"\nhost = \"qtegra\"\nbaud = 9600\n";
+  auto rep = load_report_from_string(text, "f.toml");
+  EXPECT_TRUE(has(rep.diagnostics, "f.toml:7:transports.bad.port: missing required field"));
+  EXPECT_TRUE(has(rep.diagnostics, "f.toml:10:transports.bad.baud: unknown field"));
+
+  auto r = load_system_config_from_string(
+      "[system]\nname = \"x\"\n[transports.q]\nkind = \"udp\"\nhost = \"qtegra\"\nport = 1069\n", "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->transports.at("q").kind, TransportKind::Udp);
+  EXPECT_EQ(std::get<UdpParams>(r->transports.at("q").params).host, "qtegra");
+  EXPECT_EQ(std::get<UdpParams>(r->transports.at("q").params).port, 1069);
 }
 
 TEST(ConfigLoader, RangeChecks) {

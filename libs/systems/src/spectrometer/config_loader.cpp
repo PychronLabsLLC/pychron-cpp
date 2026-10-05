@@ -17,8 +17,9 @@ using detail::Reader;
 template <class E, std::size_t N>
 using Table = std::array<std::pair<std::string_view, E>, N>;
 
-constexpr Table<TransportKind, 7> kTransportKinds{{
+constexpr Table<TransportKind, 8> kTransportKinds{{
     {"tcp", TransportKind::Tcp},
+    {"udp", TransportKind::Udp},
     {"serial", TransportKind::Serial},
     {"modbus_tcp", TransportKind::ModbusTcp},
     {"modbus_rtu", TransportKind::ModbusRtu},
@@ -153,7 +154,8 @@ class Builder {
     if (t.kind != TransportKind::Link && o.t.get("link") != nullptr)
       r_.error(o.loc, Reader::join(o.path, "link"), "only for kind \"link\"");
 
-    const bool network = t.kind == TransportKind::Tcp || t.kind == TransportKind::ModbusTcp;
+    const bool network =
+        t.kind == TransportKind::Tcp || t.kind == TransportKind::Udp || t.kind == TransportKind::ModbusTcp;
     const bool serial = t.kind == TransportKind::Serial || t.kind == TransportKind::ModbusRtu;
     if (const auto* port = o.t.get("port")) {
       if (port->is_integer() && !serial) {

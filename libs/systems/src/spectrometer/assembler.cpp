@@ -127,6 +127,10 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
       tc.kind = config::TransportKind::Tcp;
       tc.params = config::TcpParams{c.host, c.tcp_port};
       break;
+    case cfg::TransportKind::Udp:
+      tc.kind = config::TransportKind::Udp;
+      tc.params = config::UdpParams{c.host, c.tcp_port};
+      break;
     case cfg::TransportKind::Serial:
       tc.kind = config::TransportKind::Serial;
       tc.params = config::SerialParams{c.serial_port, c.baud};

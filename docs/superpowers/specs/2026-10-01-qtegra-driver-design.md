@@ -306,7 +306,7 @@ command it receives, in order, for tests that check a sequence.
 2. pychron reconnects per Qtegra command by default; this driver keeps one
    connection. If RemoteControlServer requires a fresh connection per command,
    a `reconnect_per_command` key is the follow-up.
-3. pychron's default transport is UDP; only TCP is supported.
+3. pychron's default transport is UDP. Supported since 2026-10-05 (`kind = "udp"`), one datagram per command; not yet tried on an instrument.
 4. Source parameter units and ranges are unknown; ranges are nominal.
 
 Bring-up checklist (manual, first contact with the instrument):

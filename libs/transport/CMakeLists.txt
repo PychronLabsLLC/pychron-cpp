@@ -36,6 +36,7 @@ add_library(pychron_transport
   src/asio_stream.cpp
   src/serial_transport.cpp
   src/tcp_transport.cpp
+  src/udp_transport.cpp
   src/factory.cpp
 )
 add_library(pychron::transport ALIAS pychron_transport)

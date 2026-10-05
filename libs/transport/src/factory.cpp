@@ -8,6 +8,7 @@
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
 #include "pychron/transport/trace_recorder.hpp"
+#include "pychron/transport/udp_transport.hpp"
 
 namespace pychron {
 
@@ -56,6 +57,11 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
     case config::TransportKind::Tcp:
       if (const auto* p = std::get_if<config::TcpParams>(&config.params))
         transport = std::make_unique<TcpTransport>(TcpSettings{p->host, static_cast<std::uint16_t>(p->port)},
+                                                   std::move(options));
+      break;
+    case config::TransportKind::Udp:
+      if (const auto* p = std::get_if<config::UdpParams>(&config.params))
+        transport = std::make_unique<UdpTransport>(UdpSettings{p->host, static_cast<std::uint16_t>(p->port)},
                                                    std::move(options));
       break;
     case config::TransportKind::ModbusRtu:

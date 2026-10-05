@@ -7,12 +7,18 @@
 //
 // A dropped connection (Io / NotConnected) is repaired once per command:
 // reopen the transport, repeat the connect step, retry.
+//
+// The driver talks through a QtegraLink. Built from config, it registers that
+// link under its `link` option (default: the driver name) so qtegra_valves and
+// qtegra_gauges in the extraction-line config can share the one connection
+// Qtegra allows (their transport: kind = "link", link = "<name>").
 
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,7 +26,7 @@
 #include "pychron/devices/connectable.hpp"
 #include "pychron/devices/device.hpp"
 #include "pychron/devices/driver_registry.hpp"
-#include "pychron/devices/reconnect.hpp"
+#include "pychron/devices/spectrometer/qtegra_link.hpp"
 #include "pychron/devices/spectrometer/roles.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -45,13 +51,18 @@ class QtegraSpectrometer final : public Device,
                                  public IDetectorControl,
                                  public IBeamBlank {
  public:
+  // A private link on `transport`, registered nowhere.
   QtegraSpectrometer(std::string name, Transport& transport, QtegraOptions options, const Clock* clock = nullptr);
+  // The link `handle` owns (create() makes it from config). Config error from
+  // create() when the handle borrows: this driver owns its connection.
+  QtegraSpectrometer(std::string name, QtegraLinkHandle handle, QtegraOptions options, const Clock* clock = nullptr);
+  ~QtegraSpectrometer() override;
 
   static DriverSchema schema();
   static Result<std::unique_ptr<QtegraSpectrometer>> create(const DriverArgs& args);
 
   // Successful reconnects since construction.
-  std::uint64_t reconnects() const noexcept { return reconnector_.reconnects(); }
+  std::uint64_t reconnects() const noexcept { return link_->reconnects(); }
 
   // IConnectable: GetIntegrationTime; a numeric reply is success and seeds
   // the cached integration period. Never reconnects.
@@ -118,9 +129,9 @@ class QtegraSpectrometer final : public Device,
   Result<std::optional<Frame>> next(Duration timeout) override;
 
  private:
-  // The connect step on the bare transport. It is also the Reconnector's
-  // on_connect, so it must never go through the Reconnector itself.
-  Result<void> handshake();
+  // The connect step on the bare transport. It is also the link's reconnect
+  // handshake, so it must never go through the link's exchange.
+  Result<void> handshake(Transport& transport);
   // One command through the Reconnector; the raw reply is the caller's to decode.
   Result<Bytes> exchange(Result<codec::Command> cmd);
   // For the setters whose reply pychron ignores: any reply but ERROR is success.
@@ -141,11 +152,11 @@ class QtegraSpectrometer final : public Device,
   // Config error unless `channel` is one of `channels`.
   Result<void> check_channel(const ChannelId& channel) const;
 
-  Transport& transport_;
   QtegraOptions options_;
   SteadyClock steady_;  // used when no clock is injected
   const Clock& clock_;
-  Reconnector reconnector_;
+  std::optional<QtegraLinkHandle> handle_;  // keeps a registered link registered
+  std::shared_ptr<QtegraLink> link_;
   std::vector<ParamSpec> params_;
   // Seconds, as last reported by GetIntegrationTime or written by
   // configure(); 0 until connected. Atomic rather than under mutex_ because

@@ -41,7 +41,7 @@ struct SystemSection : Located {
   double integration_time_s = 1.0;
 };
 
-enum class TransportKind { Tcp, Serial, ModbusTcp, ModbusRtu, LabjackU3, Sim, Link };
+enum class TransportKind { Tcp, Udp, Serial, ModbusTcp, ModbusRtu, LabjackU3, Sim, Link };
 
 // `[transports.<name>]`. `port` is a TCP port number for network kinds and a
 // device path for serial kinds, so both forms are kept.

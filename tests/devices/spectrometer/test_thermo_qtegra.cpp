@@ -115,7 +115,7 @@ TEST(Qtegra, SchemaListsDeclaredKeys) {
     EXPECT_FALSE(key.required) << key.name;
   }
   EXPECT_EQ(names, (std::vector<std::string>{"roles", "channels", "limit_min", "limit_max", "terminator",
-                                             "settle_periods"}));
+                                             "settle_periods", "link"}));
 }
 
 TEST(Qtegra, UndeclaredKeyRejected) {

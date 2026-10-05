@@ -176,7 +176,7 @@ Result<std::unique_ptr<NgxSpectrometer>> NgxSpectrometer::create(const DriverArg
   if (!std::isfinite(options.limits.min) || !std::isfinite(options.limits.max) || !(options.limits.min < options.limits.max))
     return fail(ErrorKind::Config, "limits " + format_range(options.limits) + " must be a non-empty range");
   const Clock& clock = args.clock != nullptr ? *args.clock : shared_steady_clock();
-  auto link = NgxLinkHandle::make(args.transport, options.link, options.session, clock);
+  auto link = make_ngx_link(args.transport, options.link, options.session, clock);
   if (!link) return fail(std::move(link).error());
   return std::make_unique<NgxSpectrometer>(args.name, std::move(*link), std::move(options), args.clock);
 }
@@ -500,7 +500,7 @@ Result<std::unique_ptr<NgxValves>> NgxValves::create(const DriverArgs& args) {
   if (options.status_retries < 0 || options.status_retries > 10)
     return fail(ErrorKind::Config, "status_retries must be between 0 and 10");
   const Clock& clock = args.clock != nullptr ? *args.clock : shared_steady_clock();
-  auto link = NgxLinkHandle::make(args.transport, options.link, options.session, clock);
+  auto link = make_ngx_link(args.transport, options.link, options.session, clock);
   if (!link) return fail(std::move(link).error());
   return std::make_unique<NgxValves>(args.name, std::move(*link), std::move(options));
 }

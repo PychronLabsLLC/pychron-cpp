@@ -15,6 +15,7 @@ add_library(pychron_devices STATIC
   src/spectrometer/roles.cpp
   src/spectrometer/detectors.cpp
   src/spectrometer/ngx_link.cpp
+  src/spectrometer/qtegra_link.cpp
   src/spectrometer/ngx.cpp
   src/spectrometer/ngx_sim.cpp
   src/spectrometer/legacy/polled_acquirer.cpp

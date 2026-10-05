@@ -190,6 +190,7 @@ class Parser {
 constexpr std::array kTransportKinds{
     std::pair<std::string_view, TransportKind>{"serial", TransportKind::Serial},
     std::pair<std::string_view, TransportKind>{"tcp", TransportKind::Tcp},
+    std::pair<std::string_view, TransportKind>{"udp", TransportKind::Udp},
     std::pair<std::string_view, TransportKind>{"modbus_rtu", TransportKind::ModbusRtu},
     std::pair<std::string_view, TransportKind>{"modbus_tcp", TransportKind::ModbusTcp},
     std::pair<std::string_view, TransportKind>{"sim", TransportKind::Sim},
@@ -462,6 +463,12 @@ class ConfigBuilder {
         TcpParams tp;
         tcp(tp, true);
         tc.params = tp;
+        break;
+      }
+      case TransportKind::Udp: {
+        TcpParams tp;
+        tcp(tp, true);
+        tc.params = UdpParams{tp.host, tp.port};
         break;
       }
       case TransportKind::ModbusRtu: {

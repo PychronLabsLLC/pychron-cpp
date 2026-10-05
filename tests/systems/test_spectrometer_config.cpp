@@ -100,6 +100,16 @@ std::string with(std::string_view from, std::string_view to) {
   return s;
 }
 
+TEST(SpectrometerConfig, QtegraOverUdp) {
+  // ldeo and felix reach Qtegra over UDP (legacy survey C.6).
+  auto r = parse(with("kind = \"tcp\"", "kind = \"udp\""));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& t = r.config->transports.at("qtegra");
+  EXPECT_EQ(t.kind, TransportKind::Udp);
+  EXPECT_EQ(t.host, "192.168.0.10");
+  EXPECT_EQ(t.tcp_port, 1069);
+}
+
 TEST(SpectrometerConfig, ParsesIntegratedSpecExample) {
   auto r = parse(kIntegrated);
   ASSERT_TRUE(r.ok()) << dump(r);
