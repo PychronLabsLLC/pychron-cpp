@@ -218,11 +218,16 @@ LaserSnapshot LaserSystem::snapshot() {
   return s;
 }
 
-Result<CameraView> LaserSystem::view() {
+void LaserSystem::set_measured_scale(const ScaleMeasurement& measured) {
+  Gate gate(gate_);
+  if (camera_) camera_->measured = measured.map;
+}
+
+Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
   Gate gate(gate_);
   if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
   CameraView seen;
-  if (auto* live = dynamic_cast<vision::LiveFeed*>(frames_.get())) {
+  if (auto* live = fresh ? nullptr : dynamic_cast<vision::LiveFeed*>(frames_.get())) {
     // Never waited for: the newest picture there is, and how it is doing.
     vision::LiveFeed::Latest latest = live->latest();
     if (!latest.frame) {
@@ -251,8 +256,9 @@ Result<CameraView> LaserSystem::view() {
   if (auto* laser = driver_.laser()) firing = laser->is_firing().value_or(false);
   vision::FinderParams params;
   params.mode = firing ? vision::FinderMode::Glow : vision::FinderMode::Hole;
-  params.expected_radius_px = seen.expected_radius_px;
-  const auto targets = finder_->find(seen.frame.view(), params);
+  params.expected_radius_px = any_size ? 0.0 : seen.expected_radius_px;
+  seen.targets = finder_->find(seen.frame.view(), params);
+  const auto& targets = seen.targets;
   // The one nearest the aim: what a centring would go for.
   for (const auto& target : targets) {
     const auto off = [&seen](const vision::Target& t) {
@@ -319,7 +325,7 @@ struct LaserSystem::Centering {
   vision::AutocenterReason failed = vision::AutocenterReason::None;
 
   Centering(vision::ITargetFinder& finder, const CameraConfig& camera, vision::AutocenterParams params)
-      : controller(finder, camera.map(), camera.px_per_mm, params) {}
+      : controller(finder, camera.map(), camera.scale_px_per_mm(), params) {}
 };
 
 namespace {

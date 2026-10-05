@@ -32,8 +32,21 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
     system->set_corrections(*lab.corrections);
     // A recording is for looking (elctl laser look): it never moves a
     // stage. Any other camera must be one that can centre holes here.
-    const laser::CameraConfig* camera = lab.cameras.find(name);
-    if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
+    // The camera as the lab describes it, with its scale as measured when
+    // somebody has measured it.
+    std::optional<laser::CameraConfig> described;
+    std::string scale_trouble;
+    if (const laser::CameraConfig* found = lab.cameras.find(name)) {
+      described = *found;
+      if (auto measured = lab.camera_scales->load(name); !measured) scale_trouble = measured.error().what;
+      else if (*measured) described->measured = (*measured)->map;
+    }
+    const laser::CameraConfig* camera = described ? &*described : nullptr;
+    if (camera != nullptr && camera->source != laser::CameraSource::Recorded && !scale_trouble.empty()) {
+      // A scale that cannot be read is not replaced by a guess.
+      if (camera->use == laser::CameraUse::View) notes_.push_back("camera of " + name + ": " + scale_trouble);
+      else problems_.insert_or_assign(name, "camera of " + name + ": " + scale_trouble);
+    } else if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
       const bool sim = simulated ? simulated(name) : line.sim() != nullptr && line.sim()->chromium(name) != nullptr;
       // What a live camera that did not open says; empty when it did, and
       // for the others.

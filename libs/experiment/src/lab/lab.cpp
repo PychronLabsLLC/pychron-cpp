@@ -105,6 +105,7 @@ Lab load_lab(const LabPaths& paths) {
   lab.cameras = laser::CameraLibrary::load(dir / "cameras.toml");  // a bad table stops only its device's runs
   lab.corrections = std::make_unique<laser::CorrectionStore>(dir / "stage_corrections");
   lab.calibrations = std::make_unique<laser::CalibrationStore>(dir / "stage_calibrations");
+  lab.camera_scales = std::make_unique<laser::CameraScaleStore>(dir / "camera_scales");
   if (lab.line) {
     for (const auto& [name, driver] : lab.line->drivers) {  // a map: sorted
       const DriverSchema* schema = DriverRegistry::global().schema(driver.kind);

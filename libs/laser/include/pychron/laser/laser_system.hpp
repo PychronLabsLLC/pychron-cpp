@@ -35,6 +35,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/camera.hpp"
+#include "pychron/laser/camera_scale.hpp"
 #include "pychron/laser/correction_store.hpp"
 #include "pychron/laser/pattern.hpp"
 #include "pychron/laser/tray_camera.hpp"
@@ -92,7 +93,8 @@ struct LaserSnapshot {
 // What the camera sees now, and what the device's finder makes of it.
 struct CameraView {
   vision::Frame frame;
-  std::optional<vision::Target> target;  // the best one; none: nothing found
+  std::optional<vision::Target> target;  // the one nearest the aim; none: nothing found
+  std::vector<vision::Target> targets;   // everything the finder made out
   StageXY aim_px{};                      // where the beam is in the frame, in pixels
   double px_per_mm = 0;
   double expected_radius_px = 0;         // of a hole of the current tray
@@ -156,7 +158,14 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // running(): those advance a centring or a pattern, and belong to whoever
   // started it. Config error from view() for a device with no camera.
   LaserSnapshot snapshot();
-  Result<CameraView> view();
+  // `fresh`: a picture taken now (a live camera is waited for, up to its
+  // timeout), for whoever has just moved the stage; otherwise the newest
+  // there is. `any_size`: targets of whatever size (the scale that says how
+  // big a hole should look is what is being measured).
+  Result<CameraView> view(bool fresh = false, bool any_size = false);
+  // The camera's pixel scale as measured (camera_scale.hpp): used from now
+  // on instead of what its configuration says. Nothing with no camera.
+  void set_measured_scale(const ScaleMeasurement& measured);
 
   // Everything off, now, from any thread: the beam, the output, the enable,
   // the stage, a pattern, a centring. Every step is tried whatever the

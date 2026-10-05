@@ -41,6 +41,7 @@
 #include "pychron/experiment/plan/plan_library.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/camera.hpp"
+#include "pychron/laser/camera_scale.hpp"
 #include "pychron/laser/correction_store.hpp"
 #include "pychron/laser/pattern.hpp"
 #include "pychron/laser/tray_map.hpp"
@@ -104,6 +105,7 @@ struct Lab {
   laser::CameraLibrary cameras;         // <lab>/cameras.toml
   std::unique_ptr<laser::CorrectionStore> corrections;  // <lab>/stage_corrections; never null
   std::unique_ptr<laser::CalibrationStore> calibrations;  // <lab>/stage_calibrations; never null
+  std::unique_ptr<laser::CameraScaleStore> camera_scales;  // <lab>/camera_scales; never null
   // The line config's drivers that are extraction devices, sorted: what a
   // queue's or a run's extract_device may name. Empty: the name is free text.
   std::vector<std::string> extract_devices;

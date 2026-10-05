@@ -352,6 +352,39 @@ TEST_F(ViewCameraTest, ACameraForLookingShowsAPictureAndStopsNoQueue) {
   }
 }
 
+// A scale somebody measured is used instead of what cameras.toml says.
+class MeasuredScaleTest : public CameraLabTest {
+  std::string cameras() const override { return "[co2]\npx_per_mm = 23\n"; }
+  void prepare_lab() override {
+    CameraLabTest::prepare_lab();
+    fs::create_directories(dir_ / "camera_scales");
+    std::ofstream(dir_ / "camera_scales" / "co2.toml") << "m = [[0.05, 0.0], [0.0, -0.05]]\nresidual_mm = 0.0\n";
+  }
+};
+
+TEST_F(MeasuredScaleTest, TheLabsMeasuredScaleIsUsed) {
+  EXPECT_TRUE(lasers_->problems().empty());
+  const auto seen = lasers_->find("co2")->view();
+  ASSERT_TRUE(seen) << seen.error().what;
+  EXPECT_NEAR(seen->px_per_mm, 20, 1e-9);
+}
+
+class BrokenScaleTest : public CameraLabTest {
+  std::string cameras() const override { return "[co2]\n"; }
+  void prepare_lab() override {
+    CameraLabTest::prepare_lab();
+    fs::create_directories(dir_ / "camera_scales");
+    std::ofstream(dir_ / "camera_scales" / "co2.toml") << "m = [[0.05]]\n";
+  }
+};
+
+// A camera that centres holes by a scale nobody can read is not used.
+TEST_F(BrokenScaleTest, AScaleFileThatCannotBeReadIsAProblem) {
+  ASSERT_EQ(lasers_->problems().size(), 1u);
+  EXPECT_NE(lasers_->problems().front().find("camera_scales"), std::string::npos) << lasers_->problems().front();
+  EXPECT_FALSE(lasers_->find("co2")->can_centre());
+}
+
 class LiveCameraOnASimulatedLaserTest : public CameraLabTest {
   std::string cameras() const override { return "[co2]\nsource = \"opencv\"\n"; }
 };

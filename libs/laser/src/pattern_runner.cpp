@@ -30,7 +30,7 @@ struct PatternRunner::Follow {
   bool seen = false;         // the glow was found in one
 
   Follow(vision::ITargetFinder& finder, const CameraConfig& camera, const vision::DragonflyParams& params)
-      : controller(finder, camera.map(), camera.px_per_mm, params) {}
+      : controller(finder, camera.map(), camera.scale_px_per_mm(), params) {}
 };
 
 namespace {
@@ -188,7 +188,7 @@ Result<void> PatternRunner::start_following(const Pattern& pattern, double run_d
                 device_);
   }
   // What it looks at must be a picture: the crop is 2.5 target diameters.
-  const double side_px = 2.5 * 2.0 * pattern.target_radius * camera.px_per_mm;
+  const double side_px = 2.5 * 2.0 * pattern.target_radius * camera.scale_px_per_mm();
   if (!(side_px >= 1.0 && side_px <= 1.0e5)) {
     return fail(ErrorKind::Config,
                 "pattern " + pattern.name + ": target_radius gives a look of " + seconds_text(side_px) +
