@@ -1,8 +1,8 @@
-# Legacy Hardware Drivers: Valve Actuators, Gauges, Cryo — Implementation Plan
+# Legacy Hardware Drivers: Valve Actuators, Gauges, Cryo, Heaters — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port the legacy Pychron valve actuators, pressure gauge controllers and cryostat controllers that real labs run, so that `elctl import-line` stops replacing them with `sim_valves` and illustration-only gauges, and so that `set_cryo` / `get_cryo_temp` / `get_pressure` work in scripts on an extraction line.
+**Goal:** Port the legacy Pychron valve actuators, pressure gauge controllers, cryostat controllers and line heaters that real labs run, so that `elctl import-line` stops replacing them with `sim_valves` and illustration-only gauges, and so that `set_cryo` / `get_cryo_temp` / `get_pressure` work in scripts on an extraction line.
 
 **Architecture:** The same three layers as every other driver (`libs/codecs/CONVENTIONS.md`): a pure codec per vendor, a `Device` in `libs/devices` that composes `Transport&` + codec and implements a capability interface (`IValveActuator`, `IChannelPressureGauge`, and a new `ITemperatureController`), and a `SimTransport` hook wired into `SimSystem::hook_for`. Above the drivers, two systems-layer pieces are missing and are added here: a line `IPressureService` and a line cryo service. The legacy importer (`libs/setup/src/legacy_line.cpp`) learns each new kind as it lands.
 
@@ -18,6 +18,7 @@
 | Valve config | interlocks, settle, mandatory read-back | per-valve `inverted`, per-actuator `invert`, `state_source` (readback on another device), `verify = false` (legacy `query_state=false` / `check_actuation_enabled=false`) |
 | Gauges | `pfeiffer_maxigauge`, `gp_microion`, `GaugeScanner`, `ExtractionLine::read_gauge` | PLC2000 gauge registers (AELAMS), Varian/Agilent XGS-600 (ldeo), Qtegra gauge readback (ldeo, usgsdenver), MicroIon via furnace host (usgsdenver), MKS 937 (one 2019 lab), SRS IGC100, Gamma SPC ion pump; **no `IPressureService` implementation**, so `get_pressure` in a script is always "not supported" |
 | Cryo | `ICryo` as an *extraction-device* feature only; script verbs `set_cryo` / `get_cryo_temp`; run field `cryo_temp` | Any temperature-controller capability; Lakeshore 325/331/335/336 driver (ldeo, hal copy); a line-level cryo service (legacy reaches the cryostat through the extraction line, not the extract device); named setpoints (`cryotemps.yaml`) |
+| Heaters | nothing (a heater relay can be a `[[switches]]` entry, on/off only) | AutomationDirect PLC2000 heater: enable, PID on/off, setpoint, readback (AELAMS) |
 | Transports | serial, tcp, sim, link; Modbus TCP framing (`ReadSpec::modbus_tcp`, `codecs/modbus_adc`) used over a plain `tcp` transport | `udp` (ldeo and felix Qtegra); Qtegra link sharing (one socket for spectrometer + valves + gauges, survey C.5); `modbus_tcp` / `modbus_rtu` kinds still fail at build (`factory.cpp:61-63`); no coil or holding-register codec |
 
 ## Owner decisions needed before the marked tasks
@@ -28,7 +29,7 @@
 4. **Cryo blocking (Task C4).** Legacy `block` waits forever. Proposal: required `timeout_s` (default 600) and the run's `CancelToken`; timeout is an `Io` error that fails the script.
 5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
 6. **Gauge "off"/over-range readings (Tasks B1–B6).** Legacy maps them to sentinels (MKS `OFF` → 1000, `LO<E-11` → 1e-12, SPC failure → 0.0) or leaves a stale value. Proposal, per codec rule 4: every non-number is a `Protocol` error with a stable message (`"gauge off"`, `"under range"`, `"over range"`, `"no sensor"`), so `GaugeScanner` raises its one Warning alarm and the UI shows no number, never a wrong one. Under-range alone may instead decode as an upper bound if the owner wants a value shown.
-7. **AELAMS PLC2000 link and register map (Task 0.4, A7, B7).** Legacy supports both Modbus TCP (`modbustcp_communicator.py`, port 502) and RTU (`modbus_communicator.py`, serial). Which does AELAMS run, which unit id, and is the float word order the legacy default (byte order big, word order little: low word first)? Needed: AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, and `PLC2000Heater` if present). Proposal: TCP first; RTU only if AELAMS uses it.
+7. ~~AELAMS PLC2000 link~~ **Decided 2026-10-05: Modbus TCP.** RTU is not built in this plan. Still to confirm at bring-up (Task D3): unit id, float word order (legacy default: byte order big, word order little, i.e. low word first) and coil/register numbering, ideally from AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, heater).
 
 ## Global constraints
 
@@ -47,15 +48,17 @@
 Phase 0 (shared)      0.1 UDP ─┬─ 0.3 Qtegra link sharing ─┬─ A2 qtegra_valves
                                │                           └─ B2 qtegra_gauges
                       0.2 valve inversion / state_source / verify ─ A1 agilent_switch, A6 agilent_dio
-                      0.4 Modbus codec + transport kinds ─┬─ A7 plc2000_valves
-                                                          └─ B7 plc2000_gauges
+                      0.4 Modbus codec + transport kind ─┬─ A7 plc2000_valves
+                                                         ├─ B7 plc2000_gauges
+                                                         └─ E2 plc2000_heater
 Phase A (actuators)   A1 → A2 → A3 → A4 → A5 → A6, A7     (A3–A7 independent of each other)
 Phase B (gauges)      B0 pressure service first; B1–B6 independent
 Phase C (cryo)        C1 → C2 → C3 → C4 → C5 → C6
+Phase E (heaters)     E1 → E2 → E3
 Phase D               importer + docs per kind as each lands; D2 hardware bring-up (manual)
 ```
 
-Phases A, B and C are independent of each other once Phase 0 is in; they can run in parallel worktrees. Within a phase, priority is by lab count.
+Phases A, B, C and E are independent of each other once Phase 0 is in; they can run in parallel worktrees. Within a phase, priority is by lab count.
 
 ---
 
@@ -97,17 +100,16 @@ Semantics (write them into the `switch_manager.hpp` header comment):
 - [ ] An `ask` from a borrower is atomic with respect to acquisition polling (`GetData` and a valve `Open` never interleave on the wire). Test with a sim hook that records interleaving.
 - [ ] Spectrometer config may live in another file; same lookup rule as NGX.
 
-### Task 0.4: Modbus codec and transport kinds
+### Task 0.4: Modbus codec and the `modbus_tcp` transport kind
 
-**Why:** AELAMS runs its valves and gauges on an AutomationDirect PLC (legacy `PLC2000GPActuator`, `PLC2000GaugeController`). The priorities doc already decided to hand-roll Modbus framing as a codec rather than use libmodbus; `codecs/modbus_adc` does it for function 04 only.
+**Why:** AELAMS runs its valves, gauges and heaters on an AutomationDirect PLC over Modbus TCP (legacy `PLC2000GPActuator`, `PLC2000GaugeController`, `PLC2000Heater`). The priorities doc already decided to hand-roll Modbus framing as a codec rather than use libmodbus; `codecs/modbus_adc` does it for function 04 only.
 
 **Files:** `libs/codecs/include/pychron/codecs/modbus.hpp`, `src/modbus.cpp` (new, generic), `codecs/modbus_adc.{hpp,cpp}` (rebuilt on it, public API unchanged), `libs/transport/src/factory.cpp`, `tests/codecs/test_modbus.cpp`, `tests/transport/test_factory.cpp`.
 
-- [ ] Generic codec, host and device side (the device side feeds sim hooks): read coils (01), read holding registers (03), read input registers (04), write single coil (05, `FF00`/`0000`), write multiple registers (16). MBAP framing for TCP; RTU framing with CRC-16/Modbus behind the same request/response types, so one driver serves both.
+- [ ] Generic codec, host and device side (the device side feeds sim hooks): read coils (01), read holding registers (03), read input registers (04), write single coil (05, `FF00`/`0000`), write multiple registers (16). MBAP framing only. Keep the request/response types framing-neutral so RTU (CRC-16) can be added later without touching drivers.
 - [ ] 32-bit float and int from a register pair with explicit byte and word order (`ABCD`, `CDAB`, `BADC`, `DCBA`). Legacy's default (byte order big, word order little) is `CDAB`; `modbus_adc` stays `ABCD`. Test vectors for all four.
 - [ ] Exception replies (`0x80 | fn`, code) are Protocol errors naming the code (`illegal data address` etc.); transaction-id and unit-id mismatches are Protocol.
-- [ ] `kind = "modbus_tcp"` builds a TCP transport (port default 502); `kind = "modbus_rtu"` builds a serial transport. Unit id is a driver option (`unit`, default 1), not a transport key, because several units share one RTU bus. The kinds exist so `elctl check` can tell a Modbus driver on a non-Modbus transport.
-- [ ] RTU waits on owner decision 7; TCP does not.
+- [ ] `kind = "modbus_tcp"` builds a TCP transport (port default 502); a Modbus driver on any other kind except `sim` is a Config error at load. `modbus_rtu` keeps failing at build with its existing message. Unit id is a driver option (`unit`, default 1), not a transport key, so several drivers (valves, gauges, heater) share one PLC connection; the transport queue serialises them, and transaction ids are per transport, not per driver (test `SharedConnectionKeepsTransactionIdsDistinct`).
 
 ---
 
@@ -284,7 +286,7 @@ Protocol (legacy `gauges/plc2000/plc2000_gauge_controller.py`, `core/modbus.py`)
 - [ ] Driver options `unit`, `word_order` (`ABCD|CDAB|BADC|DCBA`, default `CDAB`), `register_offset` (default −1).
 - [ ] One read covering every configured channel when the registers are contiguous; `IChannelPressureGauge` serves each channel from it.
 - [ ] Sim: holding-register model filled from `SimSystem` gauge readings.
-- [ ] Follow-up, not in this plan: legacy `PLC2000Heater` (`hardware/heater.py:101`) and `BakeoutPLC` use the same codec; list them in the importer report if AELAMS's files name them.
+- [ ] Legacy `BakeoutPLC` uses the same codec but is not in this plan; the importer reports it if AELAMS's files name it.
 
 ### Not in this plan (gauges)
 
@@ -369,13 +371,64 @@ Ar_freeze = [90.0, 120.0]
 
 ---
 
+## Phase E: Heaters
+
+Legacy has a `HeaterManager` on the extraction line: each heater device shows an on/off button (with an "Are you sure" confirmation), a "Use PID" checkbox, a setpoint field and a readback strip chart, scanned on the line's heater period (`extraction_line/heater_manager.py`, `hardware/heater.py:27-95`). Scripts have no heater verbs, and this plan adds none.
+
+### Task E1: `IHeater` capability, scan and line commands
+
+**Files:** `libs/devices/include/pychron/devices/heater.hpp`, `libs/core/include/pychron/core/events.hpp` (`HeaterSample{heater, readback, setpoint, enabled, use_pid, ts}`), `system_config.hpp` + loader (`[[heaters]] { name, driver, description, units }`), `libs/systems` (`ExtractionLine` gains `heater_info`, `set_heater_enabled`, `set_heater_setpoint`, `set_heater_pid`; a scan alongside `GaugeScanner`), tests.
+
+```cpp
+struct IHeater {
+  virtual ~IHeater() = default;
+  virtual Result<void> set_enabled(bool on) = 0;
+  virtual Result<bool> enabled() = 0;
+  virtual Result<void> set_setpoint(double value) = 0;   // in the heater's configured units
+  virtual Result<double> setpoint() = 0;
+  virtual Result<double> readback() = 0;
+  virtual Result<void> set_use_pid(bool on) = 0;
+  virtual Result<bool> use_pid() = 0;
+};
+```
+
+- [ ] Units are whatever the PLC program uses (°C at AELAMS, to confirm); carried as a string on `[[heaters]]` for display, not converted.
+- [ ] The scan reads readback, setpoint, enabled and use_pid each period and publishes one `HeaterSample`; a failed read publishes one Warning alarm until the next good one (same rule as gauges). Legacy only read the readback while on; ours reads all four always, so an enable from the PLC's own panel is seen.
+- [ ] Every command writes, then reads back the same field, and fails Protocol on a mismatch (legacy never checked).
+
+### Task E2: `plc2000_heater` — AutomationDirect PLC heater (AELAMS)
+
+Protocol (legacy `hardware/heater.py:101-180`), Modbus TCP via Task 0.4. Addresses come from `[Register] setpoint/readback/use_pid/enable` and are 1-based; legacy subtracts 1.
+
+| Field | Read | Write |
+|---|---|---|
+| enable | read coils (01) at `enable` − 1 | write single coil (05) |
+| use_pid | read coils (01) at `use_pid` − 1 | write single coil (05) |
+| setpoint | **input** registers (04), 2 at `setpoint` − 1, float32 | **holding** registers (16), 2 at `setpoint` − 1, **int32** |
+| readback | input registers (04), 2 at `readback` − 1, float32 | — |
+
+- [ ] Driver options `unit`, `word_order` (default `CDAB`), `enable`, `use_pid`, `setpoint`, `readback` (1-based addresses as in the legacy cfg), `setpoint_write_format` (`int32` default, as legacy; `float32` available). A missing address makes that operation `not_supported`, not a silent no-op as in legacy.
+- [ ] The setpoint asymmetry (int32 written to holding registers, float32 read from input registers) is legacy's wire behaviour and almost certainly mirrors the PLC program; keep it, and say so in the header. With `int32`, a fractional setpoint is a Config error rather than silently truncated (legacy's `int(value)`). Bring-up (D3) confirms write-then-read round-trips.
+- [ ] Legacy bug not carried: `read_use_pid` tested `if self.use_pid_address:`, so a `use_pid` coil at address 1 (0 after the offset) was never read. Test `UsePidCoilAtAddressOneIsRead`.
+- [ ] `IHeater`; may share the PLC transport with `plc2000_valves` and `plc2000_gauges`.
+- [ ] Sim: the PLC model from A7/B7 gains coils and registers for the heater; readback approaches setpoint with a first-order lag while enabled (on the injected clock), and decays toward ambient when disabled.
+
+### Task E3: Heaters in `elctl` and the UI
+
+- [ ] `elctl heater list|status <name>|on <name>|off <name>|pid <name> on|off|setpoint <name> <value>`.
+- [ ] A Heaters dock in `apps/pychron-ui`, one row per heater: on/off with a confirmation dialog (as legacy), Use PID, setpoint entry (applied on Enter), readback LCD, strip chart from `HeaterSample` (shared with the cryo dock's chart). Through `ExtractionLine` and `CoreBridge` only.
+- [ ] Canvas: none in this plan (legacy drew no heater element).
+
+---
+
 ## Phase D: Importer, docs, bring-up
 
 ### Task D1: Importer coverage (runs with each driver task, collected here)
 
-- [ ] Actuators: `AgilentGPActuator` → `agilent_switch` (+ `invert`), `PLC2000GPActuator` → `plc2000_valves` on a `modbus_tcp`/`modbus_rtu` transport (`[Communications] host/port/byteorder/wordorder` carried over), `QtegraGPActuator` → `qtegra_valves` (link when the spectrometer importer made a `thermo_qtegra` on the same endpoint), `NMGRLFurnaceActuator`, `PychronGPActuator`, `ArduinoGPActuator`, `AgilentMultifunction` (as `state_source`).
+- [ ] Actuators: `AgilentGPActuator` → `agilent_switch` (+ `invert`), `PLC2000GPActuator` → `plc2000_valves` on a `modbus_tcp` transport (`[Communications] host/port/byteorder/wordorder` carried over; a serial PLC2000 cfg is reported, not imported), `QtegraGPActuator` → `qtegra_valves` (link when the spectrometer importer made a `thermo_qtegra` on the same endpoint), `NMGRLFurnaceActuator`, `PychronGPActuator`, `ArduinoGPActuator`, `AgilentMultifunction` (as `state_source`).
 - [ ] Valve keys now carried: `inverted_logic`/`inverted`, `state_device`/`state_address`, `query_state`/`check_actuation_enabled` → `verify`. Remove them from the "not carried over" report list.
 - [ ] Gauge controllers (today: drawn for illustration only), including `PLC2000GaugeController` → `plc2000_gauges`: read `devices/<controller>.cfg` `[Gauges] names/channels/lows/highs` (comma lists, zipped; report length mismatches instead of truncating as legacy's `zip` did) into `[drivers.*]` + `[[gauges]]` with `alarm_low/high`. Canvas gauges then show readings.
+- [ ] Heaters: `PLC2000Heater` → `[drivers.*] kind = "plc2000_heater"` (addresses from `[Register]`) and a `[[heaters]]` entry; when its `[Communications]` endpoint matches the PLC2000 actuator's or gauge controller's, they share one `modbus_tcp` transport.
 - [ ] Cryostat: `Model335TemperatureController.cfg` → `[drivers.*] kind = "lakeshore"`, `[Range]` predicates → numeric bands (only the forms `v<a`, `a<v<b`, `v>a`; anything else reported, not guessed), `[IOConfig]` → `inputs`; `cryotemps.yaml` → `[cryo.setpoints]` (comma strings to arrays).
 - [ ] Each mapping has a synthetic-cfg importer test; the NMGRL example in `configs/examples/nmgrl/` is regenerated and its diff reviewed.
 
@@ -387,14 +440,15 @@ Ar_freeze = [90.0, 120.0]
 
 ### Task D3: Hardware bring-up (manual, per lab)
 
-- [ ] For each driver: run against the real instrument with `trace = true`, commit the trace (hosts and serials scrubbed) as a codec fixture, and fix any reply the codec rejected. Order by lab availability; ldeo (XGS-600, Lakeshore 335, Qtegra UDP, Agilent) covers the most in one visit. AELAMS: confirm unit id, word order and coil numbering on the live PLC before the importer's defaults are trusted.
+- [ ] For each driver: run against the real instrument with `trace = true`, commit the trace (hosts and serials scrubbed) as a codec fixture, and fix any reply the codec rejected. Order by lab availability; ldeo (XGS-600, Lakeshore 335, Qtegra UDP, Agilent) covers the most in one visit. AELAMS: confirm unit id, word order, coil numbering and the heater's setpoint write/read round-trip on the live PLC before the importer's defaults are trusted.
 
 ## Review focus
 
 1. **Inversion and read-back** (Task 0.2): with `inverted` and/or `state_source`, the recorded state is the valve's, and two interlocked valves are never recorded open together. Property test in `test_switch_manager`.
-2. **Modbus word order** (0.4, B7): a float read with the wrong word order is a plausible-looking wrong pressure, not an error. Test vectors for all four orders; bring-up checks one known value.
+2. **Modbus word order and the heater setpoint** (0.4, B7, E2): a float read with the wrong word order is a plausible-looking wrong pressure, not an error. Test vectors for all four orders; bring-up checks one known value. The heater writes its setpoint as int32 and reads it as float32: a wrong format there leaves the heater at a different setpoint than the UI shows, so E1's write-then-read-back check must catch it.
 3. **Shared Qtegra endpoint** (0.3, A2, B2): a valve command never interleaves with an acquisition `GetData` on the wire.
 4. **Gauge non-numbers** (B1–B6): no sentinel reaches `PressureSample`; every off/over-range reply becomes one Warning alarm.
 5. **Cryo blocking** (C4): cancel and timeout both end the wait promptly; nothing waits forever.
 6. **Range bands** (C3): every setpoint in the configured span selects exactly one band.
-7. **Importer honesty** (D1): every legacy key not carried over is still listed in the report; nothing is guessed.
+7. **Heater commands** (E1–E3): a heater command from the UI is confirmed, read back, and never sent twice by a scan racing it.
+8. **Importer honesty** (D1): every legacy key not carried over is still listed in the report; nothing is guessed.
