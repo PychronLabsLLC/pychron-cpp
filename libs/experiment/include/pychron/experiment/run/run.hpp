@@ -178,6 +178,7 @@ class Run {
                           std::function<void()> on_pump_time_start = {});
   scripting::ScriptContext script_context() const;
   void end_extraction();
+  void record_cryo();
   void note(std::string message);  // thread-safe: scripts log from their own threads
   void finish(RunControl& control, Result<void> phase_result, RunEvent failure_event);
 

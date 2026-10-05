@@ -65,6 +65,18 @@ Result<double> LineCryoService::get_cryo_temp(int channel) {
   return (*tc)->read_temperature(inputs[static_cast<std::size_t>(channel - 1)]);
 }
 
+Result<std::map<std::string, double>> LineCryoService::read_cryo_inputs() {
+  auto tc = controller();
+  if (!tc) return fail(std::move(tc).error());
+  std::map<std::string, double> out;
+  for (const auto& input : (*tc)->inputs()) {
+    auto t = (*tc)->read_temperature(input);
+    if (!t) return fail(std::move(t).error());
+    out[input] = *t;
+  }
+  return out;
+}
+
 Result<bool> LineCryoService::cryo_settling() {
   std::map<int, double> targets;
   TimePoint set_at;

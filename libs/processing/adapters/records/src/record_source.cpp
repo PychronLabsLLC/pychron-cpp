@@ -108,6 +108,8 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
   a.extraction.units = spec.units;
   a.extraction.pattern = act.pattern.empty() ? spec.pattern : act.pattern;
   a.extraction.positions = act.positions.empty() ? spec.positions : act.positions;
+  a.extraction.cryo_temperature = spec.cryo_temperature;
+  a.extraction.cryo_measured = act.cryo_measured;
 
   a.gains = r.spectrometer.gains;
   a.deflections = r.spectrometer.deflections;

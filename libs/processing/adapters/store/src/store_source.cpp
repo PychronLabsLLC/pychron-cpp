@@ -356,6 +356,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   a.extraction.cleanup = x.cleanup_duration;
   a.extraction.weight = x.weight;
   a.extraction.beam_diameter = x.beam_diameter;
+  a.extraction.cryo_temperature = x.cryo_temperature;
   a.extraction.pattern = x.pattern.value_or("");
 
   for (const auto& det : d.detectors) {

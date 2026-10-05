@@ -107,6 +107,7 @@ toml::table to_table(const AnalysisRecord& r) {
   spec.insert_or_assign("units", r.extraction.spec.units);
   spec.insert_or_assign("pattern", r.extraction.spec.pattern);
   spec.insert_or_assign("positions", num_array(r.extraction.spec.positions));
+  if (r.extraction.spec.cryo_temperature) spec.insert_or_assign("cryo_temperature", *r.extraction.spec.cryo_temperature);
   ex.insert_or_assign("spec", std::move(spec));
   const auto& a = r.extraction.actuals;
   act.insert_or_assign("value", a.value);
@@ -129,6 +130,7 @@ toml::table to_table(const AnalysisRecord& r) {
   act.insert_or_assign("grain_polygons", std::move(polys));
   act.insert_or_assign("pipette_counts", a.pipette_counts);
   if (a.manometer_pressure) act.insert_or_assign("manometer_pressure", *a.manometer_pressure);
+  if (!a.cryo_measured.empty()) act.insert_or_assign("cryo_measured", dmap(a.cryo_measured));
   ex.insert_or_assign("actuals", std::move(act));
   root.insert_or_assign("extraction", std::move(ex));
 
@@ -468,6 +470,7 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   spec.str("units", r.extraction.spec.units);
   spec.str("pattern", r.extraction.spec.pattern);
   spec.nums("positions", r.extraction.spec.positions);
+  spec.opt_num("cryo_temperature", r.extraction.spec.cryo_temperature);
   const auto act = ex.sub("actuals");
   auto& a = r.extraction.actuals;
   act.num("value", a.value);
@@ -500,6 +503,7 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   }
   act.integer("pipette_counts", a.pipette_counts);
   act.opt_num("manometer_pressure", a.manometer_pressure);
+  if (act.find("cryo_measured")) act.dmap("cryo_measured", a.cryo_measured);
 
   const auto ms = top.sub("measurement");
   const auto plan = ms.sub("plan");

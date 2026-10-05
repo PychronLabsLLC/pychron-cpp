@@ -27,7 +27,7 @@
 2. ~~Agilent at ASU is VISA-USB~~ **Decided 2026-10-05: serial and TCP now; ASU's USB unit stays on `sim_valves` with a note** until a `usbtmc` transport is planned separately.
 3. ~~`verify = false` semantics~~ **Done in 0.2 as proposed:** the commanded state is recorded and published; interlocks rest on it.
 4. **Cryo blocking (Task C4).** Built as proposed: `[cryo] timeout_s` (default 600) bounds the wait, and the script's cancel ends it; the owner has not ruled otherwise.
-5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
+5. ~~Measured cryo temperature in the run record~~ **Decided 2026-10-05: yes.** Each input's kelvin as extraction ends, beside the requested `cryo_temperature`.
 6. **Gauge "off"/over-range readings (Tasks B1–B7).** Built as proposed (every non-number is a Protocol error, never a sentinel), as the codec rules require; the owner has not ruled on showing under-range as an upper bound.
 7. ~~AELAMS PLC2000 link~~ **Decided 2026-10-05: Modbus TCP.** RTU is not built in this plan. Still to confirm at bring-up (Task D3): unit id, float word order (legacy default: byte order big, word order little, i.e. low word first) and coil/register numbering, ideally from AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, heater).
 
@@ -392,8 +392,10 @@ Ar_freeze = [90.0, 120.0]
 
 ### Task C5: Cryo in the run record
 
-- [ ] Per owner decision 5: at `end_extract`, record measured input temperatures into the run record beside the requested `cryo_temperature`; persisted by the DVC writer; shown in recall.
-- [ ] Experiment rule: `cryo_temp` stays forbidden for non-heating runs (unchanged), and a queue with `cryo_temp` set on a line without a cryo service is a check error.
+Done 2026-10-05. The record keeps `extraction.spec.cryo_temperature` (requested) and `extraction.actuals.cryo_measured` (input -> kelvin), both written only when present, so older records still read and the schema version is unchanged. Recall shows them. The database keeps the requested value in its existing column; the measured ones live in the record (no migration). The queue check for `cryo_temp` without a line cryostat is not done.
+
+- [x] Per owner decision 5: at `end_extract`, record measured input temperatures into the run record beside the requested `cryo_temperature`; persisted by the DVC writer; shown in recall.
+- [x] Experiment rule: `cryo_temp` stays forbidden for non-heating runs (unchanged), and a queue with `cryo_temp` set on a line without a cryo service is a check error.
 
 ### Task C6: Cryo in the UI
 

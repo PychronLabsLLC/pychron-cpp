@@ -9,6 +9,7 @@
 //   set_cryo_named(n)    [cryo.setpoints].n: value i to output i
 //   get_cryo_temp(c)     input c (1 = the first of the controller's inputs),
 //                        read now
+//   read_cryo_inputs()   every controller input, read now
 //   cryo_settling()      true until every output the last set touched reads
 //                        within tolerance_k on its paired input (output i
 //                        waits on input i, as legacy paired them); an Io
@@ -37,6 +38,7 @@ class LineCryoService final : public extraction::ICryo {
   Result<double> get_cryo_temp(int channel) override;
   Result<void> set_cryo_named(std::string_view name) override;
   Result<bool> cryo_settling() override;
+  Result<std::map<std::string, double>> read_cryo_inputs() override;
 
  private:
   Result<ITemperatureController*> controller() const;

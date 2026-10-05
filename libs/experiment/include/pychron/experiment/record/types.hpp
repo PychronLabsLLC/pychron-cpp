@@ -49,6 +49,7 @@ struct ExtractionSpecRec {
   double value = 0, duration = 0, cleanup = 0;
   std::string units, pattern;
   std::vector<int> positions;
+  std::optional<double> cryo_temperature;  // the run's requested cryo_temp, kelvin
   friend bool operator==(const ExtractionSpecRec&, const ExtractionSpecRec&) = default;
 };
 
@@ -62,6 +63,9 @@ struct ExtractionActuals {
   std::vector<std::vector<std::pair<double, double>>> grain_polygons;
   int pipette_counts = 0;
   std::optional<double> manometer_pressure;
+  // The line cryostat's inputs (kelvin) read as the extraction ended; empty
+  // without a cryostat or when the read failed (the run's log says why).
+  std::map<std::string, double> cryo_measured;
   friend bool operator==(const ExtractionActuals&, const ExtractionActuals&) = default;
 };
 

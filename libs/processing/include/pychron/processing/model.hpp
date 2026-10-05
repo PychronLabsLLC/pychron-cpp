@@ -52,6 +52,8 @@ struct IsotopeData {
 
 struct ExtractionInfo {
   std::optional<double> value, duration, cleanup, weight, beam_diameter;
+  std::optional<double> cryo_temperature;         // requested, kelvin
+  std::map<std::string, double> cryo_measured;    // cryostat input -> kelvin as extraction ended
   std::string units, pattern;
   std::vector<int> positions;
 };

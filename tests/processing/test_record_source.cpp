@@ -34,7 +34,8 @@ rec::AnalysisRecord record(const std::string& uuid, const std::string& identifie
   r.identity = {uuid, identifier, aliquot, step, type, ts, 1, "q-1"};
   r.sample = {"FC-2", "proj", "sanidine", "NM-300", "A", "5", "Doe", ""};
   r.instrument = {"jan", "co2", "lab", "me", "0.1.0", "abc"};
-  r.extraction.spec = {10.0, 30, 60, "W", "", {1}};
+  r.extraction.spec = {10.0, 30, 60, "W", "", {1}, 77.0};
+  r.extraction.actuals.cryo_measured = {{"A", 77.2}};
   r.extraction.actuals.value = 9.5;
   r.spectrometer.gains = {{"H1", 1.002}};
   r.spectrometer.deflections = {{"H1", 10.0}};
@@ -84,6 +85,8 @@ TEST(RecordSource, MapsARecord) {
   EXPECT_EQ(a.increment, 1);
   EXPECT_EQ(a.irradiation, "NM-300");
   EXPECT_EQ(*a.extraction.value, 9.5);
+  EXPECT_EQ(a.extraction.cryo_temperature, 77.0);
+  EXPECT_EQ(a.extraction.cryo_measured, (std::map<std::string, double>{{"A", 77.2}}));
   ASSERT_EQ(a.isotopes.size(), 5u);
   EXPECT_EQ(a.isotopes[0].key, "Ar40");
   EXPECT_EQ(a.isotopes[4].key, "Ar36");

@@ -74,6 +74,7 @@ class RunTest : public ::testing::Test {
     s.scripts = &host_;
     s.resolver = &resolver_;
     s.line.device = &device_;
+    s.line.cryo = cryo_;
     s.spectrometer = &spec_;
     s.valves = &valves_;
     s.spectrometer_info = [] { return SpectrometerInfo{"hash123", "argon-2026", 1.0}; };
@@ -113,7 +114,46 @@ class RunTest : public ::testing::Test {
     return q;
   }();
   RunControl control_;
+  extraction::ICryo* cryo_ = nullptr;
 };
+
+// A line cryostat with two inputs, or one whose read fails.
+class FakeLineCryo final : public extraction::ICryo {
+ public:
+  Result<void> set_cryo(double) override { return {}; }
+  Result<double> get_cryo_temp(int) override { return 77.3; }
+  Result<std::map<std::string, double>> read_cryo_inputs() override {
+    if (broken) return fail(ErrorKind::Timeout, "no reply within 500 ms");
+    return std::map<std::string, double>{{"A", 77.3}, {"B", 80.1}};
+  }
+  bool broken = false;
+};
+
+TEST_F(RunTest, TheCryostatsTemperaturesAreRecordedAsExtractionEnds) {
+  // Owner decision 2026-10-05: measured beside requested.
+  FakeLineCryo cryo;
+  cryo_ = &cryo;
+  auto spec = unknown_run("12345");
+  spec.extraction.cryo_temp = 77.0;
+  auto r = go(spec);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->extraction.spec.cryo_temperature, 77.0);
+  EXPECT_EQ(r.record->extraction.actuals.cryo_measured, (std::map<std::string, double>{{"A", 77.3}, {"B", 80.1}}));
+}
+
+TEST_F(RunTest, ACryostatThatDoesNotAnswerIsSaidAndLeftOut) {
+  FakeLineCryo cryo;
+  cryo.broken = true;
+  cryo_ = &cryo;
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.record);
+  EXPECT_TRUE(r.record->extraction.actuals.cryo_measured.empty());
+  bool said = false;
+  for (const auto& m : r.messages) said |= m.find("cryo temperatures not recorded") != std::string::npos;
+  EXPECT_TRUE(said) << ::testing::PrintToString(r.messages);
+}
 
 TEST_F(RunTest, FullRunSucceedsAndSaves) {
   int overlap = 0, pump = 0;

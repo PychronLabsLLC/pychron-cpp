@@ -53,6 +53,21 @@ TEST(Recall, AirWithoutFluxExplainsMissingAge) {
   ASSERT_NE(row(m.spectrometer, "H1 gain"), nullptr);
 }
 
+TEST(Recall, CryoTemperaturesAreShownWhenRecorded) {
+  auto a = make_air(0);
+  a->extraction.cryo_temperature = 77.0;
+  a->extraction.cryo_measured = {{"A", 77.4}, {"B", 81.0}};
+  auto ra = pp::reduce_analysis(a, {});
+  const auto m = pp::make_recall_model(*ra);
+  ASSERT_NE(row(m.extraction, "Cryo setpoint"), nullptr);
+  EXPECT_EQ(row(m.extraction, "Cryo setpoint")->units, "K");
+  ASSERT_NE(row(m.extraction, "Cryo A"), nullptr);
+  EXPECT_DOUBLE_EQ(row(m.extraction, "Cryo B")->value->value, 81.0);
+  // Without a cryostat there are no cryo rows.
+  const auto plain = pp::make_recall_model(*pp::reduce_analysis(make_air(0), {}));
+  EXPECT_EQ(row(plain.extraction, "Cryo setpoint"), nullptr);
+}
+
 TEST(Recall, EvolutionSceneRefitsTheSignal) {
   auto a = make_air(0);
   r::FitSpec linear;

@@ -302,6 +302,18 @@ void Run::note(std::string message) {
   if (s_.bus != nullptr) s_.bus->publish(said);
 }
 
+// The line cryostat's temperatures as the extraction ended, for the record
+// (owner decision 2026-10-05). A failed read leaves them out and says why.
+void Run::record_cryo() {
+  if (s_.line.cryo == nullptr) return;
+  auto temps = s_.line.cryo->read_cryo_inputs();
+  if (!temps) {
+    if (!extraction::is_not_supported(temps.error())) note("cryo temperatures not recorded: " + temps.error().what);
+    return;
+  }
+  actuals_.cryo_measured = std::move(*temps);
+}
+
 void Run::end_extraction() {
   if (device_ == nullptr) return;
   // A pattern never outlives the run that started it: the stage is stopped
@@ -321,6 +333,7 @@ Result<void> Run::extract(RunControl& control) {
   const auto start = s_.clock->now();
   auto r = run_script(*extraction_, scripting::ScriptKind::Extraction, control);
   end_extraction();  // always: the device never stays on after this phase
+  record_cryo();
   if (hooks_.release_extraction) hooks_.release_extraction();
   actuals_.duration = std::chrono::duration<double>(s_.clock->now() - start).count();
   if (r && s_.persister != nullptr) {
@@ -431,6 +444,7 @@ Result<void> Run::save() {
   ex.spec.cleanup = seconds(spec_.extraction.cleanup);
   ex.spec.units = std::string(to_string(spec_.extraction.units));
   if (spec_.extraction.position) ex.spec.positions = spec_.extraction.position->holes;
+  ex.spec.cryo_temperature = spec_.extraction.cryo_temp;
   ex.actuals = actuals_;
   ex.actuals.positions = ex.spec.positions;
   b.set_extraction(ex);

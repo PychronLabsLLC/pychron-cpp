@@ -14,13 +14,14 @@ RecordBuilder full_builder() {
   b.set_sample({"FC-2", "proj", "sanidine", "NM-300", "A", "5", "Doe", "a \"note\"\nline2"});
   b.set_instrument({"jan", "co2", "lab", "me", "0.1.0", "abc123"});
   Extraction ex;
-  ex.spec = {10.0, 30, 60, "watts", "circle", {1, 2}};
+  ex.spec = {10.0, 30, 60, "watts", "circle", {1, 2}, 77.0};
   ex.actuals.value = 9.9;
   ex.actuals.duration = 30;
   ex.actuals.pid_params = {{"kp", 0.5}};
   ex.actuals.series["response"] = {{0.f, 1.f}, {0.1f, 0.2f}, {}};
   ex.actuals.grain_polygons = {{{0.0, 0.0}, {1.5, 2.5}}};
   ex.actuals.manometer_pressure = 1e-6;
+  ex.actuals.cryo_measured = {{"A", 77.12}, {"B", 80.5}};
   ex.actuals.snapshot_refs = {"snap1.jpg"};
   b.set_extraction(ex);
   Measurement m;
@@ -191,4 +192,30 @@ TEST(RecordSerialize, RejectsMalformed) {
   EXPECT_FALSE(from_json("{\"identity\": ").has_value());
   EXPECT_FALSE(from_json("[]").has_value());
   EXPECT_FALSE(from_toml("[identity]\naliquot = \"x\"\n").has_value());
+}
+
+TEST(RecordSerialize, CryoTemperaturesAreKeptAndOmittedWhenAbsent) {
+  // Owner decision 2026-10-05: the measured cryo temperatures are recorded
+  // beside the requested one.
+  auto rec = full_builder().finalize().value();
+  const auto text = to_toml(rec);
+  EXPECT_NE(text.find("cryo_temperature = 77.0"), std::string::npos) << text;
+  EXPECT_NE(text.find("cryo_measured"), std::string::npos);
+  auto back = from_toml(text);
+  ASSERT_TRUE(back.has_value()) << back.error().what;
+  EXPECT_EQ(back->extraction.spec.cryo_temperature, 77.0);
+  EXPECT_EQ(back->extraction.actuals.cryo_measured, (std::map<std::string, double>{{"A", 77.12}, {"B", 80.5}}));
+
+  // A run without a cryostat writes neither, and a record written before
+  // them still reads.
+  auto b = full_builder();
+  Extraction ex;
+  ex.spec = {10.0, 30, 60, "watts", "circle", {1, 2}, std::nullopt};
+  b.set_extraction(ex);
+  const auto plain = to_toml(b.finalize().value());
+  EXPECT_EQ(plain.find("cryo"), std::string::npos) << plain;
+  auto old = from_toml(plain);
+  ASSERT_TRUE(old.has_value()) << old.error().what;
+  EXPECT_FALSE(old->extraction.spec.cryo_temperature);
+  EXPECT_TRUE(old->extraction.actuals.cryo_measured.empty());
 }

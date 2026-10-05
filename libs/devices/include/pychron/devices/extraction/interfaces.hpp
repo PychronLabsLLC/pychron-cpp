@@ -23,6 +23,7 @@
 // long motions (moves, patterns) is the caller's job: start, then poll the
 // matching *_moving()/running() query while checking its CancelToken.
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -147,6 +148,10 @@ struct ICryo {
   // once every output it set reads within tolerance on its input. An error
   // once it has taken longer than allowed. A blocking set_cryo polls this.
   virtual Result<bool> cryo_settling() { return false; }
+  // Every input now, by input name ("A" -> kelvin), for the run record.
+  virtual Result<std::map<std::string, double>> read_cryo_inputs() {
+    return fail(not_supported("reading every cryo input"));
+  }
 };
 
 struct IMotorService {

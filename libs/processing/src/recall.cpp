@@ -135,6 +135,9 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
   if (ex.beam_diameter) m.extraction.rows.push_back(value_row("Beam diameter", Value{*ex.beam_diameter, 0}));
   if (!ex.pattern.empty()) m.extraction.rows.push_back(text_row("Pattern", ex.pattern));
   if (!ex.positions.empty()) m.extraction.rows.push_back(text_row("Positions", join_ints(ex.positions)));
+  if (ex.cryo_temperature) m.extraction.rows.push_back(value_row("Cryo setpoint", Value{*ex.cryo_temperature, 0}, "K"));
+  for (const auto& [input, k] : ex.cryo_measured)
+    m.extraction.rows.push_back(value_row("Cryo " + input, Value{k, 0}, "K"));
 
   m.spectrometer.title = "Spectrometer";
   for (const auto& [d, g] : a.gains) m.spectrometer.rows.push_back(value_row(d + " gain", Value{g, 0}));
