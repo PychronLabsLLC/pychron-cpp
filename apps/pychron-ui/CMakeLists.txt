@@ -64,6 +64,7 @@ add_library(pychron_ui_lib STATIC
   src/laser_bridge.cpp
   src/tray_view.cpp
   src/camera_view.cpp
+  src/laser_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -118,6 +119,7 @@ add_library(pychron_ui_lib STATIC
   src/laser_bridge.hpp
   src/tray_view.hpp
   src/camera_view.hpp
+  src/laser_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
