@@ -5,6 +5,7 @@
 // line's scheduler, the sim spectrometer and a LabSession, as
 // `pychron-ui --sim --sim-speed 400` builds them.
 
+#include <random>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -26,7 +27,8 @@ namespace pychron::ui::test {
 inline std::filesystem::path scratch_lab() {
   namespace fs = std::filesystem;
   const fs::path dir = fs::temp_directory_path() /
-                       ("pychron-ui-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                       ("pychron-ui-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
   fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir, fs::copy_options::recursive);
   fs::remove_all(dir / "data");
   return dir;

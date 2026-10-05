@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -20,7 +21,8 @@ class LabTest : public ::testing::Test {
  protected:
   void SetUp() override {
     dir_ = fs::temp_directory_path() /
-           ("pychron-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+           ("pychron-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
   }

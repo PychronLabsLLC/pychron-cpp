@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <random>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -48,7 +49,8 @@ class PersistTest : public ::testing::Test {
  protected:
   void SetUp() override {
     dir_ = fs::temp_directory_path() /
-           ("persist_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+           ("persist_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
     fs::create_directories(dir_);
   }
   void TearDown() override {

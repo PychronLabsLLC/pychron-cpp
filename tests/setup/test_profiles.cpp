@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
 #include <filesystem>
 #include <fstream>
 
@@ -25,7 +26,8 @@ const fs::path kExamples(PYCHRON_EXAMPLE_CONFIGS_DIR);
 
 fs::path scratch(const std::string& tag) {
   const fs::path dir = fs::temp_directory_path() / ("pychron-setup-" + tag + "-" +
-                                                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                                                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
   fs::remove_all(dir);
   return dir;
 }

@@ -9,6 +9,7 @@
 
 #include <asio.hpp>
 
+#include <random>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -92,7 +93,8 @@ class NgxServer {
 
 struct Tmp {
   fs::path dir = fs::temp_directory_path() /
-                 ("pychron-conn-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                 ("pychron-conn-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
 };

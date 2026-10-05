@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -25,7 +26,8 @@ class ConditionalFilesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = fs::temp_directory_path() /
-            ("pychron-condfiles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            ("pychron-condfiles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
     fs::create_directories(root_);
     dir_ = root_ / "conditionals";
   }

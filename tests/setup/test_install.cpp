@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -22,7 +23,8 @@ namespace {
 
 struct Tmp {
   fs::path dir = fs::temp_directory_path() /
-                 ("pychron-setup-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                 ("pychron-setup-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                                                     std::to_string(std::random_device{}()));
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
   void write(const fs::path& rel, const std::string& text) const {
