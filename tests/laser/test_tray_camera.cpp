@@ -96,12 +96,35 @@ TEST(SimTrayCamera, RendersTheNearestHole) {
   ASSERT_TRUE(frame);
   EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 1.0 * 23, 1e-6);
   // the second hole, 4 mm to the left, is in view too (cut by the frame's
-  // edge): its neighbours are drawn, dark like the hole on the bright tray
+  // edge), dark like the nearest on the bright tray
   const auto hole = frame->at(123, 100);
   const auto neighbour = frame->at(8, 100);
   const auto tray = frame->at(60, 100);
   EXPECT_LT(hole, tray);
   EXPECT_EQ(neighbour, hole);
+}
+
+// Only the tray's own holes are drawn: no imagined grid of neighbours that a
+// finder could take for one.
+TEST(SimTrayCamera, DrawsTheTraysHolesAndNoOthers) {
+  ManualClock clock;
+  TraySight sight;
+  sight.stage = {15, 20};
+  sight.holes = {{15, 20}, {17, 21}};  // two holes, askew
+  SimTrayCamera camera(config(), [&] { return sight; }, clock);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  vision::SimpleFinder finder;
+  vision::FinderParams params;
+  params.expected_radius_px = 11.5;
+  const auto found = finder.find(frame->view(), params);
+  ASSERT_EQ(found.size(), 2u);
+  for (const auto& t : found) {
+    const double dx = (t.center_px.x - 99.5) / 23, dy = -(t.center_px.y - 99.5) / 23;
+    const bool first = std::hypot(dx, dy) < 0.05;
+    const bool second = std::hypot(dx - 2, dy - 1) < 0.05;
+    EXPECT_TRUE(first || second) << dx << ", " << dy;
+  }
 }
 
 TEST(SimTrayCamera, BareTrayWithNoHoleInView) {

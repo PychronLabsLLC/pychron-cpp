@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -20,8 +21,11 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/devices/extraction/chromium.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
+#include "pychron/laser/camera.hpp"
+#include "pychron/laser/correction_store.hpp"
 #include "pychron/laser/laser_system.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "pychron/laser/tray_camera.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
 namespace pychron::laser::harness {
@@ -93,6 +97,62 @@ struct LaserSystemTest : ::testing::Test, LaserHarness {
     return std::find(log.begin(), log.end(), command) != log.end();
   }
   void settle() { ASSERT_TRUE(conformance::settles(*this, [&] { return system.moving(); })); }
+};
+
+// The laser system with a camera and a corrections store: the simulated
+// camera sees the `small` tray (calibrated with its origin at stage (10, 20))
+// where it really is, `error` away from where the calibration says.
+inline CameraConfig camera_config(double ex = 0.15, double ey = -0.10) {
+  CameraConfig c;
+  c.device = "co2";
+  c.sim_tray_error_mm = {ex, ey};
+  c.sim_noise = 0;
+  return c;
+}
+
+struct CameraHarness : LaserHarness {
+  CorrectionStore corrections{lab.dir / "stage_corrections"};
+  CameraConfig camera;
+  SimTrayCamera* sim_camera = nullptr;  // null when a test supplied its own frames
+
+  // `seen`: what the system believes about its camera. `pictured`: what the
+  // simulated camera really does (the same unless a test wants them to differ).
+  explicit CameraHarness(CameraConfig seen = camera_config(), std::optional<CameraConfig> pictured = {},
+                         std::unique_ptr<vision::IFrameSource> frames = nullptr)
+      : camera(seen) {
+    system.set_corrections(corrections);
+    if (frames == nullptr) {
+      auto made = std::make_unique<SimTrayCamera>(pictured.value_or(seen), system.sight(), clock);
+      sim_camera = made.get();
+      frames = std::move(made);
+    }
+    system.attach_camera(seen, std::move(frames), clock);
+    EXPECT_TRUE(system.set_tray("small"));
+  }
+  void advance() { clock.advance(100ms); }
+  // Polls moving() until it says false or fails; the last answer.
+  Result<bool> drive(int limit = 3000) {
+    Result<bool> busy = true;
+    for (int i = 0; i < limit; ++i) {
+      busy = system.moving();
+      if (!busy || !*busy) return busy;
+      advance();
+    }
+    ADD_FAILURE() << "still moving after " << limit << " polls";
+    return busy;
+  }
+  StageXY at() const {
+    const auto p = sim.position();
+    return {static_cast<double>(p.x) / 1000.0, static_cast<double>(p.y) / 1000.0};
+  }
+  std::vector<std::string> stage_moves() const {
+    std::vector<std::string> out;
+    for (const auto& line : sim.log()) {
+      if (line.starts_with("Stage.MoveTo ")) out.push_back(line.substr(13));
+    }
+    return out;
+  }
+  IExtractionDevice& device() { return system; }
 };
 
 }  // namespace pychron::laser::harness

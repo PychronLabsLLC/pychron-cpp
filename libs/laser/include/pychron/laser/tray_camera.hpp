@@ -43,8 +43,8 @@ class SimTrayCamera final : public vision::IFrameSource {
   // outlive the camera.
   SimTrayCamera(const CameraConfig& config, TraySightFn sight, const Clock& clock);
 
-  // The hole nearest the stage at its real position, its neighbours around
-  // it; the bare tray when no hole is in view. Numbered from 1.
+  // The tray's holes that are in view, each at its real position; the bare
+  // tray when none is. Numbered from 1.
   Result<vision::Frame> grab() override;
   vision::FrameInfo info() const override;
   // Of the hole in the most recent frame; not visible when there was none.

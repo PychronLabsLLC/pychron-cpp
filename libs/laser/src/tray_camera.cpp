@@ -40,16 +40,6 @@ Result<vision::Frame> SimTrayCamera::grab() {
   const bool in_view = nearest != nullptr && best <= reach_mm;
   if (in_view) {
     scene.hole_mm = {nearest->x + error.x, nearest->y + error.y};
-    // Its neighbours are drawn on a grid of the distance to the closest one.
-    double pitch = std::numeric_limits<double>::infinity();
-    for (const auto& other : sight.holes) {
-      if (&other == nearest) continue;
-      pitch = std::min(pitch, std::hypot(other.x - nearest->x, other.y - nearest->y));
-    }
-    if (std::isfinite(pitch) && pitch > 2 * scene.hole_radius_mm) {
-      scene.neighbours = true;
-      scene.pitch_mm = pitch;
-    }
   } else {
     // The bare tray: a hole far outside any frame.
     scene.hole_mm = {sight.stage.x + 1e6, sight.stage.y + 1e6};
@@ -57,6 +47,22 @@ Result<vision::Frame> SimTrayCamera::grab() {
 
   auto [frame, truth] = vision::render(scene, {sight.stage.x, sight.stage.y});
   truth.visible = truth.visible && in_view;
+
+  // The tray's other holes that are in view, where they really are (not on
+  // an imagined grid: a finder must not be offered holes the tray lacks).
+  // Holes are dark on the tray, so the darker pixel wins.
+  vision::HoleScene other = scene;
+  other.noise = 0;
+  for (const auto& hole : sight.holes) {
+    if (&hole == nearest || !in_view) continue;
+    const StageXY real{hole.x + error.x, hole.y + error.y};
+    if (std::hypot(real.x - sight.stage.x, real.y - sight.stage.y) > reach_mm + sight.hole_radius_mm) continue;
+    other.hole_mm = {real.x, real.y};
+    const vision::Frame drawn = vision::render(other, {sight.stage.x, sight.stage.y}).first;
+    for (std::size_t i = 0; i < frame.data.size() && i < drawn.data.size(); ++i) {
+      frame.data[i] = std::min(frame.data[i], drawn.data[i]);
+    }
+  }
 
   // The vision library renders the usual camera: image +x is stage +x, image
   // +y is stage -y. A camera the config says is mounted otherwise gives the

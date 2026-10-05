@@ -21,19 +21,39 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
+#include "pychron/core/clock.hpp"
 #include "pychron/laser/calibration_store.hpp"
+#include "pychron/laser/camera.hpp"
+#include "pychron/laser/correction_store.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "pychron/laser/tray_camera.hpp"
 #include "pychron/laser/tray_map.hpp"
+#include "pychron/vision/autocenter.hpp"
+#include "pychron/vision/source.hpp"
 
 namespace pychron::laser {
 
 class PatternRunner;
+
+// How the last autocenter ended.
+struct AutocenterOutcome {
+  enum class Result { None, Converged, Failed, Stopped } result = Result::None;
+  vision::AutocenterReason reason = vision::AutocenterReason::None;  // why it failed
+  std::string hole;
+  std::string tray;
+  int iterations = 0;       // looks taken
+  StageXY found{};          // where the stage ended
+  StageXY moved_mm{};       // from where the centring started
+  double residual_mm = 0;   // the last measured offset
+  std::string note;         // e.g. the correction could not be saved
+};
 
 class LaserSystem final : public extraction::IExtractionDevice, public extraction::IStage {
  public:
@@ -47,6 +67,30 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
 
   std::string tray() const;               // empty: none
   CalibrationStatus calibration() const;  // of the current tray, as read by set_tray; Missing with no tray
+
+  // Autocenter (laser autocenter design). Both are set before the first
+  // move, and what they are given must outlive the system.
+  //
+  // With corrections, a hole move goes to where the hole was last found
+  // (when that is within its guard of the calibrated position). With a
+  // camera, move_to_position(hole, autocenter = true) goes on, once the
+  // stage has arrived, to centre the hole: it waits `settle`, looks, nudges
+  // the stage, and looks again, until the hole is under the aim point (the
+  // position is then saved as the hole's correction) or it gives up (the
+  // stage returns to where the centring started). All of that happens in
+  // moving(): the caller's poll loop drives it, one stage command per poll.
+  void set_corrections(const CorrectionStore& corrections);
+  void attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
+  bool has_camera() const noexcept { return frames_ != nullptr; }
+  // What this system's camera is over, for a simulated one. Valid while the
+  // system lives; asks the driver where the stage is.
+  TraySightFn sight();
+  AutocenterOutcome last_autocenter() const;
+  HoleCorrections corrections() const;  // of the current tray
+  // How far autocenter may take `hole` from its calibrated position: 45% of
+  // the way to the nearest other hole, at most 1 mm. Finding the neighbour
+  // is not finding the hole. 0 for a hole the current tray lacks.
+  double guard_mm(std::string_view hole) const;
 
   // IExtractionDevice: the driver's.
   const std::string& device_name() const override { return name_; }
@@ -71,7 +115,8 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   extraction::IImaging* imaging() override { return driver_.imaging(); }
 
   // IStage
-  // `autocenter` is accepted and has no effect yet.
+  // `autocenter` centres a hole when the system has a camera; without one,
+  // and for a position that is not a hole, it has no effect.
   Result<void> move_to_position(std::string_view position, bool autocenter) override;
   Result<void> set_axis(Axis axis, double value) override;
   Result<void> set_xy(double x, double y, double speed_mm_s = 0) override;
@@ -84,7 +129,14 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   std::vector<std::string> positions() const override;  // the tray's holes, in file order
 
  private:
+  struct Centering;  // an autocenter in progress
+
   Result<extraction::IStage*> driver_stage();
+  // Ends an autocenter in progress, if any, as `how` (nothing is saved).
+  void abandon(AutocenterOutcome::Result how);
+  Result<bool> look(extraction::IStage& stage);
+  Result<bool> give_up(extraction::IStage& stage, vision::AutocenterReason why);
+  double guard_locked(const Hole& hole) const;
 
   const std::string name_;
   extraction::IExtractionDevice& driver_;
@@ -93,9 +145,18 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
 
   std::unique_ptr<PatternRunner> runner_;  // over this system's own stage
 
-  mutable std::mutex mutex_;  // tray_ and status_; never held across a driver call
+  const CorrectionStore* correction_store_ = nullptr;
+  std::optional<CameraConfig> camera_;
+  std::unique_ptr<vision::IFrameSource> frames_;
+  const Clock* clock_ = nullptr;
+  std::unique_ptr<vision::ITargetFinder> finder_;
+  std::unique_ptr<Centering> centering_;  // the caller's thread only
+
+  mutable std::mutex mutex_;  // everything below; never held across a driver call
   const TrayMap* tray_ = nullptr;
   CalibrationStatus status_;
+  HoleCorrections corrections_;
+  AutocenterOutcome outcome_;
 };
 
 }  // namespace pychron::laser
