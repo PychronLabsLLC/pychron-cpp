@@ -15,6 +15,7 @@
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/laser_system.hpp"
+#include "pychron/laser/pattern.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
@@ -35,7 +36,11 @@ constexpr const char* kLaserUsage =
     "  calibrate <device> <tray> center|right [--x X --y Y]\n"
     "                                                    the same, at the map's centre / east calibration hole\n"
     "  calibrate <device> <tray> show|clear\n"
-    "  goto <device> <tray> <hole> [--timeout <s>]       move there and report the miss\n";
+    "  goto <device> <tray> <hole> [--timeout <s>]       move there and report the miss\n"
+    "  patterns                                          the lab's patterns: kind, points, length, time\n"
+    "  pattern <device> <name> [--dry-run] [--timeout <s>]\n"
+    "                                                    run a pattern about where the stage is (the laser is\n"
+    "                                                    not fired); --dry-run prints its points instead\n";
 
 // Locale-free fixed-point text.
 std::string num(double value, int places = 3) {
@@ -65,6 +70,7 @@ struct Args {
   std::vector<std::string> words;  // everything that is not an option
   fs::path lab;
   std::optional<double> x, y, timeout;
+  bool dry_run = false;
 };
 
 class Laser {
@@ -102,13 +108,100 @@ class Laser {
     return ok ? kOk : kFailed;
   }
 
-  // device and tray are words 1 and 2 of both calibrate and goto.
-  int with_tray(int (Laser::*then)()) {
+  int patterns() {
+    for (const auto& p : lab_.patterns.problems()) io_.err << "error: " << p << '\n';
+    const auto names = lab_.patterns.names();
+    if (names.empty()) io_.out << "no patterns in " << (a_.lab / "patterns").string() << '\n';
+    bool ok = lab_.patterns.problems().empty();
+    for (const auto& name : names) {
+      const laser::Pattern& pattern = *lab_.patterns.find(name);
+      const auto path = laser::pattern_path(pattern, pattern.seed.value_or(0));
+      if (!path) {
+        io_.err << "error: " << path.error().what << '\n';
+        ok = false;
+        continue;
+      }
+      io_.out << name << "  " << to_string(pattern.kind) << "  " << summary(pattern, *path) << '\n';
+    }
+    return ok ? kOk : kFailed;
+  }
+
+  // pattern <device> <name>
+  int pattern() {
     device_ = a_.words[1];
+    if (int rc = check_device(); rc != kOk) return rc;
+    const std::string& name = a_.words[2];
+    const laser::Pattern* pattern = lab_.patterns.find(name);
+    if (pattern == nullptr) {
+      for (const auto& p : lab_.patterns.problems()) {
+        if (p.starts_with(name + ": ")) return failed("pattern " + p);
+      }
+      return failed("no pattern '" + name + "' in " + (a_.lab / "patterns").string() +
+                    " (it has: " + joined(lab_.patterns.names()) + ")");
+    }
+    if (a_.dry_run) {
+      const auto path = laser::pattern_path(*pattern, pattern->seed.value_or(0));
+      if (!path) return failed(path.error().what);
+      for (std::size_t i = 0; i < path->size(); ++i) {
+        io_.out << std::setw(3) << i + 1 << "  " << std::setw(7) << num((*path)[i].x) << "," << std::setw(7)
+                << num((*path)[i].y) << '\n';
+      }
+      io_.out << summary(*pattern, *path) << " at " << num(pattern->velocity) << " mm/s\n";
+      if (pattern->kind == laser::PatternKind::Random && !pattern->seed) {
+        io_.out << "(a random walk with no seed: each run's points differ)\n";
+      }
+      return kOk;
+    }
+
+    auto opened = open();
+    if (!opened) return failed(opened.error().what);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, &lab_.patterns);
+    auto* runner = system.pattern_runner();
+    if (runner == nullptr) return failed(device_ + " has no stage to run a pattern on");
+    if (auto r = runner->execute_pattern(name); !r) return failed(r.error().what);
+    const auto path = laser::pattern_path(*pattern, pattern->seed.value_or(0));
+    io_.out << "pattern " << name << ": " << (path ? summary(*pattern, *path) : std::string("running")) << '\n';
+    io_.out.flush();
+
+    const auto step = std::chrono::milliseconds(50);
+    // Time for the pattern itself, and as much again for the arrival checks.
+    const double expected = path ? laser::path_length(*path) / pattern->velocity : 60;
+    const auto limit = std::chrono::duration<double>(a_.timeout.value_or(2 * expected + 60));
+    const auto started = std::chrono::steady_clock::now();
+    const int interrupts = interrupt_count().load();
+    for (;;) {
+      auto running = runner->running();
+      if (!running) return failed(running.error().what);
+      if (!*running) break;
+      const bool interrupted = interrupt_count().load() != interrupts;
+      if (interrupted || std::chrono::steady_clock::now() - started > limit) {
+        const std::string why = interrupted ? "interrupted" : "still running after " + num(limit.count(), 1) + " s";
+        if (auto r = runner->stop_pattern(); !r) {
+          return failed(why + "; the pattern could not be stopped (" + r.error().what + ")");
+        }
+        auto at = system.position();
+        return failed(why + "; the stage was stopped" + (at ? " at " + num(at->x) + ", " + num(at->y) : std::string{}));
+      }
+      std::this_thread::sleep_for(step);
+    }
+    auto at = system.position();
+    if (!at) return failed(at.error().what);
+    io_.out << "ended at " << num(at->x) << ", " << num(at->y) << '\n';
+    return kOk;
+  }
+
+  int check_device() {
     if (std::find(lab_.extract_devices.begin(), lab_.extract_devices.end(), device_) == lab_.extract_devices.end()) {
       return failed("no extraction device '" + device_ + "' in " + g_.config.string() +
                     " (it has: " + joined(lab_.extract_devices) + ")");
     }
+    return kOk;
+  }
+
+  // device and tray are words 1 and 2 of both calibrate and goto.
+  int with_tray(int (Laser::*then)()) {
+    device_ = a_.words[1];
+    if (int rc = check_device(); rc != kOk) return rc;
     map_ = lab_.trays.find(a_.words[2]);
     if (map_ == nullptr) {
       for (const auto& p : lab_.trays.problems()) io_.err << "error: " << p << '\n';
@@ -265,6 +358,13 @@ class Laser {
     return kFailed;
   }
 
+  // "8 points  8.000 mm  8.0 s": the whole path, and how long it takes at the
+  // pattern's speed (the pauses at each point come on top).
+  static std::string summary(const laser::Pattern& pattern, const std::vector<laser::StageXY>& path) {
+    const double length = laser::path_length(path);
+    return std::to_string(path.size()) + " points  " + num(length) + " mm  " + num(length / pattern.velocity, 1) + " s";
+  }
+
   // Stops the stage and says where; says so when it could not be stopped.
   std::string stopped(extraction::IStage& stage) {
     if (auto r = stage.stop(); !r) return "the stage could not be stopped (" + r.error().what + ") and may still be moving";
@@ -331,6 +431,8 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
       else if (x == "--y") a.y = *number;
       else if (*number <= 0) return usage("--timeout must be above 0");
       else a.timeout = *number;
+    } else if (x == "--dry-run") {
+      a.dry_run = true;
     } else if (x.starts_with("--")) {
       return usage("unexpected '" + x + "'");
     } else {
@@ -343,6 +445,19 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
   if (a.lab.empty()) a.lab = ".";
 
   const std::string verb = a.words[0];
+  if (a.dry_run && verb != "pattern") return usage("--dry-run goes with pattern");
+  if (verb == "patterns") {
+    if (a.words.size() != 1) return usage("patterns takes no arguments");
+    if (a.x || a.timeout) return usage("patterns takes no --x, --y or --timeout");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.patterns() : kFailed;
+  }
+  if (verb == "pattern") {
+    if (a.words.size() != 3) return usage("pattern needs <device> <name>");
+    if (a.x) return usage("--x and --y go with calibrate");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.pattern() : kFailed;
+  }
   if (verb == "trays") {
     if (a.words.size() != 1) return usage("trays takes no arguments");
     if (a.x || a.timeout) return usage("trays takes no --x, --y or --timeout");

@@ -252,6 +252,85 @@ TEST_F(LaserCmd, UnknownNamesSayWhatIsKnown) {
   EXPECT_NE(o.err.find("99"), std::string::npos) << o.err;
 }
 
+// --- patterns ---------------------------------------------------------------
+
+TEST_F(LaserCmd, PatternsListsKindPointsLengthAndTime) {
+  const auto o = laser({"patterns"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  // radius 1: out to a vertex, six sides of 1 mm, and back; 1 mm/s
+  EXPECT_NE(o.out.find("hexagon  polygon  8 points  8.000 mm  8.0 s"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, PatternsReportsAFileThatDidNotLoad) {
+  std::ofstream(lab("patterns") / "broken.toml") << "kind = \"polygon\"\nradius = 0\n";
+  const auto o = laser({"patterns"});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.out.find("hexagon"), std::string::npos) << o.out;
+  EXPECT_NE(o.err.find("broken: radius"), std::string::npos) << o.err;
+}
+
+TEST_F(LaserCmd, PatternsWithNoneSaysSo) {
+  fs::remove_all(lab("patterns"));
+  const auto o = laser({"patterns"});
+  EXPECT_EQ(o.code, 0);
+  EXPECT_NE(o.out.find("no patterns"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, PatternDryRunPrintsThePointsAndOpensNoHardware) {
+  unplug_the_laser();
+  const auto o = laser({"pattern", "co2", "hexagon", "--dry-run"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("  1    1.000,  0.000"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("  2    0.500,  0.866"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("  4   -1.000,  0.000"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("  8    0.000,  0.000"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("8 points  8.000 mm  8.0 s at 1.000 mm/s"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, PatternRunsOnTheSimulatorAndReturns) {
+  // The simulated stage rests at the corner of its travel: a pattern that
+  // stays inside it.
+  std::ofstream(lab("patterns") / "line.toml") << "kind = \"linear\"\nlength = 1\nvelocity = 5\n";
+  const auto o = laser({"pattern", "co2", "line"}, true);
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("pattern line: 3 points"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("ended at 0.000, 0.000"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, APatternOffTheStageFailsAndSaysWhichPoint) {
+  const auto o = laser({"pattern", "co2", "hexagon"}, true);  // about (0, 0): half of it is outside
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("pattern hexagon, point "), std::string::npos) << o.err;
+}
+
+TEST_F(LaserCmd, PatternTimeoutStopsTheStage) {
+  std::ofstream(lab("patterns") / "crawl.toml") << "kind = \"linear\"\nlength = 5\nvelocity = 0.5\n";
+  const auto o = laser({"pattern", "co2", "crawl", "--timeout", "0.3"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("still running after 0.3 s"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("the stage was stopped at "), std::string::npos) << o.err;
+}
+
+TEST_F(LaserCmd, UnknownPatternNamesTheKnownOnes) {
+  auto o = laser({"pattern", "co2", "spiral", "--dry-run"});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("spiral"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("hexagon"), std::string::npos) << o.err;
+  o = laser({"pattern", "diode", "hexagon", "--dry-run"});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("diode"), std::string::npos) << o.err;
+}
+
+TEST_F(LaserCmd, PatternUsageErrors) {
+  EXPECT_EQ(laser({"pattern"}).code, 2);
+  EXPECT_EQ(laser({"pattern", "co2"}).code, 2);
+  EXPECT_EQ(laser({"pattern", "co2", "hexagon", "extra"}).code, 2);
+  EXPECT_EQ(laser({"patterns", "extra"}).code, 2);
+  EXPECT_EQ(laser({"patterns", "--dry-run"}).code, 2);
+  EXPECT_EQ(laser({"trays", "--dry-run"}).code, 2);
+  EXPECT_EQ(laser({"pattern", "co2", "hexagon", "--x", "1", "--y", "1"}).code, 2);
+}
+
 TEST_F(LaserCmd, TheLabCanBeNamed) {
   fs::rename(dir_ / "lab" / "tray_maps", dir_ / "tray_maps");
   fs::rename(dir_ / "lab" / "stage_calibrations", dir_ / "stage_calibrations");

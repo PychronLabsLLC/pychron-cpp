@@ -64,6 +64,8 @@ constexpr const char* kUsageText =
     "  laser trays                 tray maps and their stage calibrations\n"
     "  laser calibrate <device> <tray> point <hole>|center|right|show|clear [--x X --y Y]\n"
     "  laser goto <device> <tray> <hole>   move the stage to a hole and report the miss\n"
+    "  laser patterns              the lab's laser patterns\n"
+    "  laser pattern <device> <name> [--dry-run]   run a pattern (laser not fired), or print its points\n"
     "\n"
     "Setup (no line needed):\n"
     "  init --list                 the setup profiles (argus, helix, ngx, data-reduction)\n"

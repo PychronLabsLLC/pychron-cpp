@@ -8,6 +8,8 @@
 //   elctl ... laser calibrate <device> <tray> center|right [--x X --y Y]
 //   elctl ... laser calibrate <device> <tray> show|clear
 //   elctl ... laser goto <device> <tray> <hole> [--timeout <seconds>]
+//   elctl ... laser patterns
+//   elctl ... laser pattern <device> <name> [--dry-run] [--timeout <seconds>]
 //
 // A calibration is a list of points: "the stage was at (x, y) when it was on
 // this hole". `point` takes the position from the device (jog the stage onto
@@ -15,6 +17,10 @@
 // in which case no hardware is opened. `center` and `right` are `point` at
 // the tray map's centre and east calibration holes. One point places the
 // tray, two also turn it, three or more are fitted.
+//
+// `pattern` runs a pattern about wherever the stage is, without firing the
+// laser: to see where the beam would go. goto and pattern stop the stage on
+// Ctrl-C and when --timeout runs out.
 //
 // --lab defaults to the install's lab, else the -c config's directory.
 
