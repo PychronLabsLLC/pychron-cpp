@@ -171,6 +171,12 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
     connect(cryo_, &CryoDock::cryoFailed, log_,
             [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [cryo] ") + message); });
   }
+  if (!line.config().heaters.empty()) {
+    heaters_ = new HeaterDock(bridge_, this);
+    addDockWidget(Qt::RightDockWidgetArea, heaters_);
+    connect(heaters_, &HeaterDock::heaterFailed, log_,
+            [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [heater] ") + message); });
+  }
   statusBar()->addPermanentWidget(health_, 1);
 
   spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));

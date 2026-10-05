@@ -453,9 +453,11 @@ Protocol (legacy `hardware/heater.py:101-180`), Modbus TCP via Task 0.4. Address
 
 ### Task E3: Heaters in `elctl` and the UI
 
-- [ ] `elctl heater list|status <name>|on <name>|off <name>|pid <name> on|off|setpoint <name> <value>`.
-- [ ] A Heaters dock in `apps/pychron-ui`, one row per heater: on/off with a confirmation dialog (as legacy), Use PID, setpoint entry (applied on Enter), readback LCD, strip chart from `HeaterSample` (shared with the cryo dock's chart). Through `ExtractionLine` and `CoreBridge` only.
-- [ ] Canvas: none in this plan (legacy drew no heater element).
+Done 2026-10-05. The write-then-read-back rules live in `systems/heater_ops.hpp`, shared by `ExtractionLine` and elctl (which still builds its own line; its sim line simulates `plc2000_heater`). `HeaterDock` sits beside the alarms when the line has `[[heaters]]`; its chart reuses the strip-chart model and view as the cryo dock does, but it is a separate chart (a heater's units are not kelvin). Controls whose field the driver lacks are disabled once the first sample shows it.
+
+- [x] `elctl heater list|status <name>|on <name>|off <name>|pid <name> on|off|setpoint <name> <value>`.
+- [x] A Heaters dock in `apps/pychron-ui`, one row per heater: on/off with a confirmation dialog (as legacy), Use PID, setpoint entry (applied on Enter), readback LCD, strip chart from `HeaterSample` (shared with the cryo dock's chart). Through `ExtractionLine` and `CoreBridge` only.
+- [x] Canvas: none in this plan (legacy drew no heater element).
 
 ---
 

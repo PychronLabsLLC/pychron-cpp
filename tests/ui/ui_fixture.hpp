@@ -71,4 +71,51 @@ driver = "cryostat"
   return std::move(*line);
 }
 
+// A line with two simulated PLC heaters: "furnace" with every field (°C),
+// "bake" with only enable and readback.
+inline std::unique_ptr<systems::ExtractionLine> make_heater_line() {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "heaters"
+scan_interval_ms = 1000
+[transports.plc]
+kind = "sim"
+timeout_ms = 100
+[transports.plc2]
+kind = "sim"
+timeout_ms = 100
+[drivers.furnace_plc]
+kind = "plc2000_heater"
+transport = "plc"
+enable = 2
+use_pid = 1
+setpoint = 11
+readback = 21
+[drivers.bake_plc]
+kind = "plc2000_heater"
+transport = "plc2"
+enable = 1
+readback = 3
+[[heaters]]
+name = "furnace"
+driver = "furnace_plc"
+description = "Furnace heater"
+units = "C"
+[[heaters]]
+name = "bake"
+driver = "bake_plc"
+)",
+                                                    "heaters.toml");
+  if (!cfg) {
+    qFatal("cannot load heater line: %s", to_string(cfg.error()).c_str());
+  }
+  systems::ExtractionLine::Options options;
+  options.run_scheduler = false;
+  auto line = systems::ExtractionLine::create(*cfg, std::nullopt, options);
+  if (!line) {
+    qFatal("cannot create heater line: %s", to_string(line.error()).c_str());
+  }
+  return std::move(*line);
+}
+
 }  // namespace pychron::ui::test

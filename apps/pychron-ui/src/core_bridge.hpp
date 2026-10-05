@@ -14,6 +14,7 @@
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,6 +46,7 @@ class CoreBridge : public QObject {
     std::set<std::string> pending;                        // actuations in flight
     std::map<std::string, double> temperatures;           // cryostat input -> kelvin
     bool started = false;                                 // start()'s Snapshot has arrived
+    std::map<std::string, HeaterSample> heaters;          // latest scan or command read-back
   };
 
   // Actor name the UI actuates as.
@@ -85,6 +87,13 @@ class CoreBridge : public QObject {
   void set_cryo_setpoint(int output, double kelvin);
   void read_cryo_setpoint(int output);
 
+  // Non-blocking, on the command executor: each writes, reads the field
+  // back (ExtractionLine), and posts heaterCommandFinished. A fresh
+  // HeaterSample follows a success.
+  void set_heater_enabled(const QString& name, bool on);
+  void set_heater_setpoint(const QString& name, double value);
+  void set_heater_pid(const QString& name, bool on);
+
   // Blocks until every queued command has finished.
   void drain();
 
@@ -103,6 +112,8 @@ class CoreBridge : public QObject {
   // `set`: whether this answers set_cryo_setpoint (a failed set carries its
   // error) or read_cryo_setpoint.
   void cryoSetpoint(int output, bool set, const pychron::Result<double>& setpoint);
+  void heaterSample(const pychron::HeaterSample& event);
+  void heaterCommandFinished(const QString& name, const pychron::Result<void>& result);
 
  private:
   struct Gate;
@@ -119,6 +130,8 @@ class CoreBridge : public QObject {
   void on_lock(const SwitchLockChanged& e);
   void on_failed(const ActuationFailed& e);
   void on_temperature(const TemperatureSample& e);
+  void on_heater(const HeaterSample& e);
+  void heater_command(const QString& name, std::function<Result<void>(systems::ExtractionLine&)> command);
   void cryo_command(int output, std::optional<double> kelvin);
   void on_finished(const std::string& name, const Result<void>& result,
                    const std::vector<systems::SwitchInfo>& switches);

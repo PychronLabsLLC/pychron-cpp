@@ -57,6 +57,7 @@ CoreBridge::CoreBridge(systems::ExtractionLine& line, QObject* parent)
   relay<ActuationFailed>(&CoreBridge::on_failed);
   relay<SwitchLockChanged>(&CoreBridge::on_lock);
   relay<TemperatureSample>(&CoreBridge::on_temperature);
+  relay<HeaterSample>(&CoreBridge::on_heater);
 
   // Locks and owners are in-memory manager state (no device I/O); seed the
   // badges (and last recorded states) now and refresh them after every
@@ -154,6 +155,36 @@ void CoreBridge::cryo_command(int output, std::optional<double> kelvin) {
       Qt::QueuedConnection);
 }
 
+void CoreBridge::set_heater_enabled(const QString& name, bool on) {
+  heater_command(name, [n = name.toStdString(), on](systems::ExtractionLine& l) { return l.set_heater_enabled(n, on); });
+}
+
+void CoreBridge::set_heater_setpoint(const QString& name, double value) {
+  heater_command(name,
+                 [n = name.toStdString(), value](systems::ExtractionLine& l) { return l.set_heater_setpoint(n, value); });
+}
+
+void CoreBridge::set_heater_pid(const QString& name, bool on) {
+  heater_command(name, [n = name.toStdString(), on](systems::ExtractionLine& l) { return l.set_heater_pid(n, on); });
+}
+
+void CoreBridge::heater_command(const QString& name, std::function<Result<void>(systems::ExtractionLine&)> command) {
+  auto* line = &line_;
+  QPointer<CoreBridge> self(this);
+  QMetaObject::invokeMethod(
+      worker_,
+      [line, self, name, command = std::move(command)] {
+        Result<void> result = command(*line);
+        QMetaObject::invokeMethod(
+            self.data(),
+            [self, name, result] {
+              if (self) emit self->heaterCommandFinished(name, result);
+            },
+            Qt::QueuedConnection);
+      },
+      Qt::QueuedConnection);
+}
+
 void CoreBridge::drain() {
   QSemaphore done;
   QMetaObject::invokeMethod(worker_, [&done] { done.release(); }, Qt::QueuedConnection);
@@ -178,6 +209,11 @@ void CoreBridge::on_pressure(const PressureSample& e) {
 void CoreBridge::on_temperature(const TemperatureSample& e) {
   state_.temperatures[e.input] = e.kelvin;
   emit temperatureSample(e);
+}
+
+void CoreBridge::on_heater(const HeaterSample& e) {
+  state_.heaters[e.heater] = e;
+  emit heaterSample(e);
 }
 
 void CoreBridge::on_alarm(const Alarm& e) { emit alarm(e); }
