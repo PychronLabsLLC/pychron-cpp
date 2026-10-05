@@ -783,8 +783,10 @@ To ship Python with the package (scripted extractions without a system
 Python), unpack a python-build-standalone `install_only` archive and pass it
 twice: `-DPython_ROOT_DIR=<dir> -DPYCHRON_BUNDLE_PYTHON=<dir>`. On macOS and
 Windows the Qt runtime is copied in (`PYCHRON_DEPLOY_QT`). The `release`
-workflow does all of this on a `v*` tag and attaches the packages to the
-GitHub release; it also runs on pull requests that touch packaging.
+workflow does all of this for each release and attaches the packages to the
+GitHub release; it also runs on pull requests into `main` that touch
+packaging. Releases are cut by release-please when `develop` is merged into
+`main` (see "Workflow" in `AGENTS.md`).
 
 ## 8. Checklist
 

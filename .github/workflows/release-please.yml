@@ -1,0 +1,63 @@
+# Releases (AGENTS.md, "Workflow").
+#
+# On every push to main, release-please opens or updates the release pull
+# request: the next version (from the Conventional Commits since the last
+# release), CHANGELOG.md, and the version in version.txt, CMakeLists.txt and
+# vcpkg.json. Merging that pull request tags vX.Y.Z and publishes the GitHub
+# release; the installers are then built and attached by release.yml, called
+# from here because a tag pushed with GITHUB_TOKEN starts no workflow.
+#
+# Afterwards main is merged back into develop, so develop carries the version
+# and the changelog.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  installers:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    permissions:
+      contents: write
+
+  # A conflict fails this job: merge main into develop by hand.
+  sync-develop:
+    needs: release-please
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - name: Merge main into develop
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --ff-only origin/main || git merge --no-edit -m "chore: merge main into develop" origin/main
+          git push origin develop

@@ -1,4 +1,7 @@
-# Build and test on every push to main and every pull request.
+# Build and test on main only: every pull request into main (develop, or
+# release-please's release) and every push to it. develop and the work
+# branches are not built here; they are tested where they are written
+# (AGENTS.md).
 #
 # Core jobs use the `dev` configure preset: dependencies come from
 # find_package() or the pinned FetchContent fallbacks in
@@ -18,6 +21,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:

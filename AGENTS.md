@@ -2,16 +2,53 @@
 
 ## Workflow
 
-- Single developer. Do not open pull requests. Commit on a branch (or worktree),
-  then merge into `main` and push.
-- Before pushing, bring `main` up to date with `origin/main` (rebase local work
-  on top of it) and run the tests.
+Single developer. Two long-lived branches:
+
+- `develop` is the integration branch: all work lands here first.
+- `main` is what has been released or is about to be. It is protected: nothing
+  is pushed to it, it changes only by pull request.
+
+Day to day:
+
+- Work on a branch (or worktree) cut from `develop`, named for the kind of
+  change: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>`,
+  `refactor/<topic>`, `test/<topic>`, `ci/<topic>`.
+- Commit messages follow Conventional Commits, with the component as the
+  scope: `feat(ui): a heaters dock`, `fix(canvas): ...`, `docs: ...`. The
+  release notes and the next version are computed from them: `feat` is a minor
+  bump, `fix` and `perf` a patch, and `feat!:` / `fix!:` or a
+  `BREAKING CHANGE:` footer a breaking change (still a minor bump while the
+  version is 0.x). `chore`, `docs`, `refactor`, `test`, `ci` and `build`
+  release nothing on their own.
+- To land: rebase the branch on `origin/develop`, run the tests, merge into
+  `develop` and push. No pull request is needed for `develop`.
+- CI does not run on `develop` or on work branches, only on `main` and on pull
+  requests into it. The tests you run locally are the only ones before a
+  release: run them.
 - Never skip or disable a failing test; find the root cause.
+- Never push to `main`, and do not open a pull request into `main` or merge
+  one unless asked to release.
+
+Releasing (`.github/workflows/release-please.yml`):
+
+1. Open a pull request from `develop` into `main`. CI runs on it.
+2. Merge it with a merge commit, never a squash: release-please reads the
+   individual commits.
+3. release-please opens (or updates) a release pull request into `main` with
+   the next version, `CHANGELOG.md`, and the version in `version.txt`,
+   `CMakeLists.txt` and `vcpkg.json`. Do not edit those by hand.
+4. Merging the release pull request tags `vX.Y.Z` and publishes the GitHub
+   release; the `release` workflow builds the installers and attaches them.
+5. `main` is merged back into `develop` by the same workflow. If that job
+   fails on a conflict, merge `main` into `develop` by hand.
+
+A hotfix is a `fix/` branch cut from `main` and merged into it by pull
+request; it reaches `develop` through step 5.
 
 ## Build and test
 
 See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
-`dev`). Tests are GoogleTest, one `test_<component>.cpp` per component under
+`dev`, and `dev-ui` for the UI job). Tests are GoogleTest, one `test_<component>.cpp` per component under
 `tests/`, run with `ctest`.
 
 - CI (`.github/workflows/ci.yml`) builds with clang + ASan/UBSan on macOS,

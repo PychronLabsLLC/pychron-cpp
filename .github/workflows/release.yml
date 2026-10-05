@@ -1,8 +1,10 @@
 # Installers for the three platforms (installation wizard spec section 3.7).
 #
-# On a v* tag: build, smoke-test the installed package and attach it to the
-# GitHub release. On a pull request that touches packaging, and on demand:
-# the same build and smoke test, packages kept as workflow artifacts only.
+# For a release (called by release-please.yml with the new tag, or on a v* tag
+# pushed by hand): build, smoke-test the installed package and attach it to
+# the GitHub release. On a pull request into main that touches packaging, and
+# on demand: the same build and smoke test, packages kept as workflow
+# artifacts only.
 #
 # Each package carries a relocatable CPython (python-build-standalone) for
 # scripted extractions; the programs are linked against that Python and find
@@ -14,12 +16,19 @@ on:
   push:
     tags: ["v*"]
   pull_request:
+    branches: [main]
     paths:
       - cmake/PychronInstall.cmake
       - cmake/PychronPackaging.cmake
       - packaging/**
       - .github/workflows/release.yml
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release's tag; the packages are built from it and attached to its release.
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -50,6 +59,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install tools (Linux)
         if: runner.os == 'Linux'
@@ -143,7 +154,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-24.04
     steps:
@@ -153,5 +164,7 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          # release-please has written the notes; a tag pushed by hand gets GitHub's.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist/*
-          generate_release_notes: true
+          generate_release_notes: ${{ inputs.tag == '' }}
