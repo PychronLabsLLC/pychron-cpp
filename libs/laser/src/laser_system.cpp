@@ -285,8 +285,7 @@ void LaserSystem::set_measured_scale(const ScaleMeasurement& measured) {
   if (camera_) camera_->measured = measured.map;
 }
 
-Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
-  Gate gate(gate_);
+Result<CameraView> LaserSystem::frame_now(bool fresh) {
   if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
   CameraView seen;
   if (auto* live = fresh ? nullptr : dynamic_cast<vision::LiveFeed*>(frames_.get())) {
@@ -313,16 +312,52 @@ Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
     if (tray_ != nullptr && tray_->dimension() > 0) radius_mm = tray_->dimension() / 2;
   }
   seen.expected_radius_px = radius_mm * seen.px_per_mm;
-  // A hole, dark on the tray; with the beam on, the sample's glow.
+  return seen;
+}
+
+Result<CameraView> LaserSystem::picture() {
+  Gate gate(gate_);
+  return frame_now(false);
+}
+
+Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
+  CameraView seen;
   bool firing = false;
-  if (auto* laser = driver_.laser()) firing = laser->is_firing().value_or(false);
+  {
+    Gate gate(gate_);
+    auto frame = frame_now(fresh);
+    if (!frame) return frame;
+    seen = std::move(*frame);
+    if (auto* laser = driver_.laser()) firing = laser->is_firing().value_or(false);
+  }
+  // The looking is done on a frame of the caller's own, outside the gate: a
+  // big picture holds up neither the device nor a stop.
+  // A hole, dark on the tray; with the beam on, the sample's glow.
   vision::FinderParams params;
   params.mode = firing ? vision::FinderMode::Glow : vision::FinderMode::Hole;
   params.expected_radius_px = any_size ? 0.0 : seen.expected_radius_px;
-  seen.targets = finder_->find(seen.frame.view(), params);
-  const auto& targets = seen.targets;
+  vision::SimpleFinder finder;
+  if (any_size) {
+    seen.targets = finder.find(seen.frame.view(), params);
+  } else {
+    // About the aim point only: what a centering would go for is there, and
+    // a camera's whole frame is far more than that.
+    const double side = std::clamp(8.0 * seen.expected_radius_px, 160.0, 1.0e6);
+    const int x0 = std::max(0, static_cast<int>(std::lround(seen.aim_px.x - side / 2)));
+    const int y0 = std::max(0, static_cast<int>(std::lround(seen.aim_px.y - side / 2)));
+    const int x1 = std::min(seen.frame.width, static_cast<int>(std::lround(seen.aim_px.x + side / 2)));
+    const int y1 = std::min(seen.frame.height, static_cast<int>(std::lround(seen.aim_px.y + side / 2)));
+    if (x1 > x0 && y1 > y0) {
+      const vision::Frame part = vision::crop(seen.frame.view(), vision::Rect{x0, y0, x1 - x0, y1 - y0});
+      seen.targets = finder.find(part.view(), params);
+      for (auto& target : seen.targets) {
+        target.center_px.x += x0;
+        target.center_px.y += y0;
+      }
+    }
+  }
   // The one nearest the aim: what a centering would go for.
-  for (const auto& target : targets) {
+  for (const auto& target : seen.targets) {
     const auto off = [&seen](const vision::Target& t) {
       return std::hypot(t.center_px.x - seen.aim_px.x, t.center_px.y - seen.aim_px.y);
     };

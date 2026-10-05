@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -53,6 +54,16 @@ struct LaserBridge::Worker {
   bool first = true;
 };
 
+// The newest picture waiting for the main thread: a slow repaint drops
+// frames, it does not queue them.
+struct LaserBridge::Video {
+  std::mutex mutex;
+  std::condition_variable wake;
+  bool quit = false;
+  std::optional<laser::CameraView> pending;
+  bool posted = false;
+};
+
 template <class F>
 void LaserBridge::post(F&& f) {
   std::lock_guard lock(gate_->mutex);
@@ -73,6 +84,65 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
   watch_only_ = deps_.lasers.driver() == Lasers::Driver::Queue;
   worker_->watch_only = watch_only_;
   thread_ = std::thread([this] { loop(); });
+  video_ = std::make_unique<Video>();
+  if (system_.has_camera()) video_thread_ = std::thread([this] { show(); });
+}
+
+void LaserBridge::show() {
+  Video& v = *video_;
+  std::optional<vision::Target> target;       // what the finder last made out
+  std::vector<vision::Target> targets;
+  auto found_at = std::chrono::steady_clock::time_point{};
+  std::uint64_t shown_seq = 0;
+  std::string shown_trouble, failed;
+  int shown_age_s = -1;
+  for (;;) {
+    const auto began = std::chrono::steady_clock::now();
+    const bool look = began - found_at >= deps_.find_every;
+    auto seen = look ? system_.view() : system_.picture();
+    if (seen) {
+      failed.clear();
+      if (look) {
+        target = seen->target;
+        targets = seen->targets;
+        found_at = began;
+      } else {
+        seen->target = target;
+        seen->targets = targets;
+      }
+      // A camera that has stopped gives the same frame again: shown again
+      // only when what is said about it changes.
+      const int age_s = seen->trouble.empty() ? -1 : seen->age_ms / 1000;
+      if (seen->frame.seq != shown_seq || seen->trouble != shown_trouble || age_s != shown_age_s || look) {
+        shown_seq = seen->frame.seq;
+        shown_trouble = seen->trouble;
+        shown_age_s = age_s;
+        bool post_it = false;
+        {
+          std::lock_guard lock(v.mutex);
+          v.pending = std::move(*seen);
+          post_it = !std::exchange(v.posted, true);
+        }
+        if (post_it) post([this] { deliver_view(); });
+      }
+    } else if (seen.error().what != failed) {
+      failed = seen.error().what;
+      post([this, why = QString::fromStdString(failed)] { emit viewFailed(why); });
+    }
+    std::unique_lock lock(v.mutex);
+    if (v.wake.wait_until(lock, began + deps_.video, [&v] { return v.quit; })) return;
+  }
+}
+
+void LaserBridge::deliver_view() {
+  std::optional<laser::CameraView> seen;
+  {
+    std::lock_guard lock(video_->mutex);
+    seen = std::move(video_->pending);
+    video_->pending.reset();
+    video_->posted = false;
+  }
+  if (seen) emit view(*seen);
 }
 
 LaserBridge::~LaserBridge() {
@@ -87,6 +157,12 @@ LaserBridge::~LaserBridge() {
     worker_->cancel.store(true);  // a motion being waited for is stopped
   }
   worker_->wake.notify_all();
+  {
+    std::lock_guard lock(video_->mutex);
+    video_->quit = true;
+  }
+  video_->wake.notify_all();
+  if (video_thread_.joinable()) video_thread_.join();
   if (thread_.joinable()) thread_.join();
   // Nobody is left to close a beam this bridge's window opened. A queue's
   // beam is the queue's: its own end closes it.
@@ -174,13 +250,6 @@ void LaserBridge::publish_now() {
   laser::LaserSnapshot state = system_.snapshot();
   const bool watch_only = deps_.lasers.driver() == Lasers::Driver::Queue;
   post([this, state = std::move(state), watch_only] { on_snapshot(state, watch_only); });
-  if (!system_.has_camera()) return;
-  auto seen = system_.view();
-  if (seen) {
-    post([this, seen = std::move(*seen)] { emit view(seen); });
-  } else {
-    post([this, why = QString::fromStdString(seen.error().what)] { emit viewFailed(why); });
-  }
 }
 
 void LaserBridge::loop() {

@@ -164,7 +164,12 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // timeout), for whoever has just moved the stage; otherwise the newest
   // there is. `any_size`: targets of whatever size (the scale that says how
   // big a hole should look is what is being measured).
+  // The finder looks about the aim point only (a square a few holes wide),
+  // unless `any_size`, and outside the gate: a big frame holds nothing up.
   Result<CameraView> view(bool fresh = false, bool any_size = false);
+  // The picture alone, with nothing looked for in it: cheap enough to show
+  // as video. Its target and targets are empty.
+  Result<CameraView> picture();
   // The camera's pixel scale as measured (camera_scale.hpp): used from now
   // on instead of what its configuration says. Nothing with no camera.
   void set_measured_scale(const ScaleMeasurement& measured);
@@ -254,6 +259,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
   extraction::IPatternRunner* inner_runner();
 
   Result<extraction::IStage*> driver_stage();
+  // The frame and where the aim is in it; under the gate.
+  Result<CameraView> frame_now(bool fresh);
   // moving(), under the gate: one step of a centering, or the driver's answer.
   Result<bool> advance();
   // The stage is sent somewhere that is not a hole: a centering is over, and

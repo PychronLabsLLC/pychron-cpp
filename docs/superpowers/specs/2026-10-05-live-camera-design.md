@@ -177,3 +177,14 @@ recording, colour, autofocus.
 - Every elctl command uses the measured scale.
 - A video file never centers a stage; a camera whose open does not answer is
   a problem for a camera that centers.
+
+### Video
+
+The picture was first shown four times a second, with the device's status,
+and the finder was run on the whole frame under the gate: 0.3 s a look on a
+1280 x 720 frame in a debug build. Now `LaserSystem::picture()` is the frame
+alone; `view()` looks only in a square about the aim point (eight hole radii
+wide, 160 pixels at least) and outside the gate; and the bridge has a video
+thread that shows a picture every 40 ms, looks every 250 ms and draws the
+last sighting on the frames between. A slow repaint drops frames instead of
+queueing them. The window says the rate it shows.

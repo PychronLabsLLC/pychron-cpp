@@ -22,6 +22,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 class QTableWidget;
+class QTimer;
 
 namespace pychron::ui {
 
@@ -86,6 +87,9 @@ class LaserWindow : public QMainWindow {
   QPushButton* snapshot_ = nullptr;
   QPushButton* measure_scale_ = nullptr;
   QLabel* camera_scale_ = nullptr;
+  QLabel* camera_rate_ = nullptr;  // how many pictures a second are shown
+  int views_ = 0;                  // since the rate was last worked out
+  double camera_fps_ = 0;
   QPushButton* enable_ = nullptr;
   QDoubleSpinBox* output_ = nullptr;
   QPushButton* fire_ = nullptr;

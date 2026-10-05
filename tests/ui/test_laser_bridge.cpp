@@ -5,6 +5,7 @@
 #include <map>
 #include <vector>
 
+#include <QElapsedTimer>
 #include <QtTest/QtTest>
 
 #include "laser_fixture.hpp"
@@ -317,6 +318,35 @@ class LaserBridgeTest : public QObject {
     bridge_->measure_scale(0.5);
     test::settle(*bridge_);
     QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
+  }
+
+  // The picture is video: a dozen frames a second at least, whatever else
+  // the bridge is doing, and with what the finder last saw drawn on them.
+  void the_picture_is_shown_as_video() {
+    bridge_->set_tray(QStringLiteral("example-9"));
+    bridge_->go_to(QStringLiteral("5"), false);
+    test::settle(*bridge_);
+    QElapsedTimer clock;
+    int frames = 0, with_target = 0;
+    std::uint64_t last_seq = 0;
+    bool in_order = true;
+    QObject::connect(bridge_.get(), &LaserBridge::view, [&](const laser::CameraView& seen) {
+      ++frames;
+      if (seen.target) ++with_target;
+      if (seen.frame.seq <= last_seq) in_order = false;
+      last_seq = seen.frame.seq;
+    });
+    clock.start();
+    bridge_->jog(20, 0, 0);  // a move under way: 4 simulated seconds
+    QTest::qWait(1000);
+    const double per_second = frames * 1000.0 / static_cast<double>(clock.elapsed());
+    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second").arg(per_second)));
+    QVERIFY(in_order);
+    test::settle(*bridge_);
+    bridge_->go_to(QStringLiteral("5"), false);
+    test::settle(*bridge_);
+    with_target = 0;
+    QTRY_VERIFY(with_target >= 5);  // back on a hole: its ring rides on the video
   }
 
   void publishes_snapshots_and_views() {

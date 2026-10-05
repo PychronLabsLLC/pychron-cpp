@@ -6,8 +6,9 @@
 // thread, and results come back as signals on it.
 //
 // One worker thread per bridge. Between commands, and while one waits for a
-// motion to end, it takes the system's snapshot (and its camera's view) every
-// `publish` and posts them to the main thread. Commands run in the order
+// motion to end, it takes the system's snapshot every `publish` and posts it
+// to the main thread. The camera's picture comes from a second thread, every
+// `video`: a command waiting on the device does not freeze it. Commands run in the order
 // issued. One that starts a motion (a move, a centering, a pattern) waits for
 // it there, polling every `poll`: nothing is left half centered because
 // nobody was asking.
@@ -50,6 +51,11 @@ struct LaserBridgeDeps {
   std::function<void()> abort_queue;  // called (on the worker) by an emergency stop; may be empty
   std::chrono::milliseconds poll{50};
   std::chrono::milliseconds publish{250};
+  // The camera's picture is video: shown this often (25 a second), on a
+  // thread of its own, whatever the commands are doing. What the finder
+  // makes of it is looked for less often and drawn on the frames between.
+  std::chrono::milliseconds video{40};
+  std::chrono::milliseconds find_every{250};
 };
 
 class LaserBridge : public QObject {
@@ -122,6 +128,9 @@ class LaserBridge : public QObject {
  private:
   struct Gate;
   struct Worker;
+  struct Video;
+  void show();          // the video thread
+  void deliver_view();  // main thread: the newest picture, if one is waiting
   using Action = std::function<Result<void>()>;
 
   // Queues `action` under `what`. `driving`: it needs the Manual lease.
@@ -146,6 +155,8 @@ class LaserBridge : public QObject {
   std::shared_ptr<Gate> gate_;
   std::unique_ptr<Worker> worker_;
   std::thread thread_;
+  std::unique_ptr<Video> video_;
+  std::thread video_thread_;
 };
 
 }  // namespace pychron::ui

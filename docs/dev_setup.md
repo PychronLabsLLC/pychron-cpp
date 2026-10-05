@@ -682,6 +682,13 @@ pychron-ui --examples --sim --laser    # after setting source and use as above
   macOS asks once whether Pychron may use the camera. From a terminal it is
   the terminal that is asked (`elctl laser look co2`).
 
+The picture is video: up to 25 frames a second (the camera's own rate
+allowing), on a thread of the window's own, so a command that is waiting on
+the laser does not freeze it. Under the picture the window says how many
+frames a second it is showing and the camera's rate. What the finder makes
+of the picture is looked for four times a second, about the aim point only,
+and drawn on the frames between.
+
 A live camera is read on a thread of its own. If it stops, the laser window
 shows its last picture greyed, how old it is and why, and goes on trying to
 open it every second; nothing waits for a camera longer than its

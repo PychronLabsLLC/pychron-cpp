@@ -166,6 +166,46 @@ TEST_F(LaserWatch, ViewSeesNoTargetOffTheTray) {
   EXPECT_FALSE(seen->target);
 }
 
+// The picture alone, for showing as video: no finder is run on it.
+TEST_F(LaserWatch, APictureIsTheFrameWithoutLookingForAnything) {
+  go("3");
+  const auto shown = system.picture();
+  ASSERT_TRUE(shown) << shown.error().what;
+  EXPECT_EQ(shown->frame.width, camera.sim_width);
+  EXPECT_FALSE(shown->target.has_value());
+  EXPECT_TRUE(shown->targets.empty());
+  EXPECT_NEAR(shown->aim_px.x, (camera.sim_width - 1) / 2.0, 1e-9);
+  EXPECT_NEAR(shown->expected_radius_px, 0.5 * camera.px_per_mm, 1e-9);
+  // each is a new frame
+  const auto next = system.picture();
+  ASSERT_TRUE(next);
+  EXPECT_GT(next->frame.seq, shown->frame.seq);
+}
+
+// What is looked for is looked for about the aim point only (a big frame is
+// not searched from edge to edge), and said in the whole frame's pixels.
+TEST(LaserView, LooksAboutTheAimPointAndAnswersInFramePixels) {
+  CameraConfig big = camera_config(0.15, -0.10);
+  big.sim_width = 640;
+  big.sim_height = 480;
+  big.aim_offset_px = {40, -30};
+  CameraHarness h(big);
+  ASSERT_TRUE(h.system.move_to_position("3", false));
+  ASSERT_TRUE(h.drive());
+  const auto seen = h.system.view();
+  ASSERT_TRUE(seen) << seen.error().what;
+  EXPECT_NEAR(seen->aim_px.x, 319.5 + 40, 1e-9);
+  EXPECT_NEAR(seen->aim_px.y, 239.5 - 30, 1e-9);
+  ASSERT_TRUE(seen->target.has_value());
+  // hole 3 is drawn about the frame's centre, 0.15, -0.10 mm off: within a few pixels of it, not of (0, 0)
+  EXPECT_NEAR(seen->target->center_px.x, 319.5 + 0.15 * 23, 2.5);
+  EXPECT_NEAR(seen->target->center_px.y, 239.5 + 0.10 * 23, 2.5);
+  // the other holes of the tray, 5 mm (115 px) away, are in the frame but not what the aim is on
+  for (const auto& target : seen->targets) {
+    EXPECT_LT(std::hypot(target.center_px.x - seen->aim_px.x, target.center_px.y - seen->aim_px.y), 120.0);
+  }
+}
+
 TEST(LaserWatchNoCamera, ViewNeedsACamera) {
   LaserHarness h;
   auto seen = h.system.view();

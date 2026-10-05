@@ -19,6 +19,7 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "camera_view.hpp"
@@ -79,6 +80,18 @@ LaserWindow::LaserWindow(LaserBridge& bridge, bool simulation, QWidget* parent)
   connect(&bridge_, &LaserBridge::driverChanged, this, [this](bool) { refresh_enabled(); });
   connect(&bridge_, &LaserBridge::calibrationChanged, this, &LaserWindow::refresh_tray);
   connect(&bridge_, &LaserBridge::view, camera_, &CameraView::set_view);
+  connect(&bridge_, &LaserBridge::view, this, [this](const laser::CameraView& seen) {
+    ++views_;
+    camera_fps_ = seen.fps;
+  });
+  // How smooth the picture is, said: frames shown a second, and the camera's own rate.
+  auto* rate = new QTimer(this);
+  rate->setInterval(1000);
+  connect(rate, &QTimer::timeout, this, [this] {
+    camera_rate_->setText(camera_fps_ > 0 ? tr("%1 fps (camera %2)").arg(views_).arg(qRound(camera_fps_)) : tr("%1 fps").arg(views_));
+    views_ = 0;
+  });
+  if (bridge_.has_camera()) rate->start();
   connect(&bridge_, &LaserBridge::viewFailed, camera_, &CameraView::set_failed);
   if (!bridge_.has_camera()) camera_->clear(tr("%1 has no camera").arg(bridge_.device()));
   refresh_patterns();
@@ -142,6 +155,10 @@ void LaserWindow::build() {
   snapshot_ = button(tr("Snapshot"), "snapshot", right);
   snapshot_->setToolTip(tr("Save what the camera sees to the lab's snapshots"));
   centering->addWidget(snapshot_);
+  camera_rate_ = new QLabel(right);
+  camera_rate_->setObjectName(QStringLiteral("camera_rate"));
+  style::set_tone(camera_rate_, style::Tone::Muted);
+  centering->addWidget(camera_rate_);
   outcome_ = new QLabel(right);
   outcome_->setObjectName(QStringLiteral("autocenter_outcome"));
   outcome_->setWordWrap(true);

@@ -19,8 +19,13 @@ QImage to_image(const vision::Frame& frame) {
   for (int y = 0; y < frame.height; ++y) {
     uchar* row = image.scanLine(y);
     const std::uint16_t* from = frame.data.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width);
-    for (int x = 0; x < frame.width; ++x) {
-      row[x] = static_cast<uchar>(std::clamp(from[x] * 255.0 / depth, 0.0, 255.0));
+    if (frame.pixel_depth == 255) {
+      // the usual camera: a byte a pixel already (this runs for every frame of video)
+      for (int x = 0; x < frame.width; ++x) row[x] = static_cast<uchar>(from[x] > 255 ? 255 : from[x]);
+    } else {
+      for (int x = 0; x < frame.width; ++x) {
+        row[x] = static_cast<uchar>(std::clamp(from[x] * 255.0 / depth, 0.0, 255.0));
+      }
     }
   }
   return image;
