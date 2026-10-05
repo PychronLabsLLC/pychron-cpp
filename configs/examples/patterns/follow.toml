@@ -5,7 +5,7 @@
 # (pattern = "follow"); the script's execute_pattern() runs it, with the laser
 # already firing.
 kind = "dragonfly"
-duration = 5                  # s: how long it follows
+duration = 5                  # s: how long it follows, for a run that gives no duration of its own
 velocity = 1.0                # mm/s for its moves
 perimeter_radius = 2.5        # mm: never further from where it started
 saturation_threshold = 0.75   # a glow this bright (0 to 1): hold still

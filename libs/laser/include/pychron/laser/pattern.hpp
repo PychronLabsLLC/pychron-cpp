@@ -65,7 +65,8 @@ inline constexpr std::size_t kMaxPatternPoints = 10000;
 //   rubberband        length offset rotation
 //   raster            length offset rotation dx single_pass
 //   trough            length width rotation use_x
-//   dragonfly         duration (required) perimeter_radius saturation_threshold
+//   dragonfly         duration (the run's, when it has one, is used instead)
+//                     perimeter_radius saturation_threshold
 //                     aggressiveness move_threshold max_step spiral spiral_base
 //                     target_radius; velocity is the speed of its moves, and
 //                     it has no iterations
@@ -94,7 +95,7 @@ struct Pattern {
   std::optional<std::uint64_t> seed;  // random: unset, a new walk each run
 
   // dragonfly (legacy's defaults)
-  double duration_s = 0;               // how long it follows the glow
+  double duration_s = 0;               // how long it follows the glow when the run does not say; 0: only the run's
   double perimeter_radius = 2.5;       // mm: never further from where it started
   double saturation_threshold = 0.75;  // a glow this bright: hold still
   double aggressiveness = 1.0;

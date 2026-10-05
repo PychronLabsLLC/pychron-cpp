@@ -208,7 +208,7 @@ TEST_F(PatternRunnerTest, UnknownAndBrokenPatternsAreConfig) {
   EXPECT_EQ(broken.error().kind, ErrorKind::Config);
   EXPECT_NE(broken.error().what.find("radius"), std::string::npos) << broken.error().what;  // the file's problem
   EXPECT_EQ(sim.log().size(), before);
-  EXPECT_EQ(runner().patterns(), (std::vector<std::string>{"square", "track", "track_brief", "track_tight", "twice", "walk", "wide"}));
+  EXPECT_EQ(runner().patterns(), (std::vector<std::string>{"square", "track", "track_blind", "track_brief", "track_open", "track_tight", "twice", "walk", "wide"}));
 }
 
 TEST_F(PatternRunnerTest, ASeededWalkRepeats) {

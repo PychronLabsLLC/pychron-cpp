@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <iomanip>
 #include <locale>
 #include <optional>
 #include <random>
@@ -24,6 +25,9 @@ struct PatternRunner::Follow {
   std::optional<TimePoint> at_rest;
   int stale = 0;
   std::string lost;  // why the camera was given up on; empty: it was not
+  double own_perimeter = 0;  // the pattern's, before the hole's room limited it
+  bool looked = false;       // a frame was taken
+  bool seen = false;         // the glow was found in one
 
   Follow(vision::ITargetFinder& finder, const CameraConfig& camera, const vision::DragonflyParams& params)
       : controller(finder, camera.map(), camera.px_per_mm, params) {}
@@ -34,6 +38,13 @@ namespace {
 // How many batches of frames the controller will not take (older than its
 // last move) are waited out before the camera is taken to have stopped.
 constexpr int kStaleTries = 5;
+
+std::string mm_text(double mm) {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::fixed << std::setprecision(3) << mm;
+  return out.str();
+}
 
 std::string seconds_text(double seconds) {
   std::ostringstream out;
@@ -77,7 +88,7 @@ void PatternRunner::end() {
   name_.clear();
 }
 
-Result<void> PatternRunner::execute_pattern(std::string_view pattern) {
+Result<void> PatternRunner::execute_pattern_for(std::string_view pattern, double duration_s) {
   {
     std::lock_guard lock(mutex_);
     if (active_) {
@@ -97,7 +108,7 @@ Result<void> PatternRunner::execute_pattern(std::string_view pattern) {
                 "unknown pattern " + std::string(pattern) + " (there is: " + (known.empty() ? "none" : known) + ")",
                 device_);
   }
-  if (found->follows_glow()) return start_following(*found);
+  if (found->follows_glow()) return start_following(*found, duration_s);
   // Only a random walk with no seed of its own needs one made up.
   std::uint64_t seed = found->seed.value_or(0);
   if (found->kind == PatternKind::Random && !found->seed) {
@@ -126,6 +137,7 @@ Result<void> PatternRunner::execute_pattern(std::string_view pattern) {
     next_ = 0;
     name_ = found->name;
     velocity_ = found->velocity;
+    note_.clear();
     active_ = true;
   }
   return send_next();
@@ -153,7 +165,7 @@ Result<void> PatternRunner::send_next() {
   return {};
 }
 
-Result<void> PatternRunner::start_following(const Pattern& pattern) {
+Result<void> PatternRunner::start_following(const Pattern& pattern, double run_duration_s) {
   if (!vision_) {
     return fail(ErrorKind::Config,
                 "pattern " + pattern.name + " follows the glow and " + device_ + " has no camera to see it", device_);
@@ -168,9 +180,29 @@ Result<void> PatternRunner::start_following(const Pattern& pattern) {
   if (!centre) return fail(std::move(centre).error());
 
   const CameraConfig& camera = *vision_.camera;
+  // The run's duration, as in legacy pychron; the pattern's own when the run has none.
+  const double duration_s = run_duration_s > 0 ? run_duration_s : pattern.duration_s;
+  if (!(duration_s > 0) || !std::isfinite(duration_s)) {
+    return fail(ErrorKind::Config,
+                "pattern " + pattern.name + " has no duration: the run gives none and the pattern has none of its own",
+                device_);
+  }
+  // What it looks at must be a picture: the crop is 2.5 target diameters.
+  const double side_px = 2.5 * 2.0 * pattern.target_radius * camera.px_per_mm;
+  if (!(side_px >= 1.0 && side_px <= 1.0e5)) {
+    return fail(ErrorKind::Config,
+                "pattern " + pattern.name + ": target_radius gives a look of " + seconds_text(side_px) +
+                    " px with this camera, which cannot show a glow",
+                device_);
+  }
+  // Never beyond the room its hole has: the beam is on.
+  double perimeter = pattern.perimeter_radius;
+  const double room = vision_.room_mm ? vision_.room_mm() : 0.0;
+  if (room > 0 && room < perimeter) perimeter = room;
+
   vision::DragonflyParams params;
-  params.total_duration = std::chrono::duration_cast<Duration>(std::chrono::duration<double>(pattern.duration_s));
-  params.perimeter_radius_mm = pattern.perimeter_radius;
+  params.total_duration = std::chrono::duration_cast<Duration>(std::chrono::duration<double>(duration_s));
+  params.perimeter_radius_mm = perimeter;
   params.saturation_threshold = pattern.saturation_threshold;
   params.aggressiveness = pattern.aggressiveness;
   params.move_threshold_mm = pattern.move_threshold;
@@ -184,9 +216,10 @@ Result<void> PatternRunner::start_following(const Pattern& pattern) {
   const TimePoint now = vision_.clock->now();
   follow_ = std::make_unique<Follow>(*finder_, camera, params);
   follow_->centre = {centre->x, centre->y};
-  follow_->perimeter = pattern.perimeter_radius;
+  follow_->perimeter = perimeter;
+  follow_->own_perimeter = pattern.perimeter_radius;
   follow_->velocity = pattern.velocity;
-  follow_->duration_s = pattern.duration_s;
+  follow_->duration_s = duration_s;
   follow_->ends = now + params.total_duration;
   follow_->controller.start(now, {centre->x, centre->y});
   std::lock_guard lock(mutex_);
@@ -215,6 +248,11 @@ Result<bool> PatternRunner::go_home() {
 
 Result<bool> PatternRunner::lose_the_camera(std::string why) {
   follow_->lost = std::move(why);
+  {
+    // Said now: the pattern may be stopped before it has run its time.
+    std::lock_guard lock(mutex_);
+    note_ = "pattern " + name_ + ": the camera was lost (" + follow_->lost + ")";
+  }
   return go_home();
 }
 
@@ -237,7 +275,24 @@ Result<bool> PatternRunner::follow() {
 
   if (f.phase == Follow::Phase::Return) {
     if (f.lost.empty()) {  // its time was up
+      // What it could not do, for the run's log.
+      std::string said;
+      const auto add = [&said](const std::string& what) { said += (said.empty() ? "" : "; ") + what; };
+      if (!f.looked) {
+        add("it never looked: its " + seconds_text(f.duration_s) + " s were over before the stage had settled");
+      } else if (!f.seen) {
+        add("the glow was not seen: it searched for its " + seconds_text(f.duration_s) + " s");
+      }
+      // Only when it went looking: a pattern that had its glow never needed more room.
+      if (f.looked && !f.seen && f.perimeter < f.own_perimeter) {
+        add("it was held within " + mm_text(f.perimeter) + " mm of its start, the room the hole has (its perimeter is " +
+            mm_text(f.own_perimeter) + " mm)");
+      }
       end();
+      if (!said.empty()) {
+        std::lock_guard lock(mutex_);
+        note_ = "pattern " + name + ": " + said;
+      }
       return false;
     }
     if (vision_.camera->on_failure == OnAutocenterFailure::Fail) {
@@ -271,6 +326,7 @@ Result<bool> PatternRunner::follow() {
     if (!frame) return lose_the_camera(frame.error().what);
     frames.push_back(std::move(*frame));
   }
+  f.looked = true;
   std::vector<vision::FrameView> views;
   for (const auto& frame : frames) views.push_back(frame.view());
   auto at = stage_.position();
@@ -288,13 +344,15 @@ Result<bool> PatternRunner::follow() {
   if (step->reason == vision::DragonflyStep::Reason::Invalid) {
     return failed(Error{ErrorKind::Config, "its settings or the camera's cannot be used to follow a glow", device_});
   }
+  using Reason = vision::DragonflyStep::Reason;
+  if (step->reason == Reason::Saturated || step->reason == Reason::Deadband || step->reason == Reason::Track) {
+    f.seen = true;  // it has a glow to go by
+  }
   if (step->action == Action::Hold) return true;
 
-  // An absolute move: the target is an offset from where the pattern started.
+  // An absolute move: the target is an offset from where the pattern started,
+  // which the controller keeps within the perimeter it was given.
   const StageXY to{f.centre.x + step->target_mm.x, f.centre.y + step->target_mm.y};
-  if (std::hypot(to.x - f.centre.x, to.y - f.centre.y) > f.perimeter + 0.001) {
-    return failed(Error{ErrorKind::Protocol, "a move beyond its perimeter was asked for and not made", device_});
-  }
   if (auto moved = stage_.set_xy(to.x, to.y, f.velocity); !moved) return failed(std::move(moved).error());
   f.at_rest.reset();
   return true;

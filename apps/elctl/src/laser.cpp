@@ -571,7 +571,9 @@ class Laser {
 
   // "follows the glow for 5.0 s within 2.500 mm"
   static std::string glow_summary(const laser::Pattern& pattern) {
-    return "follows the glow for " + num(pattern.duration_s, 1) + " s within " + num(pattern.perimeter_radius) + " mm";
+    return std::string("follows the glow for the run's duration") +
+           (pattern.duration_s > 0 ? " (else " + num(pattern.duration_s, 1) + " s)" : "") + " within " +
+           num(pattern.perimeter_radius) + " mm";
   }
 
   // Stops the stage and says where; says so when it could not be stopped.

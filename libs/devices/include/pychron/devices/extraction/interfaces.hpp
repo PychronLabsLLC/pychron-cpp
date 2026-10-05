@@ -101,6 +101,13 @@ struct IPatternRunner {
   virtual ~IPatternRunner() = default;
   // Config error for an unknown pattern. Starts it; poll running().
   virtual Result<void> execute_pattern(std::string_view pattern) = 0;
+  // The same, told how long the run heats for (seconds; 0 or less: it does
+  // not say). A pattern that runs for a time (one that follows the glow)
+  // runs for that; one with a path of its own ignores it.
+  virtual Result<void> execute_pattern_for(std::string_view pattern, double duration_s) {
+    (void)duration_s;
+    return execute_pattern(pattern);
+  }
   virtual Result<bool> running() = 0;
   virtual Result<void> stop_pattern() = 0;
   virtual std::vector<std::string> patterns() const = 0;

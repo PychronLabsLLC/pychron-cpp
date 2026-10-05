@@ -307,6 +307,29 @@ TEST_F(LabExtractionTest, ADragonflyNeedsACamera) {
   EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
 }
 
+// A dragonfly runs for the run's duration, or its own: with neither there is
+// no telling how long to heat.
+TEST_F(LabExtractionTest, ADragonflyNeedsADurationFromSomewhere) {
+  std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << "[co2]\n";
+  std::ofstream(dir_ / "patterns" / "open.toml") << "kind = \"dragonfly\"\n";
+  std::ofstream(dir_ / "patterns" / "timed.toml") << "kind = \"dragonfly\"\nduration = 20\n";
+  const Lab l = lab();
+  calibrate(l);
+  auto q = queue(l);
+  q.runs.at(1).extraction.pattern = "open";
+  q.runs.at(1).extraction.duration = Duration::zero();
+  auto found = extraction(check_lab_queue(l, q));
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].run, 1);
+  EXPECT_TRUE(says(found[0], {"open", "duration"})) << found[0].message;
+
+  q.runs.at(1).extraction.duration = std::chrono::seconds(30);  // the run says
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+  q.runs.at(1).extraction.duration = Duration::zero();
+  q.runs.at(1).extraction.pattern = "timed";  // the pattern says
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+}
+
 TEST_F(LabExtractionTest, ListsPatterns) {
   const Lab l = lab();
   EXPECT_EQ(l.patterns.names(), (std::vector<std::string>{"hexagon"}));

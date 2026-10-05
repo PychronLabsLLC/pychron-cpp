@@ -4,6 +4,7 @@
 // the simulated laser fires.
 
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@ class Shutter final : public vision::IFrameSource {
     ++grabs;
     if (dead) return fail(ErrorKind::Io, "the camera stopped answering");
     auto frame = inner_->grab();
+    if (after_grab) after_grab(grabs);
     if (frame && blank) std::fill(frame->data.begin(), frame->data.end(), std::uint16_t{0});
     return frame;
   }
@@ -37,6 +39,7 @@ class Shutter final : public vision::IFrameSource {
   bool blank = false;
   bool dead = false;
   int grabs = 0;
+  std::function<void(int)> after_grab;  // told the count, once the frame is taken
 
  private:
   std::unique_ptr<vision::IFrameSource> inner_;
@@ -54,14 +57,14 @@ struct Rig : LaserHarness {
   CorrectionStore corrections{lab.dir / "stage_corrections"};
   Shutter* shutter = nullptr;
 
-  explicit Rig(CameraConfig camera = glow_camera(0.3, -0.2)) {
+  explicit Rig(CameraConfig camera = glow_camera(0.3, -0.2), const char* hole = "3") {
     system.set_corrections(corrections);
     auto frames = std::make_unique<Shutter>(std::make_unique<SimTrayCamera>(camera, system.sight(), clock));
     shutter = frames.get();
     EXPECT_TRUE(system.attach_camera(camera, std::move(frames), clock));
     EXPECT_TRUE(system.set_tray("small"));
     // on hole 3 (15, 20), uncentred, beam on at a working output
-    EXPECT_TRUE(system.move_to_position("3", false));
+    EXPECT_TRUE(system.move_to_position(hole, false));
     EXPECT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
     EXPECT_TRUE(system.enable());
     EXPECT_TRUE(system.extract(20, ExtractUnits::Percent));
@@ -193,6 +196,10 @@ TEST(Dragonfly, ADurationShorterThanASettleStillEnds) {
   EXPECT_FALSE(*done);
   EXPECT_NEAR(rig.at().x, 15, 1e-9);
   EXPECT_EQ(rig.shutter->grabs, 0);  // over before a frame could be trusted
+  // and it says so: a pattern that never looked followed nothing
+  const std::string note = rig.runner().last_note();
+  EXPECT_NE(note.find("track_brief"), std::string::npos) << note;
+  EXPECT_NE(note.find("never looked"), std::string::npos) << note;
 }
 
 TEST(Dragonfly, AClockThatJumpsPastTheEndEndsIt) {
@@ -313,4 +320,140 @@ TEST(Dragonfly, ASecondPatternWhileItRunsIsRefused) {
   auto* r = dynamic_cast<PatternRunner*>(&rig.runner());
   ASSERT_NE(r, nullptr);
   EXPECT_NE(r->progress().find("track"), std::string::npos) << r->progress();
+}
+
+// How long it runs is the run's to say, as in legacy pychron (the script
+// passes its duration); the pattern's own is for when the run has none.
+TEST(Dragonfly, TheRunsDurationWinsOverThePatterns) {
+  Rig rig;
+  const TimePoint started = rig.clock.now();
+  ASSERT_TRUE(rig.runner().execute_pattern_for("track", 6));  // the file says 20
+  auto done = rig.finish();
+  ASSERT_TRUE(done) << done.error().what;
+  EXPECT_GE(rig.clock.now() - started, Duration(6s));
+  EXPECT_LT(rig.clock.now() - started, Duration(8s));
+
+  const TimePoint again = rig.clock.now();
+  ASSERT_TRUE(rig.runner().execute_pattern_for("track", 0));  // the run has none: the file's 20
+  ASSERT_TRUE(rig.finish());
+  EXPECT_GE(rig.clock.now() - again, Duration(20s));
+
+  const TimePoint open = rig.clock.now();
+  ASSERT_TRUE(rig.runner().execute_pattern_for("track_open", 4));  // a pattern with none of its own
+  ASSERT_TRUE(rig.finish());
+  EXPECT_GE(rig.clock.now() - open, Duration(4s));
+  EXPECT_LT(rig.clock.now() - open, Duration(6s));
+}
+
+TEST(Dragonfly, WithNoDurationAnywhereItIsRefused) {
+  Rig rig;
+  const auto before = rig.targets().size();
+  for (double none : {0.0, -1.0, std::nan("")}) {
+    auto r = rig.runner().execute_pattern_for("track_open", none);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Config);
+    EXPECT_NE(r.error().what.find("duration"), std::string::npos) << r.error().what;
+  }
+  auto plain = rig.runner().execute_pattern("track_open");
+  ASSERT_FALSE(plain);
+  EXPECT_EQ(rig.targets().size(), before);
+  EXPECT_FALSE(*rig.runner().running());
+  // a path pattern takes no duration and ignores one
+  EXPECT_TRUE(rig.runner().execute_pattern_for("square", 999));
+}
+
+// The beam is on. With no glow to follow the search spirals outward: never
+// further than the room the hole has before its neighbours (45% of the way to
+// the nearest), whatever the pattern's own perimeter. Hole 7's neighbours are
+// 1.41 mm away.
+TEST(Dragonfly, ItsPerimeterIsLimitedToTheRoomItsHoleHas) {
+  Rig rig(glow_camera(0, 0), "7");  // (18, 28) on the stage
+  rig.shutter->blank = true;        // nothing glows: it will search
+  const auto before = rig.targets().size();
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));  // the file's perimeter is 2.5 mm
+  auto done = rig.finish();
+  ASSERT_TRUE(done) << done.error().what;
+  const auto moves = rig.targets();
+  ASSERT_GT(moves.size(), before + 3);
+  const double room = 0.45 * std::sqrt(2.0);
+  for (std::size_t i = before; i < moves.size(); ++i) EXPECT_LE(apart(moves[i], {18, 28}), room + 0.001) << i;
+  const std::string note = rig.runner().last_note();
+  EXPECT_NE(note.find("0.636"), std::string::npos) << note;              // said: it was held in
+  EXPECT_NE(note.find("glow was not seen"), std::string::npos) << note;  // and that it followed nothing
+}
+
+TEST(Dragonfly, AHoleWithRoomKeepsThePatternsPerimeter) {
+  Rig rig(glow_camera(0, 0), "3");  // nearest neighbour 4.47 mm: room 2.01
+  rig.shutter->blank = true;
+  ASSERT_TRUE(rig.runner().execute_pattern("track_tight"));  // 0.4 mm: tighter than the room
+  ASSERT_TRUE(rig.finish());
+  double furthest = 0;
+  for (const auto& t : rig.targets()) furthest = std::max(furthest, apart(t, {15, 20}));
+  EXPECT_LE(furthest, 0.4 + 0.001);
+  EXPECT_GT(furthest, 0.3);
+  EXPECT_EQ(rig.runner().last_note().find("held within"), std::string::npos);  // its own perimeter: nothing to add
+}
+
+// --- the stage or the settings fail with the beam on ---------------------------
+
+TEST(Dragonfly, SettingsThatCannotSeeAreRefusedBeforeItStarts) {
+  Rig rig;
+  auto r = rig.runner().execute_pattern("track_blind");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("target_radius"), std::string::npos) << r.error().what;
+  EXPECT_FALSE(*rig.runner().running());
+  EXPECT_EQ(rig.shutter->grabs, 0);
+}
+
+TEST(Dragonfly, AMoveTheStageRefusesEndsIt) {
+  Rig rig;
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  rig.sim.fail_next("Stage.MoveTo", 4);  // its first correction
+  auto done = rig.finish();
+  ASSERT_FALSE(done);
+  EXPECT_EQ(done.error().kind, ErrorKind::Io);
+  EXPECT_NE(done.error().what.find("pattern track"), std::string::npos) << done.error().what;
+  EXPECT_FALSE(*rig.runner().running());  // over: said once
+  EXPECT_TRUE(rig.runner().execute_pattern("square"));
+}
+
+TEST(Dragonfly, AStageThatCannotSayWhereItIsEndsIt) {
+  Rig rig;
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  // The first look's three frames are taken (the simulated camera asks the
+  // stage where it is for each); the next question is the pattern's own.
+  rig.shutter->after_grab = [&](int count) {
+    if (count == 3) rig.sim.fail_next("Stage.Pos?", 4);
+  };
+  auto done = rig.finish();
+  ASSERT_FALSE(done);
+  EXPECT_NE(done.error().what.find("pattern track"), std::string::npos) << done.error().what;
+  EXPECT_FALSE(*rig.runner().running());
+}
+
+TEST(Dragonfly, AReturnTheStageRefusesEndsItWithTheError) {
+  Rig rig;
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  ASSERT_TRUE(rig.run_for(5));
+  rig.shutter->dead = true;              // it will turn for home
+  rig.sim.fail_next("Stage.MoveTo", 4);  // and the stage will not go
+  auto done = rig.finish();
+  ASSERT_FALSE(done);
+  EXPECT_EQ(done.error().kind, ErrorKind::Io);
+  EXPECT_NE(done.error().what.find("pattern track"), std::string::npos) << done.error().what;
+  EXPECT_FALSE(*rig.runner().running());
+}
+
+// The camera is lost and the pattern is then stopped before its time is up:
+// the log still says the camera was lost.
+TEST(Dragonfly, ACameraLostIsSaidEvenIfThePatternIsStoppedAfter) {
+  Rig rig;
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  ASSERT_TRUE(rig.run_for(5));
+  rig.shutter->dead = true;
+  ASSERT_TRUE(rig.run_for(4));  // home, and holding
+  ASSERT_TRUE(rig.runner().stop_pattern());
+  const std::string note = rig.runner().last_note();
+  EXPECT_NE(note.find("camera"), std::string::npos) << note;
 }

@@ -228,9 +228,6 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
       return fail(ErrorKind::Config, p.name + ": " + std::string(key) + ": " + why);
     }
   }
-  if (*kind == PatternKind::Dragonfly && !table.contains("duration")) {
-    return fail(ErrorKind::Config, p.name + ": duration: missing (how long, in seconds, it follows the glow)");
-  }
   if (*kind == PatternKind::Raster && p.dx > p.length + 2 * p.offset) {
     return fail(ErrorKind::Config, p.name + ": dx: the step is wider than the box it rasters (length + 2 offset)");
   }

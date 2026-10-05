@@ -267,7 +267,7 @@ TEST_F(LaserCmd, PatternsListsKindPointsLengthAndTime) {
 TEST_F(LaserCmd, PatternsListsADragonfly) {
   const auto o = laser({"patterns"});
   ASSERT_EQ(o.code, 0) << o.err;
-  EXPECT_NE(o.out.find("follow  dragonfly  follows the glow for 5.0 s within 2.500 mm"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("follow  dragonfly  follows the glow for the run's duration (else 5.0 s) within 2.500 mm"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("hexagon  polygon"), std::string::npos) << o.out;
 }
 

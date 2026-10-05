@@ -402,7 +402,6 @@ INSTANTIATE_TEST_SUITE_P(
                       BadFile{"kind = \"linear\"\nrotation = \"x\"\n", "rotation"},
                       BadFile{"kind = \"linear\"\nnsides = 5\n", "nsides"},  // a polygon's key
                       BadFile{"kind = \"trough\"\nuse_x = 1\n", "use_x"},
-                      BadFile{"kind = \"dragonfly\"\n", "duration"},  // required
                       BadFile{"kind = \"dragonfly\"\nduration = 0\n", "duration"},
                       BadFile{"kind = \"dragonfly\"\nduration = 3601\n", "duration"},
                       BadFile{"kind = \"dragonfly\"\nduration = 10\nsaturation_threshold = 0\n", "saturation_threshold"},
@@ -460,6 +459,10 @@ TEST(PatternFile, ReadsADragonfly) {
   EXPECT_DOUBLE_EQ(full->spiral_base, 0.3);
   EXPECT_DOUBLE_EQ(full->target_radius, 0.75);
   EXPECT_TRUE(Pattern::parse("kind = \"dragonfly\"\nduration = 1\nspiral = \"hexagon\"\n", "h"));
+  // with no duration of its own it runs for the run's (as legacy pychron)
+  auto runs = Pattern::parse("kind = \"dragonfly\"\n", "r");
+  ASSERT_TRUE(runs) << runs.error().what;
+  EXPECT_DOUBLE_EQ(runs->duration_s, 0);
 }
 
 TEST(PatternPoints, ADragonflyHasNoPath) {

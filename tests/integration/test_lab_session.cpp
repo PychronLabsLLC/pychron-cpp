@@ -367,6 +367,51 @@ TEST_F(LabSessionTest, ADragonflyRunFollowsTheGrainAndLeavesTheLaserOff) {
   EXPECT_DOUBLE_EQ(sim.output(), 0);
 }
 
+// A dragonfly that cannot run (here: a look of less than a pixel) is refused
+// when the script starts it, with the beam already on: the run fails and the
+// laser does not stay on.
+class BlindDragonflySessionTest : public LabSessionTest {
+ protected:
+  void prepare_lab() override {
+    std::ofstream(dir_ / "patterns" / "follow.toml", std::ios::trunc) << "kind = \"dragonfly\"\ntarget_radius = 0.001\n";
+  }
+};
+
+TEST_F(BlindDragonflySessionTest, ADragonflyThatFailsLeavesTheLaserOff) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto& sim = laser_sim("co2");
+  auto q = laser_queue();
+  q.runs.at(0).extraction.pattern = "follow";
+  ASSERT_TRUE(session_->start(q));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_FALSE(result->runs.empty());
+  EXPECT_EQ(result->runs.front().state, run::RunState::Failed);
+  EXPECT_NE(result->runs.front().error.value_or("").find("target_radius"), std::string::npos)
+      << result->runs.front().error.value_or("");
+  EXPECT_EQ(count(sim.log(), "Laser.Fire"), 1);  // it had fired
+  EXPECT_FALSE(sim.firing());                    // and is off
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_DOUBLE_EQ(sim.output(), 0);
+}
+
+// The run's duration is how long a dragonfly follows, as in legacy pychron.
+TEST_F(LabSessionTest, ADragonflyRunsForTheRunsDuration) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto q = laser_queue();
+  q.runs.erase(q.runs.begin());  // one run: hole 7
+  q.runs.at(0).extraction.pattern = "follow";  // the file says 5 s
+  q.runs.at(0).extraction.duration = std::chrono::seconds(12);
+  const TimePoint before = clock_.now();
+  ASSERT_TRUE(session_->start(q));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 1u);
+  EXPECT_EQ(result->runs[0].state, run::RunState::Success) << result->runs[0].error.value_or("");
+  // the whole run took at least the 12 s of following (5 s would be the pattern's own)
+  EXPECT_GE(clock_.now() - before, Duration(std::chrono::seconds(12)));
+}
+
 TEST_F(LabSessionTest, AnUncalibratedTrayIsRefusedAtStart) {
   ASSERT_TRUE(lab_.calibrations->clear("co2", "example-9"));
   const auto before = laser_sim("co2").log();

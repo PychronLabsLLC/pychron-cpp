@@ -62,6 +62,8 @@ struct LabDir {
     // dragonflies: they follow the glow, and need a camera
     pattern("track.toml", "kind = \"dragonfly\"\nduration = 20\nvelocity = 2\n");
     pattern("track_brief.toml", "kind = \"dragonfly\"\nduration = 0.05\n");
+    pattern("track_blind.toml", "kind = \"dragonfly\"\nduration = 20\ntarget_radius = 0.001\n");  // a look of less than a pixel
+    pattern("track_open.toml", "kind = \"dragonfly\"\nvelocity = 2\n");  // for as long as the run says
     pattern("track_tight.toml", "kind = \"dragonfly\"\nduration = 20\nvelocity = 2\nperimeter_radius = 0.4\n");
   }
   ~LabDir() { fs::remove_all(dir); }

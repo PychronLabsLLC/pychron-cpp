@@ -167,10 +167,15 @@ class FakeLaser final : public extraction::IExtractionDevice,
   std::vector<std::string> patterns() const override { return {"spiral"}; }
   bool needs_polling() const override { return pattern_needs_polling; }
   std::string last_note() override { return std::exchange(pattern_note, {}); }
+  Result<void> execute_pattern_for(std::string_view p, double duration_s) override {
+    pattern_duration = duration_s;
+    return execute_pattern(p);
+  }
 
   std::atomic<bool> pattern_running{false};
   bool pattern_finishes = true;
   bool pattern_needs_polling = false;
+  double pattern_duration = -1;     // the run duration the last execute_pattern was given
   std::string pattern_note;         // what the last pattern has to say
   bool stage_centres = false;       // a stage with a camera: centring needs the move waited for
   std::string move_note;            // what the last hole move has to say

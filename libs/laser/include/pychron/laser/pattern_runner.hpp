@@ -21,12 +21,18 @@
 // returns to where it started. It needs the device's camera (set_vision). A
 // camera that fails part way sends the stage back to the start; then the
 // camera's on_failure decides: the pattern holds there until its time is up
-// (and says so in last_note()), or ends with an error.
+// (and says so in last_note()), or ends with an error. It runs for the run's
+// duration, or its own when the run has none. With the beam on and no glow
+// to follow it searches outward: never beyond its perimeter, nor beyond the
+// room its hole has before the neighbours (PatternVision::room_mm). What it
+// could not do (never looked, never saw the glow, was held in) is said in
+// last_note().
 //
 // Calls are made from one thread at a time; progress() may be asked from
 // another.
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -49,6 +55,9 @@ struct PatternVision {
   vision::IFrameSource* frames = nullptr;
   const CameraConfig* camera = nullptr;
   const Clock* clock = nullptr;
+  // How far from where it starts a pattern may roam before it reaches the
+  // neighbouring holes (mm); 0 or less: not known, no limit beyond its own.
+  std::function<double()> room_mm;
   explicit operator bool() const noexcept { return frames != nullptr && camera != nullptr && clock != nullptr; }
 };
 
@@ -65,7 +74,10 @@ class PatternRunner final : public extraction::IPatternRunner {
   // Config error for a pattern the library lacks or could not load, while
   // another is running, or while the stage is still moving (there is no
   // centre yet). Nothing is sent unless the stage's position was read.
-  Result<void> execute_pattern(std::string_view pattern) override;
+  Result<void> execute_pattern(std::string_view pattern) override { return execute_pattern_for(pattern, 0); }
+  // `duration_s`: how long the run heats for; a pattern that follows the
+  // glow runs for that, or for its own duration when the run gives none.
+  Result<void> execute_pattern_for(std::string_view pattern, double duration_s) override;
   Result<bool> running() override;
   // Drops what is left and stops the stage where it is. A stage that cannot
   // stop finishes its current move; that is not an error.
@@ -79,7 +91,7 @@ class PatternRunner final : public extraction::IPatternRunner {
 
  private:
   struct Follow;  // a dragonfly in progress
-  Result<void> start_following(const Pattern& pattern);
+  Result<void> start_following(const Pattern& pattern, double run_duration_s);
   Result<bool> follow();
   Result<bool> lose_the_camera(std::string why);
   Result<bool> go_home();

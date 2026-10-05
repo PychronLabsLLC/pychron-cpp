@@ -438,6 +438,25 @@ TEST_F(ScriptHostTest, AHoleMovesNoteIsLogged) {
   EXPECT_TRUE(logged.empty());
 }
 
+// A pattern that runs for a time (a dragonfly) runs for the run's duration,
+// as in legacy pychron: the script's execute_pattern() passes it along.
+TEST_F(ScriptHostTest, ExecutePatternPassesTheRunsDuration) {
+  rig.env.context = make_context({{"duration", 12.0}, {"pattern", std::string("spiral")}});
+  auto r = host->run(inline_script("def main():\n    execute_pattern()\n"), rig.env, token);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(rig.log.contains("execute_pattern spiral"));
+  EXPECT_DOUBLE_EQ(rig.laser.pattern_duration, 12.0);
+
+  auto own = host->run(inline_script("def main():\n    execute_pattern('spiral', duration=3)\n"), rig.env, token);
+  ASSERT_TRUE(own) << own.error().what;
+  EXPECT_DOUBLE_EQ(rig.laser.pattern_duration, 3.0);
+
+  rig.env.context = make_context({{"pattern", std::string("spiral")}});  // a run with no duration
+  auto none = host->run(inline_script("def main():\n    execute_pattern()\n"), rig.env, token);
+  ASSERT_TRUE(none) << none.error().what;
+  EXPECT_DOUBLE_EQ(rig.laser.pattern_duration, 0.0);
+}
+
 // What a finished pattern has to say (a dragonfly that lost its camera and
 // held still) goes into the run's log.
 TEST_F(ScriptHostTest, APatternsNoteIsLogged) {

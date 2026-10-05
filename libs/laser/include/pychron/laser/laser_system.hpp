@@ -155,6 +155,10 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
   std::unique_ptr<Centering> centering_;  // the caller's thread only
+  // How far a pattern may roam from the hole the stage was last sent to
+  // before it reaches a neighbour (45% of the way to the nearest); 0: the
+  // stage is not known to be on a hole. The caller's thread only.
+  double hole_room_ = 0;
 
   mutable std::mutex mutex_;  // everything below; never held across a driver call
   const TrayMap* tray_ = nullptr;

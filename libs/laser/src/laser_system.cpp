@@ -107,7 +107,9 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
-  if (runner_ != nullptr) runner_->set_vision({frames_.get(), &*camera_, clock_});
+  if (runner_ != nullptr) {
+    runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; }});
+  }
   return {};
 }
 
@@ -192,6 +194,7 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   abandon(AutocenterOutcome::Result::Stopped);  // a new move takes over
+  hole_room_ = 0;
   {
     std::lock_guard lock(mutex_);
     move_note_.clear();  // of an earlier move nobody asked about
@@ -201,6 +204,7 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
   std::optional<StageXY> nominal;
   StageXY start{};
   double guard = 0;
+  double room = 0;
   double hole_radius = 0.5;
   CalibrationStatus status;
   bool is_hole = false;
@@ -216,6 +220,12 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
           start = *nominal;
           guard = guard_locked(*hole);
           hole_radius = hole->dimension / 2;
+          // uncapped, for a pattern: the whole room the hole has
+          double nearest = std::numeric_limits<double>::infinity();
+          for (const auto& other : tray_->holes()) {
+            if (&other != hole) nearest = std::min(nearest, std::hypot(other.x - hole->x, other.y - hole->y));
+          }
+          room = std::isfinite(nearest) ? 0.45 * nearest : 0.0;
           // Where it was found last time, unless that is further off than
           // any honest correction could be.
           if (const auto it = corrections_.find(position); it != corrections_.end()) {
@@ -235,6 +245,7 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
       e.what = "hole " + std::string(position) + " on " + tray + ": " + e.what;
       return fail(std::move(e));
     }
+    hole_room_ = room;
     if (autocenter && frames_ != nullptr) {
       vision::AutocenterParams params;
       params.hole_radius_mm = hole_radius;
@@ -270,6 +281,7 @@ Result<void> LaserSystem::set_axis(Axis axis, double value) {
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   abandon(AutocenterOutcome::Result::Stopped);
+  hole_room_ = 0;  // off the hole, for all the system knows
   return (*stage)->set_axis(axis, value);
 }
 
@@ -277,6 +289,7 @@ Result<void> LaserSystem::set_xy(double x, double y, double speed_mm_s) {
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   abandon(AutocenterOutcome::Result::Stopped);
+  hole_room_ = 0;
   return (*stage)->set_xy(x, y, speed_mm_s);
 }
 
@@ -432,6 +445,7 @@ Result<bool> LaserSystem::give_up(IStage& stage, vision::AutocenterReason why) {
 
 Result<void> LaserSystem::set_tray(std::string_view tray) {
   abandon(AutocenterOutcome::Result::Stopped);
+  hole_room_ = 0;
   if (tray.empty()) {
     std::lock_guard lock(mutex_);
     tray_ = nullptr;

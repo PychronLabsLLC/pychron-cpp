@@ -310,8 +310,8 @@ def set_tray(tray=None):
     _h.set_tray(str(_ctx('tray', tray)))
 
 
-def execute_pattern(pattern=None, block=True):
-    _h.execute_pattern(str(_ctx('pattern', pattern)), bool(block))
+def execute_pattern(pattern=None, block=True, duration=None):
+    _h.execute_pattern(str(_ctx('pattern', pattern)), bool(block), float(_ctx('duration', duration) or 0))
 
 
 def dump_sample():

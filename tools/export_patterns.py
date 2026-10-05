@@ -153,14 +153,17 @@ _KINDS = {
         "use_x": ("use_x", True, None, None, True),
     }),
 }
-# A dragonfly follows the glow for a time: it has a duration and no iterations.
+# A dragonfly follows the glow. In legacy its `duration` is the dwell at each
+# point; how long it runs is the run's duration, else `manual_total_duration`.
 _DRAGONFLY = {
     "velocity": ("velocity", 1.0, 0.0, _MM, False),
-    "duration": ("duration", 0.1, 0.0, 3600.0, False),
     "perimeter_radius": ("perimeter_radius", 2.5, 0.0, _MM, False),
     "saturation_threshold": ("saturation_threshold", 0.75, 0.0, 1.0, False),
+    "aggressiveness": ("aggressiveness", 1.0, 0.0, 10.0, True),
+    "move_threshold": ("move_threshold", 0.033, 0.0, _MM, True),
     "spiral_base": ("base", 0.5, 0.0, _MM, False),
 }
+_DRAGONFLY_TOTAL = ("manual_total_duration", 0.0, 0.0, 3600.0, False)
 _NOT_EXPORTED = {
     "ArcPattern": "an arc needs a controller arc move, which pychron-cpp does not have",
     "SeekPattern": "seek is driven by vision, not a pattern of points",
@@ -232,18 +235,31 @@ def to_toml(class_name, state):
         return None, [_NOT_EXPORTED[class_name]]
     if class_name in ("DragonFlyPeakPattern", "DragonFlyPattern"):
         lines = ['kind = "dragonfly"']
+        notes = []
         try:
+            total = state.get("manual_total_duration", 0.0)
+            if type(total) in (int, float) and total == 0:
+                notes.append("it has no total duration of its own: it runs for the run's duration")
+            else:
+                lines.append(f"duration = {_value('duration', _DRAGONFLY_TOTAL, state)}")
             for key, spec in _DRAGONFLY.items():
                 lines.append(f"{key} = {_value(key, spec, state)}")
+            spiral = state.get("spiral_kind", "Hexagon")
+            if type(spiral) is not str or spiral.lower() not in ("hexagon", "square"):
+                raise ValueError("spiral (spiral_kind) is neither Hexagon nor Square")
+            lines.append(f'spiral = "{spiral.lower()}"')
         except ValueError as error:
             return None, [str(error)]
-        notes = []
+        if "duration" in state:
+            notes.append("its dwell at each point (duration) is not carried over: the stage is waited for, then looked at")
         for attribute, what in (("limit", "its limit"), ("pre_seek_delay", "its pre_seek_delay"),
                                 ("mask_kind", "its mask"), ("custom_mask_radius", "its mask radius")):
             if attribute in state:
                 notes.append(f"{what} ({attribute}) is not carried over")
         if state.get("niterations", 1) not in (1, None):
             notes.append("its iterations are not carried over: a dragonfly runs once, for its duration")
+        # velocity first, as the other kinds
+        lines.sort(key=lambda line: (not line.startswith("kind"), not line.startswith("velocity")))
         return "\n".join(lines) + "\n", notes
     if class_name not in _KINDS:
         return None, [f"{class_name} is not a pattern this tool knows"]

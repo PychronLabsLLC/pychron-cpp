@@ -223,6 +223,10 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
     // stage: one that follows it (a recording does not).
     if (const laser::Pattern* pattern = e.pattern ? lab.patterns.find(*e.pattern) : nullptr;
         pattern != nullptr && pattern->follows_glow()) {
+      // It runs for the run's duration, or its own.
+      if (e.duration <= Duration::zero() && !(pattern->duration_s > 0)) {
+        say(row, "pattern " + pattern->name + " has no duration: the run gives none and the pattern has none of its own");
+      }
       const laser::CameraConfig* camera = lab.cameras.find(device);
       if (camera == nullptr || camera->source == laser::CameraSource::Recorded) {
         say(row, "pattern " + pattern->name + " follows the glow and " + device + " has no camera to see it (" +

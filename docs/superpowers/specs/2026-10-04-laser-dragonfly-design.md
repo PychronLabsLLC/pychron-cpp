@@ -154,3 +154,25 @@ Seek; power control from brightness; autofocus (2c-3); a live camera
   laser); `patterns` and `--dry-run` describe it.
 - On NMGRL's co2 patterns folder the export tool now writes 12 of 13 (both
   dragonflies); only seek is skipped.
+- From the final review:
+  - **Section 2's "its duration is the pattern's, as in legacy" was wrong
+    about legacy.** There, a dragonfly's `duration` is the dwell at each
+    point; it runs for the run's extraction duration, else its
+    `manual_total_duration`. Now: the script's `execute_pattern()` passes the
+    run's duration (`IPatternRunner::execute_pattern_for`), which wins; the
+    pattern's `duration` is optional and used when the run gives none; with
+    neither the queue is refused. The export tool maps
+    `manual_total_duration` to `duration`, carries `spiral_kind`,
+    `aggressiveness` and `move_threshold`, and reports the dwell as dropped.
+    On NMGRL's file: 25 s, perimeter 0.85 mm, square spiral.
+  - **The perimeter is also limited to the room the hole has** (45% of the
+    way to its nearest neighbour, from the hole the stage was last sent to),
+    because with no glow the search walks the firing beam outward.
+  - **`last_note()` says what the pattern could not do**: it never looked
+    (over before the stage settled), the glow was never seen, it was held
+    within the hole's room while searching, the camera was lost (said at once,
+    so a pattern stopped afterwards still reports it).
+  - **Settings that cannot see** (a look of under a pixel) are refused when
+    the pattern starts, not at the first look.
+  - The runner's own perimeter refusal was removed: the controller projects
+    every target onto the perimeter it is given, and no test could reach it.

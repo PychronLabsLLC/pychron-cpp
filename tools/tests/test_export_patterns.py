@@ -125,30 +125,37 @@ class ReadAndConvert(Scratch):
         self.assertFalse(self.out.exists() and any(self.out.iterdir()))
 
     def test_dragonfly_exports(self):
-        lp(self.src, "fly.lp", "DragonFlyPeakPattern", duration=45.0, base=0.4, perimeter_radius=2.0,
-           saturation_threshold=0.8, velocity=1.5, limit=10, pre_seek_delay=0.25, mask_kind="Beam",
-           niterations=3)
-        lp(self.src, "bare.lp", "DragonFlyPeakPattern")  # legacy's defaults, its 0.1 s duration included
+        # legacy: `duration` is the dwell at each point; how long it runs is the run's
+        # duration, else manual_total_duration
+        lp(self.src, "fly.lp", "DragonFlyPeakPattern", duration=0.1, manual_total_duration=45.0, base=0.4,
+           perimeter_radius=2.0, saturation_threshold=0.8, velocity=1.5, spiral_kind="Square", aggressiveness=2.0,
+           move_threshold=0.05, limit=10, pre_seek_delay=0.25, mask_kind="Beam", niterations=3)
+        lp(self.src, "bare.lp", "DragonFlyPeakPattern")  # all at legacy's defaults: no total of its own
         report = self.export()
         self.assertEqual(report.written, ["bare", "fly"], report.skipped)
         self.assertEqual(self.toml("fly"), {"kind": "dragonfly", "velocity": 1.5, "duration": 45.0,
                                             "perimeter_radius": 2.0, "saturation_threshold": 0.8,
-                                            "spiral_base": 0.4})
-        self.assertEqual(self.toml("bare"), {"kind": "dragonfly", "velocity": 1.0, "duration": 0.1,
-                                             "perimeter_radius": 2.5, "saturation_threshold": 0.75,
-                                             "spiral_base": 0.5})
+                                            "aggressiveness": 2.0, "move_threshold": 0.05, "spiral_base": 0.4,
+                                            "spiral": "square"})
+        # no duration key: it runs for the run's
+        self.assertEqual(self.toml("bare"), {"kind": "dragonfly", "velocity": 1.0, "perimeter_radius": 2.5,
+                                             "saturation_threshold": 0.75, "aggressiveness": 1.0,
+                                             "move_threshold": 0.033, "spiral_base": 0.5, "spiral": "hexagon"})
         notes = " ".join(report.notes["fly"])
-        for word in ("limit", "pre_seek_delay", "mask", "iterations"):
+        for word in ("limit", "pre_seek_delay", "mask", "iterations", "dwell"):
             self.assertIn(word, notes)
-        self.assertNotIn("iterations", self.toml("fly"))  # a dragonfly runs once, for its duration
+        self.assertIn("run's duration", " ".join(report.notes["bare"]))
+        self.assertNotIn("iterations", self.toml("fly"))  # a dragonfly runs once
 
     def test_a_dragonfly_the_reader_would_refuse_is_skipped(self):
-        lp(self.src, "never.lp", "DragonFlyPeakPattern", duration=0.0)
-        lp(self.src, "blind.lp", "DragonFlyPeakPattern", duration=10.0, saturation_threshold=1.5)
+        lp(self.src, "long.lp", "DragonFlyPeakPattern", manual_total_duration=99999.0)
+        lp(self.src, "blind.lp", "DragonFlyPeakPattern", saturation_threshold=1.5)
+        lp(self.src, "odd.lp", "DragonFlyPeakPattern", spiral_kind="Round")
         report = self.export()
         self.assertEqual(report.written, [])
-        self.assertIn("duration", report.skipped["never"])
+        self.assertIn("duration", report.skipped["long"])
         self.assertIn("saturation_threshold", report.skipped["blind"])
+        self.assertIn("spiral", report.skipped["odd"])
 
     def test_series_and_direction_are_reported(self):
         lp(self.src, "busy.lp", "LineSpiralPattern", radius=0.1, nsteps=2, percent_change=0.8, step_scalar=5,
@@ -282,7 +289,7 @@ class AgainstTheRealReader(Scratch):
         done = subprocess.run([os.environ["ELCTL"], "laser", "patterns", "--lab", str(lab)],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        lp(self.src, "fly.lp", "DragonFlyPeakPattern", duration=30.0)
+        lp(self.src, "fly.lp", "DragonFlyPeakPattern", manual_total_duration=30.0)
         self.export()
         (lab / "patterns").mkdir(exist_ok=True)
         (self.out / "fly.toml").rename(lab / "patterns" / "fly.toml")

@@ -98,7 +98,7 @@ class HostState {
   void set_axis(const std::string& axis, double value, bool block);
   void set_xy(double x, double y, bool block);
   void set_tray(const std::string& tray);
-  void execute_pattern(const std::string& pattern, bool block);
+  void execute_pattern(const std::string& pattern, bool block, double duration_s);
 
   void dump_sample();
   void drop_sample(const std::string& position);

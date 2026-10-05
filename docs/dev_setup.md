@@ -544,7 +544,7 @@ commented):
 
 ```toml
 kind = "dragonfly"
-duration = 30                 # s, required
+duration = 30                 # s: for a run that gives none of its own
 velocity = 1.0
 perimeter_radius = 2.5        # mm: never further from where it started
 saturation_threshold = 0.75   # a glow this bright: hold still
@@ -554,8 +554,14 @@ spiral = "hexagon"            # the search when the glow is lost
 spiral_base = 0.5
 ```
 
-The script fires the laser and then calls `execute_pattern()`; the pattern's
-own duration is how long it heats, so the script does not also sleep. A
+The script fires the laser and then calls `execute_pattern()`, which follows
+for the **run's** extraction `duration`, as legacy Pychron did (the pattern's
+own `duration` is used when the run has none; a queue with neither is not
+started). The script does not also sleep. With the beam on and no glow to
+follow, the search spirals outward: never beyond `perimeter_radius`, and
+never beyond the room the hole has before its neighbours (45% of the way to
+the nearest), whichever is less. What it could not do (it never saw the glow,
+it was held in, the camera was lost) goes into the run's log. A
 dragonfly needs the device to have a camera that follows the stage: a queue
 naming one on a device without is not started. If the camera fails part way,
 the stage returns to where the pattern began and, by the camera's
@@ -574,7 +580,9 @@ python3 tools/export_patterns.py /path/to/setupfiles/patterns /path/to/lab/patte
 ```
 
 It says what it could not carry over: arc and seek patterns, z and power
-series, a spiral's inward direction, a dragonfly's limit, delay and mask.
+series, a spiral's inward direction, a dragonfly's dwell, limit, delay and
+mask. A legacy dragonfly's total time (`manual_total_duration`) becomes its
+`duration`; one with none runs for the run's.
 
 Each segment is driven as a straight line at the pattern's velocity (the
 speed is shared between the x and y axes).

@@ -12,7 +12,7 @@ def main():
     extract()
     fire_laser()
     if pattern:
-        execute_pattern()
+        execute_pattern()   # a path, or a dragonfly following the glow for `duration`
     else:
         sleep(duration)
     end_extract()

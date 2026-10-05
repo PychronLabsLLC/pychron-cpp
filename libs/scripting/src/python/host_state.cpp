@@ -417,7 +417,7 @@ void HostState::set_tray(const std::string& tray) {
   unwrap(nogil([&] { return stage->set_tray(tray); }));
 }
 
-void HostState::execute_pattern(const std::string& pattern, bool block) {
+void HostState::execute_pattern(const std::string& pattern, bool block, double duration_s) {
   if (estimating()) return;
   guard();
   check_requested("execute_pattern");
@@ -431,7 +431,8 @@ void HostState::execute_pattern(const std::string& pattern, bool block) {
                              "while the script waits for them",
                              device().device_name())));
   }
-  unwrap(nogil([&] { return runner->execute_pattern(pattern); }));
+  // With the run's duration: a pattern that runs for a time runs for that.
+  unwrap(nogil([&] { return runner->execute_pattern_for(pattern, duration_s); }));
   if (block) {
     wait_while([&] { return runner->running(); }, "execute_pattern",
                [&] { (void)nogil([&] { return runner->stop_pattern(); }); });
