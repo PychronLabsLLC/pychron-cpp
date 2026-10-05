@@ -10,8 +10,21 @@
 # sim: the tray as a camera would see it from the simulated stage.
 # recorded: a folder of recorded frames (frames = "recordings/..."), for
 # looking at what the finder sees (`elctl laser look`); it does not follow
-# the stage. A live camera is not available yet.
+# the stage.
+# opencv: a real camera, or a video file (see [co2.opencv] below).
+# pylon: a Basler GigE or USB3 camera (see [co2.pylon]); read and checked
+# here, but its driver is not part of this build yet.
 source = "sim"
+# centre: the camera may centre holes and follow the glow. A live camera
+# does that only over a real laser, a simulated one only over a simulated
+# laser.
+# view: a picture only. Nothing it sees moves the stage, and queues run
+# uncentred. To try this computer's own camera in the laser window, set
+#   source = "opencv"
+#   use = "view"
+# (`elctl laser cameras` lists what there is; macOS asks once whether
+# Pychron may use the camera).
+use = "centre"
 px_per_mm = 23.0
 # which way the picture moves when the stage does: the usual camera shows
 # stage +x as image +x and stage +y as image up (flip_y)
@@ -19,6 +32,29 @@ flip_x = false
 flip_y = true
 aim_offset_px = [0, 0]    # the beam's place in the picture, from its centre
 settle_ms = 200           # after a move, before a frame is trusted
+
+# px_per_mm and the flips can be measured instead of typed, with a hole
+# under the aim point: `elctl laser camera-scale co2 <tray> <hole>`, or
+# Measure camera scale in the laser window. What is measured is kept in
+# camera_scales/co2.toml and used instead of the values here.
+
+[co2.opencv]
+device = 0                # a camera's index, or a video file's name
+# width = 1280            # asked of the camera; left out: its own
+# height = 720
+# fps = 30
+channel = "luma"          # luma | r | g | b
+rotate = 0                # 0 | 90 | 180 | 270, clockwise
+# roi = [0, 0, 640, 480]  # x, y, w, h: a part of the frame
+timeout_ms = 1000         # how long anything waits for a frame
+
+[co2.pylon]
+serial = ""               # empty: the first camera found
+exposure_us = 10000
+gain_db = 0
+pixel_format = "Mono8"
+packet_size = 1500        # GigE: 1500, or more with jumbo frames end to end
+timeout_ms = 1000
 
 [co2.sim]
 # how far the real tray is from where its calibration says: what autocenter

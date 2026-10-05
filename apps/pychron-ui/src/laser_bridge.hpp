@@ -66,7 +66,8 @@ class LaserBridge : public QObject {
   QStringList trays() const;
   const laser::TrayMap* tray_map(const QString& name) const;  // null: no such tray
   const laser::PatternLibrary& patterns() const { return deps_.lab.patterns; }
-  bool has_camera() const;
+  bool has_camera() const;   // a picture to look at
+  bool can_centre() const;   // a camera that may move the stage
 
   // Read from disk, as they are now; main thread.
   std::vector<laser::CalibrationPoint> calibration_points(const QString& tray) const;
@@ -94,6 +95,13 @@ class LaserBridge : public QObject {
   void add_calibration_point(const QString& hole);
   void remove_calibration_point(const QString& hole);
   void clear_calibration();
+  // Saves what the camera sees to the lab's snapshots (snapshotSaved says
+  // where). Looking needs no lease: it works while a queue drives.
+  void snapshot_to_file();
+  // Measures the camera's pixel scale by jogging the stage `step_mm` in x
+  // and in y from where it is (something the finder sees must be under the
+  // aim point), saves it for the device and uses it from then on.
+  void measure_scale(double step_mm);
   void emergency_stop();
   void reset_stop();  // refused while a queue still holds the lasers
 
@@ -108,6 +116,8 @@ class LaserBridge : public QObject {
   void commandFinished(const QString& what, const pychron::Result<void>& result);
   void driverChanged(bool watch_only);
   void calibrationChanged();
+  void snapshotSaved(const QString& file);
+  void scaleMeasured(const pychron::laser::ScaleMeasurement& measured);
 
  private:
   struct Gate;

@@ -281,6 +281,44 @@ class LaserBridgeTest : public QObject {
     QVERIFY(!heard_->ok("add_calibration_point"));
   }
 
+  void a_snapshot_is_a_picture_any_program_opens() {
+    QString saved;
+    QObject::connect(bridge_.get(), &LaserBridge::snapshotSaved, [&saved](const QString& file) { saved = file; });
+    bridge_->snapshot_to_file();
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("snapshot"), qPrintable(heard_->why("snapshot")));
+    QVERIFY(saved.startsWith(QString::fromStdString((lab_->dir / "snapshots" / "co2").string())));
+    // read by Qt's own decoder, not ours
+    const QImage picture(saved);
+    QVERIFY2(!picture.isNull(), qPrintable(saved));
+    QCOMPARE(picture.size(), QSize(200, 200));
+    QVERIFY(picture.isGrayscale());
+    // the simulated tray is light: the picture is not black
+    QVERIFY(qGray(picture.pixel(3, 3)) > 60);
+  }
+
+  void the_cameras_scale_is_measured_saved_and_used() {
+    bridge_->set_tray(QStringLiteral("example-9"));
+    bridge_->go_to(QStringLiteral("5"), false);
+    std::optional<laser::ScaleMeasurement> measured;
+    QObject::connect(bridge_.get(), &LaserBridge::scaleMeasured,
+                     [&measured](const laser::ScaleMeasurement& m) { measured = m; });
+    bridge_->measure_scale(0.25);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("measure_scale"), qPrintable(heard_->why("measure_scale")));
+    QVERIFY(measured.has_value());
+    QVERIFY(std::abs(measured->px_per_mm - 23.0) < 0.5);
+    QVERIFY(!measured->flip_x);
+    QVERIFY(measured->flip_y);
+    QVERIFY(std::filesystem::exists(lab_->dir / "camera_scales" / "co2.toml"));
+    QCOMPARE(lab_->x(), 25.0);  // put back on the hole
+    // nothing to see: said, and nothing saved over the good one
+    bridge_->jog(-20, -20, 0);
+    bridge_->measure_scale(0.25);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
+  }
+
   void publishes_snapshots_and_views() {
     QTRY_VERIFY(heard_->snapshots.size() >= 3);
     QTRY_VERIFY(heard_->views >= 3);

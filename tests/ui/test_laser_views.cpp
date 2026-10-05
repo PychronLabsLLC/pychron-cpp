@@ -185,6 +185,26 @@ class LaserViewsTest : public QObject {
     QVERIFY(!close(shot.pixelColor(20, 20), QColor(200, 200, 200)));  // greyed
   }
 
+  // A live camera that has stopped: its last picture, greyed, how old, and why.
+  void a_stopped_live_camera_shows_its_last_picture_and_why() {
+    CameraView view;
+    view.resize(400, 400);
+    laser::CameraView last = seen(true);
+    last.trouble = "cable out";
+    last.age_ms = 4200;
+    view.set_view(last);
+    QVERIFY(!view.image().isNull());
+    QVERIFY2(view.message().contains(QStringLiteral("cable out")), qPrintable(view.message()));
+    QVERIFY2(view.message().contains(QStringLiteral("4 s")), qPrintable(view.message()));
+    QVERIFY(!view.has_target());
+    const QImage shot = view.grab().toImage();
+    QVERIFY(!close(shot.pixelColor(20, 20), QColor(200, 200, 200)));  // greyed
+    // and it clears when frames flow again
+    view.set_view(seen(true));
+    QVERIFY(view.message().isEmpty());
+    QVERIFY(view.has_target());
+  }
+
   void camera_says_when_it_has_none() {
     CameraView view;
     view.resize(300, 300);

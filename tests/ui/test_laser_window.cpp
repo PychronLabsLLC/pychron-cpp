@@ -370,6 +370,29 @@ class LaserWindowTest : public QObject {
     QCOMPARE(lab_->x(), 10.0);
   }
 
+  void snapshot_and_measure_scale_buttons() {
+    btn("snapshot")->click();
+    settle();
+    QVERIFY2(text("status").contains(QStringLiteral("snapshots")), qPrintable(text("status")));
+    QVERIFY(std::filesystem::exists(lab_->dir / "snapshots" / "co2"));
+
+    choose_tray(QStringLiteral("example-9"));
+    the<QCheckBox>("centre_on_go")->setChecked(false);
+    TrayView* tray = window_->tray_view();
+    QTest::mouseClick(tray, Qt::LeftButton, {}, tray->hole_center(QStringLiteral("5")).toPoint());
+    settle();
+    btn("measure_scale")->click();
+    settle();
+    QTRY_VERIFY2(text("camera_scale").contains(QStringLiteral("px/mm")), qPrintable(text("camera_scale")));
+    QVERIFY2(text("camera_scale").contains(QStringLiteral("23.")), qPrintable(text("camera_scale")));
+    QVERIFY(std::filesystem::exists(lab_->dir / "camera_scales" / "co2.toml"));
+    // neither is offered while a queue drives
+    auto queue = lab_->lasers->drive(Lasers::Driver::Queue);
+    QVERIFY(queue.has_value());
+    QTRY_VERIFY(!btn("measure_scale")->isEnabled());
+    QVERIFY(btn("snapshot")->isEnabled());  // looking is always allowed
+  }
+
   void the_pattern_maker_button_is_offered_when_there_is_one() {
     QVERIFY(btn("pattern_maker")->isHidden());
     int opened = 0;

@@ -132,3 +132,27 @@ hardware: there is no real camera on a real stage here.
 
 Not in this part: the pylon driver, exposure and gain controls, video
 recording, colour, autofocus.
+
+## 10. As built
+
+- **Section 2.** `LiveFeed`'s opener is handed the clock to stamp frames
+  from, and the feed stops handing it out when it is destroyed: a read that
+  returns after the feed has gone touches nothing of the caller's. The
+  reader thread is detached only when it does not end within the timeout.
+- **Section 3.** `LaserSystem::attach_viewer` is how a camera for looking
+  comes in; `can_centre()` is what centring and the window ask. A simulated
+  camera marked `view` over a real laser is not shown (it would show a tray
+  that is not there): a note. A recorded camera is still never attached.
+- **A camera that is not there at start.** The feed is made and goes on
+  trying. For a `centre` camera that is a problem, and stays one until the
+  program is started again even if the camera appears: `Lasers`' problems
+  are fixed when it is built.
+- **Section 4.** `camera-scale` in elctl takes a tray and a hole and goes
+  there first. The measurement looks for targets of any size (the scale that
+  says how big a hole should look is what is being measured). The store's
+  file is the map (`m`, `residual_mm`) under a comment: only the map is read
+  back. A scale file that cannot be read is a problem for a `centre` camera.
+- **Section 7.** Frame age is shown only when the camera has stopped.
+- **Not proven here:** the built-in camera could not be opened by the
+  session that wrote this (macOS did not allow it); `RealCamera` is the test
+  to run by hand. No live camera has centred a hole on a real stage.

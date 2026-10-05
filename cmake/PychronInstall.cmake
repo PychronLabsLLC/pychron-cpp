@@ -71,7 +71,10 @@ if(TARGET pychron-ui)
       MACOSX_BUNDLE_GUI_IDENTIFIER com.pychronlabs.pychron
       MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
       MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-      MACOSX_BUNDLE_ICON_FILE pychron.icns)
+      MACOSX_BUNDLE_ICON_FILE pychron.icns
+      # CMake's own template plus NSCameraUsageDescription: without it macOS
+      # ends a program that opens a camera (a laser's live camera).
+      MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/packaging/macos/Info.plist.in")
     # The icon files are the application icon rendered by tools/make_icons.py.
     set(_pychron_icns "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.icns")
     # TARGET_DIRECTORY: source properties belong to a directory, and the target

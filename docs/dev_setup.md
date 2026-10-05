@@ -648,6 +648,70 @@ A device with no table in `cameras.toml` has no picture and no centring; the
 rest works. The camera is still the simulated one: a live camera is not
 available yet.
 
+### A live camera
+
+A laser's camera can be a real one. In the lab's `cameras.toml`:
+
+```toml
+[co2]
+source = "opencv"     # sim | recorded | opencv | pylon
+use = "view"          # centre | view
+
+[co2.opencv]
+device = 0            # `elctl laser cameras` lists what there is
+```
+
+- `opencv` is any camera OpenCV opens (this computer's own, a USB camera) or
+  a video file. It needs a build with OpenCV (`-DPYCHRON_VISION_OPENCV`).
+- `pylon` is a Basler GigE or USB3 camera. Its table (`serial`,
+  `exposure_us`, `gain_db`, `pixel_format`, `packet_size`) is read and
+  checked, but the driver is not written yet: opening one says "built
+  without pylon". It goes in `libs/vision` as one more backend
+  (`camera_backend.hpp`) when there is an SDK and a camera to prove it on.
+- `use = "centre"` (the default): the camera centres holes and follows the
+  glow. A live camera may do that only over a real laser; over a simulated
+  one it is a problem for the device and its queues are not started.
+- `use = "view"`: a picture only. Nothing it sees moves the stage; hole moves
+  go to their calibrated positions and queues run. This is how to try the
+  computer's own camera:
+
+```sh
+pychron-ui --examples --sim --laser    # after setting source and use as above
+```
+
+  macOS asks once whether Pychron may use the camera. From a terminal it is
+  the terminal that is asked (`elctl laser look co2`).
+
+A live camera is read on a thread of its own. If it stops, the laser window
+shows its last picture greyed, how old it is and why, and goes on trying to
+open it every second; nothing waits for a camera longer than its
+`timeout_ms`, an emergency stop least of all.
+
+**The pixel scale.** `px_per_mm`, `flip_x` and `flip_y` can be measured: put
+a hole under the aim point and
+
+```sh
+elctl -c line.toml laser camera-scale co2 221-hole 111
+```
+
+(or Measure camera scale in the laser window's Calibration tab). The stage
+is jogged a quarter millimetre in x and in y and the scale read off what the
+picture does. A measurement whose axes disagree by more than 3%, or are more
+than 3 degrees from square, is refused. It is kept in
+`camera_scales/co2.toml` and used instead of what `cameras.toml` says;
+`elctl laser camera-scale co2 clear` forgets it.
+
+**Snapshots.** `elctl laser snapshot co2 [name]`, the Snapshot button, and a
+script's `snapshot()` save what the camera sees to
+`snapshots/<device>/<name>.png` (the time, with no name), never over a
+picture that is there.
+
+To check a real camera through the same code the window uses:
+
+```sh
+PYCHRON_TEST_CAMERA=0 ctest --test-dir build/dev -R RealCamera
+```
+
 ## 6. Set up an install
 
 `elctl init` installs a setup profile (`profiles/`: `argus`, `helix`, `ngx`,

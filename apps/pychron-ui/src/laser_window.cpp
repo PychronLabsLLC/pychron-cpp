@@ -133,12 +133,15 @@ void LaserWindow::build() {
   centre_ = new QCheckBox(tr("Centre holes"), right);
   centre_->setObjectName(QStringLiteral("centre_on_go"));
   centre_->setToolTip(tr("A click on a hole goes there and then centres it by eye"));
-  centre_->setChecked(bridge_.has_camera());
-  centre_->setEnabled(bridge_.has_camera());
+  centre_->setChecked(bridge_.can_centre());
+  centre_->setEnabled(bridge_.can_centre());
   centring->addWidget(centre_);
   autocenter_ = button(tr("Autocenter"), "autocenter", right);
   autocenter_->setToolTip(tr("Centre the hole the stage was last sent to"));
   centring->addWidget(autocenter_);
+  snapshot_ = button(tr("Snapshot"), "snapshot", right);
+  snapshot_->setToolTip(tr("Save what the camera sees to the lab's snapshots"));
+  centring->addWidget(snapshot_);
   outcome_ = new QLabel(right);
   outcome_->setObjectName(QStringLiteral("autocenter_outcome"));
   outcome_->setWordWrap(true);
@@ -183,6 +186,8 @@ void LaserWindow::build() {
                    [this, hole] { bridge_.add_calibration_point(hole); });
     menu.exec(where);
   });
+  connect(snapshot_, &QPushButton::clicked, this, [this] { bridge_.snapshot_to_file(); });
+  connect(&bridge_, &LaserBridge::snapshotSaved, this, [this](const QString& file) { last_snapshot_ = file; });
   connect(autocenter_, &QPushButton::clicked, this, [this] {
     const QString hole = QString::fromStdString(bridge_.state().last_hole);
     if (!hole.isEmpty()) bridge_.go_to(hole, true);
@@ -303,6 +308,21 @@ QWidget* LaserWindow::build_calibration() {
   cal_solution_->setObjectName(QStringLiteral("cal_solution"));
   cal_solution_->setWordWrap(true);
   v->addWidget(cal_solution_);
+  auto* scale_row = new QHBoxLayout;
+  measure_scale_ = button(tr("Measure camera scale"), "measure_scale", page);
+  measure_scale_->setToolTip(tr("With a hole under the aim point: jog the stage a step in x and in y and read the "
+                                "camera's pixels per millimetre and flips off what the picture does"));
+  scale_row->addWidget(measure_scale_);
+  camera_scale_ = new QLabel(page);
+  camera_scale_->setObjectName(QStringLiteral("camera_scale"));
+  camera_scale_->setWordWrap(true);
+  scale_row->addWidget(camera_scale_, 1);
+  v->addLayout(scale_row);
+  connect(measure_scale_, &QPushButton::clicked, this, [this] { bridge_.measure_scale(0.25); });
+  connect(&bridge_, &LaserBridge::scaleMeasured, this, [this](const laser::ScaleMeasurement& m) {
+    camera_scale_->setText(tr("%1 px/mm · flip x %2 · flip y %3 · saved")
+                               .arg(mm(m.px_per_mm, 2), m.flip_x ? tr("yes") : tr("no"), m.flip_y ? tr("yes") : tr("no")));
+  });
   cal_cautions_ = new QLabel(page);
   cal_cautions_->setObjectName(QStringLiteral("cal_cautions"));
   cal_cautions_->setWordWrap(true);
@@ -519,8 +539,10 @@ void LaserWindow::refresh_enabled() {
   for (QPushButton* b : jogs_) b->setEnabled(can_drive && s.has_stage);
   step_->setEnabled(can_drive && s.has_stage);
   stop_stage_->setEnabled(!watching && s.has_stage);
-  centre_->setEnabled(can_drive && s.has_camera);
-  autocenter_->setEnabled(can_drive && s.has_camera && !s.last_hole.empty());
+  centre_->setEnabled(can_drive && bridge_.can_centre());
+  autocenter_->setEnabled(can_drive && bridge_.can_centre() && !s.last_hole.empty());
+  snapshot_->setEnabled(s.has_camera);  // looking is always allowed
+  measure_scale_->setEnabled(can_drive && s.has_camera && s.has_stage && !busy);
 
   enable_->setEnabled(can_drive);
   output_->setEnabled(can_drive);
@@ -551,7 +573,9 @@ void LaserWindow::on_finished(const QString& what, const Result<void>& result) {
   QString name = what;
   name.replace(QLatin1Char('_'), QLatin1Char(' '));
   if (result) {
-    status_->setText(tr("%1: done").arg(name));
+    // where the picture went is the news
+    status_->setText(what == QStringLiteral("snapshot") && !last_snapshot_.isEmpty() ? tr("snapshot: %1").arg(last_snapshot_)
+                                                                                    : tr("%1: done").arg(name));
     style::set_tone(status_, style::Tone::Muted);
   } else if (result.error().kind == ErrorKind::Cancelled) {
     status_->setText(tr("%1: stopped").arg(name));

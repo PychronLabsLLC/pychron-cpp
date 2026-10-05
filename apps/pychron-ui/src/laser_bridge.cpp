@@ -110,6 +110,8 @@ const laser::TrayMap* LaserBridge::tray_map(const QString& name) const {
 
 bool LaserBridge::has_camera() const { return system_.has_camera(); }
 
+bool LaserBridge::can_centre() const { return system_.can_centre(); }
+
 std::vector<laser::CalibrationPoint> LaserBridge::calibration_points(const QString& tray) const {
   auto stored = deps_.lab.calibrations->load(deps_.device, tray.toStdString());
   if (!stored || !*stored) return {};
@@ -360,6 +362,43 @@ void LaserBridge::remove_calibration_point(const QString& hole) {
 void LaserBridge::clear_calibration() {
   submit("clear_calibration", [this] {
     return change_calibration([](std::vector<laser::CalibrationPoint>& points, double, double) { points.clear(); });
+  });
+}
+
+void LaserBridge::snapshot_to_file() {
+  submit(
+      "snapshot",
+      [this]() -> Result<void> {
+        auto* imaging = system_.imaging();
+        if (imaging == nullptr) return fail(ErrorKind::Config, "no camera", deps_.device);
+        auto saved = imaging->snapshot({});
+        if (!saved) return fail(std::move(saved).error());
+        post([this, file = QString::fromStdString(*saved)] { emit snapshotSaved(file); });
+        return {};
+      },
+      false);
+}
+
+void LaserBridge::measure_scale(double step_mm) {
+  submit("measure_scale", [this, step_mm]() -> Result<void> {
+    const laser::CameraConfig* camera = deps_.lab.cameras.find(deps_.device);
+    const auto settle = std::chrono::duration_cast<std::chrono::milliseconds>(
+        camera != nullptr ? camera->settle : Duration(std::chrono::milliseconds(200)));
+    // The stage at rest, then the picture given time to settle (real time:
+    // the camera's, not a simulated clock's).
+    const auto arrive = [this, settle]() -> Result<void> {
+      if (auto at_rest = wait([this] { return system_.moving(); }, [this] { (void)system_.stop(); }); !at_rest) {
+        return at_rest;
+      }
+      const auto until = std::chrono::steady_clock::now() + settle;
+      return wait([until]() -> Result<bool> { return std::chrono::steady_clock::now() < until; }, [] {});
+    };
+    auto measured = laser::measure_camera_scale(system_, step_mm, arrive);
+    if (!measured) return fail(std::move(measured).error());
+    if (auto saved = deps_.lab.camera_scales->save(deps_.device, *measured); !saved) return saved;
+    system_.set_measured_scale(*measured);
+    post([this, m = *measured] { emit scaleMeasured(m); });
+    return {};
   });
 }
 

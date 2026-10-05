@@ -42,6 +42,12 @@ void CameraView::set_view(const laser::CameraView& seen) {
   if (seen.target) target_ = Target{QPointF(seen.target->center_px.x, seen.target->center_px.y), seen.target->radius_px};
   message_.clear();
   stale_ = false;
+  // A live camera that has stopped: this is its last picture, not now's.
+  if (!seen.trouble.empty()) {
+    target_.reset();
+    stale_ = true;
+    message_ = tr("%1\nlast picture %2 s ago").arg(QString::fromStdString(seen.trouble)).arg(seen.age_ms / 1000);
+  }
   update();
 }
 

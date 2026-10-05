@@ -64,6 +64,7 @@ class LaserWindow : public QMainWindow {
 
   LaserBridge& bridge_;
   bool simulation_;
+  QString last_snapshot_;
   QString shown_tray_;  // what the tray view and the calibration tab show
   std::function<void()> open_pattern_maker_;
 
@@ -82,6 +83,9 @@ class LaserWindow : public QMainWindow {
   QCheckBox* centre_ = nullptr;
   QPushButton* autocenter_ = nullptr;
   QLabel* outcome_ = nullptr;
+  QPushButton* snapshot_ = nullptr;
+  QPushButton* measure_scale_ = nullptr;
+  QLabel* camera_scale_ = nullptr;
   QPushButton* enable_ = nullptr;
   QDoubleSpinBox* output_ = nullptr;
   QPushButton* fire_ = nullptr;
