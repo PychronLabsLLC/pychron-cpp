@@ -47,10 +47,19 @@ enum class CalibrationState { Missing, Stale, Unsolvable, Ok };
 // "not calibrated", "stale", "unsolvable", "ok".
 std::string_view to_string(CalibrationState state) noexcept;
 
+// What names a calibration: lower-case hex SHA-256 of its points. Whatever
+// was found with one calibration (a hole's correction) is not used with
+// another.
+std::string fingerprint(std::span<const CalibrationPoint> points);
+
+// A name that can be one plain part of a file name (a device, a tray).
+bool safe_file_part(std::string_view name) noexcept;
+
 struct CalibrationStatus {
   CalibrationState state = CalibrationState::Missing;
   std::optional<Solution> solution;  // set exactly when state is Ok
   std::string why;                   // empty when Ok; otherwise names device and tray
+  std::string fingerprint;           // of the points; set exactly when state is Ok
 };
 
 class CalibrationStore {

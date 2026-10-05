@@ -2,11 +2,14 @@
 
 #include <cmath>
 #include <fstream>
+#include <locale>
 #include <numbers>
 #include <sstream>
 #include <system_error>
 
 #include <toml++/toml.hpp>
+
+#include "pychron/core/sha256.hpp"
 
 namespace pychron::laser {
 
@@ -16,14 +19,7 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kSchemaVersion = 1;
 
-// A name that is one plain part of a file name.
-bool safe(std::string_view name) {
-  if (name.empty() || name == "." || name == "..") return false;
-  for (char c : name) {
-    if (c == '/' || c == '\\' || c == '\0') return false;
-  }
-  return true;
-}
+bool safe(std::string_view name) { return safe_file_part(name); }
 
 Result<void> check_names(std::string_view device, std::string_view tray) {
   if (!safe(device)) {
@@ -40,6 +36,23 @@ std::string where(std::string_view device, std::string_view tray) {
 }
 
 }  // namespace
+
+bool safe_file_part(std::string_view name) noexcept {
+  if (name.empty() || name == "." || name == "..") return false;
+  for (char c : name) {
+    if (c == '/' || c == '\\' || c == '\0') return false;
+  }
+  return true;
+}
+
+std::string fingerprint(std::span<const CalibrationPoint> points) {
+  // Exact: the bits of each coordinate, not a rounded decimal.
+  std::ostringstream text;
+  text.imbue(std::locale::classic());
+  text << std::hexfloat;
+  for (const auto& p : points) text << p.hole.size() << ':' << p.hole << '\t' << p.x << '\t' << p.y << '\n';
+  return to_hex(sha256(std::string_view(text.str())));
+}
 
 std::string_view to_string(CalibrationState state) noexcept {
   switch (state) {
@@ -196,6 +209,7 @@ CalibrationStatus CalibrationStore::status(const TrayMap& map, std::string_view 
   }
   out.state = CalibrationState::Ok;
   out.solution = std::move(*solved);
+  out.fingerprint = fingerprint((*loaded)->points);
   return out;
 }
 
