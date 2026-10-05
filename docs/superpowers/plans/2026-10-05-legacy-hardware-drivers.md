@@ -8,17 +8,17 @@
 
 **Tech Stack:** C++20, GoogleTest, toml++, asio (UDP), the repo's `Transport` / `SimTransport` / `DriverRegistry` / `GaugeScanner` / `SwitchManager`.
 
-**Sources:** `docs/superpowers/specs/2026-09-30-legacy-config-survey.md` (appendix C: device catalogue, lab counts, shared endpoints), `2026-10-03-legacy-extraction-line-survey.md` (actuator table, importer), and the legacy Python source (`NMGRL/pychron`, `pychron/hardware/{actuators,agilent,arduino,gauges,ionpump,lakeshore}`), read 2026-10-05. Legacy file and line references below are into that tree. No lab file is copied into the repo; fixtures are synthetic.
+**Sources:** `docs/superpowers/specs/2026-09-30-legacy-config-survey.md` (appendix C: device catalogue, lab counts, shared endpoints), `2026-10-03-legacy-extraction-line-survey.md` (actuator table, importer), and the legacy Python source (`NMGRL/pychron`, `pychron/hardware/{actuators,agilent,arduino,gauges,ionpump,lakeshore}`), read 2026-10-05. AELAMS (not in the Drive survey) runs a PLC2000 for valves and gauges, per the owner. Legacy file and line references below are into that tree. No lab file is copied into the repo; fixtures are synthetic.
 
 ## What exists, what is missing
 
 | Area | Have | Missing (labs that need it, from survey C.2/C.6) |
 |---|---|---|
-| Valve actuators | `ngx_valves` (8 labs), `proxr_relay`, `sim_valves` | Agilent 34903A switch (5), Qtegra valves (3), NMGRL furnace firmware (3), Pychron-to-Pychron (1), Arduino (1), Agilent 34907A DIO readback (1), LabJack U3 (1) |
+| Valve actuators | `ngx_valves` (8 labs), `proxr_relay`, `sim_valves` | Agilent 34903A switch (5), Qtegra valves (3), NMGRL furnace firmware (3), AutomationDirect PLC2000 over Modbus (AELAMS), Pychron-to-Pychron (1), Arduino (1), Agilent 34907A DIO readback (1), LabJack U3 (1) |
 | Valve config | interlocks, settle, mandatory read-back | per-valve `inverted`, per-actuator `invert`, `state_source` (readback on another device), `verify = false` (legacy `query_state=false` / `check_actuation_enabled=false`) |
-| Gauges | `pfeiffer_maxigauge`, `gp_microion`, `GaugeScanner`, `ExtractionLine::read_gauge` | Varian/Agilent XGS-600 (ldeo), Qtegra gauge readback (ldeo, usgsdenver), MicroIon via furnace host (usgsdenver), MKS 937 (one 2019 lab), SRS IGC100, Gamma SPC ion pump; **no `IPressureService` implementation**, so `get_pressure` in a script is always "not supported" |
+| Gauges | `pfeiffer_maxigauge`, `gp_microion`, `GaugeScanner`, `ExtractionLine::read_gauge` | PLC2000 gauge registers (AELAMS), Varian/Agilent XGS-600 (ldeo), Qtegra gauge readback (ldeo, usgsdenver), MicroIon via furnace host (usgsdenver), MKS 937 (one 2019 lab), SRS IGC100, Gamma SPC ion pump; **no `IPressureService` implementation**, so `get_pressure` in a script is always "not supported" |
 | Cryo | `ICryo` as an *extraction-device* feature only; script verbs `set_cryo` / `get_cryo_temp`; run field `cryo_temp` | Any temperature-controller capability; Lakeshore 325/331/335/336 driver (ldeo, hal copy); a line-level cryo service (legacy reaches the cryostat through the extraction line, not the extract device); named setpoints (`cryotemps.yaml`) |
-| Transports | serial, tcp, sim, link | `udp` (ldeo and felix Qtegra); Qtegra link sharing (one socket for spectrometer + valves + gauges, survey C.5) |
+| Transports | serial, tcp, sim, link; Modbus TCP framing (`ReadSpec::modbus_tcp`, `codecs/modbus_adc`) used over a plain `tcp` transport | `udp` (ldeo and felix Qtegra); Qtegra link sharing (one socket for spectrometer + valves + gauges, survey C.5); `modbus_tcp` / `modbus_rtu` kinds still fail at build (`factory.cpp:61-63`); no coil or holding-register codec |
 
 ## Owner decisions needed before the marked tasks
 
@@ -28,6 +28,7 @@
 4. **Cryo blocking (Task C4).** Legacy `block` waits forever. Proposal: required `timeout_s` (default 600) and the run's `CancelToken`; timeout is an `Io` error that fails the script.
 5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
 6. **Gauge "off"/over-range readings (Tasks B1–B6).** Legacy maps them to sentinels (MKS `OFF` → 1000, `LO<E-11` → 1e-12, SPC failure → 0.0) or leaves a stale value. Proposal, per codec rule 4: every non-number is a `Protocol` error with a stable message (`"gauge off"`, `"under range"`, `"over range"`, `"no sensor"`), so `GaugeScanner` raises its one Warning alarm and the UI shows no number, never a wrong one. Under-range alone may instead decode as an upper bound if the owner wants a value shown.
+7. **AELAMS PLC2000 link and register map (Task 0.4, A7, B7).** Legacy supports both Modbus TCP (`modbustcp_communicator.py`, port 502) and RTU (`modbus_communicator.py`, serial). Which does AELAMS run, which unit id, and is the float word order the legacy default (byte order big, word order little: low word first)? Needed: AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, and `PLC2000Heater` if present). Proposal: TCP first; RTU only if AELAMS uses it.
 
 ## Global constraints
 
@@ -46,7 +47,9 @@
 Phase 0 (shared)      0.1 UDP ─┬─ 0.3 Qtegra link sharing ─┬─ A2 qtegra_valves
                                │                           └─ B2 qtegra_gauges
                       0.2 valve inversion / state_source / verify ─ A1 agilent_switch, A6 agilent_dio
-Phase A (actuators)   A1 → A2 → A3 → A4 → A5 → A6        (A3–A5 independent of each other)
+                      0.4 Modbus codec + transport kinds ─┬─ A7 plc2000_valves
+                                                          └─ B7 plc2000_gauges
+Phase A (actuators)   A1 → A2 → A3 → A4 → A5 → A6, A7     (A3–A7 independent of each other)
 Phase B (gauges)      B0 pressure service first; B1–B6 independent
 Phase C (cryo)        C1 → C2 → C3 → C4 → C5 → C6
 Phase D               importer + docs per kind as each lands; D2 hardware bring-up (manual)
@@ -93,6 +96,18 @@ Semantics (write them into the `switch_manager.hpp` header comment):
 - [ ] Follow `ngx_link.hpp` exactly (owner driver opens; borrowers use a `link` transport naming the owner; borrowers' `connect()` is a no-op).
 - [ ] An `ask` from a borrower is atomic with respect to acquisition polling (`GetData` and a valve `Open` never interleave on the wire). Test with a sim hook that records interleaving.
 - [ ] Spectrometer config may live in another file; same lookup rule as NGX.
+
+### Task 0.4: Modbus codec and transport kinds
+
+**Why:** AELAMS runs its valves and gauges on an AutomationDirect PLC (legacy `PLC2000GPActuator`, `PLC2000GaugeController`). The priorities doc already decided to hand-roll Modbus framing as a codec rather than use libmodbus; `codecs/modbus_adc` does it for function 04 only.
+
+**Files:** `libs/codecs/include/pychron/codecs/modbus.hpp`, `src/modbus.cpp` (new, generic), `codecs/modbus_adc.{hpp,cpp}` (rebuilt on it, public API unchanged), `libs/transport/src/factory.cpp`, `tests/codecs/test_modbus.cpp`, `tests/transport/test_factory.cpp`.
+
+- [ ] Generic codec, host and device side (the device side feeds sim hooks): read coils (01), read holding registers (03), read input registers (04), write single coil (05, `FF00`/`0000`), write multiple registers (16). MBAP framing for TCP; RTU framing with CRC-16/Modbus behind the same request/response types, so one driver serves both.
+- [ ] 32-bit float and int from a register pair with explicit byte and word order (`ABCD`, `CDAB`, `BADC`, `DCBA`). Legacy's default (byte order big, word order little) is `CDAB`; `modbus_adc` stays `ABCD`. Test vectors for all four.
+- [ ] Exception replies (`0x80 | fn`, code) are Protocol errors naming the code (`illegal data address` etc.); transaction-id and unit-id mismatches are Protocol.
+- [ ] `kind = "modbus_tcp"` builds a TCP transport (port default 502); `kind = "modbus_rtu"` builds a serial transport. Unit id is a driver option (`unit`, default 1), not a transport key, because several units share one RTU bus. The kinds exist so `elctl check` can tell a Modbus driver on a non-Modbus transport.
+- [ ] RTU waits on owner decision 7; TCP does not.
 
 ---
 
@@ -177,9 +192,22 @@ Legacy `agilent/agilent_multifunction.py`: its write path raises TypeError and i
 
 - [ ] Shares a codec file with A1 (`codecs/agilent.hpp`).
 
+### Task A7: `plc2000_valves` — AutomationDirect PLC over Modbus (AELAMS)
+
+Protocol (legacy `actuators/plc2000_gp_actuator.py`, `core/modbus.py`):
+
+- Valve address is a 1-based coil number; wire coil = address − 1.
+- Open: write single coil `ON`; close: `OFF` (no inversion in legacy; Task 0.2 `inverted` applies if a valve needs it).
+- State: read coils, 1 coil at address − 1; bit 0.
+- Legacy returned success without checking the write's echo and swallowed `ModbusIOException`; ours checks the function-05 echo (address and value must match) and the manager's read-back runs as for every valve.
+
+- [ ] Driver options `unit` (default 1), `coil_offset` (default −1, so the legacy address convention imports unchanged).
+- [ ] Batch state: `refresh()` reads the coil range covering all of the driver's valves in one request when they are contiguous (an `IValveActuator` extension `read_many`, optional, default per-valve). Legacy read one coil per valve.
+- [ ] Sim: a coil bank model behind the device-side codec; writes move the simulated line's valves.
+
 ### Not in this plan (actuators)
 
-LabJack U3/T4 (needs the LabJack USB library; hal only), PLC2000 (needs Modbus RTU/TCP framing, no surveyed lab), WiscAr cRIO (WiSCAr runs NGX), MCC, RPi GPIO, U2351A (all unused by surveyed labs or broken in legacy). The importer keeps `sim_valves` + its note for them.
+LabJack U3/T4 (needs the LabJack USB library; hal only), WiscAr cRIO (WiSCAr runs NGX), MCC, RPi GPIO, U2351A (all unused by surveyed labs or broken in legacy). The importer keeps `sim_valves` + its note for them.
 
 ---
 
@@ -246,9 +274,21 @@ Protocol (legacy `ionpump/spc_ion_pump_controller.py:67-73`):
 
 - [ ] TCP with read terminator `>` covers telnet as used (no option negotiation observed in the survey); add a test that a leading IAC sequence is skipped if it ever appears.
 
+### Task B7: `plc2000_gauges` — gauge values in PLC registers (AELAMS)
+
+Protocol (legacy `gauges/plc2000/plc2000_gauge_controller.py`, `core/modbus.py`):
+
+- Gauge `channel` *n* reads 2 holding registers (function 03) from register *n* − 1 and decodes a float32 in the configured word order (default `CDAB`, legacy's big/little).
+- The PLC reports whatever its ladder logic computed, in the gauge's configured units. A non-finite float is Protocol (legacy returned it).
+
+- [ ] Driver options `unit`, `word_order` (`ABCD|CDAB|BADC|DCBA`, default `CDAB`), `register_offset` (default −1).
+- [ ] One read covering every configured channel when the registers are contiguous; `IChannelPressureGauge` serves each channel from it.
+- [ ] Sim: holding-register model filled from `SimSystem` gauge readings.
+- [ ] Follow-up, not in this plan: legacy `PLC2000Heater` (`hardware/heater.py:101`) and `BakeoutPLC` use the same codec; list them in the importer report if AELAMS's files name them.
+
 ### Not in this plan (gauges)
 
-ADC-backed gauges (`ADCGaugeController`, U3 gauges: need an ADC sensor source; belongs with the survey's "sensor with `source = {driver, channel}` and a conversion" work), PLC2000 (Modbus), MKS670/SRG/TerraNova (dead in legacy). The existing `pfeiffer_maxigauge` and `gp_microion` already handle status fields legacy ignored; no change.
+ADC-backed gauges (`ADCGaugeController`, U3 gauges: need an ADC sensor source; belongs with the survey's "sensor with `source = {driver, channel}` and a conversion" work), MKS670/SRG/TerraNova (dead in legacy). The existing `pfeiffer_maxigauge` and `gp_microion` already handle status fields legacy ignored; no change.
 
 ---
 
@@ -333,9 +373,9 @@ Ar_freeze = [90.0, 120.0]
 
 ### Task D1: Importer coverage (runs with each driver task, collected here)
 
-- [ ] Actuators: `AgilentGPActuator` → `agilent_switch` (+ `invert`), `QtegraGPActuator` → `qtegra_valves` (link when the spectrometer importer made a `thermo_qtegra` on the same endpoint), `NMGRLFurnaceActuator`, `PychronGPActuator`, `ArduinoGPActuator`, `AgilentMultifunction` (as `state_source`).
+- [ ] Actuators: `AgilentGPActuator` → `agilent_switch` (+ `invert`), `PLC2000GPActuator` → `plc2000_valves` on a `modbus_tcp`/`modbus_rtu` transport (`[Communications] host/port/byteorder/wordorder` carried over), `QtegraGPActuator` → `qtegra_valves` (link when the spectrometer importer made a `thermo_qtegra` on the same endpoint), `NMGRLFurnaceActuator`, `PychronGPActuator`, `ArduinoGPActuator`, `AgilentMultifunction` (as `state_source`).
 - [ ] Valve keys now carried: `inverted_logic`/`inverted`, `state_device`/`state_address`, `query_state`/`check_actuation_enabled` → `verify`. Remove them from the "not carried over" report list.
-- [ ] Gauge controllers (today: drawn for illustration only): read `devices/<controller>.cfg` `[Gauges] names/channels/lows/highs` (comma lists, zipped; report length mismatches instead of truncating as legacy's `zip` did) into `[drivers.*]` + `[[gauges]]` with `alarm_low/high`. Canvas gauges then show readings.
+- [ ] Gauge controllers (today: drawn for illustration only), including `PLC2000GaugeController` → `plc2000_gauges`: read `devices/<controller>.cfg` `[Gauges] names/channels/lows/highs` (comma lists, zipped; report length mismatches instead of truncating as legacy's `zip` did) into `[drivers.*]` + `[[gauges]]` with `alarm_low/high`. Canvas gauges then show readings.
 - [ ] Cryostat: `Model335TemperatureController.cfg` → `[drivers.*] kind = "lakeshore"`, `[Range]` predicates → numeric bands (only the forms `v<a`, `a<v<b`, `v>a`; anything else reported, not guessed), `[IOConfig]` → `inputs`; `cryotemps.yaml` → `[cryo.setpoints]` (comma strings to arrays).
 - [ ] Each mapping has a synthetic-cfg importer test; the NMGRL example in `configs/examples/nmgrl/` is regenerated and its diff reviewed.
 
@@ -347,13 +387,14 @@ Ar_freeze = [90.0, 120.0]
 
 ### Task D3: Hardware bring-up (manual, per lab)
 
-- [ ] For each driver: run against the real instrument with `trace = true`, commit the trace (hosts and serials scrubbed) as a codec fixture, and fix any reply the codec rejected. Order by lab availability; ldeo (XGS-600, Lakeshore 335, Qtegra UDP, Agilent) covers the most in one visit.
+- [ ] For each driver: run against the real instrument with `trace = true`, commit the trace (hosts and serials scrubbed) as a codec fixture, and fix any reply the codec rejected. Order by lab availability; ldeo (XGS-600, Lakeshore 335, Qtegra UDP, Agilent) covers the most in one visit. AELAMS: confirm unit id, word order and coil numbering on the live PLC before the importer's defaults are trusted.
 
 ## Review focus
 
 1. **Inversion and read-back** (Task 0.2): with `inverted` and/or `state_source`, the recorded state is the valve's, and two interlocked valves are never recorded open together. Property test in `test_switch_manager`.
-2. **Shared Qtegra endpoint** (0.3, A2, B2): a valve command never interleaves with an acquisition `GetData` on the wire.
-3. **Gauge non-numbers** (B1–B6): no sentinel reaches `PressureSample`; every off/over-range reply becomes one Warning alarm.
-4. **Cryo blocking** (C4): cancel and timeout both end the wait promptly; nothing waits forever.
-5. **Range bands** (C3): every setpoint in the configured span selects exactly one band.
-6. **Importer honesty** (D1): every legacy key not carried over is still listed in the report; nothing is guessed.
+2. **Modbus word order** (0.4, B7): a float read with the wrong word order is a plausible-looking wrong pressure, not an error. Test vectors for all four orders; bring-up checks one known value.
+3. **Shared Qtegra endpoint** (0.3, A2, B2): a valve command never interleaves with an acquisition `GetData` on the wire.
+4. **Gauge non-numbers** (B1–B6): no sentinel reaches `PressureSample`; every off/over-range reply becomes one Warning alarm.
+5. **Cryo blocking** (C4): cancel and timeout both end the wait promptly; nothing waits forever.
+6. **Range bands** (C3): every setpoint in the configured span selects exactly one band.
+7. **Importer honesty** (D1): every legacy key not carried over is still listed in the report; nothing is guessed.
