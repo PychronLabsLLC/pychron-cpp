@@ -1,7 +1,7 @@
 # Laser system design, part 2c-1: autocenter and hole corrections
 
 Date: 2026-10-04
-Status: Design, approved in conversation; not implemented
+Status: Implemented (section 13 lists what was decided differently). Proven on the simulated camera only.
 Owner: Jake Ross
 Scope: sub-project 2 of the laser program, third part, first of its own three
 (2c-1 this spec; 2c-2 dragonfly; 2c-3 autofocus).
@@ -239,3 +239,30 @@ example's own is not committed).
 Dragonfly and seek (2c-2); the autofocus sweep (2c-3); screen capture and any
 live camera (sub-project 4); solving the camera-to-stage map from jogs; z;
 the laser window; recording autocenter outcomes in the analysis record.
+
+## 13. As built
+
+- **The simulated camera draws the tray's real holes**, each where it really
+  is, not `vision::HoleScene`'s square grid of neighbours: the first test run
+  had autocenter converge on an imagined grid hole.
+- **The guard cannot help beyond about half the hole spacing.** A tray that
+  far off puts a neighbour nearer to the calibrated position than the true
+  hole and inside the guard. That is a wrong calibration, not something a
+  camera looking at one hole can tell; documented.
+- **A converged position is checked against the guard**, as is every nudge
+  before it is sent, in addition to `vision::Autocenter`'s own path limit.
+- **Frames no newer than the last decision are waited out for five polls**
+  before the autocenter fails as `stale_frame`.
+- **`AutocenterOutcome::note`**: a converged centring whose correction could
+  not be written still counts; the note says so (and `elctl laser autocenter`
+  exits 1).
+- **A corrections file that cannot be understood is an error on load and on
+  put** (it is not written over); `LaserSystem` treats it as no corrections.
+- **`set_tray` abandons an autocenter in progress**, as a new move and
+  `stop()` do.
+- **A camera whose frames cannot be opened** is in `LabSession::problems()`
+  and the device runs without a camera.
+- **`elctl laser autocenter` prints the outcome**, not each step.
+- The state machine is a private part of `LaserSystem` (no separate files).
+- `make_frame_source` takes a `TraySightFn` (stage position and the
+  calibrated hole positions) rather than separate stage and tray callbacks.

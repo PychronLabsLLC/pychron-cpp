@@ -501,7 +501,10 @@ during implementation, where they add to or depart from the sections above:
 
 **Left for the laser-system sub-project**
 - One stale-frame rule for both controllers, on frame timestamps only.
+  (Autocenter's is in use: laser autocenter design, 2c-1. Dragonfly's waits
+  for 2c-2.)
 - An enum for Autocenter's reasons, separating rejections from failures.
+  (Done in 2c-1: `AutocenterReason`.)
 - One shared crop, find and offset helper for the two controllers.
 - Scale has two sources of truth: `px_per_mm` and `CameraStageMap`.
 - Dragonfly with its aim point outside the frame searches; Autocenter fails.

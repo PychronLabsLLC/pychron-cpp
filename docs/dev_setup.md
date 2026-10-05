@@ -399,6 +399,75 @@ elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/ex
 script cancelled while it waits for a move stops the stage too. A hole move
 does not change z.
 
+### Autocenter and hole corrections
+
+A calibration puts every hole within a fraction of a millimetre. With a
+camera, a hole move goes on to centre the hole under the beam: the stage
+arrives, waits `settle_ms`, the camera looks, the stage is nudged, and it
+looks again, until the hole is within `tolerance_mm` of the aim point. A
+script's `move_to_position()` asks for this by default
+(`move_to_position(autocenter=False)` does not).
+
+A device has a camera when the lab's `cameras.toml` has a table for it
+(`configs/examples/cameras.toml` is commented):
+
+```toml
+[co2]
+source = "sim"            # sim | recorded
+px_per_mm = 23.0
+flip_x = false
+flip_y = true             # which way the picture moves when the stage does
+aim_offset_px = [0, 0]
+settle_ms = 200
+
+[co2.autocenter]
+tolerance_mm = 0.03
+max_iterations = 4
+max_step_mm = 0.5
+frames_per_step = 3
+on_failure = "continue"   # or "fail"
+```
+
+**There is no live camera yet.** `sim` is the simulated tray (the example's
+is deliberately 0.15, -0.10 mm from its calibration, so `--sim` runs show
+autocenter correcting it); `recorded` replays a folder of frames, for looking
+at what the finder makes of real pictures. On a real Chromium nothing changes
+until the screen-capture source exists.
+
+What is found is kept per hole in `stage_corrections/<device>.<tray>.toml` and
+is where the next move to that hole starts; a move that asks for autocenter
+still checks, and updates it. Corrections are dropped when the tray map or the
+stage calibration changes.
+
+What it will not do:
+
+- **Find the neighbour.** A hole is never taken more than 45% of the way to
+  the nearest other hole (at most 1 mm) from its calibrated position; beyond
+  that it is a failure, and a saved correction further off than that is
+  ignored. A tray off by more than about half the hole spacing cannot be told
+  from one that is right: recalibrate.
+- **Guess.** When the hole is not seen, the camera fails, or the nudges make
+  things worse (a wrong `flip_x`/`flip_y` shows as this), the stage goes back
+  to where the centring started. With `on_failure = "continue"` (legacy
+  Pychron's behaviour) the run carries on there; with `"fail"` the move is an
+  error and the run stops before the laser fires.
+
+```bash
+elctl -c extraction_line.toml --sim laser autocenter co2 example-9 5
+```
+
+```bash
+elctl -c extraction_line.toml laser corrections co2 example-9
+```
+
+```bash
+elctl -c extraction_line.toml --sim laser look co2 --tray example-9
+```
+
+`autocenter` moves to a hole, centres it and saves the correction (exit 1 if
+it could not, whatever `on_failure` says); `corrections ... clear [<hole>]`
+forgets them; `look` says what the finder sees and moves nothing.
+
 ### Laser patterns
 
 A pattern is a path the beam is moved along while it heats. A run names one
@@ -470,9 +539,8 @@ which pauses the beam for about 0.15 s at every point, so a pattern of
 hundreds of points is slow and heats its vertices more. The speed is never
 above the driver's `move_speed`.
 
-Not done yet: autocenter and per-hole corrections, seek and dragonfly, the
-laser window, a pattern maker and on-screen calibration, watts and
-temperature.
+Not done yet: a live camera, seek and dragonfly, autofocus, the laser window,
+a pattern maker and on-screen calibration, watts and temperature.
 
 ## 6. Set up an install
 
