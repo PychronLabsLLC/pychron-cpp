@@ -219,3 +219,25 @@ before it starts.
   folder: 10 exported, the two dragonfly patterns and seek skipped.
 - The stage conformance suite gained "a move at a speed settles" and "stop
   stops or says it cannot".
+- From the final review:
+  - **A move at a speed is a straight line.** Chromium takes a speed per axis
+    and (as the simulator models it) runs the axes independently, so the
+    driver shares the speed between x and y in proportion to the distance
+    each has to go. Without that a slanted segment was a 45 degree leg and
+    then a straight one. Whether a real Chromium interpolates by itself is
+    not known; this is right either way if its speed fields are per axis.
+  - **`execute_pattern(block=False)` is refused** for a runner that only
+    advances while it is polled (`IPatternRunner::needs_polling()`): the beam
+    would sit on the first point. **The run stops any pattern at the end of
+    its extraction**, so a pattern never outlives its run.
+  - **A pattern is not started while the stage is moving** (no centre yet).
+  - **Everything that could not run is said when the file is read**: a raster
+    step so fine it would be more than 10 000 points, and a pattern of more
+    than 10 000 points over its iterations (key `iterations`), are load
+    errors, so the queue check refuses them before the laser fires.
+  - **A random walk draws y only as far as walk_x** (legacy's circle test
+    passes nothing further): the same walk, and a tall narrow box ends.
+  - **The export tool** accepts only plain numbers and booleans as values and
+    never prints anything else from a pickle (a small pickle could make it
+    hang or crash); one bad file no longer stops the rest; it applies the
+    reader's point limits.

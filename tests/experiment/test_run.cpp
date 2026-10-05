@@ -423,6 +423,22 @@ TEST_F(RunDeviceTest, TheScriptIsToldTheRunsPattern) {
   EXPECT_EQ(seen, "");  // no pattern: an empty name, so a script can test it
 }
 
+// A pattern never outlives the run that started it: whatever the script left
+// going is stopped before the laser is switched off, so the next run starts
+// from a device that is doing nothing.
+TEST_F(RunDeviceTest, TheRunStopsAPatternItsScriptLeftRunning) {
+  queue_.extract_device = "co2";
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    return env.line.device->pattern_runner()->execute_pattern("hexagon");  // and never waits for it
+  };
+  AutomatedRun run(unknown_run("12345"), queue_, by_name());
+  ASSERT_EQ(run.execute(control_).state, RunState::Success);
+  EXPECT_EQ(co2_.fake_patterns.stops.load(), 1);
+  EXPECT_FALSE(*co2_.fake_patterns.running());
+  EXPECT_FALSE(co2_.pattern_running_at_end.load());  // stopped first, then the laser off
+  EXPECT_EQ(diode_.fake_patterns.stops.load(), 0);
+}
+
 TEST_F(RunDeviceTest, AnUnknownNameLeavesTheRunWithoutADevice) {
   queue_.extract_device = "furnace";
   bool had_device = true;

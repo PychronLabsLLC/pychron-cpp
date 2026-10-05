@@ -298,6 +298,11 @@ void Run::note(std::string message) {
 
 void Run::end_extraction() {
   if (device_ == nullptr) return;
+  // A pattern never outlives the run that started it: the stage is stopped
+  // before the laser goes off, and the next run finds the device idle.
+  if (auto* patterns = device_->pattern_runner()) {
+    if (auto r = patterns->stop_pattern(); !r) note("stop_pattern: " + r.error().what);
+  }
   if (auto r = device_->end_extract(); !r) note("end_extract: " + r.error().what);
   if (auto r = device_->disable(); !r) note("disable: " + r.error().what);
 }

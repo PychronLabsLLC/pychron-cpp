@@ -43,14 +43,25 @@ Result<void> PatternRunner::execute_pattern(std::string_view pattern) {
                 "unknown pattern " + std::string(pattern) + " (there is: " + (known.empty() ? "none" : known) + ")",
                 device_);
   }
-  const std::uint64_t seed = found->seed ? *found->seed : (std::uint64_t{std::random_device{}()} << 32) | std::random_device{}();
+  // Only a random walk with no seed of its own needs one made up.
+  std::uint64_t seed = found->seed.value_or(0);
+  if (found->kind == PatternKind::Random && !found->seed) {
+    std::random_device entropy;
+    seed = (std::uint64_t{entropy()} << 32) | entropy();
+  }
   auto offsets = pattern_path(*found, seed);
   if (!offsets) {
     Error e = std::move(offsets).error();
     e.device = device_;
     return fail(std::move(e));
   }
-  // The centre is where the stage is now.
+  // The centre is where the stage is now: it has to have stopped.
+  auto moving = stage_.moving();
+  if (!moving) return fail(std::move(moving).error());
+  if (*moving) {
+    return fail(ErrorKind::Config, "the stage is still moving; pattern " + found->name + " starts from where it stops",
+                device_);
+  }
   auto centre = stage_.position();
   if (!centre) return fail(std::move(centre).error());
   {
@@ -71,6 +82,7 @@ Result<void> PatternRunner::send_next() {
   std::string where;
   {
     std::lock_guard lock(mutex_);
+    if (!active_ || next_ >= path_.size()) return {};  // stopped meanwhile
     to = path_[next_];
     velocity = velocity_;
     ++next_;

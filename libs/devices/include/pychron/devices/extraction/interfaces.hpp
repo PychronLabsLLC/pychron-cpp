@@ -97,6 +97,10 @@ struct IPatternRunner {
   virtual Result<bool> running() = 0;
   virtual Result<void> stop_pattern() = 0;
   virtual std::vector<std::string> patterns() const = 0;
+  // True for a runner that advances only when running() is asked: a pattern
+  // nobody waits for would stay on its first point. False for a device that
+  // runs its patterns itself.
+  virtual bool needs_polling() const { return false; }
 };
 
 struct IPipetteService {

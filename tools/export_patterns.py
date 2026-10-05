@@ -39,7 +39,10 @@ class _Inert:
         if isinstance(state, tuple) and len(state) == 2 and isinstance(state[1], dict):
             state = {**(state[0] or {}), **state[1]}  # (dict state, slots state)
         if isinstance(state, dict):
-            self.__dict__.update({_text(k): v for k, v in state.items()})
+            for key, value in state.items():
+                key = _text(key)
+                if type(key) is str:  # anything else is not an attribute name
+                    self.__dict__[key] = value
 
     def __call__(self, *args, **kwargs):
         return _Inert()
@@ -159,25 +162,62 @@ _NOT_EXPORTED = {
 }
 
 
+MAX_POINTS = 10000  # as the reader's kMaxPatternPoints
+
+
+def _number(key, attribute, value):
+    """`value` as a float. Only a plain number is one: nothing else is converted or printed
+    (a pickle can hold a value whose text is astronomically long)."""
+    if type(value) not in (int, float) or (type(value) is int and abs(value) > 10 ** 12):
+        raise ValueError(f"{key} ({attribute}) is not a number a pattern can have (a {type(value).__name__})")
+    return float(value)
+
+
 def _value(key, spec, state):
     """The value for `key`, as TOML text; raises ValueError if the reader would refuse it."""
     attribute, default, low, high, low_allowed = spec
     value = state.get(attribute, default)
     if isinstance(default, bool):
-        if not isinstance(value, (bool, int)):
-            raise ValueError(f"{key} ({attribute} = {value!r}) is not true or false")
+        if type(value) not in (bool, int):
+            raise ValueError(f"{key} ({attribute}) is not true or false (a {type(value).__name__})")
         return "true" if value else "false"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} ({attribute} = {value!r}) is not a number") from None
+    number = _number(key, attribute, value)
     if not math.isfinite(number) or number < low or number > high or (number == low and not low_allowed):
-        raise ValueError(f"{key} ({attribute} = {value!r}) is outside what a pattern allows")
+        raise ValueError(f"{key} ({attribute} = {number!r}) is outside what a pattern allows")
     if isinstance(default, int):
         if number != int(number):
-            raise ValueError(f"{key} ({attribute} = {value!r}) is not a whole number")
+            raise ValueError(f"{key} ({attribute} = {number!r}) is not a whole number")
         return str(int(number))
     return repr(number)
+
+
+def _points(kind, values):
+    """How many points one pass of the pattern has (as the reader counts them)."""
+    if kind == "polygon":
+        return values["nsides"] + 1
+    if kind == "linear":
+        return 2 * values["npasses"]
+    if kind == "circular_contour":
+        return 37 * values["nsteps"]
+    if kind == "square_spiral":
+        return 4 * values["nsteps"] + 1
+    if kind == "line_spiral":
+        turns = values["nsteps"]
+        count = sum(max(2 * t + values["step_scalar"], 0) - (0 if t == turns - 1 else 1)
+                    for t in range(turns) if 2 * t + values["step_scalar"] > 1)
+        return max(count, 1)
+    if kind == "random":
+        return values["npoints"]
+    if kind == "raster":
+        box = values["length"] + 2 * values["offset"]
+        if values["dx"] > box:
+            raise ValueError("dx is wider than the box it rasters")
+        steps = math.floor(box / values["dx"] + 1e-9)
+        if steps > 4 * MAX_POINTS:
+            raise ValueError("dx is so fine the raster has too many points")
+        steps += steps % 2
+        return (steps + 2) if values["single_pass"] else 2 * (steps + 2) + 1
+    return 5  # rubberband, trough
 
 
 def to_toml(class_name, state):
@@ -189,13 +229,17 @@ def to_toml(class_name, state):
     kind, keys = _KINDS[class_name]
     lines = [f'kind = "{kind}"']
     try:
+        values = {}
         for key, spec in {**_COMMON, **keys}.items():
-            lines.append(f"{key} = {_value(key, spec, state)}")
-        if kind == "raster":
-            dx = float(state.get("dx", 0.5))
-            box = float(state.get("nominal_length", 15.0)) + 2 * float(state.get("offset", 0.0))
-            if dx > box:
-                raise ValueError("dx is wider than the box it rasters")
+            text = _value(key, spec, state)
+            lines.append(f"{key} = {text}")
+            if text in ("true", "false"):
+                values[key] = text == "true"
+            else:
+                values[key] = int(text) if isinstance(spec[1], int) else float(text)
+        points = int(_points(kind, values) * values["iterations"]) + 1
+        if points > MAX_POINTS:
+            raise ValueError(f"it has {points} points over its iterations; a pattern may have {MAX_POINTS}")
     except ValueError as error:
         return None, [str(error)]
     notes = []
@@ -229,10 +273,13 @@ def export(source, out, force=False):
         name = path.stem
         try:
             class_name, state = read_lp(path)
+            text, notes = to_toml(class_name, state)
         except ValueError as error:
             report.skipped[name] = str(error)
             continue
-        text, notes = to_toml(class_name, state)
+        except Exception as error:  # whatever a file holds, the next one is still exported
+            report.skipped[name] = f"cannot be exported ({type(error).__name__})"
+            continue
         if text is None:
             report.skipped[name] = "; ".join(notes)
             continue

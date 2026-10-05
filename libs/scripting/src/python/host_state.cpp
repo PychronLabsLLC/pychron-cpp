@@ -410,6 +410,14 @@ void HostState::execute_pattern(const std::string& pattern, bool block) {
   check_requested("execute_pattern");
   auto* runner =
       feature(*this, &extraction::IExtractionDevice::pattern_runner, Capability::Pattern);
+  if (!block && runner->needs_polling()) {
+    // This device's patterns advance only while the script waits for them:
+    // unwaited, the beam would sit on the first point for the whole heating.
+    unwrap(Result<void>(fail(ErrorKind::Config,
+                             "execute_pattern(block=False) cannot be used with this device: its patterns run only "
+                             "while the script waits for them",
+                             device().device_name())));
+  }
   unwrap(nogil([&] { return runner->execute_pattern(pattern); }));
   if (block)
     wait_while([&] { return runner->running(); }, "execute_pattern",

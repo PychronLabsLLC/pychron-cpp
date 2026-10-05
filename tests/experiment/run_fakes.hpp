@@ -121,6 +121,26 @@ class FakeStage final : public extraction::IStage {
   std::vector<std::string> trays_;
 };
 
+// A pattern runner that only records: started by a script, it runs until stopped.
+class FakePatterns final : public extraction::IPatternRunner {
+ public:
+  Result<void> execute_pattern(std::string_view) override {
+    running_ = true;
+    return {};
+  }
+  Result<bool> running() override { return running_.load(); }
+  Result<void> stop_pattern() override {
+    running_ = false;
+    ++stops;
+    return {};
+  }
+  std::vector<std::string> patterns() const override { return {"hexagon"}; }
+  std::atomic<int> stops{0};
+
+ private:
+  std::atomic<bool> running_{false};
+};
+
 class FakeDevice final : public extraction::IExtractionDevice {
  public:
   FakeDevice() = default;
@@ -128,6 +148,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
 
   const std::string& device_name() const override { return name_; }
   extraction::IStage* stage() override { return has_stage ? &fake_stage : nullptr; }
+  extraction::IPatternRunner* pattern_runner() override { return has_stage ? &fake_patterns : nullptr; }
   Result<void> enable() override {
     enabled = true;
     return {};
@@ -144,6 +165,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
     return {};
   }
   Result<void> end_extract() override {
+    if (end_extracts == 0) pattern_running_at_end = fake_patterns.running().value_or(false);
     output_ = 0;
     ++end_extracts;
     return {};
@@ -155,6 +177,9 @@ class FakeDevice final : public extraction::IExtractionDevice {
   std::atomic<int> disables{0}, end_extracts{0}, extracts{0};
   bool has_stage = false;
   FakeStage fake_stage;
+  FakePatterns fake_patterns;
+  // What the device was doing when the extraction was ended.
+  std::atomic<bool> pattern_running_at_end{false};
 
  private:
   std::string name_ = "fake_laser";

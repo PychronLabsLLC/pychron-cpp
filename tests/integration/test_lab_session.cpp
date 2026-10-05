@@ -197,25 +197,22 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
 
   // The second run names the hexagon pattern (radius 1 mm, 1 mm/s): with the
   // beam on, the stage goes round it about hole 7 and comes back.
+  // Each side at 1 mm/s along it: the slanted ones share that between x and y.
   const std::vector<std::string> hexagon{
-      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20500,20866,0,1000,1000,100",
-      "Stage.MoveTo 19500,20866,0,1000,1000,100", "Stage.MoveTo 19000,20000,0,1000,1000,100",
-      "Stage.MoveTo 19500,19134,0,1000,1000,100", "Stage.MoveTo 20500,19134,0,1000,1000,100",
-      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20000,20000,0,1000,1000,100"};
-  std::vector<std::string> slow;  // the moves at the pattern's speed, in order
-  std::size_t first_slow = 0, last_slow = 0, fires = 0, second_fire = 0, last_laser_stop = 0;
-  for (std::size_t i = 0; i < log.size(); ++i) {
-    if (log[i].starts_with("Stage.MoveTo ") && log[i].ends_with(",1000,1000,100")) {
-      if (slow.empty()) first_slow = i;
-      last_slow = i;
-      slow.push_back(log[i]);
-    }
-    if (log[i] == "Laser.Fire" && ++fires == 2) second_fire = i;
-    if (log[i] == "Laser.Stop") last_laser_stop = i;
+      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20500,20866,0,500,866,100",
+      "Stage.MoveTo 19500,20866,0,1000,1000,100", "Stage.MoveTo 19000,20000,0,500,866,100",
+      "Stage.MoveTo 19500,19134,0,500,866,100",   "Stage.MoveTo 20500,19134,0,1000,1000,100",
+      "Stage.MoveTo 21000,20000,0,500,866,100",   "Stage.MoveTo 20000,20000,0,1000,1000,100"};
+  // The stage moves made while the second run's beam was on.
+  std::vector<std::string> beam_on;
+  std::size_t fires = 0;
+  bool firing = false;
+  for (const auto& line : log) {
+    if (line == "Laser.Fire") firing = ++fires == 2;
+    else if (line == "Laser.Stop") firing = false;
+    else if (firing && line.starts_with("Stage.MoveTo ")) beam_on.push_back(line);
   }
-  EXPECT_EQ(slow, hexagon);
-  EXPECT_LT(second_fire, first_slow);      // the beam is on before the pattern starts
-  EXPECT_GT(last_laser_stop, last_slow);   // and goes off after it
+  EXPECT_EQ(beam_on, hexagon) << ::testing::PrintToString(log);
   EXPECT_EQ(sim.position().x, 20000);
   EXPECT_EQ(sim.position().y, 20000);
   EXPECT_FALSE(sim.firing());

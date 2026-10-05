@@ -35,14 +35,16 @@ class PatternRunner final : public extraction::IPatternRunner {
   // `stage` and `patterns` must outlive the runner. `device` is named in errors.
   PatternRunner(std::string device, extraction::IStage& stage, const PatternLibrary& patterns);
 
-  // Config error for a pattern the library lacks or could not load, or while
-  // another is running. Nothing is sent unless the stage's position was read.
+  // Config error for a pattern the library lacks or could not load, while
+  // another is running, or while the stage is still moving (there is no
+  // centre yet). Nothing is sent unless the stage's position was read.
   Result<void> execute_pattern(std::string_view pattern) override;
   Result<bool> running() override;
   // Drops what is left and stops the stage where it is. A stage that cannot
   // stop finishes its current move; that is not an error.
   Result<void> stop_pattern() override;
   std::vector<std::string> patterns() const override;
+  bool needs_polling() const override { return true; }
 
   // "<name>, point <i> of <n>" while one runs; empty when idle.
   std::string progress() const;

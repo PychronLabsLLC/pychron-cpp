@@ -223,6 +223,43 @@ TEST(PatternPoints, EveryKindsDefaultsGiveFinitePoints) {
   }
 }
 
+// A walk much taller than it is wide: legacy's test keeps only points within
+// walk_x of the centre, which a draw over the whole box would almost never hit.
+TEST(PatternPoints, ANarrowRandomWalkTerminates) {
+  Pattern p = of(PatternKind::Random);
+  p.npoints = 50;
+  p.walk_x = 1e-6;
+  p.walk_y = 100;
+  const auto points = pattern_points(p, 3);
+  ASSERT_EQ(points.size(), 50u);
+  for (const auto& q : points) EXPECT_LE(std::hypot(q.x, q.y), 1e-6 + 1e-18);
+  p.walk_x = 100;
+  p.walk_y = 1e-6;
+  const auto flat = pattern_points(p, 3);
+  ASSERT_EQ(flat.size(), 50u);
+  for (const auto& q : flat) EXPECT_LE(std::abs(q.y), 1e-6);
+}
+
+// The count is known without making the points, so a file can be refused for
+// it when it is read.
+TEST(PatternPoints, TheCountIsKnownWithoutMakingThem) {
+  for (auto kind : kKinds) {
+    for (int variant = 0; variant < 4; ++variant) {
+      Pattern p = of(kind);
+      p.nsides = 3 + 5 * variant;
+      p.npasses = 1 + variant;
+      p.nsteps = 1 + 2 * variant;
+      p.step_scalar = 1 + 4 * variant;
+      p.npoints = 1 + 7 * variant;
+      p.length = 3 + variant;
+      p.offset = 0.25 * variant;
+      p.dx = 0.1 + 0.35 * variant;
+      p.single_pass = variant % 2 == 0;
+      EXPECT_EQ(pattern_point_count(p), pattern_points(p, 1).size()) << to_string(kind) << " variant " << variant;
+    }
+  }
+}
+
 TEST(PatternPath, RepeatsAndReturnsToTheCentre) {
   Pattern p = of(PatternKind::Polygon);
   p.nsides = 4;
@@ -352,6 +389,11 @@ INSTANTIATE_TEST_SUITE_P(
                       BadFile{"kind = \"polygon\"\niterations = 201\n", "iterations"},
                       BadFile{"kind = \"raster\"\ndx = 0\n", "dx"},
                       BadFile{"kind = \"raster\"\nlength = 2\noffset = 0\ndx = 3\n", "dx"},  // wider than its box
+                      // a step so fine the raster would be millions of points
+                      BadFile{"kind = \"raster\"\nlength = 15\ndx = 0.00000002\n", "dx"},
+                      BadFile{"kind = \"raster\"\nlength = 15\ndx = 1e-300\n", "dx"},
+                      // every key in range, 11 100 points in all: said when the file is read
+                      BadFile{"kind = \"circular_contour\"\nnsteps = 10\niterations = 30\n", "iterations"},
                       BadFile{"kind = \"random\"\nnpoints = 0\n", "npoints"},
                       BadFile{"kind = \"random\"\nseed = -1\n", "seed"},
                       BadFile{"kind = \"linear\"\nnpasses = 0\n", "npasses"},

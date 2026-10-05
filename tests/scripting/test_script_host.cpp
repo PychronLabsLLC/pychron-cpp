@@ -397,6 +397,23 @@ TEST_F(ScriptHostTest, AMoveThatArrivesIsNotStopped) {
   EXPECT_FALSE(rig.log.contains("stop"));
 }
 
+// A runner that only advances while it is polled cannot run a pattern the
+// script will not wait for: the beam would sit on its first point. Refused,
+// and nothing is started.
+TEST_F(ScriptHostTest, AnUnwaitedPatternIsRefusedWhereItCannotRunItself) {
+  rig.laser.pattern_needs_polling = true;
+  auto r = host->run(inline_script("def main():\n    execute_pattern('spiral', block=False)\n"), rig.env, token);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("block=False"), std::string::npos) << r.error().what;
+  EXPECT_FALSE(rig.log.contains("execute_pattern spiral"));
+
+  // a device that runs its patterns itself may be left to it
+  rig.laser.pattern_needs_polling = false;
+  auto ok = host->run(inline_script("def main():\n    execute_pattern('spiral', block=False)\n"), rig.env, token);
+  ASSERT_TRUE(ok) << ok.error().what;
+  EXPECT_TRUE(rig.log.contains("execute_pattern spiral"));
+}
+
 TEST_F(ScriptHostTest, CancelStopsARunningPattern) {
   rig.laser.pattern_finishes = false;
   std::thread canceller([&] {

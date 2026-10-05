@@ -408,6 +408,41 @@ TEST_F(ChromiumTest, AMoveAtASpeedSendsItForXAndY) {
   EXPECT_EQ(sim.position().x, 10000);
 }
 
+// A move at a speed is a straight line at that speed: Chromium takes a speed
+// for each axis and runs them independently, so the speed is shared between
+// x and y in proportion to how far each has to go.
+TEST_F(ChromiumTest, ADiagonalMoveAtASpeedIsAStraightLine) {
+  ASSERT_TRUE(laser.set_xy(4, 3, 1.0));  // 5 mm at 1 mm/s
+  EXPECT_TRUE(logged("Stage.MoveTo 4000,3000,0,800,600,100"));
+  clock.advance(2500ms);
+  EXPECT_NEAR(static_cast<double>(sim.position().x), 2000, 2);  // half way, on the line
+  EXPECT_NEAR(static_cast<double>(sim.position().y), 1500, 2);
+  clock.advance(2400ms);
+  EXPECT_LT(sim.position().x, 4000);  // not early
+  clock.advance(200ms);
+  settle();
+  EXPECT_EQ(sim.position().x, 4000);
+  EXPECT_EQ(sim.position().y, 3000);
+  // back along another slope, from where it now is
+  ASSERT_TRUE(laser.set_xy(-1, -9, 2.6));  // 13 mm: 5 across, 12 down
+  EXPECT_TRUE(logged("Stage.MoveTo -1000,-9000,0,1000,2400,100"));
+}
+
+// A side that is level but for the last bit of a double is level: the axis
+// that goes nowhere must not be given a crawl it would then be waited on.
+TEST_F(ChromiumTest, AnAxisThatDoesNotMoveByAMicronKeepsTheWholeSpeed) {
+  ASSERT_TRUE(laser.set_xy(2, 1.0000000001, 1.0));
+  settle();
+  ASSERT_TRUE(laser.set_xy(5, 1.0, 1.0));
+  EXPECT_TRUE(logged("Stage.MoveTo 5000,1000,0,1000,1000,100"));
+}
+
+// An axis that barely moves still gets a speed of at least 1.
+TEST_F(ChromiumTest, ANearlyStraightMoveNeverSendsAZeroSpeed) {
+  ASSERT_TRUE(laser.set_xy(10, 0.001, 0.5));
+  EXPECT_TRUE(logged("Stage.MoveTo 10000,1,0,500,1,100"));
+}
+
 TEST_F(ChromiumTest, WithNoSpeedTheStagesOwnIsUsed) {
   ASSERT_TRUE(laser.set_xy(1, 1));
   EXPECT_TRUE(logged("Stage.MoveTo 1000,1000,0,5000,5000,100"));

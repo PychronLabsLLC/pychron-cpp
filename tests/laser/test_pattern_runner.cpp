@@ -52,10 +52,11 @@ TEST_F(PatternRunnerTest, VisitsThePointsInOrderAtThePatternsSpeed) {
   finish();
   auto made = moves();
   made.erase(made.begin(), made.begin() + static_cast<std::ptrdiff_t>(before));
-  // radius 1 about (10, 20), closed, then the centre; 2 mm/s in x and y
-  EXPECT_EQ(made, (std::vector<std::string>{"11000,20000,0,2000,2000,100", "10000,21000,0,2000,2000,100",
-                                            "9000,20000,0,2000,2000,100", "10000,19000,0,2000,2000,100",
-                                            "11000,20000,0,2000,2000,100", "10000,20000,0,2000,2000,100"}));
+  // radius 1 about (10, 20), closed, then the centre; 2 mm/s along each
+  // segment (the diagonals share it between x and y: 1414 each)
+  EXPECT_EQ(made, (std::vector<std::string>{"11000,20000,0,2000,2000,100", "10000,21000,0,1414,1414,100",
+                                            "9000,20000,0,1414,1414,100", "10000,19000,0,1414,1414,100",
+                                            "11000,20000,0,1414,1414,100", "10000,20000,0,2000,2000,100"}));
   EXPECT_FALSE(*runner().running());
   EXPECT_EQ(sim.position().x, 10000);
   EXPECT_EQ(sim.position().y, 20000);
@@ -127,6 +128,7 @@ TEST_F(PatternRunnerTest, APointOutsideTravelEndsThePattern) {
 TEST_F(PatternRunnerTest, ALaterPointOutsideTravelEndsItThere) {
   // about (0, 49.5): the first vertex (1, 49.5) is inside, the second (0, 50.5) is not
   park(0, 49.5);
+  const auto sent_before = moves().size();
   ASSERT_TRUE(runner().execute_pattern("square"));  // (1, 49.5) is inside
   Result<bool> busy = true;
   for (int i = 0; i < 400 && busy && *busy; ++i) {
@@ -136,7 +138,7 @@ TEST_F(PatternRunnerTest, ALaterPointOutsideTravelEndsItThere) {
   ASSERT_FALSE(busy);  // (0, 50.5) is outside
   EXPECT_EQ(busy.error().kind, ErrorKind::Config);
   EXPECT_NE(busy.error().what.find("pattern square, point 2 of 6"), std::string::npos) << busy.error().what;
-  for (const auto& move : moves()) EXPECT_EQ(move.find(",50500,"), std::string::npos) << move;
+  EXPECT_EQ(moves().size(), sent_before + 1);  // the first vertex, and nothing after the refusal
   EXPECT_FALSE(*runner().running());  // ended: the error is said once
   EXPECT_FALSE(*system.moving());
 }
@@ -173,6 +175,24 @@ TEST_F(PatternRunnerTest, ASecondPatternWhileRunningIsRefused) {
   finish();
   EXPECT_EQ(moves().size(), sent + 5);  // the first went on to its end
 }
+
+// The centre is where the stage is: while it is still going somewhere, that
+// is nowhere in particular.
+TEST_F(PatternRunnerTest, APatternIsNotStartedWhileTheStageMoves) {
+  ASSERT_TRUE(system.set_xy(10, 0));  // under way, not waited for
+  const auto sent = moves().size();
+  auto r = runner().execute_pattern("square");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("moving"), std::string::npos) << r.error().what;
+  EXPECT_EQ(moves().size(), sent);
+  EXPECT_FALSE(*runner().running());
+  settle();
+  EXPECT_TRUE(runner().execute_pattern("square"));
+}
+
+// It runs only while it is polled: a caller that will not wait must know.
+TEST_F(PatternRunnerTest, SaysItNeedsPolling) { EXPECT_TRUE(runner().needs_polling()); }
 
 TEST_F(PatternRunnerTest, UnknownAndBrokenPatternsAreConfig) {
   const auto before = sim.log().size();

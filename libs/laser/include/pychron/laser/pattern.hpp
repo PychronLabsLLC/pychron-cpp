@@ -91,7 +91,9 @@ struct Pattern {
   // What a file holding only `kind` gives: legacy's defaults for the kind.
   static Pattern defaults(PatternKind kind);
   // Config error "<name>: <key>: <what>" for an unknown key, a key of
-  // another kind, a wrong type or a value out of range.
+  // another kind, a wrong type, a value out of range, or a pattern of more
+  // than kMaxPatternPoints points over its iterations: whatever could not
+  // run is said when the file is read, not when the beam is on.
   static Result<Pattern> parse(std::string_view toml, std::string name);
   static Result<Pattern> load(const std::filesystem::path& file);  // the name is the stem
 };
@@ -99,6 +101,9 @@ struct Pattern {
 // One pass of the pattern: offsets from its centre. `seed` is used by a
 // random walk only, and the same seed gives the same walk on every machine.
 std::vector<StageXY> pattern_points(const Pattern& pattern, std::uint64_t seed);
+
+// How many points pattern_points() gives, without making them.
+std::size_t pattern_point_count(const Pattern& pattern);
 
 // The length of the path from the centre through `points`, mm.
 double path_length(std::span<const StageXY> points);

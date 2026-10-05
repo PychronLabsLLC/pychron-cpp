@@ -154,6 +154,41 @@ class ReadAndConvert(Scratch):
         self.assertEqual(report.written, [])
         self.assertEqual(sorted(report.skipped), ["empty", "evil", "junk"])
 
+    def test_a_pickle_cannot_hang_or_crash_the_export(self):
+        # values a pattern never has: each is refused by its type, never printed or converted
+        bomb = ()
+        for _ in range(60):
+            bomb = (bomb, bomb)  # printing it would take 2**60 characters
+        deep = []
+        for _ in range(20000):
+            deep = [deep]
+        lp(self.src, "a_bomb.lp", "PolygonPattern", radius=bomb)
+        lp(self.src, "b_huge.lp", "PolygonPattern", radius=10 ** 400)
+        lp(self.src, "c_deep.lp", "PolygonPattern", radius=deep)
+        lp(self.src, "d_text.lp", "PolygonPattern", nsides="6")
+        lp(self.src, "e_flag.lp", "TroughPattern", use_x="yes")
+        odd = legacy_class("PolygonPattern")()
+        odd.__dict__.update({"radius": 1.0})
+        raw = pickle.dumps(odd, protocol=2)
+        # the same pickle with a non-text key in its state
+        (self.src / "f_keys.lp").write_bytes(raw.replace(b"X\x06\x00\x00\x00radius", b"K\x01"))
+        lp(self.src, "z_good.lp", "PolygonPattern", radius=1.0, nsides=5)
+        report = self.export()
+        self.assertEqual(report.written, ["f_keys", "z_good"], report.skipped)  # the odd key is ignored
+        self.assertEqual(sorted(report.skipped), ["a_bomb", "b_huge", "c_deep", "d_text", "e_flag"])
+        for name in ("a_bomb", "c_deep"):
+            self.assertIn("radius", report.skipped[name])
+            self.assertLess(len(report.skipped[name]), 300)
+        self.assertEqual(self.toml("z_good")["nsides"], 5)
+
+    def test_a_pattern_of_too_many_points_is_not_written(self):
+        lp(self.src, "long.lp", "CircularContourPattern", nsteps=10, niterations=30)
+        lp(self.src, "fine.lp", "RasterRubberbandPattern", nominal_length=15.0, dx=0.00000002)
+        report = self.export()
+        self.assertEqual(report.written, [])
+        self.assertIn("points", report.skipped["long"])
+        self.assertIn("dx", report.skipped["fine"])
+
     def test_python2_pickles_are_read(self):
         # protocol 2 from Python 2: classic copy_reg reconstruction, byte-string keys
         raw = (b"\x80\x02c" + MODULE.encode() + b"\nPolygonPattern\nq\x00)\x81q\x01}q\x02"

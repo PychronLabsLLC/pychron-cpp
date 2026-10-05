@@ -442,7 +442,10 @@ elctl -c extraction_line.toml laser pattern co2 hexagon --dry-run
 ```
 
 A queue is not started if a run names a pattern the lab lacks or whose file
-does not load. A pattern is not checked against the stage's travel
+does not load (a pattern may have 10 000 points over all its iterations). A
+script must wait for its pattern: `execute_pattern(block=False)` is refused,
+because the pattern only advances while the script waits. Whatever a script
+leaves running is stopped when the run's extraction ends. A pattern is not checked against the stage's travel
 beforehand: a point outside it ends the pattern there (the error names the
 point) and the run's ending switches the laser off. Stopping a pattern stops
 the stage where it is.
@@ -456,6 +459,9 @@ python3 tools/export_patterns.py /path/to/setupfiles/patterns /path/to/lab/patte
 
 It says what it could not carry over: arc, seek and dragonfly patterns, z and
 power series, a spiral's inward direction.
+
+Each segment is driven as a straight line at the pattern's velocity (the
+speed is shared between the x and y axes).
 
 Limits: the stage's arrival at each point is checked before the next is sent,
 which pauses the beam for about 0.15 s at every point, so a pattern of

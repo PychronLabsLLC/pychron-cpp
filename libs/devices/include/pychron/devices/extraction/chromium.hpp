@@ -29,8 +29,11 @@
 // (pychron/laser), which then calls set_xy. A move is started, then moving()
 // polled: it reads the position (or Scans.InPos?) once per call and
 // reports arrival after three good polls in a row, as legacy pychron did.
-// An xy move may name a speed (a pattern's): it is sent as whole microns per
-// second for x and y, never above the configured travel speed and never 0.
+// An xy move may name a speed (a pattern's). Chromium takes a speed for each
+// axis and runs them independently, so the speed is shared between x and y
+// in proportion to how far each has to go: the move is a straight line at
+// that speed. Whole microns per second, never above the configured travel
+// speed and never 0.
 // stop() halts the stage where it is (Stage.Stop).
 // Moves outside the configured travel are refused before anything is sent.
 //
@@ -129,8 +132,9 @@ class ChromiumLaser final : public Device, public IExtractionDevice, public ILas
   // Config error if `mm` is outside the travel of axis 0 (x), 1 (y) or 2 (z).
   Result<void> check_travel(std::size_t axis, double mm) const;
   // Checks the travel limits, then starts a move to `to` (mm).
-  // `speed_mm_s` 0: the configured travel speed; else x and y at that speed.
-  Result<void> start_move(const StagePosition& to, double speed_mm_s = 0);
+  // `speed_mm_s` 0: the configured travel speed. Else `speed_mm_s` along the
+  // straight line from `from`, shared between the x and y speeds.
+  Result<void> start_move(const StagePosition& to, double speed_mm_s = 0, const StagePosition* from = nullptr);
   codec::chromium::Microns to_wire(const StagePosition& mm) const;
   StagePosition from_wire(const codec::chromium::Microns& um) const;
 

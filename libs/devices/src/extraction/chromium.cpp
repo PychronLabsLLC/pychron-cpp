@@ -422,7 +422,7 @@ Result<void> ChromiumLaser::check_travel(std::size_t axis, double mm) const {
                                        std::to_string(high) + " mm)");
 }
 
-Result<void> ChromiumLaser::start_move(const StagePosition& to, double speed_mm_s) {
+Result<void> ChromiumLaser::start_move(const StagePosition& to, double speed_mm_s, const StagePosition* from) {
   const std::array<double, 3> wanted{to.x, to.y, to.z};
   for (std::size_t i = 0; i < 3; ++i) {
     if (auto ok = check_travel(i, wanted[i]); !ok) return ok;
@@ -432,9 +432,24 @@ Result<void> ChromiumLaser::start_move(const StagePosition& to, double speed_mm_
   if (speed_mm_s > 0) {
     // Whole microns per second, at most the stage's own and at least 1: a
     // speed of 0 on the wire is a move that never arrives.
-    const auto um_per_s = static_cast<std::int64_t>(std::llround(std::min(speed_mm_s * 1000.0, 1e12)));
-    speed.x = std::clamp<std::int64_t>(um_per_s, 1, std::max<std::int64_t>(1, options_.move_speed.x));
-    speed.y = std::clamp<std::int64_t>(um_per_s, 1, std::max<std::int64_t>(1, options_.move_speed.y));
+    const double um_per_s = std::min(speed_mm_s * 1000.0, 1e12);
+    // Each axis runs at its own speed: for a straight line at `speed_mm_s`
+    // each gets its share of the distance. An axis that does not move keeps
+    // the whole speed (it has nowhere to go).
+    double share_x = 1, share_y = 1;
+    if (from != nullptr) {
+      // In whole microns, as the stage sees it: an axis whose target is
+      // where it already is does not move, whatever a double says.
+      const cr::Microns start = to_wire(*from);
+      const double dx = std::abs(static_cast<double>(wire.x - start.x));
+      const double dy = std::abs(static_cast<double>(wire.y - start.y));
+      const double d = std::hypot(dx, dy);
+      if (dx > 0) share_x = dx / d;
+      if (dy > 0) share_y = dy / d;
+    }
+    const auto whole = [](double v) { return static_cast<std::int64_t>(std::llround(v)); };
+    speed.x = std::clamp<std::int64_t>(whole(um_per_s * share_x), 1, std::max<std::int64_t>(1, options_.move_speed.x));
+    speed.y = std::clamp<std::int64_t>(whole(um_per_s * share_y), 1, std::max<std::int64_t>(1, options_.move_speed.y));
   }
   auto reply = act(cr::stage_move_to(wire, speed), cr::stage_position());
   if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
@@ -454,7 +469,7 @@ Result<void> ChromiumLaser::set_xy(double x, double y, double speed_mm_s) {
   // z stays where it is: read, not remembered.
   auto at = observe(read_position());
   if (!at) return fail(std::move(at).error());
-  return start_move({x, y, at->z}, speed_mm_s);
+  return start_move({x, y, at->z}, speed_mm_s, &*at);
 }
 
 Result<void> ChromiumLaser::stop() {

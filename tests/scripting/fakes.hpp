@@ -162,9 +162,11 @@ class FakeLaser final : public extraction::IExtractionDevice,
     return rec("stop_pattern");
   }
   std::vector<std::string> patterns() const override { return {"spiral"}; }
+  bool needs_polling() const override { return pattern_needs_polling; }
 
   std::atomic<bool> pattern_running{false};
   bool pattern_finishes = true;
+  bool pattern_needs_polling = false;
   std::atomic<bool> stage_stuck{false};
   std::atomic<bool> stage_stopped{false};
   bool stage_can_stop = true;

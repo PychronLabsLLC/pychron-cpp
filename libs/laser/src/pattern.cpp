@@ -115,6 +115,19 @@ std::string store(const Key& key, const toml::node& node, Pattern& pattern) {
   return {};
 }
 
+// How many steps a raster takes across its box. Legacy fits the step to the
+// box: an even count of the steps asked for, plus one, so the zig-zag ends on
+// the far edge. In double, and bounded: a step of 1e-300 is not a count an
+// int can hold.
+std::size_t raster_steps(const Pattern& p) {
+  const double total = p.length + 2 * p.offset;
+  double n = std::floor(total / p.dx + 1e-9);
+  if (!(n < 4.0 * static_cast<double>(kMaxPatternPoints))) return 4 * kMaxPatternPoints;  // also NaN and inf
+  if (n < 0) n = 0;
+  if (std::fmod(n, 2.0) != 0) n += 1;
+  return static_cast<std::size_t>(n) + 1;
+}
+
 StageXY turned(double x, double y, double degrees) {
   const double a = degrees * std::numbers::pi / 180.0;
   return {x * std::cos(a) - y * std::sin(a), x * std::sin(a) + y * std::cos(a)};
@@ -198,6 +211,16 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
   if (*kind == PatternKind::Raster && p.dx > p.length + 2 * p.offset) {
     return fail(ErrorKind::Config, p.name + ": dx: the step is wider than the box it rasters (length + 2 offset)");
   }
+  if (*kind == PatternKind::Raster && raster_steps(p) > kMaxPatternPoints) {
+    return fail(ErrorKind::Config, p.name + ": dx: the step is so fine the raster has more than " +
+                                       std::to_string(kMaxPatternPoints) + " points");
+  }
+  // Every iteration's points, and the return to the centre.
+  const std::size_t points = pattern_point_count(p) * static_cast<std::size_t>(p.iterations) + 1;
+  if (points > kMaxPatternPoints) {
+    return fail(ErrorKind::Config, p.name + ": iterations: the pattern has " + std::to_string(points) +
+                                       " points over its iterations; at most " + std::to_string(kMaxPatternPoints));
+  }
   return p;
 }
 
@@ -207,6 +230,30 @@ Result<Pattern> Pattern::load(const fs::path& file) {
   std::ostringstream text;
   text << in.rdbuf();
   return parse(text.str(), file.stem().string());
+}
+
+std::size_t pattern_point_count(const Pattern& p) {
+  const auto n = [](int value) { return static_cast<std::size_t>(std::max(value, 0)); };
+  switch (p.kind) {
+    case PatternKind::Polygon: return n(p.nsides) + 1;
+    case PatternKind::Linear: return 2 * n(p.npasses);
+    case PatternKind::CircularContour: return 37 * n(p.nsteps);
+    case PatternKind::LineSpiral: {
+      std::size_t count = 0;
+      for (int turn = 0; turn < p.nsteps; ++turn) {
+        const int angles = 2 * turn + p.step_scalar;
+        if (angles <= 1) continue;  // one angle is both 0 and 360
+        count += n(angles) - (turn != p.nsteps - 1 ? 1 : 0);
+      }
+      return std::max<std::size_t>(count, 1);
+    }
+    case PatternKind::SquareSpiral: return 4 * n(p.nsteps) + 1;
+    case PatternKind::Random: return n(p.npoints);
+    case PatternKind::Rubberband: return 5;
+    case PatternKind::Raster: return p.single_pass ? raster_steps(p) + 1 : 2 * (raster_steps(p) + 1) + 1;
+    case PatternKind::Trough: return 5;
+  }
+  return 0;
 }
 
 std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
@@ -266,9 +313,13 @@ std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
       const auto unit = [&rng] { return static_cast<double>(rng() >> 11) * 0x1.0p-53; };
       for (int i = 0; i < p.npoints; ++i) {
         double x = 0, y = 0;
-        do {  // a point in the box, within walk_x of the centre (legacy's test)
+        // A point in the box, within walk_x of the centre (legacy's test). No
+        // point further than walk_x in y can pass it, so y is drawn only
+        // that far: the same walk, and a tall narrow box still ends.
+        const double reach_y = std::min(p.walk_y, p.walk_x);
+        do {
           x = (unit() * 2 - 1) * p.walk_x;
-          y = (unit() * 2 - 1) * p.walk_y;
+          y = (unit() * 2 - 1) * reach_y;
         } while (std::hypot(x, y) > p.walk_x);
         out.push_back({x, y});
       }
@@ -282,16 +333,15 @@ std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
       break;
     }
     case PatternKind::Raster: {
-      // Legacy fits the step to the box: an even count of the steps asked
-      // for, plus one, so the zig-zag ends on the far edge.
       const double o = p.offset, total = p.length + 2 * p.offset;
-      int n = static_cast<int>(std::floor(total / p.dx + 1e-9));
-      if (n % 2 != 0) ++n;
-      const int steps = n + 1;
-      const double dx = total / steps;
-      for (int i = 0; i <= steps; ++i) out.push_back(turned(-o + dx * i, i % 2 == 0 ? o : -o, p.rotation));
+      const std::size_t steps = raster_steps(p);  // bounded, whatever dx is
+      const double dx = total / static_cast<double>(steps);
+      const auto across = [dx](std::size_t i) { return dx * static_cast<double>(i); };
+      for (std::size_t i = 0; i <= steps; ++i) out.push_back(turned(-o + across(i), i % 2 == 0 ? o : -o, p.rotation));
       if (!p.single_pass) {
-        for (int i = 0; i <= steps; ++i) out.push_back(turned(p.length + o - dx * i, i % 2 == 0 ? o : -o, p.rotation));
+        for (std::size_t i = 0; i <= steps; ++i) {
+          out.push_back(turned(p.length + o - across(i), i % 2 == 0 ? o : -o, p.rotation));
+        }
         out.push_back(turned(-o, o, p.rotation));
       }
       break;
