@@ -524,38 +524,62 @@ class ConfigBuilder {
     const auto get = lookup_in(t);
     p_.reject_unknown(t, v,
                       Keys{"name", "description", "actuator", "address", "interlocks", "positive_interlocks",
-                           "settle_ms"});
+                           "settle_ms", "inverted", "state_source", "verify"});
     p_.read(get, v, "name", v.name, true);
     p_.read(get, v, "description", v.description, false);
     p_.read(get, v, "actuator", v.actuator, true);
     // Addresses are strings ("1", "A3"); accept a bare integer for convenience.
-    if (const auto* n = get("address"); n != nullptr && n->is_integer()) {
-      v.field_locs["address"] = p_.loc(*n);
-      v.address = std::to_string(n->as_integer()->get());
-    } else {
-      p_.read(get, v, "address", v.address, true);
-    }
+    read_address(get, v, v.address);
     p_.read_array(get, v, "interlocks", v.interlocks);
     p_.read_array(get, v, "positive_interlocks", v.positive_interlocks);
     p_.read(get, v, "settle_ms", v.settle_ms, false, 0);
+    read_actuation(get, v, v.inverted, v.state_source, v.verify);
     return v;
+  }
+
+  // `address` as a string, or a bare integer for convenience.
+  void read_address(const Lookup& get, Located& e, std::string& out) {
+    if (const auto* n = get("address"); n != nullptr && n->is_integer()) {
+      e.field_locs["address"] = p_.loc(*n);
+      out = std::to_string(n->as_integer()->get());
+    } else {
+      p_.read(get, e, "address", out, true);
+    }
+  }
+
+  // inverted, state_source, verify (valves and switches).
+  void read_actuation(const Lookup& get, Located& e, bool& inverted, std::optional<StateSourceConfig>& source,
+                      bool& verify) {
+    p_.read(get, e, "inverted", inverted);
+    p_.read(get, e, "verify", verify);
+    const auto* n = get("state_source");
+    if (n == nullptr) return;
+    const auto path = Parser::field(e, "state_source");
+    const auto* t = p_.as_table(*n, path);
+    if (t == nullptr) return;
+    StateSourceConfig s;
+    p_.begin(s, *t, path);
+    const auto sget = lookup_in(*t);
+    p_.reject_unknown(*t, s, Keys{"driver", "address", "inverted"});
+    p_.read(sget, s, "driver", s.driver, true);
+    read_address(sget, s, s.address);
+    p_.read(sget, s, "inverted", s.inverted);
+    source = std::move(s);
   }
 
   SwitchConfig parse_switch(const std::string& path, const toml::table& t) {
     SwitchConfig s;
     p_.begin(s, t, path);
     const auto get = lookup_in(t);
-    p_.reject_unknown(t, s, Keys{"name", "description", "actuator", "address", "settle_ms"});
+    p_.reject_unknown(t, s,
+                      Keys{"name", "description", "actuator", "address", "settle_ms", "inverted", "state_source",
+                           "verify"});
     p_.read(get, s, "name", s.name, true);
     p_.read(get, s, "description", s.description, false);
     p_.read(get, s, "actuator", s.actuator, true);
-    if (const auto* n = get("address"); n != nullptr && n->is_integer()) {
-      s.field_locs["address"] = p_.loc(*n);
-      s.address = std::to_string(n->as_integer()->get());
-    } else {
-      p_.read(get, s, "address", s.address, true);
-    }
+    read_address(get, s, s.address);
     p_.read(get, s, "settle_ms", s.settle_ms, false, 0);
+    read_actuation(get, s, s.inverted, s.state_source, s.verify);
     return s;
   }
 

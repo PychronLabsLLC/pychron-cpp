@@ -481,6 +481,201 @@ address = "9"
   EXPECT_EQ(missing.error().kind, ErrorKind::Config);
 }
 
+// ---- wiring: inverted, state_source, verify (plan 2026-10-05, task 0.2) -----
+
+namespace {
+
+// "act" and a second device "src" that only reads.
+struct WiredFixture {
+  explicit WiredFixture(std::vector<SwitchSpec> specs) {
+    auto made = SwitchManager::create(
+        std::move(specs),
+        [this](const std::string& n) -> IValveActuator* {
+          return n == "act" ? &act : n == "src" ? &src : nullptr;
+        },
+        {&clock, &bus});
+    EXPECT_TRUE(made) << (made ? "" : made.error().what);
+    if (made) mgr = std::move(*made);
+  }
+
+  ManualClock clock;
+  SignalBus bus;
+  FakeActuator act{&clock};
+  FakeActuator src{&clock};
+  Recorder rec{bus};
+  std::unique_ptr<SwitchManager> mgr;
+};
+
+SwitchSpec inverted(SwitchSpec s) {
+  s.inverted = true;
+  return s;
+}
+
+SwitchSpec sourced(SwitchSpec s, std::string address, bool source_inverted = false) {
+  s.state_source = StateSource{"src", ValveAddress{std::move(address)}, source_inverted};
+  return s;
+}
+
+SwitchSpec unverified(SwitchSpec s) {
+  s.verify = false;
+  return s;
+}
+
+}  // namespace
+
+TEST(SwitchManagerWiring, AnInvertedValveIsOpenedWithCloseAndRecordedAsTheValve) {
+  WiredFixture f({inverted(valve("A", "1"))});
+  f.act.set_hw("1", ValveState::Open);  // channel on: the valve is closed
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "me"));
+  EXPECT_EQ(f.act.hw("1"), ValveState::Closed);  // the channel was closed
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_EQ(f.act.calls(), (std::vector<std::string>{"read 1", "close 1", "read 1"}));
+  ASSERT_FALSE(f.rec.changed.empty());
+  EXPECT_EQ(f.rec.changed.back().state, ValveState::Open);
+
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "me"));
+  EXPECT_EQ(f.act.hw("1"), ValveState::Open);
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+}
+
+TEST(SwitchManagerWiring, AStateSourceIsReadInsteadOfTheActuator) {
+  WiredFixture f({sourced(valve("A", "101"), "102")});
+  f.src.set_hw("102", ValveState::Open);
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_TRUE(f.act.calls().empty());  // refresh asked the source only
+
+  // The command goes to the actuator; the read-back to the source, which
+  // here has not followed: the manager says what the source says.
+  auto r = f.mgr->actuate("A", SwitchOp::Close, "me");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(f.act.calls(), (std::vector<std::string>{"close 101"}));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+
+  f.src.set_hw("102", ValveState::Closed);
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "me"));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+}
+
+TEST(SwitchManagerWiring, AnInvertedStateSourceIsReadInverted) {
+  // The valve's own inversion is its channel's; the source has its own.
+  WiredFixture f({sourced(inverted(valve("A", "101")), "102", /*source_inverted=*/true)});
+  f.src.set_hw("102", ValveState::Closed);  // input off: the valve is open
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  f.src.set_hw("102", ValveState::Open);
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "me"));
+  EXPECT_EQ(f.act.calls(), (std::vector<std::string>{"open 101"}));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+}
+
+TEST(SwitchManagerWiring, AnUnverifiedValveRecordsWhatItWasToldAndIsNeverRead) {
+  WiredFixture f({unverified(valve("A", "1")), valve("B", "2", {"A"})});
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Unknown);  // nothing to read yet
+  EXPECT_EQ(st(*f.mgr, "B"), ValveState::Closed);
+  // Unknown blocks its interlock partner, as for any valve.
+  EXPECT_FALSE(f.mgr->actuate("B", SwitchOp::Open, "me"));
+
+  f.act.stick("1");  // the hardware ignores it; nobody can tell
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "me"));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);  // left as commanded
+  for (const auto& c : f.act.calls()) EXPECT_NE(c, "read 1");
+  ASSERT_TRUE(f.mgr->actuate("B", SwitchOp::Open, "me"));  // the commanded state holds the interlock
+  EXPECT_EQ(f.mgr->info("A")->stats.closes, 1);
+}
+
+TEST(SwitchManagerWiring, AnUnverifiedValveWhoseCommandFailsIsUnknown) {
+  WiredFixture f({unverified(valve("A", "1"))});
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "me"));
+  f.act.fail_commands(ErrorKind::Io);
+  EXPECT_FALSE(f.mgr->actuate("A", SwitchOp::Close, "me"));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Unknown);
+}
+
+TEST(SwitchManagerWiring, ACloseThatCannotBeReadBackFails) {
+  // Legacy passed this: a failed read on close was taken as closed.
+  WiredFixture f({valve("A", "1")});
+  ASSERT_TRUE(f.mgr->refresh());
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "me"));
+  f.act.fail_reads(ErrorKind::Timeout);
+  auto r = f.mgr->actuate("A", SwitchOp::Close, "me");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Unknown);
+}
+
+TEST(SwitchManagerWiring, CreateRejectsWiringThatCannotWork) {
+  FakeActuator act;
+  auto lookup = [&](const std::string& n) -> IValveActuator* { return n == "act" ? &act : nullptr; };
+  auto hand = manual("M");
+  hand.inverted = true;
+  auto both = unverified(sourced(valve("B", "2"), "9"));
+  both.state_source->driver = "act";
+  auto nowhere = sourced(valve("C", "3"), "9");  // "src" does not resolve here
+  auto r = SwitchManager::create({valve("A", "1"), hand, both, nowhere}, lookup);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  for (const char* needle : {"manual valve has no actuator", "cannot have a state_source", "state_source 'src'"}) {
+    EXPECT_NE(r.error().what.find(needle), std::string::npos) << needle << " in: " << r.error().what;
+  }
+}
+
+TEST(SwitchManagerWiring, FromConfigCarriesTheWiring) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.bus]
+kind = "sim"
+[drivers.act]
+kind = "proxr_relay"
+transport = "bus"
+[drivers.src]
+kind = "proxr_relay"
+transport = "bus"
+[[valves]]
+name = "A"
+actuator = "act"
+address = "1"
+inverted = true
+state_source = { driver = "src", address = 7, inverted = true }
+[[valves]]
+name = "B"
+actuator = "act"
+address = "2"
+verify = false
+[[switches]]
+name = "pump_power"
+actuator = "act"
+address = "9"
+inverted = true
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ASSERT_TRUE(cfg->valves[0].state_source);
+  EXPECT_EQ(cfg->valves[0].state_source->address, "7");
+  EXPECT_TRUE(cfg->switches[0].inverted);
+
+  FakeActuator act, src;
+  auto mgr = SwitchManager::from_config(*cfg, [&](const std::string& n) -> IValveActuator* {
+    return n == "act" ? &act : n == "src" ? &src : nullptr;
+  });
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  src.set_hw("7", ValveState::Closed);  // inverted input: the valve is open
+  ASSERT_TRUE((*mgr)->refresh());
+  EXPECT_EQ((*mgr)->state("A").value(), ValveState::Open);
+  EXPECT_EQ((*mgr)->state("B").value(), ValveState::Unknown);
+  act.set_hw("9", ValveState::Open);
+  ASSERT_TRUE((*mgr)->refresh());
+  EXPECT_EQ((*mgr)->state("pump_power").value(), ValveState::Closed);
+}
+
 // End to end over the real driver and a simulated board.
 TEST(SwitchManager, DrivesProxrRelayOverSimulatedBoard) {
   ProxrBoardSim board;

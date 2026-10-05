@@ -45,6 +45,17 @@ class Validator {
     for (const auto& s : c_.switches) claim(s, s.name);
   }
 
+  // A state source names a driver, and replaces the read-back verify=false
+  // turns off.
+  template <class S>
+  void check_actuation(const S& s) {
+    if (!s.state_source) return;
+    if (!c_.drivers.contains(s.state_source->driver)) {
+      report(*s.state_source, "driver", "unknown driver '" + s.state_source->driver + "'");
+    }
+    if (!s.verify) report(s, "verify", "verify = false reads nothing back; it cannot have a state_source");
+  }
+
   // Switches share actuators and the (actuator, address) space with valves.
   void check_switches(std::map<std::pair<std::string, std::string>, std::string>& addresses) {
     for (const auto& s : c_.switches) {
@@ -56,6 +67,7 @@ class Validator {
         report(s, "address",
                "address '" + s.address + "' on actuator '" + s.actuator + "' already used by '" + it->second + "'");
       }
+      check_actuation(s);
     }
   }
 
@@ -83,6 +95,7 @@ class Validator {
                "address '" + v.address + "' on actuator '" + v.actuator + "' already used by valve '" +
                    it->second + "'");
       }
+      check_actuation(v);
       check_interlock_list(v, v.interlocks, "interlocks");
       check_interlock_list(v, v.positive_interlocks, "positive_interlocks");
       for (std::size_t i = 0; i < v.positive_interlocks.size(); ++i) {

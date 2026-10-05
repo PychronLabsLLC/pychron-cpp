@@ -185,6 +185,23 @@ TEST(SimSystem, RelayHookDrivesValveModel) {
   EXPECT_FALSE(sim.valve_open("A"));
 }
 
+TEST(SimSystem, AnInvertedValveIsOpenWhileItsRelayIsOff) {
+  std::string text(kConfig);
+  text.replace(text.find("address = \"1\"\n"), 14, "address = \"1\"\ninverted = true\n");
+  auto cfg = config::load_system_config_from_string(text, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("relay"), *cfg));
+  ASSERT_TRUE(transport->open());
+  ProxrRelay relay("relay", *transport);
+  ASSERT_TRUE(relay.close(ValveAddress{"1"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  ASSERT_TRUE(relay.open(ValveAddress{"1"}));
+  EXPECT_FALSE(sim.valve_open("A"));
+}
+
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;

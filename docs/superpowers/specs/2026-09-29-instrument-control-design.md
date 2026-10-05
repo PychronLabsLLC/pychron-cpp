@@ -242,6 +242,13 @@ address = "1"
 interlocks = ["B"]           # cannot open while any of these are open
 positive_interlocks = []     # all of these must be open before this opens
 settle_ms = 1000
+# Optional wiring (valves and switches; added 2026-10-05):
+# inverted = true            # channel wired backwards: open() closes the valve,
+#                            # read-back inverted; the recorded state is the valve's
+# state_source = { driver = "agilent1", address = "102", inverted = false }
+#                            # read state from another device instead of the actuator
+# verify = false             # no read-back; the commanded state is recorded
+#                            # (legacy query_state = false); not with state_source
 
 [[valves]]
 name = "B"

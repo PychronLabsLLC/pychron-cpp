@@ -150,16 +150,17 @@ Result<double> SimSystem::gauge_reading(std::string_view volume) const {
 
 SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const config::SystemConfig& system) {
   if (driver.kind == "proxr_relay") {
-    std::map<std::int64_t, std::string> by_index;
-    auto map_address = [&](const std::string& actuator, const std::string& address, const std::string& name) {
-      if (actuator != driver.name) return;
-      if (auto index = ValveAddress{address}.as_index()) by_index[*index] = name;
+    // A relay drives its valve; an inverted valve is open while its relay is off.
+    std::map<std::int64_t, std::pair<std::string, bool>> by_index;
+    auto map_address = [&](const auto& v) {
+      if (v.actuator != driver.name) return;
+      if (auto index = ValveAddress{v.address}.as_index()) by_index[*index] = {v.name, v.inverted};
     };
-    for (const auto& v : system.valves) map_address(v.actuator, v.address, v.name);
-    for (const auto& s : system.switches) map_address(s.actuator, s.address, s.name);
+    for (const auto& v : system.valves) map_address(v);
+    for (const auto& s : system.switches) map_address(s);
 
     auto board = std::make_unique<ProxrBoardSim>([this, by_index = std::move(by_index)](std::int64_t index, bool on) {
-      if (auto it = by_index.find(index); it != by_index.end()) set_valve(it->second, on);
+      if (auto it = by_index.find(index); it != by_index.end()) set_valve(it->second.first, on != it->second.second);
     });
     auto hook = board->hook();
     std::lock_guard lock(mutex_);
@@ -178,11 +179,11 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
   if (driver.kind == "ngx_valves") {
     // The NGX simulator answers (Login, SAB, valves); actuations move the
     // simulated line's valves.
-    std::map<std::string, std::string> by_address;
+    std::map<std::string, std::pair<std::string, bool>> by_address;  // name, inverted
     for (const auto& v : system.valves)
-      if (v.actuator == driver.name) by_address[v.address] = v.name;
+      if (v.actuator == driver.name) by_address[v.address] = {v.name, v.inverted};
     for (const auto& s : system.switches)
-      if (s.actuator == driver.name) by_address[s.address] = s.name;
+      if (s.actuator == driver.name) by_address[s.address] = {s.name, s.inverted};
     auto model = std::make_shared<spectrometer::NgxSimModel>();
     model->banner_pending = false;  // no event source on a line transport
     auto inner = spectrometer::ngx_sim_hook(model);
@@ -193,7 +194,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto* verb : {"OpenValve ", "CloseValve "}) {
         if (!cmd.starts_with(verb)) continue;
         if (auto it = by_address.find(cmd.substr(std::string(verb).size())); it != by_address.end())
-          set_valve(it->second, cmd.starts_with("OpenValve "));
+          set_valve(it->second.first, cmd.starts_with("OpenValve ") != it->second.second);
       }
       return reply;
     };

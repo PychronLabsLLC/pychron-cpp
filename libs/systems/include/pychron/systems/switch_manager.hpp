@@ -18,8 +18,10 @@
 //                          allowed).
 //                      Closing is never interlocked.
 //   4. command         IValveActuator::open/close at the switch's address
+//                      (close/open when the switch is `inverted`)
 //   5. settle          wait settle time on the injected Clock
 //   6. read back       IValveActuator::read must report the commanded state
+//                      (skipped when `verify` is false)
 // and publishes ValveChanged on success or ActuationFailed on any failure.
 // Refusals in steps 1-3 are ErrorKind::Interlock and send nothing.
 //
@@ -27,6 +29,17 @@
 // refresh() reads the hardware or an actuation reads it back. A failed
 // command or read-back leaves the switch Unknown; a read-back that disagrees
 // records what the hardware reported and fails with Protocol.
+//
+// Wiring (valves and switches):
+//   - `inverted`: the actuator's channel is wired backwards. Opening sends
+//     close(), and the actuator's read-back is inverted, so the recorded
+//     state is always the valve's, never the channel's.
+//   - `state_source`: read-back and refresh() read another device at another
+//     address instead of the actuator, inverted when the source says so (the
+//     switch's own `inverted` describes its actuator channel, not the source).
+//   - `verify` false: nothing is read back. The commanded state is recorded
+//     as if read, and refresh() leaves the switch as it is. Interlocks then
+//     rest on the commanded state (legacy query_state = false).
 //
 // Manual valves have no actuator: actuate() records the operator's report
 // after the lock/owner checks, so they can take part in interlocks.
@@ -43,6 +56,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -64,6 +78,13 @@ enum class SwitchKind { Valve, ManualValve, Switch };
 std::string_view to_string(SwitchOp op) noexcept;
 std::string_view to_string(SwitchKind kind) noexcept;
 
+// Where a switch's state is read when not from its actuator.
+struct StateSource {
+  std::string driver;  // resolved through the same ActuatorLookup
+  ValveAddress address;
+  bool inverted = false;  // reads Open when the switch is closed
+};
+
 struct SwitchSpec {
   std::string name;
   std::string description;
@@ -73,6 +94,9 @@ struct SwitchSpec {
   std::vector<std::string> interlocks;           // Valve only
   std::vector<std::string> positive_interlocks;  // Valve only
   Duration settle{};
+  bool inverted = false;                    // not for manual valves
+  std::optional<StateSource> state_source;  // not for manual valves; not with verify = false
+  bool verify = true;                       // not for manual valves
 };
 
 // What a switch has done since the manager was built. In memory only.
@@ -162,6 +186,8 @@ class SwitchManager {
   Result<void> check_interlocks(const Entry& e) const;
   Result<void> drive(Entry& e, SwitchOp op);
   void settle(Duration d) const;
+  // The switch's state as its read-back device reports it, inversion applied.
+  Result<ValveState> read_back(const Entry& e) const;
   bool record(Entry& e, ValveState s);  // true if the state changed
   void count(Entry& e, int SwitchStats::* what);
   Result<void> failed(const Entry& e, Error error);

@@ -347,3 +347,26 @@ TEST(Logging, RejectsUnknownKeyAndNonPositiveSizes) {
     EXPECT_FALSE(load_system_config_from_string(text, "f.toml")) << body;
   }
 }
+
+TEST(ConfigLoader, ValveWiringKeysAreChecked) {
+  const std::string text = std::string(test::kPreamble) +
+                           "[[valves]]\nname = \"A\"\nactuator = \"act\"\naddress = \"1\"\n"
+                           "state_source = { driver = \"act\", address = \"2\", polarity = 1 }\n"
+                           "[[valves]]\nname = \"B\"\nactuator = \"act\"\naddress = \"3\"\nstate_source = \"act\"\n";
+  auto rep = load_report_from_string(text, "f.toml");
+  EXPECT_TRUE(has(rep.diagnostics, at(text, "polarity", "valves[0].state_source.polarity: unknown field")));
+  EXPECT_TRUE(has(rep.diagnostics, at(text, "state_source = \"act\"",
+                                      "valves[1].state_source: expected table, got string")));
+}
+
+TEST(ConfigLoader, StateSourceMustNameADriverAndNeedsVerify) {
+  const std::string text = std::string(test::kPreamble) +
+                           "[[valves]]\nname = \"A\"\nactuator = \"act\"\naddress = \"1\"\n"
+                           "state_source = { driver = \"nope\", address = \"2\" }\nverify = false\n";
+  auto rep = load_report_from_string(text, "f.toml");
+  EXPECT_TRUE(has(rep.diagnostics, at(text, "nope", "valves[0].state_source.driver: unknown driver 'nope'")))
+      << ::testing::PrintToString(test::formatted(rep.diagnostics));
+  EXPECT_TRUE(has(rep.diagnostics,
+                  at(text, "verify", "valves[0].verify: verify = false reads nothing back; it cannot have a state_source")))
+      << ::testing::PrintToString(test::formatted(rep.diagnostics));
+}

@@ -79,6 +79,23 @@ struct DriverConfig : Located {
   toml::table options;  // the whole [drivers.<name>] table, for driver-specific keys
 };
 
+// Where a valve's state is read when not from its own actuator (LDEO reads
+// autovalve states from a second Agilent): `state_source = { driver =
+// "agilent1", address = "102", inverted = false }`. `inverted`: that input
+// reads true when the valve is closed.
+struct StateSourceConfig : Located {
+  std::string driver;  // name of a [drivers.*] entry
+  std::string address;
+  bool inverted = false;
+};
+
+// Actuated valves and switches share these keys:
+//   inverted      the actuator's channel is wired backwards: open() closes the
+//                 valve and its read-back says the opposite. The recorded
+//                 state is always the valve's.
+//   state_source  read the state somewhere else (see StateSourceConfig).
+//   verify        false: no read-back; the commanded state is recorded.
+//                 Legacy `query_state = false`. Not with state_source.
 struct ValveConfig : Located {
   std::string name;
   std::string description;
@@ -87,6 +104,9 @@ struct ValveConfig : Located {
   std::vector<std::string> interlocks;           // cannot open while any of these are open
   std::vector<std::string> positive_interlocks;  // all must be open before this opens
   std::int64_t settle_ms = 0;
+  bool inverted = false;
+  std::optional<StateSourceConfig> state_source;
+  bool verify = true;
 };
 
 struct ManualValveConfig : Located {
@@ -103,6 +123,9 @@ struct SwitchConfig : Located {
   std::string actuator;  // name of a [drivers.*] entry
   std::string address;
   std::int64_t settle_ms = 0;
+  bool inverted = false;  // as for valves
+  std::optional<StateSourceConfig> state_source;
+  bool verify = true;
 };
 
 enum class PressureUnits { Torr, Mbar, Pa };

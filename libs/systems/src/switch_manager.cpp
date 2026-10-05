@@ -27,6 +27,7 @@ std::string_view to_string(SwitchKind kind) noexcept {
 struct SwitchManager::Entry {
   SwitchSpec spec;
   IValveActuator* actuator = nullptr;  // null for manual valves
+  IValveActuator* reader = nullptr;    // state_source's device, when there is one
   std::vector<Entry*> exclusive;       // negative interlocks, both directions
   std::vector<Entry*> positive;
   // Guarded by SwitchManager::state_.
@@ -46,6 +47,23 @@ const Clock& default_clock() {
 }
 
 ValveState target_of(SwitchOp op) { return op == SwitchOp::Open ? ValveState::Open : ValveState::Closed; }
+
+ValveState inverse(ValveState s) {
+  switch (s) {
+    case ValveState::Open:
+      return ValveState::Closed;
+    case ValveState::Closed:
+      return ValveState::Open;
+    default:
+      return s;
+  }
+}
+
+template <class C>
+std::optional<StateSource> state_source_of(const C& c) {
+  if (!c.state_source) return std::nullopt;
+  return StateSource{c.state_source->driver, ValveAddress{c.state_source->address}, c.state_source->inverted};
+}
 
 std::string join(const std::vector<std::string>& lines) {
   std::string out;
@@ -73,6 +91,9 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::from_config(const config::
     s.interlocks = v.interlocks;
     s.positive_interlocks = v.positive_interlocks;
     s.settle = std::chrono::milliseconds(v.settle_ms);
+    s.inverted = v.inverted;
+    s.state_source = state_source_of(v);
+    s.verify = v.verify;
     specs.push_back(std::move(s));
   }
   for (const auto& m : config.manual_valves) {
@@ -90,6 +111,9 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::from_config(const config::
     s.actuator = w.actuator;
     s.address = ValveAddress{w.address};
     s.settle = std::chrono::milliseconds(w.settle_ms);
+    s.inverted = w.inverted;
+    s.state_source = state_source_of(w);
+    s.verify = w.verify;
     specs.push_back(std::move(s));
   }
   return create(std::move(specs), lookup, options);
@@ -113,12 +137,19 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
       problems.push_back("duplicate switch name '" + s.name + "'");
       continue;
     }
+    const std::string what = std::string(to_string(s.kind)) + " '" + s.name + "'";
     if (s.kind != SwitchKind::ManualValve) {
       e->actuator = lookup ? lookup(s.actuator) : nullptr;
-      if (!e->actuator) {
-        problems.push_back(std::string(to_string(s.kind)) + " '" + s.name + "': actuator '" + s.actuator +
-                           "' is not a valve actuator");
+      if (!e->actuator) problems.push_back(what + ": actuator '" + s.actuator + "' is not a valve actuator");
+      if (s.state_source) {
+        e->reader = lookup ? lookup(s.state_source->driver) : nullptr;
+        if (!e->reader) {
+          problems.push_back(what + ": state_source '" + s.state_source->driver + "' is not a valve actuator");
+        }
+        if (!s.verify) problems.push_back(what + ": verify = false reads nothing back; it cannot have a state_source");
       }
+    } else if (s.inverted || s.state_source || !s.verify) {
+      problems.push_back(what + ": a manual valve has no actuator to invert, read or verify");
     }
     if (s.kind != SwitchKind::Valve && (!s.interlocks.empty() || !s.positive_interlocks.empty())) {
       problems.push_back(std::string(to_string(s.kind)) + " '" + s.name + "': only valves carry interlocks");
@@ -242,9 +273,18 @@ Result<void> SwitchManager::check_interlocks(const Entry& e) const {
   return {};
 }
 
+Result<ValveState> SwitchManager::read_back(const Entry& e) const {
+  const auto& source = e.spec.state_source;
+  auto read = source ? e.reader->read(source->address) : e.actuator->read(e.spec.address);
+  if (!read) return read;
+  const bool flip = source ? source->inverted : e.spec.inverted;
+  return flip ? inverse(*read) : *read;
+}
+
 Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   const auto target = target_of(op);
-  auto sent = op == SwitchOp::Open ? e.actuator->open(e.spec.address) : e.actuator->close(e.spec.address);
+  const bool channel_open = (op == SwitchOp::Open) != e.spec.inverted;
+  auto sent = channel_open ? e.actuator->open(e.spec.address) : e.actuator->close(e.spec.address);
   if (!sent) {
     // The command may or may not have reached the valve.
     record(e, ValveState::Unknown);
@@ -254,7 +294,14 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
 
   settle(e.spec.settle);
 
-  auto read = e.actuator->read(e.spec.address);
+  if (!e.spec.verify) {
+    record(e, target);
+    count(e, op == SwitchOp::Open ? &SwitchStats::opens : &SwitchStats::closes);
+    if (bus_) bus_->publish(ValveChanged{e.spec.name, target, clock_->now()});
+    return {};
+  }
+
+  auto read = read_back(e);
   if (!read) {
     record(e, ValveState::Unknown);
     count(e, &SwitchStats::failures);
@@ -303,8 +350,8 @@ Result<void> SwitchManager::refresh() {
   std::lock_guard serial(actuation_);
   std::vector<Error> errors;
   for (auto& e : entries_) {
-    if (!e->actuator) continue;
-    auto read = e->actuator->read(e->spec.address);
+    if (!e->actuator || !e->spec.verify) continue;
+    auto read = read_back(*e);
     const auto s = read ? *read : ValveState::Unknown;
     if (!read) errors.push_back(std::move(read).error());
     if (record(*e, s) && bus_) bus_->publish(ValveChanged{e->spec.name, s, clock_->now()});
