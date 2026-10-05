@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -14,8 +13,8 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
-#include "pychron/devices/extraction/capability.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
+#include "pychron/systems/heater_ops.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/transport/factory.hpp"
 
@@ -447,62 +446,21 @@ Result<HeaterSample> ExtractionLine::read_heater(std::string_view name) {
   return read_heater(std::string(name), **h);
 }
 
-namespace {
-
-// A field the driver does not have reads as nullopt; any other failure
-// fails the whole read.
-template <class T>
-Result<std::optional<T>> optional_field(Result<T> r) {
-  if (r) return std::optional<T>(*r);
-  if (extraction::is_not_supported(r.error())) return std::optional<T>{};
-  return fail(std::move(r).error());
-}
-
-}  // namespace
-
 Result<HeaterSample> ExtractionLine::read_heater(const std::string& name, IHeater& h) {
-  HeaterSample s;
-  s.heater = name;
-  auto readback = optional_field(h.readback());
-  if (!readback) return fail(std::move(readback).error());
-  auto setpoint = optional_field(h.setpoint());
-  if (!setpoint) return fail(std::move(setpoint).error());
-  auto enabled = optional_field(h.enabled());
-  if (!enabled) return fail(std::move(enabled).error());
-  auto use_pid = optional_field(h.use_pid());
-  if (!use_pid) return fail(std::move(use_pid).error());
-  s.readback = *readback;
-  s.setpoint = *setpoint;
-  s.enabled = *enabled;
-  s.use_pid = *use_pid;
-  s.ts = clock_->now();
+  auto s = read_heater_sample(name, h, clock_->now());
+  if (!s) return s;
   {
     std::lock_guard lock(pressures_mutex_);
-    heater_samples_[name] = s;
+    heater_samples_[name] = *s;
   }
-  bus_.publish(s);
+  bus_.publish(*s);
   return s;
 }
-
-namespace {
-
-// A setpoint may come back through a float32 register.
-bool same_setpoint(double want, double got) {
-  return std::abs(want - got) <= 1e-5 * std::max(1.0, std::abs(want));
-}
-
-}  // namespace
 
 Result<void> ExtractionLine::set_heater_enabled(std::string_view name, bool on) {
   auto h = heater_or_error(name);
   if (!h) return fail(std::move(h).error());
-  if (auto set = (*h)->set_enabled(on); !set) return set;
-  auto got = (*h)->enabled();
-  if (!got) return fail(std::move(got).error());
-  if (*got != on) {
-    return fail(ErrorKind::Protocol, std::string("turned ") + (on ? "on" : "off") + " but reads back " +
-                                         (*got ? "on" : "off"), std::string(name));
-  }
+  if (auto r = systems::set_heater_enabled(std::string(name), **h, on); !r) return r;
   (void)read_heater(std::string(name), **h);
   return {};
 }
@@ -510,13 +468,7 @@ Result<void> ExtractionLine::set_heater_enabled(std::string_view name, bool on) 
 Result<void> ExtractionLine::set_heater_setpoint(std::string_view name, double value) {
   auto h = heater_or_error(name);
   if (!h) return fail(std::move(h).error());
-  if (auto set = (*h)->set_setpoint(value); !set) return set;
-  auto got = (*h)->setpoint();
-  if (!got) return fail(std::move(got).error());
-  if (!same_setpoint(value, *got)) {
-    return fail(ErrorKind::Protocol, "setpoint " + std::to_string(value) + " reads back as " + std::to_string(*got),
-                std::string(name));
-  }
+  if (auto r = systems::set_heater_setpoint(std::string(name), **h, value); !r) return r;
   (void)read_heater(std::string(name), **h);
   return {};
 }
@@ -524,13 +476,7 @@ Result<void> ExtractionLine::set_heater_setpoint(std::string_view name, double v
 Result<void> ExtractionLine::set_heater_pid(std::string_view name, bool on) {
   auto h = heater_or_error(name);
   if (!h) return fail(std::move(h).error());
-  if (auto set = (*h)->set_use_pid(on); !set) return set;
-  auto got = (*h)->use_pid();
-  if (!got) return fail(std::move(got).error());
-  if (*got != on) {
-    return fail(ErrorKind::Protocol, std::string("use_pid set ") + (on ? "on" : "off") + " but reads back " +
-                                         (*got ? "on" : "off"), std::string(name));
-  }
+  if (auto r = systems::set_heater_pid(std::string(name), **h, on); !r) return r;
   (void)read_heater(std::string(name), **h);
   return {};
 }

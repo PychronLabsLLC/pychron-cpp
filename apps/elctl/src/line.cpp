@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <deque>
+#include <memory>
 
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
+#include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/transport/factory.hpp"
 
@@ -18,9 +20,21 @@ using namespace pychron;
 // Device models behind sim transports. Deques keep addresses stable because
 // transport hooks borrow them.
 struct Line::Sims {
-  std::deque<ProxrBoardSim> boards;
+  explicit Sims(const Clock& c) : clock(c) {}
 
-  SimTransport::Hook hook_for(const std::string& driver_kind) {
+  const Clock& clock;
+  std::deque<ProxrBoardSim> boards;
+  std::deque<std::unique_ptr<Plc2000HeaterSim>> heaters;
+
+  SimTransport::Hook hook_for(const config::DriverConfig& driver) {
+    const std::string& driver_kind = driver.kind;
+    if (driver_kind == "plc2000_heater") {
+      // Off, at 25 in the PLC's units; on, it heats toward the setpoint.
+      auto options = Plc2000Heater::parse_options(driver.options);
+      if (!options) return {};
+      heaters.push_back(std::make_unique<Plc2000HeaterSim>(clock, std::move(*options)));
+      return heaters.back()->hook();
+    }
     if (driver_kind == "proxr_relay") {
       boards.emplace_back();
       return boards.back().hook();
@@ -35,7 +49,7 @@ struct Line::Sims {
   }
 };
 
-Line::Line(config::SystemConfig config) : config_(std::move(config)), sims_(std::make_unique<Sims>()) {}
+Line::Line(config::SystemConfig config) : config_(std::move(config)), sims_(std::make_unique<Sims>(clock_)) {}
 
 Line::~Line() {
   stop_scan();
@@ -75,7 +89,7 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
       // The first driver on the wire decides which device model answers.
       auto driver = std::find_if(cfg.drivers.begin(), cfg.drivers.end(),
                                  [&](const auto& d) { return d.second.transport == name; });
-      if (driver != cfg.drivers.end()) context.sim_hook = line->sims_->hook_for(driver->second.kind);
+      if (driver != cfg.drivers.end()) context.sim_hook = line->sims_->hook_for(driver->second);
     }
     auto transport = make_transport(tc, context);
     if (!transport) return fail(transport.error());
@@ -133,6 +147,22 @@ const config::GaugeConfig* Line::gauge(const std::string& name) const {
     if (g.name == name) return &g;
   }
   return nullptr;
+}
+
+const config::HeaterConfig* Line::heater_config(const std::string& name) const {
+  for (const auto& h : config_.heaters) {
+    if (h.name == name) return &h;
+  }
+  return nullptr;
+}
+
+Result<IHeater*> Line::heater(const std::string& name) const {
+  const auto* h = heater_config(name);
+  if (!h) return fail(ErrorKind::Config, "unknown heater '" + name + "'");
+  Device* d = device(h->driver);
+  if (!d) return fail(ErrorKind::Config, "heater driver '" + h->driver + "' not built", name);
+  if (auto* heater = capability<IHeater>(*d)) return heater;
+  return fail(ErrorKind::Config, "driver '" + h->driver + "' is not a heater", name);
 }
 
 Result<double> Line::read_gauge(const std::string& name) {

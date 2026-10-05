@@ -464,7 +464,8 @@ Deferred to M2: `labjack_u3` (vendor SDK behind `Transport`).
 
 `validate`, `canvas-check`, `list-drivers`, `probe`, `list`, `state`,
 `open <valve>`, `close <valve>`, `read <gauge>`, `scan --for <dur>`,
-`trace on|off`, `sim` (SimSystem REPL).
+`trace on|off`, `sim` (SimSystem REPL), and (added 2026-10-05)
+`heater list|status|on|off|pid|setpoint`.
 
 ### 9.4 Order of work
 

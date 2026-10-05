@@ -11,6 +11,7 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 
 #include "duration.hpp"
@@ -30,6 +31,7 @@
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
+#include "pychron/systems/heater_ops.hpp"
 #include "trace_settings.hpp"
 
 namespace elctl {
@@ -49,7 +51,7 @@ constexpr const char* kUsageText =
     "  validate [file]             check a system config; print every error\n"
     "  canvas-check [canvas.toml]  check a canvas and cross-check it against the config\n"
     "  list-drivers                driver kinds and the keys each one reads\n"
-    "  list                        configured valves, manual valves, switches and gauges\n"
+    "  list                        configured valves, manual valves, switches, heaters and gauges\n"
     "  conditionals-check <file> [--spectrometer <spectrometer.toml>]\n"
     "                              parse conditionals, print their canonical form, and check\n"
     "                              names against the config's gauges and the spectrometer\n"
@@ -105,6 +107,12 @@ constexpr const char* kUsageText =
     "  open <valve>                actuate, enforcing locks and interlocks\n"
     "  close <valve>\n"
     "  read <gauge>                one pressure reading\n"
+    "  heater list                 the configured heaters\n"
+    "  heater status <name>        read enable, use_pid, setpoint and readback\n"
+    "  heater on|off <name>        switch a heater; each command reads its field back\n"
+    "  heater pid <name> on|off    the heater's PID loop\n"
+    "  heater setpoint <name> <value>\n"
+    "                              in the heater's units (shown by heater list)\n"
     "  scan --for <dur> [--interval <dur>]\n"
     "                              stream gauge samples and alarms (dur: 500ms, 10s, 2m)\n"
     "  trace [on|off [transport...]]\n"
@@ -210,6 +218,7 @@ class Session {
     if (cmd == "open") return actuate(args, systems::SwitchOp::Open);
     if (cmd == "close") return actuate(args, systems::SwitchOp::Close);
     if (cmd == "read") return read(args);
+    if (cmd == "heater") return heater(args);
     if (cmd == "scan") return scan(args);
     if (cmd == "trace") return trace(args);
     if (cmd == "sim") return repl();
@@ -365,6 +374,7 @@ class Session {
       if (!s.description.empty()) io_.out << "  # " << s.description;
       io_.out << '\n';
     }
+    for (const auto& h : cfg->heaters) list_heater(h);
     for (const auto& gc : cfg->gauges) {
       io_.out << "gauge   " << gc.name << "  " << gc.driver << " ch" << gc.channel << "  " << units_name(gc.units);
       if (gc.alarm_high) io_.out << "  alarm_high=" << *gc.alarm_high;
@@ -372,6 +382,13 @@ class Session {
       io_.out << '\n';
     }
     return kOk;
+  }
+
+  void list_heater(const config::HeaterConfig& h) {
+    io_.out << "heater  " << h.name << "  " << h.driver;
+    if (!h.units.empty()) io_.out << "  " << h.units;
+    if (!h.description.empty()) io_.out << "  # " << h.description;
+    io_.out << '\n';
   }
 
   // --- line -----------------------------------------------------------------
@@ -497,6 +514,64 @@ class Session {
     auto p = (*line)->read_gauge(args[0]);
     if (!p) return failed(p.error());
     io_.out << gc->name << "  " << pressure(*p, gc->units) << '\n';
+    return kOk;
+  }
+
+  int heater(const std::vector<std::string>& args) {
+    const std::string sub = args.empty() ? "" : args[0];
+    if (sub == "list") {
+      if (args.size() != 1) return usage("heater list takes no arguments");
+      auto cfg = load_config(g_.config);
+      if (!cfg) return failed(cfg.error());
+      for (const auto& h : cfg->heaters) list_heater(h);
+      return kOk;
+    }
+    const bool takes_value = sub == "pid" || sub == "setpoint";
+    if (sub != "status" && sub != "on" && sub != "off" && !takes_value) {
+      return usage("heater list|status|on|off|pid|setpoint");
+    }
+    if (args.size() != (takes_value ? 3u : 2u)) {
+      return usage(takes_value ? "heater " + sub + " <name> <" + (sub == "pid" ? "on|off" : "value") + ">"
+                               : "heater " + sub + " <name>");
+    }
+    const std::string& name = args[1];
+    auto line = ready();
+    if (!line) return failed(line.error());
+    auto h = (*line)->heater(name);
+    if (!h) return failed(h.error());
+    Result<void> done;
+    if (sub == "on" || sub == "off") {
+      done = systems::set_heater_enabled(name, **h, sub == "on");
+    } else if (sub == "pid") {
+      if (args[2] != "on" && args[2] != "off") return usage("heater pid <name> on|off");
+      done = systems::set_heater_pid(name, **h, args[2] == "on");
+    } else if (sub == "setpoint") {
+      double value = 0;
+      std::size_t used = 0;
+      try {
+        value = std::stod(args[2], &used);
+      } catch (const std::exception&) {
+        used = 0;
+      }
+      if (used == 0 || used != args[2].size()) return usage("heater setpoint: '" + args[2] + "' is not a number");
+      done = systems::set_heater_setpoint(name, **h, value);
+    }
+    if (!done) return failed(done.error());
+    auto s = systems::read_heater_sample(name, **h, (*line)->clock().now());
+    if (!s) return failed(s.error());
+    const std::string units = (*line)->heater_config(name)->units;
+    auto value = [&](const std::optional<double>& v) {
+      std::ostringstream o;
+      o << std::fixed << std::setprecision(2) << *v;
+      if (!units.empty()) o << ' ' << units;
+      return o.str();
+    };
+    io_.out << name;
+    if (s->enabled) io_.out << "  " << (*s->enabled ? "on" : "off");
+    if (s->use_pid) io_.out << "  pid " << (*s->use_pid ? "on" : "off");
+    if (s->setpoint) io_.out << "  setpoint " << value(s->setpoint);
+    if (s->readback) io_.out << "  readback " << value(s->readback);
+    io_.out << '\n';
     return kOk;
   }
 

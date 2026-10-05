@@ -159,5 +159,89 @@ TEST_F(ElctlTest, LoggingConfigCreatesLogFile) {
   EXPECT_TRUE(std::filesystem::exists(logs / "pychron.log")) << o.err;
 }
 
+// The example line plus two PLC heaters, one without setpoint or use_pid.
+class HeaterCommands : public ElctlTest {
+ protected:
+  void SetUp() override {
+    ElctlTest::SetUp();
+    std::string text;
+    {
+      std::ifstream f(path("extraction_line.toml"));
+      text.assign(std::istreambuf_iterator<char>(f), {});
+    }
+    text += R"(
+[transports.plc]
+kind = "sim"
+timeout_ms = 100
+[transports.plc2]
+kind = "sim"
+timeout_ms = 100
+[drivers.furnace_plc]
+kind = "plc2000_heater"
+transport = "plc"
+enable = 2
+use_pid = 1
+setpoint = 11
+readback = 21
+[drivers.bake_plc]
+kind = "plc2000_heater"
+transport = "plc2"
+enable = 1
+readback = 3
+[[heaters]]
+name = "furnace"
+driver = "furnace_plc"
+description = "Furnace heater"
+units = "C"
+[[heaters]]
+name = "bake"
+driver = "bake_plc"
+)";
+    write("extraction_line.toml", text);
+  }
+};
+
+TEST_F(HeaterCommands, ListShowsEveryHeater) {
+  auto o = run({"heater", "list"});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "heater  furnace  furnace_plc  C  # Furnace heater")) << o.out;
+  EXPECT_TRUE(contains(o.out, "heater  bake  bake_plc\n")) << o.out;
+  EXPECT_TRUE(contains(run({"list"}).out, "heater  furnace")) << "list includes heaters";
+}
+
+TEST_F(HeaterCommands, StatusPrintsWhatTheHeaterHas) {
+  auto o = run({"heater", "status", "furnace"});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "furnace  off  pid off  setpoint 0.00 C  readback 25.00 C")) << o.out;
+  auto bake = run({"heater", "status", "bake"});
+  EXPECT_EQ(bake.code, 0) << bake.err;
+  EXPECT_TRUE(contains(bake.out, "bake  off  readback 25.00\n")) << bake.out;
+}
+
+TEST_F(HeaterCommands, CommandsReadTheirFieldBack) {
+  auto o = run({"sim"}, "heater setpoint furnace 450\nheater on furnace\nheater pid furnace on\n"
+                        "heater status furnace\nheater off furnace\nquit\n");
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(o.err.empty()) << o.err;
+  EXPECT_TRUE(contains(o.out, "furnace  off  pid off  setpoint 450.00 C")) << o.out;
+  EXPECT_TRUE(contains(o.out, "furnace  on  pid on  setpoint 450.00 C")) << o.out;
+}
+
+TEST_F(HeaterCommands, RefusalsAreErrors) {
+  auto fraction = run({"heater", "setpoint", "furnace", "450.5"});  // int32 on the wire
+  EXPECT_EQ(fraction.code, 1);
+  EXPECT_TRUE(contains(fraction.err, "whole number")) << fraction.err;
+  auto pid = run({"heater", "pid", "bake", "on"});
+  EXPECT_EQ(pid.code, 1);
+  EXPECT_TRUE(contains(pid.err, "not supported")) << pid.err;
+  auto unknown = run({"heater", "on", "nope"});
+  EXPECT_EQ(unknown.code, 1);
+  EXPECT_TRUE(contains(unknown.err, "unknown heater")) << unknown.err;
+  EXPECT_EQ(run({"heater", "setpoint", "furnace", "hot"}).code, 2);
+  EXPECT_EQ(run({"heater", "pid", "furnace", "maybe"}).code, 2);
+  EXPECT_EQ(run({"heater", "on"}).code, 2);
+  EXPECT_EQ(run({"heater", "warm", "furnace"}).code, 2);
+}
+
 }  // namespace
 }  // namespace elctl::testing

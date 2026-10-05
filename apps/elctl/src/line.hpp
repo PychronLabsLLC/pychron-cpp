@@ -10,7 +10,8 @@
 // `kind = "sim"` transports (or every transport, with force_sim) are wired to
 // minimal stateless-per-process device models chosen by the kind of driver
 // on the transport: a ProxrBoardSim for `proxr_relay`, a fixed-pressure
-// MaxiGauge for `pfeiffer_maxigauge`. SimSystem replaces these later.
+// MaxiGauge for `pfeiffer_maxigauge`, a Plc2000HeaterSim for
+// `plc2000_heater`. SimSystem replaces these later.
 
 #include <filesystem>
 #include <memory>
@@ -24,6 +25,7 @@
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
+#include "pychron/devices/heater.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/switch_manager.hpp"
 #include "pychron/transport/transport.hpp"
@@ -64,6 +66,10 @@ class Line {
   const pychron::config::GaugeConfig* gauge(const std::string& name) const;
   // One reading, in the gauge's configured units.
   pychron::Result<double> read_gauge(const std::string& name);
+
+  const pychron::config::HeaterConfig* heater_config(const std::string& name) const;
+  // Config error for an unknown heater or a driver that is not one.
+  pychron::Result<pychron::IHeater*> heater(const std::string& name) const;
 
   // Registers every gauge with the scanner at `interval` and starts the
   // scheduler; PressureSample/Alarm arrive on bus(). stop_scan() undoes it.
