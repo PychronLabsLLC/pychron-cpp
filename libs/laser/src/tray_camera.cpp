@@ -1,5 +1,8 @@
 #include "pychron/laser/tray_camera.hpp"
 
+#include "pychron/vision/camera_backend.hpp"
+#include "pychron/vision/live_feed.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -133,6 +136,32 @@ Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConf
     const Clock* stamp = &clock;
     return std::unique_ptr<vision::IFrameSource>(
         std::make_unique<vision::RecordedSource>(std::move(*recorded), [stamp] { return stamp->now(); }));
+  }
+  if (config.live()) {
+    const vision::CameraRequest request = config.request();
+    // Known before anything is opened: a backend this build does not have
+    // will not appear by waiting.
+    bool known = false;
+    for (const auto& backend : vision::camera_backends()) {
+      if (backend.name != request.backend) continue;
+      known = true;
+      if (!backend.available) {
+        return fail(ErrorKind::Config, "camera of " + config.device + ": " + backend.unavailable_why, config.device);
+      }
+    }
+    if (!known) {
+      return fail(ErrorKind::Config, "camera of " + config.device + ": no camera backend " + request.backend,
+                  config.device);
+    }
+    vision::LiveFeedOptions options;
+    options.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(config.live_timeout);
+    const Clock* stamp = &clock;
+    options.stamp = [stamp] { return stamp->now(); };
+    // A camera that is not there yet is waited for: the feed goes on trying.
+    auto feed = std::make_unique<vision::LiveFeed>(
+        [request](vision::ClockFn frame_clock) { return vision::open_camera(request, std::move(frame_clock)); }, options);
+    (void)feed->wait_open();
+    return std::unique_ptr<vision::IFrameSource>(std::move(feed));
   }
   return std::unique_ptr<vision::IFrameSource>(std::make_unique<SimTrayCamera>(config, std::move(sight), clock));
 }

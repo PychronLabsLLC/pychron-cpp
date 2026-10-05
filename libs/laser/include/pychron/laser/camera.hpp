@@ -4,7 +4,8 @@
 // <lab>/cameras.toml, one table per device, named as its driver.
 //
 //   [co2]
-//   source = "sim"            sim | recorded
+//   source = "sim"            sim | recorded | opencv | pylon
+//   use = "centre"            centre | view: a picture only; it never moves the stage
 //   px_per_mm = 23.0
 //   flip_x = false            image +x is stage -x
 //   flip_y = true             image +y is stage -y (the usual camera)
@@ -28,11 +29,34 @@
 //   frames_per_step = 3
 //   on_failure = "continue"   continue | fail
 //
+//   [co2.opencv]              source = "opencv": whatever OpenCV can open
+//   device = 0                a camera's index, or a video file
+//   width = 1280              asked of the camera; 0 or absent: its own
+//   height = 720
+//   fps = 30
+//   channel = "luma"          luma | r | g | b
+//   rotate = 0                0 | 90 | 180 | 270, clockwise
+//   roi = [0, 0, 0, 0]        x, y, w, h; no size: the whole frame
+//   timeout_ms = 1000         how long anyone waits for a frame
+//
+//   [co2.pylon]               source = "pylon": a Basler camera (GigE, USB3)
+//   serial = "40012345"       empty: the first found
+//   exposure_us = 10000
+//   gain_db = 0
+//   pixel_format = "Mono8"
+//   packet_size = 1500        GigE
+//   timeout_ms = 1000
+//
+// A live camera (opencv, pylon) is read on a thread of its own
+// (vision::LiveFeed). The pylon table is read and checked whether or not
+// this build has the driver; opening it says when it has not.
+//
 // A device with no table has no camera. A table that does not load is a
 // problem for that device only.
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,10 +65,16 @@
 #include "pychron/core/error.hpp"
 #include "pychron/laser/calibration.hpp"
 #include "pychron/vision/calibration.hpp"
+#include "pychron/vision/camera_backend.hpp"
 
 namespace pychron::laser {
 
-enum class CameraSource { Sim, Recorded };
+enum class CameraSource { Sim, Recorded, OpenCv, Pylon };
+// "sim", "recorded", "opencv", "pylon".
+std::string_view to_string(CameraSource source) noexcept;
+// Centre: it may centre holes and follow the glow. View: it is looked
+// through, and nothing it sees moves the stage.
+enum class CameraUse { Centre, View };
 enum class OnAutocenterFailure { Continue, Fail };
 
 struct CameraConfig {
@@ -56,6 +86,19 @@ struct CameraConfig {
   StageXY aim_offset_px{};
   Duration settle{std::chrono::milliseconds(200)};
   std::string frames;  // recorded: the case directory, relative to the lab
+  CameraUse use = CameraUse::Centre;
+
+  // A live camera: what its backend is asked for.
+  std::string live_device;  // opencv: an index or a file ("0" when empty); pylon: a serial number
+  int live_width = 0;
+  int live_height = 0;
+  double live_fps = 0;
+  vision::SourceConfig shape;                          // roi, channel, rotation
+  std::map<std::string, std::string> backend_options;  // pylon's own keys, as text
+  Duration live_timeout{std::chrono::milliseconds(1000)};
+  // The pixel scale as measured by jogging the stage (camera_scale.hpp);
+  // used instead of px_per_mm and the flips when there is one.
+  std::optional<vision::CameraStageMap> measured;
 
   StageXY sim_tray_error_mm{};
   double sim_noise = 0.01;
@@ -75,13 +118,20 @@ struct CameraConfig {
 
   // Image offset (px) to the stage move (mm) that centres it.
   vision::CameraStageMap map() const;
+  // Pixels per millimetre: the measured map's, or px_per_mm.
+  double scale_px_per_mm() const;
+  bool live() const noexcept { return source == CameraSource::OpenCv || source == CameraSource::Pylon; }
+  // What a live camera's backend is asked to open.
+  vision::CameraRequest request() const;
 };
 
 // Whether this camera may be used to move a stage (autocenter). Only a
 // camera that follows the stage closes a loop: a recording never does (it
-// is for looking at what a finder sees), and a simulated camera only over a
+// is for looking at what a finder sees), a simulated camera only over a
 // simulated stage (over a real one it would "find" its made-up tray error
-// and the laser would be fired there). Config error saying which.
+// and the laser would be fired there), and a live camera only over a real
+// one (a simulated stage is not what it looks at). A camera marked
+// use = "view" never does. Config error saying which.
 Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_simulated);
 
 class CameraLibrary {

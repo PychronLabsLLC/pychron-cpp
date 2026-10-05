@@ -65,7 +65,10 @@ class SimTrayCamera final : public vision::IFrameSource {
   std::optional<TimePoint> lit_since_;   // the last grab with the beam on
 };
 
-// Config error for a recorded source whose directory is not a fixture case.
+// A live source (opencv, pylon) comes behind a vision::LiveFeed, which goes
+// on trying to open a camera that is not there yet (what is wrong is in its
+// latest()). Config error for a recorded source whose directory is not a
+// fixture case, and for a live source whose backend this build does not have.
 Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConfig& config,
                                                                 const std::filesystem::path& lab, TraySightFn sight,
                                                                 const Clock& clock);

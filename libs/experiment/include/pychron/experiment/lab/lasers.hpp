@@ -53,7 +53,7 @@ class Lasers {
   // One LaserSystem per driver of `line` that is an extraction device, under
   // the driver's name (what a queue's extract_device names), with the lab's
   // corrections and, when the lab gives it one that may be used here, its
-  // camera. `simulated` says whether a driver is simulated (a simulated
+  // camera (one marked use = "view" as a picture only). `simulated` says whether a driver is simulated (a simulated
   // camera may only centre holes on a simulated stage); empty: asked of the
   // line. `lab` and `line` must outlive this.
   Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool(std::string_view driver)> simulated = {});
@@ -66,6 +66,9 @@ class Lasers {
   // cannot be used to centre holes on it. Fixed once built.
   std::vector<std::string> problems() const;
   const std::string* problem_of(std::string_view device) const;
+  // What is wrong that stops no queue: a camera for looking that cannot be
+  // looked through. Fixed once built.
+  std::vector<std::string> notes() const { return notes_; }
 
   // Config error, saying who drives now, when it is the other. By hand may
   // be taken again while it is held by hand (those commands are serialised by
@@ -85,6 +88,7 @@ class Lasers {
   // calibrations.
   std::map<std::string, std::unique_ptr<laser::LaserSystem>, std::less<>> systems_;
   std::map<std::string, std::string, std::less<>> problems_;
+  std::vector<std::string> notes_;
 
   mutable std::mutex mutex_;
   Driver driver_ = Driver::None;

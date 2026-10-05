@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "pychron/vision/finder.hpp"
+#include "pychron/vision/live_feed.hpp"
 
 namespace pychron::laser {
 
@@ -221,10 +222,22 @@ Result<CameraView> LaserSystem::view() {
   Gate gate(gate_);
   if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
   CameraView seen;
-  auto frame = frames_->grab();
-  if (!frame) return fail(std::move(frame).error());
-  seen.frame = std::move(*frame);
-  seen.px_per_mm = camera_->px_per_mm;
+  if (auto* live = dynamic_cast<vision::LiveFeed*>(frames_.get())) {
+    // Never waited for: the newest picture there is, and how it is doing.
+    vision::LiveFeed::Latest latest = live->latest();
+    if (!latest.frame) {
+      return fail(ErrorKind::Io, latest.error.empty() ? "no picture from the camera yet" : latest.error, name_);
+    }
+    seen.frame = std::move(*latest.frame);
+    seen.age_ms = static_cast<int>(latest.age.count());
+    seen.fps = latest.fps;
+    seen.trouble = std::move(latest.error);
+  } else {
+    auto frame = frames_->grab();
+    if (!frame) return fail(std::move(frame).error());
+    seen.frame = std::move(*frame);
+  }
+  seen.px_per_mm = camera_->scale_px_per_mm();
   seen.aim_px = {(seen.frame.width - 1) / 2.0 + camera_->aim_offset_px.x,
                  (seen.frame.height - 1) / 2.0 + camera_->aim_offset_px.y};
   double radius_mm = 0.5;
@@ -232,7 +245,7 @@ Result<CameraView> LaserSystem::view() {
     std::lock_guard lock(mutex_);
     if (tray_ != nullptr && tray_->dimension() > 0) radius_mm = tray_->dimension() / 2;
   }
-  seen.expected_radius_px = radius_mm * camera_->px_per_mm;
+  seen.expected_radius_px = radius_mm * seen.px_per_mm;
   // A hole, dark on the tray; with the beam on, the sample's glow.
   bool firing = false;
   if (auto* laser = driver_.laser()) firing = laser->is_firing().value_or(false);
@@ -337,18 +350,35 @@ void LaserSystem::set_corrections(const CorrectionStore& corrections) { correcti
 Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
   Gate gate(gate_);
-  // Whether the stage is simulated is the caller's to know; that a recording
-  // can never move a stage is known here.
-  if (auto ok = usable_for_autocenter(config, true); !ok) return ok;
+  // Whether the stage and the camera suit each other is the caller's to
+  // know; that a recording, or a camera for looking, never moves a stage is
+  // known here.
+  if (config.use == CameraUse::View || config.source == CameraSource::Recorded) {
+    return usable_for_autocenter(config, config.source == CameraSource::Sim);
+  }
   if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
+  centres_ = true;
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
   if (runner_ != nullptr) {
     runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; }});
   }
+  return {};
+}
+
+Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
+                                        const Clock& clock) {
+  Gate gate(gate_);
+  if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
+  camera_ = std::move(config);
+  frames_ = std::move(frames);
+  centres_ = false;
+  clock_ = &clock;
+  finder_ = std::make_unique<vision::SimpleFinder>();
+  if (runner_ != nullptr) runner_->set_vision({});  // nothing to follow the glow with
   return {};
 }
 
@@ -494,7 +524,7 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
       std::lock_guard lock(mutex_);
       last_hole_ = std::string(position);
     }
-    if (autocenter && frames_ != nullptr) {
+    if (autocenter && can_centre()) {
       vision::AutocenterParams params;
       params.hole_radius_mm = hole_radius;
       params.tolerance_mm = camera_->tolerance_mm;

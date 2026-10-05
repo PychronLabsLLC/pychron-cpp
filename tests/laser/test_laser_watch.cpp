@@ -312,3 +312,173 @@ TEST_F(LaserWatch, StoppedFromAnotherThreadMidPattern) {
   if (running) EXPECT_FALSE(*running);
   EXPECT_FALSE(*runner().running());
 }
+
+// A camera for looking only (live camera design, section 3): its picture is
+// shown and nothing it sees moves the stage.
+
+namespace {
+
+struct Viewer : ::testing::Test, LaserHarness {
+  CameraConfig camera = [] {
+    CameraConfig c = camera_config();
+    c.use = CameraUse::View;
+    return c;
+  }();
+  Viewer() {
+    EXPECT_TRUE(system.attach_viewer(camera, std::make_unique<SimTrayCamera>(camera, system.sight(), clock), clock));
+    EXPECT_TRUE(system.set_tray("small"));
+  }
+};
+
+// A camera a test controls, behind the "pylon" backend's name.
+struct FakeLive {
+  struct Control {
+    std::atomic<bool> fails{false};
+    std::atomic<int> grabs{0};
+  };
+  std::shared_ptr<Control> control = std::make_shared<Control>();
+  FakeLive() {
+    vision::CameraBackend b;
+    b.name = "pylon";
+    b.available = true;
+    b.open = [control = control](const vision::CameraRequest& r, vision::ClockFn stamp)
+        -> Result<std::unique_ptr<vision::IFrameSource>> {
+      if (r.device == "absent") return fail(ErrorKind::Io, "no camera with serial absent");
+      struct Source final : vision::IFrameSource {
+        std::shared_ptr<Control> control;
+        vision::ClockFn stamp;
+        std::uint64_t seq = 0;
+        Result<vision::Frame> grab() override {
+          std::this_thread::sleep_for(std::chrono::milliseconds(3));
+          if (control->fails) return fail(ErrorKind::Io, "cable out");
+          vision::Frame f = vision::Frame::make(64, 48, 255, 180);
+          f.seq = ++seq;
+          f.timestamp = stamp();
+          ++control->grabs;
+          return f;
+        }
+        vision::FrameInfo info() const override { return {64, 48, 255, 300.0}; }
+      };
+      auto source = std::make_unique<Source>();
+      source->control = control;
+      source->stamp = std::move(stamp);
+      return std::unique_ptr<vision::IFrameSource>(std::move(source));
+    };
+    b.list = [] { return std::vector<vision::CameraFound>{}; };
+    vision::register_camera_backend(std::move(b));
+  }
+  ~FakeLive() { vision::unregister_camera_backend("pylon"); }
+
+  static CameraConfig config(const char* serial = "1") {
+    CameraConfig c;
+    c.device = "co2";
+    c.source = CameraSource::Pylon;
+    c.use = CameraUse::View;
+    c.live_device = serial;
+    c.live_timeout = std::chrono::milliseconds(200);
+    return c;
+  }
+};
+
+}  // namespace
+
+TEST_F(Viewer, ShowsItsPictureAndNeverCentres) {
+  EXPECT_TRUE(system.has_camera());
+  EXPECT_FALSE(system.can_centre());
+  EXPECT_FALSE(system.autocenter_needs_polling());
+  ASSERT_TRUE(system.move_to_position("3", true));
+  EXPECT_EQ(system.snapshot().activity, LaserActivity::Moving) << "a move, not a centring";
+  ASSERT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
+  EXPECT_EQ(sim.position().x, 15000) << "at its calibrated position, not where the camera sees it";
+  EXPECT_EQ(sim.position().y, 20000);
+  EXPECT_EQ(system.last_autocenter().result, AutocenterOutcome::Result::None);
+  const auto seen = system.view();
+  ASSERT_TRUE(seen) << seen.error().what;
+  EXPECT_TRUE(seen->target.has_value()) << "what it sees is still shown";
+  EXPECT_TRUE(system.snapshot().has_camera);
+}
+
+TEST_F(Viewer, ADragonflyIsRefused) {
+  ASSERT_TRUE(system.move_to_position("3", false));
+  ASSERT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
+  const auto started = system.pattern_runner()->execute_pattern_for("track", 5);
+  ASSERT_FALSE(started);
+  EXPECT_EQ(started.error().kind, ErrorKind::Config);
+}
+
+TEST(ViewerRules, ACameraThatCentresIsNotAttachedAsOneThatCannot) {
+  LaserHarness h;
+  CameraConfig recorded = camera_config();
+  recorded.source = CameraSource::Recorded;
+  // a camera meant to centre must come in by attach_camera, where it is checked
+  CameraConfig view = camera_config();
+  view.use = CameraUse::View;
+  const auto as_camera = h.system.attach_camera(view, std::make_unique<SimTrayCamera>(view, h.system.sight(), h.clock), h.clock);
+  ASSERT_FALSE(as_camera);
+  EXPECT_NE(as_camera.error().what.find("looking"), std::string::npos) << as_camera.error().what;
+  EXPECT_FALSE(h.system.has_camera());
+}
+
+TEST(LiveView, ALiveCameraIsWatchedWithoutWaitingForIt) {
+  FakeLive fake;
+  LaserHarness h;
+  const CameraConfig config = FakeLive::config();
+  auto frames = make_frame_source(config, h.lab.dir, h.system.sight(), h.clock);
+  ASSERT_TRUE(frames) << frames.error().what;
+  ASSERT_TRUE(h.system.attach_viewer(config, std::move(*frames), h.clock));
+  // frames arrive by themselves
+  Result<CameraView> seen = h.system.view();
+  for (int i = 0; i < 400 && (!seen || seen->fps <= 0); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    seen = h.system.view();
+  }
+  ASSERT_TRUE(seen) << seen.error().what;
+  EXPECT_EQ(seen->frame.width, 64);
+  EXPECT_GT(seen->fps, 0);
+  EXPECT_LT(seen->age_ms, 200);
+  EXPECT_TRUE(seen->trouble.empty()) << seen->trouble;
+  // the camera goes: the last picture, how old, and why; and the look does not wait for it
+  fake.control->fails = true;
+  for (int i = 0; i < 400 && seen && seen->trouble.empty(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    seen = h.system.view();
+  }
+  ASSERT_TRUE(seen);
+  EXPECT_NE(seen->trouble.find("cable out"), std::string::npos) << seen->trouble;
+  EXPECT_EQ(seen->frame.width, 64);
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  const auto began = std::chrono::steady_clock::now();
+  seen = h.system.view();
+  EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::milliseconds(40));
+  ASSERT_TRUE(seen);
+  EXPECT_GE(seen->age_ms, 50);
+  // and it comes back by itself
+  fake.control->fails = false;
+  for (int i = 0; i < 600 && (!seen || !seen->trouble.empty()); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    seen = h.system.view();
+  }
+  ASSERT_TRUE(seen);
+  EXPECT_TRUE(seen->trouble.empty()) << seen->trouble;
+}
+
+TEST(LiveView, ACameraThatIsNotThereIsStillWaitedFor) {
+  FakeLive fake;
+  LaserHarness h;
+  // absent now: the source is made all the same, and says what is wrong
+  auto frames = make_frame_source(FakeLive::config("absent"), h.lab.dir, h.system.sight(), h.clock);
+  ASSERT_TRUE(frames) << frames.error().what;
+  ASSERT_TRUE(h.system.attach_viewer(FakeLive::config("absent"), std::move(*frames), h.clock));
+  const auto seen = h.system.view();
+  ASSERT_FALSE(seen);
+  EXPECT_NE(seen.error().what.find("no camera with serial absent"), std::string::npos) << seen.error().what;
+}
+
+TEST(LiveView, ABackendThisBuildLacksIsAnError) {
+  LaserHarness h;  // the real "pylon": not built
+  const auto frames = make_frame_source(FakeLive::config(), h.lab.dir, h.system.sight(), h.clock);
+  ASSERT_FALSE(frames);
+  EXPECT_EQ(frames.error().kind, ErrorKind::Config);
+  EXPECT_NE(frames.error().what.find("built without pylon"), std::string::npos) << frames.error().what;
+  EXPECT_NE(frames.error().what.find("co2"), std::string::npos) << frames.error().what;
+}

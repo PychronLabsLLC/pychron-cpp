@@ -96,6 +96,11 @@ struct CameraView {
   StageXY aim_px{};                      // where the beam is in the frame, in pixels
   double px_per_mm = 0;
   double expected_radius_px = 0;         // of a hole of the current tray
+  // A live camera: how old the picture is, the rate frames arrive at, and
+  // what is wrong when they have stopped (the picture is then the last one).
+  int age_ms = 0;
+  double fps = 0;
+  std::string trouble;
 };
 
 class LaserSystem final : public extraction::IExtractionDevice,
@@ -128,7 +133,15 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // Config error, and no camera, for one that does not follow the stage (a
   // recording): see usable_for_autocenter().
   Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
+  // A camera for looking only: view() shows its picture and what the finder
+  // makes of it; a hole move is not centred by it and a pattern cannot
+  // follow the glow with it. For a camera that does not follow this stage
+  // (use = "view").
+  Result<void> attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
+  // A picture to look at.
   bool has_camera() const noexcept { return frames_ != nullptr; }
+  // A camera that may move the stage.
+  bool can_centre() const noexcept { return frames_ != nullptr && centres_; }
   // What this system's camera is over, for a simulated one. Valid while the
   // system lives; asks the driver where the stage is.
   TraySightFn sight();
@@ -198,7 +211,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   Result<void> stop() override;
   Result<extraction::StagePosition> position() override;
   Result<bool> moving() override;
-  bool autocenter_needs_polling() const override { return has_camera(); }
+  bool autocenter_needs_polling() const override { return can_centre(); }
   std::string last_move_note() override;
   // An empty name clears the tray. Config error for a tray the lab lacks; the
   // current one is kept.
@@ -243,6 +256,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const CorrectionStore* correction_store_ = nullptr;
   std::optional<CameraConfig> camera_;
   std::unique_ptr<vision::IFrameSource> frames_;
+  bool centres_ = false;  // the camera may move the stage (attach_camera)
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
   std::unique_ptr<Centering> centering_;  // under the gate

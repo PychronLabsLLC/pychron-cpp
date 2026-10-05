@@ -220,3 +220,130 @@ TEST(CameraLibrary, LoadsAFile) {
   EXPECT_DOUBLE_EQ(lib.find("co2")->px_per_mm, 31);
   fs::remove(file);
 }
+
+// Live cameras (live camera design, sections 1 and 3).
+
+TEST(CameraConfig, ReadsALiveOpenCvCamera) {
+  const auto lib = parse(R"([co2]
+source = "opencv"
+use = "view"
+px_per_mm = 40
+
+[co2.opencv]
+device = 1
+width = 1280
+height = 720
+fps = 30
+channel = "g"
+rotate = 90
+roi = [10, 20, 300, 200]
+timeout_ms = 400
+)");
+  ASSERT_TRUE(lib.problems().empty()) << lib.problems().front();
+  const CameraConfig* c = lib.find("co2");
+  ASSERT_NE(c, nullptr);
+  EXPECT_EQ(c->source, CameraSource::OpenCv);
+  EXPECT_TRUE(c->live());
+  EXPECT_EQ(c->use, CameraUse::View);
+  const vision::CameraRequest r = c->request();
+  EXPECT_EQ(r.backend, "opencv");
+  EXPECT_EQ(r.device, "1");
+  EXPECT_EQ(r.width, 1280);
+  EXPECT_EQ(r.height, 720);
+  EXPECT_DOUBLE_EQ(r.fps, 30);
+  EXPECT_EQ(r.shape.channel, vision::SourceConfig::Channel::G);
+  EXPECT_EQ(r.shape.rotate, 90);
+  EXPECT_EQ(r.shape.roi.x, 10);
+  EXPECT_EQ(r.shape.roi.h, 200);
+  EXPECT_EQ(c->live_timeout, Duration(400ms));
+  // by default: camera 0, as it comes, and it centres
+  const auto plain = parse("[co2]\nsource = \"opencv\"\n");
+  ASSERT_TRUE(plain.problems().empty()) << plain.problems().front();
+  EXPECT_EQ(plain.find("co2")->request().device, "0");
+  EXPECT_EQ(plain.find("co2")->use, CameraUse::Centre);
+  EXPECT_EQ(plain.find("co2")->live_timeout, Duration(1000ms));
+  // a file is a device too
+  const auto file = parse("[co2]\nsource = \"opencv\"\n[co2.opencv]\ndevice = \"clips/a.mp4\"\n");
+  ASSERT_TRUE(file.problems().empty()) << file.problems().front();
+  EXPECT_EQ(file.find("co2")->request().device, "clips/a.mp4");
+}
+
+TEST(CameraConfig, ReadsAPylonCameraAheadOfItsDriver) {
+  const auto lib = parse(R"([co2]
+source = "pylon"
+
+[co2.pylon]
+serial = "40012345"
+exposure_us = 8000
+gain_db = 3.5
+pixel_format = "Mono12"
+packet_size = 8192
+timeout_ms = 2000
+)");
+  ASSERT_TRUE(lib.problems().empty()) << lib.problems().front();
+  const CameraConfig* c = lib.find("co2");
+  EXPECT_EQ(c->source, CameraSource::Pylon);
+  EXPECT_TRUE(c->live());
+  const vision::CameraRequest r = c->request();
+  EXPECT_EQ(r.backend, "pylon");
+  EXPECT_EQ(r.device, "40012345");
+  EXPECT_EQ(r.options.at("exposure_us"), "8000");
+  EXPECT_EQ(r.options.at("gain_db"), "3.5");
+  EXPECT_EQ(r.options.at("pixel_format"), "Mono12");
+  EXPECT_EQ(r.options.at("packet_size"), "8192");
+  EXPECT_EQ(c->live_timeout, Duration(2000ms));
+  EXPECT_FALSE(parse("[co2]\n").find("co2")->live());
+}
+
+TEST(CameraConfig, RefusesBadLiveValues) {
+  for (const char* text : {
+           "[co2]\nsource = \"webcam\"\n",
+           "[co2]\nuse = \"steer\"\n",
+           "[co2]\n[co2.opencv]\ndevice = -1\n",
+           "[co2]\n[co2.opencv]\ndevice = true\n",
+           "[co2]\n[co2.opencv]\nrotate = 45\n",
+           "[co2]\n[co2.opencv]\nchannel = \"x\"\n",
+           "[co2]\n[co2.opencv]\nroi = [1, 2, 3]\n",
+           "[co2]\n[co2.opencv]\nroi = [1, 2, -3, 4]\n",
+           "[co2]\n[co2.opencv]\nwidth = -4\n",
+           "[co2]\n[co2.opencv]\ntimeout_ms = 0\n",
+           "[co2]\n[co2.opencv]\nexposure = 4\n",
+           "[co2]\n[co2.pylon]\nexposure_us = 0\n",
+           "[co2]\n[co2.pylon]\npacket_size = 10\n",
+           "[co2]\n[co2.pylon]\nserial = 7\n",
+           "[co2]\n[co2.pylon]\npixel_format = \"\"\n",
+       }) {
+    const auto lib = parse(text);
+    EXPECT_EQ(lib.problems().size(), 1u) << text;
+    EXPECT_EQ(lib.find("co2"), nullptr) << text;
+  }
+}
+
+TEST(CameraUse, ALiveCameraClosesTheLoopOnlyOverARealStage) {
+  CameraConfig live;
+  live.device = "co2";
+  live.source = CameraSource::OpenCv;
+  EXPECT_TRUE(usable_for_autocenter(live, false));
+  const auto on_sim = usable_for_autocenter(live, true);
+  ASSERT_FALSE(on_sim);
+  EXPECT_EQ(on_sim.error().kind, ErrorKind::Config);
+  EXPECT_NE(on_sim.error().what.find("simulated"), std::string::npos) << on_sim.error().what;
+  EXPECT_NE(on_sim.error().what.find("use = \"view\""), std::string::npos) << "it says what to do: " << on_sim.error().what;
+  live.source = CameraSource::Pylon;
+  EXPECT_TRUE(usable_for_autocenter(live, false));
+  EXPECT_FALSE(usable_for_autocenter(live, true));
+}
+
+TEST(CameraUse, ACameraForLookingNeverClosesTheLoop) {
+  for (const CameraSource source : {CameraSource::Sim, CameraSource::OpenCv, CameraSource::Pylon}) {
+    CameraConfig view;
+    view.device = "co2";
+    view.source = source;
+    view.use = CameraUse::View;
+    for (const bool simulated : {true, false}) {
+      const auto r = usable_for_autocenter(view, simulated);
+      ASSERT_FALSE(r);
+      EXPECT_NE(r.error().what.find("looking"), std::string::npos) << r.error().what;
+    }
+  }
+}

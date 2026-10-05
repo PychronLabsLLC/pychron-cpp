@@ -228,9 +228,11 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
         say(row, "pattern " + pattern->name + " has no duration: the run gives none and the pattern has none of its own");
       }
       const laser::CameraConfig* camera = lab.cameras.find(device);
-      if (camera == nullptr || camera->source == laser::CameraSource::Recorded) {
+      if (camera == nullptr || camera->source == laser::CameraSource::Recorded || camera->use == laser::CameraUse::View) {
         say(row, "pattern " + pattern->name + " follows the glow and " + device + " has no camera to see it (" +
-                     (camera == nullptr ? "no [" + device + "] table in cameras.toml" : "recorded frames do not follow the stage") +
+                     (camera == nullptr ? "no [" + device + "] table in cameras.toml"
+                      : camera->use == laser::CameraUse::View ? "its camera is for looking only: use = \"view\""
+                                                              : "recorded frames do not follow the stage") +
                      ")");
       }
     }

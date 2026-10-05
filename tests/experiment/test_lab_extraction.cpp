@@ -291,6 +291,7 @@ TEST_F(LabExtractionTest, ADragonflyNeedsACamera) {
 
   for (const char* cameras : {static_cast<const char*>(nullptr),                       // none
                               "[co2]\nsource = \"recorded\"\nframes = \"x\"\n",      // one that only looks
+                              "[co2]\nuse = \"view\"\n",                            // one that is only looked through
                               "[diode]\n"}) {                                          // another device's
     const auto found = with(cameras);
     ASSERT_EQ(found.size(), 1u) << (cameras ? cameras : "no file");

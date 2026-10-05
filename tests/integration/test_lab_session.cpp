@@ -319,6 +319,65 @@ TEST_F(SharedLasersSessionTest, AQueueDrivesTheLasersItWasGiven) {
   EXPECT_EQ(seen.firing, false);
 }
 
+// --- cameras for looking, and live ones (live camera design, section 3) -------
+
+class CameraLabTest : public SharedLasersSessionTest {
+ protected:
+  void prepare_lab() override { std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << cameras(); }
+  virtual std::string cameras() const = 0;
+};
+
+class ViewCameraTest : public CameraLabTest {
+  std::string cameras() const override { return "[co2]\nuse = \"view\"\n[co2.sim]\ntray_error_mm = [0.15, -0.10]\nnoise = 0\n"; }
+};
+
+TEST_F(ViewCameraTest, ACameraForLookingShowsAPictureAndStopsNoQueue) {
+  EXPECT_TRUE(lasers_->problems().empty());
+  EXPECT_TRUE(lasers_->notes().empty());
+  laser::LaserSystem& co2 = *lasers_->find("co2");
+  EXPECT_TRUE(co2.has_camera());
+  EXPECT_FALSE(co2.can_centre());
+  EXPECT_TRUE(co2.view());
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  // the holes were gone to as calibrated: nothing the camera saw moved the stage
+  EXPECT_EQ(co2.last_autocenter().result, laser::AutocenterOutcome::Result::None);
+  for (const auto& line : laser_sim("co2").log()) {
+    // (the second run also traces a hexagon about its hole: those moves are within a millimetre of it)
+    if (line.starts_with("Stage.MoveTo 30")) EXPECT_TRUE(line.starts_with("Stage.MoveTo 30000,30000,")) << line;
+    EXPECT_NE(line, "Stage.MoveTo 30150,29900,0,5000,5000,100") << "centred, by a camera that is only for looking";
+  }
+}
+
+class LiveCameraOnASimulatedLaserTest : public CameraLabTest {
+  std::string cameras() const override { return "[co2]\nsource = \"opencv\"\n"; }
+};
+
+TEST_F(LiveCameraOnASimulatedLaserTest, IsAProblemThatSaysWhatToDo) {
+  ASSERT_EQ(lasers_->problems().size(), 1u);
+  EXPECT_NE(lasers_->problems().front().find("use = \"view\""), std::string::npos) << lasers_->problems().front();
+  EXPECT_FALSE(lasers_->find("co2")->has_camera()) << "and no camera was opened to find that out";
+  EXPECT_FALSE(session_->start(laser_queue()));
+}
+
+class LiveViewCameraThatIsNotThereTest : public CameraLabTest {
+  std::string cameras() const override {
+    return "[co2]\nsource = \"opencv\"\nuse = \"view\"\n[co2.opencv]\ndevice = \"no/such/clip.mp4\"\ntimeout_ms = 200\n";
+  }
+};
+
+TEST_F(LiveViewCameraThatIsNotThereTest, IsANoteAndStopsNoQueue) {
+  EXPECT_TRUE(lasers_->problems().empty());
+  ASSERT_EQ(lasers_->notes().size(), 1u);
+  EXPECT_NE(lasers_->notes().front().find("co2"), std::string::npos) << lasers_->notes().front();
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  session_->wait();
+}
+
 // --- laser queues (laser system design, sections 5 and 7) --------------------
 
 TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {

@@ -6,6 +6,7 @@
 #include "pychron/laser/tray_camera.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "pychron/vision/live_feed.hpp"
 
 namespace pychron::experiment::lab {
 
@@ -34,13 +35,42 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
     const laser::CameraConfig* camera = lab.cameras.find(name);
     if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
       const bool sim = simulated ? simulated(name) : line.sim() != nullptr && line.sim()->chromium(name) != nullptr;
-      Result<void> usable = laser::usable_for_autocenter(*camera, sim);
-      if (usable) {
-        auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), line.clock());
-        if (frames) usable = system->attach_camera(*camera, std::move(*frames), line.clock());
-        else usable = fail(frames.error());
+      // What a live camera that did not open says; empty when it did, and
+      // for the others.
+      const auto unopened = [](vision::IFrameSource& frames) {
+        auto* live = dynamic_cast<vision::LiveFeed*>(&frames);
+        return live != nullptr ? live->latest().error : std::string{};
+      };
+      if (camera->use == laser::CameraUse::View) {
+        // A picture only. What is wrong with it stops no queue: nothing
+        // depends on it.
+        Result<void> shown;
+        if (camera->source == laser::CameraSource::Sim && !sim) {
+          shown = fail(ErrorKind::Config, "a simulated camera over a real laser would show a tray that is not there");
+        } else if (auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), line.clock())) {
+          const std::string why = unopened(**frames);
+          shown = system->attach_viewer(*camera, std::move(*frames), line.clock());
+          if (shown && !why.empty()) shown = fail(ErrorKind::Io, why + " (it is tried again every second)");
+        } else {
+          shown = fail(frames.error());
+        }
+        if (!shown) notes_.push_back("camera of " + name + ": " + shown.error().what);
+      } else {
+        Result<void> usable = laser::usable_for_autocenter(*camera, sim);
+        if (usable) {
+          auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), line.clock());
+          if (frames) {
+            const std::string why = unopened(**frames);
+            usable = system->attach_camera(*camera, std::move(*frames), line.clock());
+            // A camera that is meant to centre holes and is not there: the
+            // runs would go uncentred without anyone having said so.
+            if (usable && !why.empty()) usable = fail(ErrorKind::Io, "camera of " + name + ": " + why, name);
+          } else {
+            usable = fail(frames.error());
+          }
+        }
+        if (!usable) problems_.insert_or_assign(name, usable.error().what);
       }
-      if (!usable) problems_.insert_or_assign(name, usable.error().what);
     }
     systems_.emplace(name, std::move(system));
   }
