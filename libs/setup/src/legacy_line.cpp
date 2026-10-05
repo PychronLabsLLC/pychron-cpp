@@ -464,6 +464,29 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
     return a;
   }
   if (invert) notes.push_back("actuator " + name + ": invert=True not carried over (no inverted logic in the line config yet)");
+  std::string lower_class;
+  for (char c : a.legacy_class) lower_class += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  // Legacy took any class naming Qtegra for QtegraGPActuator (actuator.py).
+  if (lower_class.find("qtegra") != std::string::npos) {
+    a.kind = "qtegra_valves";
+    if (a.host.empty() || a.port.empty()) {
+      a.comment = "legacy " + what + ": no host in the device file; simulated until one is set";
+      notes.push_back("actuator " + name + ": no Qtegra host in the device file; the transport is simulated");
+      return a;
+    }
+    std::string kind;
+    for (char c : comms["kind"]) kind += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (kind != "tcp" && kind != "udp") {
+      // Legacy's ethernet communicator defaults to UDP.
+      notes.push_back("actuator " + name + ": no kind= in the device file; written as udp, legacy pychron's default");
+      kind = "udp";
+    }
+    a.transport_kind = kind;
+    a.comment = "legacy " + what + " at " + a.endpoint + " (" + kind + ")";
+    notes.push_back("actuator " + name + ": Qtegra takes one client; if the spectrometer's thermo_qtegra uses " +
+                    a.endpoint + ", make this transport kind = \"link\", link = \"<that driver's link name>\"");
+    return a;
+  }
   if (a.legacy_class.find("NGX") != std::string::npos) {
     a.kind = "ngx_valves";
     if (!a.host.empty() && !a.port.empty()) {
@@ -598,7 +621,8 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
        << "\nscan_interval_ms = 1000\n";
   for (const auto& a : actuators) {
     line << "\n# " << a.comment << "\n[transports." << q(a.name) << "]\nkind = " << q(a.transport_kind) << "\n";
-    if (a.transport_kind == "tcp") line << "host = " << q(a.host) << "\nport = " << a.port << "\n";
+    if (a.transport_kind == "tcp" || a.transport_kind == "udp")
+      line << "host = " << q(a.host) << "\nport = " << a.port << "\n";
     if (a.transport_kind == "serial") {
       line << "port = " << q(a.serial_port) << "\nbaud = " << a.baud << "\ndata_bits = " << a.data_bits
            << "\nstop_bits = " << a.stop_bits << "\nparity = " << q(a.parity) << "\n";

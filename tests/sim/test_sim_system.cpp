@@ -9,6 +9,7 @@
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/agilent_switch.hpp"
+#include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
@@ -238,6 +239,38 @@ inverted = true
   // B is wired backwards on top: the channel the manager closes opens it.
   ASSERT_TRUE(unit.close(ValveAddress{"102"}));
   EXPECT_TRUE(sim.valve_open("B"));
+}
+
+TEST(SimSystem, QtegraValvesMoveTheLinesValvesByName) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.qtegra]
+kind = "sim"
+[drivers.switch_controller]
+kind = "qtegra_valves"
+transport = "qtegra"
+link = "sim_qtegra_valves"
+[[valves]]
+name = "A"
+actuator = "switch_controller"
+address = "Valve 1_1 Set"
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("switch_controller"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("switch_controller"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto* valves = capability<IValveActuator>(**made);
+  ASSERT_NE(valves, nullptr);
+  EXPECT_EQ(*valves->read(ValveAddress{"Valve 1_1 Set"}), ValveState::Closed);
+  ASSERT_TRUE(valves->open(ValveAddress{"Valve 1_1 Set"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  ASSERT_TRUE(valves->close(ValveAddress{"Valve 1_1 Set"}));
+  EXPECT_FALSE(sim.valve_open("A"));
 }
 
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {

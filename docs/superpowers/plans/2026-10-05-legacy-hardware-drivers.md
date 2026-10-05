@@ -154,13 +154,15 @@ Protocol (legacy `agilent/agilent_gp_actuator.py`, `agilent_mixin.py`):
 
 ### Task A2: `qtegra_valves` — valves through Qtegra RemoteControl (3 labs)
 
+Done 2026-10-05. On a `link` transport in simulation, the spectrometer's simulated Qtegra answers and the line's network model does not follow; on its own simulated transport it does. The NMGRL example's two Qtegra controllers run this driver.
+
 Protocol (legacy `actuators/ascii_gp_actuator.py`; `QtegraGPActuator` is a pass-through subclass):
 
 - `Open <name>` / `Close <name>`, reply `OK`; `GetValveState <name>`, reply `True` / `False`. Name is the address verbatim and may contain spaces (`Valve 1_9 Set`, `Pipet Ref. Out Set`).
 - Anything other than exactly `True`/`False` is Protocol (legacy treated it as closed).
 
-- [ ] Depends on 0.3; transport is a `link` to the `thermo_qtegra` driver, or its own TCP/UDP transport when no spectrometer driver is configured.
-- [ ] Sim: extend the Qtegra sim to answer the three verbs and move the simulated line's valves.
+- [x] Depends on 0.3; transport is a `link` to the `thermo_qtegra` driver, or its own TCP/UDP transport when no spectrometer driver is configured.
+- [x] Sim: extend the Qtegra sim to answer the three verbs and move the simulated line's valves.
 
 ### Task A3: `nmgrl_furnace_valves` — NMGRL furnace firmware (usgsdenver, felix, jan)
 

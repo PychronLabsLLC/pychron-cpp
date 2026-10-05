@@ -107,6 +107,8 @@ class SimSystem {
   //   agilent_switch      an AgilentUnitSim; route commands for channels of
   //                       valves/switches on this unit drive set_valve(),
   //                       honouring the unit's `invert` and each valve's.
+  //   qtegra_valves       a Qtegra answering valve commands; Open/Close of a
+  //                       valve's Qtegra name drive set_valve().
   //   pfeiffer_maxigauge  channel n reads the volume named after the gauge
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels

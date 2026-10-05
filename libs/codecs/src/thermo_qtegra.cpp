@@ -269,6 +269,9 @@ Result<Command> set_sub_cup_configuration(std::string_view name, Terminator t) {
   return with_name("SetSubCupConfiguration", name, t);
 }
 Result<Command> reset(Terminator t) { return simple("Reset", t); }
+Result<Command> open_valve(std::string_view n, Terminator t) { return with_name("Open", n, t); }
+Result<Command> close_valve(std::string_view n, Terminator t) { return with_name("Close", n, t); }
+Result<Command> get_valve_state(std::string_view n, Terminator t) { return with_name("GetValveState", n, t); }
 
 Result<void> decode_ok(const Bytes& reply) {
   auto b = body(reply);
@@ -303,6 +306,15 @@ Result<bool> decode_bool(const Bytes& reply) {
   for (auto k : kFalse)
     if (s == k) return false;
   return protocol_error("expected a boolean", reply);
+}
+
+Result<bool> decode_valve_state(const Bytes& reply) {
+  auto b = body(reply);
+  if (!b) return fail(b.error());
+  const auto s = lower(*b);
+  if (s == "true") return true;
+  if (s == "false") return false;
+  return protocol_error("expected True or False", reply);
 }
 
 Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::string> names) {

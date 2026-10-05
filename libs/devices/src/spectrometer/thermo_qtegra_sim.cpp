@@ -32,7 +32,9 @@ double parameter(const QtegraSimModel& m, const std::string& name) {
   return 0.0;
 }
 
-Bytes respond(QtegraSimModel& m, const Bytes& tx) {
+// `moved`: set to the valve and its new state by Open/Close, for the
+// listener the hook calls once the model is unlocked.
+Bytes respond(QtegraSimModel& m, const Bytes& tx, std::optional<std::pair<std::string, bool>>& moved) {
   const auto request = q::decode_request(tx);
   if (!request) return q::encode_error("empty command");
   const auto& verb = request->verb;
@@ -94,6 +96,18 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx) {
     if (args.size() != 1) return bad_arguments;
     return q::encode_number(parameter(m, args[0]));
   }
+  // A valve name may hold spaces but no comma: the whole argument is it.
+  if (verb == "Open" || verb == "Close") {
+    if (args.size() != 1) return bad_arguments;
+    m.valves[args[0]] = verb == "Open";
+    moved = {args[0], verb == "Open"};
+    return q::encode_ok();
+  }
+  if (verb == "GetValveState") {
+    if (args.size() != 1) return bad_arguments;
+    const auto it = m.valves.find(args[0]);
+    return q::encode_bool(it != m.valves.end() && it->second);
+  }
   if (verb == "GetData" && args.empty()) {
     if (!m.data_override.empty()) return q::encode_line(m.data_override);
     if (m.intensities.empty()) return q::encode_error("no data");
@@ -105,7 +119,12 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx) {
 }  // namespace
 
 SimTransport::Hook qtegra_sim_hook(std::shared_ptr<QtegraSimModel> model) {
-  return [model = std::move(model)](const Bytes& tx) { return respond(*model, tx); };
+  return [model = std::move(model)](const Bytes& tx) {
+    std::optional<std::pair<std::string, bool>> moved;
+    Bytes reply = respond(*model, tx, moved);
+    if (moved && model->on_valve) model->on_valve(moved->first, moved->second);
+    return reply;
+  };
 }
 
 }  // namespace pychron::spectrometer

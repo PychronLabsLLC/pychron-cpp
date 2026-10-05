@@ -79,7 +79,7 @@ without one it uses `switch_controller`.
 | Legacy class | Seen at | Communications | pychron-cpp |
 |---|---|---|---|
 | NGXGPActuator | ASU, Purdue, UAF, Reston, WiSCAr | TCP, port 1099, `invert=True` | `ngx_valves` |
-| QtegraGPActuator | melbourne | TCP `localhost:1069` | none yet |
+| QtegraGPActuator | melbourne | TCP `localhost:1069` | `qtegra_valves` |
 | AgilentGPActuator | ASU, NMGRL | serial 19200, or VISA USB | `agilent_switch` (serial, LAN; VISA-USB simulated) |
 | ArduinoGPActuator | NMGRL | USB serial | none yet |
 | NMGRLFurnaceActuator | NMGRL | (subsystem) | none yet |
@@ -105,6 +105,10 @@ Mapping:
   on its serial port (a bare legacy name becomes `/dev/tty.<name>`, as legacy
   opened it, and the report says so) or its LAN host (port 5025 when none is
   given); a VISA-USB unit gets a simulated transport and a note.
+  Any class naming Qtegra becomes `qtegra_valves` on its host and port, tcp
+  or udp as its `kind=` says (udp when it says nothing: legacy's default,
+  reported); the report says to make it a `link` when the spectrometer's
+  thermo_qtegra shares the endpoint.
   Every other class becomes a `sim_valves` driver (any address, state kept in
   memory) on a simulated transport, with the legacy class and endpoint in a
   comment: the line loads and runs in simulation, and the comment says what

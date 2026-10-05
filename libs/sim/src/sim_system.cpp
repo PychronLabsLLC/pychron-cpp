@@ -8,6 +8,7 @@
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
+#include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/devices/types.hpp"
 
 namespace pychron::sim {
@@ -192,6 +193,23 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     std::lock_guard lock(mutex_);
     units_.push_back(std::move(unit));
     return hook;
+  }
+
+  if (driver.kind == "qtegra_valves") {
+    // A Qtegra RemoteControl answering valve commands only; its Open/Close
+    // move the line's valves (by Qtegra name). On a kind = "link" transport
+    // the spectrometer's simulator answers instead, and the line's model
+    // does not follow.
+    std::map<std::string, std::pair<std::string, bool>> by_name;  // valve, inverted
+    for (const auto& v : system.valves)
+      if (v.actuator == driver.name) by_name[v.address] = {v.name, v.inverted};
+    for (const auto& s : system.switches)
+      if (s.actuator == driver.name) by_name[s.address] = {s.name, s.inverted};
+    auto model = std::make_shared<spectrometer::QtegraSimModel>();
+    model->on_valve = [this, by_name = std::move(by_name)](const std::string& name, bool open) {
+      if (auto it = by_name.find(name); it != by_name.end()) set_valve(it->second.first, open != it->second.second);
+    };
+    return spectrometer::qtegra_sim_hook(std::move(model));
   }
 
   if (driver.kind == "chromium") {

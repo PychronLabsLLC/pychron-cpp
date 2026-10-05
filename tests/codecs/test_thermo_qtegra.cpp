@@ -383,3 +383,25 @@ TEST(QtegraCodec, ValidateNameMatchesEncoderRule) {
   expect_config(q::validate_name("H1,AX"));
   expect_config(q::validate_name("H1\r"));
 }
+
+TEST(QtegraCodec, ValveCommands) {
+  // Legacy ASCIIGPActuator: verb, one space, the Qtegra valve name.
+  EXPECT_EQ(*q::open_valve("Valve 1_9 Set"), cmd("Open Valve 1_9 Set"));
+  EXPECT_EQ(*q::close_valve("Pipet Ref. Out Set"), cmd("Close Pipet Ref. Out Set"));
+  EXPECT_EQ(*q::get_valve_state("A"), cmd("GetValveState A"));
+  EXPECT_EQ(q::open_valve("A", q::Terminator::LF)->tx, to_bytes("Open A\n"));
+  for (const char* bad : {"", "A,B", "A\rB"}) {
+    auto r = q::open_valve(bad);
+    ASSERT_FALSE(r) << bad;
+    EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  }
+}
+
+TEST(QtegraCodec, ValveStateIsTrueOrFalseOnly) {
+  EXPECT_EQ(*q::decode_valve_state(to_bytes("True\r\n")), true);
+  EXPECT_EQ(*q::decode_valve_state(to_bytes("false\r")), false);
+  // decode_bool's wider vocabulary is not a valve state; legacy took these as closed.
+  for (const char* bad : {"OK\r\n", "1\r\n", "open\r\n", "\r\n", "ERROR: no such valve\r\n"}) {
+    expect_protocol(q::decode_valve_state(to_bytes(bad)));
+  }
+}

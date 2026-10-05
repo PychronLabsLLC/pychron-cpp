@@ -26,6 +26,7 @@ add_executable(pychron_devices_tests
   spectrometer/test_thermo_qtegra_conformance.cpp
   spectrometer/test_ngx.cpp
   spectrometer/test_qtegra_link.cpp
+  spectrometer/test_qtegra_valves.cpp
   spectrometer/legacy/test_dac_positioner.cpp
   spectrometer/legacy/test_serial_hv.cpp
   spectrometer/legacy/test_acquirers.cpp

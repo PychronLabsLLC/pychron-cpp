@@ -146,6 +146,14 @@ Result<Command> set_sub_cup_configuration(std::string_view name, Terminator term
 // Not seen in pychron Python; unverified.
 Result<Command> reset(Terminator term = kDefaultTerminator);
 
+// Valves through Qtegra (legacy ASCIIGPActuator / QtegraGPActuator):
+// "Open <name>", "Close <name>" answered "OK"; "GetValveState <name>"
+// answered "True" or "False". Names are Qtegra's ("Valve 1_9 Set") and may
+// contain spaces.
+Result<Command> open_valve(std::string_view name, Terminator term = kDefaultTerminator);
+Result<Command> close_valve(std::string_view name, Terminator term = kDefaultTerminator);
+Result<Command> get_valve_state(std::string_view name, Terminator term = kDefaultTerminator);
+
 // --- decoders ------------------------------------------------------------------
 // Replies are trimmed of surrounding whitespace (CR/LF/space/tab). A reply
 // starting with "ERROR" is a Protocol error (GetData: containing "ERROR").
@@ -159,6 +167,9 @@ Result<double> decode_number(const Bytes& reply);
 // pychron to_bool, case-insensitive: true/t/yes/y/1/ok/open -> true,
 // false/f/no/n/0/closed -> false; anything else is a Protocol error.
 Result<bool> decode_bool(const Bytes& reply);
+// GetValveState: "True" or "False", any case; anything else (legacy read it
+// as closed) is a Protocol error.
+Result<bool> decode_valve_state(const Bytes& reply);
 // Bare CSV of floats, one per requested name in the same order; returns the
 // values paired with `names`. Count mismatch is a Protocol error.
 Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::string> names);

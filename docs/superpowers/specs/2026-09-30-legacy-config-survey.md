@@ -980,7 +980,7 @@ sim and link.
 | Watlow EZ-Zone | none | 4 |
 | Fusions logic board and motors | none | 4 |
 | Newport ESP stage | none | 4 |
-| Qtegra valve actuator | none (the Qtegra driver has no valve code) | 3 |
+| Qtegra valve actuator | `qtegra_valves` (2026-10-05), alone or on thermo_qtegra's link | 3 |
 | Furnace firmware actuator | none | 3 |
 | Pyrometer, OmegaADC, diode module | none | 3 |
 | Model335 cryostat | none | 1 real, 1 copy |

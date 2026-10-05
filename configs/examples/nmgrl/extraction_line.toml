@@ -40,22 +40,24 @@ timeout_ms = 2000
 kind = "sim_valves"
 transport = "arduino_valve_controller"
 
-# legacy ObamaQtegraGPActuator: pychron-cpp has no driver for it yet; simulated
+# legacy ObamaQtegraGPActuator: Qtegra on another Pychron's spectrometer; the endpoint is
+# left out of this example, so a simulated Qtegra answers
 [transports."felix_helix_valve_controller"]
 kind = "sim"
 timeout_ms = 2000
 
 [drivers."felix_helix_valve_controller"]
-kind = "sim_valves"
+kind = "qtegra_valves"
 transport = "felix_helix_valve_controller"
 
-# legacy JanQtegraGPActuator: pychron-cpp has no driver for it yet; simulated
+# legacy JanQtegraGPActuator: Qtegra on another Pychron's spectrometer; the endpoint is
+# left out of this example, so a simulated Qtegra answers
 [transports."jan_argus_valve_controller"]
 kind = "sim"
 timeout_ms = 2000
 
 [drivers."jan_argus_valve_controller"]
-kind = "sim_valves"
+kind = "qtegra_valves"
 transport = "jan_argus_valve_controller"
 
 [[valves]]
@@ -299,8 +301,6 @@ outer = "W"
 #   canvas: tee ADiode-Diode-RDiode: end offset not carried over
 #   actuator furnace_switch_controller (NMGRLFurnaceActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator arduino_valve_controller (ArduinoGPActuator): no pychron-cpp driver yet; simulated by sim_valves
-#   actuator felix_helix_valve_controller (ObamaQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
-#   actuator jan_argus_valve_controller (JanQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   canvas: manual_valve MiniboneManual_Rough is not in the valve file; dropped
 #   canvas: 5 gauges drawn for illustration, with no reading (legacy gauge controllers are not imported): FBTurbo IG, FATurbo IG, Microbone IG, Roughing IG, Bone IG
 #   canvas: connection MiniboneManual_Rough-Minibone names an element that is not drawn; dropped

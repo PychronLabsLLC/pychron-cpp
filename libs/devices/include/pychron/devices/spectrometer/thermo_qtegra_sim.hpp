@@ -3,6 +3,7 @@
 // Stateful simulated Qtegra RemoteControlServer for SimTransport::hooked(),
 // so tests run the real QtegraSpectrometer against a small in-memory model.
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -40,6 +41,11 @@ struct QtegraSimModel {
   // Every command received, in order, as "Verb" or "Verb arg,arg" (arguments
   // trimmed, no terminator).
   std::vector<std::string> commands;
+  // Valves by Qtegra name: Open/Close answer OK, GetValveState True/False.
+  // A name not here is closed. `on_valve` (set before use) is called after
+  // each Open/Close, outside `mutex`, with the name and whether it is open.
+  std::map<std::string, bool> valves;
+  std::function<void(const std::string& name, bool open)> on_valve;
 };
 
 // Commands it does not know, or cannot parse, answer "ERROR: ...".

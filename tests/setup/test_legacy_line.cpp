@@ -213,10 +213,13 @@ TEST_F(YamlLine, ValvesActuatorsAndInterlocks) {
   ASSERT_EQ(line->pipettes.size(), 1u);
   EXPECT_EQ(line->pipettes[0].inner, "A");
 
-  // Qtegra has no driver: a stand-in, saying what it stands in for.
-  EXPECT_EQ(line->drivers.at("switch_controller").kind, "sim_valves");
-  EXPECT_EQ(line->transports.at("switch_controller").kind, config::TransportKind::Sim);
-  EXPECT_NE(made->line_toml.find("QtegraGPActuator at localhost:1069"), std::string::npos);
+  // Qtegra valves on the legacy endpoint; no kind= means UDP, as in legacy.
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "qtegra_valves");
+  const auto& qtegra = line->transports.at("switch_controller");
+  ASSERT_EQ(qtegra.kind, config::TransportKind::Udp);
+  EXPECT_EQ(std::get<config::UdpParams>(qtegra.params).host, "localhost");
+  EXPECT_EQ(std::get<config::UdpParams>(qtegra.params).port, 1069);
+  EXPECT_NE(made->line_toml.find("QtegraGPActuator at localhost:1069 (udp)"), std::string::npos);
   // NGX keeps its endpoint.
   EXPECT_EQ(line->drivers.at("ngx").kind, "ngx_valves");
   const auto& ngx = line->transports.at("ngx");
@@ -231,7 +234,8 @@ TEST_F(YamlLine, ValvesActuatorsAndInterlocks) {
   EXPECT_TRUE(has_note(*made, "query_state not carried over (1 valve: B)")) << notes;
   EXPECT_TRUE(has_note(*made, "interlock with unknown valve Z dropped")) << notes;
   EXPECT_TRUE(has_note(*made, "ngx: invert=True not carried over")) << notes;
-  EXPECT_TRUE(has_note(*made, "QtegraGPActuator): no pychron-cpp driver yet")) << notes;
+  EXPECT_TRUE(has_note(*made, "switch_controller: no kind= in the device file; written as udp")) << notes;
+  EXPECT_TRUE(has_note(*made, "Qtegra takes one client")) << notes;
   // The notes are in the file too.
   EXPECT_NE(made->line_toml.find("#   query_state not carried over"), std::string::npos);
 }
@@ -303,6 +307,20 @@ TEST_F(YamlLine, AMissingActuatorFileGetsAStandInNeverAnotherController) {
   EXPECT_EQ(valve(*line, "C")->actuator, "ngx");
   EXPECT_EQ(line->drivers.at("ngx").kind, "sim_valves");
   EXPECT_TRUE(has_note(*made, "actuator ngx: devices/ngx.cfg not found; simulated")) << all_notes(*made);
+}
+
+TEST_F(YamlLine, AQtegraActuatorKeepsATcpKind) {
+  // melbourne's file says kind = TCP; a lab-named class still means Qtegra.
+  t.write("devices/switch_controller.cfg", "[General]\ntype = ObamaQtegraGPActuator\n");
+  t.write("devices/ObamaQtegraGPActuator.cfg",
+          "[Communications]\ntype = ethernet\nkind = TCP\nhost = 10.0.0.2\nport = 1069\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "qtegra_valves");
+  ASSERT_EQ(line->transports.at("switch_controller").kind, config::TransportKind::Tcp);
+  EXPECT_FALSE(has_note(*made, "switch_controller: no kind=")) << all_notes(*made);
 }
 
 // Agilent units become agilent_switch on the legacy port (plan 2026-10-05, A1).
