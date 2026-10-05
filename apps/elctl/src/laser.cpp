@@ -19,6 +19,7 @@
 #include "pychron/laser/tray_camera.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/laser/tray_map.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
 namespace elctl {
@@ -133,13 +134,20 @@ class Laser {
     if (map_->find(hole) == nullptr) return failed("no hole " + hole + " on tray " + map_->name());
     const laser::CameraConfig* config = camera();
     if (config == nullptr) return kFailed;
+    // A recording never moves a stage: said before anything is opened.
+    if (config->source == laser::CameraSource::Recorded) {
+      return failed(laser::usable_for_autocenter(*config, true).error().what);
+    }
     auto opened = open();
     if (!opened) return failed(opened.error().what);
+    // And a simulated camera only over a simulated stage.
+    const bool simulated = line_->sim() != nullptr && line_->sim()->chromium(device_) != nullptr;
+    if (auto ok = laser::usable_for_autocenter(*config, simulated); !ok) return failed(ok.error().what);
     laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
     system.set_corrections(*lab_.corrections);
     auto frames = laser::make_frame_source(*config, a_.lab, system.sight(), line_->clock());
     if (!frames) return failed(frames.error().what);
-    system.attach_camera(*config, std::move(*frames), line_->clock());
+    if (auto ok = system.attach_camera(*config, std::move(*frames), line_->clock()); !ok) return failed(ok.error().what);
     if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
     if (auto r = system.move_to_position(hole, true); !r) return failed(r.error().what);
     io_.out << "moving to hole " << hole << " and centring it\n";

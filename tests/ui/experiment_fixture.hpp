@@ -83,7 +83,7 @@ struct SimLab {
     lab = experiment::lab::load_lab(lab_paths(dir));
     if (notifications) lab.notifications = std::move(*notifications);
     session = std::make_unique<experiment::lab::LabSession>(
-        lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get()},
+        lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get(), {}},
         experiment::lab::SessionOptions{dir / "data", {}, std::move(notify)});
   }
   SimLab(const SimLab&) = delete;

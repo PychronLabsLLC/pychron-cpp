@@ -126,7 +126,7 @@ struct CameraHarness : LaserHarness {
       sim_camera = made.get();
       frames = std::move(made);
     }
-    system.attach_camera(seen, std::move(frames), clock);
+    EXPECT_TRUE(system.attach_camera(seen, std::move(frames), clock));
     EXPECT_TRUE(system.set_tray("small"));
   }
   void advance() { clock.advance(100ms); }

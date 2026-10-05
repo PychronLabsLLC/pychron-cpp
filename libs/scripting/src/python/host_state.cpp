@@ -373,8 +373,21 @@ void HostState::move_to_position(const std::string& position, bool autocenter, b
   guard();
   check_requested("move_to_position");
   auto* stage = feature(*this, &extraction::IExtractionDevice::stage, Capability::Stage);
+  if (!block && autocenter && stage->autocenter_needs_polling()) {
+    // This stage centres the hole after it arrives, and only while the
+    // script waits: unwaited, the hole would be left uncentred and a failure
+    // to centre it never seen.
+    unwrap(Result<void>(fail(ErrorKind::Config,
+                             "move_to_position(block=False) cannot centre the hole: wait for the move, or say "
+                             "autocenter=False",
+                             device().device_name())));
+  }
   unwrap(nogil([&] { return stage->move_to_position(position, autocenter); }));
-  if (block) wait_while([&] { return stage->moving(); }, "move_to_position", stop_stage(stage));
+  if (block) {
+    wait_while([&] { return stage->moving(); }, "move_to_position", stop_stage(stage));
+    // Centred, and by how much; or not, and why: into the run's log.
+    if (const std::string note = stage->last_move_note(); !note.empty() && env_.log) env_.log(note);
+  }
 }
 
 void HostState::set_axis(const std::string& axis, double value, bool block) {

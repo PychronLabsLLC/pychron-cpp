@@ -397,6 +397,47 @@ TEST_F(ScriptHostTest, AMoveThatArrivesIsNotStopped) {
   EXPECT_FALSE(rig.log.contains("stop"));
 }
 
+// A hole move that centres the hole does it while the script waits. Unwaited
+// it would be left where the calibration says, with the centring pending and
+// its failure never seen: refused, unless the script says it wants none.
+TEST_F(ScriptHostTest, AnUnwaitedCentringMoveIsRefused) {
+  rig.laser.stage_centres = true;
+  auto r = host->run(inline_script("def main():\n    move_to_position('2', block=False)\n"), rig.env, token);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("block=False"), std::string::npos) << r.error().what;
+  EXPECT_NE(r.error().what.find("autocenter=False"), std::string::npos) << r.error().what;
+  EXPECT_FALSE(rig.log.contains("move_to_position 2"));
+
+  rig.log.clear();
+  auto plain = host->run(inline_script("def main():\n    move_to_position('2', autocenter=False, block=False)\n"),
+                         rig.env, token);
+  ASSERT_TRUE(plain) << plain.error().what;
+  EXPECT_TRUE(rig.log.contains("move_to_position 2"));
+
+  // a stage with no camera has nothing to wait for
+  rig.laser.stage_centres = false;
+  rig.log.clear();
+  auto unwaited = host->run(inline_script("def main():\n    move_to_position('2', block=False)\n"), rig.env, token);
+  ASSERT_TRUE(unwaited) << unwaited.error().what;
+  EXPECT_TRUE(rig.log.contains("move_to_position 2"));
+}
+
+// What a hole move has to say (centred, and by how much; or not, and why)
+// goes into the run's log.
+TEST_F(ScriptHostTest, AHoleMovesNoteIsLogged) {
+  std::vector<std::string> logged;
+  rig.env.log = [&](std::string_view line) { logged.emplace_back(line); };
+  rig.laser.move_note = "hole 2: centred, moved 0.150, -0.100 mm";
+  auto r = host->run(inline_script("def main():\n    move_to_position('2')\n"), rig.env, token);
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_EQ(logged.size(), 1u);
+  EXPECT_EQ(logged[0], "hole 2: centred, moved 0.150, -0.100 mm");
+  // nothing to say, nothing logged
+  logged.clear();
+  ASSERT_TRUE(host->run(inline_script("def main():\n    move_to_position('2')\n"), rig.env, token));
+  EXPECT_TRUE(logged.empty());
+}
+
 // A runner that only advances while it is polled cannot run a pattern the
 // script will not wait for: the beam would sit on its first point. Refused,
 // and nothing is started.

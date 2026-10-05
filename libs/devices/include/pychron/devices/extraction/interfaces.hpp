@@ -85,6 +85,13 @@ struct IStage {
   // Stop any motion now, where it is; moving() is false after. A stage that
   // cannot be stopped answers not_supported().
   virtual Result<void> stop() { return fail(not_supported("stage stop")); }
+  // True for a stage whose move_to_position(..., autocenter = true) goes on
+  // working after the stage arrives, and only while moving() is asked: a
+  // move nobody waits for would be left uncentred, its failure unseen.
+  virtual bool autocenter_needs_polling() const { return false; }
+  // What the last finished hole move has to say for the run's log (centred
+  // and by how much; not centred and why); empty when nothing. Said once.
+  virtual std::string last_move_note() { return {}; }
   // Config error for an unknown tray.
   virtual Result<void> set_tray(std::string_view tray) = 0;
   virtual std::vector<std::string> positions() const = 0;  // on the current tray

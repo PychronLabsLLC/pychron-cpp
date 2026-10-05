@@ -266,3 +266,25 @@ the laser window; recording autocenter outcomes in the analysis record.
 - The state machine is a private part of `LaserSystem` (no separate files).
 - `make_frame_source` takes a `TraySightFn` (stage position and the
   calibrated hole positions) rather than separate stage and tray callbacks.
+- From the final review:
+  - **Only a camera that follows the stage closes the loop**
+    (`usable_for_autocenter`). A `recorded` camera is never attached to a
+    `LaserSystem` and `elctl laser autocenter` refuses it: it is for `look`.
+    A `sim` camera is used only over a simulated stage; over a real laser
+    the session reports it and **starts no queue that uses that device**
+    until the table is removed (it would have "found" its made-up tray error
+    and fired there). Nothing is run uncentred without having said so.
+  - **`move_to_position(block=False)` with autocenter is refused** on a stage
+    with a camera (`IStage::autocenter_needs_polling`): centring happens only
+    while the script waits. `autocenter=False` makes an unwaited move legal.
+  - **A hole move says what happened** (`IStage::last_move_note`: "hole 3:
+    centred, moved 0.150, -0.100 mm" or "not centred (no_target); at its
+    calibrated position"), which the script host puts in the run's log with
+    the script's own output. Nothing displays a run's log yet (true of
+    script `info()` too): that is the experiment window's to show.
+  - **`fingerprint()` hashes the IEEE bits** of the calibration's points, not
+    a library's hexfloat text, so a lab directory keeps its corrections
+    across platforms.
+  - The guard tests sit close to the guard (0.60 mm converges, 0.66 mm fails,
+    guard 0.636), a wrong flip is pinned as `runaway` in x and in y, and the
+    half-spacing limit above is pinned by a test.

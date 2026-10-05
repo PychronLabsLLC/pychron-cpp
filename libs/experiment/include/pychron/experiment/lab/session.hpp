@@ -18,6 +18,9 @@
 // Each delivery is published as NotificationSent.
 
 #include <filesystem>
+#include <functional>
+#include <map>
+#include <string_view>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -44,6 +47,9 @@ struct SessionHardware {
   systems::ExtractionLine& line;  // started; its clock, scheduler and bus are the session's
   spectrometer::Spectrometer* spectrometer = nullptr;
   spectrometer::ScanService* scan = nullptr;  // paused while a queue runs
+  // Whether the extraction device `driver` is simulated (a simulated camera
+  // may only centre holes on a simulated stage). Empty: asked of the line.
+  std::function<bool(std::string_view driver)> simulated;
 };
 
 struct SessionOptions {
@@ -91,9 +97,12 @@ class LabSession {
   void notify_test();
   Notifier& notifier() noexcept { return *notifier_; }
 
-  // What could not be set up as the lab asked and was done without: a
-  // device's camera whose frames could not be opened. Fixed for the session.
-  const std::vector<std::string>& problems() const noexcept { return problems_; }
+  // What the lab asks of an extraction device that this session cannot do:
+  // a camera that cannot be used to centre holes on it (a simulated camera
+  // over a real laser, frames that cannot be opened). Fixed for the session.
+  // A queue that uses such a device is not started: the lab is put right
+  // first, rather than run uncentred without anyone having said so.
+  std::vector<std::string> problems() const;
 
   const Lab& lab() const noexcept { return lab_; }
   const std::filesystem::path& data() const noexcept { return options_.data; }
@@ -109,7 +118,7 @@ class LabSession {
   const Lab& lab_;
   SessionHardware hardware_;
   SessionOptions options_;
-  std::vector<std::string> problems_;
+  std::map<std::string, std::string, std::less<>> device_problems_;  // by extraction device
   std::unique_ptr<Services> services_;
   std::unique_ptr<Notifier> notifier_;
 

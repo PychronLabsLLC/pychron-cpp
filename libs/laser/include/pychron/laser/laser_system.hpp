@@ -80,7 +80,9 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   // stage returns to where the centring started). All of that happens in
   // moving(): the caller's poll loop drives it, one stage command per poll.
   void set_corrections(const CorrectionStore& corrections);
-  void attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
+  // Config error, and no camera, for one that does not follow the stage (a
+  // recording): see usable_for_autocenter().
+  Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
   bool has_camera() const noexcept { return frames_ != nullptr; }
   // What this system's camera is over, for a simulated one. Valid while the
   // system lives; asks the driver where the stage is.
@@ -123,6 +125,8 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   Result<void> stop() override;
   Result<extraction::StagePosition> position() override;
   Result<bool> moving() override;
+  bool autocenter_needs_polling() const override { return has_camera(); }
+  std::string last_move_note() override;
   // An empty name clears the tray. Config error for a tray the lab lacks; the
   // current one is kept.
   Result<void> set_tray(std::string_view tray) override;
@@ -157,6 +161,7 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   CalibrationStatus status_;
   HoleCorrections corrections_;
   AutocenterOutcome outcome_;
+  std::string move_note_;  // of the last centring that ran to its end; taken once
 };
 
 }  // namespace pychron::laser

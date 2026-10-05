@@ -395,6 +395,26 @@ TEST_F(LaserCameraCmd, AutocenterNeedsACamera) {
   EXPECT_NE(o.err.find("co2.px_per_mm"), std::string::npos) << o.err;
 }
 
+// A recording does not follow the stage: it is for `look`, never for moving.
+TEST_F(LaserCameraCmd, AutocenterRefusesARecordedCamera) {
+  const auto dir = lab("recordings") / "holes";
+  fs::create_directories(dir);
+  {
+    pychron::vision::FrameRecorder recorder(dir, pychron::vision::Provenance::Synthetic, pychron::vision::FinderMode::Hole, 23);
+    pychron::vision::HoleScene scene;
+    scene.hole_radius_mm = 1.0;
+    scene.hole_mm = {0.5, 0};
+    for (int i = 0; i < 12; ++i) ASSERT_TRUE(recorder.add(pychron::vision::render(scene, {0, 0}).first.view()));
+    ASSERT_TRUE(recorder.finish());
+  }
+  camera("[co2]\nsource = \"recorded\"\nframes = \"recordings/holes\"\n");
+  const auto o = laser({"autocenter", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("recorded"), std::string::npos) << o.err;
+  EXPECT_EQ(o.out.find("converged"), std::string::npos) << o.out;
+  EXPECT_FALSE(fs::exists(corrections_file()));
+}
+
 TEST_F(LaserCameraCmd, AutocenterGivesUpAfterItsTimeoutAndStopsTheStage) {
   ASSERT_EQ(calibrate({"clear"}).code, 0);
   ASSERT_EQ(calibrate({"center", "--x", "25", "--y", "25"}).code, 0);  // 5 s away

@@ -1,6 +1,8 @@
 #include "pychron/laser/calibration_store.hpp"
 
 #include <cmath>
+#include <bit>
+#include <cstdint>
 #include <fstream>
 #include <locale>
 #include <numbers>
@@ -46,12 +48,20 @@ bool safe_file_part(std::string_view name) noexcept {
 }
 
 std::string fingerprint(std::span<const CalibrationPoint> points) {
-  // Exact: the bits of each coordinate, not a rounded decimal.
-  std::ostringstream text;
-  text.imbue(std::locale::classic());
-  text << std::hexfloat;
-  for (const auto& p : points) text << p.hole.size() << ':' << p.hole << '\t' << p.x << '\t' << p.y << '\n';
-  return to_hex(sha256(std::string_view(text.str())));
+  // Exact and the same on every platform: the IEEE bits of each coordinate
+  // as 16 hex digits, not a library's rendering of a double.
+  const auto bits = [](double value) {
+    static const char digits[] = "0123456789abcdef";
+    const auto raw = std::bit_cast<std::uint64_t>(value);
+    std::string out(16, '0');
+    for (int i = 0; i < 16; ++i) out[static_cast<std::size_t>(i)] = digits[(raw >> (60 - 4 * i)) & 0xF];
+    return out;
+  };
+  std::string text;
+  for (const auto& p : points) {
+    text += std::to_string(p.hole.size()) + ":" + p.hole + "\t" + bits(p.x) + "\t" + bits(p.y) + "\n";
+  }
+  return to_hex(sha256(std::string_view(text)));
 }
 
 std::string_view to_string(CalibrationState state) noexcept {

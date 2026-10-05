@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <utility>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -141,6 +142,8 @@ class FakeLaser final : public extraction::IExtractionDevice,
   }
   Result<void> set_xy(double x, double y, double = 0) override { return rec("set_xy " + num(x) + " " + num(y)); }
   Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
+  bool autocenter_needs_polling() const override { return stage_centres; }
+  std::string last_move_note() override { return std::exchange(move_note, {}); }
   // Never arrives while stage_stuck (for cancel tests), until stopped.
   Result<bool> moving() override { return stage_stuck && !stage_stopped; }
   Result<void> stop() override {
@@ -167,6 +170,8 @@ class FakeLaser final : public extraction::IExtractionDevice,
   std::atomic<bool> pattern_running{false};
   bool pattern_finishes = true;
   bool pattern_needs_polling = false;
+  bool stage_centres = false;       // a stage with a camera: centring needs the move waited for
+  std::string move_note;            // what the last hole move has to say
   std::atomic<bool> stage_stuck{false};
   std::atomic<bool> stage_stopped{false};
   bool stage_can_stop = true;

@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include "pychron/core/sha256.hpp"
 #include "pychron/laser/calibration_store.hpp"
 
 using namespace pychron;
@@ -63,6 +64,19 @@ TEST(Fingerprint, ChangesWithAnyPoint) {
   b.push_back({"2", 10, 25});
   EXPECT_NE(fingerprint(a), fingerprint(b));
   EXPECT_NE(fingerprint(a), fingerprint({}));
+  // -0.0 and 0.0 are different bits and so different calibrations: exactness, not arithmetic
+  EXPECT_NE(fingerprint(std::vector<CalibrationPoint>{{"1", 0.0, 0}}),
+            fingerprint(std::vector<CalibrationPoint>{{"1", -0.0, 0}}));
+}
+
+// The same on every platform: a lab directory moved between machines keeps
+// what was found. The bytes hashed are spelled out (the hole's length and
+// text, then the IEEE bits of x and y as 16 hex digits), not a library's
+// rendering of a double.
+TEST(Fingerprint, IsTheSameEverywhere) {
+  const std::vector<CalibrationPoint> points{{"5", 25.0, 25.0}, {"6", 30.0, 25.0}};
+  const std::string spelled = "1:5\t4039000000000000\t4039000000000000\n1:6\t403e000000000000\t4039000000000000\n";
+  EXPECT_EQ(fingerprint(points), to_hex(pychron::sha256(std::string_view(spelled))));
 }
 
 TEST_F(CorrectionStoreTest, TheCalibrationStatusCarriesItsFingerprint) {

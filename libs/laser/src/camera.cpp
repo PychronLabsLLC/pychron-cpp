@@ -159,6 +159,23 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
 
 }  // namespace
 
+Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_simulated) {
+  if (config.source == CameraSource::Recorded) {
+    return fail(ErrorKind::Config,
+                "the camera of " + config.device + " is recorded frames, which do not follow the stage: they are for " +
+                    "looking (elctl laser look), not for centring a hole",
+                config.device);
+  }
+  if (config.source == CameraSource::Sim && !stage_is_simulated) {
+    return fail(ErrorKind::Config,
+                "the camera of " + config.device + " is simulated (source = \"sim\" in cameras.toml) and " +
+                    config.device + " is a real laser: it would be centred on a tray that is not there. Remove the [" +
+                    config.device + "] table until the laser has a live camera",
+                config.device);
+  }
+  return {};
+}
+
 vision::CameraStageMap CameraConfig::map() const { return vision::CameraStageMap::from_scale(px_per_mm, flip_x, flip_y); }
 
 CameraLibrary CameraLibrary::parse(std::string_view text, std::string file_name) {

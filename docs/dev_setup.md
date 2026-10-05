@@ -428,6 +428,11 @@ frames_per_step = 3
 on_failure = "continue"   # or "fail"
 ```
 
+Only a camera that follows the stage is ever used to move it. A `recorded`
+camera is for `elctl laser look` and never centres anything. A `sim` camera
+centres holes only on a simulated laser: left in a lab whose laser is real,
+it stops queues on that device from starting until the table is removed.
+
 **There is no live camera yet.** `sim` is the simulated tray (the example's
 is deliberately 0.15, -0.10 mm from its calibration, so `--sim` runs show
 autocenter correcting it); `recorded` replays a folder of frames, for looking
@@ -463,6 +468,11 @@ elctl -c extraction_line.toml laser corrections co2 example-9
 ```bash
 elctl -c extraction_line.toml --sim laser look co2 --tray example-9
 ```
+
+A script must wait for a move that centres: `move_to_position(block=False)`
+is refused on a device with a camera unless it also says `autocenter=False`.
+What each hole move did ("hole 3: centred, moved 0.150, -0.100 mm", or why
+it was not centred) goes into the run's log.
 
 `autocenter` moves to a hole, centres it and saves the correction (exit 1 if
 it could not, whatever `on_failure` says); `corrections ... clear [<hole>]`

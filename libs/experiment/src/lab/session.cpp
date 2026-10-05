@@ -11,6 +11,7 @@
 #include "pychron/laser/laser_system.hpp"
 #include "pychron/laser/tray_camera.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "pychron/systems/switch_valve_service.hpp"
@@ -21,7 +22,8 @@ namespace fs = std::filesystem;
 
 // Declaration order is construction order; members refer only to earlier ones.
 struct LabSession::Services {
-  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, std::vector<std::string>& problems)
+  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data,
+           std::map<std::string, std::string, std::less<>>& problems)
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         valves(hw.line, "measurement"),
@@ -51,14 +53,19 @@ struct LabSession::Services {
       // Where holes were found before, and (if the lab gives the device a
       // camera) the means to find them again.
       system->set_corrections(*lab.corrections);
-      if (const laser::CameraConfig* camera = lab.cameras.find(name)) {
-        auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), hw.line.clock());
-        if (frames) {
-          system->attach_camera(*camera, std::move(*frames), hw.line.clock());
-        } else {
-          // Said, and done without: the device still runs, uncentred.
-          problems.push_back(frames.error().what);
+      // A recording is for looking (elctl laser look): it never moves a
+      // stage. Any other camera must be one that can centre holes here.
+      const laser::CameraConfig* camera = lab.cameras.find(name);
+      if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
+        const bool simulated = hw.simulated ? hw.simulated(name)
+                                            : hw.line.sim() != nullptr && hw.line.sim()->chromium(name) != nullptr;
+        Result<void> usable = laser::usable_for_autocenter(*camera, simulated);
+        if (usable) {
+          auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), hw.line.clock());
+          if (frames) usable = system->attach_camera(*camera, std::move(*frames), hw.line.clock());
+          else usable = fail(frames.error());
         }
+        if (!usable) problems.insert_or_assign(name, usable.error().what);
       }
       lasers.emplace(name, std::move(system));
     }
@@ -105,7 +112,7 @@ struct LabSession::Services {
 LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions options)
     : lab_(lab), hardware_(hardware), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
-  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, problems_);
+  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, device_problems_);
   notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
@@ -114,11 +121,29 @@ LabSession::~LabSession() {
   if (thread_.joinable()) thread_.join();
 }
 
+std::vector<std::string> LabSession::problems() const {
+  std::vector<std::string> out;
+  for (const auto& [device, what] : device_problems_) out.push_back(what);
+  return out;
+}
+
 bool LabSession::has_spectrometer() const noexcept { return hardware_.spectrometer != nullptr; }
 
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
   if (auto ok = check(queue); !ok) return ok;
+  // A device whose camera cannot be used as the lab asks is not run without
+  // it: the queue waits for the lab to be put right.
+  for (const auto& r : queue.runs) {
+    if (r.skip) continue;
+    ExtractionSpec nothing;
+    nothing.device = r.extraction.device;
+    if (r.extraction == nothing) continue;  // the run extracts nothing
+    const std::string& device = r.extraction.device.empty() ? queue.extract_device : r.extraction.device;
+    if (const auto it = device_problems_.find(device); it != device_problems_.end()) {
+      return fail(ErrorKind::Config, it->second, "experiment");
+    }
+  }
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).

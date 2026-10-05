@@ -210,7 +210,7 @@ class Exp {
       }
       from = *row;
     }
-    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr},
+    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
                             lab::SessionOptions{a_.data, options, {}});
 
     // Progress.

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/error.hpp"
 #include "pychron/laser/calibration.hpp"
 #include "pychron/vision/calibration.hpp"
 
@@ -67,6 +68,13 @@ struct CameraConfig {
   // Image offset (px) to the stage move (mm) that centres it.
   vision::CameraStageMap map() const;
 };
+
+// Whether this camera may be used to move a stage (autocenter). Only a
+// camera that follows the stage closes a loop: a recording never does (it
+// is for looking at what a finder sees), and a simulated camera only over a
+// simulated stage (over a real one it would "find" its made-up tray error
+// and the laser would be fired there). Config error saying which.
+Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_simulated);
 
 class CameraLibrary {
  public:

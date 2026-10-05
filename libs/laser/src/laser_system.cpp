@@ -6,8 +6,12 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <iomanip>
 #include <limits>
+#include <locale>
 #include <optional>
+#include <sstream>
+#include <utility>
 
 #include "pychron/vision/finder.hpp"
 
@@ -92,12 +96,36 @@ std::string utc_now() {
 
 void LaserSystem::set_corrections(const CorrectionStore& corrections) { correction_store_ = &corrections; }
 
-void LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock) {
+Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
+                                        const Clock& clock) {
+  // Whether the stage is simulated is the caller's to know; that a recording
+  // can never move a stage is known here.
+  if (auto ok = usable_for_autocenter(config, true); !ok) return ok;
+  if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
+  return {};
 }
+
+std::string LaserSystem::last_move_note() {
+  std::lock_guard lock(mutex_);
+  return std::exchange(move_note_, {});
+}
+
+namespace {
+
+std::string mm(double value) {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::fixed << std::setprecision(3) << value;
+  std::string text = out.str();
+  if (text.starts_with('-') && text.find_first_not_of("-0.") == std::string::npos) text.erase(0, 1);
+  return text;
+}
+
+}  // namespace
 
 AutocenterOutcome LaserSystem::last_autocenter() const {
   std::lock_guard lock(mutex_);
@@ -158,6 +186,10 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   abandon(AutocenterOutcome::Result::Stopped);  // a new move takes over
+  {
+    std::lock_guard lock(mutex_);
+    move_note_.clear();  // of an earlier move nobody asked about
+  }
 
   std::string tray;
   std::optional<StageXY> nominal;
@@ -283,9 +315,12 @@ Result<bool> LaserSystem::moving() {
     outcome.residual_mm = c.residual;
     const std::string what = "hole " + c.hole + " on " + c.tray + ": autocenter failed (" +
                              std::string(to_string(c.failed)) + ")";
+    const bool corrected = apart(c.start, c.nominal) > 0;
     centering_.reset();
     {
       std::lock_guard lock(mutex_);
+      move_note_ = "hole " + outcome.hole + ": not centred (" + std::string(to_string(outcome.reason)) + "); at its " +
+                   (corrected ? "last found" : "calibrated") + " position";
       outcome_ = std::move(outcome);
     }
     if (camera_->on_failure == OnAutocenterFailure::Fail) return fail(ErrorKind::Config, what, name_);
@@ -360,6 +395,8 @@ Result<bool> LaserSystem::look(IStage& stage) {
       }
     }
     std::lock_guard lock(mutex_);
+    move_note_ = "hole " + outcome.hole + ": centred, moved " + mm(outcome.moved_mm.x) + ", " + mm(outcome.moved_mm.y) +
+                 " mm (residual " + mm(outcome.residual_mm) + " mm)" + (outcome.note.empty() ? "" : "; " + outcome.note);
     outcome_ = std::move(outcome);
     return false;
   }

@@ -7,7 +7,6 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -25,6 +24,8 @@
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/sim/sim_system.hpp"
+#include "pychron/vision/fixture.hpp"
+#include "pychron/vision/synth.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -87,8 +88,7 @@ class LabSessionTest : public ::testing::Test {
         r.post_measurement.reset();
       }
     }
-    session_ = std::make_unique<LabSession>(lab_, SessionHardware{*line_, spec_.get(), scan_.get()},
-                                            SessionOptions{dir_ / "data", {}, {}});
+    session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}});
     subs_.push_back(line_->bus().subscribe<QueueEnded>([this](const QueueEnded& e) {
       std::lock_guard lock(mutex_);
       ended_.push_back(e);
@@ -98,6 +98,7 @@ class LabSessionTest : public ::testing::Test {
 
   // Changes to the scratch lab before anything is loaded from it.
   virtual void prepare_lab() {}
+  virtual SessionHardware hardware() { return SessionHardware{*line_, spec_.get(), scan_.get(), {}}; }
 
   QueueSpec laser_queue() {
     auto q = load_queue_file((dir_ / "experiment.laser.toml").string(), lab_.ids);
@@ -204,13 +205,15 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
     std::string speeds;
   };
   const auto parse = [](const std::string& line) {
+    // "Stage.MoveTo x,y,z,speed x,speed y,speed z"
     Move m{};
+    std::istringstream in(line.substr(13));
     long long x = 0, y = 0, z = 0;
-    int used = 0;
-    std::sscanf(line.c_str(), "Stage.MoveTo %lld,%lld,%lld,%n", &x, &y, &z, &used);
+    char comma = 0;
+    in >> x >> comma >> y >> comma >> z >> comma;
+    std::getline(in, m.speeds);
     m.x = static_cast<double>(x) / 1000.0;
     m.y = static_cast<double>(y) / 1000.0;
-    m.speeds = line.substr(static_cast<std::size_t>(used));
     return m;
   };
   // Where the stage was when each beam came on, and what it did under it.
@@ -350,24 +353,74 @@ TEST_F(HiddenHoleCarriedOnTest, AHiddenHoleIsCarriedOnPastByDefault) {
   EXPECT_FALSE(fs::exists(dir_ / "stage_corrections" / "co2.example-9.toml"));
 }
 
-// A camera whose recording is missing: the session says so, and the device
-// runs without a camera rather than not at all.
-class MissingRecordingSessionTest : public LabSessionTest {
+// A recorded camera is for looking at what the finder sees, not for moving
+// the stage: a session never closes the loop on one. Every hole is fired on
+// at its calibrated position and nothing is "corrected".
+class RecordedCameraSessionTest : public LabSessionTest {
  protected:
   void prepare_lab() override {
-    std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << "[co2]\nsource = \"recorded\"\nframes = \"no-such-dir\"\n";
+    // Pictures of a hole 0.5 mm off, as an old recording might show.
+    const auto dir = dir_ / "recordings" / "holes";
+    fs::create_directories(dir);
+    vision::FrameRecorder recorder(dir, vision::Provenance::Synthetic, vision::FinderMode::Hole, 23);
+    vision::HoleScene scene;
+    scene.hole_radius_mm = 1.0;
+    scene.hole_mm = {0.5, 0};
+    for (int i = 0; i < 30; ++i) ASSERT_TRUE(recorder.add(vision::render(scene, {0, 0}).first.view()));
+    ASSERT_TRUE(recorder.finish());
+    std::ofstream(dir_ / "cameras.toml", std::ios::trunc)
+        << "[co2]\nsource = \"recorded\"\nframes = \"recordings/holes\"\n";
   }
 };
 
-TEST_F(MissingRecordingSessionTest, ACameraThatCannotBeOpenedIsASessionProblem) {
-  ASSERT_EQ(session_->problems().size(), 1u);
-  EXPECT_NE(session_->problems().front().find("no-such-dir"), std::string::npos) << session_->problems().front();
-  if (!scripting::make_script_host()->available()) return;
+TEST_F(RecordedCameraSessionTest, ARecordedCameraNeverMovesTheStage) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  EXPECT_TRUE(session_->problems().empty());
+  auto& sim = laser_sim("co2");
   ASSERT_TRUE(session_->start(laser_queue()));
   const auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
   for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.error.value_or("");
-  EXPECT_EQ(laser_sim("co2").position().x, 20000);  // calibrated positions: no camera
+  // the only moves at the stage's own speed are the two hole moves, to the calibrated positions
+  std::vector<std::string> travel;
+  for (const auto& line : sim.log()) {
+    if (line.starts_with("Stage.MoveTo ") && line.ends_with(",5000,5000,100")) travel.push_back(line);
+  }
+  EXPECT_EQ(travel, (std::vector<std::string>{"Stage.MoveTo 30000,30000,0,5000,5000,100",
+                                              "Stage.MoveTo 20000,20000,0,5000,5000,100"}));
+  EXPECT_FALSE(fs::exists(dir_ / "stage_corrections" / "co2.example-9.toml"));
+}
+
+// The example's simulated camera left in a lab whose laser is real: it
+// would "find" its made-up tray error and the laser would be fired there.
+// The session says so and starts no queue on that device until the table is
+// removed.
+class SimCameraOnARealLaserTest : public LabSessionTest {
+ protected:
+  SessionHardware hardware() override {
+    SessionHardware hw = LabSessionTest::hardware();
+    hw.simulated = [](std::string_view) { return false; };  // as a real Chromium would be
+    return hw;
+  }
+};
+
+TEST_F(SimCameraOnARealLaserTest, ASimulatedCameraOnARealLaserStopsItsQueues) {
+  ASSERT_EQ(session_->problems().size(), 1u);
+  const std::string problem = session_->problems().front();
+  EXPECT_NE(problem.find("simulated"), std::string::npos) << problem;
+  EXPECT_NE(problem.find("co2"), std::string::npos) << problem;
+  const auto before = laser_sim("co2").log();
+  const auto started = session_->start(laser_queue());
+  ASSERT_FALSE(started);
+  EXPECT_EQ(started.error().kind, ErrorKind::Config);
+  EXPECT_EQ(started.error().what, problem);
+  EXPECT_FALSE(session_->running());
+  EXPECT_EQ(laser_sim("co2").log(), before);
+  // a queue with no laser in it is not held up by the laser's camera
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  session_->wait();
 }
 
 // A pattern that runs off the edge of the stage's travel: the stage refuses
@@ -510,7 +563,7 @@ TEST_F(LabSessionTest, TheQueueEndIsNotified) {
     sent.push_back(e);
   });
   session_.reset();
-  session_ = std::make_unique<LabSession>(lab_, SessionHardware{*line_, spec_.get(), scan_.get()},
+  session_ = std::make_unique<LabSession>(lab_, SessionHardware{*line_, spec_.get(), scan_.get(), {}},
                                           SessionOptions{dir_ / "data", {}, runner});
   queue_.name = "q-notify";
   queue_.runs.resize(1);
