@@ -19,7 +19,11 @@
 // Stopping: stop_stage, stop_beam and stop_pattern drop every command still
 // queued (each reports Cancelled), cancel the one in flight, then act.
 // emergency_stop does the same, needs no lease, stops the laser system
-// (which latches) and then asks for the queue to be aborted.
+// (which latches, and is latched at once on the calling thread) and then
+// asks for the queue to be aborted.
+//
+// A bridge that goes while its laser fires closes the beam and disables the
+// laser, unless a queue is driving: nothing would be left to do it.
 
 #include <chrono>
 #include <functional>
@@ -91,7 +95,7 @@ class LaserBridge : public QObject {
   void remove_calibration_point(const QString& hole);
   void clear_calibration();
   void emergency_stop();
-  void reset_stop();
+  void reset_stop();  // refused while a queue still holds the lasers
 
   // Blocks until every command issued has finished; their signals are still
   // to be delivered by the event loop.

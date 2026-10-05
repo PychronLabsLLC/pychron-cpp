@@ -80,8 +80,8 @@ class LabSession {
 
   // Config error if a queue is running or `queue` does not check against the
   // lab (the message names the first error and how many there are); also
-  // while a laser is being driven by hand, and while a laser's emergency
-  // stop has not been reset.
+  // while a laser is being driven by hand, while a laser's emergency stop
+  // has not been reset, and while a laser's beam is on.
   Result<void> start(QueueSpec queue, std::size_t from_row = 0);
 
   void stop();

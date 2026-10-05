@@ -88,6 +88,14 @@ LaserBridge::~LaserBridge() {
   }
   worker_->wake.notify_all();
   if (thread_.joinable()) thread_.join();
+  // Nobody is left to close a beam this bridge's window opened. A queue's
+  // beam is the queue's: its own end closes it.
+  if (auto hand = deps_.lasers.drive(Lasers::Driver::Manual)) {
+    if (system_.laser() != nullptr && system_.is_firing().value_or(true)) {
+      (void)system_.end_extract();
+      (void)system_.disable();
+    }
+  }
 }
 
 QStringList LaserBridge::trays() const {
@@ -356,6 +364,8 @@ void LaserBridge::clear_calibration() {
 }
 
 void LaserBridge::emergency_stop() {
+  // At once, here: the worker may be waiting for the device, or for a camera.
+  system_.latch_stop();
   interrupt(
       "emergency_stop",
       [this]() -> Result<void> {
@@ -370,6 +380,11 @@ void LaserBridge::reset_stop() {
   submit(
       "reset_stop",
       [this]() -> Result<void> {
+        // A queue that was aborted may not have seen it yet: its script's
+        // next call must still be refused.
+        if (deps_.lasers.driver() == Lasers::Driver::Queue) {
+          return fail(ErrorKind::Config, "a queue is still running: reset the stop once it has ended", deps_.device);
+        }
         system_.reset_stop();
         return {};
       },

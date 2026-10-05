@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -268,10 +269,14 @@ QWidget* LaserWindow::build_control() {
   connect(enable_, &QPushButton::clicked, this, [this](bool on) { bridge_.enable(on); });
   connect(fire_, &QPushButton::clicked, this, [this] { bridge_.fire(output_->value()); });
   connect(stop_beam_, &QPushButton::clicked, this, [this] { bridge_.stop_beam(); });
-  // While the beam is on, the spin box is the output.
-  connect(output_, &QDoubleSpinBox::editingFinished, this, [this] {
-    if (bridge_.state().firing.value_or(false) && !bridge_.watch_only()) bridge_.set_output(output_->value());
-  });
+  // While the beam is on, Enter in the box sends the output. Only Enter: a
+  // value half typed is not sent because the focus went elsewhere.
+  if (auto* typed = output_->findChild<QLineEdit*>()) {
+    connect(typed, &QLineEdit::returnPressed, this, [this] {
+      output_->interpretText();
+      if (bridge_.state().firing.value_or(false) && !bridge_.watch_only()) bridge_.set_output(output_->value());
+    });
+  }
   return page;
 }
 
@@ -496,7 +501,8 @@ void LaserWindow::refresh_enabled() {
   const bool busy = s.activity != laser::LaserActivity::Idle;
 
   if (s.stopped) {
-    banner_->setText(tr("Emergency stop: everything is off. Reset to drive again."));
+    banner_->setText(watching ? tr("Emergency stop: everything is off. Reset once the queue has ended.")
+                              : tr("Emergency stop: everything is off. Reset to drive again."));
     banner_->show();
   } else if (watching) {
     banner_->setText(tr("Queue running: watch only"));
@@ -504,7 +510,8 @@ void LaserWindow::refresh_enabled() {
   } else {
     banner_->hide();
   }
-  reset_->setVisible(s.stopped);
+  // Not under a queue: it may not have seen its abort yet.
+  reset_->setVisible(s.stopped && !watching);
   estop_->setEnabled(true);  // always
 
   tray_choice_->setEnabled(can_drive && !busy);
@@ -533,6 +540,11 @@ void LaserWindow::refresh_enabled() {
   pattern_run_->setToolTip(by_eye ? tr("A dragonfly follows the glow of a heated sample: it runs from a queue")
                                   : tr("Run the pattern about where the stage is now"));
   pattern_stop_->setEnabled(!watching);
+}
+
+void LaserWindow::closeEvent(QCloseEvent* event) {
+  if (!bridge_.watch_only() && bridge_.state().firing.value_or(false)) bridge_.stop_beam();
+  QMainWindow::closeEvent(event);
 }
 
 void LaserWindow::on_finished(const QString& what, const Result<void>& result) {

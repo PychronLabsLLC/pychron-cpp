@@ -48,8 +48,10 @@ class LaserWindowTest : public QObject {
   }
 
  private slots:
-  void init() {
-    lab_ = std::make_unique<test::SimLaserLab>();
+  void init() { build(50); }
+  void build(double speed) {
+    cleanup();
+    lab_ = std::make_unique<test::SimLaserLab>(speed);
     bridge_ = std::make_unique<LaserBridge>(lab_->deps());
     window_ = std::make_unique<LaserWindow>(*bridge_, true);
     window_->resize(1000, 700);
@@ -204,7 +206,60 @@ class LaserWindowTest : public QObject {
     QTRY_VERIFY(btn("jog_left")->isEnabled());
   }
 
+  // Typing a new output while the beam is on sends it on Enter, and only then:
+  // not when the box merely loses the focus half typed.
+  void a_new_output_is_sent_on_enter_only() {
+    btn("enable")->click();
+    settle();
+    QTRY_VERIFY(btn("fire")->isEnabled());
+    auto* output = the<QDoubleSpinBox>("output");
+    output->setValue(10);
+    btn("fire")->click();
+    settle();
+    QTRY_VERIFY(bridge_->state().firing.value_or(false));
+    QCOMPARE(lab_->sim().output(), 10.0);
+    output->setFocus();
+    output->setValue(80);  // on the way to 8.0
+    the<QDoubleSpinBox>("jog_step")->setFocus();  // the focus goes elsewhere
+    settle();
+    QCOMPARE(lab_->sim().output(), 10.0);
+    output->setFocus();
+    output->setValue(8);
+    QTest::keyClick(output, Qt::Key_Return);
+    settle();
+    QCOMPARE(lab_->sim().output(), 8.0);
+  }
+
+  // A window closed with the beam on closes the beam: there is then nothing
+  // on screen to close it with.
+  void closing_the_window_closes_the_beam() {
+    btn("enable")->click();
+    the<QDoubleSpinBox>("output")->setValue(12);
+    settle();
+    QTRY_VERIFY(btn("fire")->isEnabled());
+    btn("fire")->click();
+    settle();
+    QTRY_VERIFY(bridge_->state().firing.value_or(false));
+    window_->close();
+    settle();
+    QVERIFY(!lab_->sim().firing());
+    QCOMPARE(lab_->sim().output(), 0.0);
+  }
+
+  void reset_is_not_offered_while_a_queue_drives() {
+    auto queue = lab_->lasers->drive(Lasers::Driver::Queue);
+    QVERIFY(queue.has_value());
+    QTRY_VERIFY(bridge_->watch_only());
+    btn("estop")->click();
+    settle();
+    QTRY_VERIFY2(text("banner").contains(QStringLiteral("Emergency stop")), qPrintable(text("banner")));
+    QVERIFY(!btn("reset_stop")->isVisible());
+    queue->release();
+    QTRY_VERIFY(btn("reset_stop")->isVisible());
+  }
+
   void emergency_stop_latches_and_reset_clears() {
+    build(5);
     btn("enable")->click();
     the<QDoubleSpinBox>("output")->setValue(40);
     settle();

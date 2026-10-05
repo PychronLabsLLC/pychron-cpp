@@ -41,6 +41,13 @@ class LaserWindow : public QMainWindow {
   void refresh_patterns();
 
   TrayView* tray_view() const noexcept { return tray_; }
+
+ protected:
+  // A beam opened here is closed when the window goes: there would be
+  // nothing on screen to close it with.
+  void closeEvent(QCloseEvent* event) override;
+
+ public:
   CameraView* camera_view() const noexcept { return camera_; }
 
  private:

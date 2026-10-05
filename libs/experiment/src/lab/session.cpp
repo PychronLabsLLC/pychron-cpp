@@ -120,6 +120,12 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   // The lasers are the queue's from here until it ends.
   auto lease = lasers_->drive(Lasers::Driver::Queue);
   if (!lease) return fail(ErrorKind::Config, lease.error().what, "experiment");
+  // A beam somebody left on by hand is nobody's now, and under a queue the
+  // window could no longer close it: it is closed first, by whoever opened it.
+  if (const auto firing = lasers_->firing(); !firing.empty()) {
+    return fail(ErrorKind::Config, firing.front() + ": the laser is firing; stop it before starting a queue",
+                "experiment");
+  }
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).

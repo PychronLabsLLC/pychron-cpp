@@ -29,12 +29,15 @@ namespace pychron::ui::test {
 struct SimLaserLab {
   std::filesystem::path dir;
   ManualClock clock{TimePoint{} + std::chrono::hours(1)};
-  ClockPump pump{clock, 50};
+  ClockPump pump;
   std::unique_ptr<systems::ExtractionLine> line;
   experiment::lab::Lab lab;
   std::unique_ptr<experiment::lab::Lasers> lasers;
 
-  SimLaserLab() {
+  // `speed`: simulated seconds per real second. A test that stops a move
+  // part way takes it slowly, so that the move cannot end first on a busy
+  // machine: 40 mm at the stage's 5 mm/s is 1.6 s at 5x.
+  explicit SimLaserLab(double speed = 50) : pump(clock, speed) {
     namespace fs = std::filesystem;
     std::random_device rd;
     dir = fs::temp_directory_path() / ("pychron-ui-laser-" + std::to_string(rd()) + std::to_string(rd()));
@@ -82,7 +85,7 @@ struct SimLaserLab {
 
 // The simulated stage is under way: past `x` mm. False if it never gets there.
 inline bool under_way(SimLaserLab& lab, double x = 1.0) {
-  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
   while (lab.x() < x) {
     if (std::chrono::steady_clock::now() > until) return false;
     std::this_thread::sleep_for(std::chrono::microseconds(200));

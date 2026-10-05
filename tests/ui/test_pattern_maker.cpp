@@ -194,14 +194,30 @@ class PatternMakerTest : public QObject {
     kind("random");
     the<QLineEdit>("name")->setText(QStringLiteral("walk"));
     QVERIFY(!the<QCheckBox>("field_seed_fixed")->isChecked());
-    QVERIFY(!the<QSpinBox>("field_seed")->isEnabled());
+    QVERIFY(!the<QLineEdit>("field_seed")->isEnabled());
     QVERIFY(!window_->pattern().seed.has_value());
     QVERIFY2(text("summary").contains(QStringLiteral("each run")), qPrintable(text("summary")));
     the<QCheckBox>("field_seed_fixed")->setChecked(true);
-    whole("field_seed", 7);
+    the<QLineEdit>("field_seed")->setText(QStringLiteral("7"));
     QCOMPARE(window_->pattern().seed, std::optional<std::uint64_t>(7));
     the<QPushButton>("save")->click();
     QCOMPARE(laser::Pattern::load(dir_ / "walk.toml")->seed, std::optional<std::uint64_t>(7));
+  }
+
+  // Opening a pattern and saving it changes nothing in it.
+  void open_then_save_keeps_every_value() {
+    std::ofstream(dir_ / "fine.toml") << "kind = \"dragonfly\"\nspiral_base = 0.0125\nmove_threshold = 0.0333\n";
+    std::ofstream(dir_ / "walk.toml") << "kind = \"random\"\nseed = 9007199254740993\nwalk_x = 0.1234567\n";
+    library_ = laser::PatternLibrary::load(dir_);
+    for (const char* name : {"fine", "walk"}) {
+      const laser::Pattern before = *library_.find(name);
+      window_->open(QString::fromLatin1(name));
+      QCOMPARE(window_->pattern(), before);
+      the<QPushButton>("save")->click();
+      const auto after = laser::Pattern::load(dir_ / (std::string(name) + ".toml"));
+      QVERIFY2(after.has_value(), name);
+      QCOMPARE(*after, before);
+    }
   }
 
   void new_clears_the_form() {

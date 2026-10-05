@@ -262,5 +262,17 @@ Where the code went another way from the sections above, and why.
 - **Interlocks** are shown as text ("interlocks: ok" or the tripped ones'
   names), not as lights: a driver names only what is tripped.
 
+- **After review.** The stop is latched on the thread the button is pressed
+  on, before the worker is asked (`LaserSystem::latch_stop`). Reset is refused
+  and hidden while a queue holds the lasers. A queue is not started while a
+  beam is on (`Lasers::firing`). A bridge that goes, and a window that
+  closes, with the beam on close it. The output box sends on Enter only. The
+  pattern maker shows numbers in full and takes a seed as text.
+
+Known limit: `view()` holds the gate while it grabs a frame. The simulated
+camera cannot block; a live camera (sub-project 4) must be grabbed outside
+the gate, or a stalled camera would hold up the device side of a stop (the
+latch itself no longer waits).
+
 Not built, and still wanted: the laser window does not remember its size, its
 tray or its step between runs of the program; there is no keyboard jogging.

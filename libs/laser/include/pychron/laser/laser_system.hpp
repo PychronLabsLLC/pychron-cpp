@@ -152,6 +152,10 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // every pattern are refused with an Interlock error, so a script that has
   // not yet seen its run aborted cannot fire again.
   Result<void> emergency_stop();
+  // The latch alone, without waiting for the device or for whoever holds
+  // the gate: from now on nothing that makes light or motion is accepted.
+  // For the thread the stop button is pressed on; emergency_stop() follows.
+  void latch_stop() noexcept { stopped_.store(true); }
   bool stopped() const noexcept { return stopped_.load(); }
   void reset_stop() noexcept { stopped_.store(false); }
 

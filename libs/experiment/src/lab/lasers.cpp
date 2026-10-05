@@ -95,6 +95,15 @@ Lasers::Driver Lasers::driver() const {
   return driver_;
 }
 
+std::vector<std::string> Lasers::firing() {
+  std::vector<std::string> out;
+  for (const auto& [name, system] : systems_) {
+    if (system->laser() == nullptr) continue;
+    if (system->is_firing().value_or(false)) out.push_back(name);
+  }
+  return out;
+}
+
 std::vector<std::string> Lasers::stopped() const {
   std::vector<std::string> out;
   for (const auto& [name, system] : systems_) {

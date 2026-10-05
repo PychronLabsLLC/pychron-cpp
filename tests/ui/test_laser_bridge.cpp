@@ -55,8 +55,12 @@ class LaserBridgeTest : public QObject {
   Q_OBJECT
 
  private slots:
-  void init() {
-    lab_ = std::make_unique<test::SimLaserLab>();
+  void init() { build(50); }
+  // The same again with time running at `speed`: slowly, for a test that
+  // stops something part way.
+  void build(double speed) {
+    cleanup();
+    lab_ = std::make_unique<test::SimLaserLab>(speed);
     bridge_ = std::make_unique<LaserBridge>(lab_->deps([this] { ++aborts_; }));
     heard_ = std::make_unique<Heard>(*bridge_);
     aborts_ = 0;
@@ -129,6 +133,7 @@ class LaserBridgeTest : public QObject {
   }
 
   void stop_stage_ends_a_move() {
+    build(5);
     bridge_->jog(40, 0, 0);  // 8 simulated seconds at 5 mm/s
     QVERIFY(test::under_way(*lab_));
     bridge_->stop_stage();
@@ -140,7 +145,7 @@ class LaserBridgeTest : public QObject {
     QVERIFY(heard_->ok("stop_stage"));
     QVERIFY2(lab_->x() > 0.0 && lab_->x() < 40.0, qPrintable(QString::number(lab_->x())));
     const double where = lab_->x();
-    QTest::qWait(60);
+    QTest::qWait(100);
     QCOMPARE(lab_->x(), where);
   }
 
@@ -198,11 +203,20 @@ class LaserBridgeTest : public QObject {
               return s.activity == laser::LaserActivity::Pattern;
             }) > 0);
 
+  }
+
+  void a_pattern_is_stopped_part_way() {
+    build(5);  // the hexagon takes 7 simulated seconds: over a second here
+    bridge_->jog(10, 10, 0);
+    test::settle(*bridge_);
     bridge_->run_pattern(QStringLiteral("hexagon"));
     QTRY_COMPARE(bridge_->state().activity, laser::LaserActivity::Pattern);
     bridge_->stop_pattern();
     test::settle(*bridge_);
-    QCOMPARE(heard_->result("run_pattern")->error().kind, ErrorKind::Cancelled);
+    const Result<void>* run = heard_->result("run_pattern");
+    QVERIFY(run != nullptr);
+    QVERIFY2(!run->has_value(), "the pattern ended before it was stopped");
+    QCOMPARE(run->error().kind, ErrorKind::Cancelled);
     QVERIFY(heard_->ok("stop_pattern"));
     QCOMPARE(bridge_->state().activity, laser::LaserActivity::Idle);
   }
@@ -298,6 +312,7 @@ class LaserBridgeTest : public QObject {
   }
 
   void emergency_stop_works_while_a_queue_drives_and_aborts_it() {
+    build(5);
     auto queue = lab_->lasers->drive(Lasers::Driver::Queue);
     QVERIFY(queue.has_value());
     // as a script would have left it
@@ -316,6 +331,12 @@ class LaserBridgeTest : public QObject {
     QVERIFY(bridge_->state().stopped);
     // the script's next call is refused
     QVERIFY(!lab_->system().fire_laser().has_value());
+    // and the stop cannot be reset under a queue that may not have seen its abort yet
+    bridge_->reset_stop();
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("reset_stop").contains("queue"), qPrintable(heard_->why("reset_stop")));
+    QVERIFY(lab_->system().stopped());
+    QVERIFY(!lab_->system().fire_laser().has_value());
     queue->release();
 
     bridge_->enable(true);
@@ -328,7 +349,44 @@ class LaserBridgeTest : public QObject {
     QVERIFY(!bridge_->state().stopped);
   }
 
+  void the_stop_is_latched_before_the_worker_gets_to_it() {
+    build(5);
+    bridge_->jog(40, 0, 0);
+    QVERIFY(test::under_way(*lab_));
+    bridge_->emergency_stop();
+    // at once, on this thread: whatever the worker or the device is busy with
+    QVERIFY(lab_->system().stopped());
+    test::settle(*bridge_);
+  }
+
+  // Nobody is left to close a beam once its bridge has gone.
+  void destroyed_with_the_beam_on_closes_it() {
+    bridge_->enable(true);
+    bridge_->fire(25);
+    test::settle(*bridge_);
+    QVERIFY(lab_->sim().firing());
+    heard_.reset();
+    bridge_.reset();
+    QVERIFY(!lab_->sim().firing());
+    QCOMPARE(lab_->sim().output(), 0.0);
+    QVERIFY(!lab_->sim().enabled());
+  }
+
+  // But a queue's beam is the queue's.
+  void destroyed_while_a_queue_drives_touches_nothing() {
+    auto queue = lab_->lasers->drive(Lasers::Driver::Queue);
+    QVERIFY(queue.has_value());
+    QVERIFY(lab_->system().enable().has_value());
+    QVERIFY(lab_->system().extract(30, extraction::ExtractUnits::Percent).has_value());
+    QVERIFY(lab_->system().fire_laser().has_value());
+    heard_.reset();
+    bridge_.reset();
+    QVERIFY(lab_->sim().firing());
+    QVERIFY(lab_->system().end_extract().has_value());
+  }
+
   void emergency_stop_drops_what_was_queued() {
+    build(5);
     bridge_->enable(true);
     bridge_->fire(10);
     bridge_->jog(40, 0, 0);
@@ -336,7 +394,9 @@ class LaserBridgeTest : public QObject {
     bridge_->jog(-40, 0, 0);  // in flight when the stop comes
     bridge_->jog(0, 30, 0);   // queued behind it
     bridge_->fire(50);        // and this
-    while (lab_->x() > 39.0) QThread::usleep(200);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (lab_->x() > 39.0 && std::chrono::steady_clock::now() < until) QThread::usleep(200);
+    QVERIFY(lab_->x() <= 39.0);
     bridge_->emergency_stop();
     test::settle(*bridge_);
     QVERIFY(heard_->ok("emergency_stop"));
@@ -352,13 +412,14 @@ class LaserBridgeTest : public QObject {
   }
 
   void destroyed_mid_move_stops_the_stage() {
+    build(5);
     bridge_->jog(40, 0, 0);
     QVERIFY(test::under_way(*lab_));
     heard_.reset();
     bridge_.reset();
     const double where = lab_->x();
     QVERIFY2(where > 0.0 && where < 40.0, qPrintable(QString::number(where)));
-    QTest::qWait(60);
+    QTest::qWait(100);
     QCOMPARE(lab_->x(), where);
     QCOMPARE(lab_->lasers->driver(), Lasers::Driver::None);
   }

@@ -105,6 +105,23 @@ TEST_F(LaserWatch, ActivityFollowsMoveCentringAndPattern) {
   EXPECT_TRUE(system.snapshot().pattern_progress.empty());
 }
 
+// A stage that fails while it is asked whether it has arrived is not shown
+// as moving for ever after.
+TEST_F(LaserWatch, AMoveWhoseStageFailsIsNotLeftMoving) {
+  ASSERT_TRUE(system.set_xy(12, 21));
+  EXPECT_EQ(system.snapshot().activity, LaserActivity::Moving);
+  sim.fail_next("Stage.Pos?", 4);
+  ASSERT_FALSE(system.moving());
+  EXPECT_EQ(system.snapshot().activity, LaserActivity::Idle);
+}
+
+TEST_F(LaserWatch, TheStopCanBeLatchedWithoutWaitingForTheDevice) {
+  system.latch_stop();
+  EXPECT_TRUE(system.stopped());
+  EXPECT_FALSE(system.enable());
+  EXPECT_TRUE(sim.log().empty() || sim.log().back() != "Laser.Enable 1");
+}
+
 TEST_F(LaserWatch, SnapshotNeverAdvancesACentring) {
   ASSERT_TRUE(system.move_to_position("3", true));
   // the stage arrives and settles, but nobody polls moving()

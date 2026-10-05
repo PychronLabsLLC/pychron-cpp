@@ -14,6 +14,8 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -53,6 +55,14 @@ QString unit_of(std::string_view key) {
 }
 
 QString num(double value, int places) { return QString::number(value, 'f', places); }
+
+// A number shown as it is, not rounded to a few places: a pattern opened and
+// saved is then the pattern it was. No trailing zeros.
+class ExactSpin : public QDoubleSpinBox {
+ public:
+  explicit ExactSpin(QWidget* parent) : QDoubleSpinBox(parent) { setDecimals(15); }
+  QString textFromValue(double value) const override { return QLocale::c().toString(value, 'g', 15); }
+};
 
 }  // namespace
 
@@ -247,8 +257,7 @@ void PatternMakerWindow::build_fields(const laser::Pattern& pattern) {
       connect(spin, &QSpinBox::valueChanged, this, [this] { changed(); });
       editor = spin;
     } else {
-      auto* spin = new QDoubleSpinBox(fields_);
-      spin->setDecimals(3);
+      auto* spin = new ExactSpin(fields_);
       // The range's own end may be typed: what is wrong with it is then said.
       spin->setRange(field.low, field.high);
       spin->setSingleStep(field.key == "rotation" ? 5 : 0.1);
@@ -265,16 +274,17 @@ void PatternMakerWindow::build_fields(const laser::Pattern& pattern) {
     auto* fixed = new QCheckBox(tr("the same walk each run"), fields_);
     fixed->setObjectName(QStringLiteral("field_seed_fixed"));
     fixed->setChecked(pattern.seed.has_value());
-    auto* seed = new QSpinBox(fields_);
+    // Text, not a spin box: a seed is any whole number a file can hold.
+    auto* seed = new QLineEdit(fields_);
     seed->setObjectName(QStringLiteral("field_seed"));
-    seed->setRange(0, std::numeric_limits<int>::max());
-    seed->setValue(static_cast<int>(std::min<std::uint64_t>(pattern.seed.value_or(0), std::numeric_limits<int>::max())));
+    seed->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9]{1,19}")), seed));
+    seed->setText(QString::number(pattern.seed.value_or(0)));
     seed->setEnabled(pattern.seed.has_value());
     connect(fixed, &QCheckBox::toggled, this, [this, seed](bool on) {
       seed->setEnabled(on);
       changed();
     });
-    connect(seed, &QSpinBox::valueChanged, this, [this] { changed(); });
+    connect(seed, &QLineEdit::textChanged, this, [this] { changed(); });
     form_->addRow(tr("Seed"), seed);
     form_->addRow(QString(), fixed);
   }
@@ -301,8 +311,8 @@ laser::Pattern PatternMakerWindow::pattern() const {
   }
   if (kind_ == laser::PatternKind::Random) {
     const auto* fixed = fields_->findChild<QCheckBox*>(QStringLiteral("field_seed_fixed"));
-    const auto* seed = fields_->findChild<QSpinBox*>(QStringLiteral("field_seed"));
-    if (fixed != nullptr && seed != nullptr && fixed->isChecked()) p.seed = static_cast<std::uint64_t>(seed->value());
+    const auto* seed = fields_->findChild<QLineEdit*>(QStringLiteral("field_seed"));
+    if (fixed != nullptr && seed != nullptr && fixed->isChecked()) p.seed = seed->text().toULongLong();
   }
   if (kind_ == laser::PatternKind::Dragonfly) {
     if (const auto* spiral = fields_->findChild<QComboBox*>(QStringLiteral("field_spiral"))) {

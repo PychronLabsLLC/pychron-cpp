@@ -575,8 +575,9 @@ Result<StagePosition> LaserSystem::position() {
 Result<bool> LaserSystem::moving() {
   Gate gate(gate_);
   auto busy = advance();
-  // A stage that cannot say is not known to have stopped.
-  if (busy) moving_.store(*busy);
+  // A move that failed is over: whoever asked has been told, and a watcher
+  // is not shown a stage moving for ever.
+  moving_.store(busy ? *busy : false);
   return busy;
 }
 

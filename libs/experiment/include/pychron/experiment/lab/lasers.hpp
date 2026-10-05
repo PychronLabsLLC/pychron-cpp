@@ -74,6 +74,9 @@ class Lasers {
   Driver driver() const;
   // The devices whose emergency stop is latched.
   std::vector<std::string> stopped() const;
+  // The devices whose beam is on now (asked of each; one that cannot say is
+  // not listed).
+  std::vector<std::string> firing();
 
  private:
   void release() noexcept;

@@ -619,7 +619,8 @@ it, whether the laser is enabled and firing, which interlocks are tripped.
 - **Laser.** Enable, then Fire: Fire sets the output and opens the beam, and
   is live only while the laser is enabled and no interlock is tripped. Stop
   closes the beam and zeroes the output. While it fires, a new output is sent
-  when you press Enter in the box.
+  when you press Enter in the box, and only then. Closing the window, or
+  quitting, with the beam on closes the beam and disables the laser.
 - **Calibration.** Jog until a hole is under the aim point (the crosshair in
   the camera's picture), choose that hole, and press Set point. One point is a
   shift, two add a rotation, three or more fit a scale as well. A point that
@@ -635,11 +636,13 @@ it, whether the laser is enabled and firing, which interlocks are tripped.
 - **EMERGENCY STOP** is always live: the beam off, the output 0, the laser
   disabled, the stage and any pattern stopped, and a running queue aborted.
   It latches. Until **Reset**, nothing will enable, fire or move, by hand or
-  from a script, and no queue will start.
+  from a script, and no queue will start. Reset is offered once the queue
+  has ended.
 
 While a queue runs the window only watches: every control but the emergency
 stop is off, and a banner says so. The reverse holds too: a queue is not
-started while a command made by hand is still running.
+started while a command made by hand is still running, nor while a beam
+opened by hand is still on.
 
 A device with no table in `cameras.toml` has no picture and no centring; the
 rest works. The camera is still the simulated one: a live camera is not

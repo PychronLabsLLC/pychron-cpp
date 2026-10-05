@@ -274,6 +274,26 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
   session_->wait();
 }
 
+// A beam somebody opened by hand has no owner once that command is over: a
+// queue is not started over it (the window could then no longer close it).
+TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileABeamIsOn) {
+  laser::LaserSystem& co2 = *lasers_->find("co2");
+  ASSERT_TRUE(co2.enable());
+  ASSERT_TRUE(co2.extract(10, extraction::ExtractUnits::Percent));
+  ASSERT_TRUE(co2.fire_laser());
+  EXPECT_EQ(lasers_->firing(), (std::vector<std::string>{"co2"}));
+  const auto started = session_->start(queue_);
+  ASSERT_FALSE(started);
+  EXPECT_NE(started.error().what.find("co2: the laser is firing"), std::string::npos) << started.error().what;
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
+  EXPECT_TRUE(laser_sim("co2").firing()) << "refusing changes nothing";
+  ASSERT_TRUE(co2.end_extract());
+  EXPECT_TRUE(lasers_->firing().empty());
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  session_->wait();
+}
+
 TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
   ASSERT_TRUE(session_->start(queue_));
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::Queue);
