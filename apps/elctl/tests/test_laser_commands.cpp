@@ -1,6 +1,7 @@
 // elctl laser: trays, calibrate, goto, on a scratch copy of the example lab
 // (its "co2" is a Chromium driver on a simulated transport).
 
+#include "pychron/vision/camera_backend.hpp"
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -531,6 +532,77 @@ TEST_F(LaserCmd, TheLabCanBeNamed) {
   const auto o = laser({"trays", "--lab", dir_.string()});
   ASSERT_EQ(o.code, 0) << o.err;
   EXPECT_NE(o.out.find("example-9"), std::string::npos) << o.out;
+}
+
+
+// --- cameras, the camera's scale, snapshots (live camera design, 4 to 6) -----
+
+TEST_F(LaserCameraCmd, CamerasListsEveryBackendAndWhatItFinds) {
+  // in place of OpenCV's own search, which would open whatever cameras this machine has
+  pychron::vision::CameraBackend fake;
+  fake.name = "opencv";
+  fake.available = true;
+  fake.list = [] {
+    return std::vector<pychron::vision::CameraFound>{{"opencv", "0", "camera 0 (FAKE)", 1280, 720, 30},
+                                            {"opencv", "1", "camera 1 (FAKE)", 640, 480, 0}};
+  };
+  pychron::vision::register_camera_backend(fake);
+  const auto o = laser({"cameras"});
+  pychron::vision::unregister_camera_backend("opencv");
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("opencv"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("device = 0"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("1280 x 720"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("30"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("device = 1"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("pylon"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("built without pylon"), std::string::npos) << o.out;
+  EXPECT_EQ(laser({"cameras", "co2"}).code, 2);
+}
+
+TEST_F(LaserCameraCmd, CameraScaleMeasuresSavesAndIsUsed) {
+  const auto o = laser({"camera-scale", "co2", "example-9", "5", "--step", "0.3"}, true);
+  ASSERT_EQ(o.code, 0) << o.err << o.out;
+  EXPECT_NE(o.out.find("px/mm"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("23."), std::string::npos) << o.out;  // the example's camera: 23 px/mm
+  EXPECT_NE(o.out.find("flip_x = false"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("flip_y = true"), std::string::npos) << o.out;
+  ASSERT_TRUE(fs::exists(lab("camera_scales") / "co2.toml"));
+  // and a centring by it still finds the hole
+  const auto centred = laser({"autocenter", "co2", "example-9", "5"}, true);
+  ASSERT_EQ(centred.code, 0) << centred.err << centred.out;
+  EXPECT_NE(centred.out.find("hole 5: converged"), std::string::npos) << centred.out;
+
+  const auto cleared = laser({"camera-scale", "co2", "clear"});
+  ASSERT_EQ(cleared.code, 0) << cleared.err;
+  EXPECT_FALSE(fs::exists(lab("camera_scales") / "co2.toml"));
+}
+
+TEST_F(LaserCameraCmd, CameraScaleWithNothingToSeeFailsAndSavesNothing) {
+  camera("[co2]\n[co2.sim]\ntray_error_mm = [30.0, 30.0]\nnoise = 0\n");  // the tray is nowhere near
+  const auto o = laser({"camera-scale", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("nothing to follow"), std::string::npos) << o.err;
+  EXPECT_FALSE(fs::exists(lab("camera_scales") / "co2.toml"));
+  EXPECT_EQ(laser({"camera-scale", "co2"}, true).code, 2);
+  EXPECT_EQ(laser({"camera-scale", "co2", "example-9", "5", "--step", "0"}, true).code, 2);
+}
+
+TEST_F(LaserCameraCmd, SnapshotSavesAPicture) {
+  const auto o = laser({"snapshot", "co2", "first"}, true);
+  ASSERT_EQ(o.code, 0) << o.err << o.out;
+  const fs::path file = lab("snapshots") / "co2" / "first.png";
+  EXPECT_NE(o.out.find(file.string()), std::string::npos) << o.out;
+  ASSERT_TRUE(fs::exists(file));
+  // again: beside it, not over it
+  const auto again = laser({"snapshot", "co2", "first"}, true);
+  ASSERT_EQ(again.code, 0) << again.err;
+  EXPECT_TRUE(fs::exists(lab("snapshots") / "co2" / "first-2.png"));
+  // a device with no camera has nothing to save
+  fs::remove(lab("cameras.toml"));
+  const auto none = laser({"snapshot", "co2"}, true);
+  EXPECT_EQ(none.code, 1);
+  EXPECT_NE(none.err.find("no camera"), std::string::npos) << none.err;
 }
 
 }  // namespace

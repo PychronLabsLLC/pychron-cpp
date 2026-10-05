@@ -10,6 +10,8 @@
 #include <sstream>
 #include <thread>
 
+#include "pychron/laser/camera_scale.hpp"
+#include "pychron/vision/camera_backend.hpp"
 #include "pychron/codecs/codec.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/lab/lab.hpp"
@@ -44,6 +46,12 @@ constexpr const char* kLaserUsage =
     "                                                    what is found is saved as the hole's correction\n"
     "  corrections <device> <tray> [clear [<hole>]]      where holes were found; or forget them\n"
     "  look <device> [--tray <tray>]                     what the camera's finder sees now; moves nothing\n"
+    "  cameras                                           the cameras this build can reach, and what to call them\n"
+    "  camera-scale <device> <tray> <hole> [--step <mm>] [--timeout <s>]\n"
+    "                                                    go to the hole, then measure the camera's px/mm and\n"
+    "                                                    flips by jogging the stage; saved for the device\n"
+    "  camera-scale <device> show|clear                  the measured scale; or forget it\n"
+    "  snapshot <device> [<name>]                        save what the camera sees: snapshots/<device>/<name>.png\n"
     "  patterns                                          the lab's patterns: kind, points, length, time\n"
     "  pattern <device> <name> [--dry-run] [--timeout <s>]\n"
     "                                                    run a pattern about where the stage is (the laser is\n"
@@ -76,7 +84,7 @@ std::string describe(const laser::Solution& s) {
 struct Args {
   std::vector<std::string> words;  // everything that is not an option
   fs::path lab;
-  std::optional<double> x, y, timeout;
+  std::optional<double> x, y, timeout, step;
   std::optional<std::string> tray;  // --tray, for look
   bool dry_run = false;
 };
@@ -217,6 +225,115 @@ class Laser {
               << num(std::hypot(it->second.x - nominal.x, it->second.y - nominal.y)) << " mm from calibrated  residual "
               << num(it->second.residual_mm) << " mm  " << it->second.found << '\n';
     }
+    return kOk;
+  }
+
+  // The device's camera attached to `system` to look through (whatever it
+  // may be used for in a queue): false, and said, when it cannot be.
+  bool look_through(laser::LaserSystem& system) {
+    const laser::CameraConfig* found = camera();
+    if (found == nullptr) return false;
+    laser::CameraConfig config = *found;
+    if (auto measured = lab_.camera_scales->load(device_); !measured) {
+      failed(measured.error().what);
+      return false;
+    } else if (*measured) {
+      config.measured = (*measured)->map;
+    }
+    auto frames = laser::make_frame_source(config, a_.lab, system.sight(), line_->clock());
+    if (!frames) {
+      failed(frames.error().what);
+      return false;
+    }
+    if (auto ok = system.attach_viewer(config, std::move(*frames), line_->clock()); !ok) {
+      failed(ok.error().what);
+      return false;
+    }
+    return true;
+  }
+
+  // Polls until the stage is at rest, then waits the camera's settle time.
+  Result<void> arrive(laser::LaserSystem& system, Duration settle) {
+    const auto limit = std::chrono::duration<double>(a_.timeout.value_or(120));
+    const auto started = std::chrono::steady_clock::now();
+    const int interrupts = interrupt_count().load();
+    for (;;) {
+      auto moving = system.moving();
+      if (!moving) return fail(moving.error());
+      if (!*moving) break;
+      if (interrupt_count().load() != interrupts) return fail(ErrorKind::Cancelled, "interrupted; " + stopped(system));
+      if (std::chrono::steady_clock::now() - started > limit) {
+        return fail(ErrorKind::Timeout, "not there after " + num(limit.count(), 1) + " s; " + stopped(system));
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    const TimePoint rested = line_->clock().now();
+    while (line_->clock().now() - rested < settle) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return {};
+  }
+
+  static void say_scale(std::ostream& out, const laser::ScaleMeasurement& m) {
+    out << num(m.px_per_mm, 2) << " px/mm   flip_x = " << (m.flip_x ? "true" : "false") << "   flip_y = "
+        << (m.flip_y ? "true" : "false") << "   axes " << num(m.skew_deg, 2) << " deg from square, "
+        << num(m.anisotropy * 100, 1) << "% apart in scale\n";
+  }
+
+  // camera-scale <device> show|clear
+  int camera_scale_file() {
+    device_ = a_.words[1];
+    if (a_.words[2] == "clear") {
+      if (auto r = lab_.camera_scales->clear(device_); !r) return failed(r.error().what);
+      io_.out << "the measured scale of " << device_ << "'s camera is forgotten: cameras.toml's values are used\n";
+      return kOk;
+    }
+    auto measured = lab_.camera_scales->load(device_);
+    if (!measured) return failed(measured.error().what);
+    if (!*measured) {
+      io_.out << "no measured scale for " << device_ << ": cameras.toml's values are used\n";
+      return kOk;
+    }
+    say_scale(io_.out, **measured);
+    return kOk;
+  }
+
+  // camera-scale <device> <tray> <hole>
+  int camera_scale() {
+    const std::string& hole = a_.words[3];
+    if (map_->find(hole) == nullptr) return failed("no hole " + hole + " on tray " + map_->name());
+    auto opened = open();
+    if (!opened) return failed(opened.error().what);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    system.set_corrections(*lab_.corrections);
+    if (!look_through(system)) return kFailed;
+    const Duration settle = lab_.cameras.find(device_)->settle;
+    if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
+    if (auto r = system.move_to_position(hole, false); !r) return failed(r.error().what);
+    if (auto r = arrive(system, settle); !r) return failed(r.error().what);
+    io_.out << "on hole " << hole << "; jogging " << num(a_.step.value_or(0.25)) << " mm in x, then in y\n";
+    io_.out.flush();
+    const auto measured =
+        laser::measure_camera_scale(system, a_.step.value_or(0.25), [&] { return arrive(system, settle); });
+    if (!measured) return failed(measured.error().what);
+    say_scale(io_.out, *measured);
+    if (auto saved = lab_.camera_scales->save(device_, *measured); !saved) return failed(saved.error().what);
+    io_.out << "saved to " << lab_.camera_scales->file(device_).string() << " (used instead of cameras.toml's px_per_mm and flips)\n";
+    return kOk;
+  }
+
+  // snapshot <device> [<name>]
+  int snapshot() {
+    device_ = a_.words[1];
+    if (int rc = check_device(); rc != kOk) return rc;
+    auto opened = open();
+    if (!opened) return failed(opened.error().what);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    if (!look_through(system)) return kFailed;
+    system.set_snapshot_dir(a_.lab / "snapshots" / device_);
+    // A live camera has only just been opened: its first picture is waited for.
+    if (auto first = system.view(true); !first) return failed(first.error().what);
+    const auto saved = system.snapshot(a_.words.size() > 2 ? a_.words[2] : std::string{});
+    if (!saved) return failed(saved.error().what);
+    io_.out << *saved << '\n';
     return kOk;
   }
 
@@ -621,6 +738,26 @@ class Laser {
 
 }  // namespace
 
+// cameras: every backend, whether this build has it, and what it finds.
+int list_cameras(Io io) {
+  for (const auto& backend : vision::camera_backends()) {
+    if (!backend.available) {
+      io.out << backend.name << ": " << backend.unavailable_why << '\n';
+      continue;
+    }
+    const auto found = backend.list ? backend.list() : std::vector<vision::CameraFound>{};
+    io.out << backend.name << ": " << found.size() << (found.size() == 1 ? " camera" : " cameras") << '\n';
+    for (const auto& camera : found) {
+      io.out << "  device = " << camera.device << "   " << camera.description;
+      if (camera.width > 0) io.out << "   " << camera.width << " x " << camera.height;
+      if (camera.fps > 0) io.out << "   " << num(camera.fps, 0) << " fps";
+      io.out << '\n';
+    }
+  }
+  io.out << "in cameras.toml: source = \"<backend>\" and, under [<device>.<backend>], device = <as above>\n";
+  return kOk;
+}
+
 int laser_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io) {
   const auto usage = [&](const std::string& message) {
     if (!message.empty()) io.err << "elctl laser: " << message << '\n';
@@ -630,7 +767,7 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
   Args a;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& x = args[i];
-    if (x == "--lab" || x == "--x" || x == "--y" || x == "--timeout") {
+    if (x == "--lab" || x == "--x" || x == "--y" || x == "--timeout" || x == "--step") {
       if (i + 1 >= args.size()) return usage(x + " needs a value");
       const std::string& v = args[++i];
       if (x == "--lab") {
@@ -639,7 +776,8 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
       }
       const auto number = codec::parse_decimal(v);
       if (!number) return usage(x + " needs a number, not '" + v + "'");
-      if (x == "--x") a.x = *number;
+      if (x == "--step") a.step = *number;
+      else if (x == "--x") a.x = *number;
       else if (x == "--y") a.y = *number;
       else if (*number <= 0) return usage("--timeout must be above 0");
       else a.timeout = *number;
@@ -662,6 +800,27 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
   const std::string verb = a.words[0];
   if (a.dry_run && verb != "pattern") return usage("--dry-run goes with pattern");
   if (a.tray && verb != "look") return usage("--tray goes with look");
+  if (a.step && verb != "camera-scale") return usage("--step goes with camera-scale");
+  if (verb == "cameras") {
+    if (a.words.size() != 1) return usage("cameras takes no arguments");
+    if (a.x || a.timeout) return usage("cameras takes no --x, --y or --timeout");
+    return list_cameras(io);
+  }
+  if (verb == "camera-scale") {
+    if (a.x) return usage("--x and --y go with calibrate");
+    const bool file_only = a.words.size() == 3 && (a.words[2] == "show" || a.words[2] == "clear");
+    if (!file_only && a.words.size() != 4) return usage("camera-scale needs <device> <tray> <hole>, or <device> show|clear");
+    if (a.step && (!(*a.step >= 0.01) || !(*a.step <= 2))) return usage("--step is from 0.01 to 2 mm");
+    Laser laser(std::move(a), globals, io);
+    if (file_only) return laser.camera_scale_file();
+    return laser.has_line() ? laser.with_tray(&Laser::camera_scale) : kFailed;
+  }
+  if (verb == "snapshot") {
+    if (a.words.size() < 2 || a.words.size() > 3) return usage("snapshot needs <device>, and optionally a name");
+    if (a.x || a.timeout) return usage("snapshot takes no --x, --y or --timeout");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.snapshot() : kFailed;
+  }
   if (verb == "autocenter") {
     if (a.words.size() != 4) return usage("autocenter needs <device> <tray> <hole>");
     if (a.x) return usage("--x and --y go with calibrate");
