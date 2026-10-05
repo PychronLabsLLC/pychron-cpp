@@ -16,6 +16,11 @@
 //   queue_user = true                      # also the queue's email (default true)
 //   on = ["run_failed", "queue_ended"]     # default: both
 //
+//   [[email]]
+//   provider = "brevo"                     # a mail service: brevo, resend or postmark, over HTTPS
+//   api_key_env = "PYCHRON_MAIL_API_KEY"   # its key; url, username, password_env and tls are not used
+//   from = "pychron@example.org"           # to, queue_user and on as above
+//
 //   [[webhook]]
 //   url = "https://hooks.slack.com/services/..."
 //   format = "slack"                       # {"text": ...}; "json" (default) posts every field
@@ -24,7 +29,8 @@
 //   argv = ["/usr/local/bin/notify-lab"]   # the message on stdin, fields as PYCHRON_* variables
 //
 // Email and webhooks run curl with its options on stdin (`--config -`), so
-// neither the password nor the webhook URL appears on a command line.
+// neither the password, the key nor the webhook URL appears on a command
+// line. The lab manager's guide is docs/notifications.md.
 
 #include <chrono>
 #include <filesystem>
@@ -33,6 +39,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -45,8 +52,12 @@ enum class NotifyEvent { RunFailed, QueueEnded, Test };
 std::string_view to_string(NotifyEvent e) noexcept;
 
 struct EmailChannel {
+  // Smtp: curl speaks SMTP to `url`. The others: one HTTPS request to that
+  // mail service, signed with the key in `api_key_env`.
+  enum class Provider { Smtp, Brevo, Resend, Postmark };
   std::string name = "email";
-  std::string url, from, username, password_env;
+  Provider provider = Provider::Smtp;
+  std::string url, from, username, password_env, api_key_env;
   std::vector<std::string> to;
   bool queue_user = true;  // also mail the queue's `email`
   bool tls = true;         // smtp:// must upgrade with STARTTLS
@@ -105,5 +116,9 @@ struct Delivery {
 // Sends `n` on every channel whose `on` has its event (every channel for a
 // Test), in channel_names() order. Blocks until each delivery ends.
 std::vector<Delivery> deliver(const NotificationConfig& config, const Notification& n, const ProcessRunner& run);
+
+// {channel, variable} for each email channel whose password_env or
+// api_key_env names a variable that is not set here, in channel order.
+std::vector<std::pair<std::string, std::string>> unset_secrets(const NotificationConfig& config);
 
 }  // namespace pychron::experiment::lab

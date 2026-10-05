@@ -205,6 +205,192 @@ password_env = "PYCHRON_TEST_SMTP_PW"
   EXPECT_EQ(fake.calls.size(), 1u);
 }
 
+TEST(Notifications, ParsesAMailServiceChannel) {
+  auto c = NotificationConfig::from_toml(R"(
+[[email]]
+provider = "brevo"
+api_key_env = "PYCHRON_TEST_MAIL_KEY"
+from = "pychron@example.org"
+to = ["a@example.org"]
+)",
+                                         "n.toml");
+  ASSERT_TRUE(c) << c.error().what;
+  ASSERT_EQ(c->email.size(), 1u);
+  EXPECT_EQ(c->email[0].provider, EmailChannel::Provider::Brevo);
+  EXPECT_EQ(c->email[0].api_key_env, "PYCHRON_TEST_MAIL_KEY");
+  EXPECT_TRUE(c->email[0].queue_user);
+  EXPECT_EQ(c->channel_names(), std::vector<std::string>{"email"});
+}
+
+TEST(Notifications, AMailServiceChannelTakesNoSmtpSettings) {
+  auto c = NotificationConfig::from_toml(R"(
+[[email]]
+provider = "resend"
+url = "smtp://mail.example.org"
+username = "pychron"
+password_env = "PW"
+tls = false
+from = "pychron@example.org"
+[[email]]
+provider = "gmail"
+api_key_env = "K"
+from = "pychron@example.org"
+[[email]]
+url = "smtp://mail.example.org"
+api_key_env = "K"
+from = "pychron@example.org"
+)",
+                                         "n.toml");
+  ASSERT_FALSE(c);
+  const auto& e = c.error().what;
+  for (const char* expected :
+       {"email[0].api_key_env: missing", "email[0].url: not used with provider", "email[0].username: not used with provider",
+        "email[0].password_env: not used with provider", "email[0].tls: not used with provider",
+        "email[1].provider: must be \"brevo\", \"resend\" or \"postmark\"",
+        "email[2].api_key_env: only used with provider"})
+    EXPECT_NE(e.find(expected), std::string::npos) << expected << "\n" << e;
+  // The missing url of a provider channel is not a mistake.
+  EXPECT_EQ(e.find("email[1].url"), std::string::npos) << e;
+}
+
+namespace {
+
+// One [[email]] channel on `provider`, sent a failed run with a queue user.
+struct ProviderSend {
+  FakeRunner fake;
+  std::vector<Delivery> deliveries;
+
+  explicit ProviderSend(const std::string& provider) {
+    set_env("PYCHRON_TEST_MAIL_KEY", "k3y-s3cret");
+    auto c = NotificationConfig::from_toml("[[email]]\nprovider = \"" + provider +
+                                               "\"\napi_key_env = \"PYCHRON_TEST_MAIL_KEY\"\n"
+                                               "from = \"pychron@example.org\"\nto = [\"a@example.org\"]\n",
+                                           "n.toml");
+    EXPECT_TRUE(c) << c.error().what;
+    auto n = run_failed_notification("q1", failed_run());
+    n.queue_email = "user@example.org";
+    deliveries = deliver(*c, n, fake.runner());
+  }
+  const std::string& config() const { return fake.calls.at(0).spec.input; }
+  const std::string& payload() const { return fake.calls.at(0).payload; }
+};
+
+void expect_has(const std::string& text, const std::string& part) {
+  EXPECT_NE(text.find(part), std::string::npos) << "no " << part << " in\n" << text;
+}
+
+}  // namespace
+
+TEST(Notifications, BrevoGetsItsJsonAndTheKeyInAHeader) {
+  ProviderSend s("brevo");
+  ASSERT_EQ(s.deliveries.size(), 1u);
+  EXPECT_TRUE(s.deliveries[0].ok) << s.deliveries[0].error;
+  ASSERT_EQ(s.fake.calls.size(), 1u);
+  const auto& argv = s.fake.calls[0].spec.argv;
+  EXPECT_EQ(argv.front(), "curl");
+  EXPECT_EQ(argv.back(), "-");  // --config -: the key is never an argument
+  for (const auto& a : argv) EXPECT_EQ(a.find("k3y-s3cret"), std::string::npos);
+  expect_has(s.config(), "url = \"https://api.brevo.com/v3/smtp/email\"");
+  expect_has(s.config(), "request = \"POST\"");
+  expect_has(s.config(), "header = \"api-key: k3y-s3cret\"");
+  expect_has(s.config(), "header = \"Content-Type: application/json\"");
+  expect_has(s.config(), "fail-with-body");  // the service's own words on a refusal
+  expect_has(s.payload(), "\"sender\": {\"email\": \"pychron@example.org\"}");
+  expect_has(s.payload(), "\"to\": [{\"email\": \"a@example.org\"}, {\"email\": \"user@example.org\"}]");
+  expect_has(s.payload(), "\"subject\": \"pychron: run 66001-3 failed (queue q1)\"");
+  expect_has(s.payload(), "\"textContent\": \"Run 66001-3 failed.\\n\\n");
+  EXPECT_EQ(s.payload().find("k3y-s3cret"), std::string::npos);
+
+  // The payload is gone once the delivery ends.
+  const auto at = s.config().find("data-binary = \"@") + 16;
+  EXPECT_FALSE(std::filesystem::exists(s.config().substr(at, s.config().find('"', at) - at)));
+}
+
+TEST(Notifications, ResendGetsItsJsonAndABearerKey) {
+  ProviderSend s("resend");
+  ASSERT_EQ(s.deliveries.size(), 1u);
+  EXPECT_TRUE(s.deliveries[0].ok) << s.deliveries[0].error;
+  expect_has(s.config(), "url = \"https://api.resend.com/emails\"");
+  expect_has(s.config(), "header = \"Authorization: Bearer k3y-s3cret\"");
+  expect_has(s.payload(), "\"from\": \"pychron@example.org\"");
+  expect_has(s.payload(), "\"to\": [\"a@example.org\", \"user@example.org\"]");
+  expect_has(s.payload(), "\"subject\": \"pychron: run 66001-3 failed (queue q1)\"");
+  expect_has(s.payload(), "\"text\": \"Run 66001-3 failed.\\n\\n");
+}
+
+TEST(Notifications, PostmarkGetsItsJsonAndAServerToken) {
+  ProviderSend s("postmark");
+  ASSERT_EQ(s.deliveries.size(), 1u);
+  EXPECT_TRUE(s.deliveries[0].ok) << s.deliveries[0].error;
+  expect_has(s.config(), "url = \"https://api.postmarkapp.com/email\"");
+  expect_has(s.config(), "header = \"X-Postmark-Server-Token: k3y-s3cret\"");
+  expect_has(s.config(), "header = \"Accept: application/json\"");
+  expect_has(s.payload(), "\"From\": \"pychron@example.org\"");
+  expect_has(s.payload(), "\"To\": \"a@example.org, user@example.org\"");
+  expect_has(s.payload(), "\"Subject\": \"pychron: run 66001-3 failed (queue q1)\"");
+  expect_has(s.payload(), "\"TextBody\": \"Run 66001-3 failed.\\n\\n");
+}
+
+TEST(Notifications, AMailServiceRefusalIsReportedInItsOwnWords) {
+  set_env("PYCHRON_TEST_MAIL_KEY", "k3y-s3cret");
+  auto c = NotificationConfig::from_toml(R"(
+[[email]]
+provider = "brevo"
+api_key_env = "PYCHRON_TEST_MAIL_KEY"
+from = "pychron@example.org"
+to = ["a@example.org"]
+)",
+                                         "n.toml");
+  ASSERT_TRUE(c) << c.error().what;
+  FakeRunner fake;
+  fake.exit_code = 22;
+  fake.output = "{\"code\":\"unauthorized\",\"message\":\"Key not found\"}\ncurl: (22) The requested URL returned error: 401\n";
+  auto d = deliver(*c, test_notification("/lab"), fake.runner());
+  ASSERT_EQ(d.size(), 1u);
+  EXPECT_FALSE(d[0].ok);
+  EXPECT_NE(d[0].error.find("Key not found"), std::string::npos) << d[0].error;
+  EXPECT_EQ(d[0].error.find("k3y-s3cret"), std::string::npos) << d[0].error;
+
+  // An unset key variable fails without running curl.
+  c->email[0].api_key_env = "PYCHRON_TEST_UNSET_VARIABLE_XYZ";
+  d = deliver(*c, test_notification("/lab"), fake.runner());
+  ASSERT_EQ(d.size(), 1u);
+  EXPECT_FALSE(d[0].ok);
+  EXPECT_NE(d[0].error.find("PYCHRON_TEST_UNSET_VARIABLE_XYZ is not set"), std::string::npos) << d[0].error;
+  EXPECT_EQ(fake.calls.size(), 1u);
+}
+
+TEST(Notifications, UnsetSecretsNamesEachChannelWhoseVariableIsMissing) {
+  set_env("PYCHRON_TEST_MAIL_KEY", "k3y-s3cret");
+  auto c = NotificationConfig::from_toml(R"(
+[[email]]
+name = "service"
+provider = "brevo"
+api_key_env = "PYCHRON_TEST_UNSET_VARIABLE_XYZ"
+from = "pychron@example.org"
+[[email]]
+name = "set"
+provider = "resend"
+api_key_env = "PYCHRON_TEST_MAIL_KEY"
+from = "pychron@example.org"
+[[email]]
+name = "smtp"
+url = "smtp://mail.example.org"
+from = "pychron@example.org"
+username = "pychron"
+password_env = "PYCHRON_TEST_UNSET_VARIABLE_ABC"
+[[email]]
+name = "open relay"
+url = "smtp://relay.example.org"
+from = "pychron@example.org"
+)",
+                                         "n.toml");
+  ASSERT_TRUE(c) << c.error().what;
+  EXPECT_EQ(unset_secrets(*c), (std::vector<std::pair<std::string, std::string>>{
+                                   {"service", "PYCHRON_TEST_UNSET_VARIABLE_XYZ"},
+                                   {"smtp", "PYCHRON_TEST_UNSET_VARIABLE_ABC"}}));
+}
+
 TEST(Notifications, WebhooksAndCommandsAndFailures) {
   auto c = NotificationConfig::from_toml(R"(
 [[webhook]]

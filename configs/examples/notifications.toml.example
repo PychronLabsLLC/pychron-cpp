@@ -2,10 +2,22 @@
 # channels you want. Each sends a message when a run fails (run_failed) and
 # when the queue ends (queue_ended); `on` narrows that.
 # Test with:  elctl exp notify --lab <this directory>
+# Step-by-step setup: docs/notifications.md
 
 # curl = "curl"     # the curl program used for email and webhooks
 # timeout = 30      # seconds per delivery
 
+# Email through a mail service (brevo, resend or postmark): one free account
+# with the service, and its key in an environment variable.
+# [[email]]
+# provider = "brevo"
+# api_key_env = "PYCHRON_MAIL_API_KEY"     # the key is read from this environment variable
+# from = "pychron@example.org"             # a sender confirmed with the service
+# to = ["lab-manager@example.org"]
+# queue_user = true                        # also mail the queue's `email`
+# on = ["run_failed", "queue_ended"]
+
+# Email through an SMTP server.
 # [[email]]
 # url = "smtps://smtp.example.org:465"     # or smtp://host:587 (STARTTLS is required unless tls = false)
 # from = "pychron@example.org"

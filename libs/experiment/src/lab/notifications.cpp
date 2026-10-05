@@ -230,21 +230,24 @@ std::chrono::milliseconds process_timeout(const NotificationConfig& c) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(c.timeout) + std::chrono::seconds(5);
 }
 
-Delivery send_email(const NotificationConfig& c, const EmailChannel& ch, const Notification& n, const ProcessRunner& run) {
-  std::vector<std::string> to = ch.to;
-  if (ch.queue_user && !n.queue_email.empty() && std::find(to.begin(), to.end(), n.queue_email) == to.end())
-    to.push_back(n.queue_email);
-  if (to.empty()) return {ch.name, false, "no recipients (the queue has no email)"};
-  std::string password;
-  if (!ch.password_env.empty()) {
-    auto p = env_var(ch.password_env.c_str());
-    if (!p) return {ch.name, false, ch.password_env + " is not set"};
-    password = *p;
-  }
+std::string json_string(const std::string& s) { return "\"" + json_escape(s) + "\""; }
 
-  std::string to_header;
-  for (const auto& t : to) to_header += (to_header.empty() ? "" : ", ") + t;
-  std::string message = "From: " + ch.from + "\r\nTo: " + to_header + "\r\nSubject: " + one_line(n.subject) +
+// A JSON array of `items`, each already JSON.
+std::string json_array(const std::vector<std::string>& items) {
+  std::string out = "[";
+  for (const auto& i : items) out += (out.size() == 1 ? "" : ", ") + i;
+  return out + "]";
+}
+
+std::string joined(const std::vector<std::string>& items) {
+  std::string out;
+  for (const auto& i : items) out += (out.empty() ? "" : ", ") + i;
+  return out;
+}
+
+Delivery send_smtp(const NotificationConfig& c, const EmailChannel& ch, const Notification& n,
+                   const std::vector<std::string>& to, const std::string& password, const ProcessRunner& run) {
+  std::string message = "From: " + ch.from + "\r\nTo: " + joined(to) + "\r\nSubject: " + one_line(n.subject) +
                         "\r\nDate: " + rfc5322_date() +
                         "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n"
                         "Content-Transfer-Encoding: 8bit\r\n\r\n" +
@@ -268,6 +271,72 @@ Delivery send_email(const NotificationConfig& c, const EmailChannel& ch, const N
   config += "upload-file = " + curl_value(payload->path()) + "\n";
   ProcessSpec spec{curl_argv(c, false), config, {}, process_timeout(c), std::nullopt};
   return finish(ch.name, c.curl, run(spec));
+}
+
+// What one mail service wants: where to post, the header carrying the key,
+// and the message in its JSON.
+struct ServiceRequest {
+  std::string url, key_header, json;
+};
+
+ServiceRequest service_request(const EmailChannel& ch, const Notification& n, const std::vector<std::string>& to,
+                               const std::string& key) {
+  const std::string subject = json_string(one_line(n.subject)), text = json_string(n.body);
+  std::vector<std::string> items;
+  switch (ch.provider) {
+    case EmailChannel::Provider::Brevo:
+      for (const auto& t : to) items.push_back("{\"email\": " + json_string(t) + "}");
+      return {"https://api.brevo.com/v3/smtp/email", "api-key: " + key,
+              "{\"sender\": {\"email\": " + json_string(ch.from) + "}, \"to\": " + json_array(items) +
+                  ", \"subject\": " + subject + ", \"textContent\": " + text + "}"};
+    case EmailChannel::Provider::Resend:
+      for (const auto& t : to) items.push_back(json_string(t));
+      return {"https://api.resend.com/emails", "Authorization: Bearer " + key,
+              "{\"from\": " + json_string(ch.from) + ", \"to\": " + json_array(items) + ", \"subject\": " + subject +
+                  ", \"text\": " + text + "}"};
+    case EmailChannel::Provider::Postmark:
+      return {"https://api.postmarkapp.com/email", "X-Postmark-Server-Token: " + key,
+              "{\"From\": " + json_string(ch.from) + ", \"To\": " + json_string(joined(to)) + ", \"Subject\": " +
+                  subject + ", \"TextBody\": " + text + "}"};
+    case EmailChannel::Provider::Smtp: break;
+  }
+  return {};
+}
+
+Delivery send_service(const NotificationConfig& c, const EmailChannel& ch, const Notification& n,
+                      const std::vector<std::string>& to, const std::string& key, const ProcessRunner& run) {
+  const auto request = service_request(ch, n, to, key);
+  auto payload = TempFile::write(request.json);
+  if (!payload) return {ch.name, false, payload.error().what};
+  // fail-with-body: a refusal exits non-zero and still prints what the
+  // service said (an unknown key, a sender it has not verified).
+  const std::string config = "url = " + curl_value(request.url) + "\nrequest = \"POST\"\nfail-with-body\nheader = " +
+                             curl_value(request.key_header) + "\nheader = " +
+                             curl_value("Content-Type: application/json") + "\nheader = " +
+                             curl_value("Accept: application/json") + "\ndata-binary = " +
+                             curl_value("@" + payload->path()) + "\n";
+  ProcessSpec spec{curl_argv(c, false), config, {}, process_timeout(c), std::nullopt};
+  return finish(ch.name, c.curl, run(spec));
+}
+
+// The variable holding the channel's password or key; empty when it has none.
+const std::string& secret_env(const EmailChannel& ch) {
+  return ch.provider == EmailChannel::Provider::Smtp ? ch.password_env : ch.api_key_env;
+}
+
+Delivery send_email(const NotificationConfig& c, const EmailChannel& ch, const Notification& n, const ProcessRunner& run) {
+  std::vector<std::string> to = ch.to;
+  if (ch.queue_user && !n.queue_email.empty() && std::find(to.begin(), to.end(), n.queue_email) == to.end())
+    to.push_back(n.queue_email);
+  if (to.empty()) return {ch.name, false, "no recipients (the queue has no email)"};
+  std::string secret;
+  if (const auto& name = secret_env(ch); !name.empty()) {
+    auto v = env_var(name.c_str());
+    if (!v) return {ch.name, false, name + " is not set"};
+    secret = *v;
+  }
+  return ch.provider == EmailChannel::Provider::Smtp ? send_smtp(c, ch, n, to, secret, run)
+                                                     : send_service(c, ch, n, to, secret, run);
 }
 
 Delivery send_webhook(const NotificationConfig& c, const WebhookChannel& ch, const Notification& n,
@@ -343,19 +412,34 @@ Result<NotificationConfig> NotificationConfig::from_toml(std::string_view text, 
   }
 
   for (const auto& [where, t] : entries(p, root, "email")) {
-    p.keys(*t, where, {"name", "url", "from", "to", "username", "password_env", "queue_user", "tls", "on"});
+    p.keys(*t, where,
+           {"name", "provider", "api_key_env", "url", "from", "to", "username", "password_env", "queue_user", "tls", "on"});
     EmailChannel e;
     if (auto nm = p.str(*t, where, "name", false); !nm.empty()) e.name = nm;
-    e.url = p.str(*t, where, "url", true);
     e.from = p.str(*t, where, "from", true);
     e.to = p.strings(*t, where, "to");
-    e.username = p.str(*t, where, "username", false);
-    e.password_env = p.str(*t, where, "password_env", false);
     e.queue_user = p.boolean(*t, where, "queue_user", true);
-    e.tls = p.boolean(*t, where, "tls", true);
     e.on = p.on(*t, where, e.on);
-    if (!e.url.empty() && !starts_with(e.url, "smtp://") && !starts_with(e.url, "smtps://"))
-      p.add(where + ".url", "must start with smtp:// or smtps://");
+    if (t->get("provider") != nullptr) {
+      // A mail service: its address and login are known, so only the key is asked for.
+      const auto provider = p.str(*t, where, "provider", false);
+      if (provider == "brevo") e.provider = EmailChannel::Provider::Brevo;
+      else if (provider == "resend") e.provider = EmailChannel::Provider::Resend;
+      else if (provider == "postmark") e.provider = EmailChannel::Provider::Postmark;
+      else p.add(where + ".provider", "must be \"brevo\", \"resend\" or \"postmark\" (leave it out for SMTP)");
+      e.api_key_env = p.str(*t, where, "api_key_env", true);
+      for (const char* key : {"url", "username", "password_env", "tls"})
+        if (t->get(key) != nullptr) p.add(where + "." + key, "not used with provider (a mail service takes only api_key_env)");
+    } else {
+      e.url = p.str(*t, where, "url", true);
+      e.username = p.str(*t, where, "username", false);
+      e.password_env = p.str(*t, where, "password_env", false);
+      e.tls = p.boolean(*t, where, "tls", true);
+      if (!e.url.empty() && !starts_with(e.url, "smtp://") && !starts_with(e.url, "smtps://"))
+        p.add(where + ".url", "must start with smtp:// or smtps://");
+      if (t->get("api_key_env") != nullptr)
+        p.add(where + ".api_key_env", "only used with provider (SMTP takes password_env)");
+    }
     if (e.to.empty() && !e.queue_user) p.add(where + ".to", "no recipients (set to, or queue_user = true)");
     c.email.push_back(std::move(e));
   }
@@ -471,6 +555,13 @@ std::vector<Delivery> deliver(const NotificationConfig& config, const Notificati
     if (wants(w.on)) out.push_back(send_webhook(config, w, n, run));
   for (const auto& c : config.commands)
     if (wants(c.on)) out.push_back(send_command(config, c, n, run));
+  return out;
+}
+
+std::vector<std::pair<std::string, std::string>> unset_secrets(const NotificationConfig& config) {
+  std::vector<std::pair<std::string, std::string>> out;
+  for (const auto& e : config.email)
+    if (const auto& name = secret_env(e); !name.empty() && !env_var(name.c_str())) out.emplace_back(e.name, name);
   return out;
 }
 

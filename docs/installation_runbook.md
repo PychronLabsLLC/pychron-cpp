@@ -209,7 +209,8 @@ Expect every `doctor` line `[OK]` and the queue to finish. Records go to
 
 Notifications are optional: copy `notifications.toml.example` to
 `notifications.toml`, fill in a channel, and send a test with
-`elctl --install argus exp notify`.
+`elctl --install argus exp notify`. `notifications.md` walks a lab manager
+through email by a mail service, from making the account to the test.
 
 ### 2.4 From simulation to the instrument
 

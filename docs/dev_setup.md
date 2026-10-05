@@ -309,8 +309,10 @@ Notifications: copy `notifications.toml.example` to `notifications.toml` in
 the lab and fill in a channel (email, webhook or a local command) to get a
 message when a run fails and when the queue ends. Email and webhooks need the
 `curl` program; an SMTP password comes from the environment variable named by
-`password_env`. `elctl exp notify --lab .` sends a test message on each
-channel (the experiment window: Executor > Send Test Notification).
+`password_env`, a mail service's key (`provider = "brevo"`, `"resend"` or
+`"postmark"`) from the one named by `api_key_env`. `elctl exp notify --lab .`
+sends a test message on each channel (the experiment window: Executor > Send
+Test Notification). The setup guide is `notifications.md`.
 
 ### A Chromium laser
 

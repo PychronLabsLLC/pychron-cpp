@@ -127,6 +127,10 @@ void check_instrument(std::vector<Check>& out, const SiteInstall& install, const
                                          : warn("curl", "cannot run " + lab.notifications.curl,
                                                 "install curl, or set curl = \"<path>\" in notifications.toml"));
   }
+  // A password or key variable that is not set here fails every message.
+  for (const auto& [channel, variable] : experiment::lab::unset_secrets(lab.notifications))
+    out.push_back(warn("notifications " + channel, variable + " is not set",
+                       "set it for the account that runs pychron (docs/notifications.md), then: elctl exp notify"));
 }
 
 void check_data_reduction(std::vector<Check>& out, const SiteInstall& install, const DoctorOptions& options) {
