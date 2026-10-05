@@ -61,6 +61,7 @@ add_library(pychron_ui_lib STATIC
   src/command_palette.cpp
   src/preferences.cpp
   src/preferences_dialog.cpp
+  src/laser_bridge.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -112,6 +113,7 @@ add_library(pychron_ui_lib STATIC
   src/command_palette.hpp
   src/preferences.hpp
   src/preferences_dialog.hpp
+  src/laser_bridge.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
