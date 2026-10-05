@@ -210,7 +210,7 @@ Legacy `agilent/agilent_multifunction.py`: its write path raises TypeError and i
 
 ### Task A7: `plc2000_valves` — AutomationDirect PLC over Modbus (AELAMS)
 
-Done 2026-10-05. `IValveActuator::read_many` (default: one `read` per address) is what `SwitchManager::refresh()` now calls, once per read-back device with its switches in config order; `plc2000_valves` overrides it with one read-coils request per run of consecutive coils (a gap may be a coil the PLC does not have, which would fail the whole request). SimSystem's coil bank answers each valve's coil and any `state_source` coil on the PLC. The importer maps `PLC2000GPActuator` to `plc2000_valves` on a `modbus_tcp` transport (port 502), with a note to confirm the unit id. A PLC transport shared with `plc2000_gauges` or `plc2000_heater` is still simulated for its first driver only.
+Done 2026-10-05. `IValveActuator::read_many` (default: one `read` per address) is what `SwitchManager::refresh()` now calls, once per read-back device with its switches in config order; `plc2000_valves` overrides it with one read-coils request per run of consecutive coils (a gap may be a coil the PLC does not have, which would fail the whole request). SimSystem's coil bank answers each valve's coil and any `state_source` coil on the PLC. The importer maps `PLC2000GPActuator` to `plc2000_valves` on a `modbus_tcp` transport (port 502), with a note to confirm the unit id. A sim transport whose drivers are all PLC kinds (`plc2000_valves`, `plc2000_gauges`, `plc2000_heater`) is one simulated PLC answering for all of them (`SimSystem::hook_for_transport`, `modbus_bus_hook`): drivers with the same unit id share one unit, each answering for its own coils and registers; other units are separate. A transport that mixes PLC and other kinds is still hooked for its first driver, and elctl's own sim line (which has no SimSystem) still simulates only the first driver on a transport.
 
 Protocol (legacy `actuators/plc2000_gp_actuator.py`, `core/modbus.py`):
 
@@ -436,7 +436,7 @@ struct IHeater {
 
 ### Task E2: `plc2000_heater` — AutomationDirect PLC heater (AELAMS)
 
-Done 2026-10-05. `Plc2000HeaterSim` lives beside the driver (as `LakeshoreSim`), and SimSystem builds one per `plc2000_heater` driver (`SimSystem::heater(driver)`). A7 (`plc2000_valves`) is not built yet, so there is no shared PLC model: a sim transport still hooks only its first driver, and a PLC transport shared by several drivers is not simulated.
+Done 2026-10-05. `Plc2000HeaterSim` lives beside the driver (as `LakeshoreSim`), and SimSystem builds one per `plc2000_heater` driver (`SimSystem::heater(driver)`). A shared PLC is simulated since A7 (see there).
 
 Protocol (legacy `hardware/heater.py:101-180`), Modbus TCP via Task 0.4. Addresses come from `[Register] setpoint/readback/use_pid/enable` and are 1-based; legacy subtracts 1.
 

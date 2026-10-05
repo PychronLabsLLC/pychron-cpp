@@ -234,3 +234,58 @@ driver = "relay"
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
   EXPECT_NE(r.error().what.find("not a heater"), std::string::npos);
 }
+
+TEST(LineSharedPlc, ValvesGaugesAndAHeaterOnOnePlc) {
+  // AELAMS: one PLC, one Modbus TCP connection, three drivers.
+  Line l(R"(
+[system]
+name = "t"
+scan_interval_ms = 1000
+[transports.plc]
+kind = "sim"
+timeout_ms = 50
+[drivers.plc_valves]
+kind = "plc2000_valves"
+transport = "plc"
+[drivers.plc_gauges]
+kind = "plc2000_gauges"
+transport = "plc"
+channels = [21]
+[drivers.plc_heater]
+kind = "plc2000_heater"
+transport = "plc"
+enable = 10
+setpoint = 31
+readback = 33
+[[valves]]
+name = "A"
+actuator = "plc_valves"
+address = "1"
+[[valves]]
+name = "B"
+actuator = "plc_valves"
+address = "2"
+[[gauges]]
+name = "IG1"
+driver = "plc_gauges"
+channel = 21
+[[heaters]]
+name = "furnace"
+driver = "plc_heater"
+)");
+  ASSERT_TRUE(l.line->start());
+  EXPECT_TRUE(l.raised().empty());
+  EXPECT_EQ(l.line->switches().info("A")->state, ValveState::Closed);
+  ASSERT_TRUE(l.line->actuate("A", systems::SwitchOp::Open, "me"));
+  EXPECT_EQ(l.line->switches().info("A")->state, ValveState::Open);
+  EXPECT_EQ(l.line->switches().info("B")->state, ValveState::Closed);
+  ASSERT_TRUE(l.line->read_gauge("IG1"));
+  ASSERT_TRUE(l.line->set_heater_setpoint("furnace", 200.0));
+  ASSERT_TRUE(l.line->set_heater_enabled("furnace", true));
+  l.scan();
+  const auto furnace = l.line->heater_info("furnace");
+  ASSERT_TRUE(furnace);
+  EXPECT_EQ(*furnace->enabled, true);
+  EXPECT_EQ(l.line->switches().info("A")->state, ValveState::Open);  // the heater's coil is its own
+  EXPECT_TRUE(l.raised().empty());
+}

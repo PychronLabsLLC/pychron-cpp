@@ -23,6 +23,10 @@ namespace {
 
 double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 
+bool is_plc_kind(std::string_view kind) {
+  return kind == "plc2000_valves" || kind == "plc2000_gauges" || kind == "plc2000_heater";
+}
+
 }  // namespace
 
 SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
@@ -153,6 +157,112 @@ Result<double> SimSystem::gauge_reading(std::string_view volume) const {
   std::lock_guard lock(mutex_);
   std::normal_distribution<double> gauss(0.0, settings_.noise);
   return std::max(0.0, *p * (1.0 + gauss(rng_)));
+}
+
+std::optional<ModbusDeviceSim> SimSystem::plc_device(const config::DriverConfig& driver,
+                                                     const config::SystemConfig& system) {
+  if (driver.kind == "plc2000_valves") {
+    // A coil bank: each valve's coil (address + coil_offset) reads and moves
+    // that simulated valve, as does a state_source coil on this PLC; any
+    // other coil is one the PLC does not have.
+    const int offset = static_cast<int>(driver.options["coil_offset"].value_or(std::int64_t{-1}));
+    struct CoilUse {
+      std::string valve;
+      bool inverted = false;
+      bool drives = false;  // the valve's actuator coil, not only its read-back
+    };
+    std::map<std::uint16_t, CoilUse> coils;
+    auto add = [&](const std::string& address, const std::string& valve, bool inverted, bool drives) {
+      auto index = ValveAddress{address}.as_index();
+      if (!index || *index + offset < 0 || *index + offset > 0xFFFF) return;
+      coils.emplace(static_cast<std::uint16_t>(*index + offset), CoilUse{valve, inverted, drives});
+    };
+    auto add_switch = [&](const auto& v) {
+      if (v.actuator == driver.name) add(v.address, v.name, v.inverted, true);
+      if (v.state_source && v.state_source->driver == driver.name)
+        add(v.state_source->address, v.name, v.state_source->inverted, false);
+    };
+    for (const auto& v : system.valves) add_switch(v);
+    for (const auto& sw : system.switches) add_switch(sw);
+    ModbusDeviceSim plc;
+    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
+    plc.read_coil = [this, coils](std::uint16_t a) -> std::optional<bool> {
+      auto it = coils.find(a);
+      if (it == coils.end()) return std::nullopt;
+      return valve_open(it->second.valve) != it->second.inverted;
+    };
+    plc.write_coil = [this, coils](std::uint16_t a, bool on) {
+      auto it = coils.find(a);
+      if (it == coils.end()) return false;
+      if (it->second.drives) set_valve(it->second.valve, on != it->second.inverted);
+      return true;
+    };
+    return plc;
+  }
+
+  if (driver.kind == "plc2000_heater") {
+    // A heater on this system's clock, at 25 (the PLC's units) and off.
+    auto options = Plc2000Heater::parse_options(driver.options);
+    if (!options) return std::nullopt;
+    auto unit = std::make_unique<Plc2000HeaterSim>(clock_, std::move(*options));
+    auto device = unit->device();
+    std::lock_guard lock(mutex_);
+    heaters_.insert_or_assign(driver.name, std::move(unit));
+    return device;
+  }
+
+  if (driver.kind == "plc2000_gauges") {
+    // Channel n's float lives at register n + register_offset (plc2000_gauges.hpp).
+    const int offset = static_cast<int>(driver.options["register_offset"].value_or(std::int64_t{-1}));
+    const auto order = codec::modbus::word_order_from_string(driver.options["word_order"].value_or(std::string("cdab")))
+                           .value_or(codec::modbus::WordOrder::CDAB);
+    std::map<int, std::string> by_register;  // first register -> gauge
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name) continue;
+        by_register[static_cast<int>(g.channel) + offset] = g.name;
+        add_volume_locked(g.name, 1.0);
+      }
+    }
+    ModbusDeviceSim plc;
+    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
+    plc.read_holding = [this, order, by_register = std::move(by_register)](
+                           std::uint16_t address) -> std::optional<std::uint16_t> {
+      for (int half : {0, 1}) {
+        auto it = by_register.find(static_cast<int>(address) - half);
+        if (it == by_register.end()) continue;
+        auto p = gauge_reading(it->second);
+        const auto words = codec::modbus::encode_float(p ? static_cast<float>(*p) : 0.0F, order);
+        return words[static_cast<std::size_t>(half)];
+      }
+      return std::nullopt;
+    };
+    return plc;
+  }
+
+  return std::nullopt;
+}
+
+SimTransport::Hook SimSystem::hook_for_transport(std::string_view transport, const config::SystemConfig& system) {
+  std::vector<const config::DriverConfig*> drivers;
+  for (const auto& [name, d] : system.drivers)
+    if (d.transport == transport) drivers.push_back(&d);
+  if (drivers.empty()) return {};
+  if (drivers.size() > 1) {
+    // One PLC serving several drivers answers for all of them.
+    std::vector<ModbusDeviceSim> parts;
+    for (const auto* d : drivers) {
+      if (!is_plc_kind(d->kind)) {
+        parts.clear();
+        break;
+      }
+      if (auto part = plc_device(*d, system)) parts.push_back(std::move(*part));
+    }
+    if (!parts.empty()) return modbus_bus_hook(std::move(parts));
+  }
+  return hook_for(*drivers.front(), system);
 }
 
 SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const config::SystemConfig& system) {
@@ -328,86 +438,12 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
-  if (driver.kind == "plc2000_valves") {
-    // A coil bank: each valve's coil (address + coil_offset) reads and moves
-    // that simulated valve, as does a state_source coil on this PLC; any
-    // other coil is one the PLC does not have.
-    const int offset = static_cast<int>(driver.options["coil_offset"].value_or(std::int64_t{-1}));
-    struct CoilUse {
-      std::string valve;
-      bool inverted = false;
-      bool drives = false;  // the valve's actuator coil, not only its read-back
-    };
-    std::map<std::uint16_t, CoilUse> coils;
-    auto add = [&](const std::string& address, const std::string& valve, bool inverted, bool drives) {
-      auto index = ValveAddress{address}.as_index();
-      if (!index || *index + offset < 0 || *index + offset > 0xFFFF) return;
-      coils.emplace(static_cast<std::uint16_t>(*index + offset), CoilUse{valve, inverted, drives});
-    };
-    auto add_switch = [&](const auto& v) {
-      if (v.actuator == driver.name) add(v.address, v.name, v.inverted, true);
-      if (v.state_source && v.state_source->driver == driver.name)
-        add(v.state_source->address, v.name, v.state_source->inverted, false);
-    };
-    for (const auto& v : system.valves) add_switch(v);
-    for (const auto& sw : system.switches) add_switch(sw);
-    ModbusDeviceSim plc;
-    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
-    plc.read_coil = [this, coils](std::uint16_t a) -> std::optional<bool> {
-      auto it = coils.find(a);
-      if (it == coils.end()) return std::nullopt;
-      return valve_open(it->second.valve) != it->second.inverted;
-    };
-    plc.write_coil = [this, coils](std::uint16_t a, bool on) {
-      auto it = coils.find(a);
-      if (it == coils.end()) return false;
-      if (it->second.drives) set_valve(it->second.valve, on != it->second.inverted);
-      return true;
-    };
-    return plc.hook();
-  }
-
   if (driver.kind == "plc2000_heater") {
-    // A heater on this system's clock, at 25 (the PLC's units) and off.
-    auto options = Plc2000Heater::parse_options(driver.options);
-    if (!options) return {};
-    auto unit = std::make_unique<Plc2000HeaterSim>(clock_, std::move(*options));
-    auto hook = unit->hook();
-    std::lock_guard lock(mutex_);
-    heaters_.insert_or_assign(driver.name, std::move(unit));
-    return hook;
+    // Alone on its transport it can be taken off the network (set_offline).
+    if (!plc_device(driver, system)) return {};
+    return heater(driver.name)->hook();
   }
-
-  if (driver.kind == "plc2000_gauges") {
-    // Channel n's float lives at register n + register_offset (plc2000_gauges.hpp).
-    const int offset = static_cast<int>(driver.options["register_offset"].value_or(std::int64_t{-1}));
-    const auto order = codec::modbus::word_order_from_string(driver.options["word_order"].value_or(std::string("cdab")))
-                           .value_or(codec::modbus::WordOrder::CDAB);
-    std::map<int, std::string> by_register;  // first register -> gauge
-    {
-      std::lock_guard lock(mutex_);
-      advance_locked();
-      for (const auto& g : system.gauges) {
-        if (g.driver != driver.name) continue;
-        by_register[static_cast<int>(g.channel) + offset] = g.name;
-        add_volume_locked(g.name, 1.0);
-      }
-    }
-    ModbusDeviceSim plc;
-    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
-    plc.read_holding = [this, order, by_register = std::move(by_register)](
-                           std::uint16_t address) -> std::optional<std::uint16_t> {
-      for (int half : {0, 1}) {
-        auto it = by_register.find(static_cast<int>(address) - half);
-        if (it == by_register.end()) continue;
-        auto p = gauge_reading(it->second);
-        const auto words = codec::modbus::encode_float(p ? static_cast<float>(*p) : 0.0F, order);
-        return words[static_cast<std::size_t>(half)];
-      }
-      return std::nullopt;
-    };
-    return plc.hook();
-  }
+  if (auto plc = plc_device(driver, system)) return plc->hook();
 
   if (driver.kind == "varian_xgs600") {
     // Gauge channel n is labels[n-1] (varian_xgs600.hpp).

@@ -36,6 +36,7 @@
 #include "pychron/devices/device.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/heater.hpp"
+#include "pychron/devices/modbus_device_sim.hpp"
 #include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -92,6 +93,9 @@ class Plc2000HeaterSim {
   Plc2000HeaterSim& operator=(const Plc2000HeaterSim&) = delete;
 
   SimTransport::Hook hook();  // the sim must outlive the transport
+  // The heater's coils and registers alone, for a PLC that also serves
+  // other drivers (modbus_bus_hook). set_offline() does not reach it.
+  ModbusDeviceSim device();
 
   bool enabled() const;
   bool use_pid() const;

@@ -174,6 +174,10 @@ void Plc2000HeaterSim::advance_locked() const {
 }
 
 SimTransport::Hook Plc2000HeaterSim::hook() {
+  return [this, inner = device().hook()](const Bytes& tx) { return offline_ ? Bytes{} : inner(tx); };
+}
+
+ModbusDeviceSim Plc2000HeaterSim::device() {
   ModbusDeviceSim plc;
   plc.unit = options_.unit;
   auto at = [](const std::optional<std::uint16_t>& address, std::uint16_t a) {
@@ -219,7 +223,7 @@ SimTransport::Hook Plc2000HeaterSim::hook() {
     }
     return true;
   };
-  return [this, inner = plc.hook()](const Bytes& tx) { return offline_ ? Bytes{} : inner(tx); };
+  return plc;
 }
 
 bool Plc2000HeaterSim::enabled() const {

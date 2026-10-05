@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include "pychron/transport/sim_transport.hpp"
 
@@ -30,5 +31,12 @@ struct ModbusDeviceSim {
   // respond() as a hook; copies this, so set the callbacks first.
   SimTransport::Hook hook() const;
 };
+
+// One Modbus TCP endpoint in front of several devices: a PLC whose coils
+// and registers serve more than one driver (plan 2026-10-05, the shared
+// PLC). Devices with the same unit id are one unit whose callbacks ask each
+// device in turn, the first that has an address answering for it; a
+// request for a unit none has gets no reply.
+SimTransport::Hook modbus_bus_hook(std::vector<ModbusDeviceSim> devices);
 
 }  // namespace pychron

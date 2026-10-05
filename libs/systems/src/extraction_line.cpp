@@ -139,9 +139,7 @@ Result<void> ExtractionLine::build() {
     context.trace_dir = options_.trace_dir.string();
     context.log_hub = log_hub_;
     if (tc.kind == config::TransportKind::Sim) {
-      auto driver = std::find_if(config_.drivers.begin(), config_.drivers.end(),
-                                 [&](const auto& d) { return d.second.transport == name; });
-      if (driver != config_.drivers.end()) context.sim_hook = sim_->hook_for(driver->second, config_);
+      context.sim_hook = sim_->hook_for_transport(name, config_);
     }
     auto transport = make_transport(tc, context);
     if (!transport) return fail(transport.error());

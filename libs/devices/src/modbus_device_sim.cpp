@@ -1,5 +1,8 @@
 #include "pychron/devices/modbus_device_sim.hpp"
 
+#include <algorithm>
+#include <map>
+#include <memory>
 #include <vector>
 
 #include "pychron/codecs/modbus.hpp"
@@ -69,6 +72,59 @@ Bytes ModbusDeviceSim::respond(const Bytes& tx) const {
 
 SimTransport::Hook ModbusDeviceSim::hook() const {
   return [self = *this](const Bytes& tx) { return self.respond(tx); };
+}
+
+namespace {
+
+// The callbacks of `parts`, asked in order.
+ModbusDeviceSim chained(std::uint8_t unit, std::vector<ModbusDeviceSim> parts) {
+  ModbusDeviceSim d;
+  d.unit = unit;
+  auto shared = std::make_shared<const std::vector<ModbusDeviceSim>>(std::move(parts));
+  auto any = [&](auto member) {
+    return std::any_of(shared->begin(), shared->end(), [&](const ModbusDeviceSim& p) { return bool(p.*member); });
+  };
+  auto read = [shared](auto member) {
+    return [shared, member](std::uint16_t a) -> decltype(((*shared)[0].*member)(a)) {
+      for (const auto& p : *shared) {
+        if (!(p.*member)) continue;
+        if (auto v = (p.*member)(a)) return v;
+      }
+      return std::nullopt;
+    };
+  };
+  if (any(&ModbusDeviceSim::read_coil)) d.read_coil = read(&ModbusDeviceSim::read_coil);
+  if (any(&ModbusDeviceSim::read_holding)) d.read_holding = read(&ModbusDeviceSim::read_holding);
+  if (any(&ModbusDeviceSim::read_input)) d.read_input = read(&ModbusDeviceSim::read_input);
+  if (any(&ModbusDeviceSim::write_coil)) {
+    d.write_coil = [shared](std::uint16_t a, bool on) {
+      for (const auto& p : *shared)
+        if (p.write_coil && p.write_coil(a, on)) return true;
+      return false;
+    };
+  }
+  if (any(&ModbusDeviceSim::write_register)) {
+    d.write_register = [shared](std::uint16_t a, std::uint16_t v) {
+      for (const auto& p : *shared)
+        if (p.write_register && p.write_register(a, v)) return true;
+      return false;
+    };
+  }
+  return d;
+}
+
+}  // namespace
+
+SimTransport::Hook modbus_bus_hook(std::vector<ModbusDeviceSim> devices) {
+  std::map<std::uint8_t, std::vector<ModbusDeviceSim>> by_unit;
+  for (auto& d : devices) by_unit[d.unit].push_back(std::move(d));
+  std::vector<ModbusDeviceSim> units;
+  for (auto& [unit, parts] : by_unit) units.push_back(chained(unit, std::move(parts)));
+  return [units = std::move(units)](const Bytes& tx) {
+    for (const auto& u : units)
+      if (Bytes reply = u.respond(tx); !reply.empty()) return reply;
+    return Bytes{};
+  };
 }
 
 }  // namespace pychron

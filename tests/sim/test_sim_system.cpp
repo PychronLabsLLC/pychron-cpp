@@ -5,6 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
+#include "pychron/devices/heater.hpp"
+
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
@@ -434,6 +438,145 @@ inverted = true
   EXPECT_EQ(*both[0], ValveState::Open);
   EXPECT_EQ(*both[1], ValveState::Closed);
   EXPECT_FALSE(plc->read({"9"}));  // no valve there: the PLC has no such coil
+}
+
+// AELAMS's one PLC: valves, gauges and a heater behind one Modbus TCP
+// connection (plan 2026-10-05, the shared PLC).
+TEST(SimSystem, OnePlcAnswersForEveryDriverOnItsTransport) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.plc]
+kind = "sim"
+[drivers.plc_valves]
+kind = "plc2000_valves"
+transport = "plc"
+[drivers.plc_gauges]
+kind = "plc2000_gauges"
+transport = "plc"
+channels = [21]
+[drivers.plc_heater]
+kind = "plc2000_heater"
+transport = "plc"
+enable = 10
+use_pid = 11
+setpoint = 31
+readback = 33
+[[valves]]
+name = "A"
+actuator = "plc_valves"
+address = "1"
+[[gauges]]
+name = "IG1"
+driver = "plc_gauges"
+channel = 21
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for_transport("plc", *cfg));
+  ASSERT_TRUE(transport->open());
+  std::map<std::string, std::unique_ptr<Device>> devices;
+  for (const char* name : {"plc_valves", "plc_gauges", "plc_heater"}) {
+    auto made = DriverRegistry::global().create(cfg->drivers.at(name), *transport);
+    ASSERT_TRUE(made) << name << ": " << made.error().what;
+    devices[name] = std::move(*made);
+  }
+  auto* valves = capability<IValveActuator>(*devices["plc_valves"]);
+  auto* gauges = capability<IChannelPressureGauge>(*devices["plc_gauges"]);
+  auto* heater = capability<IHeater>(*devices["plc_heater"]);
+
+  ASSERT_TRUE(valves->open({"1"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  EXPECT_EQ(*valves->read({"1"}), ValveState::Open);
+  auto p = gauges->read_pressure(21);
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_NEAR(*p, *sim.gauge_reading("IG1"), *p * 1e-6);
+  ASSERT_TRUE(heater->set_setpoint(300.0));
+  ASSERT_TRUE(heater->set_enabled(true));
+  EXPECT_DOUBLE_EQ(*heater->setpoint(), 300.0);
+  EXPECT_TRUE(*heater->enabled());
+  ASSERT_NE(sim.heater("plc_heater"), nullptr);
+  EXPECT_TRUE(sim.heater("plc_heater")->enabled());
+  clock.advance(std::chrono::minutes(10));
+  EXPECT_NEAR(*heater->readback(), 300.0, 1.0);
+  // The heater's enable coil is not a valve, and the valve's is not the heater's.
+  EXPECT_TRUE(*heater->enabled());
+  ASSERT_TRUE(valves->close({"1"}));
+  EXPECT_TRUE(*heater->enabled());
+  EXPECT_FALSE(sim.valve_open("A"));
+  // A coil nobody has is still an illegal address.
+  EXPECT_FALSE(valves->read({"40"}));
+}
+
+TEST(SimSystem, PlcDriversWithDifferentUnitsShareATransport) {
+  // A Modbus gateway: each unit answers only for itself.
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.plc]
+kind = "sim"
+[drivers.plc_valves]
+kind = "plc2000_valves"
+transport = "plc"
+unit = 2
+[drivers.plc_heater]
+kind = "plc2000_heater"
+transport = "plc"
+unit = 3
+enable = 1
+[[valves]]
+name = "A"
+actuator = "plc_valves"
+address = "1"
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for_transport("plc", *cfg));
+  ASSERT_TRUE(transport->open());
+  auto valves = DriverRegistry::global().create(cfg->drivers.at("plc_valves"), *transport);
+  auto heater = DriverRegistry::global().create(cfg->drivers.at("plc_heater"), *transport);
+  ASSERT_TRUE(valves && heater);
+  ASSERT_TRUE(capability<IValveActuator>(**valves)->open({"1"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  ASSERT_TRUE(capability<IHeater>(**heater)->set_enabled(true));
+  // Coil 0 of unit 3 is the heater's, not valve A's.
+  EXPECT_TRUE(sim.valve_open("A"));
+  ASSERT_TRUE(capability<IHeater>(**heater)->set_enabled(false));
+  EXPECT_TRUE(sim.valve_open("A"));
+}
+
+TEST(SimSystem, AMixedTransportIsHookedForItsFirstDriver) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.bus]
+kind = "sim"
+[drivers.a_relay]
+kind = "proxr_relay"
+transport = "bus"
+[drivers.b_plc]
+kind = "plc2000_valves"
+transport = "bus"
+[[valves]]
+name = "A"
+actuator = "a_relay"
+address = "1"
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for_transport("bus", *cfg));
+  ASSERT_TRUE(transport->open());
+  auto relay = DriverRegistry::global().create(cfg->drivers.at("a_relay"), *transport);
+  ASSERT_TRUE(relay);
+  ASSERT_TRUE(capability<IValveActuator>(**relay)->open({"1"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  EXPECT_FALSE(sim.hook_for_transport("nothing_on_it", *cfg));
 }
 
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {

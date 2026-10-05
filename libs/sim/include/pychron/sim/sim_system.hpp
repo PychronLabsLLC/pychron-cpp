@@ -42,6 +42,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/devices/agilent_unit_sim.hpp"
 #include "pychron/devices/lakeshore.hpp"
+#include "pychron/devices/modbus_device_sim.hpp"
 #include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/pychron_valve_server_sim.hpp"
@@ -123,9 +124,7 @@ class SimSystem {
   //   lakeshore           a LakeshoreSim on this system's clock.
   //   plc2000_valves      a coil bank: each valve's coil reads and moves that
   //                       simulated valve.
-  //   plc2000_heater      a Plc2000HeaterSim on this system's clock, its
-  //                       driver's coils and registers only (a PLC transport
-  //                       shared with other drivers is not simulated).
+  //   plc2000_heater      a Plc2000HeaterSim on this system's clock.
   //   plc2000_gauges      a Modbus PLC whose float at channel n's registers
   //                       is the volume of the gauge on that channel.
   //   varian_xgs600       label n of the driver's `labels` reads the volume
@@ -136,6 +135,11 @@ class SimSystem {
   // Models built here live as long as this SimSystem, which must outlive
   // the transport.
   SimTransport::Hook hook_for(const config::DriverConfig& driver, const config::SystemConfig& system);
+  // The hook for a sim transport: hook_for its first driver (by name), or,
+  // when every driver on it is a PLC kind (plc2000_valves, plc2000_gauges,
+  // plc2000_heater) and there are several, one PLC answering for all of
+  // them (modbus_bus_hook). A heater on a shared PLC cannot be set offline.
+  SimTransport::Hook hook_for_transport(std::string_view transport, const config::SystemConfig& system);
 
   // The Chromium simulator hook_for built for the driver named `driver`;
   // null if there is none. For tests and tools that look at what the
@@ -149,6 +153,10 @@ class SimSystem {
     bool valve = false;
     std::set<std::string> edges;
   };
+
+  // The coils and registers a PLC driver's sim serves; nullopt for other
+  // kinds (or a heater whose options do not parse).
+  std::optional<ModbusDeviceSim> plc_device(const config::DriverConfig& driver, const config::SystemConfig& system);
 
   // Moves the model to clock.now(); with no elapsed time it only equilibrates.
   void advance_locked() const;
