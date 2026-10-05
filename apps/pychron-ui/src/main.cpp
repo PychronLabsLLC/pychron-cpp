@@ -218,6 +218,8 @@ int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::Command
   for (const auto& problem : the_lab.problems) std::fprintf(stderr, "pychron-ui: lab: %s\n", problem.c_str());
   lab::Lasers lasers(the_lab, line);
   for (const auto& problem : lasers.problems()) std::fprintf(stderr, "pychron-ui: laser: %s\n", problem.c_str());
+  // What stops nothing is still said: a camera for looking that did not open.
+  for (const auto& note : lasers.notes()) std::fprintf(stderr, "pychron-ui: laser: %s\n", note.c_str());
 
   const std::vector<std::string> names = lasers.names();
   std::string known;
@@ -494,6 +496,9 @@ int main(int argc, char** argv) {
       session = std::make_unique<pychron::experiment::lab::LabSession>(
           *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get()},
           pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
+      for (const auto& note : lasers->notes()) {
+        window.log_dock()->append_line(QStringLiteral("WARN [ui] laser: ") + QString::fromStdString(note));
+      }
       for (const auto& problem : session->problems()) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] experiment: ") + QString::fromStdString(problem));
       }
