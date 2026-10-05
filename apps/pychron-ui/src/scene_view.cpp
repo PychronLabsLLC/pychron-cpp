@@ -363,6 +363,35 @@ void SceneView::rebuild() {
           }
         } else if (const auto* text = std::get_if<pp::TextLayer>(&layer)) {
           for (const auto& l : text->lines) corner_text[text->corner] << QString::fromStdString(l);
+        } else if (const auto* span = std::get_if<pp::SpanLayer>(&layer)) {
+          // A bound that is not set is the edge of the panel, wherever the
+          // axes are moved to.
+          auto* box = new QCPItemRect(plot_);
+          box->setClipAxisRect(rect);
+          const auto place = [&](QCPItemPosition* pos, const std::optional<double>& px, double edge_x,
+                                 const std::optional<double>& py, double edge_y) {
+            pos->setAxisRect(rect);
+            pos->setAxes(x, y);
+            pos->setTypeX(px ? QCPItemPosition::ptPlotCoords : QCPItemPosition::ptAxisRectRatio);
+            pos->setTypeY(py ? QCPItemPosition::ptPlotCoords : QCPItemPosition::ptAxisRectRatio);
+            pos->setCoords(px.value_or(edge_x), py.value_or(edge_y));
+          };
+          place(box->topLeft, span->x0, 0.0, span->y1, 0.0);
+          place(box->bottomRight, span->x1, 1.0, span->y0, 1.0);
+          box->setBrush(QBrush(qcolor(span->fill)));
+          box->setPen(Qt::NoPen);
+          box->setSelectable(false);
+          info.spans.push_back(box);
+          if (!span->label.empty()) {
+            auto* t = new QCPItemText(plot_);
+            t->setClipAxisRect(rect);
+            t->position->setParentAnchor(box->top);
+            t->position->setCoords(0, 2);
+            t->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
+            t->setText(QString::fromStdString(span->label));
+            t->setFont(scene_font(s.style, s.style.fonts.annotation));
+            t->setSelectable(false);
+          }
         } else if (const auto* guide = std::get_if<pp::GuideLayer>(&layer)) {
           auto* l = new QCPItemStraightLine(plot_);
           l->setClipAxisRect(rect);
@@ -523,6 +552,14 @@ QStringList SceneView::texts(int panel) const {
   QStringList out;
   if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
   for (const auto& t : rects_[panel].texts) out << t;
+  return out;
+}
+
+QList<QRectF> SceneView::span_rects(int panel) const {
+  QList<QRectF> out;
+  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
+  for (const QCPItemRect* box : rects_[panel].spans)
+    out << QRectF(box->topLeft->pixelPosition(), box->bottomRight->pixelPosition()).normalized();
   return out;
 }
 

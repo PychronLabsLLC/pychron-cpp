@@ -35,6 +35,22 @@ SchemaPtr panel_schema() {
   return s;
 }
 
+// A span marks a range of the x axis (ages) on every panel, or a rectangle on
+// one panel when that panel is named and y bounds are given.
+SchemaPtr span_schema() {
+  static const SchemaPtr s = make_schema(
+      "figure.ideogram.span", "Span",
+      {text("label", "Label", "Span", "", "Drawn at the top of the span"),
+       optional_number("min", "X min", "Span", "Unset: from the left edge"),
+       optional_number("max", "X max", "Span", "Unset: to the right edge"),
+       choice("panel", "Panel (from the top)", "Span", {"all", "1", "2", "3", "4", "5", "6", "7", "8"}),
+       when(optional_number("y_min", "Y min", "Span", "Unset: from the bottom of the panel"), "panel != all"),
+       when(optional_number("y_max", "Y max", "Span", "Unset: to the top of the panel"), "panel != all"),
+       color("color", "Color", "Span", "#f5a524"),
+       number("opacity", "Opacity (%)", "Span", 25.0, 0.0, 100.0, 5.0)});
+  return s;
+}
+
 SchemaPtr build_schema() {
   auto s = std::make_shared<Schema>();
   s->kind = "figure.ideogram";
@@ -72,10 +88,17 @@ SchemaPtr build_schema() {
   panels.min_rows = 1;
   panels.max_rows = 8;
   panels.default_rows_toml = {"kind = \"analysis_number\"", "kind = \"probability\"\nheight = 2.0"};
-  s->lists = {panels, groups_list()};
+  ListSpec spans;
+  spans.key = "spans";
+  spans.label = "Spans (shaded ranges)";
+  spans.section = "Spans";
+  spans.row = span_schema();
+  spans.max_rows = 32;
+  s->lists = {panels, groups_list(), spans};
   s->factory_presets = {
       {"Default", ""},
       {"Probability only", "[[panels]]\nkind = \"probability\"\n"},
+      {"Ages only", "[[panels]]\nkind = \"analysis_number\"\n"},
       {"With K/Ca",
        "[[panels]]\nkind = \"value\"\nquantity = \"kca\"\nscale = \"log\"\n"
        "[[panels]]\nkind = \"analysis_number\"\n[[panels]]\nkind = \"probability\"\nheight = 2.0\n"},
@@ -120,7 +143,13 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
   mt.n = o.get_bool("show_n");
   const auto group_rows = o.rows("groups");
   const auto panel_rows = o.rows("panels");
+  const auto span_rows = o.rows("spans");
   const bool kernel = o.get_string("probability") == "kernel";
+  // With no curve panel the mean text has nowhere of its own: the first
+  // analysis-number panel carries it.
+  const bool has_curve = std::any_of(panel_rows.begin(), panel_rows.end(),
+                                     [](const Options& row) { return row.get_string("kind") == "probability"; });
+  bool mean_text_placed = has_curve;
 
   for (int graph : d.graphs()) {
     Graph g;
@@ -350,6 +379,19 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
         }
         if (!p.y.min) p.y.min = 0.0;
         if (!p.y.max) p.y.max = index;
+        if (!mean_text_placed && o.get_bool("show_mean_text")) {
+          mean_text_placed = true;
+          TextLayer t;
+          for (const auto& gd : groups) {
+            if (!gd.mean) continue;
+            const std::string prefix = (gd.style.label.empty() ? "" : gd.style.label + ": ") +
+                                       (weighted ? "wtd mean " : "mean ");
+            t.lines.push_back(mean_text(prefix, gd.mean->value, gd.mean_error, &*gd.mean, gd.all.size(), mt, q->units()));
+          }
+          t.corner = stats_corner;
+          t.font_size = scene.style.fonts.annotation;
+          if (!t.lines.empty()) p.layers.emplace_back(std::move(t));
+        }
       } else {  // value
         auto vq = Quantity::parse(row.get_string("quantity"));
         if (!vq) {
@@ -386,6 +428,28 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
           p.layers.emplace_back(std::move(pts));
         }
       }
+      // Spans go under everything else in the panel.
+      std::vector<Layer> under;
+      for (const Options& sr : span_rows) {
+        const std::string where = sr.get_string("panel");
+        const std::size_t on = where == "all" ? 0 : static_cast<std::size_t>(where.front() - '0');  // 0: every panel
+        if (on != 0 && on != pi + 1) continue;
+        SpanLayer span;
+        span.x0 = sr.get_optional_double("min");
+        span.x1 = sr.get_optional_double("max");
+        if (span.x0 && span.x1 && *span.x0 > *span.x1) std::swap(span.x0, span.x1);
+        if (on != 0) {  // y bounds mean something on one panel only
+          span.y0 = sr.get_optional_double("y_min");
+          span.y1 = sr.get_optional_double("y_max");
+          if (span.y0 && span.y1 && *span.y0 > *span.y1) std::swap(span.y0, span.y1);
+        }
+        const Color base = parse_color(sr.get_string("color")).value_or(Color{245, 165, 36, 255});
+        span.fill = with_alpha(base, static_cast<std::uint8_t>(std::lround(base.a * sr.get_double("opacity") / 100.0)));
+        // One label per span: on the panel it is on, or on the top one.
+        if (on != 0 || g.panels.empty()) span.label = sr.get_string("label");
+        under.emplace_back(std::move(span));
+      }
+      p.layers.insert(p.layers.begin(), std::make_move_iterator(under.begin()), std::make_move_iterator(under.end()));
       g.panels.push_back(std::move(p));
     }
     scene.graphs.push_back(std::move(g));
