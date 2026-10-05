@@ -127,6 +127,16 @@ class RunControl {
   std::optional<bool> pending_truncate_;  // quick?
 };
 
+// Something a run said: a script's info() line, what a hole move did
+// ("hole 3: centred, ..."), a failure the run carried on past. Published on
+// the bus as it is said, from whichever thread said it; the same lines are
+// RunResult::messages and the record's "note" events.
+struct RunNote {
+  std::string run_id;
+  std::string text;
+  TimePoint ts{};
+};
+
 struct RunResult {
   RunState state = RunState::Pending;
   bool truncated = false;
@@ -137,7 +147,7 @@ struct RunResult {
   std::string step;
   std::optional<record::AnalysisRecord> record;   // as saved (or spooled on save_error)
   measurement::MeasurementResult measurement;
-  std::vector<std::string> messages;              // script output, post-measure failures
+  std::vector<std::string> messages;              // every RunNote's text, in order
   std::vector<RunStateChanged> history;
 };
 
@@ -185,6 +195,7 @@ class Run {
   record::ExtractionActuals actuals_;
   std::string timestamp_;
   std::mutex messages_mutex_;
+  std::vector<TimePoint> message_times_;  // one per result_.messages
 };
 
 }  // namespace pychron::experiment::run

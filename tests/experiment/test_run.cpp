@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "pychron/experiment/record/serialize.hpp"
 #include "run_fakes.hpp"
@@ -211,6 +213,48 @@ TEST_F(RunTest, PostMeasurementFailureStillSaves) {
   bool noted = false;
   for (const auto& m : r.messages) noted |= m.find("pump valve stuck") != std::string::npos;
   EXPECT_TRUE(noted);
+}
+
+// What a run says (a script's info(), a hole move's note) is published as it
+// is said and kept in the run's record.
+TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
+  host_.bodies["extract"] = [this](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    clock_.advance(5s);
+    env.log("hole 3: centred, moved 0.150, -0.100 mm (residual 0.010 mm)");
+    return {};
+  };
+  host_.bodies["post_meas"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "pump valve stuck");
+  };
+  std::vector<RunNote> said;
+  auto sub = bus_.subscribe<RunNote>([&](const RunNote& e) { said.push_back(e); });
+  const TimePoint started = clock_.now();
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success);
+
+  ASSERT_GE(said.size(), 2u);
+  EXPECT_EQ(said[0].run_id, r.uuid);
+  EXPECT_EQ(said[0].text, "hole 3: centred, moved 0.150, -0.100 mm (residual 0.010 mm)");
+  EXPECT_EQ(said[0].ts, started + 5s);
+  EXPECT_NE(said[1].text.find("pump valve stuck"), std::string::npos);
+  std::vector<std::string> texts;
+  for (const auto& e : said) texts.push_back(e.text);
+  EXPECT_EQ(texts, r.messages);
+
+  ASSERT_TRUE(r.record);
+  std::vector<record::Event> notes;
+  for (const auto& e : r.record->events)
+    if (e.kind == "note") notes.push_back(e);
+  ASSERT_EQ(notes.size(), r.messages.size());
+  EXPECT_EQ(notes[0].detail, said[0].text);
+  EXPECT_DOUBLE_EQ(notes[0].t, 5.0);  // seconds since the run started, as the state events
+  EXPECT_NE(notes[1].detail.find("pump valve stuck"), std::string::npos);
+  // and the saved file has them
+  std::ifstream in(lab_.files.analysis_path(*r.record));
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  auto saved = record::from_json(text);
+  ASSERT_TRUE(saved) << saved.error().what;
+  EXPECT_EQ(saved->events, r.record->events);
 }
 
 TEST_F(RunTest, IncompleteRecordFailsWithSaveErrorAndStaysInTheSpool) {

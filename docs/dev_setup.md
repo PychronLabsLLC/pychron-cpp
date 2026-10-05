@@ -472,7 +472,12 @@ elctl -c extraction_line.toml --sim laser look co2 --tray example-9
 A script must wait for a move that centres: `move_to_position(block=False)`
 is refused on a device with a camera unless it also says `autocenter=False`.
 What each hole move did ("hole 3: centred, moved 0.150, -0.100 mm", or why
-it was not centred) goes into the run's log.
+it was not centred) goes into the run's log, with the script's `info()`
+lines. The log is printed under the run by `elctl exp run`, listed in the
+experiment window's Events, and kept in the run's record as `events` of kind
+`note`. A camera the session cannot use (a simulated one over a real laser)
+is said when the session is made: a `warning:` line in elctl, the banner and
+Events in the window.
 
 `autocenter` moves to a hole, centres it and saves the correction (exit 1 if
 it could not, whatever `on_failure` says); `corrections ... clear [<hole>]`

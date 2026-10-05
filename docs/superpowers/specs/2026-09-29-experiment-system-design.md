@@ -483,7 +483,8 @@ data         series[iso, det, kind] as float32 (t, v[, sigma]), time_zero, count
 results      intercepts{iso: Intercept + FitSpec}, baselines{det: value, error, spec},
              blanks_ref, icfactors{det: 1.0 default}, whiff result
 conditionals installed[], tripped[]
-events       run state transitions, alarms, peak-center results, environment samples
+events       run state transitions, alarms, peak-center results, environment samples,
+             notes (what the run said: script info(), hole moves)
 provenance   schema_version, record sha, persister refs
 ```
 

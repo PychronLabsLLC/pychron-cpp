@@ -138,6 +138,46 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(calls.load(), 2);
   }
 
+  // What a run says (here: that its hole was centred) is a line of the
+  // pane's events, under the run that said it.
+  void aRunsLogShowsInTheExecutorPane() {
+    if (!pychron::scripting::make_script_host()->available()) QSKIP("needs embedded Python to run laser_extract.py");
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(sim.dir / "experiment.laser.toml", &error), qPrintable(error));
+    auto* pane = window.executor();
+    pane->request_start();
+    QVERIFY(pane->running());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    const QStringList events = pane->events();
+    const auto index = [&](const QString& text) {
+      for (int i = 0; i < events.size(); ++i)
+        if (events[i].contains(text)) return i;
+      return -1;
+    };
+    const int started = index(QStringLiteral("run 0 66001 started"));
+    const int said = index(QStringLiteral("  66001: hole 3: centred, moved "));
+    const int finished = index(QStringLiteral("run 0 66001-1: success"));
+    QVERIFY2(said >= 0, qPrintable(events.join(QLatin1Char('\n'))));
+    QVERIFY(started >= 0 && started < said);
+    QVERIFY(said < finished);
+    QVERIFY(index(QStringLiteral("  66001: hole 7: centred, moved ")) > finished);
+  }
+
+  // A camera the session cannot use is on show before any queue is started.
+  void whatTheSessionCannotDoShowsInTheExecutorPane() {
+    // the example's simulated camera over a laser that is real
+    pychron::ui::test::SimLab sim({}, {}, [](std::string_view) { return false; });
+    QCOMPARE(sim.session->problems().size(), std::size_t{1});
+    const QString problem = QString::fromStdString(sim.session->problems().front());
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(contains(window.executor()->events(), problem));
+    QVERIFY(window.executor()->error_text().contains(problem));
+  }
+
   void withoutNotificationsATestSaysSo() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

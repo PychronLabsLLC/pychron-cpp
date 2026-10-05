@@ -91,6 +91,7 @@ struct RunSummary {
   bool truncated = false, save_error = false;
   std::optional<std::string> error;
   std::vector<std::string> queue_changes;  // descriptions of applied queue actions
+  std::vector<std::string> messages;       // what the run said (run::RunNote), in order
 };
 struct RunFinished {
   RunSummary summary;

@@ -155,6 +155,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   });
   connect(&bridge_, &ExperimentBridge::runStarted, this, [this](const exec::RunStarted& e) {
     run_ = q(e.identifier);
+    identifiers_[e.run_id] = run_;
     run_state_.clear();
     block_.clear();
     run_label_->setText(run_);
@@ -185,6 +186,11 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     wait_->setText(e.duration > experiment::Duration::zero()
                        ? QStringLiteral("%1 (%2)").arg(q(e.reason), clock_text(e.duration))
                        : q(e.reason));
+  });
+  connect(&bridge_, &ExperimentBridge::runNote, this, [this](const experiment::run::RunNote& e) {
+    // By the run's own identifier: with overlap, two runs talk at once.
+    const auto it = identifiers_.find(e.run_id);
+    add_event(QStringLiteral("  %1: %2").arg(it == identifiers_.end() ? run_ : it->second, q(e.text)));
   });
   connect(&bridge_, &ExperimentBridge::runFinished, this, [this](const exec::RunFinished& e) {
     const auto& s = e.summary;
@@ -229,6 +235,15 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   state_->setText(q(exec::to_string(exec::ExecutorState::Idle)));
   update_progress();
   update_buttons();
+
+  // What the lab asks that the session cannot do: a queue on such a device
+  // will not start, so it is said before anyone tries.
+  QStringList problems;
+  for (const auto& p : bridge_.session().problems()) {
+    problems.append(q(p));
+    add_event(tr("problem: %1").arg(q(p)));
+  }
+  if (!problems.isEmpty()) show_error(problems.join(QLatin1Char('\n')));
 }
 
 void ExecutorPane::set_runnable(bool runnable, int rows) {
@@ -242,6 +257,7 @@ void ExecutorPane::set_running(bool running) {
   running_ = running;
   if (running) {
     timeline_.clear();
+    identifiers_.clear();
     timeline_clock_.start();
     done_ = 0;
     conditionals_->clear();

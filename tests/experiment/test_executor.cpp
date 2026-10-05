@@ -147,6 +147,25 @@ TEST_F(ExecutorTest, RunsTheQueueSeriallyWithTheDelayPolicy) {
   EXPECT_EQ(spec_.overlapping.load(), 0);
 }
 
+// A run's log reaches whoever follows the queue: in its summary, and so in
+// RunFinished and the queue's result.
+TEST_F(ExecutorTest, ARunsLogIsInItsSummary) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    env.log("hole 3: not centred (no_target); at its calibrated position");
+    return {};
+  };
+  std::vector<RunSummary> finished;
+  subs_.push_back(bus_.subscribe<RunFinished>([&](const RunFinished& e) { finished.push_back(e.summary); }));
+  auto q = queue({unknown_run("12345")});
+  Executor ex(context(), options());
+  const auto result = ex.execute(q);
+  ASSERT_EQ(result.runs.size(), 1u);
+  const std::vector<std::string> said{"hole 3: not centred (no_target); at its calibrated position"};
+  EXPECT_EQ(result.runs[0].messages, said);
+  ASSERT_EQ(finished.size(), 1u);
+  EXPECT_EQ(finished[0].messages, said);
+}
+
 TEST_F(ExecutorTest, EndAfterStopsAtTheBoundary) {
   auto first = unknown_run("12345");
   first.end_after = true;

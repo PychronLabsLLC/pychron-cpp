@@ -180,7 +180,7 @@ struct Conditionals {
 
 struct Event {
   double t = 0;
-  std::string kind;  // "state", "alarm", "peak_center", "environment"
+  std::string kind;  // "state", "alarm", "peak_center", "environment", "note" (what the run said)
   std::string detail;
   friend bool operator==(const Event&, const Event&) = default;
 };

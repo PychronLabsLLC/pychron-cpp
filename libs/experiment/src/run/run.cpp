@@ -292,8 +292,13 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
 }
 
 void Run::note(std::string message) {
-  std::lock_guard lock(messages_mutex_);
-  result_.messages.push_back(std::move(message));
+  RunNote said{run_id_, std::move(message), s_.clock->now()};
+  {
+    std::lock_guard lock(messages_mutex_);
+    result_.messages.push_back(said.text);
+    message_times_.push_back(said.ts);
+  }
+  if (s_.bus != nullptr) s_.bus->publish(said);
 }
 
 void Run::end_extraction() {
@@ -482,6 +487,14 @@ Result<void> Run::save() {
       detail += "failed: " + pc.message;
     }
     b.add_event(record::Event{std::chrono::duration<double>(pc.finished - t0).count(), "peak_center", detail});
+  }
+
+  {
+    // What the run said up to now; a save failure is said after the record.
+    std::lock_guard lock(messages_mutex_);
+    for (std::size_t i = 0; i < result_.messages.size(); ++i)
+      b.add_event(record::Event{std::chrono::duration<double>(message_times_[i] - t0).count(), "note",
+                                result_.messages[i]});
   }
 
   auto finalized = b.finalize();

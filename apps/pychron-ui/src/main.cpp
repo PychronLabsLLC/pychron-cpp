@@ -419,6 +419,9 @@ int main(int argc, char** argv) {
       session = std::make_unique<pychron::experiment::lab::LabSession>(
           *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}},
           pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
+      for (const auto& problem : session->problems()) {
+        window.log_dock()->append_line(QStringLiteral("WARN [ui] experiment: ") + QString::fromStdString(problem));
+      }
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
       window.set_experiment(experiment_bridge.get(), sim, cli->queue);
     } else {

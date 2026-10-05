@@ -7,14 +7,18 @@
 //   current run: identifier, run state, block, counts bar
 //   the executor's current wait (reason and duration)
 //   Start / Stop / Cancel / Abort / Truncate
-//   conditionals that tripped; one line per run start/finish, queue edit,
+//   conditionals that tripped; one line per run start/finish, thing a run
+//   said (a script's info(), whether a hole was centred), queue edit,
 //   peak-center result and queue end; records left in the spool
+//   what the session cannot do (LabSession::problems), from the start
 //
 // Start is the window's to carry out (it knows the queue and the selected
 // row): the pane emits startRequested. The other controls go straight to the
 // bridge. Cancel and Abort ask first (default No).
 
 #include <functional>
+#include <map>
+#include <string>
 
 #include <QString>
 #include <QStringList>
@@ -86,6 +90,7 @@ class ExecutorPane : public QWidget {
   bool runnable_ = false, running_ = false;
   int rows_ = 0, done_ = 0;
   QString run_, run_state_, block_;
+  std::map<std::string, QString> identifiers_;  // by run id, for the queue being run
 
   QFrame* banner_;
   QLabel* banner_label_;

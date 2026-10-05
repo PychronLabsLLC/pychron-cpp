@@ -44,6 +44,7 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<experiment::lab::NotificationSent>(&ExperimentBridge::notificationSent);
   relay<experiment::lab::QueueEnded>(&ExperimentBridge::queueEnded);
   relay<experiment::run::RunStateChanged>(&ExperimentBridge::runStateChanged);
+  relay<experiment::run::RunNote>(&ExperimentBridge::runNote);
   relay<meas::BlockStarted>(&ExperimentBridge::blockStarted);
   relay<meas::BlockFinished>(&ExperimentBridge::blockFinished);
   relay<meas::CountsProgress>(&ExperimentBridge::countsProgress);

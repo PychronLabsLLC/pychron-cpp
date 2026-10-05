@@ -10,6 +10,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -23,6 +25,7 @@
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
+#include "pychron/experiment/record/serialize.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/vision/fixture.hpp"
@@ -272,6 +275,51 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   EXPECT_FALSE(sim.firing());
   EXPECT_FALSE(sim.enabled());
   EXPECT_DOUBLE_EQ(sim.output(), 0);
+}
+
+// Whether each hole was centred is said as it happens, is in the run's
+// summary and is kept in its record.
+TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  std::mutex mutex;
+  std::map<std::string, std::vector<std::string>> said;  // by run id
+  std::map<std::string, std::size_t> rows;
+  subs_.push_back(line_->bus().subscribe<run::RunNote>([&](const run::RunNote& e) {
+    std::lock_guard lock(mutex);
+    said[e.run_id].push_back(e.text);
+  }));
+  subs_.push_back(line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted& e) {
+    std::lock_guard lock(mutex);
+    rows[e.run_id] = e.row;
+  }));
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
+  const char* holes[] = {"hole 3: centred, moved ", "hole 7: centred, moved "};
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto& r = result->runs[i];
+    ASSERT_EQ(r.state, run::RunState::Success) << r.error.value_or("");
+    const auto centred = [&](const std::vector<std::string>& lines) {
+      return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.starts_with(holes[i]); });
+    };
+    EXPECT_TRUE(centred(r.messages)) << ::testing::PrintToString(r.messages);
+    {
+      std::lock_guard lock(mutex);
+      EXPECT_EQ(rows[r.run_id], i);
+      EXPECT_EQ(said[r.run_id], r.messages);
+    }
+    const fs::path file = dir_ / "data" / "records" / r.identifier / (r.identifier + "-" + std::to_string(r.aliquot) + ".json");
+    std::ifstream in(file);
+    ASSERT_TRUE(in) << file;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto rec = record::from_json(text);
+    ASSERT_TRUE(rec) << rec.error().what;
+    std::vector<std::string> notes;
+    for (const auto& e : rec->events)
+      if (e.kind == "note") notes.push_back(e.detail);
+    EXPECT_TRUE(centred(notes)) << ::testing::PrintToString(notes);
+  }
 }
 
 TEST_F(LabSessionTest, AnUncalibratedTrayIsRefusedAtStart) {

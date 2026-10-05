@@ -212,6 +212,9 @@ class Exp {
     }
     lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
                             lab::SessionOptions{a_.data, options, {}});
+    // What the lab asks that this session cannot do (a camera it may not
+    // centre holes with): a queue that uses that device will not start.
+    for (const auto& p : session.problems()) say("warning: " + p);
 
     // Progress.
     auto& bus = (*line)->bus();
@@ -232,6 +235,14 @@ class Exp {
         id = names[e.run_id];
       }
       say("  " + id + ": " + std::string(run::to_string(e.to)) + (e.reason.empty() ? "" : " (" + e.reason + ")"));
+    }));
+    subs.push_back(bus.subscribe<run::RunNote>([&](const run::RunNote& e) {
+      std::string id;
+      {
+        std::lock_guard lock(names_mutex);
+        id = names[e.run_id];
+      }
+      say("  " + id + ": " + e.text);
     }));
     subs.push_back(bus.subscribe<executor::RunFinished>([&](const executor::RunFinished& e) {
       const auto& r = e.summary;

@@ -286,6 +286,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
   sum.truncated = r.truncated;
   sum.save_error = r.save_error;
   if (r.error) sum.error = r.error->what;
+  sum.messages = r.messages;
 
   auto end_with = [&](QueueEnd e, std::string why) {
     std::lock_guard lock(mutex_);

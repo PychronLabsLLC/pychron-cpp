@@ -8,8 +8,10 @@
 #include <random>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 #include <QtTest/QtTest>
 
@@ -62,9 +64,11 @@ struct SimLab {
   experiment::lab::Lab lab;
   std::unique_ptr<experiment::lab::LabSession> session;
 
-  // `notifications` replace the lab's; `notify` runs their programs.
+  // `notifications` replace the lab's; `notify` runs their programs;
+  // `simulated` is SessionHardware::simulated (empty: asked of the line).
   explicit SimLab(std::optional<experiment::lab::NotificationConfig> notifications = std::nullopt,
-                  experiment::lab::ProcessRunner notify = {}) {
+                  experiment::lab::ProcessRunner notify = {},
+                  std::function<bool(std::string_view)> simulated = {}) {
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
@@ -85,7 +89,7 @@ struct SimLab {
     lab = experiment::lab::load_lab(lab_paths(dir));
     if (notifications) lab.notifications = std::move(*notifications);
     session = std::make_unique<experiment::lab::LabSession>(
-        lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get(), {}},
+        lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get(), std::move(simulated)},
         experiment::lab::SessionOptions{dir / "data", {}, std::move(notify)});
   }
   SimLab(const SimLab&) = delete;

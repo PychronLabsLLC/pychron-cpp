@@ -107,6 +107,29 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   EXPECT_FALSE(contains(from.out, "run 0 ")) << from.out;
 }
 
+// What a run says is printed under its state lines: here, that each hole of
+// the example laser queue was centred, and by how much.
+TEST_F(ElctlExpTest, ARunsLogIsPrinted) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  auto o = exp({"run", lab("experiment.laser.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+                "--data", (dir_ / "out").string(), "--sim-speed", "400"},
+               true);
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "\n  66001: hole 3: centred, moved ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "\n  66001: hole 7: centred, moved ")) << o.out;
+  // in its place: after the run reached extraction, before it finished
+  const auto extracting = o.out.find("  66001: extracting");
+  const auto said = o.out.find("  66001: hole 3: centred");
+  const auto finished = o.out.find("run 0 66001-1: success");
+  ASSERT_NE(extracting, std::string::npos) << o.out;
+  ASSERT_NE(finished, std::string::npos) << o.out;
+  EXPECT_LT(extracting, said);
+  EXPECT_LT(said, finished);
+  std::ifstream in(dir_ / "out" / "records" / "66001" / "66001-1.json");
+  const std::string record((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_TRUE(contains(record, "hole 3: centred, moved ")) << record.substr(0, 2000);
+}
+
 TEST_F(ElctlExpTest, DryRunTouchesNothing) {
   auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--dry-run"},
                true);
