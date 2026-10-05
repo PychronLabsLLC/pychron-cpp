@@ -110,6 +110,8 @@ class SimSystem {
   //                       honouring the unit's `invert` and each valve's.
   //   qtegra_valves       a Qtegra answering valve commands; Open/Close of a
   //                       valve's Qtegra name drive set_valve().
+  //   qtegra_gauges       a Qtegra whose parameters[n-1] reads the volume of
+  //                       the gauge on channel n.
   //   pychron_valves      another Pychron's valve service serving the line's
   //                       valve addresses; Open/Close drive set_valve().
   //   pfeiffer_maxigauge  channel n reads the volume named after the gauge

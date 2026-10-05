@@ -94,6 +94,9 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx, std::optional<std::pair<std::s
   }
   if (verb == "GetParameter") {
     if (args.size() != 1) return bad_arguments;
+    if (m.parameter_source) {
+      if (auto v = m.parameter_source(args[0])) return q::encode_number(*v);
+    }
     return q::encode_number(parameter(m, args[0]));
   }
   // A valve name may hold spaces but no comma: the whole argument is it.

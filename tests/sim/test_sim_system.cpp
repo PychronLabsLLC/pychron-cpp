@@ -336,6 +336,35 @@ channel = 2
   EXPECT_FALSE(gauge->read_pressure(1));  // CNV1 has no gauge in the line: off
 }
 
+TEST(SimSystem, QtegraGaugesReadTheirGaugesVolumes) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.qtegra]
+kind = "sim"
+[drivers.ms_gauges]
+kind = "qtegra_gauges"
+transport = "qtegra"
+parameters = ["Ion Gauge MS Readback"]
+link = "sim_qtegra_gauges"
+[[gauges]]
+name = "MS_IG"
+driver = "ms_gauges"
+channel = 1
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("ms_gauges"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("ms_gauges"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto p = capability<IPressureGauge>(**made)->read_pressure();
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_NEAR(*p, *sim.gauge_reading("MS_IG"), *p * 1e-6);
+}
+
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;

@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,9 @@ struct QtegraSimModel {
   // each Open/Close, outside `mutex`, with the name and whether it is open.
   std::map<std::string, bool> valves;
   std::function<void(const std::string& name, bool open)> on_valve;
+  // When set (before use), GetParameter asks it first; a value from it wins
+  // over `params`. For readbacks that follow a model, e.g. a gauge.
+  std::function<std::optional<double>(const std::string& name)> parameter_source;
 };
 
 // Commands it does not know, or cannot parse, answer "ERROR: ...".

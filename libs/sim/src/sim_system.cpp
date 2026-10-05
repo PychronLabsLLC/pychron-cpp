@@ -216,6 +216,33 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
+  if (driver.kind == "qtegra_gauges") {
+    // A Qtegra whose parameters[n-1] reads the gauge on channel n.
+    std::vector<std::string> parameters;
+    if (const auto* array = driver.options["parameters"].as_array())
+      for (const auto& p : *array) parameters.push_back(p.value_or(std::string{}));
+    std::map<std::string, std::string> by_parameter;
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(parameters.size()))
+          continue;
+        by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
+        add_volume_locked(g.name, 1.0);
+      }
+    }
+    auto model = std::make_shared<spectrometer::QtegraSimModel>();
+    model->parameter_source = [this, by_parameter = std::move(by_parameter)](
+                                  const std::string& name) -> std::optional<double> {
+      auto it = by_parameter.find(name);
+      if (it == by_parameter.end()) return std::nullopt;
+      auto p = gauge_reading(it->second);
+      return p ? std::optional<double>(*p) : std::nullopt;
+    };
+    return spectrometer::qtegra_sim_hook(std::move(model));
+  }
+
   if (driver.kind == "qtegra_valves") {
     // A Qtegra RemoteControl answering valve commands only; its Open/Close
     // move the line's valves (by Qtegra name). On a kind = "link" transport
