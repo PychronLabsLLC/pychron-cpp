@@ -8,8 +8,7 @@
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/persist/persister.hpp"
-#include "pychron/laser/laser_system.hpp"
-#include "pychron/laser/tray_camera.hpp"
+#include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -20,10 +19,13 @@ namespace pychron::experiment::lab {
 
 namespace fs = std::filesystem;
 
+struct LabSession::QueueLease {
+  Lasers::Lease lease;
+};
+
 // Declaration order is construction order; members refer only to earlier ones.
 struct LabSession::Services {
-  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data,
-           std::map<std::string, std::string, std::less<>>& problems)
+  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers)
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         valves(hw.line, "measurement"),
@@ -44,35 +46,7 @@ struct LabSession::Services {
     s.scripts = host.get();
     s.resolver = &lab.scripts->resolver();
     s.line.valves = &script_valves;
-    // One laser system per driver of the line that is an extraction device,
-    // under the driver's name: what a queue's extract_device names.
-    for (const auto& [name, driver] : hw.line.config().drivers) {
-      auto* device = dynamic_cast<extraction::IExtractionDevice*>(hw.line.device(name));
-      if (device == nullptr) continue;
-      auto system = std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations, &lab.patterns);
-      // Where holes were found before, and (if the lab gives the device a
-      // camera) the means to find them again.
-      system->set_corrections(*lab.corrections);
-      // A recording is for looking (elctl laser look): it never moves a
-      // stage. Any other camera must be one that can centre holes here.
-      const laser::CameraConfig* camera = lab.cameras.find(name);
-      if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
-        const bool simulated = hw.simulated ? hw.simulated(name)
-                                            : hw.line.sim() != nullptr && hw.line.sim()->chromium(name) != nullptr;
-        Result<void> usable = laser::usable_for_autocenter(*camera, simulated);
-        if (usable) {
-          auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), hw.line.clock());
-          if (frames) usable = system->attach_camera(*camera, std::move(*frames), hw.line.clock());
-          else usable = fail(frames.error());
-        }
-        if (!usable) problems.insert_or_assign(name, usable.error().what);
-      }
-      lasers.emplace(name, std::move(system));
-    }
-    s.devices = [this](std::string_view name) -> extraction::IExtractionDevice* {
-      const auto it = lasers.find(name);
-      return it == lasers.end() ? nullptr : it->second.get();
-    };
+    s.devices = [&lasers](std::string_view name) -> extraction::IExtractionDevice* { return lasers.find(name); };
     s.spectrometer = port ? &*port : nullptr;
     s.valves = &valves;
     s.peak_center = peak_center ? &*peak_center : nullptr;
@@ -95,9 +69,6 @@ struct LabSession::Services {
 
   std::unique_ptr<scripting::IScriptHost> host;
   systems::SwitchValveService script_valves;
-  // By device name; they refer to the line's drivers and the lab's trays and
-  // calibrations, all of which outlive the session.
-  std::map<std::string, std::unique_ptr<laser::LaserSystem>, std::less<>> lasers;
   std::optional<measurement::SpectrometerPort> port;
   measurement::ExtractionLineValves valves;
   measurement::InstrumentMetrics instrument;
@@ -112,7 +83,9 @@ struct LabSession::Services {
 LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions options)
     : lab_(lab), hardware_(hardware), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
-  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, device_problems_);
+  if (hardware_.lasers == nullptr) own_lasers_ = std::make_unique<Lasers>(lab_, hardware_.line, hardware_.simulated);
+  lasers_ = hardware_.lasers != nullptr ? hardware_.lasers : own_lasers_.get();
+  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_);
   notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
@@ -121,11 +94,7 @@ LabSession::~LabSession() {
   if (thread_.joinable()) thread_.join();
 }
 
-std::vector<std::string> LabSession::problems() const {
-  std::vector<std::string> out;
-  for (const auto& [device, what] : device_problems_) out.push_back(what);
-  return out;
-}
+std::vector<std::string> LabSession::problems() const { return lasers_->problems(); }
 
 bool LabSession::has_spectrometer() const noexcept { return hardware_.spectrometer != nullptr; }
 
@@ -140,10 +109,17 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
     nothing.device = r.extraction.device;
     if (r.extraction == nothing) continue;  // the run extracts nothing
     const std::string& device = r.extraction.device.empty() ? queue.extract_device : r.extraction.device;
-    if (const auto it = device_problems_.find(device); it != device_problems_.end()) {
-      return fail(ErrorKind::Config, it->second, "experiment");
+    if (const std::string* problem = lasers_->problem_of(device)) {
+      return fail(ErrorKind::Config, *problem, "experiment");
     }
   }
+  // A stop somebody pressed is put right by somebody, not by the next queue.
+  if (const auto stopped = lasers_->stopped(); !stopped.empty()) {
+    return fail(ErrorKind::Config, stopped.front() + ": emergency stop not reset", "experiment");
+  }
+  // The lasers are the queue's from here until it ends.
+  auto lease = lasers_->drive(Lasers::Driver::Queue);
+  if (!lease) return fail(ErrorKind::Config, lease.error().what, "experiment");
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).
@@ -156,6 +132,7 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
     executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
     running_ = true;
     result_.reset();
+    lease_ = std::make_unique<QueueLease>(QueueLease{std::move(*lease)});
   }
   notifier_->set_queue(queue.name, queue.email);
   thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
@@ -206,6 +183,7 @@ void LabSession::run(QueueSpec spec, std::size_t from_row) {
     std::lock_guard lock(mutex_);
     result_ = result;
     running_ = false;
+    lease_.reset();
   }
   notifier_->queue_ended(result);
   bus.publish(QueueEnded{std::move(result)});

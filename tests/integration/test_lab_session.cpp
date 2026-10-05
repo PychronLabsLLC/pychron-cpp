@@ -27,6 +27,7 @@
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/vision/fixture.hpp"
 #include "pychron/vision/synth.hpp"
@@ -181,6 +182,121 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Completed);
   EXPECT_TRUE(scan_->running());
   EXPECT_FALSE(scan_->paused());
+}
+
+// --- lasers shared with whoever else drives them (laser window design, 2) -----
+
+// The session is given the lab's lasers instead of building its own.
+class SharedLasersSessionTest : public LabSessionTest {
+ protected:
+  SessionHardware hardware() override {
+    lasers_ = std::make_unique<Lasers>(lab_, *line_);
+    return SessionHardware{*line_, spec_.get(), scan_.get(), {}, lasers_.get()};
+  }
+  void TearDown() override {
+    session_.reset();
+    lasers_.reset();
+    LabSessionTest::TearDown();
+  }
+  std::unique_ptr<Lasers> lasers_;
+};
+
+TEST_F(SharedLasersSessionTest, ThereIsOneLaserSystemPerExtractionDriver) {
+  EXPECT_EQ(lasers_->names(), (std::vector<std::string>{"co2"}));
+  ASSERT_NE(lasers_->find("co2"), nullptr);
+  EXPECT_EQ(lasers_->find("co2")->device_name(), "co2");
+  EXPECT_TRUE(lasers_->find("co2")->has_camera()) << "the example lab gives it one";
+  EXPECT_EQ(lasers_->find("bone_gauge"), nullptr) << "not an extraction device";
+  EXPECT_TRUE(lasers_->problems().empty());
+  EXPECT_EQ(lasers_->problem_of("co2"), nullptr);
+  EXPECT_EQ(session_->problems(), lasers_->problems());
+}
+
+TEST_F(SharedLasersSessionTest, ACameraThatCannotBeUsedHereIsAProblem) {
+  // the same lab over a laser that is not simulated: its simulated camera may not move that stage
+  Lasers real(lab_, *line_, [](std::string_view) { return false; });
+  ASSERT_NE(real.problem_of("co2"), nullptr);
+  EXPECT_EQ(real.problems().size(), 1u);
+  EXPECT_FALSE(real.find("co2")->has_camera());
+}
+
+TEST_F(SharedLasersSessionTest, OnlyOneDrivesAtATime) {
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
+  {
+    auto hand = lasers_->drive(Lasers::Driver::Manual);
+    ASSERT_TRUE(hand) << hand.error().what;
+    EXPECT_EQ(lasers_->driver(), Lasers::Driver::Manual);
+    const auto queue = lasers_->drive(Lasers::Driver::Queue);
+    ASSERT_FALSE(queue);
+    EXPECT_NE(queue.error().what.find("by hand"), std::string::npos) << queue.error().what;
+    // by hand again is the same driver
+    auto again = lasers_->drive(Lasers::Driver::Manual);
+    ASSERT_TRUE(again);
+    again->release();
+    EXPECT_EQ(lasers_->driver(), Lasers::Driver::Manual) << "the first still holds it";
+  }
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
+  auto queue = lasers_->drive(Lasers::Driver::Queue);
+  ASSERT_TRUE(queue);
+  const auto hand = lasers_->drive(Lasers::Driver::Manual);
+  ASSERT_FALSE(hand);
+  EXPECT_NE(hand.error().what.find("a queue is running"), std::string::npos) << hand.error().what;
+  EXPECT_FALSE(lasers_->drive(Lasers::Driver::Queue));
+  Lasers::Lease moved = std::move(*queue);
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::Queue);
+  moved.release();
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
+}
+
+TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileTheLaserIsDrivenByHand) {
+  auto hand = lasers_->drive(Lasers::Driver::Manual);
+  ASSERT_TRUE(hand);
+  const auto started = session_->start(queue_);
+  ASSERT_FALSE(started);
+  EXPECT_NE(started.error().what.find("by hand"), std::string::npos) << started.error().what;
+  EXPECT_FALSE(session_->running());
+  hand->release();
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  session_->wait();
+}
+
+TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
+  ASSERT_TRUE(lasers_->find("co2")->emergency_stop());
+  EXPECT_EQ(lasers_->stopped(), (std::vector<std::string>{"co2"}));
+  const auto started = session_->start(queue_);
+  ASSERT_FALSE(started);
+  EXPECT_NE(started.error().what.find("co2: emergency stop not reset"), std::string::npos) << started.error().what;
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None) << "a queue that did not start holds nothing";
+  lasers_->find("co2")->reset_stop();
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  session_->wait();
+}
+
+TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
+  ASSERT_TRUE(session_->start(queue_));
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::Queue);
+  EXPECT_FALSE(lasers_->drive(Lasers::Driver::Manual));
+  session_->abort();
+  session_->wait();
+  // given back by the time anyone is told the queue has ended
+  ASSERT_TRUE(eventually([&] { return !ended().empty(); }));
+  EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
+  EXPECT_TRUE(lasers_->drive(Lasers::Driver::Manual));
+}
+
+TEST_F(SharedLasersSessionTest, AQueueDrivesTheLasersItWasGiven) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  // what the window would watch is what the queue drove
+  const laser::LaserSnapshot seen = lasers_->find("co2")->snapshot();
+  EXPECT_EQ(seen.tray, "example-9");
+  EXPECT_EQ(seen.autocenter.result, laser::AutocenterOutcome::Result::Converged);
+  EXPECT_EQ(seen.firing, false);
 }
 
 // --- laser queues (laser system design, sections 5 and 7) --------------------

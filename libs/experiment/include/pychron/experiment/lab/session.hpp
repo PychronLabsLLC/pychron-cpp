@@ -43,6 +43,8 @@ class ScanService;
 
 namespace pychron::experiment::lab {
 
+class Lasers;
+
 struct SessionHardware {
   systems::ExtractionLine& line;  // started; its clock, scheduler and bus are the session's
   spectrometer::Spectrometer* spectrometer = nullptr;
@@ -50,6 +52,10 @@ struct SessionHardware {
   // Whether the extraction device `driver` is simulated (a simulated camera
   // may only centre holes on a simulated stage). Empty: asked of the line.
   std::function<bool(std::string_view driver)> simulated;
+  // The lab's laser systems, when something else drives them too (the laser
+  // window); it must outlive the session, and `simulated` is then its own.
+  // Null: the session builds its own.
+  Lasers* lasers = nullptr;
 };
 
 struct SessionOptions {
@@ -73,7 +79,9 @@ class LabSession {
   LabSession& operator=(const LabSession&) = delete;
 
   // Config error if a queue is running or `queue` does not check against the
-  // lab (the message names the first error and how many there are).
+  // lab (the message names the first error and how many there are); also
+  // while a laser is being driven by hand, and while a laser's emergency
+  // stop has not been reset.
   Result<void> start(QueueSpec queue, std::size_t from_row = 0);
 
   void stop();
@@ -118,7 +126,8 @@ class LabSession {
   const Lab& lab_;
   SessionHardware hardware_;
   SessionOptions options_;
-  std::map<std::string, std::string, std::less<>> device_problems_;  // by extraction device
+  std::unique_ptr<Lasers> own_lasers_;  // when none were given
+  Lasers* lasers_ = nullptr;
   std::unique_ptr<Services> services_;
   std::unique_ptr<Notifier> notifier_;
 
@@ -129,6 +138,8 @@ class LabSession {
   std::shared_ptr<executor::Executor> active() const;  // executor_ while running
   std::optional<executor::QueueResult> result_;
   bool running_ = false;
+  struct QueueLease;
+  std::unique_ptr<QueueLease> lease_;  // the lasers are the queue's while it runs; under mutex_
   std::thread thread_;
 };
 
