@@ -8,6 +8,9 @@
 //   elctl ... laser calibrate <device> <tray> center|right [--x X --y Y]
 //   elctl ... laser calibrate <device> <tray> show|clear
 //   elctl ... laser goto <device> <tray> <hole> [--timeout <seconds>]
+//   elctl ... laser autocenter <device> <tray> <hole> [--timeout <seconds>]
+//   elctl ... laser corrections <device> <tray> [clear [<hole>]]
+//   elctl ... laser look <device> [--tray <tray>]
 //   elctl ... laser patterns
 //   elctl ... laser pattern <device> <name> [--dry-run] [--timeout <seconds>]
 //
@@ -17,6 +20,11 @@
 // in which case no hardware is opened. `center` and `right` are `point` at
 // the tray map's centre and east calibration holes. One point places the
 // tray, two also turn it, three or more are fitted.
+//
+// `autocenter` needs the device to have a camera (<lab>/cameras.toml): it
+// moves to the hole, centres it, and saves where it was found. `look` only
+// says what the camera's finder sees. `corrections` lists or forgets what
+// autocenter has saved.
 //
 // `pattern` runs a pattern about wherever the stage is, without firing the
 // laser: to see where the beam would go. goto and pattern stop the stage on

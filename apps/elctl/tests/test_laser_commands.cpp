@@ -12,6 +12,8 @@
 #include "elctl_fixture.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/tray_map.hpp"
+#include "pychron/vision/fixture.hpp"
+#include "pychron/vision/synth.hpp"
 
 namespace elctl::testing {
 namespace {
@@ -336,6 +338,145 @@ TEST_F(LaserCmd, PatternUsageErrors) {
   EXPECT_EQ(laser({"patterns", "--dry-run"}).code, 2);
   EXPECT_EQ(laser({"trays", "--dry-run"}).code, 2);
   EXPECT_EQ(laser({"pattern", "co2", "hexagon", "--x", "1", "--y", "1"}).code, 2);
+}
+
+// --- autocenter, corrections, look ---------------------------------------------
+
+// The example's camera sees the tray 0.15, -0.10 mm from where it is
+// calibrated. The tray is calibrated near the stage's rest position so the
+// simulated moves are short: hole 5 at (1, 1), really at (1.15, 0.90).
+struct LaserCameraCmd : LaserCmd {
+  void SetUp() override {
+    LaserCmd::SetUp();
+    ASSERT_EQ(calibrate({"clear"}).code, 0);
+    ASSERT_EQ(calibrate({"center", "--x", "1", "--y", "1"}).code, 0);
+    ASSERT_EQ(calibrate({"right", "--x", "6", "--y", "1"}).code, 0);
+  }
+  void camera(const std::string& text) const { std::ofstream(lab("cameras.toml"), std::ios::trunc) << text; }
+  fs::path corrections_file() const { return lab("stage_corrections") / "co2.example-9.toml"; }
+};
+
+TEST_F(LaserCameraCmd, AutocenterCentresAndSaves) {
+  const auto o = laser({"autocenter", "co2", "example-9", "5"}, true);
+  ASSERT_EQ(o.code, 0) << o.err << o.out;
+  EXPECT_NE(o.out.find("hole 5: converged"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("moved 0.1"), std::string::npos) << o.out;   // 0.15 in x, give or take the tolerance
+  EXPECT_NE(o.out.find(", -0."), std::string::npos) << o.out;       // and down in y
+  EXPECT_NE(o.out.find("residual 0.0"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("now at 1.1"), std::string::npos) << o.out;
+  ASSERT_TRUE(fs::exists(corrections_file()));
+
+  const auto listed = laser({"corrections", "co2", "example-9"});
+  ASSERT_EQ(listed.code, 0) << listed.err;
+  EXPECT_NE(listed.out.find("hole 5  1.1"), std::string::npos) << listed.out;
+  EXPECT_NE(listed.out.find("mm from calibrated"), std::string::npos) << listed.out;
+  EXPECT_NE(listed.out.find("0.18"), std::string::npos) << listed.out;  // hypot(0.15, 0.10)
+}
+
+TEST_F(LaserCameraCmd, AutocenterFailureIsExitOneWhateverTheConfigSays) {
+  camera("[co2]\n[co2.sim]\ntray_error_mm = [3.0, 3.0]\nnoise = 0\n[co2.autocenter]\non_failure = \"continue\"\n");
+  const auto o = laser({"autocenter", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("no_target"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("hole 5"), std::string::npos) << o.err;
+  EXPECT_FALSE(fs::exists(corrections_file()));
+}
+
+TEST_F(LaserCameraCmd, AutocenterNeedsACamera) {
+  fs::remove(lab("cameras.toml"));
+  auto o = laser({"autocenter", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("cameras.toml"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("co2"), std::string::npos) << o.err;
+  // a table that does not load says what is wrong with it
+  camera("[co2]\npx_per_mm = 0\n");
+  o = laser({"autocenter", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("co2.px_per_mm"), std::string::npos) << o.err;
+}
+
+TEST_F(LaserCameraCmd, AutocenterGivesUpAfterItsTimeoutAndStopsTheStage) {
+  ASSERT_EQ(calibrate({"clear"}).code, 0);
+  ASSERT_EQ(calibrate({"center", "--x", "25", "--y", "25"}).code, 0);  // 5 s away
+  const auto o = laser({"autocenter", "co2", "example-9", "5", "--timeout", "0.3"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("the stage was stopped"), std::string::npos) << o.err;
+  EXPECT_FALSE(fs::exists(corrections_file()));
+}
+
+TEST_F(LaserCameraCmd, CorrectionsClearOneAndAll) {
+  ASSERT_EQ(laser({"autocenter", "co2", "example-9", "5"}, true).code, 0);
+  ASSERT_EQ(laser({"autocenter", "co2", "example-9", "6"}, true).code, 0);
+  auto listed = laser({"corrections", "co2", "example-9"});
+  EXPECT_NE(listed.out.find("hole 5"), std::string::npos);
+  EXPECT_NE(listed.out.find("hole 6"), std::string::npos);
+
+  ASSERT_EQ(laser({"corrections", "co2", "example-9", "clear", "5"}).code, 0);
+  listed = laser({"corrections", "co2", "example-9"});
+  EXPECT_EQ(listed.out.find("hole 5"), std::string::npos) << listed.out;
+  EXPECT_NE(listed.out.find("hole 6"), std::string::npos);
+
+  ASSERT_EQ(laser({"corrections", "co2", "example-9", "clear"}).code, 0);
+  EXPECT_FALSE(fs::exists(corrections_file()));
+  listed = laser({"corrections", "co2", "example-9"});
+  EXPECT_EQ(listed.code, 0);
+  EXPECT_NE(listed.out.find("no corrections"), std::string::npos) << listed.out;
+}
+
+TEST_F(LaserCameraCmd, CorrectionsOfAnUncalibratedTraySaysSo) {
+  ASSERT_EQ(calibrate({"clear"}).code, 0);
+  const auto o = laser({"corrections", "co2", "example-9"});
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("not calibrated"), std::string::npos) << o.err;
+}
+
+// What the finder sees, with nothing moved: at rest (0, 0) the stage is 1.4 mm
+// from hole 5's real place.
+TEST_F(LaserCameraCmd, LookSaysWhatTheFinderSees) {
+  const auto o = laser({"look", "co2", "--tray", "example-9"}, true);
+  ASSERT_EQ(o.code, 0) << o.err;
+  // hole 5 really at (1.15, 0.90): right of centre, and above (image y is down)
+  EXPECT_NE(o.out.find("offset 26."), std::string::npos) << o.out;  // 1.15 mm at 23 px/mm
+  EXPECT_NE(o.out.find(", -20."), std::string::npos) << o.out;      // 0.90 mm, up
+  EXPECT_NE(o.out.find("move 1.1"), std::string::npos) << o.out;    // the stage move that would centre it
+  EXPECT_NE(o.out.find("radius 2"), std::string::npos) << o.out;    // about 1 mm (the finder's own measure)
+}
+
+TEST_F(LaserCameraCmd, LookSeesNothingIsExitOne) {
+  camera("[co2]\n[co2.sim]\ntray_error_mm = [30.0, 30.0]\nnoise = 0\n");
+  const auto o = laser({"look", "co2", "--tray", "example-9"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("no hole"), std::string::npos) << o.err;
+}
+
+// Recorded frames need no hardware at all.
+TEST_F(LaserCameraCmd, LookOnRecordedFrames) {
+  const auto dir = lab("recordings") / "holes";
+  fs::create_directories(dir);
+  {
+    pychron::vision::FrameRecorder recorder(dir, pychron::vision::Provenance::Synthetic, pychron::vision::FinderMode::Hole, 11.5);
+    pychron::vision::HoleScene scene;
+    scene.hole_mm = {0.5, 0.25};
+    for (int i = 0; i < 3; ++i) ASSERT_TRUE(recorder.add(pychron::vision::render(scene, {0, 0}).first.view()));
+    ASSERT_TRUE(recorder.finish());
+  }
+  camera("[co2]\nsource = \"recorded\"\nframes = \"recordings/holes\"\n");
+  unplug_the_laser();
+  const auto o = laser({"look", "co2"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("offset 11."), std::string::npos) << o.out;  // 0.5 mm
+  EXPECT_NE(o.out.find("move 0.5"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCameraCmd, UsageErrors) {
+  EXPECT_EQ(laser({"autocenter"}).code, 2);
+  EXPECT_EQ(laser({"autocenter", "co2", "example-9"}).code, 2);
+  EXPECT_EQ(laser({"corrections", "co2"}).code, 2);
+  EXPECT_EQ(laser({"corrections", "co2", "example-9", "forget"}).code, 2);
+  EXPECT_EQ(laser({"corrections", "co2", "example-9", "clear", "5", "6"}).code, 2);
+  EXPECT_EQ(laser({"look"}).code, 2);
+  EXPECT_EQ(laser({"look", "co2", "extra"}).code, 2);
+  EXPECT_EQ(laser({"trays", "--tray", "x"}).code, 2);
 }
 
 TEST_F(LaserCmd, TheLabCanBeNamed) {

@@ -16,6 +16,8 @@
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/laser_system.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "pychron/laser/tray_camera.hpp"
+#include "pychron/vision/finder.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
@@ -37,6 +39,10 @@ constexpr const char* kLaserUsage =
     "                                                    the same, at the map's centre / east calibration hole\n"
     "  calibrate <device> <tray> show|clear\n"
     "  goto <device> <tray> <hole> [--timeout <s>]       move there and report the miss\n"
+    "  autocenter <device> <tray> <hole> [--timeout <s>] move there and centre the hole with the camera;\n"
+    "                                                    what is found is saved as the hole's correction\n"
+    "  corrections <device> <tray> [clear [<hole>]]      where holes were found; or forget them\n"
+    "  look <device> [--tray <tray>]                     what the camera's finder sees now; moves nothing\n"
     "  patterns                                          the lab's patterns: kind, points, length, time\n"
     "  pattern <device> <name> [--dry-run] [--timeout <s>]\n"
     "                                                    run a pattern about where the stage is (the laser is\n"
@@ -70,6 +76,7 @@ struct Args {
   std::vector<std::string> words;  // everything that is not an option
   fs::path lab;
   std::optional<double> x, y, timeout;
+  std::optional<std::string> tray;  // --tray, for look
   bool dry_run = false;
 };
 
@@ -106,6 +113,182 @@ class Laser {
       }
     }
     return ok ? kOk : kFailed;
+  }
+
+  // The device's camera, or why it has none.
+  const laser::CameraConfig* camera() {
+    if (const laser::CameraConfig* config = lab_.cameras.find(device_)) return config;
+    const auto problems = lab_.cameras.problems_of(device_);
+    if (problems.empty()) {
+      failed(device_ + " has no camera: no [" + device_ + "] table in " + (a_.lab / "cameras.toml").string());
+    } else {
+      for (const auto& p : problems) failed("camera of " + device_ + ": " + p);
+    }
+    return nullptr;
+  }
+
+  // autocenter <device> <tray> <hole>
+  int autocenter() {
+    const std::string& hole = a_.words[3];
+    if (map_->find(hole) == nullptr) return failed("no hole " + hole + " on tray " + map_->name());
+    const laser::CameraConfig* config = camera();
+    if (config == nullptr) return kFailed;
+    auto opened = open();
+    if (!opened) return failed(opened.error().what);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    system.set_corrections(*lab_.corrections);
+    auto frames = laser::make_frame_source(*config, a_.lab, system.sight(), line_->clock());
+    if (!frames) return failed(frames.error().what);
+    system.attach_camera(*config, std::move(*frames), line_->clock());
+    if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
+    if (auto r = system.move_to_position(hole, true); !r) return failed(r.error().what);
+    io_.out << "moving to hole " << hole << " and centring it\n";
+    io_.out.flush();
+
+    const auto step = std::chrono::milliseconds(50);
+    const auto limit = std::chrono::duration<double>(a_.timeout.value_or(120));
+    const auto started = std::chrono::steady_clock::now();
+    const int interrupts = interrupt_count().load();
+    for (;;) {
+      auto moving = system.moving();
+      if (!moving) return failed(moving.error().what);  // on_failure = fail says it here
+      if (!*moving) break;
+      const bool interrupted = interrupt_count().load() != interrupts;
+      if (interrupted || std::chrono::steady_clock::now() - started > limit) {
+        return failed((interrupted ? "interrupted" : "not centred after " + num(limit.count(), 1) + " s") + "; " +
+                      stopped(system));
+      }
+      std::this_thread::sleep_for(step);
+    }
+    const laser::AutocenterOutcome outcome = system.last_autocenter();
+    auto at = system.position();
+    const std::string where = at ? num(at->x) + ", " + num(at->y) : std::string("an unknown position");
+    if (outcome.result != laser::AutocenterOutcome::Result::Converged) {
+      // Whatever the lab's on_failure says a queue should do, here it is the answer.
+      return failed("hole " + hole + " on " + map_->name() + ": autocenter failed (" +
+                    std::string(to_string(outcome.reason)) + "); the stage is back at " + where);
+    }
+    io_.out << "hole " << hole << ": converged after " << outcome.iterations << (outcome.iterations == 1 ? " look" : " looks")
+            << "; moved " << num(outcome.moved_mm.x) << ", " << num(outcome.moved_mm.y) << " mm; residual "
+            << num(outcome.residual_mm) << " mm; now at " << where << '\n';
+    if (!outcome.note.empty()) {
+      io_.err << "warning: " << outcome.note << '\n';
+      return kFailed;
+    }
+    return kOk;
+  }
+
+  // corrections <device> <tray> [clear [<hole>]]
+  int corrections() {
+    const auto& w = a_.words;
+    const auto status = lab_.calibrations->status(*map_, device_);
+    if (w.size() >= 4) {  // clear
+      if (w.size() == 5) {
+        if (status.state != laser::CalibrationState::Ok) return failed(status.why);
+        if (auto r = lab_.corrections->clear_hole(*map_, device_, status.fingerprint, w[4]); !r) return failed(r.error().what);
+        io_.out << "forgot the correction of hole " << w[4] << '\n';
+        return kOk;
+      }
+      if (auto r = lab_.corrections->clear(device_, map_->name()); !r) return failed(r.error().what);
+      io_.out << "forgot the corrections of tray " << map_->name() << " on " << device_ << '\n';
+      return kOk;
+    }
+    if (status.state != laser::CalibrationState::Ok) return failed(status.why);
+    const auto loaded = lab_.corrections->load(*map_, device_, status.fingerprint);
+    if (!loaded) return failed(loaded.error().what);
+    if (loaded->empty()) {
+      io_.out << "no corrections for tray " << map_->name() << " on " << device_ << '\n';
+      return kOk;
+    }
+    // In the tray's order, not the text order of the ids.
+    for (const auto& hole : map_->holes()) {
+      const auto it = loaded->find(hole.id);
+      if (it == loaded->end()) continue;
+      const auto nominal = status.solution->transform.to_stage(hole.x, hole.y);
+      io_.out << "hole " << hole.id << "  " << num(it->second.x) << ", " << num(it->second.y) << "  "
+              << num(std::hypot(it->second.x - nominal.x, it->second.y - nominal.y)) << " mm from calibrated  residual "
+              << num(it->second.residual_mm) << " mm  " << it->second.found << '\n';
+    }
+    return kOk;
+  }
+
+  // look <device> [--tray <tray>]
+  int look() {
+    device_ = a_.words[1];
+    if (int rc = check_device(); rc != kOk) return rc;
+    const laser::CameraConfig* config = camera();
+    if (config == nullptr) return kFailed;
+    double radius_mm = 0.5;
+    const laser::TrayMap* tray = nullptr;
+    if (a_.tray) {
+      tray = lab_.trays.find(*a_.tray);
+      if (tray == nullptr) {
+        return failed("no tray map '" + *a_.tray + "' in " + (a_.lab / "tray_maps").string() +
+                      " (it has: " + joined(lab_.trays.names()) + ")");
+      }
+      radius_mm = tray->dimension() / 2;
+    }
+
+    // A recording needs no hardware; the simulated camera looks from where
+    // the stage is, at the tray it is told.
+    static const SteadyClock wall;
+    std::unique_ptr<laser::LaserSystem> system;
+    Result<std::unique_ptr<vision::IFrameSource>> frames = fail(ErrorKind::Config, "no camera");
+    if (config->source == laser::CameraSource::Recorded) {
+      frames = laser::make_frame_source(*config, a_.lab, {}, wall);
+    } else {
+      auto opened = open();
+      if (!opened) return failed(opened.error().what);
+      system = std::make_unique<laser::LaserSystem>(device_, **opened, lab_.trays, *lab_.calibrations);
+      if (tray != nullptr) {
+        if (auto r = system->set_tray(tray->name()); !r) return failed(r.error().what);
+      }
+      frames = laser::make_frame_source(*config, a_.lab, system->sight(), line_->clock());
+    }
+    if (!frames) return failed(frames.error().what);
+
+    vision::SimpleFinder finder;
+    vision::FinderParams params;
+    params.mode = vision::FinderMode::Hole;
+    params.expected_radius_px = radius_mm * config->px_per_mm;
+    std::vector<double> xs, ys, radii;
+    int width = 0, height = 0;
+    for (int i = 0; i < config->frames_per_step; ++i) {
+      auto frame = (*frames)->grab();
+      if (!frame) return failed("the camera gave no frame: " + frame.error().what);
+      width = frame->width;
+      height = frame->height;
+      const double aim_x = (frame->width - 1) / 2.0 + config->aim_offset_px.x;
+      const double aim_y = (frame->height - 1) / 2.0 + config->aim_offset_px.y;
+      // The hole nearest the aim point.
+      const vision::Target* best = nullptr;
+      const auto targets = finder.find(frame->view(), params);
+      for (const auto& t : targets) {
+        if (best == nullptr || std::hypot(t.center_px.x - aim_x, t.center_px.y - aim_y) <
+                                   std::hypot(best->center_px.x - aim_x, best->center_px.y - aim_y)) {
+          best = &t;
+        }
+      }
+      if (best == nullptr) continue;
+      xs.push_back(best->center_px.x - aim_x);
+      ys.push_back(best->center_px.y - aim_y);
+      radii.push_back(best->radius_px);
+    }
+    if (xs.size() * 2 <= static_cast<std::size_t>(config->frames_per_step)) {
+      return failed("no hole of radius " + num(params.expected_radius_px, 1) + " px seen in " +
+                    std::to_string(width) + " x " + std::to_string(height) + " frames (" + std::to_string(xs.size()) +
+                    " of " + std::to_string(config->frames_per_step) + ")");
+    }
+    const auto median = [](std::vector<double> v) {
+      std::sort(v.begin(), v.end());
+      return v[v.size() / 2];
+    };
+    const double ox = median(xs), oy = median(ys);
+    const auto move = config->map().to_mm({ox, oy});
+    io_.out << "a hole: offset " << num(ox) << ", " << num(oy) << " px from the aim point; move " << num(move.x) << ", "
+            << num(move.y) << " mm would centre it; radius " << num(median(radii)) << " px (" << xs.size() << " of "
+            << config->frames_per_step << " frames)\n";
+    return kOk;
   }
 
   int patterns() {
@@ -431,6 +614,9 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
       else if (x == "--y") a.y = *number;
       else if (*number <= 0) return usage("--timeout must be above 0");
       else a.timeout = *number;
+    } else if (x == "--tray") {
+      if (i + 1 >= args.size()) return usage("--tray needs a value");
+      a.tray = args[++i];
     } else if (x == "--dry-run") {
       a.dry_run = true;
     } else if (x.starts_with("--")) {
@@ -446,6 +632,28 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
 
   const std::string verb = a.words[0];
   if (a.dry_run && verb != "pattern") return usage("--dry-run goes with pattern");
+  if (a.tray && verb != "look") return usage("--tray goes with look");
+  if (verb == "autocenter") {
+    if (a.words.size() != 4) return usage("autocenter needs <device> <tray> <hole>");
+    if (a.x) return usage("--x and --y go with calibrate");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.with_tray(&Laser::autocenter) : kFailed;
+  }
+  if (verb == "corrections") {
+    const bool clear = a.words.size() >= 4 && a.words[3] == "clear";
+    if (a.words.size() < 3 || a.words.size() > 5 || (a.words.size() >= 4 && !clear)) {
+      return usage("corrections needs <device> <tray>, and optionally: clear [<hole>]");
+    }
+    if (a.x || a.timeout) return usage("corrections takes no --x, --y or --timeout");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.with_tray(&Laser::corrections) : kFailed;
+  }
+  if (verb == "look") {
+    if (a.words.size() != 2) return usage("look needs <device>");
+    if (a.x || a.timeout) return usage("look takes no --x, --y or --timeout");
+    Laser laser(std::move(a), globals, io);
+    return laser.has_line() ? laser.look() : kFailed;
+  }
   if (verb == "patterns") {
     if (a.words.size() != 1) return usage("patterns takes no arguments");
     if (a.x || a.timeout) return usage("patterns takes no --x, --y or --timeout");
