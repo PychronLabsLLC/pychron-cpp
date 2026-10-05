@@ -1,0 +1,371 @@
+#include "pychron/laser/pattern.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <limits>
+#include <numbers>
+#include <random>
+#include <sstream>
+#include <system_error>
+#include <variant>
+
+#include <toml++/toml.hpp>
+
+namespace pychron::laser {
+
+namespace {
+
+namespace fs = std::filesystem;
+
+constexpr double kMaxMm = 1000;  // nothing on a sample stage is larger
+
+constexpr std::array kKindNames{
+    std::pair<std::string_view, PatternKind>{"polygon", PatternKind::Polygon},
+    std::pair<std::string_view, PatternKind>{"linear", PatternKind::Linear},
+    std::pair<std::string_view, PatternKind>{"circular_contour", PatternKind::CircularContour},
+    std::pair<std::string_view, PatternKind>{"line_spiral", PatternKind::LineSpiral},
+    std::pair<std::string_view, PatternKind>{"square_spiral", PatternKind::SquareSpiral},
+    std::pair<std::string_view, PatternKind>{"random", PatternKind::Random},
+    std::pair<std::string_view, PatternKind>{"rubberband", PatternKind::Rubberband},
+    std::pair<std::string_view, PatternKind>{"raster", PatternKind::Raster},
+    std::pair<std::string_view, PatternKind>{"trough", PatternKind::Trough},
+};
+
+// One key of a pattern file: where it goes and what it may be.
+struct Key {
+  std::string_view name;
+  std::variant<double Pattern::*, int Pattern::*, bool Pattern::*> field;
+  double low = 0;
+  double high = 0;
+  bool above_low = false;  // low itself is not allowed
+};
+
+constexpr double kAnyAngle = 1e6;
+
+const Key kVelocity{"velocity", &Pattern::velocity, 0, kMaxMm, true};
+const Key kIterations{"iterations", &Pattern::iterations, 1, 200};
+const Key kRadius{"radius", &Pattern::radius, 0, kMaxMm, true};
+const Key kRotation{"rotation", &Pattern::rotation, -kAnyAngle, kAnyAngle};
+const Key kLength{"length", &Pattern::length, 0, kMaxMm, true};
+const Key kWidth{"width", &Pattern::width, 0, kMaxMm, true};
+const Key kOffset{"offset", &Pattern::offset, 0, kMaxMm};
+const Key kDx{"dx", &Pattern::dx, 0, kMaxMm, true};
+const Key kPercentChange{"percent_change", &Pattern::percent_change, 0, 100, true};
+const Key kWalkX{"walk_x", &Pattern::walk_x, 0, kMaxMm, true};
+const Key kWalkY{"walk_y", &Pattern::walk_y, 0, kMaxMm, true};
+const Key kNsides{"nsides", &Pattern::nsides, 3, 200};
+const Key kNpasses{"npasses", &Pattern::npasses, 1, 100};
+const Key kNsteps{"nsteps", &Pattern::nsteps, 1, 10};
+const Key kStepScalar{"step_scalar", &Pattern::step_scalar, 1, 20};
+const Key kNpoints{"npoints", &Pattern::npoints, 1, 50};
+const Key kSinglePass{"single_pass", &Pattern::single_pass};
+const Key kUseX{"use_x", &Pattern::use_x};
+
+std::vector<const Key*> keys_of(PatternKind kind) {
+  switch (kind) {
+    case PatternKind::Polygon: return {&kRadius, &kNsides, &kRotation};
+    case PatternKind::Linear: return {&kLength, &kRotation, &kNpasses};
+    case PatternKind::CircularContour: return {&kRadius, &kNsteps, &kPercentChange};
+    case PatternKind::LineSpiral: return {&kRadius, &kNsteps, &kPercentChange, &kStepScalar};
+    case PatternKind::SquareSpiral: return {&kRadius, &kNsteps, &kPercentChange};
+    case PatternKind::Random: return {&kWalkX, &kWalkY, &kNpoints};
+    case PatternKind::Rubberband: return {&kLength, &kOffset, &kRotation};
+    case PatternKind::Raster: return {&kLength, &kOffset, &kRotation, &kDx, &kSinglePass};
+    case PatternKind::Trough: return {&kLength, &kWidth, &kRotation, &kUseX};
+  }
+  return {};
+}
+
+std::string plain(double value) {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << value;
+  return out.str();
+}
+
+// Why `node` cannot be the value of `key`; empty when it was stored.
+std::string store(const Key& key, const toml::node& node, Pattern& pattern) {
+  if (const auto* field = std::get_if<bool Pattern::*>(&key.field)) {
+    const auto* b = node.as_boolean();
+    if (b == nullptr) return "expected true or false";
+    pattern.**field = b->get();
+    return {};
+  }
+  const std::string range = std::string(key.above_low ? "above " : "from ") + plain(key.low) +
+                            (key.high >= kAnyAngle ? "" : " to " + plain(key.high));
+  if (const auto* field = std::get_if<int Pattern::*>(&key.field)) {
+    const auto* i = node.as_integer();
+    if (i == nullptr) return "expected a whole number";
+    if (static_cast<double>(i->get()) < key.low || static_cast<double>(i->get()) > key.high) {
+      return "must be " + range;
+    }
+    pattern.**field = static_cast<int>(i->get());
+    return {};
+  }
+  const auto* field = std::get_if<double Pattern::*>(&key.field);
+  double value = 0;
+  if (const auto* f = node.as_floating_point()) value = f->get();
+  else if (const auto* i = node.as_integer()) value = static_cast<double>(i->get());
+  else return "expected a number";
+  if (!std::isfinite(value)) return "must be a finite number";
+  if (value < key.low || value > key.high || (key.above_low && value <= key.low)) return "must be " + range;
+  pattern.**field = value;
+  return {};
+}
+
+StageXY turned(double x, double y, double degrees) {
+  const double a = degrees * std::numbers::pi / 180.0;
+  return {x * std::cos(a) - y * std::sin(a), x * std::sin(a) + y * std::cos(a)};
+}
+
+StageXY on_circle(double radius, double degrees) {
+  const double a = degrees * std::numbers::pi / 180.0;
+  return {radius * std::cos(a), radius * std::sin(a)};
+}
+
+}  // namespace
+
+std::string_view to_string(PatternKind kind) noexcept {
+  for (const auto& [name, k] : kKindNames) {
+    if (k == kind) return name;
+  }
+  return "polygon";
+}
+
+Pattern Pattern::defaults(PatternKind kind) {
+  Pattern p;
+  p.kind = kind;
+  switch (kind) {
+    case PatternKind::CircularContour:
+    case PatternKind::LineSpiral:
+    case PatternKind::SquareSpiral: p.radius = 0.1; break;
+    case PatternKind::Rubberband:
+    case PatternKind::Raster: p.length = 15; break;
+    case PatternKind::Trough: p.length = 10; break;
+    default: break;
+  }
+  return p;
+}
+
+Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
+  const auto bad = [&name](std::string_view key, const std::string& what) {
+    return fail(ErrorKind::Config, name + ": " + (key.empty() ? "" : std::string(key) + ": ") + what);
+  };
+  const toml::parse_result parsed = toml::parse(text);
+  if (!parsed) return bad("", std::string(parsed.error().description()));
+  const toml::table& table = parsed.table();
+
+  const toml::node* kind_node = table.get("kind");
+  if (kind_node == nullptr) return bad("kind", "missing (what the pattern is)");
+  const auto kind_name = kind_node->value<std::string>();
+  std::optional<PatternKind> kind;
+  if (kind_name) {
+    for (const auto& [n, k] : kKindNames) {
+      if (n == *kind_name) kind = k;
+    }
+  }
+  if (!kind) {
+    std::string known;
+    for (const auto& [n, k] : kKindNames) known += (known.empty() ? "" : ", ") + std::string(n);
+    return bad("kind", "expected one of " + known);
+  }
+
+  Pattern p = defaults(*kind);
+  p.name = std::move(name);
+  std::vector<const Key*> keys = keys_of(*kind);
+  keys.push_back(&kVelocity);
+  keys.push_back(&kIterations);
+  for (const auto& [k, node] : table) {
+    const std::string_view key = k.str();
+    if (key == "kind") continue;
+    if (key == "seed" && *kind == PatternKind::Random) {
+      const auto* i = node.as_integer();
+      if (i == nullptr || i->get() < 0) return fail(ErrorKind::Config, p.name + ": seed: expected a whole number, 0 or more");
+      p.seed = static_cast<std::uint64_t>(i->get());
+      continue;
+    }
+    const auto found = std::find_if(keys.begin(), keys.end(), [key](const Key* candidate) { return candidate->name == key; });
+    if (found == keys.end()) {
+      return fail(ErrorKind::Config, p.name + ": " + std::string(key) + ": not a key of a " +
+                                         std::string(to_string(*kind)) + " pattern");
+    }
+    if (const std::string why = store(**found, node, p); !why.empty()) {
+      return fail(ErrorKind::Config, p.name + ": " + std::string(key) + ": " + why);
+    }
+  }
+  if (*kind == PatternKind::Raster && p.dx > p.length + 2 * p.offset) {
+    return fail(ErrorKind::Config, p.name + ": dx: the step is wider than the box it rasters (length + 2 offset)");
+  }
+  return p;
+}
+
+Result<Pattern> Pattern::load(const fs::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return fail(ErrorKind::Config, file.stem().string() + ": cannot read " + file.string());
+  std::ostringstream text;
+  text << in.rdbuf();
+  return parse(text.str(), file.stem().string());
+}
+
+std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
+  std::vector<StageXY> out;
+  switch (p.kind) {
+    case PatternKind::Polygon:
+      for (int i = 0; i <= p.nsides; ++i) out.push_back(on_circle(p.radius, 360.0 * (i % p.nsides) / p.nsides + p.rotation));
+      break;
+    case PatternKind::Linear: {
+      const StageXY p1{0, 0};
+      const StageXY p2 = turned(p.length, 0, p.rotation);
+      for (int i = 0; i < p.npasses; ++i) {
+        out.push_back(i % 2 == 0 ? p1 : p2);
+        out.push_back(i % 2 == 0 ? p2 : p1);
+      }
+      break;
+    }
+    case PatternKind::CircularContour:
+      for (int ring = 0; ring < p.nsteps; ++ring) {
+        const double r = p.radius * (1 + ring * p.percent_change);
+        for (int step = 0; step <= 36; ++step) out.push_back(on_circle(r, 10.0 * (step % 36)));
+      }
+      break;
+    case PatternKind::LineSpiral:
+      for (int turn = 0; turn < p.nsteps; ++turn) {
+        const int n = 2 * turn + p.step_scalar;
+        for (int j = 0; j < n; ++j) {
+          const bool full = j == n - 1;  // the turn's last angle is 360
+          if (n == 1 || (full && turn != p.nsteps - 1)) continue;
+          const double t = 360.0 * j / (n - 1);
+          const double r = p.radius * (1 + (turn + t / 360.0) * p.percent_change);
+          out.push_back(on_circle(r, full ? 0 : t));
+        }
+      }
+      // A step_scalar of 1 on the first turn gives it no angles; the spiral
+      // then starts where it would have.
+      if (out.empty()) out.push_back({p.radius, 0});
+      break;
+    case PatternKind::SquareSpiral: {
+      double x = 0, y = 0;
+      for (int i = 0; i < 4 * p.nsteps + 1; ++i) {
+        const double r = p.radius * (1 + i * p.percent_change);
+        switch (i % 4) {
+          case 0: x += r; break;
+          case 1: y += r; break;
+          case 2: x -= r; break;
+          default: y -= r; break;
+        }
+        out.push_back({x, y});
+      }
+      break;
+    }
+    case PatternKind::Random: {
+      // Spelled out, not std::uniform_real_distribution: the same seed gives
+      // the same walk under every standard library.
+      std::mt19937_64 rng(seed);
+      const auto unit = [&rng] { return static_cast<double>(rng() >> 11) * 0x1.0p-53; };
+      for (int i = 0; i < p.npoints; ++i) {
+        double x = 0, y = 0;
+        do {  // a point in the box, within walk_x of the centre (legacy's test)
+          x = (unit() * 2 - 1) * p.walk_x;
+          y = (unit() * 2 - 1) * p.walk_y;
+        } while (std::hypot(x, y) > p.walk_x);
+        out.push_back({x, y});
+      }
+      break;
+    }
+    case PatternKind::Rubberband: {
+      const double o = p.offset, far = p.length + p.offset;
+      for (const auto& [x, y] : {std::pair{-o, o}, std::pair{far, o}, std::pair{far, -o}, std::pair{-o, -o}, std::pair{-o, o}}) {
+        out.push_back(turned(x, y, p.rotation));
+      }
+      break;
+    }
+    case PatternKind::Raster: {
+      // Legacy fits the step to the box: an even count of the steps asked
+      // for, plus one, so the zig-zag ends on the far edge.
+      const double o = p.offset, total = p.length + 2 * p.offset;
+      int n = static_cast<int>(std::floor(total / p.dx + 1e-9));
+      if (n % 2 != 0) ++n;
+      const int steps = n + 1;
+      const double dx = total / steps;
+      for (int i = 0; i <= steps; ++i) out.push_back(turned(-o + dx * i, i % 2 == 0 ? o : -o, p.rotation));
+      if (!p.single_pass) {
+        for (int i = 0; i <= steps; ++i) out.push_back(turned(p.length + o - dx * i, i % 2 == 0 ? o : -o, p.rotation));
+        out.push_back(turned(-o, o, p.rotation));
+      }
+      break;
+    }
+    case PatternKind::Trough: {
+      const StageXY p1{0, 0};
+      const StageXY p2 = turned(p.length, 0, p.rotation);
+      const StageXY p3 = turned(p.length, -p.width, p.rotation);
+      const StageXY p4 = turned(0, -p.width, p.rotation);
+      if (p.use_x) out = {p1, p2, p4, p3, p1};
+      else out = {p1, p2, p3, p4, p1};
+      break;
+    }
+  }
+  return out;
+}
+
+double path_length(std::span<const StageXY> points) {
+  double length = 0;
+  StageXY at{0, 0};
+  for (const auto& p : points) {
+    length += std::hypot(p.x - at.x, p.y - at.y);
+    at = p;
+  }
+  return length;
+}
+
+Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t seed) {
+  std::vector<StageXY> path;
+  for (int i = 0; i < pattern.iterations; ++i) {
+    const auto points = pattern_points(pattern, seed + static_cast<std::uint64_t>(i));
+    if (path.size() + points.size() + 1 > kMaxPatternPoints) {
+      return fail(ErrorKind::Config, "pattern " + pattern.name + " has more than " + std::to_string(kMaxPatternPoints) +
+                                         " points over its " + std::to_string(pattern.iterations) + " iterations");
+    }
+    path.insert(path.end(), points.begin(), points.end());
+  }
+  path.push_back({0, 0});
+  return path;
+}
+
+PatternLibrary PatternLibrary::load(const fs::path& dir) {
+  PatternLibrary lib;
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) return lib;
+  std::vector<fs::path> files;
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const fs::path& path = it->path();
+    if (path.extension() != ".toml" || path.filename().string().starts_with('.')) continue;
+    std::error_code type;
+    if (fs::is_regular_file(path, type)) files.push_back(path);
+  }
+  std::sort(files.begin(), files.end());  // directory order is unspecified
+  for (const auto& file : files) {
+    auto pattern = Pattern::load(file);
+    if (!pattern) {
+      lib.problems_.push_back(pattern.error().what);
+      continue;
+    }
+    std::string name = pattern->name;
+    lib.patterns_.insert_or_assign(std::move(name), std::move(*pattern));
+  }
+  return lib;
+}
+
+const Pattern* PatternLibrary::find(std::string_view name) const {
+  const auto it = patterns_.find(name);
+  return it == patterns_.end() ? nullptr : &it->second;
+}
+
+std::vector<std::string> PatternLibrary::names() const {
+  std::vector<std::string> out;
+  for (const auto& [name, pattern] : patterns_) out.push_back(name);
+  return out;
+}
+
+}  // namespace pychron::laser
