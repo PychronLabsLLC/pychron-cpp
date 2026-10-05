@@ -124,16 +124,36 @@ class Laser {
     return ok ? kOk : kFailed;
   }
 
-  // The device's camera, or why it has none.
+  // The device's camera as every command uses it, with its scale as measured
+  // when somebody has measured it; or why it has none (said).
   const laser::CameraConfig* camera() {
-    if (const laser::CameraConfig* config = lab_.cameras.find(device_)) return config;
-    const auto problems = lab_.cameras.problems_of(device_);
-    if (problems.empty()) {
-      failed(device_ + " has no camera: no [" + device_ + "] table in " + (a_.lab / "cameras.toml").string());
-    } else {
-      for (const auto& p : problems) failed("camera of " + device_ + ": " + p);
+    if (described_ && described_->device == device_) return &*described_;
+    const laser::CameraConfig* found = lab_.cameras.find(device_);
+    if (found == nullptr) {
+      const auto problems = lab_.cameras.problems_of(device_);
+      if (problems.empty()) {
+        failed(device_ + " has no camera: no [" + device_ + "] table in " + (a_.lab / "cameras.toml").string());
+      } else {
+        for (const auto& p : problems) failed("camera of " + device_ + ": " + p);
+      }
+      return nullptr;
     }
-    return nullptr;
+    described_ = *found;
+    auto measured = lab_.camera_scales->load(device_);
+    if (!measured) {
+      failed(measured.error().what);
+      return nullptr;
+    }
+    if (*measured) {
+      const std::string& of = (*measured)->geometry;
+      if (!of.empty() && of != found->geometry()) {
+        failed("the measured scale of " + device_ + "'s camera is of another camera setup (" + of + "; now " +
+               found->geometry() + "): measure it again, or `elctl laser camera-scale " + device_ + " clear`");
+        return nullptr;
+      }
+      described_->measured = (*measured)->map;
+    }
+    return &*described_;
   }
 
   // autocenter <device> <tray> <hole>
@@ -233,13 +253,7 @@ class Laser {
   bool look_through(laser::LaserSystem& system) {
     const laser::CameraConfig* found = camera();
     if (found == nullptr) return false;
-    laser::CameraConfig config = *found;
-    if (auto measured = lab_.camera_scales->load(device_); !measured) {
-      failed(measured.error().what);
-      return false;
-    } else if (*measured) {
-      config.measured = (*measured)->map;
-    }
+    const laser::CameraConfig config = *found;
     auto frames = laser::make_frame_source(config, a_.lab, system.sight(), line_->clock());
     if (!frames) {
       failed(frames.error().what);
@@ -267,8 +281,8 @@ class Laser {
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    const TimePoint rested = line_->clock().now();
-    while (line_->clock().now() - rested < settle) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // Real time, as the stage's and the camera's is here.
+    std::this_thread::sleep_for(settle);
     return {};
   }
 
@@ -304,15 +318,22 @@ class Laser {
     if (!opened) return failed(opened.error().what);
     laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
     system.set_corrections(*lab_.corrections);
+    // Measured afresh: whatever was measured before, of whatever setup, is not looked at.
+    const laser::CameraConfig* raw = lab_.cameras.find(device_);
+    if (raw == nullptr) {
+      (void)camera();  // says why there is none
+      return kFailed;
+    }
+    described_ = *raw;
     if (!look_through(system)) return kFailed;
-    const Duration settle = lab_.cameras.find(device_)->settle;
+    const Duration settle = raw->settle;
     if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
     if (auto r = system.move_to_position(hole, false); !r) return failed(r.error().what);
     if (auto r = arrive(system, settle); !r) return failed(r.error().what);
-    io_.out << "on hole " << hole << "; jogging " << num(a_.step.value_or(0.25)) << " mm in x, then in y\n";
+    io_.out << "on hole " << hole << "; jogging " << num(a_.step.value_or(0.5)) << " mm in x, then in y\n";
     io_.out.flush();
     const auto measured =
-        laser::measure_camera_scale(system, a_.step.value_or(0.25), [&] { return arrive(system, settle); });
+        laser::measure_camera_scale(system, a_.step.value_or(0.5), [&] { return arrive(system, settle); });
     if (!measured) return failed(measured.error().what);
     say_scale(io_.out, *measured);
     if (auto saved = lab_.camera_scales->save(device_, *measured); !saved) return failed(saved.error().what);
@@ -375,7 +396,7 @@ class Laser {
     vision::SimpleFinder finder;
     vision::FinderParams params;
     params.mode = vision::FinderMode::Hole;
-    params.expected_radius_px = radius_mm * config->px_per_mm;
+    params.expected_radius_px = radius_mm * config->scale_px_per_mm();
     std::vector<double> xs, ys, radii;
     int width = 0, height = 0;
     for (int i = 0; i < config->frames_per_step; ++i) {
@@ -732,6 +753,7 @@ class Laser {
   Io io_;
   lab::Lab lab_;
   std::string device_;
+  std::optional<laser::CameraConfig> described_;  // camera(), once asked
   const laser::TrayMap* map_ = nullptr;
   std::unique_ptr<systems::ExtractionLine> line_;
 };

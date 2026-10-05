@@ -34,7 +34,7 @@ struct ScaleRig : CameraHarness {
     for (int i = 0; i < 5; ++i) advance();  // settled
     return {};
   }
-  Result<ScaleMeasurement> measure(double step = 0.25) {
+  Result<ScaleMeasurement> measure(double step = 0.5) {
     return measure_camera_scale(system, step, [this] { return arrive(); });
   }
   void on_hole(const char* hole) {
@@ -129,7 +129,7 @@ TEST(MeasureScale, FindsTheSimulatedCamerasScaleAndFlips) {
     real.flip_x = flip_x;
     // what the system was told is wrong on every count
     CameraConfig told = real;
-    told.px_per_mm = 40;
+    told.px_per_mm = 36;  // roughly right is all it has to be
     told.flip_x = !flip_x;
     told.flip_y = !real.flip_y;
     ScaleRig rig(told, real);
@@ -185,6 +185,86 @@ TEST(MeasureScale, NeedsSomethingToSeeAndASaneStep) {
   const auto none = measure_camera_scale(no_camera.system, 0.25, [] { return Result<void>{}; });
   ASSERT_FALSE(none);
   EXPECT_NE(none.error().what.find("camera"), std::string::npos) << none.error().what;
+}
+
+// A step too small to see in the picture measures the picture's noise.
+TEST(MeasureScale, AStepThePictureDoesNotShowIsRefused) {
+  ScaleRig rig;
+  rig.on_hole("3");
+  const auto m = rig.measure(0.02);  // under half a pixel at 23 px/mm
+  ASSERT_FALSE(m);
+  EXPECT_NE(m.error().what.find("pixels"), std::string::npos) << m.error().what;
+}
+
+// A camera that does not follow the stage (one for looking, over a
+// simulated laser): the target does not move, and that is not a scale.
+TEST(MeasureScale, APictureThatDoesNotFollowTheStageIsRefused) {
+  LaserHarness h;
+  CameraConfig config = camera_config();
+  config.sim_noise = 0;
+  // always the view from hole 3, wherever the stage goes
+  const TraySightFn fixed = [sight = h.system.sight()] {
+    TraySight seen = sight();
+    seen.stage = {15, 20};
+    return seen;
+  };
+  ASSERT_TRUE(h.system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, fixed, h.clock), h.clock));
+  ASSERT_TRUE(h.system.set_tray("small"));
+  const auto arrive = [&]() -> Result<void> {
+    for (int i = 0; i < 4000; ++i) {
+      auto moving = h.system.moving();
+      if (!moving) return fail(moving.error());
+      if (!*moving) return {};
+      h.advance();
+    }
+    return fail(ErrorKind::Timeout, "still moving");
+  };
+  const auto m = measure_camera_scale(h.system, 0.25, arrive);
+  ASSERT_FALSE(m);
+  EXPECT_NE(m.error().what.find("pixels"), std::string::npos) << m.error().what;
+}
+
+// A step that takes the target past half way to its neighbour: the nearest
+// thing in the picture is then the neighbour.
+TEST(MeasureScale, AStepThatReachesTheNeighbourIsRefused) {
+  LaserHarness h;
+  CameraConfig config = camera_config();
+  config.sim_noise = 0;
+  // the picture moves twelve times as far as the stage: 0.25 mm looks like 3 mm, on a tray of 5 mm pitch
+  const TraySightFn magnified = [sight = h.system.sight()] {
+    TraySight seen = sight();
+    seen.stage = {15 + (seen.stage.x - 15) * 12, 20 + (seen.stage.y - 20) * 12};
+    return seen;
+  };
+  ASSERT_TRUE(h.system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, magnified, h.clock), h.clock));
+  ASSERT_TRUE(h.system.set_tray("small"));
+  const auto arrive = [&]() -> Result<void> {
+    for (int i = 0; i < 4000; ++i) {
+      auto moving = h.system.moving();
+      if (!moving) return fail(moving.error());
+      if (!*moving) return {};
+      h.advance();
+    }
+    return fail(ErrorKind::Timeout, "still moving");
+  };
+  ASSERT_TRUE(h.system.move_to_position("3", false));
+  ASSERT_TRUE(arrive());
+  const auto m = measure_camera_scale(h.system, 0.25, arrive);
+  ASSERT_FALSE(m) << "px/mm " << m->px_per_mm;
+}
+
+TEST(MeasureScale, AMeasurementRemembersWhatCameraItWasOf) {
+  ScaleRig rig;
+  rig.on_hole("3");
+  const auto m = rig.measure();
+  ASSERT_TRUE(m) << m.error().what;
+  EXPECT_EQ(m->geometry, rig.camera.geometry());
+  EXPECT_FALSE(m->geometry.empty());
+  const CameraScaleStore store(rig.lab.dir / "camera_scales");
+  ASSERT_TRUE(store.save("co2", *m));
+  EXPECT_EQ((*store.load("co2"))->geometry, m->geometry);
+  // three sightings, one to spare: how well they agree is known
+  EXPECT_LT(m->map.residual_mm, 0.02);
 }
 
 TEST(MeasureScale, AStageThatFailsPartWayIsSaid) {

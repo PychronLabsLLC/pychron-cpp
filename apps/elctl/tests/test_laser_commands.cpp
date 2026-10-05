@@ -578,6 +578,22 @@ TEST_F(LaserCameraCmd, CameraScaleMeasuresSavesAndIsUsed) {
   EXPECT_FALSE(fs::exists(lab("camera_scales") / "co2.toml"));
 }
 
+// The scale that was measured is the one every command uses. Shown with a
+// measurement that is wrong (both axes the wrong way round): a centring by
+// it runs away from its hole, and is right again once it is forgotten.
+TEST_F(LaserCameraCmd, EveryCommandUsesTheMeasuredScale) {
+  fs::create_directories(lab("camera_scales"));
+  std::ofstream(lab("camera_scales") / "co2.toml") << "m = [[-0.0434782, 0.0], [0.0, 0.0434782]]\nresidual_mm = 0.0\n";
+  const auto shown = laser({"camera-scale", "co2", "show"});
+  ASSERT_EQ(shown.code, 0) << shown.err;
+  EXPECT_NE(shown.out.find("flip_x = true"), std::string::npos) << shown.out;
+  const auto away = laser({"autocenter", "co2", "example-9", "5"}, true);
+  EXPECT_EQ(away.code, 1) << "centred by cameras.toml's scale, not the measured one: " << away.out;
+  ASSERT_EQ(laser({"camera-scale", "co2", "clear"}).code, 0);
+  const auto centred = laser({"autocenter", "co2", "example-9", "5"}, true);
+  ASSERT_EQ(centred.code, 0) << centred.err << centred.out;
+}
+
 TEST_F(LaserCameraCmd, CameraScaleWithNothingToSeeFailsAndSavesNothing) {
   camera("[co2]\n[co2.sim]\ntray_error_mm = [30.0, 30.0]\nnoise = 0\n");  // the tray is nowhere near
   const auto o = laser({"camera-scale", "co2", "example-9", "5"}, true);

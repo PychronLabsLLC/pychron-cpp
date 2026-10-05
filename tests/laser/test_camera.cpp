@@ -307,6 +307,7 @@ TEST(CameraConfig, RefusesBadLiveValues) {
            "[co2]\n[co2.opencv]\nroi = [1, 2, -3, 4]\n",
            "[co2]\n[co2.opencv]\nwidth = -4\n",
            "[co2]\n[co2.opencv]\ntimeout_ms = 0\n",
+           "[co2]\n[co2.opencv]\ntimeout_ms = 99\n",
            "[co2]\n[co2.opencv]\nexposure = 4\n",
            "[co2]\n[co2.pylon]\nexposure_us = 0\n",
            "[co2]\n[co2.pylon]\npacket_size = 10\n",
@@ -332,6 +333,43 @@ TEST(CameraUse, ALiveCameraClosesTheLoopOnlyOverARealStage) {
   live.source = CameraSource::Pylon;
   EXPECT_TRUE(usable_for_autocenter(live, false));
   EXPECT_FALSE(usable_for_autocenter(live, true));
+}
+
+// A video file is not a camera over the stage, whatever plays it.
+TEST(CameraUse, AVideoFileNeverClosesTheLoop) {
+  CameraConfig clip;
+  clip.device = "co2";
+  clip.source = CameraSource::OpenCv;
+  clip.live_device = "clips/a.mp4";
+  const auto r = usable_for_autocenter(clip, false);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("video file"), std::string::npos) << r.error().what;
+  clip.live_device = "2";
+  EXPECT_TRUE(usable_for_autocenter(clip, false));
+}
+
+// What a centring waits for a frame is what an emergency stop may wait too.
+TEST(CameraConfig, ACameraThatCentresWaitsTwoSecondsAtMost) {
+  const char* slow = "[co2]\nsource = \"opencv\"\n[co2.opencv]\ntimeout_ms = 5000\n";
+  auto lib = parse(slow);
+  ASSERT_EQ(lib.problems().size(), 1u);
+  EXPECT_NE(lib.problems().front().find("timeout_ms"), std::string::npos) << lib.problems().front();
+  lib = parse(std::string(slow) + "");
+  // for looking only, it may be patient
+  lib = parse("[co2]\nsource = \"opencv\"\nuse = \"view\"\n[co2.opencv]\ntimeout_ms = 5000\n");
+  EXPECT_TRUE(lib.problems().empty());
+  // and too little time is no time to take a frame in
+  lib = parse("[co2]\nsource = \"opencv\"\nuse = \"view\"\n[co2.opencv]\ntimeout_ms = 20\n");
+  EXPECT_EQ(lib.problems().size(), 1u);
+}
+
+TEST(CameraConfig, ItsGeometryNamesWhatAScaleWasMeasuredWith) {
+  const auto a = parse("[co2]\nsource = \"opencv\"\nuse = \"view\"\n[co2.opencv]\nrotate = 90\n");
+  const auto b = parse("[co2]\nsource = \"opencv\"\nuse = \"view\"\n[co2.opencv]\nrotate = 180\n");
+  const auto c = parse("[co2]\nsource = \"opencv\"\nuse = \"view\"\npx_per_mm = 99\n[co2.opencv]\nrotate = 90\n");
+  EXPECT_NE(a.find("co2")->geometry(), b.find("co2")->geometry());
+  EXPECT_EQ(a.find("co2")->geometry(), c.find("co2")->geometry()) << "what the scale replaces is not part of it";
+  EXPECT_NE(a.find("co2")->geometry(), parse("[co2]\n").find("co2")->geometry());
 }
 
 TEST(CameraUse, ACameraForLookingNeverClosesTheLoop) {

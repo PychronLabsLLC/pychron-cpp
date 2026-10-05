@@ -303,7 +303,7 @@ class LaserBridgeTest : public QObject {
     std::optional<laser::ScaleMeasurement> measured;
     QObject::connect(bridge_.get(), &LaserBridge::scaleMeasured,
                      [&measured](const laser::ScaleMeasurement& m) { measured = m; });
-    bridge_->measure_scale(0.25);
+    bridge_->measure_scale(0.5);
     test::settle(*bridge_);
     QVERIFY2(heard_->ok("measure_scale"), qPrintable(heard_->why("measure_scale")));
     QVERIFY(measured.has_value());
@@ -314,7 +314,7 @@ class LaserBridgeTest : public QObject {
     QCOMPARE(lab_->x(), 25.0);  // put back on the hole
     // nothing to see: said, and nothing saved over the good one
     bridge_->jog(-20, -20, 0);
-    bridge_->measure_scale(0.25);
+    bridge_->measure_scale(0.5);
     test::settle(*bridge_);
     QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
   }

@@ -369,6 +369,24 @@ TEST_F(MeasuredScaleTest, TheLabsMeasuredScaleIsUsed) {
   EXPECT_NEAR(seen->px_per_mm, 20, 1e-9);
 }
 
+// A scale measured with the camera set up another way is not this camera's.
+class ScaleOfAnotherSetupTest : public CameraLabTest {
+  std::string cameras() const override { return "[co2]\n[co2.sim]\nwidth = 320\n"; }
+  void prepare_lab() override {
+    CameraLabTest::prepare_lab();
+    fs::create_directories(dir_ / "camera_scales");
+    std::ofstream(dir_ / "camera_scales" / "co2.toml")
+        << "geometry = \"sim 200x200\"\nm = [[0.05, 0.0], [0.0, -0.05]]\nresidual_mm = 0.0\n";
+  }
+};
+
+TEST_F(ScaleOfAnotherSetupTest, IsAProblemUntilMeasuredAgainOrCleared) {
+  ASSERT_EQ(lasers_->problems().size(), 1u);
+  const std::string problem = lasers_->problems().front();
+  EXPECT_NE(problem.find("camera-scale"), std::string::npos) << problem;
+  EXPECT_FALSE(lasers_->find("co2")->can_centre());
+}
+
 class BrokenScaleTest : public CameraLabTest {
   std::string cameras() const override { return "[co2]\n"; }
   void prepare_lab() override {

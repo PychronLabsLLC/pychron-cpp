@@ -318,7 +318,7 @@ QWidget* LaserWindow::build_calibration() {
   camera_scale_->setWordWrap(true);
   scale_row->addWidget(camera_scale_, 1);
   v->addLayout(scale_row);
-  connect(measure_scale_, &QPushButton::clicked, this, [this] { bridge_.measure_scale(0.25); });
+  connect(measure_scale_, &QPushButton::clicked, this, [this] { bridge_.measure_scale(0.5); });
   connect(&bridge_, &LaserBridge::scaleMeasured, this, [this](const laser::ScaleMeasurement& m) {
     camera_scale_->setText(tr("%1 px/mm · flip x %2 · flip y %3 · saved")
                                .arg(mm(m.px_per_mm, 2), m.flip_x ? tr("yes") : tr("no"), m.flip_y ? tr("yes") : tr("no")));

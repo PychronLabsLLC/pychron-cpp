@@ -168,6 +168,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // The camera's pixel scale as measured (camera_scale.hpp): used from now
   // on instead of what its configuration says. Nothing with no camera.
   void set_measured_scale(const ScaleMeasurement& measured);
+  // CameraConfig::geometry() of the camera; empty with none.
+  std::string camera_geometry() const;
 
   // Everything off, now, from any thread: the beam, the output, the enable,
   // the stage, a pattern, a centring. Every step is tried whatever the

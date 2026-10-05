@@ -3,6 +3,7 @@
 // the emergency stop with its latch.
 
 #include <atomic>
+#include <functional>
 #include <thread>
 
 #include <gtest/gtest.h>
@@ -419,6 +420,75 @@ TEST(ViewerRules, ACameraThatCentresIsNotAttachedAsOneThatCannot) {
   EXPECT_FALSE(h.system.has_camera());
 }
 
+// The stop is pressed while a centring is waiting for its camera: when the
+// frames come, nothing more is sent to the stage.
+TEST(StopDuringALook, NoMoveIsSentOnceTheStopIsLatched) {
+  struct Pressing final : vision::IFrameSource {
+    std::unique_ptr<vision::IFrameSource> inner;
+    std::function<void()> on_grab;
+    Result<vision::Frame> grab() override {
+      if (on_grab) on_grab();
+      return inner->grab();
+    }
+    vision::FrameInfo info() const override { return inner->info(); }
+  };
+  LaserHarness h;
+  CameraConfig config = camera_config();
+  auto frames = std::make_unique<Pressing>();
+  frames->inner = std::make_unique<SimTrayCamera>(config, h.system.sight(), h.clock);
+  Pressing* pressing = frames.get();
+  ASSERT_TRUE(h.system.attach_camera(config, std::move(frames), h.clock));
+  ASSERT_TRUE(h.system.set_tray("small"));
+  ASSERT_TRUE(h.system.move_to_position("3", true));
+  // the hole is 0.15, -0.10 mm off: the first look would nudge the stage
+  std::size_t sent_before = 0;
+  pressing->on_grab = [&] {
+    if (!h.system.stopped()) sent_before = h.sim.log().size();
+    h.system.latch_stop();
+  };
+  for (int i = 0; i < 400; ++i) {
+    auto moving = h.system.moving();
+    if (!moving || !*moving) break;
+    h.clock.advance(std::chrono::milliseconds(100));
+  }
+  ASSERT_TRUE(h.system.stopped()) << "the centring never looked";
+  const auto log = h.sim.log();
+  for (std::size_t i = sent_before; i < log.size(); ++i) {
+    EXPECT_FALSE(log[i].starts_with("Stage.MoveTo")) << "sent after the stop: " << log[i];
+  }
+  EXPECT_EQ(h.system.last_autocenter().result, AutocenterOutcome::Result::Stopped);
+  EXPECT_EQ(h.system.snapshot().activity, LaserActivity::Idle);
+}
+
+// A live camera that centres, and goes mid-centring: the centring gives up
+// on the camera and the stage goes back to where it started.
+TEST(LiveCentring, ACameraThatGoesEndsTheCentring) {
+  FakeLive fake;
+  LaserHarness h;
+  CameraConfig config = FakeLive::config();
+  config.use = CameraUse::Centre;
+  auto frames = make_frame_source(config, h.lab.dir, h.system.sight(), h.clock);
+  ASSERT_TRUE(frames) << frames.error().what;
+  ASSERT_TRUE(h.system.attach_camera(config, std::move(*frames), h.clock));
+  EXPECT_TRUE(h.system.can_centre());
+  ASSERT_TRUE(h.system.set_tray("small"));
+  fake.control->fails = true;
+  ASSERT_TRUE(h.system.move_to_position("3", true));
+  const auto began = std::chrono::steady_clock::now();
+  Result<bool> moving = true;
+  for (int i = 0; i < 4000 && moving && *moving; ++i) {
+    moving = h.system.moving();
+    h.clock.advance(std::chrono::milliseconds(100));
+  }
+  ASSERT_TRUE(moving) << moving.error().what;
+  EXPECT_FALSE(*moving);
+  const AutocenterOutcome outcome = h.system.last_autocenter();
+  EXPECT_EQ(outcome.result, AutocenterOutcome::Result::Failed);
+  EXPECT_EQ(outcome.reason, vision::AutocenterReason::Camera);
+  EXPECT_EQ(h.sim.position().x, 15000);
+  EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(5)) << "it did not wait a timeout per frame";
+}
+
 TEST(LiveView, ALiveCameraIsWatchedWithoutWaitingForIt) {
   FakeLive fake;
   LaserHarness h;
@@ -449,7 +519,7 @@ TEST(LiveView, ALiveCameraIsWatchedWithoutWaitingForIt) {
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
   const auto began = std::chrono::steady_clock::now();
   seen = h.system.view();
-  EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::milliseconds(40));
+  EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::milliseconds(150));  // not the camera's 200 ms
   ASSERT_TRUE(seen);
   EXPECT_GE(seen->age_ms, 50);
   // and it comes back by itself

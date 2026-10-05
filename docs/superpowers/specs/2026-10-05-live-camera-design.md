@@ -156,3 +156,24 @@ recording, colour, autofocus.
 - **Not proven here:** the built-in camera could not be opened by the
   session that wrote this (macOS did not allow it); `RealCamera` is the test
   to run by hand. No live camera has centred a hole on a real stage.
+
+### After review
+
+- A camera whose read (or open) has been in flight longer than its timeout is
+  said to have stopped whether or not anything waited for it: a window that
+  only looks is not shown a frozen picture as live.
+- A centring that was waiting for its camera when the stop was latched sends
+  nothing more to the stage. One look waits once for its frames, not once
+  per frame, and a camera that centres may have a `timeout_ms` of 2000 at
+  most (100 at least, for any).
+- The scale measurement takes three sightings (x, y and both) and refuses: a
+  move of less than 5 pixels (a picture that does not follow the stage); a
+  move with something else about as near; a move nothing like what the scale
+  believed so far expects, so `px_per_mm` must be roughly right to begin
+  with; sightings that disagree. The default step is 0.5 mm.
+- A measurement remembers the camera setup it was made with (source, device,
+  size, rotation, roi, channel); with another setup it is a problem until it
+  is measured again or cleared.
+- Every elctl command uses the measured scale.
+- A video file never centres a stage; a camera whose open does not answer is
+  a problem for a camera that centres.

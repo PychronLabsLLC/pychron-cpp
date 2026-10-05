@@ -695,8 +695,9 @@ elctl -c line.toml laser camera-scale co2 221-hole 111
 ```
 
 (or Measure camera scale in the laser window's Calibration tab). The stage
-is jogged a quarter millimetre in x and in y and the scale read off what the
-picture does. A measurement whose axes disagree by more than 3%, or are more
+is jogged half a millimetre in x, in y and in both, and the scale read off
+what the picture does (`px_per_mm` in `cameras.toml` has to be roughly right
+to begin with: a move nothing like the one expected is refused). A measurement whose axes disagree by more than 3%, or are more
 than 3 degrees from square, is refused. It is kept in
 `camera_scales/co2.toml` and used instead of what `cameras.toml` says;
 `elctl laser camera-scale co2 clear` forgets it.

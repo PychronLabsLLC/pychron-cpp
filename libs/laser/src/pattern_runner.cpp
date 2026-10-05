@@ -321,10 +321,16 @@ Result<bool> PatternRunner::follow() {
   if (now - *f.at_rest < vision_.camera->settle) return true;
 
   std::vector<vision::Frame> frames;
+  // One wait for the whole look, not one per frame: the device is held meanwhile.
+  const auto began = std::chrono::steady_clock::now();
   for (int i = 0; i < vision_.camera->frames_per_step; ++i) {
     auto frame = vision_.frames->grab();
     if (!frame) return lose_the_camera(frame.error().what);
     frames.push_back(std::move(*frame));
+    if (vision_.camera->live() && std::chrono::steady_clock::now() - began > vision_.camera->live_timeout &&
+        i + 1 < vision_.camera->frames_per_step) {
+      return lose_the_camera("the camera is too slow: its frames did not come within its timeout");
+    }
   }
   f.looked = true;
   std::vector<vision::FrameView> views;

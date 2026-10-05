@@ -275,6 +275,11 @@ Result<void> LaserSystem::start_video_recording(std::string_view) {
 
 Result<void> LaserSystem::stop_video_recording() { return fail(extraction::not_supported("video recording", name_)); }
 
+std::string LaserSystem::camera_geometry() const {
+  Gate gate(gate_);
+  return camera_ ? camera_->geometry() : std::string{};
+}
+
 void LaserSystem::set_measured_scale(const ScaleMeasurement& measured) {
   Gate gate(gate_);
   if (camera_) camera_->measured = measured.map;
@@ -724,11 +729,23 @@ Result<bool> LaserSystem::advance() {
 Result<bool> LaserSystem::look(IStage& stage) {
   Centering& c = *centering_;
   std::vector<vision::Frame> frames;
+  // One wait for the whole look, not one per frame: the device is held
+  // meanwhile, and a stop would be held behind it.
+  const auto began = std::chrono::steady_clock::now();
   for (int i = 0; i < camera_->frames_per_step; ++i) {
     auto frame = frames_->grab();
-    if (!frame) return give_up(stage, vision::AutocenterReason::Camera);
+    if (!frame) break;
     frames.push_back(std::move(*frame));
+    if (camera_->live() && std::chrono::steady_clock::now() - began > camera_->live_timeout) break;
   }
+  // The stop was pressed while the camera was waited for: nothing more is
+  // sent to the stage, not even the way back.
+  if (stopped_.load()) {
+    abandon(AutocenterOutcome::Result::Stopped);
+    moving_.store(false);
+    return false;
+  }
+  if (static_cast<int>(frames.size()) < camera_->frames_per_step) return give_up(stage, vision::AutocenterReason::Camera);
   std::vector<vision::FrameView> views;
   for (const auto& frame : frames) views.push_back(frame.view());
   const vision::AutocenterStep step = c.controller.step(views);

@@ -9,6 +9,8 @@
 #include <system_error>
 #include <vector>
 
+#include <toml++/toml.hpp>
+
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/laser_system.hpp"
 
@@ -73,24 +75,21 @@ Result<ScaleMeasurement> measure_camera_scale(LaserSystem& system, double step_m
   auto start = system.position();
   if (!start) return fail(std::move(start).error());
 
-  // The target nearest `near`, in a picture taken now.
-  const auto sight = [&system](const vision::Point2& near, const char* where) -> Result<vision::Point2> {
+  // Everything the finder makes out, in a picture taken now.
+  const auto sight = [&system](const char* where) -> Result<std::vector<vision::Point2>> {
     auto seen = system.view(true, true);
     if (!seen) return fail(std::move(seen).error());
-    const vision::Target* best = nullptr;
-    double nearest = std::numeric_limits<double>::infinity();
-    for (const auto& target : seen->targets) {
-      const double d = std::hypot(target.center_px.x - near.x, target.center_px.y - near.y);
-      if (d < nearest) {
-        nearest = d;
-        best = &target;
-      }
-    }
-    if (best == nullptr) {
+    std::vector<vision::Point2> found;
+    for (const auto& target : seen->targets) found.push_back(target.center_px);
+    if (found.empty()) {
       return fail(ErrorKind::Config, std::string("nothing to follow in the picture ") + where +
                                          ": put a hole, or any mark the finder sees, under the aim point first");
     }
-    return best->center_px;
+    return found;
+  };
+  const auto apart = [](const vision::Point2& a, const vision::Point2& b) { return std::hypot(a.x - b.x, a.y - b.y); };
+  const auto nearest = [&apart](const std::vector<vision::Point2>& all, const vision::Point2& to) {
+    return *std::min_element(all.begin(), all.end(), [&](const auto& a, const auto& b) { return apart(a, to) < apart(b, to); });
   };
   const auto go = [&](double x, double y) -> Result<void> {
     if (auto moved = system.set_xy(x, y); !moved) return moved;
@@ -101,22 +100,73 @@ Result<ScaleMeasurement> measure_camera_scale(LaserSystem& system, double step_m
   auto first = system.view(true, true);
   if (!first) return fail(std::move(first).error());
   const vision::Point2 aim{first->aim_px.x, first->aim_px.y};
-  auto p0 = sight(aim, "at the start");
-  if (!p0) return fail(std::move(p0).error());
+  const double prior_px_per_mm = first->px_per_mm;  // what is believed so far: roughly right, or the check below says so
+  auto all = sight("at the start");
+  if (!all) return fail(std::move(all).error());
+  const vision::Point2 p0 = nearest(*all, aim);
+  // How far the target may move before something else is as near to where
+  // it was: beyond that, what is followed may be the neighbour.
+  double room = std::numeric_limits<double>::infinity();
+  for (const auto& other : *all) {
+    if (apart(other, p0) > 1e-9) room = std::min(room, apart(other, p0) / 2);
+  }
 
   std::vector<vision::JogPair> jogs;
-  for (const auto& [dx, dy, where] : {std::tuple{step_mm, 0.0, "after the step in x"}, std::tuple{0.0, step_mm, "after the step in y"}}) {
+  for (const auto& [dx, dy, where] : {std::tuple{step_mm, 0.0, "after the step in x"}, std::tuple{0.0, step_mm, "after the step in y"},
+                                      std::tuple{step_mm, step_mm, "after the step in both"}}) {
     if (auto moved = go(start->x + dx, start->y + dy); !moved) return fail(std::move(moved).error());
-    // The same target: it has moved less far than any other is away.
-    auto p = sight(*p0, where);
-    if (!p) {
+    auto seen = sight(where);
+    if (!seen) {
       (void)back();
-      return fail(std::move(p).error());
+      return fail(std::move(seen).error());
     }
-    jogs.push_back({{dx, dy}, {p->x - p0->x, p->y - p0->y}});
+    const vision::Point2 p = nearest(*seen, p0);
+    const double moved_px = apart(p, p0);
+    // Something else about as near to where the target was: which of the
+    // two it is cannot be told.
+    double rival = std::numeric_limits<double>::infinity();
+    for (const auto& other : *seen) {
+      if (apart(other, p) > 1e-9) rival = std::min(rival, apart(other, p0));
+    }
+    // And a move far from what the scale on file expects is the neighbour,
+    // seen a whole pitch away, however tidy the numbers.
+    const double expected_px = std::hypot(dx, dy) * prior_px_per_mm;
+    const bool gross = expected_px > 0 && (moved_px > 2.5 * expected_px || moved_px < expected_px / 2.5);
+    if (moved_px >= kMinJogPx && moved_px < room && (rival < 2 * moved_px || gross)) {
+      (void)back();
+      return fail(ErrorKind::Config,
+                  "the target moved " + num(moved_px, 1) + " pixels " + where + " where about " + num(expected_px, 1) +
+                      " were expected" + (rival < 2 * moved_px ? ", and something else in the picture is about as near" : "") +
+                      ": what was followed may not be the same target. Use a smaller step, or set px_per_mm in " +
+                      "cameras.toml roughly right first",
+                  system.device_name());
+    }
+    if (moved_px < kMinJogPx || moved_px >= room) {
+      (void)back();
+      if (moved_px < kMinJogPx) {
+        return fail(ErrorKind::Config, "the target moved " + num(moved_px, 1) + " pixels " + where + " (at least " +
+                                           num(kMinJogPx, 0) + " are needed): the picture does not follow the stage, or the " +
+                                           "step is too small to see",
+                    system.device_name());
+      }
+      return fail(ErrorKind::Config, "the target moved " + num(moved_px, 1) + " pixels " + where + ", as far as half way to " +
+                                         "the next thing in the picture: what was followed may not be the same target. " +
+                                         "Use a smaller step",
+                  system.device_name());
+    }
+    jogs.push_back({{dx, dy}, {p.x - p0.x, p.y - p0.y}});
   }
   if (auto returned = back(); !returned) return fail(std::move(returned).error());
-  return scale_from(jogs);
+  auto measured = scale_from(jogs);
+  if (!measured) return measured;
+  // Three sightings for a map two would give: they have to agree.
+  if (measured->map.residual_mm > 0.1 * step_mm) {
+    return fail(ErrorKind::Config, "the sightings disagree by " + num(measured->map.residual_mm) + " mm over a step of " +
+                                       num(step_mm) + " mm: one of them was not of the same target",
+                system.device_name());
+  }
+  measured->geometry = system.camera_geometry();
+  return measured;
 }
 
 CameraScaleStore::CameraScaleStore(fs::path dir) : dir_(std::move(dir)) {}
@@ -136,6 +186,10 @@ Result<std::optional<ScaleMeasurement>> CameraScaleStore::load(std::string_view 
   if (!map) return fail(ErrorKind::Config, path.string() + ": " + map.error().what);
   auto m = describe(*map);
   if (!m) return fail(ErrorKind::Config, path.string() + ": " + m.error().what);
+  // (the file parsed a moment ago: this cannot fail)
+  if (const auto table = toml::parse(text.str())) {
+    if (const auto geometry = table.table()["geometry"].value<std::string>()) m->geometry = *geometry;
+  }
   return std::optional<ScaleMeasurement>(std::move(*m));
 }
 
@@ -153,6 +207,7 @@ Result<void> CameraScaleStore::save(std::string_view device, const ScaleMeasurem
         << "# Used instead of px_per_mm, flip_x and flip_y in cameras.toml. Delete to go back to those.\n"
         << "# px_per_mm = " << num(m.px_per_mm) << "   flip_x = " << (m.flip_x ? "true" : "false")
         << "   flip_y = " << (m.flip_y ? "true" : "false") << "   skew " << num(m.skew_deg, 2) << " deg\n"
+        << "geometry = \"" << m.geometry << "\"\n"
         << m.map.to_toml();
     out.flush();
     if (!out) {

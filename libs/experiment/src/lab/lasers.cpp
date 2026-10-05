@@ -38,8 +38,17 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
     std::string scale_trouble;
     if (const laser::CameraConfig* found = lab.cameras.find(name)) {
       described = *found;
-      if (auto measured = lab.camera_scales->load(name); !measured) scale_trouble = measured.error().what;
-      else if (*measured) described->measured = (*measured)->map;
+      if (auto measured = lab.camera_scales->load(name); !measured) {
+        scale_trouble = measured.error().what;
+      } else if (*measured) {
+        const std::string& of = (*measured)->geometry;
+        if (!of.empty() && of != found->geometry()) {
+          scale_trouble = "its measured scale (" + lab.camera_scales->file(name).string() + ") is of another camera setup (" +
+                          of + "; now " + found->geometry() + "): measure it again (elctl laser camera-scale) or clear it";
+        } else {
+          described->measured = (*measured)->map;
+        }
+      }
     }
     const laser::CameraConfig* camera = described ? &*described : nullptr;
     if (camera != nullptr && camera->source != laser::CameraSource::Recorded && !scale_trouble.empty()) {
@@ -52,7 +61,10 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
       // for the others.
       const auto unopened = [](vision::IFrameSource& frames) {
         auto* live = dynamic_cast<vision::LiveFeed*>(&frames);
-        return live != nullptr ? live->latest().error : std::string{};
+        if (live == nullptr) return std::string{};
+        // How its first open went, one that has not answered included.
+        const auto opened = live->wait_open();
+        return opened ? std::string{} : opened.error().what;
       };
       if (camera->use == laser::CameraUse::View) {
         // A picture only. What is wrong with it stops no queue: nothing

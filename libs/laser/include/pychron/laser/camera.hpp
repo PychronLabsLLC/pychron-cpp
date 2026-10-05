@@ -37,7 +37,9 @@
 //   channel = "luma"          luma | r | g | b
 //   rotate = 0                0 | 90 | 180 | 270, clockwise
 //   roi = [0, 0, 0, 0]        x, y, w, h; no size: the whole frame
-//   timeout_ms = 1000         how long anyone waits for a frame
+//   timeout_ms = 1000         how long anyone waits for a frame: 100 or more,
+//                             and 2000 at most for a camera that centres
+//                             (an emergency stop may wait that long for it)
 //
 //   [co2.pylon]               source = "pylon": a Basler camera (GigE, USB3)
 //   serial = "40012345"       empty: the first found
@@ -123,6 +125,11 @@ struct CameraConfig {
   bool live() const noexcept { return source == CameraSource::OpenCv || source == CameraSource::Pylon; }
   // What a live camera's backend is asked to open.
   vision::CameraRequest request() const;
+  // What picture this camera gives, as text: its source, device, size and
+  // the way the picture is cut and turned. A scale measured with one
+  // geometry is not another's (px_per_mm and the flips, which a measurement
+  // replaces, are not part of it).
+  std::string geometry() const;
 };
 
 // Whether this camera may be used to move a stage (autocenter). Only a
@@ -130,8 +137,8 @@ struct CameraConfig {
 // is for looking at what a finder sees), a simulated camera only over a
 // simulated stage (over a real one it would "find" its made-up tray error
 // and the laser would be fired there), and a live camera only over a real
-// one (a simulated stage is not what it looks at). A camera marked
-// use = "view" never does. Config error saying which.
+// one (a simulated stage is not what it looks at), and never a video file.
+// A camera marked use = "view" never does. Config error saying which.
 Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_simulated);
 
 class CameraLibrary {

@@ -201,7 +201,7 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     if (rotate % 90 != 0) o.fail("rotate", "expected 0, 90, 180 or 270");
     c.shape.rotate = rotate;
     o.box("roi", c.shape.roi);
-    o.whole("timeout_ms", timeout_ms, 1, 60000);
+    o.whole("timeout_ms", timeout_ms, 100, 60000);
     o.finish();
     r.adopt(o);
     if (c.source == CameraSource::OpenCv) c.live_device = device;
@@ -221,7 +221,7 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
       pixel_format = *format;
     }
     p.whole("packet_size", packet_size, 576, 16404);
-    p.whole("timeout_ms", pylon_timeout_ms, 1, 60000);
+    p.whole("timeout_ms", pylon_timeout_ms, 100, 60000);
     p.finish();
     r.adopt(p);
     if (c.source == CameraSource::Pylon) {
@@ -234,6 +234,12 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     }
   }
   c.live_timeout = std::chrono::milliseconds(timeout_ms);
+  // A centring holds the device while it waits for a frame, and so would an
+  // emergency stop behind it.
+  if (r.ok() && c.live() && c.use == CameraUse::Centre && timeout_ms > 2000) {
+    r.fail(std::string(to_string(c.source)) + ".timeout_ms",
+           "at most 2000 for a camera that centres holes (use = \"view\" may wait longer)");
+  }
   if (const toml::table* autocenter = r.sub("autocenter")) {
     Reader a(*autocenter, c.device + ".autocenter");
     a.number("tolerance_mm", c.tolerance_mm, 0, 10, true);
@@ -276,6 +282,20 @@ vision::CameraRequest CameraConfig::request() const {
   return r;
 }
 
+std::string CameraConfig::geometry() const {
+  std::string g(to_string(source));
+  if (source == CameraSource::Sim) return g + " " + std::to_string(sim_width) + "x" + std::to_string(sim_height);
+  if (source == CameraSource::Recorded) return g + " " + frames;
+  const vision::CameraRequest r = request();
+  const char* channel = shape.channel == vision::SourceConfig::Channel::R   ? "r"
+                        : shape.channel == vision::SourceConfig::Channel::G ? "g"
+                        : shape.channel == vision::SourceConfig::Channel::B ? "b"
+                                                                            : "luma";
+  return g + " " + r.device + " " + std::to_string(r.width) + "x" + std::to_string(r.height) + " rotate " +
+         std::to_string(shape.rotate) + " roi " + std::to_string(shape.roi.x) + "," + std::to_string(shape.roi.y) + "," +
+         std::to_string(shape.roi.w) + "," + std::to_string(shape.roi.h) + " " + channel;
+}
+
 double CameraConfig::scale_px_per_mm() const {
   if (!measured) return px_per_mm;
   const auto& m = measured->m;
@@ -288,6 +308,13 @@ Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_sim
     return fail(ErrorKind::Config,
                 "the camera of " + config.device + " is for looking only (use = \"view\" in cameras.toml): nothing it " +
                     "sees moves the stage",
+                config.device);
+  }
+  if (config.source == CameraSource::OpenCv && !config.live_device.empty() &&
+      config.live_device.find_first_not_of("0123456789") != std::string::npos) {
+    return fail(ErrorKind::Config,
+                "the camera of " + config.device + " is a video file (" + config.live_device +
+                    "), which does not follow the stage: set use = \"view\" to look at it",
                 config.device);
   }
   if (config.live() && stage_is_simulated) {
