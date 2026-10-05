@@ -76,10 +76,16 @@ Result<void> LaserSystem::set_axis(Axis axis, double value) {
   return (*stage)->set_axis(axis, value);
 }
 
-Result<void> LaserSystem::set_xy(double x, double y) {
+Result<void> LaserSystem::set_xy(double x, double y, double speed_mm_s) {
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
-  return (*stage)->set_xy(x, y);
+  return (*stage)->set_xy(x, y, speed_mm_s);
+}
+
+Result<void> LaserSystem::stop() {
+  auto stage = driver_stage();
+  if (!stage) return fail(stage.error());
+  return (*stage)->stop();
 }
 
 Result<StagePosition> LaserSystem::position() {

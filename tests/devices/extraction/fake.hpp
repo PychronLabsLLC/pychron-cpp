@@ -93,7 +93,7 @@ class FakeExtractionDevice final : public IExtractionDevice,
     (axis == Axis::X ? at_.x : axis == Axis::Y ? at_.y : at_.z) = value;
     return {};
   }
-  Result<void> set_xy(double x, double y) override {
+  Result<void> set_xy(double x, double y, double = 0) override {
     at_.x = x;
     at_.y = y;
     return {};

@@ -255,7 +255,7 @@ Result<void> SimExtractionDevice::set_axis(Axis axis, double value) {
   });
 }
 
-Result<void> SimExtractionDevice::set_xy(double x, double y) {
+Result<void> SimExtractionDevice::set_xy(double x, double y, double /*speed_mm_s*/) {
   return locked([&]() -> Result<void> {
     at_.x = x;
     at_.y = y;

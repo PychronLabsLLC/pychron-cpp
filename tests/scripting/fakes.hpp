@@ -131,7 +131,7 @@ class FakeLaser final : public extraction::IExtractionDevice,
     return rec(std::string("set_axis ") + (a == Axis::X ? "x" : a == Axis::Y ? "y" : "z") + " " +
                num(v));
   }
-  Result<void> set_xy(double x, double y) override { return rec("set_xy " + num(x) + " " + num(y)); }
+  Result<void> set_xy(double x, double y, double = 0) override { return rec("set_xy " + num(x) + " " + num(y)); }
   Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
   Result<bool> moving() override { return false; }
   Result<void> set_tray(std::string_view t) override { return rec("set_tray " + std::string(t)); }

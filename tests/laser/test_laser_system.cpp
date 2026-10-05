@@ -258,6 +258,18 @@ TEST_F(LaserSystemTest, AHoleOutsideTravelIsTheDriversRefusal) {
   EXPECT_FALSE(*system.moving());
 }
 
+TEST_F(LaserSystemTest, SpeedAndStopAreTheDrivers) {
+  ASSERT_TRUE(system.set_xy(10, 0, 1.0));
+  EXPECT_TRUE(logged("Stage.MoveTo 10000,0,0,1000,1000,100"));
+  clock.advance(2s);
+  ASSERT_TRUE(system.stop());
+  EXPECT_TRUE(logged("Stage.Stop"));
+  EXPECT_FALSE(*system.moving());
+  // a hole move is at the stage's own speed
+  ASSERT_TRUE(system.move_to_position("3", false));
+  EXPECT_TRUE(logged("Stage.MoveTo 15000,20000,0,5000,5000,100"));
+}
+
 TEST_F(LaserSystemTest, AutocenterIsAcceptedAndChangesNothing) {
   ASSERT_TRUE(system.move_to_position("3", true));
   EXPECT_TRUE(logged("Stage.MoveTo 15000,20000,0,5000,5000,100"));
@@ -293,4 +305,18 @@ TEST(LaserSystemFeatures, ADriverWithoutAStageHasNone) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
   EXPECT_FALSE(static_cast<IStage&>(system).position());
+  EXPECT_FALSE(static_cast<IStage&>(system).stop());
+}
+
+// A stage that cannot stop says so, through the system as on its own.
+TEST(LaserSystemFeatures, AStageThatCannotStopSaysSo) {
+  LabDir lab;
+  const auto trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  extraction::testing::FakeExtractionDevice fake{"fake", {Capability::Stage}};
+  LaserSystem system{"fake", fake, trays, store};
+  ASSERT_NE(system.stage(), nullptr);
+  auto r = system.stage()->stop();
+  ASSERT_FALSE(r);
+  EXPECT_TRUE(is_not_supported(r.error()));
 }

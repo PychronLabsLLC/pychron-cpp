@@ -101,7 +101,7 @@ class FakeStage final : public extraction::IStage {
  public:
   Result<void> move_to_position(std::string_view, bool) override { return {}; }
   Result<void> set_axis(Axis, double) override { return {}; }
-  Result<void> set_xy(double, double) override { return {}; }
+  Result<void> set_xy(double, double, double = 0) override { return {}; }
   Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
   Result<bool> moving() override { return false; }
   Result<void> set_tray(std::string_view tray) override {

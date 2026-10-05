@@ -76,9 +76,15 @@ struct IStage {
   // name. Starts the move; poll moving().
   virtual Result<void> move_to_position(std::string_view position, bool autocenter) = 0;
   virtual Result<void> set_axis(Axis axis, double value) = 0;
-  virtual Result<void> set_xy(double x, double y) = 0;
+  // `speed_mm_s` 0: the stage's own travel speed. A stage that cannot set a
+  // speed moves at its own; a negative or non-finite speed is a Config error.
+  // (A default argument is bound to the static type: overrides repeat it.)
+  virtual Result<void> set_xy(double x, double y, double speed_mm_s = 0) = 0;
   virtual Result<StagePosition> position() = 0;
   virtual Result<bool> moving() = 0;
+  // Stop any motion now, where it is; moving() is false after. A stage that
+  // cannot be stopped answers not_supported().
+  virtual Result<void> stop() { return fail(not_supported("stage stop")); }
   // Config error for an unknown tray.
   virtual Result<void> set_tray(std::string_view tray) = 0;
   virtual std::vector<std::string> positions() const = 0;  // on the current tray

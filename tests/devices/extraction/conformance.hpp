@@ -274,8 +274,36 @@ TYPED_TEST_P(StageConformance, AxisMovesAreReadBack) {
   EXPECT_NEAR(at->z, 0.5, 1e-6);
 }
 
+// A stage that cannot set a speed moves at its own; either way it arrives.
+TYPED_TEST_P(StageConformance, AMoveAtASpeedSettles) {
+  using namespace pychron::extraction;
+  auto& s = this->stage();
+  ASSERT_TRUE(s.set_xy(1.0, 1.0, 0.5));
+  ASSERT_TRUE(conformance::settles(this->harness, [&] { return s.moving(); }));
+  auto at = s.position();
+  ASSERT_TRUE(at);
+  EXPECT_NEAR(at->x, 1.0, 1e-6);
+  EXPECT_NEAR(at->y, 1.0, 1e-6);
+}
+
+// stop() either stops the stage or says it cannot; after it nothing moves.
+TYPED_TEST_P(StageConformance, StopStopsOrIsNotSupported) {
+  using namespace pychron::extraction;
+  auto& s = this->stage();
+  ASSERT_TRUE(s.set_xy(2.0, 2.0, 0.5));
+  auto stopped = s.stop();
+  if (!stopped) {
+    EXPECT_TRUE(is_not_supported(stopped.error())) << to_string(stopped.error());
+    return;
+  }
+  auto moving = s.moving();
+  ASSERT_TRUE(moving);
+  EXPECT_FALSE(*moving);
+}
+
 REGISTER_TYPED_TEST_SUITE_P(StageConformance, HasPositions, UnknownPositionIsConfig,
-                            MoveToEveryPositionSettles, AxisMovesAreReadBack);
+                            MoveToEveryPositionSettles, AxisMovesAreReadBack, AMoveAtASpeedSettles,
+                            StopStopsOrIsNotSupported);
 
 // --- IPatternRunner ---------------------------------------------------------
 

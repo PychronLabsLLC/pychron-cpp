@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -393,6 +394,76 @@ TEST_F(ChromiumTest, AScanPositionMovesByScanNumber) {
   ASSERT_FALSE(missing);
   EXPECT_EQ(missing.error().kind, ErrorKind::Config);
   EXPECT_FALSE(*laser.moving());
+}
+
+// --- speed and stop (laser patterns design, section 6) ------------------------
+
+TEST_F(ChromiumTest, AMoveAtASpeedSendsItForXAndY) {
+  ASSERT_TRUE(laser.set_xy(10, 0, 1.0));  // 1 mm/s: 1000 microns per second in x and y, z its own
+  EXPECT_TRUE(logged("Stage.MoveTo 10000,0,0,1000,1000,100"));
+  clock.advance(9s);
+  for (int i = 0; i < 5; ++i) EXPECT_TRUE(*laser.moving());  // 10 mm takes 10 s
+  clock.advance(2s);
+  settle();
+  EXPECT_EQ(sim.position().x, 10000);
+}
+
+TEST_F(ChromiumTest, WithNoSpeedTheStagesOwnIsUsed) {
+  ASSERT_TRUE(laser.set_xy(1, 1));
+  EXPECT_TRUE(logged("Stage.MoveTo 1000,1000,0,5000,5000,100"));
+  ASSERT_TRUE(static_cast<IStage&>(laser).set_xy(2, 2, 0));
+  EXPECT_TRUE(logged("Stage.MoveTo 2000,2000,0,5000,5000,100"));
+}
+
+// Never more than the configured travel speed, never 0 (a move at 0 never arrives).
+TEST_F(ChromiumTest, SpeedIsClampedToTheStagesOwn) {
+  ASSERT_TRUE(laser.set_xy(1, 0, 50));
+  EXPECT_TRUE(logged("Stage.MoveTo 1000,0,0,5000,5000,100"));
+  ASSERT_TRUE(laser.set_xy(2, 0, 0.0001));
+  EXPECT_TRUE(logged("Stage.MoveTo 2000,0,0,1,1,100"));
+  ASSERT_TRUE(laser.set_xy(3, 0, 0.0015));  // rounds to 2
+  EXPECT_TRUE(logged("Stage.MoveTo 3000,0,0,2,2,100"));
+}
+
+TEST_F(ChromiumTest, ABadSpeedSendsNothing) {
+  const auto before = sim.log();
+  for (double speed : {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+    auto r = laser.set_xy(1, 1, speed);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  }
+  EXPECT_EQ(sim.log(), before);
+}
+
+TEST_F(ChromiumTest, StopHaltsTheStageWhereItIs) {
+  ASSERT_TRUE(laser.set_xy(10, 0, 1.0));
+  clock.advance(3s);
+  EXPECT_TRUE(*laser.moving());
+  ASSERT_TRUE(laser.stop());
+  EXPECT_TRUE(logged("Stage.Stop"));
+  EXPECT_FALSE(*laser.moving());  // at once: there is no target any more
+  const auto at = sim.position();
+  EXPECT_NEAR(static_cast<double>(at.x), 3000, 50);
+  clock.advance(10s);
+  EXPECT_EQ(sim.position().x, at.x);
+  // and it moves again when asked
+  ASSERT_TRUE(laser.set_xy(0, 0));
+  settle();
+  EXPECT_EQ(sim.position().x, 0);
+}
+
+TEST_F(ChromiumTest, StopWithNothingMovingIsFine) {
+  ASSERT_TRUE(laser.stop());
+  EXPECT_FALSE(*laser.moving());
+}
+
+TEST_F(ChromiumTest, ARefusedStopIsAnErrorAndTheTargetIsForgotten) {
+  ASSERT_TRUE(laser.set_xy(10, 0, 1.0));
+  sim.fail_next("Stage.Stop", 4);
+  auto r = laser.stop();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_FALSE(*laser.moving());  // the driver no longer claims to know where it is going
 }
 
 TEST_F(ChromiumTest, AHoleNameIsNotTheDriversToResolve) {

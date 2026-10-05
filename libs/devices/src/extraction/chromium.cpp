@@ -422,13 +422,21 @@ Result<void> ChromiumLaser::check_travel(std::size_t axis, double mm) const {
                                        std::to_string(high) + " mm)");
 }
 
-Result<void> ChromiumLaser::start_move(const StagePosition& to) {
+Result<void> ChromiumLaser::start_move(const StagePosition& to, double speed_mm_s) {
   const std::array<double, 3> wanted{to.x, to.y, to.z};
   for (std::size_t i = 0; i < 3; ++i) {
     if (auto ok = check_travel(i, wanted[i]); !ok) return ok;
   }
   const cr::Microns wire = to_wire(to);
-  auto reply = act(cr::stage_move_to(wire, options_.move_speed), cr::stage_position());
+  cr::Microns speed = options_.move_speed;
+  if (speed_mm_s > 0) {
+    // Whole microns per second, at most the stage's own and at least 1: a
+    // speed of 0 on the wire is a move that never arrives.
+    const auto um_per_s = static_cast<std::int64_t>(std::llround(std::min(speed_mm_s * 1000.0, 1e12)));
+    speed.x = std::clamp<std::int64_t>(um_per_s, 1, std::max<std::int64_t>(1, options_.move_speed.x));
+    speed.y = std::clamp<std::int64_t>(um_per_s, 1, std::max<std::int64_t>(1, options_.move_speed.y));
+  }
+  auto reply = act(cr::stage_move_to(wire, speed), cr::stage_position());
   if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
   std::lock_guard lock(state_);
   target_ = Target{std::nullopt, wire};
@@ -436,14 +444,30 @@ Result<void> ChromiumLaser::start_move(const StagePosition& to) {
   return observe(Result<void>{});
 }
 
-Result<void> ChromiumLaser::set_xy(double x, double y) {
+Result<void> ChromiumLaser::set_xy(double x, double y, double speed_mm_s) {
+  if (!std::isfinite(speed_mm_s) || speed_mm_s < 0) {
+    return refuse(ErrorKind::Config, "a stage speed must be 0 (the stage's own) or more, in mm/s");
+  }
   // Checked before the read, so a move that cannot be made sends nothing.
   if (auto ok = check_travel(0, x); !ok) return ok;
   if (auto ok = check_travel(1, y); !ok) return ok;
   // z stays where it is: read, not remembered.
   auto at = observe(read_position());
   if (!at) return fail(std::move(at).error());
-  return start_move({x, y, at->z});
+  return start_move({x, y, at->z}, speed_mm_s);
+}
+
+Result<void> ChromiumLaser::stop() {
+  auto reply = act(cr::stage_stop(), cr::stage_position());
+  // Whatever Chromium said, the driver no longer knows where the stage is
+  // going: moving() must not go on reporting a move it cannot vouch for.
+  {
+    std::lock_guard lock(state_);
+    target_.reset();
+    good_polls_ = 0;
+  }
+  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
+  return observe(Result<void>{});
 }
 
 Result<void> ChromiumLaser::set_axis(Axis axis, double value) {

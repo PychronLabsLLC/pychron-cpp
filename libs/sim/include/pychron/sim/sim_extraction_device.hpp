@@ -114,7 +114,7 @@ class SimExtractionDevice final : public extraction::IExtractionDevice,
   // IStage
   Result<void> move_to_position(std::string_view position, bool autocenter) override;
   Result<void> set_axis(Axis axis, double value) override;
-  Result<void> set_xy(double x, double y) override;
+  Result<void> set_xy(double x, double y, double speed_mm_s = 0) override;
   Result<extraction::StagePosition> position() override;
   Result<bool> moving() override;
   Result<void> set_tray(std::string_view tray) override;
