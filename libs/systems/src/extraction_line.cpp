@@ -168,7 +168,7 @@ Result<void> ExtractionLine::build() {
   scheduler_ = std::make_unique<Scheduler>(*clock_, &bus_, options_.scheduler, log_hub_);
 
   subscriptions_.push_back(bus_.subscribe<PressureSample>(
-      [this](const PressureSample& s) { record_pressure(s.gauge, s.value); }));
+      [this](const PressureSample& s) { record_pressure(s.gauge, s.value, s.ts); }));
   // Every actuation path (operator, scheduler, protocols) goes through
   // SwitchManager, which reports outcomes as events: log them all here.
   // The hub publishes Log from inside these handlers; the bus allows that.
@@ -289,7 +289,7 @@ Result<double> ExtractionLine::read_gauge(std::string_view name) {
   } else if (auto* single = capability<IPressureGauge>(*d)) {
     value = single->read_pressure();
   }
-  if (value) record_pressure(g->name, *value);
+  if (value) record_pressure(g->name, *value, clock_->now());
   return value;
 }
 
@@ -329,9 +329,17 @@ void ExtractionLine::read_all_gauges() {
   }
 }
 
-void ExtractionLine::record_pressure(const std::string& gauge, double value) {
+void ExtractionLine::record_pressure(const std::string& gauge, double value, TimePoint ts) {
   std::lock_guard lock(pressures_mutex_);
   pressures_[gauge] = value;
+  pressure_times_[gauge] = ts;
+}
+
+std::optional<ExtractionLine::PressureReading> ExtractionLine::latest_pressure(std::string_view gauge) const {
+  std::lock_guard lock(pressures_mutex_);
+  auto t = pressure_times_.find(gauge);
+  if (t == pressure_times_.end()) return std::nullopt;
+  return PressureReading{pressures_.at(t->first), t->second};
 }
 
 Result<void> ExtractionLine::set_locked(std::string_view name, bool locked) {

@@ -120,6 +120,13 @@ class ExtractionLine {
   Result<double> read_gauge(std::string_view name);
   // Recorded valve states and the latest pressure of every gauge read so far.
   Snapshot snapshot() const;
+  // The latest reading of `gauge` and when it was taken (scan or read_gauge);
+  // nullopt before the first successful read.
+  struct PressureReading {
+    double value = 0.0;
+    TimePoint ts{};
+  };
+  std::optional<PressureReading> latest_pressure(std::string_view gauge) const;
 
   SignalBus& bus() noexcept { return bus_; }
   // Options::log_hub, or the hub built from [logging]; null only if that failed.
@@ -143,7 +150,7 @@ class ExtractionLine {
 
   Result<void> build();
   void read_all_gauges();
-  void record_pressure(const std::string& gauge, double value);
+  void record_pressure(const std::string& gauge, double value, TimePoint ts);
   void log(LogLevel level, std::string message);
   void log_to(const std::optional<Logger>& logger, std::string_view name, LogLevel level, std::string message);
   void load_state();
@@ -191,6 +198,7 @@ class ExtractionLine {
   mutable std::mutex locks_mutex_;  // serializes set_locked() and the state file
   mutable std::mutex pressures_mutex_;
   std::map<std::string, double> pressures_;
+  std::map<std::string, TimePoint, std::less<>> pressure_times_;
 };
 
 }  // namespace pychron::systems
