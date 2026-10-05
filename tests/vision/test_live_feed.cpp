@@ -77,6 +77,7 @@ LiveFeedOptions quick() {
   LiveFeedOptions o;
   o.timeout = 400ms;
   o.reopen = 20ms;
+  o.open_timeout = 400ms;
   return o;
 }
 
@@ -219,6 +220,25 @@ TEST(LiveFeed, AHungCameraIsSaidEvenWhenNobodyGrabs) {
   EXPECT_DOUBLE_EQ(feed.latest().fps, 0) << "and no rate is claimed for it";
   camera.set(Camera::Mode::Run);
   ASSERT_TRUE(eventually([&] { return feed.latest().error.empty(); }));
+}
+
+// A camera takes a moment to wake: longer than anyone should wait for a
+// frame, and that is not a camera that has stopped.
+TEST(LiveFeed, ASlowOpenIsWaitedForAndIsNotTrouble) {
+  Camera camera;
+  LiveFeedOptions o = quick();  // frames: 400 ms
+  o.open_timeout = 5000ms;
+  LiveFeed feed(
+      [&camera](ClockFn stamp) -> Result<std::unique_ptr<IFrameSource>> {
+        std::this_thread::sleep_for(900ms);  // waking
+        return std::unique_ptr<IFrameSource>(std::make_unique<FakeSource>(camera, std::move(stamp)));
+      },
+      o);
+  std::this_thread::sleep_for(600ms);  // past the frame timeout, still opening
+  EXPECT_TRUE(feed.latest().error.empty()) << feed.latest().error;
+  const auto opened = feed.wait_open();
+  EXPECT_TRUE(opened) << opened.error().what;
+  EXPECT_TRUE(feed.grab());
 }
 
 // An opener that does not come back: the first open is a failure all the same.

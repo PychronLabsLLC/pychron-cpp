@@ -33,6 +33,9 @@ namespace pychron::vision {
 
 struct LiveFeedOptions {
   std::chrono::milliseconds timeout{1000};
+  // How long the camera may take to open before that is trouble: a camera
+  // takes a moment to wake, longer than anyone should wait for a frame.
+  std::chrono::milliseconds open_timeout{5000};
   std::chrono::milliseconds reopen{1000};
   ClockFn stamp;  // empty: steady_clock
 };
@@ -50,7 +53,7 @@ class LiveFeed final : public IFrameSource {
   LiveFeed& operator=(const LiveFeed&) = delete;
 
   // How the first attempt to open the camera went; Timeout if it has not
-  // answered within the timeout (it is still being tried).
+  // answered within the open timeout (it is still being tried).
   Result<void> wait_open();
 
   Result<Frame> grab() override;

@@ -30,6 +30,7 @@ struct LiveFeed::State {
   Steady::time_point read_began{};  // of `frame`
   Steady::time_point arrived{};
   Steady::time_point waiting_since = Steady::now();  // the open or read now in flight began
+  bool opening = true;                               // and it is an open
   double fps = 0;
   bool lost = false;      // the last open or read failed: the camera is being reopened
   bool stalled = false;   // somebody waited the whole timeout: no waiting until a frame comes
@@ -75,6 +76,7 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
         {
           std::lock_guard lock(s.mutex);
           s.waiting_since = Steady::now();
+          s.opening = true;
         }
         auto opened = s.open(stamp);
         std::unique_lock lock(s.mutex);
@@ -98,6 +100,7 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
       {
         std::lock_guard lock(s.mutex);
         s.waiting_since = began;
+        s.opening = false;
       }
       auto frame = source->grab();  // may not return for a long time
       const Steady::time_point now = Steady::now();
@@ -154,9 +157,10 @@ Result<void> LiveFeed::wait_open() {
   State& s = *state_;
   std::unique_lock lock(s.mutex);
   // Asked again later, it does not wait again for an open already known to be late.
-  const auto deadline = s.waiting_since + s.options.timeout;
+  const auto deadline = s.waiting_since + s.options.open_timeout;
   if (!s.changed.wait_until(lock, deadline, [&s] { return s.opened; })) {
-    return fail(ErrorKind::Timeout, "the camera has not opened in " + std::to_string(s.options.timeout.count()) + " ms");
+    return fail(ErrorKind::Timeout,
+                "the camera has not opened in " + std::to_string(s.options.open_timeout.count()) + " ms");
   }
   return s.open_result;
 }
@@ -196,9 +200,11 @@ LiveFeed::Latest LiveFeed::latest() const {
   if (s.frame) out.age = std::chrono::duration_cast<std::chrono::milliseconds>(Steady::now() - s.arrived);
   // Whether or not anybody has waited for it: an open or a read that has
   // been in flight longer than the timeout is a camera that has stopped.
-  const bool hung = Steady::now() - s.waiting_since > s.options.timeout;
+  const auto allowed = s.opening ? s.options.open_timeout : s.options.timeout;
+  const bool hung = Steady::now() - s.waiting_since > allowed;
   if (s.lost || s.stalled) out.error = s.error.what;
-  else if (hung) out.error = "no frame from the camera in " + std::to_string(s.options.timeout.count()) + " ms";
+  else if (hung && s.opening) out.error = "the camera has not opened in " + std::to_string(allowed.count()) + " ms";
+  else if (hung) out.error = "no frame from the camera in " + std::to_string(allowed.count()) + " ms";
   out.fps = out.error.empty() ? s.fps : 0.0;
   return out;
 }
