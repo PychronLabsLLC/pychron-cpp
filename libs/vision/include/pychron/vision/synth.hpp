@@ -9,11 +9,11 @@
 namespace pychron::vision {
 
 // Ground truth for a rendered scene. center_px uses the library pixel
-// convention (pixel centres at integer coordinates), not a rounded pixel.
+// convention (pixel centers at integer coordinates), not a rounded pixel.
 struct Truth {
   Vec2 center_px{};
   double radius_px = 0;
-  bool visible = false;  // target centre lies inside the frame
+  bool visible = false;  // target center lies inside the frame
 };
 
 struct HoleScene {

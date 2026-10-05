@@ -99,7 +99,7 @@ class CameraLibrary {
 
 Ranges: `px_per_mm` > 0 (≤ 10000); `settle_ms` 0–10000; `sim.noise` 0–1; `sim.width`/`height` 16–4096; `tolerance_mm` > 0 (≤ 10); `max_step_mm` > 0 (≤ 10); `max_iterations` 1–50; `frames_per_step` 1–15; `source = "recorded"` requires `frames`.
 
-- [ ] **Step 1: Write the failing tests:** `CameraConfig.DefaultsWithAnEmptyTable`; `CameraConfig.ReadsEveryKey`; `CameraConfig.MapFollowsTheFlips` (a target right of centre needs a move whose sign follows `flip_x`; pinned against `vision::CameraStageMap::from_scale`); `CameraConfigBad.RefusesBadValues` (parameterised: each range end, wrong types, unknown key at each level, `source = "usb"`, recorded without `frames`, `on_failure = "retry"`), each naming device and key; `CameraLibrary.OneBadTableDoesNotHideTheOthers`; `CameraLibrary.MissingFileIsEmpty`; `CameraLibrary.NotTomlIsOneProblem`.
+- [ ] **Step 1: Write the failing tests:** `CameraConfig.DefaultsWithAnEmptyTable`; `CameraConfig.ReadsEveryKey`; `CameraConfig.MapFollowsTheFlips` (a target right of center needs a move whose sign follows `flip_x`; pinned against `vision::CameraStageMap::from_scale`); `CameraConfigBad.RefusesBadValues` (parameterised: each range end, wrong types, unknown key at each level, `source = "usb"`, recorded without `frames`, `on_failure = "retry"`), each naming device and key; `CameraLibrary.OneBadTableDoesNotHideTheOthers`; `CameraLibrary.MissingFileIsEmpty`; `CameraLibrary.NotTomlIsOneProblem`.
 - [ ] **Step 2: Run** — Expected: FAIL to compile.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `ctest --test-dir build/dev -R Camera` — Expected: PASS.
@@ -178,7 +178,7 @@ Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConf
 
 The scene: the hole nearest the stage (true position = calibrated + `sim_tray_error_mm`), `neighbours = true` with `pitch_mm` the distance to its nearest other hole, `hole_radius_mm` from the sight, `px_per_mm`, size and noise from the config, seed advancing per grab. Image convention is the vision library's (image +x = stage +x, image +y = stage −y) composed with the config's flips relative to the default (`flip_x = false`, `flip_y = true`): a config with other flips mirrors the rendered frame, so that a *wrong* flip in the config really misleads autocenter. With no hole within the frame: the bare tray.
 
-- [ ] **Step 1: Write the failing tests:** `SimTrayCamera.TheHoleIsWhereTheTruthSays` (stage on the calibrated hole, error (0.2, −0.1): `SimpleFinder` finds the centre within 1 px of centre + (0.2, +0.1)·px_per_mm, image y down); `.FollowsTheStage`; `.RendersTheNearestHole`; `.BareTrayWithNoHoleInView` (finder finds nothing; truth not visible); `.FramesGetNewerAndNumbered` (timestamps follow the clock, seq 1, 2, 3); `.AFlippedConfigMirrorsTheImage`; `.NoiseIsSeededPerGrab` (two cameras, same sequence); `MakeFrameSource.SimAndRecorded` (a recorded case written with `vision::FrameRecorder` replays; a missing directory is a Config error naming it).
+- [ ] **Step 1: Write the failing tests:** `SimTrayCamera.TheHoleIsWhereTheTruthSays` (stage on the calibrated hole, error (0.2, −0.1): `SimpleFinder` finds the center within 1 px of center + (0.2, +0.1)·px_per_mm, image y down); `.FollowsTheStage`; `.RendersTheNearestHole`; `.BareTrayWithNoHoleInView` (finder finds nothing; truth not visible); `.FramesGetNewerAndNumbered` (timestamps follow the clock, seq 1, 2, 3); `.AFlippedConfigMirrorsTheImage`; `.NoiseIsSeededPerGrab` (two cameras, same sequence); `MakeFrameSource.SimAndRecorded` (a recorded case written with `vision::FrameRecorder` replays; a missing directory is a Config error naming it).
 - [ ] **Step 2: Run** — Expected: FAIL to compile.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `ctest --test-dir build/dev -R 'SimTrayCamera|MakeFrameSource'` — Expected: PASS.
@@ -234,13 +234,13 @@ Behaviour is spec sections 5 and 6. `moving()` order: the driver's `moving()` fi
   - `Autocenter.ANewCalibrationDropsTheCorrections`.
   - `Autocenter.ACameraThatFailsIsAFailure` — a frame source failing on its nth grab: Failed/Camera, back at the start.
   - `Autocenter.FramesThatNeverGetNewerEndIt` — a source repeating one timestamp: Failed (StaleFrame or MaxIterations) within a bounded number of polls.
-  - `Autocenter.StopEndsItAndSavesNothing`; `Autocenter.ANewMoveAbandonsIt` (to another hole: that hole is centred, the first has no correction); `Autocenter.SetXyAbandonsIt`.
+  - `Autocenter.StopEndsItAndSavesNothing`; `Autocenter.ANewMoveAbandonsIt` (to another hole: that hole is centered, the first has no correction); `Autocenter.SetXyAbandonsIt`.
   - `Autocenter.GuardIsFromTheNearestNeighbour` — `guard_mm("3") == 2.25`; a one-hole tray gives 1.0.
   - The extraction, laser, stage and pattern conformance suites over the camera harness.
 - [ ] **Step 2: Run** — Expected: FAIL to compile.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `ctest --test-dir build/dev -R 'Autocenter|LaserSystem|PatternRunner|Conformance'` then the whole suite — Expected: PASS.
-- [ ] **Step 5: Commit** `laser: a hole move can centre the hole under the beam`.
+- [ ] **Step 5: Commit** `laser: a hole move can center the hole under the beam`.
 
 ---
 
@@ -265,7 +265,7 @@ Behaviour is spec sections 5 and 6. `moving()` order: the driver's `moving()` fi
 - [ ] **Step 2: Run** — Expected: FAIL to compile, then FAIL.
 - [ ] **Step 3: Implement**; write `configs/examples/cameras.toml` (commented, as spec section 3).
 - [ ] **Step 4: Run** both suites — Expected: `build/dev` all pass; `build/dev-ui` only the four known failures.
-- [ ] **Step 5: Commit** `experiment: laser sessions centre holes with the lab's cameras`.
+- [ ] **Step 5: Commit** `experiment: laser sessions center holes with the lab's cameras`.
 
 ---
 
@@ -285,11 +285,11 @@ elctl ... laser look <device> [--tray <tray>]
 ```
 
 - [ ] **Step 1: Write the failing tests:**
-  - `LaserCmd.AutocenterCentresAndSaves` (`--sim`, the tray calibrated near the corner as the goto test does): exit 0; output has `converged`, the moved distance `0.150, -0.100` (± printed rounding), the residual; `corrections` then lists the hole with its distance from calibrated.
+  - `LaserCmd.AutocenterCentersAndSaves` (`--sim`, the tray calibrated near the corner as the goto test does): exit 0; output has `converged`, the moved distance `0.150, -0.100` (± printed rounding), the residual; `corrections` then lists the hole with its distance from calibrated.
   - `LaserCmd.AutocenterFailureIsExitOneWhateverTheConfigSays` (tray error (3, 3), `on_failure = continue`): exit 1, stderr has `no_target`; nothing saved.
   - `LaserCmd.AutocenterNeedsACamera` (no table for the device): exit 1 naming `cameras.toml`.
   - `LaserCmd.CorrectionsClearOneAndAll`; `LaserCmd.CorrectionsWithNoneSaysSo`.
-  - `LaserCmd.LookSaysWhatTheFinderSees` (`--sim`: at the stage's rest position with a tray calibrated so a hole is in view): centre px, offset px and mm, radius px.
+  - `LaserCmd.LookSaysWhatTheFinderSees` (`--sim`: at the stage's rest position with a tray calibrated so a hole is in view): center px, offset px and mm, radius px.
   - `LaserCmd.LookOnRecordedFrames` (a case written in the test with `vision::FrameRecorder` from `vision::render`; `source = "recorded"`; no `--sim`, laser unplugged): prints the offset; opens no hardware.
   - `LaserCmd.LookSeesNothingIsExitOne`.
   - Usage errors.

@@ -80,7 +80,7 @@ class LaserWindow : public QMainWindow {
   QDoubleSpinBox* step_ = nullptr;
   QList<QPushButton*> jogs_;
   QPushButton* stop_stage_ = nullptr;
-  QCheckBox* centre_ = nullptr;
+  QCheckBox* center_ = nullptr;
   QPushButton* autocenter_ = nullptr;
   QLabel* outcome_ = nullptr;
   QPushButton* snapshot_ = nullptr;

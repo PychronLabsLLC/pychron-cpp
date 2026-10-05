@@ -56,7 +56,7 @@ target_radius = 0.5           # mm; above 0: sizes the crop and the mask
 the camera's config, a clock), by `LaserSystem` when it has a camera.
 
 `execute_pattern(name)` for a dragonfly: Config error without vision. The
-centre is the stage position (it must have stopped, as for any pattern). The
+center is the stage position (it must have stopped, as for any pattern). The
 controller is started at the clock's now.
 
 `running()`, one step per poll:
@@ -65,12 +65,12 @@ controller is started at the clock's now.
 2. within `settle` of the stage coming to rest → true.
 3. grab `frames_per_step` frames (a failure → camera lost, below), read the
    stage position, `Dragonfly::step`.
-   - `Move`: one absolute move to centre + target at the pattern's velocity → true.
+   - `Move`: one absolute move to center + target at the pattern's velocity → true.
    - `Hold` → true.
-   - `Done`: move back to the centre; when it arrives → false.
+   - `Done`: move back to the center; when it arrives → false.
    - an error from the controller that is a stale batch: waited out for five
      polls as in 2c-1, then camera lost.
-4. Camera lost: move back to the centre. With `on_failure = "continue"` the
+4. Camera lost: move back to the center. With `on_failure = "continue"` the
    pattern then holds there until the duration has passed and ends normally;
    `last_note()` says so. With `"fail"`, the poll that sees the stage back
    returns a Config error naming the pattern and the cause.
@@ -78,7 +78,7 @@ controller is started at the clock's now.
 `stop_pattern()` stops the stage and ends it. A move the stage refuses ends
 it with the error. The perimeter is the controller's (targets are projected
 onto it); the runner additionally refuses any target further than
-`perimeter_radius` + 1 µm from the centre as a defect.
+`perimeter_radius` + 1 µm from the center as a defect.
 
 `IPatternRunner` gains `virtual std::string last_note()` (empty by default):
 what the last finished pattern has to say for the run's log; the script host
@@ -96,7 +96,7 @@ and <device> has no camera to see it").
 fills them from the driver. `[<device>.sim]` gains
 
 ```toml
-grain_offset_mm = [0.2, 0.1]     # the sample, from its hole's centre
+grain_offset_mm = [0.2, 0.1]     # the sample, from its hole's center
 glow_drift_mm_per_s = [0.01, 0]  # how it creeps while heated
 glow_sigma_mm = 0.3
 ```
@@ -126,7 +126,7 @@ Files (keys, ranges, `iterations` refused); runner on `ChromiumSim` with the
 simulated glow: follows an offset grain to within the deadband; follows a
 drifting grain; holds when saturated; searches when the glow is hidden and
 re-acquires when it returns; never further than the perimeter; ends on time,
-back at the centre; stop part way; camera death under both policies; one
+back at the center; stop part way; camera death under both policies; one
 stage command per poll; no vision → refused. Queue check. Session: a laser
 queue whose run names a dragonfly ends with the beam having followed the
 grain and the laser off. Export of pickles, and by hand of the real co2 files.

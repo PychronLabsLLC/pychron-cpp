@@ -81,8 +81,8 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   diagnostics_->setWordWrap(true);
   diagnostics_->hide();
 
-  auto* centre = new QWidget;
-  auto* column = new QVBoxLayout(centre);
+  auto* center = new QWidget;
+  auto* column = new QVBoxLayout(center);
   column->setContentsMargins(0, 0, 0, 0);
   column->addWidget(diagnostics_);
   queue_conditionals_ = new QComboBox;
@@ -107,7 +107,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   pick_conditionals_ = [this](const QStringList& names, const QList<Qt::CheckState>& states) {
     return pick_conditionals_dialog(names, states);
   };
-  setCentralWidget(centre);
+  setCentralWidget(center);
 
   auto* executor_dock = new QDockWidget(tr("Executor"), this);
   executor_dock->setObjectName(QStringLiteral("ExperimentExecutorDock"));

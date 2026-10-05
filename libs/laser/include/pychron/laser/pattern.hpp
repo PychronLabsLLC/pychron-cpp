@@ -14,7 +14,7 @@
 //   rotation = 0
 //
 // and a pure function from that to points: offsets in millimetres from the
-// pattern's centre, in the stage's axes, angles in degrees counter-clockwise.
+// pattern's center, in the stage's axes, angles in degrees counter-clockwise.
 // The geometry of each kind is legacy pychron's (pattern_generators.py).
 // Running one is PatternRunner's (pattern_runner.hpp).
 
@@ -153,17 +153,17 @@ std::vector<PatternField> pattern_fields(PatternKind kind);
 std::optional<double> field_value(const Pattern& pattern, std::string_view key);
 bool set_field(Pattern& pattern, std::string_view key, double value);
 
-// One pass of the pattern: offsets from its centre. `seed` is used by a
+// One pass of the pattern: offsets from its center. `seed` is used by a
 // random walk only, and the same seed gives the same walk on every machine.
 std::vector<StageXY> pattern_points(const Pattern& pattern, std::uint64_t seed);
 
 // How many points pattern_points() gives, without making them.
 std::size_t pattern_point_count(const Pattern& pattern);
 
-// The length of the path from the centre through `points`, mm.
+// The length of the path from the center through `points`, mm.
 double path_length(std::span<const StageXY> points);
 
-// The whole path a runner follows: every iteration's points, then the centre
+// The whole path a runner follows: every iteration's points, then the center
 // again. A random walk is new on each iteration. Config error for more than
 // kMaxPatternPoints, and for a pattern that follows the glow (it has no path).
 Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t seed);

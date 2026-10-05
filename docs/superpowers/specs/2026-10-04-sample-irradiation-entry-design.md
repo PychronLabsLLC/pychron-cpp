@@ -383,7 +383,7 @@ thread.
 ### 9.1 Samples window
 
 - Left: filters for PI, project and material, plus search text.
-- Centre: sample table (Name, Project, PI, Material, Grainsize, Lat, Lon,
+- Center: sample table (Name, Project, PI, Material, Grainsize, Lat, Lon,
   Elevation, Unit, Lithology, Location, Storage, IGSN, Note, Positions,
   Analyses). Cells are editable. Edited cells are tinted until saved.
 - Bottom: detail form for the selected sample with every field, the UTM
@@ -411,7 +411,7 @@ File or clipboard, column mapping table, preview with a filter
 
 - Left: tree of packages (newest first, the kind as an icon) and their
   levels, with counts. New Package… and New Level… buttons.
-- Centre: positions grid for the selected level. Rows are holder holes and
+- Center: positions grid for the selected level. Rows are holder holes and
   orphans. Columns: analyzed marker (count in tooltip), Position, Packet,
   Identifier, Sample, Project, PI, Material, Grainsize, Weight, J, ±J, Note.
   Multi-select. Weight, packet and note are editable in the cell. Identifier

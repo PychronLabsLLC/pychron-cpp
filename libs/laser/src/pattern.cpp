@@ -236,7 +236,7 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
     return fail(ErrorKind::Config, p.name + ": dx: the step is so fine the raster has more than " +
                                        std::to_string(kMaxPatternPoints) + " points");
   }
-  // Every iteration's points, and the return to the centre.
+  // Every iteration's points, and the return to the center.
   const std::size_t points = pattern_point_count(p) * static_cast<std::size_t>(p.iterations) + 1;
   if (points > kMaxPatternPoints) {
     return fail(ErrorKind::Config, p.name + ": iterations: the pattern has " + std::to_string(points) +
@@ -335,7 +335,7 @@ std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
       const auto unit = [&rng] { return static_cast<double>(rng() >> 11) * 0x1.0p-53; };
       for (int i = 0; i < p.npoints; ++i) {
         double x = 0, y = 0;
-        // A point in the box, within walk_x of the centre (legacy's test). No
+        // A point in the box, within walk_x of the center (legacy's test). No
         // point further than walk_x in y can pass it, so y is drawn only
         // that far: the same walk, and a tall narrow box still ends.
         const double reach_y = std::min(p.walk_y, p.walk_x);

@@ -75,19 +75,19 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
   tree_ = new QTreeWidget(split);
   tree_->setHeaderLabels({tr("Package"), tr("Positions")});
   tree_->setMinimumWidth(180);
-  auto* centre = new QWidget(split);
-  auto* layout = new QVBoxLayout(centre);
-  table_ = new QTableView(centre);
+  auto* center = new QWidget(split);
+  auto* layout = new QVBoxLayout(center);
+  table_ = new QTableView(center);
   table_->setModel(grid_);
   table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
   table_->horizontalHeader()->setStretchLastSection(true);
   layout->addWidget(table_, 1);
-  message_ = new QLabel(centre);
+  message_ = new QLabel(center);
   message_->setWordWrap(true);
   layout->addWidget(message_);
   split->addWidget(tree_);
-  split->addWidget(centre);
+  split->addWidget(center);
   split->setStretchFactor(1, 1);
   setCentralWidget(split);
 

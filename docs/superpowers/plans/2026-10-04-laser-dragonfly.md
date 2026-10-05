@@ -20,11 +20,11 @@
 
 ## Review Focus
 
-1. The glow leaves the frame or is hidden: the spiral search never takes the stage beyond the perimeter, and the pattern still ends on time back at the centre. (Task 3.)
-2. Camera dies with the beam on: stage back at the centre; `continue` holds and ends on time, `fail` errors and the run's ending switches the laser off. (Tasks 3, 4.)
+1. The glow leaves the frame or is hidden: the spiral search never takes the stage beyond the perimeter, and the pattern still ends on time back at the center. (Task 3.)
+2. Camera dies with the beam on: stage back at the center; `continue` holds and ends on time, `fail` errors and the run's ending switches the laser off. (Tasks 3, 4.)
 3. A dragonfly on a device with no usable camera, a recorded camera, or via `elctl laser pattern`: refused before anything moves. (Tasks 3, 4.)
 4. `stop_pattern()` or a cancelled script part way: stage stops where it is, nothing further is sent, a new pattern can start. (Task 3.)
-5. Duration edge cases: a duration shorter than one settle, and a clock that jumps past the end between polls: ends, back at the centre, no negative waits. (Task 3.)
+5. Duration edge cases: a duration shorter than one settle, and a clock that jumps past the end between polls: ends, back at the center, no negative waits. (Task 3.)
 
 ---
 
@@ -63,14 +63,14 @@ std::string PatternRunner::last_note() override;          // taken once
 ```
 
 - [ ] **Step 1: Failing tests** (camera harness; pattern files `follow` (duration 20, velocity 2), `brief` (duration 0.05)); the laser is enabled, set to 20 % and fired through the system before `execute_pattern`:
-  - `Dragonfly.FollowsAnOffsetGrain` — grain offset (0.3, −0.2): within a few steps the stage is within `move_threshold` + 0.02 of the grain and stays; ends after 20 s of clock back at the centre; `running()` false; note empty.
+  - `Dragonfly.FollowsAnOffsetGrain` — grain offset (0.3, −0.2): within a few steps the stage is within `move_threshold` + 0.02 of the grain and stays; ends after 20 s of clock back at the center; `running()` false; note empty.
   - `Dragonfly.FollowsADriftingGrain` — drift 0.02 mm/s for 20 s: the stage tracks to within 0.1 mm throughout.
   - `Dragonfly.HoldsWhenSaturated` — output 100 %: no moves after the first hold.
   - `Dragonfly.SearchesWhenTheGlowIsLostAndFindsItAgain` — a source wrapper that blanks frames for 5 s: spiral moves appear, all within the perimeter; after it returns the stage is back on the grain.
-  - `Dragonfly.NeverLeavesThePerimeter` — perimeter 0.4, grain 2 mm away: every move within 0.4 mm (+1 µm) of the centre.
-  - `Dragonfly.EndsOnTimeBackAtTheCentre`; `.ADurationShorterThanASettleStillEnds`; `.AClockThatJumpsPastTheEndEndsIt`.
+  - `Dragonfly.NeverLeavesThePerimeter` — perimeter 0.4, grain 2 mm away: every move within 0.4 mm (+1 µm) of the center.
+  - `Dragonfly.EndsOnTimeBackAtTheCenter`; `.ADurationShorterThanASettleStillEnds`; `.AClockThatJumpsPastTheEndEndsIt`.
   - `Dragonfly.StopPartWayStopsTheStage`; `.OnePollOneStageCommand`.
-  - `Dragonfly.ACameraThatDiesHoldsAtTheCentreUntilTheEnd` (continue: ends normally at the duration, note mentions the camera) and `.ACameraThatDiesIsAnErrorWhenAskedFor` (fail).
+  - `Dragonfly.ACameraThatDiesHoldsAtTheCenterUntilTheEnd` (continue: ends normally at the duration, note mentions the camera) and `.ACameraThatDiesIsAnErrorWhenAskedFor` (fail).
   - `Dragonfly.WithoutACameraItIsRefused` (system with no camera: Config, nothing sent).
   - `Dragonfly.ANoteIsSaidOnce`; script host: `APatternsNoteIsLogged`.
   - vision: `AimCrop.*` and the two controllers' existing suites unchanged.

@@ -88,7 +88,7 @@ TEST(SweepPositions, RejectsBadSpecs) {
 TEST(Sweep, MagnetSweepRecordsSignalAtEachPosition) {
   JobRig r;
   ASSERT_TRUE(r.spec);
-  // Gaussian peak on H1 centred at DAC 5.0; AX flat.
+  // Gaussian peak on H1 centered at DAC 5.0; AX flat.
   r.acquirer.signal = [&](const ChannelId& ch) {
     const double x = r.positioner.value;
     if (ch == "H1") return 1000.0 * std::exp(-(x - 5.0) * (x - 5.0) / 0.1);

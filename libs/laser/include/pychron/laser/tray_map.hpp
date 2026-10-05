@@ -7,7 +7,7 @@
 //   # comment
 //   circle,1.0            shape (circle|square), hole dimension in mm
 //   1,2,3                 valid hole ids (may be empty; read and not enforced)
-//   3,119,219,103,111     calibration holes: north, east, south, west, centre
+//   3,119,219,103,111     calibration holes: north, east, south, west, center
 //   -3.9878, 15.9512      x,y | id,x,y | x,y,(assoc) | x,y,r<dim> | id,x,y,(assoc)
 //
 // A row without an id is named by its place among the holes, from 1. The
@@ -61,7 +61,7 @@ class TrayMap {
   double dimension_ = 0;
   std::vector<Hole> holes_;
   std::map<std::string, std::size_t, std::less<>> index_;
-  std::vector<std::string> calibration_;  // empty, or north east south west centre
+  std::vector<std::string> calibration_;  // empty, or north east south west center
   std::string sha256_;
 };
 

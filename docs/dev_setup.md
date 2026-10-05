@@ -363,7 +363,7 @@ elctl -c extraction_line.toml laser calibrate co2 221-hole center
 elctl -c extraction_line.toml laser calibrate co2 221-hole right
 ```
 
-`center` and `right` are the tray map's centre and east calibration holes;
+`center` and `right` are the tray map's center and east calibration holes;
 `point <hole>` records any hole. One point places the tray, two also turn it
 (the legacy "Tray" calibration), three or more are fitted and report an rms.
 `--x` and `--y` give the position instead of reading it, with no hardware
@@ -377,7 +377,7 @@ elctl -c extraction_line.toml laser goto co2 221-hole 17
 elctl -c extraction_line.toml laser trays
 ```
 
-Centre and right lie on one line, so they cannot show a mirrored axis, and
+Center and right lie on one line, so they cannot show a mirrored axis, and
 two exchanged holes fit perfectly with the tray half a turn round; neither
 shows in the rms. `calibrate` and `trays` say so. Always check a new
 calibration with `goto` on a hole off that line before firing.
@@ -402,7 +402,7 @@ does not change z.
 ### Autocenter and hole corrections
 
 A calibration puts every hole within a fraction of a millimetre. With a
-camera, a hole move goes on to centre the hole under the beam: the stage
+camera, a hole move goes on to center the hole under the beam: the stage
 arrives, waits `settle_ms`, the camera looks, the stage is nudged, and it
 looks again, until the hole is within `tolerance_mm` of the aim point. A
 script's `move_to_position()` asks for this by default
@@ -429,8 +429,8 @@ on_failure = "continue"   # or "fail"
 ```
 
 Only a camera that follows the stage is ever used to move it. A `recorded`
-camera is for `elctl laser look` and never centres anything. A `sim` camera
-centres holes only on a simulated laser: left in a lab whose laser is real,
+camera is for `elctl laser look` and never centers anything. A `sim` camera
+centers holes only on a simulated laser: left in a lab whose laser is real,
 it stops queues on that device from starting until the table is removed.
 
 **There is no live camera yet.** `sim` is the simulated tray (the example's
@@ -453,7 +453,7 @@ What it will not do:
   from one that is right: recalibrate.
 - **Guess.** When the hole is not seen, the camera fails, or the nudges make
   things worse (a wrong `flip_x`/`flip_y` shows as this), the stage goes back
-  to where the centring started. With `on_failure = "continue"` (legacy
+  to where the centering started. With `on_failure = "continue"` (legacy
   Pychron's behaviour) the run carries on there; with `"fail"` the move is an
   error and the run stops before the laser fires.
 
@@ -469,17 +469,17 @@ elctl -c extraction_line.toml laser corrections co2 example-9
 elctl -c extraction_line.toml --sim laser look co2 --tray example-9
 ```
 
-A script must wait for a move that centres: `move_to_position(block=False)`
+A script must wait for a move that centers: `move_to_position(block=False)`
 is refused on a device with a camera unless it also says `autocenter=False`.
-What each hole move did ("hole 3: centred, moved 0.150, -0.100 mm", or why
-it was not centred) goes into the run's log, with the script's `info()`
+What each hole move did ("hole 3: centered, moved 0.150, -0.100 mm", or why
+it was not centered) goes into the run's log, with the script's `info()`
 lines. The log is printed under the run by `elctl exp run`, listed in the
 experiment window's Events, and kept in the run's record as `events` of kind
 `note`. A camera the session cannot use (a simulated one over a real laser)
 is said when the session is made: a `warning:` line in elctl, the banner and
 Events in the window.
 
-`autocenter` moves to a hole, centres it and saves the correction (exit 1 if
+`autocenter` moves to a hole, centers it and saves the correction (exit 1 if
 it could not, whatever `on_failure` says); `corrections ... clear [<hole>]`
 forgets them; `look` says what the finder sees and moves nothing.
 
@@ -538,7 +538,7 @@ the stage where it is.
 
 **A dragonfly** is the tenth kind, and not a path. For its `duration` the
 stage follows the glow of the heated sample, so the beam stays on a grain
-that sits off its hole's centre or creeps as it melts; then the stage goes
+that sits off its hole's center or creeps as it melts; then the stage goes
 back to where it started (`configs/examples/patterns/follow.toml` is
 commented):
 
@@ -611,9 +611,9 @@ stage is over the tray, what the camera sees and what the finder makes of
 it, whether the laser is enabled and firing, which interlocks are tripped.
 
 - **Tray.** Pick the tray at the top left. A click on a hole goes there; with
-  "Centre holes" ticked (the default when the device has a camera) the move
-  ends by centring the hole, as a queue's does. A right click offers the move
-  with or without centring. Ringed holes are the ones the calibration was
+  "Center holes" ticked (the default when the device has a camera) the move
+  ends by centering the hole, as a queue's does. A right click offers the move
+  with or without centering. Ringed holes are the ones the calibration was
   taken at; a green dot is a hole a camera has found before.
 - **Stage.** The arrows jog by the step; Stop stage halts a move.
 - **Laser.** Enable, then Fire: Fire sets the output and opens the beam, and
@@ -644,7 +644,7 @@ stop is off, and a banner says so. The reverse holds too: a queue is not
 started while a command made by hand is still running, nor while a beam
 opened by hand is still on.
 
-A device with no table in `cameras.toml` has no picture and no centring; the
+A device with no table in `cameras.toml` has no picture and no centering; the
 rest works. The camera is still the simulated one: a live camera is not
 available yet.
 
@@ -655,7 +655,7 @@ A laser's camera can be a real one. In the lab's `cameras.toml`:
 ```toml
 [co2]
 source = "opencv"     # sim | recorded | opencv | pylon
-use = "view"          # centre | view
+use = "view"          # center | view
 
 [co2.opencv]
 device = 0            # `elctl laser cameras` lists what there is
@@ -668,7 +668,7 @@ device = 0            # `elctl laser cameras` lists what there is
   checked, but the driver is not written yet: opening one says "built
   without pylon". It goes in `libs/vision` as one more backend
   (`camera_backend.hpp`) when there is an SDK and a camera to prove it on.
-- `use = "centre"` (the default): the camera centres holes and follows the
+- `use = "center"` (the default): the camera centers holes and follows the
   glow. A live camera may do that only over a real laser; over a simulated
   one it is a problem for the device and its queues are not started.
 - `use = "view"`: a picture only. Nothing it sees moves the stage; hole moves

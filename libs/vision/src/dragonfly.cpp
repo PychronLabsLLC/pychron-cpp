@@ -77,7 +77,7 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     }
   }
 
-  // Crop and mask are sized from the target, centred on the aim point (image centre plus offset).
+  // Crop and mask are sized from the target, centered on the aim point (image center plus offset).
   const double diameter_px = 2.0 * params_.target_radius_mm * px_per_mm_;
   const double side_d = 2.5 * diameter_px;
   if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) {

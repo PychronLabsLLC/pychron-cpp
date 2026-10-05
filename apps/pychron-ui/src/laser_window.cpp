@@ -57,12 +57,12 @@ QString outcome_text(const laser::AutocenterOutcome& o) {
   switch (o.result) {
     case R::None: return {};
     case R::Converged:
-      return LaserWindow::tr("hole %1 centred: moved %2, %3 mm (%4 looks)")
+      return LaserWindow::tr("hole %1 centered: moved %2, %3 mm (%4 looks)")
           .arg(hole, mm(o.moved_mm.x), mm(o.moved_mm.y))
           .arg(o.iterations);
     case R::Failed:
-      return LaserWindow::tr("hole %1 not centred: %2").arg(hole, QString::fromStdString(std::string(to_string(o.reason))));
-    case R::Stopped: return LaserWindow::tr("centring hole %1 was stopped").arg(hole);
+      return LaserWindow::tr("hole %1 not centered: %2").arg(hole, QString::fromStdString(std::string(to_string(o.reason))));
+    case R::Stopped: return LaserWindow::tr("centering hole %1 was stopped").arg(hole);
   }
   return {};
 }
@@ -129,24 +129,24 @@ void LaserWindow::build() {
   column->setContentsMargins(0, 0, 0, 0);
   camera_ = new CameraView(right);
   column->addWidget(camera_, 1);
-  auto* centring = new QHBoxLayout;
-  centre_ = new QCheckBox(tr("Centre holes"), right);
-  centre_->setObjectName(QStringLiteral("centre_on_go"));
-  centre_->setToolTip(tr("A click on a hole goes there and then centres it by eye"));
-  centre_->setChecked(bridge_.can_centre());
-  centre_->setEnabled(bridge_.can_centre());
-  centring->addWidget(centre_);
+  auto* centering = new QHBoxLayout;
+  center_ = new QCheckBox(tr("Center holes"), right);
+  center_->setObjectName(QStringLiteral("center_on_go"));
+  center_->setToolTip(tr("A click on a hole goes there and then centers it by eye"));
+  center_->setChecked(bridge_.can_center());
+  center_->setEnabled(bridge_.can_center());
+  centering->addWidget(center_);
   autocenter_ = button(tr("Autocenter"), "autocenter", right);
-  autocenter_->setToolTip(tr("Centre the hole the stage was last sent to"));
-  centring->addWidget(autocenter_);
+  autocenter_->setToolTip(tr("Center the hole the stage was last sent to"));
+  centering->addWidget(autocenter_);
   snapshot_ = button(tr("Snapshot"), "snapshot", right);
   snapshot_->setToolTip(tr("Save what the camera sees to the lab's snapshots"));
-  centring->addWidget(snapshot_);
+  centering->addWidget(snapshot_);
   outcome_ = new QLabel(right);
   outcome_->setObjectName(QStringLiteral("autocenter_outcome"));
   outcome_->setWordWrap(true);
-  centring->addWidget(outcome_, 1);
-  column->addLayout(centring);
+  centering->addWidget(outcome_, 1);
+  column->addLayout(centering);
   auto* tabs = new QTabWidget(right);
   tabs->setObjectName(QStringLiteral("tabs"));
   tabs->addTab(build_control(), tr("Control"));
@@ -172,14 +172,14 @@ void LaserWindow::build() {
   connect(reset_, &QPushButton::clicked, this, [this] { bridge_.reset_stop(); });
   connect(tray_, &TrayView::holeClicked, this, [this](const QString& hole) {
     if (bridge_.watch_only() || bridge_.state().stopped) return;
-    bridge_.go_to(hole, centre_->isChecked());
+    bridge_.go_to(hole, center_->isChecked());
   });
   connect(tray_, &TrayView::holeMenu, this, [this](const QString& hole, const QPoint& where) {
     if (bridge_.watch_only() || bridge_.state().stopped) return;
     QMenu menu(this);
     menu.addAction(tr("Go to hole %1").arg(hole), this, [this, hole] { bridge_.go_to(hole, false); });
     if (bridge_.has_camera()) {
-      menu.addAction(tr("Go to hole %1 and centre it").arg(hole), this, [this, hole] { bridge_.go_to(hole, true); });
+      menu.addAction(tr("Go to hole %1 and center it").arg(hole), this, [this, hole] { bridge_.go_to(hole, true); });
     }
     menu.addSeparator();
     menu.addAction(tr("The stage is on hole %1 now: calibration point").arg(hole), this,
@@ -442,7 +442,7 @@ void LaserWindow::refresh_tray() {
     return;
   }
   for (const auto& hole : map->holes()) cal_hole_->addItem(QString::fromStdString(hole.id));
-  // The map's own centre hole is where a calibration starts.
+  // The map's own center hole is where a calibration starts.
   QString preferred = keep;
   if (preferred.isEmpty() && map->center_hole()) preferred = QString::fromStdString(*map->center_hole());
   if (const int index = cal_hole_->findText(preferred); index >= 0) cal_hole_->setCurrentIndex(index);
@@ -462,7 +462,7 @@ void LaserWindow::refresh_tray() {
   if (status.solution) {
     const laser::Transform& t = status.solution->transform;
     tray_->set_transform(t);
-    cal_solution_->setText(tr("Centre %1, %2 mm · rotation %3° · scale %4 · rms %5 mm · %6 point(s)")
+    cal_solution_->setText(tr("Center %1, %2 mm · rotation %3° · scale %4 · rms %5 mm · %6 point(s)")
                                .arg(mm(t.cx), mm(t.cy), mm(t.rotation * 180.0 / std::numbers::pi, 2), mm(t.scale, 4),
                                     mm(status.solution->rms_mm))
                                .arg(status.solution->points));
@@ -485,7 +485,7 @@ void LaserWindow::on_snapshot(const laser::LaserSnapshot& s) {
     tray_->set_stage(std::nullopt);
   }
   tray_->set_current_hole(QString::fromStdString(s.last_hole));
-  // A centring that just ended may have left a correction.
+  // A centering that just ended may have left a correction.
   tray_->set_corrected_holes(bridge_.corrected_holes());
   {
     const QSignalBlocker quiet(enable_);
@@ -507,7 +507,7 @@ void LaserWindow::on_snapshot(const laser::LaserSnapshot& s) {
   }
   QString doing = QString::fromStdString(std::string(to_string(s.activity)));
   if (s.activity == laser::LaserActivity::Pattern) doing = tr("pattern %1").arg(QString::fromStdString(s.pattern_progress));
-  if (s.activity == laser::LaserActivity::Centring) doing = tr("centring hole %1").arg(QString::fromStdString(s.last_hole));
+  if (s.activity == laser::LaserActivity::Centering) doing = tr("centering hole %1").arg(QString::fromStdString(s.last_hole));
   if (!s.error.empty()) doing += tr(" · %1").arg(QString::fromStdString(s.error));
   activity_->setText(doing);
   outcome_->setText(outcome_text(s.autocenter));
@@ -539,8 +539,8 @@ void LaserWindow::refresh_enabled() {
   for (QPushButton* b : jogs_) b->setEnabled(can_drive && s.has_stage);
   step_->setEnabled(can_drive && s.has_stage);
   stop_stage_->setEnabled(!watching && s.has_stage);
-  centre_->setEnabled(can_drive && bridge_.can_centre());
-  autocenter_->setEnabled(can_drive && bridge_.can_centre() && !s.last_hole.empty());
+  center_->setEnabled(can_drive && bridge_.can_center());
+  autocenter_->setEnabled(can_drive && bridge_.can_center() && !s.last_hole.empty());
   snapshot_->setEnabled(s.has_camera);  // looking is always allowed
   measure_scale_->setEnabled(can_drive && s.has_camera && s.has_stage && !busy);
 

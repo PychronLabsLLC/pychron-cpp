@@ -319,7 +319,7 @@ orders of magnitude).
 
 - Separate top-level `QMainWindow` titled "Experiment", plus
   " (Simulation)" when the session's line is simulated.
-- Centre: the queue table (row selection, context menu with the row
+- Center: the queue table (row selection, context menu with the row
   operations), queue-level diagnostics in a strip above it.
 - Bottom dock "Executor" (`ExecutorPane`), right dock "Evolutions".
 - Menus: Queue (Open..., Save, Save As..., Revalidate), Rows (Move Up,
@@ -410,7 +410,7 @@ Extraction/Post-Measurement Script for the selected row) over the lab's
 - Left: the lab's scripts by kind, plus `lib/`; double-click opens. Script >
   New creates `<kind>/<name>.py` (`:` for subdirectories) with a `main()`
   skeleton (a hook skeleton for measurement hooks).
-- Centre: one tab per script, `*` while modified. Python highlighting with
+- Center: one tab per script, `*` while modified. Python highlighting with
   the host's commands for that kind, the run-context globals, the allowed
   builtins, keywords, strings (triple-quoted across lines), numbers,
   comments and the `#! pychron:` header each distinct. Completion

@@ -69,7 +69,7 @@ class SpectrometerBridge : public QObject {
   // table order. Empty for a detector the table does not know.
   QStringList isotopes_for(const QString& detector) const;
   std::optional<double> mass_of(const QString& isotope) const;  // amu; nullopt when unknown
-  // Mass (amu) the reference detector sees with `isotope` centred on
+  // Mass (amu) the reference detector sees with `isotope` centered on
   // `detector` (empty: the reference), from the field table alone: the
   // deflection and HV corrections are left out, since applying them reads
   // hardware. nullopt when the table cannot say.
@@ -84,7 +84,7 @@ class SpectrometerBridge : public QObject {
   void start_scan(double integration_s);
   void stop_scan();
   void set_integration(double seconds);
-  // Centres `isotope` on `detector` and, on success, records it as that
+  // Centers `isotope` on `detector` and, on success, records it as that
   // detector's isotope (announced through detectorChanged).
   void position(const QString& isotope, const QString& detector);
 

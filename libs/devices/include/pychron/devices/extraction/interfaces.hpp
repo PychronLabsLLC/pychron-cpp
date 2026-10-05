@@ -90,10 +90,10 @@ struct IStage {
   virtual Result<void> stop() { return fail(not_supported("stage stop")); }
   // True for a stage whose move_to_position(..., autocenter = true) goes on
   // working after the stage arrives, and only while moving() is asked: a
-  // move nobody waits for would be left uncentred, its failure unseen.
+  // move nobody waits for would be left uncentered, its failure unseen.
   virtual bool autocenter_needs_polling() const { return false; }
-  // What the last finished hole move has to say for the run's log (centred
-  // and by how much; not centred and why); empty when nothing. Said once.
+  // What the last finished hole move has to say for the run's log (centered
+  // and by how much; not centered and why); empty when nothing. Said once.
   virtual std::string last_move_note() { return {}; }
   // Config error for an unknown tray.
   virtual Result<void> set_tray(std::string_view tray) = 0;

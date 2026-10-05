@@ -5,11 +5,11 @@
 //
 //   [co2]
 //   source = "sim"            sim | recorded | opencv | pylon
-//   use = "centre"            centre | view: a picture only; it never moves the stage
+//   use = "center"            center | view: a picture only; it never moves the stage
 //   px_per_mm = 23.0
 //   flip_x = false            image +x is stage -x
 //   flip_y = true             image +y is stage -y (the usual camera)
-//   aim_offset_px = [0, 0]    the beam's place in the image, from its centre
+//   aim_offset_px = [0, 0]    the beam's place in the image, from its center
 //   settle_ms = 200           after a move, before a frame is trusted
 //   frames = "recordings/x"   source = "recorded": a fixture case directory
 //
@@ -18,7 +18,7 @@
 //   noise = 0.01
 //   width = 200
 //   height = 200
-//   grain_offset_mm = [0.2, 0.1]      the sample, from its hole's centre
+//   grain_offset_mm = [0.2, 0.1]      the sample, from its hole's center
 //   glow_drift_mm_per_s = [0.01, 0]   how it creeps while heated
 //   glow_sigma_mm = 0.3               the size of the glow
 //
@@ -38,7 +38,7 @@
 //   rotate = 0                0 | 90 | 180 | 270, clockwise
 //   roi = [0, 0, 0, 0]        x, y, w, h; no size: the whole frame
 //   timeout_ms = 1000         how long anyone waits for a frame: 100 or more,
-//                             and 2000 at most for a camera that centres
+//                             and 2000 at most for a camera that centers
 //                             (an emergency stop may wait that long for it)
 //
 //   [co2.pylon]               source = "pylon": a Basler camera (GigE, USB3)
@@ -74,9 +74,9 @@ namespace pychron::laser {
 enum class CameraSource { Sim, Recorded, OpenCv, Pylon };
 // "sim", "recorded", "opencv", "pylon".
 std::string_view to_string(CameraSource source) noexcept;
-// Centre: it may centre holes and follow the glow. View: it is looked
+// Center: it may center holes and follow the glow. View: it is looked
 // through, and nothing it sees moves the stage.
-enum class CameraUse { Centre, View };
+enum class CameraUse { Center, View };
 enum class OnAutocenterFailure { Continue, Fail };
 
 struct CameraConfig {
@@ -88,7 +88,7 @@ struct CameraConfig {
   StageXY aim_offset_px{};
   Duration settle{std::chrono::milliseconds(200)};
   std::string frames;  // recorded: the case directory, relative to the lab
-  CameraUse use = CameraUse::Centre;
+  CameraUse use = CameraUse::Center;
 
   // A live camera: what its backend is asked for.
   std::string live_device;  // opencv: an index or a file ("0" when empty); pylon: a serial number
@@ -107,7 +107,7 @@ struct CameraConfig {
   int sim_width = 200;
   int sim_height = 200;
   // While the simulated laser fires the camera sees the sample glow: this
-  // far from its hole's centre, creeping this fast as it is heated.
+  // far from its hole's center, creeping this fast as it is heated.
   StageXY sim_grain_offset_mm{};
   StageXY sim_glow_drift_mm_per_s{};
   double sim_glow_sigma_mm = 0.3;
@@ -118,7 +118,7 @@ struct CameraConfig {
   int frames_per_step = 3;
   OnAutocenterFailure on_failure = OnAutocenterFailure::Continue;
 
-  // Image offset (px) to the stage move (mm) that centres it.
+  // Image offset (px) to the stage move (mm) that centers it.
   vision::CameraStageMap map() const;
   // Pixels per millimetre: the measured map's, or px_per_mm.
   double scale_px_per_mm() const;

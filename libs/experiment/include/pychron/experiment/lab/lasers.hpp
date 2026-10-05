@@ -3,7 +3,7 @@
 // Lasers (laser window design, section 2): the lab's extraction devices as
 // laser systems, built once and shared by whatever drives them: a queue
 // (LabSession) and an operator (the laser window). Sharing them is what makes
-// the tray, the calibration, the corrections, the camera and a centring the
+// the tray, the calibration, the corrections, the camera and a centering the
 // same for both.
 //
 // Only one of the two drives at a time, and that is the lease: a queue holds
@@ -54,7 +54,7 @@ class Lasers {
   // the driver's name (what a queue's extract_device names), with the lab's
   // corrections and, when the lab gives it one that may be used here, its
   // camera (one marked use = "view" as a picture only). `simulated` says whether a driver is simulated (a simulated
-  // camera may only centre holes on a simulated stage); empty: asked of the
+  // camera may only center holes on a simulated stage); empty: asked of the
   // line. `lab` and `line` must outlive this.
   Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool(std::string_view driver)> simulated = {});
   Lasers(const Lasers&) = delete;
@@ -63,7 +63,7 @@ class Lasers {
   laser::LaserSystem* find(std::string_view device);  // null: no such device
   std::vector<std::string> names() const;             // sorted
   // What the lab asks of a device that cannot be done here: a camera that
-  // cannot be used to centre holes on it. Fixed once built.
+  // cannot be used to center holes on it. Fixed once built.
   std::vector<std::string> problems() const;
   const std::string* problem_of(std::string_view device) const;
   // What is wrong that stops no queue: a camera for looking that cannot be

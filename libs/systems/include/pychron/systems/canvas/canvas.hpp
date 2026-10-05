@@ -116,7 +116,7 @@ struct PipetteElement : Located {
 enum class Orientation { Auto, Horizontal, Vertical };
 
 // start_offset / end_offset move where the pipe meets its element, in pixels
-// from the element's centre (so a pipe can join a wide volume off-centre).
+// from the element's center (so a pipe can join a wide volume off-center).
 struct Connection : Located {
   std::string start;
   std::string end;

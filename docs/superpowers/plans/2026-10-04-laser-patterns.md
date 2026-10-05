@@ -63,7 +63,7 @@ struct Pattern {
   static Result<Pattern> load(const std::filesystem::path& file);      // name = stem
 };
 
-// One pass, offsets from the centre. `seed` is used by Random only.
+// One pass, offsets from the center. `seed` is used by Random only.
 std::vector<StageXY> pattern_points(const Pattern& pattern, std::uint64_t seed);
 double path_length(std::span<const StageXY> points);                   // from (0,0) through the points
 // The whole path a runner follows: iterations of the points, then (0,0).
@@ -92,9 +92,9 @@ Per-kind defaults differ from the struct's (`length`: linear 1, rubberband and r
   - `PatternPoints.Trough` — length 3, width 2: `use_x` → `(0,0) (3,0) (0,-2) (3,-2) (0,0)`; without → `(0,0) (3,0) (3,-2) (0,-2) (0,0)`.
   - `PatternPoints.RandomIsSeededAndBounded` — npoints 50, walk 2 × 3: same seed twice gives equal vectors; another seed differs; every point within `|x| <= 2`, `|y| <= 3` and `hypot <= 2`.
   - `PatternPoints.RandomMappingIsFixed` — seed 1, npoints 1, walk 1 × 1: the point equals the value computed in the test from `std::mt19937_64(1)` with the constraint's mapping.
-  - `PatternPath.RepeatsAndReturnsToTheCentre` — polygon, iterations 3: `3·5 + 1` points, last `(0,0)`.
+  - `PatternPath.RepeatsAndReturnsToTheCenter` — polygon, iterations 3: `3·5 + 1` points, last `(0,0)`.
   - `PatternPath.TooManyPointsIsRefused` — circular contour nsteps 10 (370 points) × iterations 200.
-  - `PathLength.SumsTheSegmentsFromTheCentre` — rubberband length 4 offset 1: `√2 + 6 + 2 + 6 + 2`.
+  - `PathLength.SumsTheSegmentsFromTheCenter` — rubberband length 4 offset 1: `√2 + 6 + 2 + 6 + 2`.
   - `PatternFile.ReadsEveryKindWithItsDefaults` — parameterised over the nine kinds: `kind = "<k>"` alone parses and equals `Pattern::defaults(k)` but for the name; the defaults are the table of spec section 3.
   - `PatternFile.ReadsItsKeys` — a polygon and a raster with every key set.
   - `PatternFile.RefusesBadValues` — parameterised, each a Config error whose `what` contains the file name and the key: `radius = 0`, `radius = -1`, `nsides = 2`, `nsides = 201`, `velocity = 0`, `iterations = 0`, `iterations = 201`, `dx = 0`, `npoints = 0`, `npasses = 0`, `length = nan`, `rotation = "x"`, `kind = "arc"`, no `kind`, an unknown key, `nsides = 5` on a `linear`, `seed = -1`.
@@ -197,12 +197,12 @@ extraction::IPatternRunner* pattern_runner() override;
 The runner's stage is the `LaserSystem` itself (its `IStage`), so trays and a later autocenter stay out of it. The random seed is the pattern's, else `std::random_device` at each `execute_pattern`.
 
 - [ ] **Step 1: Write the failing tests** (harness of `test_laser_system.cpp` plus `patterns/` with `square` (polygon, radius 1, nsides 4, velocity 2), `twice` (the same, iterations 2), `wide` (polygon radius 60: outside the ±50 travel), `walk` (random, seed 7), and a broken file):
-  - `PatternRunner.VisitsThePointsInOrderAtThePatternsSpeed` — stage at (10, 20): the simulator's `Stage.MoveTo` log is the five polygon points then the centre, each `…,2000,2000,100`; `running()` false at the end; position (10, 20).
+  - `PatternRunner.VisitsThePointsInOrderAtThePatternsSpeed` — stage at (10, 20): the simulator's `Stage.MoveTo` log is the five polygon points then the center, each `…,2000,2000,100`; `running()` false at the end; position (10, 20).
   - `PatternRunner.RepeatsItsIterations` — `twice`: 11 moves.
   - `PatternRunner.OnePollSendsAtMostOneMove` — each `running()` adds at most one `Stage.MoveTo`.
-  - `PatternRunner.StopHaltsTheStageMidSegment` — after the first move is under way: `stop_pattern()`; log ends with `Stage.Stop`; `running()` false; the position is neither the vertex nor the centre; a new `execute_pattern` then works.
+  - `PatternRunner.StopHaltsTheStageMidSegment` — after the first move is under way: `stop_pattern()`; log ends with `Stage.Stop`; `running()` false; the position is neither the vertex nor the center; a new `execute_pattern` then works.
   - `PatternRunner.StopWhenIdleIsFine`.
-  - `PatternRunner.APointOutsideTravelEndsThePattern` — `wide` from the centre of travel: `execute_pattern` or the first `running()` is a Config error whose `what` contains `pattern wide, point 1 of 6`; no `Stage.MoveTo` beyond travel in the log; `running()` then false.
+  - `PatternRunner.APointOutsideTravelEndsThePattern` — `wide` from the center of travel: `execute_pattern` or the first `running()` is a Config error whose `what` contains `pattern wide, point 1 of 6`; no `Stage.MoveTo` beyond travel in the log; `running()` then false.
   - `PatternRunner.AFailedMoveEndsThePattern` — `sim.fail_next("Stage.MoveTo", 4)` on the third move: that `running()` is the error with `point 3 of 6`; the next says false.
   - `PatternRunner.ASecondPatternWhileRunningIsRefused` — Config, the first goes on.
   - `PatternRunner.UnknownAndBrokenPatternsAreConfig` — the broken file's message is its problem.
@@ -210,7 +210,7 @@ The runner's stage is the `LaserSystem` itself (its `IStage`), so trays and a la
   - `LaserSystem.PatternRunnerNeedsAStageAndALibrary` — null without a library, null for a stageless driver, the driver's own when it has one.
   - `PatternConformance` over the harness.
 - [ ] **Step 2: Run** — Expected: FAIL to compile.
-- [ ] **Step 3: Implement.** State: path, next index, centre, name, an "ended with error" slot. `running()`: `moving()` first; an error from it ends the pattern.
+- [ ] **Step 3: Implement.** State: path, next index, center, name, an "ended with error" slot. `running()`: `moving()` first; an error from it ends the pattern.
 - [ ] **Step 4: Run** `ctest --test-dir build/dev -R 'PatternRunner|LaserSystem|PatternConformance'` — Expected: PASS.
 - [ ] **Step 5: Commit** `laser: patterns run point by point over the stage`.
 

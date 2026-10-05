@@ -3,7 +3,7 @@
 // QGraphicsItems for the M1 canvas (spec section 10.3). Items are passive:
 // they paint whatever state CanvasView pushes into them from the CoreBridge
 // snapshot and report clicks through a callback. Positions are element
-// centres in canvas.toml coordinates.
+// centers in canvas.toml coordinates.
 
 #include <functional>
 #include <optional>
@@ -160,7 +160,7 @@ class StageItem : public QGraphicsItem {
   canvas::StageSymbol symbol_ = canvas::StageSymbol::None;
 };
 
-// Plumbing drawn as a polyline through element centres. Remembers the names
+// Plumbing drawn as a polyline through element centers. Remembers the names
 // of the elements it joins so the view can paint it in the colour of the
 // network region it belongs to.
 //

@@ -3,7 +3,7 @@
 // ScriptEditorWindow (experiment-window design 5.8): edits the lab's scripts.
 //
 //   left    the lab's scripts by kind (double-click opens)
-//   centre  one tab per open script: highlighting, completion from the host's
+//   center  one tab per open script: highlighting, completion from the host's
 //           command table for that kind, diagnostics in place
 //   bottom  the static check's diagnostics (click to go to the line) and the
 //           estimate, refreshed 600 ms after the text stops changing

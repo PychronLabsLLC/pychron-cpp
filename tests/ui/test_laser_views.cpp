@@ -98,7 +98,7 @@ class LaserViewsTest : public QObject {
     view.set_tray(&map);
     view.set_stage(laser::StageXY{30, 25});
     QVERIFY(!view.stage_point());
-    // the tray's centre at stage (25, 25), a quarter turn: stage +x is the tray's... wherever the inverse says
+    // the tray's center at stage (25, 25), a quarter turn: stage +x is the tray's... wherever the inverse says
     laser::Transform t;
     t.cx = 25;
     t.cy = 25;
@@ -153,10 +153,10 @@ class LaserViewsTest : public QObject {
     const QImage shot = view.grab().toImage();
     // the picture
     QVERIFY(close(shot.pixelColor(20, 20), QColor(200, 200, 200)));
-    // the aim crosshair runs through the centre
+    // the aim crosshair runs through the center
     QVERIFY(close(shot.pixelColor(120, 200), theme().error));
     QVERIFY(close(shot.pixelColor(200, 320), theme().error));
-    // the target's ring: centre (70, 30) radius 15 px, 4 widget px to the frame px
+    // the target's ring: center (70, 30) radius 15 px, 4 widget px to the frame px
     const QPointF c = view.to_widget(QPointF(70, 30));
     QVERIFY(close(shot.pixelColor(QPoint(int(c.x() + 60), int(c.y()))), theme().ok));
     QVERIFY(close(shot.pixelColor(QPoint(int(c.x()), int(c.y()))), QColor(200, 200, 200)));

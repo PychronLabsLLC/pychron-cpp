@@ -11,7 +11,7 @@
 //     setpoint itself for Celsius (furnace PID). Otherwise target = ambient.
 //   - Gas: every position holds gas_per_position. The fraction released
 //     depends only on the peak temperature the sample has reached, via a
-//     logistic centred on release_c50:
+//     logistic centered on release_c50:
 //       f(T) = L(T) - L(ambient) normalised to [0, 1],
 //       L(T) = 1 / (1 + exp(-(T - release_c50) / release_width_c))
 //     so holding a temperature releases nothing more; stepping hotter does.

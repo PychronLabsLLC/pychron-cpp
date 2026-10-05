@@ -17,7 +17,7 @@
 //   <lab>/patterns/*.toml         laser patterns a run may name (optional)
 //   <lab>/cameras.toml            the camera of each extraction device (optional)
 //   <lab>/stage_corrections/      where autocenter found each hole
-//                                 (<device>.<tray>.toml, written as runs centre holes)
+//                                 (<device>.<tray>.toml, written as runs center holes)
 //   <lab>/stage_calibrations/     where each tray sits on each extraction device's stage
 //                                 (<device>.<tray>.toml, written by `elctl laser calibrate`)
 

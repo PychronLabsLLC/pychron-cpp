@@ -213,7 +213,7 @@ class Exp {
     lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
                             lab::SessionOptions{a_.data, options, {}});
     // What the lab asks that this session cannot do (a camera it may not
-    // centre holes with): a queue that uses that device will not start.
+    // center holes with): a queue that uses that device will not start.
     for (const auto& p : session.problems()) say("warning: " + p);
 
     // Progress.

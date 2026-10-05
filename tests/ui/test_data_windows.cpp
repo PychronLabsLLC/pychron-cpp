@@ -1106,7 +1106,7 @@ class TestDataWindows : public QObject {
     const QStringList before = w.view()->texts(0);
     QVERIFY(before.join(QLatin1Char('\n')).contains(QStringLiteral("plateau A-H")));
     w.view()->plot()->replot();
-    const auto pos = w.view()->point_position("step-3", 0);  // the box centre
+    const auto pos = w.view()->point_position("step-3", 0);  // the box center
     QVERIFY(pos);
     QVERIFY(w.view()->tooltip_at(w.view()->plot()->mapFrom(w.view(), *pos)).contains(QStringLiteral("S1-01D")));
     QTest::mouseClick(w.view()->plot(), Qt::LeftButton, Qt::NoModifier, w.view()->plot()->mapFrom(w.view(), *pos));

@@ -14,12 +14,12 @@ One **laser window** per extraction device that has a stage or a laser.
   points and the saved hole corrections marked. Click a hole to go to it.
 - **Camera**: the picture (the simulated camera for now), a crosshair at the
   aim point, the target the finder sees outlined, an Autocenter button, how the
-  last centring ended.
+  last centering ended.
 - **Stage**: x, y, z readout, a jog pad with a step size, Stop.
 - **Laser**: Enable, output percent, Fire, Stop, the tripped interlocks, a
   status line saying what the device is doing.
 - **Calibration**: the tray's points as a table, add a point at a hole from
-  where the stage is now, remove one, the solution (centre, rotation, scale,
+  where the stage is now, remove one, the solution (center, rotation, scale,
   rms) and its cautions, Clear. The same files as `elctl laser calibrate`.
 - **Patterns**: the lab's patterns with kind, length and time; Run about where
   the stage is; Stop. A dragonfly is listed and runs only from a queue.
@@ -45,7 +45,7 @@ snapshots and video recording, focus controls beyond jogging z, a live camera
 
 `LabSession` builds a `LaserSystem` per extraction driver and keeps them to
 itself. The window must drive the same objects: the same tray, calibration,
-corrections, camera and centring state. So the systems move into an object the
+corrections, camera and centering state. So the systems move into an object the
 application builds once.
 
 `libs/experiment`, `pychron/experiment/lab/lasers.hpp`:
@@ -90,7 +90,7 @@ Today its calls come from one thread. Now a second thread watches, and a third
 may stop it.
 
 **The gate.** One recursive lock, taken by every call that reaches the driver
-or the centring state: the `IExtractionDevice`, `IStage` and (new)
+or the centering state: the `IExtractionDevice`, `IStage` and (new)
 `ILaserDevice` calls, the camera, the simulated camera's `sight()`. The frame
 source the pattern runner is given is wrapped so its `grab()` takes the same
 gate: one lock, so no order to get wrong. `mutex_` (the system's small state)
@@ -100,10 +100,10 @@ gated too.
 
 **Snapshot.** `LaserSnapshot snapshot()`: tray, calibration state and why,
 stage position, enabled, output, firing, tripped interlocks, what it is doing
-(`Idle | Moving | Centring | Pattern`), the pattern's progress, the last
+(`Idle | Moving | Centering | Pattern`), the pattern's progress, the last
 autocenter outcome, whether it has a camera, whether the emergency stop is
 latched, and the first thing that could not be read. It never calls
-`moving()`: that call advances a centring and counts a driver's arrival
+`moving()`: that call advances a centering and counts a driver's arrival
 polls, and belongs to whoever started the move. "Moving" is what the last
 `moving()` said, set true by every move the system starts.
 
@@ -117,7 +117,7 @@ pixels, pixels per millimetre and the expected hole radius. Config error with
 no camera. It moves nothing.
 
 **Emergency stop.** `Result<void> emergency_stop()`: beam off, output 0,
-disable, stage stop, pattern stop, centring abandoned. Every step is tried
+disable, stage stop, pattern stop, centering abandoned. Every step is tried
 whatever the earlier ones answered; the first error is returned. It latches:
 until `reset_stop()`, `enable`, `extract`, `fire_laser`, `warmup`, every move
 and every pattern are refused with an Interlock error ("emergency stop: reset
@@ -157,7 +157,7 @@ stage was last sent to), `jog(dx, dy, dz)`, `stop_stage()`, `set_tray(name)`,
 
 - A command that starts a motion waits for it on the worker: it polls
   `moving()` / `running()` every 50 ms, publishing snapshots as it goes, until
-  it ends or is cancelled. So nothing is ever left half centred.
+  it ends or is cancelled. So nothing is ever left half centered.
 - Every driving command takes the `Manual` lease for as long as it runs. With
   a queue running it fails at once: "a queue is running".
 - `stop_stage`, `stop_beam`, `stop_pattern` cancel the command in flight and
@@ -215,8 +215,8 @@ says which, and stays latched.
 
 - `libs/laser`: `to_toml` round trip for every kind; `save_pattern` (bad name,
   too many points, replaces atomically); library `put` while a found pattern
-  is held; snapshot and view while another thread drives a centring and a
-  pattern (run under the sanitizers); emergency stop mid-move, mid-centring and
+  is held; snapshot and view while another thread drives a centering and a
+  pattern (run under the sanitizers); emergency stop mid-move, mid-centering and
   mid-pattern; the latch refuses and resets; interlocks in the snapshot.
 - `libs/experiment`: `Lasers` builds what the session built; the lease;
   a session given `Lasers` refuses a queue under a manual lease and under a
@@ -251,8 +251,8 @@ Where the code went another way from the sections above, and why.
   the middle of a command. The bridge is given the `Lab` (trays,
   calibrations, patterns). The three stops take the manual lease like any
   other command, so during a queue only the emergency stop acts.
-- **Section 6.** The window has a "Centre holes" tick box (what a click on a
-  hole does) and a context menu on a hole: go, go and centre, calibration
+- **Section 6.** The window has a "Center holes" tick box (what a click on a
+  hole does) and a context menu on a hole: go, go and center, calibration
   point here. A new output typed while the beam is on is sent on Enter.
   The pattern maker saves over a pattern of the same name without asking, and
   says "saved over".

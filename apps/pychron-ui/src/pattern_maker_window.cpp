@@ -66,7 +66,7 @@ class ExactSpin : public QDoubleSpinBox {
 
 }  // namespace
 
-// The path, from its centre: drawn to fit, +y up.
+// The path, from its center: drawn to fit, +y up.
 class PatternPreview : public QWidget {
  public:
   explicit PatternPreview(QWidget* parent) : QWidget(parent) {
@@ -101,24 +101,24 @@ class PatternPreview : public QWidget {
     QPainter p(this);
     p.fillRect(rect(), t.plot_bg);
     p.setRenderHint(QPainter::Antialiasing, true);
-    // the extent, always about the centre
+    // the extent, always about the center
     double reach = perimeter_;
     for (const auto& point : path_) reach = std::max({reach, std::abs(point.x), std::abs(point.y)});
     if (!(reach > 0)) reach = 1;
     const double scale = (std::min(width(), height()) / 2.0 - 16) / reach;
-    const QPointF centre(width() / 2.0, height() / 2.0);
-    const auto at = [&](const laser::StageXY& point) { return QPointF(centre.x() + scale * point.x, centre.y() - scale * point.y); };
+    const QPointF center(width() / 2.0, height() / 2.0);
+    const auto at = [&](const laser::StageXY& point) { return QPointF(center.x() + scale * point.x, center.y() - scale * point.y); };
     p.setPen(QPen(t.grid, 1));
-    p.drawLine(QPointF(0, centre.y()), QPointF(width(), centre.y()));
-    p.drawLine(QPointF(centre.x(), 0), QPointF(centre.x(), height()));
+    p.drawLine(QPointF(0, center.y()), QPointF(width(), center.y()));
+    p.drawLine(QPointF(center.x(), 0), QPointF(center.x(), height()));
     if (perimeter_ > 0) {
       p.setPen(QPen(t.accent, 1, Qt::DashLine));
       p.setBrush(Qt::NoBrush);
-      p.drawEllipse(centre, perimeter_ * scale, perimeter_ * scale);
+      p.drawEllipse(center, perimeter_ * scale, perimeter_ * scale);
     }
     if (!path_.empty()) {
       QPolygonF line;
-      line << centre;
+      line << center;
       for (const auto& point : path_) line << at(point);
       p.setPen(QPen(t.accent_strong, 1.5));
       p.setBrush(Qt::NoBrush);
@@ -128,10 +128,10 @@ class PatternPreview : public QWidget {
       p.setBrush(t.ok);
       p.drawEllipse(at(path_.front()), 3.5, 3.5);
     }
-    // the centre: where the stage is when the pattern starts, and ends
+    // the center: where the stage is when the pattern starts, and ends
     p.setPen(QPen(t.error, 1));
-    p.drawLine(centre + QPointF(-5, 0), centre + QPointF(5, 0));
-    p.drawLine(centre + QPointF(0, -5), centre + QPointF(0, 5));
+    p.drawLine(center + QPointF(-5, 0), center + QPointF(5, 0));
+    p.drawLine(center + QPointF(0, -5), center + QPointF(0, 5));
     p.setPen(t.muted_text);
     p.drawText(rect().adjusted(6, 4, -6, -4), Qt::AlignBottom | Qt::AlignRight, tr("± %1 mm").arg(num(reach, 2)));
     if (!message_.isEmpty()) p.drawText(rect().adjusted(8, 8, -8, -8), Qt::AlignTop | Qt::AlignHCenter | Qt::TextWordWrap, message_);

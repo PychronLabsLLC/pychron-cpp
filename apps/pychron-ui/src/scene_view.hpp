@@ -71,7 +71,7 @@ class SceneView : public QWidget {
   };
   struct HitBox {  // a spectrum step: a click anywhere inside selects it
     double x0, x1, y0, y1;
-    HitPoint point;  // the box centre
+    HitPoint point;  // the box center
   };
   struct RectInfo {
     QCPAxisRect* rect = nullptr;

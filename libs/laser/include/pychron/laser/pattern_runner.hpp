@@ -1,7 +1,7 @@
 #pragma once
 
 // PatternRunner: runs a pattern by moving a stage through its points (laser
-// patterns design, section 7). The centre is where the stage is when the
+// patterns design, section 7). The center is where the stage is when the
 // pattern starts; the stage is brought back there at the end.
 //
 // There is no thread. execute_pattern() sends the first move; each running()
@@ -73,7 +73,7 @@ class PatternRunner final : public extraction::IPatternRunner {
 
   // Config error for a pattern the library lacks or could not load, while
   // another is running, or while the stage is still moving (there is no
-  // centre yet). Nothing is sent unless the stage's position was read.
+  // center yet). Nothing is sent unless the stage's position was read.
   Result<void> execute_pattern(std::string_view pattern) override { return execute_pattern_for(pattern, 0); }
   // `duration_s`: how long the run heats for; a pattern that follows the
   // glow runs for that, or for its own duration when the run gives none.

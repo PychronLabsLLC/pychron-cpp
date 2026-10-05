@@ -2,7 +2,7 @@
 
 // A camera's pixel scale, measured (live camera design, section 4). Typing
 // px_per_mm and the flips into cameras.toml is a guess until it is checked,
-// and a wrong sign sends a centring away from its hole. With something the
+// and a wrong sign sends a centering away from its hole. With something the
 // finder can see under the aim point, three sightings settle it: where the
 // target is, where it is after the stage moves a step in x, and after a step
 // in y.
@@ -24,7 +24,7 @@ namespace pychron::laser {
 class LaserSystem;
 
 struct ScaleMeasurement {
-  vision::CameraStageMap map;  // image offset (px) to the stage move (mm) that centres it
+  vision::CameraStageMap map;  // image offset (px) to the stage move (mm) that centers it
   double px_per_mm = 0;
   bool flip_x = false;      // as cameras.toml's: image +x is stage -x
   bool flip_y = false;

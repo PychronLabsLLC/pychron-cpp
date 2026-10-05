@@ -64,7 +64,7 @@ MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, Conditiona
 
 using pychron::testing::Pump;
 
-// No peak-center job yet in this test: centring is covered by the spectrometer
+// No peak-center job yet in this test: centering is covered by the spectrometer
 // sim test and the peak_center unit.
 constexpr const char* kPlan = R"(
 [plan]

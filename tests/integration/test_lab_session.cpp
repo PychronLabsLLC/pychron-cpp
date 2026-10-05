@@ -336,7 +336,7 @@ TEST_F(ViewCameraTest, ACameraForLookingShowsAPictureAndStopsNoQueue) {
   EXPECT_TRUE(lasers_->notes().empty());
   laser::LaserSystem& co2 = *lasers_->find("co2");
   EXPECT_TRUE(co2.has_camera());
-  EXPECT_FALSE(co2.can_centre());
+  EXPECT_FALSE(co2.can_center());
   EXPECT_TRUE(co2.view());
   if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
   ASSERT_TRUE(session_->start(laser_queue()));
@@ -348,7 +348,7 @@ TEST_F(ViewCameraTest, ACameraForLookingShowsAPictureAndStopsNoQueue) {
   for (const auto& line : laser_sim("co2").log()) {
     // (the second run also traces a hexagon about its hole: those moves are within a millimetre of it)
     if (line.starts_with("Stage.MoveTo 30")) EXPECT_TRUE(line.starts_with("Stage.MoveTo 30000,30000,")) << line;
-    EXPECT_NE(line, "Stage.MoveTo 30150,29900,0,5000,5000,100") << "centred, by a camera that is only for looking";
+    EXPECT_NE(line, "Stage.MoveTo 30150,29900,0,5000,5000,100") << "centered, by a camera that is only for looking";
   }
 }
 
@@ -384,7 +384,7 @@ TEST_F(ScaleOfAnotherSetupTest, IsAProblemUntilMeasuredAgainOrCleared) {
   ASSERT_EQ(lasers_->problems().size(), 1u);
   const std::string problem = lasers_->problems().front();
   EXPECT_NE(problem.find("camera-scale"), std::string::npos) << problem;
-  EXPECT_FALSE(lasers_->find("co2")->can_centre());
+  EXPECT_FALSE(lasers_->find("co2")->can_center());
 }
 
 class BrokenScaleTest : public CameraLabTest {
@@ -396,11 +396,11 @@ class BrokenScaleTest : public CameraLabTest {
   }
 };
 
-// A camera that centres holes by a scale nobody can read is not used.
+// A camera that centers holes by a scale nobody can read is not used.
 TEST_F(BrokenScaleTest, AScaleFileThatCannotBeReadIsAProblem) {
   ASSERT_EQ(lasers_->problems().size(), 1u);
   EXPECT_NE(lasers_->problems().front().find("camera_scales"), std::string::npos) << lasers_->problems().front();
-  EXPECT_FALSE(lasers_->find("co2")->can_centre());
+  EXPECT_FALSE(lasers_->find("co2")->can_center());
 }
 
 class LiveCameraOnASimulatedLaserTest : public CameraLabTest {
@@ -441,9 +441,9 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   ASSERT_EQ(result->runs.size(), 2u);
   for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
 
-  // example-9 is calibrated with its centre at stage (25, 25): hole 3 at
+  // example-9 is calibrated with its center at stage (25, 25): hole 3 at
   // (30, 30) mm, hole 7 at (20, 20). The example's camera (cameras.toml) sees
-  // the tray 0.15, -0.10 mm from there, and each hole move ends by centring
+  // the tray 0.15, -0.10 mm from there, and each hole move ends by centering
   // the hole: the beam is fired on the real holes.
   const auto log = sim.log();
   EXPECT_EQ(count(log, "Stage.MoveTo 30000,30000,0,5000,5000,100"), 1) << ::testing::PrintToString(log);
@@ -492,7 +492,7 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   EXPECT_NEAR(last_before_fire[1].y, 19.90, 0.03);
 
   // The second run names the hexagon pattern (radius 1 mm, 1 mm/s): with the
-  // beam on, the stage goes round it about the centred hole and comes back.
+  // beam on, the stage goes round it about the centered hole and comes back.
   const double cx = last_before_fire[1].x, cy = last_before_fire[1].y;
   const double h = std::sqrt(3.0) / 2;
   const std::vector<std::pair<double, double>> hexagon{{1, 0}, {0.5, h}, {-0.5, h}, {-1, 0},
@@ -523,9 +523,9 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   EXPECT_DOUBLE_EQ(sim.output(), 0);
 }
 
-// Whether each hole was centred is said as it happens, is in the run's
+// Whether each hole was centered is said as it happens, is in the run's
 // summary and is kept in its record.
-TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
+TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentered) {
   if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
   std::mutex mutex;
   std::map<std::string, std::vector<std::string>> said;  // by run id
@@ -543,14 +543,14 @@ TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
   const auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result->runs.size(), 2u);
-  const char* holes[] = {"hole 3: centred, moved ", "hole 7: centred, moved "};
+  const char* holes[] = {"hole 3: centered, moved ", "hole 7: centered, moved "};
   for (std::size_t i = 0; i < 2; ++i) {
     const auto& r = result->runs[i];
     ASSERT_EQ(r.state, run::RunState::Success) << r.error.value_or("");
-    const auto centred = [&](const std::vector<std::string>& lines) {
+    const auto centered = [&](const std::vector<std::string>& lines) {
       return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.starts_with(holes[i]); });
     };
-    EXPECT_TRUE(centred(r.messages)) << ::testing::PrintToString(r.messages);
+    EXPECT_TRUE(centered(r.messages)) << ::testing::PrintToString(r.messages);
     {
       std::lock_guard lock(mutex);
       EXPECT_EQ(rows[r.run_id], i);
@@ -566,12 +566,12 @@ TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
     std::vector<std::string> notes;
     for (const auto& e : rec->events)
       if (e.kind == "note") notes.push_back(e.detail);
-    EXPECT_TRUE(centred(notes)) << ::testing::PrintToString(notes);
+    EXPECT_TRUE(centered(notes)) << ::testing::PrintToString(notes);
   }
 }
 
 // A run whose pattern is a dragonfly: with the beam on, the stage leaves the
-// centred hole for the glowing grain (the example's camera has it 0.2, 0.1 mm
+// centered hole for the glowing grain (the example's camera has it 0.2, 0.1 mm
 // off its hole), stays with it, and comes back; the laser is off after.
 TEST_F(LabSessionTest, ADragonflyRunFollowsTheGrainAndLeavesTheLaserOff) {
   if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
@@ -600,7 +600,7 @@ TEST_F(LabSessionTest, ADragonflyRunFollowsTheGrainAndLeavesTheLaserOff) {
     }
   }
   ASSERT_GE(under_beam.size(), 2u) << ::testing::PrintToString(sim.log());
-  // hole 7 really at (20.15, 19.90); the grain 0.2, 0.1 from its centre
+  // hole 7 really at (20.15, 19.90); the grain 0.2, 0.1 from its center
   bool reached = false;
   for (const auto& [x, y] : under_beam) reached = reached || std::hypot(x - 20.35, y - 20.00) < 0.08;
   EXPECT_TRUE(reached) << ::testing::PrintToString(under_beam);

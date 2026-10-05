@@ -1,5 +1,5 @@
 # A dragonfly: not a path. For its duration the stage follows the glow of the
-# heated sample, so the beam stays on a grain that sits off its hole's centre
+# heated sample, so the beam stays on a grain that sits off its hole's center
 # or creeps as it melts; then the stage returns to where it started. It needs
 # the device to have a camera (cameras.toml). A run names it like any pattern
 # (pattern = "follow"); the script's execute_pattern() runs it, with the laser

@@ -293,7 +293,7 @@ CircleFit fit_circle(std::span<const Vec2> pts) {
   mx /= n;
   my /= n;
   bad.center = {mx, my};
-  // Centred coordinates keep the normal equations well conditioned; the linear
+  // Centered coordinates keep the normal equations well conditioned; the linear
   // terms then vanish and the system reduces to 2x2.
   double suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0, sz = 0;
   for (const auto& p : pts) {

@@ -110,7 +110,7 @@ TEST(Autocenter, ConvergesOnTheTrueHoleAndSaves) {
   EXPECT_EQ(outcome.reason, AutocenterReason::None);
   EXPECT_EQ(outcome.hole, "3");
   EXPECT_EQ(outcome.tray, "small");
-  EXPECT_GE(outcome.iterations, 2);  // at least one nudge, and the look that found it centred
+  EXPECT_GE(outcome.iterations, 2);  // at least one nudge, and the look that found it centered
   EXPECT_NEAR(outcome.moved_mm.x, 0.15, 0.03);
   EXPECT_NEAR(outcome.moved_mm.y, -0.10, 0.03);
   EXPECT_NEAR(outcome.found.x, kTrueX, 0.03);
@@ -137,7 +137,7 @@ TEST(Autocenter, TheNextMoveStartsAtTheCorrection) {
   ASSERT_TRUE(h.system.move_to_position("3", true));
   ASSERT_TRUE(h.drive());
   const auto moves = h.stage_moves();
-  // one move, straight to where it was found last time; then a look that finds it centred
+  // one move, straight to where it was found last time; then a look that finds it centered
   ASSERT_EQ(moves.size(), before + 1);
   EXPECT_NEAR(h.at().x, found.x, 1e-9);
   EXPECT_EQ(h.system.last_autocenter().result, Outcome::Converged);
@@ -161,7 +161,7 @@ TEST(Autocenter, WithoutTheFlagTheCorrectionIsUsedAndNoFrameTaken) {
   EXPECT_NEAR(h.at().x, found.x, 1e-9);
   EXPECT_NEAR(h.at().y, found.y, 1e-9);
 
-  // a hole never centred goes to its calibrated position
+  // a hole never centered goes to its calibrated position
   ASSERT_TRUE(h.system.move_to_position("2", false));
   ASSERT_TRUE(h.drive());
   EXPECT_NEAR(h.at().x, 10, 1e-9);
@@ -278,7 +278,7 @@ TEST_P(AutocenterWrongFlip, IsCaughtAsRunawayAndNothingIsSaved) {
 INSTANTIATE_TEST_SUITE_P(Axes, AutocenterWrongFlip, ::testing::Values(WrongFlip{true}, WrongFlip{false}));
 
 // A camera really mounted the other way round, and said to be: the picture
-// is mirrored, the map knows, and the hole is centred all the same.
+// is mirrored, the map knows, and the hole is centered all the same.
 TEST(Autocenter, AMirroredCameraThatIsSaidToBeConverges) {
   for (const auto& [fx, fy] : {std::pair{true, false}, std::pair{true, true}, std::pair{false, false}}) {
     CameraConfig c = camera_config();
@@ -357,7 +357,7 @@ TEST_P(AutocenterGuard, NeverEndsOnTheNeighbour) {
     EXPECT_NEAR(h.at().x, nominal_x + e, 0.03);
     EXPECT_NEAR(h.at().y, nominal_y + e, 0.03);
   } else {
-    EXPECT_TRUE(GetParam().must_fail) << "an error inside the guard must be centred";
+    EXPECT_TRUE(GetParam().must_fail) << "an error inside the guard must be centered";
     EXPECT_EQ(outcome.result, Outcome::Failed);
     EXPECT_NEAR(h.at().x, nominal_x, 1e-9);
     EXPECT_NEAR(h.at().y, nominal_y, 1e-9);
@@ -589,47 +589,47 @@ TEST(Autocenter, TheLastMoveSaysWhatHappened) {
   EXPECT_EQ(h.system.last_move_note(), "");
   ASSERT_TRUE(h.system.move_to_position("3", true));
   ASSERT_TRUE(h.drive());
-  const std::string centred = h.system.last_move_note();
-  EXPECT_NE(centred.find("hole 3"), std::string::npos) << centred;
-  EXPECT_NE(centred.find("centred"), std::string::npos) << centred;
-  EXPECT_NE(centred.find("0.1"), std::string::npos) << centred;  // how far it was moved
+  const std::string centered = h.system.last_move_note();
+  EXPECT_NE(centered.find("hole 3"), std::string::npos) << centered;
+  EXPECT_NE(centered.find("centered"), std::string::npos) << centered;
+  EXPECT_NE(centered.find("0.1"), std::string::npos) << centered;  // how far it was moved
   EXPECT_EQ(h.system.last_move_note(), "");  // said once
 
   CameraHarness hidden(camera_config(2.5, 2.5));
   ASSERT_TRUE(hidden.system.move_to_position("3", true));
   ASSERT_TRUE(hidden.drive());
   const std::string failed = hidden.system.last_move_note();
-  EXPECT_NE(failed.find("not centred"), std::string::npos) << failed;
+  EXPECT_NE(failed.find("not centered"), std::string::npos) << failed;
   EXPECT_NE(failed.find("no_target"), std::string::npos) << failed;
 
   ASSERT_TRUE(hidden.system.move_to_position("3", false));
   ASSERT_TRUE(hidden.drive());
-  EXPECT_EQ(hidden.system.last_move_note(), "");  // not asked to centre: nothing to say
+  EXPECT_EQ(hidden.system.last_move_note(), "");  // not asked to center: nothing to say
 }
 
-TEST(Autocenter, OnlyASystemWithACameraNeedsItsCentringPolled) {
+TEST(Autocenter, OnlyASystemWithACameraNeedsItsCenteringPolled) {
   CameraHarness with;
   LaserHarness without;
   EXPECT_TRUE(with.system.autocenter_needs_polling());
   EXPECT_FALSE(without.system.autocenter_needs_polling());
 }
 
-// A pattern is run about the centred position.
-TEST(Autocenter, APatternStartsFromTheCentredHole) {
+// A pattern is run about the centered position.
+TEST(Autocenter, APatternStartsFromTheCenteredHole) {
   CameraHarness h;
   ASSERT_TRUE(h.system.move_to_position("3", true));
   ASSERT_TRUE(h.drive());
-  const auto centre = h.at();
+  const auto center = h.at();
   auto* runner = h.system.pattern_runner();
   ASSERT_NE(runner, nullptr);
   ASSERT_TRUE(runner->execute_pattern("square"));
   for (int i = 0; i < 3000 && *runner->running(); ++i) h.advance();
-  EXPECT_NEAR(h.at().x, centre.x, 1e-9);
-  EXPECT_NEAR(h.at().y, centre.y, 1e-9);
+  EXPECT_NEAR(h.at().x, center.x, 1e-9);
+  EXPECT_NEAR(h.at().y, center.y, 1e-9);
 }
 
 // A scan position is the driver's: no camera business.
-TEST(Autocenter, AScanPositionIsNotCentred) {
+TEST(Autocenter, AScanPositionIsNotCentered) {
   CountedHarness h;
   h.sim.add_scan({2000, 3000, 0});
   ASSERT_TRUE(h.system.move_to_position("s1", true));

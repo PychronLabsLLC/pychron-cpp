@@ -142,7 +142,7 @@ class FakeLaser final : public extraction::IExtractionDevice,
   }
   Result<void> set_xy(double x, double y, double = 0) override { return rec("set_xy " + num(x) + " " + num(y)); }
   Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
-  bool autocenter_needs_polling() const override { return stage_centres; }
+  bool autocenter_needs_polling() const override { return stage_centers; }
   std::string last_move_note() override { return std::exchange(move_note, {}); }
   // Never arrives while stage_stuck (for cancel tests), until stopped.
   Result<bool> moving() override { return stage_stuck && !stage_stopped; }
@@ -177,7 +177,7 @@ class FakeLaser final : public extraction::IExtractionDevice,
   bool pattern_needs_polling = false;
   double pattern_duration = -1;     // the run duration the last execute_pattern was given
   std::string pattern_note;         // what the last pattern has to say
-  bool stage_centres = false;       // a stage with a camera: centring needs the move waited for
+  bool stage_centers = false;       // a stage with a camera: centering needs the move waited for
   std::string move_note;            // what the last hole move has to say
   std::atomic<bool> stage_stuck{false};
   std::atomic<bool> stage_stopped{false};

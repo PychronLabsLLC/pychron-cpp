@@ -8,7 +8,7 @@
 //   the executor's current wait (reason and duration)
 //   Start / Stop / Cancel / Abort / Truncate
 //   conditionals that tripped; one line per run start/finish, thing a run
-//   said (a script's info(), whether a hole was centred), queue edit,
+//   said (a script's info(), whether a hole was centered), queue edit,
 //   peak-center result and queue end; records left in the spool
 //   what the session cannot do (LabSession::problems), from the start
 //

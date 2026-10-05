@@ -19,7 +19,7 @@
 // Whoever drives it (a script, or the laser window's worker) makes its calls
 // from one thread. It may be watched from another (snapshot(), view(),
 // tray(), calibration()) and stopped from a third (emergency_stop()): every
-// call that reaches the driver, the camera or a centring takes one gate, the
+// call that reaches the driver, the camera or a centering takes one gate, the
 // pattern runner's included (laser window design, section 3).
 
 #include <atomic>
@@ -58,13 +58,13 @@ struct AutocenterOutcome {
   std::string tray;
   int iterations = 0;       // looks taken
   StageXY found{};          // where the stage ended
-  StageXY moved_mm{};       // from where the centring started
+  StageXY moved_mm{};       // from where the centering started
   double residual_mm = 0;   // the last measured offset
   std::string note;         // e.g. the correction could not be saved
 };
 
-enum class LaserActivity { Idle, Moving, Centring, Pattern };
-// "idle", "moving", "centring", "pattern".
+enum class LaserActivity { Idle, Moving, Centering, Pattern };
+// "idle", "moving", "centering", "pattern".
 std::string_view to_string(LaserActivity activity) noexcept;
 
 // What a watcher is told: read from the device now, with what the system
@@ -86,7 +86,7 @@ struct LaserSnapshot {
   LaserActivity activity = LaserActivity::Idle;
   std::string pattern_progress;  // "<name>, point <i> of <n>" while one runs
   std::string last_hole;         // the hole the stage was last sent to; empty once it is sent elsewhere
-  AutocenterOutcome autocenter;  // how the last centring ended
+  AutocenterOutcome autocenter;  // how the last centering ended
   bool stopped = false;          // the emergency stop is latched
   std::string error;
 };
@@ -128,24 +128,24 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // With corrections, a hole move goes to where the hole was last found
   // (when that is within its guard of the calibrated position). With a
   // camera, move_to_position(hole, autocenter = true) goes on, once the
-  // stage has arrived, to centre the hole: it waits `settle`, looks, nudges
+  // stage has arrived, to center the hole: it waits `settle`, looks, nudges
   // the stage, and looks again, until the hole is under the aim point (the
   // position is then saved as the hole's correction) or it gives up (the
-  // stage returns to where the centring started). All of that happens in
+  // stage returns to where the centering started). All of that happens in
   // moving(): the caller's poll loop drives it, one stage command per poll.
   void set_corrections(const CorrectionStore& corrections);
   // Config error, and no camera, for one that does not follow the stage (a
   // recording): see usable_for_autocenter().
   Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
   // A camera for looking only: view() shows its picture and what the finder
-  // makes of it; a hole move is not centred by it and a pattern cannot
+  // makes of it; a hole move is not centered by it and a pattern cannot
   // follow the glow with it. For a camera that does not follow this stage
   // (use = "view").
   Result<void> attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
   // A picture to look at.
   bool has_camera() const noexcept { return frames_ != nullptr; }
   // A camera that may move the stage.
-  bool can_centre() const noexcept { return frames_ != nullptr && centres_; }
+  bool can_center() const noexcept { return frames_ != nullptr && centers_; }
   // What this system's camera is over, for a simulated one. Valid while the
   // system lives; asks the driver where the stage is.
   TraySightFn sight();
@@ -157,7 +157,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   double guard_mm(std::string_view hole) const;
 
   // Watching. Neither moves anything, and neither asks moving() or
-  // running(): those advance a centring or a pattern, and belong to whoever
+  // running(): those advance a centering or a pattern, and belong to whoever
   // started it. Config error from view() for a device with no camera.
   LaserSnapshot snapshot();
   // `fresh`: a picture taken now (a live camera is waited for, up to its
@@ -172,7 +172,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   std::string camera_geometry() const;
 
   // Everything off, now, from any thread: the beam, the output, the enable,
-  // the stage, a pattern, a centring. Every step is tried whatever the
+  // the stage, a pattern, a centering. Every step is tried whatever the
   // others answered; the first error is returned. It latches: until
   // reset_stop(), enabling, an output, firing, a warmup, every move and
   // every pattern are refused with an Interlock error, so a script that has
@@ -229,7 +229,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   Result<std::vector<std::string>> tripped_interlocks() override;
 
   // IStage
-  // `autocenter` centres a hole when the system has a camera; without one,
+  // `autocenter` centers a hole when the system has a camera; without one,
   // and for a position that is not a hole, it has no effect.
   Result<void> move_to_position(std::string_view position, bool autocenter) override;
   Result<void> set_axis(Axis axis, double value) override;
@@ -237,7 +237,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   Result<void> stop() override;
   Result<extraction::StagePosition> position() override;
   Result<bool> moving() override;
-  bool autocenter_needs_polling() const override { return can_centre(); }
+  bool autocenter_needs_polling() const override { return can_center(); }
   std::string last_move_note() override;
   // An empty name clears the tray. Config error for a tray the lab lacks; the
   // current one is kept.
@@ -254,9 +254,9 @@ class LaserSystem final : public extraction::IExtractionDevice,
   extraction::IPatternRunner* inner_runner();
 
   Result<extraction::IStage*> driver_stage();
-  // moving(), under the gate: one step of a centring, or the driver's answer.
+  // moving(), under the gate: one step of a centering, or the driver's answer.
   Result<bool> advance();
-  // The stage is sent somewhere that is not a hole: a centring is over, and
+  // The stage is sent somewhere that is not a hole: a centering is over, and
   // the system no longer knows the stage to be on one.
   void off_the_hole();
   // Ends an autocenter in progress, if any, as `how` (nothing is saved).
@@ -270,7 +270,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const TrayLibrary& trays_;
   const CalibrationStore& calibrations_;
 
-  // Taken by every call that reaches the driver, the camera or a centring,
+  // Taken by every call that reaches the driver, the camera or a centering,
   // and before mutex_. Recursive: a pattern's step moves this system's stage.
   mutable std::recursive_mutex gate_;
   std::atomic<bool> stopped_{false};  // the emergency stop's latch
@@ -282,7 +282,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const CorrectionStore* correction_store_ = nullptr;
   std::optional<CameraConfig> camera_;
   std::unique_ptr<vision::IFrameSource> frames_;
-  bool centres_ = false;  // the camera may move the stage (attach_camera)
+  bool centers_ = false;  // the camera may move the stage (attach_camera)
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
   std::unique_ptr<Centering> centering_;  // under the gate
@@ -296,7 +296,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   CalibrationStatus status_;
   HoleCorrections corrections_;
   AutocenterOutcome outcome_;
-  std::string move_note_;  // of the last centring that ran to its end; taken once
+  std::string move_note_;  // of the last centering that ran to its end; taken once
   std::string last_hole_;  // the hole the stage was last sent to
   std::filesystem::path snapshot_dir_;
 };

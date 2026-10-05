@@ -721,7 +721,7 @@ same pattern as `SpectrometerBridge` (spectrometer window spec).
   analysis type, mass spectrometer, project, sample, irradiation/level, load
   (each fed by `facet`), date range with presets (today, last 24 h, week,
   month, all), "exclude invalid".
-- Centre: analyses table (`AnalysisTableModel`), configurable visible
+- Center: analyses table (`AnalysisTableModel`), configurable visible
   columns (QSettings), sorted newest first, multi-select, "Load more".
   Row colour by analysis type (legacy `use_analysis_colors`).
 - Actions: Recall (double-click, Enter), Ctrl+N / Ctrl+B next and previous
@@ -796,7 +796,7 @@ the refits.
 
 ### 11.4 Figure window
 
-- Centre: `SceneView`.
+- Center: `SceneView`.
 - Right dock: `OptionsDock` generated from the schema; preset combo with
   Save, Save as, Rename, Delete, Reset to factory; Apply on change with a
   200 ms debounce (or explicit Apply, a setting).

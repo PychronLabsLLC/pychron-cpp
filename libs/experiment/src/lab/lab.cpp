@@ -218,7 +218,7 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
       continue;
     }
     // A camera that was meant to be there and is not: the run would go
-    // uncentred without anyone having said so.
+    // uncentered without anyone having said so.
     for (const auto& p : lab.cameras.problems_of(device)) say(row, "camera of " + device + ": " + p);
     // A pattern that follows the glow needs a camera that can drive the
     // stage: one that follows it (a recording does not).

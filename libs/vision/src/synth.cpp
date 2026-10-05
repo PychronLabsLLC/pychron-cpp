@@ -10,11 +10,11 @@ namespace {
 
 double clamp01(double v) { return std::clamp(v, 0.0, 1.0); }
 
-Vec2 image_centre(int w, int h) { return {(w - 1) / 2.0, (h - 1) / 2.0}; }
+Vec2 image_center(int w, int h) { return {(w - 1) / 2.0, (h - 1) / 2.0}; }
 
 // Target position in pixels: +x right, stage +y is image up.
 Vec2 target_px(int w, int h, Vec2 target_mm, Vec2 stage_mm, double px_per_mm) {
-  const Vec2 c = image_centre(w, h);
+  const Vec2 c = image_center(w, h);
   return {c.x + (target_mm.x - stage_mm.x) * px_per_mm, c.y - (target_mm.y - stage_mm.y) * px_per_mm};
 }
 

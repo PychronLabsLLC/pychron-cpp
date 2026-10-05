@@ -1,6 +1,6 @@
 # The camera of each extraction device (the driver's name in
 # extraction_line.toml). With one, a hole move that asks for it (a script's
-# move_to_position() does by default) ends by centring the hole under the
+# move_to_position() does by default) ends by centering the hole under the
 # beam: the stage waits, the camera looks, the stage is nudged, until the hole
 # is in place. What is found is kept per hole in stage_corrections/ and used
 # as the start of the next move there. A device with no table here has no
@@ -15,22 +15,22 @@
 # pylon: a Basler GigE or USB3 camera (see [co2.pylon]); read and checked
 # here, but its driver is not part of this build yet.
 source = "sim"
-# centre: the camera may centre holes and follow the glow. A live camera
+# center: the camera may center holes and follow the glow. A live camera
 # does that only over a real laser, a simulated one only over a simulated
 # laser.
 # view: a picture only. Nothing it sees moves the stage, and queues run
-# uncentred. To try this computer's own camera in the laser window, set
+# uncentered. To try this computer's own camera in the laser window, set
 #   source = "opencv"
 #   use = "view"
 # (`elctl laser cameras` lists what there is; macOS asks once whether
 # Pychron may use the camera).
-use = "centre"
+use = "center"
 px_per_mm = 23.0
 # which way the picture moves when the stage does: the usual camera shows
 # stage +x as image +x and stage +y as image up (flip_y)
 flip_x = false
 flip_y = true
-aim_offset_px = [0, 0]    # the beam's place in the picture, from its centre
+aim_offset_px = [0, 0]    # the beam's place in the picture, from its center
 settle_ms = 200           # after a move, before a frame is trusted
 
 # px_per_mm and the flips can be measured instead of typed, with a hole
@@ -62,7 +62,7 @@ timeout_ms = 1000
 tray_error_mm = [0.15, -0.10]
 noise = 0.01
 # while the simulated laser fires the camera sees the sample glow: this far
-# from its hole's centre, creeping this fast as it is heated (what a
+# from its hole's center, creeping this fast as it is heated (what a
 # dragonfly pattern follows)
 grain_offset_mm = [0.2, 0.1]
 glow_drift_mm_per_s = [0.0, 0.0]
@@ -73,6 +73,6 @@ max_iterations = 4
 max_step_mm = 0.5
 frames_per_step = 3
 # continue: carry on at the calibrated position when the hole cannot be
-# centred (as legacy pychron). fail: the move is an error and the run stops
+# centered (as legacy pychron). fail: the move is an error and the run stops
 # before the laser is fired.
 on_failure = "continue"

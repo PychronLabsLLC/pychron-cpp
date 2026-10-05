@@ -243,8 +243,8 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     // tube turning a quarter circle through the magnet's poles, and the
     // collector block the masses fan out onto.
     const QColor metal = theme().inactive;
-    const QPointF centre(46, 48);
-    auto ring = [&](double r) { return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r); };
+    const QPointF center(46, 48);
+    auto ring = [&](double r) { return QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r); };
     QPainterPath tube(QPointF(12, 56));
     tube.lineTo(12, 48);
     tube.arcTo(ring(34), 180, -90);
@@ -473,7 +473,7 @@ ConnectionItem::ConnectionItem(const std::vector<QPointF>& points, double width,
     }
   }
   setPath(path);
-  // Flat caps: a pipe ends at an element centre or on another pipe's centre
+  // Flat caps: a pipe ends at an element center or on another pipe's center
   // line, both covered. Mitred joins keep an elbow's corner square.
   setPen(QPen(default_color(), width, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
   setZValue(kFillZ);
@@ -500,7 +500,7 @@ void ConnectionItem::set_region_color(QColor color) {
 }
 
 QGraphicsPathItem* ConnectionItem::add_gap(const BoxEntry& entry, double depth) {
-  // Just long enough to cover the volume's border: centred on the edge, or
+  // Just long enough to cover the volume's border: centered on the edge, or
   // up to `depth` inside it round a corner.
   QPainterPath path;
   path.moveTo(entry.edge - entry.inward * kBorderWidth);
@@ -652,7 +652,7 @@ void GaugeLabelItem::refresh() {
   // A gauge the line does not define is there for illustration: its name only.
   setText(wired_ ? QStringLiteral("%1: %2").arg(QString::fromStdString(name_), value_) : QString::fromStdString(name_));
   setBrush(alarm_ ? theme().error_text : theme().text);
-  // Centre the chip (dial and text) on the element position the view assigns
+  // Center the chip (dial and text) on the element position the view assigns
   // with setPos(); the text itself starts at x = 0.
   const QRectF r = QGraphicsSimpleTextItem::boundingRect();
   const double dial = r.height() + kDialGap;

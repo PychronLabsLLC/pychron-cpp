@@ -39,7 +39,7 @@ In scope (version 1):
   ring buffer, sim bring-up, detector colours.
 
 Out of scope: Record Scan to CSV, markers and event annotations, rise rate,
-source panel, readout comparison, mass/DAC scanners, peak-centre and
+source panel, readout comparison, mass/DAC scanners, peak-center and
 coincidence tabs, DAC/mass sliders, deflection editing, coordination with
 running jobs beyond the `pause`/`resume` hooks, `elctl` commands.
 
@@ -252,7 +252,7 @@ settings. Plain C++ plus Qt core types so it is testable without a window.
 
 - Title "Spectrometer" plus " (Simulation)" when the loaded config is
   simulated (`is_simulated`), whether or not `--sim` was given.
-- Centre: `StripChartView`, a thin QCustomPlot wrapper that draws the model:
+- Center: `StripChartView`, a thin QCustomPlot wrapper that draws the model:
   one graph per detector in its colour, axes labelled "Time (s)" and "Signal",
   no legend (the intensities table is the legend), light-yellow plot
   background as in pychron. Repaints are capped at 20 Hz.

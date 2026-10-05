@@ -106,7 +106,7 @@ TEST(ReferenceModel, WeightedPolynomials) {
 }
 
 TEST(ReferenceModel, WeightedErrorKinds) {
-  // On y = 1 + x exactly, sigma 0.1: at the centre, SEM = 0.1 / sqrt(3).
+  // On y = 1 + x exactly, sigma 0.1: at the center, SEM = 0.1 / sqrt(3).
   std::vector<ReferencePoint> pts{{0, {1, 0.1}, "a", "", false}, {3600, {2, 0.1}, "b", "", false},
                                   {7200, {3, 0.1}, "c", "", false}};
   auto err = [&](ReferenceErrorKind k) { return ReferenceModel::make(pts, ReferenceFitKind::Linear, k)->at(3600)->error; };
@@ -115,7 +115,7 @@ TEST(ReferenceModel, WeightedErrorKinds) {
   EXPECT_NEAR(err(ReferenceErrorKind::Msem), sem, 1e-12);  // MSWD 0
   EXPECT_NEAR(err(ReferenceErrorKind::Sd), sem, 1e-12);    // no scatter
   EXPECT_NEAR(err(ReferenceErrorKind::Ci), reduction::student_t_quantile(0.975, 1) * sem, 1e-9);
-  // Away from the centre: sigma^2 (1/n + (x - xbar)^2 / Sxx), x - xbar = 2 h.
+  // Away from the center: sigma^2 (1/n + (x - xbar)^2 / Sxx), x - xbar = 2 h.
   EXPECT_NEAR(ReferenceModel::make(pts, ReferenceFitKind::Linear, ReferenceErrorKind::Sem)->at(10800)->error,
               0.1 * std::sqrt(1.0 / 3.0 + 4.0 / 2.0), 1e-12);
   // Monte Carlo agrees with the propagated SEM within its sampling error,

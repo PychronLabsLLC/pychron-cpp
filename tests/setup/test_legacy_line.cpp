@@ -249,10 +249,10 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
   // View box x -50..50 -> 10 px per unit; y up -> y down over -25..25.
   EXPECT_EQ(drawing->canvas.size, (canvas::Size{1000, 500}));
   ASSERT_NE(drawn_valve(*drawing, "A"), nullptr);
-  // A: lower-left (-20, 5), valve_dimension 2 x 2 -> centre (-19, 6).
+  // A: lower-left (-20, 5), valve_dimension 2 x 2 -> center (-19, 6).
   EXPECT_EQ(drawn_valve(*drawing, "A")->pos, (canvas::Point{310, 190}));
   ASSERT_EQ(drawing->stages.size(), 1u);
-  // S1: lower-left (-26, 0), 55 x 3 -> centre (1.5, 1.5).
+  // S1: lower-left (-26, 0), 55 x 3 -> center (1.5, 1.5).
   EXPECT_EQ(drawing->stages[0].pos, (canvas::Point{515, 235}));
   EXPECT_EQ(drawing->stages[0].size, (canvas::Size{550, 30}));
   // C is not drawn by the legacy canvas: placed, not lost.
@@ -269,7 +269,7 @@ TEST_F(YamlLine, CanvasIsRescaledWithBoxesFromTheirLowerLeftCorner) {
   ASSERT_NE(connection(*drawing, "A", "S1"), nullptr);
   EXPECT_EQ(connection(*drawing, "A", "S1")->orientation, canvas::Orientation::Vertical);
   // The end meets S1 4 right and 3 up from its lower-left corner (its top
-  // edge): from its centre (27.5, 1.5), that is 23.5 left and 1.5 up.
+  // edge): from its center (27.5, 1.5), that is 23.5 left and 1.5 up.
   EXPECT_EQ(connection(*drawing, "A", "S1")->end_offset, (canvas::Point{-235, -15}));
   EXPECT_EQ(connection(*drawing, "A", "S1")->start_offset, (canvas::Point{0, 0}));
   EXPECT_EQ(connection(*drawing, "B", "D"), nullptr);
@@ -487,7 +487,7 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   ASSERT_NE(connection(*drawing, "MV", "Obama"), nullptr);
   EXPECT_EQ(connection(*drawing, "MV", "Obama")->orientation, canvas::Orientation::Vertical);
   // offset 1,0 on a 2 x 2 valve: the middle of its bottom edge, 1 unit
-  // (16.67 px) below its centre.
+  // (16.67 px) below its center.
   EXPECT_EQ(connection(*drawing, "B", "Obama")->start_offset, (canvas::Point{0, 17}));
 
   // Elbows turn where legacy pychron turned them: level with the end, above

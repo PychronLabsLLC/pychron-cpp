@@ -1,6 +1,6 @@
 #pragma once
 
-// M1 status/control window (spec section 10.3): canvas in the centre, log and
+// M1 status/control window (spec section 10.3): canvas in the center, log and
 // alarm docks, per-transport health chips in the status bar. Owns the
 // CoreBridge; the ExtractionLine must outlive the window.
 

@@ -22,7 +22,7 @@ struct FinderParams {
   FinderMode mode = FinderMode::Hole;
   double expected_radius_px = 0;
   double radius_tol = 0.35;
-  double mask_radius_px = 0;  // <= 0: no mask. Disk centred on the frame centre.
+  double mask_radius_px = 0;  // <= 0: no mask. Disk centered on the frame center.
   double glow_fraction = 0.5;
 };
 

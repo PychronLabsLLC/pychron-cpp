@@ -199,7 +199,7 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
       const CircleFit fit = fit_circle(c.boundary);
       if (std::isfinite(fit.radius) && std::isfinite(fit.rms) && fit.rms <= 0.2 * fit.radius) {
         t.center_px = fit.center;
-        t.radius_px = fit.radius + 0.5;  // boundary pixel centres sit half a pixel inside the edge
+        t.radius_px = fit.radius + 0.5;  // boundary pixel centers sit half a pixel inside the edge
       }
       t.area_px = c.area;
       t.circularity = circ;

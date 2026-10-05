@@ -13,7 +13,7 @@ sources; §9 caller contract; §20 "left for the laser-system sub-project"),
 
 A hole move that asks for it ends with the hole under the beam, not merely at
 its calibrated position: the camera looks, the stage is nudged until the hole
-is centred, and what was found is remembered for that hole.
+is centered, and what was found is remembered for that hole.
 `LaserSystem::move_to_position(hole, autocenter)` takes the flag today and
 ignores it; the script verb's default is already `autocenter=True`.
 
@@ -44,7 +44,7 @@ source = "sim"            # sim | recorded
 px_per_mm = 23.0          # above 0
 flip_x = false            # image +x is stage -x
 flip_y = true             # image +y is stage -y (the usual camera)
-aim_offset_px = [0, 0]    # the beam's place in the image, from its centre
+aim_offset_px = [0, 0]    # the beam's place in the image, from its center
 settle_ms = 200           # after a move, before a frame is trusted; 0 to 10000
 
 # source = "recorded"
@@ -199,10 +199,10 @@ device without a camera is not an error.
 
 | Command | Does |
 |---|---|
-| `autocenter <device> <tray> <hole> [--timeout <s>]` | moves to the hole and centres it; prints each step (offset, move) and the outcome; a converged result is saved. Exit 1 on failure, whatever `on_failure` says. |
+| `autocenter <device> <tray> <hole> [--timeout <s>]` | moves to the hole and centers it; prints each step (offset, move) and the outcome; a converged result is saved. Exit 1 on failure, whatever `on_failure` says. |
 | `corrections <device> <tray>` | the saved corrections: hole, position, distance from calibrated, residual, when |
 | `corrections <device> <tray> clear [<hole>]` | forget them (or one) |
-| `look <device> [--tray <tray>]` | grabs `frames_per_step` frames and says what the finder sees: centre in px, offset in px and mm, radius; moves nothing. The hole radius is the tray's, or 0.5 mm. |
+| `look <device> [--tray <tray>]` | grabs `frames_per_step` frames and says what the finder sees: center in px, offset in px and mm, radius; moves nothing. The hole radius is the tray's, or 0.5 mm. |
 
 ## 10. Simulation and example
 
@@ -253,7 +253,7 @@ the laser window; recording autocenter outcomes in the analysis record.
   before it is sent, in addition to `vision::Autocenter`'s own path limit.
 - **Frames no newer than the last decision are waited out for five polls**
   before the autocenter fails as `stale_frame`.
-- **`AutocenterOutcome::note`**: a converged centring whose correction could
+- **`AutocenterOutcome::note`**: a converged centering whose correction could
   not be written still counts; the note says so (and `elctl laser autocenter`
   exits 1).
 - **A corrections file that cannot be understood is an error on load and on
@@ -273,12 +273,12 @@ the laser window; recording autocenter outcomes in the analysis record.
     A `sim` camera is used only over a simulated stage; over a real laser
     the session reports it and **starts no queue that uses that device**
     until the table is removed (it would have "found" its made-up tray error
-    and fired there). Nothing is run uncentred without having said so.
+    and fired there). Nothing is run uncentered without having said so.
   - **`move_to_position(block=False)` with autocenter is refused** on a stage
-    with a camera (`IStage::autocenter_needs_polling`): centring happens only
+    with a camera (`IStage::autocenter_needs_polling`): centering happens only
     while the script waits. `autocenter=False` makes an unwaited move legal.
   - **A hole move says what happened** (`IStage::last_move_note`: "hole 3:
-    centred, moved 0.150, -0.100 mm" or "not centred (no_target); at its
+    centered, moved 0.150, -0.100 mm" or "not centered (no_target); at its
     calibrated position"), which the script host puts in the run's log with
     the script's own output. Nothing displays a run's log yet (true of
     script `info()` too): that is the experiment window's to show.

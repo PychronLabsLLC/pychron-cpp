@@ -16,8 +16,8 @@ struct JogPair {
   Vec2 image_delta_px;
 };
 
-// Maps the image offset of a target (target centre minus image centre, px) to
-// the stage move (mm) that centres it. A wrong sign here makes autocenter and
+// Maps the image offset of a target (target center minus image center, px) to
+// the stage move (mm) that centers it. A wrong sign here makes autocenter and
 // dragonfly run away from the target, so the convention is pinned by tests.
 struct CameraStageMap {
   double m[2][2] = {{1, 0}, {0, 1}};  // px -> mm, stage frame

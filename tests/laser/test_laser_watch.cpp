@@ -85,10 +85,10 @@ TEST_F(LaserWatch, TheHoleIsForgottenOnceTheStageIsSentElsewhere) {
   EXPECT_TRUE(system.snapshot().last_hole.empty());
 }
 
-TEST_F(LaserWatch, ActivityFollowsMoveCentringAndPattern) {
+TEST_F(LaserWatch, ActivityFollowsMoveCenteringAndPattern) {
   EXPECT_EQ(system.snapshot().activity, LaserActivity::Idle);
   ASSERT_TRUE(system.move_to_position("3", true));
-  EXPECT_EQ(system.snapshot().activity, LaserActivity::Centring);
+  EXPECT_EQ(system.snapshot().activity, LaserActivity::Centering);
   ASSERT_TRUE(drive());
   EXPECT_EQ(system.snapshot().activity, LaserActivity::Idle);
 
@@ -123,13 +123,13 @@ TEST_F(LaserWatch, TheStopCanBeLatchedWithoutWaitingForTheDevice) {
   EXPECT_TRUE(sim.log().empty() || sim.log().back() != "Laser.Enable 1");
 }
 
-TEST_F(LaserWatch, SnapshotNeverAdvancesACentring) {
+TEST_F(LaserWatch, SnapshotNeverAdvancesACentering) {
   ASSERT_TRUE(system.move_to_position("3", true));
   // the stage arrives and settles, but nobody polls moving()
   for (int i = 0; i < 100; ++i) advance();
   const auto before = sim.log().size();
   for (int i = 0; i < 20; ++i) {
-    EXPECT_EQ(system.snapshot().activity, LaserActivity::Centring);
+    EXPECT_EQ(system.snapshot().activity, LaserActivity::Centering);
     advance();
   }
   for (std::size_t i = before; i < sim.log().size(); ++i) {
@@ -200,7 +200,7 @@ TEST_F(LaserWatch, EmergencyStopEndsBeamStageAndPattern) {
   EXPECT_EQ(s.activity, LaserActivity::Idle);
 }
 
-TEST_F(LaserWatch, EmergencyStopAbandonsACentring) {
+TEST_F(LaserWatch, EmergencyStopAbandonsACentering) {
   ASSERT_TRUE(system.move_to_position("3", true));
   advance();
   ASSERT_TRUE(system.emergency_stop());
@@ -255,7 +255,7 @@ TEST_F(LaserWatch, ResetAllowsAgain) {
   EXPECT_NEAR(at().x, 15, 1e-6);
 }
 
-// One thread drives (a centring, then a pattern, with the beam on); another
+// One thread drives (a centering, then a pattern, with the beam on); another
 // watches as fast as it can. Run under the sanitizers in CI.
 TEST_F(LaserWatch, WatchedWhileDriven) {
   std::atomic<bool> done{false};
@@ -383,12 +383,12 @@ struct FakeLive {
 
 }  // namespace
 
-TEST_F(Viewer, ShowsItsPictureAndNeverCentres) {
+TEST_F(Viewer, ShowsItsPictureAndNeverCenters) {
   EXPECT_TRUE(system.has_camera());
-  EXPECT_FALSE(system.can_centre());
+  EXPECT_FALSE(system.can_center());
   EXPECT_FALSE(system.autocenter_needs_polling());
   ASSERT_TRUE(system.move_to_position("3", true));
-  EXPECT_EQ(system.snapshot().activity, LaserActivity::Moving) << "a move, not a centring";
+  EXPECT_EQ(system.snapshot().activity, LaserActivity::Moving) << "a move, not a centering";
   ASSERT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
   EXPECT_EQ(sim.position().x, 15000) << "at its calibrated position, not where the camera sees it";
   EXPECT_EQ(sim.position().y, 20000);
@@ -407,11 +407,11 @@ TEST_F(Viewer, ADragonflyIsRefused) {
   EXPECT_EQ(started.error().kind, ErrorKind::Config);
 }
 
-TEST(ViewerRules, ACameraThatCentresIsNotAttachedAsOneThatCannot) {
+TEST(ViewerRules, ACameraThatCentersIsNotAttachedAsOneThatCannot) {
   LaserHarness h;
   CameraConfig recorded = camera_config();
   recorded.source = CameraSource::Recorded;
-  // a camera meant to centre must come in by attach_camera, where it is checked
+  // a camera meant to center must come in by attach_camera, where it is checked
   CameraConfig view = camera_config();
   view.use = CameraUse::View;
   const auto as_camera = h.system.attach_camera(view, std::make_unique<SimTrayCamera>(view, h.system.sight(), h.clock), h.clock);
@@ -420,7 +420,7 @@ TEST(ViewerRules, ACameraThatCentresIsNotAttachedAsOneThatCannot) {
   EXPECT_FALSE(h.system.has_camera());
 }
 
-// The stop is pressed while a centring is waiting for its camera: when the
+// The stop is pressed while a centering is waiting for its camera: when the
 // frames come, nothing more is sent to the stage.
 TEST(StopDuringALook, NoMoveIsSentOnceTheStopIsLatched) {
   struct Pressing final : vision::IFrameSource {
@@ -451,7 +451,7 @@ TEST(StopDuringALook, NoMoveIsSentOnceTheStopIsLatched) {
     if (!moving || !*moving) break;
     h.clock.advance(std::chrono::milliseconds(100));
   }
-  ASSERT_TRUE(h.system.stopped()) << "the centring never looked";
+  ASSERT_TRUE(h.system.stopped()) << "the centering never looked";
   const auto log = h.sim.log();
   for (std::size_t i = sent_before; i < log.size(); ++i) {
     EXPECT_FALSE(log[i].starts_with("Stage.MoveTo")) << "sent after the stop: " << log[i];
@@ -460,17 +460,17 @@ TEST(StopDuringALook, NoMoveIsSentOnceTheStopIsLatched) {
   EXPECT_EQ(h.system.snapshot().activity, LaserActivity::Idle);
 }
 
-// A live camera that centres, and goes mid-centring: the centring gives up
+// A live camera that centers, and goes mid-centering: the centering gives up
 // on the camera and the stage goes back to where it started.
-TEST(LiveCentring, ACameraThatGoesEndsTheCentring) {
+TEST(LiveCentering, ACameraThatGoesEndsTheCentering) {
   FakeLive fake;
   LaserHarness h;
   CameraConfig config = FakeLive::config();
-  config.use = CameraUse::Centre;
+  config.use = CameraUse::Center;
   auto frames = make_frame_source(config, h.lab.dir, h.system.sight(), h.clock);
   ASSERT_TRUE(frames) << frames.error().what;
   ASSERT_TRUE(h.system.attach_camera(config, std::move(*frames), h.clock));
-  EXPECT_TRUE(h.system.can_centre());
+  EXPECT_TRUE(h.system.can_center());
   ASSERT_TRUE(h.system.set_tray("small"));
   fake.control->fails = true;
   ASSERT_TRUE(h.system.move_to_position("3", true));

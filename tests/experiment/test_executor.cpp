@@ -151,7 +151,7 @@ TEST_F(ExecutorTest, RunsTheQueueSeriallyWithTheDelayPolicy) {
 // RunFinished and the queue's result.
 TEST_F(ExecutorTest, ARunsLogIsInItsSummary) {
   host_.bodies["extract"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
-    env.log("hole 3: not centred (no_target); at its calibrated position");
+    env.log("hole 3: not centered (no_target); at its calibrated position");
     return {};
   };
   std::vector<RunSummary> finished;
@@ -160,7 +160,7 @@ TEST_F(ExecutorTest, ARunsLogIsInItsSummary) {
   Executor ex(context(), options());
   const auto result = ex.execute(q);
   ASSERT_EQ(result.runs.size(), 1u);
-  const std::vector<std::string> said{"hole 3: not centred (no_target); at its calibrated position"};
+  const std::vector<std::string> said{"hole 3: not centered (no_target); at its calibrated position"};
   EXPECT_EQ(result.runs[0].messages, said);
   ASSERT_EQ(finished.size(), 1u);
   EXPECT_EQ(finished[0].messages, said);

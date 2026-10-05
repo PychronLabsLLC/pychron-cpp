@@ -45,7 +45,7 @@ class Shutter final : public vision::IFrameSource {
   std::unique_ptr<vision::IFrameSource> inner_;
 };
 
-// The grain is `grain` from hole 3's centre; the tray is where it is calibrated.
+// The grain is `grain` from hole 3's center; the tray is where it is calibrated.
 CameraConfig glow_camera(double gx, double gy, double drift_x = 0) {
   CameraConfig c = camera_config(0, 0);
   c.sim_grain_offset_mm = {gx, gy};
@@ -63,7 +63,7 @@ struct Rig : LaserHarness {
     shutter = frames.get();
     EXPECT_TRUE(system.attach_camera(camera, std::move(frames), clock));
     EXPECT_TRUE(system.set_tray("small"));
-    // on hole 3 (15, 20), uncentred, beam on at a working output
+    // on hole 3 (15, 20), uncentered, beam on at a working output
     EXPECT_TRUE(system.move_to_position(hole, false));
     EXPECT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
     EXPECT_TRUE(system.enable());

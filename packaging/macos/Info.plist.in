@@ -31,6 +31,6 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Pychron shows a laser's camera so that sample holes can be seen and centred under the beam.</string>
+	<string>Pychron shows a laser's camera so that sample holes can be seen and centered under the beam.</string>
 </dict>
 </plist>

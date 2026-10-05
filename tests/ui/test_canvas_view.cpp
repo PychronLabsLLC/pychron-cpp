@@ -25,7 +25,7 @@ using pychron::ui::CoreBridge;
 namespace {
 
 // True when the pixel just outside the left edge of the valve body, rendered
-// over white, is the lock colour (the border is 3 px wide, centred on the edge).
+// over white, is the lock colour (the border is 3 px wide, centered on the edge).
 bool hasLockBorder(ui::ValveItem* item) {
   QImage image(60, 60, QImage::Format_ARGB32);
   image.fill(Qt::white);
@@ -304,7 +304,7 @@ class TestCanvasView : public QObject {
     // B (550, 200) and turbo (650, 300; 60 x 40) do not line up either way.
     std::ofstream(canvas, std::ios::app) << "\n[[connection]]\nstart = \"B\"\nend = \"turbo\"\norientation = \"v\"\n";
     // offsets move where a pipe meets its element: A (250, 200) to the top
-    // edge of bone (100, 200; 80 x 40), 30 left of its centre
+    // edge of bone (100, 200; 80 x 40), 30 left of its center
     std::ofstream(canvas, std::ios::app)
         << "\n[[connection]]\nstart = \"A\"\nend = \"bone\"\nstart_offset = [0, -15]\nend_offset = [-30, -20]\n";
     auto line = ui::test::make_example_line(canvas);
@@ -513,7 +513,7 @@ class TestCanvasView : public QObject {
       const QRectF area = tall.symbol_rect(painter.fontMetrics().size(Qt::TextSingleLine, "Jan")).translated(29, 41.5);
       painter.end();
       int dark = 0;
-      // the upper part only: a plain box centres its name lower down
+      // the upper part only: a plain box centers its name lower down
       for (int y = int(area.top()) + 2; y < int(area.center().y()) - 8; ++y)
         for (int x = int(area.left()) + 2; x < int(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
       return dark;
@@ -640,7 +640,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(wheel.width(), 2 * ui::ValveItem::kWheelRadius);
     QVERIFY(body.contains(wheel));
 
-    // painted: the dark hub at the centre and rim to its right, on a blank face
+    // painted: the dark hub at the center and rim to its right, on a blank face
     QImage image(60, 60, QImage::Format_ARGB32);
     image.fill(Qt::white);
     QPainter painter(&image);
@@ -695,7 +695,7 @@ class TestCanvasView : public QObject {
     QVERIFY(dial.width() > 8);
     QVERIFY(dial.right() < 0);  // left of the text, which starts at x = 0
     QVERIFY(ig->boundingRect().contains(dial));
-    // dial and reading sit on a chip, centred on the gauge's position
+    // dial and reading sit on a chip, centered on the gauge's position
     QVERIFY(ig->chip_rect().contains(dial));
     QVERIFY(std::abs(ig->mapToScene(ig->chip_rect().center()).x() - ig->pos().x()) < 0.5);
     QVERIFY(ig->wired());

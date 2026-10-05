@@ -67,7 +67,7 @@ without one it uses `switch_controller`.
 - Connections reference elements that are commented out or never drawn;
   connection ends can carry an `offset` (`<start offset="1.5,0">`, or
   `{name: X, offset: "1.5,0"}` in YAML): where the pipe meets the element,
-  from the element's lower-left corner. Without one it meets the centre.
+  from the element's lower-left corner. Without one it meets the center.
 - An `elbow` turns at (start.x, end.y), or at (end.x, start.y) when its
   `<corner>` child says `lr`; no other corner value, and no `corner=`
   attribute, changes anything.
@@ -122,7 +122,7 @@ Mapping:
   colours other than the background, images, and gauge controllers (so a
   legacy gauge is drawn but shows no reading).
 - Connection-end offsets become `start_offset` / `end_offset`, in pixels
-  from the element's centre; an elbow names the corner legacy turned at.
+  from the element's center; an elbow names the corner legacy turned at.
 - A legacy `spectrometer`, `laser`, `turbo`, `getter` or `ionpump` becomes a
   stage with `symbol = "<kind>"` (`ion_pump` for the last; a glyph inside
   its box), unless the legacy element says `use_symbol="False"`.

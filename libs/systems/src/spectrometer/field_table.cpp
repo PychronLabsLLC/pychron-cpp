@@ -26,7 +26,7 @@ int degree(FitKind kind) {
   return 0;
 }
 
-// Least-squares polynomial in x = (mass - center) / scale; centring keeps the
+// Least-squares polynomial in x = (mass - center) / scale; centering keeps the
 // normal equations well conditioned for masses far from zero.
 struct Poly {
   double center = 0.0;

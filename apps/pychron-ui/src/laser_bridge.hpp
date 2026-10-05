@@ -8,8 +8,8 @@
 // One worker thread per bridge. Between commands, and while one waits for a
 // motion to end, it takes the system's snapshot (and its camera's view) every
 // `publish` and posts them to the main thread. Commands run in the order
-// issued. One that starts a motion (a move, a centring, a pattern) waits for
-// it there, polling every `poll`: nothing is left half centred because
+// issued. One that starts a motion (a move, a centering, a pattern) waits for
+// it there, polling every `poll`: nothing is left half centered because
 // nobody was asking.
 //
 // Who may drive: every driving command takes the lab's Manual lease for as
@@ -67,7 +67,7 @@ class LaserBridge : public QObject {
   const laser::TrayMap* tray_map(const QString& name) const;  // null: no such tray
   const laser::PatternLibrary& patterns() const { return deps_.lab.patterns; }
   bool has_camera() const;   // a picture to look at
-  bool can_centre() const;   // a camera that may move the stage
+  bool can_center() const;   // a camera that may move the stage
 
   // Read from disk, as they are now; main thread.
   std::vector<laser::CalibrationPoint> calibration_points(const QString& tray) const;

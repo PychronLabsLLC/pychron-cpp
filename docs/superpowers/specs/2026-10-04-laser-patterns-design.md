@@ -62,7 +62,7 @@ value out of range is a Config error naming the file and the key.
 ## 4. Points
 
 `pattern_points(const Pattern&, std::uint64_t seed) -> std::vector<StageXY>`:
-offsets from the pattern's centre, one pass. A pure function per kind, with
+offsets from the pattern's center, one pass. A pure function per kind, with
 legacy's geometry (`pychron/lasers/pattern/pattern_generators.py`), `c` being
 (0, 0):
 
@@ -70,13 +70,13 @@ legacy's geometry (`pychron/lasers/pattern/pattern_generators.py`), `c` being
 - **linear**: `p1 = (0,0)`, `p2 = (length, 0)`, rotated by `rotation`; pass i goes p1→p2 when i is even, p2→p1 when odd.
 - **circular_contour**: for ring i = 0..nsteps−1, radius `R (1 + i·percent_change)`: the circle from 0° to 360° in 10° steps (37 points, closed).
 - **line_spiral** (outwards): for turn i = 0..nsteps−1, `n = 2 i + step_scalar` angles evenly from 0° to 360° inclusive; radius `R (1 + (i + t/360)·percent_change)`; the 360° point is dropped on every turn but the last.
-- **square_spiral** (outwards): from the centre, `4 nsteps + 1` steps of length `R (1 + i·percent_change)` cycling +x, +y, −x, −y.
-- **random**: `npoints` points uniform in the box ±walk_x, ±walk_y, redrawn until within `walk_x` of the centre (legacy's circle test). A fixed generator (`std::mt19937_64`) and its own uniform mapping, so a `seed` gives the same walk on every compiler.
+- **square_spiral** (outwards): from the center, `4 nsteps + 1` steps of length `R (1 + i·percent_change)` cycling +x, +y, −x, −y.
+- **random**: `npoints` points uniform in the box ±walk_x, ±walk_y, redrawn until within `walk_x` of the center (legacy's circle test). A fixed generator (`std::mt19937_64`) and its own uniform mapping, so a `seed` gives the same walk on every compiler.
 - **rubberband**: `(-o, o), (L+o, o), (L+o, -o), (-o, -o), (-o, o)`, rotated.
 - **raster**: legacy's zig-zag over the rubberband's box: `n = int((L + 2o)/dx)`; if `n·dx <= L + 2o`: `n` made even (`n+1` if odd), `dx = (L + 2o)/(n + 1)`, `n = int((L + 2o)/dx)`; points `(-o + dx·i, ∓o)` for i = 0..n (y = +o for even i); when not `single_pass`, the way back and a return to the first corner.
 - **trough**: `p1 (0,0), p2 (L,0), p3 (L,-W), p4 (0,-W)`, rotated; order `p1 p2 p4 p3 p1` with `use_x`, else `p1 p2 p3 p4 p1`.
 
-Rotation is counter-clockwise about the centre. Every generated point is
+Rotation is counter-clockwise about the center. Every generated point is
 finite; a pattern of more than 10 000 points over all iterations is a Config
 error.
 
@@ -123,8 +123,8 @@ or `set_x/y/z` stops the stage (the host's `wait_while` gets a stop action, as
 own.
 
 - `execute_pattern(name)`: Config error for an unknown or unloadable pattern,
-  or if one is running. Reads the stage position: that is the centre. Builds
-  the whole path (points × iterations, then the centre) and starts the first
+  or if one is running. Reads the stage position: that is the center. Builds
+  the whole path (points × iterations, then the center) and starts the first
   move at the pattern's velocity.
 - `running()`: one step. If the stage is still moving: true. Otherwise the
   next point is sent: true. After the last point has arrived: false.
@@ -166,7 +166,7 @@ them.
 | Command | Does |
 |---|---|
 | `patterns` | each pattern: kind, points, path length, estimated time; files that did not load |
-| `pattern <device> <name> --dry-run` | the points, relative to the centre |
+| `pattern <device> <name> --dry-run` | the points, relative to the center |
 | `pattern <device> <name>` | runs it from where the stage is (the laser is not fired), Ctrl-C stops the stage; prints where it ended |
 
 ## 11. Testing
@@ -180,7 +180,7 @@ them.
   simulated time; the speed is clamped; `stop()` halts the simulated stage
   where it is and `moving()` is false after.
 - Runner over `ChromiumSim`: the simulator's log shows the points in order at
-  the pattern's speed; iterations; the return to the centre; `stop_pattern`
+  the pattern's speed; iterations; the return to the center; `stop_pattern`
   mid-segment; a point outside travel ends it with the point's number; a
   second `execute_pattern` while running is refused; the pattern conformance
   suite.
@@ -230,7 +230,7 @@ before it starts.
     advances while it is polled (`IPatternRunner::needs_polling()`): the beam
     would sit on the first point. **The run stops any pattern at the end of
     its extraction**, so a pattern never outlives its run.
-  - **A pattern is not started while the stage is moving** (no centre yet).
+  - **A pattern is not started while the stage is moving** (no center yet).
   - **Everything that could not run is said when the file is read**: a raster
     step so fine it would be more than 10 000 points, and a pattern of more
     than 10 000 points over its iterations (key `iterations`), are load

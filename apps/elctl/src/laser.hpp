@@ -18,11 +18,11 @@
 // this hole". `point` takes the position from the device (jog the stage onto
 // the hole first, with the laser's own software) unless --x and --y give it,
 // in which case no hardware is opened. `center` and `right` are `point` at
-// the tray map's centre and east calibration holes. One point places the
+// the tray map's center and east calibration holes. One point places the
 // tray, two also turn it, three or more are fitted.
 //
 // `autocenter` needs the device to have a camera (<lab>/cameras.toml): it
-// moves to the hole, centres it, and saves where it was found. `look` only
+// moves to the hole, centers it, and saves where it was found. `look` only
 // says what the camera's finder sees. `corrections` lists or forgets what
 // autocenter has saved.
 //

@@ -17,7 +17,7 @@ namespace pychron::laser {
 struct PatternRunner::Follow {
   enum class Phase { Follow, Return, Hold } phase = Phase::Follow;
   vision::Dragonfly controller;
-  StageXY centre{};
+  StageXY center{};
   double perimeter = 0;
   double velocity = 0;
   double duration_s = 0;
@@ -121,19 +121,19 @@ Result<void> PatternRunner::execute_pattern_for(std::string_view pattern, double
     e.device = device_;
     return fail(std::move(e));
   }
-  // The centre is where the stage is now: it has to have stopped.
+  // The center is where the stage is now: it has to have stopped.
   auto moving = stage_.moving();
   if (!moving) return fail(std::move(moving).error());
   if (*moving) {
     return fail(ErrorKind::Config, "the stage is still moving; pattern " + found->name + " starts from where it stops",
                 device_);
   }
-  auto centre = stage_.position();
-  if (!centre) return fail(std::move(centre).error());
+  auto center = stage_.position();
+  if (!center) return fail(std::move(center).error());
   {
     std::lock_guard lock(mutex_);
     path_.clear();
-    for (const auto& o : *offsets) path_.push_back({centre->x + o.x, centre->y + o.y});
+    for (const auto& o : *offsets) path_.push_back({center->x + o.x, center->y + o.y});
     next_ = 0;
     name_ = found->name;
     velocity_ = found->velocity;
@@ -176,8 +176,8 @@ Result<void> PatternRunner::start_following(const Pattern& pattern, double run_d
     return fail(ErrorKind::Config, "the stage is still moving; pattern " + pattern.name + " starts from where it stops",
                 device_);
   }
-  auto centre = stage_.position();
-  if (!centre) return fail(std::move(centre).error());
+  auto center = stage_.position();
+  if (!center) return fail(std::move(center).error());
 
   const CameraConfig& camera = *vision_.camera;
   // The run's duration, as in legacy pychron; the pattern's own when the run has none.
@@ -215,13 +215,13 @@ Result<void> PatternRunner::start_following(const Pattern& pattern, double run_d
 
   const TimePoint now = vision_.clock->now();
   follow_ = std::make_unique<Follow>(*finder_, camera, params);
-  follow_->centre = {centre->x, centre->y};
+  follow_->center = {center->x, center->y};
   follow_->perimeter = perimeter;
   follow_->own_perimeter = pattern.perimeter_radius;
   follow_->velocity = pattern.velocity;
   follow_->duration_s = duration_s;
   follow_->ends = now + params.total_duration;
-  follow_->controller.start(now, {centre->x, centre->y});
+  follow_->controller.start(now, {center->x, center->y});
   std::lock_guard lock(mutex_);
   path_.clear();
   next_ = 0;
@@ -236,7 +236,7 @@ Result<bool> PatternRunner::go_home() {
   Follow& f = *follow_;
   f.phase = Follow::Phase::Return;
   f.at_rest.reset();
-  if (auto moved = stage_.set_xy(f.centre.x, f.centre.y, f.velocity); !moved) {
+  if (auto moved = stage_.set_xy(f.center.x, f.center.y, f.velocity); !moved) {
     const std::string name = name_;
     end();
     Error e = std::move(moved).error();
@@ -358,7 +358,7 @@ Result<bool> PatternRunner::follow() {
 
   // An absolute move: the target is an offset from where the pattern started,
   // which the controller keeps within the perimeter it was given.
-  const StageXY to{f.centre.x + step->target_mm.x, f.centre.y + step->target_mm.y};
+  const StageXY to{f.center.x + step->target_mm.x, f.center.y + step->target_mm.y};
   if (auto moved = stage_.set_xy(to.x, to.y, f.velocity); !moved) return failed(std::move(moved).error());
   f.at_rest.reset();
   return true;

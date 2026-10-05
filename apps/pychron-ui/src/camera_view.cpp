@@ -77,7 +77,7 @@ QPointF CameraView::to_widget(const QPointF& frame_px) const {
   const QRectF box = picture();
   if (box.isEmpty()) return {};
   const double scale = box.width() / image_.width();
-  // a pixel's centre is at its integer coordinate
+  // a pixel's center is at its integer coordinate
   return {box.left() + (frame_px.x() + 0.5) * scale, box.top() + (frame_px.y() + 0.5) * scale};
 }
 

@@ -31,7 +31,7 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
     // camera) the means to find them again.
     system->set_corrections(*lab.corrections);
     // A recording is for looking (elctl laser look): it never moves a
-    // stage. Any other camera must be one that can centre holes here.
+    // stage. Any other camera must be one that can center holes here.
     // The camera as the lab describes it, with its scale as measured when
     // somebody has measured it.
     std::optional<laser::CameraConfig> described;
@@ -87,8 +87,8 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
           if (frames) {
             const std::string why = unopened(**frames);
             usable = system->attach_camera(*camera, std::move(*frames), line.clock());
-            // A camera that is meant to centre holes and is not there: the
-            // runs would go uncentred without anyone having said so.
+            // A camera that is meant to center holes and is not there: the
+            // runs would go uncentered without anyone having said so.
             if (usable && !why.empty()) usable = fail(ErrorKind::Io, "camera of " + name + ": " + why, name);
           } else {
             usable = fail(frames.error());

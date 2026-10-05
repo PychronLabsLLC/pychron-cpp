@@ -53,8 +53,8 @@ QIcon MainWindow::view_icon(View view) {
       p.save();
       p.scale(kPoints / 66.0, kPoints / 66.0);
       p.translate(0, 2);
-      const QPointF centre(46, 48);
-      auto ring = [&](double r) { return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r); };
+      const QPointF center(46, 48);
+      auto ring = [&](double r) { return QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r); };
       QPainterPath tube(QPointF(12, 56));
       tube.lineTo(12, 48);
       tube.arcTo(ring(34), 180, -90);

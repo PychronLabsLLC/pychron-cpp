@@ -7,7 +7,7 @@
 //   stage = scale * R(rotation) * map + (cx, cy)
 //
 //   1 point    a shift; no rotation, scale 1
-//   2 points   a shift and a rotation, scale 1 (legacy "Tray": centre, right)
+//   2 points   a shift and a rotation, scale 1 (legacy "Tray": center, right)
 //   3 or more  least-squares shift, rotation and scale (legacy "Free")
 //
 // Stage and map are both millimetres, so a fitted scale far from 1 means a

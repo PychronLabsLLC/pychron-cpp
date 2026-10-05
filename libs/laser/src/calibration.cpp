@@ -112,9 +112,9 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
                         "; stage and map are both in mm, so a scale more than 2% from 1 means a wrong hole or map");
   }
   t.scale = fitted_scale;
-  const auto centre = t.to_stage(pmx, pmy);
-  t.cx = qmx - centre.x;
-  t.cy = qmy - centre.y;
+  const auto center = t.to_stage(pmx, pmy);
+  t.cx = qmx - center.x;
+  t.cy = qmy - center.y;
   double sum = 0;
   for (std::size_t i = 0; i < points.size(); ++i) {
     const auto s = t.to_stage(holes[i]->x, holes[i]->y);

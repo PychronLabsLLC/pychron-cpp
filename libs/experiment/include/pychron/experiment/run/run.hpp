@@ -128,7 +128,7 @@ class RunControl {
 };
 
 // Something a run said: a script's info() line, what a hole move did
-// ("hole 3: centred, ..."), a failure the run carried on past. Published on
+// ("hole 3: centered, ..."), a failure the run carried on past. Published on
 // the bus as it is said, from whichever thread said it; the same lines are
 // RunResult::messages and the record's "note" events.
 struct RunNote {

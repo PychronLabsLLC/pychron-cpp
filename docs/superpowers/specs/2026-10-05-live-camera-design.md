@@ -14,7 +14,7 @@ Chromium's video window, the earlier plan, is dropped.
 ```toml
 [co2]
 source = "opencv"        # sim | recorded | opencv | pylon
-use = "centre"           # centre (default) | view: a picture only, never moves the stage
+use = "center"           # center (default) | view: a picture only, never moves the stage
 px_per_mm = 23.0
 
 [co2.opencv]
@@ -66,16 +66,16 @@ the laser window's design).
 
 ## 3. Who may move a stage
 
-- A live camera over a real stage centres holes and follows the glow.
+- A live camera over a real stage centers holes and follows the glow.
 - A live camera over a simulated stage does not follow it: with
-  `use = "centre"` that is a problem for the device (its queues are not
+  `use = "center"` that is a problem for the device (its queues are not
   started), as a simulated camera over a real laser is.
 - `use = "view"`, for any source: the picture is shown, the finder's target
   is drawn, and nothing the camera sees ever moves the stage. Hole moves go
   to their calibrated positions, a dragonfly is refused, and queues run. This
   is how a built-in camera is used for testing.
 - A camera that cannot be opened is said (and reopened when it appears): for
-  a `centre` camera a problem, for a `view` camera a note.
+  a `center` camera a problem, for a `view` camera a note.
 
 ## 4. Pixel scale from jogs
 
@@ -121,7 +121,7 @@ operator; refused, the camera cannot be opened and the error says so.
 - `LiveFeed` on fake cameras that hang, die, crawl and come back: the
   timeout, fail-fast, reconnect, a frame newer than the call.
 - Config (every key, every refusal), the use rule, a view camera never
-  centring, the scale measured on the simulator against what the simulated
+  centering, the scale measured on the simulator against what the simulated
   camera was told, the scale store, PNG (read back by our own reader and by
   Qt's), snapshots, the chooser on fake backends.
 - No test in CI opens a real camera. `PYCHRON_TEST_CAMERA=<index>` runs one
@@ -140,31 +140,31 @@ recording, colour, autofocus.
   returns after the feed has gone touches nothing of the caller's. The
   reader thread is detached only when it does not end within the timeout.
 - **Section 3.** `LaserSystem::attach_viewer` is how a camera for looking
-  comes in; `can_centre()` is what centring and the window ask. A simulated
+  comes in; `can_center()` is what centering and the window ask. A simulated
   camera marked `view` over a real laser is not shown (it would show a tray
   that is not there): a note. A recorded camera is still never attached.
 - **A camera that is not there at start.** The feed is made and goes on
-  trying. For a `centre` camera that is a problem, and stays one until the
+  trying. For a `center` camera that is a problem, and stays one until the
   program is started again even if the camera appears: `Lasers`' problems
   are fixed when it is built.
 - **Section 4.** `camera-scale` in elctl takes a tray and a hole and goes
   there first. The measurement looks for targets of any size (the scale that
   says how big a hole should look is what is being measured). The store's
   file is the map (`m`, `residual_mm`) under a comment: only the map is read
-  back. A scale file that cannot be read is a problem for a `centre` camera.
+  back. A scale file that cannot be read is a problem for a `center` camera.
 - **Section 7.** Frame age is shown only when the camera has stopped.
 - **Not proven here:** the built-in camera could not be opened by the
   session that wrote this (macOS did not allow it); `RealCamera` is the test
-  to run by hand. No live camera has centred a hole on a real stage.
+  to run by hand. No live camera has centered a hole on a real stage.
 
 ### After review
 
 - A camera whose read (or open) has been in flight longer than its timeout is
   said to have stopped whether or not anything waited for it: a window that
   only looks is not shown a frozen picture as live.
-- A centring that was waiting for its camera when the stop was latched sends
+- A centering that was waiting for its camera when the stop was latched sends
   nothing more to the stage. One look waits once for its frames, not once
-  per frame, and a camera that centres may have a `timeout_ms` of 2000 at
+  per frame, and a camera that centers may have a `timeout_ms` of 2000 at
   most (100 at least, for any).
 - The scale measurement takes three sightings (x, y and both) and refuses: a
   move of less than 5 pixels (a picture that does not follow the stage); a
@@ -175,5 +175,5 @@ recording, colour, autofocus.
   size, rotation, roi, channel); with another setup it is a problem until it
   is measured again or cleared.
 - Every elctl command uses the measured scale.
-- A video file never centres a stage; a camera whose open does not answer is
-  a problem for a camera that centres.
+- A video file never centers a stage; a camera whose open does not answer is
+  a problem for a camera that centers.

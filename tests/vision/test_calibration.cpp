@@ -15,7 +15,7 @@ using pychron::ErrorKind;
 
 namespace {
 
-// Image deltas that a known centring map M produces for the given stage jogs:
+// Image deltas that a known centering map M produces for the given stage jogs:
 // a = M^-1 * (-s).
 std::vector<JogPair> pairs_from(const double M[2][2], const std::vector<Vec2>& stage_jogs) {
   const double det = M[0][0] * M[1][1] - M[0][1] * M[1][0];
@@ -83,9 +83,9 @@ TEST(CameraStageMap, SolveAgreesWithSyntheticScene) {
 
   const Vec2 stage{0.1, -0.15};
   const Vec2 found = offset_of(scene, stage);
-  const Vec2 centre{(scene.width - 1) / 2.0, (scene.height - 1) / 2.0};
-  const Vec2 move = r->to_mm({found.x - centre.x, found.y - centre.y});
-  // The stage must move by (hole - stage) to centre the hole.
+  const Vec2 center{(scene.width - 1) / 2.0, (scene.height - 1) / 2.0};
+  const Vec2 move = r->to_mm({found.x - center.x, found.y - center.y});
+  // The stage must move by (hole - stage) to center the hole.
   EXPECT_NEAR(move.x, scene.hole_mm.x - stage.x, 0.01);
   EXPECT_NEAR(move.y, scene.hole_mm.y - stage.y, 0.01);
 }

@@ -40,7 +40,7 @@ std::string_view to_string(LaserActivity activity) noexcept {
   switch (activity) {
     case LaserActivity::Idle: return "idle";
     case LaserActivity::Moving: return "moving";
-    case LaserActivity::Centring: return "centring";
+    case LaserActivity::Centering: return "centering";
     case LaserActivity::Pattern: return "pattern";
   }
   return "idle";
@@ -205,7 +205,7 @@ LaserSnapshot LaserSystem::snapshot() {
     }
     if (runner_ != nullptr && driver_.pattern_runner() == nullptr) s.pattern_progress = runner_->progress();
     s.activity = !s.pattern_progress.empty() ? LaserActivity::Pattern
-                 : centering_ != nullptr     ? LaserActivity::Centring
+                 : centering_ != nullptr     ? LaserActivity::Centering
                  : moving_.load()            ? LaserActivity::Moving
                                              : LaserActivity::Idle;
     s.stopped = stopped_.load();
@@ -321,7 +321,7 @@ Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
   params.expected_radius_px = any_size ? 0.0 : seen.expected_radius_px;
   seen.targets = finder_->find(seen.frame.view(), params);
   const auto& targets = seen.targets;
-  // The one nearest the aim: what a centring would go for.
+  // The one nearest the aim: what a centering would go for.
   for (const auto& target : targets) {
     const auto off = [&seen](const vision::Target& t) {
       return std::hypot(t.center_px.x - seen.aim_px.x, t.center_px.y - seen.aim_px.y);
@@ -373,11 +373,11 @@ Result<IStage*> LaserSystem::driver_stage() {
 // An autocenter in progress: the stage is travelling to the hole, at rest
 // and being looked at, or on its way back after a failure.
 struct LaserSystem::Centering {
-  enum class Phase { Centre, Return } phase = Phase::Centre;
+  enum class Phase { Center, Return } phase = Phase::Center;
   std::string hole;
   std::string tray;
   StageXY nominal{};  // where the calibration puts the hole
-  StageXY start{};    // where the centring starts: the correction, or nominal
+  StageXY start{};    // where the centering starts: the correction, or nominal
   double guard = 0;
   vision::Autocenter controller;
   std::optional<TimePoint> at_rest;  // since when the stage has been seen stopped
@@ -427,7 +427,7 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
-  centres_ = true;
+  centers_ = true;
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
@@ -443,7 +443,7 @@ Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vis
   if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
-  centres_ = false;
+  centers_ = false;
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   if (runner_ != nullptr) runner_->set_vision({});  // nothing to follow the glow with
@@ -592,7 +592,7 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
       std::lock_guard lock(mutex_);
       last_hole_ = std::string(position);
     }
-    if (autocenter && can_centre()) {
+    if (autocenter && can_center()) {
       vision::AutocenterParams params;
       params.hole_radius_mm = hole_radius;
       params.tolerance_mm = camera_->tolerance_mm;
@@ -696,7 +696,7 @@ Result<bool> LaserSystem::advance() {
   }
 
   if (c.phase == Centering::Phase::Return) {
-    // Back where the centring started: it failed, and now it is over.
+    // Back where the centering started: it failed, and now it is over.
     AutocenterOutcome outcome;
     outcome.result = AutocenterOutcome::Result::Failed;
     outcome.reason = c.failed;
@@ -711,7 +711,7 @@ Result<bool> LaserSystem::advance() {
     centering_.reset();
     {
       std::lock_guard lock(mutex_);
-      move_note_ = "hole " + outcome.hole + ": not centred (" + std::string(to_string(outcome.reason)) + "); at its " +
+      move_note_ = "hole " + outcome.hole + ": not centered (" + std::string(to_string(outcome.reason)) + "); at its " +
                    (corrected ? "last found" : "calibrated") + " position";
       outcome_ = std::move(outcome);
     }
@@ -770,7 +770,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
   const StageXY here{at->x, at->y};
 
   if (step.action == Action::Converged) {
-    // Centred on something: only the hole itself can be this near where the
+    // Centered on something: only the hole itself can be this near where the
     // calibration puts it.
     if (apart(here, c.nominal) > c.guard) return give_up(stage, vision::AutocenterReason::MaxTotal);
     AutocenterOutcome outcome;
@@ -799,7 +799,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
       }
     }
     std::lock_guard lock(mutex_);
-    move_note_ = "hole " + outcome.hole + ": centred, moved " + mm(outcome.moved_mm.x) + ", " + mm(outcome.moved_mm.y) +
+    move_note_ = "hole " + outcome.hole + ": centered, moved " + mm(outcome.moved_mm.x) + ", " + mm(outcome.moved_mm.y) +
                  " mm (residual " + mm(outcome.residual_mm) + " mm)" + (outcome.note.empty() ? "" : "; " + outcome.note);
     outcome_ = std::move(outcome);
     return false;

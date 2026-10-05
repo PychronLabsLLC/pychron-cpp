@@ -34,7 +34,7 @@ Sub-project 2 is cut in three, each with its own spec and plan:
   in millimetres and knows nothing about holes.
 - **[decision]** One calibration model: a list of (hole, stage position)
   points. One point gives a shift, two a shift and a rotation (legacy "Tray":
-  centre then right), three or more a least-squares fit with scale (legacy
+  center then right), three or more a least-squares fit with scale (legacy
   "Free"/"Hole").
 - **[decision]** Until the laser UI exists a calibration is made with `elctl`,
   reading the live stage position.
@@ -52,7 +52,7 @@ Reads the legacy format (survey §5.2):
 - `#` starts a comment; blank lines are skipped.
 - Header, the first three other lines: `shape,dimension` (`circle` or `square`,
   mm); valid hole ids, CSV (may be empty); calibration holes, CSV, in the order
-  north, east, south, west, centre (may be empty).
+  north, east, south, west, center (may be empty).
 - Hole rows: `x,y` | `id,x,y` | `x,y,(assoc)` | `x,y,r<dim>` |
   `id,x,y,(assoc)`. A row without an id is numbered from 1 in file order. Ids
   are strings.
@@ -108,7 +108,7 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
 - A fitted scale more than 2% from 1 is an error: stage and map are both in
   millimetres, so that is a mistake, not a calibration.
 
-Legacy applies the scale to the centre as well (`s(Rp + c)`). The two agree at
+Legacy applies the scale to the center as well (`s(Rp + c)`). The two agree at
 `s = 1`; this form has an exact inverse at any scale. Legacy pickled
 calibrations cannot be read and are recreated.
 
@@ -229,7 +229,7 @@ All take the lab directory and the line config the way `elctl exp` does.
 |---|---|
 | `trays` | maps, hole counts, and per device: calibrated (points, rms), stale, or not |
 | `calibrate <device> <tray> point <hole> [--x X --y Y]` | records the stage position at a hole: read from the device unless both `--x` and `--y` are given (then no hardware is opened). Replaces an earlier point on the same hole. Prints the solution. |
-| `calibrate <device> <tray> center` / `right` | `point` at the map's centre / east calibration hole; an error if the map names none |
+| `calibrate <device> <tray> center` / `right` | `point` at the map's center / east calibration hole; an error if the map names none |
 | `calibrate <device> <tray> show` / `clear` | print points and solution / delete the file |
 | `goto <device> <tray> <hole>` | move there, wait for arrival (Ctrl-C stops the waiting, not the stage: section 11), print where it is and the miss in mm |
 
@@ -303,7 +303,7 @@ positions (a run with several holes passes the first to its script, as now).
   skipped. An unknown tray is reported only when a run will use it.
 - **`cautions()`**: a calibration says what its points cannot rule out. Two
   exchanged points fit perfectly half a turn round, and points on one line
-  (centre and right) cannot show a mirrored axis; neither shows in the rms.
+  (center and right) cannot show a mirrored axis; neither shows in the rms.
   `elctl laser calibrate` and `trays` print them. The check is `elctl laser
   goto` on a hole off the line.
 - **A queue with no tray clears the device's tray**, so a tray left by an

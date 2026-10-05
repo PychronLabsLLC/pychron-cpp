@@ -130,7 +130,7 @@ TEST_F(LaserCmd, CenterAndRightUseTheMapsHoles) {
   EXPECT_NE(o.out.find("rotation 90.000 deg"), std::string::npos) << o.out;
 }
 
-// Centre and right exchanged fit perfectly, half a turn round: it must be said.
+// Center and right exchanged fit perfectly, half a turn round: it must be said.
 TEST_F(LaserCmd, ExchangedPointsAreWarnedAbout) {
   ASSERT_EQ(calibrate({"clear"}).code, 0);
   ASSERT_EQ(calibrate({"center", "--x", "30", "--y", "25"}).code, 0);
@@ -188,7 +188,7 @@ TEST_F(LaserCmd, ShowPrintsPointsAndSolution) {
   EXPECT_NE(o.out.find("hole 5"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("25.000, 25.000"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("hole 6"), std::string::npos) << o.out;
-  EXPECT_NE(o.out.find("centre 25.000, 25.000"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("center 25.000, 25.000"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("rotation 0.000 deg"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("scale 1.0000"), std::string::npos) << o.out;
 }
@@ -382,7 +382,7 @@ struct LaserCameraCmd : LaserCmd {
   fs::path corrections_file() const { return lab("stage_corrections") / "co2.example-9.toml"; }
 };
 
-TEST_F(LaserCameraCmd, AutocenterCentresAndSaves) {
+TEST_F(LaserCameraCmd, AutocenterCentersAndSaves) {
   const auto o = laser({"autocenter", "co2", "example-9", "5"}, true);
   ASSERT_EQ(o.code, 0) << o.err << o.out;
   EXPECT_NE(o.out.find("hole 5: converged"), std::string::npos) << o.out;
@@ -481,10 +481,10 @@ TEST_F(LaserCameraCmd, CorrectionsOfAnUncalibratedTraySaysSo) {
 TEST_F(LaserCameraCmd, LookSaysWhatTheFinderSees) {
   const auto o = laser({"look", "co2", "--tray", "example-9"}, true);
   ASSERT_EQ(o.code, 0) << o.err;
-  // hole 5 really at (1.15, 0.90): right of centre, and above (image y is down)
+  // hole 5 really at (1.15, 0.90): right of center, and above (image y is down)
   EXPECT_NE(o.out.find("offset 26."), std::string::npos) << o.out;  // 1.15 mm at 23 px/mm
   EXPECT_NE(o.out.find(", -20."), std::string::npos) << o.out;      // 0.90 mm, up
-  EXPECT_NE(o.out.find("move 1.1"), std::string::npos) << o.out;    // the stage move that would centre it
+  EXPECT_NE(o.out.find("move 1.1"), std::string::npos) << o.out;    // the stage move that would center it
   EXPECT_NE(o.out.find("radius 2"), std::string::npos) << o.out;    // about 1 mm (the finder's own measure)
 }
 
@@ -568,10 +568,10 @@ TEST_F(LaserCameraCmd, CameraScaleMeasuresSavesAndIsUsed) {
   EXPECT_NE(o.out.find("flip_x = false"), std::string::npos) << o.out;
   EXPECT_NE(o.out.find("flip_y = true"), std::string::npos) << o.out;
   ASSERT_TRUE(fs::exists(lab("camera_scales") / "co2.toml"));
-  // and a centring by it still finds the hole
-  const auto centred = laser({"autocenter", "co2", "example-9", "5"}, true);
-  ASSERT_EQ(centred.code, 0) << centred.err << centred.out;
-  EXPECT_NE(centred.out.find("hole 5: converged"), std::string::npos) << centred.out;
+  // and a centering by it still finds the hole
+  const auto centered = laser({"autocenter", "co2", "example-9", "5"}, true);
+  ASSERT_EQ(centered.code, 0) << centered.err << centered.out;
+  EXPECT_NE(centered.out.find("hole 5: converged"), std::string::npos) << centered.out;
 
   const auto cleared = laser({"camera-scale", "co2", "clear"});
   ASSERT_EQ(cleared.code, 0) << cleared.err;
@@ -579,7 +579,7 @@ TEST_F(LaserCameraCmd, CameraScaleMeasuresSavesAndIsUsed) {
 }
 
 // The scale that was measured is the one every command uses. Shown with a
-// measurement that is wrong (both axes the wrong way round): a centring by
+// measurement that is wrong (both axes the wrong way round): a centering by
 // it runs away from its hole, and is right again once it is forgotten.
 TEST_F(LaserCameraCmd, EveryCommandUsesTheMeasuredScale) {
   fs::create_directories(lab("camera_scales"));
@@ -588,10 +588,10 @@ TEST_F(LaserCameraCmd, EveryCommandUsesTheMeasuredScale) {
   ASSERT_EQ(shown.code, 0) << shown.err;
   EXPECT_NE(shown.out.find("flip_x = true"), std::string::npos) << shown.out;
   const auto away = laser({"autocenter", "co2", "example-9", "5"}, true);
-  EXPECT_EQ(away.code, 1) << "centred by cameras.toml's scale, not the measured one: " << away.out;
+  EXPECT_EQ(away.code, 1) << "centered by cameras.toml's scale, not the measured one: " << away.out;
   ASSERT_EQ(laser({"camera-scale", "co2", "clear"}).code, 0);
-  const auto centred = laser({"autocenter", "co2", "example-9", "5"}, true);
-  ASSERT_EQ(centred.code, 0) << centred.err << centred.out;
+  const auto centered = laser({"autocenter", "co2", "example-9", "5"}, true);
+  ASSERT_EQ(centered.code, 0) << centered.err << centered.out;
 }
 
 TEST_F(LaserCameraCmd, CameraScaleWithNothingToSeeFailsAndSavesNothing) {

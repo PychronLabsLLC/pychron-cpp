@@ -42,7 +42,7 @@ TEST(Frame, CropCopiesTheRightPixels) {
   EXPECT_EQ(c.view().at(0, 0), 0);
 }
 
-TEST(Frame, CenteredRectIsCentredAndOffsettable) {
+TEST(Frame, CenteredRectIsCenteredAndOffsettable) {
   auto f = Frame::make(100, 80, 255);
   auto r = centered_rect(f.view(), 20);
   EXPECT_EQ(r.x, 40);

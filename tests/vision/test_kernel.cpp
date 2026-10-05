@@ -101,7 +101,7 @@ TEST(Kernel, ComponentsCountsAndFillsHoles) {
   EXPECT_NEAR(cs[0].centroid.y, 29.5, 0.1);
   EXPECT_FALSE(cs[0].boundary.empty());
   EXPECT_EQ(static_cast<double>(cs[0].boundary.size()), cs[0].perimeter);
-  EXPECT_EQ(cs[0].bbox.w, 30);  // centre 29.5, r 15: columns 15..44
+  EXPECT_EQ(cs[0].bbox.w, 30);  // center 29.5, r 15: columns 15..44
   // Filled disk perimeter is near 2*pi*r; an unfilled ring would roughly double it.
   EXPECT_LT(cs[0].perimeter, 2 * std::numbers::pi * 15 * 1.4);
 }
@@ -128,7 +128,7 @@ TEST(Kernel, ComponentTouchesMaskEdge) {
   ASSERT_EQ(cs.size(), 1U);
   EXPECT_FALSE(cs[0].touches_mask_edge);
 
-  auto edge = disk_mask(w, h, 52, 30, 4, 0);  // reaches radius 26 from the centre
+  auto edge = disk_mask(w, h, 52, 30, 4, 0);  // reaches radius 26 from the center
   auto ce = components(edge, w, h, 25.0);
   ASSERT_EQ(ce.size(), 1U);
   EXPECT_TRUE(ce[0].touches_mask_edge);

@@ -9,7 +9,7 @@
 //   - Gas: isotope -> mass and abundance (signal at the peak top, fA), with
 //     optional exponential decay/growth. Nothing sits at mass 34.2, so the
 //     baseline there is zero plus noise.
-//   - Peak: per detector and isotope a flat-top trapezoid centred at
+//   - Peak: per detector and isotope a flat-top trapezoid centered at
 //       table_value(mass, det) * sqrt(HV / nominal_hv) + shift
 //     where shift = deflection polynomial + geometry offset + symmetry shift.
 //   - Sensitivity scales with trap current, extraction focus (Gaussian around
@@ -77,7 +77,7 @@ struct BeamSettings {
   double flat_half_width = 0.02;          // table units
   double edge_width = 0.01;               // table units, linear ramp to zero
   std::vector<BeamGas> gas;               // empty: argon defaults
-  // (mass, detector) -> peak-centre magnet value before HV/deflection.
+  // (mass, detector) -> peak-center magnet value before HV/deflection.
   std::function<double(double mass, const std::string& detector)> table_value;
   double nominal_trap_current = 100.0;
   double symmetry_shift_per_unit = 0.001;   // YSymmetry / ZSymmetry shift the peak
@@ -128,7 +128,7 @@ class BeamModel {
   bool overloaded(std::string_view det) const;
   Result<void> clear_overload(std::string_view det);
 
-  // Peak-centre magnet value of `isotope` on `det` under current state.
+  // Peak-center magnet value of `isotope` on `det` under current state.
   Result<double> peak_center(std::string_view det, std::string_view isotope) const;
 
   // Intensity at instant `t`; counters return cps averaged over `gate`.

@@ -22,7 +22,7 @@ enum class Provenance { Synthetic, ScreenRecording, Raw };
 
 struct FixtureFrame {
   std::string file;                  // relative to the case directory
-  std::optional<Vec2> center_px;     // marked target centre, in this frame's pixels
+  std::optional<Vec2> center_px;     // marked target center, in this frame's pixels
   bool skip = false;                 // known failure: fixture tests ignore the frame
 };
 

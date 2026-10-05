@@ -256,11 +256,11 @@ timeout_ms = 400
   EXPECT_EQ(r.shape.roi.x, 10);
   EXPECT_EQ(r.shape.roi.h, 200);
   EXPECT_EQ(c->live_timeout, Duration(400ms));
-  // by default: camera 0, as it comes, and it centres
+  // by default: camera 0, as it comes, and it centers
   const auto plain = parse("[co2]\nsource = \"opencv\"\n");
   ASSERT_TRUE(plain.problems().empty()) << plain.problems().front();
   EXPECT_EQ(plain.find("co2")->request().device, "0");
-  EXPECT_EQ(plain.find("co2")->use, CameraUse::Centre);
+  EXPECT_EQ(plain.find("co2")->use, CameraUse::Center);
   EXPECT_EQ(plain.find("co2")->live_timeout, Duration(1000ms));
   // a file is a device too
   const auto file = parse("[co2]\nsource = \"opencv\"\n[co2.opencv]\ndevice = \"clips/a.mp4\"\n");
@@ -348,8 +348,8 @@ TEST(CameraUse, AVideoFileNeverClosesTheLoop) {
   EXPECT_TRUE(usable_for_autocenter(clip, false));
 }
 
-// What a centring waits for a frame is what an emergency stop may wait too.
-TEST(CameraConfig, ACameraThatCentresWaitsTwoSecondsAtMost) {
+// What a centering waits for a frame is what an emergency stop may wait too.
+TEST(CameraConfig, ACameraThatCentersWaitsTwoSecondsAtMost) {
   const char* slow = "[co2]\nsource = \"opencv\"\n[co2.opencv]\ntimeout_ms = 5000\n";
   auto lib = parse(slow);
   ASSERT_EQ(lib.problems().size(), 1u);

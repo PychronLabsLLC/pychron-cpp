@@ -18,7 +18,7 @@ namespace {
 // What a fixed target does in the picture when the stage moves by (dx, dy)
 // under a camera of `scale` px/mm, mirrored as told and turned by `turn`.
 vision::JogPair jog(double dx, double dy, double scale, bool flip_x, bool flip_y, double turn_deg = 0, double stretch_y = 1) {
-  // the map from pixels to the move that centres them, inverted: a stage
+  // the map from pixels to the move that centers them, inverted: a stage
   // move d shifts the picture by -M^-1 d
   const double a = turn_deg * std::numbers::pi / 180.0;
   double px = -(flip_x ? -1 : 1) * dx * scale;
@@ -70,7 +70,7 @@ TEST(ScaleFrom, ACameraTurnedOnItsMountIsStillAMap) {
   ASSERT_TRUE(m) << m.error().what;
   EXPECT_NEAR(m->px_per_mm, 20, 1e-9);
   EXPECT_NEAR(m->skew_deg, 0, 1e-9);
-  // a target 10 px right of the aim: the move that centres it is not along x alone
+  // a target 10 px right of the aim: the move that centers it is not along x alone
   const vision::Vec2 move = m->map.to_mm({10, 0});
   EXPECT_NEAR(std::hypot(move.x, move.y), 0.5, 1e-9);
   EXPECT_GT(std::abs(move.y), 0.05);
@@ -145,10 +145,10 @@ TEST(MeasureScale, FindsTheSimulatedCamerasScaleAndFlips) {
   }
 }
 
-TEST(MeasureScale, AMeasuredScaleIsWhatCentringUses) {
+TEST(MeasureScale, AMeasuredScaleIsWhatCenteringUses) {
   CameraConfig real = camera_config();
   CameraConfig told = real;
-  told.flip_x = true;  // a wrong sign: centring would run away from the hole
+  told.flip_x = true;  // a wrong sign: centering would run away from the hole
   told.flip_y = false;
   {
     ScaleRig wrong(told, real);

@@ -220,7 +220,7 @@ separate threads.
 ### 7.1 Dragonfly
 
 **What it does.** While the laser heats a sample, find the glowing spot in the
-video and step the XY stage so the glow sits at the image centre. With no glow
+video and step the XY stage so the glow sits at the image center. With no glow
 visible, search outward in a spiral. It is a centroid-following servo, not a
 gradient climb. It never changes laser power.
 
@@ -241,7 +241,7 @@ Parameters (`DragonFlyPeakPattern`):
 | `move_threshold` | 0.033 | mm |
 | `blur`, `min_distance`, `mask_kind`, `custom_mask_radius` | | no functional effect |
 
-Frame: cached camera frame, cropped to a square of side `2.5 × dim` mm centred
+Frame: cached camera frame, cropped to a square of side `2.5 × dim` mm centered
 on the crosshair offset, `dim` = hole dimension × multiplier. Must be mono.
 Mask radius `1.05 × dim`.
 
@@ -249,18 +249,18 @@ Detection (`Locator._find_targets_bs`, inverted, no filtering):
 
 1. Normalise to 0..1; gamma 2; unsharp mask (radius 10, amount 3); rescale to
    0..255.
-2. Zero outside the centred mask disk.
+2. Zero outside the centered mask disk.
 3. Invert.
 4. Threshold sweep from `t = mean/2` to 254: binarise at `t`, invert, fill
    holes, find external contours, simplify (`eps = 0.001 × arc length`), keep
    contours with more than 3 vertices and area over 100 px². On a hit `t += 2`;
    on a miss the step grows by one. Stop at 15 accumulated targets.
-5. Keep targets whose centroid is within `0.75 × pxpermm` px of the centre.
+5. Keep targets whose centroid is within `0.75 × pxpermm` px of the center.
 
 Scoring (`choose_target`): zero pixels at or below half the frame maximum; per
 target `sat = sum(pixels in mask) / ((area + perimeter/2) × pixel_depth)`; take
 the highest, or the smallest area if all tie. Report the centroid offset from
-the image centre in px (y down) and `sat`.
+the image center in px (y down) and `sat`.
 
 Loop, until total duration elapses or cancelled:
 
@@ -311,7 +311,7 @@ intended behaviour confirmed and recorded video.
 - Search: same threshold sweep, not inverted, annular mask `1.4 × dim`, and a
   threshold is rejected when the white fraction is outside 0.25..0.75.
 - Filter: `area / enclosing circle area > 0.35`; centroid within 0.75 mm of
-  centre; area between `π(0.5 dim)²` and `π(1.25 dim)²` (circle) or
+  center; area between `π(0.5 dim)²` and `π(1.25 dim)²` (circle) or
   `0.5 (2 dim)²` and `1.25 (2 dim)²` (square).
 - Error: with more than two targets, the left edge of the modal bin of a 10-bin
   histogram of centroid deviations; otherwise the mean.
@@ -344,7 +344,7 @@ smooth with an 11-point Hanning window; argmax. Second sweep over
 - No capture thread. A UI timer pulls a frame for display and caches it; vision
   code reads the cached frame. Only autocenter forces a fresh one.
 - Frame: mono uint8/uint16 (12-bit assumed) or RGB uint8. Transforms: swap R/B,
-  flips, rotate, centre crop.
+  flips, rotate, center crop.
 - Recording: numbered stills, then `ffmpeg` to `.avi`.
 - Snapshot: raw `.tif` plus a canvas render `.jpg`.
 - Video server: zmq, JPEG replies; Python 2 code, hook commented out.

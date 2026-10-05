@@ -113,14 +113,14 @@ class LaserWindowTest : public QObject {
     QVERIFY(!window_->tray_view()->hole_center(QStringLiteral("9")).isNull());
     QTRY_VERIFY(window_->tray_view()->stage_point().has_value());
     QCOMPARE(the<QTableWidget>("cal_table")->rowCount(), 2);
-    QVERIFY2(text("cal_solution").contains(QStringLiteral("Centre 25.000, 25.000")), qPrintable(text("cal_solution")));
+    QVERIFY2(text("cal_solution").contains(QStringLiteral("Center 25.000, 25.000")), qPrintable(text("cal_solution")));
     // two points on one line: a mirrored axis would fit as well, and it says so
     QVERIFY2(!text("cal_cautions").isEmpty(), "two points cannot rule out a mirror");
   }
 
   void clicking_a_hole_moves_the_stage() {
     choose_tray(QStringLiteral("example-9"));
-    the<QCheckBox>("centre_on_go")->setChecked(false);
+    the<QCheckBox>("center_on_go")->setChecked(false);
     TrayView* tray = window_->tray_view();
     QTest::mouseClick(tray, Qt::LeftButton, {}, tray->hole_center(QStringLiteral("3")).toPoint());
     settle();
@@ -134,16 +134,16 @@ class LaserWindowTest : public QObject {
     QVERIFY2(text("status").contains(QStringLiteral("go to: done")), qPrintable(text("status")));
   }
 
-  void a_click_centres_the_hole_when_asked_and_autocenter_does_it_again() {
+  void a_click_centers_the_hole_when_asked_and_autocenter_does_it_again() {
     choose_tray(QStringLiteral("example-9"));
-    QVERIFY(the<QCheckBox>("centre_on_go")->isChecked());  // the lab gives it a camera
+    QVERIFY(the<QCheckBox>("center_on_go")->isChecked());  // the lab gives it a camera
     QVERIFY(!btn("autocenter")->isEnabled());              // the stage is on no hole yet
     TrayView* tray = window_->tray_view();
     QTest::mouseClick(tray, Qt::LeftButton, {}, tray->hole_center(QStringLiteral("7")).toPoint());
     settle();
     QVERIFY(std::abs(lab_->x() - 20.15) < 0.04);
     QVERIFY(std::abs(lab_->y() - 19.90) < 0.04);
-    QTRY_VERIFY2(text("autocenter_outcome").contains(QStringLiteral("hole 7 centred")), qPrintable(text("autocenter_outcome")));
+    QTRY_VERIFY2(text("autocenter_outcome").contains(QStringLiteral("hole 7 centered")), qPrintable(text("autocenter_outcome")));
     QTRY_VERIFY(btn("autocenter")->isEnabled());
     btn("autocenter")->click();
     settle();
@@ -295,7 +295,7 @@ class LaserWindowTest : public QObject {
     QTRY_COMPARE(the<QTableWidget>("cal_table")->rowCount(), 0);
     QVERIFY(!std::filesystem::exists(lab_->dir / "stage_calibrations" / "co2.example-9.toml"));
     QVERIFY(!window_->tray_view()->stage_point().has_value());
-    // the map's centre hole is offered first
+    // the map's center hole is offered first
     auto* hole = the<QComboBox>("cal_hole");
     QCOMPARE(hole->currentText(), QStringLiteral("5"));
 
@@ -309,7 +309,7 @@ class LaserWindowTest : public QObject {
     the<QDoubleSpinBox>("jog_step")->setValue(5);
     btn("jog_up")->click();
     settle();
-    hole->setCurrentText(QStringLiteral("2"));  // north of the centre
+    hole->setCurrentText(QStringLiteral("2"));  // north of the center
     btn("cal_add")->click();
     settle();
     auto* points = the<QTableWidget>("cal_table");
@@ -317,7 +317,7 @@ class LaserWindowTest : public QObject {
     QCOMPARE(points->item(1, 0)->text(), QStringLiteral("2"));
     QCOMPARE(points->item(1, 2)->text(), QStringLiteral("15.000"));
     QVERIFY(std::filesystem::exists(lab_->dir / "stage_calibrations" / "co2.example-9.toml"));
-    QVERIFY2(text("cal_solution").contains(QStringLiteral("Centre 10.000, 10.000")), qPrintable(text("cal_solution")));
+    QVERIFY2(text("cal_solution").contains(QStringLiteral("Center 10.000, 10.000")), qPrintable(text("cal_solution")));
     QVERIFY2(text("cal_solution").contains(QStringLiteral("rotation 0.00")), qPrintable(text("cal_solution")));
     QVERIFY2(!text("cal_cautions").isEmpty(), "two points: a mirror is not ruled out");
     QTRY_VERIFY(window_->tray_view()->stage_point().has_value());
@@ -366,7 +366,7 @@ class LaserWindowTest : public QObject {
     int moves = 0;
     const auto log = lab_->sim().log();
     for (std::size_t i = before; i < log.size(); ++i) moves += log[i].starts_with("Stage.MoveTo") ? 1 : 0;
-    QCOMPARE(moves, 8);  // six sides closed, and back to the centre
+    QCOMPARE(moves, 8);  // six sides closed, and back to the center
     QCOMPARE(lab_->x(), 10.0);
   }
 
@@ -377,7 +377,7 @@ class LaserWindowTest : public QObject {
     QVERIFY(std::filesystem::exists(lab_->dir / "snapshots" / "co2"));
 
     choose_tray(QStringLiteral("example-9"));
-    the<QCheckBox>("centre_on_go")->setChecked(false);
+    the<QCheckBox>("center_on_go")->setChecked(false);
     TrayView* tray = window_->tray_view();
     QTest::mouseClick(tray, Qt::LeftButton, {}, tray->hole_center(QStringLiteral("5")).toPoint());
     settle();

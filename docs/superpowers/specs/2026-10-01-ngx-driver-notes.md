@@ -53,7 +53,7 @@ out; valves use `SAB 1`, actuate, `SAB 0`. 2026: see section 1.
 `threading.Lock`); `_read_intensities` -> `trigger_acq` -> `self.ask`
 resolves to `SpectrometerDevice.ask`, which takes the same lock. It would fire
 whenever `read_intensities` is entered with `triggered == False`: the first
-scan-window tick, peak centre, or a run where another thread's `StopAcq`
+scan-window tick, peak center, or a run where another thread's `StopAcq`
 clears the flag between trigger and read. Automated runs usually pre-trigger
 outside the lock, which would hide it. Not executed; confirm before relying
 on it.

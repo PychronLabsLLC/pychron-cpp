@@ -151,9 +151,9 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     else r.fail("source", "expected sim, recorded, opencv or pylon");
   }
   if (const auto use = r.word("use")) {
-    if (*use == "centre") c.use = CameraUse::Centre;
+    if (*use == "center") c.use = CameraUse::Center;
     else if (*use == "view") c.use = CameraUse::View;
-    else r.fail("use", "expected centre or view");
+    else r.fail("use", "expected center or view");
   }
   r.number("px_per_mm", c.px_per_mm, 0, 10000, true);
   r.flag("flip_x", c.flip_x);
@@ -234,11 +234,11 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     }
   }
   c.live_timeout = std::chrono::milliseconds(timeout_ms);
-  // A centring holds the device while it waits for a frame, and so would an
+  // A centering holds the device while it waits for a frame, and so would an
   // emergency stop behind it.
-  if (r.ok() && c.live() && c.use == CameraUse::Centre && timeout_ms > 2000) {
+  if (r.ok() && c.live() && c.use == CameraUse::Center && timeout_ms > 2000) {
     r.fail(std::string(to_string(c.source)) + ".timeout_ms",
-           "at most 2000 for a camera that centres holes (use = \"view\" may wait longer)");
+           "at most 2000 for a camera that centers holes (use = \"view\" may wait longer)");
   }
   if (const toml::table* autocenter = r.sub("autocenter")) {
     Reader a(*autocenter, c.device + ".autocenter");
@@ -321,19 +321,19 @@ Result<void> usable_for_autocenter(const CameraConfig& config, bool stage_is_sim
     return fail(ErrorKind::Config,
                 "the camera of " + config.device + " is a live one (source = \"" + std::string(to_string(config.source)) +
                     "\") and " + config.device + " is a simulated laser: the camera does not see where that stage is, " +
-                    "so it cannot centre a hole on it. Set use = \"view\" to look through it all the same",
+                    "so it cannot center a hole on it. Set use = \"view\" to look through it all the same",
                 config.device);
   }
   if (config.source == CameraSource::Recorded) {
     return fail(ErrorKind::Config,
                 "the camera of " + config.device + " is recorded frames, which do not follow the stage: they are for " +
-                    "looking (elctl laser look), not for centring a hole",
+                    "looking (elctl laser look), not for centering a hole",
                 config.device);
   }
   if (config.source == CameraSource::Sim && !stage_is_simulated) {
     return fail(ErrorKind::Config,
                 "the camera of " + config.device + " is simulated (source = \"sim\" in cameras.toml) and " +
-                    config.device + " is a real laser: it would be centred on a tray that is not there. Remove the [" +
+                    config.device + " is a real laser: it would be centered on a tray that is not there. Remove the [" +
                     config.device + "] table until the laser has a live camera",
                 config.device);
   }

@@ -48,7 +48,7 @@ TEST(SimpleFinder, NoisyHoleWithOverlaysAndNeighboursWithin1p5) {
   EXPECT_LT(dist(r[0].center_px, truth.center_px), 1.5);
 }
 
-TEST(SimpleFinder, PicksHoleNearestCentreAmongNeighbours) {
+TEST(SimpleFinder, PicksHoleNearestCenterAmongNeighbours) {
   HoleScene s;
   s.neighbours = true;
   auto [f, truth] = render(s, {-0.2, 0.1});
@@ -64,7 +64,7 @@ TEST(SimpleFinder, PicksHoleNearestCentreAmongNeighbours) {
 
 TEST(SimpleFinder, RejectsHoleCutByMaskEdge) {
   HoleScene s;
-  auto [f, truth] = render(s, {-12.0 / s.px_per_mm, 0});  // hole 12 px right of centre
+  auto [f, truth] = render(s, {-12.0 / s.px_per_mm, 0});  // hole 12 px right of center
   FinderParams p = hole_params(s);
   p.mask_radius_px = 15;
   FinderDebug dbg;

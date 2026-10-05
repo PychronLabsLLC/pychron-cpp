@@ -3,7 +3,7 @@ mode = "hole"
 expected_radius_px = 10.0
 tolerance_px = 4.0
 channel = "luma"
-note = "AutoCenter1.mov t=9 s; pane crop 426,402,591,444 of the movie; sub-crop 266,174 80x80 of the pane; target offset (-11,+8) from the frame centre; centre marked by eye, low trust"
+note = "AutoCenter1.mov t=9 s; pane crop 426,402,591,444 of the movie; sub-crop 266,174 80x80 of the pane; target offset (-11,+8) from the frame center; center marked by eye, low trust"
 
 [[frames]]
 file = "0001.pgm"

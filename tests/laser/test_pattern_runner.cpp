@@ -52,7 +52,7 @@ TEST_F(PatternRunnerTest, VisitsThePointsInOrderAtThePatternsSpeed) {
   finish();
   auto made = moves();
   made.erase(made.begin(), made.begin() + static_cast<std::ptrdiff_t>(before));
-  // radius 1 about (10, 20), closed, then the centre; 2 mm/s along each
+  // radius 1 about (10, 20), closed, then the center; 2 mm/s along each
   // segment (the diagonals share it between x and y: 1414 each)
   EXPECT_EQ(made, (std::vector<std::string>{"11000,20000,0,2000,2000,100", "10000,21000,0,1414,1414,100",
                                             "9000,20000,0,1414,1414,100", "10000,19000,0,1414,1414,100",
@@ -97,7 +97,7 @@ TEST_F(PatternRunnerTest, StopHaltsTheStageMidSegment) {
   EXPECT_GT(at.x, 10000);
   EXPECT_LT(at.x, 11000);
   clock.advance(10s);
-  EXPECT_EQ(sim.position().x, at.x);  // it really stopped: no vertex, no return to the centre
+  EXPECT_EQ(sim.position().x, at.x);  // it really stopped: no vertex, no return to the center
   const auto sent = moves().size();
   EXPECT_FALSE(*runner().running());
   EXPECT_EQ(moves().size(), sent);
@@ -176,7 +176,7 @@ TEST_F(PatternRunnerTest, ASecondPatternWhileRunningIsRefused) {
   EXPECT_EQ(moves().size(), sent + 5);  // the first went on to its end
 }
 
-// The centre is where the stage is: while it is still going somewhere, that
+// The center is where the stage is: while it is still going somewhere, that
 // is nowhere in particular.
 TEST_F(PatternRunnerTest, APatternIsNotStartedWhileTheStageMoves) {
   ASSERT_TRUE(system.set_xy(10, 0));  // under way, not waited for
@@ -232,7 +232,7 @@ TEST_F(PatternRunnerTest, ProgressSaysWhereItIs) {
   EXPECT_EQ(system.snapshot().pattern_progress, "");
 }
 
-// A position that cannot be read is no centre to run a pattern about.
+// A position that cannot be read is no center to run a pattern about.
 TEST_F(PatternRunnerTest, WithNoPositionNothingStarts) {
   sim.fail_next("Stage.Pos?", 4);
   const auto before = moves().size();

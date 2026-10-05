@@ -77,7 +77,7 @@ TrayView::Fit TrayView::fit() const {
   const double w = std::max(x1 - x0, 1e-6), h = std::max(y1 - y0, 1e-6);
   const double room_w = std::max(width() - 2 * kPadding, 10.0), room_h = std::max(height() - 2 * kPadding, 10.0);
   f.scale = std::min(room_w / w, room_h / h);
-  // centred; the tray's y runs up, the widget's down
+  // centered; the tray's y runs up, the widget's down
   f.origin = QPointF(width() / 2.0 - f.scale * (x0 + x1) / 2, height() / 2.0 + f.scale * (y0 + y1) / 2);
   return f;
 }

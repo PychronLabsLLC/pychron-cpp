@@ -62,7 +62,7 @@ TEST(Autocenter, ConvergesWithinThreeStepsFrom0p3mm) {
   EXPECT_LT(dist(stage.pos, scene.hole_mm), 0.03);
 }
 
-TEST(Autocenter, AlreadyCentredConvergesImmediately) {
+TEST(Autocenter, AlreadyCenteredConvergesImmediately) {
   SimpleFinder finder;
   HoleScene scene = scene_with_hole({0.5, 0.5});
   Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, {});
@@ -77,7 +77,7 @@ TEST(Autocenter, ClampsStepToMaxStep) {
   SimpleFinder finder;
   HoleScene scene = scene_with_hole({0.9, 0});
   AutocenterParams p;
-  p.crop_scale = 4.0;  // the default crop cannot see a hole 0.9 mm off centre
+  p.crop_scale = 4.0;  // the default crop cannot see a hole 0.9 mm off center
   p.max_total_mm = 5.0;
   Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
   SimStage stage{{0, 0}};
@@ -113,7 +113,7 @@ TEST(Autocenter, MedianRejectsDisplacedFrame) {
   SimStage stage{{0, 0}};
   std::uint64_t seq = 0;
   auto set = render_frames(scene, stage, 3, seq);
-  // One frame shows the hole centred (stage 0.3 mm away): offsets 0.3, 0, 0.3 mm.
+  // One frame shows the hole centered (stage 0.3 mm away): offsets 0.3, 0, 0.3 mm.
   std::uint64_t seq2 = 1;
   set.frames[1] = render_frames(scene, SimStage{{0.3, 0}}, 1, seq2).frames[0];
   const auto views = set.views();
@@ -237,8 +237,8 @@ TEST(Autocenter, ConvergesWithNeighboursNoiseAndCrosshair) {
     EXPECT_LT(dist(stage.pos, scene.hole_mm), 0.03);
   }
   {
-    // Aim point offset from the image centre: the hole ends up under the aim
-    // point, not under the centre.
+    // Aim point offset from the image center: the hole ends up under the aim
+    // point, not under the center.
     AutocenterParams p;
     p.aim_offset_px = {10, -6};
     Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);

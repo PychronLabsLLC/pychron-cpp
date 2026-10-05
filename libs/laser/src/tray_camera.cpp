@@ -38,7 +38,7 @@ Result<vision::Frame> SimTrayCamera::grab() {
       nearest = &hole;
     }
   }
-  // In view: its centre within the frame's half diagonal.
+  // In view: its center within the frame's half diagonal.
   const double reach_mm = 0.5 * std::hypot(scene.width, scene.height) / scene.px_per_mm;
   const bool in_view = nearest != nullptr && best <= reach_mm;
   if (in_view) {

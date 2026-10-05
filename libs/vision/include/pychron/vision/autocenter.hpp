@@ -20,7 +20,7 @@ struct AutocenterParams {
   double max_total_mm = 1.0;
   int frames_per_step = 3;  // hint for the caller; step() uses whatever span it is given
   double crop_scale = 2.55;  // crop side = crop_scale * 2 * radius
-  Vec2 aim_offset_px{};      // crosshair offset from image centre
+  Vec2 aim_offset_px{};      // crosshair offset from image center
 };
 
 // Why a step failed. Camera is the caller's: it could not get frames to give.

@@ -39,13 +39,13 @@ CameraConfig config(double ex = 0, double ey = 0) {
   return c;
 }
 
-// Where the finder sees a hole, as an offset in px from the image centre.
+// Where the finder sees a hole, as an offset in px from the image center.
 std::optional<vision::Vec2> seen(const vision::Frame& frame, double px_per_mm = 23.0) {
   vision::SimpleFinder finder;
   vision::FinderParams params;
   params.mode = vision::FinderMode::Hole;
   params.expected_radius_px = 0.5 * px_per_mm;
-  // the hole nearest the centre
+  // the hole nearest the center
   std::optional<vision::Vec2> best;
   for (const auto& t : finder.find(frame.view(), params)) {
     const vision::Vec2 off{t.center_px.x - (frame.width - 1) / 2.0, t.center_px.y - (frame.height - 1) / 2.0};
@@ -232,7 +232,7 @@ TEST(SimTrayCamera, ShowsAGlowAtTheGrainWhileFiring) {
   ManualClock clock;
   TraySight sight = sight_at(15, 20);
   CameraConfig c = config(0.1, 0);       // the tray, 0.1 mm right
-  c.sim_grain_offset_mm = {0.2, 0.15};   // and the grain off its hole's centre
+  c.sim_grain_offset_mm = {0.2, 0.15};   // and the grain off its hole's center
   SimTrayCamera camera(c, [&] { return sight; }, clock);
 
   auto dark = camera.grab();

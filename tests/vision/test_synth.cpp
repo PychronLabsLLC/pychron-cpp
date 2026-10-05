@@ -8,7 +8,7 @@
 
 using namespace pychron::vision;
 
-TEST(Synth, HoleAtCentreWhenStageOnHole) {
+TEST(Synth, HoleAtCenterWhenStageOnHole) {
   HoleScene s;
   s.hole_mm = {1.0, -2.0};
   auto [f, truth] = render(s, {1.0, -2.0});
@@ -64,7 +64,7 @@ TEST(Synth, SixteenBitScalesLevels) {
   EXPECT_NEAR(f.view().at(0, 0), 0.75 * 4095, 2);
 }
 
-TEST(Synth, SubPixelCentreIsHonoured) {
+TEST(Synth, SubPixelCenterIsHonoured) {
   // The intensity-weighted centroid of the hole follows the non-integer truth.
   HoleScene s;
   const Vec2 stage{0.0217, -0.0131};
@@ -103,7 +103,7 @@ TEST(Synth, TargetOffFrameIsNotVisible) {
   EXPECT_FALSE(render(s, {0, 0}).second.visible);
 }
 
-TEST(Synth, CrosshairDrawnThroughCentre) {
+TEST(Synth, CrosshairDrawnThroughCenter) {
   HoleScene h;
   h.width = h.height = 201;
   h.crosshair = true;

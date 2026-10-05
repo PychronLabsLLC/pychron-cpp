@@ -39,10 +39,10 @@ constexpr const char* kLaserUsage =
     "                                                    the stage is on <hole>: record where it is\n"
     "                                                    (read from the device unless X and Y are given)\n"
     "  calibrate <device> <tray> center|right [--x X --y Y]\n"
-    "                                                    the same, at the map's centre / east calibration hole\n"
+    "                                                    the same, at the map's center / east calibration hole\n"
     "  calibrate <device> <tray> show|clear\n"
     "  goto <device> <tray> <hole> [--timeout <s>]       move there and report the miss\n"
-    "  autocenter <device> <tray> <hole> [--timeout <s>] move there and centre the hole with the camera;\n"
+    "  autocenter <device> <tray> <hole> [--timeout <s>] move there and center the hole with the camera;\n"
     "                                                    what is found is saved as the hole's correction\n"
     "  corrections <device> <tray> [clear [<hole>]]      where holes were found; or forget them\n"
     "  look <device> [--tray <tray>]                     what the camera's finder sees now; moves nothing\n"
@@ -76,7 +76,7 @@ std::string joined(const std::vector<std::string>& names) {
 
 std::string describe(const laser::Solution& s) {
   const auto& t = s.transform;
-  return std::to_string(s.points) + (s.points == 1 ? " point" : " points") + ": centre " + num(t.cx) + ", " +
+  return std::to_string(s.points) + (s.points == 1 ? " point" : " points") + ": center " + num(t.cx) + ", " +
          num(t.cy) + "  rotation " + num(t.rotation * 180.0 / std::numbers::pi) + " deg  scale " + num(t.scale, 4) +
          "  rms " + num(s.rms_mm) + " mm";
 }
@@ -178,7 +178,7 @@ class Laser {
     if (auto ok = system.attach_camera(*config, std::move(*frames), line_->clock()); !ok) return failed(ok.error().what);
     if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
     if (auto r = system.move_to_position(hole, true); !r) return failed(r.error().what);
-    io_.out << "moving to hole " << hole << " and centring it\n";
+    io_.out << "moving to hole " << hole << " and centering it\n";
     io_.out.flush();
 
     const auto step = std::chrono::milliseconds(50);
@@ -191,7 +191,7 @@ class Laser {
       if (!*moving) break;
       const bool interrupted = interrupt_count().load() != interrupts;
       if (interrupted || std::chrono::steady_clock::now() - started > limit) {
-        return failed((interrupted ? "interrupted" : "not centred after " + num(limit.count(), 1) + " s") + "; " +
+        return failed((interrupted ? "interrupted" : "not centered after " + num(limit.count(), 1) + " s") + "; " +
                       stopped(system));
       }
       std::this_thread::sleep_for(step);
@@ -432,7 +432,7 @@ class Laser {
     const double ox = median(xs), oy = median(ys);
     const auto move = config->map().to_mm({ox, oy});
     io_.out << "a hole: offset " << num(ox) << ", " << num(oy) << " px from the aim point; move " << num(move.x) << ", "
-            << num(move.y) << " mm would centre it; radius " << num(median(radii)) << " px (" << xs.size() << " of "
+            << num(move.y) << " mm would center it; radius " << num(median(radii)) << " px (" << xs.size() << " of "
             << config->frames_per_step << " frames)\n";
     return kOk;
   }

@@ -89,7 +89,7 @@ measurement-plan importer would mishandle (added 2026-10-03).
   `spectrometer`, `ionpump`, `turbo`, `laser`, `tank`, `getter`, `gauge`,
   `coldfinger`. Map them to `stage` plus `symbol = "..."`, or add them as
   kinds.
-- Legacy coordinates are in abstract units: centre-origin `translation` plus
+- Legacy coordinates are in abstract units: center-origin `translation` plus
   `xview/yview` from `canvas_config.xml` (e.g. `-28,28`). The converter must
   map them to the pixel `pos`/`size`, or the new canvas should adopt world
   units plus a view box.
@@ -1182,7 +1182,7 @@ in `felix_mftable_archive/`, not `mftables/`.
 - jan `deflections/`: one extension-less file per detector, two columns
   (deflection, magnet DAC), no header, CR-only. Live files hold exactly two
   points; the upper deflection equals the configured value.
-- No lab has `af_demagnetization.yaml`, a peak-centre or peak-hop config, or
+- No lab has `af_demagnetization.yaml`, a peak-center or peak-hop config, or
   an integration-time table.
 
 ### D.6 Consistency within a lab
@@ -1487,7 +1487,7 @@ Measurement plan and its importer (experiment spec 4.1, 5.3):
 - Not representable in the plan as specified: two baseline masses; named and
   DAC positions; per-cup deflection, `active: False` and `protect` in hops;
   `mftable=` on a peak hop; `generate_ic_mftable`;
-  `set_spectrometer_configuration`; a peak-centre detector list and
+  `set_spectrometer_configuration`; a peak-center detector list and
   integration time; `post_equilibration_delay`; scripts with no equilibration;
   the `warm_cdd` routine (130 call sites); accelerating voltage switched off
   during equilibration; intensity-dependent baseline settling; abort on a

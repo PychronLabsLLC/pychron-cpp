@@ -71,7 +71,7 @@ cv::Mat preprocess(const FrameView& v) {
 }
 
 // Inside the disk (strict, like skimage.draw.disk) keep the value; outside write `outside`.
-// The original centres the disk at (w/2, h/2) in index space, not on the pixel centre.
+// The original centers the disk at (w/2, h/2) in index space, not on the pixel center.
 void apply_mask(cv::Mat& src, double radius, double outside) {
   if (radius <= 0) return;
   const double cx = src.cols / 2.0, cy = src.rows / 2.0;
@@ -212,8 +212,8 @@ class LegacyFinder final : public ITargetFinder {
     // glow is about 1 mm across, so 0.75 * the expected diameter stands in; no radius, no gate.
     const double gate = 0.75 * 2.0 * dim;
     const double cx = v.width / 2.0, cy = v.height / 2.0;
-    auto centre_dist = [&](const Cand& c) { return std::hypot(c.centroid.x - cx, c.centroid.y - cy); };
-    auto near_centre = [&](const Cand& c) { return gate <= 0 || centre_dist(c) < gate; };
+    auto center_dist = [&](const Cand& c) { return std::hypot(c.centroid.x - cx, c.centroid.y - cy); };
+    auto near_center = [&](const Cand& c) { return gate <= 0 || center_dist(c) < gate; };
 
     double first_t = 0;
     std::vector<Cand> found = low_search(
@@ -225,7 +225,7 @@ class LegacyFinder final : public ITargetFinder {
 
     std::vector<Target> out;
     if (glow) {
-      std::erase_if(found, [&](const Cand& c) { return !near_centre(c); });
+      std::erase_if(found, [&](const Cand& c) { return !near_center(c); });
       if (found.empty()) return out;
       std::stable_sort(found.begin(), found.end(), [](const Cand& a, const Cand& b) { return a.area < b.area; });  // Python's sorted() is stable
       std::uint16_t peak = 0;
@@ -243,14 +243,14 @@ class LegacyFinder final : public ITargetFinder {
       return out;
     }
 
-    // Hole: _filter_test (convexity, centre, area window); best is nearest the centre.
+    // Hole: _filter_test (convexity, center, area window); best is nearest the center.
     std::vector<std::pair<double, Target>> kept;
     for (const auto& c : found) {
       const double convexity = c.min_enclose_area > 0 ? c.area / c.min_enclose_area : 0.0;
       if (!(convexity > kConvexityMin)) continue;
-      if (!near_centre(c)) continue;
+      if (!near_center(c)) continue;
       if (!(a_max > c.area && c.area > a_min)) continue;
-      kept.emplace_back(centre_dist(c), to_target(c, convexity));  // the legacy test statistic
+      kept.emplace_back(center_dist(c), to_target(c, convexity));  // the legacy test statistic
     }
     std::stable_sort(kept.begin(), kept.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     for (auto& k : kept) out.push_back(std::move(k.second));

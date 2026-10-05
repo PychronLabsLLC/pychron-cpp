@@ -100,11 +100,11 @@ void paint_peaks(QPainter& p, const QRectF& area, const QColor& color, bool labe
   const double step = area.width() / static_cast<double>(kPeakHeights.size());
   // Magnetic-sector peaks are flat-topped: a super-Gaussian, not a Gaussian.
   const double width = step * 0.2;
-  const auto centre = [&](std::size_t i) { return area.left() + step * (static_cast<double>(i) + 0.5); };
+  const auto center = [&](std::size_t i) { return area.left() + step * (static_cast<double>(i) + 0.5); };
   const auto level = [&](double x) {
     double y = 0;
     for (std::size_t i = 0; i < kPeakHeights.size(); ++i) {
-      const double u = (x - centre(i)) / width;
+      const double u = (x - center(i)) / width;
       y += kPeakHeights[i] * std::exp(-u * u * u * u);
     }
     return base - y * height;
@@ -132,7 +132,7 @@ void paint_peaks(QPainter& p, const QRectF& area, const QColor& color, bool labe
     p.setPen(faded(color, 150));
     p.setFont(brand_font(label_h * 0.8, QFont::DemiBold, 0.5));
     for (std::size_t i = 0; i < kPeakHeights.size(); ++i) {
-      const QRectF cell(centre(i) - step / 2, base + label_h * 0.15, step, label_h);
+      const QRectF cell(center(i) - step / 2, base + label_h * 0.15, step, label_h);
       p.drawText(cell, Qt::AlignHCenter | Qt::AlignTop, QString::number(36 + static_cast<int>(i)));
     }
   }

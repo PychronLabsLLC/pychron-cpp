@@ -34,9 +34,9 @@ const std::map<std::string, std::string> kHardwareKind{{"sim_dac_positioner", "d
                                                        {"sim_pulse_counter", "pulse_counter"},
                                                        {"sim_hv_supply", "serial_hv"}};
 
-// Faraday peaks on the DAC axis: channel i centred at kCentre + (i - 1) * kSpacing,
+// Faraday peaks on the DAC axis: channel i centered at kCenter + (i - 1) * kSpacing,
 // amplitude proportional to HV.
-constexpr double kCentre = 5.0;
+constexpr double kCenter = 5.0;
 constexpr double kSpacing = 0.5;
 constexpr double kWidth = 0.05;
 constexpr double kPeakVolts = 2.0;
@@ -50,8 +50,8 @@ struct ToyBeam {
 
   double faraday(std::size_t channel) {
     std::lock_guard lock(mutex);
-    const double centre = kCentre + (static_cast<double>(channel) - 1.0) * kSpacing;
-    const double z = (dac - centre) / kWidth;
+    const double center = kCenter + (static_cast<double>(channel) - 1.0) * kSpacing;
+    const double z = (dac - center) / kWidth;
     return kPeakVolts * (hv / nominal_hv) * std::exp(-0.5 * z * z);
   }
 };
@@ -218,13 +218,13 @@ TEST(SimLegacyConfig, PositionSetHvAcquireEndToEnd) {
   ASSERT_TRUE(hv);
   EXPECT_DOUBLE_EQ(*hv, rig.beam.nominal_hv);
 
-  // Centre H1 (faradays channel index 1) on the magnet.
+  // Center H1 (faradays channel index 1) on the magnet.
   auto& magnet = rig.positioner();
   const auto limits = magnet.limits();
   EXPECT_EQ(limits, (Limits{rig.config["magnet"]["limits"]["min"].value_or(0.0),
                             rig.config["magnet"]["limits"]["max"].value_or(10.0)}));
-  ASSERT_TRUE(magnet.set(kCentre));
-  EXPECT_NEAR(*magnet.read(), kCentre, 1e-3);
+  ASSERT_TRUE(magnet.set(kCenter));
+  EXPECT_NEAR(*magnet.read(), kCenter, 1e-3);
 
   auto means = rig.acquire(10);
   EXPECT_NEAR(means["faradays:H1"], kPeakVolts, 1e-3);
@@ -251,7 +251,7 @@ TEST(SimLegacyConfig, DacScanFindsEachPeak) {
       if (channel.starts_with("faradays:") && v > best[channel].first) best[channel] = {v, *magnet.read()};
     }
   }
-  EXPECT_NEAR(best["faradays:AX"].second, kCentre - kSpacing, 0.01);
-  EXPECT_NEAR(best["faradays:H1"].second, kCentre, 0.01);
-  EXPECT_NEAR(best["faradays:L1"].second, kCentre + kSpacing, 0.01);
+  EXPECT_NEAR(best["faradays:AX"].second, kCenter - kSpacing, 0.01);
+  EXPECT_NEAR(best["faradays:H1"].second, kCenter, 0.01);
+  EXPECT_NEAR(best["faradays:L1"].second, kCenter + kSpacing, 0.01);
 }

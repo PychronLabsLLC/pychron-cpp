@@ -13,9 +13,9 @@ bool opencv_enabled();
 // compared with SimpleFinder on the same frames. nullptr when built without OpenCV.
 //
 // FinderParams::mode picks the legacy path: Glow is the dragonfly path
-// (inverted sweep, the centre-distance gate, ranked by choose_target, score =
+// (inverted sweep, the center-distance gate, ranked by choose_target, score =
 // legacy saturation); Hole is the autocenter path (threshold limiting and the
-// _filter_test rules, nearest the frame centre first). Hole needs the target to
+// _filter_test rules, nearest the frame center first). Hole needs the target to
 // fill 25 to 75 percent of the view, so with Autocenter's default crop it
 // returns no target.
 std::unique_ptr<ITargetFinder> make_legacy_finder();

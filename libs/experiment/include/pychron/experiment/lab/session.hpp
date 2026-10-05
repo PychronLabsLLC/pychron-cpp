@@ -50,7 +50,7 @@ struct SessionHardware {
   spectrometer::Spectrometer* spectrometer = nullptr;
   spectrometer::ScanService* scan = nullptr;  // paused while a queue runs
   // Whether the extraction device `driver` is simulated (a simulated camera
-  // may only centre holes on a simulated stage). Empty: asked of the line.
+  // may only center holes on a simulated stage). Empty: asked of the line.
   std::function<bool(std::string_view driver)> simulated;
   // The lab's laser systems, when something else drives them too (the laser
   // window); it must outlive the session, and `simulated` is then its own.
@@ -106,10 +106,10 @@ class LabSession {
   Notifier& notifier() noexcept { return *notifier_; }
 
   // What the lab asks of an extraction device that this session cannot do:
-  // a camera that cannot be used to centre holes on it (a simulated camera
+  // a camera that cannot be used to center holes on it (a simulated camera
   // over a real laser, frames that cannot be opened). Fixed for the session.
   // A queue that uses such a device is not started: the lab is put right
-  // first, rather than run uncentred without anyone having said so.
+  // first, rather than run uncentered without anyone having said so.
   std::vector<std::string> problems() const;
 
   const Lab& lab() const noexcept { return lab_; }

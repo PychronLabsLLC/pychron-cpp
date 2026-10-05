@@ -150,8 +150,8 @@ Dependency-free. The default.
 | Radius window | `expected * [1 - tol, 1 + tol]` | none |
 | Circularity | >= 0.6 | none |
 | Minimum area | from the radius window | 9 px |
-| Rank | distance to centre, ascending | integrated intensity, descending |
-| Centre | least-squares circle fit on the boundary | intensity-weighted centroid of raw pixels |
+| Rank | distance to center, ascending | integrated intensity, descending |
+| Center | least-squares circle fit on the boundary | intensity-weighted centroid of raw pixels |
 | Score | circularity x radius match | saturation |
 
 8. `Hole` only: reject components touching the mask edge.
@@ -173,7 +173,7 @@ colour reasoning.
 Built only with OpenCV. A port of the Python pipeline for comparison:
 normalise, gamma 2, unsharp mask (radius 10, amount 3), rescale, mask,
 `255 - src`, rising-threshold contour sweep, `approxPolyDP`, area over 100 px²,
-centre-distance filter, `choose_target`. It keeps the legacy saturation formula
+center-distance filter, `choose_target`. It keeps the legacy saturation formula
 `sum / ((area + perimeter / 2) * pixel_depth)` so recorded values stay
 comparable.
 
@@ -206,8 +206,8 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames);
 Per step:
 
 1. Run the finder in `Hole` mode on each frame; take the per-axis median
-   centre.
-2. Offset from the aim point (image centre plus crosshair offset), converted to
+   center.
+2. Offset from the aim point (image center plus crosshair offset), converted to
    mm through `CameraStageMap`.
 3. `|offset| < tolerance_mm`: `Converged`. Otherwise clamp to `max_step_mm` and
    return `Move`.
@@ -342,7 +342,7 @@ There is no capture thread in vision.
 ## 13. Simulation
 
 `synth::Scene` renders frames from parameters with a seeded generator and
-returns the truth (centre and radius in pixels) alongside each frame.
+returns the truth (center and radius in pixels) alongside each frame.
 
 - **Hole**: tray brightness and texture noise, a hole grid at a pitch, dark
   disks with a soft edge, optional glint, shadow gradient, crosshair overlay
@@ -388,7 +388,7 @@ sleeps.
 | File | Asserts |
 |---|---|
 | `test_kernel.cpp` | median, blur, Otsu, components, moments, circle fit on hand-built arrays |
-| `test_simple_finder.cpp` | synthetic hole and glow: centre error under 0.5 px clean, under 1.5 px with noise, overlays and neighbours; edge-cut holes rejected; blank frame gives no target |
+| `test_simple_finder.cpp` | synthetic hole and glow: center error under 0.5 px clean, under 1.5 px with noise, overlays and neighbours; edge-cut holes rejected; blank frame gives no target |
 | `test_calibration.cpp` | `solve` recovers a known rotation, flip and scale; collinear pairs rejected |
 | `test_autocenter.cpp` | closed loop against a synthetic scene: converges in at most 3 steps from a 0.3 mm offset; `Failed` on a wrong-sign map, on no target, on the iteration cap |
 | `test_dragonfly.cpp` | tracks a drifting glow; holds when saturated; moves on a pure x drift; spirals after N misses and reacquires; never leaves the perimeter; `Done` at the duration |
@@ -489,7 +489,7 @@ during implementation, where they add to or depart from the sections above:
   the caller uses for `now`.
 - Fixture frames carry `skip`; a case carries `channel` and `note`. Frame
   paths may not leave the case directory.
-- Committed real frames were cut with the target deliberately off-centre.
+- Committed real frames were cut with the target deliberately off-center.
   Three of eight pass `SimpleFinder`; the rest are `skip = true` with the
   reason recorded. `LegacyFinder` passes two of eight.
 

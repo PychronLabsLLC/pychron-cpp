@@ -38,7 +38,7 @@ FinderParams glow_params(const GlowScene& s) {
   return p;
 }
 
-// Ten stage offsets that keep the target within the legacy centre gate.
+// Ten stage offsets that keep the target within the legacy center gate.
 std::vector<Vec2> offsets() {
   std::vector<Vec2> o;
   for (int i = 0; i < 10; ++i) o.push_back({0.04 * i - 0.18, 0.03 * (i % 4) - 0.05});
@@ -159,8 +159,8 @@ TEST(LegacyFinder, RealFixtureComparison) {
     return std::string(buf);
   };
   // Extra column, holes only: the legacy autocenter looks at a crop of ceil(2.55 x radius)
-  // pixels, which the fixtures are not. This re-runs LegacyFinder on such a crop centred on
-  // the marked centre, to show whether the crop alone explains a miss. Diagnostic only.
+  // pixels, which the fixtures are not. This re-runs LegacyFinder on such a crop centered on
+  // the marked center, to show whether the crop alone explains a miss. Diagnostic only.
   std::printf("%-12s %-5s %-4s %-14s %-14s %-16s\n", "case", "mode", "skip", "SimpleFinder", "LegacyFinder",
               "Legacy tight crop");
   for (const auto& dir : dirs) {

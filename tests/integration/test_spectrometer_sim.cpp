@@ -1,5 +1,5 @@
 // End-to-end: example spectrometer config -> SpectrometerAssembler -> sim
-// drivers on one BeamModel -> position, acquire, a coarse centring scan,
+// drivers on one BeamModel -> position, acquire, a coarse centering scan,
 // table update, re-position. Runs identically against the integrated-vendor
 // and legacy-split configs. Time is a ManualClock pumped by a helper thread
 // that also drives the Scheduler, so nothing waits on the wall clock.
@@ -82,7 +82,7 @@ class SpectrometerSim : public ::testing::TestWithParam<const char*> {
   std::unique_ptr<Pump> pump_;
 };
 
-TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
+TEST_P(SpectrometerSim, PositionAcquireCenterUpdateReposition) {
   // Position Ar40 on H1 through the full pipeline.
   auto pos = spec_->position(PositionTarget{Isotope{"Ar40"}, "H1"});
   ASSERT_TRUE(pos.has_value()) << pos.error().what;
@@ -100,7 +100,7 @@ TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
   const double on_table = mean_on(*readings, "H1");
   EXPECT_GT(on_table, 0.0);
 
-  // Coarse centring scan across the peak (a stand-in for the peak-center job).
+  // Coarse centering scan across the peak (a stand-in for the peak-center job).
   const double start = pos->native;
   std::vector<std::pair<double, double>> scan;
   double top = 0.0;
@@ -121,16 +121,16 @@ TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
     }
   }
   ASSERT_GT(n, 0);
-  const double centre = sum / n;
-  EXPECT_NEAR(centre, start + kOffset, 0.004);
+  const double center = sum / n;
+  EXPECT_NEAR(center, start + kOffset, 0.004);
 
-  // Table updated from the uncorrected centre; re-position lands on it.
-  auto table_value = spec_->uncorrect(centre, "H1");
+  // Table updated from the uncorrected center; re-position lands on it.
+  auto table_value = spec_->uncorrect(center, "H1");
   ASSERT_TRUE(table_value.has_value());
   ASSERT_TRUE(spec_->update_table("H1", "Ar40", *table_value).has_value());
   auto again = spec_->position(PositionTarget{Isotope{"Ar40"}, "H1"});
   ASSERT_TRUE(again.has_value()) << again.error().what;
-  EXPECT_NEAR(again->native, centre, 1e-9);
+  EXPECT_NEAR(again->native, center, 1e-9);
   auto peak = spec_->acquire(3);
   ASSERT_TRUE(peak.has_value());
   EXPECT_GT(mean_on(*peak, "H1"), 0.9 * top);
@@ -139,7 +139,7 @@ TEST_P(SpectrometerSim, PositionAcquireCentreUpdateReposition) {
   auto a = spec_->snapshot();
   auto b = spec_->snapshot();
   EXPECT_EQ(a.hash, b.hash);
-  EXPECT_NEAR(*a.magnet, centre, 1e-9);
+  EXPECT_NEAR(*a.magnet, center, 1e-9);
   for (const auto& d : a.detectors) EXPECT_FALSE(d.protected_) << d.detector;
 }
 

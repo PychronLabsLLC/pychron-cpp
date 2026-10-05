@@ -87,7 +87,7 @@ class LaserBridgeTest : public QObject {
     test::settle(*bridge_);
     QVERIFY2(heard_->ok("set_tray"), qPrintable(heard_->why("set_tray")));
     QVERIFY2(heard_->ok("go_to"), qPrintable(heard_->why("go_to")));
-    // example-9 is calibrated with its centre at stage (25, 25): hole 3 is at (30, 30)
+    // example-9 is calibrated with its center at stage (25, 25): hole 3 is at (30, 30)
     QCOMPARE(lab_->x(), 30.0);
     QCOMPARE(lab_->y(), 30.0);
     QCOMPARE(bridge_->state().last_hole, std::string("3"));
@@ -95,7 +95,7 @@ class LaserBridgeTest : public QObject {
     QCOMPARE(bridge_->state().activity, laser::LaserActivity::Idle);
   }
 
-  void go_to_centres_when_asked() {
+  void go_to_centers_when_asked() {
     bridge_->set_tray(QStringLiteral("example-9"));
     bridge_->go_to(QStringLiteral("3"), true);
     test::settle(*bridge_);
@@ -198,7 +198,7 @@ class LaserBridgeTest : public QObject {
     bridge_->run_pattern(QStringLiteral("hexagon"));
     test::settle(*bridge_);
     QVERIFY2(heard_->ok("run_pattern"), qPrintable(heard_->why("run_pattern")));
-    QCOMPARE(lab_->x(), 10.0);  // back at its centre
+    QCOMPARE(lab_->x(), 10.0);  // back at its center
     QVERIFY(std::count_if(heard_->snapshots.begin(), heard_->snapshots.end(), [](const laser::LaserSnapshot& s) {
               return s.activity == laser::LaserActivity::Pattern;
             }) > 0);
@@ -235,7 +235,7 @@ class LaserBridgeTest : public QObject {
     QCOMPARE(bridge_->calibration(QStringLiteral("example-9")).state, laser::CalibrationState::Missing);
     QCOMPARE(bridge_->state().calibration, laser::CalibrationState::Missing);
 
-    // the centre hole (5) is put at stage (12, 14), then its east neighbour (6), 5 mm along x
+    // the center hole (5) is put at stage (12, 14), then its east neighbour (6), 5 mm along x
     bridge_->jog(12, 14, 0);
     bridge_->add_calibration_point(QStringLiteral("5"));
     bridge_->jog(5, 0, 0);

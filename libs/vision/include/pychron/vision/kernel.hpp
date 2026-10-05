@@ -8,8 +8,8 @@
 
 namespace pychron::vision {
 
-// Every mask_radius_px / radius_px below describes a disk centred on the frame
-// centre; a radius <= 0 means "no mask".
+// Every mask_radius_px / radius_px below describes a disk centered on the frame
+// center; a radius <= 0 means "no mask".
 
 // 3x3 median; edge pixels replicate the border.
 Frame median3(const FrameView&);
@@ -37,7 +37,7 @@ struct Component {
 
 // mask: 1 = foreground, row-major w*h. 8-connected; interior holes are filled
 // and counted in area/centroid. perimeter is the number of foreground pixels
-// with a 4-neighbour background pixel, and boundary holds their centres.
+// with a 4-neighbour background pixel, and boundary holds their centers.
 std::vector<Component> components(const std::vector<std::uint8_t>& mask, int w, int h, double mask_radius_px);
 
 struct CircleFit {

@@ -110,7 +110,7 @@ const laser::TrayMap* LaserBridge::tray_map(const QString& name) const {
 
 bool LaserBridge::has_camera() const { return system_.has_camera(); }
 
-bool LaserBridge::can_centre() const { return system_.can_centre(); }
+bool LaserBridge::can_center() const { return system_.can_center(); }
 
 std::vector<laser::CalibrationPoint> LaserBridge::calibration_points(const QString& tray) const {
   auto stored = deps_.lab.calibrations->load(deps_.device, tray.toStdString());

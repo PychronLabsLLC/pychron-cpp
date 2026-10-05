@@ -11,7 +11,7 @@
 namespace pychron::spectrometer {
 
 // How a detector's control points are turned into a mass -> value curve.
-// Polynomial fits are least squares in mass (centred for conditioning).
+// Polynomial fits are least squares in mass (centered for conditioning).
 enum class FitKind { Discrete, Linear, Quadratic, Cubic };
 
 // Units of the table values; must match the positioner's native axis.
@@ -57,7 +57,7 @@ class FieldTable {
   void set_fit(std::string det, FitKind kind);
   const std::map<std::string, FitKind, std::less<>>& fit_overrides() const noexcept { return fits_; }
 
-  // Native value that centres `mass` on `det`. Discrete: nearest control
+  // Native value that centers `mass` on `det`. Discrete: nearest control
   // point within kDiscreteTolerance, else Error{Config}. Never falls back to
   // any "current" position.
   Result<double> value_for(double mass, std::string_view det) const;

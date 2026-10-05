@@ -5,7 +5,7 @@
 schema_version = 1
 device = "co2"
 tray = "example-9"
-tray_sha256 = "8b726ba3a146ea4a8b0c865daa2c345b0978d41449506e34fe81e3b692554ccb"
+tray_sha256 = "0223e1188eecc851e2c38ace1325601e49689d53c3fce417f213574741d2eaf6"
 center = [ 25.0, 25.0 ]
 rotation_deg = 0.0
 scale = 1.0

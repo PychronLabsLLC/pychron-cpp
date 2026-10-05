@@ -79,7 +79,7 @@ class TrayLibrary {
   - `TrayMap.WindowsFilesLoadTheSame` — the same text with `\r\n`, a BOM and trailing spaces gives equal holes (ids, x, y); the sha differs.
   - `TrayMap.ABadRowNamesItsLine` — parameterised: `1,x,2`, `1,2`+`1,3` duplicate id, `nan,1`, `1,2,3,4,5`, a file with two header lines; each a Config error whose `what` contains `:<line>`.
   - `TrayMap.ShaIsOfTheBytes` — equals `pychron::sha256(text)` in hex.
-  - `TrayMap.TheLegacy221MapLoads` — 221 holes, `find("1")` and `find("221")` non-null, centre and right holes present.
+  - `TrayMap.TheLegacy221MapLoads` — 221 holes, `find("1")` and `find("221")` non-null, center and right holes present.
   - `TrayLibrary.LoadsADirectoryAndReportsWhatDidNot` — a temp dir with one good and one bad `.txt` and one `.md`: `names() == {good}`, one problem naming the bad file.
 
 - [ ] **Step 3: Run** `cmake --build build/dev -j8` — Expected: FAIL to compile (`tray_map.hpp` not found).
@@ -124,7 +124,7 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
   - `Solve.SwappedHolesDoNotPassSilently` — holes `2` and `4` exchanged in a 5-point set: either an error or `rms_mm > 1`.
 
 - [ ] **Step 2: Run** — Expected: FAIL to compile.
-- [ ] **Step 3: Implement.** N ≥ 3 is the closed-form 2-D similarity fit: with centred map points `p` and stage points `q`, `a = Σ(p·q)`, `b = Σ(p×q)`, `rotation = atan2(b, a)`, `scale = hypot(a, b) / Σ|p|²`, `c = q̄ − s R p̄`. Two points: the same rotation, `scale = 1`, `c` from the first point.
+- [ ] **Step 3: Implement.** N ≥ 3 is the closed-form 2-D similarity fit: with centered map points `p` and stage points `q`, `a = Σ(p·q)`, `b = Σ(p×q)`, `rotation = atan2(b, a)`, `scale = hypot(a, b) / Σ|p|²`, `c = q̄ − s R p̄`. Two points: the same rotation, `scale = 1`, `c` from the first point.
 - [ ] **Step 4: Run** `ctest --test-dir build/dev -R Solve` — Expected: PASS.
 - [ ] **Step 5: Commit** `laser: stage calibration from hole points`.
 
@@ -371,6 +371,6 @@ elctl ... laser goto <device> <tray> <hole> [--timeout <s>]
 - Modify: `docs/superpowers/specs/2026-10-04-chromium-protocol-survey.md` §7 row `move_to_position(hole)` → the laser system's
 - Modify: `libs/experiment/include/pychron/experiment/lab/lab.hpp` header comment (the two new directories)
 
-- [ ] **Step 1:** Write the doc changes: how to calibrate a tray on a real Chromium (jog to the centre hole, `elctl laser calibrate co2 <tray> center`, the same for `right`, `goto` to check), and what is still missing (patterns, autocenter, UI).
+- [ ] **Step 1:** Write the doc changes: how to calibrate a tray on a real Chromium (jog to the center hole, `elctl laser calibrate co2 <tray> center`, the same for `right`, `goto` to check), and what is still missing (patterns, autocenter, UI).
 - [ ] **Step 2: Run** the full suite — Expected: PASS; `build/dev-ui`: `cmake --build build/dev-ui -j8 && ctest --test-dir build/dev-ui -j8` — Expected: only the four known macOS offscreen failures (`ui.test_theme`, `test_menu_hub`, `test_command_palette`, `test_brand`).
 - [ ] **Step 3: Commit** `docs: trays, calibration and the laser queue`.

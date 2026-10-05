@@ -138,7 +138,7 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(calls.load(), 2);
   }
 
-  // What a run says (here: that its hole was centred) is a line of the
+  // What a run says (here: that its hole was centered) is a line of the
   // pane's events, under the run that said it.
   void aRunsLogShowsInTheExecutorPane() {
     if (!pychron::scripting::make_script_host()->available()) QSKIP("needs embedded Python to run laser_extract.py");
@@ -158,12 +158,12 @@ class TestExperimentWindow : public QObject {
       return -1;
     };
     const int started = index(QStringLiteral("run 0 66001 started"));
-    const int said = index(QStringLiteral("  66001: hole 3: centred, moved "));
+    const int said = index(QStringLiteral("  66001: hole 3: centered, moved "));
     const int finished = index(QStringLiteral("run 0 66001-1: success"));
     QVERIFY2(said >= 0, qPrintable(events.join(QLatin1Char('\n'))));
     QVERIFY(started >= 0 && started < said);
     QVERIFY(said < finished);
-    QVERIFY(index(QStringLiteral("  66001: hole 7: centred, moved ")) > finished);
+    QVERIFY(index(QStringLiteral("  66001: hole 7: centered, moved ")) > finished);
   }
 
   // A camera the session cannot use is on show before any queue is started.

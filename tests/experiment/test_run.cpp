@@ -220,7 +220,7 @@ TEST_F(RunTest, PostMeasurementFailureStillSaves) {
 TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
   host_.bodies["extract"] = [this](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
     clock_.advance(5s);
-    env.log("hole 3: centred, moved 0.150, -0.100 mm (residual 0.010 mm)");
+    env.log("hole 3: centered, moved 0.150, -0.100 mm (residual 0.010 mm)");
     return {};
   };
   host_.bodies["post_meas"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
@@ -235,7 +235,7 @@ TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
   ASSERT_GE(said.size(), 2u);
   EXPECT_EQ(said[0].run_id, r.uuid);
   EXPECT_EQ(said[0].row, 7u);  // the queue row the run was made for
-  EXPECT_EQ(said[0].text, "hole 3: centred, moved 0.150, -0.100 mm (residual 0.010 mm)");
+  EXPECT_EQ(said[0].text, "hole 3: centered, moved 0.150, -0.100 mm (residual 0.010 mm)");
   EXPECT_EQ(said[0].ts, started + 5s);
   EXPECT_NE(said[1].text.find("pump valve stuck"), std::string::npos);
   std::vector<std::string> texts;

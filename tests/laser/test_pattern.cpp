@@ -224,7 +224,7 @@ TEST(PatternPoints, EveryKindsDefaultsGiveFinitePoints) {
 }
 
 // A walk much taller than it is wide: legacy's test keeps only points within
-// walk_x of the centre, which a draw over the whole box would almost never hit.
+// walk_x of the center, which a draw over the whole box would almost never hit.
 TEST(PatternPoints, ANarrowRandomWalkTerminates) {
   Pattern p = of(PatternKind::Random);
   p.npoints = 50;
@@ -260,7 +260,7 @@ TEST(PatternPoints, TheCountIsKnownWithoutMakingThem) {
   }
 }
 
-TEST(PatternPath, RepeatsAndReturnsToTheCentre) {
+TEST(PatternPath, RepeatsAndReturnsToTheCenter) {
   Pattern p = of(PatternKind::Polygon);
   p.nsides = 4;
   p.iterations = 3;
@@ -296,7 +296,7 @@ TEST(PatternPath, TooManyPointsIsRefused) {
   EXPECT_NE(path.error().what.find("10000"), std::string::npos);
 }
 
-TEST(PathLength, SumsTheSegmentsFromTheCentre) {
+TEST(PathLength, SumsTheSegmentsFromTheCenter) {
   Pattern p = of(PatternKind::Rubberband);
   p.length = 4;
   p.offset = 1;

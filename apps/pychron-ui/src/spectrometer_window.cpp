@@ -81,7 +81,7 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   setWindowTitle(simulation ? tr("Spectrometer (Simulation)") : tr("Spectrometer"));
   resize(1100, 650);
 
-  // Centre: the banner (hidden while healthy) above the chart.
+  // Center: the banner (hidden while healthy) above the chart.
   banner_->setObjectName(QStringLiteral("SpectrometerBanner"));
   style::make_banner(banner_);
   auto* restart = new QPushButton(tr("Restart"));
@@ -92,12 +92,12 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   banner_->hide();
   connect(restart, &QPushButton::clicked, this, [this] { restart_scan(); });
 
-  auto* centre = new QWidget;
-  auto* column = new QVBoxLayout(centre);
+  auto* center = new QWidget;
+  auto* column = new QVBoxLayout(center);
   column->setContentsMargins(0, 0, 0, 0);
   column->addWidget(banner_);
   column->addWidget(view_, 1);
-  setCentralWidget(centre);
+  setCentralWidget(center);
 
   auto* controls = new QDockWidget(tr("Controls"), this);
   controls->setObjectName(QStringLiteral("SpectrometerControlsDock"));

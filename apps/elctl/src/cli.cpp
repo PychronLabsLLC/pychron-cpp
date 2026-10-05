@@ -64,7 +64,7 @@ constexpr const char* kUsageText =
     "  laser trays                 tray maps and their stage calibrations\n"
     "  laser calibrate <device> <tray> point <hole>|center|right|show|clear [--x X --y Y]\n"
     "  laser goto <device> <tray> <hole>   move the stage to a hole and report the miss\n"
-    "  laser autocenter <device> <tray> <hole>   move to a hole and centre it with the camera\n"
+    "  laser autocenter <device> <tray> <hole>   move to a hole and center it with the camera\n"
     "  laser corrections <device> <tray> [clear [<hole>]]   where autocenter found holes\n"
     "  laser look <device> [--tray <tray>]   what the camera's finder sees; moves nothing\n"
     "  laser patterns              the lab's laser patterns\n"

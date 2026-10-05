@@ -10,8 +10,8 @@ namespace pychron::vision {
 
 struct FrameView;
 
-// Pixel coordinates throughout the library: a pixel's centre sits at integer
-// (x, y), so the centre of a w x h frame is ((w-1)/2, (h-1)/2).
+// Pixel coordinates throughout the library: a pixel's center sits at integer
+// (x, y), so the center of a w x h frame is ((w-1)/2, (h-1)/2).
 //
 // Pixels are always stored as uint16_t; pixel_depth is the maximum value
 // (255, 4095, 65535), so 8-, 12- and 16-bit cameras share one code path.
@@ -43,7 +43,7 @@ struct FrameView {
 // Copies the part of `r` that lies inside the frame; fully outside gives an empty frame.
 Frame crop(const FrameView& v, Rect r);
 
-// Square of side `side` centred on the frame centre, shifted by `offset` pixels
+// Square of side `side` centered on the frame center, shifted by `offset` pixels
 // (rounded). The rectangle is not clamped to the frame (crop() does that), but
 // its corner is limited to +-1e9 so a huge offset cannot overflow int.
 Rect centered_rect(const FrameView& v, int side, Vec2 offset_px = {});

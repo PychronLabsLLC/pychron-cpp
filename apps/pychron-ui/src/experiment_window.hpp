@@ -1,7 +1,7 @@
 #pragma once
 
 // ExperimentWindow (experiment-window design 5.5): the queue table in the
-// centre, the run factory and the selected run's measurement on the left
+// center, the run factory and the selected run's measurement on the left
 // (tabbed), the executor pane docked below and the evolutions on the right.
 //
 // The queue is edited in place and saved to its TOML file; every edit is

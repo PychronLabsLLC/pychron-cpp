@@ -74,7 +74,7 @@ CheckResult check_cases(const std::filesystem::path& root) {
       EXPECT_FALSE(targets.empty()) << c->dir.filename() << "/" << ff.file << ": no target found";
       if (targets.empty()) continue;
       const double err = std::hypot(targets[0].center_px.x - ff.center_px->x, targets[0].center_px.y - ff.center_px->y);
-      EXPECT_LE(err, c->tolerance_px) << c->dir.filename() << "/" << ff.file << ": centre error " << err << " px";
+      EXPECT_LE(err, c->tolerance_px) << c->dir.filename() << "/" << ff.file << ": center error " << err << " px";
       ++out.frames;
     }
   }

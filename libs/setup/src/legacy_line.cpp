@@ -58,7 +58,7 @@ struct LConnection {
   std::string start, end, left, mid, right;
   std::string corner;  // elbow only
   // Where an end meets its element, from the element's lower-left corner in
-  // world units; unset = its centre.
+  // world units; unset = its center.
   std::optional<std::pair<double, double>> start_offset, end_offset;
 };
 struct LCanvas {
@@ -837,7 +837,7 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   for (const auto& e : elements)
     if (e.kind != "label") at[e.name] = {px(e.x), py(e.y)};
   // A legacy offset is from the element's lower-left corner, y up;
-  // canvas.toml's is from its centre, in pixels, y down.
+  // canvas.toml's is from its center, in pixels, y down.
   using Offset = std::optional<std::pair<double, double>>;
   auto shift = [&](const std::string& name, const Offset& o) -> std::pair<double, double> {
     if (!o) return {0, 0};

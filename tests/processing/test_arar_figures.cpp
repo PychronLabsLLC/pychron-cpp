@@ -249,7 +249,7 @@ TEST(Spectrum, StepsPlateauAndIntegrated) {
   EXPECT_NE(text.find("plateau A-H"), std::string::npos) << text;
   EXPECT_NE(text.find("integrated"), std::string::npos) << text;
   const auto bars = layers<pp::LineLayer>(g.panels[0]);
-  ASSERT_EQ(bars.size(), 2u);  // centre line, plateau bar
+  ASSERT_EQ(bars.size(), 2u);  // center line, plateau bar
   EXPECT_NEAR(bars[1]->y[0], age_of_f(10.0), 1e-6);
 }
 

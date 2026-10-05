@@ -76,19 +76,19 @@ All eight committed cases are `screen_recording`, one frame per case directory
 because each has its own radius estimate. They are screen captures of the old
 UI, not camera frames: holes carry a thin dark crosshair and a dark circle drawn
 around the hole under the crosshair; glows carry thick bright yellow crosshair
-lines, a yellow and a red circle and a red centre marker.
+lines, a yellow and a red circle and a red center marker.
 
-**The centres were marked by eye by the implementer from screen recordings and
+**The centers were marked by eye by the implementer from screen recordings and
 are low-trust.** They were read off enlarged copies of the colour frames, to the
 nearest pixel, and probably carry 1-3 px of error on the holes and more on the
 glows, whose shapes are irregular.
 
-### Deliberate off-centre placement
+### Deliberate off-center placement
 
-`SimpleFinder` ranks hole candidates by distance to the frame centre. A first
-cut with every target at the crop centre therefore only showed that the blob
-nearest the centre is near the centre. The committed crops were re-cut so the
-marked target sits off-centre by a fixed offset chosen before the finder was
+`SimpleFinder` ranks hole candidates by distance to the frame center. A first
+cut with every target at the crop center therefore only showed that the blob
+nearest the center is near the center. The committed crops were re-cut so the
+marked target sits off-center by a fixed offset chosen before the finder was
 run: (+9, -7), (-11, +8), (+6, +12), (-8, -10), assigned in the order of the
 table below and reused across the hole and glow groups. Offsets, marks,
 tolerance and finder were not tuned afterwards.
@@ -110,12 +110,12 @@ Three of the eight frames pass; five are `skip = true`.
 ### What these cases do and do not test
 
 They test that `SimpleFinder`, given a small hand-cut region of a real frame
-whose target is off-centre, returns a centre within 4 px of an eye-marked
+whose target is off-center, returns a center within 4 px of an eye-marked
 position, with the overlays, compression artefacts and a few neighbouring holes
 present. They do not test accuracy: the marks are low-trust and the tolerance is
 loose. They are not raw camera frames, do not cover the real autocenter or
 dragonfly region-of-interest and mask geometry, and say nothing about hole
-detection with the target far from the centre. Because the sub-crops were
+detection with the target far from the center. Because the sub-crops were
 chosen by the implementer after a first look, they are a smoke check, not an
 unbiased sample.
 
@@ -131,11 +131,11 @@ They were still run through the finder in the first round for the table.
 ## Results
 
 `SimpleFinder`, `expected_radius_px` from the estimate, `mask_radius_px` = half
-the crop side. "Err" is the distance in pixels from the marked centre to the
+the crop side. "Err" is the distance in pixels from the marked center to the
 best-ranked target; "score" is `Target::score` (the saturation for glows).
 Luma versus one colour channel (green for holes, blue for glows).
 
-### Committed crops (target off-centre)
+### Committed crops (target off-center)
 
 | Frame | Mode | Radius | Luma | Channel |
 |---|---|---|---|---|
@@ -148,7 +148,7 @@ Luma versus one colour channel (green for holes, blue for glows).
 | df1_30 | glow | 13 | err 4.99, score 0.83 (r 19.9) | err 6.97, score 0.86 (r 18.5) |
 | df1_40 | glow | 10 | err 13.02, score 0.86 (r 30.7) | err 0.98, score 0.84 (r 12.4) |
 
-### First round: target at the crop centre (not committed)
+### First round: target at the crop center (not committed)
 
 Same frames, same sizes (holes 80 and, in brackets, the first try at 120),
 glows 200. Unmarked frames show where a target was returned, with no error.
@@ -177,8 +177,8 @@ Reading the numbers:
   px) is about that of the yellow overlay circle, so the glow merged with it.
   In blue, `df0_42` instead merges the faint trail with the bright core.
 - Holes: one of four within 4 px in luma and one of four in green, and not the
-  same frame. The off-centre re-cut changed which hole frames work (`ac2_2`
-  luma was 2.41 px centred and is not found off-centre), so hit rates here are
+  same frame. The off-center re-cut changed which hole frames work (`ac2_2`
+  luma was 2.41 px centered and is not found off-center), so hit rates here are
   fragile and mostly reflect crop position. The rejection counts show mostly
   `rejected_edge` and `rejected_area`.
 - The `ac1_9` hit at 3.86 px has a score of 0.03 and a radius of 14.2 against an
@@ -204,7 +204,7 @@ tolerance were not changed to make them pass.
 | Frame | Measured (luma) | Best explanation |
 |---|---|---|
 | `hole_ac1_3` | no target | the overlay circle and crosshair drawn over the hole; the hole is half hidden. Not diagnosed beyond the rejection counts |
-| `hole_ac2_2` | no target (green finds it at 2.71) | not diagnosed; the same frame was found at 2.41 px when centred, so it is position-sensitive |
+| `hole_ac2_2` | no target (green finds it at 2.71) | not diagnosed; the same frame was found at 2.41 px when centered, so it is position-sensitive |
 | `hole_ac2_18` | no target | the overlay circle on the hole; the hole edge is also low contrast |
 | `glow_df1_30` | err 4.99 px (tolerance 4) | two touching lobes; the finder returns their joint centroid, the mark is on the larger lobe, so the mark may be the wrong thing to compare against |
 | `glow_df1_40` | err 13.02 px | the glow merges with the yellow overlay circle (reported radius 30.7); blue gives 0.98 px |
@@ -221,7 +221,7 @@ finders on every frame, including those marked `skip = true`, and asserts only
 that nothing crashes and results are finite. It is a report, not a gate. Neither
 finder, the marks nor the tolerances were changed to produce it. Parameters are
 those of the fixture tests (`expected_radius_px` from the case, mask radius half
-the crop). Errors are in px against the marked centre; `ok` is within the case
+the crop). Errors are in px against the marked center; `ok` is within the case
 `tolerance_px` (4 for every case).
 
 | Frame | Mode | skip | SimpleFinder | LegacyFinder | Legacy, tight crop (diagnostic) |
@@ -251,12 +251,12 @@ Summary:
   `dim` is a radius) and not these 80 by 80 crops, where a hole of radius 11 covers
   about 6 percent.
 - The last column re-runs `LegacyFinder` on a crop of `ceil(2.55 * radius)` pixels
-  centred on the marked centre. It returns the hole in all four. That shows a
-  tight crop centred on the mark is enough for the legacy finder to return the
+  centered on the marked center. It returns the hole in all four. That shows a
+  tight crop centered on the mark is enough for the legacy finder to return the
   hole; it does not isolate the white-fraction limit as the only cause, because
-  the tight crop also sidesteps the centre gate and most of the surrounding
+  the tight crop also sidesteps the center gate and most of the surrounding
   overlays. It is a diagnostic and is biased toward the mark: the crop is
-  centred on it and the legacy finder prefers targets near the crop centre, so
+  centered on it and the legacy finder prefers targets near the crop center, so
   the small errors show detection, not accuracy. It is not counted in the totals
   above.
 - Crop size caveat: this diagnostic and the legacy reading use about 2.55 hole

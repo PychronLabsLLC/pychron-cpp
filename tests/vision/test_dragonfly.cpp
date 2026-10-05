@@ -83,9 +83,9 @@ TEST(Dragonfly, TracksDriftingGlow) {
   EXPECT_LT(len({rig.scene.glow_mm.x - rig.stage.pos.x, rig.scene.glow_mm.y - rig.stage.pos.y}), 0.05);
 }
 
-// The aim point is image centre + offset: a glow sitting there is on target,
-// and one at the image centre is off by the opposite of the offset.
-TEST(Dragonfly, TracksTowardTheAimPointNotTheImageCentre) {
+// The aim point is image center + offset: a glow sitting there is on target,
+// and one at the image center is off by the opposite of the offset.
+TEST(Dragonfly, TracksTowardTheAimPointNotTheImageCenter) {
   // Image +x is stage +x, image +y is stage -y: 23 px right, 11.5 px up = (+1.0, +0.5) mm.
   DragonflyParams p = params();
   p.aim_offset_px = {23.0, -11.5};
@@ -98,7 +98,7 @@ TEST(Dragonfly, TracksTowardTheAimPointNotTheImageCentre) {
     EXPECT_EQ(d.action, Action::Hold);
     EXPECT_EQ(d.reason, Reason::Deadband);
   }
-  // Glow at the image centre: the stage must move so the glow lands on the aim point.
+  // Glow at the image center: the stage must move so the glow lands on the aim point.
   Rig rig(glow_at({0, 0}), p);
   for (int i = 0; i < 12; ++i) rig.step();
   EXPECT_LT(len({rig.stage.pos.x + aim_mm.x - rig.scene.glow_mm.x, rig.stage.pos.y + aim_mm.y - rig.scene.glow_mm.y}), 0.06);
@@ -177,7 +177,7 @@ TEST(Dragonfly, ReacquiresAfterSearchAndResetsSpiral) {
   for (int i = 0; i < 2; ++i) EXPECT_EQ(rig.step().reason, Reason::Miss);
   const auto s = rig.step();
   EXPECT_EQ(s.reason, Reason::Search);
-  // Glow comes back off-centre: track, which re-anchors and resets the spiral.
+  // Glow comes back off-center: track, which re-anchors and resets the spiral.
   rig.scene.peak = 0.6;
   rig.scene.glow_mm = {rig.stage.pos.x + 0.2, rig.stage.pos.y};
   const auto t = rig.step();
