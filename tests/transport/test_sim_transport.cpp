@@ -281,3 +281,17 @@ TEST(SimTransportHooked, PollTreatsNothingYetAsNormal) {
   ASSERT_FALSE(closed);
   EXPECT_EQ(closed.error().kind, ErrorKind::NotConnected);
 }
+
+TEST(SimTransportHooked, UntilCloseReturnsTheWholeReply) {
+  // A simulated peer has said everything once its reply is queued.
+  auto t = SimTransport::hooked([](const Bytes&) { return to_bytes("OK"); });
+  ASSERT_TRUE(t->open());
+  auto r = t->exchange(to_bytes("Open A\r"), ReadSpec::until_close());
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(to_string(*r), "OK");
+  auto silent = SimTransport::hooked([](const Bytes&) { return Bytes{}; });
+  ASSERT_TRUE(silent->open());
+  auto none = silent->exchange(to_bytes("Open A\r"), ReadSpec::until_close(), std::chrono::milliseconds(10));
+  ASSERT_FALSE(none);
+  EXPECT_EQ(none.error().kind, ErrorKind::Timeout);
+}

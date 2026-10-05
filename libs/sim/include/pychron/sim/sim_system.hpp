@@ -42,6 +42,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/devices/agilent_unit_sim.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
+#include "pychron/devices/pychron_valve_server_sim.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
@@ -109,6 +110,8 @@ class SimSystem {
   //                       honouring the unit's `invert` and each valve's.
   //   qtegra_valves       a Qtegra answering valve commands; Open/Close of a
   //                       valve's Qtegra name drive set_valve().
+  //   pychron_valves      another Pychron's valve service serving the line's
+  //                       valve addresses; Open/Close drive set_valve().
   //   pfeiffer_maxigauge  channel n reads the volume named after the gauge
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels
@@ -148,6 +151,7 @@ class SimSystem {
   mutable std::mt19937_64 rng_;
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
   std::vector<std::unique_ptr<AgilentUnitSim>> units_;
+  std::vector<std::unique_ptr<PychronValveServerSim>> valve_servers_;
   std::map<std::string, std::unique_ptr<extraction::ChromiumSim>, std::less<>> lasers_;  // by driver name
 };
 

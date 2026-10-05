@@ -48,6 +48,7 @@ void garble(const ReadSpec& spec, Bytes& data) {
       return;  // empty payload: nothing to corrupt
     }
     case ReadSpec::Kind::FixedLength:
+    case ReadSpec::Kind::UntilClose:
       break;
   }
   static constexpr std::uint8_t kCandidates[] = {'?', '#', '~'};
@@ -255,6 +256,9 @@ Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
       buf.insert(buf.end(), chunk.data.begin(), chunk.data.end());
       if ((n = frame_length(rs, buf))) break;
     }
+    // A simulated peer has said all it will once its reply is queued: for
+    // UntilClose that is the frame, as if it then closed.
+    if (!n && rs.kind == ReadSpec::Kind::UntilClose && !buf.empty()) n = buf.size();
     if (n || !state_->unsolicited || std::chrono::steady_clock::now() >= real_deadline) break;
     lock.unlock();
     std::this_thread::sleep_for(std::chrono::milliseconds(1));

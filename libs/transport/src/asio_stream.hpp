@@ -12,6 +12,7 @@
 #include <chrono>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -90,7 +91,11 @@ Result<Bytes> read_frame(asio::io_context& io, Stream& stream, Bytes& pending, c
       stream.cancel(ignored);
     });
     pending.insert(pending.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(got));
-    if (ec == asio::error::eof) return fail(ErrorKind::Io, "connection closed by peer");
+    if (ec == asio::error::eof) {
+      // The close is the end of an UntilClose frame (empty if nothing came).
+      if (spec.kind == ReadSpec::Kind::UntilClose) return std::exchange(pending, Bytes{});
+      return fail(ErrorKind::Io, "connection closed by peer");
+    }
     if (ec && ec != asio::error::operation_aborted) return fail(io_error("read failed", ec));
   }
 }

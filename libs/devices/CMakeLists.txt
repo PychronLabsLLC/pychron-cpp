@@ -4,6 +4,8 @@ add_library(pychron_devices STATIC
   src/agilent_switch.cpp
   src/agilent_unit_sim.cpp
   src/device.cpp
+  src/pychron_valves.cpp
+  src/pychron_valve_server_sim.cpp
   src/types.cpp
   src/driver_registry.cpp
   src/modbus_ids.cpp

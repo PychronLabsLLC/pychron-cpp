@@ -72,3 +72,8 @@ TEST(ReadSpec, UntilAnyAbsorbsLeadingSetBytes) {
 TEST(ReadSpec, UntilAnyEmptySetIsImmediatelyComplete) {
   EXPECT_EQ(frame_length(ReadSpec::until_any(Bytes{}), to_bytes("x")), 0u);
 }
+
+TEST(ReadSpec, UntilCloseIsNeverCompleteByContent) {
+  EXPECT_EQ(frame_length(ReadSpec::until_close(), to_bytes("OK\r\n")), std::nullopt);
+  EXPECT_EQ(frame_length(ReadSpec::until_close(), Bytes{}), std::nullopt);
+}

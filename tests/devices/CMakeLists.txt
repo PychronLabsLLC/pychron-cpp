@@ -17,6 +17,7 @@ add_executable(pychron_devices_tests
   test_sim_valves.cpp
   test_valve_conformance.cpp
   test_agilent_switch.cpp
+  test_pychron_valves.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
@@ -40,7 +41,8 @@ add_executable(pychron_devices_tests
 # spectrometer/ and extraction/ conformance.hpp and fakes
 target_include_directories(pychron_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(pychron_devices_tests PRIVATE pychron::devices GTest::gtest_main)
+# test_pychron_valves runs a loopback TCP server.
+target_link_libraries(pychron_devices_tests PRIVATE pychron::devices asio::asio GTest::gtest_main)
 # Committed wire traces, replayed by driver tests.
 target_compile_definitions(pychron_devices_tests PRIVATE
   PYCHRON_TRACES_DIR="${PROJECT_SOURCE_DIR}/tests/traces")

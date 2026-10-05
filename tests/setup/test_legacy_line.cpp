@@ -323,6 +323,25 @@ TEST_F(YamlLine, AQtegraActuatorKeepsATcpKind) {
   EXPECT_FALSE(has_note(*made, "switch_controller: no kind=")) << all_notes(*made);
 }
 
+TEST_F(YamlLine, AnotherPychronsValvesAreAddressedByName) {
+  // jan drives felix's valves: legacy sent each valve's name, not its address.
+  t.write("devices/switch_controller.cfg",
+          "[General]\ntype = PychronGPActuator\n[Communications]\ntype = ethernet\nkind = TCP\nhost = felix.local\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "pychron_valves");
+  const auto& tr = line->transports.at("switch_controller");
+  ASSERT_EQ(tr.kind, config::TransportKind::Tcp);
+  EXPECT_EQ(std::get<config::TcpParams>(tr.params).host, "felix.local");
+  EXPECT_EQ(std::get<config::TcpParams>(tr.params).port, 1061);
+  EXPECT_EQ(valve(*line, "A")->address, "A");  // was "Valve 1_1 Set"
+  EXPECT_EQ(valve(*line, "B")->address, "B");
+  EXPECT_EQ(valve(*line, "C")->address, "3");  // on another actuator: unchanged
+  EXPECT_TRUE(has_note(*made, "2 valve address(es) replaced by the valve name")) << all_notes(*made);
+}
+
 // Agilent units become agilent_switch on the legacy port (plan 2026-10-05, A1).
 TEST_F(YamlLine, AnAgilentUnitOnSerialKeepsItsPortAndInvert) {
   // Reston's indirection: switch_controller names the class, whose file has the comms.

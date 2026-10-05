@@ -156,3 +156,42 @@ TEST(TcpTransport, UnresolvableHostIsIoError) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Io);
 }
+
+TEST(TcpTransport, UntilCloseFramesTheReplyAtThePeersClose) {
+  // A server that answers one command per connection with no terminator
+  // (legacy Pychron's valve service), then hangs up.
+  LoopbackServer server([](asio::ip::tcp::socket& s) {
+    read_line(s);
+    send(s, "O");
+    std::this_thread::sleep_for(20ms);
+    send(s, "K");
+  });
+  TcpTransport t({"127.0.0.1", server.port()}, opts());
+  ASSERT_TRUE(t.open());
+  auto r = t.exchange(to_bytes("Open A\n"), ReadSpec::until_close());
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(to_string(*r), "OK");
+}
+
+TEST(TcpTransport, UntilCloseWithNothingSaidIsAnEmptyFrame) {
+  LoopbackServer server([](asio::ip::tcp::socket& s) { read_line(s); });
+  TcpTransport t({"127.0.0.1", server.port()}, opts());
+  ASSERT_TRUE(t.open());
+  auto r = t.exchange(to_bytes("q\n"), ReadSpec::until_close());
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->empty());
+}
+
+TEST(TcpTransport, UntilCloseTimesOutWhileThePeerStaysOpen) {
+  LoopbackServer server([](asio::ip::tcp::socket& s) {
+    read_line(s);
+    send(s, "OK");
+    read_line(s);  // keeps the connection open
+  });
+  TcpTransport t({"127.0.0.1", server.port()}, opts());
+  ASSERT_TRUE(t.open());
+  auto r = t.exchange(to_bytes("q\n"), ReadSpec::until_close(), 100ms);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  (void)t.write(to_bytes("bye\n"));
+}

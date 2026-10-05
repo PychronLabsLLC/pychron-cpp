@@ -35,6 +35,12 @@ ReadSpec ReadSpec::modbus_rtu() {
   return s;
 }
 
+ReadSpec ReadSpec::until_close() {
+  ReadSpec s;
+  s.kind = Kind::UntilClose;
+  return s;
+}
+
 ReadSpec ReadSpec::modbus_tcp() {
   ReadSpec s;
   s.kind = Kind::ModbusTcp;
@@ -97,6 +103,8 @@ std::optional<std::size_t> frame_length(const ReadSpec& spec, const Bytes& buffe
       const std::size_t len = static_cast<std::size_t>(buffer[4]) << 8 | buffer[5];
       return complete_if(6 + len, buffer.size());
     }
+    case ReadSpec::Kind::UntilClose:
+      return std::nullopt;
   }
   return std::nullopt;
 }

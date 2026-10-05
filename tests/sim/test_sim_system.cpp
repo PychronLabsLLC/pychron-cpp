@@ -273,6 +273,36 @@ address = "Valve 1_1 Set"
   EXPECT_FALSE(sim.valve_open("A"));
 }
 
+TEST(SimSystem, AnotherPychronServesTheLinesValves) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.felix]
+kind = "sim"
+[drivers.felix_valves]
+kind = "pychron_valves"
+transport = "felix"
+[[valves]]
+name = "A"
+actuator = "felix_valves"
+address = "A"
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("felix_valves"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("felix_valves"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto* valves = capability<IValveActuator>(**made);
+  ASSERT_TRUE(valves->open(ValveAddress{"A"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  auto unknown = valves->open(ValveAddress{"Z"});  // felix does not serve Z
+  ASSERT_FALSE(unknown);
+  EXPECT_EQ(unknown.error().kind, ErrorKind::Config);
+}
+
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;

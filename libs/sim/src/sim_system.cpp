@@ -195,6 +195,26 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
+  if (driver.kind == "pychron_valves") {
+    // Another Pychron's valve service, serving the names this line uses.
+    std::map<std::string, std::pair<std::string, bool>> by_name;  // valve, inverted
+    for (const auto& v : system.valves)
+      if (v.actuator == driver.name) by_name[v.address] = {v.name, v.inverted};
+    for (const auto& s : system.switches)
+      if (s.actuator == driver.name) by_name[s.address] = {s.name, s.inverted};
+    std::set<std::string> names;
+    for (const auto& [name, _] : by_name) names.insert(name);
+    auto server = std::make_unique<PychronValveServerSim>(
+        [this, by_name = std::move(by_name)](const std::string& name, bool open) {
+          if (auto it = by_name.find(name); it != by_name.end()) set_valve(it->second.first, open != it->second.second);
+        });
+    if (!names.empty()) server->declare(std::move(names));
+    auto hook = server->hook();
+    std::lock_guard lock(mutex_);
+    valve_servers_.push_back(std::move(server));
+    return hook;
+  }
+
   if (driver.kind == "qtegra_valves") {
     // A Qtegra RemoteControl answering valve commands only; its Open/Close
     // move the line's valves (by Qtegra name). On a kind = "link" transport

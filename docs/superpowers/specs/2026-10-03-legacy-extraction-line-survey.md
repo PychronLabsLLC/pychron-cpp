@@ -108,7 +108,9 @@ Mapping:
   Any class naming Qtegra becomes `qtegra_valves` on its host and port, tcp
   or udp as its `kind=` says (udp when it says nothing: legacy's default,
   reported); the report says to make it a `link` when the spectrometer's
-  thermo_qtegra shares the endpoint.
+  thermo_qtegra shares the endpoint. PychronGPActuator becomes
+  `pychron_valves` on its host (port 1061 when none is given), and its
+  valves' addresses become their names, which legacy sent (reported).
   Every other class becomes a `sim_valves` driver (any address, state kept in
   memory) on a simulated transport, with the legacy class and endpoint in a
   comment: the line loads and runs in simulation, and the comment says what

@@ -166,6 +166,8 @@ Protocol (legacy `actuators/ascii_gp_actuator.py`; `QtegraGPActuator` is a pass-
 
 ### Task A3: `nmgrl_furnace_valves` — NMGRL furnace firmware (usgsdenver, felix, jan)
 
+**Skipped (owner, 2026-10-05).** The NMGRL furnace actuator stays on `sim_valves`.
+
 Protocol (legacy `actuators/nmgrl_furnace_actuator.py`), TCP 4567:
 
 - `Open <addr>` / `Close <addr>` → bool token; `GetChannelState <addr>` → bool token.
@@ -177,13 +179,15 @@ Protocol (legacy `actuators/nmgrl_furnace_actuator.py`), TCP 4567:
 
 ### Task A4: `pychron_valves` — another Pychron's valve server (felix ↔ jan)
 
+Done 2026-10-05. Two facts from the legacy server shaped it: the reply has no terminator and the server hangs up after it (new `ReadSpec::until_close()`; the driver reconnects per command), and GetValveState answers `OK` for open (Python True) and `False` for closed. Legacy addressed these valves by name, so the importer writes each valve's name as its address.
+
 Protocol (legacy `actuators/pychron_gp_actuator.py`, server `tx/protocols/base_valve.py`), TCP 1061:
 
 - `Open <name>` / `Close <name>` → `OK` (changed) or `ok` (already) or an error code; `GetValveState <name>`, `GetIndicatorState <name>` → bool token.
 - The address is the **remote valve name**.
 
-- [ ] Scope: actuation and state only. State/lock/owner words (`GetValveStates` with CRC16) are out of scope; legacy's version-1 word format disagrees between its own sender and parser.
-- [ ] Note in the header: this is the client half of the RPC service (priorities item 5); when `libs/rpc` lands, its server must answer this driver.
+- [x] Scope: actuation and state only. State/lock/owner words (`GetValveStates` with CRC16) are out of scope; legacy's version-1 word format disagrees between its own sender and parser.
+- [x] Note in the header: this is the client half of the RPC service (priorities item 5); when `libs/rpc` lands, its server must answer this driver.
 
 ### Task A5: `arduino_valves` — NMGRL Arduino valve box (usgsdenver)
 

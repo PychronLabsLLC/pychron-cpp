@@ -466,6 +466,21 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
   if (invert) notes.push_back("actuator " + name + ": invert=True not carried over (no inverted logic in the line config yet)");
   std::string lower_class;
   for (char c : a.legacy_class) lower_class += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (a.legacy_class == "PychronGPActuator") {
+    a.kind = "pychron_valves";
+    if (a.host.empty()) {
+      a.comment = "legacy " + what + ": no host in the device file; simulated until one is set";
+      notes.push_back("actuator " + name + ": no host for the remote Pychron in the device file; the transport is simulated");
+      return a;
+    }
+    if (a.port.empty()) a.port = "1061";  // legacy's valve service
+    a.transport_kind = "tcp";
+    a.comment = "legacy " + what + " at " + a.host + ":" + a.port;
+    std::string kind;
+    for (char c : comms["kind"]) kind += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (kind == "udp") notes.push_back("actuator " + name + ": kind=UDP in the device file; written as tcp, which the valve service serves");
+    return a;
+  }
   // Legacy took any class naming Qtegra for QtegraGPActuator (actuator.py).
   if (lower_class.find("qtegra") != std::string::npos) {
     a.kind = "qtegra_valves";
@@ -594,6 +609,22 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   }
   std::vector<Actuator> actuators;
   for (const auto& name : actuator_order) actuators.push_back(resolve_actuator(name, devices, out.read, out.notes));
+  // Legacy PychronGPActuator sends the valve's name, not its address.
+  std::set<std::string> by_name;
+  for (const auto& act : actuators)
+    if (act.kind == "pychron_valves") by_name.insert(act.name);
+  for (const auto& actuator : by_name) {
+    int moved = 0;
+    for (auto& v : valves.valves)
+      if (v.actuator == actuator && v.address != v.name) {
+        v.address = v.name;
+        ++moved;
+      }
+    if (moved > 0) {
+      out.notes.push_back("actuator " + actuator + " (PychronGPActuator): " + std::to_string(moved) +
+                          " valve address(es) replaced by the valve name, which legacy sent to the remote Pychron");
+    }
+  }
 
   // Interlocks and pipettes may only name valves the line has.
   for (auto& v : valves.valves) {
