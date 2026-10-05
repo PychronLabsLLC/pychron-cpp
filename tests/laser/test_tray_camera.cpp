@@ -210,6 +210,114 @@ TEST(SimTrayCamera, UsesTheConfigsSizeAndScale) {
   EXPECT_NEAR(camera.last_truth().radius_px, 20, 1e-9);
 }
 
+// While the laser fires the camera does not see a dark hole: it sees the
+// sample glow, where the sample is.
+namespace {
+struct Glow {
+  double x_px = 0, y_px = 0, saturation = 0;
+};
+std::optional<Glow> glow(const vision::Frame& frame) {
+  vision::SimpleFinder finder;
+  vision::FinderParams params;
+  params.mode = vision::FinderMode::Glow;
+  params.expected_radius_px = 0.5 * 23;
+  const auto found = finder.find(frame.view(), params);
+  if (found.empty()) return std::nullopt;
+  return Glow{found.front().center_px.x - (frame.width - 1) / 2.0, found.front().center_px.y - (frame.height - 1) / 2.0,
+              vision::saturation(found.front())};
+}
+}  // namespace
+
+TEST(SimTrayCamera, ShowsAGlowAtTheGrainWhileFiring) {
+  ManualClock clock;
+  TraySight sight = sight_at(15, 20);
+  CameraConfig c = config(0.1, 0);       // the tray, 0.1 mm right
+  c.sim_grain_offset_mm = {0.2, 0.15};   // and the grain off its hole's centre
+  SimTrayCamera camera(c, [&] { return sight; }, clock);
+
+  auto dark = camera.grab();
+  ASSERT_TRUE(dark);
+  EXPECT_TRUE(seen(*dark));     // not firing: the hole
+  EXPECT_FALSE(glow(*dark));
+
+  sight.firing = true;
+  sight.output_percent = 20;
+  auto lit = camera.grab();
+  ASSERT_TRUE(lit);
+  const auto g = glow(*lit);
+  ASSERT_TRUE(g);
+  EXPECT_NEAR(g->x_px, 0.3 * 23, 1.0);    // 0.1 + 0.2, right
+  EXPECT_NEAR(g->y_px, -0.15 * 23, 1.0);  // 0.15 up: image y is down
+  EXPECT_TRUE(camera.last_truth().visible);
+  EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 0.3 * 23, 1e-6);
+  EXPECT_FALSE(seen(*lit));     // no dark hole to take for one while it glows
+
+  sight.firing = false;
+  auto after = camera.grab();
+  ASSERT_TRUE(after);
+  EXPECT_FALSE(glow(*after));
+}
+
+TEST(SimTrayCamera, TheGlowDriftsWhileFiring) {
+  ManualClock clock;
+  TraySight sight = sight_at(15, 20);
+  CameraConfig c = config();
+  c.sim_glow_drift_mm_per_s = {0.02, -0.01};
+  SimTrayCamera camera(c, [&] { return sight; }, clock);
+  sight.firing = true;
+  sight.output_percent = 20;
+  ASSERT_TRUE(camera.grab());
+  EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 0, 1e-6);
+  clock.advance(10s);
+  ASSERT_TRUE(camera.grab());
+  EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 0.2 * 23, 1e-6);
+  EXPECT_NEAR(camera.last_truth().center_px.y - 99.5, 0.1 * 23, 1e-6);  // -0.1 mm in y: down the image is +
+  // the beam goes off and on again: the grain is where it had got to, and creeps on from there
+  sight.firing = false;
+  clock.advance(100s);
+  ASSERT_TRUE(camera.grab());
+  sight.firing = true;
+  ASSERT_TRUE(camera.grab());
+  EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 0.2 * 23, 1e-6);
+  clock.advance(5s);
+  ASSERT_TRUE(camera.grab());
+  EXPECT_NEAR(camera.last_truth().center_px.x - 99.5, 0.3 * 23, 1e-6);
+}
+
+TEST(SimTrayCamera, BrightnessFollowsOutput) {
+  ManualClock clock;
+  TraySight sight = sight_at(15, 20);
+  SimTrayCamera camera(config(), [&] { return sight; }, clock);
+  sight.firing = true;
+  const auto saturation_at = [&](double percent) {
+    sight.output_percent = percent;
+    auto frame = camera.grab();
+    EXPECT_TRUE(frame);
+    const auto g = glow(*frame);
+    return g ? g->saturation : 0.0;
+  };
+  const double low = saturation_at(8), mid = saturation_at(20), full = saturation_at(100);
+  EXPECT_LT(low, mid);
+  EXPECT_LT(mid, 0.75);   // at a working output the glow is not saturated: it can be followed
+  EXPECT_GE(full, 0.75);  // flat out, it is
+  sight.output_percent = 0;
+  auto off = camera.grab();
+  ASSERT_TRUE(off);
+  EXPECT_FALSE(glow(*off));  // firing at no output: nothing glows
+}
+
+TEST(SimTrayCamera, NoGlowWithNoHoleInView) {
+  ManualClock clock;
+  TraySight sight = sight_at(40, 40);
+  sight.firing = true;
+  sight.output_percent = 20;
+  SimTrayCamera camera(config(), [&] { return sight; }, clock);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  EXPECT_FALSE(glow(*frame));
+  EXPECT_FALSE(camera.last_truth().visible);
+}
+
 TEST(MakeFrameSource, SimAndRecorded) {
   ManualClock clock;
   TraySight sight = sight_at(15, 20);

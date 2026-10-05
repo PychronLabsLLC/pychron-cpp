@@ -136,6 +136,9 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     s.number("noise", c.sim_noise, 0, 1);
     s.whole("width", c.sim_width, 16, 4096);
     s.whole("height", c.sim_height, 16, 4096);
+    s.pair("grain_offset_mm", c.sim_grain_offset_mm);
+    s.pair("glow_drift_mm_per_s", c.sim_glow_drift_mm_per_s);
+    s.number("glow_sigma_mm", c.sim_glow_sigma_mm, 0, 100, true);
     s.finish();
     r.adopt(s);
   }

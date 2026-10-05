@@ -17,6 +17,9 @@
 //   noise = 0.01
 //   width = 200
 //   height = 200
+//   grain_offset_mm = [0.2, 0.1]      the sample, from its hole's centre
+//   glow_drift_mm_per_s = [0.01, 0]   how it creeps while heated
+//   glow_sigma_mm = 0.3               the size of the glow
 //
 //   [co2.autocenter]
 //   tolerance_mm = 0.03
@@ -58,6 +61,11 @@ struct CameraConfig {
   double sim_noise = 0.01;
   int sim_width = 200;
   int sim_height = 200;
+  // While the simulated laser fires the camera sees the sample glow: this
+  // far from its hole's centre, creeping this fast as it is heated.
+  StageXY sim_grain_offset_mm{};
+  StageXY sim_glow_drift_mm_per_s{};
+  double sim_glow_sigma_mm = 0.3;
 
   double tolerance_mm = 0.03;
   double max_step_mm = 0.5;

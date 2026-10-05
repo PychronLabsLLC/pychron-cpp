@@ -159,6 +159,10 @@ TraySightFn LaserSystem::sight() {
     if (IStage* stage = driver_.stage()) {
       if (auto at = stage->position()) seen.stage = {at->x, at->y};
     }
+    if (auto* laser = driver_.laser()) {
+      seen.firing = laser->is_firing().value_or(false);
+      if (seen.firing) seen.output_percent = driver_.output().value_or(0);
+    }
     std::lock_guard lock(mutex_);
     if (tray_ != nullptr && status_.solution) {
       seen.hole_radius_mm = tray_->dimension() / 2;

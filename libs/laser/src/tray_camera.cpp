@@ -45,8 +45,40 @@ Result<vision::Frame> SimTrayCamera::grab() {
     scene.hole_mm = {sight.stage.x + 1e6, sight.stage.y + 1e6};
   }
 
-  auto [frame, truth] = vision::render(scene, {sight.stage.x, sight.stage.y});
-  truth.visible = truth.visible && in_view;
+  // The grain creeps only while it is heated, and stays where it got to.
+  const TimePoint now = clock_.now();
+  if (sight.firing && lit_since_) {
+    const double seconds = std::chrono::duration<double>(now - *lit_since_).count();
+    crept_.x += config_.sim_glow_drift_mm_per_s.x * seconds;
+    crept_.y += config_.sim_glow_drift_mm_per_s.y * seconds;
+  }
+  lit_since_ = sight.firing ? std::optional<TimePoint>(now) : std::nullopt;
+
+  vision::Frame frame;
+  vision::Truth truth;
+  if (sight.firing) {
+    // Under the beam the picture is the glow, not the holes.
+    vision::GlowScene glow;
+    glow.width = scene.width;
+    glow.height = scene.height;
+    glow.px_per_mm = scene.px_per_mm;
+    glow.noise = scene.noise;
+    glow.seed = scene.seed;
+    glow.sigma_mm = config_.sim_glow_sigma_mm;
+    // Brighter with output: followable at a working output, saturated flat out.
+    glow.peak = in_view ? std::clamp(0.03 * sight.output_percent, 0.0, 1.3) : 0.0;
+    glow.glow_mm = {scene.hole_mm.x + config_.sim_grain_offset_mm.x + crept_.x,
+                    scene.hole_mm.y + config_.sim_grain_offset_mm.y + crept_.y};
+    auto lit = vision::render(glow, {sight.stage.x, sight.stage.y});
+    frame = std::move(lit.first);
+    truth = lit.second;
+    truth.visible = truth.visible && in_view && glow.peak > 0;
+  } else {
+    auto drawn = vision::render(scene, {sight.stage.x, sight.stage.y});
+    frame = std::move(drawn.first);
+    truth = drawn.second;
+    truth.visible = truth.visible && in_view;
+  }
 
   // The tray's other holes that are in view, where they really are (not on
   // an imagined grid: a finder must not be offered holes the tray lacks).
@@ -54,7 +86,7 @@ Result<vision::Frame> SimTrayCamera::grab() {
   vision::HoleScene other = scene;
   other.noise = 0;
   for (const auto& hole : sight.holes) {
-    if (&hole == nearest || !in_view) continue;
+    if (&hole == nearest || !in_view || sight.firing) continue;
     const StageXY real{hole.x + error.x, hole.y + error.y};
     if (std::hypot(real.x - sight.stage.x, real.y - sight.stage.y) > reach_mm + sight.hole_radius_mm) continue;
     other.hole_mm = {real.x, real.y};
@@ -81,7 +113,7 @@ Result<vision::Frame> SimTrayCamera::grab() {
     frame = std::move(out);
   }
 
-  frame.timestamp = clock_.now();
+  frame.timestamp = now;
   frame.seq = ++seq_;
   truth_ = truth;
   return std::move(frame);

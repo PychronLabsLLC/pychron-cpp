@@ -217,6 +217,28 @@ TEST_F(LaserSystemTest, SpeedAndStopAreTheDrivers) {
   EXPECT_TRUE(logged("Stage.MoveTo 15000,20000,0,5000,5000,100"));
 }
 
+// What the system's simulated camera is told: where the stage is, where the
+// holes are, and whether the beam is on.
+TEST_F(LaserSystemTest, SightSaysWhereTheStageIsAndWhetherTheLaserFires) {
+  const auto sight = system.sight();
+  ASSERT_TRUE(system.set_xy(3, 4));
+  settle();
+  auto seen = sight();
+  EXPECT_NEAR(seen.stage.x, 3, 1e-9);
+  EXPECT_NEAR(seen.stage.y, 4, 1e-9);
+  EXPECT_EQ(seen.holes.size(), 9u);
+  EXPECT_NEAR(seen.holes[2].x, 15, 1e-9);  // hole 3
+  EXPECT_FALSE(seen.firing);
+  ASSERT_TRUE(system.enable());
+  ASSERT_TRUE(system.extract(20, ExtractUnits::Percent));
+  ASSERT_TRUE(system.laser()->fire_laser());
+  seen = sight();
+  EXPECT_TRUE(seen.firing);
+  EXPECT_DOUBLE_EQ(seen.output_percent, 20);
+  ASSERT_TRUE(system.end_extract());
+  EXPECT_FALSE(sight().firing);
+}
+
 TEST_F(LaserSystemTest, AutocenterIsAcceptedAndChangesNothing) {
   ASSERT_TRUE(system.move_to_position("3", true));
   EXPECT_TRUE(logged("Stage.MoveTo 15000,20000,0,5000,5000,100"));

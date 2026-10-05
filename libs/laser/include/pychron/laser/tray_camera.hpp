@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -34,6 +35,8 @@ struct TraySight {
   StageXY stage{};
   std::vector<StageXY> holes;
   double hole_radius_mm = 0.5;
+  bool firing = false;        // the beam is on
+  double output_percent = 0;  // at this output
 };
 using TraySightFn = std::function<TraySight()>;
 
@@ -44,7 +47,9 @@ class SimTrayCamera final : public vision::IFrameSource {
   SimTrayCamera(const CameraConfig& config, TraySightFn sight, const Clock& clock);
 
   // The tray's holes that are in view, each at its real position; the bare
-  // tray when none is. Numbered from 1.
+  // tray when none is. While the laser fires: the sample's glow instead, at
+  // the nearest hole's real position plus the grain's offset and however far
+  // it has crept, as bright as the output makes it. Numbered from 1.
   Result<vision::Frame> grab() override;
   vision::FrameInfo info() const override;
   // Of the hole in the most recent frame; not visible when there was none.
@@ -56,6 +61,8 @@ class SimTrayCamera final : public vision::IFrameSource {
   const Clock& clock_;
   vision::Truth truth_{};
   std::uint64_t seq_ = 0;
+  StageXY crept_{};                      // how far the grain has drifted under the beam
+  std::optional<TimePoint> lit_since_;   // the last grab with the beam on
 };
 
 // Config error for a recorded source whose directory is not a fixture case.

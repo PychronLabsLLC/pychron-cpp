@@ -44,6 +44,9 @@ TEST(CameraConfig, DefaultsWithAnEmptyTable) {
   EXPECT_EQ(c->max_iterations, 4);
   EXPECT_EQ(c->frames_per_step, 3);
   EXPECT_EQ(c->on_failure, OnAutocenterFailure::Continue);
+  EXPECT_DOUBLE_EQ(c->sim_grain_offset_mm.x, 0);
+  EXPECT_DOUBLE_EQ(c->sim_glow_drift_mm_per_s.x, 0);
+  EXPECT_DOUBLE_EQ(c->sim_glow_sigma_mm, 0.3);
   EXPECT_EQ(lib.devices(), (std::vector<std::string>{"co2"}));
   EXPECT_EQ(lib.find("diode"), nullptr);
 }
@@ -63,6 +66,10 @@ tray_error_mm = [0.15, -0.10]
 noise = 0.02
 width = 320
 height = 240
+
+grain_offset_mm = [0.2, 0.1]
+glow_drift_mm_per_s = [0.01, -0.02]
+glow_sigma_mm = 0.25
 
 [co2.autocenter]
 tolerance_mm = 0.05
@@ -89,6 +96,11 @@ frames = "recordings/diode-holes"
   EXPECT_DOUBLE_EQ(c->sim_noise, 0.02);
   EXPECT_EQ(c->sim_width, 320);
   EXPECT_EQ(c->sim_height, 240);
+  EXPECT_DOUBLE_EQ(c->sim_grain_offset_mm.x, 0.2);
+  EXPECT_DOUBLE_EQ(c->sim_grain_offset_mm.y, 0.1);
+  EXPECT_DOUBLE_EQ(c->sim_glow_drift_mm_per_s.x, 0.01);
+  EXPECT_DOUBLE_EQ(c->sim_glow_drift_mm_per_s.y, -0.02);
+  EXPECT_DOUBLE_EQ(c->sim_glow_sigma_mm, 0.25);
   EXPECT_DOUBLE_EQ(c->tolerance_mm, 0.05);
   EXPECT_EQ(c->max_iterations, 6);
   EXPECT_DOUBLE_EQ(c->max_step_mm, 0.25);
@@ -160,6 +172,9 @@ INSTANTIATE_TEST_SUITE_P(
                       BadCamera{"[co2]\n[co2.sim]\nheight = 5000\n", "co2.sim.height"},
                       BadCamera{"[co2]\n[co2.sim]\ntray_error_mm = 0.1\n", "co2.sim.tray_error_mm"},
                       BadCamera{"[co2]\n[co2.sim]\nzoom = 1\n", "co2.sim.zoom"},
+                      BadCamera{"[co2]\n[co2.sim]\nglow_sigma_mm = 0\n", "co2.sim.glow_sigma_mm"},
+                      BadCamera{"[co2]\n[co2.sim]\ngrain_offset_mm = [1]\n", "co2.sim.grain_offset_mm"},
+                      BadCamera{"[co2]\n[co2.sim]\nglow_drift_mm_per_s = \"slow\"\n", "co2.sim.glow_drift_mm_per_s"},
                       BadCamera{"[co2]\n[co2.autocenter]\ntolerance_mm = 0\n", "co2.autocenter.tolerance_mm"},
                       BadCamera{"[co2]\n[co2.autocenter]\nmax_step_mm = 0\n", "co2.autocenter.max_step_mm"},
                       BadCamera{"[co2]\n[co2.autocenter]\nmax_iterations = 0\n", "co2.autocenter.max_iterations"},
