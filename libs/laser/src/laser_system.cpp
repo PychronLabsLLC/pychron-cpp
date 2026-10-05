@@ -15,6 +15,7 @@
 
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/live_feed.hpp"
+#include "pychron/vision/png.hpp"
 
 namespace pychron::laser {
 
@@ -217,6 +218,62 @@ LaserSnapshot LaserSystem::snapshot() {
   s.autocenter = outcome_;
   return s;
 }
+
+extraction::IImaging* LaserSystem::imaging() {
+  if (auto* own = driver_.imaging()) return own;
+  return has_camera() ? this : nullptr;
+}
+
+void LaserSystem::set_snapshot_dir(std::filesystem::path dir) {
+  std::lock_guard lock(mutex_);
+  snapshot_dir_ = std::move(dir);
+}
+
+Result<std::string> LaserSystem::snapshot(std::string_view name) {
+  namespace fs = std::filesystem;
+  fs::path dir;
+  {
+    std::lock_guard lock(mutex_);
+    dir = snapshot_dir_;
+  }
+  if (dir.empty()) return fail(ErrorKind::Config, "no directory to keep snapshots in", name_);
+  std::string stem(name);
+  if (stem.ends_with(".png")) stem.erase(stem.size() - 4);
+  if (stem.empty()) {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm parts{};
+#ifdef _WIN32
+    gmtime_s(&parts, &now);
+#else
+    gmtime_r(&now, &parts);
+#endif
+    char text[32];
+    std::strftime(text, sizeof text, "%Y%m%d-%H%M%S", &parts);
+    stem = text;
+  }
+  // One plain part of a file name: a snapshot stays in its directory.
+  if (!safe_file_part(stem) || stem.front() == '.' || stem.find(':') != std::string::npos) {
+    return fail(ErrorKind::Config, "'" + std::string(name) + "' cannot name a snapshot (it names the file)", name_);
+  }
+  auto seen = view();
+  if (!seen) return fail(std::move(seen).error());
+  if (!seen->trouble.empty()) {
+    return fail(ErrorKind::Io, "the camera has stopped (" + seen->trouble + "): its last picture is not a snapshot of now", name_);
+  }
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec) return fail(ErrorKind::Io, "cannot make " + dir.string() + ": " + ec.message(), name_);
+  fs::path file = dir / (stem + ".png");
+  for (int n = 2; fs::exists(file, ec); ++n) file = dir / (stem + "-" + std::to_string(n) + ".png");
+  if (auto written = vision::write_png(file, seen->frame.view()); !written) return fail(std::move(written).error());
+  return file.string();
+}
+
+Result<void> LaserSystem::start_video_recording(std::string_view) {
+  return fail(extraction::not_supported("video recording", name_));
+}
+
+Result<void> LaserSystem::stop_video_recording() { return fail(extraction::not_supported("video recording", name_)); }
 
 void LaserSystem::set_measured_scale(const ScaleMeasurement& measured) {
   Gate gate(gate_);

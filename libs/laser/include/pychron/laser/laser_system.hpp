@@ -23,6 +23,7 @@
 // pattern runner's included (laser window design, section 3).
 
 #include <atomic>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -107,7 +108,8 @@ struct CameraView {
 
 class LaserSystem final : public extraction::IExtractionDevice,
                           public extraction::IStage,
-                          public extraction::ILaserDevice {
+                          public extraction::ILaserDevice,
+                          public extraction::IImaging {
  public:
   // `driver`, `trays` and `calibrations` must outlive the system. `name` is
   // the device's name in queues and in calibration files.
@@ -202,7 +204,20 @@ class LaserSystem final : public extraction::IExtractionDevice,
   extraction::IPipetteService* pipettes() override { return driver_.pipettes(); }
   extraction::ICryo* cryo() override { return driver_.cryo(); }
   extraction::IMotorService* motors() override { return driver_.motors(); }
-  extraction::IImaging* imaging() override { return driver_.imaging(); }
+  // The driver's own when it takes pictures itself; else this object, given
+  // a camera; else null.
+  extraction::IImaging* imaging() override;
+
+  // IImaging, by the system's camera: <snapshot dir>/<name>.png, never over
+  // a picture that is there ("-2", "-3", ... is added); with no name, the
+  // UTC time. Returns the file. Config error for a name that is not a plain
+  // file name, and when no directory was set; a live camera that has
+  // stopped gives its error, not its last picture. Recording is not
+  // supported.
+  void set_snapshot_dir(std::filesystem::path dir);
+  Result<std::string> snapshot(std::string_view name) override;
+  Result<void> start_video_recording(std::string_view name) override;
+  Result<void> stop_video_recording() override;
 
   // ILaserDevice: the driver's. Config error for a device with no laser.
   Result<void> fire_laser() override;
@@ -281,6 +296,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   AutocenterOutcome outcome_;
   std::string move_note_;  // of the last centring that ran to its end; taken once
   std::string last_hole_;  // the hole the stage was last sent to
+  std::filesystem::path snapshot_dir_;
 };
 
 }  // namespace pychron::laser
