@@ -31,6 +31,11 @@ struct LiveFeed::State {
   Steady::time_point arrived{};
   Steady::time_point waiting_since = Steady::now();  // the open or read now in flight began
   bool opening = true;                               // and it is an open
+  // The camera last did what was hoped of it (began to open, opened, gave a
+  // frame), and whether it has given a frame since it opened: until it has,
+  // it is given the time a camera takes to wake.
+  Steady::time_point progress = Steady::now();
+  bool warm = false;
   double fps = 0;
   bool lost = false;      // the last open or read failed: the camera is being reopened
   bool stalled = false;   // somebody waited the whole timeout: no waiting until a frame comes
@@ -77,6 +82,8 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
           std::lock_guard lock(s.mutex);
           s.waiting_since = Steady::now();
           s.opening = true;
+          s.progress = s.waiting_since;
+          s.warm = false;
         }
         auto opened = s.open(stamp);
         std::unique_lock lock(s.mutex);
@@ -93,6 +100,7 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
         }
         source = std::move(*opened);
         s.info = source->info();
+        s.progress = Steady::now();
         s.changed.notify_all();
         if (s.quit) break;
       }
@@ -107,6 +115,17 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
       std::unique_lock lock(s.mutex);
       if (s.quit) break;
       if (!frame) {
+        // A read that comes back empty is not yet a camera that has gone: one
+        // still waking gives nothing for a while, and a frame can be late.
+        // Closing it and opening it again takes seconds; it is read again,
+        // and given up only when nothing has come for as long as anyone waits.
+        const auto patience = s.warm ? s.options.timeout : s.options.open_timeout;
+        if (now - s.progress <= patience) {
+          if (!s.stalled) s.error = frame.error();  // why, should it go on
+          s.changed.wait_for(lock, std::chrono::milliseconds(15), [&s] { return s.quit; });
+          if (s.quit) break;
+          continue;
+        }
         s.error = std::move(frame).error();
         s.lost = true;
         s.changed.notify_all();
@@ -124,6 +143,8 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
       s.frame = std::move(*frame);
       s.read_began = began;
       s.arrived = now;
+      s.progress = now;
+      s.warm = true;
       s.lost = false;
       s.stalled = false;
       s.error = {};
@@ -200,10 +221,13 @@ LiveFeed::Latest LiveFeed::latest() const {
   if (s.frame) out.age = std::chrono::duration_cast<std::chrono::milliseconds>(Steady::now() - s.arrived);
   // Whether or not anybody has waited for it: an open or a read that has
   // been in flight longer than the timeout is a camera that has stopped.
-  const auto allowed = s.opening ? s.options.open_timeout : s.options.timeout;
-  const bool hung = Steady::now() - s.waiting_since > allowed;
+  // Whether or not a read is in flight: nothing has come of the camera for
+  // longer than it is given.
+  const auto allowed = s.warm ? s.options.timeout : s.options.open_timeout;
+  const bool hung = Steady::now() - s.progress > allowed;
   if (s.lost || s.stalled) out.error = s.error.what;
   else if (hung && s.opening) out.error = "the camera has not opened in " + std::to_string(allowed.count()) + " ms";
+  else if (hung && !s.error.what.empty()) out.error = s.error.what;  // its reads are coming back empty
   else if (hung) out.error = "no frame from the camera in " + std::to_string(allowed.count()) + " ms";
   out.fps = out.error.empty() ? s.fps : 0.0;
   return out;

@@ -23,6 +23,7 @@ struct Camera {
   std::mutex mutex;
   std::condition_variable changed;
   enum class Mode { Run, Hang, Fail } mode = Mode::Run;
+  int hiccups = 0;  // reads that come back empty before the next good one
   std::chrono::milliseconds period{5};
   bool opens = true;
   int opened = 0;
@@ -47,6 +48,10 @@ class FakeSource final : public IFrameSource {
     // a hung read returns only when the camera is let go
     camera_.changed.wait(lock, [&] { return camera_.mode != Camera::Mode::Hang; });
     if (camera_.mode == Camera::Mode::Fail) return fail(ErrorKind::Io, "camera unplugged");
+    if (camera_.hiccups > 0) {
+      --camera_.hiccups;
+      return fail(ErrorKind::Io, "end of stream");
+    }
     const auto period = camera_.period;
     lock.unlock();
     std::this_thread::sleep_for(period);
@@ -220,6 +225,31 @@ TEST(LiveFeed, AHungCameraIsSaidEvenWhenNobodyGrabs) {
   EXPECT_DOUBLE_EQ(feed.latest().fps, 0) << "and no rate is claimed for it";
   camera.set(Camera::Mode::Run);
   ASSERT_TRUE(eventually([&] { return feed.latest().error.empty(); }));
+}
+
+// A camera's read comes back empty now and then (one that is still warming
+// up, a frame that was late): that is not a camera that has gone. It is not
+// closed and opened again, which would take seconds each time.
+TEST(LiveFeed, AnEmptyReadOrTwoIsNotALostCamera) {
+  Camera camera;
+  {
+    std::lock_guard lock(camera.mutex);
+    camera.hiccups = 3;  // the first reads after it opens
+  }
+  LiveFeed feed(opener(camera), quick());
+  ASSERT_TRUE(feed.wait_open());
+  ASSERT_TRUE(eventually([&] { return feed.latest().frame.has_value(); }));
+  EXPECT_TRUE(feed.latest().error.empty()) << feed.latest().error;
+  // and in the middle of a run
+  {
+    std::lock_guard lock(camera.mutex);
+    camera.hiccups = 4;
+  }
+  const int before = camera.reads;
+  ASSERT_TRUE(eventually([&] { return camera.reads >= before + 5; }));
+  EXPECT_TRUE(feed.latest().error.empty()) << feed.latest().error;
+  std::lock_guard lock(camera.mutex);
+  EXPECT_EQ(camera.opened, 1) << "it was closed and opened again over an empty read";
 }
 
 // A camera takes a moment to wake: longer than anyone should wait for a

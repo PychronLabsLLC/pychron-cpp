@@ -11,6 +11,10 @@
 //             once, until the camera shows a frame again.
 //   latest()  the newest frame there is, how old, and what is wrong.
 //
+// A read that comes back empty is not a camera that has gone: a camera that
+// is still waking gives nothing for a while, and a frame can be late. It is
+// read again, and only when nothing has come for `timeout` (`open_timeout`
+// until its first frame) is it lost.
 // A camera that is lost, or was never there, is opened again every `reopen`.
 // Time here is real time (a camera does not run on a simulated clock); the
 // frames are stamped from `stamp`, the caller's clock.

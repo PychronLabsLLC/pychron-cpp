@@ -193,3 +193,17 @@ The finder is not run on the video at all unless the device is itself
 looking for something (`LaserSystem::looking()`: a hole being centered, a
 pattern following the glow). The dashed circle of the expected hole size
 and the aim crosshair are always drawn.
+
+### Found on the built-in camera
+
+- Opening takes over a second, and the first frame may take seconds more:
+  opening has its own wait (`open_timeout`, 5 s), and so does the first frame.
+- A read comes back empty now and then. One empty read used to close the
+  camera and open it again a second later, which on a camera that takes
+  seconds to wake was a picture that cut in and out and never settled. Now
+  the read is tried again, and the camera is lost only after `timeout` with
+  nothing (shown with the read's own error).
+- OpenCV cannot ask macOS for the camera from a thread that is not the main
+  one: the first open fails while the question is on screen, and the retry
+  after it is answered succeeds.
+- 1920 x 1080 at 29 frames a second is shown at about 17 in a debug build.
