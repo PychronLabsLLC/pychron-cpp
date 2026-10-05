@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
@@ -26,5 +27,17 @@ using ClockFn = std::function<TimePoint()>;
 // (pixel_depth 255), numbered from 1 and stamped from `clock` at grab() time.
 // ErrorKind::Config when built without OpenCV.
 Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string& uri, SourceConfig, ClockFn clock = {});
+
+struct CameraRequest;
+struct CameraFound;
+
+// Whether this build has OpenCV.
+bool opencv_built() noexcept;
+// A camera or file by a request: its device is the uri above (empty: camera
+// 0); a size and rate are asked of the camera, which may give its nearest.
+Result<std::unique_ptr<IFrameSource>> open_opencv_camera(const CameraRequest& request, ClockFn clock = {});
+// OpenCV cannot list cameras: indexes 0 to 7 are opened in turn, and each
+// that opens is listed with its size and rate. Empty without OpenCV.
+std::vector<CameraFound> list_opencv_cameras();
 
 }  // namespace pychron::vision

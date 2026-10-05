@@ -1,5 +1,7 @@
 #include "pychron/vision/opencv_source.hpp"
 
+#include "pychron/vision/camera_backend.hpp"
+
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -137,11 +139,73 @@ Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string& uri,
   }
 }
 
+bool opencv_built() noexcept { return true; }
+
+Result<std::unique_ptr<IFrameSource>> open_opencv_camera(const CameraRequest& request, ClockFn clock) {
+  if (!clock) clock = &std::chrono::steady_clock::now;
+  const SourceConfig& cfg = request.shape;
+  if (cfg.rotate != 0 && cfg.rotate != 90 && cfg.rotate != 180 && cfg.rotate != 270)
+    return fail(ErrorKind::Config, "rotate must be 0, 90, 180 or 270");
+  const std::string uri = request.device.empty() ? "0" : request.device;
+  try {
+    cv::VideoCapture cap;
+    if (is_index(uri)) {
+      cap.open(std::stoi(uri));
+      if (!cap.isOpened()) {
+        return fail(ErrorKind::Io, "cannot open camera " + uri +
+                                       " (is it there, in use by another program, or not allowed to this one?)");
+      }
+      // Asked for, not demanded: a camera gives the nearest it has.
+      if (request.width > 0) cap.set(cv::CAP_PROP_FRAME_WIDTH, request.width);
+      if (request.height > 0) cap.set(cv::CAP_PROP_FRAME_HEIGHT, request.height);
+      if (request.fps > 0) cap.set(cv::CAP_PROP_FPS, request.fps);
+    } else {
+      std::error_code ec;
+      if (!std::filesystem::exists(uri, ec)) return fail(ErrorKind::Io, "no such video file: " + uri);
+      cap.open(uri);
+      if (!cap.isOpened()) return fail(ErrorKind::Io, "cannot open " + uri);
+    }
+    return std::unique_ptr<IFrameSource>(std::make_unique<OpenCvSource>(std::move(cap), cfg, std::move(clock)));
+  } catch (const std::exception& e) {
+    return fail(ErrorKind::Io, e.what());
+  }
+}
+
+std::vector<CameraFound> list_opencv_cameras() {
+  std::vector<CameraFound> found;
+  for (int index = 0; index < 8; ++index) {
+    try {
+      cv::VideoCapture cap(index);
+      if (!cap.isOpened()) continue;
+      CameraFound camera;
+      camera.backend = "opencv";
+      camera.device = std::to_string(index);
+      camera.description = "camera " + std::to_string(index) + " (" + cap.getBackendName() + ")";
+      camera.width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+      camera.height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+      const double fps = cap.get(cv::CAP_PROP_FPS);
+      camera.fps = std::isfinite(fps) && fps > 0 ? fps : 0.0;
+      found.push_back(std::move(camera));
+    } catch (const std::exception&) {
+      // not a camera this build can open
+    }
+  }
+  return found;
+}
+
 #else
 
 Result<std::unique_ptr<IFrameSource>> open_opencv_source(const std::string&, SourceConfig, ClockFn) {
   return fail(ErrorKind::Config, "built without OpenCV");
 }
+
+bool opencv_built() noexcept { return false; }
+
+Result<std::unique_ptr<IFrameSource>> open_opencv_camera(const CameraRequest&, ClockFn) {
+  return fail(ErrorKind::Config, "built without OpenCV");
+}
+
+std::vector<CameraFound> list_opencv_cameras() { return {}; }
 
 #endif
 
