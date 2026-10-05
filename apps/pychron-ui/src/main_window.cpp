@@ -116,6 +116,19 @@ QIcon MainWindow::view_icon(View view) {
       }
       break;
     }
+    case View::Laser: {
+      // a beam coming down onto a sample, which glows
+      p.drawLine(QPointF(4, 2), QPointF(9, 11));
+      p.setBrush(ink);
+      p.drawEllipse(QPointF(9.6, 12.2), 1.8, 1.8);
+      p.setBrush(Qt::NoBrush);
+      for (const auto& [from, to] : {std::pair{QPointF(13, 9.5), QPointF(15.5, 8)}, std::pair{QPointF(13.6, 12.5), QPointF(16.5, 12.5)},
+                                     std::pair{QPointF(13, 15.2), QPointF(15.5, 16.6)}}) {
+        p.drawLine(from, to);
+      }
+      p.drawLine(QPointF(3, 16.5), QPointF(11.5, 16.5));
+      break;
+    }
     case View::Data: {
       // axes and the points of a signal decaying toward its intercept
       p.drawLine(QPointF(2.5, 2), QPointF(2.5, 15.5));
@@ -144,6 +157,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
+      laser_action_(new QAction(QStringLiteral("Laser"), this)),
       data_(new DataWorkspace(this, [this](const QString& text) { log_->append_line(text); })),
       installations_(new QAction(QStringLiteral("Installations…"), this)),
       preferences_(new QAction(QStringLiteral("Preferences…"), this)) {
@@ -179,23 +193,32 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   });
   data_action_->setShortcut(key(Shortcut::DataWindow));
   data_action_->setEnabled(false);
+  laser_action_->setShortcut(key(Shortcut::LaserWindow));
+  laser_action_->setEnabled(false);
   // A glyph each (macOS hides menu icons unless an action asks for its own).
   for (const auto& [action, view] : {std::pair{line_window, View::ExtractionLine},
                                      std::pair{spectrometer_action_, View::Spectrometer},
                                      std::pair{experiment_action_, View::Experiment},
-                                     std::pair{data_action_, View::Data}}) {
+                                     std::pair{data_action_, View::Data},
+                                     std::pair{laser_action_, View::Laser}}) {
     action->setIcon(view_icon(view));
     action->setIconVisibleInMenu(true);
   }
   auto& menus = MenuHub::instance();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
-  menus.contribute(this, MenuHub::Menu::View, {line_window, spectrometer_action_, experiment_action_, data_action_},
+  menus.contribute(this, MenuHub::Menu::View,
+                   {line_window, spectrometer_action_, experiment_action_, data_action_, laser_action_},
                    MenuHub::Scope::App);
   MenuHub::instance().contribute(this, MenuHub::Menu::Help,
                                  {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);
   about_action_ = brand::add_help_menu(this);
   MenuHub::instance().install(this);
+  // The first laser (the only one, usually); with several the action carries
+  // a submenu of them.
+  connect(laser_action_, &QAction::triggered, this, [this] {
+    if (!lasers_.empty()) open_laser(lasers_.front()->device());
+  });
   connect(data_action_, &QAction::triggered, this, [this] {
     DataBrowserWindow* w = data_->browser();
     if (w == nullptr) return;
@@ -288,7 +311,83 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
   experiment_action_->setEnabled(bridge != nullptr);
 }
 
-MainWindow::~MainWindow() { set_data(nullptr, nullptr); }
+void MainWindow::set_lasers(std::vector<LaserBridge*> bridges, bool simulation, laser::PatternLibrary* patterns,
+                            std::filesystem::path patterns_dir) {
+  for (auto& [device, window] : laser_windows_) {
+    window->close();
+    delete window;  // it holds the old bridge
+  }
+  laser_windows_.clear();
+  delete pattern_maker_;  // it holds the old library
+  pattern_maker_ = nullptr;
+  lasers_ = std::move(bridges);
+  laser_simulation_ = simulation;
+  patterns_ = lasers_.empty() ? nullptr : patterns;
+  patterns_dir_ = std::move(patterns_dir);
+  laser_action_->setEnabled(!lasers_.empty());
+  delete laser_action_->menu();
+  laser_action_->setMenu(nullptr);
+  if (lasers_.size() > 1) {
+    auto* menu = new QMenu(this);
+    for (LaserBridge* bridge : lasers_) {
+      const QString device = bridge->device();
+      menu->addAction(device, this, [this, device] { open_laser(device); });
+    }
+    laser_action_->setMenu(menu);
+  }
+}
+
+LaserWindow* MainWindow::laser_window(const QString& device) const {
+  const auto it = laser_windows_.find(device);
+  return it == laser_windows_.end() ? nullptr : it->second;
+}
+
+LaserWindow* MainWindow::open_laser(const QString& device) {
+  LaserWindow* window = laser_window(device);
+  if (window == nullptr) {
+    for (LaserBridge* bridge : lasers_) {
+      if (bridge->device() != device) continue;
+      window = new LaserWindow(*bridge, laser_simulation_, this);
+      window->setWindowFlag(Qt::Window, true);
+      window->setAttribute(Qt::WA_DeleteOnClose, false);
+      window->resize(1000, 720);
+      if (patterns_ != nullptr) window->set_pattern_maker([this] { open_pattern_maker(); });
+      // a queue's errors are in the log; so are a laser's
+      connect(bridge, &LaserBridge::commandFinished, window, [this, device](const QString& what, const Result<void>& r) {
+        if (!r && r.error().kind != ErrorKind::Cancelled) {
+          log_->append_line(QStringLiteral("ERROR [laser %1] %2: %3").arg(device, what, QString::fromStdString(r.error().what)));
+        }
+      });
+      laser_windows_.emplace(device, window);
+    }
+  }
+  if (window == nullptr) return nullptr;
+  window->show();
+  window->raise();
+  window->activateWindow();
+  return window;
+}
+
+PatternMakerWindow* MainWindow::open_pattern_maker() {
+  if (patterns_ == nullptr) return nullptr;
+  if (pattern_maker_ == nullptr) {
+    pattern_maker_ = new PatternMakerWindow(*patterns_, patterns_dir_, this);
+    pattern_maker_->setWindowFlag(Qt::Window, true);
+    pattern_maker_->setAttribute(Qt::WA_DeleteOnClose, false);
+    connect(pattern_maker_, &PatternMakerWindow::saved, this, [this](const QString&) {
+      for (auto& [device, window] : laser_windows_) window->refresh_patterns();
+    });
+  }
+  pattern_maker_->show();
+  pattern_maker_->raise();
+  pattern_maker_->activateWindow();
+  return pattern_maker_;
+}
+
+MainWindow::~MainWindow() {
+  set_lasers({}, false);
+  set_data(nullptr, nullptr);
+}
 
 void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets) {
   data_->set_source(source, presets);
@@ -352,6 +451,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   if (spectrometer_window_ != nullptr) {
     spectrometer_window_->close();
   }
+  for (auto& [device, window] : laser_windows_) window->close();
+  if (pattern_maker_ != nullptr) pattern_maker_->close();
   QMainWindow::closeEvent(event);
 }
 

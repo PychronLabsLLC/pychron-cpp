@@ -595,6 +595,56 @@ above the driver's `move_speed`.
 Not done yet: a live camera, seek, autofocus, the laser window,
 a pattern maker and on-screen calibration, watts and temperature.
 
+### The laser window
+
+`pychron-ui` has a window for each extraction device: View ▸ Laser
+(Ctrl+Shift+B), a submenu when the line has several. A laser PC that runs no
+experiments can open that window alone:
+
+```sh
+pychron-ui --examples --sim --laser              # the only extraction device
+pychron-ui --sim --laser --device co2 line.toml  # one of several
+```
+
+What it shows is what the device says now, four times a second: where the
+stage is over the tray, what the camera sees and what the finder makes of
+it, whether the laser is enabled and firing, which interlocks are tripped.
+
+- **Tray.** Pick the tray at the top left. A click on a hole goes there; with
+  "Centre holes" ticked (the default when the device has a camera) the move
+  ends by centring the hole, as a queue's does. A right click offers the move
+  with or without centring. Ringed holes are the ones the calibration was
+  taken at; a green dot is a hole a camera has found before.
+- **Stage.** The arrows jog by the step; Stop stage halts a move.
+- **Laser.** Enable, then Fire: Fire sets the output and opens the beam, and
+  is live only while the laser is enabled and no interlock is tripped. Stop
+  closes the beam and zeroes the output. While it fires, a new output is sent
+  when you press Enter in the box.
+- **Calibration.** Jog until a hole is under the aim point (the crosshair in
+  the camera's picture), choose that hole, and press Set point. One point is a
+  shift, two add a rotation, three or more fit a scale as well. A point that
+  cannot be right (the fit's scale is off by more than 2%) is refused and the
+  file is left as it was. The cautions under the solution say what the points
+  cannot rule out. The files are the ones `elctl laser calibrate` writes.
+- **Patterns.** Run runs the chosen pattern about where the stage is. A
+  dragonfly is listed but runs only from a queue: it follows a heated sample.
+  **Pattern maker…** opens a form for a pattern: its kind, its fields, the
+  path drawn with its length and time. Save writes `<lab>/patterns/<name>.toml`
+  (over a pattern of the same name, without asking) and the next run of that
+  name uses it.
+- **EMERGENCY STOP** is always live: the beam off, the output 0, the laser
+  disabled, the stage and any pattern stopped, and a running queue aborted.
+  It latches. Until **Reset**, nothing will enable, fire or move, by hand or
+  from a script, and no queue will start.
+
+While a queue runs the window only watches: every control but the emergency
+stop is off, and a banner says so. The reverse holds too: a queue is not
+started while a command made by hand is still running.
+
+A device with no table in `cameras.toml` has no picture and no centring; the
+rest works. The camera is still the simulated one: a live camera is not
+available yet.
+
 ## 6. Set up an install
 
 `elctl init` installs a setup profile (`profiles/`: `argus`, `helix`, `ngx`,

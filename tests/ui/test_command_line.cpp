@@ -95,6 +95,34 @@ class TestCommandLine : public QObject {
     QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));
   }
 
+  void laserOpensOnlyTheLaserWindow() {
+    auto cli = parse_command_line({QStringLiteral("--laser"), QStringLiteral("line.toml"), QStringLiteral("--sim")});
+    QVERIFY(cli.has_value());
+    QVERIFY(cli->laser);
+    QVERIFY(!cli->device.has_value());
+    QCOMPARE(cli->files.size(), std::size_t{1});
+    QVERIFY(!parse_command_line({}).value().laser);
+
+    auto named = parse_command_line({QStringLiteral("--laser"), QStringLiteral("--device"), QStringLiteral("co2")});
+    QVERIFY(named.has_value());
+    QCOMPARE(QString::fromStdString(named->device.value_or("")), QStringLiteral("co2"));
+  }
+
+  void laserUsageErrors() {
+    auto bare = parse_command_line({QStringLiteral("--laser"), QStringLiteral("--device")});
+    QVERIFY(!bare.has_value());
+    QCOMPARE(QString::fromStdString(bare.error().what), QStringLiteral("--device needs an extraction device's name"));
+    auto alone = parse_command_line({QStringLiteral("--device"), QStringLiteral("co2")});
+    QVERIFY(!alone.has_value());
+    QCOMPARE(QString::fromStdString(alone.error().what), QStringLiteral("--device needs --laser"));
+    for (const char* other : {"--queue", "--spectrometer"}) {
+      auto both = parse_command_line({QStringLiteral("--laser"), QString::fromLatin1(other), QStringLiteral("f.toml")});
+      QVERIFY2(!both.has_value(), other);
+      QCOMPARE(QString::fromStdString(both.error().what),
+               QStringLiteral("--laser opens only the laser window: it takes no ") + QString::fromLatin1(other));
+    }
+  }
+
   void installSetupAndExamples() {
     auto cli = parse_command_line({QStringLiteral("--install"), QStringLiteral("argus-lab"), QStringLiteral("--sim")});
     QVERIFY(cli.has_value());

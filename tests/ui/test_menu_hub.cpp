@@ -126,7 +126,7 @@ class TestMenuHub : public QObject {
       QVERIFY(!glyphs.contains(image));
       glyphs.append(image);
     }
-    QCOMPARE(glyphs.size(), 4);
+    QCOMPARE(glyphs.size(), 5);  // extraction line, spectrometer, experiment, data, laser
   }
 
   void shared_one_bar_serves_every_window() {

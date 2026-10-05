@@ -6,7 +6,9 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <vector>
 #include <optional>
 
 #include <QAction>
@@ -24,6 +26,9 @@
 #include "core_bridge.hpp"
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
+#include "laser_bridge.hpp"
+#include "laser_window.hpp"
+#include "pattern_maker_window.hpp"
 #include "log_dock.hpp"
 #include "preferences_dialog.hpp"
 #include "processing_bridge.hpp"
@@ -41,7 +46,7 @@ class MainWindow : public QMainWindow {
 
   // The glyph beside each View menu item: a line drawing, a mask icon the
   // platform colours to suit its menus.
-  enum class View { ExtractionLine, Spectrometer, Experiment, Data };
+  enum class View { ExtractionLine, Spectrometer, Experiment, Data, Laser };
   static QIcon view_icon(View view);
   // Closes the data windows before the processing bridge they use goes.
   ~MainWindow() override;
@@ -69,6 +74,20 @@ class MainWindow : public QMainWindow {
                       std::function<std::unique_ptr<QSettings>()> settings = {});
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
+
+  // Enables View > Laser for `bridges`, one laser window each (a submenu when
+  // there are several); none disables it and closes the laser windows and
+  // the pattern maker. With `patterns` (the lab's, and the directory they
+  // are saved in) each window offers the pattern maker. The bridges and the
+  // library must outlive the main window or be cleared first.
+  void set_lasers(std::vector<LaserBridge*> bridges, bool simulation, laser::PatternLibrary* patterns = nullptr,
+                  std::filesystem::path patterns_dir = {});
+  QAction* laser_action() const noexcept { return laser_action_; }
+  // Null until its action is first triggered.
+  LaserWindow* laser_window(const QString& device) const;
+  LaserWindow* open_laser(const QString& device);  // null for an unknown device
+  PatternMakerWindow* pattern_maker() const noexcept { return pattern_maker_; }
+  PatternMakerWindow* open_pattern_maker();        // null without a pattern library
 
   // Enables View > Data (browser, recall and figure windows) over `source`
   // with figure presets from `presets` (null disables it and closes every data
@@ -129,6 +148,13 @@ class MainWindow : public QMainWindow {
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
   QAction* data_action_;
+  QAction* laser_action_;
+  std::vector<LaserBridge*> lasers_;
+  bool laser_simulation_ = false;
+  laser::PatternLibrary* patterns_ = nullptr;
+  std::filesystem::path patterns_dir_;
+  std::map<QString, LaserWindow*> laser_windows_;
+  PatternMakerWindow* pattern_maker_ = nullptr;
   DataWorkspace* data_;
   QAction* installations_;
   std::function<void()> on_installations_;

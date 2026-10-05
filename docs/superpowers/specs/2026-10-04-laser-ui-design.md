@@ -228,3 +228,39 @@ says which, and stays latched.
   cautions; the pattern maker's preview, errors and save; the command line.
 
 Everything is proven on the simulator only. No real Chromium has been driven.
+
+## 10. As built
+
+Where the code went another way from the sections above, and why.
+
+- **Section 3, the gate.** The frame source is not wrapped. The pattern runner
+  is (`LaserSystem::GatedRunner`): every runner call holds the gate, so the
+  camera it uses is behind it too, and so is a stop from another thread.
+  `pattern_runner()` and `laser()` therefore return the system's own objects,
+  never the driver's.
+- **Section 3, the view.** The target reported is the one nearest the aim
+  point, wherever in the frame it is.
+- **Section 4.** `save_pattern` refuses what does not parse back; it does not
+  compare the result with what it was given, so a field of another kind set
+  on the pattern is simply not written. `check_pattern` is the same refusal
+  without the write (the pattern maker's). A name may hold spaces; it may not
+  be empty, a path, or start with a dot. `pattern_fields`, `field_value` and
+  `set_field` name a kind's keys for a form.
+- **Section 5.** The worker is a `std::thread` with its own queue, not a
+  `QThread` with an event loop: it has to poll, publish and be cancelled in
+  the middle of a command. The bridge is given the `Lab` (trays,
+  calibrations, patterns). The three stops take the manual lease like any
+  other command, so during a queue only the emergency stop acts.
+- **Section 6.** The window has a "Centre holes" tick box (what a click on a
+  hole does) and a context menu on a hole: go, go and centre, calibration
+  point here. A new output typed while the beam is on is sent on Enter.
+  The pattern maker saves over a pattern of the same name without asking, and
+  says "saved over".
+- **Section 7.** Ctrl+Shift+B opens the laser window. The pattern maker is
+  opened from the laser window's Patterns tab, not from a Tools menu. In the
+  `--laser` flavor problems with the lab go to stderr (there is no log dock).
+- **Interlocks** are shown as text ("interlocks: ok" or the tripped ones'
+  names), not as lights: a driver names only what is tripped.
+
+Not built, and still wanted: the laser window does not remember its size, its
+tray or its step between runs of the program; there is no keyboard jogging.

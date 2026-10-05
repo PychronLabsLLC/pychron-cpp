@@ -4,7 +4,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QApplication>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QtTest/QtTest>
@@ -12,6 +14,8 @@
 #include "camera_view.hpp"
 #include "laser_fixture.hpp"
 #include "laser_window.hpp"
+#include "main_window.hpp"
+#include "pattern_maker_window.hpp"
 #include "tray_view.hpp"
 
 using namespace pychron;
@@ -326,5 +330,66 @@ class LaserWindowTest : public QObject {
   std::unique_ptr<LaserWindow> window_;
 };
 
-QTEST_MAIN(LaserWindowTest)
+// The laser in the main window's View menu.
+class MainWindowLaserTest : public QObject {
+  Q_OBJECT
+
+ private slots:
+  void the_main_window_offers_the_laser() {
+    test::SimLaserLab lab;
+    {
+      MainWindow main(*lab.line);
+      QVERIFY(main.laser_action() != nullptr);
+      QVERIFY(!main.laser_action()->isEnabled());  // until there is one
+      QVERIFY(!main.laser_action()->icon().isNull());
+      QVERIFY(!main.laser_action()->shortcut().isEmpty());
+
+      LaserBridge bridge(lab.deps());
+      main.set_lasers({&bridge}, true, &lab.lab.patterns, lab.dir / "patterns");
+      QVERIFY(main.laser_action()->isEnabled());
+      QVERIFY(main.laser_window(QStringLiteral("co2")) == nullptr);  // not until asked for
+      main.laser_action()->trigger();
+      LaserWindow* window = main.laser_window(QStringLiteral("co2"));
+      QVERIFY(window != nullptr);
+      QVERIFY(window->isVisible());
+      QCOMPARE(window->windowTitle(), QStringLiteral("Laser co2 (Simulation)"));
+      main.laser_action()->trigger();
+      QCOMPARE(main.laser_window(QStringLiteral("co2")), window);  // the same one again
+
+      // its pattern maker saves into the lab, and the window lists what it saved
+      auto* maker_button = window->findChild<QPushButton*>(QStringLiteral("pattern_maker"));
+      QVERIFY(maker_button != nullptr && !maker_button->isHidden());
+      maker_button->click();
+      PatternMakerWindow* maker = main.pattern_maker();
+      QVERIFY(maker != nullptr);
+      QVERIFY(maker->isVisible());
+      maker->findChild<QLineEdit*>(QStringLiteral("name"))->setText(QStringLiteral("made"));
+      maker->findChild<QPushButton*>(QStringLiteral("save"))->click();
+      QVERIFY(std::filesystem::exists(lab.dir / "patterns" / "made.toml"));
+      auto* list = window->findChild<QTableWidget*>(QStringLiteral("pattern_list"));
+      QCOMPARE(list->rowCount(), 3);
+      QCOMPARE(list->item(2, 0)->text(), QStringLiteral("made"));
+
+      // gone with the bridges
+      main.set_lasers({}, false);
+      QVERIFY(main.laser_window(QStringLiteral("co2")) == nullptr);
+      QVERIFY(main.pattern_maker() == nullptr);
+      QVERIFY(!main.laser_action()->isEnabled());
+    }
+  }
+};
+
+int main(int argc, char** argv) {
+  QApplication app(argc, argv);
+  int failed = 0;
+  {
+    LaserWindowTest test;
+    failed += QTest::qExec(&test, argc, argv);
+  }
+  {
+    MainWindowLaserTest test;
+    failed += QTest::qExec(&test, argc, argv);
+  }
+  return failed;
+}
 #include "test_laser_window.moc"

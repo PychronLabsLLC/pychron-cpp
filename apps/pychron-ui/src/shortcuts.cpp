@@ -31,6 +31,7 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::SpectrometerWindow, C::Everywhere, QStringLiteral("Spectrometer window"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_S)},
       {S::ExperimentWindow, C::Everywhere, QStringLiteral("Experiment window"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
       {S::DataWindow, C::Everywhere, QStringLiteral("Data browser"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_D)},
+      {S::LaserWindow, C::Everywhere, QStringLiteral("Laser window"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_B)},
       {S::KeyboardShortcuts, C::Everywhere, QStringLiteral("Keyboard shortcuts (this list)"),
        QKeySequence(QKeySequence::HelpContents)},
       {S::CommandPalette, C::Everywhere, QStringLiteral("Command palette"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_P)},

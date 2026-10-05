@@ -67,7 +67,10 @@
 #include "data_main_window.hpp"
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
+#include "laser_bridge.hpp"
+#include "laser_window.hpp"
 #include "main_window.hpp"
+#include "pattern_maker_window.hpp"
 #include "preferences.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
@@ -76,7 +79,9 @@
 #include "setup_wizard.hpp"
 #include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/processing/record_source.hpp"
 #ifdef PYCHRON_UI_HAS_STORE
 // Qt's `signals` keyword macro would rewrite CollectionRoots::signals.
@@ -197,6 +202,63 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   return QApplication::exec();
 }
 
+// --laser: one extraction device's laser window and nothing else, for a
+// laser PC. The line is loaded as usual (its drivers are the laser's), with
+// no spectrometer and no experiment session: nothing here runs a queue.
+int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::CommandLine& cli, const fs::path& lab_dir,
+              const fs::path& system_file, pychron::ui::SplashScreen& splash) {
+  namespace lab = pychron::experiment::lab;
+  splash.status(QStringLiteral("Starting the extraction line"));
+  if (const auto started = line.start(); !started) {
+    splash.close();
+    return fatal("the extraction line did not start: " + pychron::to_string(started.error()));
+  }
+  splash.status(QStringLiteral("Loading the lab: %1").arg(QString::fromStdString(lab_dir.string())));
+  lab::Lab the_lab = lab::load_lab({lab_dir, system_file, fs::path()});
+  for (const auto& problem : the_lab.problems) std::fprintf(stderr, "pychron-ui: lab: %s\n", problem.c_str());
+  lab::Lasers lasers(the_lab, line);
+  for (const auto& problem : lasers.problems()) std::fprintf(stderr, "pychron-ui: laser: %s\n", problem.c_str());
+
+  const std::vector<std::string> names = lasers.names();
+  std::string known;
+  for (const auto& name : names) known += (known.empty() ? "" : ", ") + name;
+  std::string device;
+  if (cli.device) {
+    if (lasers.find(*cli.device) == nullptr) {
+      splash.close();
+      return fatal("--device " + *cli.device + ": no such extraction device in " + system_file.string() + " (it has: " +
+                   (known.empty() ? "none" : known) + ")");
+    }
+    device = *cli.device;
+  } else if (names.size() == 1) {
+    device = names.front();
+  } else {
+    splash.close();
+    return fatal(names.empty() ? "--laser: " + system_file.string() + " has no extraction device (a laser's driver)"
+                               : "--laser: say which with --device (" + known + ")");
+  }
+
+  int rc = 0;
+  {
+    pychron::ui::LaserBridge bridge(pychron::ui::LaserBridgeDeps{lasers, the_lab, device, {}});
+    const bool simulated = line.sim() != nullptr && line.sim()->chromium(device) != nullptr;
+    pychron::ui::LaserWindow window(bridge, simulated);
+    pychron::ui::PatternMakerWindow maker(the_lab.patterns, lab_dir / "patterns", &window);
+    maker.setWindowFlag(Qt::Window, true);
+    QObject::connect(&maker, &pychron::ui::PatternMakerWindow::saved, &window, [&window] { window.refresh_patterns(); });
+    window.set_pattern_maker([&maker] {
+      maker.show();
+      maker.raise();
+      maker.activateWindow();
+    });
+    window.resize(1100, 760);
+    window.show();
+    splash.finish_after(&window, std::chrono::milliseconds(1200));
+    rc = QApplication::exec();
+  }  // the window, then its bridge: a motion being waited for is stopped
+  return rc;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -307,6 +369,16 @@ int main(int argc, char** argv) {
   // What was actually loaded decides the window's "(Simulation)" title and the
   // table-following sim beam; --sim only demands it (require_sim).
   bool simulation = false;
+  // The experiment session is built once the line has started (below).
+  const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
+  if (cli->laser) {
+    const int laser_rc = run_laser(**line, *cli, lab_dir, system_file, splash);
+    if (pump) pump->drive(nullptr);  // waits for a step in progress
+    (*line)->stop();
+    if (pump) pump->stop();
+    return laser_rc;
+  }
+
   const fs::path spectrometer_config =
       spectrometer_file ? *spectrometer_file : sim ? examples / "spectrometer.sim-integrated.toml" : fs::path();
   if (!spectrometer_config.empty()) {
@@ -330,11 +402,13 @@ int main(int argc, char** argv) {
     }
   }
 
-  // The experiment session is built once the line has started (below).
-  const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
   std::unique_ptr<pychron::experiment::lab::Lab> lab;
+  // The lab's lasers are shared by the session (queues) and the laser
+  // windows (an operator): one drives at a time.
+  std::unique_ptr<pychron::experiment::lab::Lasers> lasers;
   std::unique_ptr<pychron::experiment::lab::LabSession> session;
   std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
+  std::vector<std::unique_ptr<pychron::ui::LaserBridge>> laser_bridges;
 
   // Data browsing: the records the experiment writes, and figure presets.
   const fs::path data_dir = cli->data            ? *cli->data
@@ -416,27 +490,41 @@ int main(int argc, char** argv) {
       for (const auto& problem : lab->problems) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] lab: ") + QString::fromStdString(problem));
       }
+      lasers = std::make_unique<pychron::experiment::lab::Lasers>(*lab, **line);
       session = std::make_unique<pychron::experiment::lab::LabSession>(
-          *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}},
+          *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get()},
           pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
       for (const auto& problem : session->problems()) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] experiment: ") + QString::fromStdString(problem));
       }
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
       window.set_experiment(experiment_bridge.get(), sim, cli->queue);
+      // A laser window per extraction device; its emergency stop aborts the queue.
+      std::vector<pychron::ui::LaserBridge*> bridges;
+      bool lasers_simulated = !lasers->names().empty();
+      for (const auto& name : lasers->names()) {
+        laser_bridges.push_back(std::make_unique<pychron::ui::LaserBridge>(pychron::ui::LaserBridgeDeps{
+            *lasers, *lab, name, [raw = session.get()] { raw->abort(); }}));
+        bridges.push_back(laser_bridges.back().get());
+        lasers_simulated = lasers_simulated && (*line)->sim() != nullptr && (*line)->sim()->chromium(name) != nullptr;
+      }
+      window.set_lasers(bridges, lasers_simulated, &lab->patterns, lab_dir / "patterns");
     } else {
       window.log_dock()->append_line(
           QStringLiteral("ERROR [ui] experiment unavailable: extraction line did not start"));
     }
     splash.finish_after(&window, std::chrono::milliseconds(1200));
     rc = QApplication::exec();
+    window.set_lasers({}, false);             // the laser windows go before their bridges
     window.set_data(nullptr, nullptr);        // data windows go before the data source
     window.set_experiment(nullptr, false);    // the experiment window goes before its bridge
     window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }
   // Teardown order (explicit; not the reverse of declaration):
-  //   0. the experiment window (above), its bridge, then the session, which
-  //      aborts and joins a running queue before anything it uses goes;
+  //   0. the laser windows (above) and their bridges (a motion being waited
+  //      for is stopped); the experiment window (above), its bridge, then the
+  //      session, which aborts and joins a running queue before anything it
+  //      uses goes; then the lasers the two shared;
   //   1. the spectrometer window, then the main window (the block above);
   //   2. the bridge, whose executor finishes the command in flight; the scan
   //      stop the closing window asked for happens even if it was queued
@@ -450,8 +538,10 @@ int main(int argc, char** argv) {
   // When the line never started, step 4 does nothing: the scheduler never ran
   // and the spectrometer was never offered, so no poll or command has touched
   // it and the same order is safe.
+  laser_bridges.clear();
   experiment_bridge.reset();
   session.reset();
+  lasers.reset();
   spectrometer_bridge.reset();
   scan.reset();
   if (pump) pump->drive(nullptr);  // waits for a step in progress

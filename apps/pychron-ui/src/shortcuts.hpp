@@ -26,6 +26,7 @@ enum class Shortcut {
   SpectrometerWindow,
   ExperimentWindow,
   DataWindow,
+  LaserWindow,
   KeyboardShortcuts,
   CommandPalette,
   MinimizeWindow,

@@ -36,6 +36,12 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--install needs an installation name");
       cli.install = v->toStdString();
+    } else if (arg == QStringLiteral("--laser")) {
+      cli.laser = true;
+    } else if (arg == QStringLiteral("--device")) {
+      auto v = value();
+      if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--device needs an extraction device's name");
+      cli.device = v->toStdString();
     } else if (arg == QStringLiteral("--setup")) {
       cli.setup = true;
     } else if (arg == QStringLiteral("--examples")) {
@@ -63,6 +69,11 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
     }
   }
   if (cli.sim_speed > 0 && !cli.sim) return fail(ErrorKind::Config, "--sim-speed needs --sim");
+  if (cli.device && !cli.laser) return fail(ErrorKind::Config, "--device needs --laser");
+  if (cli.laser && (cli.queue || cli.spectrometer_file)) {
+    return fail(ErrorKind::Config, std::string("--laser opens only the laser window: it takes no ") +
+                                       (cli.queue ? "--queue" : "--spectrometer"));
+  }
   const int sources = (cli.files.empty() ? 0 : 1) + (cli.install ? 1 : 0) + (cli.setup ? 1 : 0) + (cli.examples ? 1 : 0);
   if (sources > 1) return fail(ErrorKind::Config, "config files, --install, --setup and --examples exclude each other");
   return cli;

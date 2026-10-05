@@ -111,11 +111,11 @@ void LaserWindow::build() {
   estop_->setMinimumHeight(40);
   // The one control that is never disabled, and never looks it.
   estop_->setStyleSheet(
-      QStringLiteral("QPushButton#estop { background: %1; color: #ffffff; border: 1px solid %2; font-weight: 700;"
+      QStringLiteral("QPushButton#estop { background: %1; color: %3; border: 1px solid %2; font-weight: 700;"
                      " padding: 6px 18px; }"
                      "QPushButton#estop:hover { background: %2; }"
                      "QPushButton#estop:pressed { background: %2; }")
-          .arg(theme().error_text.name(), theme().error_text.darker(125).name()));
+          .arg(theme().error_text.name(), theme().error_text.darker(125).name(), theme().base.name()));
   top->addWidget(estop_);
   outer->addLayout(top);
 
