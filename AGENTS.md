@@ -5,8 +5,10 @@
 Single developer. Two long-lived branches:
 
 - `develop` is the integration branch: all work lands here first.
-- `main` is what has been released or is about to be. It is protected: nothing
-  is pushed to it, it changes only by pull request.
+- `main` is what has been released or is about to be. Nothing is pushed to
+  it: it changes only by pull request. GitHub does not enforce this yet
+  (branch protection needs a paid plan for a private repository), so the rule
+  is kept by hand.
 
 Day to day:
 
