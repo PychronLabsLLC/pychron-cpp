@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/vision/calibration.hpp"
@@ -22,12 +23,19 @@ struct AutocenterParams {
   Vec2 aim_offset_px{};      // crosshair offset from image centre
 };
 
+// Why a step failed. Camera is the caller's: it could not get frames to give.
+enum class AutocenterReason { None, NoTarget, MaxIterations, Runaway, MaxTotal, Invalid, Clipped, StaleFrame, Camera };
+
+// "", "no_target", "max_iterations", "runaway", "max_total", "invalid",
+// "clipped", "stale_frame", "camera".
+std::string_view to_string(AutocenterReason reason) noexcept;
+
 struct AutocenterStep {
   enum class Action { Move, Converged, Failed } action = Action::Failed;
   Vec2 move_mm{};  // relative, stage frame
   Vec2 offset_mm{};
   int iteration = 0;
-  std::string reason;  // "", "no_target", "max_iterations", "runaway", "max_total", "invalid", "clipped", "stale_frame"
+  AutocenterReason reason = AutocenterReason::None;
 };
 
 // Step-function controller: takes frames, returns a decision, never moves a

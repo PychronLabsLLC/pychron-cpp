@@ -135,7 +135,7 @@ TEST(Autocenter, FailsWhenNoTargetInMajority) {
   const auto views = set.views();
   const auto s = ac.step(std::span<const FrameView>(views));
   EXPECT_EQ(s.action, Action::Failed);
-  EXPECT_EQ(s.reason, "no_target");
+  EXPECT_EQ(s.reason, AutocenterReason::NoTarget);
   EXPECT_EQ(s.move_mm.x, 0);
   EXPECT_EQ(s.move_mm.y, 0);
 }
@@ -148,7 +148,7 @@ TEST(Autocenter, FailsOnWrongSignMap) {
   SimStage stage{{0, 0}};
   const auto r = run_loop(ac, scene, stage, 4);
   EXPECT_EQ(r.last.action, Action::Failed);
-  EXPECT_EQ(r.last.reason, "runaway");
+  EXPECT_EQ(r.last.reason, AutocenterReason::Runaway);
   EXPECT_LE(r.calls, 4);
 }
 
@@ -161,7 +161,7 @@ TEST(Autocenter, FailsAtIterationCap) {
   SimStage stage{{0, 0}};
   const auto r = run_loop(ac, scene, stage, 10);
   EXPECT_EQ(r.last.action, Action::Failed);
-  EXPECT_EQ(r.last.reason, "max_iterations");
+  EXPECT_EQ(r.last.reason, AutocenterReason::MaxIterations);
   EXPECT_EQ(r.calls, 5);
   EXPECT_EQ(r.moves, 4);
 }
@@ -175,7 +175,7 @@ TEST(Autocenter, FailsWhenTotalMoveExceedsLimit) {
   SimStage stage{{0, 0}};
   const auto r = run_loop(ac, scene, stage);
   EXPECT_EQ(r.last.action, Action::Failed);
-  EXPECT_EQ(r.last.reason, "max_total");
+  EXPECT_EQ(r.last.reason, AutocenterReason::MaxTotal);
   EXPECT_EQ(r.last.move_mm.x, 0);
   EXPECT_EQ(r.last.move_mm.y, 0);
 }
@@ -185,7 +185,7 @@ TEST(Autocenter, EmptySpanFails) {
   Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, {});
   const auto s = ac.step(std::span<const FrameView>{});
   EXPECT_EQ(s.action, Action::Failed);
-  EXPECT_EQ(s.reason, "invalid");
+  EXPECT_EQ(s.reason, AutocenterReason::Invalid);
   EXPECT_EQ(s.move_mm.x, 0);
   EXPECT_EQ(s.move_mm.y, 0);
 }
@@ -203,7 +203,7 @@ TEST(Autocenter, InvalidMapOrRadiusFails) {
     Autocenter ac(finder, map, px, p);
     const auto s = ac.step(sp);
     EXPECT_EQ(s.action, Action::Failed);
-    EXPECT_EQ(s.reason, "invalid");
+    EXPECT_EQ(s.reason, AutocenterReason::Invalid);
     EXPECT_EQ(s.move_mm.x, 0);
     EXPECT_EQ(s.move_mm.y, 0);
     EXPECT_TRUE(std::isfinite(s.offset_mm.x) && std::isfinite(s.offset_mm.y));
@@ -281,7 +281,7 @@ TEST(Autocenter, ClippedCropFails) {
   const auto views = set.views();
   const auto s = ac.step(std::span<const FrameView>(views));
   EXPECT_EQ(s.action, Action::Failed);
-  EXPECT_EQ(s.reason, "clipped");
+  EXPECT_EQ(s.reason, AutocenterReason::Clipped);
   EXPECT_EQ(s.move_mm.x, 0);
   EXPECT_EQ(s.move_mm.y, 0);
   EXPECT_EQ(s.iteration, 0);
@@ -289,7 +289,7 @@ TEST(Autocenter, ClippedCropFails) {
   // clipped call itself did not advance the counter.
   p.aim_offset_px = {10, -6};
   Autocenter ok(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
-  EXPECT_NE(ok.step(std::span<const FrameView>(views)).reason, "clipped");
+  EXPECT_NE(ok.step(std::span<const FrameView>(views)).reason, AutocenterReason::Clipped);
 }
 
 TEST(Autocenter, ClippedDoesNotConsumeIteration) {
@@ -302,7 +302,7 @@ TEST(Autocenter, ClippedDoesNotConsumeIteration) {
   std::uint64_t seq = 0;
   auto bad = render_frames(small, SimStage{{0, 0}}, 3, seq);
   const auto bv = bad.views();
-  EXPECT_EQ(ac.step(std::span<const FrameView>(bv)).reason, "clipped");
+  EXPECT_EQ(ac.step(std::span<const FrameView>(bv)).reason, AutocenterReason::Clipped);
   auto good = render_frames(scene, SimStage{{0, 0}}, 3, seq);
   const auto gv = good.views();
   const auto s = ac.step(std::span<const FrameView>(gv));
@@ -325,7 +325,7 @@ TEST(Autocenter, StaleFramesRejectedWithoutConsumingIteration) {
 
   const auto stale = ac.step(std::span<const FrameView>(v1));
   EXPECT_EQ(stale.action, Action::Failed);
-  EXPECT_EQ(stale.reason, "stale_frame");
+  EXPECT_EQ(stale.reason, AutocenterReason::StaleFrame);
   EXPECT_EQ(stale.move_mm.x, 0);
   EXPECT_EQ(stale.move_mm.y, 0);
 
@@ -361,7 +361,7 @@ TEST(Autocenter, InvalidParamsFail) {
     Autocenter ac(finder, CameraStageMap::from_scale(kScale, false, true), kScale, p);
     const auto s = ac.step(std::span<const FrameView>(views));
     EXPECT_EQ(s.action, Action::Failed);
-    EXPECT_EQ(s.reason, "invalid");
+    EXPECT_EQ(s.reason, AutocenterReason::Invalid);
     EXPECT_EQ(s.move_mm.x, 0);
     EXPECT_EQ(s.move_mm.y, 0);
   }
@@ -392,4 +392,16 @@ TEST(Autocenter, ResetClearsRunawayAndStaleState) {
   const auto s = ac.step(std::span<const FrameView>(v));
   EXPECT_EQ(s.action, Action::Move);
   EXPECT_EQ(s.iteration, 0);
+}
+
+TEST(AutocenterReason, NamesAreTheOldWords) {
+  EXPECT_EQ(to_string(AutocenterReason::None), "");
+  EXPECT_EQ(to_string(AutocenterReason::NoTarget), "no_target");
+  EXPECT_EQ(to_string(AutocenterReason::MaxIterations), "max_iterations");
+  EXPECT_EQ(to_string(AutocenterReason::Runaway), "runaway");
+  EXPECT_EQ(to_string(AutocenterReason::MaxTotal), "max_total");
+  EXPECT_EQ(to_string(AutocenterReason::Invalid), "invalid");
+  EXPECT_EQ(to_string(AutocenterReason::Clipped), "clipped");
+  EXPECT_EQ(to_string(AutocenterReason::StaleFrame), "stale_frame");
+  EXPECT_EQ(to_string(AutocenterReason::Camera), "camera");
 }

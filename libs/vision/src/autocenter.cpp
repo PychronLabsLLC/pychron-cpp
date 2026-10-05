@@ -35,7 +35,7 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
   out.action = AutocenterStep::Action::Failed;
   out.iteration = iteration_;
 
-  auto reject = [&](const char* why, Vec2 offset = {}) {
+  auto reject = [&](AutocenterReason why, Vec2 offset = {}) {
     out.action = AutocenterStep::Action::Failed;
     out.move_mm = {};
     out.offset_mm = offset;
@@ -55,11 +55,11 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
                          params_.tolerance_mm >= 0 && std::isfinite(params_.max_step_mm) &&
                          params_.max_step_mm > 0 && std::isfinite(params_.max_total_mm) &&
                          params_.max_total_mm > 0 && params_.max_iterations >= 1;
-  if (!params_ok || frames.empty()) return reject("invalid");
+  if (!params_ok || frames.empty()) return reject(AutocenterReason::Invalid);
 
   // Bound the double before any int conversion.
   const double side_d = params_.crop_scale * 2.0 * params_.hole_radius_mm * px_per_mm_;
-  if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) return reject("invalid");
+  if (!std::isfinite(side_d) || side_d < 1.0 || side_d > kMaxSidePx) return reject(AutocenterReason::Invalid);
   const double radius_px = params_.hole_radius_mm * px_per_mm_;
   const int side = static_cast<int>(std::lround(side_d));
 
@@ -68,8 +68,8 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
   // aim point and hide a hole cut by the frame, so it is never searched.
   for (const FrameView& f : frames) {
     const Rect r = centered_rect(f, side, params_.aim_offset_px);
-    if (r.x < 0 || r.y < 0 || r.x + r.w > f.width || r.y + r.h > f.height) return reject("clipped");
-    if (have_last_ts_ && f.timestamp <= last_ts_) return reject("stale_frame");
+    if (r.x < 0 || r.y < 0 || r.x + r.w > f.width || r.y + r.h > f.height) return reject(AutocenterReason::Clipped);
+    if (have_last_ts_ && f.timestamp <= last_ts_) return reject(AutocenterReason::StaleFrame);
   }
   for (const FrameView& f : frames) {
     if (!have_last_ts_ || f.timestamp > last_ts_) last_ts_ = f.timestamp;
@@ -99,10 +99,10 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
     ys.push_back(oy);
   }
 
-  if (xs.size() * 2 <= frames.size()) return reject("no_target");
+  if (xs.size() * 2 <= frames.size()) return reject(AutocenterReason::NoTarget);
 
   const Vec2 offset_mm = map_.to_mm({median(xs), median(ys)});
-  if (!finite(offset_mm)) return reject("invalid");
+  if (!finite(offset_mm)) return reject(AutocenterReason::Invalid);
   out.offset_mm = offset_mm;
   const double mag = std::hypot(offset_mm.x, offset_mm.y);
 
@@ -111,21 +111,36 @@ AutocenterStep Autocenter::step(std::span<const FrameView> frames) {
     return out;
   }
 
-  if (out.iteration >= params_.max_iterations) return reject("max_iterations", offset_mm);
+  if (out.iteration >= params_.max_iterations) return reject(AutocenterReason::MaxIterations, offset_mm);
 
   grow_count_ = (prev_offset_mm_ >= 0 && mag > prev_offset_mm_) ? grow_count_ + 1 : 0;
   prev_offset_mm_ = mag;
-  if (grow_count_ >= 2) return reject("runaway", offset_mm);
+  if (grow_count_ >= 2) return reject(AutocenterReason::Runaway, offset_mm);
 
   const double k = mag > params_.max_step_mm ? params_.max_step_mm / mag : 1.0;
   const Vec2 move{offset_mm.x * k, offset_mm.y * k};
   const double len = std::hypot(move.x, move.y);
-  if (total_mm_ + len > params_.max_total_mm) return reject("max_total", offset_mm);
+  if (total_mm_ + len > params_.max_total_mm) return reject(AutocenterReason::MaxTotal, offset_mm);
   total_mm_ += len;
 
   out.action = AutocenterStep::Action::Move;
   out.move_mm = move;
   return out;
+}
+
+std::string_view to_string(AutocenterReason reason) noexcept {
+  switch (reason) {
+    case AutocenterReason::None: return "";
+    case AutocenterReason::NoTarget: return "no_target";
+    case AutocenterReason::MaxIterations: return "max_iterations";
+    case AutocenterReason::Runaway: return "runaway";
+    case AutocenterReason::MaxTotal: return "max_total";
+    case AutocenterReason::Invalid: return "invalid";
+    case AutocenterReason::Clipped: return "clipped";
+    case AutocenterReason::StaleFrame: return "stale_frame";
+    case AutocenterReason::Camera: return "camera";
+  }
+  return "invalid";
 }
 
 }  // namespace pychron::vision
