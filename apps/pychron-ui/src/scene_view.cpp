@@ -552,7 +552,7 @@ bool SceneView::eventFilter(QObject* watched, QEvent* event) {
       if (!(e->buttons() & Qt::LeftButton)) {
         const QString tip = tooltip_at(e->pos());
         if (!tip.isEmpty())
-          QToolTip::showText(plot_->mapToGlobal(e->pos()), tip, plot_);
+          QToolTip::showText(plot_->mapToGlobal(e->pos()), style::tip_text(tip), plot_);
         else
           QToolTip::hideText();
       }

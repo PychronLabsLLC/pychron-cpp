@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <QToolTip>
 
 #include "health_bar.hpp"
 #include "theme.hpp"
@@ -124,6 +125,34 @@ class TestTheme : public QObject {
     QVERIFY(chip != nullptr);
     const QImage image = render(*chip);
     QCOMPARE(image.pixelColor(image.width() / 2, 1), theme().error);
+  }
+
+  // A tooltip is a light surface with a hairline, like a menu: not the menu
+  // bar's ink.
+  void tooltip_is_a_light_surface_with_a_hairline() {
+    QLabel host(QStringLiteral("host"));
+    host.resize(200, 100);
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+    QToolTip::showText(host.mapToGlobal(QPoint(20, 20)), QStringLiteral("Outer Pipette 2"), &host);
+    QWidget* tip = nullptr;
+    for (QWidget* w : QApplication::allWidgets()) {
+      if (w->inherits("QTipLabel")) tip = w;
+    }
+    QVERIFY(tip);
+    const QImage image = tip->grab().toImage();
+    QCOMPARE(image.pixelColor(0, image.height() / 2), theme().strong_border);
+    QCOMPARE(image.pixelColor(3, image.height() / 2), theme().base);
+    QCOMPARE(text_color(*tip), theme().text);
+    QToolTip::hideText();
+  }
+
+  void tip_text_sets_the_first_of_several_lines_heavier() {
+    QCOMPARE(style::tip_text(QStringLiteral("Outer Pipette 2")), QStringLiteral("Outer Pipette 2"));
+    const QString tip = style::tip_text(QStringLiteral("62410-01D  excluded\nAge <Ma> 28.2\n12.4% gas"));
+    QVERIFY(Qt::mightBeRichText(tip));
+    QVERIFY(tip.contains(QStringLiteral("font-weight:600\">62410-01D  excluded</span>")));
+    QVERIFY(tip.contains(QStringLiteral("Age &lt;Ma&gt; 28.2<br>12.4% gas")));
   }
 
   void fonts() {

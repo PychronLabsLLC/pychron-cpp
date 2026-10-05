@@ -164,6 +164,8 @@ QString arrow_dir(const Theme& t) {
 // The widget chrome. Colours are @name tokens, filled from the theme.
 // Item views keep their default item drawing so a model's BackgroundRole
 // (run states, analysis types) still shows; only frames and headers change.
+// A tooltip is a menu's surface with square corners: a tooltip window is
+// opaque on macOS, so a radius leaves its corners filled.
 QString chrome_sheet(const Theme& t) {
   QString s = QStringLiteral(R"(
 QMainWindow::separator { background: @window; width: 5px; height: 5px; }
@@ -178,7 +180,7 @@ QMenu::item { padding: 6px 26px 6px 12px; border-radius: 5px; }
 QMenu::item:selected { background: @accent_soft; color: @accent_strong; }
 QMenu::item:disabled { color: @faint_text; }
 QMenu::separator { height: 1px; background: @border; margin: 4px 8px; }
-QToolTip { background: @chrome; color: @on_chrome; border: none; padding: 5px 8px; }
+QToolTip { background: @base; color: @text; border: 1px solid @strong_border; padding: 4px 7px; }
 
 QToolBar { background: @base; border: none; border-bottom: 1px solid @border; padding: 4px 6px; spacing: 4px; }
 QToolBar::separator { background: @border; width: 1px; margin: 4px 6px; }
@@ -416,6 +418,15 @@ void set_font_sizes(int ui_pt, int code_pt) {
   if (pt > 0) font.setPointSizeF(pt);
   QApplication::setFont(font);
   code_point_size = code_pt > 0 ? code_pt : 0;
+}
+
+QString tip_text(const QString& plain) {
+  const qsizetype cut = plain.indexOf(QLatin1Char('\n'));
+  if (cut < 0) return plain;
+  QString rest = plain.mid(cut + 1).toHtmlEscaped();
+  rest.replace(QLatin1Char('\n'), QStringLiteral("<br>"));
+  return QStringLiteral("<p style=\"white-space:pre; margin:0\"><span style=\"font-weight:600\">%1</span><br>%2</p>")
+      .arg(plain.left(cut).toHtmlEscaped(), rest);
 }
 
 QFont title_font(const QFont& base) {

@@ -137,6 +137,10 @@ void set_chip(QLabel* label, Level level);
 // (apply_application_preferences).
 void set_font_sizes(int ui_pt, int code_pt);
 
+// Tooltip text from plain lines: the first line is the subject and is set
+// heavier, the rest are its details. A single line comes back as it is.
+QString tip_text(const QString& plain);
+
 // Window headline: larger and bold.
 QFont title_font(const QFont& base);
 // At the code font size when one is set.
