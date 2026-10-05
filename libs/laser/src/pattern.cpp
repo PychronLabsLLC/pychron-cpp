@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -408,6 +409,143 @@ Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t 
   return path;
 }
 
+namespace {
+
+std::vector<const Key*> all_keys_of(PatternKind kind) {
+  std::vector<const Key*> keys{&kVelocity};
+  if (kind != PatternKind::Dragonfly) keys.push_back(&kIterations);  // a dragonfly runs once, for its duration
+  for (const Key* key : keys_of(kind)) keys.push_back(key);
+  return keys;
+}
+
+const Key* key_of(PatternKind kind, std::string_view name) {
+  for (const Key* key : all_keys_of(kind)) {
+    if (key->name == name) return key;
+  }
+  return nullptr;
+}
+
+// The shortest text that reads back as exactly `value`.
+std::string exact(double value) {
+  char buffer[32];
+  const auto end = std::to_chars(buffer, buffer + sizeof buffer, value).ptr;
+  return std::string(buffer, end);
+}
+
+}  // namespace
+
+std::vector<PatternField> pattern_fields(PatternKind kind) {
+  std::vector<PatternField> out;
+  for (const Key* key : all_keys_of(kind)) {
+    PatternField field;
+    field.key = key->name;
+    field.type = std::holds_alternative<bool Pattern::*>(key->field)  ? PatternField::Type::Flag
+                 : std::holds_alternative<int Pattern::*>(key->field) ? PatternField::Type::Whole
+                                                                      : PatternField::Type::Number;
+    field.low = key->low;
+    field.high = key->high;
+    field.above_low = key->above_low;
+    out.push_back(field);
+  }
+  return out;
+}
+
+std::optional<double> field_value(const Pattern& pattern, std::string_view name) {
+  const Key* key = key_of(pattern.kind, name);
+  if (key == nullptr) return std::nullopt;
+  if (const auto* f = std::get_if<bool Pattern::*>(&key->field)) return pattern.**f ? 1.0 : 0.0;
+  if (const auto* f = std::get_if<int Pattern::*>(&key->field)) return static_cast<double>(pattern.**f);
+  return pattern.**std::get_if<double Pattern::*>(&key->field);
+}
+
+bool set_field(Pattern& pattern, std::string_view name, double value) {
+  const Key* key = key_of(pattern.kind, name);
+  if (key == nullptr) return false;
+  if (const auto* f = std::get_if<bool Pattern::*>(&key->field)) {
+    pattern.**f = value != 0;
+  } else if (const auto* i = std::get_if<int Pattern::*>(&key->field)) {
+    // Out of an int's reach is out of every key's range: parse says so.
+    const double whole = std::isfinite(value) ? std::round(std::clamp(value, -2.0e9, 2.0e9)) : 0.0;
+    pattern.**i = static_cast<int>(whole);
+  } else {
+    pattern.**std::get_if<double Pattern::*>(&key->field) = value;
+  }
+  return true;
+}
+
+std::string to_toml(const Pattern& pattern) {
+  std::string out = "kind = \"" + std::string(to_string(pattern.kind)) + "\"\n";
+  for (const Key* key : all_keys_of(pattern.kind)) {
+    // No duration of its own: it runs for as long as the run says.
+    if (key == &kDuration && !(pattern.duration_s > 0)) continue;
+    out += std::string(key->name) + " = ";
+    if (const auto* f = std::get_if<bool Pattern::*>(&key->field)) out += pattern.**f ? "true" : "false";
+    else if (const auto* i = std::get_if<int Pattern::*>(&key->field)) out += std::to_string(pattern.**i);
+    else out += exact(pattern.**std::get_if<double Pattern::*>(&key->field));
+    out += '\n';
+  }
+  if (pattern.kind == PatternKind::Random && pattern.seed) out += "seed = " + std::to_string(*pattern.seed) + "\n";
+  if (pattern.kind == PatternKind::Dragonfly) {
+    out += std::string("spiral = \"") + (pattern.square_spiral ? "square" : "hexagon") + "\"\n";
+  }
+  return out;
+}
+
+Result<fs::path> save_pattern(const fs::path& dir, const Pattern& pattern) {
+  const std::string& name = pattern.name;
+  if (name.empty()) return fail(ErrorKind::Config, "a pattern needs a name");
+  // A name that is one plain part of a file name; a leading dot would be a
+  // file the library does not read.
+  if (name == "." || name == ".." || name.front() == '.' || name.find_first_of("/\\") != std::string::npos ||
+      name.find('\0') != std::string::npos) {
+    return fail(ErrorKind::Config, "'" + name + "' cannot be a pattern's name (it names the file)");
+  }
+  const std::string text = to_toml(pattern);
+  // What could not run is not saved: the same check a file gets when read.
+  auto back = Pattern::parse(text, name);
+  if (!back) return fail(back.error());
+  const fs::path path = dir / (name + ".toml");
+  const auto cannot = [&path](const std::string& why) {
+    return fail(ErrorKind::Io, "cannot write " + path.string() + (why.empty() ? "" : ": " + why));
+  };
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec) return cannot(ec.message());
+  // Beside the target, then renamed: a reader never sees a torn file.
+  const fs::path tmp = fs::path(path).concat(".tmp");
+  {
+    std::ofstream out(tmp, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (out) out << text;
+    out.flush();
+    if (!out) {
+      fs::remove(tmp, ec);
+      return cannot("");
+    }
+  }
+  fs::rename(tmp, path, ec);
+  if (ec) {
+    const std::string why = ec.message();
+    fs::remove(tmp, ec);
+    return cannot(why);
+  }
+  return path;
+}
+
+PatternLibrary::PatternLibrary(PatternLibrary&& other) noexcept {
+  std::lock_guard lock(other.mutex_);
+  patterns_ = std::move(other.patterns_);
+  problems_ = std::move(other.problems_);
+}
+
+PatternLibrary& PatternLibrary::operator=(PatternLibrary&& other) noexcept {
+  if (this != &other) {
+    std::scoped_lock lock(mutex_, other.mutex_);
+    patterns_ = std::move(other.patterns_);
+    problems_ = std::move(other.problems_);
+  }
+  return *this;
+}
+
 PatternLibrary PatternLibrary::load(const fs::path& dir) {
   PatternLibrary lib;
   std::error_code ec;
@@ -427,20 +565,35 @@ PatternLibrary PatternLibrary::load(const fs::path& dir) {
       continue;
     }
     std::string name = pattern->name;
-    lib.patterns_.insert_or_assign(std::move(name), std::move(*pattern));
+    lib.patterns_.insert_or_assign(std::move(name), std::make_shared<const Pattern>(std::move(*pattern)));
   }
   return lib;
 }
 
-const Pattern* PatternLibrary::find(std::string_view name) const {
+std::shared_ptr<const Pattern> PatternLibrary::find(std::string_view name) const {
+  std::lock_guard lock(mutex_);
   const auto it = patterns_.find(name);
-  return it == patterns_.end() ? nullptr : &it->second;
+  return it == patterns_.end() ? nullptr : it->second;
 }
 
 std::vector<std::string> PatternLibrary::names() const {
+  std::lock_guard lock(mutex_);
   std::vector<std::string> out;
   for (const auto& [name, pattern] : patterns_) out.push_back(name);
   return out;
+}
+
+std::vector<std::string> PatternLibrary::problems() const {
+  std::lock_guard lock(mutex_);
+  return problems_;
+}
+
+void PatternLibrary::put(Pattern pattern) {
+  std::string name = pattern.name;
+  auto made = std::make_shared<const Pattern>(std::move(pattern));
+  std::lock_guard lock(mutex_);
+  std::erase_if(problems_, [&name](const std::string& problem) { return problem.starts_with(name + ": "); });
+  patterns_.insert_or_assign(std::move(name), std::move(made));
 }
 
 }  // namespace pychron::laser

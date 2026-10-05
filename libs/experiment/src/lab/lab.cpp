@@ -221,7 +221,7 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
     for (const auto& p : lab.cameras.problems_of(device)) say(row, "camera of " + device + ": " + p);
     // A pattern that follows the glow needs a camera that can drive the
     // stage: one that follows it (a recording does not).
-    if (const laser::Pattern* pattern = e.pattern ? lab.patterns.find(*e.pattern) : nullptr;
+    if (const std::shared_ptr<const laser::Pattern> pattern = e.pattern ? lab.patterns.find(*e.pattern) : nullptr;
         pattern != nullptr && pattern->follows_glow()) {
       // It runs for the run's duration, or its own.
       if (e.duration <= Duration::zero() && !(pattern->duration_s > 0)) {

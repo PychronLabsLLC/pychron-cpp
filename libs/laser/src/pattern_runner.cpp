@@ -96,7 +96,7 @@ Result<void> PatternRunner::execute_pattern_for(std::string_view pattern, double
                                          std::string(pattern), device_);
     }
   }
-  const Pattern* found = patterns_.find(pattern);
+  const std::shared_ptr<const Pattern> found = patterns_.find(pattern);
   if (found == nullptr) {
     // A file that is there and did not load says why.
     for (const auto& problem : patterns_.problems()) {

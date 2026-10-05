@@ -305,7 +305,8 @@ class Laser {
     if (names.empty()) io_.out << "no patterns in " << (a_.lab / "patterns").string() << '\n';
     bool ok = lab_.patterns.problems().empty();
     for (const auto& name : names) {
-      const laser::Pattern& pattern = *lab_.patterns.find(name);
+      const auto held = lab_.patterns.find(name);
+      const laser::Pattern& pattern = *held;
       if (pattern.follows_glow()) {
         io_.out << name << "  " << to_string(pattern.kind) << "  " << glow_summary(pattern) << '\n';
         continue;
@@ -326,7 +327,7 @@ class Laser {
     device_ = a_.words[1];
     if (int rc = check_device(); rc != kOk) return rc;
     const std::string& name = a_.words[2];
-    const laser::Pattern* pattern = lab_.patterns.find(name);
+    const std::shared_ptr<const laser::Pattern> pattern = lab_.patterns.find(name);
     if (pattern == nullptr) {
       for (const auto& p : lab_.patterns.problems()) {
         if (p.starts_with(name + ": ")) return failed("pattern " + p);

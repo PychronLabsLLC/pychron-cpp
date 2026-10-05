@@ -507,3 +507,154 @@ TEST(PatternLibrary, LoadsADirectoryAndReportsWhatDidNot) {
   EXPECT_TRUE(none.names().empty());
   EXPECT_TRUE(none.problems().empty());
 }
+
+// Writing patterns (laser window design, section 4).
+
+namespace {
+
+constexpr PatternKind kEveryKind[] = {PatternKind::Polygon,      PatternKind::Linear,    PatternKind::CircularContour,
+                                      PatternKind::LineSpiral,   PatternKind::SquareSpiral, PatternKind::Random,
+                                      PatternKind::Rubberband,   PatternKind::Raster,    PatternKind::Trough,
+                                      PatternKind::Dragonfly};
+
+}  // namespace
+
+TEST(PatternWrite, RoundTripsEveryKindsDefaults) {
+  for (const PatternKind kind : kEveryKind) {
+    Pattern p = Pattern::defaults(kind);
+    p.name = "made";
+    const std::string text = to_toml(p);
+    const auto back = Pattern::parse(text, "made");
+    ASSERT_TRUE(back) << to_string(kind) << ": " << back.error().what << "\n" << text;
+    EXPECT_EQ(*back, p) << to_string(kind) << "\n" << text;
+  }
+}
+
+TEST(PatternWrite, RoundTripsEveryField) {
+  for (const PatternKind kind : kEveryKind) {
+    Pattern p = Pattern::defaults(kind);
+    p.name = "made";
+    // every field of the kind moved off its default, to a value its range allows
+    for (const PatternField& field : pattern_fields(kind)) {
+      const double now = *field_value(p, field.key);
+      const double next = field.type == PatternField::Type::Flag ? (now != 0 ? 0 : 1)
+                          : field.type == PatternField::Type::Whole ? std::min(now + 1, field.high)
+                                                                    : std::min(now * 0.7 + 0.0123, field.high);
+      ASSERT_TRUE(set_field(p, field.key, next)) << field.key;
+    }
+    if (kind == PatternKind::Random) p.seed = 18446744073709551615ull >> 1;
+    if (kind == PatternKind::Dragonfly) p.square_spiral = true;
+    const std::string text = to_toml(p);
+    const auto back = Pattern::parse(text, "made");
+    ASSERT_TRUE(back) << to_string(kind) << ": " << back.error().what << "\n" << text;
+    EXPECT_EQ(*back, p) << to_string(kind) << "\n" << text;
+  }
+}
+
+TEST(PatternWrite, WritesOnlyTheKindsKeys) {
+  Pattern p = Pattern::defaults(PatternKind::Polygon);
+  p.length = 7;  // not a polygon's
+  const std::string text = to_toml(p);
+  EXPECT_NE(text.find("kind = \"polygon\""), std::string::npos) << text;
+  EXPECT_NE(text.find("nsides = 6"), std::string::npos) << text;
+  EXPECT_EQ(text.find("length"), std::string::npos) << text;
+  EXPECT_EQ(text.find("duration"), std::string::npos) << text;
+  // a dragonfly has no iterations, and no duration until it is given one
+  const std::string fly = to_toml(Pattern::defaults(PatternKind::Dragonfly));
+  EXPECT_EQ(fly.find("iterations"), std::string::npos) << fly;
+  EXPECT_EQ(fly.find("duration"), std::string::npos) << fly;
+  EXPECT_NE(fly.find("spiral = \"hexagon\""), std::string::npos) << fly;
+}
+
+TEST(PatternFields, NameTheKindsKeysAndTheirRanges) {
+  const auto fields = pattern_fields(PatternKind::Polygon);
+  std::vector<std::string> keys;
+  for (const auto& f : fields) keys.emplace_back(f.key);
+  EXPECT_EQ(keys, (std::vector<std::string>{"velocity", "iterations", "radius", "nsides", "rotation"}));
+  EXPECT_EQ(fields[3].type, PatternField::Type::Whole);
+  EXPECT_DOUBLE_EQ(fields[3].low, 3);
+  Pattern p = Pattern::defaults(PatternKind::Polygon);
+  EXPECT_FALSE(set_field(p, "length", 2)) << "not a polygon's";
+  EXPECT_FALSE(field_value(p, "length"));
+  // a dragonfly has no iterations
+  for (const auto& f : pattern_fields(PatternKind::Dragonfly)) EXPECT_NE(f.key, "iterations");
+}
+
+TEST(PatternSave, WritesAFileTheLibraryLoads) {
+  const auto dir = scratch() / "patterns";  // not there yet
+  Pattern p = Pattern::defaults(PatternKind::Linear);
+  p.name = "stripe";
+  p.length = 3;
+  const auto file = save_pattern(dir, p);
+  ASSERT_TRUE(file) << file.error().what;
+  EXPECT_EQ(*file, dir / "stripe.toml");
+  const auto lib = PatternLibrary::load(dir);
+  ASSERT_NE(lib.find("stripe"), nullptr);
+  EXPECT_EQ(*lib.find("stripe"), p);
+  // again, over the first
+  p.length = 4;
+  ASSERT_TRUE(save_pattern(dir, p));
+  EXPECT_DOUBLE_EQ(Pattern::load(dir / "stripe.toml")->length, 4);
+  EXPECT_FALSE(fs::exists(dir / "stripe.toml.tmp"));
+  fs::remove_all(dir.parent_path());
+}
+
+TEST(PatternSave, RefusesANameThatIsNotAFileName) {
+  const auto dir = scratch();
+  Pattern p = Pattern::defaults(PatternKind::Linear);
+  for (const char* name : {"", "..", "../up", "a/b", ".hidden"}) {
+    p.name = name;
+    const auto file = save_pattern(dir, p);
+    ASSERT_FALSE(file) << name;
+    EXPECT_EQ(file.error().kind, ErrorKind::Config);
+  }
+  EXPECT_TRUE(fs::is_empty(dir));
+  fs::remove_all(dir);
+}
+
+TEST(PatternSave, RefusesAPatternThatCouldNotRun) {
+  const auto dir = scratch();
+  Pattern p = Pattern::defaults(PatternKind::Polygon);
+  p.name = "huge";
+  p.nsides = 200;
+  p.iterations = 200;  // 40 200 points
+  auto file = save_pattern(dir, p);
+  ASSERT_FALSE(file);
+  EXPECT_NE(file.error().what.find("points"), std::string::npos) << file.error().what;
+  p = Pattern::defaults(PatternKind::Polygon);
+  p.name = "flat";
+  p.radius = 0;
+  file = save_pattern(dir, p);
+  ASSERT_FALSE(file);
+  EXPECT_NE(file.error().what.find("radius"), std::string::npos) << file.error().what;
+  EXPECT_TRUE(fs::is_empty(dir));
+  fs::remove_all(dir);
+}
+
+TEST(PatternLibrary, AFoundPatternOutlivesItsReplacement) {
+  PatternLibrary lib;
+  Pattern p = Pattern::defaults(PatternKind::Linear);
+  p.name = "stripe";
+  p.length = 3;
+  lib.put(p);
+  const std::shared_ptr<const Pattern> held = lib.find("stripe");
+  ASSERT_NE(held, nullptr);
+  p.length = 9;
+  lib.put(p);
+  EXPECT_DOUBLE_EQ(held->length, 3) << "whoever is running it keeps the path it started with";
+  EXPECT_DOUBLE_EQ(lib.find("stripe")->length, 9);
+  EXPECT_EQ(lib.names(), (std::vector<std::string>{"stripe"}));
+}
+
+TEST(PatternLibrary, PuttingAPatternClearsItsProblem) {
+  const auto dir = scratch();
+  std::ofstream(dir / "bad.toml") << "kind = \"polygon\"\nradius = 0\n";
+  PatternLibrary lib = PatternLibrary::load(dir);
+  ASSERT_EQ(lib.problems().size(), 1u);
+  Pattern p = Pattern::defaults(PatternKind::Polygon);
+  p.name = "bad";
+  lib.put(p);
+  EXPECT_TRUE(lib.problems().empty());
+  EXPECT_NE(lib.find("bad"), nullptr);
+  fs::remove_all(dir);
+}

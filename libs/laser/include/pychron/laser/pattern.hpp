@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -120,6 +122,34 @@ struct Pattern {
   static Result<Pattern> load(const std::filesystem::path& file);  // the name is the stem
 };
 
+// The file a pattern is: `kind`, `velocity`, `iterations` (a dragonfly has
+// none) and the kind's own keys, so that Pattern::parse(to_toml(p), p.name)
+// gives p back. A dragonfly's duration is written only when it has one.
+std::string to_toml(const Pattern& pattern);
+
+// Writes <dir>/<name>.toml (the directory is made). Config error, and
+// nothing written, for a name that cannot be a pattern file's (empty, a
+// path, a leading dot) or a pattern that does not parse back: one that could
+// not run is not saved. Written beside the target and renamed into place.
+Result<std::filesystem::path> save_pattern(const std::filesystem::path& dir, const Pattern& pattern);
+
+// One editable key of a kind of pattern, for whatever shows a form of them:
+// velocity, iterations (not a dragonfly), then the kind's own, in the order
+// the files list them.
+struct PatternField {
+  enum class Type { Number, Whole, Flag };
+  std::string_view key;
+  Type type = Type::Number;
+  double low = 0;
+  double high = 0;         // 1e6 or more: no upper limit worth showing
+  bool above_low = false;  // low itself is not allowed
+};
+std::vector<PatternField> pattern_fields(PatternKind kind);
+// nullopt / false for a key the pattern's kind does not have. A flag is 0 or
+// 1; a whole number is rounded. The range is not checked here (parse does).
+std::optional<double> field_value(const Pattern& pattern, std::string_view key);
+bool set_field(Pattern& pattern, std::string_view key, double value);
+
 // One pass of the pattern: offsets from its centre. `seed` is used by a
 // random walk only, and the same seed gives the same walk on every machine.
 std::vector<StageXY> pattern_points(const Pattern& pattern, std::uint64_t seed);
@@ -135,20 +165,28 @@ double path_length(std::span<const StageXY> points);
 // kMaxPatternPoints, and for a pattern that follows the glow (it has no path).
 Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t seed);
 
-// The patterns of a directory (<lab>/patterns/*.toml) by name.
+// The patterns of a directory (<lab>/patterns/*.toml) by name. It may be
+// read from one thread while another puts a pattern in it: a reader keeps
+// the pattern it found, whatever replaces it.
 class PatternLibrary {
  public:
   PatternLibrary() = default;
+  PatternLibrary(PatternLibrary&& other) noexcept;
+  PatternLibrary& operator=(PatternLibrary&& other) noexcept;
   // Never fails: a missing directory is an empty library, and a file that
   // does not load is reported in problems() ("<name>: ...").
   static PatternLibrary load(const std::filesystem::path& dir);
 
-  const Pattern* find(std::string_view name) const;
+  std::shared_ptr<const Pattern> find(std::string_view name) const;  // null: none of that name
   std::vector<std::string> names() const;  // sorted
-  const std::vector<std::string>& problems() const noexcept { return problems_; }
+  std::vector<std::string> problems() const;
+  // Adds the pattern, or replaces the one of its name; a problem a file of
+  // that name had is forgotten.
+  void put(Pattern pattern);
 
  private:
-  std::map<std::string, Pattern, std::less<>> patterns_;
+  mutable std::mutex mutex_;
+  std::map<std::string, std::shared_ptr<const Pattern>, std::less<>> patterns_;
   std::vector<std::string> problems_;
 };
 
