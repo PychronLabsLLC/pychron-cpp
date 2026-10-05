@@ -395,11 +395,13 @@ Ar_freeze = [90.0, 120.0]
 Done 2026-10-05. The record keeps `extraction.spec.cryo_temperature` (requested) and `extraction.actuals.cryo_measured` (input -> kelvin), both written only when present, so older records still read and the schema version is unchanged. Recall shows them. The database keeps the requested value in its existing column; the measured ones live in the record (no migration). The queue check for `cryo_temp` without a line cryostat is not done.
 
 - [x] Per owner decision 5: at `end_extract`, record measured input temperatures into the run record beside the requested `cryo_temperature`; persisted by the DVC writer; shown in recall.
-- [x] Experiment rule: `cryo_temp` stays forbidden for non-heating runs (unchanged), and a queue with `cryo_temp` set on a line without a cryo service is a check error.
+- [ ] Experiment rule: `cryo_temp` stays forbidden for non-heating runs (unchanged), and a queue with `cryo_temp` set on a line without a cryo service is a check error.
 
 ### Task C6: Cryo in the UI
 
-- [ ] A Cryo dock in `apps/pychron-ui`: inputs, setpoints with readback, a strip chart from `TemperatureSample` (reuse the spectrometer strip-chart ring). Through `ExtractionLine`/`CoreBridge` only (instrument-control design §10).
+Done 2026-10-05. `CryoDock` sits beside the alarms when the line has a `[cryo]` cryostat. `CoreBridge` relays `TemperatureSample` (kept in `State::temperatures`) and runs `set_cryo_setpoint` / `read_cryo_setpoint` on its command executor. Setpoints are read back after `start()`'s Snapshot; each field starts at what the controller holds. A refused set shows its error in the dock and the log. Named setpoints are not in the dock.
+
+- [x] A Cryo dock in `apps/pychron-ui`: inputs, setpoints with readback, a strip chart from `TemperatureSample` (reuse the spectrometer strip-chart ring). Through `ExtractionLine`/`CoreBridge` only (instrument-control design §10).
 
 ---
 

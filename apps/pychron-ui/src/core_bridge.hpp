@@ -16,6 +16,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -42,6 +43,8 @@ class CoreBridge : public QObject {
     std::map<std::string, TransportHealth> health;
     std::map<std::string, systems::SwitchInfo> switches;  // lock / owner badges
     std::set<std::string> pending;                        // actuations in flight
+    std::map<std::string, double> temperatures;           // cryostat input -> kelvin
+    bool started = false;                                 // start()'s Snapshot has arrived
   };
 
   // Actor name the UI actuates as.
@@ -71,6 +74,17 @@ class CoreBridge : public QObject {
   // through lockChanged once the core confirms.
   Result<void> set_locked(const QString& name, bool locked);
 
+  // The cryostat's inputs and control loops (empty / 0 without one, or
+  // before line.start()). Configuration only: no device I/O.
+  std::vector<std::string> cryo_inputs() const;
+  int cryo_outputs() const;
+
+  // Non-blocking, on the command executor: sets output `output`'s setpoint,
+  // or only reads it back, then posts cryoSetpoint with the setpoint the
+  // controller reports (or the error).
+  void set_cryo_setpoint(int output, double kelvin);
+  void read_cryo_setpoint(int output);
+
   // Blocks until every queued command has finished.
   void drain();
 
@@ -85,6 +99,10 @@ class CoreBridge : public QObject {
   void actuationFailed(const pychron::ActuationFailed& event);
   void actuationStarted(const QString& name);
   void actuationFinished(const QString& name, const pychron::Result<void>& result);
+  void temperatureSample(const pychron::TemperatureSample& event);
+  // `set`: whether this answers set_cryo_setpoint (a failed set carries its
+  // error) or read_cryo_setpoint.
+  void cryoSetpoint(int output, bool set, const pychron::Result<double>& setpoint);
 
  private:
   struct Gate;
@@ -100,6 +118,8 @@ class CoreBridge : public QObject {
   void on_snapshot(const Snapshot& e);
   void on_lock(const SwitchLockChanged& e);
   void on_failed(const ActuationFailed& e);
+  void on_temperature(const TemperatureSample& e);
+  void cryo_command(int output, std::optional<double> kelvin);
   void on_finished(const std::string& name, const Result<void>& result,
                    const std::vector<systems::SwitchInfo>& switches);
   void set_switches(const std::vector<systems::SwitchInfo>& switches);

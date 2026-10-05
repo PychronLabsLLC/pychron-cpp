@@ -61,6 +61,8 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
   refresh();
 }
 
+void StripChartView::set_y_label(const QString& label) { plot_->yAxis->setLabel(label); }
+
 void StripChartView::apply_scale() {
   const bool log = model_.scale() == YScale::Log;
   if (log) {

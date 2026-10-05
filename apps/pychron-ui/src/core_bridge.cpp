@@ -56,6 +56,7 @@ CoreBridge::CoreBridge(systems::ExtractionLine& line, QObject* parent)
   relay<Snapshot>(&CoreBridge::on_snapshot);
   relay<ActuationFailed>(&CoreBridge::on_failed);
   relay<SwitchLockChanged>(&CoreBridge::on_lock);
+  relay<TemperatureSample>(&CoreBridge::on_temperature);
 
   // Locks and owners are in-memory manager state (no device I/O); seed the
   // badges (and last recorded states) now and refresh them after every
@@ -118,6 +119,41 @@ Result<void> CoreBridge::set_locked(const QString& name, bool locked) {
   return line_.set_locked(name.toStdString(), locked);
 }
 
+std::vector<std::string> CoreBridge::cryo_inputs() const {
+  const auto* cryostat = line_.cryostat();
+  return cryostat ? cryostat->inputs() : std::vector<std::string>{};
+}
+
+int CoreBridge::cryo_outputs() const {
+  const auto* cryostat = line_.cryostat();
+  return cryostat ? cryostat->outputs() : 0;
+}
+
+void CoreBridge::set_cryo_setpoint(int output, double kelvin) { cryo_command(output, kelvin); }
+
+void CoreBridge::read_cryo_setpoint(int output) { cryo_command(output, std::nullopt); }
+
+void CoreBridge::cryo_command(int output, std::optional<double> kelvin) {
+  auto* line = &line_;
+  QPointer<CoreBridge> self(this);
+  QMetaObject::invokeMethod(
+      worker_,
+      [line, self, output, kelvin] {
+        Result<double> result = fail(ErrorKind::Config, "no cryostat configured", "cryo");
+        if (auto* cryostat = line->cryostat()) {
+          Result<void> set = kelvin ? cryostat->set_setpoint(output, *kelvin) : Result<void>{};
+          result = set ? cryostat->setpoint(output) : Result<double>(fail(std::move(set).error()));
+        }
+        QMetaObject::invokeMethod(
+            self.data(),
+            [self, output, set = kelvin.has_value(), result] {
+              if (self) emit self->cryoSetpoint(output, set, result);
+            },
+            Qt::QueuedConnection);
+      },
+      Qt::QueuedConnection);
+}
+
 void CoreBridge::drain() {
   QSemaphore done;
   QMetaObject::invokeMethod(worker_, [&done] { done.release(); }, Qt::QueuedConnection);
@@ -139,6 +175,11 @@ void CoreBridge::on_pressure(const PressureSample& e) {
   emit pressureSample(e);
 }
 
+void CoreBridge::on_temperature(const TemperatureSample& e) {
+  state_.temperatures[e.input] = e.kelvin;
+  emit temperatureSample(e);
+}
+
 void CoreBridge::on_alarm(const Alarm& e) { emit alarm(e); }
 
 void CoreBridge::on_health(const TransportHealth& e) {
@@ -149,6 +190,7 @@ void CoreBridge::on_health(const TransportHealth& e) {
 void CoreBridge::on_log(const Log& e) { emit logLine(e); }
 
 void CoreBridge::on_snapshot(const Snapshot& e) {
+  state_.started = true;
   for (const auto& [name, st] : e.valves) {
     state_.valves[name] = st;
     if (auto it = state_.switches.find(name); it != state_.switches.end()) {

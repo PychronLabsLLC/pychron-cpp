@@ -24,6 +24,7 @@
 #include "data_workspace.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "cryo_dock.hpp"
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
 #include "laser_bridge.hpp"
@@ -55,6 +56,8 @@ class MainWindow : public QMainWindow {
   CanvasView* canvas_view() const noexcept { return canvas_; }
   LogDock* log_dock() const noexcept { return log_; }
   AlarmDock* alarm_dock() const noexcept { return alarms_; }
+  // Null unless the line has a [cryo] cryostat.
+  CryoDock* cryo_dock() const noexcept { return cryo_; }
   HealthBar* health_bar() const noexcept { return health_; }
 
   // Enables View > Spectrometer for `bridge` (null disables it and closes
@@ -135,6 +138,7 @@ class MainWindow : public QMainWindow {
   CanvasView* canvas_;
   LogDock* log_;
   AlarmDock* alarms_;
+  CryoDock* cryo_ = nullptr;
   HealthBar* health_;
   QAction* spectrometer_action_;
   SpectrometerBridge* spectrometer_ = nullptr;

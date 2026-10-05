@@ -12,6 +12,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(pychron_ui_lib STATIC
   src/command_line.cpp
   src/core_bridge.cpp
+  src/cryo_dock.cpp
   src/canvas_items.cpp
   src/canvas_view.cpp
   src/log_dock.cpp
@@ -68,6 +69,7 @@ add_library(pychron_ui_lib STATIC
   src/pattern_maker_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
+  src/cryo_dock.hpp
   src/canvas_items.hpp
   src/canvas_view.hpp
   src/log_dock.hpp

@@ -165,6 +165,12 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   setCentralWidget(canvas_);
   addDockWidget(Qt::BottomDockWidgetArea, log_);
   addDockWidget(Qt::RightDockWidgetArea, alarms_);
+  if (bridge_.cryo_outputs() > 0 || !bridge_.cryo_inputs().empty()) {
+    cryo_ = new CryoDock(bridge_, this);
+    addDockWidget(Qt::RightDockWidgetArea, cryo_);
+    connect(cryo_, &CryoDock::cryoFailed, log_,
+            [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [cryo] ") + message); });
+  }
   statusBar()->addPermanentWidget(health_, 1);
 
   spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));

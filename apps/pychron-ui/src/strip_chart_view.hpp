@@ -30,6 +30,8 @@ class StripChartView : public QWidget {
   // capped at 20 Hz: one that comes too soon is deferred, not dropped.
   void refresh();
 
+  void set_y_label(const QString& label);
+
   int graph_count() const;
   int point_count(int graph) const;
   bool graph_visible(int graph) const;
