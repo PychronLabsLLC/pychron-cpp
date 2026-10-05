@@ -8,6 +8,8 @@
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/varian_xgs600.hpp"
+#include "pychron/devices/modbus_device_sim.hpp"
+#include "pychron/codecs/modbus.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/devices/types.hpp"
@@ -311,6 +313,37 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       return p ? std::optional<double>(*p) : std::nullopt;
     };
     return maxigauge_sim_hook(std::move(model));
+  }
+
+  if (driver.kind == "plc2000_gauges") {
+    // Channel n's float lives at register n + register_offset (plc2000_gauges.hpp).
+    const int offset = static_cast<int>(driver.options["register_offset"].value_or(std::int64_t{-1}));
+    const auto order = codec::modbus::word_order_from_string(driver.options["word_order"].value_or(std::string("cdab")))
+                           .value_or(codec::modbus::WordOrder::CDAB);
+    std::map<int, std::string> by_register;  // first register -> gauge
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name) continue;
+        by_register[static_cast<int>(g.channel) + offset] = g.name;
+        add_volume_locked(g.name, 1.0);
+      }
+    }
+    ModbusDeviceSim plc;
+    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
+    plc.read_holding = [this, order, by_register = std::move(by_register)](
+                           std::uint16_t address) -> std::optional<std::uint16_t> {
+      for (int half : {0, 1}) {
+        auto it = by_register.find(static_cast<int>(address) - half);
+        if (it == by_register.end()) continue;
+        auto p = gauge_reading(it->second);
+        const auto words = codec::modbus::encode_float(p ? static_cast<float>(*p) : 0.0F, order);
+        return words[static_cast<std::size_t>(half)];
+      }
+      return std::nullopt;
+    };
+    return plc.hook();
   }
 
   if (driver.kind == "varian_xgs600") {

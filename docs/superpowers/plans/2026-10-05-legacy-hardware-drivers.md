@@ -28,7 +28,7 @@
 3. ~~`verify = false` semantics~~ **Done in 0.2 as proposed:** the commanded state is recorded and published; interlocks rest on it.
 4. **Cryo blocking (Task C4).** Legacy `block` waits forever. Proposal: required `timeout_s` (default 600) and the run's `CancelToken`; timeout is an `Io` error that fails the script.
 5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
-6. **Gauge "off"/over-range readings (Tasks B1–B6).** Legacy maps them to sentinels (MKS `OFF` → 1000, `LO<E-11` → 1e-12, SPC failure → 0.0) or leaves a stale value. Proposal, per codec rule 4: every non-number is a `Protocol` error with a stable message (`"gauge off"`, `"under range"`, `"over range"`, `"no sensor"`), so `GaugeScanner` raises its one Warning alarm and the UI shows no number, never a wrong one. Under-range alone may instead decode as an upper bound if the owner wants a value shown.
+6. **Gauge "off"/over-range readings (Tasks B1–B7).** Built as proposed (every non-number is a Protocol error, never a sentinel), as the codec rules require; the owner has not ruled on showing under-range as an upper bound.
 7. ~~AELAMS PLC2000 link~~ **Decided 2026-10-05: Modbus TCP.** RTU is not built in this plan. Still to confirm at bring-up (Task D3): unit id, float word order (legacy default: byte order big, word order little, i.e. low word first) and coil/register numbering, ideally from AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, heater).
 
 ## Global constraints
@@ -231,15 +231,19 @@ LabJack U3/T4 (needs the LabJack USB library; hal only), WiscAr cRIO (WiSCAr run
 
 ### Task B0: `IPressureService` over the extraction line
 
+Done 2026-10-05. The script binding was not exercised in this session's build (scripting compiled out); the service and its wiring into LabSession are tested.
+
 **Why:** scripts call `get_pressure("Bone", "IG")`; `extraction::IPressureService` is declared but never implemented, and `LabSession` never sets `ExtractionServices::pressure`. Without this, no new gauge is reachable from a script.
 
 **Files:** `libs/systems/include/pychron/systems/line_pressure_service.hpp`, `src/line_pressure_service.cpp`, `libs/experiment/src/lab/session.cpp` (construct and set `line.pressure`), `tests/systems/test_line_pressure_service.cpp`, a scripting test.
 
-- [ ] `get_pressure(controller, gauge)`: resolve by gauge name; `controller` must match the gauge's driver name or be empty (legacy accepts display names too: accept `display_name` if B-phase adds one). Return the latest scanned value (legacy `force=False`), and fail Io if the latest scan failed or is older than 3 scan intervals.
-- [ ] `get_manometer_pressure(name)`: same lookup over gauges (a manometer is a gauge here).
-- [ ] Conditionals already read `gauge.NAME.pressure` from the line snapshot (`libs/experiment/src/conditionals/expr.cpp`); the experiment importer maps legacy `Hub.IG1.pressure` to `gauge.IG1.pressure`. Add a test that a gauge from a new driver reaches both paths.
+- [x] `get_pressure(controller, gauge)`: resolve by gauge name; `controller` must match the gauge's driver name or be empty (legacy accepts display names too: accept `display_name` if B-phase adds one). Return the latest scanned value (legacy `force=False`), and fail Io if the latest scan failed or is older than 3 scan intervals.
+- [x] `get_manometer_pressure(name)`: same lookup over gauges (a manometer is a gauge here).
+- [x] Conditionals already read `gauge.NAME.pressure` from the line snapshot (`libs/experiment/src/conditionals/expr.cpp`); the experiment importer maps legacy `Hub.IG1.pressure` to `gauge.IG1.pressure`. Add a test that a gauge from a new driver reaches both paths.
 
 ### Task B1: `varian_xgs600` — Agilent/Varian XGS-600 (ldeo)
+
+Done 2026-10-05. Not checked against a capture: what the controller answers for an over- or under-range sensor is unknown, so every non-number is a Protocol error quoting it.
 
 Protocol (legacy `gauges/varian/varian_gauge_controller.py:43-46`), serial 9600, CR:
 
@@ -247,14 +251,16 @@ Protocol (legacy `gauges/varian/varian_gauge_controller.py:43-46`), serial 9600,
 - Gauges are addressed by sensor label (`IG1`, `CNV1`), not a number. Keep `GaugeConfig::channel` an integer: driver option `labels = ["CNV1","IMG1","HFIG1"]`, channel *n* reads `labels[n-1]`.
 - Off/over-range/no-sensor replies: per owner decision 6 (codec tests with literal replies from the XGS-600 manual).
 
-- [ ] `IChannelPressureGauge`; several gauges on one bus share one transport.
+- [x] `IChannelPressureGauge`; several gauges on one bus share one transport.
 
 ### Task B2: `qtegra_gauges` — values read through Qtegra (ldeo, usgsdenver)
+
+Done 2026-10-05.
 
 - `GetParameter <name>` → number; `ERROR...` → Protocol (existing `thermo_qtegra` codec helpers).
 - Driver option `parameters = ["Ion Gauge MS Readback", ...]`, channel *n* reads `parameters[n-1]`.
 
-- [ ] Depends on 0.3 (link to the Qtegra driver).
+- [x] Depends on 0.3 (link to the Qtegra driver).
 
 ### Task B3: `furnace_microion` — Micro-Ion read through the furnace host (usgsdenver)
 
@@ -292,14 +298,16 @@ Protocol (legacy `ionpump/spc_ion_pump_controller.py:67-73`):
 
 ### Task B7: `plc2000_gauges` — gauge values in PLC registers (AELAMS)
 
+Done 2026-10-05, one read per channel; reading every contiguous channel in one request is left for when the scan rate needs it. `ModbusDeviceSim` (devices) answers for a simulated PLC and is meant for A7 and E2 too.
+
 Protocol (legacy `gauges/plc2000/plc2000_gauge_controller.py`, `core/modbus.py`):
 
 - Gauge `channel` *n* reads 2 holding registers (function 03) from register *n* − 1 and decodes a float32 in the configured word order (default `CDAB`, legacy's big/little).
 - The PLC reports whatever its ladder logic computed, in the gauge's configured units. A non-finite float is Protocol (legacy returned it).
 
-- [ ] Driver options `unit`, `word_order` (`ABCD|CDAB|BADC|DCBA`, default `CDAB`), `register_offset` (default −1).
-- [ ] One read covering every configured channel when the registers are contiguous; `IChannelPressureGauge` serves each channel from it.
-- [ ] Sim: holding-register model filled from `SimSystem` gauge readings.
+- [x] Driver options `unit`, `word_order` (`ABCD|CDAB|BADC|DCBA`, default `CDAB`), `register_offset` (default −1).
+- [ ] (deferred) One read covering every configured channel when the registers are contiguous; `IChannelPressureGauge` serves each channel from it.
+- [x] Sim: holding-register model filled from `SimSystem` gauge readings.
 - [ ] Legacy `BakeoutPLC` uses the same codec but is not in this plan; the importer reports it if AELAMS's files name it.
 
 ### Not in this plan (gauges)

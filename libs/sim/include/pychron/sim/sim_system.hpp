@@ -118,6 +118,8 @@ class SimSystem {
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
+  //   plc2000_gauges      a Modbus PLC whose float at channel n's registers
+  //                       is the volume of the gauge on that channel.
   //   varian_xgs600       label n of the driver's `labels` reads the volume
   //                       of the gauge on channel n, as for maxigauge.
   //   chromium            a ChromiumSim on this system's clock: the laser

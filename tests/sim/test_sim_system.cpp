@@ -365,6 +365,36 @@ channel = 1
   EXPECT_NEAR(*p, *sim.gauge_reading("MS_IG"), *p * 1e-6);
 }
 
+TEST(SimSystem, APlcHoldsEachGaugesPressureInItsRegisters) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.plc]
+kind = "sim"
+[drivers.plc_gauges]
+kind = "plc2000_gauges"
+transport = "plc"
+channels = [1, 2]
+[[gauges]]
+name = "IG1"
+driver = "plc_gauges"
+channel = 2
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("plc_gauges"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("plc_gauges"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto* gauge = capability<IChannelPressureGauge>(**made);
+  auto p = gauge->read_pressure(2);
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_NEAR(*p, *sim.gauge_reading("IG1"), *p * 1e-6);
+  EXPECT_FALSE(gauge->read_pressure(1));  // no gauge there: the PLC has no such register
+}
+
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;

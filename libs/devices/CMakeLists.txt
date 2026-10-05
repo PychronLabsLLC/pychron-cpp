@@ -4,12 +4,14 @@ add_library(pychron_devices STATIC
   src/agilent_switch.cpp
   src/agilent_unit_sim.cpp
   src/device.cpp
+  src/plc2000_gauges.cpp
   src/varian_xgs600.cpp
   src/pychron_valves.cpp
   src/pychron_valve_server_sim.cpp
   src/types.cpp
   src/driver_registry.cpp
   src/modbus_ids.cpp
+  src/modbus_device_sim.cpp
   src/reconnect.cpp
   src/pfeiffer_maxigauge.cpp
   src/gp_microion.cpp

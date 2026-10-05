@@ -19,6 +19,7 @@ add_executable(pychron_devices_tests
   test_agilent_switch.cpp
   test_pychron_valves.cpp
   test_varian_xgs600.cpp
+  test_plc2000_gauges.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
