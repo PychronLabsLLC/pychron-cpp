@@ -1,5 +1,5 @@
 # Example laser queue for the simulated lab: two unknowns on holes 3 and 7 of
-# the example-9 tray, heated with the simulated Chromium CO2 laser ("co2" in
+# the example-9 tray (the second with the beam moved along patterns/hexagon.toml), heated with the simulated Chromium CO2 laser ("co2" in
 # extraction_line.toml).
 #   elctl -c extraction_line.toml --sim exp run experiment.laser.toml \
 #         --spectrometer spectrometer.sim-integrated.toml
@@ -26,7 +26,7 @@ sample = { sample = "FC-2", material = "sanidine", project = "examples" }
 
 [[runs]]
 identifier = "66001"
-extraction = { script = "laser_extract", position = "7", value = 20, units = "percent", duration = 10 }
+extraction = { script = "laser_extract", position = "7", value = 20, units = "percent", duration = 10, pattern = "hexagon" }
 measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 1 } }
 post_measurement = "sim_pump"
 sample = { sample = "FC-2", material = "sanidine", project = "examples" }

@@ -37,6 +37,9 @@ class LabExtractionTest : public ::testing::Test {
                                          "[transports.valve_bus]\nkind = \"sim\"\n"
                                          "[drivers.co2]\nkind = \"chromium\"\ntransport = \"laser_pc\"\n"
                                          "[drivers.relays]\nkind = \"proxr_relay\"\ntransport = \"valve_bus\"\n";
+    fs::remove_all(dir_ / "patterns");
+    fs::create_directories(dir_ / "patterns");
+    std::ofstream(dir_ / "patterns" / "hexagon.toml") << "kind = \"polygon\"\nnsides = 6\n";
     fs::create_directories(dir_ / "tray_maps");
     std::ofstream(dir_ / "tray_maps" / "small.txt") << kTray;
   }
@@ -236,6 +239,58 @@ TEST_F(LabExtractionTest, ARunWithNoDeviceIsNotChecked) {
   const auto check = check_lab_queue(l, q);
   EXPECT_TRUE(extraction(check).empty());
   for (const auto& d : check.all()) EXPECT_NE(d.field, "tray") << describe(d);
+}
+
+TEST_F(LabExtractionTest, ListsPatterns) {
+  const Lab l = lab();
+  EXPECT_EQ(l.patterns.names(), (std::vector<std::string>{"hexagon"}));
+  EXPECT_TRUE(l.patterns.problems().empty());
+}
+
+TEST_F(LabExtractionTest, AKnownPatternChecks) {
+  const Lab l = lab();
+  calibrate(l);
+  auto q = queue(l);
+  q.runs.at(1).extraction.pattern = "hexagon";
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+}
+
+TEST_F(LabExtractionTest, UnknownPattern) {
+  const Lab l = lab();
+  calibrate(l);
+  auto q = queue(l);
+  q.runs.at(1).extraction.pattern = "spiral";
+  q.runs.at(2).extraction.pattern = "spiral";
+  const auto found = extraction(check_lab_queue(l, q));
+  ASSERT_EQ(found.size(), 1u);  // once
+  EXPECT_EQ(found[0].severity, Severity::Error);
+  EXPECT_EQ(found[0].run, 1);
+  EXPECT_TRUE(says(found[0], {"spiral", "hexagon"})) << found[0].message;
+}
+
+// A pattern file that does not load stops the runs that name it, and no others.
+TEST_F(LabExtractionTest, ABadPatternStopsOnlyRunsThatUseIt) {
+  std::ofstream(dir_ / "patterns" / "broken.toml") << "kind = \"polygon\"\nradius = 0\n";
+  const Lab l = lab();
+  EXPECT_TRUE(l.problems.empty());
+  calibrate(l);
+  auto q = queue(l);
+  q.runs.at(1).extraction.pattern = "hexagon";
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+  q.runs.at(1).extraction.pattern = "broken";
+  const auto found = extraction(check_lab_queue(l, q));
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].run, 1);
+  EXPECT_TRUE(says(found[0], {"broken", "radius"})) << found[0].message;  // the file's own problem
+}
+
+TEST_F(LabExtractionTest, ALabWithoutDevicesIgnoresPatterns) {
+  std::ofstream(dir_ / "line.toml") << "[system]\nname = \"plain\"\n";
+  const Lab l = lab();
+  auto q = queue(l);
+  q.extract_device = "anything";
+  q.runs.at(1).extraction.pattern = "whatever-the-furnace-calls-it";
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
 }
 
 // The example lab's own line config, and every lab before lasers: with no

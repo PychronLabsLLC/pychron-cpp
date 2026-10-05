@@ -194,6 +194,28 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   EXPECT_EQ(count(log, "Stage.MoveTo 20000,20000,0,5000,5000,100"), 1);
   EXPECT_EQ(count(log, "Laser.Output 20"), 2);
   EXPECT_EQ(count(log, "Laser.Fire"), 2);
+
+  // The second run names the hexagon pattern (radius 1 mm, 1 mm/s): with the
+  // beam on, the stage goes round it about hole 7 and comes back.
+  const std::vector<std::string> hexagon{
+      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20500,20866,0,1000,1000,100",
+      "Stage.MoveTo 19500,20866,0,1000,1000,100", "Stage.MoveTo 19000,20000,0,1000,1000,100",
+      "Stage.MoveTo 19500,19134,0,1000,1000,100", "Stage.MoveTo 20500,19134,0,1000,1000,100",
+      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20000,20000,0,1000,1000,100"};
+  std::vector<std::string> slow;  // the moves at the pattern's speed, in order
+  std::size_t first_slow = 0, last_slow = 0, fires = 0, second_fire = 0, last_laser_stop = 0;
+  for (std::size_t i = 0; i < log.size(); ++i) {
+    if (log[i].starts_with("Stage.MoveTo ") && log[i].ends_with(",1000,1000,100")) {
+      if (slow.empty()) first_slow = i;
+      last_slow = i;
+      slow.push_back(log[i]);
+    }
+    if (log[i] == "Laser.Fire" && ++fires == 2) second_fire = i;
+    if (log[i] == "Laser.Stop") last_laser_stop = i;
+  }
+  EXPECT_EQ(slow, hexagon);
+  EXPECT_LT(second_fire, first_slow);      // the beam is on before the pattern starts
+  EXPECT_GT(last_laser_stop, last_slow);   // and goes off after it
   EXPECT_EQ(sim.position().x, 20000);
   EXPECT_EQ(sim.position().y, 20000);
   EXPECT_FALSE(sim.firing());
@@ -231,6 +253,31 @@ TEST_F(LabSessionTest, ARunWhoseHoleIsOutOfTravelFailsAndTheLaserStaysOff) {
   EXPECT_FALSE(sim.firing());
   EXPECT_FALSE(sim.enabled());
   EXPECT_EQ(sim.position().x, 0);
+}
+
+// A pattern that runs off the edge of the stage's travel: the stage refuses
+// the point, the run fails there, and the laser does not stay on.
+TEST_F(LabSessionTest, APatternOutOfTravelFailsTheRunAndTheLaserIsOff) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  // Hole 7 (the pattern's) at stage (0.2, 0.2): the hexagon's far side is past 0.
+  const std::vector<laser::CalibrationPoint> points{{"5", 5.2, 5.2}, {"6", 10.2, 5.2}};
+  ASSERT_TRUE(lab_.calibrations->save(*lab_.trays.find("example-9"), "co2", points));
+  auto& sim = laser_sim("co2");
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
+  EXPECT_EQ(result->runs[0].state, run::RunState::Success) << result->runs[0].error.value_or("");
+  EXPECT_EQ(result->runs[1].state, run::RunState::Failed);
+  const std::string why = result->runs[1].error.value_or("");
+  EXPECT_NE(why.find("pattern hexagon, point "), std::string::npos) << why;
+  EXPECT_NE(why.find("travel"), std::string::npos) << why;
+  for (const auto& line : sim.log()) {
+    if (line.starts_with("Stage.MoveTo ")) EXPECT_EQ(line.find("Stage.MoveTo -"), std::string::npos) << line;
+  }
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_DOUBLE_EQ(sim.output(), 0);
 }
 
 // Two lasers on one line: each run ends its own, and the first is off before

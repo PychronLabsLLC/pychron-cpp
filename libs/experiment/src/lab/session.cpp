@@ -46,7 +46,8 @@ struct LabSession::Services {
     for (const auto& [name, driver] : hw.line.config().drivers) {
       auto* device = dynamic_cast<extraction::IExtractionDevice*>(hw.line.device(name));
       if (device == nullptr) continue;
-      lasers.emplace(name, std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations));
+      lasers.emplace(name, std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations,
+                                                                  &lab.patterns));
     }
     s.devices = [this](std::string_view name) -> extraction::IExtractionDevice* {
       const auto it = lasers.find(name);

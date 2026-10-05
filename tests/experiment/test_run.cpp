@@ -400,6 +400,29 @@ TEST_F(RunDeviceTest, ADeviceSetDirectlyWins) {
   EXPECT_TRUE(asked_.empty());
 }
 
+// The run's pattern reaches its script, which is what execute_pattern() runs.
+TEST_F(RunDeviceTest, TheScriptIsToldTheRunsPattern) {
+  queue_.extract_device = "co2";
+  std::string seen = "unset";
+  host_.bodies["extract"] = [&](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    const auto it = env.context.globals.find("pattern");
+    if (it != env.context.globals.end() && std::holds_alternative<std::string>(it->second)) {
+      seen = std::get<std::string>(it->second);
+    }
+    return {};
+  };
+  auto spec = unknown_run("12345");
+  spec.extraction.pattern = "hexagon";
+  AutomatedRun with(std::move(spec), queue_, by_name());
+  ASSERT_EQ(with.execute(control_).state, RunState::Success);
+  EXPECT_EQ(seen, "hexagon");
+
+  seen = "unset";
+  AutomatedRun without(unknown_run("12346"), queue_, by_name());
+  ASSERT_EQ(without.execute(control_).state, RunState::Success);
+  EXPECT_EQ(seen, "");  // no pattern: an empty name, so a script can test it
+}
+
 TEST_F(RunDeviceTest, AnUnknownNameLeavesTheRunWithoutADevice) {
   queue_.extract_device = "furnace";
   bool had_device = true;

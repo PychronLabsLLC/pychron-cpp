@@ -1,0 +1,13 @@
+# A laser pattern: the path the beam is moved along while it heats. A run
+# names it (pattern = "hexagon") and its extraction script runs it with
+# execute_pattern(). Lengths are mm, angles degrees, about wherever the stage
+# is when the pattern starts; the stage returns there at the end.
+#
+# kinds: polygon, linear, circular_contour, line_spiral, square_spiral,
+#        random, rubberband, raster, trough (see docs/dev_setup.md)
+kind = "polygon"
+velocity = 1.0      # mm/s
+iterations = 1
+radius = 1.0
+nsides = 6
+rotation = 0

@@ -262,6 +262,7 @@ scripting::ScriptContext Run::script_context() const {
   g["post_cleanup"] = seconds(ex.post_cleanup);
   g["extract_device"] = ex.device.empty() ? queue_.extract_device : ex.device;
   g["tray"] = queue_.tray;
+  g["pattern"] = ex.pattern.value_or(std::string{});  // empty: none, so a script can test it
   if (ex.position && !ex.position->holes.empty()) g["position"] = std::int64_t{ex.position->holes.front()};
   if (ex.beam_diameter) g["beam_diameter"] = *ex.beam_diameter;
   if (ex.ramp_rate) g["ramp_rate"] = *ex.ramp_rate;

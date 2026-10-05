@@ -101,6 +101,7 @@ Lab load_lab(const LabPaths& paths) {
   // A map that does not load is not a lab problem: it stops the queues that
   // name it (check_lab_queue), not every queue.
   lab.trays = laser::TrayLibrary::load(dir / "tray_maps");
+  lab.patterns = laser::PatternLibrary::load(dir / "patterns");  // as trays: a bad one stops only its runs
   lab.calibrations = std::make_unique<laser::CalibrationStore>(dir / "stage_calibrations");
   if (lab.line) {
     for (const auto& [name, driver] : lab.line->drivers) {  // a map: sorted
@@ -212,6 +213,13 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
     if (std::find(lab.extract_devices.begin(), lab.extract_devices.end(), device) == lab.extract_devices.end()) {
       say(row, "unknown extraction device '" + device + "' (the line has: " + joined(lab.extract_devices) + ")");
       continue;
+    }
+    if (e.pattern && !e.pattern->empty() && lab.patterns.find(*e.pattern) == nullptr) {
+      std::string why = "unknown pattern " + *e.pattern + " (the lab has: " + joined(lab.patterns.names()) + ")";
+      for (const auto& p : lab.patterns.problems()) {
+        if (p.starts_with(*e.pattern + ": ")) why = "pattern " + p;  // it is there and did not load
+      }
+      say(row, std::move(why));
     }
     // The run sets the queue's tray on its device before any script.
     if (!queue.tray.empty() && tray == nullptr) unknown_tray();
