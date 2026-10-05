@@ -983,7 +983,7 @@ sim and link.
 | Qtegra valve actuator | `qtegra_valves` (2026-10-05), alone or on thermo_qtegra's link | 3 |
 | Furnace firmware actuator | none | 3 |
 | Pyrometer, OmegaADC, diode module | none | 3 |
-| Model335 cryostat | none | 1 real, 1 copy |
+| Model335 cryostat | `lakeshore` and `[cryo]` (2026-10-05) | 1 real, 1 copy |
 | Furnace drives, Eurotherm, multiplexer, APIS, Unidex | none | 2 |
 | Chiller, fiber light, Chromium stage | none | 2 |
 | Fourteen others | none | 1 each |

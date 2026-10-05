@@ -134,8 +134,19 @@ struct IPipetteService {
 
 struct ICryo {
   virtual ~ICryo() = default;
+  // Output 1's setpoint. Returns once it is set, not reached.
   virtual Result<void> set_cryo(double setpoint_kelvin) = 0;
-  virtual Result<double> get_cryo_temp(int channel) = 0;  // Kelvin
+  // Input `channel` (1 = the first) in kelvin.
+  virtual Result<double> get_cryo_temp(int channel) = 0;
+  // A named setpoint (legacy cryotemps.yaml, e.g. "He_freeze"): one value per
+  // output. Config error for an unknown name.
+  virtual Result<void> set_cryo_named(std::string_view /*name*/) {
+    return fail(not_supported("named cryo setpoints"));
+  }
+  // True while the last set_cryo/set_cryo_named has not been reached; false
+  // once every output it set reads within tolerance on its input. An error
+  // once it has taken longer than allowed. A blocking set_cryo polls this.
+  virtual Result<bool> cryo_settling() { return false; }
 };
 
 struct IMotorService {

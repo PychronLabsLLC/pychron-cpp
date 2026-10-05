@@ -48,6 +48,7 @@
 #include "pychron/devices/device.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/canvas.hpp"
+#include "pychron/devices/temperature_controller.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/network_graph.hpp"
 #include "pychron/systems/switch_manager.hpp"
@@ -128,6 +129,16 @@ class ExtractionLine {
   };
   std::optional<PressureReading> latest_pressure(std::string_view gauge) const;
 
+  // The [cryo] controller, or null when there is none (or it is not a
+  // temperature controller, which start() refuses).
+  ITemperatureController* cryostat() const;
+  // The latest scanned reading of a cryostat input; nullopt before the first.
+  struct TemperatureReading {
+    double kelvin = 0.0;
+    TimePoint ts{};
+  };
+  std::optional<TemperatureReading> latest_temperature(std::string_view input) const;
+
   SignalBus& bus() noexcept { return bus_; }
   // Options::log_hub, or the hub built from [logging]; null only if that failed.
   std::shared_ptr<LogHub> log_hub() const noexcept { return log_hub_; }
@@ -199,6 +210,9 @@ class ExtractionLine {
   mutable std::mutex pressures_mutex_;
   std::map<std::string, double> pressures_;
   std::map<std::string, TimePoint, std::less<>> pressure_times_;
+  std::map<std::string, TemperatureReading, std::less<>> temperatures_;  // under pressures_mutex_
+  std::optional<JobId> cryo_job_;
+  bool cryo_failed_ = false;  // scan thread only
 };
 
 }  // namespace pychron::systems

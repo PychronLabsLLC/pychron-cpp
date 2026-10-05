@@ -41,6 +41,7 @@
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/devices/agilent_unit_sim.hpp"
+#include "pychron/devices/lakeshore.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/pychron_valve_server_sim.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
@@ -118,6 +119,7 @@ class SimSystem {
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
+  //   lakeshore           a LakeshoreSim on this system's clock.
   //   plc2000_gauges      a Modbus PLC whose float at channel n's registers
   //                       is the volume of the gauge on that channel.
   //   varian_xgs600       label n of the driver's `labels` reads the volume
@@ -157,6 +159,7 @@ class SimSystem {
   mutable std::mt19937_64 rng_;
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
   std::vector<std::unique_ptr<AgilentUnitSim>> units_;
+  std::vector<std::unique_ptr<LakeshoreSim>> cryostats_;
   std::vector<std::unique_ptr<PychronValveServerSim>> valve_servers_;
   std::map<std::string, std::unique_ptr<extraction::ChromiumSim>, std::less<>> lasers_;  // by driver name
 };

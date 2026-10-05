@@ -4,6 +4,7 @@ add_library(pychron_devices STATIC
   src/agilent_switch.cpp
   src/agilent_unit_sim.cpp
   src/device.cpp
+  src/lakeshore.cpp
   src/plc2000_gauges.cpp
   src/varian_xgs600.cpp
   src/pychron_valves.cpp

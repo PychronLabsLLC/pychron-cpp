@@ -578,6 +578,71 @@ TEST_F(ScriptHostTest, ResourcesAndPressure) {
   EXPECT_TRUE(rig.resources.held.empty());
 }
 
+namespace {
+
+// A line cryostat: settles after `polls` asks.
+class FakeCryo final : public extraction::ICryo {
+ public:
+  Result<void> set_cryo(double k) override {
+    calls.push_back("set " + std::to_string(static_cast<int>(k)));
+    left = polls;
+    return {};
+  }
+  Result<double> get_cryo_temp(int channel) override { return 70.0 + channel; }
+  Result<void> set_cryo_named(std::string_view name) override {
+    if (name != "He_freeze") return fail(ErrorKind::Config, "no cryo setpoint named '" + std::string(name) + "'");
+    calls.push_back("named " + std::string(name));
+    left = polls;
+    return {};
+  }
+  Result<bool> cryo_settling() override {
+    calls.push_back("settling");
+    if (fail_wait) return fail(ErrorKind::Io, "the cryostat did not reach its setpoint");
+    if (left == 0) return false;
+    --left;
+    return true;
+  }
+  int polls = 2;
+  int left = 0;
+  bool fail_wait = false;
+  std::vector<std::string> calls;
+};
+
+}  // namespace
+
+TEST_F(ScriptHostTest, CryoCommandsReachTheLinesCryostat) {
+  // Legacy reached the cryostat through the extraction line, whatever the
+  // extract device (plan 2026-10-05, C4).
+  FakeCryo cryo;
+  rig.env.line.cryo = &cryo;
+  auto r = host->run(inline_script("def main():\n"
+                                   "    set_cryo(77)\n"
+                                   "    set_cryo('He_freeze', block=True)\n"
+                                   "    info(get_cryo_temp(2))\n"),
+                     rig.env, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_EQ(cryo.calls, (std::vector<std::string>{"set 77", "named He_freeze", "settling", "settling", "settling"}));
+  EXPECT_EQ(r->messages, std::vector<std::string>{"72.0"});
+}
+
+TEST_F(ScriptHostTest, ACryoWaitThatFailsFailsTheScript) {
+  FakeCryo cryo;
+  cryo.fail_wait = true;
+  rig.env.line.cryo = &cryo;
+  auto r = host->run(inline_script("def main():\n    set_cryo(77, block=True)\n"), rig.env, token);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("did not reach"), std::string::npos) << r.error().what;
+  auto unknown = host->run(inline_script("def main():\n    set_cryo('Xe_freeze')\n"), rig.env, token);
+  ASSERT_FALSE(unknown);
+  EXPECT_NE(unknown.error().what.find("Xe_freeze"), std::string::npos) << unknown.error().what;
+}
+
+TEST_F(ScriptHostTest, NoCryostatAnywhereIsNotSupported) {
+  auto r = host->run(inline_script("def main():\n    set_cryo(77)\n"), rig.env, token);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("not supported"), std::string::npos) << r.error().what;
+}
+
 #endif  // PYCHRON_SCRIPTING_ENABLED
 
 TEST(StubHost, ReportsAvailability) {

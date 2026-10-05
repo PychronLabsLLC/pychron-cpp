@@ -244,7 +244,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "logging", "aliases"});
+                           "pipettes", "cryo", "logging", "aliases"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -284,6 +284,9 @@ class ConfigBuilder {
     });
     if (const auto* n = root.get("aliases")) {
       if (const auto* t = p_.as_table(*n, "aliases")) parse_aliases(*t, "", c.aliases);
+    }
+    if (const auto* n = root.get("cryo")) {
+      if (const auto* t = p_.as_table(*n, "cryo")) c.cryo = parse_cryo(*t);
     }
     return c;
   }
@@ -605,6 +608,51 @@ class ConfigBuilder {
     p_.read(get, g, "alarm_high", g.alarm_high);
     p_.read(get, g, "alarm_low", g.alarm_low);
     return g;
+  }
+
+  CryoConfig parse_cryo(const toml::table& t) {
+    CryoConfig cc;
+    p_.begin(cc, t, "cryo");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, cc, Keys{"driver", "tolerance_k", "timeout_s", "setpoints"});
+    p_.read(get, cc, "driver", cc.driver, true);
+    std::optional<double> tolerance, timeout;
+    p_.read(get, cc, "tolerance_k", tolerance);
+    p_.read(get, cc, "timeout_s", timeout);
+    if (tolerance) {
+      if (*tolerance > 0) cc.tolerance_k = *tolerance;
+      else p_.error(p_.loc(*t.get("tolerance_k")), "cryo.tolerance_k", "must be above 0");
+    }
+    if (timeout) {
+      if (*timeout > 0) cc.timeout_s = *timeout;
+      else p_.error(p_.loc(*t.get("timeout_s")), "cryo.timeout_s", "must be above 0");
+    }
+    if (const auto* n = t.get("setpoints")) {
+      if (const auto* table = p_.as_table(*n, "cryo.setpoints")) {
+        for (auto&& [k, v] : *table) {
+          const std::string field = "cryo.setpoints." + std::string(k.str());
+          const auto* array = v.as_array();
+          std::vector<double> values;
+          bool ok = array != nullptr && !array->empty() && array->size() <= 4;
+          if (ok) {
+            for (const auto& e : *array) {
+              auto d = e.value<double>();
+              if (!d || *d < 0) {
+                ok = false;
+                break;
+              }
+              values.push_back(*d);
+            }
+          }
+          if (!ok) {
+            p_.error(p_.loc(v), field, "expected 1 to 4 kelvin values, one per output, none negative");
+            continue;
+          }
+          cc.setpoints.emplace(std::string(k.str()), std::move(values));
+        }
+      }
+    }
+    return cc;
   }
 
   PipetteConfig parse_pipette(const std::string& path, const toml::table& t) {

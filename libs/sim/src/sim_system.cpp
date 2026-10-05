@@ -8,6 +8,7 @@
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/varian_xgs600.hpp"
+#include "pychron/devices/lakeshore.hpp"
 #include "pychron/devices/modbus_device_sim.hpp"
 #include "pychron/codecs/modbus.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
@@ -313,6 +314,16 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       return p ? std::optional<double>(*p) : std::nullopt;
     };
     return maxigauge_sim_hook(std::move(model));
+  }
+
+  if (driver.kind == "lakeshore") {
+    // A cryostat on this system's clock: room temperature at start, each
+    // input following its output's setpoint while that heater is on.
+    auto unit = std::make_unique<LakeshoreSim>(clock_, "MODEL" + driver.options["model"].value_or(std::string("335")));
+    auto hook = unit->hook();
+    std::lock_guard lock(mutex_);
+    cryostats_.push_back(std::move(unit));
+    return hook;
   }
 
   if (driver.kind == "plc2000_gauges") {

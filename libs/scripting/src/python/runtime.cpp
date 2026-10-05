@@ -48,6 +48,7 @@ void bind_classes(py::module_ scope) {
       .def("set_motor", &HostState::set_motor)
       .def("get_value", &HostState::get_value)
       .def("set_cryo", &HostState::set_cryo)
+      .def("set_cryo_named", &HostState::set_cryo_named)
       .def("get_cryo_temp", &HostState::get_cryo_temp)
       .def("snapshot", &HostState::snapshot)
       .def("video_start", &HostState::video_start)

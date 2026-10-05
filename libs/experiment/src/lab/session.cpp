@@ -13,6 +13,7 @@
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
+#include "pychron/systems/line_cryo_service.hpp"
 #include "pychron/systems/line_pressure_service.hpp"
 #include "pychron/systems/switch_valve_service.hpp"
 
@@ -30,6 +31,7 @@ struct LabSession::Services {
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         script_pressure(hw.line),
+        script_cryo(hw.line),
         valves(hw.line, "measurement"),
         instrument(hw.spectrometer, &hw.line),
         files(data / "records"),
@@ -49,6 +51,7 @@ struct LabSession::Services {
     s.resolver = &lab.scripts->resolver();
     s.line.valves = &script_valves;
     s.line.pressure = &script_pressure;
+    if (hw.line.config().cryo) s.line.cryo = &script_cryo;
     s.devices = [&lasers](std::string_view name) -> extraction::IExtractionDevice* { return lasers.find(name); };
     s.spectrometer = port ? &*port : nullptr;
     s.valves = &valves;
@@ -73,6 +76,7 @@ struct LabSession::Services {
   std::unique_ptr<scripting::IScriptHost> host;
   systems::SwitchValveService script_valves;
   systems::LinePressureService script_pressure;
+  systems::LineCryoService script_cryo;
   std::optional<measurement::SpectrometerPort> port;
   measurement::ExtractionLineValves valves;
   measurement::InstrumentMetrics instrument;

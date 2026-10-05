@@ -20,6 +20,7 @@ class Validator {
     check_gauges();
     check_pipettes();
     check_aliases();
+    check_cryo();
     return std::move(out_);
   }
 
@@ -54,6 +55,12 @@ class Validator {
       report(*s.state_source, "driver", "unknown driver '" + s.state_source->driver + "'");
     }
     if (!s.verify) report(s, "verify", "verify = false reads nothing back; it cannot have a state_source");
+  }
+
+  void check_cryo() {
+    if (c_.cryo && !c_.drivers.contains(c_.cryo->driver)) {
+      report(*c_.cryo, "driver", "unknown driver '" + c_.cryo->driver + "'");
+    }
   }
 
   // Switches share actuators and the (actuator, address) space with valves.

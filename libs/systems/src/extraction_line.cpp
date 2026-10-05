@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 #include <toml++/toml.hpp>
 
@@ -247,6 +248,45 @@ Result<void> ExtractionLine::start() {
     }
   }
 
+  if (config_.cryo) {
+    auto* tc = cryostat();
+    if (tc == nullptr) {
+      scanner_.reset();
+      for (auto& [name, t] : transports_) t->close();
+      return fail(ErrorKind::Config, "[cryo] driver '" + config_.cryo->driver + "' is not a temperature controller");
+    }
+    // Every input, every scan interval: published, kept for the cryo
+    // service, and a failure raised once until the next good scan.
+    auto scan = [this, tc] {
+      for (const auto& input : tc->inputs()) {
+        const TimePoint ts = clock_->now();
+        auto t = tc->read_temperature(input);
+        if (!t) {
+          if (!cryo_failed_) {
+            cryo_failed_ = true;
+            bus_.publish(Alarm{config_.cryo->driver, AlarmSeverity::Warning,
+                               "read of input " + input + " failed: " + to_string(t.error()), ts});
+          }
+          return;
+        }
+        {
+          std::lock_guard lock(pressures_mutex_);
+          temperatures_[input] = TemperatureReading{*t, ts};
+        }
+        bus_.publish(TemperatureSample{config_.cryo->driver, input, *t, ts});
+      }
+      cryo_failed_ = false;
+    };
+    scan();
+    auto job = scheduler_->every("cryo", interval, scan);
+    if (!job) {
+      scanner_.reset();
+      for (auto& [name, t] : transports_) t->close();
+      return fail(job.error());
+    }
+    cryo_job_ = *job;
+  }
+
   running_ = true;
   log(LogLevel::Info, "extraction line started: " + std::to_string(config_.valves.size() + config_.manual_valves.size()) +
                           " valves, " + std::to_string(config_.gauges.size()) + " gauges");
@@ -261,6 +301,7 @@ void ExtractionLine::stop() {
   // Cancelling a job does not interrupt a scan already running on a worker,
   // and that scan still uses the scanner's state: drain before destroying.
   scanner_->stop();
+  if (cryo_job_) scheduler_->cancel(*std::exchange(cryo_job_, std::nullopt));
   scheduler_->stop();
   scheduler_->wait_idle();
   scanner_.reset();
@@ -333,6 +374,19 @@ void ExtractionLine::record_pressure(const std::string& gauge, double value, Tim
   std::lock_guard lock(pressures_mutex_);
   pressures_[gauge] = value;
   pressure_times_[gauge] = ts;
+}
+
+ITemperatureController* ExtractionLine::cryostat() const {
+  if (!config_.cryo) return nullptr;
+  Device* d = device(config_.cryo->driver);
+  return d ? capability<ITemperatureController>(*d) : nullptr;
+}
+
+std::optional<ExtractionLine::TemperatureReading> ExtractionLine::latest_temperature(std::string_view input) const {
+  std::lock_guard lock(pressures_mutex_);
+  auto it = temperatures_.find(input);
+  if (it == temperatures_.end()) return std::nullopt;
+  return it->second;
 }
 
 std::optional<ExtractionLine::PressureReading> ExtractionLine::latest_pressure(std::string_view gauge) const {

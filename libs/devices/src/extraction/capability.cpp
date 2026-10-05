@@ -79,6 +79,7 @@ CapabilitySet capabilities(const ExtractionServices& services) {
   CapabilitySet set = services.device ? capabilities(*services.device) : CapabilitySet{};
   if (services.valves) set.add(Capability::Valves);
   if (services.pressure) set.add(Capability::Pressure);
+  if (services.cryo) set.add(Capability::Cryo);
   return set;
 }
 

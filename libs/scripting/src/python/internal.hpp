@@ -107,7 +107,8 @@ class HostState {
   void extract_pipette(const std::string& name);
   void set_motor(const std::string& name, double value, bool block);
   double get_value(const std::string& name);
-  void set_cryo(double value);
+  void set_cryo(double value, bool block);
+  void set_cryo_named(const std::string& name, bool block);
   double get_cryo_temp(int channel);
   std::string snapshot(const std::string& name);
   void video_start(const std::string& name);
@@ -149,6 +150,8 @@ class HostState {
  private:
   extraction::IValveService& valves();
   extraction::IPressureService& pressure();
+  // The line's cryostat when the run has one, else the extract device's.
+  extraction::ICryo& cryo();
   IResourceService& resources();
   const Clock& clock() const;
   // Raises ScriptCancelled/ScriptAborted if a request is pending.

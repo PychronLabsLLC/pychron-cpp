@@ -490,18 +490,33 @@ double HostState::get_value(const std::string& name) {
   return unwrap(nogil([&] { return m->get_value(name); }));
 }
 
-void HostState::set_cryo(double value) {
+extraction::ICryo& HostState::cryo() {
+  if (env_.line.cryo) return *env_.line.cryo;
+  if (!env_.line.device) raise(not_supported(Capability::Cryo));
+  return *feature(*this, &extraction::IExtractionDevice::cryo, Capability::Cryo);
+}
+
+void HostState::set_cryo(double value, bool block) {
   if (estimating()) return;
   guard();
-  auto* c = feature(*this, &extraction::IExtractionDevice::cryo, Capability::Cryo);
-  unwrap(nogil([&] { return c->set_cryo(value); }));
+  auto& c = cryo();
+  unwrap(nogil([&] { return c.set_cryo(value); }));
+  if (block) wait_while([&] { return c.cryo_settling(); }, "set_cryo");
+}
+
+void HostState::set_cryo_named(const std::string& name, bool block) {
+  if (estimating()) return;
+  guard();
+  auto& c = cryo();
+  unwrap(nogil([&] { return c.set_cryo_named(name); }));
+  if (block) wait_while([&] { return c.cryo_settling(); }, "set_cryo");
 }
 
 double HostState::get_cryo_temp(int channel) {
   if (estimating()) return 0.0;
   guard();
-  auto* c = feature(*this, &extraction::IExtractionDevice::cryo, Capability::Cryo);
-  return unwrap(nogil([&] { return c->get_cryo_temp(channel); }));
+  auto& c = cryo();
+  return unwrap(nogil([&] { return c.get_cryo_temp(channel); }));
 }
 
 std::string HostState::snapshot(const std::string& name) {

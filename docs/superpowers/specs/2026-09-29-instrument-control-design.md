@@ -234,6 +234,14 @@ kind = "pfeiffer_maxigauge"
 transport = "gauge_net"
 channels = [1, 2, 3]
 
+# [cryo] (added 2026-10-05): the line's cryostat, for set_cryo / get_cryo_temp.
+# [cryo]
+# driver = "cryostat"          # a temperature controller (kind = "lakeshore")
+# tolerance_k = 1.0            # a blocking set_cryo waits until within this
+# timeout_s = 600              # ... and fails after this
+# [cryo.setpoints]             # legacy cryotemps.yaml, kelvin, one per output
+# He_freeze = [14.0, 0.0]
+
 [[valves]]
 name = "A"
 description = "Furnace to bone"

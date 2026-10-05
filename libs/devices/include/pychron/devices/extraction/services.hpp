@@ -47,6 +47,10 @@ struct ExtractionServices {
   IExtractionDevice* device = nullptr;
   IValveService* valves = nullptr;
   IPressureService* pressure = nullptr;
+  // The line's cryostat (legacy reached it through the extraction line, not
+  // the extract device). When set it answers the cryo commands; otherwise
+  // the device's own cryo(), if any.
+  ICryo* cryo = nullptr;
 };
 
 // Device features plus Valves/Pressure for the non-null line services.

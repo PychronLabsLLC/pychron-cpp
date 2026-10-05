@@ -21,7 +21,9 @@
 
 namespace pychron {
 
-enum class KeyType { String, Integer, Float, Boolean, IntegerArray, FloatArray, StringArray };
+// TableArray: an array of tables ([[drivers.<name>.ranges]]); the driver
+// checks the tables' keys.
+enum class KeyType { String, Integer, Float, Boolean, IntegerArray, FloatArray, StringArray, TableArray };
 
 std::string_view to_string(KeyType type) noexcept;
 

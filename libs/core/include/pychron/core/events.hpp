@@ -39,6 +39,15 @@ struct PressureSample {
   TimePoint ts{};
 };
 
+// One reading of a temperature controller's input, in kelvin (the line's
+// cryostat scan).
+struct TemperatureSample {
+  std::string source;  // the controller's driver name
+  std::string input;   // "A", "B", ...
+  double kelvin = 0.0;
+  TimePoint ts{};
+};
+
 struct Alarm {
   std::string source;
   AlarmSeverity severity = AlarmSeverity::Warning;

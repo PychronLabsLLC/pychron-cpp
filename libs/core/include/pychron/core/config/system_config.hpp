@@ -139,6 +139,18 @@ struct GaugeConfig : Located {
   std::optional<double> alarm_low;
 };
 
+// [cryo]: the line's cryostat (plan 2026-10-05, C4). `driver` is a
+// [drivers.*] that controls temperature (a Lake Shore). Setpoint n of a
+// named setpoint goes to output n, and output n waits on input n, as legacy
+// paired them. Values in kelvin.
+struct CryoConfig : Located {
+  std::string driver;
+  double tolerance_k = 1.0;  // "at setpoint" band for a blocking set_cryo
+  double timeout_s = 600;    // a blocking set_cryo that has not arrived by then fails
+  // Legacy cryotemps.yaml: "He_freeze" = [14.0, 0.0] for outputs 1 and 2.
+  std::map<std::string, std::vector<double>> setpoints;
+};
+
 struct PipetteConfig : Located {
   std::string name;
   std::string inner;
@@ -166,6 +178,7 @@ struct SystemConfig {
   std::vector<SwitchConfig> switches;
   std::vector<GaugeConfig> gauges;
   std::vector<PipetteConfig> pipettes;
+  std::optional<CryoConfig> cryo;
   LoggingConfig logging;
   std::map<std::string, AliasConfig> aliases;  // by key
 };

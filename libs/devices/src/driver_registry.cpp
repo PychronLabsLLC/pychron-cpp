@@ -28,6 +28,8 @@ bool matches(const toml::node& node, KeyType type) {
       });
     case KeyType::StringArray:
       return node.is_array() && all_elements(*node.as_array(), &toml::node::is_string);
+    case KeyType::TableArray:
+      return node.is_array() && all_elements(*node.as_array(), &toml::node::is_table);
   }
   return false;
 }
@@ -43,6 +45,7 @@ std::string type_phrase(KeyType type) {
     case KeyType::IntegerArray: return "array of integers";
     case KeyType::FloatArray: return "array of numbers";
     case KeyType::StringArray: return "array of strings";
+    case KeyType::TableArray: return "array of tables";
     default: return std::string(to_string(type));
   }
 }
@@ -65,6 +68,7 @@ std::string_view to_string(KeyType type) noexcept {
     case KeyType::IntegerArray: return "array<integer>";
     case KeyType::FloatArray: return "array<float>";
     case KeyType::StringArray: return "array<string>";
+    case KeyType::TableArray: return "array<table>";
   }
   return "string";
 }

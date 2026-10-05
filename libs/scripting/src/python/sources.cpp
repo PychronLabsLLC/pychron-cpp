@@ -349,7 +349,11 @@ def get_value(name):
 
 
 def set_cryo(value, block=False):
-    _h.set_cryo(float(value))
+    # A name is a [cryo.setpoints] entry (legacy cryotemps.yaml).
+    if isinstance(value, str):
+        _h.set_cryo_named(value, bool(block))
+    else:
+        _h.set_cryo(float(value), bool(block))
 
 
 def get_cryo_temp(channel=1):

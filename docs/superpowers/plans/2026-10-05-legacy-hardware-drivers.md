@@ -26,7 +26,7 @@
 1. ~~Agilent identify command~~ **Decided 2026-10-05: `*IDN?` on connect; never `*TST?`** (a full self-test that can cycle relays).
 2. ~~Agilent at ASU is VISA-USB~~ **Decided 2026-10-05: serial and TCP now; ASU's USB unit stays on `sim_valves` with a note** until a `usbtmc` transport is planned separately.
 3. ~~`verify = false` semantics~~ **Done in 0.2 as proposed:** the commanded state is recorded and published; interlocks rest on it.
-4. **Cryo blocking (Task C4).** Legacy `block` waits forever. Proposal: required `timeout_s` (default 600) and the run's `CancelToken`; timeout is an `Io` error that fails the script.
+4. **Cryo blocking (Task C4).** Built as proposed: `[cryo] timeout_s` (default 600) bounds the wait, and the script's cancel ends it; the owner has not ruled otherwise.
 5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
 6. **Gauge "off"/over-range readings (Tasks B1–B7).** Built as proposed (every non-number is a Protocol error, never a sentinel), as the codec rules require; the owner has not ruled on showing under-range as an upper bound.
 7. ~~AELAMS PLC2000 link~~ **Decided 2026-10-05: Modbus TCP.** RTU is not built in this plan. Still to confirm at bring-up (Task D3): unit id, float word order (legacy default: byte order big, word order little, i.e. low word first) and coil/register numbering, ideally from AELAMS's PLC2000 `.cfg` files (actuator, gauge controller, heater).
@@ -322,6 +322,8 @@ Legacy reaches the cryostat through the extraction line (`ExtractionLineManager.
 
 ### Task C1: `ITemperatureController` capability
 
+Done 2026-10-05. The scan lives in ExtractionLine (one job reading every input of the [cryo] controller) rather than a separate scanner class; readings are kept for the service and published as `TemperatureSample`.
+
 **Files:** `libs/devices/include/pychron/devices/temperature_controller.hpp`, `events.hpp` (`TemperatureSample{source, input, value_k, ts}`), `GaugeScanner`-like `TemperatureScanner` in `libs/systems` (or generalise the scanner's reader path; prefer reuse), tests.
 
 ```cpp
@@ -335,10 +337,12 @@ struct ITemperatureController {
 };
 ```
 
-- [ ] Kelvin at the interface; a controller configured for °C converts in the driver (explicit, per codec rule 6).
-- [ ] Scanner publishes `TemperatureSample` per input at the driver's scan interval.
+- [x] Kelvin at the interface; a controller configured for °C converts in the driver (explicit, per codec rule 6).
+- [x] Scanner publishes `TemperatureSample` per input at the driver's scan interval.
 
 ### Task C2: Lakeshore codec
+
+Done 2026-10-05.
 
 Protocol (legacy `lakeshore/base_controller.py`, GPIB-style command set; models 325/331/335 identical, 336 adds inputs C/D and outputs 3/4):
 
@@ -349,19 +353,23 @@ Protocol (legacy `lakeshore/base_controller.py`, GPIB-style command set; models 
 - Values formatted locale-free with three decimals.
 - Serial 7 data bits / odd / 1 stop is in the lab's transport config (Lakeshore's own default is 57600 7O1; LDEO's file says 9600 7O1); the codec does not assume it.
 
-- [ ] Model 330 (`RANG`, `SETP?` without output) and SI 9700 (`SET`, `TA?`) are left out: no surveyed lab uses them.
+- [x] Model 330 (`RANG`, `SETP?` without output) and SI 9700 (`SET`, `TA?`) are left out: no surveyed lab uses them.
 
 ### Task C3: `lakeshore` driver
+
+Done 2026-10-05. With no bands for an output the range is left alone (legacy's default bands are not used). `KeyType::TableArray` was added to the driver registry for `ranges`.
 
 **Files:** `libs/devices/{include/pychron/devices,src}/lakeshore.{hpp,cpp}`, sim hook, `SimSystem` branch (a first-order thermal model: input approaches setpoint with a time constant, on the injected clock), tests.
 
 Options: `model` (`325|331|335|336`), `inputs` (default `["A","B"]`), `units` (`K|C`), `[[drivers.<name>.ranges]] {output, range, min, max}` (setpoint bands, numeric), `setpoint_tolerance` (default 0.01 K), `verify_retries` (default 3).
 
-- [ ] `set_setpoint`: pick the band containing the setpoint (half-open `[min, max)`, last band closed; a setpoint in no band is Config), send `RANGE`, send `SETP`, read `SETP?`, compare within tolerance, retry at most `verify_retries`. Range 0 (heater off) is selectable. Tests `BandBoundariesAreCovered` (legacy gaps at 10 and 30), `RangeZeroIsSelectable`, `VerifyUsesTolerance`, `SameSetpointTwiceIsSentTwice` (legacy's trait handler skipped repeats).
-- [ ] `connect()` sends `*CLS`, checks `*IDN?` names a Lakeshore of the configured model; mismatch is Config naming what answered.
-- [ ] Implements `ITemperatureController` and `IScannable`.
+- [x] `set_setpoint`: pick the band containing the setpoint (half-open `[min, max)`, last band closed; a setpoint in no band is Config), send `RANGE`, send `SETP`, read `SETP?`, compare within tolerance, retry at most `verify_retries`. Range 0 (heater off) is selectable. Tests `BandBoundariesAreCovered` (legacy gaps at 10 and 30), `RangeZeroIsSelectable`, `VerifyUsesTolerance`, `SameSetpointTwiceIsSentTwice` (legacy's trait handler skipped repeats).
+- [x] `connect()` sends `*CLS`, checks `*IDN?` names a Lakeshore of the configured model; mismatch is Config naming what answered.
+- [x] Implements `ITemperatureController` and `IScannable`.
 
 ### Task C4: Line cryo service and script binding
+
+Done 2026-10-05, except: the species prefix (`freeze` → `Ar_freeze`) is not done; names are given in full. `elctl cryo` is not done. The script binding is tested against the embedded interpreter.
 
 **Files:** `libs/devices/include/pychron/devices/extraction/services.hpp` (`ExtractionServices::cryo`, a `ICryo*`), `capability.cpp` (`Cryo` present if either the device or the line has it), `libs/systems/.../line_cryo_service.{hpp,cpp}`, `system_config.hpp` + loader (`[cryo]` section), `libs/scripting/src/python/host_state.cpp` (prefer the line service, fall back to the device's), `libs/experiment/src/lab/session.cpp`, tests.
 
@@ -377,9 +385,9 @@ He_freeze = [14.0, 0.0]
 Ar_freeze = [90.0, 120.0]
 ```
 
-- [ ] Extend `ICryo` to legacy's script signature: `set_cryo(value_or_name, block, delay)` where the value is a number (output 1) or a setpoint name; `freeze`, `pump`, `release` are prefixed with the run's species (`Ar_freeze`), as legacy `cryo_manager.py:133-156`. Unknown name is Config, checked by the script static check where the name is a literal.
-- [ ] Blocking waits on the run's `Clock` and `CancelToken` until every set output's paired input is within `tolerance_k`, polling at `max(0.5 s, delay)`; timeout per owner decision 4.
-- [ ] `get_cryo_temp(input)`: input 1 → first configured input (legacy `1 → 'a'`), returns kelvin; a read failure is an error, never 0.0 (legacy returned 0.0).
+- [x] Extend `ICryo` to legacy's script signature: `set_cryo(value_or_name, block, delay)` where the value is a number (output 1) or a setpoint name; `freeze`, `pump`, `release` are prefixed with the run's species (`Ar_freeze`), as legacy `cryo_manager.py:133-156`. Unknown name is Config, checked by the script static check where the name is a literal.
+- [x] Blocking waits on the run's `Clock` and `CancelToken` until every set output's paired input is within `tolerance_k`, polling at `max(0.5 s, delay)`; timeout per owner decision 4.
+- [x] `get_cryo_temp(input)`: input 1 → first configured input (legacy `1 → 'a'`), returns kelvin; a read failure is an error, never 0.0 (legacy returned 0.0).
 - [ ] `elctl cryo status|set <K>|setpoint <name>` for bench work.
 
 ### Task C5: Cryo in the run record
