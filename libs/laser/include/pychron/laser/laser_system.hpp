@@ -19,6 +19,7 @@
 // Calls are made from one thread at a time (the script host's); tray() and
 // calibration() may be asked from another.
 
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -27,16 +28,22 @@
 #include "pychron/core/error.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/laser/calibration_store.hpp"
+#include "pychron/laser/pattern.hpp"
 #include "pychron/laser/tray_map.hpp"
 
 namespace pychron::laser {
+
+class PatternRunner;
 
 class LaserSystem final : public extraction::IExtractionDevice, public extraction::IStage {
  public:
   // `driver`, `trays` and `calibrations` must outlive the system. `name` is
   // the device's name in queues and in calibration files.
+  // With `patterns` (which must outlive the system too) and a driver that has
+  // a stage, the system runs the lab's patterns over it.
   LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
-              const CalibrationStore& calibrations);
+              const CalibrationStore& calibrations, const PatternLibrary* patterns = nullptr);
+  ~LaserSystem() override;
 
   std::string tray() const;               // empty: none
   CalibrationStatus calibration() const;  // of the current tray, as read by set_tray; Missing with no tray
@@ -55,7 +62,9 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   extraction::IFurnaceDevice* furnace() override { return driver_.furnace(); }
   // This object when the driver has a stage; null otherwise.
   extraction::IStage* stage() override { return driver_.stage() != nullptr ? this : nullptr; }
-  extraction::IPatternRunner* pattern_runner() override { return driver_.pattern_runner(); }
+  // The driver's own if it runs patterns itself; else the system's, given a
+  // stage and a pattern library; else null.
+  extraction::IPatternRunner* pattern_runner() override;
   extraction::IPipetteService* pipettes() override { return driver_.pipettes(); }
   extraction::ICryo* cryo() override { return driver_.cryo(); }
   extraction::IMotorService* motors() override { return driver_.motors(); }
@@ -81,6 +90,8 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   extraction::IExtractionDevice& driver_;
   const TrayLibrary& trays_;
   const CalibrationStore& calibrations_;
+
+  std::unique_ptr<PatternRunner> runner_;  // over this system's own stage
 
   mutable std::mutex mutex_;  // tray_ and status_; never held across a driver call
   const TrayMap* tray_ = nullptr;

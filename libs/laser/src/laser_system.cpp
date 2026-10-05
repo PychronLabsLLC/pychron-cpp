@@ -1,5 +1,7 @@
 #include "pychron/laser/laser_system.hpp"
 
+#include "pychron/laser/pattern_runner.hpp"
+
 #include <optional>
 
 namespace pychron::laser {
@@ -8,8 +10,19 @@ using extraction::IStage;
 using extraction::StagePosition;
 
 LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
-                         const CalibrationStore& calibrations)
-    : name_(std::move(name)), driver_(driver), trays_(trays), calibrations_(calibrations) {}
+                         const CalibrationStore& calibrations, const PatternLibrary* patterns)
+    : name_(std::move(name)), driver_(driver), trays_(trays), calibrations_(calibrations) {
+  // The runner moves this system's stage, not the driver's directly, so
+  // whatever the system adds to a move applies to a pattern's too.
+  if (patterns != nullptr) runner_ = std::make_unique<PatternRunner>(name_, *this, *patterns);
+}
+
+LaserSystem::~LaserSystem() = default;
+
+extraction::IPatternRunner* LaserSystem::pattern_runner() {
+  if (auto* own = driver_.pattern_runner()) return own;
+  return driver_.stage() != nullptr ? runner_.get() : nullptr;
+}
 
 std::string LaserSystem::tray() const {
   std::lock_guard lock(mutex_);
