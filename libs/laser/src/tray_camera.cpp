@@ -1,0 +1,102 @@
+#include "pychron/laser/tray_camera.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include "pychron/vision/fixture.hpp"
+
+namespace pychron::laser {
+
+SimTrayCamera::SimTrayCamera(const CameraConfig& config, TraySightFn sight, const Clock& clock)
+    : config_(config), sight_(std::move(sight)), clock_(clock) {}
+
+vision::FrameInfo SimTrayCamera::info() const { return {config_.sim_width, config_.sim_height, 255, 0.0}; }
+
+Result<vision::Frame> SimTrayCamera::grab() {
+  const TraySight sight = sight_ ? sight_() : TraySight{};
+  const StageXY error = config_.sim_tray_error_mm;
+
+  vision::HoleScene scene;
+  scene.width = config_.sim_width;
+  scene.height = config_.sim_height;
+  scene.px_per_mm = config_.px_per_mm;
+  scene.hole_radius_mm = sight.hole_radius_mm;
+  scene.noise = config_.sim_noise;
+  scene.seed = static_cast<std::uint32_t>(seq_ + 1);  // differs frame to frame, repeats run to run
+
+  // The hole nearest the stage, where it really is.
+  const StageXY* nearest = nullptr;
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto& hole : sight.holes) {
+    const double d = std::hypot(hole.x + error.x - sight.stage.x, hole.y + error.y - sight.stage.y);
+    if (d < best) {
+      best = d;
+      nearest = &hole;
+    }
+  }
+  // In view: its centre within the frame's half diagonal.
+  const double reach_mm = 0.5 * std::hypot(scene.width, scene.height) / scene.px_per_mm;
+  const bool in_view = nearest != nullptr && best <= reach_mm;
+  if (in_view) {
+    scene.hole_mm = {nearest->x + error.x, nearest->y + error.y};
+    // Its neighbours are drawn on a grid of the distance to the closest one.
+    double pitch = std::numeric_limits<double>::infinity();
+    for (const auto& other : sight.holes) {
+      if (&other == nearest) continue;
+      pitch = std::min(pitch, std::hypot(other.x - nearest->x, other.y - nearest->y));
+    }
+    if (std::isfinite(pitch) && pitch > 2 * scene.hole_radius_mm) {
+      scene.neighbours = true;
+      scene.pitch_mm = pitch;
+    }
+  } else {
+    // The bare tray: a hole far outside any frame.
+    scene.hole_mm = {sight.stage.x + 1e6, sight.stage.y + 1e6};
+  }
+
+  auto [frame, truth] = vision::render(scene, {sight.stage.x, sight.stage.y});
+  truth.visible = truth.visible && in_view;
+
+  // The vision library renders the usual camera: image +x is stage +x, image
+  // +y is stage -y. A camera the config says is mounted otherwise gives the
+  // mirrored picture.
+  const bool mirror_x = config_.flip_x;
+  const bool mirror_y = !config_.flip_y;
+  if (mirror_x || mirror_y) {
+    vision::Frame out = vision::Frame::make(frame.width, frame.height, frame.pixel_depth);
+    for (int y = 0; y < frame.height; ++y) {
+      for (int x = 0; x < frame.width; ++x) {
+        out.at(mirror_x ? frame.width - 1 - x : x, mirror_y ? frame.height - 1 - y : y) = frame.at(x, y);
+      }
+    }
+    if (mirror_x) truth.center_px.x = (frame.width - 1) - truth.center_px.x;
+    if (mirror_y) truth.center_px.y = (frame.height - 1) - truth.center_px.y;
+    frame = std::move(out);
+  }
+
+  frame.timestamp = clock_.now();
+  frame.seq = ++seq_;
+  truth_ = truth;
+  return std::move(frame);
+}
+
+Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConfig& config,
+                                                                const std::filesystem::path& lab, TraySightFn sight,
+                                                                const Clock& clock) {
+  if (config.source == CameraSource::Recorded) {
+    const auto dir = lab / config.frames;
+    auto recorded = vision::load_case(dir);
+    if (!recorded) {
+      return fail(ErrorKind::Config,
+                  "camera of " + config.device + ": " + dir.string() + " is not a recording (" + recorded.error().what + ")",
+                  config.device);
+    }
+    const Clock* stamp = &clock;
+    return std::unique_ptr<vision::IFrameSource>(
+        std::make_unique<vision::RecordedSource>(std::move(*recorded), [stamp] { return stamp->now(); }));
+  }
+  return std::unique_ptr<vision::IFrameSource>(std::make_unique<SimTrayCamera>(config, std::move(sight), clock));
+}
+
+}  // namespace pychron::laser
