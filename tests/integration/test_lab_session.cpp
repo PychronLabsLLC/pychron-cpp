@@ -324,6 +324,49 @@ TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
   }
 }
 
+// A run whose pattern is a dragonfly: with the beam on, the stage leaves the
+// centred hole for the glowing grain (the example's camera has it 0.2, 0.1 mm
+// off its hole), stays with it, and comes back; the laser is off after.
+TEST_F(LabSessionTest, ADragonflyRunFollowsTheGrainAndLeavesTheLaserOff) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto& sim = laser_sim("co2");
+  auto q = laser_queue();
+  q.runs.at(1).extraction.pattern = "follow";
+  ASSERT_TRUE(session_->start(q));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+
+  // The stage moves made while the second beam was on, in mm.
+  std::vector<std::pair<double, double>> under_beam;
+  std::size_t fires = 0;
+  bool firing = false;
+  for (const auto& line : sim.log()) {
+    if (line == "Laser.Fire") firing = ++fires == 2;
+    else if (line == "Laser.Stop") firing = false;
+    else if (firing && line.starts_with("Stage.MoveTo ")) {
+      std::istringstream in(line.substr(13));
+      long long x = 0, y = 0;
+      char comma = 0;
+      in >> x >> comma >> y;
+      under_beam.emplace_back(static_cast<double>(x) / 1000.0, static_cast<double>(y) / 1000.0);
+    }
+  }
+  ASSERT_GE(under_beam.size(), 2u) << ::testing::PrintToString(sim.log());
+  // hole 7 really at (20.15, 19.90); the grain 0.2, 0.1 from its centre
+  bool reached = false;
+  for (const auto& [x, y] : under_beam) reached = reached || std::hypot(x - 20.35, y - 20.00) < 0.08;
+  EXPECT_TRUE(reached) << ::testing::PrintToString(under_beam);
+  for (const auto& [x, y] : under_beam) EXPECT_LT(std::hypot(x - 20.15, y - 19.90), 2.5 + 0.03);  // inside its perimeter
+  // back on the hole at the end, and nothing left on
+  EXPECT_NEAR(under_beam.back().first, 20.15, 0.03);
+  EXPECT_NEAR(under_beam.back().second, 19.90, 0.03);
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_DOUBLE_EQ(sim.output(), 0);
+}
+
 TEST_F(LabSessionTest, AnUncalibratedTrayIsRefusedAtStart) {
   ASSERT_TRUE(lab_.calibrations->clear("co2", "example-9"));
   const auto before = laser_sim("co2").log();

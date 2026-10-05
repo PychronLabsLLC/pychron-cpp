@@ -274,6 +274,39 @@ TEST_F(LabExtractionTest, ADeviceWithoutACameraIsFine) {
   EXPECT_TRUE(extraction(check_lab_queue(l, queue(l))).empty());
 }
 
+// A dragonfly follows the glow by eye: on a device with no camera that can
+// drive the stage it cannot run, and the queue says so before it starts.
+TEST_F(LabExtractionTest, ADragonflyNeedsACamera) {
+  std::ofstream(dir_ / "patterns" / "follow.toml") << "kind = \"dragonfly\"\nduration = 5\n";
+  const auto with = [&](const char* cameras) {
+    if (cameras == nullptr) fs::remove(dir_ / "cameras.toml");
+    else std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << cameras;
+    const Lab l = lab();
+    calibrate(l);
+    auto q = queue(l);
+    q.runs.at(1).extraction.pattern = "follow";
+    return extraction(check_lab_queue(l, q));
+  };
+  EXPECT_TRUE(with("[co2]\n").empty());  // a camera: fine
+
+  for (const char* cameras : {static_cast<const char*>(nullptr),                       // none
+                              "[co2]\nsource = \"recorded\"\nframes = \"x\"\n",      // one that only looks
+                              "[diode]\n"}) {                                          // another device's
+    const auto found = with(cameras);
+    ASSERT_EQ(found.size(), 1u) << (cameras ? cameras : "no file");
+    EXPECT_EQ(found[0].run, 1);
+    EXPECT_EQ(found[0].severity, Severity::Error);
+    EXPECT_TRUE(says(found[0], {"follow", "glow", "co2", "camera"})) << found[0].message;
+  }
+  // a path pattern needs no camera
+  fs::remove(dir_ / "cameras.toml");
+  const Lab l = lab();
+  calibrate(l);
+  auto q = queue(l);
+  q.runs.at(1).extraction.pattern = "hexagon";
+  EXPECT_TRUE(extraction(check_lab_queue(l, q)).empty());
+}
+
 TEST_F(LabExtractionTest, ListsPatterns) {
   const Lab l = lab();
   EXPECT_EQ(l.patterns.names(), (std::vector<std::string>{"hexagon"}));

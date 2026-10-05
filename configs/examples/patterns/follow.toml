@@ -1,0 +1,16 @@
+# A dragonfly: not a path. For its duration the stage follows the glow of the
+# heated sample, so the beam stays on a grain that sits off its hole's centre
+# or creeps as it melts; then the stage returns to where it started. It needs
+# the device to have a camera (cameras.toml). A run names it like any pattern
+# (pattern = "follow"); the script's execute_pattern() runs it, with the laser
+# already firing.
+kind = "dragonfly"
+duration = 5                  # s: how long it follows
+velocity = 1.0                # mm/s for its moves
+perimeter_radius = 2.5        # mm: never further from where it started
+saturation_threshold = 0.75   # a glow this bright (0 to 1): hold still
+aggressiveness = 1.0
+move_threshold = 0.033        # mm: smaller corrections are not made
+max_step = 0.5                # mm
+spiral = "hexagon"            # the search when the glow is lost: hexagon | square
+spiral_base = 0.5             # mm

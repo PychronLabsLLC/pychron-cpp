@@ -263,6 +263,31 @@ TEST_F(LaserCmd, PatternsListsKindPointsLengthAndTime) {
   EXPECT_NE(o.out.find("hexagon  polygon  8 points  8.000 mm  8.0 s"), std::string::npos) << o.out;
 }
 
+// A dragonfly has no path to list or to walk: it follows the glow.
+TEST_F(LaserCmd, PatternsListsADragonfly) {
+  const auto o = laser({"patterns"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("follow  dragonfly  follows the glow for 5.0 s within 2.500 mm"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("hexagon  polygon"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, PatternDryRunOfADragonflySaysItHasNoPath) {
+  unplug_the_laser();
+  const auto o = laser({"pattern", "co2", "follow", "--dry-run"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("no path"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("5.0 s"), std::string::npos) << o.out;
+}
+
+// It steers by the glow of a heated sample, and this command does not fire
+// the laser: there would be nothing to follow.
+TEST_F(LaserCmd, ADragonflyIsNotRunFromHere) {
+  const auto o = laser({"pattern", "co2", "follow"}, true);
+  EXPECT_EQ(o.code, 1);
+  EXPECT_NE(o.err.find("glow"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("queue"), std::string::npos) << o.err;
+}
+
 TEST_F(LaserCmd, PatternsReportsAFileThatDidNotLoad) {
   std::ofstream(lab("patterns") / "broken.toml") << "kind = \"polygon\"\nradius = 0\n";
   const auto o = laser({"patterns"});

@@ -25,6 +25,11 @@ settle_ms = 200           # after a move, before a frame is trusted
 # has to find
 tray_error_mm = [0.15, -0.10]
 noise = 0.01
+# while the simulated laser fires the camera sees the sample glow: this far
+# from its hole's centre, creeping this fast as it is heated (what a
+# dragonfly pattern follows)
+grain_offset_mm = [0.2, 0.1]
+glow_drift_mm_per_s = [0.0, 0.0]
 
 [co2.autocenter]
 tolerance_mm = 0.03

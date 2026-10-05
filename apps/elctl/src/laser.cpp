@@ -306,6 +306,10 @@ class Laser {
     bool ok = lab_.patterns.problems().empty();
     for (const auto& name : names) {
       const laser::Pattern& pattern = *lab_.patterns.find(name);
+      if (pattern.follows_glow()) {
+        io_.out << name << "  " << to_string(pattern.kind) << "  " << glow_summary(pattern) << '\n';
+        continue;
+      }
       const auto path = laser::pattern_path(pattern, pattern.seed.value_or(0));
       if (!path) {
         io_.err << "error: " << path.error().what << '\n';
@@ -329,6 +333,15 @@ class Laser {
       }
       return failed("no pattern '" + name + "' in " + (a_.lab / "patterns").string() +
                     " (it has: " + joined(lab_.patterns.names()) + ")");
+    }
+    if (pattern->follows_glow()) {
+      if (a_.dry_run) {
+        io_.out << name << " " << glow_summary(*pattern) << ": it has no path of its own\n";
+        return kOk;
+      }
+      // It steers by the glow of a heated sample; this command never fires.
+      return failed("pattern " + name + " follows the glow of a heated sample, and this command does not fire the " +
+                    "laser: there would be nothing to follow. It runs from a queue (a run's pattern = \"" + name + "\")");
     }
     if (a_.dry_run) {
       const auto path = laser::pattern_path(*pattern, pattern->seed.value_or(0));
@@ -554,6 +567,11 @@ class Laser {
   static std::string summary(const laser::Pattern& pattern, const std::vector<laser::StageXY>& path) {
     const double length = laser::path_length(path);
     return std::to_string(path.size()) + " points  " + num(length) + " mm  " + num(length / pattern.velocity, 1) + " s";
+  }
+
+  // "follows the glow for 5.0 s within 2.500 mm"
+  static std::string glow_summary(const laser::Pattern& pattern) {
+    return "follows the glow for " + num(pattern.duration_s, 1) + " s within " + num(pattern.perimeter_radius) + " mm";
   }
 
   // Stops the stage and says where; says so when it could not be stopped.
