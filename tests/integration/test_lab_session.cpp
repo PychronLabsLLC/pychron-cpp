@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -187,34 +189,81 @@ TEST_F(LabSessionTest, ALaserQueueMovesFiresAndLeavesTheLaserOff) {
   ASSERT_EQ(result->runs.size(), 2u);
   for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
 
-  // example-9 is calibrated with its centre at stage (25, 25): hole 3 is at
-  // (30, 30) mm, hole 7 at (20, 20).
+  // example-9 is calibrated with its centre at stage (25, 25): hole 3 at
+  // (30, 30) mm, hole 7 at (20, 20). The example's camera (cameras.toml) sees
+  // the tray 0.15, -0.10 mm from there, and each hole move ends by centring
+  // the hole: the beam is fired on the real holes.
   const auto log = sim.log();
   EXPECT_EQ(count(log, "Stage.MoveTo 30000,30000,0,5000,5000,100"), 1) << ::testing::PrintToString(log);
   EXPECT_EQ(count(log, "Stage.MoveTo 20000,20000,0,5000,5000,100"), 1);
   EXPECT_EQ(count(log, "Laser.Output 20"), 2);
   EXPECT_EQ(count(log, "Laser.Fire"), 2);
 
-  // The second run names the hexagon pattern (radius 1 mm, 1 mm/s): with the
-  // beam on, the stage goes round it about hole 7 and comes back.
-  // Each side at 1 mm/s along it: the slanted ones share that between x and y.
-  const std::vector<std::string> hexagon{
-      "Stage.MoveTo 21000,20000,0,1000,1000,100", "Stage.MoveTo 20500,20866,0,500,866,100",
-      "Stage.MoveTo 19500,20866,0,1000,1000,100", "Stage.MoveTo 19000,20000,0,500,866,100",
-      "Stage.MoveTo 19500,19134,0,500,866,100",   "Stage.MoveTo 20500,19134,0,1000,1000,100",
-      "Stage.MoveTo 21000,20000,0,500,866,100",   "Stage.MoveTo 20000,20000,0,1000,1000,100"};
-  // The stage moves made while the second run's beam was on.
-  std::vector<std::string> beam_on;
+  struct Move {
+    double x, y;
+    std::string speeds;
+  };
+  const auto parse = [](const std::string& line) {
+    Move m{};
+    long long x = 0, y = 0, z = 0;
+    int used = 0;
+    std::sscanf(line.c_str(), "Stage.MoveTo %lld,%lld,%lld,%n", &x, &y, &z, &used);
+    m.x = static_cast<double>(x) / 1000.0;
+    m.y = static_cast<double>(y) / 1000.0;
+    m.speeds = line.substr(static_cast<std::size_t>(used));
+    return m;
+  };
+  // Where the stage was when each beam came on, and what it did under it.
+  std::vector<Move> last_before_fire;
+  std::vector<Move> under_second_beam;
+  Move last{};
   std::size_t fires = 0;
   bool firing = false;
   for (const auto& line : log) {
-    if (line == "Laser.Fire") firing = ++fires == 2;
-    else if (line == "Laser.Stop") firing = false;
-    else if (firing && line.starts_with("Stage.MoveTo ")) beam_on.push_back(line);
+    if (line.starts_with("Stage.MoveTo ")) {
+      last = parse(line);
+      if (firing && fires == 2) under_second_beam.push_back(last);
+    } else if (line == "Laser.Fire") {
+      ++fires;
+      firing = true;
+      last_before_fire.push_back(last);
+    } else if (line == "Laser.Stop") {
+      firing = false;
+    }
   }
-  EXPECT_EQ(beam_on, hexagon) << ::testing::PrintToString(log);
-  EXPECT_EQ(sim.position().x, 20000);
-  EXPECT_EQ(sim.position().y, 20000);
+  ASSERT_EQ(last_before_fire.size(), 2u);
+  EXPECT_NEAR(last_before_fire[0].x, 30.15, 0.03);  // hole 3, where it really is
+  EXPECT_NEAR(last_before_fire[0].y, 29.90, 0.03);
+  EXPECT_NEAR(last_before_fire[1].x, 20.15, 0.03);  // hole 7
+  EXPECT_NEAR(last_before_fire[1].y, 19.90, 0.03);
+
+  // The second run names the hexagon pattern (radius 1 mm, 1 mm/s): with the
+  // beam on, the stage goes round it about the centred hole and comes back.
+  const double cx = last_before_fire[1].x, cy = last_before_fire[1].y;
+  const double h = std::sqrt(3.0) / 2;
+  const std::vector<std::pair<double, double>> hexagon{{1, 0}, {0.5, h}, {-0.5, h}, {-1, 0},
+                                                       {-0.5, -h}, {0.5, -h}, {1, 0}, {0, 0}};
+  ASSERT_EQ(under_second_beam.size(), hexagon.size()) << ::testing::PrintToString(log);
+  for (std::size_t i = 0; i < hexagon.size(); ++i) {
+    EXPECT_NEAR(under_second_beam[i].x, cx + hexagon[i].first, 0.0011) << i;
+    EXPECT_NEAR(under_second_beam[i].y, cy + hexagon[i].second, 0.0011) << i;
+  }
+  // each side at 1 mm/s along it: the level ones whole, the slanted ones shared
+  EXPECT_EQ(under_second_beam[0].speeds, "1000,1000,100");
+  EXPECT_EQ(under_second_beam[1].speeds, "500,866,100");
+  EXPECT_EQ(under_second_beam[2].speeds, "1000,1000,100");
+  EXPECT_NEAR(static_cast<double>(sim.position().x) / 1000.0, cx, 0.0011);
+  EXPECT_NEAR(static_cast<double>(sim.position().y) / 1000.0, cy, 0.0011);
+
+  // and what was found is remembered for the two holes
+  const laser::TrayMap& map = *lab_.trays.find("example-9");
+  const auto remembered = lab_.corrections->load(map, "co2", lab_.calibrations->status(map, "co2").fingerprint);
+  ASSERT_TRUE(remembered) << remembered.error().what;
+  ASSERT_TRUE(remembered->contains("3"));
+  ASSERT_TRUE(remembered->contains("7"));
+  EXPECT_NEAR(remembered->at("3").x, 30.15, 0.03);
+  EXPECT_NEAR(remembered->at("7").y, 19.90, 0.03);
+  EXPECT_TRUE(session_->problems().empty());
   EXPECT_FALSE(sim.firing());
   EXPECT_FALSE(sim.enabled());
   EXPECT_DOUBLE_EQ(sim.output(), 0);
@@ -250,6 +299,75 @@ TEST_F(LabSessionTest, ARunWhoseHoleIsOutOfTravelFailsAndTheLaserStaysOff) {
   EXPECT_FALSE(sim.firing());
   EXPECT_FALSE(sim.enabled());
   EXPECT_EQ(sim.position().x, 0);
+}
+
+// The camera cannot see the hole (the tray is nowhere near where its
+// calibration says). With on_failure = "fail" the run stops there: the laser
+// is never fired at a place nobody could confirm.
+class HiddenHoleSessionTest : public LabSessionTest {
+ protected:
+  virtual const char* on_failure() const { return "fail"; }
+  void prepare_lab() override {
+    std::ofstream(dir_ / "cameras.toml", std::ios::trunc)
+        << "[co2]\n[co2.sim]\ntray_error_mm = [3.0, 3.0]\nnoise = 0\n[co2.autocenter]\non_failure = \"" << on_failure()
+        << "\"\n";
+  }
+};
+
+TEST_F(HiddenHoleSessionTest, AHiddenHoleFailsTheRunBeforeTheLaserFires) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto& sim = laser_sim("co2");
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_FALSE(result->runs.empty());
+  EXPECT_EQ(result->runs.front().state, run::RunState::Failed);
+  const std::string why = result->runs.front().error.value_or("");
+  EXPECT_NE(why.find("hole 3"), std::string::npos) << why;
+  EXPECT_NE(why.find("no_target"), std::string::npos) << why;
+  EXPECT_EQ(count(sim.log(), "Laser.Fire"), 0);
+  EXPECT_FALSE(sim.firing());
+  EXPECT_FALSE(sim.enabled());
+  EXPECT_EQ(sim.position().x, 30000);  // back at the calibrated position
+  EXPECT_FALSE(fs::exists(dir_ / "stage_corrections" / "co2.example-9.toml"));
+}
+
+class HiddenHoleCarriedOnTest : public HiddenHoleSessionTest {
+ protected:
+  const char* on_failure() const override { return "continue"; }
+};
+
+// The default, as legacy pychron: carry on at the calibrated position.
+TEST_F(HiddenHoleCarriedOnTest, AHiddenHoleIsCarriedOnPastByDefault) {
+  if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
+  auto& sim = laser_sim("co2");
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->runs.size(), 2u);
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.error.value_or("");
+  EXPECT_EQ(count(sim.log(), "Laser.Fire"), 2);
+  EXPECT_FALSE(fs::exists(dir_ / "stage_corrections" / "co2.example-9.toml"));
+}
+
+// A camera whose recording is missing: the session says so, and the device
+// runs without a camera rather than not at all.
+class MissingRecordingSessionTest : public LabSessionTest {
+ protected:
+  void prepare_lab() override {
+    std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << "[co2]\nsource = \"recorded\"\nframes = \"no-such-dir\"\n";
+  }
+};
+
+TEST_F(MissingRecordingSessionTest, ACameraThatCannotBeOpenedIsASessionProblem) {
+  ASSERT_EQ(session_->problems().size(), 1u);
+  EXPECT_NE(session_->problems().front().find("no-such-dir"), std::string::npos) << session_->problems().front();
+  if (!scripting::make_script_host()->available()) return;
+  ASSERT_TRUE(session_->start(laser_queue()));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.error.value_or("");
+  EXPECT_EQ(laser_sim("co2").position().x, 20000);  // calibrated positions: no camera
 }
 
 // A pattern that runs off the edge of the stage's travel: the stage refuses

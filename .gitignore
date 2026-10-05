@@ -27,5 +27,7 @@ __pycache__/
 # subagent-driven-development scratch (ledger, briefs, review packages)
 .superpowers/
 configs/examples/data/
+# holes found by autocenter while running the examples
+configs/examples/**/stage_corrections/
 # notification channels hold site addresses and webhook URLs
 configs/examples/notifications.toml

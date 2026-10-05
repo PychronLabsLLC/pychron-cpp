@@ -1,0 +1,37 @@
+# The camera of each extraction device (the driver's name in
+# extraction_line.toml). With one, a hole move that asks for it (a script's
+# move_to_position() does by default) ends by centring the hole under the
+# beam: the stage waits, the camera looks, the stage is nudged, until the hole
+# is in place. What is found is kept per hole in stage_corrections/ and used
+# as the start of the next move there. A device with no table here has no
+# camera and goes to its calibrated positions, as before.
+
+[co2]
+# sim: the tray as a camera would see it from the simulated stage.
+# recorded: a folder of recorded frames (frames = "recordings/..."), for
+# looking at what the finder sees (`elctl laser look`); it does not follow
+# the stage. A live camera is not available yet.
+source = "sim"
+px_per_mm = 23.0
+# which way the picture moves when the stage does: the usual camera shows
+# stage +x as image +x and stage +y as image up (flip_y)
+flip_x = false
+flip_y = true
+aim_offset_px = [0, 0]    # the beam's place in the picture, from its centre
+settle_ms = 200           # after a move, before a frame is trusted
+
+[co2.sim]
+# how far the real tray is from where its calibration says: what autocenter
+# has to find
+tray_error_mm = [0.15, -0.10]
+noise = 0.01
+
+[co2.autocenter]
+tolerance_mm = 0.03
+max_iterations = 4
+max_step_mm = 0.5
+frames_per_step = 3
+# continue: carry on at the calibrated position when the hole cannot be
+# centred (as legacy pychron). fail: the move is an error and the run stops
+# before the laser is fired.
+on_failure = "continue"

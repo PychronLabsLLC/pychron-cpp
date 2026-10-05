@@ -241,6 +241,39 @@ TEST_F(LabExtractionTest, ARunWithNoDeviceIsNotChecked) {
   for (const auto& d : check.all()) EXPECT_NE(d.field, "tray") << describe(d);
 }
 
+TEST_F(LabExtractionTest, LoadsCamerasAndHasACorrectionStore) {
+  fs::remove(dir_ / "cameras.toml");
+  EXPECT_TRUE(lab().cameras.devices().empty());  // no file: no cameras
+  std::ofstream(dir_ / "cameras.toml") << "[co2]\npx_per_mm = 31\n";
+  const Lab l = lab();
+  ASSERT_NE(l.cameras.find("co2"), nullptr);
+  EXPECT_DOUBLE_EQ(l.cameras.find("co2")->px_per_mm, 31);
+  ASSERT_NE(l.corrections, nullptr);
+  EXPECT_EQ(l.corrections->dir(), dir_ / "stage_corrections");
+  EXPECT_TRUE(l.problems.empty());
+}
+
+// A camera table that does not load stops the runs on its device, with the
+// table's own problem; a device that simply has no camera is fine.
+TEST_F(LabExtractionTest, ACameraThatDidNotLoadStopsRunsOnItsDevice) {
+  std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << "[co2]\npx_per_mm = 0\n";
+  const Lab l = lab();
+  EXPECT_TRUE(l.problems.empty());
+  calibrate(l);
+  const auto found = extraction(check_lab_queue(l, queue(l)));
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].severity, Severity::Error);
+  EXPECT_EQ(found[0].run, 0);
+  EXPECT_TRUE(says(found[0], {"cameras.toml", "co2.px_per_mm"})) << found[0].message;
+}
+
+TEST_F(LabExtractionTest, ADeviceWithoutACameraIsFine) {
+  std::ofstream(dir_ / "cameras.toml", std::ios::trunc) << "[diode]\npx_per_mm = 0\n";  // another device's trouble
+  const Lab l = lab();
+  calibrate(l);
+  EXPECT_TRUE(extraction(check_lab_queue(l, queue(l))).empty());
+}
+
 TEST_F(LabExtractionTest, ListsPatterns) {
   const Lab l = lab();
   EXPECT_EQ(l.patterns.names(), (std::vector<std::string>{"hexagon"}));

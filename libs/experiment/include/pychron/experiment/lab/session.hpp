@@ -21,7 +21,9 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/executor/executor.hpp"
@@ -89,6 +91,10 @@ class LabSession {
   void notify_test();
   Notifier& notifier() noexcept { return *notifier_; }
 
+  // What could not be set up as the lab asked and was done without: a
+  // device's camera whose frames could not be opened. Fixed for the session.
+  const std::vector<std::string>& problems() const noexcept { return problems_; }
+
   const Lab& lab() const noexcept { return lab_; }
   const std::filesystem::path& data() const noexcept { return options_.data; }
   bool has_spectrometer() const noexcept;
@@ -103,6 +109,7 @@ class LabSession {
   const Lab& lab_;
   SessionHardware hardware_;
   SessionOptions options_;
+  std::vector<std::string> problems_;
   std::unique_ptr<Services> services_;
   std::unique_ptr<Notifier> notifier_;
 

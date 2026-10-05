@@ -102,6 +102,8 @@ Lab load_lab(const LabPaths& paths) {
   // name it (check_lab_queue), not every queue.
   lab.trays = laser::TrayLibrary::load(dir / "tray_maps");
   lab.patterns = laser::PatternLibrary::load(dir / "patterns");  // as trays: a bad one stops only its runs
+  lab.cameras = laser::CameraLibrary::load(dir / "cameras.toml");  // a bad table stops only its device's runs
+  lab.corrections = std::make_unique<laser::CorrectionStore>(dir / "stage_corrections");
   lab.calibrations = std::make_unique<laser::CalibrationStore>(dir / "stage_calibrations");
   if (lab.line) {
     for (const auto& [name, driver] : lab.line->drivers) {  // a map: sorted
@@ -214,6 +216,9 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
       say(row, "unknown extraction device '" + device + "' (the line has: " + joined(lab.extract_devices) + ")");
       continue;
     }
+    // A camera that was meant to be there and is not: the run would go
+    // uncentred without anyone having said so.
+    for (const auto& p : lab.cameras.problems_of(device)) say(row, "camera of " + device + ": " + p);
     if (e.pattern && !e.pattern->empty() && lab.patterns.find(*e.pattern) == nullptr) {
       std::string why = "unknown pattern " + *e.pattern + " (the lab has: " + joined(lab.patterns.names()) + ")";
       for (const auto& p : lab.patterns.problems()) {

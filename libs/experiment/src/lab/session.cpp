@@ -9,6 +9,7 @@
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/laser/laser_system.hpp"
+#include "pychron/laser/tray_camera.hpp"
 #include "pychron/scripting/script_host.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
@@ -20,7 +21,7 @@ namespace fs = std::filesystem;
 
 // Declaration order is construction order; members refer only to earlier ones.
 struct LabSession::Services {
-  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data)
+  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, std::vector<std::string>& problems)
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         valves(hw.line, "measurement"),
@@ -46,8 +47,20 @@ struct LabSession::Services {
     for (const auto& [name, driver] : hw.line.config().drivers) {
       auto* device = dynamic_cast<extraction::IExtractionDevice*>(hw.line.device(name));
       if (device == nullptr) continue;
-      lasers.emplace(name, std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations,
-                                                                  &lab.patterns));
+      auto system = std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations, &lab.patterns);
+      // Where holes were found before, and (if the lab gives the device a
+      // camera) the means to find them again.
+      system->set_corrections(*lab.corrections);
+      if (const laser::CameraConfig* camera = lab.cameras.find(name)) {
+        auto frames = laser::make_frame_source(*camera, lab.paths.dir, system->sight(), hw.line.clock());
+        if (frames) {
+          system->attach_camera(*camera, std::move(*frames), hw.line.clock());
+        } else {
+          // Said, and done without: the device still runs, uncentred.
+          problems.push_back(frames.error().what);
+        }
+      }
+      lasers.emplace(name, std::move(system));
     }
     s.devices = [this](std::string_view name) -> extraction::IExtractionDevice* {
       const auto it = lasers.find(name);
@@ -92,7 +105,7 @@ struct LabSession::Services {
 LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions options)
     : lab_(lab), hardware_(hardware), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
-  services_ = std::make_unique<Services>(lab_, hardware_, options_.data);
+  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, problems_);
   notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
