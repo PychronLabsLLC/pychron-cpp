@@ -87,7 +87,7 @@ class RunTest : public ::testing::Test {
   }
 
   RunResult go(RunSpec spec, RunHooks hooks = {}) {
-    AutomatedRun run(std::move(spec), queue_, services(), std::move(hooks), 3);
+    AutomatedRun run(std::move(spec), queue_, services(), std::move(hooks), 3, 7);
     return run.execute(control_);
   }
 
@@ -234,6 +234,7 @@ TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
 
   ASSERT_GE(said.size(), 2u);
   EXPECT_EQ(said[0].run_id, r.uuid);
+  EXPECT_EQ(said[0].row, 7u);  // the queue row the run was made for
   EXPECT_EQ(said[0].text, "hole 3: centred, moved 0.150, -0.100 mm (residual 0.010 mm)");
   EXPECT_EQ(said[0].ts, started + 5s);
   EXPECT_NE(said[1].text.find("pump valve stuck"), std::string::npos);

@@ -283,10 +283,11 @@ TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
   if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run laser_extract.py";
   std::mutex mutex;
   std::map<std::string, std::vector<std::string>> said;  // by run id
-  std::map<std::string, std::size_t> rows;
+  std::map<std::string, std::size_t> rows, note_rows;
   subs_.push_back(line_->bus().subscribe<run::RunNote>([&](const run::RunNote& e) {
     std::lock_guard lock(mutex);
     said[e.run_id].push_back(e.text);
+    note_rows[e.run_id] = e.row;
   }));
   subs_.push_back(line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted& e) {
     std::lock_guard lock(mutex);
@@ -307,6 +308,7 @@ TEST_F(LabSessionTest, ALaserRunSaysWhetherItsHoleWasCentred) {
     {
       std::lock_guard lock(mutex);
       EXPECT_EQ(rows[r.run_id], i);
+      EXPECT_EQ(note_rows[r.run_id], i);
       EXPECT_EQ(said[r.run_id], r.messages);
     }
     const fs::path file = dir_ / "data" / "records" / r.identifier / (r.identifier + "-" + std::to_string(r.aliquot) + ".json");

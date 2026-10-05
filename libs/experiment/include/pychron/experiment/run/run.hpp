@@ -133,6 +133,7 @@ class RunControl {
 // RunResult::messages and the record's "note" events.
 struct RunNote {
   std::string run_id;
+  std::size_t row = 0;  // the run's row in its queue (Run's `row`)
   std::string text;
   TimePoint ts{};
 };
@@ -153,7 +154,10 @@ struct RunResult {
 
 class Run {
  public:
-  Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks hooks = {}, int run_index = 0);
+  // `row` is the run's row in its queue; it only labels what the run
+  // publishes (RunNote).
+  Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks hooks = {}, int run_index = 0,
+      std::size_t row = 0);
 
   // Runs every phase on the calling thread.
   RunResult execute(RunControl& control);
@@ -183,6 +187,7 @@ class Run {
   extraction::IExtractionDevice* device_ = nullptr;  // this run's; bound in prepare()
   RunHooks hooks_;
   int run_index_;
+  std::size_t row_;
   std::string run_id_;
   RunStateMachine sm_;
   RunResult result_;

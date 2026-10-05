@@ -90,12 +90,13 @@ void RunControl::attach(measurement::MeasurementEngine* engine) {
 
 // ---- Run -------------------------------------------------------------------------
 
-Run::Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks hooks, int run_index)
+Run::Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks hooks, int run_index, std::size_t row)
     : spec_(std::move(spec)),
       queue_(queue),
       s_(std::move(services)),
       hooks_(std::move(hooks)),
       run_index_(run_index),
+      row_(row),
       run_id_(s_.make_uuid ? s_.make_uuid() : random_uuid()),
       sm_(run_id_, s_.clock ? *s_.clock : default_clock(), s_.bus) {
   if (s_.clock == nullptr) s_.clock = &default_clock();
@@ -292,7 +293,7 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
 }
 
 void Run::note(std::string message) {
-  RunNote said{run_id_, std::move(message), s_.clock->now()};
+  RunNote said{run_id_, row_, std::move(message), s_.clock->now()};
   {
     std::lock_guard lock(messages_mutex_);
     result_.messages.push_back(said.text);

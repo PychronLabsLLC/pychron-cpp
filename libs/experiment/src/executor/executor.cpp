@@ -249,7 +249,7 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
     pump_started_ = clock_.now();
   };
 
-  s->run = std::make_unique<run::Run>(s->spec, s->header, ctx_.services, std::move(hooks), index);
+  s->run = std::make_unique<run::Run>(s->spec, s->header, ctx_.services, std::move(hooks), index, row);
   {
     std::lock_guard lock(mutex_);
     active_.push_back(s);
