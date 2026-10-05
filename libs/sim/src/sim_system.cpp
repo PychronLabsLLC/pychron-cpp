@@ -7,6 +7,7 @@
 
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
+#include "pychron/devices/varian_xgs600.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/devices/types.hpp"
@@ -283,6 +284,32 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       return p ? std::optional<double>(*p) : std::nullopt;
     };
     return maxigauge_sim_hook(std::move(model));
+  }
+
+  if (driver.kind == "varian_xgs600") {
+    // Gauge channel n is labels[n-1] (varian_xgs600.hpp).
+    std::vector<std::string> labels;
+    if (const auto* array = driver.options["labels"].as_array())
+      for (const auto& l : *array) labels.push_back(l.value_or(std::string{}));
+    std::map<std::string, std::string> by_label;
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(labels.size())) continue;
+        by_label[labels[static_cast<std::size_t>(g.channel - 1)]] = g.name;
+        add_volume_locked(g.name, 1.0);
+      }
+    }
+    Xgs600SimModel model;
+    model.address = driver.options["address"].value_or(std::string("00"));
+    model.pressure = [this, by_label = std::move(by_label)](const std::string& label) -> std::optional<double> {
+      auto it = by_label.find(label);
+      if (it == by_label.end()) return std::nullopt;
+      auto p = gauge_reading(it->second);
+      return p ? std::optional<double>(*p) : std::nullopt;
+    };
+    return xgs600_sim_hook(std::move(model));
   }
 
   if (driver.kind == "gp_microion") {

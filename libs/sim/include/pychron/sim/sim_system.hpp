@@ -116,6 +116,8 @@ class SimSystem {
   //                       configured on that channel (added as an isolated
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
+  //   varian_xgs600       label n of the driver's `labels` reads the volume
+  //                       of the gauge on channel n, as for maxigauge.
   //   chromium            a ChromiumSim on this system's clock: the laser
   //                       PC, with its stage, output and interlocks.
   //   anything else       a silent wire (the driver sees timeouts).

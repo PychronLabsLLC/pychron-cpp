@@ -9,6 +9,7 @@
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/agilent_switch.hpp"
+#include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -301,6 +302,38 @@ address = "A"
   auto unknown = valves->open(ValveAddress{"Z"});  // felix does not serve Z
   ASSERT_FALSE(unknown);
   EXPECT_EQ(unknown.error().kind, ErrorKind::Config);
+}
+
+TEST(SimSystem, AnXgs600ReadsEachGaugeByItsLabel) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.xgs]
+kind = "sim"
+[drivers.xgs]
+kind = "varian_xgs600"
+transport = "xgs"
+labels = ["CNV1", "IMG1"]
+[[gauges]]
+name = "IG1"
+driver = "xgs"
+channel = 2
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  auto topo = three_volumes();
+  topo.volumes.push_back({"IG1", 1.0});
+  SimSystem sim(clock, topo, quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("xgs"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("xgs"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto* gauge = capability<IChannelPressureGauge>(**made);
+  auto p = gauge->read_pressure(2);
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_NEAR(*p, *sim.gauge_reading("IG1"), *p * 1e-3);
+  EXPECT_FALSE(gauge->read_pressure(1));  // CNV1 has no gauge in the line: off
 }
 
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {

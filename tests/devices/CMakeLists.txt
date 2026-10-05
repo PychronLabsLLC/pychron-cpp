@@ -18,6 +18,7 @@ add_executable(pychron_devices_tests
   test_valve_conformance.cpp
   test_agilent_switch.cpp
   test_pychron_valves.cpp
+  test_varian_xgs600.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
