@@ -132,6 +132,9 @@ std::string to_toml(const Pattern& pattern);
 // path, a leading dot) or a pattern that does not parse back: one that could
 // not run is not saved. Written beside the target and renamed into place.
 Result<std::filesystem::path> save_pattern(const std::filesystem::path& dir, const Pattern& pattern);
+// What save_pattern would refuse, without writing anything: for a form that
+// says what is wrong as it is filled in.
+Result<void> check_pattern(const Pattern& pattern);
 
 // One editable key of a kind of pattern, for whatever shows a form of them:
 // velocity, iterations (not a dragonfly), then the kind's own, in the order

@@ -491,7 +491,7 @@ std::string to_toml(const Pattern& pattern) {
   return out;
 }
 
-Result<fs::path> save_pattern(const fs::path& dir, const Pattern& pattern) {
+Result<void> check_pattern(const Pattern& pattern) {
   const std::string& name = pattern.name;
   if (name.empty()) return fail(ErrorKind::Config, "a pattern needs a name");
   // A name that is one plain part of a file name; a leading dot would be a
@@ -500,10 +500,16 @@ Result<fs::path> save_pattern(const fs::path& dir, const Pattern& pattern) {
       name.find('\0') != std::string::npos) {
     return fail(ErrorKind::Config, "'" + name + "' cannot be a pattern's name (it names the file)");
   }
-  const std::string text = to_toml(pattern);
   // What could not run is not saved: the same check a file gets when read.
-  auto back = Pattern::parse(text, name);
+  auto back = Pattern::parse(to_toml(pattern), name);
   if (!back) return fail(back.error());
+  return {};
+}
+
+Result<fs::path> save_pattern(const fs::path& dir, const Pattern& pattern) {
+  if (auto ok = check_pattern(pattern); !ok) return fail(ok.error());
+  const std::string& name = pattern.name;
+  const std::string text = to_toml(pattern);
   const fs::path path = dir / (name + ".toml");
   const auto cannot = [&path](const std::string& why) {
     return fail(ErrorKind::Io, "cannot write " + path.string() + (why.empty() ? "" : ": " + why));

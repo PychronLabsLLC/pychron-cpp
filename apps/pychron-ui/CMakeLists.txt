@@ -65,6 +65,7 @@ add_library(pychron_ui_lib STATIC
   src/tray_view.cpp
   src/camera_view.cpp
   src/laser_window.cpp
+  src/pattern_maker_window.cpp
   src/command_line.hpp
   src/core_bridge.hpp
   src/canvas_items.hpp
@@ -120,6 +121,7 @@ add_library(pychron_ui_lib STATIC
   src/tray_view.hpp
   src/camera_view.hpp
   src/laser_window.hpp
+  src/pattern_maker_window.hpp
 )
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
