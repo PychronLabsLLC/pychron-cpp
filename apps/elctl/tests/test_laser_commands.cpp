@@ -229,7 +229,11 @@ TEST_F(LaserCmd, GotoUncalibratedIsRefused) {
 TEST_F(LaserCmd, GotoGivesUpAfterItsTimeout) {
   const auto o = laser({"goto", "co2", "example-9", "5", "--timeout", "0.3"}, true);  // 25 mm away at 5 mm/s
   EXPECT_EQ(o.code, 1);
-  EXPECT_NE(o.err.find("still moving"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("still moving after 0.3 s"), std::string::npos) << o.err;
+  // and it does not leave the stage going: it is stopped part way
+  EXPECT_NE(o.err.find("the stage was stopped at "), std::string::npos) << o.err;
+  EXPECT_EQ(o.err.find("may still be moving"), std::string::npos) << o.err;
+  EXPECT_EQ(o.err.find("stopped at 25.000, 25.000"), std::string::npos) << o.err;
 }
 
 TEST_F(LaserCmd, UnknownNamesSayWhatIsKnown) {

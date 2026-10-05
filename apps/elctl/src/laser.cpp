@@ -233,11 +233,10 @@ class Laser {
       auto moving = system.moving();
       if (!moving) return failed(moving.error().what);
       if (!*moving) break;
-      // There is no stage stop in the device interface: the stage goes on to
-      // its target, and this only stops waiting for it.
-      if (interrupt_count().load() != interrupts) return failed("interrupted; the stage may still be moving");
-      if (std::chrono::steady_clock::now() - started > limit) {
-        return failed("still moving after " + num(limit.count(), 1) + " s; the stage may still be moving");
+      const bool interrupted = interrupt_count().load() != interrupts;
+      if (interrupted || std::chrono::steady_clock::now() - started > limit) {
+        return failed((interrupted ? "interrupted" : "still moving after " + num(limit.count(), 1) + " s") + "; " +
+                      stopped(system));
       }
       std::this_thread::sleep_for(step);
     }
@@ -264,6 +263,14 @@ class Laser {
   int failed(const std::string& what) {
     io_.err << "error: " << what << '\n';
     return kFailed;
+  }
+
+  // Stops the stage and says where; says so when it could not be stopped.
+  std::string stopped(extraction::IStage& stage) {
+    if (auto r = stage.stop(); !r) return "the stage could not be stopped (" + r.error().what + ") and may still be moving";
+    auto at = stage.position();
+    if (!at) return "the stage was stopped";
+    return "the stage was stopped at " + num(at->x) + ", " + num(at->y);
   }
 
   // What the stored calibration cannot rule out (laser::cautions).

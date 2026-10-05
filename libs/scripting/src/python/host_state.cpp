@@ -361,13 +361,20 @@ T* feature(HostState& st, T* (extraction::IExtractionDevice::*get)(), Capability
 }
 }  // namespace
 
+// What a cancelled wait on the stage does: stop it where it is. The beam may
+// be on, and a stage that goes on to its target heats whatever it passes. A
+// stage that cannot stop, or fails to, does not keep the script from ending.
+std::function<void()> HostState::stop_stage(extraction::IStage* stage) {
+  return [stage] { (void)nogil([&] { return stage->stop(); }); };
+}
+
 void HostState::move_to_position(const std::string& position, bool autocenter, bool block) {
   if (estimating()) return;
   guard();
   check_requested("move_to_position");
   auto* stage = feature(*this, &extraction::IExtractionDevice::stage, Capability::Stage);
   unwrap(nogil([&] { return stage->move_to_position(position, autocenter); }));
-  if (block) wait_while([&] { return stage->moving(); }, "move_to_position");
+  if (block) wait_while([&] { return stage->moving(); }, "move_to_position", stop_stage(stage));
 }
 
 void HostState::set_axis(const std::string& axis, double value, bool block) {
@@ -378,7 +385,7 @@ void HostState::set_axis(const std::string& axis, double value, bool block) {
   auto a = axis == "x" ? extraction::IStage::Axis::X
                        : axis == "y" ? extraction::IStage::Axis::Y : extraction::IStage::Axis::Z;
   unwrap(nogil([&] { return stage->set_axis(a, value); }));
-  if (block) wait_while([&] { return stage->moving(); }, "set_" + axis);
+  if (block) wait_while([&] { return stage->moving(); }, "set_" + axis, stop_stage(stage));
 }
 
 void HostState::set_xy(double x, double y, bool block) {
@@ -387,7 +394,7 @@ void HostState::set_xy(double x, double y, bool block) {
   check_requested("set_xy");
   auto* stage = feature(*this, &extraction::IExtractionDevice::stage, Capability::Stage);
   unwrap(nogil([&] { return stage->set_xy(x, y); }));
-  if (block) wait_while([&] { return stage->moving(); }, "set_xy");
+  if (block) wait_while([&] { return stage->moving(); }, "set_xy", stop_stage(stage));
 }
 
 void HostState::set_tray(const std::string& tray) {

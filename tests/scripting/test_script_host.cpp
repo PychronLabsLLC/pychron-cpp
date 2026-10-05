@@ -357,6 +357,46 @@ TEST_F(ScriptHostTest, CancelNotSwallowedByExceptException) {
   EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
 }
 
+// A script cancelled while it waits for the stage stops the stage: the beam
+// may be on, and a stage that goes on to its target heats what it passes.
+TEST_F(ScriptHostTest, ACancelledMoveStopsTheStage) {
+  for (const char* body : {"move_to_position('2')", "set_xy(1, 2)", "set_x(3)", "set_y(3)", "set_z(3)"}) {
+    CancelToken cancel;
+    rig.laser.stage_stuck = true;
+    rig.laser.stage_stopped = false;
+    rig.log.clear();
+    std::thread canceller([&] {
+      std::this_thread::sleep_for(100ms);
+      cancel.cancel();
+    });
+    auto r = host->run(inline_script(std::string("def main():\n    ") + body + "\n"), rig.env, cancel);
+    canceller.join();
+    ASSERT_FALSE(r) << body;
+    EXPECT_EQ(r.error().kind, ErrorKind::Cancelled) << body;
+    EXPECT_EQ(rig.log.count("stop"), 1u) << body;
+  }
+}
+
+TEST_F(ScriptHostTest, AStageThatCannotStopStillCancels) {
+  rig.laser.stage_stuck = true;
+  rig.laser.stage_can_stop = false;
+  std::thread canceller([&] {
+    std::this_thread::sleep_for(100ms);
+    token.cancel();
+  });
+  auto r = host->run(inline_script("def main():\n    move_to_position('2')\n"), rig.env, token);
+  canceller.join();
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
+}
+
+// A move that arrives is not followed by a stop.
+TEST_F(ScriptHostTest, AMoveThatArrivesIsNotStopped) {
+  auto r = host->run(inline_script("def main():\n    move_to_position('2')\n    set_xy(1, 2)\n"), rig.env, token);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_FALSE(rig.log.contains("stop"));
+}
+
 TEST_F(ScriptHostTest, CancelStopsARunningPattern) {
   rig.laser.pattern_finishes = false;
   std::thread canceller([&] {

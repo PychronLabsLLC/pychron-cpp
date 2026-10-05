@@ -156,6 +156,7 @@ class HostState {
   // Waits `d` on the token; raises on a request. true if woken.
   bool wait_period(Duration d, const std::string& command);
   // Polls `busy` every poll period; on a request calls `stop` then raises.
+  std::function<void()> stop_stage(extraction::IStage* stage);
   void wait_while(const std::function<Result<bool>()>& busy, const std::string& command,
                   const std::function<void()>& stop = {});
   Error convert(py::error_already_set& e);

@@ -32,6 +32,14 @@ struct CallLog {
     auto s = snapshot();
     return std::find(s.begin(), s.end(), c) != s.end();
   }
+  std::size_t count(const std::string& c) {
+    auto s = snapshot();
+    return static_cast<std::size_t>(std::count(s.begin(), s.end(), c));
+  }
+  void clear() {
+    std::lock_guard lock(mutex);
+    calls.clear();
+  }
 };
 
 inline std::string num(double v) {
@@ -133,7 +141,13 @@ class FakeLaser final : public extraction::IExtractionDevice,
   }
   Result<void> set_xy(double x, double y, double = 0) override { return rec("set_xy " + num(x) + " " + num(y)); }
   Result<extraction::StagePosition> position() override { return extraction::StagePosition{}; }
-  Result<bool> moving() override { return false; }
+  // Never arrives while stage_stuck (for cancel tests), until stopped.
+  Result<bool> moving() override { return stage_stuck && !stage_stopped; }
+  Result<void> stop() override {
+    if (!stage_can_stop) return fail(extraction::not_supported("stage stop", "fake"));
+    stage_stopped = true;
+    return rec("stop");
+  }
   Result<void> set_tray(std::string_view t) override { return rec("set_tray " + std::string(t)); }
   std::vector<std::string> positions() const override { return {"1", "2"}; }
 
@@ -151,6 +165,9 @@ class FakeLaser final : public extraction::IExtractionDevice,
 
   std::atomic<bool> pattern_running{false};
   bool pattern_finishes = true;
+  std::atomic<bool> stage_stuck{false};
+  std::atomic<bool> stage_stopped{false};
+  bool stage_can_stop = true;
 
  private:
   Result<void> rec(std::string c) {
