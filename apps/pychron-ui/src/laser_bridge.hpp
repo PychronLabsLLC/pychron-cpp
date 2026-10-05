@@ -52,8 +52,10 @@ struct LaserBridgeDeps {
   std::chrono::milliseconds poll{50};
   std::chrono::milliseconds publish{250};
   // The camera's picture is video: shown this often (25 a second), on a
-  // thread of its own, whatever the commands are doing. What the finder
-  // makes of it is looked for less often and drawn on the frames between.
+  // thread of its own, whatever the commands are doing. Nothing is looked
+  // for in it unless a hole is being centered or a pattern follows the
+  // glow; then what the finder sees is looked for every `find_every` and
+  // drawn on the frames between.
   std::chrono::milliseconds video{40};
   std::chrono::milliseconds find_every{250};
 };

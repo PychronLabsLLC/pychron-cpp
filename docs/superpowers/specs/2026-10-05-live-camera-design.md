@@ -188,3 +188,8 @@ wide, 160 pixels at least) and outside the gate; and the bridge has a video
 thread that shows a picture every 40 ms, looks every 250 ms and draws the
 last sighting on the frames between. A slow repaint drops frames instead of
 queueing them. The window says the rate it shows.
+
+The finder is not run on the video at all unless the device is itself
+looking for something (`LaserSystem::looking()`: a hole being centered, a
+pattern following the glow). The dashed circle of the expected hole size
+and the aim crosshair are always drawn.

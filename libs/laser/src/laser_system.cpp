@@ -315,6 +315,12 @@ Result<CameraView> LaserSystem::frame_now(bool fresh) {
   return seen;
 }
 
+bool LaserSystem::looking() {
+  Gate gate(gate_);
+  if (centering_ != nullptr) return true;
+  return runner_ != nullptr && driver_.pattern_runner() == nullptr && runner_->following();
+}
+
 Result<CameraView> LaserSystem::picture() {
   Gate gate(gate_);
   return frame_now(false);

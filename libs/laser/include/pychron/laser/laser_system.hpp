@@ -167,6 +167,10 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // The finder looks about the aim point only (a square a few holes wide),
   // unless `any_size`, and outside the gate: a big frame holds nothing up.
   Result<CameraView> view(bool fresh = false, bool any_size = false);
+  // Whether the device is looking for something now: a hole being centered,
+  // or a pattern following the glow. Only then is there anything of the
+  // finder's to draw on the picture.
+  bool looking();
   // The picture alone, with nothing looked for in it: cheap enough to show
   // as video. Its target and targets are empty.
   Result<CameraView> picture();

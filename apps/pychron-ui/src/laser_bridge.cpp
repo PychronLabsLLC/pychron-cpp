@@ -98,7 +98,13 @@ void LaserBridge::show() {
   int shown_age_s = -1;
   for (;;) {
     const auto began = std::chrono::steady_clock::now();
-    const bool look = began - found_at >= deps_.find_every;
+    // The finder runs only while the device itself is looking for something.
+    const bool looking = system_.looking();
+    if (!looking) {
+      target.reset();
+      targets.clear();
+    }
+    const bool look = looking && began - found_at >= deps_.find_every;
     auto seen = look ? system_.view() : system_.picture();
     if (seen) {
       failed.clear();

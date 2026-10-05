@@ -166,6 +166,31 @@ TEST_F(LaserWatch, ViewSeesNoTargetOffTheTray) {
   EXPECT_FALSE(seen->target);
 }
 
+// Whether anything is being looked for: only while a hole is being centered
+// or a pattern follows the glow. That is when a window draws what is seen.
+TEST_F(LaserWatch, IsLookingOnlyWhileCenteringOrFollowingTheGlow) {
+  EXPECT_FALSE(system.looking());
+  go("3");
+  EXPECT_FALSE(system.looking()) << "a plain move looks for nothing";
+  ASSERT_TRUE(system.move_to_position("3", true));
+  EXPECT_TRUE(system.looking());
+  ASSERT_TRUE(drive());
+  EXPECT_FALSE(system.looking());
+  // a pattern with a path of its own does not look
+  ASSERT_TRUE(runner().execute_pattern("square"));
+  EXPECT_FALSE(system.looking());
+  finish_pattern();
+  // one that follows the glow does
+  ASSERT_TRUE(system.enable());
+  ASSERT_TRUE(system.extract(20, ExtractUnits::Percent));
+  ASSERT_TRUE(beam().fire_laser());
+  ASSERT_TRUE(runner().execute_pattern_for("track_brief", 0));
+  EXPECT_TRUE(system.looking());
+  finish_pattern();
+  EXPECT_FALSE(system.looking());
+  ASSERT_TRUE(system.end_extract());
+}
+
 // The picture alone, for showing as video: no finder is run on it.
 TEST_F(LaserWatch, APictureIsTheFrameWithoutLookingForAnything) {
   go("3");

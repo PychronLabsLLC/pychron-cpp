@@ -321,7 +321,8 @@ class LaserBridgeTest : public QObject {
   }
 
   // The picture is video: a dozen frames a second at least, whatever else
-  // the bridge is doing, and with what the finder last saw drawn on them.
+  // the bridge is doing. The finder is not run on it: that is for a
+  // centering or a dragonfly, while one runs.
   void the_picture_is_shown_as_video() {
     bridge_->set_tray(QStringLiteral("example-9"));
     bridge_->go_to(QStringLiteral("5"), false);
@@ -343,10 +344,12 @@ class LaserBridgeTest : public QObject {
     QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second").arg(per_second)));
     QVERIFY(in_order);
     test::settle(*bridge_);
+    // nothing is looked for in it: the stage sat on a hole, and no frame says so
+    QCOMPARE(with_target, 0);
     bridge_->go_to(QStringLiteral("5"), false);
     test::settle(*bridge_);
-    with_target = 0;
-    QTRY_VERIFY(with_target >= 5);  // back on a hole: its ring rides on the video
+    QTest::qWait(300);
+    QCOMPARE(with_target, 0);
   }
 
   void publishes_snapshots_and_views() {

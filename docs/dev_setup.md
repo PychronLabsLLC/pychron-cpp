@@ -685,9 +685,10 @@ pychron-ui --examples --sim --laser    # after setting source and use as above
 The picture is video: up to 25 frames a second (the camera's own rate
 allowing), on a thread of the window's own, so a command that is waiting on
 the laser does not freeze it. Under the picture the window says how many
-frames a second it is showing and the camera's rate. What the finder makes
-of the picture is looked for four times a second, about the aim point only,
-and drawn on the frames between.
+frames a second it is showing and the camera's rate. Nothing is looked for
+in the picture unless a hole is being centered or a dragonfly is following
+the glow; then what the finder sees is drawn on it (looked for four times a
+second, about the aim point only).
 
 A live camera is read on a thread of its own. If it stops, the laser window
 shows its last picture greyed, how old it is and why, and goes on trying to

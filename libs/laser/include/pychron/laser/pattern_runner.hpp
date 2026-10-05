@@ -86,6 +86,10 @@ class PatternRunner final : public extraction::IPatternRunner {
   bool needs_polling() const override { return true; }
   std::string last_note() override;
 
+  // A pattern that follows the glow is running. As the other calls: one
+  // thread at a time.
+  bool following() const noexcept { return follow_ != nullptr; }
+
   // "<name>, point <i> of <n>" while one runs; empty when idle.
   std::string progress() const;
 
