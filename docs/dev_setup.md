@@ -393,10 +393,78 @@ holes of `tray_maps/example-9.txt` with `scripts/extraction/laser_extract.py`.
 elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/experiment.laser.toml --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
-Not done yet: patterns, autocenter and per-hole corrections, the laser window
-and on-screen calibration, watts and temperature. `elctl laser goto` cannot
-stop a stage that is moving (Ctrl-C only stops waiting for it). A hole move
+`elctl laser goto` stops the stage on Ctrl-C and when `--timeout` runs out. A
+script cancelled while it waits for a move stops the stage too. A hole move
 does not change z.
+
+### Laser patterns
+
+A pattern is a path the beam is moved along while it heats. A run names one
+(`pattern = "hexagon"` in its extraction) and its script runs it with
+`execute_pattern()`; `configs/examples/experiment.laser.toml` does so on its
+second run. Patterns are files in the lab, `patterns/<name>.toml`:
+
+```toml
+kind = "polygon"
+velocity = 1.0      # mm/s
+iterations = 1      # the whole pattern, repeated
+radius = 1.0        # the kind's own keys
+nsides = 6
+rotation = 0
+```
+
+Lengths are mm and angles degrees, in the stage's axes, about wherever the
+stage is when the pattern starts; it returns there at the end. The kinds and
+their keys (names, geometry and defaults are legacy Pychron's):
+
+| kind | keys |
+|---|---|
+| `polygon` | `radius`, `nsides`, `rotation` |
+| `linear` | `length`, `rotation`, `npasses` |
+| `circular_contour` | `radius`, `nsteps`, `percent_change` |
+| `line_spiral` | `radius`, `nsteps`, `percent_change`, `step_scalar` |
+| `square_spiral` | `radius`, `nsteps`, `percent_change` |
+| `random` | `walk_x`, `walk_y`, `npoints`, `seed` (none: a new walk each run) |
+| `rubberband` | `length`, `offset`, `rotation` |
+| `raster` | `length`, `offset`, `rotation`, `dx`, `single_pass` |
+| `trough` | `length`, `width`, `rotation`, `use_x` |
+
+```bash
+elctl laser patterns --lab configs/examples
+```
+
+lists them with their points, path length and time. To see where the beam
+would go, `--dry-run` prints a pattern's points, and without it the pattern is
+run from where the stage is, with the laser not fired:
+
+```bash
+elctl -c extraction_line.toml laser pattern co2 hexagon --dry-run
+```
+
+A queue is not started if a run names a pattern the lab lacks or whose file
+does not load. A pattern is not checked against the stage's travel
+beforehand: a point outside it ends the pattern there (the error names the
+point) and the run's ending switches the laser off. Stopping a pattern stops
+the stage where it is.
+
+Legacy patterns are Python pickles (`setupfiles/patterns/*.lp`). Export them
+once per lab; nothing in a pickle is run:
+
+```bash
+python3 tools/export_patterns.py /path/to/setupfiles/patterns /path/to/lab/patterns
+```
+
+It says what it could not carry over: arc, seek and dragonfly patterns, z and
+power series, a spiral's inward direction.
+
+Limits: the stage's arrival at each point is checked before the next is sent,
+which pauses the beam for about 0.15 s at every point, so a pattern of
+hundreds of points is slow and heats its vertices more. The speed is never
+above the driver's `move_speed`.
+
+Not done yet: autocenter and per-hole corrections, seek and dragonfly, the
+laser window, a pattern maker and on-screen calibration, watts and
+temperature.
 
 ## 6. Set up an install
 

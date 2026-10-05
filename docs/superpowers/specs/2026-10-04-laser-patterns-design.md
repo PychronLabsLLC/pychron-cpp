@@ -1,7 +1,7 @@
 # Laser system design, part 2b: patterns
 
 Date: 2026-10-04
-Status: Design, approved in conversation; not implemented
+Status: Implemented (section 13 lists what was decided differently). Not run against a real Chromium.
 Owner: Jake Ross
 Scope: sub-project 2 of the laser program, second of three parts.
 Builds on: 2026-10-04-laser-system-design.md (2a: `LaserSystem`, trays, calibration),
@@ -196,3 +196,26 @@ them.
 Seek and dragonfly (2c); arc; z and power series; a pattern maker (sub-project
 3); patterns in the tray's frame; a check of the pattern against stage travel
 before it starts.
+
+## 13. As built
+
+- **The first point is sent by `execute_pattern`**, so a pattern whose first
+  point is outside travel fails at the call rather than at the first poll.
+- **A raster whose `dx` is wider than its box is refused** (legacy drew one
+  diagonal). Lengths are capped at 1000 mm and `percent_change` at 100.
+- **Raster step count** is computed directly (an even count of the steps asked
+  for, plus one) instead of legacy's second floating-point division, which
+  rounds either way at exact multiples.
+- **`stop_pattern` on a stage that cannot stop succeeds**: the pattern is
+  over and the move in progress finishes.
+- **The run puts `pattern` in its script's context** (empty when none), so a
+  script can test it; it was missing.
+- **`elctl laser patterns` needs no line config.** `pattern`'s default
+  timeout is twice the path time plus 60 s.
+- **The export tool also reads old traits pickles** (`traits.traits.__newobj__`),
+  which three of NMGRL's co2 patterns use, and skips a pattern whose legacy
+  values the reader would refuse (a `LinearPattern` left at its default
+  length of 0) rather than writing a file that will not load. On the co2
+  folder: 10 exported, the two dragonfly patterns and seek skipped.
+- The stage conformance suite gained "a move at a speed settles" and "stop
+  stops or says it cannot".

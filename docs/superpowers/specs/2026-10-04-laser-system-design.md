@@ -278,9 +278,9 @@ positions (a run with several holes passes the first to its script, as now).
 - **An unknown tray is one queue-level diagnostic** (`queue.tray`), not a
   per-run one, and is reported whenever the lab has extraction devices, even
   if no run names a hole: the run's `set_tray` would fail every run.
-- **`elctl laser goto` cannot stop the stage.** `IStage` has no stop and the
-  Chromium driver exposes none. Ctrl-C and `--timeout` stop the waiting and
-  say the stage may still be moving.
+- **`elctl laser goto` could not stop the stage** when this part was built
+  (`IStage` had no stop). Part 2b added `IStage::stop()`: Ctrl-C and
+  `--timeout` now stop it.
 - **`point` against an edited map starts again**: the earlier points belong
   to another version of the map and are dropped with a warning.
 - **A poor fit is saved with a warning** when its rms is more than the hole
