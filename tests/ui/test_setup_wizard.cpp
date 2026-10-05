@@ -313,11 +313,14 @@ class TestSetupWizard : public QObject {
     QVERIFY2(w.ready_error()->isHidden(), qPrintable(w.ready_error()->text()));
     const QString summary = w.summary()->toPlainText();
     QVERIFY2(summary.contains(QStringLiteral("query_state not carried over")), qPrintable(summary));
-    QVERIFY2(summary.contains(QStringLiteral("QtegraGPActuator")), qPrintable(summary));
+    // The actuator now converts (qtegra_valves); its notes still show first.
+    QVERIFY2(summary.contains(QStringLiteral("Qtegra takes one client")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("written as udp")), qPrintable(summary));
     QVERIFY(walk_to(w, SetupWizard::kDone));
     std::ifstream in(dir("helix-legacy") / "extraction_line.toml");
     const std::string line((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     QVERIFY(line.find("address = \"Valve 1_2 Set\"") != std::string::npos);
+    QVERIFY(line.find("kind = \"qtegra_valves\"") != std::string::npos);
     QVERIFY(fs::exists(dir("helix-legacy") / "canvas.toml"));
     QVERIFY(!setup::any_fail(w.checks()));
   }
