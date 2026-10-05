@@ -97,6 +97,15 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
   Never edit an applied migration; add `NNNN_<name>.sql`.
+- The publication data report (`libs/processing` `report.hpp`, Schaen et al.
+  2021) is Qt-free and reads only the `Analysis` model: metadata it needs
+  (sample location and lithology, the flux monitor, the reactor) is carried
+  by `Analysis::sample_info`, `Analysis::monitor` and
+  `ReductionContext::reactor`, filled by the store source. A column added to
+  a table gets a row in `tests/processing/test_report.cpp`; the CSV must stay
+  RFC 4180 and every row the width of its header. `elctl export` is split
+  into `export.cpp` / `export_stub.cpp` like `import`. User guide:
+  `docs/export.md`.
 - `libs/entry` (sample and package entry) builds only with persistence, like
   `libs/ingest`. Entry writes catalog rows only through
   `IStore::apply_catalog_edits` (field-value compare-and-swap, one

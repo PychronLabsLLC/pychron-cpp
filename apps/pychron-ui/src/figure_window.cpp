@@ -1,6 +1,7 @@
 #include "figure_window.hpp"
 
 #include <algorithm>
+#include <filesystem>
 
 #include <QComboBox>
 #include <QDockWidget>
@@ -19,6 +20,7 @@
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "pychron/processing/quantity.hpp"
+#include "pychron/processing/report.hpp"
 #include "scene_view.hpp"
 
 namespace pychron::ui {
@@ -97,6 +99,12 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
     const QString path = QFileDialog::getSaveFileName(this, tr("Export figure"), QString(), tr("PDF (*.pdf);;PNG (*.png)"));
     if (!path.isEmpty() && !export_figure(path)) QMessageBox::warning(this, tr("Export"), tr("Could not write %1").arg(path));
   });
+  auto* table = tools->addAction(tr("Export table..."), this, [this] {
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export data report"), QStringLiteral("report.csv"),
+                                                      tr("CSV report (*.csv);;JSON report (*.json)"));
+    if (!path.isEmpty() && !export_report(path)) QMessageBox::warning(this, tr("Export"), tr("Could not write %1").arg(path));
+  });
+  table->setToolTip(tr("Write these analyses as a 40Ar/39Ar data report after Schaen et al. (2021)"));
 
   // Options dock: presets + generated editor.
   auto* dock = new QDockWidget(tr("Options"), this);
@@ -271,6 +279,31 @@ void FigureWindow::select_preset(const QString& name) { presets_->select(name); 
 bool FigureWindow::export_figure(const QString& path) {
   if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) return view_->save_pdf(path);
   return view_->save_png(path);
+}
+
+bool FigureWindow::export_report(const QString& path) {
+  if (!dataset_) return false;
+  pp::ReportOptions options;
+  if (kind_ == "spectrum") {
+    namespace r = pychron::reduction;
+    const pp::Options& o = pipeline_.find(kFigure)->options;
+    options.plateau.method = o.get_string("plateau.method") == "mahon" ? r::PlateauMethod::Mahon : r::PlateauMethod::Fleck;
+    options.plateau.nsteps = static_cast<int>(o.get_int("plateau.nsteps"));
+    options.plateau.gas_fraction = o.get_double("plateau.gas_fraction");
+    options.plateau.overlap_sigma = o.get_double("plateau.overlap_sigma");
+    options.plateau_weighting = o.get_string("plateau.weighting") == "volume_fraction" ? r::PlateauWeighting::VolumeFraction
+                                                                                         : r::PlateauWeighting::InverseVariance;
+    options.mean_error = r::parse_mean_error_kind(o.get_string("plateau.error_kind")).value_or(r::MeanErrorKind::Msem);
+    options.integrated_includes_excluded = o.get_bool("integrated.include_excluded");
+  }
+  const auto report = pp::make_report(*dataset_, options);
+  auto saved = pp::save_report(report, std::filesystem::path(path.toStdString()));
+  if (!saved) {
+    status_->setText(tr("Export failed: %1").arg(qs(saved.error().what)));
+    return false;
+  }
+  status_->setText(tr("Wrote %1").arg(path));
+  return true;
 }
 
 }  // namespace pychron::ui

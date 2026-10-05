@@ -8,7 +8,11 @@
 //   Ctrl+N / Ctrl+B          select the next / previous row and recall it
 //   Plot > kind              figure_requested(kind, selected uuids or all shown);
 //                            kind: time_series, ideogram, spectrum, inverse_isochron
+//   Export                   export_requested(path, selected uuids or all shown): one
+//                            click asks for a file name and the workspace writes the
+//                            Schaen et al. (2021) data report there (.csv or .json)
 
+#include <functional>
 #include <map>
 #include <optional>
 
@@ -53,7 +57,12 @@ class DataBrowserWindow : public QWidget {
   QListWidget* facet_list(processing::Facet f) const;
   QPushButton* load_more_button() const noexcept { return more_; }
   QToolButton* plot_button() const noexcept { return plot_; }
+  QPushButton* export_button() const noexcept { return export_; }
   QLabel* status() const noexcept { return status_; }
+  // A line for the status label (the workspace reports an export here).
+  void show_message(const QString& text);
+  // The file name Export asks for; tests replace the dialog. Empty: cancelled.
+  std::function<QString(const QString& suggested)> ask_export_path;
   QStringList selected_uuids() const;
   void select_rows(const QList<int>& rows);
   void recall_step(int delta);  // Ctrl+N (+1) / Ctrl+B (-1)
@@ -61,6 +70,7 @@ class DataBrowserWindow : public QWidget {
  signals:
   void recall_requested(const QString& uuid);
   void figure_requested(const QString& kind, const QStringList& uuids);
+  void export_requested(const QString& path, const QStringList& uuids);
 
  private:
   void reload();     // first page for the current query
@@ -68,6 +78,7 @@ class DataBrowserWindow : public QWidget {
   void update_facets();
   void recall_current();
   void request_figure(const QString& kind);
+  void request_export();
 
   processing::IAnalysisSource& source_;
   AnalysisTableModel* model_;
@@ -78,6 +89,7 @@ class DataBrowserWindow : public QWidget {
   std::map<processing::Facet, QListWidget*> facets_;
   QPushButton* more_;
   QToolButton* plot_;
+  QPushButton* export_;
   QLabel* status_;
   int page_size_ = Preferences::kDefaultPageSize;
   std::optional<processing::BrowseCursor> next_;

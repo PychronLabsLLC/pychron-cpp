@@ -4,6 +4,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -128,10 +129,18 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
     connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
   }
   plot_->setMenu(plot_menu);
+  export_ = new QPushButton(tr("Export"));
+  export_->setToolTip(tr("Write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
+                         "Schaen et al. (2021): CSV or JSON"));
+  ask_export_path = [this](const QString& suggested) {
+    return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
+                                        tr("CSV report (*.csv);;JSON report (*.json)"));
+  };
   bar->addWidget(status_, 1);
   bar->addWidget(more_);
   bar->addWidget(recall);
   bar->addWidget(plot_);
+  bar->addWidget(export_);
   rl->addLayout(bar);
 
   auto* split = new QSplitter;
@@ -148,6 +157,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(refresh_button, &QPushButton::clicked, this, &DataBrowserWindow::refresh);
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
   connect(recall, &QPushButton::clicked, this, &DataBrowserWindow::recall_current);
+  connect(export_, &QPushButton::clicked, this, &DataBrowserWindow::request_export);
   connect(table_, &QTableView::activated, this, [this](const QModelIndex&) { recall_current(); });
   auto* next = new QShortcut(key(Shortcut::RecallNext), this);
   auto* prev = new QShortcut(key(Shortcut::RecallPrevious), this);
@@ -299,6 +309,32 @@ void DataBrowserWindow::request_figure(const QString& kind) {
   if (ids.isEmpty())
     for (const auto& r : model_->rows()) ids << qs(r.uuid);
   if (!ids.isEmpty()) emit figure_requested(kind, ids);
+}
+
+void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
+
+void DataBrowserWindow::request_export() {
+  QStringList ids = selected_uuids();
+  if (ids.isEmpty())
+    for (int r = 0; r < model_->rowCount(); ++r) ids << qs(model_->row(r).uuid);
+  if (ids.isEmpty()) {
+    status_->setText(tr("Nothing to export"));
+    return;
+  }
+  // Named after the one sample shown, else "analyses".
+  std::string sample;
+  bool one_sample = true;
+  for (int r = 0; r < model_->rowCount() && one_sample; ++r) {
+    const auto& row = model_->row(r);
+    if (ids.contains(qs(row.uuid))) {
+      if (sample.empty()) sample = row.sample;
+      one_sample = row.sample == sample;
+    }
+  }
+  const QString stem = one_sample && !sample.empty() ? qs(sample) : QStringLiteral("analyses");
+  const QString path = ask_export_path ? ask_export_path(stem + QStringLiteral("-report.csv")) : QString();
+  if (path.isEmpty()) return;
+  emit export_requested(path, ids);
 }
 
 }  // namespace pychron::ui

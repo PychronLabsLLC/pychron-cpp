@@ -78,8 +78,14 @@ class StoreSourceTest : public ::testing::Test {
     const auto pi = *store_->add_principal_investigator(acq_, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt});
     const auto project = *store_->add_project(acq_, {"Fish Canyon", pi, std::nullopt});
     const auto material = *store_->add_material(acq_, {"sanidine", "60-80", std::nullopt});
-    const auto sample =
-        *store_->add_sample(acq_, {.name = "FC-2", .project = project, .material = material});
+    const auto sample = *store_->add_sample(acq_, {.name = "FC-2",
+                                                   .project = project,
+                                                   .material = material,
+                                                   .igsn = "IEFC20001",
+                                                   .lat = 37.75,
+                                                   .lon = -106.9,
+                                                   .elevation = 2850.0,
+                                                   .lithology = "ash-flow tuff"});
     ASSERT_TRUE(store_->add_extract_device(acq_, "co2"));
     position_ = *store_->add_irradiation_position(acq_, {level_, 3, sample, std::nullopt, {}, {}, std::nullopt});
     ASSERT_TRUE(store_->add_identifier(acq_, {"77000", "unknown", std::nullopt, std::nullopt, position_, std::nullopt, std::nullopt}));
@@ -94,6 +100,10 @@ class StoreSourceTest : public ::testing::Test {
     flux.j = 0.001;
     flux.j_err = 1e-6;
     flux.position_jerr = 2e-7;
+    flux.monitor_name = "FC-2";
+    flux.monitor_material = "sanidine";
+    flux.monitor_age = 28.201;
+    flux.monitor_age_err = 0.023;
     publish(ref_object(ps::RefType::FluxPosition, "NM-300/A/3", pos), flux);
     const auto prod = ref_object(ps::RefType::Production, "NM-300/Triga", {});
     publish(prod, ps::ProductionValue{"Triga", std::nullopt, {{"K4039", 0.0008, 5e-5}, {"Ca3937", 0.0007, 1e-5}}});
@@ -295,6 +305,16 @@ TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
   EXPECT_EQ(a.context.production->ca3937.value, 0.0007);
   ASSERT_EQ(a.context.chronology.size(), 1u);
   EXPECT_EQ(a.context.chronology[0].end_utc_s - a.context.chronology[0].start_utc_s, 36000);
+  // Report metadata: the sample's catalog row, the flux monitor, the reactor.
+  EXPECT_EQ(a.sample_info.latitude, 37.75);
+  EXPECT_EQ(a.sample_info.longitude, -106.9);
+  EXPECT_EQ(a.sample_info.elevation, 2850.0);
+  EXPECT_EQ(a.sample_info.lithology, "ash-flow tuff");
+  EXPECT_EQ(a.sample_info.igsn, "IEFC20001");
+  EXPECT_EQ(a.monitor.name, "FC-2");
+  EXPECT_EQ(a.monitor.material, "sanidine");
+  EXPECT_EQ(a.monitor.age, (Value{28.201, 0.023}));
+  EXPECT_EQ(a.context.reactor, "Triga");
 
   const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
   ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
@@ -305,6 +325,8 @@ TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
   ASSERT_TRUE(air) << to_string(air.error());
   EXPECT_FALSE((*air)->context.flux);
   EXPECT_FALSE((*air)->context.production);
+  EXPECT_FALSE((*air)->sample_info.latitude);  // "air" is no catalog sample
+  EXPECT_TRUE((*air)->monitor.name.empty());
 
   // Cached until something changes.
   EXPECT_EQ(source().load(unknown_.str())->get(), loaded->get());

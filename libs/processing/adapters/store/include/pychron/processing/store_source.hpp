@@ -79,6 +79,9 @@ struct StoreAnalysisParts {
   std::map<persistence::Kind, persistence::RevisionPayload> heads;
   std::map<persistence::Kind, persistence::Uuid> head_revisions;
   std::vector<persistence::RefPayload> refs;
+  // The catalog row of the analysis's sample (location, lithology, IGSN for
+  // the report); absent when the store has no sample of that name.
+  std::optional<persistence::SampleRow> sample;
 };
 Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts);
 
