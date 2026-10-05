@@ -11,6 +11,7 @@
 #include "pychron/devices/lakeshore.hpp"
 #include "pychron/devices/modbus_device_sim.hpp"
 #include "pychron/devices/plc2000_heater.hpp"
+#include "pychron/devices/plc2000_valves.hpp"
 #include "pychron/codecs/modbus.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
@@ -325,6 +326,45 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     std::lock_guard lock(mutex_);
     cryostats_.push_back(std::move(unit));
     return hook;
+  }
+
+  if (driver.kind == "plc2000_valves") {
+    // A coil bank: each valve's coil (address + coil_offset) reads and moves
+    // that simulated valve, as does a state_source coil on this PLC; any
+    // other coil is one the PLC does not have.
+    const int offset = static_cast<int>(driver.options["coil_offset"].value_or(std::int64_t{-1}));
+    struct CoilUse {
+      std::string valve;
+      bool inverted = false;
+      bool drives = false;  // the valve's actuator coil, not only its read-back
+    };
+    std::map<std::uint16_t, CoilUse> coils;
+    auto add = [&](const std::string& address, const std::string& valve, bool inverted, bool drives) {
+      auto index = ValveAddress{address}.as_index();
+      if (!index || *index + offset < 0 || *index + offset > 0xFFFF) return;
+      coils.emplace(static_cast<std::uint16_t>(*index + offset), CoilUse{valve, inverted, drives});
+    };
+    auto add_switch = [&](const auto& v) {
+      if (v.actuator == driver.name) add(v.address, v.name, v.inverted, true);
+      if (v.state_source && v.state_source->driver == driver.name)
+        add(v.state_source->address, v.name, v.state_source->inverted, false);
+    };
+    for (const auto& v : system.valves) add_switch(v);
+    for (const auto& sw : system.switches) add_switch(sw);
+    ModbusDeviceSim plc;
+    plc.unit = static_cast<std::uint8_t>(driver.options["unit"].value_or(std::int64_t{1}));
+    plc.read_coil = [this, coils](std::uint16_t a) -> std::optional<bool> {
+      auto it = coils.find(a);
+      if (it == coils.end()) return std::nullopt;
+      return valve_open(it->second.valve) != it->second.inverted;
+    };
+    plc.write_coil = [this, coils](std::uint16_t a, bool on) {
+      auto it = coils.find(a);
+      if (it == coils.end()) return false;
+      if (it->second.drives) set_valve(it->second.valve, on != it->second.inverted);
+      return true;
+    };
+    return plc.hook();
   }
 
   if (driver.kind == "plc2000_heater") {

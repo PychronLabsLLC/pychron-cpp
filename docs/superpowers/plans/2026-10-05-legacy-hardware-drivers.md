@@ -210,6 +210,8 @@ Legacy `agilent/agilent_multifunction.py`: its write path raises TypeError and i
 
 ### Task A7: `plc2000_valves` — AutomationDirect PLC over Modbus (AELAMS)
 
+Done 2026-10-05. `IValveActuator::read_many` (default: one `read` per address) is what `SwitchManager::refresh()` now calls, once per read-back device with its switches in config order; `plc2000_valves` overrides it with one read-coils request per run of consecutive coils (a gap may be a coil the PLC does not have, which would fail the whole request). SimSystem's coil bank answers each valve's coil and any `state_source` coil on the PLC. The importer maps `PLC2000GPActuator` to `plc2000_valves` on a `modbus_tcp` transport (port 502), with a note to confirm the unit id. A PLC transport shared with `plc2000_gauges` or `plc2000_heater` is still simulated for its first driver only.
+
 Protocol (legacy `actuators/plc2000_gp_actuator.py`, `core/modbus.py`):
 
 - Valve address is a 1-based coil number; wire coil = address − 1.
@@ -218,8 +220,8 @@ Protocol (legacy `actuators/plc2000_gp_actuator.py`, `core/modbus.py`):
 - Legacy returned success without checking the write's echo and swallowed `ModbusIOException`; ours checks the function-05 echo (address and value must match) and the manager's read-back runs as for every valve.
 
 - [x] Driver options `unit` (default 1), `coil_offset` (default −1, so the legacy address convention imports unchanged).
-- [ ] Batch state: `refresh()` reads the coil range covering all of the driver's valves in one request when they are contiguous (an `IValveActuator` extension `read_many`, optional, default per-valve). Legacy read one coil per valve.
-- [ ] Sim: a coil bank model behind the device-side codec; writes move the simulated line's valves.
+- [x] Batch state: `refresh()` reads the coil range covering all of the driver's valves in one request when they are contiguous (an `IValveActuator` extension `read_many`, optional, default per-valve). Legacy read one coil per valve.
+- [x] Sim: a coil bank model behind the device-side codec; writes move the simulated line's valves.
 
 ### Not in this plan (actuators)
 

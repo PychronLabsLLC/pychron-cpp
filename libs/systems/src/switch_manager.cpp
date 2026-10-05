@@ -367,10 +367,39 @@ Result<void> SwitchManager::failed(const Entry& e, Error error) {
 
 Result<void> SwitchManager::refresh() {
   std::lock_guard serial(actuation_);
-  std::vector<Error> errors;
+  // Each read-back device answers for all of its switches at once
+  // (read_many: one request per coil run on a PLC), in config order.
+  std::vector<std::pair<IValveActuator*, std::vector<Entry*>>> by_device;
   for (auto& e : entries_) {
     if (!e->actuator || !e->spec.verify) continue;
-    auto read = read_back(*e);
+    IValveActuator* device = e->spec.state_source ? e->reader : e->actuator;
+    auto group = std::find_if(by_device.begin(), by_device.end(), [&](const auto& g) { return g.first == device; });
+    if (group == by_device.end()) group = by_device.insert(by_device.end(), {device, {}});
+    group->second.push_back(e.get());
+  }
+  std::map<const Entry*, Result<ValveState>> reads;
+  for (const auto& [device, group] : by_device) {
+    std::vector<ValveAddress> addresses;
+    for (const Entry* e : group) addresses.push_back(e->spec.state_source ? e->spec.state_source->address : e->spec.address);
+    auto states = device->read_many(addresses);
+    for (std::size_t i = 0; i < group.size(); ++i) {
+      const Entry& e = *group[i];
+      if (i >= states.size()) {
+        reads.emplace(&e, fail(ErrorKind::Protocol, "read-back device answered for fewer switches", e.spec.name));
+        continue;
+      }
+      auto read = std::move(states[i]);
+      const bool flip = e.spec.state_source ? e.spec.state_source->inverted : e.spec.inverted;
+      if (read && flip) read = inverse(*read);
+      reads.emplace(&e, std::move(read));
+    }
+  }
+
+  std::vector<Error> errors;
+  for (auto& e : entries_) {
+    auto it = reads.find(e.get());
+    if (it == reads.end()) continue;
+    auto& read = it->second;
     const auto s = read ? *read : ValveState::Unknown;
     if (!read) errors.push_back(std::move(read).error());
     if (record(*e, s) && bus_) bus_->publish(ValveChanged{e->spec.name, s, clock_->now()});

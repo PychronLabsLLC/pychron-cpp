@@ -395,6 +395,47 @@ channel = 2
   EXPECT_FALSE(gauge->read_pressure(1));  // no gauge there: the PLC has no such register
 }
 
+TEST(SimSystem, APlcsCoilsMoveAndReadItsValves) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.plc]
+kind = "sim"
+[drivers.plc_valves]
+kind = "plc2000_valves"
+transport = "plc"
+[[valves]]
+name = "A"
+actuator = "plc_valves"
+address = "1"
+[[valves]]
+name = "C"
+actuator = "plc_valves"
+address = "2"
+inverted = true
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("plc_valves"), *cfg));
+  ASSERT_TRUE(transport->open());
+  auto made = DriverRegistry::global().create(cfg->drivers.at("plc_valves"), *transport);
+  ASSERT_TRUE(made) << made.error().what;
+  auto* plc = capability<IValveActuator>(**made);
+  ASSERT_TRUE(plc->open({"1"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  EXPECT_EQ(*plc->read({"1"}), ValveState::Open);
+  // C is wired backwards: its coil reads on while the valve is closed.
+  EXPECT_EQ(*plc->read({"2"}), ValveState::Open);
+  ASSERT_TRUE(plc->close({"2"}));
+  EXPECT_TRUE(sim.valve_open("C"));
+  auto both = plc->read_many({{"1"}, {"2"}});
+  EXPECT_EQ(*both[0], ValveState::Open);
+  EXPECT_EQ(*both[1], ValveState::Closed);
+  EXPECT_FALSE(plc->read({"9"}));  // no valve there: the PLC has no such coil
+}
+
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
   ASSERT_TRUE(cfg) << cfg.error().what;

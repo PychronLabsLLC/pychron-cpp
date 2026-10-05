@@ -121,6 +121,8 @@ class SimSystem {
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
   //   lakeshore           a LakeshoreSim on this system's clock.
+  //   plc2000_valves      a coil bank: each valve's coil reads and moves that
+  //                       simulated valve.
   //   plc2000_heater      a Plc2000HeaterSim on this system's clock, its
   //                       driver's coils and registers only (a PLC transport
   //                       shared with other drivers is not simulated).

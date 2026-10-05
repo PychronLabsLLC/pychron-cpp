@@ -7,6 +7,7 @@ add_library(pychron_devices STATIC
   src/lakeshore.cpp
   src/plc2000_gauges.cpp
   src/plc2000_heater.cpp
+  src/plc2000_valves.cpp
   src/varian_xgs600.cpp
   src/pychron_valves.cpp
   src/pychron_valve_server_sim.cpp

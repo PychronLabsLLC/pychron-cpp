@@ -342,6 +342,25 @@ TEST_F(YamlLine, AnotherPychronsValvesAreAddressedByName) {
   EXPECT_TRUE(has_note(*made, "2 valve address(es) replaced by the valve name")) << all_notes(*made);
 }
 
+// AELAMS's PLC: coils over Modbus TCP, 1-based addresses unchanged (plan
+// 2026-10-05, A7).
+TEST_F(YamlLine, APlcActuatorIsModbusTcpWithItsAddressesUnchanged) {
+  t.write("devices/switch_controller.cfg",
+          "[General]\ntype = PLC2000GPActuator\n[Communications]\ntype = ethernet\nhost = 192.168.1.20\n");
+  t.write("extractionline/valves.yaml", "- name: A\n  address: 5\n- name: B\n  address: 6\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "plc2000_valves");
+  const auto& tr = line->transports.at("switch_controller");
+  ASSERT_EQ(tr.kind, config::TransportKind::ModbusTcp);
+  EXPECT_EQ(std::get<config::ModbusTcpParams>(tr.params).tcp.host, "192.168.1.20");
+  EXPECT_EQ(std::get<config::ModbusTcpParams>(tr.params).tcp.port, 502);
+  EXPECT_EQ(valve(*line, "A")->address, "5");  // coil 4 on the wire, as legacy
+  EXPECT_TRUE(has_note(*made, "unit id is written as the default 1")) << all_notes(*made);
+}
+
 // Agilent units become agilent_switch on the legacy port (plan 2026-10-05, A1).
 TEST_F(YamlLine, AnAgilentUnitOnSerialKeepsItsPortAndInvert) {
   // Reston's indirection: switch_controller names the class, whose file has the comms.

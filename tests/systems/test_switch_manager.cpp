@@ -45,6 +45,21 @@ class FakeActuator final : public IValveActuator {
     return it == hw_.end() ? ValveState::Closed : it->second;
   }
 
+  // Each read_many call's addresses, then the default per-address reads.
+  std::vector<Result<ValveState>> read_many(const std::vector<ValveAddress>& addresses) override {
+    {
+      std::lock_guard lk(m_);
+      std::vector<std::string> batch;
+      for (const auto& a : addresses) batch.push_back(a.value);
+      batches_.push_back(std::move(batch));
+    }
+    return IValveActuator::read_many(addresses);
+  }
+  std::vector<std::vector<std::string>> batches() {
+    std::lock_guard lk(m_);
+    return batches_;
+  }
+
   void set_hw(const std::string& a, ValveState s) {
     std::lock_guard lk(m_);
     hw_[a] = s;
@@ -93,6 +108,7 @@ class FakeActuator final : public IValveActuator {
   std::mutex m_;
   std::map<std::string, ValveState> hw_;
   std::vector<std::string> calls_;
+  std::vector<std::vector<std::string>> batches_;
   std::vector<TimePoint> read_times_;
   std::vector<std::string> stuck_;
   std::optional<ErrorKind> fail_command_;
@@ -623,6 +639,27 @@ TEST(SwitchManagerWiring, AnInvertedStateSourceIsReadInverted) {
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "me"));
   EXPECT_EQ(f.act.calls(), (std::vector<std::string>{"open 101"}));
   EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+}
+
+TEST(SwitchManagerWiring, RefreshAsksEachReadBackDeviceOnceForAllItsSwitches) {
+  // One read_many per device, in config order, so a PLC reads its coils in
+  // runs (plan 2026-10-05, A7); inversions still apply per switch.
+  WiredFixture f({valve("A", "1"), sourced(valve("B", "2"), "12"), inverted(valve("C", "3")),
+                  unverified(valve("D", "4")), sourced(valve("E", "5"), "15", /*source_inverted=*/true)});
+  f.act.set_hw("1", ValveState::Open);
+  f.act.set_hw("3", ValveState::Open);
+  f.src.set_hw("12", ValveState::Open);
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_EQ(f.act.batches(), (std::vector<std::vector<std::string>>{{"1", "3"}}));
+  EXPECT_EQ(f.src.batches(), (std::vector<std::vector<std::string>>{{"12", "15"}}));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_EQ(st(*f.mgr, "B"), ValveState::Open);
+  EXPECT_EQ(st(*f.mgr, "C"), ValveState::Closed);
+  EXPECT_EQ(st(*f.mgr, "E"), ValveState::Open);  // source reads closed, inverted
+  // Published in config order.
+  std::vector<std::string> order;
+  for (const auto& c : f.rec.changed) order.push_back(c.valve);
+  EXPECT_EQ(order, (std::vector<std::string>{"A", "B", "C", "E"}));
 }
 
 TEST(SwitchManagerWiring, AnUnverifiedValveRecordsWhatItWasToldAndIsNeverRead) {

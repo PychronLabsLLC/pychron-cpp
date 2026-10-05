@@ -502,6 +502,21 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
                     a.endpoint + ", make this transport kind = \"link\", link = \"<that driver's link name>\"");
     return a;
   }
+  if (a.legacy_class == "PLC2000GPActuator") {
+    // Coils on an AutomationDirect PLC over Modbus TCP; the legacy 1-based
+    // addresses import unchanged (plc2000_valves' coil_offset = -1).
+    a.kind = "plc2000_valves";
+    if (a.host.empty()) {
+      a.comment = "legacy " + what + ": no host in the device file; simulated until one is set";
+      notes.push_back("actuator " + name + ": no PLC host in the device file; the transport is simulated");
+      return a;
+    }
+    if (a.port.empty()) a.port = "502";
+    a.transport_kind = "modbus_tcp";
+    a.comment = "legacy " + what + " at " + a.host + ":" + a.port;
+    notes.push_back("actuator " + name + ": the PLC's Modbus unit id is written as the default 1; confirm it");
+    return a;
+  }
   if (a.legacy_class.find("NGX") != std::string::npos) {
     a.kind = "ngx_valves";
     if (!a.host.empty() && !a.port.empty()) {
@@ -652,7 +667,7 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
        << "\nscan_interval_ms = 1000\n";
   for (const auto& a : actuators) {
     line << "\n# " << a.comment << "\n[transports." << q(a.name) << "]\nkind = " << q(a.transport_kind) << "\n";
-    if (a.transport_kind == "tcp" || a.transport_kind == "udp")
+    if (a.transport_kind == "tcp" || a.transport_kind == "udp" || a.transport_kind == "modbus_tcp")
       line << "host = " << q(a.host) << "\nport = " << a.port << "\n";
     if (a.transport_kind == "serial") {
       line << "port = " << q(a.serial_port) << "\nbaud = " << a.baud << "\ndata_bits = " << a.data_bits

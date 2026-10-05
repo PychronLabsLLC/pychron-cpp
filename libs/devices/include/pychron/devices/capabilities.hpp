@@ -5,6 +5,8 @@
 // Calls block until the device answers (or the transport times out) and are
 // made from scheduler/manager threads, never the UI thread.
 
+#include <vector>
+
 #include "pychron/core/error.hpp"
 #include "pychron/devices/device.hpp"
 #include "pychron/devices/types.hpp"
@@ -23,6 +25,15 @@ struct IValveActuator {
   virtual Result<void> close(const ValveAddress& address) = 0;
   // State as reported by the hardware (read-back), not as last commanded.
   virtual Result<ValveState> read(const ValveAddress& address) = 0;
+  // read() of each address, in order, one result per address. A driver
+  // that can read several at once (a PLC's coil range) overrides it; the
+  // default reads them one by one.
+  virtual std::vector<Result<ValveState>> read_many(const std::vector<ValveAddress>& addresses) {
+    std::vector<Result<ValveState>> out;
+    out.reserve(addresses.size());
+    for (const auto& a : addresses) out.push_back(read(a));
+    return out;
+  }
 };
 
 struct IScannable {
