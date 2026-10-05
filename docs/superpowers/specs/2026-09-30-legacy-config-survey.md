@@ -976,7 +976,7 @@ sim and link.
 | NGX spectrometer | `isotopx_ngx` | 8 |
 | Qtegra spectrometer | `thermo_qtegra`; two of three labs use UDP | 3 |
 | MicroIon gauge | `gp_microion` | 1 |
-| Agilent switch-unit actuator | none | 5 |
+| Agilent switch-unit actuator | `agilent_switch` (2026-10-05; not VISA-USB) | 5 |
 | Watlow EZ-Zone | none | 4 |
 | Fusions logic board and motors | none | 4 |
 | Newport ESP stage | none | 4 |

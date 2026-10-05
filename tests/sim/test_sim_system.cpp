@@ -8,6 +8,7 @@
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
+#include "pychron/devices/agilent_switch.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
@@ -200,6 +201,43 @@ TEST(SimSystem, AnInvertedValveIsOpenWhileItsRelayIsOff) {
   EXPECT_TRUE(sim.valve_open("A"));
   ASSERT_TRUE(relay.open(ValveAddress{"1"}));
   EXPECT_FALSE(sim.valve_open("A"));
+}
+
+TEST(SimSystem, AnAgilentUnitDrivesItsValvesWithEitherPolarity) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.agilent]
+kind = "sim"
+[drivers.switch_controller]
+kind = "agilent_switch"
+transport = "agilent"
+invert = true
+[[valves]]
+name = "A"
+actuator = "switch_controller"
+address = "101"
+[[valves]]
+name = "B"
+actuator = "switch_controller"
+address = "102"
+inverted = true
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("switch_controller"), *cfg));
+  ASSERT_TRUE(transport->open());
+  AgilentSwitch unit("switch_controller", *transport, /*invert=*/true);
+  EXPECT_EQ(*unit.read(ValveAddress{"101"}), ValveState::Closed);  // the line starts closed
+  ASSERT_TRUE(unit.open(ValveAddress{"101"}));
+  EXPECT_TRUE(sim.valve_open("A"));
+  ASSERT_TRUE(unit.close(ValveAddress{"101"}));
+  EXPECT_FALSE(sim.valve_open("A"));
+  // B is wired backwards on top: the channel the manager closes opens it.
+  ASSERT_TRUE(unit.close(ValveAddress{"102"}));
+  EXPECT_TRUE(sim.valve_open("B"));
 }
 
 TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {

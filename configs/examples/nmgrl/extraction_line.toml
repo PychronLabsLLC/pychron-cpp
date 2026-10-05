@@ -21,13 +21,14 @@ timeout_ms = 2000
 kind = "sim_valves"
 transport = "furnace_switch_controller"
 
-# legacy AgilentGPActuator: pychron-cpp has no driver for it yet; simulated
+# legacy AgilentGPActuator on serial; the port is left out of this example,
+# so the unit is simulated (an Agilent 34970A model answers on the wire)
 [transports."switch_controller"]
 kind = "sim"
 timeout_ms = 2000
 
 [drivers."switch_controller"]
-kind = "sim_valves"
+kind = "agilent_switch"
 transport = "switch_controller"
 
 # legacy ArduinoGPActuator: pychron-cpp has no driver for it yet; simulated
@@ -297,7 +298,6 @@ outer = "W"
 #   canvas: tee R-JanNP10-MSManual: end offset not carried over
 #   canvas: tee ADiode-Diode-RDiode: end offset not carried over
 #   actuator furnace_switch_controller (NMGRLFurnaceActuator): no pychron-cpp driver yet; simulated by sim_valves
-#   actuator switch_controller (AgilentGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator arduino_valve_controller (ArduinoGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator felix_helix_valve_controller (ObamaQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves
 #   actuator jan_argus_valve_controller (JanQtegraGPActuator): no pychron-cpp driver yet; simulated by sim_valves

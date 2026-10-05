@@ -305,6 +305,60 @@ TEST_F(YamlLine, AMissingActuatorFileGetsAStandInNeverAnotherController) {
   EXPECT_TRUE(has_note(*made, "actuator ngx: devices/ngx.cfg not found; simulated")) << all_notes(*made);
 }
 
+// Agilent units become agilent_switch on the legacy port (plan 2026-10-05, A1).
+TEST_F(YamlLine, AnAgilentUnitOnSerialKeepsItsPortAndInvert) {
+  // Reston's indirection: switch_controller names the class, whose file has the comms.
+  t.write("devices/switch_controller.cfg", "[General]\ntype = AgilentGPActuator\ninvert = True\n");
+  t.write("devices/AgilentGPActuator.cfg",
+          "[Communications]\ntype = serial\nport = usbserial-FTXYZ\nbaudrate = 19200\nbytesize = 8\nparity = "
+          "None\nstopbits = 1\n");
+  fs::remove(t.dir / "devices" / "QtegraGPActuator.cfg");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what << "\n" << made->line_toml;
+  const auto& d = line->drivers.at("switch_controller");
+  EXPECT_EQ(d.kind, "agilent_switch");
+  EXPECT_EQ(d.options["invert"].value<bool>(), true);
+  const auto& tr = line->transports.at("switch_controller");
+  ASSERT_EQ(tr.kind, config::TransportKind::Serial);
+  const auto& sp = std::get<config::SerialParams>(tr.params);
+  EXPECT_EQ(sp.port, "/dev/tty.usbserial-FTXYZ");
+  EXPECT_EQ(sp.baud, 19200);
+  EXPECT_EQ(sp.parity, config::Parity::None);
+  EXPECT_TRUE(has_note(*made, "serial port usbserial-FTXYZ written as /dev/tty.usbserial-FTXYZ")) << all_notes(*made);
+  EXPECT_FALSE(has_note(*made, "switch_controller: invert=True not carried over")) << all_notes(*made);
+  EXPECT_FALSE(has_note(*made, "AgilentGPActuator): no pychron-cpp driver yet")) << all_notes(*made);
+}
+
+TEST_F(YamlLine, AnAgilentUnitOnTheLanUsesItsScpiSocket) {
+  t.write("devices/switch_controller.cfg",
+          "[General]\ntype = AgilentGPActuator\n[Communications]\ntype = ethernet\nhost = 10.0.0.30\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what;
+  const auto& tr = line->transports.at("switch_controller");
+  ASSERT_EQ(tr.kind, config::TransportKind::Tcp);
+  EXPECT_EQ(std::get<config::TcpParams>(tr.params).host, "10.0.0.30");
+  EXPECT_EQ(std::get<config::TcpParams>(tr.params).port, 5025);
+  EXPECT_FALSE(line->drivers.at("switch_controller").options.contains("invert"));
+}
+
+TEST_F(YamlLine, AnAgilentUnitOnVisaUsbIsSimulatedAndSaysWhy) {
+  // ASU's unit: owner decision 2026-10-05, no USB transport yet.
+  t.write("devices/switch_controller.cfg",
+          "[General]\ntype = AgilentGPActuator\n[Communications]\ntype = visa\nboard = 0\nmanufacture_id = 2391\n"
+          "model_code = 0x0007\nserial_number = MY123\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto line = config::load_system_config_from_string(made->line_toml, "extraction_line.toml");
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "agilent_switch");
+  EXPECT_EQ(line->transports.at("switch_controller").kind, config::TransportKind::Sim);
+  EXPECT_TRUE(has_note(*made, "VISA-USB is not supported; simulated")) << all_notes(*made);
+}
+
 // An NMGRL-shaped setup: valves.xml with groups, names as addresses, a
 // second actuator without a file, canvas.xml with the <xvidew> misspelling.
 TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
@@ -352,7 +406,13 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   EXPECT_EQ(valve(*line, "B")->actuator, "switch_controller");
   EXPECT_EQ(valve(*line, "B")->interlocks, std::vector<std::string>{"A"});
   ASSERT_EQ(line->manual_valves.size(), 1u);
-  EXPECT_NE(made->line_toml.find("AgilentGPActuator at serial /dev/ttyUSB0 @19200"), std::string::npos);
+  // The Agilent unit is driven on its legacy port, which is already a path.
+  EXPECT_EQ(line->drivers.at("switch_controller").kind, "agilent_switch");
+  const auto& agilent = line->transports.at("switch_controller");
+  ASSERT_EQ(agilent.kind, config::TransportKind::Serial);
+  EXPECT_EQ(std::get<config::SerialParams>(agilent.params).port, "/dev/ttyUSB0");
+  EXPECT_EQ(std::get<config::SerialParams>(agilent.params).baud, 19200);
+  EXPECT_NE(made->line_toml.find("AgilentGPActuator on serial /dev/ttyUSB0"), std::string::npos);
 
   auto drawing = canvas::load_canvas_from_string(made->canvas_toml, "canvas.toml");
   ASSERT_TRUE(drawing) << drawing.error().what;

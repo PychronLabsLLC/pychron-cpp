@@ -23,9 +23,9 @@
 
 ## Owner decisions needed before the marked tasks
 
-1. **Agilent identify command (Task A1).** Legacy sends `*TST?` and accepts `0`. `*TST?` runs a full self-test that can take seconds and cycles relays on some cards. Proposal: `*IDN?` on connect; never `*TST?`.
-2. **Agilent at ASU is VISA-USB (Task A1).** No VISA transport exists. Proposal: support serial and TCP (LAN on a 34972A) now; ASU's unit stays on `sim_valves` with a note until a `usbtmc` transport is planned separately.
-3. **`verify = false` semantics (Task 0.2).** Legacy `query_state=false` trusts the commanded state. Proposal: record the commanded state, publish `ValveChanged`, and log once at load that the valve is unverified. Interlocks then rely on commanded state for that valve.
+1. ~~Agilent identify command~~ **Decided 2026-10-05: `*IDN?` on connect; never `*TST?`** (a full self-test that can cycle relays).
+2. ~~Agilent at ASU is VISA-USB~~ **Decided 2026-10-05: serial and TCP now; ASU's USB unit stays on `sim_valves` with a note** until a `usbtmc` transport is planned separately.
+3. ~~`verify = false` semantics~~ **Done in 0.2 as proposed:** the commanded state is recorded and published; interlocks rest on it.
 4. **Cryo blocking (Task C4).** Legacy `block` waits forever. Proposal: required `timeout_s` (default 600) and the run's `CancelToken`; timeout is an `Io` error that fails the script.
 5. **Measured cryo temperature in the run record (Task C5).** Legacy's `cryo_response` blob is always empty (its recorder raises). Proposal: record the measured input temperatures at `end_extract` as `extraction.cryo_measured_k` beside the requested `cryo_temperature`; no time-series blob.
 6. **Gauge "off"/over-range readings (Tasks B1–B6).** Legacy maps them to sentinels (MKS `OFF` → 1000, `LO<E-11` → 1e-12, SPC failure → 0.0) or leaves a stale value. Proposal, per codec rule 4: every non-number is a `Protocol` error with a stable message (`"gauge off"`, `"under range"`, `"over range"`, `"no sensor"`), so `GaugeScanner` raises its one Warning alarm and the UI shows no number, never a wrong one. Under-range alone may instead decode as an upper bound if the owner wants a value shown.
@@ -133,9 +133,11 @@ Every actuator task has the same steps; only the protocol differs.
 
 **Files:** `tests/devices/valve_conformance.hpp` (pattern: `tests/devices/extraction/conformance.hpp`), run against `SimValves`, `ProxrRelay`, `NgxValves` first so the suite is proven before new drivers use it.
 
-- [ ] open→read is Open; close→read is Closed; unknown/invalid address is Config and sends nothing; transport timeout is Io; a reply the codec rejects is Protocol; no call leaves stale bytes that the next exchange would take as its reply.
+- [x] open→read is Open; close→read is Closed; unknown/invalid address is Config and sends nothing; transport timeout is Io; a reply the codec rejects is Protocol; no call leaves stale bytes that the next exchange would take as its reply.
 
 ### Task A1: `agilent_switch` — Agilent 34903A / 34970A switch unit (5 labs)
+
+Done 2026-10-05. `AgilentUnitSim` models the unit; SimSystem starts its relays so every valve starts closed for the unit's `invert`. The NMGRL example's Agilent unit now runs this driver against the simulated unit.
 
 Protocol (legacy `agilent/agilent_gp_actuator.py`, `agilent_mixin.py`):
 
@@ -146,9 +148,9 @@ Protocol (legacy `agilent/agilent_gp_actuator.py`, `agilent_mixin.py`):
 - After each command drain errors: `SYST:ERR?` until `+0,"No error"`, at most 10; any other error string fails the actuation as Protocol with the instrument's message.
 - Several drivers may share one unit (legacy "becker box" reuse by `[Communications] address`): one `[transports.x]`, several drivers, no special code.
 
-- [ ] Owner decisions 1 and 2 first.
-- [ ] Driver option `invert` (bool, default false).
-- [ ] Tests include `InvertSwapsCommandAndQuery`, `ErrorQueueIsDrainedAndReported`, `ErrorQueueDrainIsBounded`.
+- [x] Owner decisions 1 and 2 first.
+- [x] Driver option `invert` (bool, default false).
+- [x] Tests include `InvertSwapsCommandAndQuery`, `ErrorQueueIsDrainedAndReported`, `ErrorQueueDrainIsBounded`.
 
 ### Task A2: `qtegra_valves` — valves through Qtegra RemoteControl (3 labs)
 

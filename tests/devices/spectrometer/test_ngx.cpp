@@ -17,6 +17,7 @@
 #include "pychron/devices/spectrometer/ngx.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/transport/link_transport.hpp"
+#include "valve_conformance.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -329,6 +330,25 @@ TEST_F(Ngx, ValvesShareTheLinkAndAreBracketedBySab) {
   std::lock_guard lock(model->mutex);
   EXPECT_EQ(model->unbracketed_actuations, 0);
   EXPECT_FALSE(model->sab);
+}
+
+TEST_F(Ngx, ValvesPassTheValveConformanceSuite) {
+  // Silence and garbage are not exercised here: the link reconnects and logs
+  // in again, which the tests above cover.
+  auto s = make(*sim);
+  ASSERT_TRUE(s->connect());
+  LinkTransport borrowed("ngx-line", link);
+  const toml::table none;
+  auto v = NgxValves::create(DriverArgs{"valves", borrowed, none, &clock});
+  ASSERT_TRUE(v) << v.error().what;
+  struct Rig final : pychron::test::ValveRig {
+    IValveActuator* valves = nullptr;
+    IValveActuator& actuator() override { return *valves; }
+    ValveAddress first() override { return {"3"}; }
+    ValveAddress second() override { return {"7"}; }
+  } rig;
+  rig.valves = v->get();
+  pychron::test::expect_valve_conformance(rig);
 }
 
 TEST_F(Ngx, AValveActuationDuringAnIntegrationLeavesItAlone) {

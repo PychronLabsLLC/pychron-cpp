@@ -168,6 +168,32 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
+  if (driver.kind == "agilent_switch") {
+    // A valve is open while its relay is open, or closed with invert = true
+    // (agilent_switch.hpp), and the other way round for an inverted valve.
+    const bool unit_invert = driver.options["invert"].value_or(false);
+    std::map<std::string, std::pair<std::string, bool>> by_channel;  // name, inverted
+    auto map_channel = [&](const auto& v) {
+      if (v.actuator != driver.name) return;
+      if (auto ch = codec::agilent::channel(v.address)) by_channel[*ch] = {v.name, v.inverted};
+    };
+    for (const auto& v : system.valves) map_channel(v);
+    for (const auto& s : system.switches) map_channel(s);
+
+    auto unit = std::make_unique<AgilentUnitSim>(
+        [this, unit_invert, by_channel = std::move(by_channel)](const std::string& channel, bool relay_closed) {
+          auto it = by_channel.find(channel);
+          if (it == by_channel.end()) return;
+          const bool open = (relay_closed == unit_invert) != it->second.second;
+          set_valve(it->second.first, open);
+        },
+        /*relays_start_closed=*/!unit_invert);
+    auto hook = unit->hook();
+    std::lock_guard lock(mutex_);
+    units_.push_back(std::move(unit));
+    return hook;
+  }
+
   if (driver.kind == "chromium") {
     auto laser = std::make_unique<extraction::ChromiumSim>(clock_);
     auto hook = laser->hook();

@@ -1,6 +1,7 @@
 #include "pychron/setup/legacy_line.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -374,7 +375,27 @@ std::string num(double v) {
 struct Actuator {
   std::string name, legacy_class, endpoint, kind, comment;
   std::string transport_kind = "sim", host, port;
+  // transport_kind "serial"
+  std::string serial_port, parity = "none";
+  int baud = 9600, data_bits = 8, stop_bits = 1;
+  bool invert = false;  // written as the driver's `invert` (agilent_switch)
 };
+
+// Legacy pychron opened "/dev/tty.<port>" for a bare serial port name.
+std::string serial_path(const std::string& port) {
+  if (port.starts_with("/") || port.starts_with("COM")) return port;
+  return "/dev/tty." + port;
+}
+
+int int_or(const std::string& text, int fallback) {
+  try {
+    std::size_t used = 0;
+    const int v = std::stoi(text, &used);
+    return used == text.size() ? v : fallback;
+  } catch (...) {
+    return fallback;
+  }
+}
 
 Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>& devices, std::vector<std::string>& read,
                           std::vector<std::string>& notes) {
@@ -398,8 +419,7 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
     read.push_back("devices/" + a.legacy_class + ".cfg");
   }
   auto comms = comms_from["Communications"];
-  bool invert = general["invert"] == "True" || comms_from["General"]["invert"] == "True";
-  if (invert) notes.push_back("actuator " + name + ": invert=True not carried over (no inverted logic in the line config yet)");
+  const bool invert = general["invert"] == "True" || comms_from["General"]["invert"] == "True";
   const std::string type = comms["type"];
   if (!comms["host"].empty() || type == "ethernet") {
     a.host = comms["host"];
@@ -411,6 +431,39 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
     a.endpoint = type;
   }
   const std::string what = a.legacy_class.empty() ? std::string("unknown class") : a.legacy_class;
+  if (a.legacy_class == "AgilentGPActuator") {
+    a.kind = "agilent_switch";
+    a.invert = invert;
+    std::string lower_type;
+    for (char c : type) lower_type += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower_type == "visa" || !comms["manufacture_id"].empty()) {
+      a.comment = "legacy " + what + " on VISA-USB: no USB transport yet; simulated";
+      notes.push_back("actuator " + name + " (" + what +
+                      "): VISA-USB is not supported; simulated until the unit is on RS-232 or LAN");
+    } else if (!a.host.empty()) {
+      a.transport_kind = "tcp";
+      if (a.port.empty()) a.port = "5025";  // the unit's SCPI socket
+      a.comment = "legacy " + what + " at " + a.host + ":" + a.port;
+    } else if (!comms["port"].empty()) {
+      a.transport_kind = "serial";
+      a.serial_port = serial_path(comms["port"]);
+      a.baud = int_or(comms["baudrate"], 9600);
+      a.data_bits = int_or(comms["bytesize"], 8);
+      a.stop_bits = int_or(comms["stopbits"], 1);
+      const char p = comms["parity"].empty() ? 'n' : static_cast<char>(std::tolower(comms["parity"][0]));
+      a.parity = p == 'e' ? "even" : p == 'o' ? "odd" : "none";
+      a.comment = "legacy " + what + " on serial " + comms["port"];
+      if (a.serial_port != comms["port"]) {
+        notes.push_back("actuator " + name + ": serial port " + comms["port"] + " written as " + a.serial_port +
+                        " (legacy pychron's macOS naming); check it on this machine");
+      }
+    } else {
+      a.comment = "legacy " + what + ": no port or host in the device file; simulated until one is set";
+      notes.push_back("actuator " + name + ": no Agilent port or host in the device file; the transport is simulated");
+    }
+    return a;
+  }
+  if (invert) notes.push_back("actuator " + name + ": invert=True not carried over (no inverted logic in the line config yet)");
   if (a.legacy_class.find("NGX") != std::string::npos) {
     a.kind = "ngx_valves";
     if (!a.host.empty() && !a.port.empty()) {
@@ -546,8 +599,13 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   for (const auto& a : actuators) {
     line << "\n# " << a.comment << "\n[transports." << q(a.name) << "]\nkind = " << q(a.transport_kind) << "\n";
     if (a.transport_kind == "tcp") line << "host = " << q(a.host) << "\nport = " << a.port << "\n";
+    if (a.transport_kind == "serial") {
+      line << "port = " << q(a.serial_port) << "\nbaud = " << a.baud << "\ndata_bits = " << a.data_bits
+           << "\nstop_bits = " << a.stop_bits << "\nparity = " << q(a.parity) << "\n";
+    }
     line << "timeout_ms = 2000\n\n[drivers." << q(a.name) << "]\nkind = " << q(a.kind) << "\ntransport = " << q(a.name)
          << "\n";
+    if (a.invert) line << "invert = true\n";
   }
   for (const auto& v : valves.valves) {
     line << "\n[[valves]]\nname = " << q(v.name) << "\n";

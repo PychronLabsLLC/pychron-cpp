@@ -1,6 +1,8 @@
 # Device base, capability interfaces, DriverRegistry and (later) the vendor
 # drivers that compose a Transport with a codec.
 add_library(pychron_devices STATIC
+  src/agilent_switch.cpp
+  src/agilent_unit_sim.cpp
   src/device.cpp
   src/types.cpp
   src/driver_registry.cpp

@@ -28,10 +28,12 @@ TEST(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
   ASSERT_TRUE(line.start());
   EXPECT_EQ(line.snapshot().valves.size(), 40u);  // 33 actuated, 7 manual
 
-  // one valve per legacy controller (furnace, Agilent, Arduino, the two Qtegra
-  // boxes), then pipette 1's outer valve
+  // one valve per legacy controller (furnace; Agilent, the agilent_switch
+  // driver against a simulated unit; Arduino; the two Qtegra boxes), then
+  // pipette 1's outer valve
   for (const char* valve : {"FD", "Q", "I", "V", "O", "W"}) {
-    ASSERT_TRUE(line.actuate(valve, SwitchOp::Open, "test")) << valve;
+    auto opened = line.actuate(valve, SwitchOp::Open, "test");
+    ASSERT_TRUE(opened) << valve << ": " << opened.error().what;
     EXPECT_EQ(line.snapshot().valves.at(valve), ValveState::Open) << valve;
   }
 

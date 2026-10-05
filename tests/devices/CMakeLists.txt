@@ -15,6 +15,8 @@ add_executable(pychron_devices_tests
   test_proxr_relay.cpp
   test_proxr_board_sim.cpp
   test_sim_valves.cpp
+  test_valve_conformance.cpp
+  test_agilent_switch.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp
   spectrometer/test_detectors.cpp
