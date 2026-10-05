@@ -432,9 +432,11 @@ void HostState::execute_pattern(const std::string& pattern, bool block) {
                              device().device_name())));
   }
   unwrap(nogil([&] { return runner->execute_pattern(pattern); }));
-  if (block)
+  if (block) {
     wait_while([&] { return runner->running(); }, "execute_pattern",
                [&] { (void)nogil([&] { return runner->stop_pattern(); }); });
+    if (const std::string note = runner->last_note(); !note.empty() && env_.log) env_.log(note);
+  }
 }
 
 void HostState::dump_sample() {

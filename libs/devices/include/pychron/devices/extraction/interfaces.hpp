@@ -108,6 +108,9 @@ struct IPatternRunner {
   // nobody waits for would stay on its first point. False for a device that
   // runs its patterns itself.
   virtual bool needs_polling() const { return false; }
+  // What the last finished pattern has to say for the run's log; empty when
+  // nothing. Said once.
+  virtual std::string last_note() { return {}; }
 };
 
 struct IPipetteService {

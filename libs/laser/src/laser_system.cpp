@@ -106,6 +106,8 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   frames_ = std::move(frames);
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
+  // The same eyes for a pattern that follows the glow.
+  if (runner_ != nullptr) runner_->set_vision({frames_.get(), &*camera_, clock_});
   return {};
 }
 

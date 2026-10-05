@@ -15,10 +15,19 @@
 // next running() says false. Nothing switches the laser off here: that is
 // the run's, when its script ends.
 //
+// A pattern that follows the glow (a dragonfly) has no path: for its
+// duration each step waits for the stage to rest and settle, looks, and asks
+// vision::Dragonfly whether to hold or where to move; at the end the stage
+// returns to where it started. It needs the device's camera (set_vision). A
+// camera that fails part way sends the stage back to the start; then the
+// camera's on_failure decides: the pattern holds there until its time is up
+// (and says so in last_note()), or ends with an error.
+//
 // Calls are made from one thread at a time; progress() may be asked from
 // another.
 
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -26,14 +35,32 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
+#include "pychron/core/clock.hpp"
+#include "pychron/laser/camera.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "pychron/vision/finder.hpp"
+#include "pychron/vision/source.hpp"
 
 namespace pychron::laser {
+
+// The means to see, for a pattern that follows the glow: the device's camera.
+// What it points at must outlive the runner.
+struct PatternVision {
+  vision::IFrameSource* frames = nullptr;
+  const CameraConfig* camera = nullptr;
+  const Clock* clock = nullptr;
+  explicit operator bool() const noexcept { return frames != nullptr && camera != nullptr && clock != nullptr; }
+};
 
 class PatternRunner final : public extraction::IPatternRunner {
  public:
   // `stage` and `patterns` must outlive the runner. `device` is named in errors.
   PatternRunner(std::string device, extraction::IStage& stage, const PatternLibrary& patterns);
+  ~PatternRunner() override;
+
+  // Given by the laser system when it has a camera. Without it a pattern
+  // that follows the glow (a dragonfly) is refused.
+  void set_vision(PatternVision vision);
 
   // Config error for a pattern the library lacks or could not load, while
   // another is running, or while the stage is still moving (there is no
@@ -45,11 +72,18 @@ class PatternRunner final : public extraction::IPatternRunner {
   Result<void> stop_pattern() override;
   std::vector<std::string> patterns() const override;
   bool needs_polling() const override { return true; }
+  std::string last_note() override;
 
   // "<name>, point <i> of <n>" while one runs; empty when idle.
   std::string progress() const;
 
  private:
+  struct Follow;  // a dragonfly in progress
+  Result<void> start_following(const Pattern& pattern);
+  Result<bool> follow();
+  Result<bool> lose_the_camera(std::string why);
+  Result<bool> go_home();
+
   // Sends path_[next_] and advances; ends the pattern on failure.
   Result<void> send_next();
   void end();
@@ -64,6 +98,11 @@ class PatternRunner final : public extraction::IPatternRunner {
   double velocity_ = 0;
   std::vector<StageXY> path_;  // stage millimetres
   std::size_t next_ = 0;       // the point to send next
+  std::string note_;           // of the last pattern that ended; taken once
+
+  PatternVision vision_;
+  std::unique_ptr<vision::ITargetFinder> finder_;
+  std::unique_ptr<Follow> follow_;  // the caller's thread only
 };
 
 }  // namespace pychron::laser

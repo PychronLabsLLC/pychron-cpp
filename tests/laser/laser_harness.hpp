@@ -59,6 +59,10 @@ struct LabDir {
     pattern("wide.toml", "kind = \"polygon\"\nradius = 60\nnsides = 4\n");  // outside the stage's +-50 mm
     pattern("walk.toml", "kind = \"random\"\nnpoints = 4\nseed = 7\nvelocity = 5\n");
     pattern("broken.toml", "kind = \"polygon\"\nradius = 0\n");
+    // dragonflies: they follow the glow, and need a camera
+    pattern("track.toml", "kind = \"dragonfly\"\nduration = 20\nvelocity = 2\n");
+    pattern("track_brief.toml", "kind = \"dragonfly\"\nduration = 0.05\n");
+    pattern("track_tight.toml", "kind = \"dragonfly\"\nduration = 20\nvelocity = 2\nperimeter_radius = 0.4\n");
   }
   ~LabDir() { fs::remove_all(dir); }
 };

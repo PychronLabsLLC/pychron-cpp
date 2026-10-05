@@ -438,6 +438,18 @@ TEST_F(ScriptHostTest, AHoleMovesNoteIsLogged) {
   EXPECT_TRUE(logged.empty());
 }
 
+// What a finished pattern has to say (a dragonfly that lost its camera and
+// held still) goes into the run's log.
+TEST_F(ScriptHostTest, APatternsNoteIsLogged) {
+  std::vector<std::string> logged;
+  rig.env.log = [&](std::string_view line) { logged.emplace_back(line); };
+  rig.laser.pattern_note = "pattern track: the camera was lost";
+  auto r = host->run(inline_script("def main():\n    execute_pattern('spiral')\n"), rig.env, token);
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_EQ(logged.size(), 1u);
+  EXPECT_EQ(logged[0], "pattern track: the camera was lost");
+}
+
 // A runner that only advances while it is polled cannot run a pattern the
 // script will not wait for: the beam would sit on its first point. Refused,
 // and nothing is started.
