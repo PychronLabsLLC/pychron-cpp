@@ -31,6 +31,7 @@ constexpr std::array kKindNames{
     std::pair<std::string_view, PatternKind>{"rubberband", PatternKind::Rubberband},
     std::pair<std::string_view, PatternKind>{"raster", PatternKind::Raster},
     std::pair<std::string_view, PatternKind>{"trough", PatternKind::Trough},
+    std::pair<std::string_view, PatternKind>{"dragonfly", PatternKind::Dragonfly},
 };
 
 // One key of a pattern file: where it goes and what it may be.
@@ -60,6 +61,14 @@ const Key kNpasses{"npasses", &Pattern::npasses, 1, 100};
 const Key kNsteps{"nsteps", &Pattern::nsteps, 1, 10};
 const Key kStepScalar{"step_scalar", &Pattern::step_scalar, 1, 20};
 const Key kNpoints{"npoints", &Pattern::npoints, 1, 50};
+const Key kDuration{"duration", &Pattern::duration_s, 0, 3600, true};
+const Key kPerimeter{"perimeter_radius", &Pattern::perimeter_radius, 0, kMaxMm, true};
+const Key kSaturation{"saturation_threshold", &Pattern::saturation_threshold, 0, 1, true};
+const Key kAggressiveness{"aggressiveness", &Pattern::aggressiveness, 0, 10};
+const Key kMoveThreshold{"move_threshold", &Pattern::move_threshold, 0, kMaxMm};
+const Key kMaxStep{"max_step", &Pattern::max_step, 0, kMaxMm, true};
+const Key kSpiralBase{"spiral_base", &Pattern::spiral_base, 0, kMaxMm, true};
+const Key kTargetRadius{"target_radius", &Pattern::target_radius, 0, kMaxMm, true};
 const Key kSinglePass{"single_pass", &Pattern::single_pass};
 const Key kUseX{"use_x", &Pattern::use_x};
 
@@ -74,6 +83,9 @@ std::vector<const Key*> keys_of(PatternKind kind) {
     case PatternKind::Rubberband: return {&kLength, &kOffset, &kRotation};
     case PatternKind::Raster: return {&kLength, &kOffset, &kRotation, &kDx, &kSinglePass};
     case PatternKind::Trough: return {&kLength, &kWidth, &kRotation, &kUseX};
+    case PatternKind::Dragonfly:
+      return {&kDuration, &kPerimeter, &kSaturation, &kAggressiveness, &kMoveThreshold, &kMaxStep, &kSpiralBase,
+              &kTargetRadius};
   }
   return {};
 }
@@ -189,7 +201,7 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
   p.name = std::move(name);
   std::vector<const Key*> keys = keys_of(*kind);
   keys.push_back(&kVelocity);
-  keys.push_back(&kIterations);
+  if (*kind != PatternKind::Dragonfly) keys.push_back(&kIterations);  // a dragonfly runs once, for its duration
   for (const auto& [k, node] : table) {
     const std::string_view key = k.str();
     if (key == "kind") continue;
@@ -197,6 +209,14 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
       const auto* i = node.as_integer();
       if (i == nullptr || i->get() < 0) return fail(ErrorKind::Config, p.name + ": seed: expected a whole number, 0 or more");
       p.seed = static_cast<std::uint64_t>(i->get());
+      continue;
+    }
+    if (key == "spiral" && *kind == PatternKind::Dragonfly) {
+      const auto which = node.value<std::string>();
+      if (!which || (*which != "hexagon" && *which != "square")) {
+        return fail(ErrorKind::Config, p.name + ": spiral: expected hexagon or square");
+      }
+      p.square_spiral = *which == "square";
       continue;
     }
     const auto found = std::find_if(keys.begin(), keys.end(), [key](const Key* candidate) { return candidate->name == key; });
@@ -207,6 +227,9 @@ Result<Pattern> Pattern::parse(std::string_view text, std::string name) {
     if (const std::string why = store(**found, node, p); !why.empty()) {
       return fail(ErrorKind::Config, p.name + ": " + std::string(key) + ": " + why);
     }
+  }
+  if (*kind == PatternKind::Dragonfly && !table.contains("duration")) {
+    return fail(ErrorKind::Config, p.name + ": duration: missing (how long, in seconds, it follows the glow)");
   }
   if (*kind == PatternKind::Raster && p.dx > p.length + 2 * p.offset) {
     return fail(ErrorKind::Config, p.name + ": dx: the step is wider than the box it rasters (length + 2 offset)");
@@ -252,6 +275,7 @@ std::size_t pattern_point_count(const Pattern& p) {
     case PatternKind::Rubberband: return 5;
     case PatternKind::Raster: return p.single_pass ? raster_steps(p) + 1 : 2 * (raster_steps(p) + 1) + 1;
     case PatternKind::Trough: return 5;
+    case PatternKind::Dragonfly: return 0;  // no path
   }
   return 0;
 }
@@ -355,6 +379,7 @@ std::vector<StageXY> pattern_points(const Pattern& p, std::uint64_t seed) {
       else out = {p1, p2, p3, p4, p1};
       break;
     }
+    case PatternKind::Dragonfly: break;  // where it goes is decided by eye, as it runs
   }
   return out;
 }
@@ -370,6 +395,9 @@ double path_length(std::span<const StageXY> points) {
 }
 
 Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t seed) {
+  if (pattern.follows_glow()) {
+    return fail(ErrorKind::Config, "pattern " + pattern.name + " follows the glow: it has no path");
+  }
   std::vector<StageXY> path;
   for (int i = 0; i < pattern.iterations; ++i) {
     const auto points = pattern_points(pattern, seed + static_cast<std::uint64_t>(i));

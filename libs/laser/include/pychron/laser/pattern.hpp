@@ -41,11 +41,14 @@ enum class PatternKind {
   Random,
   Rubberband,
   Raster,
-  Trough
+  Trough,
+  // Not a path: the stage follows the glowing sample for a time, by eye
+  // (vision::Dragonfly). Needs a camera; run by PatternRunner like the rest.
+  Dragonfly
 };
 
 // "polygon", "linear", "circular_contour", "line_spiral", "square_spiral",
-// "random", "rubberband", "raster", "trough".
+// "random", "rubberband", "raster", "trough", "dragonfly".
 std::string_view to_string(PatternKind kind) noexcept;
 
 // Most points a pattern may have over all its iterations.
@@ -62,6 +65,10 @@ inline constexpr std::size_t kMaxPatternPoints = 10000;
 //   rubberband        length offset rotation
 //   raster            length offset rotation dx single_pass
 //   trough            length width rotation use_x
+//   dragonfly         duration (required) perimeter_radius saturation_threshold
+//                     aggressiveness move_threshold max_step spiral spiral_base
+//                     target_radius; velocity is the speed of its moves, and
+//                     it has no iterations
 struct Pattern {
   std::string name;
   PatternKind kind = PatternKind::Polygon;
@@ -85,6 +92,20 @@ struct Pattern {
   bool single_pass = true;
   bool use_x = true;
   std::optional<std::uint64_t> seed;  // random: unset, a new walk each run
+
+  // dragonfly (legacy's defaults)
+  double duration_s = 0;               // how long it follows the glow
+  double perimeter_radius = 2.5;       // mm: never further from where it started
+  double saturation_threshold = 0.75;  // a glow this bright: hold still
+  double aggressiveness = 1.0;
+  double move_threshold = 0.033;       // mm: smaller corrections are not made
+  double max_step = 0.5;               // mm
+  double spiral_base = 0.5;            // mm: the search when the glow is lost
+  double target_radius = 0.5;          // mm: sizes the look
+  bool square_spiral = false;          // spiral = "square"; else hexagon
+
+  // A dragonfly: it has no path, and is run by eye.
+  bool follows_glow() const noexcept { return kind == PatternKind::Dragonfly; }
 
   friend bool operator==(const Pattern&, const Pattern&) = default;
 
@@ -110,7 +131,7 @@ double path_length(std::span<const StageXY> points);
 
 // The whole path a runner follows: every iteration's points, then the centre
 // again. A random walk is new on each iteration. Config error for more than
-// kMaxPatternPoints.
+// kMaxPatternPoints, and for a pattern that follows the glow (it has no path).
 Result<std::vector<StageXY>> pattern_path(const Pattern& pattern, std::uint64_t seed);
 
 // The patterns of a directory (<lab>/patterns/*.toml) by name.

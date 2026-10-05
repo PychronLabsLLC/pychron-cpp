@@ -402,12 +402,76 @@ INSTANTIATE_TEST_SUITE_P(
                       BadFile{"kind = \"linear\"\nrotation = \"x\"\n", "rotation"},
                       BadFile{"kind = \"linear\"\nnsides = 5\n", "nsides"},  // a polygon's key
                       BadFile{"kind = \"trough\"\nuse_x = 1\n", "use_x"},
+                      BadFile{"kind = \"dragonfly\"\n", "duration"},  // required
+                      BadFile{"kind = \"dragonfly\"\nduration = 0\n", "duration"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 3601\n", "duration"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nsaturation_threshold = 0\n", "saturation_threshold"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nsaturation_threshold = 1.5\n", "saturation_threshold"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nperimeter_radius = 0\n", "perimeter_radius"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nmax_step = 0\n", "max_step"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\naggressiveness = -1\n", "aggressiveness"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nspiral = \"round\"\n", "spiral"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nspiral = 3\n", "spiral"},
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\niterations = 2\n", "iterations"},  // it runs once
+                      BadFile{"kind = \"dragonfly\"\nduration = 10\nnsides = 5\n", "nsides"},
+                      BadFile{"kind = \"polygon\"\nduration = 10\n", "duration"},  // a dragonfly's key
                       BadFile{"kind = \"arc\"\n", "kind"},
                       BadFile{"kind = 3\n", "kind"},
                       BadFile{"radius = 1\n", "kind"},
                       BadFile{"kind = \"polygon\"\nwobble = 1\n", "wobble"},
                       BadFile{"kind = \"polygon\"\n[nested]\na = 1\n", "nested"},
                       BadFile{"kind = \"polygon\nradius", "bad"}));  // not TOML
+
+// A dragonfly follows the glowing sample for its duration: it is a pattern
+// with no path of its own (so it is not among the kinds the point tests loop over).
+TEST(PatternFile, ReadsADragonfly) {
+  auto bare = Pattern::parse("kind = \"dragonfly\"\nduration = 30\n", "follow");
+  ASSERT_TRUE(bare) << bare.error().what;
+  EXPECT_EQ(bare->kind, PatternKind::Dragonfly);
+  EXPECT_EQ(to_string(bare->kind), "dragonfly");
+  EXPECT_TRUE(bare->follows_glow());
+  EXPECT_FALSE(of(PatternKind::Polygon).follows_glow());
+  EXPECT_DOUBLE_EQ(bare->duration_s, 30);
+  // legacy's defaults
+  EXPECT_DOUBLE_EQ(bare->velocity, 1.0);
+  EXPECT_DOUBLE_EQ(bare->perimeter_radius, 2.5);
+  EXPECT_DOUBLE_EQ(bare->saturation_threshold, 0.75);
+  EXPECT_DOUBLE_EQ(bare->aggressiveness, 1.0);
+  EXPECT_DOUBLE_EQ(bare->move_threshold, 0.033);
+  EXPECT_DOUBLE_EQ(bare->max_step, 0.5);
+  EXPECT_FALSE(bare->square_spiral);
+  EXPECT_DOUBLE_EQ(bare->spiral_base, 0.5);
+  EXPECT_DOUBLE_EQ(bare->target_radius, 0.5);
+
+  auto full = Pattern::parse(
+      "kind = \"dragonfly\"\nduration = 12.5\nvelocity = 2\nperimeter_radius = 1.5\nsaturation_threshold = 0.6\n"
+      "aggressiveness = 0.5\nmove_threshold = 0\nmax_step = 0.25\nspiral = \"square\"\nspiral_base = 0.3\n"
+      "target_radius = 0.75\n",
+      "f");
+  ASSERT_TRUE(full) << full.error().what;
+  EXPECT_DOUBLE_EQ(full->duration_s, 12.5);
+  EXPECT_DOUBLE_EQ(full->velocity, 2);
+  EXPECT_DOUBLE_EQ(full->perimeter_radius, 1.5);
+  EXPECT_DOUBLE_EQ(full->saturation_threshold, 0.6);
+  EXPECT_DOUBLE_EQ(full->aggressiveness, 0.5);
+  EXPECT_DOUBLE_EQ(full->move_threshold, 0);
+  EXPECT_DOUBLE_EQ(full->max_step, 0.25);
+  EXPECT_TRUE(full->square_spiral);
+  EXPECT_DOUBLE_EQ(full->spiral_base, 0.3);
+  EXPECT_DOUBLE_EQ(full->target_radius, 0.75);
+  EXPECT_TRUE(Pattern::parse("kind = \"dragonfly\"\nduration = 1\nspiral = \"hexagon\"\n", "h"));
+}
+
+TEST(PatternPoints, ADragonflyHasNoPath) {
+  const auto p = Pattern::parse("kind = \"dragonfly\"\nduration = 30\n", "follow");
+  ASSERT_TRUE(p);
+  EXPECT_TRUE(pattern_points(*p, 0).empty());
+  EXPECT_EQ(pattern_point_count(*p), 0u);
+  const auto path = pattern_path(*p, 0);
+  ASSERT_FALSE(path);
+  EXPECT_EQ(path.error().kind, ErrorKind::Config);
+  EXPECT_NE(path.error().what.find("follow"), std::string::npos);
+}
 
 TEST(PatternFile, LoadsFromAFileNamedAfterItsStem) {
   const auto dir = scratch();
