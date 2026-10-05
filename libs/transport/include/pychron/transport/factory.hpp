@@ -21,7 +21,8 @@ struct TransportContext {
 // Builds the transport a [transports.<name>] entry describes, closed.
 // kind = "sim" yields a hooked SimTransport, so the same config runs with no
 // hardware. When `trace` is set the result is wrapped in a TraceRecorder.
-// Config error for kinds not yet supported (modbus_rtu, modbus_tcp).
+// modbus_tcp is a TCP transport (the framing is the driver's codec). Config
+// error for kinds not yet supported (modbus_rtu).
 Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig& config,
                                                   const TransportContext& context = {});
 

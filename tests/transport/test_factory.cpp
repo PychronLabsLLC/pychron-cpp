@@ -84,8 +84,18 @@ TEST(TransportFactory, UdpIsBuiltClosed) {
   EXPECT_EQ((*t)->health().state, HealthState::Down);
 }
 
-TEST(TransportFactory, ModbusIsNotYetSupported) {
-  auto t = make_transport(cfg("mb", config::TransportKind::ModbusTcp, config::ModbusTcpParams{}));
+TEST(TransportFactory, ModbusTcpIsATcpTransport) {
+  auto t = make_transport(
+      cfg("plc", config::TransportKind::ModbusTcp, config::ModbusTcpParams{config::TcpParams{"10.0.0.9", 502}}));
+  ASSERT_TRUE(t) << t.error().what;
+  auto* tcp = dynamic_cast<TcpTransport*>(t->get());
+  ASSERT_NE(tcp, nullptr);
+  EXPECT_EQ(tcp->settings().host, "10.0.0.9");
+  EXPECT_EQ(tcp->settings().port, 502);
+}
+
+TEST(TransportFactory, ModbusRtuIsNotYetSupported) {
+  auto t = make_transport(cfg("mb", config::TransportKind::ModbusRtu, config::ModbusRtuParams{}));
   ASSERT_FALSE(t);
   EXPECT_EQ(t.error().kind, ErrorKind::Config);
   EXPECT_EQ(t.error().device, "mb");

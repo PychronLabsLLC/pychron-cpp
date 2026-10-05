@@ -64,16 +64,22 @@ Phases A, B, C and E are independent of each other once Phase 0 is in; they can 
 
 ## Phase 0: Shared infrastructure
 
+Done 2026-10-05. Notes from doing it:
+
+- 0.3: `link_registry.hpp` holds one registry/handle template; NGX moved onto it. `thermo_qtegra` built from config refuses a `link` transport (it owns the connection); built directly from a `Transport&` (tests) its link is registered nowhere.
+- 0.2: with a `state_source`, the read-back inversion is the source's `inverted` only; the switch's own `inverted` describes its actuator channel. Legacy NOTed on either flag; the importer (D1) sets the source's flag accordingly.
+- 0.4: the modbus_tcp transport kind is a TCP transport. The check that a Modbus driver is not on a non-Modbus transport moves to A7, where the first such driver lands. Transaction ids come from one process-wide counter (`devices/modbus_ids.hpp`) rather than per transport: simpler, and as safe.
+
 ### Task 0.1: `udp` transport kind
 
 **Why:** two of three Qtegra labs (ldeo, felix) talk to Qtegra over UDP (survey C.6); the Qtegra spec (2026-10-01, open item 3) deferred it.
 
 **Files:** `libs/core/include/pychron/core/config/system_config.hpp` (`TransportKind::Udp`, `UdpParams{host, port}`), `libs/core/src/config/loader.cpp` (kind table, keys), `libs/transport/include/pychron/transport/udp_transport.hpp`, `libs/transport/src/udp_transport.cpp`, `libs/transport/src/factory.cpp`; tests `tests/transport/test_udp_transport.cpp`, loader cases in the existing config tests.
 
-- [ ] Datagram semantics: one `write` = one datagram; `read(ReadSpec)` assembles datagrams until the spec is satisfied (Qtegra replies fit one datagram, but don't assume it). `open()` connects the socket to the peer so stray datagrams from other hosts are dropped by the kernel.
-- [ ] Health, retries, `TraceRecorder` and `poll()` behave as for TCP.
-- [ ] Tests against a loopback asio UDP echo/peer in-process: request/reply, reply split over two datagrams, timeout, datagram from a different port ignored.
-- [ ] `thermo_qtegra` accepts a `udp` transport (it only needs `Transport&`); add one `tests/systems/test_qtegra_system.cpp` case on UDP.
+- [x] Datagram semantics: one `write` = one datagram; `read(ReadSpec)` assembles datagrams until the spec is satisfied (Qtegra replies fit one datagram, but don't assume it). `open()` connects the socket to the peer so stray datagrams from other hosts are dropped by the kernel.
+- [x] Health, retries, `TraceRecorder` and `poll()` behave as for TCP.
+- [x] Tests against a loopback asio UDP echo/peer in-process: request/reply, reply split over two datagrams, timeout, datagram from a different port ignored.
+- [x] `thermo_qtegra` accepts a `udp` transport (it only needs `Transport&`); add one `tests/systems/test_qtegra_system.cpp` case on UDP.
 
 ### Task 0.2: Valve inversion, separate state readback, unverified valves
 
@@ -83,12 +89,12 @@ Phases A, B, C and E are independent of each other once Phase 0 is in; they can 
 
 Semantics (write them into the `switch_manager.hpp` header comment):
 
-- [ ] **Actuator `invert`** is a driver option, handled inside the driver (Agilent swaps OPEN/CLOSE in both the command and the query, exactly as legacy `agilent_gp_actuator.py:115-118`). The manager never sees it.
-- [ ] **Valve `inverted`**: the manager sends `close()` to open and `open()` to close, and inverts the read-back, so the recorded state is always the valve's, not the channel's. Legacy double-actuation ignored this flag; ours does not.
-- [ ] **`state_source`**: read-back and `refresh()` read `state_source.driver` at `state_source.address` (inverted if its `inverted` is set) instead of the actuator. The read-back step stays mandatory.
-- [ ] **`verify = false`**: no read-back; record the commanded state (owner decision 3). `refresh()` leaves such valves at their recorded state rather than Unknown after the first actuation.
-- [ ] A failed read-back on **close** fails (legacy passed it: `not None == True`). Test `CloseWithNoReadbackFails`.
-- [ ] Interlock property tests extended: inversion and state_source never let two negatively interlocked valves be recorded open together.
+- [x] **Actuator `invert`** is a driver option, handled inside the driver (Agilent swaps OPEN/CLOSE in both the command and the query, exactly as legacy `agilent_gp_actuator.py:115-118`). The manager never sees it.
+- [x] **Valve `inverted`**: the manager sends `close()` to open and `open()` to close, and inverts the read-back, so the recorded state is always the valve's, not the channel's. Legacy double-actuation ignored this flag; ours does not.
+- [x] **`state_source`**: read-back and `refresh()` read `state_source.driver` at `state_source.address` (inverted if its `inverted` is set) instead of the actuator. The read-back step stays mandatory.
+- [x] **`verify = false`**: no read-back; record the commanded state (owner decision 3). `refresh()` leaves such valves at their recorded state rather than Unknown after the first actuation.
+- [x] A failed read-back on **close** fails (legacy passed it: `not None == True`). Test `CloseWithNoReadbackFails`.
+- [x] Interlock property tests extended: inversion and state_source never let two negatively interlocked valves be recorded open together.
 
 ### Task 0.3: Qtegra link sharing
 
@@ -96,9 +102,9 @@ Semantics (write them into the `switch_manager.hpp` header comment):
 
 **Files:** `libs/devices/include/pychron/devices/spectrometer/thermo_qtegra.hpp` + `.cpp` (expose a `QtegraLinkHandle` the way `ngx_link.hpp` does: a serialised `ask(command) -> Result<std::string>` over the spectrometer's transport), `tests/devices/spectrometer/test_thermo_qtegra*.cpp`.
 
-- [ ] Follow `ngx_link.hpp` exactly (owner driver opens; borrowers use a `link` transport naming the owner; borrowers' `connect()` is a no-op).
-- [ ] An `ask` from a borrower is atomic with respect to acquisition polling (`GetData` and a valve `Open` never interleave on the wire). Test with a sim hook that records interleaving.
-- [ ] Spectrometer config may live in another file; same lookup rule as NGX.
+- [x] Follow `ngx_link.hpp` exactly (owner driver opens; borrowers use a `link` transport naming the owner; borrowers' `connect()` is a no-op).
+- [x] An `ask` from a borrower is atomic with respect to acquisition polling (`GetData` and a valve `Open` never interleave on the wire). Test with a sim hook that records interleaving.
+- [x] Spectrometer config may live in another file; same lookup rule as NGX.
 
 ### Task 0.4: Modbus codec and the `modbus_tcp` transport kind
 
@@ -106,10 +112,10 @@ Semantics (write them into the `switch_manager.hpp` header comment):
 
 **Files:** `libs/codecs/include/pychron/codecs/modbus.hpp`, `src/modbus.cpp` (new, generic), `codecs/modbus_adc.{hpp,cpp}` (rebuilt on it, public API unchanged), `libs/transport/src/factory.cpp`, `tests/codecs/test_modbus.cpp`, `tests/transport/test_factory.cpp`.
 
-- [ ] Generic codec, host and device side (the device side feeds sim hooks): read coils (01), read holding registers (03), read input registers (04), write single coil (05, `FF00`/`0000`), write multiple registers (16). MBAP framing only. Keep the request/response types framing-neutral so RTU (CRC-16) can be added later without touching drivers.
-- [ ] 32-bit float and int from a register pair with explicit byte and word order (`ABCD`, `CDAB`, `BADC`, `DCBA`). Legacy's default (byte order big, word order little) is `CDAB`; `modbus_adc` stays `ABCD`. Test vectors for all four.
-- [ ] Exception replies (`0x80 | fn`, code) are Protocol errors naming the code (`illegal data address` etc.); transaction-id and unit-id mismatches are Protocol.
-- [ ] `kind = "modbus_tcp"` builds a TCP transport (port default 502); a Modbus driver on any other kind except `sim` is a Config error at load. `modbus_rtu` keeps failing at build with its existing message. Unit id is a driver option (`unit`, default 1), not a transport key, so several drivers (valves, gauges, heater) share one PLC connection; the transport queue serialises them, and transaction ids are per transport, not per driver (test `SharedConnectionKeepsTransactionIdsDistinct`).
+- [x] Generic codec, host and device side (the device side feeds sim hooks): read coils (01), read holding registers (03), read input registers (04), write single coil (05, `FF00`/`0000`), write multiple registers (16). MBAP framing only. Keep the request/response types framing-neutral so RTU (CRC-16) can be added later without touching drivers.
+- [x] 32-bit float and int from a register pair with explicit byte and word order (`ABCD`, `CDAB`, `BADC`, `DCBA`). Legacy's default (byte order big, word order little) is `CDAB`; `modbus_adc` stays `ABCD`. Test vectors for all four.
+- [x] Exception replies (`0x80 | fn`, code) are Protocol errors naming the code (`illegal data address` etc.); transaction-id and unit-id mismatches are Protocol.
+- [x] `kind = "modbus_tcp"` builds a TCP transport (port default 502); a Modbus driver on any other kind except `sim` is a Config error at load. `modbus_rtu` keeps failing at build with its existing message. Unit id is a driver option (`unit`, default 1), not a transport key, so several drivers (valves, gauges, heater) share one PLC connection; the transport queue serialises them, and transaction ids are per transport, not per driver (test `SharedConnectionKeepsTransactionIdsDistinct`).
 
 ---
 

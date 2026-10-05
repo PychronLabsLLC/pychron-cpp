@@ -64,9 +64,14 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
         transport = std::make_unique<UdpTransport>(UdpSettings{p->host, static_cast<std::uint16_t>(p->port)},
                                                    std::move(options));
       break;
-    case config::TransportKind::ModbusRtu:
     case config::TransportKind::ModbusTcp:
-      return fail(ErrorKind::Config, "modbus transports are not supported yet", config.name);
+      // A TCP stream; the Modbus framing is the driver's codec (codec::modbus).
+      if (const auto* p = std::get_if<config::ModbusTcpParams>(&config.params))
+        transport = std::make_unique<TcpTransport>(
+            TcpSettings{p->tcp.host, static_cast<std::uint16_t>(p->tcp.port)}, std::move(options));
+      break;
+    case config::TransportKind::ModbusRtu:
+      return fail(ErrorKind::Config, "modbus_rtu transports are not supported yet", config.name);
     case config::TransportKind::Link:
       if (const auto* p = std::get_if<config::LinkParams>(&config.params))
         return std::unique_ptr<Transport>(std::make_unique<LinkTransport>(config.name, p->link));

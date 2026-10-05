@@ -1,6 +1,7 @@
 #pragma once
 
-// Multichannel ADC over Modbus TCP (legacy Faraday banks). See CONVENTIONS.md.
+// Multichannel ADC over Modbus TCP (legacy Faraday banks), on codec::modbus.
+// See CONVENTIONS.md.
 //
 //   host -> MBAP{tid, 0, 6, unit} 04 <start:u16> <count:u16>   read input registers
 //   adc  -> MBAP{tid, 0, 3+2n, unit} 04 <2n:u8> <reg:u16>*n
