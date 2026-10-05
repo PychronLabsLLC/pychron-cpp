@@ -1,7 +1,7 @@
 # Laser system design, part 2c-2: dragonfly
 
 Date: 2026-10-04
-Status: Design, approved in conversation; not implemented
+Status: Implemented (section 11 lists what was decided differently). Proven on the simulated camera only.
 Owner: Jake Ross
 Scope: sub-project 2 of the laser program, part 2c-2.
 Builds on: 2026-10-03-vision-design.md §8 (the `Dragonfly` controller) and §9
@@ -135,3 +135,22 @@ grain and the laser off. Export of pickles, and by hand of the real co2 files.
 
 Seek; power control from brightness; autofocus (2c-3); a live camera
 (sub-project 4); the laser window (sub-project 3).
+
+## 11. As built
+
+- **The simulated glow's brightness is 0.03 × output percent, capped at 1.3**
+  (not output/25 capped 1.2): 20 % gives the unsaturated glow the vision
+  tests follow, 100 % is saturated.
+- **The grain's drift accumulates only while the beam is on**, and stays
+  where it got to when the beam goes off.
+- **`vision::aim_crop` was not written.** It is a refactor of the two
+  controllers' internals with no change in behaviour; both already take their
+  scale and map from the one `CameraConfig`.
+- **The runner checks the time itself** before asking the controller, so a
+  clock that jumps and a duration shorter than the settle both end the
+  pattern.
+- **A controller answer of `Invalid`** ends the pattern with a Config error.
+- **`elctl laser pattern` refuses to run a dragonfly** (it never fires the
+  laser); `patterns` and `--dry-run` describe it.
+- On NMGRL's co2 patterns folder the export tool now writes 12 of 13 (both
+  dragonflies); only seek is skipped.

@@ -10,9 +10,9 @@ every class a pickle names is replaced by an inert stand-in that only keeps
 the attributes it is given. Each pattern becomes <out dir>/<name>.toml, the
 file `<lab>/patterns` holds (docs/dev_setup.md).
 
-Not exported, and said so: arc, seek and dragonfly patterns (pychron-cpp has
-no arc move, and the vision-driven ones are not patterns of points), the
-deprecated diamond, z and power series, and a spiral's inward direction.
+Not exported, and said so: arc and seek patterns (pychron-cpp has no arc move
+and no seek), the deprecated diamond, z and power series, a spiral's inward
+direction, and a dragonfly's limit, delay and mask.
 Run it once per lab, then check the result with `elctl laser patterns`.
 """
 
@@ -153,11 +153,17 @@ _KINDS = {
         "use_x": ("use_x", True, None, None, True),
     }),
 }
+# A dragonfly follows the glow for a time: it has a duration and no iterations.
+_DRAGONFLY = {
+    "velocity": ("velocity", 1.0, 0.0, _MM, False),
+    "duration": ("duration", 0.1, 0.0, 3600.0, False),
+    "perimeter_radius": ("perimeter_radius", 2.5, 0.0, _MM, False),
+    "saturation_threshold": ("saturation_threshold", 0.75, 0.0, 1.0, False),
+    "spiral_base": ("base", 0.5, 0.0, _MM, False),
+}
 _NOT_EXPORTED = {
     "ArcPattern": "an arc needs a controller arc move, which pychron-cpp does not have",
     "SeekPattern": "seek is driven by vision, not a pattern of points",
-    "DragonFlyPeakPattern": "dragonfly is driven by vision, not a pattern of points",
-    "DragonFlyPattern": "dragonfly is driven by vision, not a pattern of points",
     "DiamondPattern": "deprecated in legacy Pychron: make it a polygon with nsides = 4",
 }
 
@@ -224,6 +230,21 @@ def to_toml(class_name, state):
     """(TOML text or None, notes). None: the pattern is not exported; notes say why."""
     if class_name in _NOT_EXPORTED:
         return None, [_NOT_EXPORTED[class_name]]
+    if class_name in ("DragonFlyPeakPattern", "DragonFlyPattern"):
+        lines = ['kind = "dragonfly"']
+        try:
+            for key, spec in _DRAGONFLY.items():
+                lines.append(f"{key} = {_value(key, spec, state)}")
+        except ValueError as error:
+            return None, [str(error)]
+        notes = []
+        for attribute, what in (("limit", "its limit"), ("pre_seek_delay", "its pre_seek_delay"),
+                                ("mask_kind", "its mask"), ("custom_mask_radius", "its mask radius")):
+            if attribute in state:
+                notes.append(f"{what} ({attribute}) is not carried over")
+        if state.get("niterations", 1) not in (1, None):
+            notes.append("its iterations are not carried over: a dragonfly runs once, for its duration")
+        return "\n".join(lines) + "\n", notes
     if class_name not in _KINDS:
         return None, [f"{class_name} is not a pattern this tool knows"]
     kind, keys = _KINDS[class_name]

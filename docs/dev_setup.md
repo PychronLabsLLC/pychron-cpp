@@ -536,6 +536,36 @@ beforehand: a point outside it ends the pattern there (the error names the
 point) and the run's ending switches the laser off. Stopping a pattern stops
 the stage where it is.
 
+**A dragonfly** is the tenth kind, and not a path. For its `duration` the
+stage follows the glow of the heated sample, so the beam stays on a grain
+that sits off its hole's centre or creeps as it melts; then the stage goes
+back to where it started (`configs/examples/patterns/follow.toml` is
+commented):
+
+```toml
+kind = "dragonfly"
+duration = 30                 # s, required
+velocity = 1.0
+perimeter_radius = 2.5        # mm: never further from where it started
+saturation_threshold = 0.75   # a glow this bright: hold still
+move_threshold = 0.033        # mm
+max_step = 0.5
+spiral = "hexagon"            # the search when the glow is lost
+spiral_base = 0.5
+```
+
+The script fires the laser and then calls `execute_pattern()`; the pattern's
+own duration is how long it heats, so the script does not also sleep. A
+dragonfly needs the device to have a camera that follows the stage: a queue
+naming one on a device without is not started. If the camera fails part way,
+the stage returns to where the pattern began and, by the camera's
+`on_failure`, either holds there for the rest of the duration (and says so in
+the run's log) or the run fails. `elctl laser pattern` does not run a
+dragonfly (it never fires the laser, so there is no glow). As with autocenter,
+there is no live camera yet: this runs on the simulator, whose camera shows a
+glow at the sample while the simulated laser fires (`grain_offset_mm` and
+`glow_drift_mm_per_s` in `cameras.toml`).
+
 Legacy patterns are Python pickles (`setupfiles/patterns/*.lp`). Export them
 once per lab; nothing in a pickle is run:
 
@@ -543,8 +573,8 @@ once per lab; nothing in a pickle is run:
 python3 tools/export_patterns.py /path/to/setupfiles/patterns /path/to/lab/patterns
 ```
 
-It says what it could not carry over: arc, seek and dragonfly patterns, z and
-power series, a spiral's inward direction.
+It says what it could not carry over: arc and seek patterns, z and power
+series, a spiral's inward direction, a dragonfly's limit, delay and mask.
 
 Each segment is driven as a straight line at the pattern's velocity (the
 speed is shared between the x and y axes).
@@ -554,7 +584,7 @@ which pauses the beam for about 0.15 s at every point, so a pattern of
 hundreds of points is slow and heats its vertices more. The speed is never
 above the driver's `move_speed`.
 
-Not done yet: a live camera, seek and dragonfly, autofocus, the laser window,
+Not done yet: a live camera, seek, autofocus, the laser window,
 a pattern maker and on-screen calibration, watts and temperature.
 
 ## 6. Set up an install

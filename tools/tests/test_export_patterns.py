@@ -112,17 +112,43 @@ class ReadAndConvert(Scratch):
         self.assertEqual(self.toml("band")["length"], 15.0)
 
     def test_unmapped_classes_are_reported_and_skipped(self):
-        for cls in ("ArcPattern", "SeekPattern", "DragonFlyPeakPattern", "DiamondPattern", "WhoKnowsPattern"):
+        for cls in ("ArcPattern", "SeekPattern", "DiamondPattern", "WhoKnowsPattern"):
             lp(self.src, f"{cls}.lp", cls, velocity=1.0)
         lp(self.src, "elsewhere.lp", "PolygonPattern")
         (self.src / "elsewhere.lp").write_bytes(pickle.dumps(legacy_class("Thing", "some.other.module")()))
         report = self.export()
         self.assertEqual(report.written, [])
-        self.assertEqual(sorted(report.skipped), ["ArcPattern", "DiamondPattern", "DragonFlyPeakPattern",
-                                                  "SeekPattern", "WhoKnowsPattern", "elsewhere"])
+        self.assertEqual(sorted(report.skipped), ["ArcPattern", "DiamondPattern", "SeekPattern", "WhoKnowsPattern",
+                                                  "elsewhere"])
         self.assertIn("vision", report.skipped["SeekPattern"])
         self.assertIn("polygon", report.skipped["DiamondPattern"])  # says what to make instead
         self.assertFalse(self.out.exists() and any(self.out.iterdir()))
+
+    def test_dragonfly_exports(self):
+        lp(self.src, "fly.lp", "DragonFlyPeakPattern", duration=45.0, base=0.4, perimeter_radius=2.0,
+           saturation_threshold=0.8, velocity=1.5, limit=10, pre_seek_delay=0.25, mask_kind="Beam",
+           niterations=3)
+        lp(self.src, "bare.lp", "DragonFlyPeakPattern")  # legacy's defaults, its 0.1 s duration included
+        report = self.export()
+        self.assertEqual(report.written, ["bare", "fly"], report.skipped)
+        self.assertEqual(self.toml("fly"), {"kind": "dragonfly", "velocity": 1.5, "duration": 45.0,
+                                            "perimeter_radius": 2.0, "saturation_threshold": 0.8,
+                                            "spiral_base": 0.4})
+        self.assertEqual(self.toml("bare"), {"kind": "dragonfly", "velocity": 1.0, "duration": 0.1,
+                                             "perimeter_radius": 2.5, "saturation_threshold": 0.75,
+                                             "spiral_base": 0.5})
+        notes = " ".join(report.notes["fly"])
+        for word in ("limit", "pre_seek_delay", "mask", "iterations"):
+            self.assertIn(word, notes)
+        self.assertNotIn("iterations", self.toml("fly"))  # a dragonfly runs once, for its duration
+
+    def test_a_dragonfly_the_reader_would_refuse_is_skipped(self):
+        lp(self.src, "never.lp", "DragonFlyPeakPattern", duration=0.0)
+        lp(self.src, "blind.lp", "DragonFlyPeakPattern", duration=10.0, saturation_threshold=1.5)
+        report = self.export()
+        self.assertEqual(report.written, [])
+        self.assertIn("duration", report.skipped["never"])
+        self.assertIn("saturation_threshold", report.skipped["blind"])
 
     def test_series_and_direction_are_reported(self):
         lp(self.src, "busy.lp", "LineSpiralPattern", radius=0.1, nsteps=2, percent_change=0.8, step_scalar=5,
@@ -256,6 +282,14 @@ class AgainstTheRealReader(Scratch):
         done = subprocess.run([os.environ["ELCTL"], "laser", "patterns", "--lab", str(lab)],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        lp(self.src, "fly.lp", "DragonFlyPeakPattern", duration=30.0)
+        self.export()
+        (lab / "patterns").mkdir(exist_ok=True)
+        (self.out / "fly.toml").rename(lab / "patterns" / "fly.toml")
+        done = subprocess.run([os.environ["ELCTL"], "laser", "patterns", "--lab", str(lab)],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("fly  dragonfly", done.stdout)
         for name in ("hept  polygon", "ras  raster", "spi  line_spiral", "walk  random"):
             self.assertIn(name, done.stdout)
 
