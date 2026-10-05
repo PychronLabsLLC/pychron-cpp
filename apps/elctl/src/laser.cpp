@@ -450,7 +450,7 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
     if (a.words.size() != 1) return usage("patterns takes no arguments");
     if (a.x || a.timeout) return usage("patterns takes no --x, --y or --timeout");
     Laser laser(std::move(a), globals, io);
-    return laser.has_line() ? laser.patterns() : kFailed;
+    return laser.patterns();  // a folder of files: no line config needed
   }
   if (verb == "pattern") {
     if (a.words.size() != 3) return usage("pattern needs <device> <name>");

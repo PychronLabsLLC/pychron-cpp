@@ -9,3 +9,19 @@ target_compile_definitions(pychron_laser_tests PRIVATE
 pychron_set_warnings(pychron_laser_tests)
 
 gtest_discover_tests(pychron_laser_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+
+# tools/export_patterns.py (legacy .lp pickles to pattern TOML) is tested with
+# the standard library's unittest; with elctl built, what it writes is also
+# read back by the real loader. Python 3.11 has tomllib.
+find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME tools.export_patterns
+    COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${PROJECT_SOURCE_DIR}/tools/tests" -p "test_export_patterns.py"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(tools.export_patterns PROPERTIES TIMEOUT 120)
+  if(TARGET elctl)
+    set_tests_properties(tools.export_patterns PROPERTIES ENVIRONMENT "ELCTL=$<TARGET_FILE:elctl>")
+  endif()
+else()
+  message(STATUS "python3 >= 3.11 not found: tools/export_patterns.py is not tested")
+endif()

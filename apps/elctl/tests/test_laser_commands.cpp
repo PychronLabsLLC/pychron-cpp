@@ -269,6 +269,13 @@ TEST_F(LaserCmd, PatternsReportsAFileThatDidNotLoad) {
   EXPECT_NE(o.err.find("broken: radius"), std::string::npos) << o.err;
 }
 
+// Listing patterns is about a folder of files: it needs no line config.
+TEST_F(LaserCmd, PatternsNeedsNoLineConfig) {
+  const auto o = run_raw({"laser", "patterns", "--lab", (dir_ / "lab").string()});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("hexagon  polygon"), std::string::npos) << o.out;
+}
+
 TEST_F(LaserCmd, PatternsWithNoneSaysSo) {
   fs::remove_all(lab("patterns"));
   const auto o = laser({"patterns"});
