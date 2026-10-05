@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,7 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
+#include "pychron/devices/extraction/capability.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/transport/factory.hpp"
@@ -248,6 +250,14 @@ Result<void> ExtractionLine::start() {
     }
   }
 
+  for (const auto& h : config_.heaters) {
+    if (heater(h.name) == nullptr) {
+      scanner_.reset();
+      for (auto& [name, t] : transports_) t->close();
+      return fail(ErrorKind::Config, "heater '" + h.name + "': driver '" + h.driver + "' is not a heater");
+    }
+  }
+
   if (config_.cryo) {
     auto* tc = cryostat();
     if (tc == nullptr) {
@@ -287,6 +297,33 @@ Result<void> ExtractionLine::start() {
     cryo_job_ = *job;
   }
 
+  if (!config_.heaters.empty()) {
+    // Every field of every heater, always: an enable from the controller's
+    // own panel is seen (legacy read only the readback, only while on).
+    auto scan = [this] {
+      for (const auto& h : config_.heaters) {
+        auto sample = read_heater(h.name, *heater(h.name));
+        if (!sample) {
+          if (heaters_failed_.insert(h.name).second) {
+            bus_.publish(Alarm{h.name, AlarmSeverity::Warning, "heater read failed: " + to_string(sample.error()),
+                               clock_->now()});
+          }
+          continue;
+        }
+        heaters_failed_.erase(h.name);
+      }
+    };
+    scan();
+    auto job = scheduler_->every("heaters", interval, scan);
+    if (!job) {
+      if (cryo_job_) scheduler_->cancel(*std::exchange(cryo_job_, std::nullopt));
+      scanner_.reset();
+      for (auto& [name, t] : transports_) t->close();
+      return fail(job.error());
+    }
+    heater_job_ = *job;
+  }
+
   running_ = true;
   log(LogLevel::Info, "extraction line started: " + std::to_string(config_.valves.size() + config_.manual_valves.size()) +
                           " valves, " + std::to_string(config_.gauges.size()) + " gauges");
@@ -302,6 +339,7 @@ void ExtractionLine::stop() {
   // and that scan still uses the scanner's state: drain before destroying.
   scanner_->stop();
   if (cryo_job_) scheduler_->cancel(*std::exchange(cryo_job_, std::nullopt));
+  if (heater_job_) scheduler_->cancel(*std::exchange(heater_job_, std::nullopt));
   scheduler_->stop();
   scheduler_->wait_idle();
   scanner_.reset();
@@ -380,6 +418,121 @@ ITemperatureController* ExtractionLine::cryostat() const {
   if (!config_.cryo) return nullptr;
   Device* d = device(config_.cryo->driver);
   return d ? capability<ITemperatureController>(*d) : nullptr;
+}
+
+IHeater* ExtractionLine::heater(std::string_view name) const {
+  auto h = std::find_if(config_.heaters.begin(), config_.heaters.end(), [&](const auto& x) { return x.name == name; });
+  if (h == config_.heaters.end()) return nullptr;
+  Device* d = device(h->driver);
+  return d ? capability<IHeater>(*d) : nullptr;
+}
+
+Result<IHeater*> ExtractionLine::heater_or_error(std::string_view name) const {
+  if (auto* h = heater(name)) return h;
+  const bool known =
+      std::any_of(config_.heaters.begin(), config_.heaters.end(), [&](const auto& x) { return x.name == name; });
+  return fail(ErrorKind::Config, known ? "its driver is not a heater" : "unknown heater", std::string(name));
+}
+
+std::optional<HeaterSample> ExtractionLine::heater_info(std::string_view name) const {
+  std::lock_guard lock(pressures_mutex_);
+  auto it = heater_samples_.find(name);
+  if (it == heater_samples_.end()) return std::nullopt;
+  return it->second;
+}
+
+Result<HeaterSample> ExtractionLine::read_heater(std::string_view name) {
+  auto h = heater_or_error(name);
+  if (!h) return fail(std::move(h).error());
+  return read_heater(std::string(name), **h);
+}
+
+namespace {
+
+// A field the driver does not have reads as nullopt; any other failure
+// fails the whole read.
+template <class T>
+Result<std::optional<T>> optional_field(Result<T> r) {
+  if (r) return std::optional<T>(*r);
+  if (extraction::is_not_supported(r.error())) return std::optional<T>{};
+  return fail(std::move(r).error());
+}
+
+}  // namespace
+
+Result<HeaterSample> ExtractionLine::read_heater(const std::string& name, IHeater& h) {
+  HeaterSample s;
+  s.heater = name;
+  auto readback = optional_field(h.readback());
+  if (!readback) return fail(std::move(readback).error());
+  auto setpoint = optional_field(h.setpoint());
+  if (!setpoint) return fail(std::move(setpoint).error());
+  auto enabled = optional_field(h.enabled());
+  if (!enabled) return fail(std::move(enabled).error());
+  auto use_pid = optional_field(h.use_pid());
+  if (!use_pid) return fail(std::move(use_pid).error());
+  s.readback = *readback;
+  s.setpoint = *setpoint;
+  s.enabled = *enabled;
+  s.use_pid = *use_pid;
+  s.ts = clock_->now();
+  {
+    std::lock_guard lock(pressures_mutex_);
+    heater_samples_[name] = s;
+  }
+  bus_.publish(s);
+  return s;
+}
+
+namespace {
+
+// A setpoint may come back through a float32 register.
+bool same_setpoint(double want, double got) {
+  return std::abs(want - got) <= 1e-5 * std::max(1.0, std::abs(want));
+}
+
+}  // namespace
+
+Result<void> ExtractionLine::set_heater_enabled(std::string_view name, bool on) {
+  auto h = heater_or_error(name);
+  if (!h) return fail(std::move(h).error());
+  if (auto set = (*h)->set_enabled(on); !set) return set;
+  auto got = (*h)->enabled();
+  if (!got) return fail(std::move(got).error());
+  if (*got != on) {
+    return fail(ErrorKind::Protocol, std::string("turned ") + (on ? "on" : "off") + " but reads back " +
+                                         (*got ? "on" : "off"), std::string(name));
+  }
+  (void)read_heater(std::string(name), **h);
+  return {};
+}
+
+Result<void> ExtractionLine::set_heater_setpoint(std::string_view name, double value) {
+  auto h = heater_or_error(name);
+  if (!h) return fail(std::move(h).error());
+  if (auto set = (*h)->set_setpoint(value); !set) return set;
+  auto got = (*h)->setpoint();
+  if (!got) return fail(std::move(got).error());
+  if (!same_setpoint(value, *got)) {
+    return fail(ErrorKind::Protocol, "setpoint " + std::to_string(value) + " reads back as " + std::to_string(*got),
+                std::string(name));
+  }
+  (void)read_heater(std::string(name), **h);
+  return {};
+}
+
+Result<void> ExtractionLine::set_heater_pid(std::string_view name, bool on) {
+  auto h = heater_or_error(name);
+  if (!h) return fail(std::move(h).error());
+  if (auto set = (*h)->set_use_pid(on); !set) return set;
+  auto got = (*h)->use_pid();
+  if (!got) return fail(std::move(got).error());
+  if (*got != on) {
+    return fail(ErrorKind::Protocol, std::string("use_pid set ") + (on ? "on" : "off") + " but reads back " +
+                                         (*got ? "on" : "off"), std::string(name));
+  }
+  (void)read_heater(std::string(name), **h);
+  return {};
 }
 
 std::optional<ExtractionLine::TemperatureReading> ExtractionLine::latest_temperature(std::string_view input) const {

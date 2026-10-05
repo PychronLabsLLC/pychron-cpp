@@ -151,6 +151,16 @@ struct CryoConfig : Located {
   std::map<std::string, std::vector<double>> setpoints;
 };
 
+// [[heaters]] (plan 2026-10-05, E1): a heater the line scans and the
+// operator switches. `driver` is a [drivers.*] that heats; `units` is only
+// shown (the controller's program decides them, e.g. "C").
+struct HeaterConfig : Located {
+  std::string name;
+  std::string driver;
+  std::string description;
+  std::string units;
+};
+
 struct PipetteConfig : Located {
   std::string name;
   std::string inner;
@@ -179,6 +189,7 @@ struct SystemConfig {
   std::vector<GaugeConfig> gauges;
   std::vector<PipetteConfig> pipettes;
   std::optional<CryoConfig> cryo;
+  std::vector<HeaterConfig> heaters;
   LoggingConfig logging;
   std::map<std::string, AliasConfig> aliases;  // by key
 };

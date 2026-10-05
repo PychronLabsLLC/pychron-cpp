@@ -21,6 +21,7 @@ class Validator {
     check_pipettes();
     check_aliases();
     check_cryo();
+    check_heaters();
     return std::move(out_);
   }
 
@@ -60,6 +61,14 @@ class Validator {
   void check_cryo() {
     if (c_.cryo && !c_.drivers.contains(c_.cryo->driver)) {
       report(*c_.cryo, "driver", "unknown driver '" + c_.cryo->driver + "'");
+    }
+  }
+
+  void check_heaters() {
+    std::set<std::string> names;
+    for (const auto& h : c_.heaters) {
+      if (!names.insert(h.name).second) report(h, "name", "duplicate heater name '" + h.name + "'");
+      if (!c_.drivers.contains(h.driver)) report(h, "driver", "unknown driver '" + h.driver + "'");
     }
   }
 

@@ -242,6 +242,14 @@ channels = [1, 2, 3]
 # [cryo.setpoints]             # legacy cryotemps.yaml, kelvin, one per output
 # He_freeze = [14.0, 0.0]
 
+# [[heaters]] (added 2026-10-05): heaters the line scans every scan_interval_ms
+# (HeaterSample) and the operator switches.
+# [[heaters]]
+# name = "furnace"
+# driver = "furnace_plc"       # a heater (kind = "plc2000_heater")
+# description = "Furnace heater"
+# units = "C"                  # shown only; the controller's program decides
+
 [[valves]]
 name = "A"
 description = "Furnace to bone"

@@ -20,6 +20,7 @@ add_executable(pychron_devices_tests
   test_pychron_valves.cpp
   test_varian_xgs600.cpp
   test_plc2000_gauges.cpp
+  test_plc2000_heater.cpp
   test_lakeshore.cpp
   spectrometer/test_roles.cpp
   spectrometer/test_params.cpp

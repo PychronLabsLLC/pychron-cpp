@@ -10,6 +10,7 @@
 #include "pychron/devices/varian_xgs600.hpp"
 #include "pychron/devices/lakeshore.hpp"
 #include "pychron/devices/modbus_device_sim.hpp"
+#include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/codecs/modbus.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
@@ -326,6 +327,17 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
+  if (driver.kind == "plc2000_heater") {
+    // A heater on this system's clock, at 25 (the PLC's units) and off.
+    auto options = Plc2000Heater::parse_options(driver.options);
+    if (!options) return {};
+    auto unit = std::make_unique<Plc2000HeaterSim>(clock_, std::move(*options));
+    auto hook = unit->hook();
+    std::lock_guard lock(mutex_);
+    heaters_.insert_or_assign(driver.name, std::move(unit));
+    return hook;
+  }
+
   if (driver.kind == "plc2000_gauges") {
     // Channel n's float lives at register n + register_offset (plc2000_gauges.hpp).
     const int offset = static_cast<int>(driver.options["register_offset"].value_or(std::int64_t{-1}));
@@ -413,6 +425,12 @@ extraction::ChromiumSim* SimSystem::chromium(std::string_view driver) const {
   std::lock_guard lock(mutex_);
   const auto it = lasers_.find(driver);
   return it == lasers_.end() ? nullptr : it->second.get();
+}
+
+Plc2000HeaterSim* SimSystem::heater(std::string_view driver) const {
+  std::lock_guard lock(mutex_);
+  const auto it = heaters_.find(driver);
+  return it == heaters_.end() ? nullptr : it->second.get();
 }
 
 }  // namespace pychron::sim

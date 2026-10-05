@@ -48,6 +48,7 @@
 #include "pychron/devices/device.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/canvas.hpp"
+#include "pychron/devices/heater.hpp"
 #include "pychron/devices/temperature_controller.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/network_graph.hpp"
@@ -139,6 +140,23 @@ class ExtractionLine {
   };
   std::optional<TemperatureReading> latest_temperature(std::string_view input) const;
 
+  // [[heaters]] (plan 2026-10-05, E1). Each is scanned every
+  // scan_interval_ms: readback, setpoint, enabled and use_pid are read and
+  // published as one HeaterSample; a failed scan raises one Warning alarm
+  // until the next good one. Config error for an unknown heater.
+  //
+  // The driver of `name`, or null (unknown, or not a heater: start() refuses).
+  IHeater* heater(std::string_view name) const;
+  // The latest scan or command read-back; nullopt before the first.
+  std::optional<HeaterSample> heater_info(std::string_view name) const;
+  // Reads every field now, records and publishes it.
+  Result<HeaterSample> read_heater(std::string_view name);
+  // Each writes, reads the same field back (Protocol error on a mismatch:
+  // legacy never checked), then publishes a fresh HeaterSample.
+  Result<void> set_heater_enabled(std::string_view name, bool on);
+  Result<void> set_heater_setpoint(std::string_view name, double value);
+  Result<void> set_heater_pid(std::string_view name, bool on);
+
   SignalBus& bus() noexcept { return bus_; }
   // Options::log_hub, or the hub built from [logging]; null only if that failed.
   std::shared_ptr<LogHub> log_hub() const noexcept { return log_hub_; }
@@ -162,6 +180,8 @@ class ExtractionLine {
   Result<void> build();
   void read_all_gauges();
   void record_pressure(const std::string& gauge, double value, TimePoint ts);
+  Result<IHeater*> heater_or_error(std::string_view name) const;
+  Result<HeaterSample> read_heater(const std::string& name, IHeater& heater);
   void log(LogLevel level, std::string message);
   void log_to(const std::optional<Logger>& logger, std::string_view name, LogLevel level, std::string message);
   void load_state();
@@ -213,6 +233,9 @@ class ExtractionLine {
   std::map<std::string, TemperatureReading, std::less<>> temperatures_;  // under pressures_mutex_
   std::optional<JobId> cryo_job_;
   bool cryo_failed_ = false;  // scan thread only
+  std::map<std::string, HeaterSample, std::less<>> heater_samples_;  // under pressures_mutex_
+  std::optional<JobId> heater_job_;
+  std::set<std::string> heaters_failed_;  // scan thread only
 };
 
 }  // namespace pychron::systems

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -45,6 +46,17 @@ struct TemperatureSample {
   std::string source;  // the controller's driver name
   std::string input;   // "A", "B", ...
   double kelvin = 0.0;
+  TimePoint ts{};
+};
+
+// One scan of a heater ([[heaters]]), in its configured units. A field the
+// heater's driver does not support is nullopt.
+struct HeaterSample {
+  std::string heater;
+  std::optional<double> readback;
+  std::optional<double> setpoint;
+  std::optional<bool> enabled;
+  std::optional<bool> use_pid;
   TimePoint ts{};
 };
 

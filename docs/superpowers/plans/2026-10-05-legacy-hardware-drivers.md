@@ -217,7 +217,7 @@ Protocol (legacy `actuators/plc2000_gp_actuator.py`, `core/modbus.py`):
 - State: read coils, 1 coil at address − 1; bit 0.
 - Legacy returned success without checking the write's echo and swallowed `ModbusIOException`; ours checks the function-05 echo (address and value must match) and the manager's read-back runs as for every valve.
 
-- [ ] Driver options `unit` (default 1), `coil_offset` (default −1, so the legacy address convention imports unchanged).
+- [x] Driver options `unit` (default 1), `coil_offset` (default −1, so the legacy address convention imports unchanged).
 - [ ] Batch state: `refresh()` reads the coil range covering all of the driver's valves in one request when they are contiguous (an `IValveActuator` extension `read_many`, optional, default per-valve). Legacy read one coil per valve.
 - [ ] Sim: a coil bank model behind the device-side codec; writes move the simulated line's valves.
 
@@ -411,6 +411,8 @@ Legacy has a `HeaterManager` on the extraction line: each heater device shows an
 
 ### Task E1: `IHeater` capability, scan and line commands
 
+Done 2026-10-05. `HeaterSample`'s four fields are optional: a field the driver does not support (no address configured) is nullopt rather than an error, so a heater with only enable and readback scans cleanly. The scan is one job in `ExtractionLine` (as the cryo scan), on `scan_interval_ms`. `ExtractionLine` also has `heater(name)` and `read_heater(name)`. A setpoint reads back equal within 1e-5 relative (a float32 register). Units are carried, not confirmed (AELAMS's °C is still to confirm at D3).
+
 **Files:** `libs/devices/include/pychron/devices/heater.hpp`, `libs/core/include/pychron/core/events.hpp` (`HeaterSample{heater, readback, setpoint, enabled, use_pid, ts}`), `system_config.hpp` + loader (`[[heaters]] { name, driver, description, units }`), `libs/systems` (`ExtractionLine` gains `heater_info`, `set_heater_enabled`, `set_heater_setpoint`, `set_heater_pid`; a scan alongside `GaugeScanner`), tests.
 
 ```cpp
@@ -426,11 +428,13 @@ struct IHeater {
 };
 ```
 
-- [ ] Units are whatever the PLC program uses (°C at AELAMS, to confirm); carried as a string on `[[heaters]]` for display, not converted.
-- [ ] The scan reads readback, setpoint, enabled and use_pid each period and publishes one `HeaterSample`; a failed read publishes one Warning alarm until the next good one (same rule as gauges). Legacy only read the readback while on; ours reads all four always, so an enable from the PLC's own panel is seen.
-- [ ] Every command writes, then reads back the same field, and fails Protocol on a mismatch (legacy never checked).
+- [x] Units are whatever the PLC program uses (°C at AELAMS, to confirm); carried as a string on `[[heaters]]` for display, not converted.
+- [x] The scan reads readback, setpoint, enabled and use_pid each period and publishes one `HeaterSample`; a failed read publishes one Warning alarm until the next good one (same rule as gauges). Legacy only read the readback while on; ours reads all four always, so an enable from the PLC's own panel is seen.
+- [x] Every command writes, then reads back the same field, and fails Protocol on a mismatch (legacy never checked).
 
 ### Task E2: `plc2000_heater` — AutomationDirect PLC heater (AELAMS)
+
+Done 2026-10-05. `Plc2000HeaterSim` lives beside the driver (as `LakeshoreSim`), and SimSystem builds one per `plc2000_heater` driver (`SimSystem::heater(driver)`). A7 (`plc2000_valves`) is not built yet, so there is no shared PLC model: a sim transport still hooks only its first driver, and a PLC transport shared by several drivers is not simulated.
 
 Protocol (legacy `hardware/heater.py:101-180`), Modbus TCP via Task 0.4. Addresses come from `[Register] setpoint/readback/use_pid/enable` and are 1-based; legacy subtracts 1.
 
@@ -441,11 +445,11 @@ Protocol (legacy `hardware/heater.py:101-180`), Modbus TCP via Task 0.4. Address
 | setpoint | **input** registers (04), 2 at `setpoint` − 1, float32 | **holding** registers (16), 2 at `setpoint` − 1, **int32** |
 | readback | input registers (04), 2 at `readback` − 1, float32 | — |
 
-- [ ] Driver options `unit`, `word_order` (default `CDAB`), `enable`, `use_pid`, `setpoint`, `readback` (1-based addresses as in the legacy cfg), `setpoint_write_format` (`int32` default, as legacy; `float32` available). A missing address makes that operation `not_supported`, not a silent no-op as in legacy.
-- [ ] The setpoint asymmetry (int32 written to holding registers, float32 read from input registers) is legacy's wire behaviour and almost certainly mirrors the PLC program; keep it, and say so in the header. With `int32`, a fractional setpoint is a Config error rather than silently truncated (legacy's `int(value)`). Bring-up (D3) confirms write-then-read round-trips.
-- [ ] Legacy bug not carried: `read_use_pid` tested `if self.use_pid_address:`, so a `use_pid` coil at address 1 (0 after the offset) was never read. Test `UsePidCoilAtAddressOneIsRead`.
-- [ ] `IHeater`; may share the PLC transport with `plc2000_valves` and `plc2000_gauges`.
-- [ ] Sim: the PLC model from A7/B7 gains coils and registers for the heater; readback approaches setpoint with a first-order lag while enabled (on the injected clock), and decays toward ambient when disabled.
+- [x] Driver options `unit`, `word_order` (default `CDAB`), `enable`, `use_pid`, `setpoint`, `readback` (1-based addresses as in the legacy cfg), `setpoint_write_format` (`int32` default, as legacy; `float32` available). A missing address makes that operation `not_supported`, not a silent no-op as in legacy.
+- [x] The setpoint asymmetry (int32 written to holding registers, float32 read from input registers) is legacy's wire behaviour and almost certainly mirrors the PLC program; keep it, and say so in the header. With `int32`, a fractional setpoint is a Config error rather than silently truncated (legacy's `int(value)`). Bring-up (D3) confirms write-then-read round-trips.
+- [x] Legacy bug not carried: `read_use_pid` tested `if self.use_pid_address:`, so a `use_pid` coil at address 1 (0 after the offset) was never read. Test `UsePidCoilAtAddressOneIsRead`.
+- [x] `IHeater`; may share the PLC transport with `plc2000_valves` and `plc2000_gauges`.
+- [x] Sim: the PLC model from A7/B7 gains coils and registers for the heater; readback approaches setpoint with a first-order lag while enabled (on the injected clock), and decays toward ambient when disabled.
 
 ### Task E3: Heaters in `elctl` and the UI
 

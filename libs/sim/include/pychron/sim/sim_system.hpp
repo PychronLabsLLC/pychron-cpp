@@ -42,6 +42,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/devices/agilent_unit_sim.hpp"
 #include "pychron/devices/lakeshore.hpp"
+#include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/pychron_valve_server_sim.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
@@ -120,6 +121,9 @@ class SimSystem {
   //                       volume if the topology lacks it); other channels
   //                       have no sensor.
   //   lakeshore           a LakeshoreSim on this system's clock.
+  //   plc2000_heater      a Plc2000HeaterSim on this system's clock, its
+  //                       driver's coils and registers only (a PLC transport
+  //                       shared with other drivers is not simulated).
   //   plc2000_gauges      a Modbus PLC whose float at channel n's registers
   //                       is the volume of the gauge on that channel.
   //   varian_xgs600       label n of the driver's `labels` reads the volume
@@ -135,6 +139,8 @@ class SimSystem {
   // null if there is none. For tests and tools that look at what the
   // simulated laser was told.
   extraction::ChromiumSim* chromium(std::string_view driver) const;
+  // Likewise the PLC heater simulator of a plc2000_heater driver.
+  Plc2000HeaterSim* heater(std::string_view driver) const;
 
  private:
   struct Node {
@@ -160,6 +166,7 @@ class SimSystem {
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
   std::vector<std::unique_ptr<AgilentUnitSim>> units_;
   std::vector<std::unique_ptr<LakeshoreSim>> cryostats_;
+  std::map<std::string, std::unique_ptr<Plc2000HeaterSim>, std::less<>> heaters_;  // by driver name
   std::vector<std::unique_ptr<PychronValveServerSim>> valve_servers_;
   std::map<std::string, std::unique_ptr<extraction::ChromiumSim>, std::less<>> lasers_;  // by driver name
 };

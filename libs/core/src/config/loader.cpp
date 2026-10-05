@@ -244,7 +244,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "cryo", "logging", "aliases"});
+                           "pipettes", "cryo", "heaters", "logging", "aliases"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -278,6 +278,9 @@ class ConfigBuilder {
     });
     for_each_item(root, "gauges", [&](const std::string& path, const toml::table& t) {
       c.gauges.push_back(parse_gauge(path, t));
+    });
+    for_each_item(root, "heaters", [&](const std::string& path, const toml::table& t) {
+      c.heaters.push_back(parse_heater(path, t));
     });
     for_each_item(root, "pipettes", [&](const std::string& path, const toml::table& t) {
       c.pipettes.push_back(parse_pipette(path, t));
@@ -608,6 +611,18 @@ class ConfigBuilder {
     p_.read(get, g, "alarm_high", g.alarm_high);
     p_.read(get, g, "alarm_low", g.alarm_low);
     return g;
+  }
+
+  HeaterConfig parse_heater(const std::string& path, const toml::table& t) {
+    HeaterConfig h;
+    p_.begin(h, t, path);
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, h, Keys{"name", "driver", "description", "units"});
+    p_.read(get, h, "name", h.name, true);
+    p_.read(get, h, "driver", h.driver, true);
+    p_.read(get, h, "description", h.description, false);
+    p_.read(get, h, "units", h.units, false);
+    return h;
   }
 
   CryoConfig parse_cryo(const toml::table& t) {
