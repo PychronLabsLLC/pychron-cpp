@@ -585,3 +585,14 @@ TEST(ChromiumRegistry, TheDeviceExposesItsCapabilities) {
   ASSERT_NE(schema, nullptr);
   EXPECT_NE(schema->summary.find("Chromium"), std::string::npos);
 }
+
+TEST_F(ChromiumTest, SaysWhichInterlocksAreTripped) {
+  auto none = laser.tripped_interlocks();
+  ASSERT_TRUE(none) << none.error().what;
+  EXPECT_TRUE(none->empty());
+  sim.trip_interlock("Door");
+  sim.trip_interlock("Coolant");
+  auto tripped = laser.tripped_interlocks();
+  ASSERT_TRUE(tripped) << tripped.error().what;
+  EXPECT_EQ(*tripped, (std::vector<std::string>{"Door", "Coolant"}));
+}

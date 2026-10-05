@@ -48,6 +48,9 @@ struct ILaserDevice {
   virtual Result<bool> is_firing() = 0;
   // Pre-extraction warmup (e.g. CO2 tube conditioning).
   virtual Result<void> warmup() = 0;
+  // The interlocks tripped now, by name; empty when every one is satisfied,
+  // and for a device that cannot say.
+  virtual Result<std::vector<std::string>> tripped_interlocks() { return std::vector<std::string>{}; }
 };
 
 struct IFurnaceDevice {

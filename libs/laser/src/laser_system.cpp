@@ -28,11 +28,249 @@ LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver
   if (patterns != nullptr) runner_ = std::make_unique<PatternRunner>(name_, *this, *patterns);
 }
 
+namespace {
+
+using Gate = std::lock_guard<std::recursive_mutex>;
+
+}  // namespace
+
+std::string_view to_string(LaserActivity activity) noexcept {
+  switch (activity) {
+    case LaserActivity::Idle: return "idle";
+    case LaserActivity::Moving: return "moving";
+    case LaserActivity::Centring: return "centring";
+    case LaserActivity::Pattern: return "pattern";
+  }
+  return "idle";
+}
+
+// Whichever runner the device has, with each call behind the system's gate
+// and the emergency stop's latch in front of a start.
+class LaserSystem::GatedRunner final : public extraction::IPatternRunner {
+ public:
+  explicit GatedRunner(LaserSystem& system) : system_(system) {}
+
+  Result<void> execute_pattern(std::string_view pattern) override { return execute_pattern_for(pattern, 0); }
+  Result<void> execute_pattern_for(std::string_view pattern, double duration_s) override {
+    Gate gate(system_.gate_);
+    if (auto ok = system_.allowed(); !ok) return ok;
+    return system_.inner_runner()->execute_pattern_for(pattern, duration_s);
+  }
+  Result<bool> running() override {
+    Gate gate(system_.gate_);
+    return system_.inner_runner()->running();
+  }
+  Result<void> stop_pattern() override {
+    Gate gate(system_.gate_);
+    return system_.inner_runner()->stop_pattern();
+  }
+  std::vector<std::string> patterns() const override { return system_.inner_runner()->patterns(); }
+  bool needs_polling() const override { return system_.inner_runner()->needs_polling(); }
+  std::string last_note() override {
+    Gate gate(system_.gate_);
+    return system_.inner_runner()->last_note();
+  }
+
+ private:
+  LaserSystem& system_;
+};
+
 LaserSystem::~LaserSystem() = default;
 
-extraction::IPatternRunner* LaserSystem::pattern_runner() {
+extraction::IPatternRunner* LaserSystem::inner_runner() {
   if (auto* own = driver_.pattern_runner()) return own;
   return driver_.stage() != nullptr ? runner_.get() : nullptr;
+}
+
+extraction::IPatternRunner* LaserSystem::pattern_runner() {
+  if (inner_runner() == nullptr) return nullptr;
+  Gate gate(gate_);
+  if (gated_runner_ == nullptr) gated_runner_ = std::make_unique<GatedRunner>(*this);
+  return gated_runner_.get();
+}
+
+Result<void> LaserSystem::allowed() const {
+  if (!stopped_.load()) return {};
+  return fail(ErrorKind::Interlock, "emergency stop: reset it in the laser window", name_);
+}
+
+Result<void> LaserSystem::prepare() {
+  Gate gate(gate_);
+  return driver_.prepare();
+}
+
+Result<void> LaserSystem::enable() {
+  Gate gate(gate_);
+  if (auto ok = allowed(); !ok) return ok;
+  return driver_.enable();
+}
+
+Result<void> LaserSystem::disable() {
+  Gate gate(gate_);
+  return driver_.disable();
+}
+
+Result<bool> LaserSystem::is_enabled() {
+  Gate gate(gate_);
+  return driver_.is_enabled();
+}
+
+Result<void> LaserSystem::extract(double value, extraction::ExtractUnits units) {
+  Gate gate(gate_);
+  if (auto ok = allowed(); !ok) return ok;
+  return driver_.extract(value, units);
+}
+
+Result<void> LaserSystem::end_extract() {
+  Gate gate(gate_);
+  return driver_.end_extract();
+}
+
+Result<double> LaserSystem::output() {
+  Gate gate(gate_);
+  return driver_.output();
+}
+
+namespace {
+
+Unexpected<Error> no_laser(const std::string& name) { return fail(ErrorKind::Config, "the device has no laser", name); }
+
+}  // namespace
+
+Result<void> LaserSystem::fire_laser() {
+  Gate gate(gate_);
+  auto* laser = driver_.laser();
+  if (laser == nullptr) return no_laser(name_);
+  if (auto ok = allowed(); !ok) return ok;
+  return laser->fire_laser();
+}
+
+Result<void> LaserSystem::stop_laser() {
+  Gate gate(gate_);
+  auto* laser = driver_.laser();
+  if (laser == nullptr) return no_laser(name_);
+  return laser->stop_laser();
+}
+
+Result<bool> LaserSystem::is_firing() {
+  Gate gate(gate_);
+  auto* laser = driver_.laser();
+  if (laser == nullptr) return no_laser(name_);
+  return laser->is_firing();
+}
+
+Result<void> LaserSystem::warmup() {
+  Gate gate(gate_);
+  auto* laser = driver_.laser();
+  if (laser == nullptr) return no_laser(name_);
+  if (auto ok = allowed(); !ok) return ok;
+  return laser->warmup();
+}
+
+Result<std::vector<std::string>> LaserSystem::tripped_interlocks() {
+  Gate gate(gate_);
+  auto* laser = driver_.laser();
+  if (laser == nullptr) return no_laser(name_);
+  return laser->tripped_interlocks();
+}
+
+LaserSnapshot LaserSystem::snapshot() {
+  LaserSnapshot s;
+  s.device = name_;
+  {
+    Gate gate(gate_);
+    const auto note = [&s](const Error& e) {
+      if (s.error.empty()) s.error = e.what;
+    };
+    IStage* stage = driver_.stage();
+    auto* laser = driver_.laser();
+    s.has_stage = stage != nullptr;
+    s.has_laser = laser != nullptr;
+    s.has_camera = frames_ != nullptr;
+    if (stage != nullptr) {
+      if (auto at = stage->position()) s.position = *at;
+      else note(at.error());
+    }
+    if (auto on = driver_.is_enabled()) s.enabled = *on;
+    else note(on.error());
+    if (auto out = driver_.output()) s.output = *out;
+    else note(out.error());
+    if (laser != nullptr) {
+      if (auto firing = laser->is_firing()) s.firing = *firing;
+      else note(firing.error());
+      if (auto tripped = laser->tripped_interlocks()) s.interlocks = std::move(*tripped);
+      else note(tripped.error());
+    }
+    if (runner_ != nullptr && driver_.pattern_runner() == nullptr) s.pattern_progress = runner_->progress();
+    s.activity = !s.pattern_progress.empty() ? LaserActivity::Pattern
+                 : centering_ != nullptr     ? LaserActivity::Centring
+                 : moving_.load()            ? LaserActivity::Moving
+                                             : LaserActivity::Idle;
+    s.stopped = stopped_.load();
+  }
+  std::lock_guard lock(mutex_);
+  if (tray_ != nullptr) s.tray = tray_->name();
+  s.calibration = status_.state;
+  s.calibration_why = status_.why;
+  s.last_hole = last_hole_;
+  s.autocenter = outcome_;
+  return s;
+}
+
+Result<CameraView> LaserSystem::view() {
+  Gate gate(gate_);
+  if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
+  CameraView seen;
+  auto frame = frames_->grab();
+  if (!frame) return fail(std::move(frame).error());
+  seen.frame = std::move(*frame);
+  seen.px_per_mm = camera_->px_per_mm;
+  seen.aim_px = {(seen.frame.width - 1) / 2.0 + camera_->aim_offset_px.x,
+                 (seen.frame.height - 1) / 2.0 + camera_->aim_offset_px.y};
+  double radius_mm = 0.5;
+  {
+    std::lock_guard lock(mutex_);
+    if (tray_ != nullptr && tray_->dimension() > 0) radius_mm = tray_->dimension() / 2;
+  }
+  seen.expected_radius_px = radius_mm * camera_->px_per_mm;
+  // A hole, dark on the tray; with the beam on, the sample's glow.
+  bool firing = false;
+  if (auto* laser = driver_.laser()) firing = laser->is_firing().value_or(false);
+  vision::FinderParams params;
+  params.mode = firing ? vision::FinderMode::Glow : vision::FinderMode::Hole;
+  params.expected_radius_px = seen.expected_radius_px;
+  const auto targets = finder_->find(seen.frame.view(), params);
+  // The one nearest the aim: what a centring would go for.
+  for (const auto& target : targets) {
+    const auto off = [&seen](const vision::Target& t) {
+      return std::hypot(t.center_px.x - seen.aim_px.x, t.center_px.y - seen.aim_px.y);
+    };
+    if (!seen.target || off(target) < off(*seen.target)) seen.target = target;
+  }
+  return seen;
+}
+
+Result<void> LaserSystem::emergency_stop() {
+  // Before the gate: a call that is waiting for it is refused when it gets it.
+  stopped_.store(true);
+  Gate gate(gate_);
+  Result<void> first;
+  const auto tried = [&first](Result<void> step) {
+    if (!step && first) first = std::move(step);
+  };
+  if (auto* laser = driver_.laser()) tried(laser->stop_laser());
+  tried(driver_.end_extract());
+  tried(driver_.disable());
+  if (auto* runner = inner_runner()) tried(runner->stop_pattern());
+  if (IStage* stage = driver_.stage()) {
+    // A stage that cannot be stopped finishes its move; there is no more to do.
+    if (auto halted = stage->stop(); !halted && !extraction::is_not_supported(halted.error())) {
+      tried(std::move(halted));
+    }
+  }
+  abandon(AutocenterOutcome::Result::Stopped);
+  moving_.store(false);
+  return first;
 }
 
 std::string LaserSystem::tray() const {
@@ -98,6 +336,7 @@ void LaserSystem::set_corrections(const CorrectionStore& corrections) { correcti
 
 Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
+  Gate gate(gate_);
   // Whether the stage is simulated is the caller's to know; that a recording
   // can never move a stage is known here.
   if (auto ok = usable_for_autocenter(config, true); !ok) return ok;
@@ -159,6 +398,7 @@ double LaserSystem::guard_mm(std::string_view hole) const {
 
 TraySightFn LaserSystem::sight() {
   return [this]() {
+    Gate gate(gate_);
     TraySight seen;
     if (IStage* stage = driver_.stage()) {
       if (auto at = stage->position()) seen.stage = {at->x, at->y};
@@ -191,13 +431,16 @@ void LaserSystem::abandon(AutocenterOutcome::Result how) {
 }
 
 Result<void> LaserSystem::move_to_position(std::string_view position, bool autocenter) {
+  Gate gate(gate_);
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
+  if (auto ok = allowed(); !ok) return ok;
   abandon(AutocenterOutcome::Result::Stopped);  // a new move takes over
   hole_room_ = 0;
   {
     std::lock_guard lock(mutex_);
     move_note_.clear();  // of an earlier move nobody asked about
+    last_hole_.clear();
   }
 
   std::string tray;
@@ -246,6 +489,11 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
       return fail(std::move(e));
     }
     hole_room_ = room;
+    moving_.store(true);
+    {
+      std::lock_guard lock(mutex_);
+      last_hole_ = std::string(position);
+    }
     if (autocenter && frames_ != nullptr) {
       vision::AutocenterParams params;
       params.hole_radius_mm = hole_radius;
@@ -274,39 +522,65 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
              e.what;
     return fail(std::move(e));
   }
+  if (moved) moving_.store(true);
   return moved;
 }
 
-Result<void> LaserSystem::set_axis(Axis axis, double value) {
-  auto stage = driver_stage();
-  if (!stage) return fail(stage.error());
+void LaserSystem::off_the_hole() {
   abandon(AutocenterOutcome::Result::Stopped);
   hole_room_ = 0;  // off the hole, for all the system knows
-  return (*stage)->set_axis(axis, value);
+  std::lock_guard lock(mutex_);
+  last_hole_.clear();
+}
+
+Result<void> LaserSystem::set_axis(Axis axis, double value) {
+  Gate gate(gate_);
+  auto stage = driver_stage();
+  if (!stage) return fail(stage.error());
+  if (auto ok = allowed(); !ok) return ok;
+  off_the_hole();
+  auto moved = (*stage)->set_axis(axis, value);
+  if (moved) moving_.store(true);
+  return moved;
 }
 
 Result<void> LaserSystem::set_xy(double x, double y, double speed_mm_s) {
+  Gate gate(gate_);
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
-  abandon(AutocenterOutcome::Result::Stopped);
-  hole_room_ = 0;
-  return (*stage)->set_xy(x, y, speed_mm_s);
+  if (auto ok = allowed(); !ok) return ok;
+  off_the_hole();
+  auto moved = (*stage)->set_xy(x, y, speed_mm_s);
+  if (moved) moving_.store(true);
+  return moved;
 }
 
 Result<void> LaserSystem::stop() {
+  Gate gate(gate_);
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   abandon(AutocenterOutcome::Result::Stopped);
-  return (*stage)->stop();
+  auto halted = (*stage)->stop();
+  if (halted) moving_.store(false);
+  return halted;
 }
 
 Result<StagePosition> LaserSystem::position() {
+  Gate gate(gate_);
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   return (*stage)->position();
 }
 
 Result<bool> LaserSystem::moving() {
+  Gate gate(gate_);
+  auto busy = advance();
+  // A stage that cannot say is not known to have stopped.
+  if (busy) moving_.store(*busy);
+  return busy;
+}
+
+Result<bool> LaserSystem::advance() {
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   if (centering_ == nullptr) return (*stage)->moving();
@@ -444,6 +718,7 @@ Result<bool> LaserSystem::give_up(IStage& stage, vision::AutocenterReason why) {
 }
 
 Result<void> LaserSystem::set_tray(std::string_view tray) {
+  Gate gate(gate_);
   abandon(AutocenterOutcome::Result::Stopped);
   hole_room_ = 0;
   if (tray.empty()) {
@@ -451,6 +726,7 @@ Result<void> LaserSystem::set_tray(std::string_view tray) {
     tray_ = nullptr;
     status_ = {};
     corrections_.clear();
+    last_hole_.clear();
     return {};
   }
   const TrayMap* map = trays_.find(tray);
@@ -464,6 +740,7 @@ Result<void> LaserSystem::set_tray(std::string_view tray) {
     if (auto loaded = correction_store_->load(*map, name_, status.fingerprint)) corrections = std::move(*loaded);
   }
   std::lock_guard lock(mutex_);
+  if (tray_ != map) last_hole_.clear();  // the same tray again: the stage is where it was
   tray_ = map;
   status_ = std::move(status);
   corrections_ = std::move(corrections);

@@ -317,9 +317,8 @@ TEST(Dragonfly, ASecondPatternWhileItRunsIsRefused) {
   ASSERT_TRUE(rig.runner().execute_pattern("track"));
   EXPECT_FALSE(rig.runner().execute_pattern("square"));
   EXPECT_FALSE(rig.runner().execute_pattern("track"));
-  auto* r = dynamic_cast<PatternRunner*>(&rig.runner());
-  ASSERT_NE(r, nullptr);
-  EXPECT_NE(r->progress().find("track"), std::string::npos) << r->progress();
+  const std::string progress = rig.system.snapshot().pattern_progress;
+  EXPECT_NE(progress.find("track"), std::string::npos) << progress;
 }
 
 // How long it runs is the run's to say, as in legacy pychron (the script

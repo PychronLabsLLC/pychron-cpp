@@ -16,9 +16,13 @@
 // and nothing is sent. The calibration is read when the tray is set, so one
 // saved by another process is used from the next set_tray on.
 //
-// Calls are made from one thread at a time (the script host's); tray() and
-// calibration() may be asked from another.
+// Whoever drives it (a script, or the laser window's worker) makes its calls
+// from one thread. It may be watched from another (snapshot(), view(),
+// tray(), calibration()) and stopped from a third (emergency_stop()): every
+// call that reaches the driver, the camera or a centring takes one gate, the
+// pattern runner's included (laser window design, section 3).
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -36,6 +40,8 @@
 #include "pychron/laser/tray_camera.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/vision/autocenter.hpp"
+#include "pychron/vision/finder.hpp"
+#include "pychron/vision/frame.hpp"
 #include "pychron/vision/source.hpp"
 
 namespace pychron::laser {
@@ -55,7 +61,46 @@ struct AutocenterOutcome {
   std::string note;         // e.g. the correction could not be saved
 };
 
-class LaserSystem final : public extraction::IExtractionDevice, public extraction::IStage {
+enum class LaserActivity { Idle, Moving, Centring, Pattern };
+// "idle", "moving", "centring", "pattern".
+std::string_view to_string(LaserActivity activity) noexcept;
+
+// What a watcher is told: read from the device now, with what the system
+// knows about itself. What could not be read is left unset, and `error`
+// says the first reason.
+struct LaserSnapshot {
+  std::string device;
+  std::string tray;  // empty: none
+  CalibrationState calibration = CalibrationState::Missing;
+  std::string calibration_why;
+  bool has_stage = false;
+  bool has_laser = false;
+  bool has_camera = false;
+  std::optional<extraction::StagePosition> position;
+  std::optional<bool> enabled;
+  std::optional<bool> firing;
+  std::optional<double> output;
+  std::vector<std::string> interlocks;  // the tripped ones
+  LaserActivity activity = LaserActivity::Idle;
+  std::string pattern_progress;  // "<name>, point <i> of <n>" while one runs
+  std::string last_hole;         // the hole the stage was last sent to; empty once it is sent elsewhere
+  AutocenterOutcome autocenter;  // how the last centring ended
+  bool stopped = false;          // the emergency stop is latched
+  std::string error;
+};
+
+// What the camera sees now, and what the device's finder makes of it.
+struct CameraView {
+  vision::Frame frame;
+  std::optional<vision::Target> target;  // the best one; none: nothing found
+  StageXY aim_px{};                      // where the beam is in the frame, in pixels
+  double px_per_mm = 0;
+  double expected_radius_px = 0;         // of a hole of the current tray
+};
+
+class LaserSystem final : public extraction::IExtractionDevice,
+                          public extraction::IStage,
+                          public extraction::ILaserDevice {
  public:
   // `driver`, `trays` and `calibrations` must outlive the system. `name` is
   // the device's name in queues and in calibration files.
@@ -94,27 +139,51 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   // is not finding the hole. 0 for a hole the current tray lacks.
   double guard_mm(std::string_view hole) const;
 
+  // Watching. Neither moves anything, and neither asks moving() or
+  // running(): those advance a centring or a pattern, and belong to whoever
+  // started it. Config error from view() for a device with no camera.
+  LaserSnapshot snapshot();
+  Result<CameraView> view();
+
+  // Everything off, now, from any thread: the beam, the output, the enable,
+  // the stage, a pattern, a centring. Every step is tried whatever the
+  // others answered; the first error is returned. It latches: until
+  // reset_stop(), enabling, an output, firing, a warmup, every move and
+  // every pattern are refused with an Interlock error, so a script that has
+  // not yet seen its run aborted cannot fire again.
+  Result<void> emergency_stop();
+  bool stopped() const noexcept { return stopped_.load(); }
+  void reset_stop() noexcept { stopped_.store(false); }
+
   // IExtractionDevice: the driver's.
   const std::string& device_name() const override { return name_; }
-  Result<void> prepare() override { return driver_.prepare(); }
-  Result<void> enable() override { return driver_.enable(); }
-  Result<void> disable() override { return driver_.disable(); }
-  Result<bool> is_enabled() override { return driver_.is_enabled(); }
-  Result<void> extract(double value, extraction::ExtractUnits units) override { return driver_.extract(value, units); }
-  Result<void> end_extract() override { return driver_.end_extract(); }
-  Result<double> output() override { return driver_.output(); }
+  Result<void> prepare() override;
+  Result<void> enable() override;
+  Result<void> disable() override;
+  Result<bool> is_enabled() override;
+  Result<void> extract(double value, extraction::ExtractUnits units) override;
+  Result<void> end_extract() override;
+  Result<double> output() override;
   bool supports(extraction::ExtractUnits units) const override { return driver_.supports(units); }
-  extraction::ILaserDevice* laser() override { return driver_.laser(); }
+  // This object when the driver has a laser; null otherwise.
+  extraction::ILaserDevice* laser() override { return driver_.laser() != nullptr ? this : nullptr; }
   extraction::IFurnaceDevice* furnace() override { return driver_.furnace(); }
   // This object when the driver has a stage; null otherwise.
   extraction::IStage* stage() override { return driver_.stage() != nullptr ? this : nullptr; }
   // The driver's own if it runs patterns itself; else the system's, given a
-  // stage and a pattern library; else null.
+  // stage and a pattern library; else null. Either way behind the gate.
   extraction::IPatternRunner* pattern_runner() override;
   extraction::IPipetteService* pipettes() override { return driver_.pipettes(); }
   extraction::ICryo* cryo() override { return driver_.cryo(); }
   extraction::IMotorService* motors() override { return driver_.motors(); }
   extraction::IImaging* imaging() override { return driver_.imaging(); }
+
+  // ILaserDevice: the driver's. Config error for a device with no laser.
+  Result<void> fire_laser() override;
+  Result<void> stop_laser() override;
+  Result<bool> is_firing() override;
+  Result<void> warmup() override;
+  Result<std::vector<std::string>> tripped_interlocks() override;
 
   // IStage
   // `autocenter` centres a hole when the system has a camera; without one,
@@ -133,9 +202,20 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   std::vector<std::string> positions() const override;  // the tray's holes, in file order
 
  private:
-  struct Centering;  // an autocenter in progress
+  struct Centering;    // an autocenter in progress
+  class GatedRunner;   // the pattern runner, each call behind the gate
+
+  // Interlock error while the emergency stop is latched.
+  Result<void> allowed() const;
+  // The system's own runner, or the driver's; null when neither.
+  extraction::IPatternRunner* inner_runner();
 
   Result<extraction::IStage*> driver_stage();
+  // moving(), under the gate: one step of a centring, or the driver's answer.
+  Result<bool> advance();
+  // The stage is sent somewhere that is not a hole: a centring is over, and
+  // the system no longer knows the stage to be on one.
+  void off_the_hole();
   // Ends an autocenter in progress, if any, as `how` (nothing is saved).
   void abandon(AutocenterOutcome::Result how);
   Result<bool> look(extraction::IStage& stage);
@@ -147,17 +227,24 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   const TrayLibrary& trays_;
   const CalibrationStore& calibrations_;
 
+  // Taken by every call that reaches the driver, the camera or a centring,
+  // and before mutex_. Recursive: a pattern's step moves this system's stage.
+  mutable std::recursive_mutex gate_;
+  std::atomic<bool> stopped_{false};  // the emergency stop's latch
+  std::atomic<bool> moving_{false};   // a move was started, and moving() has not yet said it is over
+
   std::unique_ptr<PatternRunner> runner_;  // over this system's own stage
+  std::unique_ptr<GatedRunner> gated_runner_;
 
   const CorrectionStore* correction_store_ = nullptr;
   std::optional<CameraConfig> camera_;
   std::unique_ptr<vision::IFrameSource> frames_;
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
-  std::unique_ptr<Centering> centering_;  // the caller's thread only
+  std::unique_ptr<Centering> centering_;  // under the gate
   // How far a pattern may roam from the hole the stage was last sent to
   // before it reaches a neighbour (45% of the way to the nearest); 0: the
-  // stage is not known to be on a hole. The caller's thread only.
+  // stage is not known to be on a hole. Under the gate.
   double hole_room_ = 0;
 
   mutable std::mutex mutex_;  // everything below; never held across a driver call
@@ -166,6 +253,7 @@ class LaserSystem final : public extraction::IExtractionDevice, public extractio
   HoleCorrections corrections_;
   AutocenterOutcome outcome_;
   std::string move_note_;  // of the last centring that ran to its end; taken once
+  std::string last_hole_;  // the hole the stage was last sent to
 };
 
 }  // namespace pychron::laser

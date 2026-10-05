@@ -192,6 +192,24 @@ Result<void> ChromiumLaser::check_interlocks(std::string_view doing) {
   return fail(ErrorKind::Interlock, "cannot " + std::string(doing) + ": laser interlock tripped (" + names + ")");
 }
 
+Result<std::vector<std::string>> ChromiumLaser::tripped_interlocks() {
+  auto run = [&]() -> Result<std::vector<std::string>> {
+    auto reply = query(cr::laser_status());
+    if (!reply) return fail(std::move(reply).error());
+    auto status = cr::decode_number(*reply);
+    if (!status) return fail(std::move(status).error());
+    if (*status == 0) return std::vector<std::string>{};
+    auto listed = query(cr::laser_interlocks());
+    if (!listed) return fail(std::move(listed).error());
+    auto names = cr::decode_interlocks(*listed);
+    if (!names) return fail(std::move(names).error());
+    // Tripped, and Chromium names none: still not nothing.
+    if (names->empty()) names->push_back("unknown");
+    return std::move(*names);
+  };
+  return observe(run());
+}
+
 Result<void> ChromiumLaser::prepare() {
   auto run = [&]() -> Result<void> {
     auto reply = query(cr::sys_id());

@@ -224,13 +224,12 @@ TEST_F(PatternRunnerTest, ASeededWalkRepeats) {
 }
 
 TEST_F(PatternRunnerTest, ProgressSaysWhereItIs) {
-  auto* r = dynamic_cast<PatternRunner*>(system.pattern_runner());
-  ASSERT_NE(r, nullptr);
-  EXPECT_EQ(r->progress(), "");
-  ASSERT_TRUE(r->execute_pattern("square"));
-  EXPECT_EQ(r->progress(), "square, point 1 of 6");
+  // what a watcher is told (the runner itself is behind the system's gate)
+  EXPECT_EQ(system.snapshot().pattern_progress, "");
+  ASSERT_TRUE(runner().execute_pattern("square"));
+  EXPECT_EQ(system.snapshot().pattern_progress, "square, point 1 of 6");
   finish();
-  EXPECT_EQ(r->progress(), "");
+  EXPECT_EQ(system.snapshot().pattern_progress, "");
 }
 
 // A position that cannot be read is no centre to run a pattern about.
@@ -263,7 +262,9 @@ TEST(PatternRunnerFeatures, NeedsAStageAndALibrary) {
   // a device that runs patterns itself keeps doing so
   extraction::testing::FakeExtractionDevice own{"own", {Capability::Stage, Capability::Pattern}};
   LaserSystem theirs{"own", own, trays, store, &patterns};
-  EXPECT_EQ(theirs.pattern_runner(), own.pattern_runner());
+  ASSERT_NE(theirs.pattern_runner(), nullptr);
+  EXPECT_EQ(theirs.pattern_runner()->patterns(), own.pattern_runner()->patterns());
+  EXPECT_FALSE(theirs.pattern_runner()->needs_polling()) << "the device's own runner, not the system's";
 }
 
 // A stage that cannot stop: stopping the pattern still ends it, at the next

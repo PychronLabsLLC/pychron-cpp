@@ -246,7 +246,8 @@ TEST_F(LaserSystemTest, AutocenterIsAcceptedAndChangesNothing) {
 
 TEST_F(LaserSystemTest, TheDeviceIsTheDrivers) {
   EXPECT_EQ(system.device_name(), "co2");
-  EXPECT_EQ(system.laser(), driver.laser());
+  // the laser is reached through the system too: it is what gates and stops it
+  EXPECT_EQ(system.laser(), static_cast<ILaserDevice*>(&system));
   EXPECT_EQ(system.stage(), static_cast<IStage*>(&system));
   EXPECT_EQ(system.furnace(), nullptr);
   ASSERT_TRUE(system.enable());

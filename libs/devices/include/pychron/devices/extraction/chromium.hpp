@@ -100,6 +100,7 @@ class ChromiumLaser final : public Device, public IExtractionDevice, public ILas
   Result<void> stop_laser() override;
   Result<bool> is_firing() override;
   Result<void> warmup() override { return {}; }
+  Result<std::vector<std::string>> tripped_interlocks() override;
 
   // IStage
   Result<void> move_to_position(std::string_view position, bool autocenter) override;
