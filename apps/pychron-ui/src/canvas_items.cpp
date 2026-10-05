@@ -46,6 +46,7 @@ ValveItem::ValveItem(std::string name, canvas::ValveKind kind, QGraphicsItem* pa
     : QGraphicsObject(parent), name_(std::move(name)), label_(QString::fromStdString(name_)), kind_(kind) {
   setZValue(2);
   setCursor(Qt::PointingHandCursor);
+  setAcceptHoverEvents(true);
   setToolTip(QString::fromStdString(name_));
   flash_timer_.setInterval(kFlashIntervalMs);
   connect(&flash_timer_, &QTimer::timeout, this, [this] {
@@ -87,6 +88,11 @@ void ValveItem::set_locked(bool locked) {
 void ValveItem::set_pending(bool pending) {
   pending_ = pending;
   update();
+}
+
+void ValveItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event) {
+  if (on_hover_) on_hover_();
+  QGraphicsObject::hoverEnterEvent(event);
 }
 
 void ValveItem::set_details(const QStringList& lines) {

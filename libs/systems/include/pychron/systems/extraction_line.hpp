@@ -62,9 +62,10 @@ struct ExtractionLineOptions {
   std::filesystem::path trace_dir = "traces";
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
   Scheduler::Options scheduler;
-  // Where software locks and valve states persist between runs (TOML:
-  // `locked = ["A", ...]`, `[valves] A = "open"`). Empty: they live in memory
-  // only. load() defaults it to `<system file stem>.state.toml` beside the
+  // Where software locks, valve states and each valve's history (counts
+  // and times, SwitchStats) persist between runs (TOML: `locked = ["A", ...]`,
+  // `[valves] A = "open"`, `[stats.A] opens = 12 ...`). Empty: they live in
+  // memory only. load() defaults it to `<system file stem>.state.toml` beside the
   // config.
   //
   // On the first start() the hardware is read back and is the truth: a
@@ -72,6 +73,8 @@ struct ExtractionLineOptions {
   // nothing can report it: manual valves (the operator's last report) and
   // valves on simulated controllers, which start closed every run.
   std::filesystem::path state_file;
+  // Stamps each valve's history (SwitchStats); the system clock if empty.
+  std::function<WallTime()> wall;
   bool run_scheduler = true;     // false: caller drives scheduler().run_pending()
   // Optional override. When null the line creates one from [logging]. Every
   // transport mirrors its bytes to "<name>.wire" on it, and the line's own
@@ -155,6 +158,9 @@ class ExtractionLine {
   // Valve states read from the state file, until the first start() has
   // restored them; from then on the file follows the line.
   std::map<std::string, ValveState> remembered_;
+  // Likewise each switch's history: the manager counts from zero until the
+  // first start() hands it back.
+  std::map<std::string, SwitchStats> remembered_stats_;
   std::atomic<bool> restored_{false};
   Options options_;
 

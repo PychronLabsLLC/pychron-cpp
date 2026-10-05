@@ -67,6 +67,7 @@ class LineLocks : public ::testing::Test {
     o.scheduler.threads = 0;
     o.run_scheduler = false;
     if (with_state) o.state_file = state_file_;
+    o.wall = [this] { return wall_; };
     auto line = ExtractionLine::create(*cfg, std::nullopt, o);
     EXPECT_TRUE(line) << line.error().what;
     return std::move(*line);
@@ -80,6 +81,7 @@ class LineLocks : public ::testing::Test {
   }
 
   ManualClock clock_;
+  WallTime wall_{std::chrono::seconds(1'000'000)};
   std::filesystem::path dir_;
   std::filesystem::path state_file_;
 };
@@ -204,6 +206,65 @@ TEST_F(LineLocks, ALockedValveIsRestoredAndStaysLocked) {
   EXPECT_EQ(line->snapshot().valves.at("A"), ValveState::Open);
   EXPECT_TRUE(line->is_locked("A"));
   EXPECT_FALSE(line->actuate("A", SwitchOp::Close, "ui"));
+}
+
+// A valve's history is its lifetime's: counts, the last actuation, how long
+// it has been in its state and the time it has spent open all carry on in
+// the next run.
+TEST_F(LineLocks, ValveHistoryCarriesOnAcrossRuns) {
+  using std::chrono::seconds;
+  {
+    auto line = make();
+    ASSERT_TRUE(line->start());
+    ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "ui"));
+    wall_ += seconds(30);
+    ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "ui"));
+    wall_ += seconds(5);
+    ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "ui"));
+    ASSERT_TRUE(line->set_locked("A", true));
+    EXPECT_FALSE(line->actuate("A", SwitchOp::Close, "ui"));  // refused: no part of the history
+    line->stop();
+  }
+  wall_ += seconds(3600);  // the line was down, the valve stayed open
+  {
+    auto line = make();
+    // A lock change before start() must not write the history away.
+    ASSERT_TRUE(line->set_locked("A", false));
+  }
+  auto line = make();
+  ASSERT_TRUE(line->start());
+  SwitchStats a = line->switches().info("A")->stats;
+  EXPECT_EQ(a.opens, 2);
+  EXPECT_EQ(a.closes, 1);
+  EXPECT_EQ(a.failures, 0);
+  EXPECT_EQ(a.open_time, seconds(30));
+  EXPECT_EQ(a.last_actuation, WallTime{seconds(1'000'035)});
+  EXPECT_EQ(a.since, WallTime{seconds(1'000'035)});  // found as it was left
+  EXPECT_EQ(line->switches().info("B")->stats, SwitchStats{});
+
+  wall_ += seconds(10);
+  ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "ui"));
+  a = line->switches().info("A")->stats;
+  EXPECT_EQ(a.closes, 2);
+  EXPECT_EQ(a.open_time, seconds(30 + 3600 + 10));
+}
+
+// `since` holds only for a valve found in the state it was left in. One
+// whose state was not kept keeps its counts, but when it got where it is now
+// is not known.
+TEST_F(LineLocks, AValveNotFoundAsItWasLeftHasNoSince) {
+  std::ofstream(state_file_) << "[stats.A]\nopens = 7\ncloses = 6\nsince = 999000\nopen_seconds = 40\n"
+                                "[stats.GONE]\nopens = 1\n";
+  auto line = make();
+  int warned = 0;
+  for (const auto& w : line->warnings()) warned += w.field == "stats";
+  EXPECT_EQ(warned, 1);
+  ASSERT_TRUE(line->start());
+  const SwitchStats a = line->switches().info("A")->stats;
+  EXPECT_EQ(a.opens, 7);
+  EXPECT_EQ(a.closes, 6);
+  EXPECT_EQ(a.open_time, std::chrono::seconds(40));
+  EXPECT_FALSE(a.since);
 }
 
 TEST_F(LineLocks, ALockChangeBeforeStartKeepsTheRememberedValves) {

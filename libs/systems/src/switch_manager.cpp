@@ -197,7 +197,12 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
 }
 
 SwitchManager::SwitchManager(std::vector<std::unique_ptr<Entry>> entries, Options options)
-    : clock_(options.clock ? options.clock : &default_clock()), bus_(options.bus), entries_(std::move(entries)) {
+    : clock_(options.clock ? options.clock : &default_clock()),
+      bus_(options.bus),
+      wall_(options.wall ? std::move(options.wall) : std::function<WallTime()>([] {
+        return std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+      })),
+      entries_(std::move(entries)) {
   for (auto& e : entries_) by_name_.emplace(e->spec.name, e.get());
 }
 
@@ -333,12 +338,26 @@ void SwitchManager::settle(Duration d) const {
 
 bool SwitchManager::record(Entry& e, ValveState s) {
   std::lock_guard lk(state_);
-  return std::exchange(e.state, s) != s;
+  const ValveState was = std::exchange(e.state, s);
+  if (was == s) return false;
+  const WallTime now = wall_();
+  if (was == ValveState::Open && e.stats.since && now > *e.stats.since) e.stats.open_time += now - *e.stats.since;
+  // Out of Unknown is a reading, not a change: when it got there is not known.
+  e.stats.since = was == ValveState::Unknown ? std::nullopt : std::optional<WallTime>(now);
+  return true;
 }
 
-void SwitchManager::count(Entry& e, int SwitchStats::* what) {
+void SwitchManager::count(Entry& e, std::int64_t SwitchStats::* what) {
   std::lock_guard lk(state_);
   ++(e.stats.*what);
+  if (what != &SwitchStats::failures) e.stats.last_actuation = wall_();
+}
+
+void SwitchManager::seed_stats(std::string_view name, SwitchStats stats) {
+  Entry* e = find(name);
+  if (!e) return;
+  std::lock_guard lk(state_);
+  e->stats = stats;
 }
 
 Result<void> SwitchManager::failed(const Entry& e, Error error) {

@@ -1,6 +1,7 @@
 #include "canvas_view.hpp"
 #include "theme.hpp"
 
+#include <QDateTime>
 #include <QLocale>
 
 #include <algorithm>
@@ -92,6 +93,9 @@ void CanvasView::build(const canvas::Canvas& c) {
     item->set_label(QString::fromStdString(v.label()));
     item->set_on_click([this](const std::string& name) { on_click(name); });
     item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
+    item->set_on_hover([this, item, name = v.name] {
+      item->set_details(valve_details(bridge_.state(), name, QDateTime::currentDateTime()));
+    });
     scene_.addItem(item);
     valves_[v.name] = item;
     positions_[v.name] = item->pos();
@@ -303,36 +307,57 @@ bool CanvasView::request_lock(const std::string& name, bool locked) {
 
 namespace {
 
+// "40 s", "13 min", "2 h 13 min", "17 d 4 h": two units at most.
+QString span(std::chrono::seconds d) {
+  const qint64 s = std::max<qint64>(0, d.count());
+  if (s < 60) return CanvasView::tr("%1 s").arg(s);
+  if (s < 3600) return CanvasView::tr("%1 min").arg(s / 60);
+  if (s < 86400) return CanvasView::tr("%1 h %2 min").arg(s / 3600).arg(s % 3600 / 60);
+  return CanvasView::tr("%1 d %2 h").arg(s / 86400).arg(s % 86400 / 3600);
+}
+
+// The time alone today, with the date before it otherwise.
+QString moment(systems::WallTime t, const QDateTime& now) {
+  const QDateTime at = QDateTime::fromSecsSinceEpoch(t.time_since_epoch().count());
+  return QLocale().toString(at, at.date() == now.date() ? QStringLiteral("HH:mm:ss") : QStringLiteral("d MMM yyyy HH:mm"));
+}
+
+}  // namespace
+
 // The lines of a valve's tooltip under its name: what it is, the state it is
-// in and since when, and what it has been asked to do this session.
-QStringList valve_details(const CoreBridge::State& state, const std::string& name) {
+// in and since when, and its history (kept between runs).
+QStringList CanvasView::valve_details(const CoreBridge::State& state, const std::string& name, const QDateTime& now) {
   QStringList lines;
   const auto info = state.switches.find(name);
   if (info != state.switches.end() && !info->second.description.empty())
     lines += QString::fromStdString(info->second.description);
 
   const auto at = state.valves.find(name);
-  QString now;
-  switch (at == state.valves.end() ? ValveState::Unknown : at->second) {
-    case ValveState::Open: now = CanvasView::tr("Open"); break;
-    case ValveState::Closed: now = CanvasView::tr("Closed"); break;
-    default: now = CanvasView::tr("State unknown"); break;
+  const ValveState valve = at == state.valves.end() ? ValveState::Unknown : at->second;
+  QString line;
+  switch (valve) {
+    case ValveState::Open: line = tr("Open"); break;
+    case ValveState::Closed: line = tr("Closed"); break;
+    default: line = tr("State unknown"); break;
   }
-  if (const auto changed = state.changed_at.find(name); changed != state.changed_at.end())
-    now += CanvasView::tr(" since %1").arg(QLocale().toString(changed->second.time(), QStringLiteral("HH:mm:ss")));
-  if (info == state.switches.end()) return lines << now;
-  if (info->second.locked) now += CanvasView::tr(", locked");
-  if (!info->second.owner.empty()) now += CanvasView::tr(", owned by %1").arg(QString::fromStdString(info->second.owner));
-  lines += now;
+  if (info == state.switches.end()) return lines << line;
+  const systems::SwitchStats& h = info->second.stats;
+  const systems::WallTime wall{std::chrono::seconds(now.toSecsSinceEpoch())};
+  if (h.since && valve != ValveState::Unknown)
+    line += tr(" since %1 (%2)").arg(moment(*h.since, now), span(wall - *h.since));
+  if (info->second.locked) line += tr(", locked");
+  if (!info->second.owner.empty()) line += tr(", owned by %1").arg(QString::fromStdString(info->second.owner));
+  lines += line;
 
-  const systems::SwitchStats& n = info->second.stats;
-  lines += n == systems::SwitchStats{}
-               ? CanvasView::tr("Not actuated this session")
-               : CanvasView::tr("This session: opened %1, closed %2, failed %3").arg(n.opens).arg(n.closes).arg(n.failures);
+  if (h.opens == 0 && h.closes == 0 && h.failures == 0) return lines << tr("Never actuated");
+  if (h.last_actuation) lines += tr("Last actuated %1").arg(moment(*h.last_actuation, now));
+  lines += tr("Opened %L1, closed %L2, failed %L3").arg(h.opens).arg(h.closes).arg(h.failures);
+  // A spell still running counts up to now.
+  std::chrono::seconds open = h.open_time;
+  if (valve == ValveState::Open && h.since && wall > *h.since) open += wall - *h.since;
+  lines += tr("Time open %1").arg(span(open));
   return lines;
 }
-
-}  // namespace
 
 void CanvasView::apply_state() {
   const auto& state = bridge_.state();
@@ -344,7 +369,7 @@ void CanvasView::apply_state() {
       item->set_locked(it->second.locked);
     }
     item->set_pending(bridge_.pending(name));
-    item->set_details(valve_details(state, name));
+    item->set_details(valve_details(state, name, QDateTime::currentDateTime()));
   }
   for (auto& [name, item] : gauges_) {
     if (auto it = state.pressures.find(name); it != state.pressures.end()) {

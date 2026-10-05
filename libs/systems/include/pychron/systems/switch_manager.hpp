@@ -52,6 +52,8 @@
 // (state(), info(), ...) may be called from any thread at any time.
 // Locks and ownership are in memory only.
 
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -99,11 +101,24 @@ struct SwitchSpec {
   bool verify = true;                       // not for manual valves
 };
 
-// What a switch has done since the manager was built. In memory only.
+// Calendar time, to the second: what a switch's history is kept in, so it
+// means the same after a restart.
+using WallTime = std::chrono::sys_seconds;
+
+// What a switch has done. The manager counts from zero; whoever keeps the
+// history between runs (ExtractionLine's state file) hands it back with
+// seed_stats().
 struct SwitchStats {
-  int opens = 0;     // commands carried out (a manual valve: reports taken)
-  int closes = 0;
-  int failures = 0;  // commands sent that failed or read back wrong; a refusal sends nothing and is not one
+  std::int64_t opens = 0;     // commands carried out (a manual valve: reports taken)
+  std::int64_t closes = 0;
+  std::int64_t failures = 0;  // commands sent that failed or read back wrong; a refusal sends nothing and is not one
+  std::optional<WallTime> last_actuation;  // the last command carried out
+  // When the recorded state last changed. Unset when that is not known: the
+  // state is a first reading, or came out of Unknown.
+  std::optional<WallTime> since;
+  // Time recorded open, over spells that have ended: one still running is
+  // `since` to now, and one whose start is not known is not counted.
+  std::chrono::seconds open_time{0};
   friend bool operator==(const SwitchStats&, const SwitchStats&) = default;
 };
 
@@ -125,6 +140,7 @@ using ActuatorLookup = std::function<IValveActuator*(const std::string& name)>;
 struct SwitchManagerOptions {
   const Clock* clock = nullptr;  // settle waits and event stamps; SteadyClock if null
   SignalBus* bus = nullptr;      // events are dropped if null
+  std::function<WallTime()> wall = {};  // stamps SwitchStats; the system clock if empty
 };
 
 class SwitchManager {
@@ -176,6 +192,10 @@ class SwitchManager {
   std::map<std::string, ValveState> states() const;  // for Snapshot
   bool contains(std::string_view name) const;
 
+  // Replaces a switch's history with one kept from an earlier run. Unknown
+  // names are ignored.
+  void seed_stats(std::string_view name, SwitchStats stats);
+
  private:
   struct Entry;
   SwitchManager(std::vector<std::unique_ptr<Entry>> entries, Options options);
@@ -189,11 +209,12 @@ class SwitchManager {
   // The switch's state as its read-back device reports it, inversion applied.
   Result<ValveState> read_back(const Entry& e) const;
   bool record(Entry& e, ValveState s);  // true if the state changed
-  void count(Entry& e, int SwitchStats::* what);
+  void count(Entry& e, std::int64_t SwitchStats::* what);
   Result<void> failed(const Entry& e, Error error);
 
   const Clock* clock_;
   SignalBus* bus_;
+  std::function<WallTime()> wall_;
   std::vector<std::unique_ptr<Entry>> entries_;
   std::map<std::string, Entry*, std::less<>> by_name_;
   std::mutex actuation_;      // one actuation (or refresh) at a time

@@ -146,7 +146,7 @@ struct Fixture {
   explicit Fixture(std::vector<SwitchSpec> specs, bool refresh = true) {
     auto made = SwitchManager::create(
         std::move(specs), [this](const std::string& n) -> IValveActuator* { return n == "act" ? &act : nullptr; },
-        {&clock, &bus});
+        {&clock, &bus, [this] { return wall; }});
     EXPECT_TRUE(made) << (made ? "" : made.error().what);
     if (made) mgr = std::move(*made);
     if (mgr && refresh) {
@@ -155,6 +155,7 @@ struct Fixture {
   }
 
   ManualClock clock;
+  WallTime wall{1'000'000s};  // SwitchStats times; a test moves it by hand
   SignalBus bus;
   FakeActuator act{&clock};
   Recorder rec{bus};
@@ -268,20 +269,71 @@ TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {
 // nothing and counts as neither.
 TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   Fixture f({valve("A", "1"), valve("B", "2", {"A"}), manual("M")});
-  ASSERT_TRUE(f.mgr->refresh());
   EXPECT_EQ(f.mgr->info("A")->stats, SwitchStats{});
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));  // sent again, though already open
   ASSERT_FALSE(f.mgr->actuate("B", SwitchOp::Open, "op"));  // interlocked: refused
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
   ASSERT_TRUE(f.mgr->actuate("M", SwitchOp::Open, "op"));
+  f.wall += 60s;
   f.act.stick("1");
   ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Open, "op"));
   f.act.fail_commands(ErrorKind::Timeout);
   ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Open, "op"));
-  EXPECT_EQ(f.mgr->info("A")->stats, (SwitchStats{2, 1, 2}));
+  const SwitchStats a = f.mgr->info("A")->stats;
+  EXPECT_EQ(a.opens, 2);
+  EXPECT_EQ(a.closes, 1);
+  EXPECT_EQ(a.failures, 2);
+  EXPECT_EQ(a.last_actuation, WallTime{1'000'000s});  // a failure is not an actuation
   EXPECT_EQ(f.mgr->info("B")->stats, SwitchStats{});
-  EXPECT_EQ(f.mgr->info("M")->stats, (SwitchStats{1, 0, 0}));
+  EXPECT_EQ(f.mgr->info("M")->stats.opens, 1);
+}
+
+// `since` is when the recorded state last changed, and the time open adds up
+// over spells that have ended. A state that comes out of Unknown is a
+// reading: when the valve got there is not known, and is not made up.
+TEST(SwitchManager, StatsTimeTheStateAndAddUpTheTimeOpen) {
+  Fixture f({valve("A", "1")});
+  EXPECT_FALSE(f.mgr->info("A")->stats.since);  // first read back closed
+  f.wall += 10s;
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
+  f.wall += 5s;
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));  // no change: the spell goes on
+  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
+  EXPECT_EQ(f.mgr->info("A")->stats.last_actuation, WallTime{1'000'015s});
+  f.wall += 25s;
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
+  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'040s});
+  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 30s);
+
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  f.wall += 100s;
+  f.act.fail_commands(ErrorKind::Timeout);
+  ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Close, "op"));  // now Unknown: the open spell ended here
+  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 130s);
+  f.act.fail_commands(std::nullopt);
+  f.wall += 7s;
+  ASSERT_TRUE(f.mgr->refresh());
+  EXPECT_NE(st(*f.mgr, "A"), ValveState::Unknown);
+  EXPECT_FALSE(f.mgr->info("A")->stats.since);
+}
+
+TEST(SwitchManager, SeedStatsReplacesTheHistory) {
+  Fixture f({valve("A", "1")});
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  SwitchStats kept;
+  kept.opens = 1200;
+  kept.closes = 1199;
+  kept.since = WallTime{500s};
+  kept.open_time = 3600s;
+  f.mgr->seed_stats("A", kept);
+  f.mgr->seed_stats("nope", kept);
+  EXPECT_EQ(f.mgr->info("A")->stats, kept);
+  f.wall += 10s;
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
+  EXPECT_EQ(f.mgr->info("A")->stats.closes, 1200);
+  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 3600s + (WallTime{1'000'010s} - WallTime{500s}));
 }
 
 TEST(SwitchManager, CommandFailureLeavesUnknownAndPublishes) {

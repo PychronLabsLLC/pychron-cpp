@@ -11,9 +11,11 @@
 #include <vector>
 
 #include <QColor>
+#include <QDateTime>
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QRectF>
+#include <QStringList>
 
 #include "canvas_items.hpp"
 #include "core_bridge.hpp"
@@ -42,6 +44,10 @@ class CanvasView : public QGraphicsView {
   // Initialised from canvas.toml's open_valve_color; changing it repaints.
   canvas::OpenValveColor open_valve_color() const noexcept { return open_valve_color_; }
   void set_open_valve_color(canvas::OpenValveColor mode);
+
+  // The lines of a valve's tooltip under its name, as of `now`: description,
+  // state and how long it has held, last actuation, counts and time open.
+  static QStringList valve_details(const CoreBridge::State& state, const std::string& name, const QDateTime& now);
 
   // Colour of an isolated volume.
   static QColor isolated_color();

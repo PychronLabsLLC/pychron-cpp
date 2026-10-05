@@ -160,7 +160,7 @@ Result<void> ExtractionLine::build() {
         Device* d = device(name);
         return d ? capability<IValveActuator>(*d) : nullptr;
       },
-      SwitchManagerOptions{clock_, &bus_});
+      SwitchManagerOptions{clock_, &bus_, options_.wall});
   if (!switches) return fail(switches.error());
   switches_ = std::move(*switches);
   load_state();
@@ -186,6 +186,10 @@ Result<void> ExtractionLine::build() {
   subscriptions_.push_back(bus_.subscribe<ActuationFailed>([this](const ActuationFailed& e) {
     log_to(switches_logger_, "switches", LogLevel::Warn,
            "actuate '" + e.valve + "' failed: " + std::string(to_string(e.error.kind)) + ": " + e.error.what);
+    // A failure is part of the valve's history, and may change no state.
+    if (!restored_) return;
+    std::lock_guard lock(locks_mutex_);
+    save_state();
   }));
   subscriptions_.push_back(bus_.subscribe<SwitchLockChanged>([this](const SwitchLockChanged& e) {
     log_to(switches_logger_, "switches", LogLevel::Info, "valve " + e.name + (e.locked ? " locked" : " unlocked"));
@@ -352,8 +356,9 @@ bool ExtractionLine::is_locked(std::string_view name) const {
   return info && info->locked;
 }
 
-// The state file is `locked = ["A", "B"]` and a `[valves]` table of
-// "open" / "closed". A missing file means no locks and nothing remembered; a
+// The state file is `locked = ["A", "B"]`, a `[valves]` table of
+// "open" / "closed", and a `[stats.<name>]` table per switch (counts, and
+// times in seconds since 1970 UTC). A missing file means no locks and nothing remembered; a
 // corrupt one or a name that no longer exists is reported in warnings() and
 // skipped, never fatal.
 void ExtractionLine::load_state() {
@@ -390,6 +395,31 @@ void ExtractionLine::load_state() {
       remembered_[name] = *state == "open" ? ValveState::Open : ValveState::Closed;
     }
   }
+  if (const auto* stats = parsed.table()["stats"].as_table()) {
+    for (const auto& [key, node] : *stats) {
+      const std::string name(key.str());
+      const auto* t = node.as_table();
+      if (!switches_->contains(name) || !t) {
+        warnings_.push_back(
+            {config::SourceLoc{file, 0, 0}, "stats", "saved history for unknown valve '" + name + "' ignored"});
+        continue;
+      }
+      // A count below zero is a damaged file: that number starts again.
+      const auto count = [t](const char* k) { return std::max<std::int64_t>(0, (*t)[k].value_or<std::int64_t>(0)); };
+      const auto time = [t](const char* k) -> std::optional<WallTime> {
+        const auto v = (*t)[k].value<std::int64_t>();
+        return v && *v > 0 ? std::optional<WallTime>(WallTime(std::chrono::seconds(*v))) : std::nullopt;
+      };
+      SwitchStats s;
+      s.opens = count("opens");
+      s.closes = count("closes");
+      s.failures = count("failures");
+      s.open_time = std::chrono::seconds(count("open_seconds"));
+      s.last_actuation = time("last_actuation");
+      s.since = time("since");
+      remembered_stats_[name] = s;
+    }
+  }
 }
 
 // Callers hold locks_mutex_ (or run before any other thread can).
@@ -397,19 +427,34 @@ void ExtractionLine::save_state() {
   if (options_.state_file.empty()) return;
   toml::array names;
   toml::table valves;
+  toml::table stats;
   for (const auto& info : switches_->list()) {
     if (info.locked) names.push_back(info.name);
     // Until the last run's states are restored, they are what is remembered.
     ValveState state = info.state;
+    SwitchStats history = info.stats;
     if (!restored_) {
       auto it = remembered_.find(info.name);
       state = it == remembered_.end() ? ValveState::Unknown : it->second;
+      auto kept = remembered_stats_.find(info.name);
+      history = kept == remembered_stats_.end() ? SwitchStats{} : kept->second;
     }
     if (state != ValveState::Unknown) valves.insert(info.name, state == ValveState::Open ? "open" : "closed");
+    if (history == SwitchStats{}) continue;
+    toml::table h;
+    h.insert("opens", history.opens);
+    h.insert("closes", history.closes);
+    h.insert("failures", history.failures);
+    h.insert("open_seconds", static_cast<std::int64_t>(history.open_time.count()));
+    const auto unix_seconds = [](WallTime t) { return static_cast<std::int64_t>(t.time_since_epoch().count()); };
+    if (history.last_actuation) h.insert("last_actuation", unix_seconds(*history.last_actuation));
+    if (history.since) h.insert("since", unix_seconds(*history.since));
+    stats.insert(info.name, std::move(h));
   }
   toml::table table;
   table.insert("locked", std::move(names));
   table.insert("valves", std::move(valves));
+  table.insert("stats", std::move(stats));
 
   // Write beside the target and rename so a crash never leaves a torn file.
   const auto tmp = std::filesystem::path(options_.state_file).concat(".tmp");
@@ -473,7 +518,19 @@ void ExtractionLine::restore_valves() {
   }
   {
     std::lock_guard lock(locks_mutex_);
+    // The history carries on from the last run; what the read-back and the
+    // restore above did is not part of it. `since` holds only for a valve
+    // found in the state it was left in: one that moved while nobody was
+    // watching moved at a time nobody knows.
+    for (const auto& info : switches_->list()) {
+      SwitchStats history;
+      if (auto kept = remembered_stats_.find(info.name); kept != remembered_stats_.end()) history = kept->second;
+      auto left = remembered_.find(info.name);
+      if (left == remembered_.end() || left->second != info.state) history.since.reset();
+      switches_->seed_stats(info.name, history);
+    }
     remembered_.clear();
+    remembered_stats_.clear();
     restored_ = true;
     save_state();
   }

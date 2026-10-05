@@ -107,13 +107,12 @@ class TestCanvasView : public QObject {
   // it has been asked to do.
   void tooltipShowsStateAndActuationCounts() {
     ui::ValveItem* b = view_->valve("B");
-    // Counts are the session's: earlier tests have used this valve.
+    // Earlier tests have used this valve, and its history is kept.
     const auto counts = [b] {
-      const auto m = QRegularExpression(QStringLiteral("opened (\\d+), closed (\\d+), failed (\\d+)")).match(b->toolTip());
-      return std::array<int, 3>{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt()};
+      const auto m = QRegularExpression(QStringLiteral("Opened ([\\d,]+), closed ([\\d,]+), failed ([\\d,]+)")).match(b->toolTip());
+      return std::array<int, 3>{m.captured(1).remove(QLatin1Char(',')).toInt(), m.captured(2).remove(QLatin1Char(',')).toInt(),
+                                m.captured(3).remove(QLatin1Char(',')).toInt()};
     };
-    QVERIFY(view_->valve("P1")->toolTip().contains(QStringLiteral("Not actuated this session")));
-    QVERIFY(!view_->valve("P1")->toolTip().contains(QStringLiteral("since")));
     bridge_->actuate("B", SwitchOp::Open);
     QTRY_COMPARE(b->state(), ValveState::Open);
     QTRY_VERIFY(!b->is_pending());
@@ -125,6 +124,41 @@ class TestCanvasView : public QObject {
     QTRY_VERIFY(b->toolTip().contains(QStringLiteral("Open since ")));
     QCOMPARE(counts(), (std::array<int, 3>{before[0] + 1, before[1], before[2]}));
     QVERIFY(b->toolTip().contains(QStringLiteral("Prep to spectrometer")));
+    QVERIFY(b->toolTip().contains(QStringLiteral("Last actuated ")));
+    QVERIFY(b->toolTip().contains(QStringLiteral("Time open ")));
+  }
+
+  // The lines under a valve's name, from its history and as of a given moment.
+  void valveDetailsSayStateHistoryAndTimeOpen() {
+    using std::chrono::seconds;
+    const QDateTime now(QDate(2026, 10, 5), QTime(15, 0, 0));
+    const auto ago = [&now](qint64 s) { return systems::WallTime(seconds(now.toSecsSinceEpoch() - s)); };
+    ui::CoreBridge::State state;
+    systems::SwitchInfo v;
+    v.name = "V";
+    v.description = "Bone to turbo";
+    v.locked = true;
+    state.switches["V"] = v;
+    state.valves["V"] = ValveState::Closed;
+    QCOMPARE(ui::CanvasView::valve_details(state, "V", now),
+             (QStringList{QStringLiteral("Bone to turbo"), QStringLiteral("Closed, locked"), QStringLiteral("Never actuated")}));
+
+    systems::SwitchStats& h = state.switches["V"].stats;
+    h.opens = 1204;
+    h.closes = 1203;
+    h.failures = 3;
+    h.since = ago(2 * 3600 + 13 * 60);
+    h.last_actuation = ago(3 * 86400);
+    h.open_time = seconds(40 * 3600);
+    state.switches["V"].locked = false;
+    state.valves["V"] = ValveState::Open;
+    const QLocale locale;
+    QCOMPARE(ui::CanvasView::valve_details(state, "V", now),
+             (QStringList{QStringLiteral("Bone to turbo"), QStringLiteral("Open since 12:47:00 (2 h 13 min)"),
+                          QStringLiteral("Last actuated %1").arg(locale.toString(now.addDays(-3), QStringLiteral("d MMM yyyy HH:mm"))),
+                          QStringLiteral("Opened %1, closed %2, failed 3").arg(locale.toString(1204), locale.toString(1203)),
+                          QStringLiteral("Time open 1 d 18 h")}));  // 40 h ended, 2 h 13 min running
+    QCOMPARE(ui::CanvasView::valve_details(state, "nope", now), QStringList{QStringLiteral("State unknown")});
   }
 
   void lockedValveDrawsBlueBorderAndUnlockClearsIt() {

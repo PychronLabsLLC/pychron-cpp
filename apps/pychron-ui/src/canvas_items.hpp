@@ -69,8 +69,11 @@ class ValveItem : public QGraphicsObject {
   void set_pending(bool pending);
   // Rejection feedback: blink for ~1 s and keep `what` in the tooltip.
   void flash(const QString& what);
-  // The tooltip's lines under the name: description, state, counts.
+  // The tooltip's lines under the name: description, state, history.
   void set_details(const QStringList& lines);
+  // Called as the pointer comes over the valve, before its tooltip shows:
+  // the details hold durations, which are only right when asked for.
+  void set_on_hover(std::function<void()> on_hover) { on_hover_ = std::move(on_hover); }
 
   void set_on_click(std::function<void(const std::string&)> on_click) { on_click_ = std::move(on_click); }
   // Called with the requested state when the user picks the context-menu
@@ -92,6 +95,7 @@ class ValveItem : public QGraphicsObject {
  protected:
   void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
   void contextMenuEvent(QGraphicsSceneContextMenuEvent* event) override;
+  void hoverEnterEvent(QGraphicsSceneHoverEvent* event) override;
 
  private:
   std::string name_;
@@ -102,6 +106,8 @@ class ValveItem : public QGraphicsObject {
   std::optional<QColor> inherited_;
   bool pending_ = false;
   void update_tip();
+
+  std::function<void()> on_hover_;
 
   QStringList details_;
   QString last_failure_;
