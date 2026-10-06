@@ -212,7 +212,7 @@ TEST(ExtractionLine, TheStarterLineOrTheLabsOwnFilesAreCheckedBeforeAnythingIsWr
   fs::create_directories(tmp.dir / "mine");
   std::string line = read(examples / "extraction_line.toml");
   line += "\n# the lab's line\n";
-  std::ofstream(tmp.dir / "mine" / "line.toml") << line;
+  std::ofstream(tmp.dir / "mine" / "line.toml", std::ios::binary) << line;  // as written: no CRLF on Windows
   fs::copy_file(examples / "canvas.toml", tmp.dir / "mine" / "drawing.toml");
   auto own = answers_for(*p,
                          {{"line_source", Value{std::string("import")}},
@@ -233,7 +233,7 @@ TEST(ExtractionLine, TheStarterLineOrTheLabsOwnFilesAreCheckedBeforeAnythingIsWr
     ASSERT_NE(at, std::string::npos) << from;
     renamed.replace(at, from.size(), from == "name = \"A\"" ? "name = \"Z\"" : "interlocks = [\"Z\"]");
   }
-  std::ofstream(tmp.dir / "mine" / "line.toml", std::ios::trunc) << renamed;
+  std::ofstream(tmp.dir / "mine" / "line.toml", std::ios::binary | std::ios::trunc) << renamed;
   plan = plan_install(lib, *p, *own, tmp.dir / "bad-canvas");
   ASSERT_FALSE(plan);
   EXPECT_NE(plan.error().what.find("canvas.toml does not match the extraction line"), std::string::npos)
@@ -241,7 +241,7 @@ TEST(ExtractionLine, TheStarterLineOrTheLabsOwnFilesAreCheckedBeforeAnythingIsWr
   EXPECT_FALSE(fs::exists(tmp.dir / "bad-canvas"));
 
   // A line that does not load, and a file that is not there.
-  std::ofstream(tmp.dir / "mine" / "line.toml", std::ios::trunc) << "[[valves]]\nname = 3\n";
+  std::ofstream(tmp.dir / "mine" / "line.toml", std::ios::binary | std::ios::trunc) << "[[valves]]\nname = 3\n";
   plan = plan_install(lib, *p, *own, tmp.dir / "bad-line");
   ASSERT_FALSE(plan);
   EXPECT_NE(plan.error().what.find("extraction_line.toml is not a usable extraction-line config"), std::string::npos)

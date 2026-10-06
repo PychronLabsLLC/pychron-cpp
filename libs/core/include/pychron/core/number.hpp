@@ -18,8 +18,13 @@ namespace pychron {
 // digits, a decimal point, an exponent. Nothing else around it, not "inf" or
 // "nan", not hex. nullopt otherwise.
 inline std::optional<double> parse_double(std::string_view text) noexcept {
-  if (text.empty() || text.front() == ' ' || text.front() == '\t' || text.front() == '\n' || text.front() == '\r')
-    return std::nullopt;
+  if (text.empty()) return std::nullopt;
+  // Only the characters a decimal number is made of: some streams (MSVC's)
+  // would otherwise read "0x10" as hex, and all of them skip leading blanks.
+  for (const char c : text) {
+    const bool decimal = (c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-';
+    if (!decimal) return std::nullopt;
+  }
   std::istringstream in{std::string(text)};
   in.imbue(std::locale::classic());
   double v = 0;
