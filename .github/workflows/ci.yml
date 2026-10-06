@@ -84,9 +84,12 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ninja-build ccache
           qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
 
+      # No OpenCV here: Homebrew's brings TBB, whose exit-time destructor
+      # crashes under the sanitizers (in libtbb, after the program is done).
+      # The ui job, unsanitized, has OpenCV and runs the same tests.
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja ccache opencv
+        run: brew install ninja ccache
 
       # A step, not a `services:` block: services cannot be limited to one matrix entry.
       - name: Start PostgreSQL 16
@@ -163,8 +166,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # OpenCV too: the only job with it (see the core job's macOS step).
       - name: Install Qt and tools
-        run: brew install qt ninja ccache
+        run: brew install qt ninja ccache opencv
 
       - name: Restore ccache
         uses: actions/cache/restore@v4

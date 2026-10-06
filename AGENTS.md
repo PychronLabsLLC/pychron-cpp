@@ -62,7 +62,8 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - `-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF` (default `AUTO`) controls the optional
   OpenCV in `libs/vision` (`LegacyFinder`, `OpenCvSource`); without it those
   two files compile to stubs. OpenCV headers appear only in those two `.cpp`
-  files. Only the macOS CI job installs OpenCV.
+  files. Only the macOS `ui` CI job installs OpenCV (Homebrew's brings TBB,
+  which crashes at exit under the sanitizers).
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
