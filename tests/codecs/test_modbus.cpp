@@ -28,7 +28,9 @@ void expect_protocol(const Result<T>& r, std::string_view needle = {}) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Protocol) << to_string(r.error());
   EXPECT_TRUE(r.error().device.empty());
-  if (!needle.empty()) EXPECT_NE(r.error().what.find(needle), std::string::npos) << r.error().what;
+  if (!needle.empty()) {
+    EXPECT_NE(r.error().what.find(needle), std::string::npos) << r.error().what;
+  }
 }
 
 template <class T>
