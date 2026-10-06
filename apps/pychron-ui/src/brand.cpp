@@ -21,6 +21,7 @@
 #include <QRadialGradient>
 #include <QSysInfo>
 #include <QTextDocumentFragment>
+#include <QShowEvent>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -282,12 +283,19 @@ SplashScreen::SplashScreen(bool simulation)
     : QSplashScreen(brand::banner(kSplashSize, qApp->devicePixelRatio(), simulation, false)),
       simulation_(simulation) {
   setWindowIcon(brand::app_icon());
-  shown_.start();
+}
+
+void SplashScreen::showEvent(QShowEvent* event) {
+  QSplashScreen::showEvent(event);
+  // Up for the minimum from when it could be seen: painting the banner (its
+  // fonts, the first time) can itself take a good part of the minimum.
+  if (!shown_.isValid()) shown_.start();
 }
 
 void SplashScreen::finish_after(QWidget* window, std::chrono::milliseconds minimum) {
   raise();  // over the window just shown, where no window manager keeps it there
-  const auto left = minimum - std::chrono::milliseconds(shown_.elapsed());
+  const auto up = std::chrono::milliseconds(shown_.isValid() ? shown_.elapsed() : 0);
+  const auto left = minimum - up;
   if (left <= std::chrono::milliseconds::zero()) {
     finish(window);
     return;

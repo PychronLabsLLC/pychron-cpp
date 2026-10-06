@@ -121,9 +121,11 @@ class LaserBridgeTest : public QObject {
     bridge_->jog(-0.5, 0, 0);
     test::settle(*bridge_);
     QVERIFY2(heard_->ok("jog"), qPrintable(heard_->why("jog")));
-    QCOMPARE(lab_->x(), 1.0);
-    QCOMPARE(lab_->y(), 0.5);
-    QCOMPARE(lab_->z(), 2.0);
+    // The driver counts the stage arrived within its tolerance; the simulated
+    // stage is on the target itself a moment later.
+    QTRY_COMPARE(lab_->x(), 1.0);
+    QTRY_COMPARE(lab_->y(), 0.5);
+    QTRY_COMPARE(lab_->z(), 2.0);
   }
 
   void a_jog_off_the_stage_is_refused_and_says_why() {

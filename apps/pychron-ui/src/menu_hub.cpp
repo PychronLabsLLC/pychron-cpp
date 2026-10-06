@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QDialog>
 #include <QEvent>
 #include <QLayout>
@@ -42,10 +43,14 @@ MenuHub& MenuHub::instance() {
 
 MenuHub::Bars MenuHub::platform_bars() {
 #ifdef Q_OS_MACOS
-  return Bars::Shared;
-#else
-  return Bars::PerWindow;
+  // One bar for all only where the platform shows a global one: a parentless
+  // QMenuBar is the native macOS bar, and nothing at all under another
+  // platform plugin (offscreen, in tests), where its shortcuts never fire.
+  if (QGuiApplication::platformName() == QLatin1String("cocoa") &&
+      !QCoreApplication::testAttribute(Qt::AA_DontUseNativeMenuBar))
+    return Bars::Shared;
 #endif
+  return Bars::PerWindow;
 }
 
 MenuHub& MenuHub::reset(Bars bars) {

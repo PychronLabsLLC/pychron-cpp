@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
@@ -361,13 +362,18 @@ QString style_sheet() {
 
 namespace {
 
-// The first of `wanted` installed here, or empty. A family that is not
-// installed is never handed to Qt: on macOS that makes it build its whole
-// alias table ("Populating font family aliases took ... ms").
+// A family that is not installed is never handed to Qt: on macOS that makes
+// it build its whole alias table ("Populating font family aliases took ...
+// ms").
+bool installed(const QString& family) {
+  static const QStringList families = QFontDatabase::families();
+  return families.contains(family, Qt::CaseInsensitive);
+}
+
+// The first of `wanted` installed here, or empty.
 QString installed_family(std::initializer_list<QLatin1String> wanted) {
-  static const QStringList installed = QFontDatabase::families();
   for (const QLatin1String name : wanted) {
-    if (installed.contains(name, Qt::CaseInsensitive)) return name;
+    if (installed(name)) return name;
   }
   return {};
 }
@@ -382,8 +388,13 @@ void apply(QApplication& app) {
   // platform's own UI font. The size stays the platform's until set_font_sizes.
   QFont font = QApplication::font();
   if (const QString family = installed_family({QLatin1String("IBM Plex Sans"), QLatin1String("Segoe UI Variable Text")});
-      !family.isEmpty())
+      !family.isEmpty()) {
     font.setFamily(family);
+  } else if (!installed(font.family())) {
+    // A platform theme may name a family that is not installed (the offscreen
+    // platform's is "Sans Serif"); the one Qt resolves it to is.
+    if (const QString resolved = QFontInfo(font).family(); installed(resolved)) font.setFamily(resolved);
+  }
   font.setHintingPreference(QFont::PreferNoHinting);
   QApplication::setFont(font);
   app.setStyleSheet(style_sheet());
