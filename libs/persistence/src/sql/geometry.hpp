@@ -12,7 +12,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -45,11 +47,14 @@ inline QString geom_read(Dialect dialect, const QString& expr) {
 
 namespace geometry_detail {
 
+// A stream in the C locale: floating-point from_chars is missing from
+// Apple's libc++, and strtod reads the process locale's decimal point.
 inline std::optional<double> number(std::string_view text) {
+  std::istringstream in{std::string(text)};
+  in.imbue(std::locale::classic());
   double v = 0;
-  const auto* end = text.data() + text.size();
-  const auto r = std::from_chars(text.data(), end, v);
-  if (r.ec != std::errc{} || r.ptr != end || !std::isfinite(v)) return std::nullopt;
+  char rest = 0;
+  if (!(in >> v) || in.get(rest) || !std::isfinite(v)) return std::nullopt;
   return v;
 }
 

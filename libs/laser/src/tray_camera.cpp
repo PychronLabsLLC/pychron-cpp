@@ -119,7 +119,7 @@ Result<vision::Frame> SimTrayCamera::grab() {
   frame.timestamp = now;
   frame.seq = ++seq_;
   truth_ = truth;
-  return std::move(frame);
+  return frame;
 }
 
 Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConfig& config,

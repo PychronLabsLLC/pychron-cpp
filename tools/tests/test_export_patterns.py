@@ -192,12 +192,16 @@ class ReadAndConvert(Scratch):
         bomb = ()
         for _ in range(60):
             bomb = (bomb, bomb)  # printing it would take 2**60 characters
-        deep = []
-        for _ in range(20000):
-            deep = [deep]
         lp(self.src, "a_bomb.lp", "PolygonPattern", radius=bomb)
         lp(self.src, "b_huge.lp", "PolygonPattern", radius=10 ** 400)
-        lp(self.src, "c_deep.lp", "PolygonPattern", radius=deep)
+        # A list nested 20000 deep. pickle.dumps would recurse once per level
+        # and hit the interpreter's limit, so the pickle is written by hand:
+        # EMPTY_LIST, then at each level a list that APPENDs the one inside.
+        deep = b"]"
+        for _ in range(20000):
+            deep = b"]" + deep + b"a"
+        (self.src / "c_deep.lp").write_bytes(b"\x80\x02c" + MODULE.encode() + b"\nPolygonPattern\nq\x00)\x81q\x01}q\x02"
+                                            b"(X\x06\x00\x00\x00radiusq\x03" + deep + b"ub.")
         lp(self.src, "d_text.lp", "PolygonPattern", nsides="6")
         lp(self.src, "e_flag.lp", "TroughPattern", use_x="yes")
         odd = legacy_class("PolygonPattern")()
