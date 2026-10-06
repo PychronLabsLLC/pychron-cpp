@@ -65,6 +65,12 @@ jobs:
       CCACHE_MAXSIZE: 1G
       # Read when the store tests are discovered (build) and run; empty means SQLite only.
       PYCHRON_TEST_PG_URL: ${{ matrix.pg_url }}
+      # A sanitizer build reports a crash with its stack. The programs install
+      # their own handler for these signals, which says only "fatal signal 11";
+      # the sanitizer keeps its own (2: exclusive). Abort is left to the
+      # programs: the log tests expect their line for it.
+      ASAN_OPTIONS: handle_segv=2:handle_sigbus=2
+      UBSAN_OPTIONS: print_stacktrace=1
     steps:
       - uses: actions/checkout@v4
 
