@@ -46,14 +46,20 @@ only, no GUI. TinyORM and range-v3 are fetched from git at configure time.
 The library is skipped when CMake finds no Qt. The plain `dev` preset does
 not search Homebrew's Qt, so use `dev-ui` or pass
 `-DCMAKE_PREFIX_PATH=$(brew --prefix qt)`. Persistence tests always run on
-SQLite. To also run them on PostgreSQL (this needs Qt's QPSQL driver plugin),
-point `PYCHRON_TEST_PG_URL` at an empty database:
+SQLite. To also run them on PostgreSQL (this needs Qt's QPSQL driver plugin
+and PostGIS, which the schema uses for sample locations), point
+`PYCHRON_TEST_PG_URL` at an empty database:
 
 ```bash
-brew install postgresql@16 && brew services start postgresql@16
+brew install postgresql@16 postgis && brew services start postgresql@16
 createdb pychron_test
 export PYCHRON_TEST_PG_URL=postgresql://$USER@localhost/pychron_test
 ```
+
+On Ubuntu the PostGIS package is `postgresql-16-postgis-3`. The first
+migration that needs it runs `CREATE EXTENSION IF NOT EXISTS postgis WITH
+SCHEMA public`; PostGIS 3 is a trusted extension, so the database owner may
+do that without being a superuser.
 
 ### Vision / OpenCV (optional)
 

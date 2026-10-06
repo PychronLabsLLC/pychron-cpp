@@ -24,8 +24,11 @@ the checks and the way back.
 - For an instrument: the address and port of the instrument's control PC
   (Qtegra RemoteControlServer, default port 1069; NGX controller, default
   1099), and its calibration (field table, detectors, source settings).
-- For a server database: a PostgreSQL server, an empty database, and a user
-  that may create tables in it.
+- For a server database: a PostgreSQL server with PostGIS installed (sample
+  locations are a geometry column), an empty database, and a user that may
+  create tables in it and create the `postgis` extension (PostGIS 3 is
+  trusted: the database owner can; otherwise an administrator runs
+  `CREATE EXTENSION postgis` once).
 - For a legacy migration: `git` 2.32 or newer, `python3`, the system
   time-zone database (`tzdata`), the lab's IANA time zone
   (for example `America/Denver`), and read access to the lab's legacy sources

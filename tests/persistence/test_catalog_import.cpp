@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "sql/errors.hpp"
+#include "sql/geometry.hpp"
 #include "store_fixture.hpp"
 
 using namespace pychron;
@@ -305,8 +306,10 @@ TEST_P(CatalogImportTest, SampleKeepsEveryColumn) {
   const Row r = raw_row(shared, "sample", id);
   EXPECT_EQ(pd::to_std(r.value("note")), "n");
   EXPECT_EQ(pd::to_std(r.value("igsn")), "IGSN2");
-  EXPECT_DOUBLE_EQ(r.value("lat").toDouble(), 34.5);
-  EXPECT_DOUBLE_EQ(r.value("lon").toDouble(), -106.5);
+  const auto point = pd::parse_point(pd::to_std(r.value("geom")));  // one geometry column, not lat and lon
+  ASSERT_TRUE(point);
+  EXPECT_DOUBLE_EQ(point->lat, 34.5);
+  EXPECT_DOUBLE_EQ(point->lon, -106.5);
   EXPECT_DOUBLE_EQ(r.value("elevation").toDouble(), 1500.5);
   EXPECT_EQ(pd::to_std(r.value("storage_location")), "shelf 3");
   EXPECT_EQ(pd::to_std(r.value("location")), "Fish Canyon");
@@ -595,6 +598,7 @@ TEST_P(CatalogImportTest, SampleCreatedBareIsFilledByALaterSpec) {
   differing.note = "other";
   differing.igsn = "IGSN9";
   differing.lat = 1.0;
+  differing.lon = 2.0;
   differing.approximate_age = 1.0;
   const Uuid id = s.expect_fill(
       "sample", [&] { return s.store->add_sample(c, bare); }, [&] { return s.store->add_sample(c, full); },
@@ -602,8 +606,10 @@ TEST_P(CatalogImportTest, SampleCreatedBareIsFilledByALaterSpec) {
   const Row r = s.row("sample", id);
   EXPECT_EQ(pd::to_std(r.value("note")), "n");
   EXPECT_EQ(pd::to_std(r.value("igsn")), "IGSN2");
-  EXPECT_DOUBLE_EQ(r.value("lat").toDouble(), 34.5);
-  EXPECT_DOUBLE_EQ(r.value("lon").toDouble(), -106.5);
+  const auto point = pd::parse_point(pd::to_std(r.value("geom")));  // one geometry column, not lat and lon
+  ASSERT_TRUE(point);
+  EXPECT_DOUBLE_EQ(point->lat, 34.5);
+  EXPECT_DOUBLE_EQ(point->lon, -106.5);
   EXPECT_DOUBLE_EQ(r.value("elevation").toDouble(), 1500.5);
   EXPECT_EQ(pd::to_std(r.value("storage_location")), "shelf 3");
   EXPECT_EQ(pd::to_std(r.value("location")), "Fish Canyon");

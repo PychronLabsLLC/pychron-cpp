@@ -26,6 +26,7 @@
 #include "pychron/dvc/catalog_adapter.hpp"
 #include "pychron/ingest/ids.hpp"
 #include "pychron/ingest/writer.hpp"
+#include "sql/geometry.hpp"
 #include "store_fixture.hpp"
 #include "verify_support.hpp"
 
@@ -191,11 +192,11 @@ std::vector<std::string> snapshot_of(World& w) {
   rows("material", "SELECT uuid, name, grainsize FROM material", {"uuid", "name", "grainsize"});
   // The fixture's one sample with legacy times is HH-1; the other's are write times.
   rows("sample",
-       "SELECT uuid, name, project_uuid, material_uuid, note, igsn, lat, lon, elevation, storage_location, location, "
+       "SELECT uuid, name, project_uuid, material_uuid, note, igsn, geom, elevation, storage_location, location, "
        "unit, lithology, lithology_class, lithology_type, lithology_group, approximate_age, "
        "CASE WHEN name = 'HH-1' THEN created_utc END AS created, "
        "CASE WHEN name = 'HH-1' THEN updated_utc END AS updated FROM sample",
-       {"uuid", "name", "project_uuid", "material_uuid", "note", "igsn", "lat", "lon", "elevation", "storage_location",
+       {"uuid", "name", "project_uuid", "material_uuid", "note", "igsn", "geom", "elevation", "storage_location",
         "location", "unit", "lithology", "lithology_class", "lithology_type", "lithology_group", "approximate_age",
         "created", "updated"});
   rows("irradiation", "SELECT name, CASE WHEN name = 'NM-300' THEN created_utc END AS created FROM irradiation",
@@ -423,8 +424,10 @@ TEST_P(CatalogDb, SampleKeepsLatLonAndNote) {
   const auto r = world_->one("SELECT * FROM sample WHERE name = 'HH-1'");
   EXPECT_EQ(pd::to_std(r.value("note")), "collected at the base, north side");
   EXPECT_EQ(pd::to_std(r.value("igsn")), "IGSN001");
-  EXPECT_DOUBLE_EQ(r.value("lat").toDouble(), 34.0722);
-  EXPECT_DOUBLE_EQ(r.value("lon").toDouble(), -106.905);
+  const auto point = pd::parse_point(pd::to_std(r.value("geom")));  // the legacy lat and lon, one point
+  ASSERT_TRUE(point);
+  EXPECT_DOUBLE_EQ(point->lat, 34.0722);
+  EXPECT_DOUBLE_EQ(point->lon, -106.905);
   EXPECT_DOUBLE_EQ(r.value("elevation").toDouble(), 1890.5);
   EXPECT_EQ(pd::to_std(r.value("storage_location")), "shelf 3");
   EXPECT_EQ(pd::to_std(r.value("location")), "Socorro, NM");
@@ -440,7 +443,7 @@ TEST_P(CatalogDb, SampleKeepsLatLonAndNote) {
   EXPECT_EQ(pd::to_time(r.value("updated_utc")).iso(), "2016-11-06T07:30:00.000000Z");
   // A sample without them has no legacy columns at all.
   EXPECT_TRUE(world_->is_null("SELECT note AS v FROM sample WHERE name = 'FC-2'"));
-  EXPECT_TRUE(world_->is_null("SELECT lat AS v FROM sample WHERE name = 'FC-2'"));
+  EXPECT_TRUE(world_->is_null("SELECT geom AS v FROM sample WHERE name = 'FC-2'"));
 }
 
 TEST_P(CatalogDb, ProjectKeepsLegacyColumns) {
@@ -927,6 +930,45 @@ TEST_P(CatalogDb, ReplayRestatesAConflictThatSaysSomethingElseNow) {
   EXPECT_EQ(dvc::testing::verify_source(*world_, **adapter).replay_would_write, 0);
 }
 
+// The store keeps a sample's location as one point (migration 0004): a
+// legacy row with a latitude but no longitude, or the reverse, is imported
+// without a location, and the half it had is reported as a warning.
+TEST_P(CatalogDb, HalfALocationIsImportedWithoutItAndReported) {
+  DumpDir dir;
+  dir.table("ProjectTbl", {R"({"id":1,"name":"P","principal_investigatorID":null})"})
+      .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
+      .table("SampleTbl",
+             {
+                 R"({"id":1,"name":"S","materialID":1,"projectID":1,"lat":34.5})",
+                 R"({"id":2,"name":"T","materialID":1,"projectID":1,"lon":-106.5})",
+                 R"({"id":3,"name":"U","materialID":1,"projectID":1,"lat":34.5,"lon":-106.5})",
+             })
+      .table("IrradiationTbl", {R"({"id":1,"name":"NM-1","create_date":null})"})
+      .table("LevelTbl", {R"({"id":1,"name":"A","irradiationID":1})"})
+      .table("IrradiationPositionTbl", {R"({"id":1,"identifier":"100","sampleID":3,"levelID":1,"position":1})"})
+      .done();
+  auto stats = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_TRUE(stats->finished);
+  EXPECT_EQ(stats->conflicts, 2);
+  EXPECT_EQ(world_->count("sample"), 3);
+  EXPECT_TRUE(world_->is_null("SELECT geom AS v FROM sample WHERE name = 'S'"));
+  EXPECT_TRUE(world_->is_null("SELECT geom AS v FROM sample WHERE name = 'T'"));
+  const auto point = pd::parse_point(world_->text("SELECT geom AS v FROM sample WHERE name = 'U'"));
+  ASSERT_TRUE(point);
+  EXPECT_DOUBLE_EQ(point->lat, 34.5);
+  EXPECT_DOUBLE_EQ(point->lon, -106.5);
+
+  std::map<std::string, std::string> reasons;
+  for (const auto& conflict : world_->conflicts()) {
+    EXPECT_TRUE(ingest::is_warning_conflict(conflict)) << conflict.path;
+    reasons[conflict.path] = json::parse(conflict.detail_json).at("reason").get<std::string>();
+  }
+  EXPECT_EQ(reasons, (std::map<std::string, std::string>{
+                         {"SampleTbl.jsonl#1@lat", "lat without lon is not a location; imported without a location"},
+                         {"SampleTbl.jsonl#2@lon", "lon without lat is not a location; imported without a location"}}));
+}
+
 // Rows with one natural key are one row (spec section 10.43). What decides
 // is what would be imported, not the text of the dump: a repeat that says the
 // same, or brings what the first lacks, is no conflict; one that says
@@ -937,10 +979,10 @@ TEST_P(CatalogDb, RepeatedRowsAreOneRowWithTheUnionOfTheirValues) {
       .table("MaterialTbl", {R"({"id":1,"name":"M","grainsize":null})"})
       .table("SampleTbl",
              {
-                 R"({"id":1,"name":"S","materialID":1,"projectID":1,"note":"one","igsn":null,"lat":34.5})",
+                 R"({"id":1,"name":"S","materialID":1,"projectID":1,"note":"one","igsn":null,"lat":34.5,"lon":-106.5})",
                  // The same after the none rule: "---------" and NULL are both no value.
-                 R"({"id":2,"name":"S","materialID":1,"projectID":1,"note":"---------","igsn":"","lat":"34.5"})",
-                 R"({"id":3,"name":"S","materialID":1,"projectID":1,"note":null,"igsn":null,"lat":null})",
+                 R"({"id":2,"name":"S","materialID":1,"projectID":1,"note":"---------","igsn":"","lat":"34.5","lon":"-106.5"})",
+                 R"({"id":3,"name":"S","materialID":1,"projectID":1,"note":null,"igsn":null,"lat":null,"lon":null})",
                  // Brings what the first lacks.
                  R"({"id":4,"name":"S","materialID":1,"projectID":1,"note":null,"igsn":"IG-1"})",
                  // Says something else, and brings a location.
@@ -962,10 +1004,13 @@ TEST_P(CatalogDb, RepeatedRowsAreOneRowWithTheUnionOfTheirValues) {
   EXPECT_EQ(stats->conflicts, 2);
 
   EXPECT_EQ(world_->count("sample"), 1);
-  auto r = world_->one("SELECT note, igsn, lat, location FROM sample");
+  auto r = world_->one("SELECT note, igsn, geom, location FROM sample");
   EXPECT_EQ(pd::to_std(r.value("note")), "one");
   EXPECT_EQ(pd::to_std(r.value("igsn")), "IG-1");
-  EXPECT_DOUBLE_EQ(r.value("lat").toDouble(), 34.5);
+  const auto point = pd::parse_point(pd::to_std(r.value("geom")));
+  ASSERT_TRUE(point);
+  EXPECT_DOUBLE_EQ(point->lat, 34.5);
+  EXPECT_DOUBLE_EQ(point->lon, -106.5);
   EXPECT_EQ(pd::to_std(r.value("location")), "here");
   EXPECT_EQ(world_->count("irradiation_position"), 1);
   EXPECT_EQ(world_->count("identifier"), 1);
@@ -1441,7 +1486,9 @@ TEST(CatalogDbAdapter, RowThatCannotBeReadIsConflictAndTheRestGoesOn) {
   EXPECT_EQ(samples[1].material, ingest::kPlaceholderMaterial);
   EXPECT_EQ(samples[1].grainsize, "");
   EXPECT_EQ(samples[2].fields.name, "numbers as text");
-  EXPECT_EQ(samples[2].fields.lat, std::optional<double>{34.5});
+  // "34.5" reads as a number, but a latitude without a longitude is no
+  // location: the row comes through without one, and says so below.
+  EXPECT_EQ(samples[2].fields.lat, std::nullopt);
   EXPECT_EQ(samples[2].fields.lon, std::nullopt);
   EXPECT_EQ(samples[2].project, "P");
 
@@ -1464,6 +1511,7 @@ TEST(CatalogDbAdapter, RowThatCannotBeReadIsConflictAndTheRestGoesOn) {
       {"SampleTbl.jsonl#line11", "id is missing"},
       {"SampleTbl.jsonl#x12", "id is not a whole number"},
       {"SampleTbl.jsonl#13", "materialID is not a whole number"},
+      {"SampleTbl.jsonl#14@lat", "lat without lon is not a location; imported without a location"},
       {"SampleTbl.jsonl#15", "lat is not a number"},
   };
   ASSERT_EQ(details.size(), want.size());

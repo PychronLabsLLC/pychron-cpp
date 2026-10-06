@@ -96,7 +96,15 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   or tested there.
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
-  Never edit an applied migration; add `NNNN_<name>.sql`.
+  Never edit an applied migration; add `NNNN_<name>.sql`. A statement only
+  PostgreSQL understands is preceded by `-- @sqlite skip`; its SQLite
+  counterpart, when one is needed, is given as `-- @sqlite exec <statement>`.
+- A sample's location is one PostGIS `geometry(Point, 4326)` column, `geom`
+  (migration 0004); SQLite keeps the same point as EWKT text. The catalog API
+  still speaks `lat` and `lon` (`SampleFields`, the `lat`/`lon` edit fields):
+  `libs/persistence/src/sql/geometry.hpp` converts, and every read of the
+  column goes through `geom_read()` (`ST_AsEWKT` on PostgreSQL). Half a point
+  is refused. PostgreSQL needs PostGIS; the tests on it do too.
 - The publication data report (`libs/processing` `report.hpp`, Schaen et al.
   2021) is Qt-free and reads only the `Analysis` model: metadata it needs
   (sample location and lithology, the flux monitor, the reactor) is carried

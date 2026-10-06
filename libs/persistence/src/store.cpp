@@ -11,6 +11,7 @@
 #include "migrate.hpp"
 #include "pychron/core/calendar.hpp"
 #include "sql/errors.hpp"
+#include "sql/geometry.hpp"
 #include "sql/statements.hpp"
 #include "store_impl.hpp"
 
@@ -246,8 +247,10 @@ class TinyStore final : public IStore {
     row["material_uuid"] = qv(spec.material);
     row["note"] = qv(spec.note);
     row["igsn"] = qv(spec.igsn);
-    row["lat"] = qv(spec.lat);
-    row["lon"] = qv(spec.lon);
+    // One point, or none: the geometry column holds both halves.
+    if (spec.lat.has_value() != spec.lon.has_value())
+      return fail(ErrorKind::Protocol, "sample '" + spec.name + "': latitude and longitude go together");
+    row["geom"] = spec.lat ? qv(detail::ewkt_point(*spec.lat, *spec.lon)) : QVariant();
     row["elevation"] = qv(spec.elevation);
     row["storage_location"] = qv(spec.storage_location);
     row["location"] = qv(spec.location);

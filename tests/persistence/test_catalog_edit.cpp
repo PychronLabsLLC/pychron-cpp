@@ -99,6 +99,58 @@ TEST_P(CatalogEditTest, InsertUpdateDeleteRoundTrip) {
   EXPECT_FALSE(*store_->catalog_row(CatalogTable::PrincipalInvestigator, pi));
 }
 
+TEST_P(CatalogEditTest, LatitudeAndLongitudeAreOneGeometryColumn) {
+  const Uuid sample = Uuid::v7();
+  CatalogEditBatch insert;
+  insert.edits = {CatalogInsert{CatalogTable::Sample, sample,
+                                {{"name", text("geo-1")}, {"project_uuid", cat_.p_ross1}, {"material_uuid", cat_.biotite},
+                                 {"lat", 34.0722}, {"lon", -106.905}}}};
+  ASSERT_TRUE(applied(apply(insert)));
+  CatalogFields s = row(CatalogTable::Sample, sample);
+  EXPECT_EQ(s.at("lat"), CatalogValue{34.0722});
+  EXPECT_EQ(s.at("lon"), CatalogValue{-106.905});
+
+  // Changing one half keeps the other, and the other half still checks as expected.
+  CatalogEditBatch half;
+  half.edits = {CatalogUpdate{CatalogTable::Sample, sample, {{"lon", -106.905}}, {{"lat", 35.0}}}};
+  ASSERT_TRUE(applied(apply(half)));
+  s = row(CatalogTable::Sample, sample);
+  EXPECT_EQ(s.at("lat"), CatalogValue{35.0});
+  EXPECT_EQ(s.at("lon"), CatalogValue{-106.905});
+  SampleQuery q;
+  q.text = "geo-1";
+  auto listed = store_->samples(q);
+  ASSERT_TRUE(listed && listed->size() == 1);
+  EXPECT_EQ(listed->front().fields.lat, 35.0);
+  EXPECT_EQ(listed->front().fields.lon, -106.905);
+
+  // Half a point and a coordinate off the globe are errors, not edits.
+  CatalogEditBatch lone;
+  lone.edits = {CatalogInsert{CatalogTable::Sample, Uuid::v7(),
+                              {{"name", text("geo-2")}, {"project_uuid", cat_.p_ross1}, {"material_uuid", cat_.biotite},
+                               {"lat", 1.0}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), lone));
+  CatalogEditBatch off;
+  off.edits = {CatalogUpdate{CatalogTable::Sample, sample, {}, {{"lat", 95.0}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), off));
+  CatalogEditBatch far;
+  far.edits = {CatalogUpdate{CatalogTable::Sample, sample, {}, {{"lon", -181.0}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), far));
+  CatalogEditBatch drop_one;
+  drop_one.edits = {CatalogUpdate{CatalogTable::Sample, sample, {}, {{"lon", CatalogValue{}}}}};
+  EXPECT_FALSE(store_->apply_catalog_edits(client(), drop_one));
+  EXPECT_EQ(row(CatalogTable::Sample, sample).at("lat"), CatalogValue{35.0});
+  EXPECT_FALSE(store_->add_sample(client(), {.name = "geo-3", .project = cat_.p_ross1, .material = cat_.biotite, .lat = 1.0}));
+
+  // Both to null clears the point.
+  CatalogEditBatch clear;
+  clear.edits = {CatalogUpdate{CatalogTable::Sample, sample, {{"lat", 35.0}}, {{"lat", CatalogValue{}}, {"lon", CatalogValue{}}}}};
+  ASSERT_TRUE(applied(apply(clear)));
+  s = row(CatalogTable::Sample, sample);
+  EXPECT_EQ(s.at("lat"), CatalogValue{});
+  EXPECT_EQ(s.at("lon"), CatalogValue{});
+}
+
 TEST_P(CatalogEditTest, UnknownColumnWrongTypeAndMissingRequiredAreErrors) {
   CatalogEditBatch a;
   a.edits = {CatalogUpdate{CatalogTable::Sample, cat_.s1, {}, {{"created_utc", text("x")}}}};
