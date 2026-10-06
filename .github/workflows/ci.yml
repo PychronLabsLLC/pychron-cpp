@@ -86,9 +86,10 @@ jobs:
       - name: Start PostgreSQL 16
         if: matrix.postgres
         run: |
+          # The PostGIS image: sample locations are a geometry column (migration 0004).
           docker run -d --name postgres -p 5432:5432 \
             -e POSTGRES_USER=pychron -e POSTGRES_PASSWORD=pychron -e POSTGRES_DB=pychron_test \
-            postgres:16
+            postgis/postgis:16-3.4
           for _ in $(seq 60); do
             # The image restarts the server once during init; wait for the final one on TCP.
             if docker exec postgres pg_isready -h localhost -U pychron -d pychron_test; then exit 0; fi

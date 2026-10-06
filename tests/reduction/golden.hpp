@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "pychron/core/number.hpp"
 #include "pychron/reduction/arar_types.hpp"
 
 #ifndef PYCHRON_REDUCTION_GOLDEN_DIR
@@ -339,13 +340,10 @@ class Parser {
       while (digit(peek())) ++pos_;
     }
     if (digit(peek())) return fail("leading zero");
-    const char* first = text_.data() + start;
-    const char* last = text_.data() + pos_;
-    double v = 0.0;
-    const auto [end, ec] = std::from_chars(first, last, v);
-    if (ec != std::errc{} || end != last) return fail("bad or out-of-range number");
+    const auto v = pychron::parse_double(std::string_view(text_).substr(start, pos_ - start));
+    if (!v) return fail("bad or out-of-range number");
     out.type = Json::Type::Number;
-    out.number = v;
+    out.number = *v;
     return true;
   }
 
