@@ -226,3 +226,34 @@ TEST(Synth, NanGlowParametersDoNotReachTheCast) {
   (void)t;
   EXPECT_FALSE(f.data.empty());
 }
+
+TEST(Synth, DarkenHoleDrawsOneMoreHoleWhereTheDarkerPixelWins) {
+  HoleScene s;
+  s.noise = 0;
+  auto [frame, truth] = render(s, {0.0, 0.0});
+  ASSERT_TRUE(truth.visible);
+  const Frame before = frame;
+  // A second hole one pitch to the right: the same picture as a frame
+  // rendered with that hole, pixel for pixel, where it is dark.
+  HoleScene other = s;
+  other.hole_mm = {s.pitch_mm, 0.0};
+  darken_hole(frame, other, {0.0, 0.0});
+  const auto [alone, other_truth] = render(other, {0.0, 0.0});
+  ASSERT_TRUE(other_truth.visible);
+  std::size_t darkened = 0;
+  for (std::size_t i = 0; i < frame.data.size(); ++i) {
+    EXPECT_EQ(frame.data[i], std::min(before.data[i], alone.data[i])) << "pixel " << i;
+    if (frame.data[i] != before.data[i]) ++darkened;
+  }
+  EXPECT_GT(darkened, 0u);
+  // Darkening only: the first hole is as it was.
+  const std::size_t center = static_cast<std::size_t>(truth.center_px.y) * static_cast<std::size_t>(frame.width) +
+                             static_cast<std::size_t>(truth.center_px.x);
+  EXPECT_EQ(frame.data[center], before.data[center]);
+  // A hole off the frame, or a stage position that is not a number, touches nothing.
+  Frame same = frame;
+  other.hole_mm = {1e6, 0.0};
+  darken_hole(same, other, {0.0, 0.0});
+  darken_hole(same, s, {std::nan(""), 0.0});
+  EXPECT_EQ(same.data, frame.data);
+}

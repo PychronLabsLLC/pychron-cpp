@@ -49,4 +49,11 @@ struct GlowScene {
 std::pair<Frame, Truth> render(const HoleScene& scene, Vec2 stage_mm);
 std::pair<Frame, Truth> render(const GlowScene& scene, Vec2 stage_mm);
 
+// One more hole, the scene's hole_mm, drawn into a frame already rendered
+// with the same scene and stage position: the darker pixel wins, so a hole
+// is dark on the tray and never lightens one already there. Only the pixels
+// around the hole are touched (a tray of holes costs no more frames); its
+// noise, shadow and glint are not drawn.
+void darken_hole(Frame& frame, const HoleScene& scene, Vec2 stage_mm);
+
 }  // namespace pychron::vision

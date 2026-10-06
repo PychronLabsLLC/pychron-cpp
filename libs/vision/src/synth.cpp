@@ -105,6 +105,27 @@ std::pair<Frame, Truth> render(const HoleScene& s, Vec2 stage_mm) {
   return {std::move(f), Truth{t, r, visible}};
 }
 
+void darken_hole(Frame& f, const HoleScene& s, Vec2 stage_mm) {
+  if (f.width <= 0 || f.height <= 0 || f.data.size() < static_cast<std::size_t>(f.width) * f.height) return;
+  const Vec2 t = target_px(f.width, f.height, s.hole_mm, stage_mm, s.px_per_mm);
+  const double r = s.hole_radius_mm * s.px_per_mm;
+  if (!std::isfinite(t.x) || !std::isfinite(t.y) || !std::isfinite(r) || r < 0) return;
+  // The hole and its 1 px edge; the same edge and levels as render().
+  const int x0 = std::max(0, static_cast<int>(std::floor(t.x - r - 1)));
+  const int x1 = std::min(f.width - 1, static_cast<int>(std::ceil(t.x + r + 1)));
+  const int y0 = std::max(0, static_cast<int>(std::floor(t.y - r - 1)));
+  const int y1 = std::min(f.height - 1, static_cast<int>(std::ceil(t.y + r + 1)));
+  for (int y = y0; y <= y1; ++y) {
+    for (int x = x0; x <= x1; ++x) {
+      const double in_hole = clamp01(r - std::hypot(x - t.x, y - t.y) + 0.5);
+      if (in_hole <= 0) continue;
+      const double level = s.tray_level + (s.hole_level - s.tray_level) * in_hole;
+      std::uint16_t& px = f.at(x, y);
+      px = std::min(px, quantise(level, s.pixel_depth));
+    }
+  }
+}
+
 std::pair<Frame, Truth> render(const GlowScene& s, Vec2 stage_mm) {
   Frame f = Frame::make(s.width, s.height, s.pixel_depth);
   const Vec2 t = target_px(f.width, f.height, s.glow_mm, stage_mm, s.px_per_mm);
