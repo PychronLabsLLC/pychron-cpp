@@ -1,9 +1,8 @@
 #pragma once
 
 // ClockPump: simulated time for apps (elctl --sim-speed, pychron-ui
-// --sim-speed). A thread advances a ManualClock `speed` times as fast as real
-// time, in steps of about a millisecond, and, when a scheduler is driven,
-// runs its due jobs inline after each step.
+// --sim-speed). A thread advances a ManualClock by `speed` ms every real ms
+// and, when a scheduler is driven, runs its due jobs inline after each step.
 //
 // Driving the scheduler from the pump keeps polling in step with the clock
 // however the threads are scheduled: a dispatcher thread starved for a few

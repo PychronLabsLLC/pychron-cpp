@@ -9,6 +9,8 @@
 #include <vector>
 
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
 #include <QtTest/QtTest>
 
 #include "laser_fixture.hpp"
@@ -377,7 +379,14 @@ class LaserBridgeTest : public QObject {
     });
     clock.start();
     bridge_->jog(20, 0, 0);  // a move under way: 4 simulated seconds
-    QTest::qWait(1000);
+    // Watched through an event loop, as the window does: QTest::qWait sleeps
+    // between its looks at the queue, and on a machine with coarse timers (the
+    // macOS runners) each of those sleeps is longer than a frame.
+    {
+      QEventLoop loop;
+      QTimer::singleShot(1000, &loop, &QEventLoop::quit);
+      loop.exec();
+    }
     const double per_second = frames * 1000.0 / static_cast<double>(clock.elapsed());
     QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second; %2").arg(per_second).arg(timing())));
     QVERIFY(in_order);
