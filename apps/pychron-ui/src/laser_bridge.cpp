@@ -11,6 +11,8 @@
 
 #include <QMetaObject>
 
+#include "pychron/core/process.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -89,6 +91,8 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
 }
 
 void LaserBridge::show() {
+  // A live picture: scheduled, and woken, as what the user is watching.
+  pychron::mark_thread_interactive();
   Video& v = *video_;
   std::optional<vision::Target> target;       // what the finder last made out
   std::vector<vision::Target> targets;
