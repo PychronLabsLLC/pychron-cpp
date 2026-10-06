@@ -10,6 +10,7 @@
 
 #include "pychron/entry/names.hpp"
 #include "pychron/entry/sample_fields.hpp"
+#include "pychron/core/number.hpp"
 
 namespace pychron::entry {
 
@@ -62,11 +63,8 @@ std::string normalize_header(std::string_view h) {
 std::optional<double> parse_number(const std::string& text, bool* bad) {
   const std::string t = trim(text);
   if (t.empty()) return std::nullopt;
-  double v = 0;
-  const char* first = t.data();
-  if (*first == '+') ++first;
-  auto [ptr, ec] = std::from_chars(first, t.data() + t.size(), v);
-  if (ec != std::errc() || ptr != t.data() + t.size() || !std::isfinite(v)) {
+  const auto v = parse_double(t);
+  if (!v) {
     *bad = true;
     return std::nullopt;
   }

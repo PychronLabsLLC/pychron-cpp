@@ -1,4 +1,5 @@
 #include "pychron/processing/store_source.hpp"
+#include "pychron/core/number.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -150,11 +151,10 @@ std::map<std::string, double> flat_json_numbers(std::string_view s) {
     } else if (s.substr(i, 4) == "null") {
       i += 4;
     } else {
-      double v = 0;
-      const auto r = std::from_chars(s.data() + i, s.data() + s.size(), v);
-      if (r.ec != std::errc{}) return out;
-      i = static_cast<std::size_t>(r.ptr - s.data());
-      out[key] = v;
+      const auto v = parse_double_prefix(std::string_view(s).substr(i));
+      if (!v) return out;
+      i += v->second;
+      out[key] = v->first;
     }
     ws();
     if (i < s.size() && s[i] == ',') {

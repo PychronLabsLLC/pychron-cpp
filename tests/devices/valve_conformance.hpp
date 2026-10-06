@@ -96,7 +96,9 @@ inline void expect_valve_conformance(ValveRig& rig) {
     auto read = a.read(*bad);
     ASSERT_FALSE(read);
     EXPECT_EQ(read.error().kind, ErrorKind::Config) << read.error().what;
-    if (rig.tap()) EXPECT_EQ(rig.tap()->sent(), before) << "a refused address reached the wire";
+    if (rig.tap()) {
+      EXPECT_EQ(rig.tap()->sent(), before) << "a refused address reached the wire";
+    }
   }
 
   if (auto* tap = rig.tap()) {

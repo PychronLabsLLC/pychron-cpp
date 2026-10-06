@@ -1,4 +1,5 @@
 #include "legacy_json.hpp"
+#include "pychron/core/number.hpp"
 
 #include <cmath>
 #include <limits>
@@ -136,14 +137,7 @@ std::optional<double> as_double(const Json& j) {
     const char first = s.front() == '-' || s.front() == '+' ? (s.size() > 1 ? s[1] : '\0') : s.front();
     if (!((first >= '0' && first <= '9') || first == '.')) return std::nullopt;
     const std::string_view digits = s.front() == '+' ? s.substr(1) : s;
-    // A stream in the C locale: floating-point from_chars is missing from
-    // Apple's libc++, and strtod reads the process locale's decimal point.
-    std::istringstream in{std::string(digits)};
-    in.imbue(std::locale::classic());
-    double v = 0;
-    char rest = 0;
-    if (!(in >> v) || in.get(rest) || !std::isfinite(v)) return std::nullopt;
-    return v;
+    return pychron::parse_double(digits);
   }
   return std::nullopt;
 }

@@ -124,7 +124,9 @@ jobs:
           key: ccache-${{ matrix.name }}-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev --parallel 4
+        # A failure is run once more, alone, at the end: the log's tail then
+        # holds the output of every failed test, not a page of passes.
+        run: ctest --preset dev --parallel 4 || (ctest --preset dev --rerun-failed --output-on-failure; exit 1)
 
   windows:
     name: core (windows-msvc)
@@ -139,7 +141,8 @@ jobs:
         run: cmake --build --preset dev --config Debug --parallel
 
       - name: Test
-        run: ctest --preset dev -C Debug --parallel 4
+        shell: bash
+        run: ctest --preset dev -C Debug --parallel 4 || (ctest --preset dev -C Debug --rerun-failed --output-on-failure; exit 1)
 
   ui:
     name: ui (macos-qt6)
@@ -181,4 +184,4 @@ jobs:
           key: ccache-macos-qt6-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev-ui --parallel 4
+        run: ctest --preset dev-ui --parallel 4 || (ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)

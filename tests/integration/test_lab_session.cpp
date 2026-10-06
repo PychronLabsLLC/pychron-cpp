@@ -347,7 +347,9 @@ TEST_F(ViewCameraTest, ACameraForLookingShowsAPictureAndStopsNoQueue) {
   EXPECT_EQ(co2.last_autocenter().result, laser::AutocenterOutcome::Result::None);
   for (const auto& line : laser_sim("co2").log()) {
     // (the second run also traces a hexagon about its hole: those moves are within a millimetre of it)
-    if (line.starts_with("Stage.MoveTo 30")) EXPECT_TRUE(line.starts_with("Stage.MoveTo 30000,30000,")) << line;
+    if (line.starts_with("Stage.MoveTo 30")) {
+      EXPECT_TRUE(line.starts_with("Stage.MoveTo 30000,30000,")) << line;
+    }
     EXPECT_NE(line, "Stage.MoveTo 30150,29900,0,5000,5000,100") << "centered, by a camera that is only for looking";
   }
 }
@@ -827,7 +829,9 @@ TEST_F(LabSessionTest, APatternOutOfTravelFailsTheRunAndTheLaserIsOff) {
   EXPECT_NE(why.find("pattern hexagon, point "), std::string::npos) << why;
   EXPECT_NE(why.find("travel"), std::string::npos) << why;
   for (const auto& line : sim.log()) {
-    if (line.starts_with("Stage.MoveTo ")) EXPECT_EQ(line.find("Stage.MoveTo -"), std::string::npos) << line;
+    if (line.starts_with("Stage.MoveTo ")) {
+      EXPECT_EQ(line.find("Stage.MoveTo -"), std::string::npos) << line;
+    }
   }
   EXPECT_FALSE(sim.firing());
   EXPECT_FALSE(sim.enabled());

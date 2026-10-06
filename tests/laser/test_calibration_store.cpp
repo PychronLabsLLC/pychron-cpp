@@ -127,7 +127,7 @@ TEST_F(CalibrationStoreTest, TheSolvedValuesInTheFileAreNotTrusted) {
   ASSERT_NE(at, std::string::npos);
   const auto eol = text.find('\n', at);
   text.replace(at, eol - at, "rotation_deg = 45.0");
-  std::ofstream(file, std::ios::trunc) << text;
+  std::ofstream(file, std::ios::trunc | std::ios::binary) << text;  // as read: no second CR per line on Windows
 
   const auto status = store.status(map(), "co2");
   ASSERT_EQ(status.state, CalibrationState::Ok) << status.why;

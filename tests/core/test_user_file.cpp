@@ -20,9 +20,11 @@ TEST(UserFile, AFileWithoutTheAttributeIsFineAndAMissingOneIsNot) {
   EXPECT_TRUE(pychron::mark_as_user_file(file));  // idempotent
   EXPECT_FALSE(pychron::mark_as_user_file(dir / "never-written.csv"));
   // The file is untouched.
-  std::ifstream in(file);
   std::string line;
-  std::getline(in, line);
+  {
+    std::ifstream in(file);  // closed before the directory goes: Windows will not remove an open file
+    std::getline(in, line);
+  }
   EXPECT_EQ(line, "# a report");
   fs::remove_all(dir);
 }

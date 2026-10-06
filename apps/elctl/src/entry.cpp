@@ -4,6 +4,7 @@
 
 #include "entry.hpp"
 
+#include "pychron/core/number.hpp"
 #include "pychron/core/user_file.hpp"
 
 #include <cctype>
@@ -332,10 +333,8 @@ int package_add(Context& ctx, const Args& a) {
   }
   std::optional<double> z;
   if (const auto zt = a.get("--z")) {
-    double v = 0;
-    auto [end, ec] = std::from_chars(zt->data(), zt->data() + zt->size(), v);
-    if (ec != std::errc() || end != zt->data() + zt->size()) return usage(ctx.io, "--z: not a number");
-    z = v;
+    z = pychron::parse_double(*zt);
+    if (!z) return usage(ctx.io, "--z: not a number");
   }
   if (const auto levels = a.get("--levels")) {
     auto names = level_names(*levels);

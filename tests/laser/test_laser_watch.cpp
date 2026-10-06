@@ -375,7 +375,9 @@ TEST_F(LaserWatch, StoppedFromAnotherThreadMidPattern) {
   EXPECT_FALSE(sim.firing());
   EXPECT_TRUE(system.stopped());
   // whether it saw the refusal or the stop, the pattern is over
-  if (running) EXPECT_FALSE(*running);
+  if (running) {
+    EXPECT_FALSE(*running);
+  }
   EXPECT_FALSE(*runner().running());
 }
 
