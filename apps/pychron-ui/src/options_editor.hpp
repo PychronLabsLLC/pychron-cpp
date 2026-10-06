@@ -1,7 +1,10 @@
 #pragma once
 
 // OptionsEditor (data browsing and visualization design, sections 6.1, 11.4):
-// a form generated from a processing::Schema. One tab per section; one editor
+// a form generated from a processing::Schema. One page per section, chosen
+// from a row of buttons that wraps onto further rows in a narrow dock, so
+// every section is always in sight (a tab bar scrolls the ones that do not
+// fit out of view); one editor
 // per field type; each list (panels, groups, ...) is a row list with add,
 // remove and move buttons and a form for the selected row. Every edit is
 // validated through Options::set; an invalid value is marked and not applied.
@@ -21,7 +24,9 @@
 
 class QFormLayout;
 class QListWidget;
-class QTabWidget;
+class QAbstractButton;
+class QButtonGroup;
+class QStackedWidget;
 
 namespace pychron::ui {
 
@@ -31,7 +36,7 @@ class OptionsEditor : public QWidget {
  public:
   explicit OptionsEditor(QWidget* parent = nullptr);
 
-  // Rebuilds the form for `options` (keeps the current tab).
+  // Rebuilds the form for `options` (keeps the current section).
   void set_options(const processing::Options& options);
   const processing::Options& options() const noexcept { return options_; }
 
@@ -42,7 +47,11 @@ class OptionsEditor : public QWidget {
   QWidget* editor(const QString& key) const;
   QWidget* row_editor(const QString& list, const QString& key) const;
   QListWidget* rows(const QString& list) const;
-  QTabWidget* tabs() const noexcept { return tabs_; }
+  // Sections, in schema order; the button of each, and which one is shown.
+  QStringList sections() const;
+  QAbstractButton* section_button(int index) const;
+  int current_section() const;
+  void set_current_section(int index);
   // Applies a value as if typed by the user; false if invalid.
   bool apply(const QString& key, const processing::OptionValue& value);
 
@@ -65,7 +74,9 @@ class OptionsEditor : public QWidget {
 
   processing::Options options_;
   QStringList quantities_;
-  QTabWidget* tabs_;
+  QWidget* section_bar_;
+  QButtonGroup* section_buttons_;
+  QStackedWidget* pages_;
   std::map<QString, QWidget*> editors_;
   std::map<QString, ListUi> lists_;
   bool building_ = false;

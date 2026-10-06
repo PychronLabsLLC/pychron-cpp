@@ -1,10 +1,12 @@
 #include "options_editor.hpp"
+#include "flow_layout.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -17,7 +19,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
-#include <QTabWidget>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -65,10 +67,36 @@ bool condition_holds(const std::string& cond, const pp::Options& o) {
 
 }  // namespace
 
-OptionsEditor::OptionsEditor(QWidget* parent) : QWidget(parent), tabs_(new QTabWidget(this)) {
+OptionsEditor::OptionsEditor(QWidget* parent)
+    : QWidget(parent),
+      section_bar_(new QWidget(this)),
+      section_buttons_(new QButtonGroup(this)),
+      pages_(new QStackedWidget(this)) {
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(tabs_);
+  layout->setSpacing(6);
+  auto* flow = new FlowLayout(section_bar_);
+  flow->setContentsMargins(6, 6, 6, 0);
+  layout->addWidget(section_bar_);
+  layout->addWidget(pages_, 1);
+  section_buttons_->setExclusive(true);
+  connect(section_buttons_, &QButtonGroup::idClicked, pages_, &QStackedWidget::setCurrentIndex);
+}
+
+QStringList OptionsEditor::sections() const {
+  QStringList out;
+  for (const QAbstractButton* b : section_buttons_->buttons()) out << b->text();
+  return out;
+}
+
+QAbstractButton* OptionsEditor::section_button(int index) const { return section_buttons_->button(index); }
+
+int OptionsEditor::current_section() const { return pages_->currentIndex(); }
+
+void OptionsEditor::set_current_section(int index) {
+  if (index < 0 || index >= pages_->count()) return;
+  pages_->setCurrentIndex(index);
+  if (QAbstractButton* b = section_buttons_->button(index)) b->setChecked(true);
 }
 
 void OptionsEditor::set_options(const pp::Options& options) {
@@ -269,13 +297,18 @@ QWidget* OptionsEditor::make_editor(const pp::FieldSpec& f, const pp::Options& v
 
 void OptionsEditor::rebuild() {
   building_ = true;
-  const int tab = tabs_->currentIndex();
+  const int section_shown = pages_->currentIndex();
   std::map<QString, int> selected_rows;
   for (const auto& [k, ui] : lists_) selected_rows[k] = ui.list ? ui.list->currentRow() : -1;
-  while (tabs_->count() > 0) {
-    QWidget* w = tabs_->widget(0);
-    tabs_->removeTab(0);
+  while (pages_->count() > 0) {
+    QWidget* w = pages_->widget(0);
+    pages_->removeWidget(w);
     w->deleteLater();  // a rebuild may run inside a signal of one of these widgets
+  }
+  for (QAbstractButton* b : section_buttons_->buttons()) {
+    section_buttons_->removeButton(b);
+    section_bar_->layout()->removeWidget(b);
+    b->deleteLater();
   }
   editors_.clear();
   lists_.clear();
@@ -379,13 +412,20 @@ void OptionsEditor::rebuild() {
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setWidget(page);
-    tabs_->addTab(scroll, qs(section));
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* button = new QToolButton(section_bar_);
+    button->setText(qs(section));
+    button->setCheckable(true);
+    button->setAutoRaise(true);
+    section_buttons_->addButton(button, pages_->count());
+    section_bar_->layout()->addWidget(button);
+    pages_->addWidget(scroll);
   }
   for (auto& [k, ui] : lists_) {
     const int r = selected_rows.count(k) ? selected_rows[k] : -1;
     ui.list->setCurrentRow(r >= 0 && r < ui.list->count() ? r : (ui.list->count() > 0 ? 0 : -1));
   }
-  if (tab >= 0 && tab < tabs_->count()) tabs_->setCurrentIndex(tab);
+  set_current_section(section_shown >= 0 && section_shown < pages_->count() ? section_shown : 0);
   building_ = false;
   for (const auto& [k, _] : lists_) build_row_form(k);
   refresh_enabled();

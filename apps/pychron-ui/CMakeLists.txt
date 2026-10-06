@@ -42,6 +42,7 @@ add_library(pychron_ui_lib STATIC
   src/conditional_form.cpp
   src/conditionals_editor_window.cpp
   src/scene_view.cpp
+  src/flow_layout.cpp
   src/options_editor.cpp
   src/processing_bridge.cpp
   src/analysis_table_model.cpp
@@ -100,6 +101,7 @@ add_library(pychron_ui_lib STATIC
   src/conditional_form.hpp
   src/conditionals_editor_window.hpp
   src/scene_view.hpp
+  src/flow_layout.hpp
   src/options_editor.hpp
   src/processing_bridge.hpp
   src/analysis_table_model.hpp

@@ -34,6 +34,7 @@
 #include "main_window.hpp"
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
 #include "isotope_evolution_window.hpp"
@@ -1045,7 +1046,7 @@ class TestDataWindows : public QObject {
 
     // The dock edits the figure: one panel, run-number axis.
     auto* editor = w.options_editor();
-    QVERIFY(editor->tabs()->count() >= 5);
+    QVERIFY(editor->sections().size() >= 5);
     QVERIFY(editor->apply(QStringLiteral("x.kind"), std::string("index")));
     QVERIFY(!editor->apply(QStringLiteral("x.kind"), std::string("sideways")));
     QVERIFY(wait_runs(w, bridge, 2));
@@ -1113,6 +1114,41 @@ class TestDataWindows : public QObject {
     QVERIFY(wait_runs(w, bridge, 2));
     QCOMPARE(w.pipeline().find("edits")->options.get_strings("exclude"), std::vector<std::string>{"step-3"});
     QVERIFY(w.view()->texts(0) != before);  // D left the plateau
+  }
+
+  // Every section's button is on screen however narrow the editor is: the
+  // row wraps instead of running off the side.
+  void options_editor_sections_wrap_and_stay_in_sight() {
+    OptionsEditor e;
+    e.set_options(pp::Options(pp::ideogram_schema()));
+    const QStringList sections = e.sections();
+    QVERIFY(sections.size() >= 6);
+    QVERIFY(sections.contains(QStringLiteral("Spans")));
+    for (const int width : {900, 260}) {
+      e.resize(width, 600);
+      e.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&e));
+      QCoreApplication::processEvents();
+      int rows = 0, last_y = -1;
+      for (int i = 0; i < sections.size(); ++i) {
+        const QAbstractButton* b = e.section_button(i);
+        QVERIFY(b->isVisible());
+        const QRect at(b->mapTo(&e, QPoint(0, 0)), b->size());
+        QVERIFY2(e.rect().contains(at), qPrintable(QStringLiteral("%1 at width %2").arg(sections[i]).arg(width)));
+        if (at.y() != last_y) ++rows;
+        last_y = at.y();
+      }
+      QVERIFY(width == 900 ? rows <= 2 : rows >= 2);
+    }
+    // A click shows that section; a rebuild keeps it.
+    QCOMPARE(e.current_section(), 0);
+    const int spans = static_cast<int>(sections.indexOf(QStringLiteral("Spans")));
+    QTest::mouseClick(e.section_button(spans), Qt::LeftButton);
+    QCOMPARE(e.current_section(), spans);
+    QVERIFY(e.apply(QStringLiteral("fill_curve"), true));
+    e.set_options(e.options());
+    QCOMPARE(e.current_section(), spans);
+    QVERIFY(e.section_button(spans)->isChecked());
   }
 
   void options_editor_rows() {
