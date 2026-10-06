@@ -24,16 +24,19 @@
 #include <QToolButton>
 #include <QTableView>
 #include <QTableWidget>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <qcustomplot.h>
 
 #include "data_browser_window.hpp"
+#include "data_workspace.hpp"
 #include "figure_window.hpp"
 #include "main_window.hpp"
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
 #include "isotope_evolution_window.hpp"
@@ -46,6 +49,7 @@
 using namespace pychron;
 namespace pp = pychron::processing;
 using pychron::ui::DataBrowserWindow;
+using pychron::ui::DataWorkspace;
 using pychron::ui::FigureWindow;
 using pychron::ui::OptionsEditor;
 using pychron::ui::ProcessingBridge;
@@ -1045,7 +1049,7 @@ class TestDataWindows : public QObject {
 
     // The dock edits the figure: one panel, run-number axis.
     auto* editor = w.options_editor();
-    QVERIFY(editor->tabs()->count() >= 5);
+    QVERIFY(editor->sections().size() >= 5);
     QVERIFY(editor->apply(QStringLiteral("x.kind"), std::string("index")));
     QVERIFY(!editor->apply(QStringLiteral("x.kind"), std::string("sideways")));
     QVERIFY(wait_runs(w, bridge, 2));
@@ -1113,6 +1117,140 @@ class TestDataWindows : public QObject {
     QVERIFY(wait_runs(w, bridge, 2));
     QCOMPARE(w.pipeline().find("edits")->options.get_strings("exclude"), std::vector<std::string>{"step-3"});
     QVERIFY(w.view()->texts(0) != before);  // D left the plateau
+  }
+
+  // Every section's button is on screen however narrow the editor is: the
+  // row wraps instead of running off the side.
+  void options_editor_sections_wrap_and_stay_in_sight() {
+    OptionsEditor e;
+    e.set_options(pp::Options(pp::ideogram_schema()));
+    const QStringList sections = e.sections();
+    QVERIFY(sections.size() >= 6);
+    QVERIFY(sections.contains(QStringLiteral("Spans")));
+    for (const int width : {900, 260}) {
+      e.resize(width, 600);
+      e.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&e));
+      QCoreApplication::processEvents();
+      int rows = 0, last_y = -1;
+      for (int i = 0; i < sections.size(); ++i) {
+        const QAbstractButton* b = e.section_button(i);
+        QVERIFY(b->isVisible());
+        const QRect at(b->mapTo(&e, QPoint(0, 0)), b->size());
+        QVERIFY2(e.rect().contains(at), qPrintable(QStringLiteral("%1 at width %2").arg(sections[i]).arg(width)));
+        if (at.y() != last_y) ++rows;
+        last_y = at.y();
+      }
+      QVERIFY(width == 900 ? rows <= 2 : rows >= 2);
+    }
+    // A click shows that section; a rebuild keeps it.
+    QCOMPARE(e.current_section(), 0);
+    const int spans = static_cast<int>(sections.indexOf(QStringLiteral("Spans")));
+    QTest::mouseClick(e.section_button(spans), Qt::LeftButton);
+    QCOMPARE(e.current_section(), spans);
+    QVERIFY(e.apply(QStringLiteral("fill_curve"), true));
+    e.set_options(e.options());
+    QCOMPARE(e.current_section(), spans);
+    QVERIFY(e.section_button(spans)->isChecked());
+  }
+
+  void browser_export_button_asks_for_a_file_and_emits() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    QSignalSpy exported(&w, &DataBrowserWindow::export_requested);
+    QString suggested;
+    w.ask_export_path = [&suggested](const QString& s) {
+      suggested = s;
+      return QStringLiteral("/tmp/out.csv");
+    };
+    w.select_rows({0, 2});
+    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    QCOMPARE(exported.count(), 1);
+    auto args = exported.takeFirst();
+    QCOMPARE(args.at(0).toString(), QStringLiteral("/tmp/out.csv"));
+    QCOMPARE(args.at(1).toStringList(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
+    QVERIFY2(suggested.endsWith(QStringLiteral("-report.csv")), qPrintable(suggested));
+    // Nothing selected: everything shown. A cancelled dialog exports nothing.
+    w.table()->clearSelection();
+    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    QCOMPARE(exported.count(), 1);
+    QCOMPARE(exported.takeFirst().at(1).toStringList().size(), 10);
+    w.ask_export_path = [](const QString&) { return QString(); };
+    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    QCOMPARE(exported.count(), 0);
+  }
+
+  void workspace_export_writes_the_report() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    QStringList logged;
+    DataWorkspace ws(&owner, [&logged](const QString& line) { logged << line; });
+    ws.set_source(src.get(), &presets);
+    auto* browser = ws.browser();
+    QVERIFY(browser);
+    QStringList ids;
+    for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
+    const QString path = dir.path() + QStringLiteral("/steps-report.csv");
+    QVERIFY(ws.export_report(path, ids));
+    QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
+    QVERIFY2(browser->status()->text().startsWith(QStringLiteral("Wrote ")), qPrintable(browser->status()->text()));
+    QVERIFY(browser->status()->text().contains(QStringLiteral("8 analyses, 1 groups")));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString csv = QString::fromUtf8(file.readAll());
+    QVERIFY(csv.startsWith(QStringLiteral("# 40Ar/39Ar data report after Schaen")));
+    QVERIFY(csv.contains(QStringLiteral("[summary]")));
+    QVERIFY(csv.contains(QStringLiteral("S1-01A")));
+    QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
+    // The browser's Export button goes the same way.
+    browser->ask_export_path = [&dir](const QString&) { return dir.path() + QStringLiteral("/again.json"); };
+    QTest::mouseClick(browser->export_button(), Qt::LeftButton);
+    QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
+    QFile json(dir.path() + QStringLiteral("/again.json"));
+    QVERIFY(json.open(QIODevice::ReadOnly));
+    QVERIFY(json.readAll().startsWith("{"));
+    // An unwritable path is reported, not thrown.
+    QVERIFY(ws.export_report(dir.path() + QStringLiteral("/no/such/dir/x.csv"), ids));
+    QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
+    QVERIFY2(browser->status()->text().startsWith(QStringLiteral("Export failed")), qPrintable(browser->status()->text()));
+    QVERIFY(!logged.isEmpty());
+  }
+
+  void figure_export_report_uses_the_figures_grouping_and_plateau() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
+    FigureWindow w(bridge, presets, "spectrum", ids);
+    QVERIFY(!w.export_report(dir.path() + QStringLiteral("/early.csv")));  // nothing computed yet
+    w.show();
+    QVERIFY(wait_runs(w, bridge, 1));
+    const QString path = dir.path() + QStringLiteral("/spectrum.csv");
+    QVERIFY(w.export_report(path));
+    QVERIFY(w.status_label()->text().startsWith(QStringLiteral("Wrote ")));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QString csv = QString::fromUtf8(file.readAll());
+    QVERIFY(csv.contains(QStringLiteral("S1-1,FC-2")) || csv.contains(QStringLiteral("S1-1,")));
+    QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));
+    // Exclude D in the figure: the report follows, and so do stricter plateau options.
+    w.toggle_exclusion({QStringLiteral("step-3")});
+    QVERIFY(wait_runs(w, bridge, 2));
+    auto opts = w.pipeline().find("figure")->options;
+    QVERIFY(opts.set("plateau.nsteps", std::int64_t{8}).has_value());
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, 3));
+    QVERIFY(w.export_report(path));
+    file.close();
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    csv = QString::fromUtf8(file.readAll());
+    QVERIFY(!csv.contains(QStringLiteral(",A-H,8,")));  // seven included steps cannot make an eight-step plateau
+    QVERIFY(csv.contains(QStringLiteral("S1-01D,S1,FC-2,,unknown,S1-1,1,D,")) || csv.contains(QStringLiteral(",no,")));
+    QVERIFY(!w.export_report(dir.path() + QStringLiteral("/no/such/dir/x.json")));
   }
 
   void options_editor_rows() {

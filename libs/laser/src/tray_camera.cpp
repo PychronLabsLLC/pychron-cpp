@@ -85,18 +85,16 @@ Result<vision::Frame> SimTrayCamera::grab() {
 
   // The tray's other holes that are in view, where they really are (not on
   // an imagined grid: a finder must not be offered holes the tray lacks).
-  // Holes are dark on the tray, so the darker pixel wins.
+  // Holes are dark on the tray, so the darker pixel wins. Each is drawn
+  // where it is, not as a frame of its own: a live picture is many frames a
+  // second, on a tray of many holes.
   vision::HoleScene other = scene;
-  other.noise = 0;
   for (const auto& hole : sight.holes) {
     if (&hole == nearest || !in_view || sight.firing) continue;
     const StageXY real{hole.x + error.x, hole.y + error.y};
     if (std::hypot(real.x - sight.stage.x, real.y - sight.stage.y) > reach_mm + sight.hole_radius_mm) continue;
     other.hole_mm = {real.x, real.y};
-    const vision::Frame drawn = vision::render(other, {sight.stage.x, sight.stage.y}).first;
-    for (std::size_t i = 0; i < frame.data.size() && i < drawn.data.size(); ++i) {
-      frame.data[i] = std::min(frame.data[i], drawn.data[i]);
-    }
+    vision::darken_hole(frame, other, {sight.stage.x, sight.stage.y});
   }
 
   // The vision library renders the usual camera: image +x is stage +x, image
@@ -119,7 +117,7 @@ Result<vision::Frame> SimTrayCamera::grab() {
   frame.timestamp = now;
   frame.seq = ++seq_;
   truth_ = truth;
-  return std::move(frame);
+  return frame;
 }
 
 Result<std::unique_ptr<vision::IFrameSource>> make_frame_source(const CameraConfig& config,

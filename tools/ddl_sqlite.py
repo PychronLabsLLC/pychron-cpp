@@ -34,6 +34,14 @@ Non-mechanical rules:
       RAISE(ABORT). A '-- @sqlite guard <table> allow <cols...>' directive turns
       the matching trigger into: no DELETE, and no UPDATE that changes any
       column outside the allow list.
+    * ALTER TABLE ... DROP COLUMN stays as it is (SQLite >= 3.35).
+    * geometry(Point, <srid>) (PostGIS, schema-qualified or not) becomes TEXT
+      holding the point as EWKT, CHECK (x LIKE 'SRID=<srid>;POINT(% %)'). The
+      access layer reads and writes that text on both engines.
+    * '-- @sqlite skip' drops the statement that follows it (PostgreSQL-only:
+      CREATE EXTENSION, an UPDATE through PostGIS functions, a GIST index).
+      '-- @sqlite exec <statement>' emits that statement, verbatim and without
+      its ';', in the SQLite file at that point.
 """
 
 from __future__ import annotations
@@ -52,9 +60,14 @@ TABLE_CONSTRAINT = re.compile(r"^(PRIMARY\s+KEY|UNIQUE|FOREIGN\s+KEY|CHECK|CONST
 PG_ONLY_CALLS = ("convert_to(", "sha256(")
 
 
-def strip_comments(sql: str) -> tuple[str, list[str]]:
-    """Remove -- comments outside quotes; return the text and any @sqlite directives."""
-    out, directives = [], []
+DIRECTIVE = "@SQLITE_DIRECTIVE "
+
+
+def strip_comments(sql: str) -> str:
+    """Remove -- comments outside quotes. An @sqlite directive becomes a
+    pseudo-statement in the text ('@SQLITE_DIRECTIVE <text>;'), so that it
+    keeps its place among the statements."""
+    out = []
     for line in sql.splitlines():
         result, in_quote, i = [], False, 0
         while i < len(line):
@@ -64,12 +77,12 @@ def strip_comments(sql: str) -> tuple[str, list[str]]:
             if not in_quote and line.startswith("--", i):
                 comment = line[i + 2 :].strip()
                 if comment.startswith("@sqlite"):
-                    directives.append(comment[len("@sqlite") :].strip())
+                    result.append(DIRECTIVE + comment[len("@sqlite") :].strip() + ";")
                 break
             result.append(c)
             i += 1
         out.append("".join(result).rstrip())
-    return "\n".join(out), directives
+    return "\n".join(out)
 
 
 def split_statements(sql: str) -> list[str]:
@@ -141,6 +154,7 @@ def remove_pg_only_checks(text: str) -> str:
 TYPE_MAP = [
     # (pattern at start of the remainder, sqlite type, check template or None)
     (r"double precision\b", "REAL", None),
+    (r"(?:\w+\.)?geometry\s*\(\s*Point\s*,\s*(\d+)\s*\)", "TEXT", "{c} LIKE 'SRID={srid};POINT(% %)'"),
     (r"timestamptz\b", "TEXT", "{c} LIKE '____-__-__T__:__:__%Z'"),
     (r"uuid\b", "TEXT", "length({c}) = 36"),
     (r"jsonb\b", "TEXT", "json_valid({c})"),
@@ -183,6 +197,8 @@ class Table:
             m = re.match(pattern, rest, re.I)
             if m:
                 rest = rest[m.end() :].strip()
+                if check and m.groups():
+                    check = check.replace("{srid}", m.group(1))
                 break
         else:
             raise SystemExit(f"ddl_sqlite: {self.name}.{col}: unmapped type in '{item}'")
@@ -200,18 +216,31 @@ class Table:
 
 
 def convert(pg_sql: str) -> str:
-    text, directives = strip_comments(pg_sql)
+    text = strip_comments(pg_sql)
+    statements = split_statements(text)
     guards: dict[str, list[str]] = {}
-    for d in directives:
-        m = re.match(r"guard\s+(\w+)\s+allow\s+(.+)$", d)
-        if not m:
-            raise SystemExit(f"ddl_sqlite: unknown directive '@sqlite {d}'")
-        guards[m.group(1)] = m.group(2).split()
+    for stmt in statements:
+        if stmt.startswith(DIRECTIVE):
+            if m := re.match(r"guard\s+(\w+)\s+allow\s+(.+)$", stmt[len(DIRECTIVE) :].strip()):
+                guards[m.group(1)] = m.group(2).split()
 
     tables: dict[str, Table] = {}
     ordered: list[object] = []  # Table or str
-    for stmt in split_statements(text):
+    skip_next = False
+    for stmt in statements:
         flat = " ".join(stmt.split())
+        if flat.startswith(DIRECTIVE):
+            directive = stmt[len(DIRECTIVE) :].strip()
+            if directive == "skip":
+                skip_next = True
+            elif directive.startswith("exec "):
+                ordered.append(" ".join(directive[len("exec ") :].split()))
+            elif not directive.startswith("guard "):
+                raise SystemExit(f"ddl_sqlite: unknown directive '@sqlite {directive}'")
+            continue
+        if skip_next:
+            skip_next = False
+            continue
         if m := re.match(r"CREATE TABLE (\w+) \((.*)\)$", flat, re.S):
             t = Table(m.group(1), split_top_level(m.group(2)))
             tables[t.name] = t
@@ -226,6 +255,8 @@ def convert(pg_sql: str) -> str:
             # cannot be primary keys.
             column = Table(m.group(1), []).render_item(m.group(2))
             ordered.append(f"ALTER TABLE {m.group(1)} ADD COLUMN {column}")
+        elif re.match(r"ALTER TABLE \w+ DROP COLUMN \w+$", flat):
+            ordered.append(flat)
         elif flat.startswith("CREATE FUNCTION"):
             continue
         elif m := re.match(
@@ -242,6 +273,8 @@ def convert(pg_sql: str) -> str:
             ordered.append(flat)
         else:
             raise SystemExit(f"ddl_sqlite: unsupported statement: {flat[:80]}")
+    if skip_next:
+        raise SystemExit("ddl_sqlite: '@sqlite skip' with no statement after it")
 
     out = []
     for item in ordered:

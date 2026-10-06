@@ -17,7 +17,9 @@
 #include <string>
 #include <vector>
 
+#include <QList>
 #include <QPoint>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
@@ -26,6 +28,7 @@
 
 class QCustomPlot;
 class QCPAxisRect;
+class QCPItemRect;
 class QRubberBand;
 
 namespace pychron::ui {
@@ -54,6 +57,8 @@ class SceneView : public QWidget {
   QStringList points_in(const QRect& rect) const;
   QString tooltip_at(const QPoint& pos) const;
   QStringList texts(int panel) const;  // annotation lines
+  // The shaded spans of `panel` as drawn, in widget pixels.
+  QList<QRectF> span_rects(int panel) const;
 
  signals:
   void point_clicked(const QString& uuid);
@@ -78,6 +83,7 @@ class SceneView : public QWidget {
     std::vector<HitPoint> points;
     std::vector<HitBox> boxes;
     std::vector<QString> texts;
+    std::vector<QCPItemRect*> spans;
     std::optional<double> x_min, x_max, y_min, y_max;  // scene limits
     bool log = false;
   };

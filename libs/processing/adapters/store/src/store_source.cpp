@@ -1,4 +1,5 @@
 #include "pychron/processing/store_source.hpp"
+#include "pychron/core/number.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -150,11 +151,10 @@ std::map<std::string, double> flat_json_numbers(std::string_view s) {
     } else if (s.substr(i, 4) == "null") {
       i += 4;
     } else {
-      double v = 0;
-      const auto r = std::from_chars(s.data() + i, s.data() + s.size(), v);
-      if (r.ec != std::errc{}) return out;
-      i = static_cast<std::size_t>(r.ptr - s.data());
-      out[key] = v;
+      const auto v = parse_double_prefix(std::string_view(s).substr(i));
+      if (!v) return out;
+      i += v->second;
+      out[key] = v->first;
     }
     ws();
     if (i < s.size() && s[i] == ',') {
@@ -422,8 +422,23 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   std::stable_sort(a.isotopes.begin(), a.isotopes.end(),
                    [](const IsotopeData& p, const IsotopeData& q) { return p.isotope > q.isotope; });
 
+  if (parts.sample) {
+    const auto& f = parts.sample->fields;
+    a.sample_info.latitude = f.lat;
+    a.sample_info.longitude = f.lon;
+    a.sample_info.elevation = f.elevation;
+    a.sample_info.lithology = f.lithology.value_or("");
+    a.sample_info.unit = f.unit.value_or("");
+    a.sample_info.location = f.location.value_or("");
+    a.sample_info.igsn = f.igsn.value_or("");
+  }
+
   for (const auto& ref : parts.refs) {
     if (const auto* f = std::get_if<ps::FluxValue>(&ref)) {
+      // The monitor is metadata for the report, kept even without a J.
+      a.monitor.name = f->monitor_name.value_or("");
+      a.monitor.material = f->monitor_material.value_or("");
+      if (f->monitor_age) a.monitor.age = Value{*f->monitor_age, f->monitor_age_err.value_or(0.0)};
       // No J: no flux yet, hence no age. With a J, a NULL error is unknown
       // (NaN), not 0, and the analysis does not reduce. The position error is
       // an optional extra: NULL is none.
@@ -436,6 +451,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
         flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(unknown)};
       a.context.flux = flux;
     } else if (const auto* p = std::get_if<ps::ProductionValue>(&ref)) {
+      a.context.reactor = p->reactor.value_or("");
       // A production without ratios is no production (reference data the
       // source removed), not nine ratios of zero.
       if (p->ratios.empty()) continue;
@@ -681,6 +697,21 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
       if (!payload) return fail(payload.error());
       if (*payload)
         if (const auto* r = std::get_if<ps::RefPayload>(&**payload)) p.refs.push_back(*r);
+    }
+    // The sample's catalog row, by name; the one of the analysis's project
+    // when several projects have a sample of that name.
+    if (!p.detail.row.sample.empty()) {
+      ps::SampleQuery query;
+      query.text = p.detail.row.sample;
+      auto samples = s.samples(query);
+      if (!samples) return fail(samples.error());
+      const ps::SampleRow* chosen = nullptr;
+      for (const auto& row : *samples) {
+        if (row.name != p.detail.row.sample) continue;
+        if (chosen == nullptr || row.project_name == p.detail.row.project) chosen = &row;
+        if (row.project_name == p.detail.row.project) break;
+      }
+      if (chosen != nullptr) p.sample = *chosen;
     }
     return p;
   });

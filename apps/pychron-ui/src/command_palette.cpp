@@ -82,7 +82,10 @@ QString CommandPalette::label(const QAction* action, const QString& menu_title) 
 }
 
 CommandPalette::CommandPalette(QWidget* parent)
-    : QFrame(parent, Qt::Popup), filter_(new QLineEdit), list_(new QTreeWidget) {
+    // A popup, and one that never takes the active window's place: the window's
+    // own commands stay live under it (Qt refuses the activation a window
+    // manager, or a platform without one, would otherwise hand a new window).
+    : QFrame(parent, Qt::Popup | Qt::WindowDoesNotAcceptFocus), filter_(new QLineEdit), list_(new QTreeWidget) {
   setObjectName(QStringLiteral("CommandPalette"));
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);

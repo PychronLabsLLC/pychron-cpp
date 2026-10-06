@@ -17,6 +17,7 @@
 #include "duration.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
+#include "export.hpp"
 #include "laser.hpp"
 #include "import.hpp"
 #include "pychron/setup/installer.hpp"
@@ -90,6 +91,11 @@ constexpr const char* kUsageText =
     "                              import, resuming where the last run stopped\n"
     "  import status|conflicts|verify --db <url>\n"
     "                              progress, what could not be imported, and whether to trust it\n"
+    "\n"
+    "Publication data (elctl export help lists every option):\n"
+    "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
+    "                              write a 40Ar/39Ar data report after Schaen et al. (2021): metadata,\n"
+    "                              constants, one row per analysis, and plateau, mean and isochron ages\n"
     "\n"
     "Sample and package entry (elctl entry help lists every option):\n"
     "  entry samples import <file.csv> --db <url> [--dry-run]\n"
@@ -211,6 +217,7 @@ class Session {
     }
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "entry") return entry_command(args, io_);
+    if (cmd == "export") return export_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();

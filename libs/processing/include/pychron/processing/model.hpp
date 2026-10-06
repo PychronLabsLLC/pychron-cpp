@@ -58,6 +58,23 @@ struct ExtractionInfo {
   std::vector<int> positions;
 };
 
+// Where the sample came from, as the catalog has it (Schaen et al. 2021
+// reporting standard, sample metadata). Every part may be absent: a record
+// directory knows none of it.
+struct SampleInfo {
+  std::optional<double> latitude, longitude, elevation;  // degrees, degrees, metres
+  std::string lithology, unit, location, igsn;
+  friend bool operator==(const SampleInfo&, const SampleInfo&) = default;
+};
+
+// The fluence monitor the J of the analysis was measured against
+// (flux_position monitor_*). Empty when the source does not say.
+struct MonitorInfo {
+  std::string name, material;
+  std::optional<Value> age;  // in the lab's age units (Ma)
+  friend bool operator==(const MonitorInfo&, const MonitorInfo&) = default;
+};
+
 struct PeakCenterInfo {
   std::string detector;
   double center = 0.0;
@@ -72,6 +89,7 @@ struct ReductionContext {
   std::vector<reduction::Dose> chronology;
   std::optional<reduction::ReductionConstants> constants;  // absent: the run's settings decide
   std::optional<reduction::Measured> fixed_k3739;
+  std::string reactor;  // where `production` was measured (production.reactor); informational
 };
 
 struct Analysis {
@@ -89,6 +107,8 @@ struct Analysis {
   std::string tag = "ok";
 
   ExtractionInfo extraction;
+  SampleInfo sample_info;
+  MonitorInfo monitor;
   std::vector<IsotopeData> isotopes;
   std::map<std::string, double> gains, deflections, source;
   std::map<std::string, double> environmentals;  // lab_temperature, lab_humidity, ...

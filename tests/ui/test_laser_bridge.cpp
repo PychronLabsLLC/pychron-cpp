@@ -2,10 +2,15 @@
 // section 5).
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
 #include <QtTest/QtTest>
 
 #include "laser_fixture.hpp"
@@ -121,9 +126,11 @@ class LaserBridgeTest : public QObject {
     bridge_->jog(-0.5, 0, 0);
     test::settle(*bridge_);
     QVERIFY2(heard_->ok("jog"), qPrintable(heard_->why("jog")));
-    QCOMPARE(lab_->x(), 1.0);
-    QCOMPARE(lab_->y(), 0.5);
-    QCOMPARE(lab_->z(), 2.0);
+    // The driver counts the stage arrived within its tolerance; the simulated
+    // stage is on the target itself a moment later.
+    QTRY_COMPARE(lab_->x(), 1.0);
+    QTRY_COMPARE(lab_->y(), 0.5);
+    QTRY_COMPARE(lab_->z(), 2.0);
   }
 
   void a_jog_off_the_stage_is_refused_and_says_why() {
@@ -320,6 +327,63 @@ class LaserBridgeTest : public QObject {
     QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
   }
 
+  // What this machine makes of the waits the video loop is built on, for a
+  // rate that comes up short: the cost of a picture and of a stage poll, and
+  // how long a millisecond's sleep, a 40 ms timed wait and a 10 ms event-loop
+  // wait really take.
+  QString timing() {
+    auto& sys = lab_->system();
+    QElapsedTimer t;
+    t.start();
+    for (int i = 0; i < 10; ++i) (void)sys.picture();
+    const auto picture_us = t.nsecsElapsed() / 10000;
+    t.restart();
+    for (int i = 0; i < 10; ++i) (void)sys.moving();
+    const auto moving_us = t.nsecsElapsed() / 10000;
+    t.restart();
+    for (int i = 0; i < 10; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto sleep_us = t.nsecsElapsed() / 10000;
+    std::mutex m;
+    std::condition_variable cv;
+    std::unique_lock lock(m);
+    t.restart();
+    cv.wait_for(lock, std::chrono::milliseconds(40), [] { return false; });
+    const auto wait_us = t.nsecsElapsed() / 1000;
+    t.restart();
+    QTest::qWait(10);
+    const auto qwait_us = t.nsecsElapsed() / 1000;
+    // A call queued from another thread, as a frame is: how long until the
+    // event loop runs it.
+    qint64 queued_us = 0;
+    {
+      QEventLoop loop;
+      QObject target;
+      QElapsedTimer posted;
+      std::thread other([&] {
+        posted.start();
+        QMetaObject::invokeMethod(
+            &target,
+            [&] {
+              queued_us = posted.nsecsElapsed() / 1000;
+              loop.quit();
+            },
+            Qt::QueuedConnection);
+      });
+      QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+      loop.exec();
+      other.join();
+    }
+    return QStringLiteral(
+               "picture %1 us, moving %2 us, sleep_for(1 ms) %3 us, wait_for(40 ms) %4 us, qWait(10) %5 us, a queued "
+               "call %6 us")
+        .arg(picture_us)
+        .arg(moving_us)
+        .arg(sleep_us)
+        .arg(wait_us)
+        .arg(qwait_us)
+        .arg(queued_us);
+  }
+
   // The picture is video: a dozen frames a second at least, whatever else
   // the bridge is doing. The finder is not run on it: that is for a
   // centering or a dragonfly, while one runs.
@@ -331,17 +395,29 @@ class LaserBridgeTest : public QObject {
     int frames = 0, with_target = 0;
     std::uint64_t last_seq = 0;
     bool in_order = true;
+    int skipped = 0;  // frames the camera gave that were never shown
     QObject::connect(bridge_.get(), &LaserBridge::view, [&](const laser::CameraView& seen) {
       ++frames;
       if (seen.target) ++with_target;
       if (seen.frame.seq <= last_seq) in_order = false;
+      if (last_seq != 0 && seen.frame.seq > last_seq + 1) skipped += static_cast<int>(seen.frame.seq - last_seq - 1);
       last_seq = seen.frame.seq;
     });
     clock.start();
     bridge_->jog(20, 0, 0);  // a move under way: 4 simulated seconds
-    QTest::qWait(1000);
+    // Watched through an event loop, as the window does: QTest::qWait sleeps
+    // between its looks at the queue, and on a machine with coarse timers (the
+    // macOS runners) each of those sleeps is longer than a frame.
+    {
+      QEventLoop loop;
+      QTimer::singleShot(1000, &loop, &QEventLoop::quit);
+      loop.exec();
+    }
     const double per_second = frames * 1000.0 / static_cast<double>(clock.elapsed());
-    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second").arg(per_second)));
+    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second, %2 frames skipped; %3")
+                                                .arg(per_second)
+                                                .arg(skipped)
+                                                .arg(timing())));
     QVERIFY(in_order);
     test::settle(*bridge_);
     // nothing is looked for in it: the stage sat on a hole, and no frame says so

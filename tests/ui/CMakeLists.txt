@@ -20,7 +20,10 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   pychron_link_drivers(${target} pychron_sim)
   pychron_set_warnings(${target})
   add_test(NAME ui.${name} COMMAND ${target})
+  # The longest (the experiment window's) takes 12 s here and five times that
+  # on the macOS runners, where a millisecond's sleep is nine: simulated time
+  # (ClockPump) runs that much slower there.
   set_tests_properties(ui.${name} PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 60)
+    TIMEOUT 180)
 endforeach()

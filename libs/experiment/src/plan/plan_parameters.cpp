@@ -6,6 +6,7 @@
 #include <set>
 
 #include "plan_toml.hpp"
+#include "pychron/core/number.hpp"
 
 namespace pychron::experiment::plan {
 
@@ -83,14 +84,7 @@ bool exposed(std::string_view path, const std::vector<ExposeEntry>& expose) {
   return false;
 }
 
-std::optional<double> number(std::string_view text) {
-  const std::string t = trim(text);
-  if (t.empty()) return std::nullopt;
-  double v = 0;
-  auto [end, ec] = std::from_chars(t.data(), t.data() + t.size(), v);
-  if (ec != std::errc{} || end != t.data() + t.size() || !std::isfinite(v)) return std::nullopt;
-  return v;
-}
+std::optional<double> number(std::string_view text) { return parse_double(trim(text)); }
 
 std::optional<std::int64_t> integer(std::string_view text) {
   const std::string t = trim(text);

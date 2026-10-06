@@ -13,6 +13,7 @@
 #include "pychron/core/calendar.hpp"
 #include "sql/catalog.hpp"
 #include "sql/errors.hpp"
+#include "sql/geometry.hpp"
 #include "sql/statements.hpp"
 
 namespace pychron::persistence {
@@ -45,7 +46,13 @@ QString qstr(std::string_view s) { return QString::fromUtf8(s.data(), static_cas
 
 // ---------------------------------------------------------------- the editable columns (5.2)
 
-enum class ColumnType { Text, Real, Int, Bool, Id, Date };
+// Latitude and Longitude are the two halves of the sample's `geom` point
+// (sql/geometry.hpp): editable as "lat" and "lon", stored as one column.
+enum class ColumnType { Text, Real, Int, Bool, Id, Date, Latitude, Longitude };
+
+constexpr const char* kGeomColumn = "geom";
+
+bool is_geo(ColumnType t) { return t == ColumnType::Latitude || t == ColumnType::Longitude; }
 
 struct Column {
   const char* name;
@@ -87,8 +94,8 @@ const std::vector<TableRules>& rules() {
         {"material_uuid", T::Id, true, true},
         {"note", T::Text, false, false},
         {"igsn", T::Text, false, false},
-        {"lat", T::Real, false, false},
-        {"lon", T::Real, false, false},
+        {"lat", T::Latitude, false, false},
+        {"lon", T::Longitude, false, false},
         {"elevation", T::Real, false, false},
         {"storage_location", T::Text, false, false},
         {"location", T::Text, false, false},
@@ -180,6 +187,18 @@ Result<void> check_value(const TableRules& t, const Column& c, const CatalogValu
       ok = (std::holds_alternative<double>(v) && std::isfinite(std::get<double>(v))) ||
            std::holds_alternative<std::int64_t>(v);
       break;
+    case ColumnType::Latitude:
+    case ColumnType::Longitude: {
+      const double limit = c.type == ColumnType::Latitude ? 90.0 : 180.0;
+      std::optional<double> d;
+      if (const auto* x = std::get_if<double>(&v)) d = *x;
+      if (const auto* i = std::get_if<std::int64_t>(&v)) d = static_cast<double>(*i);
+      ok = d && std::isfinite(*d) && std::fabs(*d) <= limit;
+      if (d && !ok)
+        return fail(ErrorKind::Protocol, where + ": " + describe(v) + " is not in " +
+                                             (c.type == ColumnType::Latitude ? "[-90, 90]" : "[-180, 180]"));
+      break;
+    }
     case ColumnType::Int:
       ok = std::holds_alternative<std::int64_t>(v);
       break;
@@ -220,7 +239,7 @@ QVariant to_variant(const CatalogValue& v) {
 
 // A real column given as an integer compares as the double it is stored as.
 CatalogValue normalized(const Column& c, const CatalogValue& v) {
-  if (c.type == ColumnType::Real)
+  if (c.type == ColumnType::Real || is_geo(c.type))
     if (const auto* i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i);
   return v;
 }
@@ -232,6 +251,8 @@ CatalogValue from_variant(const Column& c, const QVariant& v) {
     case ColumnType::Date:
       return to_std(v);
     case ColumnType::Real:
+    case ColumnType::Latitude:
+    case ColumnType::Longitude:
       return v.toDouble();
     case ColumnType::Int:
       return static_cast<std::int64_t>(v.toLongLong());
@@ -256,6 +277,66 @@ QJsonValue json_of(const CatalogValue& v) {
 }
 
 std::string compact(const QJsonObject& o) { return QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString(); }
+
+// ---------------------------------------------------------------- the geometry column
+
+// The SELECT list of a table's editable columns: every stored column quoted,
+// and the point the geo columns share read once, as `geom`.
+QString select_list(const TableRules& t, Dialect dialect) {
+  QStringList names;
+  bool geo = false;
+  for (const auto& c : t.columns) {
+    if (is_geo(c.type))
+      geo = true;
+    else
+      names << QStringLiteral("\"%1\"").arg(QString::fromUtf8(c.name));
+  }
+  if (geo) names << geom_read(dialect, QString::fromUtf8(kGeomColumn)) + QStringLiteral(" AS geom");
+  return names.join(QStringLiteral(", "));
+}
+
+// The editable fields of a selected row (select_list's columns).
+CatalogFields fields_of(const TableRules& t, const Row& row) {
+  CatalogFields out;
+  std::optional<GeoPoint> point;
+  bool parsed = false;
+  for (const auto& c : t.columns) {
+    if (!is_geo(c.type)) {
+      out[c.name] = from_variant(c, row.value(QString::fromUtf8(c.name)));
+      continue;
+    }
+    if (!parsed) {
+      const QVariant geom = row.value(QString::fromUtf8(kGeomColumn));
+      if (!geom.isNull()) point = parse_point(to_std(geom));
+      parsed = true;
+    }
+    if (!point)
+      out[c.name] = std::monostate{};
+    else
+      out[c.name] = c.type == ColumnType::Latitude ? point->lat : point->lon;
+  }
+  return out;
+}
+
+// The geom cell for a row's lat and lon (normalized values): NULL without
+// either, the point with both; half a point is an error.
+Result<QVariant> geom_cell(const TableRules& t, const CatalogFields& row) {
+  std::optional<double> lat, lon;
+  for (const auto& c : t.columns) {
+    if (!is_geo(c.type)) continue;
+    const auto it = row.find(c.name);
+    if (it == row.end()) continue;
+    if (const auto* d = std::get_if<double>(&it->second)) (c.type == ColumnType::Latitude ? lat : lon) = *d;
+  }
+  if (lat.has_value() != lon.has_value())
+    return fail(ErrorKind::Protocol, std::string(table_name(t.table)) + ": latitude and longitude go together");
+  if (!lat) return QVariant();
+  return qv(ewkt_point(*lat, *lon));
+}
+
+bool has_geo(const TableRules& t) {
+  return std::any_of(t.columns.begin(), t.columns.end(), [](const Column& c) { return is_geo(c.type); });
+}
 
 // ---------------------------------------------------------------- the batch
 
@@ -309,17 +390,13 @@ class EditRun {
 
   // The row's editable columns, locked for this transaction on PostgreSQL.
   Result<std::optional<CatalogFields>> current(const TableRules& t, Uuid uuid) {
-    QStringList names;
-    for (const auto& c : t.columns) names << QStringLiteral("\"%1\"").arg(QString::fromUtf8(c.name));
     QString sql = QStringLiteral("SELECT %1 FROM %2 WHERE uuid = ?")
-                      .arg(names.join(QStringLiteral(", ")), qstr(table_name(t.table)));
+                      .arg(select_list(t, db_.dialect()), qstr(table_name(t.table)));
     if (db_.dialect() == Dialect::PostgreSql) sql += QStringLiteral(" FOR UPDATE");
     auto row = db_.select_one(sql, {qv(uuid)});
     if (!row) return fail(row.error());
     if (!*row) return std::optional<CatalogFields>{};
-    CatalogFields out;
-    for (const auto& c : t.columns) out[c.name] = from_variant(c, (*row)->value(QString::fromUtf8(c.name)));
-    return std::optional<CatalogFields>{std::move(out)};
+    return std::optional<CatalogFields>{fields_of(t, **row)};
   }
 
   Result<std::int64_t> count(const QString& sql, const Bindings& bindings) {
@@ -434,9 +511,14 @@ class EditRun {
     insert["uuid"] = qv(e.uuid);
     QJsonObject diff;
     for (const auto& [name, value] : row) {
-      insert[QString::fromStdString(name)] = to_variant(value);
+      if (!is_geo(column_of(rules, name)->type)) insert[QString::fromStdString(name)] = to_variant(value);
       if (!std::holds_alternative<std::monostate>(value))
         diff.insert(QString::fromStdString(name), QJsonArray{QJsonValue(QJsonValue::Null), json_of(value)});
+    }
+    if (has_geo(rules)) {
+      auto geom = geom_cell(rules, row);
+      if (!geom) return fail(geom.error());
+      insert[QString::fromUtf8(kGeomColumn)] = *geom;
     }
     const UtcTime now = UtcTime::now();
     insert["created_utc"] = qv(now);
@@ -483,10 +565,21 @@ class EditRun {
     QStringList sets;
     Bindings b;
     QJsonObject diff;
+    bool geo_changed = false;
     for (const auto& [name, value] : changes) {
-      sets << QStringLiteral("\"%1\" = ?").arg(QString::fromStdString(name));
-      b << to_variant(value);
+      if (is_geo(column_of(rules, name)->type)) {
+        geo_changed = true;
+      } else {
+        sets << QStringLiteral("\"%1\" = ?").arg(QString::fromStdString(name));
+        b << to_variant(value);
+      }
       diff.insert(QString::fromStdString(name), QJsonArray{json_of(before.at(name)), json_of(value)});
+    }
+    if (geo_changed) {
+      auto geom = geom_cell(rules, after);
+      if (!geom) return fail(geom.error());
+      sets << QStringLiteral("\"%1\" = ?").arg(QString::fromUtf8(kGeomColumn));
+      b << *geom;
     }
     if (e.table == CatalogTable::Sample) {
       sets << QStringLiteral("updated_utc = ?");
@@ -752,7 +845,8 @@ Result<std::vector<MaterialRow>> materials(Db& db) {
 }
 
 Result<std::vector<SampleRow>> samples(Db& db, Dialect dialect, const SampleQuery& q) {
-  QString sql = sql::kSamples.arg(sql::ts(dialect, QStringLiteral("s.updated_utc")));
+  QString sql = sql::kSamples.arg(sql::ts(dialect, QStringLiteral("s.updated_utc")),
+                                  geom_read(dialect, QStringLiteral("s.geom")));
   Bindings b;
   if (!q.text.empty()) {
     QString pattern = qs(q.text).toLower();
@@ -793,8 +887,11 @@ Result<std::vector<SampleRow>> samples(Db& db, Dialect dialect, const SampleQuer
     auto& f = s.fields;
     f.note = opt_str(r.value("note"));
     f.igsn = opt_str(r.value("igsn"));
-    f.lat = opt_double(r.value("lat"));
-    f.lon = opt_double(r.value("lon"));
+    if (const QVariant geom = r.value("geom"); !geom.isNull())
+      if (const auto point = parse_point(to_std(geom))) {
+        f.lat = point->lat;
+        f.lon = point->lon;
+      }
     f.elevation = opt_double(r.value("elevation"));
     f.storage_location = opt_str(r.value("storage_location"));
     f.location = opt_str(r.value("location"));
@@ -931,16 +1028,12 @@ Result<std::int64_t> max_numeric_identifier(Db& db, Dialect dialect) {
 Result<std::optional<CatalogFields>> catalog_row(Db& db, CatalogTable table, Uuid uuid) {
   const TableRules* rules = rules_of(table);
   if (!rules) return fail(ErrorKind::Protocol, "catalog_row: " + std::string(table_name(table)) + " is not an entry table");
-  QStringList names;
-  for (const auto& c : rules->columns) names << QStringLiteral("\"%1\"").arg(QString::fromUtf8(c.name));
   auto row = db.select_one(QStringLiteral("SELECT %1 FROM %2 WHERE uuid = ?")
-                               .arg(names.join(QStringLiteral(", ")), qstr(table_name(table))),
+                               .arg(select_list(*rules, db.dialect()), qstr(table_name(table))),
                            {qv(uuid)});
   if (!row) return fail(row.error());
   if (!*row) return std::optional<CatalogFields>{};
-  CatalogFields out;
-  for (const auto& c : rules->columns) out[c.name] = from_variant(c, (*row)->value(QString::fromUtf8(c.name)));
-  return std::optional<CatalogFields>{std::move(out)};
+  return std::optional<CatalogFields>{fields_of(*rules, **row)};
 }
 
 // ---------------------------------------------------------------- writes

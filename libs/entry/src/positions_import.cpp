@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "pychron/entry/names.hpp"
+#include "pychron/core/number.hpp"
 
 namespace pychron::entry {
 
@@ -80,13 +81,12 @@ PositionImportResult apply_position_import(const CsvTable& table, const CatalogS
     }
     const std::string weight = get("weight");
     if (!weight.empty()) {
-      double w = 0;
-      auto [wend, wec] = std::from_chars(weight.data(), weight.data() + weight.size(), w);
-      if (wec != std::errc() || wend != weight.data() + weight.size() || !std::isfinite(w)) {
+      const auto w = parse_double(weight);
+      if (!w) {
         out.errors.push_back(at + "weight '" + weight + "' is not a number");
         continue;
       }
-      p.weight = w;
+      p.weight = *w;
     }
     if (const std::string packet = get("packet"); !packet.empty()) {
       if (!valid_packet(packet)) {

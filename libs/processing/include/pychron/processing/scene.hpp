@@ -118,7 +118,17 @@ struct EllipseLayer {
   int group = 0;
 };
 
-using Layer = std::variant<PointLayer, LineLayer, BandLayer, TextLayer, GuideLayer, StepLayer, EllipseLayer>;
+// A shaded rectangle behind the data, marking a range of interest: x0..x1 by
+// y0..y1 in axis units. An unset bound runs to that edge of the panel, so a
+// span with x bounds alone covers the panel's whole height.
+struct SpanLayer {
+  std::optional<double> x0, x1, y0, y1;
+  Color fill;
+  std::string label;  // drawn at the top of the span; may be empty
+};
+
+using Layer =
+    std::variant<PointLayer, LineLayer, BandLayer, TextLayer, GuideLayer, StepLayer, EllipseLayer, SpanLayer>;
 
 enum class AxisScale { Linear, Log };
 enum class AxisFormat { Number, Time, Category };

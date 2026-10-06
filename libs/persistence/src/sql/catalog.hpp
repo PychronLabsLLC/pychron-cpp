@@ -22,10 +22,11 @@ inline const QString kMaterials = QStringLiteral(
     "SELECT m.uuid, m.name, m.grainsize, (SELECT count(*) FROM sample s WHERE s.material_uuid = m.uuid) AS n_samples "
     "FROM material m ORDER BY m.name, m.grainsize, m.uuid");
 
-// %1: updated_utc as text. Filters are appended as " AND ...".
+// %1: updated_utc as text; %2: the geom point as text (geom_read). Filters
+// are appended as " AND ...".
 inline const QString kSamples = QStringLiteral(
     "SELECT s.uuid, s.name, s.project_uuid, s.material_uuid, p.pi_uuid, p.name AS project_name, "
-    "pi.display_name AS pi_name, m.name AS material_name, m.grainsize, s.note, s.igsn, s.lat, s.lon, s.elevation, "
+    "pi.display_name AS pi_name, m.name AS material_name, m.grainsize, s.note, s.igsn, %2 AS geom, s.elevation, "
     "s.storage_location, s.location, s.unit, s.lithology, s.lithology_class, s.lithology_type, s.lithology_group, "
     "s.approximate_age, %1 AS updated, "
     "(SELECT count(*) FROM irradiation_position ip WHERE ip.sample_uuid = s.uuid) AS n_positions, "

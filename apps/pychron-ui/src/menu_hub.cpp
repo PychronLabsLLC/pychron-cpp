@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QDialog>
 #include <QEvent>
 #include <QLayout>
@@ -42,10 +43,14 @@ MenuHub& MenuHub::instance() {
 
 MenuHub::Bars MenuHub::platform_bars() {
 #ifdef Q_OS_MACOS
-  return Bars::Shared;
-#else
-  return Bars::PerWindow;
+  // One bar for all only where the platform shows a global one: a parentless
+  // QMenuBar is the native macOS bar, and nothing at all under another
+  // platform plugin (offscreen, in tests), where its shortcuts never fire.
+  if (QGuiApplication::platformName() == QLatin1String("cocoa") &&
+      !QCoreApplication::testAttribute(Qt::AA_DontUseNativeMenuBar))
+    return Bars::Shared;
 #endif
+  return Bars::PerWindow;
 }
 
 MenuHub& MenuHub::reset(Bars bars) {
@@ -58,6 +63,8 @@ MenuHub& MenuHub::reset(Bars bars) {
 MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
   QCoreApplication::instance()->installEventFilter(this);
   connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] {
+    if (QWidget* active = QApplication::activeWindow(); active == nullptr || active->windowType() != Qt::Popup)
+      under_popup_ = active;
     update_gates();
     refresh_windows();
   });
@@ -231,8 +238,14 @@ bool MenuHub::eventFilter(QObject* watched, QEvent* event) {
   return false;
 }
 
-QWidget* MenuHub::current_window() const {
+QWidget* MenuHub::active_window() const {
   QWidget* active = QApplication::activeWindow();
+  if (active != nullptr && active->windowType() == Qt::Popup) return under_popup_;
+  return active;
+}
+
+QWidget* MenuHub::current_window() const {
+  QWidget* active = active_window();
   return active != nullptr && takes_bar(active) ? active : nullptr;
 }
 
@@ -372,7 +385,7 @@ void MenuHub::rebuild(Bar& b) {
 }
 
 void MenuHub::update_gates() {
-  const QWidget* active = QApplication::activeWindow();
+  const QWidget* active = active_window();
   for (const Gate& g : gates_) {
     if (g.group == nullptr) continue;
     g.group->setEnabled(g.owner != nullptr && g.owner->window() == active);

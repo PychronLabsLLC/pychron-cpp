@@ -73,10 +73,11 @@ class SplashScreen : public QSplashScreen {
 
  protected:
   void drawContents(QPainter* painter) override;
+  void showEvent(QShowEvent* event) override;
 
  private:
   bool simulation_;
-  QElapsedTimer shown_;
+  QElapsedTimer shown_;  // runs from the first time it is shown
 };
 
 class AboutDialog : public QDialog {

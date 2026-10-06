@@ -43,7 +43,9 @@ struct Line {
     auto made = ExtractionLine::create(*cfg, std::nullopt, o);
     EXPECT_TRUE(made) << made.error().what;
     line = std::move(*made);
-    if (start) EXPECT_TRUE(line->start());
+    if (start) {
+      EXPECT_TRUE(line->start());
+    }
   }
   ~Line() { line->stop(); }
 

@@ -809,6 +809,14 @@ class Reader {
     s.igsn = f.optional_text("igsn");
     s.lat = f.number("lat");
     s.lon = f.number("lon");
+    // The store keeps a location as one point: half of one is no location.
+    if (s.lat.has_value() != s.lon.has_value()) {
+      const char* given = s.lat ? "lat" : "lon";
+      const char* missing_half = s.lat ? "lon" : "lat";
+      f.unlink(given, std::string(given) + " without " + missing_half + " is not a location", "imported without a location");
+      s.lat.reset();
+      s.lon.reset();
+    }
     s.elevation = f.number("elevation");
     s.storage_location = f.optional_text("storage_location");
     s.location = f.optional_text("location");

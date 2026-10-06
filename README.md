@@ -23,7 +23,7 @@ spectrometers, runs automated experiment queues, and stores the results.
 | `libs/scripting` | Embedded CPython host for extraction scripts |
 | `libs/reduction` | Fits and data reduction |
 | `libs/persistence` | Database-backed store for analyses (TinyORM on QtSql) |
-| `libs/processing` | Browsing, recall and figures: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures |
+| `libs/processing` | Browsing, recall and figures: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures, and the publication data report after Schaen et al. (2021) |
 | `apps/elctl` | Command-line tool: validate configs, drive the line, run experiments |
 | `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window, script and conditionals editors, data browser, recall and figure windows |
 | `configs/examples` | An example lab: line, canvas, spectrometers, plans, scripts, a three-run queue; `nmgrl/` is a full-size line (the NMGRL valve box, simulated) |
@@ -78,7 +78,10 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 Browse and plot the records a queue wrote (View > Data): filter, double-click
 to recall an analysis, or select runs and choose a figure from "Plot" (time
 series, ideogram, age spectrum, inverse isochron). Figure
-options are edited in the dock and saved as named presets.
+options are edited in the dock and saved as named presets. "Export" in the
+browser (or "Export table..." in a figure, or `elctl export`) writes the
+analyses as a 40Ar/39Ar data report after Schaen et al. (2021), CSV or JSON;
+see [docs/export.md](docs/export.md).
 
 Run the example experiment queue from the command line:
 

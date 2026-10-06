@@ -80,9 +80,16 @@ LiveFeed::LiveFeed(Opener open, LiveFeedOptions options) : state_(std::make_shar
       if (source == nullptr) {
         {
           std::lock_guard lock(s.mutex);
-          s.waiting_since = Steady::now();
+          // The first open has been waited for since the feed was made (the
+          // state's initial times): wait_open() measures from there, and so
+          // must latest(), or a thread slow to start (sanitizers, a loaded
+          // machine) would leave an open that timed out looking fine. A
+          // reopen starts its wait now.
+          if (s.opened) {
+            s.waiting_since = Steady::now();
+            s.progress = s.waiting_since;
+          }
           s.opening = true;
-          s.progress = s.waiting_since;
           s.warm = false;
         }
         auto opened = s.open(stamp);
@@ -224,7 +231,7 @@ LiveFeed::Latest LiveFeed::latest() const {
   // Whether or not a read is in flight: nothing has come of the camera for
   // longer than it is given.
   const auto allowed = s.warm ? s.options.timeout : s.options.open_timeout;
-  const bool hung = Steady::now() - s.progress > allowed;
+  const bool hung = Steady::now() - s.progress >= allowed;
   if (s.lost || s.stalled) out.error = s.error.what;
   else if (hung && s.opening) out.error = "the camera has not opened in " + std::to_string(allowed.count()) + " ms";
   else if (hung && !s.error.what.empty()) out.error = s.error.what;  // its reads are coming back empty

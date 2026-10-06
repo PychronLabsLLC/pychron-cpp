@@ -51,6 +51,7 @@ std::vector<CatalogItem> lab_catalog() {
   SampleItem sample;
   sample.fields.name = "HH-1";
   sample.fields.lat = 34.07;
+  sample.fields.lon = -106.9;  // a location is one point: both halves or neither
   sample.project = "Henry Hill";
   sample.material = "sanidine";
   sample.pi_last_name = "Ross";

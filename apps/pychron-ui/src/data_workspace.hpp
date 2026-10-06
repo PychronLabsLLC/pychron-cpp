@@ -48,6 +48,11 @@ class DataWorkspace : public QObject {
   // Null without data (or for an unknown figure kind).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_figure(const QString& kind, const QStringList& uuids);
+  // Reduces `uuids`, groups them (by aliquot when any is a heating step,
+  // else by identifier) and writes the Schaen et al. (2021) data report to
+  // `path` (.json, else CSV) on the processing thread; the browser's status
+  // line says what was written, or why not. False without data.
+  bool export_report(const QString& path, const QStringList& uuids);
 
  private:
   void clear();
@@ -60,6 +65,7 @@ class DataWorkspace : public QObject {
   DataBrowserWindow* browser_ = nullptr;
   int page_size_ = Preferences::kDefaultPageSize;
   QList<QPointer<QWidget>> children_;  // recall and figure windows
+  int export_channel_ = 0;             // the bridge channel exports run on
 };
 
 }  // namespace pychron::ui

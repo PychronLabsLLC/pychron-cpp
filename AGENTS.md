@@ -62,7 +62,8 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 - `-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF` (default `AUTO`) controls the optional
   OpenCV in `libs/vision` (`LegacyFinder`, `OpenCvSource`); without it those
   two files compile to stubs. OpenCV headers appear only in those two `.cpp`
-  files. Only the macOS CI job installs OpenCV.
+  files. Only the macOS `ui` CI job installs OpenCV (Homebrew's brings TBB,
+  which crashes at exit under the sanitizers).
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
@@ -96,12 +97,34 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   or tested there.
 - The schema source is `libs/persistence/migrations/pg/`. After editing it,
   run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
-  Never edit an applied migration; add `NNNN_<name>.sql`.
+  Never edit an applied migration; add `NNNN_<name>.sql`. A statement only
+  PostgreSQL understands is preceded by `-- @sqlite skip`; its SQLite
+  counterpart, when one is needed, is given as `-- @sqlite exec <statement>`.
+- A sample's location is one PostGIS `geometry(Point, 4326)` column, `geom`
+  (migration 0004); SQLite keeps the same point as EWKT text. The catalog API
+  still speaks `lat` and `lon` (`SampleFields`, the `lat`/`lon` edit fields):
+  `libs/persistence/src/sql/geometry.hpp` converts, and every read of the
+  column goes through `geom_read()` (`ST_AsEWKT` on PostgreSQL). Half a point
+  is refused. PostgreSQL needs PostGIS; the tests on it do too.
+- The publication data report (`libs/processing` `report.hpp`, Schaen et al.
+  2021) is Qt-free and reads only the `Analysis` model: metadata it needs
+  (sample location and lithology, the flux monitor, the reactor) is carried
+  by `Analysis::sample_info`, `Analysis::monitor` and
+  `ReductionContext::reactor`, filled by the store source. A column added to
+  a table gets a row in `tests/processing/test_report.cpp`; the CSV must stay
+  RFC 4180 and every row the width of its header. `elctl export` is split
+  into `export.cpp` / `export_stub.cpp` like `import`. User guide:
+  `docs/export.md`.
 - `libs/entry` (sample and package entry) builds only with persistence, like
   `libs/ingest`. Entry writes catalog rows only through
   `IStore::apply_catalog_edits` (field-value compare-and-swap, one
   transaction) and identifiers only through `allocate_identifiers`; never
   through ad hoc UPDATEs. User guide: `docs/entry.md`.
+- A file the application writes for the user to open elsewhere (a report, a
+  figure, a template, a sheet) goes through `pychron::mark_as_user_file`
+  (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned
+  macOS application quarantines what it writes, and Gatekeeper then refuses
+  the file. Files pychron reads back itself (configs, stores) do not.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

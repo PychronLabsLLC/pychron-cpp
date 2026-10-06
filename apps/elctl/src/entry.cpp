@@ -4,6 +4,9 @@
 
 #include "entry.hpp"
 
+#include "pychron/core/number.hpp"
+#include "pychron/core/user_file.hpp"
+
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -140,7 +143,9 @@ Result<void> write_file(const std::string& path, const std::string& text) {
   std::ofstream out(path, std::ios::binary);
   if (!out) return pychron::fail(pychron::ErrorKind::Io, "cannot write " + path);
   out << text;
+  out.close();
   if (!out) return pychron::fail(pychron::ErrorKind::Io, "cannot write " + path);
+  pychron::mark_as_user_file(path);  // the user's own file: no quarantine on macOS
   return {};
 }
 
@@ -328,10 +333,8 @@ int package_add(Context& ctx, const Args& a) {
   }
   std::optional<double> z;
   if (const auto zt = a.get("--z")) {
-    double v = 0;
-    auto [end, ec] = std::from_chars(zt->data(), zt->data() + zt->size(), v);
-    if (ec != std::errc() || end != zt->data() + zt->size()) return usage(ctx.io, "--z: not a number");
-    z = v;
+    z = pychron::parse_double(*zt);
+    if (!z) return usage(ctx.io, "--z: not a number");
   }
   if (const auto levels = a.get("--levels")) {
     auto names = level_names(*levels);

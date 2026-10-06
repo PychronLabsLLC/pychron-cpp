@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "pychron/core/env.hpp"
 #include "pychron/vision/camera_backend.hpp"
 #include "pychron/vision/live_feed.hpp"
 
@@ -16,11 +17,11 @@ using namespace pychron;
 using namespace pychron::vision;
 
 TEST(RealCamera, GivesFramesThroughALiveFeed) {
-  const char* index = std::getenv("PYCHRON_TEST_CAMERA");
-  if (index == nullptr || *index == '\0') GTEST_SKIP() << "set PYCHRON_TEST_CAMERA=<index> to open a real camera";
+  const auto index = pychron::env_var("PYCHRON_TEST_CAMERA");
+  if (!index || index->empty()) GTEST_SKIP() << "set PYCHRON_TEST_CAMERA=<index> to open a real camera";
   CameraRequest request;
   request.backend = "opencv";
-  request.device = index;
+  request.device = *index;
   LiveFeedOptions options;
   options.timeout = std::chrono::milliseconds(5000);  // a camera takes a moment to wake
   LiveFeed feed([request](ClockFn stamp) { return open_camera(request, std::move(stamp)); }, options);

@@ -142,7 +142,7 @@ TEST(SimpleFinder, SixteenBitMatchesEightBit) {
 
 TEST(SimpleFinder, UniformFramesGiveNoTarget) {
   SimpleFinder finder;
-  for (const std::uint16_t fill : {0, 255, 128}) {
+  for (const std::uint16_t fill : {std::uint16_t{0}, std::uint16_t{255}, std::uint16_t{128}}) {
     const Frame f = Frame::make(120, 120, 255, fill);
     FinderParams hp;
     hp.mode = FinderMode::Hole;

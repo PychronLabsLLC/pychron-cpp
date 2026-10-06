@@ -277,7 +277,7 @@ Result<void> ExtractionLine::start() {
           return;
         }
         {
-          std::lock_guard lock(pressures_mutex_);
+          std::lock_guard guard(pressures_mutex_);
           temperatures_[input] = TemperatureReading{*t, ts};
         }
         bus_.publish(TemperatureSample{config_.cryo->driver, input, *t, ts});

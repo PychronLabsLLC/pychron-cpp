@@ -94,7 +94,7 @@ TEST(LegacyFinder, UniformFramesGiveNoTarget) {
   auto legacy = make_legacy_finder();
   if (!legacy) GTEST_SKIP() << "built without OpenCV";
   for (const auto mode : {FinderMode::Hole, FinderMode::Glow}) {
-    for (const std::uint16_t level : {0, 100, 255}) {
+    for (const std::uint16_t level : {std::uint16_t{0}, std::uint16_t{100}, std::uint16_t{255}}) {
       const Frame f = Frame::make(120, 120, 255, level);
       FinderParams p;
       p.mode = mode;

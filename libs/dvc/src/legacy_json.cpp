@@ -1,8 +1,10 @@
 #include "legacy_json.hpp"
+#include "pychron/core/number.hpp"
 
-#include <charconv>
 #include <cmath>
 #include <limits>
+#include <locale>
+#include <sstream>
 
 namespace pychron::dvc {
 
@@ -135,10 +137,7 @@ std::optional<double> as_double(const Json& j) {
     const char first = s.front() == '-' || s.front() == '+' ? (s.size() > 1 ? s[1] : '\0') : s.front();
     if (!((first >= '0' && first <= '9') || first == '.')) return std::nullopt;
     const std::string_view digits = s.front() == '+' ? s.substr(1) : s;
-    double v = 0;
-    const auto r = std::from_chars(digits.data(), digits.data() + digits.size(), v);
-    if (r.ec != std::errc{} || r.ptr != digits.data() + digits.size() || !std::isfinite(v)) return std::nullopt;
-    return v;
+    return pychron::parse_double(digits);
   }
   return std::nullopt;
 }

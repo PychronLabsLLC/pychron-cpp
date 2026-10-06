@@ -1,5 +1,9 @@
 #include "packages_window.hpp"
 
+#include <filesystem>
+
+#include "pychron/core/user_file.hpp"
+
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
@@ -680,7 +684,10 @@ Result<int> PackagesWindow::save_pdf(const QString& path) {
   });
   if (!sheets) return fail(sheets.error());
   auto pages = write_package_pdf(path, *sheets);
-  if (pages) show_message(tr("Wrote %1 pages").arg(*pages));
+  if (pages) {
+    pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
+    show_message(tr("Wrote %1 pages").arg(*pages));
+  }
   return pages;
 }
 

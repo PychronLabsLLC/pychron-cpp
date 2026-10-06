@@ -114,8 +114,11 @@ TEST(Profiles, NgxWithALoginKeepsThePasswordInAnOwnerOnlyFile) {
                              {"ngx_user", Value{std::string("pychron")}},
                              {"ngx_password", Value{std::string("s3cret")}}},
                             root);
-  std::ifstream local(root / "spectrometer.local.toml");
-  std::string text((std::istreambuf_iterator<char>(local)), std::istreambuf_iterator<char>());
+  std::string text;
+  {
+    std::ifstream local(root / "spectrometer.local.toml");  // closed before remove_all: Windows keeps open files
+    text.assign((std::istreambuf_iterator<char>(local)), std::istreambuf_iterator<char>());
+  }
   EXPECT_NE(text.find("s3cret"), std::string::npos);
 #ifndef _WIN32
   const auto perms = fs::status(root / "spectrometer.local.toml").permissions();

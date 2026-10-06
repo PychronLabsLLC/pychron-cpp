@@ -113,7 +113,7 @@ Appendix A (section 11).
 |---|---|---|---|
 | `project` | `uuid`, `name`, `pi_uuid`, `checkin_date`, `comment`, `lab_contact`, `institution` | UNIQUE(`name`,`pi_uuid`) | `ProjectTbl` :319 |
 | `material` | `uuid`, `name`, `grainsize` (not null, default `''`) | UNIQUE(`name`,`grainsize`) | `MaterialTbl` :342. Default `''` avoids NULL-uniqueness differences between engines. |
-| `sample` | `uuid`, `name`, `project_uuid`, `material_uuid`, `note`, `igsn`, `lat`, `lon`, `elevation`, `storage_location`, `location`, `unit`, `lithology`, `lithology_class`, `lithology_type`, `lithology_group`, `approximate_age`, `updated_utc` | UNIQUE(`name`,`project_uuid`,`material_uuid`); IX(`igsn`) | `SampleTbl` :354. Sample metadata edits are rare catalog updates and are audited by `change_log` with a field-level diff, not revisioned (decision D6). |
+| `sample` | `uuid`, `name`, `project_uuid`, `material_uuid`, `note`, `igsn`, `geom` (PostGIS point, WGS 84; `lat`/`lon` until migration 0004), `elevation`, `storage_location`, `location`, `unit`, `lithology`, `lithology_class`, `lithology_type`, `lithology_group`, `approximate_age`, `updated_utc` | UNIQUE(`name`,`project_uuid`,`material_uuid`); IX(`igsn`) | `SampleTbl` :354. Sample metadata edits are rare catalog updates and are audited by `change_log` with a field-level diff, not revisioned (decision D6). |
 
 ### 3.3 Irradiations, identifiers
 

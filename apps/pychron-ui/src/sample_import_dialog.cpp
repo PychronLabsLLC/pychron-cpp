@@ -1,5 +1,9 @@
 #include "sample_import_dialog.hpp"
 
+#include <filesystem>
+
+#include "pychron/core/user_file.hpp"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -84,6 +88,8 @@ SampleImportDialog::SampleImportDialog(EntryBridge& bridge, QWidget* parent) : Q
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly)) return show_message(tr("Cannot write %1").arg(path), true);
     f.write(QByteArray::fromStdString(entry::template_csv()));
+    f.close();
+    pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
   });
   connect(export_errors, &QPushButton::clicked, this, [this] {
     if (!plan_ || plan_->errors == 0) return;
@@ -92,6 +98,8 @@ SampleImportDialog::SampleImportDialog(EntryBridge& bridge, QWidget* parent) : Q
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly)) return show_message(tr("Cannot write %1").arg(path), true);
     f.write(QByteArray::fromStdString(entry::errors_csv(*plan_)));
+    f.close();
+    pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
   });
   connect(preview_button, &QPushButton::clicked, this, [this] { preview(); });
   connect(filter_, &QComboBox::currentIndexChanged, this, [this] { fill_preview(); });

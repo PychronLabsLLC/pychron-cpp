@@ -200,6 +200,83 @@ TEST(Ideogram, JErrorInTheMean) {
   EXPECT_GT(e_with, e_without);
 }
 
+// Ages alone: one panel of ages with error bars against the analysis
+// number, no curve. The mean text has no curve panel to sit on and moves here.
+TEST(Ideogram, AgesOnlyHasNoCurveAndKeepsTheMeanText) {
+  auto d = steps();
+  auto o = pp::PresetStore("/nonexistent").factory(pp::ideogram_schema(), "Ages only");
+  ASSERT_TRUE(o);
+  auto s = pp::build_ideogram(d, o->options);
+  ASSERT_TRUE(s) << s.error().what;
+  const auto& g = s->graphs[0];
+  ASSERT_EQ(g.panels.size(), 1u);
+  EXPECT_EQ(g.panels[0].quantity, "analysis_number");
+  EXPECT_TRUE(layers<pp::LineLayer>(g.panels[0]).empty());
+  const auto ages = layers<pp::PointLayer>(g.panels[0]);
+  ASSERT_EQ(ages.size(), 1u);
+  EXPECT_EQ(ages[0]->x.size(), 8u);
+  EXPECT_EQ(ages[0]->x_err.size(), 8u);
+  EXPECT_NE(all_text(g.panels[0]).find("wtd mean"), std::string::npos);
+
+  // With a curve panel the text stays there, once.
+  pp::Options both(pp::ideogram_schema());
+  auto two = pp::build_ideogram(d, both);
+  ASSERT_TRUE(two);
+  EXPECT_EQ(all_text(two->graphs[0].panels[0]).find("wtd mean"), std::string::npos);
+}
+
+// A span with x bounds alone shades every panel top to bottom; one that
+// names a panel is drawn there only and may be bounded in y. Spans lie under
+// the data, and none is there unless asked for.
+TEST(Ideogram, SpansShadeAgeRangesAndRectanglesOnOnePanel) {
+  auto d = steps();
+  auto o = pp::PresetStore("/nonexistent").factory(pp::ideogram_schema(), "With K/Ca");
+  ASSERT_TRUE(o);
+  auto none = pp::build_ideogram(d, o->options);
+  ASSERT_TRUE(none);
+  for (const auto& p : none->graphs[0].panels) EXPECT_TRUE(layers<pp::SpanLayer>(p).empty());
+
+  pp::Options every = o->options.new_row("spans");
+  ASSERT_TRUE(every.set("label", std::string("FC")));
+  ASSERT_TRUE(every.set("min", 28.3));
+  ASSERT_TRUE(every.set("max", 28.1));  // either way round
+  ASSERT_TRUE(every.set("y_min", 5.0));  // means nothing across panels: not used
+  ASSERT_TRUE(every.set("color", std::string("#102030")));
+  ASSERT_TRUE(every.set("opacity", 50.0));
+  pp::Options box = o->options.new_row("spans");
+  ASSERT_TRUE(box.set("panel", std::string("1")));  // K/Ca
+  ASSERT_TRUE(box.set("min", 27.0));
+  ASSERT_TRUE(box.set("y_min", 0.5));
+  ASSERT_TRUE(box.set("y_max", 2.0));
+  ASSERT_TRUE(o->options.set_rows("spans", {every, box}));
+
+  auto s = pp::build_ideogram(d, o->options);
+  ASSERT_TRUE(s) << s.error().what;
+  const auto& panels = s->graphs[0].panels;
+  ASSERT_EQ(panels.size(), 3u);
+  const auto kca = layers<pp::SpanLayer>(panels[0]);
+  ASSERT_EQ(kca.size(), 2u);
+  EXPECT_TRUE(std::holds_alternative<pp::SpanLayer>(panels[0].layers[0]));  // under the points
+  EXPECT_EQ(kca[0]->x0, 28.1);
+  EXPECT_EQ(kca[0]->x1, 28.3);
+  EXPECT_FALSE(kca[0]->y0 || kca[0]->y1);
+  EXPECT_EQ(kca[0]->fill, (pp::Color{0x10, 0x20, 0x30, 128}));
+  EXPECT_EQ(kca[0]->label, "FC");  // once, on the top panel
+  EXPECT_EQ(kca[1]->x0, 27.0);
+  EXPECT_FALSE(kca[1]->x1);  // open to the right
+  EXPECT_EQ(kca[1]->y0, 0.5);
+  EXPECT_EQ(kca[1]->y1, 2.0);
+  for (std::size_t i : {std::size_t{1}, std::size_t{2}}) {
+    const auto spans = layers<pp::SpanLayer>(panels[i]);
+    ASSERT_EQ(spans.size(), 1u);
+    EXPECT_EQ(spans[0]->x0, 28.1);
+    EXPECT_TRUE(spans[0]->label.empty());
+  }
+  // The x limits are the data's: a span does not stretch them.
+  EXPECT_EQ(s->graphs[0].x.min, none->graphs[0].x.min);
+  EXPECT_EQ(s->graphs[0].x.max, none->graphs[0].x.max);
+}
+
 TEST(Ideogram, ValuePanelKernelAndLimits) {
   auto d = steps();
   auto o = pp::PresetStore("/nonexistent").factory(pp::ideogram_schema(), "With K/Ca");

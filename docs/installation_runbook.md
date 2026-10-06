@@ -24,8 +24,11 @@ the checks and the way back.
 - For an instrument: the address and port of the instrument's control PC
   (Qtegra RemoteControlServer, default port 1069; NGX controller, default
   1099), and its calibration (field table, detectors, source settings).
-- For a server database: a PostgreSQL server, an empty database, and a user
-  that may create tables in it.
+- For a server database: a PostgreSQL server with PostGIS installed (sample
+  locations are a geometry column), an empty database, and a user that may
+  create tables in it and create the `postgis` extension (PostGIS 3 is
+  trusted: the database owner can; otherwise an administrator runs
+  `CREATE EXTENSION postgis` once).
 - For a legacy migration: `git` 2.32 or newer, `python3`, the system
   time-zone database (`tzdata`), the lab's IANA time zone
   (for example `America/Denver`), and read access to the lab's legacy sources
@@ -43,6 +46,16 @@ Packages are built by the `release` workflow on a `v*` tag and attached to the
 GitHub release (<https://github.com/PychronLabsLLC/pychron-cpp/releases>).
 Each carries its own Python for extraction scripts. They are not code-signed,
 so macOS and Windows warn on first launch.
+
+On macOS the warning is Gatekeeper's: open the application once with a
+right-click > Open (or allow it under System Settings > Privacy & Security).
+Until the application is notarized, macOS also marks files that a downloaded
+application writes as quarantined; Pychron clears that mark from the files it
+writes for you (data reports, figures, CSV templates, level sheets), so they
+open without "Apple could not verify ... is free of malware". A file written
+by an older release that still shows it can be cleared by hand:
+`xattr -d com.apple.quarantine <file>`. The lasting fix is a Developer ID
+signature and notarization in the release workflow.
 
 | Platform | Package | Install | Where `elctl` is |
 |---|---|---|---|

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/env.hpp"
 #include "pychron/core/log_match.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/logger.hpp"
@@ -43,8 +44,8 @@ class TempDir {
   // of the path, so concurrent runs of the same test (another checkout,
   // another ctest) cannot remove each other's directory.
   explicit TempDir(const std::string& name) : env_("PYCHRON_LOG_HUB_TMP_" + name) {
-    if (const char* inherited = std::getenv(env_.c_str()); inherited != nullptr && *inherited != '\0') {
-      path_ = inherited;
+    if (const auto inherited = env_var(env_.c_str()); inherited && !inherited->empty()) {
+      path_ = *inherited;
       owner_ = false;
       return;
     }

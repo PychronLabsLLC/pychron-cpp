@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "pychron/core/env.hpp"
 #include "pychron/vision/autocenter.hpp"
 #include "pychron/vision/dragonfly.hpp"
 #include "pychron/vision/finder.hpp"
@@ -234,8 +235,9 @@ TEST(Fixture, CommittedCasesWithinTolerance) {
 }
 
 TEST(Fixture, ExternalCasesWithinTolerance) {
-  const char* env = std::getenv("PYCHRON_VISION_FIXTURES");
-  if (env == nullptr || *env == '\0') GTEST_SKIP() << "PYCHRON_VISION_FIXTURES is not set";
+  const auto set = pychron::env_var("PYCHRON_VISION_FIXTURES");
+  if (!set || set->empty()) GTEST_SKIP() << "PYCHRON_VISION_FIXTURES is not set";
+  const std::string& env = *set;
   std::error_code ec;
   ASSERT_TRUE(std::filesystem::is_directory(env, ec)) << "PYCHRON_VISION_FIXTURES is not a directory: " << env;
   const auto r = check_cases(env);

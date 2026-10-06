@@ -14,6 +14,7 @@ add_library(pychron_core
   src/sha256.cpp
   src/sha1.cpp
   src/calendar.cpp
+  src/user_file.cpp
   src/config/diagnostic.cpp
   src/config/loader.cpp
   src/config/validate.cpp

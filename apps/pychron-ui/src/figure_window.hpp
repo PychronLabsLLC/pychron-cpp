@@ -58,6 +58,11 @@ class FigureWindow : public QMainWindow {
   void toggle_exclusion(const QStringList& uuids);
   void select_preset(const QString& name);
   bool export_figure(const QString& path);  // .pdf or .png by extension
+  // The figure's analyses as a Schaen et al. (2021) data report (.json, else
+  // CSV), with this window's grouping and exclusions; a spectrum's plateau
+  // options decide the plateau. False before the first run or when the file
+  // cannot be written.
+  bool export_report(const QString& path);
 
   // Dialog hooks for tests: the name for "Save as" (empty: cancelled).
   std::function<QString()> ask_preset_name;

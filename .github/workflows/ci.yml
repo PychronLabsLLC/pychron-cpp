@@ -44,11 +44,13 @@ jobs:
             cc: clang
             cxx: clang++
             sanitize: address,undefined
+            jobs: 2  # three cores, and timing tests under four jobs at once fail
           - name: linux-gcc
             os: ubuntu-24.04
             cc: gcc-14
             cxx: g++-14
             sanitize: ""
+            jobs: 4
             postgres: true
             pg_url: postgresql://pychron:pychron@localhost:5432/pychron_test
           - name: linux-clang-asan
@@ -56,6 +58,7 @@ jobs:
             cc: clang-18
             cxx: clang++-18
             sanitize: address,undefined
+            jobs: 4
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -65,6 +68,12 @@ jobs:
       CCACHE_MAXSIZE: 1G
       # Read when the store tests are discovered (build) and run; empty means SQLite only.
       PYCHRON_TEST_PG_URL: ${{ matrix.pg_url }}
+      # A sanitizer build reports a crash with its stack. The programs install
+      # their own handler for these signals, which says only "fatal signal 11";
+      # the sanitizer keeps its own (2: exclusive). Abort is left to the
+      # programs: the log tests expect their line for it.
+      ASAN_OPTIONS: handle_segv=2:handle_sigbus=2
+      UBSAN_OPTIONS: print_stacktrace=1
     steps:
       - uses: actions/checkout@v4
 
@@ -78,17 +87,21 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ninja-build ccache
           qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql
 
+      # No OpenCV here: Homebrew's brings TBB, whose exit-time destructor
+      # crashes under the sanitizers (in libtbb, after the program is done).
+      # The ui job, unsanitized, has OpenCV and runs the same tests.
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja ccache opencv
+        run: brew install ninja ccache
 
       # A step, not a `services:` block: services cannot be limited to one matrix entry.
       - name: Start PostgreSQL 16
         if: matrix.postgres
         run: |
+          # The PostGIS image: sample locations are a geometry column (migration 0004).
           docker run -d --name postgres -p 5432:5432 \
             -e POSTGRES_USER=pychron -e POSTGRES_PASSWORD=pychron -e POSTGRES_DB=pychron_test \
-            postgres:16
+            postgis/postgis:16-3.4
           for _ in $(seq 60); do
             # The image restarts the server once during init; wait for the final one on TCP.
             if docker exec postgres pg_isready -h localhost -U pychron -d pychron_test; then exit 0; fi
@@ -124,7 +137,9 @@ jobs:
           key: ccache-${{ matrix.name }}-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev --parallel 4
+        # A failure is run once more, alone, at the end: the log's tail then
+        # holds the output of every failed test, not a page of passes.
+        run: ctest --preset dev --parallel ${{ matrix.jobs }} || (ctest --preset dev --rerun-failed --output-on-failure; exit 1)
 
   windows:
     name: core (windows-msvc)
@@ -139,7 +154,8 @@ jobs:
         run: cmake --build --preset dev --config Debug --parallel
 
       - name: Test
-        run: ctest --preset dev -C Debug --parallel 4
+        shell: bash
+        run: ctest --preset dev -C Debug --parallel 4 || (ctest --preset dev -C Debug --rerun-failed --output-on-failure; exit 1)
 
   ui:
     name: ui (macos-qt6)
@@ -153,8 +169,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # OpenCV too: the only job with it (see the core job's macOS step).
       - name: Install Qt and tools
-        run: brew install qt ninja ccache
+        run: brew install qt ninja ccache opencv
 
       - name: Restore ccache
         uses: actions/cache/restore@v4
@@ -181,4 +198,4 @@ jobs:
           key: ccache-macos-qt6-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev-ui --parallel 4
+        run: ctest --preset dev-ui --parallel 2 || (ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)

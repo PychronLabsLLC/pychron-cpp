@@ -1,3 +1,7 @@
+# Every text file is LF in a checkout on every platform: the TOML, CSV and
+# template files are parsed by code that is not told about CRLF, and the
+# Windows CI runner's git would otherwise convert them.
+* text=auto eol=lf
 *.pgm binary
 # Legacy fixtures are read byte for byte (hashes, git blob shas): never convert line endings.
 tests/dvc/fixtures/** -text

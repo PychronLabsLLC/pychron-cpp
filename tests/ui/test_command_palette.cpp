@@ -158,10 +158,12 @@ class TestCommandPalette : public QObject {
     QTRY_COMPARE(QApplication::activeWindow(), &experiment);
     palette = open(main);
     QVERIFY(palette != nullptr);
-    // What a window manager does with a new window; a popup does not take it.
+    // What a window manager does with a new window (and the offscreen platform
+    // with every window shown): handed activation or not, the popup is not a
+    // window of its own, and the commands stay the window's under it.
     palette->activateWindow();
     QTest::qWait(50);
-    QCOMPARE(QApplication::activeWindow(), &experiment);
+    QCOMPARE(MenuHub::instance().current_window(), &experiment);
     QVERIFY(revalidate->isEnabled());
     QVERIFY(palette->shown().contains(QStringLiteral("Queue \u203a Revalidate")));
     palette->filter()->setText(QStringLiteral("reval"));

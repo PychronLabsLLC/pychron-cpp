@@ -1,0 +1,79 @@
+// SceneView draws what a scene says; here, the layers with nothing else to test them.
+
+#include <memory>
+
+#include <QtTest/QtTest>
+
+#include <qcustomplot.h>
+
+#include "pychron/processing/scene.hpp"
+#include "scene_view.hpp"
+
+namespace pp = pychron::processing;
+using pychron::ui::SceneView;
+
+class TestSceneView : public QObject {
+  Q_OBJECT
+
+ private slots:
+  // A span with x bounds alone runs the whole height of its panel; one with
+  // every bound is that rectangle. Neither changes the axes.
+  void spansFillTheirBoundsOrThePanel() {
+    pp::Scene scene;
+    pp::Graph g;
+    g.x.min = 0.0;
+    g.x.max = 10.0;
+    pp::Panel p;
+    p.y.min = 0.0;
+    p.y.max = 100.0;
+    pp::SpanLayer tall;
+    tall.x0 = 2.0;
+    tall.x1 = 4.0;
+    tall.label = "FC";
+    pp::SpanLayer box;
+    box.x0 = 5.0;
+    box.x1 = 10.0;
+    box.y0 = 25.0;
+    box.y1 = 75.0;
+    pp::SpanLayer open;  // no bounds: the panel
+    pp::PointLayer pts;
+    pts.x = {1.0, 9.0};
+    pts.y = {10.0, 90.0};
+    pts.refs = {pp::PointRef{"a"}, pp::PointRef{"b"}};
+    pts.excluded = {false, false};
+    p.layers = {tall, box, open, pts};
+    g.panels.push_back(p);
+    scene.graphs.push_back(g);
+
+    SceneView view;
+    view.resize(600, 400);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+
+    const QCPAxisRect* rect = view.plot()->axisRect(0);
+    const QRectF panel = rect->rect();
+    const QCPAxis* x = rect->axis(QCPAxis::atBottom);
+    const QCPAxis* y = rect->axis(QCPAxis::atLeft);
+    QCOMPARE(x->range().lower, 0.0);
+    QCOMPARE(x->range().upper, 10.0);
+
+    const QList<QRectF> spans = view.span_rects(0);
+    QCOMPARE(spans.size(), 3);
+    const auto near = [](double a, double b) { return qAbs(a - b) < 1.5; };
+    QVERIFY(near(spans[0].left(), x->coordToPixel(2.0)));
+    QVERIFY(near(spans[0].right(), x->coordToPixel(4.0)));
+    QVERIFY(near(spans[0].top(), panel.top()));
+    QVERIFY(near(spans[0].bottom(), panel.bottom()));
+    QVERIFY(near(spans[1].left(), x->coordToPixel(5.0)));
+    QVERIFY(near(spans[1].top(), y->coordToPixel(75.0)));
+    QVERIFY(near(spans[1].bottom(), y->coordToPixel(25.0)));
+    QVERIFY(near(spans[2].left(), panel.left()));
+    QVERIFY(near(spans[2].right(), panel.right()));
+    QVERIFY(spans[1].height() < spans[0].height());
+  }
+};
+
+QTEST_MAIN(TestSceneView)
+#include "test_scene_view.moc"

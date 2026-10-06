@@ -6,6 +6,7 @@
 
 #include "pychron/experiment/model/positions.hpp"
 #include "pychron/experiment/model/rules.hpp"
+#include "pychron/core/number.hpp"
 
 namespace pychron::experiment {
 
@@ -22,14 +23,7 @@ std::string trim(std::string_view s) {
   return std::string(s.substr(b, e - b + 1));
 }
 
-std::optional<double> number(std::string_view s) {
-  const std::string t = trim(s);
-  if (t.empty()) return std::nullopt;
-  double v = 0;
-  auto [end, ec] = std::from_chars(t.data(), t.data() + t.size(), v);
-  if (ec != std::errc{} || end != t.data() + t.size() || !std::isfinite(v)) return std::nullopt;
-  return v;
-}
+std::optional<double> number(std::string_view s) { return parse_double(trim(s)); }
 
 }  // namespace
 
