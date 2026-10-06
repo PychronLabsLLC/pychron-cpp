@@ -2,7 +2,10 @@
 // section 5).
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <QElapsedTimer>
@@ -322,6 +325,39 @@ class LaserBridgeTest : public QObject {
     QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
   }
 
+  // What this machine makes of the waits the video loop is built on, for a
+  // rate that comes up short: the cost of a picture and of a stage poll, and
+  // how long a millisecond's sleep, a 40 ms timed wait and a 10 ms event-loop
+  // wait really take.
+  QString timing() {
+    auto& sys = lab_->system();
+    QElapsedTimer t;
+    t.start();
+    for (int i = 0; i < 10; ++i) (void)sys.picture();
+    const auto picture_us = t.nsecsElapsed() / 10000;
+    t.restart();
+    for (int i = 0; i < 10; ++i) (void)sys.moving();
+    const auto moving_us = t.nsecsElapsed() / 10000;
+    t.restart();
+    for (int i = 0; i < 10; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto sleep_us = t.nsecsElapsed() / 10000;
+    std::mutex m;
+    std::condition_variable cv;
+    std::unique_lock lock(m);
+    t.restart();
+    cv.wait_for(lock, std::chrono::milliseconds(40), [] { return false; });
+    const auto wait_us = t.nsecsElapsed() / 1000;
+    t.restart();
+    QTest::qWait(10);
+    const auto qwait_us = t.nsecsElapsed() / 1000;
+    return QStringLiteral("picture %1 us, moving %2 us, sleep_for(1 ms) %3 us, wait_for(40 ms) %4 us, qWait(10) %5 us")
+        .arg(picture_us)
+        .arg(moving_us)
+        .arg(sleep_us)
+        .arg(wait_us)
+        .arg(qwait_us);
+  }
+
   // The picture is video: a dozen frames a second at least, whatever else
   // the bridge is doing. The finder is not run on it: that is for a
   // centering or a dragonfly, while one runs.
@@ -343,7 +379,7 @@ class LaserBridgeTest : public QObject {
     bridge_->jog(20, 0, 0);  // a move under way: 4 simulated seconds
     QTest::qWait(1000);
     const double per_second = frames * 1000.0 / static_cast<double>(clock.elapsed());
-    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second").arg(per_second)));
+    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second; %2").arg(per_second).arg(timing())));
     QVERIFY(in_order);
     test::settle(*bridge_);
     // nothing is looked for in it: the stage sat on a hole, and no frame says so

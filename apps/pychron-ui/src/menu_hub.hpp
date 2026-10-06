@@ -89,6 +89,13 @@ class MenuHub : public QObject {
   // not shown yet with Bars::PerWindow).
   QMenuBar* bar_for(const QWidget* window) const;
 
+  // The active window, for the commands that are live: a popup (the command
+  // palette, a menu) that a platform hands activation to when it is shown
+  // belongs to the window that was active under it.
+  QWidget* active_window() const;
+  // The window Minimize and Zoom act on: the active one, if it takes a bar.
+  QWidget* current_window() const;
+
   // Every contributed action, in menu order then contribution order (for the
   // command palette); hidden and disabled ones included.
   struct Command {
@@ -141,14 +148,13 @@ class MenuHub : public QObject {
   void rebuild(Bar& bar);
   void schedule_rebuild();
   void update_gates();
-  // The window Minimize and Zoom act on: the active one, if it takes a bar.
-  QWidget* current_window() const;
   void add_window(QWidget* window);
   void refresh_windows();
   QList<QAction*> window_menu() const;  // nullptr: a separator
 
   Bars mode_;
   QPointer<QMenuBar> shared_;
+  QPointer<QWidget> under_popup_;  // the active window before a popup took activation
   std::vector<Group> groups_;
   std::vector<Bar> bars_;
   std::vector<Gate> gates_;
