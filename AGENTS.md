@@ -119,6 +119,11 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `IStore::apply_catalog_edits` (field-value compare-and-swap, one
   transaction) and identifiers only through `allocate_identifiers`; never
   through ad hoc UPDATEs. User guide: `docs/entry.md`.
+- A file the application writes for the user to open elsewhere (a report, a
+  figure, a template, a sheet) goes through `pychron::mark_as_user_file`
+  (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned
+  macOS application quarantines what it writes, and Gatekeeper then refuses
+  the file. Files pychron reads back itself (configs, stores) do not.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

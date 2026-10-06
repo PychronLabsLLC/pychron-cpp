@@ -1,4 +1,8 @@
 #include "scene_view.hpp"
+
+#include <filesystem>
+
+#include "pychron/core/user_file.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -472,9 +476,17 @@ void SceneView::reset_view() {
   plot_->replot();
 }
 
-bool SceneView::save_png(const QString& path, int width, int height) { return plot_->savePng(path, width, height); }
+bool SceneView::save_png(const QString& path, int width, int height) {
+  if (!plot_->savePng(path, width, height)) return false;
+  pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
+  return true;
+}
 
-bool SceneView::save_pdf(const QString& path) { return plot_->savePdf(path); }
+bool SceneView::save_pdf(const QString& path) {
+  if (!plot_->savePdf(path)) return false;
+  pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
+  return true;
+}
 
 const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where) const {
   const HitPoint* best = nullptr;

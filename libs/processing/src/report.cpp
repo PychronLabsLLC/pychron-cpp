@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "figure_common.hpp"
+#include "pychron/core/user_file.hpp"
 #include "pychron/processing/arar_groups.hpp"
 #include "pychron/reduction/arar_reduction.hpp"
 
@@ -839,8 +840,9 @@ Result<void> save_report(const Report& report, const std::filesystem::path& path
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out) return fail(ErrorKind::Io, "report: cannot write " + path.string());
   out << text;
-  out.flush();
+  out.close();
   if (!out) return fail(ErrorKind::Io, "report: writing " + path.string() + " failed");
+  mark_as_user_file(path);  // the user's own output: no quarantine on macOS
   return {};
 }
 

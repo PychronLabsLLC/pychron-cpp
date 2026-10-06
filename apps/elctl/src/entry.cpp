@@ -4,6 +4,8 @@
 
 #include "entry.hpp"
 
+#include "pychron/core/user_file.hpp"
+
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -140,7 +142,9 @@ Result<void> write_file(const std::string& path, const std::string& text) {
   std::ofstream out(path, std::ios::binary);
   if (!out) return pychron::fail(pychron::ErrorKind::Io, "cannot write " + path);
   out << text;
+  out.close();
   if (!out) return pychron::fail(pychron::ErrorKind::Io, "cannot write " + path);
+  pychron::mark_as_user_file(path);  // the user's own file: no quarantine on macOS
   return {};
 }
 
