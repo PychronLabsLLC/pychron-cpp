@@ -44,11 +44,13 @@ jobs:
             cc: clang
             cxx: clang++
             sanitize: address,undefined
+            jobs: 2  # three cores, and timing tests under four jobs at once fail
           - name: linux-gcc
             os: ubuntu-24.04
             cc: gcc-14
             cxx: g++-14
             sanitize: ""
+            jobs: 4
             postgres: true
             pg_url: postgresql://pychron:pychron@localhost:5432/pychron_test
           - name: linux-clang-asan
@@ -56,6 +58,7 @@ jobs:
             cc: clang-18
             cxx: clang++-18
             sanitize: address,undefined
+            jobs: 4
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -136,7 +139,7 @@ jobs:
       - name: Test
         # A failure is run once more, alone, at the end: the log's tail then
         # holds the output of every failed test, not a page of passes.
-        run: ctest --preset dev --parallel 4 || (ctest --preset dev --rerun-failed --output-on-failure; exit 1)
+        run: ctest --preset dev --parallel ${{ matrix.jobs }} || (ctest --preset dev --rerun-failed --output-on-failure; exit 1)
 
   windows:
     name: core (windows-msvc)
@@ -195,4 +198,4 @@ jobs:
           key: ccache-macos-qt6-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev-ui --parallel 4 || (ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)
+        run: ctest --preset dev-ui --parallel 2 || (ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)

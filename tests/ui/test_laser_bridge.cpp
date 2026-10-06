@@ -352,12 +352,36 @@ class LaserBridgeTest : public QObject {
     t.restart();
     QTest::qWait(10);
     const auto qwait_us = t.nsecsElapsed() / 1000;
-    return QStringLiteral("picture %1 us, moving %2 us, sleep_for(1 ms) %3 us, wait_for(40 ms) %4 us, qWait(10) %5 us")
+    // A call queued from another thread, as a frame is: how long until the
+    // event loop runs it.
+    qint64 queued_us = 0;
+    {
+      QEventLoop loop;
+      QObject target;
+      QElapsedTimer posted;
+      std::thread other([&] {
+        posted.start();
+        QMetaObject::invokeMethod(
+            &target,
+            [&] {
+              queued_us = posted.nsecsElapsed() / 1000;
+              loop.quit();
+            },
+            Qt::QueuedConnection);
+      });
+      QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+      loop.exec();
+      other.join();
+    }
+    return QStringLiteral(
+               "picture %1 us, moving %2 us, sleep_for(1 ms) %3 us, wait_for(40 ms) %4 us, qWait(10) %5 us, a queued "
+               "call %6 us")
         .arg(picture_us)
         .arg(moving_us)
         .arg(sleep_us)
         .arg(wait_us)
-        .arg(qwait_us);
+        .arg(qwait_us)
+        .arg(queued_us);
   }
 
   // The picture is video: a dozen frames a second at least, whatever else
@@ -371,10 +395,12 @@ class LaserBridgeTest : public QObject {
     int frames = 0, with_target = 0;
     std::uint64_t last_seq = 0;
     bool in_order = true;
+    int skipped = 0;  // frames the camera gave that were never shown
     QObject::connect(bridge_.get(), &LaserBridge::view, [&](const laser::CameraView& seen) {
       ++frames;
       if (seen.target) ++with_target;
       if (seen.frame.seq <= last_seq) in_order = false;
+      if (last_seq != 0 && seen.frame.seq > last_seq + 1) skipped += static_cast<int>(seen.frame.seq - last_seq - 1);
       last_seq = seen.frame.seq;
     });
     clock.start();
@@ -388,7 +414,10 @@ class LaserBridgeTest : public QObject {
       loop.exec();
     }
     const double per_second = frames * 1000.0 / static_cast<double>(clock.elapsed());
-    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second; %2").arg(per_second).arg(timing())));
+    QVERIFY2(per_second >= 12.0, qPrintable(QStringLiteral("%1 frames a second, %2 frames skipped; %3")
+                                                .arg(per_second)
+                                                .arg(skipped)
+                                                .arg(timing())));
     QVERIFY(in_order);
     test::settle(*bridge_);
     // nothing is looked for in it: the stage sat on a hole, and no frame says so
