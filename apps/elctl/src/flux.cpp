@@ -46,7 +46,10 @@ constexpr const char* kShortUsage =
     "                      [--monitors NAME] [--sample NAME] [--all-positions]\n"
     "                      [--omit RECORD_ID]... [--include RECORD_ID]... [--reset-omits]\n"
     "                      [--exclude-position HOLE]... [--no-save-position HOLE]...\n"
-    "                      [--csv FILE] [--save] [--user NAME]\n";
+    "                      [--csv FILE] [--save] [--user NAME]\n"
+    "       elctl flux show <irradiation> <level> --db <url>\n"
+    "       elctl flux history <irradiation> <level> [<hole>] --db <url>\n"
+    "       elctl flux monitors [list | show NAME | set FILE | default NAME] --db <url> [--user NAME]\n";
 
 constexpr const char* kUsageText =
     "usage: elctl flux fit <irradiation> [<level>] --db <url> [options]\n"
@@ -78,8 +81,17 @@ constexpr const char* kUsageText =
     "  --csv FILE                 every position, one row each\n"
     "  --save [--user NAME]       save the fit; nothing is written without it\n"
     "\n"
-    "Exit codes: 0 done; 1 a level could not be fitted, or a save conflicted;\n"
-    "2 usage or a fatal error.\n";
+    "elctl flux show <irradiation> <level> --db <url>\n"
+    "  The saved J of every position of a level, with its model and who saved it.\n"
+    "elctl flux history <irradiation> <level> [<hole>] --db <url>\n"
+    "  The saves of a level, newest first, one line per changeset with the holes it\n"
+    "  touched; with a hole, one line per revision of that position with its J.\n"
+    "elctl flux monitors [list | show NAME | set FILE | default NAME] --db <url> [--user NAME]\n"
+    "  The lab's monitor sets: list them (the default is marked *), print one as JSON,\n"
+    "  replace them all from a JSON file, or choose the default.\n"
+    "\n"
+    "Exit codes: 0 done; 1 a level could not be fitted, a save conflicted, or the name\n"
+    "asked for does not exist; 2 usage or a fatal error.\n";
 
 struct Args {
   std::string db, irradiation, level, csv, user;
@@ -355,6 +367,16 @@ std::string number17(const std::optional<double>& v) { return v ? number17(*v) :
 
 }  // namespace
 
+std::string flux_j_text(const std::optional<double>& v) { return j_text(v); }
+std::string flux_percent_of(const std::optional<double>& err, const std::optional<double>& value) {
+  return percent_of(err, value);
+}
+std::string flux_table(const std::vector<std::string>& head, const std::vector<std::vector<std::string>>& rows) {
+  std::ostringstream out;
+  print_table(out, head, rows);
+  return out.str();
+}
+
 std::string format_flux_fit(const pp::LevelFit& fit, const std::vector<std::string>& extra_warnings) {
   std::ostringstream out;
   const auto& m = fit.monitor_set;
@@ -532,29 +554,44 @@ struct Session {
   }
 };
 
-int run(const Args& a, Io io) {
-  // A fit reads: a mistyped SQLite path is an error, not a new empty store.
+}  // namespace
+
+Result<std::unique_ptr<ps::IStore>> open_flux_store(const std::string& db) {
+  // A command reads: a mistyped SQLite path is an error, not a new empty store.
   constexpr std::string_view kSqlite = "sqlite:";
-  if (a.db.starts_with(kSqlite) && a.db != "sqlite::memory:") {
+  if (db.starts_with(kSqlite) && db != "sqlite::memory:") {
     std::error_code code;
-    const fs::path file(a.db.substr(kSqlite.size()));
-    if (!fs::is_regular_file(file, code)) return fatal(io, "no database at " + file.string());
-    if (fs::file_size(file, code) == 0 && !code) return fatal(io, file.string() + " is empty: not a pychron store");
+    const fs::path file(db.substr(kSqlite.size()));
+    if (!fs::is_regular_file(file, code)) return fail(ErrorKind::Config, "no database at " + file.string());
+    if (fs::file_size(file, code) == 0 && !code)
+      return fail(ErrorKind::Config, file.string() + " is empty: not a pychron store");
   }
-  auto store = ps::open_store(ps::StoreConfig{a.db, false});
+  return ps::open_store(ps::StoreConfig{db, false});
+}
+
+Result<ps::Actor> flux_actor(ps::IStore& store, const std::string& user_name) {
+  const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
+  auto client = store.register_client({host, "reduction", std::nullopt, "elctl"});
+  if (!client) return fail(client.error());
+  const std::string user = user_name.empty() ? pychron::env_var("USER").value_or("pychron") : user_name;
+  auto u = store.ensure_user(*client, user);
+  if (!u) return fail(u.error());
+  return ps::Actor{*u, *client};
+}
+
+namespace {
+
+int run(const Args& a, Io io) {
+  auto store = open_flux_store(a.db);
   if (!store) return fatal(io, store.error().what);
   auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
   if (!source) return fatal(io, source.error().what);
 
   Session s{io, a, **store, **source, std::nullopt, {}, kOk, false};
   if (a.save) {
-    const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
-    auto client = (*store)->register_client({host, "reduction", std::nullopt, "elctl"});
-    if (!client) return fatal(io, client.error().what);
-    const std::string user = a.user.empty() ? pychron::env_var("USER").value_or("pychron") : a.user;
-    auto u = (*store)->ensure_user(*client, user);
-    if (!u) return fatal(io, u.error().what);
-    s.actor = ps::Actor{*u, *client};
+    auto actor = flux_actor(**store, a.user);
+    if (!actor) return fatal(io, actor.error().what);
+    s.actor = *actor;
   }
 
   std::vector<std::string> levels;
@@ -599,11 +636,19 @@ int flux_command(const std::vector<std::string>& args, Io io) {
     (args.empty() ? io.err : io.out) << kUsageText;
     return args.empty() ? kUsage : kOk;
   }
-  if (args[0] != "fit") return usage(io, "unknown subcommand '" + args[0] + "'");
   const std::vector<std::string> rest(args.begin() + 1, args.end());
+  if (args[0] != "fit" && args[0] != "show" && args[0] != "history" && args[0] != "monitors")
+    return usage(io, "unknown subcommand '" + args[0] + "'");
   if (!rest.empty() && (rest[0] == "help" || rest[0] == "--help")) {
     io.out << kUsageText;
     return kOk;
+  }
+  if (args[0] != "fit") {
+    try {
+      return flux_admin_command(args[0], rest, io);
+    } catch (const std::exception& e) {
+      return fatal(io, e.what());
+    }
   }
   auto parsed = parse(rest);
   if (!parsed) return usage(io, parsed.error().what);

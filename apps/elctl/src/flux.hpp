@@ -30,6 +30,12 @@
 // Prints the monitor and the unknown tables and the warnings. Without
 // --save nothing is written to the store.
 //
+//   elctl flux show <irradiation> <level> --db <url>
+//   elctl flux history <irradiation> <level> [<hole>] --db <url>
+//   elctl flux monitors [list | show NAME | set FILE | default NAME] --db <url> [--user NAME]
+// (flux_admin.cpp: what a level holds, how it came to hold it, and the
+// lab's monitor sets.)
+//
 // Exit codes: 0 done (warnings included); 1 a level could not be fitted or a
 // save conflicted; 2 usage or a fatal error (no store, bad flag). Built
 // without persistence, says so and exits 2.
@@ -40,8 +46,12 @@
 #include "cli.hpp"
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
+#include <memory>
+#include <optional>
 #include <string_view>
 
+#include "pychron/core/error.hpp"
+#include "pychron/persistence/store.hpp"
 #include "pychron/processing/flux_store.hpp"
 #endif
 
@@ -65,6 +75,23 @@ std::string csv_field(std::string_view text);
 // The head line, and a row for every position of the fit; rows end in CRLF.
 std::string flux_csv_header();
 std::string flux_csv_rows(const pychron::processing::LevelFit& fit);
+
+// ---- Shared by flux.cpp and flux_admin.cpp ----------------------------------
+
+// The store behind `url` for a command that reads: a SQLite path that is not
+// a store is an error, not a new empty one.
+pychron::Result<std::unique_ptr<pychron::persistence::IStore>> open_flux_store(const std::string& url);
+// The actor that writes: this machine as a client, `user_name` (else $USER) as the user.
+pychron::Result<pychron::persistence::Actor> flux_actor(pychron::persistence::IStore& store, const std::string& user_name);
+
+// `%.4e`, "-" for an absent or non-finite value; the share of `err` in `value` in percent.
+std::string flux_j_text(const std::optional<double>& v);
+std::string flux_percent_of(const std::optional<double>& err, const std::optional<double>& value);
+// Left aligned columns two spaces apart; the head row first; every line ends in a line break.
+std::string flux_table(const std::vector<std::string>& head, const std::vector<std::vector<std::string>>& rows);
+
+// show, history and monitors; `rest` is what follows the subcommand.
+int flux_admin_command(const std::string& subcommand, const std::vector<std::string>& rest, Io io);
 
 #endif
 

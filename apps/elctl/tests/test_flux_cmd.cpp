@@ -359,6 +359,203 @@ TEST_F(FluxCmd, AWholeIrradiationCsvHoldsEveryLevelOnce) {
   EXPECT_EQ(parse_csv(text.str()).size(), 13u);  // the header once, then level A
 }
 
+// `text` with every run of spaces made one.
+std::string collapse(const std::string& text) {
+  std::string out;
+  for (const char c : text) {
+    if (c == ' ' && !out.empty() && out.back() == ' ') continue;
+    out += c;
+  }
+  return out;
+}
+
+// The lines of `out` (without the line break).
+std::vector<std::string> lines_of(const std::string& out) {
+  std::istringstream in(out);
+  std::vector<std::string> lines;
+  for (std::string line; std::getline(in, line);) lines.push_back(line);
+  return lines;
+}
+
+// The lines of `out` holding `needle`.
+std::vector<std::string> lines_with(const std::string& out, const std::string& needle) {
+  std::vector<std::string> found;
+  for (auto& line : lines_of(out))
+    if (contains(line, needle)) found.push_back(std::move(line));
+  return found;
+}
+
+TEST_F(FluxCmd, ShowListsTheSavedJ) {
+  // Before any save every value column is "-".
+  Outcome o = run_raw({"flux", "show", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(collapse(o.out), "hole identifier sample J +/- % model saved by saved (UTC)")) << o.out;
+  auto lines = lines_of(o.out);
+  ASSERT_GE(lines.size(), 13u) << o.out;
+  const auto before = split_ws(lines[1 + 8]);  // hole 9, an unknown
+  ASSERT_EQ(before.size(), 9u) << lines[9];
+  EXPECT_EQ(before[0], "9");
+  for (std::size_t i = 3; i < before.size(); ++i) EXPECT_EQ(before[i], "-") << i;
+
+  ASSERT_EQ(fit({"--model", "plane", "--save", "--user", "jsmith"}).code, elctl::kOk);
+  o = run_raw({"flux", "show", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  lines = lines_of(o.out);
+  ASSERT_EQ(lines.size(), 13u) << o.out;  // the head and the twelve positions
+  for (int hole = 1; hole <= 12; ++hole) {
+    const auto cells = split_ws(lines[static_cast<std::size_t>(hole)]);
+    ASSERT_GE(cells.size(), 9u) << lines[static_cast<std::size_t>(hole)];
+    EXPECT_EQ(cells[0], std::to_string(hole));
+    EXPECT_NE(cells[3], "-");
+    EXPECT_NE(cells[4], "-");
+    EXPECT_NE(cells[5], "-");
+    EXPECT_EQ(cells[6], "Plane");
+    EXPECT_EQ(cells[7], "jsmith");
+  }
+  EXPECT_TRUE(contains(lines[1], "66001")) << lines[1];
+}
+
+TEST_F(FluxCmd, HistoryIsNewestFirstByChangeset) {
+  ASSERT_EQ(fit({"--model", "plane", "--save", "--user", "jsmith"}).code, elctl::kOk);
+  ASSERT_EQ(fit({"--model", "nearest", "--neighbors", "3", "--save", "--user", "jsmith"}).code, elctl::kOk);
+  Outcome o = run_raw({"flux", "history", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  const auto lines = lines_of(o.out);
+  ASSERT_EQ(lines.size(), 3u) << o.out;  // the head and two changesets
+  EXPECT_TRUE(contains(lines[0], "saved (UTC)")) << o.out;
+  EXPECT_TRUE(contains(lines[0], "positions")) << o.out;
+  for (std::size_t i = 1; i < 3; ++i) {
+    EXPECT_TRUE(contains(lines[i], "jsmith")) << lines[i];
+    EXPECT_TRUE(contains(lines[i], "fit flux for NM-300A")) << lines[i];
+    EXPECT_TRUE(contains(lines[i], "1, 2, 3")) << lines[i];
+  }
+  // Newest first: the ISO time of the first changeset is not before the second's.
+  EXPECT_GE(split_ws(lines[1])[0], split_ws(lines[2])[0]) << o.out;
+
+  // One position: a line per revision, newest first, with its J.
+  o = run_raw({"flux", "history", "NM-300", "A", "9", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  const auto hole = lines_of(o.out);
+  ASSERT_EQ(hole.size(), 3u) << o.out;
+  EXPECT_TRUE(contains(hole[0], "J")) << o.out;
+  for (std::size_t i = 1; i < 3; ++i) {
+    EXPECT_TRUE(contains(hole[i], "fit flux for NM-300A")) << hole[i];
+    EXPECT_TRUE(contains(hole[i], "e-")) << hole[i];  // a J in %.4e
+  }
+  EXPECT_TRUE(contains(hole[1], "Nearest Neighbors")) << hole[1];
+  EXPECT_TRUE(contains(hole[2], "Plane")) << hole[2];
+
+  o = run_raw({"flux", "history", "NM-300", "A", "99", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kFailed);
+  EXPECT_TRUE(contains(o.err, "99")) << o.err;
+}
+
+TEST_F(FluxCmd, MonitorsListsTheDefaults) {
+  for (const auto& args : {std::vector<std::string>{"flux", "monitors", "--db", db_},
+                           std::vector<std::string>{"flux", "monitors", "list", "--db", db_}}) {
+    const Outcome o = run_raw(args);
+    EXPECT_EQ(o.code, elctl::kOk) << o.err;
+    EXPECT_TRUE(contains(collapse(o.out), "name sample material age (Ma) +/- lambda_k")) << o.out;
+    const auto kuiper = lines_with(o.out, "FC-2 (Kuiper 2008)");
+    ASSERT_EQ(kuiper.size(), 1u) << o.out;
+    EXPECT_EQ(kuiper[0][0], '*');
+    EXPECT_TRUE(contains(kuiper[0], "28.201")) << kuiper[0];
+    const auto renne = lines_with(o.out, "FC-2 (Renne 1998)");
+    ASSERT_EQ(renne.size(), 1u) << o.out;
+    EXPECT_NE(renne[0][0], '*');
+  }
+  const Outcome shown = run_raw({"flux", "monitors", "show", "FC-2 (Renne 1998)", "--db", db_});
+  EXPECT_EQ(shown.code, elctl::kOk) << shown.err;
+  EXPECT_TRUE(contains(shown.out, "\"name\": \"FC-2 (Renne 1998)\"")) << shown.out;
+  EXPECT_TRUE(contains(shown.out, "\"age_ma\"")) << shown.out;
+  EXPECT_FALSE(contains(shown.out, "Kuiper")) << shown.out;
+  const Outcome none = run_raw({"flux", "monitors", "show", "nope", "--db", db_});
+  EXPECT_EQ(none.code, elctl::kFailed);
+  EXPECT_TRUE(contains(none.err, "Renne")) << none.err;
+}
+
+TEST_F(FluxCmd, MonitorsSetAndDefault) {
+  const Outcome shown = run_raw({"flux", "monitors", "show", "FC-2 (Renne 1998)", "--db", db_});
+  ASSERT_EQ(shown.code, elctl::kOk);
+  // The file holds the two stock sets and a third.
+  const Outcome kuiper = run_raw({"flux", "monitors", "show", "FC-2 (Kuiper 2008)", "--db", db_});
+  ASSERT_EQ(kuiper.code, elctl::kOk);
+  const std::string text = R"j({"default": "FC-2 (Kuiper 2008)", "monitors": [)j" + kuiper.out + ", " + shown.out +
+                           R"j(, {"name": "FC-2 (mine)", "sample": "FC-2", "material": "sanidine", "age_ma": 28.3, )j" +
+                           R"("age_err_ma": 0.1, "lambda_ec": [5.757e-11, 1.6e-13], )" +
+                           R"("lambda_b": [4.955e-10, 1.3e-12]}]})";
+  const std::string file = path("sets.json").string();
+  {
+    std::ofstream out(file);
+    out << text;
+  }
+  Outcome o = run_raw({"flux", "monitors", "set", file, "--db", db_, "--user", "jsmith"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "saved 3 monitor sets")) << o.out;
+  o = run_raw({"flux", "monitors", "--db", db_});
+  EXPECT_EQ(lines_of(o.out).size(), 4u) << o.out;  // the head and three sets
+  EXPECT_TRUE(contains(o.out, "FC-2 (mine)")) << o.out;
+
+  o = run_raw({"flux", "monitors", "default", "FC-2 (mine)", "--db", db_, "--user", "jsmith"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  o = run_raw({"flux", "monitors", "list", "--db", db_});
+  EXPECT_EQ(lines_with(o.out, "FC-2 (mine)")[0][0], '*') << o.out;
+  EXPECT_NE(lines_with(o.out, "FC-2 (Kuiper 2008)")[0][0], '*') << o.out;
+  // The default is what a fit names.
+  o = fit({});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "monitors FC-2 (mine): 28.3 +/- 0.1 Ma")) << o.out;
+}
+
+TEST_F(FluxCmd, MonitorsSetRejectsABadFile) {
+  const auto before = seq();
+  const std::string file = path("dup.json").string();
+  {
+    std::ofstream out(file);
+    out << R"({"default": "A", "monitors": [)"
+        << R"({"name": "A", "sample": "S", "material": "m", "age_ma": 1, "age_err_ma": 0.1,)"
+        << R"( "lambda_ec": [1e-11, 1e-13], "lambda_b": [1e-10, 1e-12]},)"
+        << R"({"name": "A", "sample": "S", "material": "m", "age_ma": 1, "age_err_ma": 0.1,)"
+        << R"( "lambda_ec": [1e-11, 1e-13], "lambda_b": [1e-10, 1e-12]}]})";
+  }
+  Outcome o = run_raw({"flux", "monitors", "set", file, "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "flux monitors:")) << o.err;
+  EXPECT_TRUE(contains(o.err, "'A' is used twice")) << o.err;
+  EXPECT_EQ(seq(), before);
+  o = run_raw({"flux", "monitors", "set", path("missing.json").string(), "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "missing.json")) << o.err;
+  EXPECT_EQ(seq(), before);
+  o = run_raw({"flux", "monitors", "set", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+}
+
+TEST_F(FluxCmd, MonitorsDefaultOfAnUnknownNameListsWhatExists) {
+  const auto before = seq();
+  const Outcome o = run_raw({"flux", "monitors", "default", "nope", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kFailed);
+  EXPECT_TRUE(contains(o.err, "nope")) << o.err;
+  EXPECT_TRUE(contains(o.err, "FC-2 (Kuiper 2008)")) << o.err;
+  EXPECT_TRUE(contains(o.err, "FC-2 (Renne 1998)")) << o.err;
+  EXPECT_EQ(seq(), before);
+}
+
+TEST_F(FluxCmd, UnknownSubcommandIsUsage) {
+  Outcome o = run_raw({"flux", "nope"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "unknown subcommand 'nope'")) << o.err;
+  EXPECT_TRUE(contains(o.err, "usage: elctl flux fit")) << o.err;
+  EXPECT_TRUE(contains(o.err, "flux show")) << o.err;
+  EXPECT_TRUE(contains(o.err, "flux history")) << o.err;
+  EXPECT_TRUE(contains(o.err, "flux monitors")) << o.err;
+  EXPECT_EQ(o.out, "");
+  o = run_raw({"flux", "show", "NM-300"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  o = run_raw({"flux", "monitors", "bogus", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+}
+
 TEST(FluxCmdFormat, CsvFieldQuotesOnlyWhatNeedsIt) {
   EXPECT_EQ(elctl::csv_field("plain"), "plain");
   EXPECT_EQ(elctl::csv_field("a,b"), "\"a,b\"");
