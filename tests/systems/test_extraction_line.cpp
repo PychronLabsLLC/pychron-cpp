@@ -646,11 +646,15 @@ TEST(ExtractionLine, ALineTheSimulatorRefusesFailsTheLoad) {
   EXPECT_NE(gauge.error().what.find("IG1"), std::string::npos) << gauge.error().what;
 }
 
-// Every warning the line logs while it is built, through a hub of the test's.
+// What the line logs while it is built, through a hub of the test's: every
+// warning, and every record at info.
 struct BuildLog {
   explicit BuildLog(const Clock& clock) {
     sub = bus.subscribe<Log>([this](const Log& e) {
-      if (e.logger == "extraction_line" && e.level == LogLevel::Warn) warnings.push_back(e.message);
+      if (e.logger != "extraction_line") return;
+      if (e.level == LogLevel::Warn) warnings.push_back(e.message);
+      if (e.level == LogLevel::Info) infos.push_back(e.message);
+      if (e.message.find("carry no gas") != std::string::npos) no_gas.push_back(e);
     });
     auto made = LogHub::create(config::LoggingConfig{}, clock, &bus);
     EXPECT_TRUE(made);
@@ -663,33 +667,244 @@ struct BuildLog {
   }
   SignalBus bus;
   std::vector<std::string> warnings;
+  std::vector<std::string> infos;
+  std::vector<Log> no_gas;  // the report of valves with no physics, at whatever level
   SignalBus::Subscription sub;
   std::shared_ptr<LogHub> hub;
 };
 
-TEST(ExtractionLine, WarnsOnceOfEachValveTheSimulatorCannotModel) {
+constexpr const char* kTwoValves = R"(
+[system]
+name = "t"
+
+[transports.bus]
+kind = "sim"
+
+[drivers.relay]
+kind = "proxr_relay"
+transport = "bus"
+
+[[valves]]
+name = "V1"
+actuator = "relay"
+address = "1"
+
+[[valves]]
+name = "V2"
+actuator = "relay"
+address = "2"
+)";
+
+// Pipe drawn straight from one valve to the next is a small volume of its
+// own between them, so both valves carry gas.
+TEST(ExtractionLine, TwoValvesJoinedDirectlyGetAPipeBetweenThem) {
   ManualClock clock;
-  // right --B-- M1 (two valves and no volume between), on top of the canvas.
-  const std::string canvas = std::string(kCanvas) +
-                             "\n[[valve]]\nname = \"B\"\npos = [0, 0]\n"
-                             "\n[[connection]]\nstart = \"right\"\nend = \"B\"\n"
-                             "\n[[connection]]\nstart = \"B\"\nend = \"M1\"\n";
+  // tank (10 cc) -- V1 -- V2 -- line (10 cc)
+  const char* canvas = R"(
+[[valve]]
+name = "V1"
+pos = [0, 0]
+
+[[valve]]
+name = "V2"
+pos = [0, 0]
+
+[[stage]]
+name = "tank"
+pos = [0, 0]
+volume = 10.0
+
+[[stage]]
+name = "line"
+pos = [0, 0]
+volume = 10.0
+
+[[connection]]
+start = "tank"
+end = "V1"
+
+[[connection]]
+start = "V2"
+end = "V1"
+
+[[connection]]
+start = "V2"
+end = "line"
+)";
+  BuildLog log(clock);
+  auto opts = manual(clock);
+  opts.log_hub = log.hub;
+  opts.sim.outgassing = 0.0;  // what is in a volume is what was put there
+  opts.sim.outgassing_active = 0.0;
+  opts.sim.initial_pressures = {{"tank", 1e-4}};
+  auto made = ExtractionLine::create(system_config(kTwoValves), canvas_model(canvas), opts);
+  ASSERT_TRUE(made) << made.error().what;
+  sim::SimSystem& lab = *(*made)->sim();
+  EXPECT_TRUE(lab.valves_without_physics().empty());
+  EXPECT_TRUE(log.no_gas.empty()) << log.no_gas[0].message;
+  EXPECT_TRUE(log.warnings.empty()) << log.warnings[0];
+  ASSERT_TRUE(lab.has_volume("V1~V2")) << "named for the two valves, in lexical order";
+  EXPECT_FALSE(lab.has_volume("V2~V1"));
+  EXPECT_NEAR(*lab.pressure("V1~V2"), 1e-8, 1e-20);
+
+  // V1 alone: the pipe fills from the tank, and its size is 1 cc; the line,
+  // behind V2, does not change.
+  lab.set_valve("V1", true);
+  clock.advance(10s);
+  const double filled = (10 * 1e-4 + 1 * 1e-8) / 11;
+  EXPECT_NEAR(*lab.pressure("V1~V2"), filled, filled * 1e-9);
+  EXPECT_NEAR(*lab.pressure("tank"), filled, filled * 1e-9);
+  EXPECT_DOUBLE_EQ(*lab.pressure("line"), 1e-8);
+
+  // Both: the tank and the line equilibrate through it.
+  lab.set_valve("V2", true);
+  clock.advance(10s);
+  const double level = (10 * 1e-4 + 1 * 1e-8 + 10 * 1e-8) / 21;
+  EXPECT_NEAR(*lab.pressure("tank"), level, level * 1e-9);
+  EXPECT_NEAR(*lab.pressure("line"), level, level * 1e-9);
+  EXPECT_NEAR(*lab.pressure("V1~V2"), level, level * 1e-9);
+}
+
+// A pipe's size is `[defaults] pipe_cc`, or its own by name.
+TEST(ExtractionLine, SimTomlSizesAPipeBetweenTwoValves) {
+  ManualClock clock;
+  SimLab lab("pipe");
+  lab.write("extraction_line.toml", kTwoValves);
+  lab.write("canvas.toml",
+            "[[valve]]\nname = \"V1\"\npos = [0, 0]\n[[valve]]\nname = \"V2\"\npos = [0, 0]\n"
+            "[[valve]]\nname = \"V3\"\npos = [0, 0]\n"
+            "[[stage]]\nname = \"tank\"\npos = [0, 0]\nvolume = 10.0\n"
+            "[[stage]]\nname = \"line\"\npos = [0, 0]\nvolume = 10.0\n"
+            "[[connection]]\nstart = \"tank\"\nend = \"V1\"\n[[connection]]\nstart = \"V1\"\nend = \"V2\"\n"
+            "[[connection]]\nstart = \"V3\"\nend = \"V2\"\n[[connection]]\nstart = \"V3\"\nend = \"line\"\n");
+  lab.write("extraction_line.toml",
+            std::string(kTwoValves) + "\n[[valves]]\nname = \"V3\"\nactuator = \"relay\"\naddress = \"3\"\n");
+  lab.write("sim.toml", "[defaults]\npipe_cc = 4\noutgassing = 0\n[volumes.tank]\npressure = 1e-4\n"
+                        "[volumes.\"V2~V3\"]\nvolume_cc = 2\npressure = 3e-6\n");
+  auto opts = manual(clock);
+  opts.sim.outgassing_active = 0.0;  // no key of the file's
+  auto made = lab.load(opts);
+  ASSERT_TRUE(made) << made.error().what;
+  sim::SimSystem& sim = *(*made)->sim();
+  // Three valves in a row: a pipe each side of the middle one.
+  ASSERT_TRUE(sim.has_volume("V1~V2"));
+  ASSERT_TRUE(sim.has_volume("V2~V3"));
+  EXPECT_TRUE(sim.valves_without_physics().empty());
+  EXPECT_DOUBLE_EQ(*sim.pressure("V2~V3"), 3e-6);
+  sim.set_valve("V1", true);
+  clock.advance(10s);
+  const double first = (10 * 1e-4 + 4 * 1e-8) / 14;  // pipe_cc
+  EXPECT_NEAR(*sim.pressure("V1~V2"), first, first * 1e-9);
+  sim.set_valve("V1", false);
+  sim.set_valve("V2", true);
+  clock.advance(10s);
+  const double second = (4 * first + 2 * 3e-6) / 6;  // its own size
+  EXPECT_NEAR(*sim.pressure("V2~V3"), second, second * 1e-9);
+
+  lab.write("sim.toml", "[volumes.\"V1~V3\"]\nvolume_cc = 2\n");
+  EXPECT_FALSE(lab.load(manual(clock))) << "no such pipe";
+}
+
+// Two valves on a tee with a volume are both on that volume: the tee is the
+// volume's, and no pipe is made between them.
+TEST(ExtractionLine, ValvesOnATeeWithAVolumeShareThatVolume) {
+  ManualClock clock;
+  const char* canvas = R"(
+[[valve]]
+name = "V1"
+pos = [0, 0]
+
+[[valve]]
+name = "V2"
+pos = [0, 0]
+
+[[stage]]
+name = "tank"
+pos = [0, 0]
+volume = 10.0
+
+[[stage]]
+name = "mid"
+pos = [0, 0]
+volume = 5.0
+
+[[stage]]
+name = "line"
+pos = [0, 0]
+volume = 10.0
+
+[[connection]]
+start = "tank"
+end = "V1"
+
+[[tee]]
+left = "V1"
+right = "V2"
+mid = "mid"
+
+[[connection]]
+start = "V2"
+end = "line"
+)";
+  auto opts = manual(clock);
+  opts.sim.outgassing = 0.0;
+  opts.sim.outgassing_active = 0.0;
+  opts.sim.initial_pressures = {{"tank", 1e-4}};
+  auto made = ExtractionLine::create(system_config(kTwoValves), canvas_model(canvas), opts);
+  ASSERT_TRUE(made) << made.error().what;
+  sim::SimSystem& lab = *(*made)->sim();
+  EXPECT_FALSE(lab.has_volume("V1~V2"));
+  EXPECT_TRUE(lab.valves_without_physics().empty());
+  lab.set_valve("V1", true);
+  lab.set_valve("V2", true);
+  clock.advance(10s);
+  const double level = (10 * 1e-4 + 5 * 1e-8 + 10 * 1e-8) / 25;
+  EXPECT_NEAR(*lab.pressure("line"), level, level * 1e-9);
+  EXPECT_NEAR(*lab.pressure("mid"), level, level * 1e-9);
+}
+
+// Valves the simulator still cannot give physics (joined to one volume, to
+// none, or to three or more) are said once, in one line, and not as a
+// warning: a drawing may leave a valve's far side off the page.
+TEST(ExtractionLine, ValvesWithoutPhysicsAreReportedOnce) {
+  ManualClock clock;
+  // B dangles from right; kCanvas's M1 is joined to nothing.
+  const std::string canvas = std::string(kCanvas) + "\n[[valve]]\nname = \"B\"\npos = [0, 0]\n"
+                                                    "\n[[connection]]\nstart = \"right\"\nend = \"B\"\n";
   BuildLog log(clock);
   auto opts = manual(clock);
   opts.log_hub = log.hub;
   auto line = ExtractionLine::create(system_config(), canvas_model(canvas.c_str()), opts);
   ASSERT_TRUE(line) << line.error().what;
-  EXPECT_EQ(log.count("valve 'B' carries no gas in the simulation"), 1) << "B: joined to M1";
-  EXPECT_EQ(log.count("valve 'M1' carries no gas in the simulation"), 1) << "M1: joined to B and to nothing else";
-  EXPECT_EQ(log.count("valve 'A' carries"), 0);
-  ASSERT_EQ(log.warnings.size(), 2u);
-  EXPECT_NE(log.warnings[0].find("valve 'M1' with no volume between"), std::string::npos) << log.warnings[0];
-  // It is still a valve, with a state.
+  EXPECT_TRUE(log.warnings.empty()) << log.warnings[0];
+  ASSERT_EQ(log.no_gas.size(), 1u);
+  EXPECT_EQ(log.no_gas[0].level, LogLevel::Info);
+  const std::string& said = log.no_gas[0].message;
+  EXPECT_EQ(said.find("sim: 2 valve(s) carry no gas in the simulation: B ("), 0u) << said;
+  EXPECT_NE(said.find("B (it is joined to one volume only ('right'))"), std::string::npos) << said;
+  EXPECT_NE(said.find(", M1 (it is joined to no volume)"), std::string::npos) << said;
+  EXPECT_EQ(said.find("A ("), std::string::npos) << said;
+  // Each is still a valve, with a state.
   ASSERT_TRUE((*line)->start());
   ASSERT_TRUE((*line)->actuate("B", SwitchOp::Open, "test"));
   EXPECT_TRUE((*line)->sim()->valve_open("B"));
 
-  // A sound canvas warns of nothing. (kCanvas's M1 is joined to nothing.)
+  // A valve joined to a valve and to two volumes is on three: said too.
+  //   left --A-- right, and A --B-- far: A has left, right and the pipe A~B.
+  BuildLog three(clock);
+  opts.log_hub = three.hub;
+  const std::string tee = std::string(kCanvas) + "\n[[valve]]\nname = \"B\"\npos = [0, 0]\n"
+                                                 "\n[[stage]]\nname = \"far\"\npos = [0, 0]\n"
+                                                 "\n[[connection]]\nstart = \"A\"\nend = \"B\"\n"
+                                                 "\n[[connection]]\nstart = \"B\"\nend = \"far\"\n";
+  ASSERT_TRUE(ExtractionLine::create(system_config(), canvas_model(tee.c_str()), opts));
+  ASSERT_EQ(three.no_gas.size(), 1u);
+  EXPECT_EQ(three.no_gas[0].message.find("sim: 2 valve(s) carry no gas in the simulation: A (it is joined to 3 volumes"),
+            0u)
+      << three.no_gas[0].message;
+  EXPECT_TRUE(three.warnings.empty());
+
+  // A sound canvas says nothing.
   BuildLog quiet(clock);
   opts.log_hub = quiet.hub;
   const std::string sound = std::string(kCanvas) + "\n[[connection]]\nstart = \"right\"\nend = \"M1\"\n"
@@ -697,6 +912,79 @@ TEST(ExtractionLine, WarnsOnceOfEachValveTheSimulatorCannotModel) {
                                                    "\n[[connection]]\nstart = \"M1\"\nend = \"far\"\n";
   ASSERT_TRUE(ExtractionLine::create(system_config(), canvas_model(sound.c_str()), opts));
   EXPECT_TRUE(quiet.warnings.empty()) << quiet.warnings[0];
+  EXPECT_TRUE(quiet.no_gas.empty()) << quiet.no_gas[0].message;
+}
+
+// The NMGRL valve box draws pipe from valve to valve in five places and has
+// two tees of two valves and a volume. Read from its canvas, the valves that
+// still carry no gas are the ones drawn with one side or neither:
+//   FE, FF, FG                          joined to nothing (the furnace's shutters)
+//   G, NP-10CRough, GP50Manual_Rough    one side (CO2, NP-10C, GP502): the roughing side is not drawn
+//   RDiode                              one side (the Diode tee): likewise
+TEST(ExtractionLine, TheNmgrlExampleModelsItsValveToValveJoins) {
+  const std::filesystem::path dir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
+  ManualClock clock;
+  BuildLog log(clock);
+  ExtractionLine::Options opts;
+  opts.clock = &clock;
+  opts.scheduler.threads = 0;
+  opts.run_scheduler = false;
+  opts.log_hub = log.hub;
+  opts.sim.noise = 0.0;
+  opts.state_file = std::filesystem::temp_directory_path() / "pychron-test-nmgrl-pipes.state.toml";
+  std::filesystem::remove(opts.state_file);
+  auto loaded = ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", opts);
+  ASSERT_TRUE(loaded) << loaded.error().what;
+  sim::SimSystem& lab = *(*loaded)->sim();
+
+  std::vector<std::string> without;
+  for (const auto& [valve, why] : lab.valves_without_physics()) without.push_back(valve);
+  const std::vector<std::string> expected{"FE", "FF", "FG", "G", "GP50Manual_Rough", "NP-10CRough", "RDiode"};
+  EXPECT_EQ(without, expected);
+  ASSERT_EQ(log.no_gas.size(), 1u);
+  EXPECT_EQ(log.no_gas[0].level, LogLevel::Info);
+  EXPECT_EQ(log.no_gas[0].message.find("sim: 7 valve(s) carry no gas in the simulation: FE ("), 0u)
+      << log.no_gas[0].message;
+  EXPECT_EQ(log.count("carr"), 0) << "no warning of a valve";
+
+  // The pipes: one for each pair joined by a connection, none for a tee's pair.
+  for (const char* pipe : {"ADiode~B", "D~F", "E~I", "FA~FC", "R~S"}) EXPECT_TRUE(lab.has_volume(pipe)) << pipe;
+  for (const char* none : {"ADiode~RDiode", "MSManual~R", "B~ADiode", "F~D", "I~E", "FC~FA", "S~R"}) {
+    EXPECT_FALSE(lab.has_volume(none)) << none;
+  }
+
+  // And gas goes through them. Bone to Minibone is E, the pipe, I.
+  ASSERT_TRUE(lab.set_pressure("Bone", 1e-3));
+  const double minibone = *lab.pressure("Minibone");
+  lab.set_valve("E", true);
+  clock.advance(60s);
+  EXPECT_GT(*lab.pressure("E~I"), 0.9e-3);
+  EXPECT_LT(*lab.pressure("Minibone"), 2 * minibone + 1e-7) << "I is closed";
+  lab.set_valve("I", true);
+  clock.advance(60s);
+  EXPECT_GT(*lab.pressure("Minibone"), 1e-4);
+  // Microbone to Jan's getter and Jan is S, the pipe, R, then the tee's
+  // volume and MSManual.
+  lab.set_valve("E", false);
+  lab.set_valve("I", false);
+  ASSERT_TRUE(lab.set_pressure("Microbone", 1e-3));
+  for (const char* valve : {"S", "R", "MSManual"}) lab.set_valve(valve, true);
+  clock.advance(60s);
+  EXPECT_GT((*lab.partial_pressures("Jan"))[sim::index(sim::Species::Ar40)], 1e-7);
+  // Bone to the diode laser's chamber is B, the pipe, ADiode; to the CO2
+  // chamber D, the pipe, F; the furnace manifold to its turbo FC, the pipe, FA.
+  ASSERT_TRUE(lab.set_pressure("Bone", 1e-3));
+  for (const char* valve : {"B", "ADiode", "D", "F"}) lab.set_valve(valve, true);
+  clock.advance(60s);
+  EXPECT_GT(*lab.pressure("Diode"), 1e-4);
+  EXPECT_GT(*lab.pressure("CO2"), 1e-4);
+  ASSERT_TRUE(lab.set_pressure("FurnaceManifold", 1e-3));
+  lab.set_valve("FC", true);
+  clock.advance(60s);
+  EXPECT_GT(*lab.pressure("FA~FC"), 0.5e-3);
+  lab.set_valve("FA", true);
+  clock.advance(600s);
+  EXPECT_LT(*lab.pressure("FurnaceManifold"), 1e-5) << "pumped by FATurbo through FA";
 }
 
 TEST(ExtractionLine, WarnsOnceOfASecondSpectrometerStage) {

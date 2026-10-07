@@ -16,7 +16,9 @@
 // Its names are the canvas's: a line loaded without its canvas reads
 // neither (only a file the caller names in Options::sim_file). A sim.toml
 // that does not read, or a line the simulator cannot describe, fails the
-// load; a valve it cannot give physics is a warning in the log.
+// load. Two valves drawn joined directly have a small pipe volume between
+// them, `<a>~<b>`; the valves it still cannot give physics (one side drawn,
+// or neither) are named in one line of the log, at info.
 //
 // start():
 //   1. opens every transport (all-or-nothing: on any failure all are closed

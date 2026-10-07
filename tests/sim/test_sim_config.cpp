@@ -89,6 +89,8 @@ TEST_F(SimConfig, AnEmptyFileGivesTheDefaults) {
   EXPECT_EQ(s.seed, std::uint64_t{0x5eed});
   EXPECT_EQ(s.tank_argon40, 3e-5);
   EXPECT_EQ(s.pipette_cc, 0.1);
+  EXPECT_EQ(s.gauge_cc, 1.0);
+  EXPECT_EQ(s.pipe_cc, 1.0);
   EXPECT_EQ(s.pump_speed, 50.0);
   EXPECT_EQ(s.pump_base, 1e-9);
   EXPECT_EQ(s.getter_speed, 1.0);
@@ -274,6 +276,8 @@ TEST_F(SimConfig, RefusesANegativeOrNonFiniteNumber) {
     const std::string v = bad;
     expect_refused("[defaults]\npressure = " + v + "\n", "defaults.pressure");
     expect_refused("[defaults]\nvolume_cc = " + v + "\n", "defaults.volume_cc");
+    expect_refused("[defaults]\npipe_cc = " + v + "\n", "defaults.pipe_cc");
+    expect_refused("[defaults]\ngauge_cc = " + v + "\n", "defaults.gauge_cc");
     expect_refused("[defaults]\nvalve_conductance = " + v + "\n", "defaults.valve_conductance");
     expect_refused("[defaults]\noutgassing = " + v + "\n", "defaults.outgassing");
     expect_refused("[defaults]\nnoise = " + v + "\n", "defaults.noise");
@@ -308,6 +312,8 @@ TEST_F(SimConfig, RefusesANumberNoLineCanHave) {
   expect_refused("[defaults]\npressure = 1e5\n", "defaults.pressure");
   expect_refused("[defaults]\nvolume_cc = 0\n", "defaults.volume_cc");
   expect_refused("[defaults]\nvolume_cc = 1e10\n", "defaults.volume_cc");
+  expect_refused("[defaults]\npipe_cc = 0\n", "defaults.pipe_cc");
+  expect_refused("[defaults]\ngauge_cc = 1e10\n", "defaults.gauge_cc");
   expect_refused("[defaults]\nvalve_conductance = 1e10\n", "defaults.valve_conductance");
   expect_refused("[defaults]\noutgassing = 1e4\n", "defaults.outgassing");
   expect_refused("[defaults]\nnoise = 11\n", "defaults.noise");

@@ -10,13 +10,16 @@
 //   [defaults]             every volume and valve not named below
 //     pressure             mbar, as air                    default_pressure
 //     volume_cc            cc, a volume with no size       default_volume_cc
+//     pipe_cc              cc, the pipe between two valves pipe_cc
+//     gauge_cc             cc, a gauge with no size        gauge_cc
 //     valve_conductance    L/s for Ar40                    valve_conductance
 //     outgassing           mbar L / s of Ar40 per litre    outgassing
 //     noise                relative 1-sigma on gauges      noise
 //     seed                 of that noise                   seed
 //   [compositions.<name>]  ratios to Ar36, by species      named
 //     Ar36 Ar37 Ar38 Ar39 Ar40 active   (one not given is 0)
-//   [volumes.<name>]
+//   [volumes.<name>]       a stage, pipette or gauge; or "<a>~<b>", the pipe
+//                          between valves a and b drawn joined (a before b)
 //     composition          `air`, `cocktail` or a [compositions.*] name
 //     argon40              mbar of Ar40; the rest follows the composition
 //     pressure             mbar in all; the composition's proportions

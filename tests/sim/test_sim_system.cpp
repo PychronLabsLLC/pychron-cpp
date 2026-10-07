@@ -1266,6 +1266,72 @@ TEST(SimSystem, AGaugeVolumeOffTheCanvasHasItsSettings) {
   EXPECT_LT(after[kActive], before[kActive] * 1e-3);
 }
 
+// A gauge drawn on the canvas is a small volume, as one off the canvas is:
+// the one setting sizes both.
+TEST(SimSystem, ACanvasGaugeIsSmall) {
+  auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  // line (10 cc) --V-- IG (a gauge, no size)
+  SimSystem::Topology t;
+  t.volumes = {{"line", 10.0}, {"IG", 0.0, sim::SimRole::Gauge}};
+  t.valves = {"V"};
+  t.edges = {{"line", "V"}, {"V", "IG"}};
+  const auto shared = [&](SimSystem::Settings settings) {
+    ManualClock clock;
+    settings.initial_pressures = {{"line", 1e-4}};
+    SimSystem sim(clock, t, settings);
+    sim.set_valve("V", true);
+    clock.advance(10s);
+    return *sim.pressure("IG");
+  };
+  EXPECT_EQ(SimSystem::Settings{}.gauge_cc, 1.0);
+  EXPECT_NEAR(shared(quiet()), (10 * 1e-4 + 1 * 1e-8) / 11, 1e-4 * 1e-9) << "1 cc, not the default 50";
+  auto larger = quiet();
+  larger.gauge_cc = 4.0;
+  EXPECT_NEAR(shared(larger), (10 * 1e-4 + 4 * 1e-8) / 14, 1e-4 * 1e-9);
+  larger.sizes = {{"IG", 2.0}};  // its own size goes before the role's
+  EXPECT_NEAR(shared(larger), (10 * 1e-4 + 2 * 1e-8) / 12, 1e-4 * 1e-9);
+
+  // Off the canvas: a pump of 0.004 L/s empties gauge_cc = 4 cc with a time
+  // constant of a second.
+  ManualClock clock;
+  auto settings = quiet();
+  settings.gauge_cc = 4.0;
+  settings.initial_pressures = {{"IG1", 1e-3}};
+  settings.pumps = {{"IG1", {1e-9, 5s}}};
+  settings.pump_speeds = {{"IG1", 0.004}};
+  SimSystem sim(clock, three_volumes(), settings);
+  (void)sim.hook_for(cfg->drivers.at("ig"), *cfg);
+  ASSERT_TRUE(sim.has_volume("IG1"));
+  clock.advance(1s);
+  const double expected = 1e-9 + (1e-3 - 1e-9) * std::exp(-1.0);
+  EXPECT_NEAR(*sim.pressure("IG1"), expected, expected * 1e-9);
+}
+
+// The pipe the line puts between two valves it finds joined directly.
+TEST(SimSystem, APipeIsSmall) {
+  // a (10 cc) --V-- a~b (a pipe, no size)
+  SimSystem::Topology t;
+  t.volumes = {{"a", 10.0}, {"a~b", 0.0, sim::SimRole::Pipe}};
+  t.valves = {"V"};
+  t.edges = {{"a", "V"}, {"V", "a~b"}};
+  const auto shared = [&](SimSystem::Settings settings) {
+    ManualClock clock;
+    settings.initial_pressures = {{"a", 1e-4}};
+    SimSystem sim(clock, t, settings);
+    sim.set_valve("V", true);
+    clock.advance(10s);
+    return *sim.pressure("a~b");
+  };
+  EXPECT_EQ(SimSystem::Settings{}.pipe_cc, 1.0);
+  EXPECT_NEAR(shared(quiet()), (10 * 1e-4 + 1 * 1e-8) / 11, 1e-4 * 1e-9);
+  auto wider = quiet();
+  wider.pipe_cc = 5.0;
+  EXPECT_NEAR(shared(wider), (10 * 1e-4 + 5 * 1e-8) / 15, 1e-4 * 1e-9);
+  wider.sizes = {{"a~b", 2.0}};
+  EXPECT_NEAR(shared(wider), (10 * 1e-4 + 2 * 1e-8) / 12, 1e-4 * 1e-9);
+}
+
 }  // namespace
 
 // A chromium driver on a sim transport talks to a Chromium simulator, whose

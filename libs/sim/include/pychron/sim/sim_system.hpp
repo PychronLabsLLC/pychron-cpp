@@ -69,13 +69,14 @@
 
 namespace pychron::sim {
 
-// What a volume is to the gas, from the canvas stage's kind.
-enum class SimRole { Plain, Pump, Getter, Tank, Pipette, Spectrometer };
+// What a volume is to the gas: from the canvas stage's kind; a gauge; or
+// `Pipe`, the pipe the line finds drawn straight from one valve to the next.
+enum class SimRole { Plain, Pump, Getter, Tank, Pipette, Spectrometer, Gauge, Pipe };
 
 struct SimVolume {
   std::string name;
   // Size. Zero or less is unset: SimSettings::sizes, else pipette_cc for a
-  // pipette, else default_volume_cc.
+  // pipette, gauge_cc for a gauge, pipe_cc for a pipe, else default_volume_cc.
   double cc = 0.0;
   SimRole role = SimRole::Plain;
 };
@@ -136,6 +137,8 @@ struct SimSettings {
   // `compositions` or `initial_pressures` says what it holds.
   double tank_argon40 = 3e-5;
   double pipette_cc = 0.1;    // a pipette with no size
+  double gauge_cc = 1.0;      // a gauge with no size, on the canvas or off it
+  double pipe_cc = 1.0;       // the pipe between two valves joined directly
   double pump_speed = 50.0;   // L/s: a pump stage's
   double pump_base = 1e-9;    // mbar: its ultimate pressure
   double getter_speed = 1.0;  // L/s for active gas
@@ -197,9 +200,9 @@ class SimSystem {
   // The spectrometer's source: the first volume of that role by name order;
   // nothing when the line has none.
   std::optional<std::string> spectrometer_volume() const;
-  // The valves that have a state and no physics, each with why (a valve
-  // joined to another valve, a tee on a valve, a dangling valve): what the
-  // line warns of when it builds this.
+  // The valves that have a state and no physics, each with why (a dangling
+  // valve, one joined to nothing, a tee on a valve): what the line says of
+  // them when it builds this.
   std::vector<std::pair<std::string, std::string>> valves_without_physics() const;
 
   // Set when the topology and settings do not describe a network (a
@@ -262,9 +265,9 @@ class SimSystem {
   // Moves the network to clock.now(), and says when that is.
   TimePoint advance_locked() const;
   // An isolated volume for a gauge the topology does not have, with what
-  // the settings say of that name (size, gas, leak, pump, getter); nothing
-  // if a volume has the name already.
-  void add_volume_locked(const std::string& name, double cc);
+  // the settings say of that name (size, gas, leak, pump, getter) and a
+  // gauge's size if they give none; nothing if a volume has the name already.
+  void add_gauge_volume_locked(const std::string& name);
 
   const Clock& clock_;
   Settings settings_;

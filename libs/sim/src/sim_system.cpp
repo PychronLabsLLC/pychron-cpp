@@ -43,7 +43,14 @@ bool is_plc_kind(std::string_view kind) {
 // A size the settings give goes first, then the topology's, then the role's.
 double litres_of(const std::string& name, double cc, SimRole role, const SimSettings& settings) {
   if (auto own = settings.sizes.find(name); own != settings.sizes.end()) cc = own->second;
-  if (!(cc > 0)) cc = role == SimRole::Pipette ? settings.pipette_cc : settings.default_volume_cc;
+  if (!(cc > 0)) {
+    switch (role) {
+      case SimRole::Pipette: cc = settings.pipette_cc; break;
+      case SimRole::Gauge: cc = settings.gauge_cc; break;
+      case SimRole::Pipe: cc = settings.pipe_cc; break;
+      default: cc = settings.default_volume_cc; break;
+    }
+  }
   return cc / 1000.0;
 }
 
@@ -190,14 +197,14 @@ std::vector<std::pair<std::string, std::string>> SimSystem::valves_without_physi
   return network_.valves_without_physics();
 }
 
-void SimSystem::add_volume_locked(const std::string& name, double cc) {
+void SimSystem::add_gauge_volume_locked(const std::string& name) {
   if (network_.has_volume(name)) return;
   // No part of the line, so no walls of it either: it holds what it is
   // given, and has the leak and the pumps the settings give its name.
   // Refused (the name of a valve, a pressure that cannot be), the gauge has
   // no volume and reads nothing, and the line says why.
-  GasVolume volume = volume_of(name, cc, SimRole::Plain, false, settings_);
-  const std::vector<GasPump> pumps = pumps_of(name, SimRole::Plain, volume.litres, settings_);
+  GasVolume volume = volume_of(name, 0.0, SimRole::Gauge, false, settings_);
+  const std::vector<GasPump> pumps = pumps_of(name, SimRole::Gauge, volume.litres, settings_);
   if (auto added = network_.add_volume(std::move(volume), pumps); !added && !build_error_) {
     build_error_ = added.error();
   }
@@ -350,7 +357,7 @@ std::optional<ModbusDeviceSim> SimSystem::plc_device(const config::DriverConfig&
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_register[static_cast<int>(g.channel) + offset] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     ModbusDeviceSim plc;
@@ -471,7 +478,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
         if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(parameters.size()))
           continue;
         by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     auto model = std::make_shared<spectrometer::QtegraSimModel>();
@@ -542,7 +549,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_channel[static_cast<int>(g.channel)] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     MaxiGaugeSimModel model;
@@ -584,7 +591,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(labels.size())) continue;
         by_label[labels[static_cast<std::size_t>(g.channel - 1)]] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     Xgs600SimModel model;
@@ -606,7 +613,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_channel[static_cast<int>(g.channel)] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     MicroIonSimModel model;

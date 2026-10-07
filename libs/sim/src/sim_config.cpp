@@ -174,9 +174,12 @@ class Reader {
 
   void read_defaults(const toml::table& t) {
     const std::string path = "defaults";
-    reject_unknown(t, path, {"pressure", "volume_cc", "valve_conductance", "outgassing", "noise", "seed"});
+    reject_unknown(t, path,
+                   {"pressure", "volume_cc", "pipe_cc", "gauge_cc", "valve_conductance", "outgassing", "noise", "seed"});
     if (auto v = number(t, path, "pressure", kPressure)) settings_.default_pressure = *v;
     if (auto v = number(t, path, "volume_cc", kSize)) settings_.default_volume_cc = *v;
+    if (auto v = number(t, path, "pipe_cc", kSize)) settings_.pipe_cc = *v;
+    if (auto v = number(t, path, "gauge_cc", kSize)) settings_.gauge_cc = *v;
     if (auto v = number(t, path, "valve_conductance", kFlow)) settings_.valve_conductance = *v;
     if (auto v = number(t, path, "outgassing", kGasRate)) settings_.outgassing = *v;
     if (auto v = number(t, path, "noise", kNoise)) settings_.noise = *v;

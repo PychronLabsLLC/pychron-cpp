@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -40,14 +42,38 @@ sim::SimRole role_of(canvas::SourceKind kind) {
   return sim::SimRole::Plain;
 }
 
+// The pipe between two valves joined directly: named for the two, in
+// lexical order, so that it is the one name whichever valve is asked.
+std::string pipe_between(const std::string& a, const std::string& b) { return a < b ? a + "~" + b : b + "~" + a; }
+
+// Whether two valves are both joined to one volume: the two valve ends of a
+// tee (or of a cross) whose other end is that volume. The junction is then
+// the volume's, and there is no pipe of their own between the valves.
+bool share_a_volume(const NetworkGraph& graph, const std::string& a, const std::string& b) {
+  const auto beside_b = graph.neighbors(b);
+  for (const auto& n : graph.neighbors(a)) {
+    if (!graph.is_valve(n) && beside_b.contains(n)) return true;
+  }
+  return false;
+}
+
 // Sim topology from the canvas plumbing. Every volume of the graph (a stage,
 // a pipette, a gauge) is a volume, with the stage's size (cc) where it gives
 // one and its kind as its role; a `[[pipette]]` is a pipette, wired as it is
-// drawn.
+// drawn, and a `[[gauge]]` a gauge.
+//
+// A canvas draws pipe straight from one valve to the next. A valve stands
+// between two volumes, so each such pair gets the pipe as a small volume of
+// its own, `<a>~<b>`, between them (after the canvas's volumes: one drawn
+// with that name is the volume). The exception is a pair that a tee joins
+// to each other and to one volume: both are on that volume already.
 sim::SimTopology topology_of(const NetworkGraph& graph, const canvas::Canvas& canvas) {
   sim::SimTopology t;
   for (const auto& v : graph.volumes()) {
     sim::SimVolume volume{v};  // no size: the simulator's default for its role
+    for (const auto& g : canvas.gauges) {
+      if (g.name == v) volume.role = sim::SimRole::Gauge;
+    }
     for (const auto& s : canvas.stages) {
       if (s.name != v) continue;
       if (s.volume) volume.cc = *s.volume;
@@ -63,7 +89,15 @@ sim::SimTopology topology_of(const NetworkGraph& graph, const canvas::Canvas& ca
     for (const auto& m : graph.neighbors(n)) t.edges.emplace_back(n, m);
   }
   for (const auto& n : graph.valves()) {
-    for (const auto& m : graph.neighbors(n)) t.edges.emplace_back(n, m);
+    for (const auto& m : graph.neighbors(n)) {
+      if (!graph.is_valve(m)) {
+        t.edges.emplace_back(n, m);
+      } else if (!share_a_volume(graph, n, m)) {
+        const std::string pipe = pipe_between(n, m);
+        if (n < m) t.volumes.push_back({pipe, 0.0, sim::SimRole::Pipe});  // once for the pair
+        t.edges.emplace_back(n, pipe);
+      }
+    }
   }
   return t;
 }
@@ -245,7 +279,8 @@ Result<void> ExtractionLine::build() {
 
 // The simulated lab behind the sim transports: the canvas as volumes with
 // roles, the simulator's numbers from `Options::sim` with a sim.toml over
-// them, and a warning for each thing on the canvas it cannot model.
+// them, a warning of a second spectrometer, and one line at info naming the
+// valves that carry no gas (a drawing may well leave a valve's far side off).
 Result<void> ExtractionLine::build_sim() {
   const sim::SimTopology topology = network_ ? topology_of(*network_, *canvas_) : sim::SimTopology{};
 
@@ -265,7 +300,7 @@ Result<void> ExtractionLine::build_sim() {
     // A gauge off the canvas is a volume of its own once its controller is
     // simulated, so the file may name one.
     sim::SimTopology known = topology;
-    for (const auto& g : config_.gauges) known.volumes.push_back({g.name});
+    for (const auto& g : config_.gauges) known.volumes.push_back({g.name, 0.0, sim::SimRole::Gauge});
     auto settings = sim::load_sim_settings(file, known, std::move(options_.sim));
     if (!settings) return fail(settings.error());
     options_.sim = std::move(*settings);
@@ -280,8 +315,12 @@ Result<void> ExtractionLine::build_sim() {
                               *source + "'");
     }
   }
-  for (const auto& [valve, why] : sim_->valves_without_physics()) {
-    log(LogLevel::Warn, "sim: valve '" + valve + "' carries no gas in the simulation: " + why);
+  if (const auto without = sim_->valves_without_physics(); !without.empty()) {
+    std::string said = "sim: " + std::to_string(without.size()) + " valve(s) carry no gas in the simulation: ";
+    for (std::size_t i = 0; i < without.size(); ++i) {
+      said += (i == 0 ? "" : ", ") + without[i].first + " (" + without[i].second + ")";
+    }
+    log(LogLevel::Info, std::move(said));
   }
   return {};
 }
