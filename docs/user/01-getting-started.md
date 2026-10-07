@@ -494,6 +494,10 @@ build/dev-ui/apps/pychron-ui/pychron-ui --examples --sim --sim-speed 50 \
     --queue configs/examples/experiment.toml
 ```
 
+On macOS the program is inside the application bundle: write
+`build/dev-ui/apps/pychron-ui/Pychron.app/Contents/MacOS/Pychron` where the
+command says `build/dev-ui/apps/pychron-ui/pychron-ui`.
+
 `--data` keeps the records out of the repository. `--sim-speed 50` makes
 simulated time run 50 times faster than the clock on the wall.
 

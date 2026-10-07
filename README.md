@@ -73,6 +73,10 @@ Open the extraction-line window and the spectrometer strip chart
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
 ```
 
+(On macOS the program is inside the application bundle:
+`build/dev-ui/apps/pychron-ui/Pychron.app/Contents/MacOS/Pychron`, here and
+below.)
+
 Run the example experiment queue in the experiment window (View >
 Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
 

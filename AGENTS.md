@@ -149,7 +149,12 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `sim.toml` key is read and range-checked in `sim_config.cpp`, listed
   commented out with its default in `configs/examples/sim.toml`
   (`SimConfig.TheExampleFileIsTheDefaults` holds the two together) and given
-  a row in the user guide, `docs/simulator.md`.
+  a row in the user guide, `docs/simulator.md`. The example lab's five tuned
+  numbers are pinned by that test too, and a line number of
+  `sim_extract.py` by the script-editor test (`tests/ui/test_script_editor.cpp`),
+  so retuning the example or editing that script means editing those tests.
+  `[defaults] seed` is the one seed of the lab: `feed_beam_from_line` gives
+  it to the beam when it is not `SimSettings`' default.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

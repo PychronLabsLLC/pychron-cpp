@@ -89,8 +89,8 @@ Not modelled:
 - **A getter on the example line.** The model has getters; the example canvas
   draws none, so the active gas of an air shot stays in the source until it
   is pumped out.
-- **A tee whose three ends are all valves.** Those three valves carry no gas
-  (see below).
+- **A tee whose three ends are all valves.** Those three valves normally
+  carry no gas (see below).
 - **Units on gauges.** A simulated gauge reports the model's number, which is
   mbar, under whatever unit the gauge is configured with (the example's say
   torr). Nothing is converted.
@@ -129,7 +129,15 @@ example canvas the turbo and the two gauges on its pipe are one volume of
 If the canvas has two spectrometer stages, the first by name is the source
 and the log has a warning for the other. If it has none, the simulated
 spectrometer does not read the line and shows its fixed argon instead
-(1e6 fA of Ar40).
+(1e6 fA of Ar40). The programs say so when they start: `elctl exp run`
+prints
+
+```
+note: the simulated spectrometer is not joined to the line: the canvas has no spectrometer stage
+```
+
+and `pychron-ui` writes the same sentence to the terminal it was started
+from.
 
 A gauge that `extraction_line.toml` has and the canvas does not is a 1 cc
 volume of its own, joined to nothing and with no walls: it reads the pressure
@@ -152,6 +160,11 @@ handled:
   only, to three or more, or with the same volume on both sides. It still
   opens and closes, and interlocks and scripts see its state. It only moves
   no gas.
+- **Three valves on one tee** are each joined to the other two, so each has
+  a pipe to each of the others. A valve with something drawn on its far side
+  then stands between three volumes and carries no gas, which is the usual
+  case. One with nothing drawn on its far side sits between its two pipes
+  and does carry gas from one to the other.
 
 Because `~` names a pipe, a simulated line refuses a canvas valve with `~` in
 its name:
@@ -161,9 +174,13 @@ sim: valve 'V1~V2': a valve's name may not contain '~' on a simulated line (the 
 ```
 
 The valves that carry no gas are listed once, in one log line at `info`, when
-the line is built. It is in the Log dock of `pychron-ui`, and in `pychron.log`
-if `extraction_line.toml` has `[logging] dir`. The example line has none. The
-full-size example line (`configs/examples/nmgrl`) logs:
+the line is built, which is before any window is open. It goes where the
+line's log goes: to `pychron.log` if `extraction_line.toml` has
+`[logging] dir` (the Log dock of `pychron-ui` shows that file's history when
+it opens), and to the terminal if it has `echo_stderr = true`. An
+`elctl exp run` user sees it in the same two places; `elctl` prints nothing
+of it otherwise. The example line has no valve without gas, so it logs no
+such line. The full-size example line (`configs/examples/nmgrl`) logs:
 
 ```
 [info] extraction_line: sim: 7 valve(s) carry no gas in the simulation: FE (it is joined to no volume), FF (it is joined to no volume), FG (it is joined to no volume), G (it is joined to one volume only ('CO2')), GP50Manual_Rough (it is joined to one volume only ('GP502')), NP-10CRough (it is joined to one volume only ('NP-10C')), RDiode (it is joined to one volume only ('Diode'))
@@ -193,7 +210,11 @@ or detector by name. It cannot change what a stage is: that is the canvas's
   there is one.
 - It is read only when the line is loaded with its canvas, since its names
   are the canvas's. `pychron-ui` and `elctl exp run` load the canvas. A tool
-  that loads the line alone does not read it.
+  that loads the line alone does not read it, and a simulated line says so
+  in its log, at `info`:
+  `sim: <file> not read: the line was loaded without its canvas`.
+- It is the simulated lab's. A line with no simulated transport has no
+  simulated lab: a `sim.toml` beside it is not opened, and not checked.
 
 ### What is in force
 
@@ -367,7 +388,8 @@ When the line is real, or its canvas has no spectrometer stage, a simulated
 spectrometer has no simulated gas to read and shows a fixed argon instead:
 1e6 fA of Ar40, 1e4 of Ar39, 1e3 each of Ar38 and Ar37, 3e3 of Ar36, whatever
 the valves do. `sim.toml`'s `[spectrometer]` then does nothing. Its
-`[detectors.*]` baselines still apply wherever the line is simulated.
+`[detectors.*]` baselines and its `seed` still apply wherever the line is
+simulated.
 
 ## The example lab
 
@@ -401,8 +423,15 @@ Its `sim.toml` sets five numbers, so that the signals are of a lab's size:
 
 ### Running the air queue
 
-`experiment.sim-air.toml` is five analyses: blank, air, air, air, blank. From
-`configs/examples`, with a built `elctl`:
+`experiment.sim-air.toml` is five analyses: blank, air, air, air, blank.
+
+Every command here is run from `configs/examples`, and calls the programs by
+their names, `elctl` and `pychron-ui`: have them on your `PATH`, or write
+the path out. In a build tree, from that folder, `elctl` is
+`../../build/dev/apps/elctl/elctl` and `pychron-ui` is
+`../../build/dev-ui/apps/pychron-ui/pychron-ui`
+(`../../build/dev-ui/apps/pychron-ui/Pychron.app/Contents/MacOS/Pychron` on
+macOS).
 
 ```bash
 elctl -c extraction_line.toml --sim exp validate experiment.sim-air.toml \
@@ -419,6 +448,12 @@ queue sim-air: 5 run(s), ETA 0:39:30
 ok: experiment.sim-air.toml
 ```
 
+The ETA adds up what the queue file and the plan state: the queue's delays,
+each run's `duration`, and the plan's equilibration, counts and settling
+times. The lab takes 50 minutes over the same queue, since it also waits
+where the scripts wait (the pipette, the pump-out) and for the peak center
+after each measurement, which the estimate leaves out.
+
 ```bash
 elctl -c extraction_line.toml --sim exp run experiment.sim-air.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed max \
@@ -433,6 +468,23 @@ queue completed
 5/5 run(s) succeeded; records in /Users/you/pychron-sim-data/records
 ```
 
+A run also writes `extraction_line.state.toml` beside `extraction_line.toml`:
+where it left the valves. A simulated line puts its valves back from that
+file when it next starts, so a second run from the same folder starts where
+the first one ended, with `C` open, and its first blank reads about 10.0 fA
+where the first run's read 10.3 (see [Reproducibility](#reproducibility)).
+To experiment, copy the folder and work in the copy, which leaves the
+examples as they came:
+
+```bash
+cp -R . ~/pychron-sim-lab
+cd ~/pychron-sim-lab
+rm -f extraction_line.state.toml
+```
+
+The `elctl` commands are the same there. Without `--data` the records go to
+`data/records` in the folder.
+
 `--sim-speed` (it needs `--sim`) is how fast the lab's clock runs:
 
 | | The five analyses (50 minutes of the lab's time) take |
@@ -444,17 +496,25 @@ queue completed
 The speed does not change what is measured. `max` is `elctl`'s only;
 `pychron-ui` takes a number.
 
-In the window:
+In the window, from `configs/examples` again:
 
 ```bash
 pychron-ui --examples --sim --sim-speed 50 --data ~/pychron-sim-data \
-    --queue configs/examples/experiment.sim-air.toml
+    --queue experiment.sim-air.toml
 ```
 
-(In a build tree the program is `build/dev-ui/apps/pychron-ui/pychron-ui`,
-or `build/dev-ui/apps/pychron-ui/Pychron.app/Contents/MacOS/Pychron` on
-macOS; `elctl` is `build/dev/apps/elctl/elctl`.) Start the queue from the
-experiment window and watch the canvas and the signal plot.
+`--examples` is the example lab wherever the program finds it, which in a
+build tree is `configs/examples`; `--queue` is a path from the folder you
+are in. In a copy of the lab, name its files instead:
+
+```bash
+pychron-ui extraction_line.toml canvas.toml --sim --sim-speed 50 \
+    --spectrometer spectrometer.sim-integrated.toml \
+    --queue experiment.sim-air.toml
+```
+
+Open the experiment window (View > Experiment), start the queue there, and
+watch the canvas and the signal plot.
 
 ### What one air analysis does
 
@@ -608,5 +668,16 @@ What does change the numbers:
   analysis still ends as a success.
 - Only the first spectrometer stage is a source, and one sensitivity serves
   every isotope and detector.
+- One simulated transport makes the whole line a simulated line: its canvas
+  is modelled, `sim.toml` is read and its checks apply, even where the other
+  transports are real. A valve on a real transport never moves in the
+  model, and a gauge on one reads the hardware.
+- An ion counter reads the source's fA figure as counts per second, one for
+  one. A real femtoamp is about 6 242 ions a second, so the simulated
+  counter's counting statistics are poorer than a real instrument's at the
+  same beam.
+- Only the beam named `default` is joined to the line. A spectrometer whose
+  simulated drivers name another beam (`beam = "..."`) reads that beam's
+  fixed argon.
 - A gauge the canvas does not draw reads a steady pressure whatever the
   valves do.

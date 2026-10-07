@@ -277,6 +277,11 @@ Valve locks and interlocks are enforced. If a transport cannot be opened
 elctl prints `warning: transport NAME: ...` and carries on, because a dead gauge
 link must not stop valve work.
 
+Simulated, these commands (`open`, `close`, `read`, `scan` and the rest, and
+the `sim` session) use `elctl`'s own stand-ins for the devices and have no gas
+model, so a gauge reads the same number whatever the valves do; `exp run` and
+`pychron-ui` do have one ([The simulated lab](../simulator.md)).
+
 ### probe
 
 Open every transport and ping every driver; prints the health of each.

@@ -332,8 +332,9 @@ The join is one function, the only place it happens:
 
 ```cpp
 // libs/systems, spectrometer/bringup.hpp
-Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line);
-struct SpectrometerBringup { bool sim_beam_from_table; bool require_sim; sim::SimSystem* line_sim; };
+enum class BeamFeed { LineGas, FixedGas };
+Result<BeamFeed> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line);
+struct SpectrometerBringup { bool sim_beam_from_table; bool require_sim; sim::SimSystem* line_sim; BeamFeed* fed; };
 ```
 
 It sets the provider and applies `[detectors.*]` baselines, and it checks
@@ -349,7 +350,11 @@ beam's mutex, then the line's; the line never calls a beam.
 and the spectrometer is simulated, whether `--sim` was given or the files
 are simulated already. A spectrometer simulated on its own (the spectrometer
 window, the spectrometer tests), or beside a line with no spectrometer
-stage, has no provider and keeps the fixed argon defaults.
+stage, has no provider and keeps the fixed argon defaults. In the second
+case the join answers `BeamFeed::FixedGas`, and `elctl exp run` and
+`pychron-ui` each say in one line that the spectrometer is not joined to the
+line. The join also gives the beam the line's seed when the line was given
+one (section 11, "One seed").
 
 ### 5.3 Baseline and noise
 
@@ -406,7 +411,10 @@ order. The exception is a pair that a tee joins to each other and to one
 volume: both are on that volume already and no pipe is made. A canvas valve
 with `~` in its name is refused when the line builds its sim (`Config`), so
 two pairs cannot make one name. A tee of three valves is not modelled: each
-of the three then has three neighbours and no physics.
+of the three has a pipe to each of the others, so one with a volume drawn on
+its far side has three neighbours and no physics. That is the normal case; a
+valve of such a tee with nothing drawn on its far side sits between its two
+pipes and does have physics.
 
 The valves that carry no gas are logged once, in one line at info, with why
 for each. A second spectrometer stage is a warning.
@@ -609,8 +617,14 @@ and queue; expected values are worked out from the settings the line loaded:
   A check with no reading in it holds the 2 % to five standard errors of the
   design;
 - a blank is above zero, under 1 % of an air run, and what the walls gave;
-- three air runs decline by the tank's depletion factor within counting
-  error;
+- three air runs decline with the tank: each shot over the one before is
+  the depletion factor within five standard errors of that ratio, and so is
+  the third over the first against the factor squared, whose five standard
+  errors are asserted to be less than the two declines themselves (a pair
+  alone could not tell a decline from none);
+- another seed in `sim.toml` gives other readings on every detector and
+  gauge, the same tank pressure after the shot, and an Ar40 intercept within
+  five standard errors;
 - a run whose extraction script omits the pipette measures a blank;
 - a tank valve left open drains the tank;
 - two labs built afresh give identical records;
@@ -641,8 +655,8 @@ and queue; expected values are worked out from the settings the line loaded:
 - **A getter on the example canvas.** The model has the role; the example
   draws none, so an air shot's active gas stays in the source until it is
   pumped.
-- **A tee of three valves**, and any valve that does not stand between
-  exactly two volumes: tracked, reported, no gas.
+- **A tee of three valves** (normally: section 6.1), and any valve that does
+  not stand between exactly two volumes: tracked, reported, no gas.
 - **The gas model behind `elctl`'s hardware commands.** `elctl open`,
   `read`, `scan` and the `sim` session use `elctl`'s own device sims, not
   `ExtractionLine`: gauges there read a fixed number.
@@ -715,3 +729,27 @@ Each is a departure from the first draft of this document or from the plan.
   do not fit a test's time under ThreadSanitizer.
 - **`blank_air` was added to the example plan's `analysis_types`**, so the
   Measurement dock offers the plan for the air queue's blanks.
+- **The tank's decline is asserted on pairs and on the third over the
+  first.** One decline (0.2 %) is about five standard errors of the ratio of
+  two shots, so a pair held to five standard errors would pass with no
+  decline at all. The test holds each pair to the depletion factor at five
+  standard errors, the third over the first to the factor squared at five,
+  and asserts that those five standard errors are smaller than the two
+  declines (they are 0.4 of them), so shots that did not decline fail.
+- **One seed.** `[defaults] seed` first seeded the gauges only, and nothing
+  set the detectors' seed: a user who changed the seed saw the same detector
+  readings. `feed_beam_from_line` now gives the beam the line's seed
+  (`BeamModel::set_seed`) when the line was given one, which is told from
+  the default by its value: any seed but `SimSettings`' default, 0x5eed.
+  That is also `BeamSettings`' default, so a file that writes 0x5eed out
+  reads as one that says nothing, and no reading of a lab with no seed moved.
+  The one case where the two differ, a beam built by hand with a seed of its
+  own beside a line at the default, keeps the seed its builder chose.
+- **The join answers what the beam reads, and the applications say it.**
+  Bringup has no logger; a simulated spectrometer left on its fixed argon
+  because the line has no spectrometer volume was silent. `BeamFeed` is the
+  answer, and `elctl exp run` and `pychron-ui` print one line for
+  `FixedGas`.
+- **A sim file skipped for want of the canvas is logged whichever way it was
+  found**, named by `[sim] file` or lying beside the line; a line with no
+  simulated transport never opens one.
