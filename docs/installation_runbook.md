@@ -44,18 +44,19 @@ the example configs.
 
 Packages are built by the `release` workflow on a `v*` tag and attached to the
 GitHub release (<https://github.com/PychronLabsLLC/pychron-cpp/releases>).
-Each carries its own Python for extraction scripts. They are not code-signed,
-so macOS and Windows warn on first launch.
+Each carries its own Python for extraction scripts. The macOS `.dmg` is signed
+with Pychron Labs' Developer ID and notarized by Apple once the repository has
+the signing secrets (section 1.4); the Windows packages are not code-signed,
+so Windows warns on first launch.
 
-On macOS the warning is Gatekeeper's: open the application once with a
-right-click > Open (or allow it under System Settings > Privacy & Security).
-Until the application is notarized, macOS also marks files that a downloaded
-application writes as quarantined; Pychron clears that mark from the files it
-writes for you (data reports, figures, CSV templates, level sheets), so they
-open without "Apple could not verify ... is free of malware". A file written
-by an older release that still shows it can be cleared by hand:
-`xattr -d com.apple.quarantine <file>`. The lasting fix is a Developer ID
-signature and notarization in the release workflow.
+A macOS package from before that (v0.3.0 and earlier), or one built without
+the secrets, brings Gatekeeper's warning instead: open the application once
+with a right-click > Open (or allow it under System Settings > Privacy &
+Security). Such a build also leaves the files it writes quarantined; Pychron
+clears that mark from the files it writes for you (data reports, figures, CSV
+templates, level sheets), so they open without "Apple could not verify ... is
+free of malware". A file written by an older release that still shows it can
+be cleared by hand: `xattr -d com.apple.quarantine <file>`.
 
 | Platform | Package | Install | Where `elctl` is |
 |---|---|---|---|
@@ -120,6 +121,57 @@ Checks the profiles, the setup wizard and the database plugin, and prints one
 `/Applications/Pychron.app/Contents/MacOS/Pychron`. On a Linux machine with no
 display, prefix it with `QT_QPA_PLATFORM=offscreen`; the macOS and Windows
 packages carry only their native platform plugin, so leave it unset there.
+
+### 1.4 Signing and notarizing the macOS package
+
+The `release` workflow signs `Pychron.app` from the inside out with the
+hardened runtime (`packaging/macos/sign_app.sh`, called by CPack before the
+disk image is made), then signs the `.dmg`, submits it to Apple's notary
+service and staples the ticket to it. The smoke test checks the signatures,
+runs the installed programs (Python included) under the hardened runtime and,
+for a notarized image, asks Gatekeeper (`spctl`) what it would decide.
+
+It needs five repository secrets (Settings > Secrets and variables >
+Actions). Without the first two the app is signed ad hoc: everything is still
+signed and run under the hardened runtime, but the package is not fit to hand
+out, and a release says so in a warning.
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | The Developer ID Application certificate and its private key, exported as a `.p12` and base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | The password the `.p12` was exported with |
+| `APPLE_API_KEY_P8_BASE64` | An App Store Connect API key (`AuthKey_<id>.p8`), base64-encoded |
+| `APPLE_API_KEY_ID` | That key's ID |
+| `APPLE_API_ISSUER_ID` | The issuer ID shown above the keys list |
+
+To make them (an Apple Developer Program membership, as an Account Holder or
+Admin):
+
+1. In Xcode > Settings > Accounts > Manage Certificates, add a "Developer ID
+   Application" certificate (or create one under Certificates at
+   developer.apple.com from a certificate signing request made in Keychain
+   Access).
+2. In Keychain Access, find "Developer ID Application: <team> (<team ID>)"
+   under My Certificates, select it together with its private key, and export
+   them as a `.p12` with a password. Then:
+   `base64 -i Certificates.p12 | pbcopy` and paste it into
+   `MACOS_CERTIFICATE_P12_BASE64`.
+3. In App Store Connect > Users and Access > Integrations > App Store Connect
+   API, generate a team key with the Developer role. Download the `.p8` (it
+   can be downloaded once), then `base64 -i AuthKey_<id>.p8 | pbcopy` into
+   `APPLE_API_KEY_P8_BASE64`; the key ID and the issuer ID go into the other
+   two.
+
+To check them before a release, run the `release` workflow by hand (Actions >
+release > Run workflow, no tag): the macOS job signs, notarizes and assesses
+the image and keeps it as a workflow artifact. A rejected submission fails the
+job with Apple's log, which names each file and why.
+
+The programs' entitlements are in `packaging/macos/entitlements.plist`: the
+camera (a laser's live camera, which the hardened runtime otherwise refuses),
+loading libraries not signed by Pychron's team (Python's extension modules, a
+vendor's camera SDK) and Python's `ctypes`. A new need, such as another device
+class, goes there.
 
 ## Part 2. Configure
 
@@ -483,7 +535,8 @@ Single-developer project. Open an issue at
 - A server database gets its schema only from the importer; there is no
   stand-alone "create schema" command for a lab starting with no legacy data.
 - The importer is not built or tested on Windows in CI.
-- Packages are unsigned.
+- Windows packages are unsigned. The macOS package is signed and notarized
+  only once the repository has the signing secrets (section 1.4).
 - A macOS package built with Homebrew's Qt carries the SQLite database driver
   only: it cannot open a PostgreSQL store unless Qt's QPSQL plugin was
   installed when it was built.

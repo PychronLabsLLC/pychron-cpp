@@ -125,6 +125,13 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned
   macOS application quarantines what it writes, and Gatekeeper then refuses
   the file. Files pychron reads back itself (configs, stores) do not.
+- The macOS `.dmg` is signed (hardened runtime) by `packaging/macos/sign_app.sh`
+  from CPack (`packaging/macos/cpack_sign.cmake`, identity in
+  `PYCHRON_CODESIGN_IDENTITY`, `-` for ad hoc), then signed, notarized and
+  stapled in `release.yml` when the signing secrets are set
+  (`docs/installation_runbook.md` section 1.4). Something the programs newly
+  need under the hardened runtime (a device, a kind of library) is an
+  entitlement in `packaging/macos/entitlements.plist`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang
