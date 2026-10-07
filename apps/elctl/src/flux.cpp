@@ -4,6 +4,7 @@
 #include "flux.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -120,8 +121,9 @@ int fatal(Io io, const std::string& message) {
 
 std::optional<int> parse_int(const std::string& text) {
   int value = 0;
-  char rest = 0;
-  if (std::sscanf(text.c_str(), "%d%c", &value, &rest) != 1) return std::nullopt;
+  const char* end = text.data() + text.size();
+  const auto [stop, error] = std::from_chars(text.data(), end, value);
+  if (error != std::errc{} || stop != end) return std::nullopt;
   return value;
 }
 
@@ -185,6 +187,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
     }
     if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
     const std::string& value = args[++i];
+    if (value.rfind("--", 0) == 0) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
     auto bad = [&](const std::string& what) { return fail(ErrorKind::Config, flag + " is " + what + "; got '" + value + "'"); };
     if (flag == "--db") {
       a.db = value;
@@ -420,7 +423,9 @@ std::string format_flux_save(const pp::FluxSaveOutcome& outcome, std::string_vie
     if (outcome.conflict->actual_by) out << " at " << outcome.conflict->actual_by->created.iso();
     out << " since this fit was loaded\n";
   } else if (outcome.written == 0) {
-    out << "nothing to save: " << outcome.unchanged << " positions unchanged\n";
+    out << "nothing to save: " << outcome.unchanged << " positions unchanged";
+    if (outcome.skipped > 0) out << ", " << outcome.skipped << " not saved";
+    out << '\n';
   } else {
     out << "saved " << outcome.written << " positions (" << outcome.unchanged << " unchanged)";
     if (outcome.skipped > 0) out << ", " << outcome.skipped << " not saved";
@@ -528,7 +533,7 @@ struct Session {
     if (!loaded) return fail_level(loaded.error());
     const pp::FluxOptions options = resolve(a, *loaded);
     std::vector<std::string> warnings;
-    if (loaded->saved_options && loaded->saved_sd_replaced && !a.fit_error && !a.model)
+    if (loaded->saved_options && loaded->saved_sd_replaced && !a.fit_error && r::is_least_squares(options.fit.kind))
       warnings.push_back("saved fit used SD, which a fitted surface does not have: using msem");
     auto fitted = pp::fit_level(*loaded, options, a.edits);
     if (!fitted) return fail_level(fitted.error());
@@ -587,6 +592,13 @@ int run(const Args& a, Io io) {
   auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
   if (!source) return fatal(io, source.error().what);
 
+  // The CSV's destination is opened before anything is saved: an unwritable path writes nothing.
+  std::ofstream csv;
+  if (!a.csv.empty()) {
+    csv.open(a.csv, std::ios::binary | std::ios::trunc);
+    if (!csv) return fatal(io, "could not write " + a.csv);
+  }
+
   Session s{io, a, **store, **source, std::nullopt, {}, kOk, false};
   if (a.save) {
     auto actor = flux_actor(**store, a.user);
@@ -617,12 +629,10 @@ int run(const Args& a, Io io) {
     s.level(name);
   }
 
-  if (!a.csv.empty() && s.any_fitted) {
-    {
-      std::ofstream file(a.csv, std::ios::binary | std::ios::trunc);
-      file << flux_csv_header() << s.csv_rows;
-      if (!file) return fatal(io, "could not write " + a.csv);
-    }
+  if (!a.csv.empty()) {
+    csv << flux_csv_header() << s.csv_rows;
+    csv.close();
+    if (!csv) return fatal(io, "could not write " + a.csv);
     pychron::mark_as_user_file(a.csv);
     io.out << "wrote " << a.csv << '\n';
   }

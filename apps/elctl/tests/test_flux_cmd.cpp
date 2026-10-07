@@ -127,7 +127,10 @@ class FluxCmd : public elctl::testing::ElctlTest {
     auto seeded = pt::seed_flux_level(**store, ps::Actor{*user, *client}, monitor_sample);
     EXPECT_TRUE(seeded) << (seeded ? "" : to_string(seeded.error()));
     seeded_ = *seeded;
-    if (!store_) store_ = std::move(*store);
+    if (!store_) {
+      store_ = std::move(*store);
+      actor_ = ps::Actor{*user, *client};
+    }
     return url;
   }
 
@@ -142,6 +145,7 @@ class FluxCmd : public elctl::testing::ElctlTest {
   std::string db_;
   std::unique_ptr<ps::IStore> store_;
   pt::SeededLevel seeded_;
+  ps::Actor actor_;
 };
 
 TEST_F(FluxCmd, PrintsBothTablesAndWritesNothing) {
@@ -223,6 +227,48 @@ TEST_F(FluxCmd, FlagsReplaceOneFieldOfTheSavedFit) {
   EXPECT_TRUE(contains(o.out, "model plane, weighted; mean arithmetic (msem); fit error sem")) << o.out;
 }
 
+TEST_F(FluxCmd, ASavedLeastSquaresFitWithSdWarnsAndUsesMsem) {
+  ps::FluxValue v;
+  v.j = 0.001;
+  v.j_err = 1e-6;
+  v.options_json = R"({"model_kind":"Plane","predicted_j_error_type":"SD","error_kind":"MSEM"})";
+  ASSERT_TRUE(pt::seed_save_flux(*store_, actor_, seeded_, 1, v));
+  const std::string warning = "warning: saved fit used SD, which a fitted surface does not have: using msem";
+  Outcome o = fit({});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, warning)) << o.out;
+  EXPECT_TRUE(contains(o.out, "fit error msem")) << o.out;
+  // A model flag does not hide it while the fit error is the saved one and the model a surface.
+  o = fit({"--model", "plane", "--weighted"});
+  EXPECT_TRUE(contains(o.out, warning)) << o.out;
+  // Where the model is not a surface the saved fit error is not in question.
+  o = fit({"--model", "nearest"});
+  EXPECT_FALSE(contains(o.out, warning)) << o.out;
+  // An explicit --fit-error replaces the saved one.
+  o = fit({"--fit-error", "sem"});
+  EXPECT_FALSE(contains(o.out, warning)) << o.out;
+  EXPECT_TRUE(contains(o.out, "fit error sem")) << o.out;
+}
+
+TEST_F(FluxCmd, AValueFlagDoesNotTakeTheNextFlag) {
+  Outcome o = fit({"--csv", "--save"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--csv needs a value")) << o.err;
+  EXPECT_FALSE(fs::exists("--save"));
+  o = run_raw({"flux", "fit", "NM-300", "A", "--db", "--save"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--db needs a value")) << o.err;
+}
+
+TEST_F(FluxCmd, AnUnwritableCsvSavesNothing) {
+  const auto before = seq();
+  const Outcome o = fit({"--csv", (path("no-such-dir") / "x.csv").string(), "--save", "--user", "jsmith"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "could not write")) << o.err;
+  EXPECT_EQ(o.out, "");
+  EXPECT_EQ(seq(), before);
+}
+
 TEST_F(FluxCmd, OmitAndExcludeChangeTheFit) {
   const Outcome o = fit({"--omit", "66001-02", "--exclude-position", "3"});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
@@ -298,7 +344,7 @@ TEST_F(FluxCmd, BadFlagsAreUsageErrors) {
   const std::vector<std::vector<std::string>> bad = {
       {"--model", "rbf"},         {"--degree", "9"},           {"--degree", "x"},          {"--neighbors", "0"},
       {"--mean", "median"},       {"--mean-error", "x"},       {"--interpolation", "x"},   {"--axis", "z"},
-      {"--weighted", "--unweighted"}, {"--wat"},               {"--model"},                {"--fit-error", "sd", "--model", "plane"}};
+      {"--weighted", "--unweighted"}, {"--wat"},               {"--model"},                {"--exclude-position", "99999999999"},                {"--fit-error", "sd", "--model", "plane"}};
   for (const auto& extra : bad) {
     const Outcome o = fit(extra);
     EXPECT_EQ(o.code, elctl::kUsage) << extra[0] << "\n" << o.err;
@@ -580,6 +626,9 @@ TEST(FluxCmdFormat, ASaveConflictExitsOne) {
   saved.written = 0;
   saved.unchanged = 12;
   EXPECT_EQ(elctl::format_flux_save(saved, ""), "nothing to save: 12 positions unchanged\n");
+  saved.unchanged = 11;
+  saved.skipped = 1;
+  EXPECT_EQ(elctl::format_flux_save(saved, ""), "nothing to save: 11 positions unchanged, 1 not saved\n");
 }
 
 }  // namespace
