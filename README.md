@@ -33,6 +33,11 @@ spectrometers, runs automated experiment queues, and stores the results.
 The core libraries are Qt-free. Qt is used only by `apps/pychron-ui` and, for
 its SQL layer, `libs/persistence`.
 
+## Using it
+
+The user guide is in [docs/user](docs/user/README.md): getting started,
+each window, configuration, the command line, scripting and troubleshooting.
+
 ## Build and test
 
 Requires a C++20 compiler and CMake 3.25 or newer. asio, toml++, spdlog,
@@ -68,7 +73,7 @@ Open the extraction-line window and the spectrometer strip chart
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
 ```
 
-Run the example experiment queue in the experiment window (Window >
+Run the example experiment queue in the experiment window (View >
 Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
 
 ```bash
