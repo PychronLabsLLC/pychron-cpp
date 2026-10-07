@@ -50,9 +50,18 @@ the signing secrets (section 1.4); the Windows packages are not code-signed,
 so Windows warns on first launch.
 
 A macOS package from before that (v0.3.0 and earlier), or one built without
-the secrets, brings Gatekeeper's warning instead: open the application once
-with a right-click > Open (or allow it under System Settings > Privacy &
-Security). Such a build also leaves the files it writes quarantined; Pychron
+the secrets, is stopped by Gatekeeper on first launch. With "Apple could not
+verify ..." open it once, dismiss the warning, then click Open Anyway under
+System Settings > Privacy & Security (right-click > Open no longer does it
+on macOS 15 and later). With "Pychron is damaged and can't be opened" (v0.3.0,
+whose signatures do not hold together) there is no Open Anyway: copy the
+application to Applications and clear its quarantine mark once, then open it:
+
+```
+xattr -dr com.apple.quarantine /Applications/Pychron.app
+```
+
+Such a build also leaves the files it writes quarantined; Pychron
 clears that mark from the files it writes for you (data reports, figures, CSV
 templates, level sheets), so they open without "Apple could not verify ... is
 free of malware". A file written by an older release that still shows it can
