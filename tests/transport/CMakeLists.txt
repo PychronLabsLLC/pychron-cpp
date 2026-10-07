@@ -13,6 +13,8 @@ add_executable(pychron_transport_tests
 )
 
 target_link_libraries(pychron_transport_tests PRIVATE pychron::transport asio::asio GTest::gtest_main)
+# virtual_time.hpp
+target_include_directories(pychron_transport_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 if(WIN32)
   target_compile_definitions(pychron_transport_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()

@@ -3,14 +3,12 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
-#include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
 #include <mutex>
 #include <thread>
 #include <utility>
 
 #include "pychron/core/virtual_clock.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -36,29 +34,7 @@ std::unique_ptr<SimTransport> open_scripted(std::vector<SimStep> steps, int retr
 // A read that waits past the clock leaves time standing and the test asleep
 // in it. Each test on a VirtualClock runs under a real-time bound: when it is
 // exceeded the process says so and aborts, well inside the ctest timeout.
-class SimTransportVirtual : public ::testing::Test {
- protected:
-  ~SimTransportVirtual() override {
-    {
-      std::lock_guard lock(mutex_);
-      finished_ = true;
-    }
-    finished_cv_.notify_all();
-    deadman_.join();
-  }
-
- private:
-  std::mutex mutex_;
-  std::condition_variable finished_cv_;
-  bool finished_ = false;
-  std::thread deadman_{[this] {
-    std::unique_lock lock(mutex_);
-    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
-    std::fputs("SimTransport test did not finish within 30 s of real time: a thread is stuck\n",
-               stderr);
-    std::abort();
-  }};
-};
+class SimTransportVirtual : public pychron::testing::VirtualTimeTest {};
 
 }  // namespace
 

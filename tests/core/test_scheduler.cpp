@@ -2,9 +2,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -21,6 +18,7 @@
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -29,30 +27,13 @@ namespace {
 // threads = 0: jobs run inline inside run_pending(), fully deterministic.
 Scheduler::Options inline_pool() { return Scheduler::Options{0}; }
 
-// Waits, in real time, until `n` threads are asleep in the clock.
-[[nodiscard]] bool await_waiters(const VirtualClock& clock, std::size_t n) {
-  const auto give_up = std::chrono::steady_clock::now() + 5s;
-  while (clock.waiters() != n) {
-    if (std::chrono::steady_clock::now() > give_up) return false;
-    std::this_thread::yield();
-  }
-  return true;
-}
+using pychron::testing::await_waiters;
 
 // A scheduler that waits past the clock leaves time standing and the test
 // asleep in it. Each test on a VirtualClock runs under a real-time bound: when
 // it is exceeded the process says so and aborts, well inside the ctest timeout.
-class SchedulerVirtual : public ::testing::Test {
+class SchedulerVirtual : public pychron::testing::VirtualTimeTest {
  protected:
-  ~SchedulerVirtual() override {
-    {
-      std::lock_guard lock(mutex_);
-      finished_ = true;
-    }
-    finished_cv_.notify_all();
-    deadman_.join();
-  }
-
   // Appended to by jobs on worker threads.
   void record(TimePoint t) {
     std::lock_guard lock(mutex_);
@@ -65,16 +46,7 @@ class SchedulerVirtual : public ::testing::Test {
 
  private:
   std::mutex mutex_;
-  std::condition_variable finished_cv_;
-  bool finished_ = false;
   std::vector<TimePoint> times_;
-  std::thread deadman_{[this] {
-    std::unique_lock lock(mutex_);
-    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
-    std::fputs("Scheduler test did not finish within 30 s of real time: a thread is stuck\n",
-               stderr);
-    std::abort();
-  }};
 };
 }  // namespace
 

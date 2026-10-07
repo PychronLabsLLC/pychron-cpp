@@ -2,9 +2,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
 #include <deque>
 #include <future>
 #include <memory>
@@ -17,6 +14,7 @@
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -74,42 +72,12 @@ TransportOptions opts(int retries = 0, std::uint64_t down_after = 3) {
 
 const ReadSpec kCr = ReadSpec::until("\r");
 
-// Waits, in real time, until `n` threads are asleep in the clock.
-[[nodiscard]] bool await_waiters(const VirtualClock& clock, std::size_t n) {
-  const auto give_up = std::chrono::steady_clock::now() + 5s;
-  while (clock.waiters() != n) {
-    if (std::chrono::steady_clock::now() > give_up) return false;
-    std::this_thread::yield();
-  }
-  return true;
-}
+using pychron::testing::await_waiters;
 
 // A transport that waits past the clock leaves time standing and the test
 // asleep in it. Each test on a VirtualClock runs under a real-time bound: when
 // it is exceeded the process says so and aborts, well inside the ctest timeout.
-class QueuedTransportVirtual : public ::testing::Test {
- protected:
-  ~QueuedTransportVirtual() override {
-    {
-      std::lock_guard lock(mutex_);
-      finished_ = true;
-    }
-    finished_cv_.notify_all();
-    deadman_.join();
-  }
-
- private:
-  std::mutex mutex_;
-  std::condition_variable finished_cv_;
-  bool finished_ = false;
-  std::thread deadman_{[this] {
-    std::unique_lock lock(mutex_);
-    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
-    std::fputs("QueuedTransport test did not finish within 30 s of real time: a thread is stuck\n",
-               stderr);
-    std::abort();
-  }};
-};
+class QueuedTransportVirtual : public pychron::testing::VirtualTimeTest {};
 
 }  // namespace
 

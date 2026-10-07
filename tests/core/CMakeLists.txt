@@ -23,6 +23,8 @@ add_executable(pychron_core_tests
 )
 
 target_link_libraries(pychron_core_tests PRIVATE pychron::core GTest::gtest_main)
+# virtual_time.hpp
+target_include_directories(pychron_core_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 pychron_set_warnings(pychron_core_tests)
 
 gtest_discover_tests(pychron_core_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)

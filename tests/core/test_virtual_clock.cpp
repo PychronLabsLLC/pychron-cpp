@@ -3,8 +3,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
 #include <future>
 #include <limits>
 #include <memory>
@@ -15,6 +13,7 @@
 #include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -22,32 +21,15 @@ using namespace std::chrono_literals;
 namespace {
 
 using Real = std::chrono::steady_clock;
+using pychron::testing::await_participants;
+using pychron::testing::await_waiters;
 
 // A clock that loses a wake-up leaves a thread asleep for good. A test cannot
 // unwind past such a thread, so each one runs under a real-time bound: when it
 // is exceeded the process says so and aborts, well inside the ctest timeout.
-class VirtualClockTest : public ::testing::Test {
+class VirtualClockTest : public pychron::testing::VirtualTimeTest {
  protected:
-  ~VirtualClockTest() override {
-    {
-      std::lock_guard lock(mutex_);
-      finished_ = true;
-    }
-    finished_cv_.notify_all();
-    deadman_.join();
-  }
-
- private:
-  std::mutex mutex_;
-  std::condition_variable finished_cv_;
-  bool finished_ = false;
-  std::thread deadman_{[this] {
-    std::unique_lock lock(mutex_);
-    if (finished_cv_.wait_for(lock, 45s, [this] { return finished_; })) return;
-    std::fputs("VirtualClock test did not finish within 45 s of real time: a thread is stuck\n",
-               stderr);
-    std::abort();
-  }};
+  VirtualClockTest() : VirtualTimeTest(45s) {}
 };
 
 // A helper thread whose end the test waits for with a real-time bound.
@@ -77,30 +59,6 @@ class Worker {
   std::future<void> done_;
   std::thread thread_;
 };
-
-// A thread becomes a participant on its own, some real time after it is
-// started. Until it has, the clock does not know to wait for it, so a test
-// that is about to let time go first waits here (the test thread is runnable
-// meanwhile, which holds time where it is).
-[[nodiscard]] bool await_participants(const VirtualClock& clock, std::size_t n) {
-  const auto give_up = Real::now() + 5s;
-  while (clock.participants() != n) {
-    if (Real::now() > give_up) return false;
-    std::this_thread::yield();
-  }
-  return true;
-}
-
-// The same for a thread that has to be asleep in the clock, not merely
-// started, before the test goes on: `n` waits registered and not woken.
-[[nodiscard]] bool await_waiters(const VirtualClock& clock, std::size_t n) {
-  const auto give_up = Real::now() + 5s;
-  while (clock.waiters() != n) {
-    if (Real::now() > give_up) return false;
-    std::this_thread::yield();
-  }
-  return true;
-}
 
 // With the calling thread a participant that does not wait, a sleeper stays
 // asleep and time stays where it is; once the caller sleeps too, both go on.
