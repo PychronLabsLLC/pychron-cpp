@@ -13,8 +13,8 @@ options schemas, `OptionsEditor`, `PresetBar`, `PresetStore`),
 Scope: a window in `apps/pychron-ui` that fits and saves the J of one
 irradiation level: a level tree, a J plot with the individual monitor
 analyses, a monitor table and an unknown table, an options dock with
-presets, Save. A new `Fit` menu. Three Qt-free additions to
-`libs/processing` that the window draws from.
+presets, Save. A new `Fit` menu. Four Qt-free additions the window draws from: three in
+`libs/processing`, one in its store adapter.
 Out of scope: a 2-D map of J over the tray, vertical flux (J against level
 height), a history pane with restore, an editor for monitor sets, Monte
 Carlo and position error, moving the other fit windows under the `Fit`
@@ -172,7 +172,7 @@ The y axis is J; the title of the x axis is `Hole angle (degrees)`, `X` or
 `Y`. Without a fit (the fit failed) layers 2 and 3 are still drawn, so the
 data stays in view under the error.
 
-### 4.4 Level status (`flux_view.hpp`)
+### 4.4 Level status (`flux_store.hpp`)
 
 ```cpp
 enum class LevelFluxStatus { NoMonitors, NotFitted, Fitted };
@@ -182,8 +182,7 @@ LevelFluxStatus level_flux_status(const persistence::LevelSheet& sheet, std::str
 From the level sheet alone: `NoMonitors` when no position carries the
 monitor sample; `Fitted` when every monitor position has a J; else
 `NotFitted`. The sample is that of the monitor document's default set.
-This lives in the store adapter's header (`flux_store.hpp`), since it names
-a persistence type.
+It lives in the store adapter because it names a persistence type.
 
 ## 5. UI design (`apps/pychron-ui`)
 
@@ -364,7 +363,7 @@ action is absent when the application gave no recall callback.
 | `apps/pychron-ui/src/entry_actions.{hpp,cpp}` | `bridge()` accessor; forwards `flux_requested` |
 | `apps/pychron-ui/src/main.cpp` | `FitActions` in both start-up paths |
 | `apps/pychron-ui/CMakeLists.txt` | the new sources, in the store block |
-| `tests/processing/test_flux_view.cpp`, `test_flux_fit.cpp`, `test_options.cpp` | new and extended |
+| `tests/processing/test_flux_view.cpp`, `test_flux_fit.cpp`, `test_flux_store.cpp`, `test_options.cpp` | new and extended |
 | `tests/ui/test_flux_window.cpp`, `tests/ui/CMakeLists.txt` | new; `tests/processing` on the include path for `flux_seed.hpp` |
 | `apps/elctl/tests/test_flux_cmd.cpp` | the reason line |
 | `docs/flux.md`, `AGENTS.md` | the window; one sentence in the flux bullet |
@@ -387,7 +386,7 @@ Core (GoogleTest):
   that do not; the curve at a monitor's abscissa equals that monitor's
   predicted J for Plane on the ring; the highlight layer; a scene without a
   fit has analyses and means only.
-- `level_flux_status` for the three cases.
+- `level_flux_status` for the three cases (`tests/processing/test_flux_store.cpp`).
 
 Window (`tests/ui/test_flux_window.cpp`, QtTest, offscreen, a temporary
 SQLite store seeded with `flux_seed.hpp`; one `QSKIP` without the store):
