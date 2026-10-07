@@ -141,8 +141,8 @@ void JobRunner::finish(const std::shared_ptr<Slot>& slot) {
       while (history_.size() > options_.history) history_.pop_front();
     }
     if (current_ == slot) current_.reset();
+    clock_.notify_all(idle_);
   }
-  idle_.notify_all();
   bus_.publish(JobFinished{std::move(record)});
 }
 
@@ -189,7 +189,7 @@ std::optional<Job> JobRunner::job(JobId id) const {
 
 void JobRunner::wait_idle() const {
   std::unique_lock lock(mutex_);
-  idle_.wait(lock, [this] { return current_ == nullptr; });
+  while (current_ != nullptr) clock_.wait(idle_, lock);
 }
 
 }  // namespace pychron::jobs
