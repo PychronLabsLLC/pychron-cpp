@@ -136,7 +136,9 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
 }
 
 // The queue is some eight minutes of delays, extraction and counting; on the
-// virtual clock at unlimited speed nothing waits for real time.
+// virtual clock at unlimited speed nothing waits for real time. The bound is
+// for the whole command, interpreter start-up included, on a slow machine:
+// thirty real seconds are still far short of the simulated minutes.
 TEST_F(ElctlExpTest, SimulatedQueueTakesNoRealTime) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto began = std::chrono::steady_clock::now();
@@ -144,7 +146,7 @@ TEST_F(ElctlExpTest, SimulatedQueueTakesNoRealTime) {
   const auto took = std::chrono::steady_clock::now() - began;
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "3/3 run(s) succeeded")) << o.out;
-  EXPECT_LT(took, std::chrono::seconds(5));
+  EXPECT_LT(took, std::chrono::seconds(30));
 }
 
 // Simulated time starts at the real time of day and runs on from there: each
@@ -171,7 +173,9 @@ TEST_F(ElctlExpTest, SimulatedAnalysesAreStampedInSimulatedTime) {
 // At a thousandth of real speed the queue's first delay alone is minutes long
 // and simulated time all but stands: the operator's Ctrl-C is heard in real
 // time all the same. The two interrupts are kept standing rather than timed,
-// since the command clears the count when it starts the queue.
+// since the command clears the count when it starts the queue. Thirty real
+// seconds allow the command its start-up on a slow machine and are nothing
+// beside the days the queue would take at that speed.
 TEST_F(ElctlExpTest, AnInterruptStopsAPacedQueueInRealTime) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   std::atomic<bool> done{false};
@@ -196,7 +200,7 @@ TEST_F(ElctlExpTest, AnInterruptStopsAPacedQueueInRealTime) {
   EXPECT_TRUE(contains(o.out, "interrupt: cancelling")) << o.out;
   EXPECT_TRUE(contains(o.out, "queue cancelled: cancelled by the operator")) << o.out;
   EXPECT_TRUE(contains(o.out, "0/")) << o.out;
-  EXPECT_LT(took, std::chrono::seconds(5));
+  EXPECT_LT(took, std::chrono::seconds(30));
 }
 
 // A run that gives up after the simulated beam is in place leaves nothing

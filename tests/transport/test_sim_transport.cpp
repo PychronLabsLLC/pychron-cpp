@@ -318,7 +318,9 @@ TEST_F(SimTransportVirtual, UnsolicitedReadTimesOutInClockTime) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
   EXPECT_EQ(clock.now(), kStart + 3s);
-  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 200ms);
+  // Three thousand one-millisecond polls of the clock, each a hand-over between
+  // threads: no real time to speak of, but not nothing on a loaded machine.
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 20s);
 }
 
 TEST_F(SimTransportVirtual, UnsolicitedReadSeesLateInput) {

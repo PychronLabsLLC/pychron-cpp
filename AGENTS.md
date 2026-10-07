@@ -206,7 +206,11 @@ Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
   time" from a stall. The `*Steady` tests (`ExampleLineSteady`,
   `NgxLinkSteady`, `QtegraAcquireSteady`, `AdcBankSteady`) are the exception
   by design: they keep the hardware arrangement under test on a
-  `SteadyClock`, with short real sleeps and real lower bounds.
+  `SteadyClock`, with short real sleeps and real lower bounds. So are the
+  pacing tests of `VirtualClock` (what a paced jump costs in real time is the
+  thing tested, and its real lower bound is the point) and `elctl`'s
+  interrupt test (`AnInterruptStopsAPacedQueueInRealTime`); their upper
+  bounds follow the rule all the same.
 - A stuck test does not hang: the fixture's dead-man always aborts it after
   30 s of real time, with a message. When some thread is waiting in the clock
   for a deadline, the clock also reports `virtual clock stalled; runnable:

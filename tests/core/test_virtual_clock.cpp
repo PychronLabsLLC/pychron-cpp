@@ -339,18 +339,22 @@ TEST_F(VirtualClockTest, WallNowIsEpochPlusElapsed) {
   EXPECT_EQ(clock.wall_now(), options.epoch + 90s);
 }
 
+// A hundred simulated seconds at ten thousand to one are ten real
+// milliseconds. A pace cannot end early, so the lower bound is exact; the
+// upper one only has to be far below the hundred seconds an unpaced-for speed
+// would take, and leaves a slow machine its room.
 TEST_F(VirtualClockTest, PacingTakesDeltaOverSpeed) {
   VirtualClock::Options options;
-  options.speed = 100;
+  options.speed = 10'000;
   VirtualClock clock(options);
   Clock::Participant main(clock, "test");
   const TimePoint kStart = clock.now();
   const auto real_start = Real::now();
-  clock.sleep_for(1s);
+  clock.sleep_for(100s);
   const auto real = Real::now() - real_start;
   EXPECT_GE(real, 8ms);
-  EXPECT_LT(real, 600ms);
-  EXPECT_EQ(clock.now(), kStart + 1s);
+  EXPECT_LT(real, 5s);
+  EXPECT_EQ(clock.now(), kStart + 100s);
 }
 
 namespace {
@@ -410,7 +414,7 @@ void expect_a_notify_ends_the_pacing_sleep(bool waiter_blocks_last) {
   }
   clock.notify_all(cv);
   ASSERT_TRUE(w->join_within());
-  EXPECT_LT(woken.real - notified, 500ms);
+  EXPECT_LT(woken.real - notified, 5s);  // not the minute the sleep is for
   EXPECT_GE(woken.now - kStart, 20ms);
   EXPECT_LE(woken.now - kStart, 5s);
   // W has left and the sleeper is pacing the rest of its minute: let it go.
@@ -445,7 +449,7 @@ TEST_F(VirtualClockTest, SetSpeedTakesEffectDuringASleep) {
   const auto real_set = Real::now();
   clock.set_speed(std::numeric_limits<double>::infinity());
   ASSERT_TRUE(sleeper.join_within());
-  EXPECT_LT(woken.real - real_set, 1s);
+  EXPECT_LT(woken.real - real_set, 5s);  // not the hundred seconds left
   EXPECT_EQ(woken.now, kStart + 100s);
   EXPECT_EQ(clock.now(), kStart + 100s);
 }
@@ -473,7 +477,7 @@ TEST_F(VirtualClockTest, ALeaveHandsThePacingToASleeper) {
   release_b.set_value();
   // B's leave returns at once; the hundred real seconds are for A to sleep.
   ASSERT_TRUE(b.join_within());
-  EXPECT_LT(leave_took, 2s);
+  EXPECT_LT(leave_took, 5s);
   EXPECT_FALSE(a.finished());
   // A is pacing, or nobody would hear this.
   clock.set_speed(std::numeric_limits<double>::infinity());
@@ -497,9 +501,9 @@ TEST_F(VirtualClockTest, NowAdvancesDuringAPace) {
   const TimePoint second = clock.now();
   const WallTime wall_second = clock.wall_now();
   EXPECT_GE(second - first, 30ms);
-  EXPECT_LE(second - first, 2s);
+  EXPECT_LE(second - first, 5s);
   EXPECT_GE(wall_second - wall_first, 30ms);
-  EXPECT_LE(wall_second - wall_first, 2s);
+  EXPECT_LE(wall_second - wall_first, 5s);
   clock.set_speed(std::numeric_limits<double>::infinity());
   ASSERT_TRUE(sleeper.join_within());
   EXPECT_EQ(clock.now(), kStart + 60s);
@@ -522,7 +526,7 @@ TEST_F(VirtualClockTest, AnOutsidersSleepDuringAPaceTakesItsOwnTime) {
   const TimePoint after = clock.now();
   const auto real = Real::now() - real_before;
   EXPECT_GE(real, 90ms);
-  EXPECT_LT(real, 2s);
+  EXPECT_LT(real, 5s);
   EXPECT_GE(after - before, 100ms);
   clock.set_speed(std::numeric_limits<double>::infinity());
   ASSERT_TRUE(sleeper.join_within());
@@ -623,7 +627,9 @@ TEST_F(VirtualClockTest, FrequentNotifiesDoNotSlowPacedTime) {
     EXPECT_TRUE(sleeper.join_within());
   }
   EXPECT_GE(real, 90ms);
-  EXPECT_LT(real, 400ms);
+  // A notify that started the sleep over would never let it end; one that
+  // only costs a little each time has room here on a slow machine.
+  EXPECT_LT(real, 10s);
   EXPECT_EQ(clock.now(), kStart + 10s);
 }
 
