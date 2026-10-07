@@ -137,9 +137,10 @@ jobs:
           key: ccache-${{ matrix.name }}-${{ github.sha }}
 
       - name: Test
-        # A failure is run once more, alone, at the end: the log's tail then
-        # holds the output of every failed test, not a page of passes.
-        run: ctest --preset dev --parallel ${{ matrix.jobs }} || (ctest --preset dev --rerun-failed --output-on-failure; exit 1)
+        # On a failure the log's tail holds what each failed test printed when
+        # it failed (tools/ci_failed_output.py), then the failed tests run
+        # once more alone: a test that fails, then passes, still says why.
+        run: ctest --preset dev --parallel ${{ matrix.jobs }} || (python3 tools/ci_failed_output.py build/dev; ctest --preset dev --rerun-failed --output-on-failure; exit 1)
 
   windows:
     name: core (windows-msvc)
@@ -155,7 +156,7 @@ jobs:
 
       - name: Test
         shell: bash
-        run: ctest --preset dev -C Debug --parallel 4 || (ctest --preset dev -C Debug --rerun-failed --output-on-failure; exit 1)
+        run: ctest --preset dev -C Debug --parallel 4 || (python tools/ci_failed_output.py build/dev; ctest --preset dev -C Debug --rerun-failed --output-on-failure; exit 1)
 
   ui:
     name: ui (macos-qt6)
@@ -198,4 +199,4 @@ jobs:
           key: ccache-macos-qt6-${{ github.sha }}
 
       - name: Test
-        run: ctest --preset dev-ui --parallel 2 || (ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)
+        run: ctest --preset dev-ui --parallel 2 || (python3 tools/ci_failed_output.py build/dev-ui; ctest --preset dev-ui --rerun-failed --output-on-failure; exit 1)

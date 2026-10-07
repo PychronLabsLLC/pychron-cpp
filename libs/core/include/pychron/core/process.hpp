@@ -40,4 +40,10 @@ Result<ProcessResult> run_process(const ProcessSpec& spec);
 // cannot be found.
 std::filesystem::path executable_dir();
 
+// The calling thread feeds what the user is watching (a live picture): on
+// macOS it asks for the user-interactive quality of service, which the system
+// schedules first and wakes on time (a thread of lower QoS has its timers
+// coalesced, by tens of milliseconds). Elsewhere it does nothing.
+void mark_thread_interactive() noexcept;
+
 }  // namespace pychron

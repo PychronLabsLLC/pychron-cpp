@@ -7,6 +7,11 @@
 #include <iterator>
 #include <thread>
 
+#if defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -373,6 +378,12 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
 }
 
 #endif
+
+void mark_thread_interactive() noexcept {
+#if defined(__APPLE__)
+  (void)pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+}
 
 std::filesystem::path executable_dir() {
 #if defined(_WIN32)
