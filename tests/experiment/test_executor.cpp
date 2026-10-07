@@ -980,6 +980,71 @@ TEST_F(ExecutorVirtual, AStopBeforeExecuteDoesNotWaitForTheScheduledStart) {
   EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
+// The minimum pump time is counted from when the run before began to pump.
+// That is said after it has let the spectrometer go, so the next run, which
+// has the spectrometer by then, waits to hear it. Here the first run has no
+// post-measurement script and says so at once; its thread is held between
+// the two for as long as the second run would need to get ahead of it.
+TEST_F(ExecutorVirtual, MinimumPumpTimeIsCountedFromThePreviousRunsPumping) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  w.host.bodies["extract"] = takes(300s);
+  RunSpec first = counted_run("12345", 600);
+  first.overlap.duration = Seconds{2};
+  first.post_measurement.reset();
+  RunSpec second = unknown_run("12346");
+  second.overlap.min_delay = Seconds{120};
+  auto q = w.queue({first, second}, Seconds{10}, Seconds{60});
+  w.subs.push_back(w.bus.subscribe<run::RunStateChanged>([&](const run::RunStateChanged& e) {
+    if (e.to != run::RunState::PostMeasuring || e.run_id != w.run_id("12345")) return;
+    // The spectrometer is free and the pump time not yet said.
+    (void)pychron::testing::eventually_real([&] { return w.first_block(w.run_id("12346")).has_value(); }, 200ms);
+  }));
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success"}));
+  const auto released = w.entered(w.run_id("12345"), run::RunState::PostMeasuring);
+  const auto got = w.first_block(w.run_id("12346"));
+  ASSERT_TRUE(released && got);
+  EXPECT_EQ(*got, *released + 120s);
+  EXPECT_EQ(w.spec.overlapping.load(), 0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+// With a post-measurement script the pumping begins when the script says so.
+TEST_F(ExecutorVirtual, MinimumPumpTimeIsCountedFromWhenTheScriptSaysItPumps) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  w.host.bodies["extract"] = takes(300s);
+  std::mutex mutex;
+  std::optional<TimePoint> pumping;
+  w.host.bodies["post_meas"] = [&](const scripting::ScriptEnvironment& env, scripting::CancelToken& token) -> Result<void> {
+    token.wait_until(*env.clock, env.clock->now() + 50s);  // isolating, before the pump valve opens
+    {
+      std::lock_guard lock(mutex);
+      if (!pumping) pumping = env.clock->now();
+    }
+    if (env.on_pump_time_start) env.on_pump_time_start();
+    return {};
+  };
+  RunSpec first = counted_run("12345", 600);
+  first.overlap.duration = Seconds{2};
+  RunSpec second = unknown_run("12346");
+  second.overlap.min_delay = Seconds{120};
+  auto q = w.queue({first, second}, Seconds{10}, Seconds{60});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  const auto released = w.entered(w.run_id("12345"), run::RunState::PostMeasuring);
+  const auto got = w.first_block(w.run_id("12346"));
+  ASSERT_TRUE(released && got && pumping);
+  EXPECT_EQ(*pumping, *released + 50s);
+  EXPECT_EQ(*got, *pumping + 120s);
+  EXPECT_EQ(w.spec.overlapping.load(), 0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
 TEST_F(ExecutorVirtual, ScheduledStartWaitsOnTheClock) {
   World w({});
   Clock::Participant me(w.clock, "test");

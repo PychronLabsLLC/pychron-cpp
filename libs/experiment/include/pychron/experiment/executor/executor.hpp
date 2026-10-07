@@ -208,6 +208,9 @@ class Executor {
 
   std::unique_ptr<Resource> extraction_, spectrometer_;
   std::optional<TimePoint> pump_started_;
+  // The run that has let the spectrometer go and not yet said when it began
+  // to pump. Under mutex_, notified on cv_ through the clock.
+  Slot* pump_owed_ = nullptr;
   std::optional<RunChecks> run_checks_;
   std::size_t last_started_row_ = 0;
   std::optional<RunSpec> previous_spec_;  // last run that ran (for the delay policy)

@@ -253,7 +253,11 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
     if (!spectrometer_->acquire(clock_, s->control.token())) return false;
     std::optional<TimePoint> pump;
     {
-      std::lock_guard lock(mutex_);
+      // The run that had the spectrometer says when it began to pump after it
+      // has let it go: that is waited for, or the time read here is the one
+      // of the run before it.
+      std::unique_lock lock(mutex_);
+      while (pump_owed_ != nullptr && !s->control.requested()) clock_.wait(cv_, lock);
       pump = pump_started_;
     }
     const auto min = to_clock(s->spec.overlap.min_delay);
@@ -267,15 +271,23 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
     }
     return true;
   };
-  hooks.release_spectrometer = [this] { spectrometer_->release(clock_); };
+  hooks.release_spectrometer = [this, s] {
+    {
+      std::lock_guard lock(mutex_);
+      pump_owed_ = s;  // before the next run can have the spectrometer
+    }
+    spectrometer_->release(clock_);
+  };
   hooks.on_overlap_ready = [this, s] {
     std::lock_guard lock(mutex_);
     s->overlap_ready = true;
     clock_.notify_all(cv_);
   };
-  hooks.on_pump_time_started = [this] {
+  hooks.on_pump_time_started = [this, s] {
     std::lock_guard lock(mutex_);
     pump_started_ = clock_.now();
+    if (pump_owed_ == s) pump_owed_ = nullptr;
+    clock_.notify_all(cv_);
   };
 
   s->run = std::make_unique<run::Run>(s->spec, s->header, ctx_.services, std::move(hooks), index, row);
@@ -298,6 +310,7 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
     // Said while this thread is still a participant.
     std::lock_guard lock(mutex_);
     s->done = true;
+    if (pump_owed_ == s) pump_owed_ = nullptr;  // a run that failed or was aborted never says
     clock_.notify_all(cv_);
   });
   return slot;
@@ -480,6 +493,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     // meant for this queue (see ended()).
     std::lock_guard lock(mutex_);
     pump_started_.reset();
+    pump_owed_ = nullptr;
     active_.clear();
   }
   previous_spec_.reset();
