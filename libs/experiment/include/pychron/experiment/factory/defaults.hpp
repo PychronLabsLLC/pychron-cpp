@@ -21,6 +21,8 @@ struct RunDefaults {
   std::optional<Unit> units;
   std::optional<double> value;
   std::optional<Duration> duration, cleanup, pre_cleanup, post_cleanup;
+  // The sample a run of this type is of (a blank's, an air's); unset leaves the run's alone.
+  std::optional<SampleInfo> sample;
 };
 
 // Lab defaults.toml:
@@ -30,6 +32,7 @@ struct RunDefaults {
 //   post_equilibration = "..."   post_measurement = "..."
 //   [<analysis_type>.<extract_device>.extraction]   units value duration cleanup pre_cleanup post_cleanup
 //   [<analysis_type>.<extract_device>.overrides]    "main.counts" = 400
+//   [<analysis_type>.<extract_device>.sample]       sample material project
 class DefaultsTable {
  public:
   static Result<DefaultsTable> from_toml(std::string_view text, std::string_view name = "defaults.toml");
@@ -44,7 +47,7 @@ class DefaultsTable {
 };
 
 // Replaces measurement plan/overrides, extraction script and post scripts with the
-// defaults, and sets any extraction fields the defaults provide.
+// defaults, and sets any extraction fields and the sample the defaults provide.
 void apply_defaults(RunSpec& run, const RunDefaults& defaults);
 
 // Clears every field rules_for(run.id.type) forbids, so the run validates.

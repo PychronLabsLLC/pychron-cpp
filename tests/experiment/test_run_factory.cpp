@@ -430,3 +430,45 @@ TEST(SpecialRuns, NoCountedRunsNoInsertion) {
   EXPECT_EQ(ids_of(out), (std::vector<std::string>{"a"}));
   EXPECT_TRUE(insert_frequency({}, special(AnalysisType::BlankUnknown, "bu"), {.every = 1}).empty());
 }
+
+// --- a sample in the run defaults (install defaults design, 4.1) ---------
+
+TEST(RunDefaults, ASampleTableIsReadAndGivenToTheRun) {
+  auto t = DefaultsTable::from_toml(R"(
+[air."*"]
+template = "mc"
+[air."*".sample]
+sample = "air"
+material = "air"
+project = "references"
+)");
+  ASSERT_TRUE(t) << t.error().what;
+  auto run = make_special_run(AnalysisType::Air, IdentifierRules::defaults(), "", *t);
+  ASSERT_TRUE(run) << run.error().what;
+  EXPECT_EQ(run->sample.sample, "air");
+  EXPECT_EQ(run->sample.material, "air");
+  EXPECT_EQ(run->sample.project, "references");
+}
+
+TEST(RunDefaults, AnUnknownSampleKeyIsAnError) {
+  auto t = DefaultsTable::from_toml("[air.\"*\"]\ntemplate = \"mc\"\n[air.\"*\".sample]\nirradiation = \"NM-1\"\n");
+  ASSERT_FALSE(t);
+  EXPECT_NE(t.error().what.find("unknown key 'irradiation'"), std::string::npos) << t.error().what;
+}
+
+TEST(RunDefaults, ASampleThatIsNotATableIsAnError) {
+  auto t = DefaultsTable::from_toml("[air.\"*\"]\ntemplate = \"mc\"\nsample = \"air\"\n");
+  ASSERT_FALSE(t);
+  EXPECT_NE(t.error().what.find("'sample' must be a table"), std::string::npos) << t.error().what;
+}
+
+TEST(RunDefaults, DefaultsWithoutASampleLeaveTheRunsSampleAlone) {
+  RunSpec run;
+  run.sample.sample = "FC-2";
+  run.sample.project = "monitors";
+  RunDefaults d;
+  d.template_name = "mc";
+  apply_defaults(run, d);
+  EXPECT_EQ(run.sample.sample, "FC-2");
+  EXPECT_EQ(run.sample.project, "monitors");
+}

@@ -54,7 +54,8 @@ class Parser {
 
   RunDefaults entry(const toml::table& t, const std::string& where) {
     RunDefaults d;
-    check_keys(t, {"template", "script", "post_equilibration", "post_measurement", "extraction", "overrides"}, where);
+    check_keys(t, {"template", "script", "post_equilibration", "post_measurement", "extraction", "overrides", "sample"},
+               where);
     str(t, "template", d.template_name, where);
     str(t, "script", d.script, where);
     opt_str(t, "post_equilibration", d.post_equilibration, where);
@@ -76,6 +77,18 @@ class Parser {
       dur(*e, "post_cleanup", d.post_cleanup, ew);
     } else if (t.contains("extraction")) {
       add(where, "'extraction' must be a table");
+    }
+
+    if (const auto* sm = t["sample"].as_table()) {
+      const std::string sw = where + ".sample";
+      check_keys(*sm, {"sample", "material", "project"}, sw);
+      SampleInfo info;
+      str(*sm, "sample", info.sample, sw);
+      str(*sm, "material", info.material, sw);
+      str(*sm, "project", info.project, sw);
+      d.sample = std::move(info);
+    } else if (t.contains("sample")) {
+      add(where, "'sample' must be a table");
     }
 
     if (const auto* o = t["overrides"].as_table()) {
@@ -164,6 +177,7 @@ void apply_defaults(RunSpec& run, const RunDefaults& d) {
   if (d.cleanup) e.cleanup = *d.cleanup;
   if (d.pre_cleanup) e.pre_cleanup = *d.pre_cleanup;
   if (d.post_cleanup) e.post_cleanup = *d.post_cleanup;
+  if (d.sample) run.sample = *d.sample;
 }
 
 void strip_for_type(RunSpec& run) {
