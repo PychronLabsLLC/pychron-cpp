@@ -3,9 +3,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 #include <utility>
+
+#include "pychron/core/virtual_clock.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -27,6 +32,33 @@ std::unique_ptr<SimTransport> open_scripted(std::vector<SimStep> steps, int retr
   EXPECT_TRUE(t->open());
   return t;
 }
+
+// A read that waits past the clock leaves time standing and the test asleep
+// in it. Each test on a VirtualClock runs under a real-time bound: when it is
+// exceeded the process says so and aborts, well inside the ctest timeout.
+class SimTransportVirtual : public ::testing::Test {
+ protected:
+  ~SimTransportVirtual() override {
+    {
+      std::lock_guard lock(mutex_);
+      finished_ = true;
+    }
+    finished_cv_.notify_all();
+    deadman_.join();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable finished_cv_;
+  bool finished_ = false;
+  std::thread deadman_{[this] {
+    std::unique_lock lock(mutex_);
+    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
+    std::fputs("SimTransport test did not finish within 30 s of real time: a thread is stuck\n",
+               stderr);
+    std::abort();
+  }};
+};
 
 }  // namespace
 
@@ -294,4 +326,42 @@ TEST(SimTransportHooked, UntilCloseReturnsTheWholeReply) {
   auto none = silent->exchange(to_bytes("Open A\r"), ReadSpec::until_close(), std::chrono::milliseconds(10));
   ASSERT_FALSE(none);
   EXPECT_EQ(none.error().kind, ErrorKind::Timeout);
+}
+
+TEST_F(SimTransportVirtual, UnsolicitedReadTimesOutInClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  auto t = SimTransport::hooked([](const Bytes&) { return Bytes{}; }, o, [] { return Bytes{}; });
+  ASSERT_TRUE(t->open());
+
+  const auto real_start = std::chrono::steady_clock::now();
+  auto r = t->read(kCrLf, 3s);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(clock.now(), kStart + 3s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 200ms);
+}
+
+TEST_F(SimTransportVirtual, UnsolicitedReadSeesLateInput) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  bool sent = false;  // worker thread only
+  auto t = SimTransport::hooked([](const Bytes&) { return Bytes{}; }, o, [&] {
+    if (sent || clock.now() < kStart + 1s) return Bytes{};
+    sent = true;
+    return to_bytes(std::string("EVENT\r\n"));
+  });
+  ASSERT_TRUE(t->open());
+
+  auto r = t->read(kCrLf, 3s);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(*r, to_bytes(std::string("EVENT\r\n")));
+  EXPECT_GE(clock.now(), kStart + 1s);
+  EXPECT_LE(clock.now(), kStart + 1s + 2ms);
 }

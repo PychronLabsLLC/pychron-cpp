@@ -86,7 +86,8 @@ struct TransportOptions {
   int retries = 0;
   // Consecutive failed calls after which health() reports Down.
   std::uint64_t down_after = 3;
-  // Time source for Health::last_ok; a SteadyClock is used when null.
+  // Time source for Health::last_ok and for the waits of the queue (its
+  // worker is a participant of it); a SteadyClock is used when null.
   const Clock* clock = nullptr;
   // When set, a TransportHealth event is published on every state change.
   SignalBus* bus = nullptr;

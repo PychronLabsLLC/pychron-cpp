@@ -1,7 +1,7 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
-#include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -17,6 +17,14 @@ namespace {
 struct Job {
   std::function<void()> run;
   std::function<void()> cancel;
+};
+
+// Where a queued call's result is left for its caller. Guarded by the queue
+// mutex; `done` is waited on and notified through the clock.
+template <class T>
+struct Pending {
+  std::optional<Result<T>> value;
+  std::condition_variable done;
 };
 
 bool retryable(const Error& e) { return e.kind == ErrorKind::Timeout || e.kind == ErrorKind::Io; }
@@ -38,6 +46,9 @@ struct QueuedTransport::Impl {
   bool stopping = false;
   std::thread worker;
   std::thread::id worker_id;
+  bool worker_done = false;        // the worker has left its loop
+  std::size_t callers = 0;         // threads inside submit() waiting for a result
+  std::condition_variable exited;  // either of those changed; through the clock
 
   bool open = false;  // worker thread only (or after the worker has stopped)
 
@@ -108,42 +119,92 @@ struct QueuedTransport::Impl {
 
   // Runs `fn` on the worker and blocks until it completes. Calls made from
   // the worker itself (re-entrancy) run inline to avoid self-deadlock.
+  //
+  // The caller waits in the clock: the worker is a participant, and a caller
+  // that is one too must not hold time still while the worker's I/O takes
+  // some.
   template <class T>
   Result<T> submit(std::function<Result<T>()> fn) {
-    auto promise = std::make_shared<std::promise<Result<T>>>();
-    auto future = promise->get_future();
-    {
-      std::unique_lock lock(mutex);
-      if (stopping) return fail(cancelled());
-      if (std::this_thread::get_id() == worker_id) {
-        lock.unlock();
-        return fn();
-      }
-      Error cancel_error = cancelled();
-      queue.push_back(Job{[promise, fn = std::move(fn)] { promise->set_value(fn()); },
-                          [promise, cancel_error] { promise->set_value(fail(cancel_error)); }});
+    auto pending = std::make_shared<Pending<T>>();
+    std::unique_lock lock(mutex);
+    if (stopping) return fail(cancelled());
+    if (std::this_thread::get_id() == worker_id) {
+      lock.unlock();
+      return fn();
     }
-    cv.notify_one();
-    return future.get();
+    queue.push_back(Job{[this, pending, fn = std::move(fn)] {
+                          auto r = fn();
+                          {
+                            std::lock_guard held(mutex);
+                            pending->value = std::move(r);
+                          }
+                          clock->notify_all(pending->done);
+                        },
+                        [this, pending, cancel_error = cancelled()] {
+                          {
+                            std::lock_guard held(mutex);
+                            pending->value = Result<T>(fail(cancel_error));
+                          }
+                          clock->notify_all(pending->done);
+                        }});
+    ++callers;
+    clock->notify_one(cv);
+    while (!pending->value) clock->wait(pending->done, lock);
+    Result<T> r = std::move(*pending->value);
+    // Said with the mutex held: this thread touches nothing of the transport
+    // once it lets go, so stop() may then let the transport be destroyed.
+    if (--callers == 0 && stopping) clock->notify_all(exited);
+    return r;
   }
 
-  void run_worker() {
+  void run_worker(std::shared_ptr<Clock::Hold> started) {
+    Clock::Participant participant(*clock, "transport." + options.name);
+    started.reset();
     for (;;) {
       Job job;
       {
         std::unique_lock lock(mutex);
-        cv.wait(lock, [this] { return stopping || !queue.empty(); });
-        if (queue.empty()) return;
+        while (!stopping && queue.empty()) clock->wait(cv, lock);
+        if (queue.empty()) {
+          // Said while this thread is still a participant: stop() is runnable
+          // again before the clock stops counting the worker.
+          worker_done = true;
+          lock.unlock();
+          clock->notify_all(exited);
+          return;
+        }
         job = std::move(queue.front());
         queue.pop_front();
       }
       job.run();
     }
   }
+
+  // Fails the queued calls and returns once the worker has finished the call
+  // it was busy with and every caller has taken its result. The wait is in
+  // the clock, where the worker says it has finished: what it is busy with
+  // may take clock time, and a join alone would stop that. Called on the
+  // worker itself (from inside a job) it only stops the queue.
+  void stop() {
+    std::deque<Job> cancelled_jobs;
+    {
+      std::lock_guard lock(mutex);
+      stopping = true;
+      cancelled_jobs.swap(queue);
+    }
+    clock->notify_all(cv);
+    for (auto& job : cancelled_jobs) job.cancel();
+    if (std::this_thread::get_id() == worker_id) return;
+    std::unique_lock lock(mutex);
+    while (!worker_done || callers != 0) clock->wait(exited, lock);
+  }
 };
 
 QueuedTransport::QueuedTransport(TransportOptions options) : impl_(std::make_unique<Impl>(std::move(options))) {
-  impl_->worker = std::thread([impl = impl_.get()] { impl->run_worker(); });
+  // Time does not jump until the worker has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(*impl_->clock);
+  impl_->worker = std::thread([impl = impl_.get(), hold]() mutable { impl->run_worker(std::move(hold)); });
+  hold.reset();
   std::lock_guard lock(impl_->mutex);
   impl_->worker_id = impl_->worker.get_id();
 }
@@ -151,27 +212,16 @@ QueuedTransport::QueuedTransport(TransportOptions options) : impl_(std::make_uni
 QueuedTransport::~QueuedTransport() {
   // Derived classes already called shutdown(); this only reaps the thread if
   // one forgot, and cannot call the (now destroyed) primitives.
-  std::deque<Job> pending;
-  {
-    std::lock_guard lock(impl_->mutex);
-    impl_->stopping = true;
-    pending.swap(impl_->queue);
-  }
-  impl_->cv.notify_all();
-  for (auto& job : pending) job.cancel();
+  impl_->stop();
   if (impl_->worker.joinable()) impl_->worker.join();
 }
 
 void QueuedTransport::shutdown() {
-  std::deque<Job> pending;
   {
     std::lock_guard lock(impl_->mutex);
     if (impl_->stopping && !impl_->worker.joinable()) return;
-    impl_->stopping = true;
-    pending.swap(impl_->queue);
   }
-  impl_->cv.notify_all();
-  for (auto& job : pending) job.cancel();
+  impl_->stop();
   if (impl_->worker.joinable() && std::this_thread::get_id() != impl_->worker_id) impl_->worker.join();
   if (impl_->open) {
     impl_->open = false;

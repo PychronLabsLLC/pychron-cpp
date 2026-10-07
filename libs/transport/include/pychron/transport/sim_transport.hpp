@@ -37,7 +37,8 @@ class SimTransport final : public QueuedTransport {
   using Hook = std::function<Bytes(const Bytes& tx)>;
   // Input nobody asked for (an instrument's event stream): polled by each
   // read; returns the bytes due now, empty for none. With one, a read with
-  // nothing to frame waits in real time up to its timeout, as a socket does.
+  // nothing to frame waits up to its timeout, as a socket does, in the time
+  // of TransportOptions::clock (real time when that is null).
   using Unsolicited = std::function<Bytes()>;
 
   static std::unique_ptr<SimTransport> scripted(std::vector<SimStep> steps, TransportOptions options = {});

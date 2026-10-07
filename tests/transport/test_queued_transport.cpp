@@ -2,13 +2,20 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <future>
+#include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
 #include "pychron/core/events.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
 
 using namespace pychron;
@@ -66,6 +73,43 @@ TransportOptions opts(int retries = 0, std::uint64_t down_after = 3) {
 }
 
 const ReadSpec kCr = ReadSpec::until("\r");
+
+// Waits, in real time, until `n` threads are asleep in the clock.
+[[nodiscard]] bool await_waiters(const VirtualClock& clock, std::size_t n) {
+  const auto give_up = std::chrono::steady_clock::now() + 5s;
+  while (clock.waiters() != n) {
+    if (std::chrono::steady_clock::now() > give_up) return false;
+    std::this_thread::yield();
+  }
+  return true;
+}
+
+// A transport that waits past the clock leaves time standing and the test
+// asleep in it. Each test on a VirtualClock runs under a real-time bound: when
+// it is exceeded the process says so and aborts, well inside the ctest timeout.
+class QueuedTransportVirtual : public ::testing::Test {
+ protected:
+  ~QueuedTransportVirtual() override {
+    {
+      std::lock_guard lock(mutex_);
+      finished_ = true;
+    }
+    finished_cv_.notify_all();
+    deadman_.join();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable finished_cv_;
+  bool finished_ = false;
+  std::thread deadman_{[this] {
+    std::unique_lock lock(mutex_);
+    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
+    std::fputs("QueuedTransport test did not finish within 30 s of real time: a thread is stuck\n",
+               stderr);
+    std::abort();
+  }};
+};
 
 }  // namespace
 
@@ -262,4 +306,69 @@ TEST(QueuedTransport, ShutdownCancelsQueuedAndLaterCalls) {
   EXPECT_EQ(r2.error().kind, ErrorKind::Cancelled);
   EXPECT_EQ(t.exchange(to_bytes("3"), kCr).error().kind, ErrorKind::Cancelled);
   EXPECT_EQ(t.close_calls, 1);
+}
+
+TEST_F(QueuedTransportVirtual, CallerWaitsForTheWorkerInClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  auto t = SimTransport::hooked(
+      [&](const Bytes&) {
+        clock.sleep_for(2s);  // the instrument takes its time, on the worker
+        return to_bytes("OK\r");
+      },
+      o);
+  ASSERT_TRUE(t->open());
+
+  const auto real_start = std::chrono::steady_clock::now();
+  auto r = t->exchange(to_bytes("Q\r"), kCr);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(to_string(*r), "OK\r");
+  EXPECT_EQ(clock.now(), kStart + 2s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 200ms);
+}
+
+// The call the worker is busy with is finished, as on any clock; the one
+// queued behind it is the pending call, and it is woken with Cancelled at
+// once, without the clock moving.
+TEST_F(QueuedTransportVirtual, ShutdownCancelsAPendingCall) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");  // runnable until it sleeps: time stands
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  auto t = SimTransport::hooked(
+      [&](const Bytes&) {
+        clock.sleep_for(2s);
+        return to_bytes("OK\r");
+      },
+      o);
+  ASSERT_TRUE(t->open());
+  SimTransport* const raw = t.get();
+
+  auto first = std::async(std::launch::async, [&clock, raw] {
+    Clock::Participant caller(clock, "first");
+    return raw->exchange(to_bytes("1\r"), kCr);
+  });
+  ASSERT_TRUE(await_waiters(clock, 2));  // the worker in the hook, and its caller
+  auto second = std::async(std::launch::async, [&clock, raw] {
+    Clock::Participant caller(clock, "second");
+    return raw->exchange(to_bytes("2\r"), kCr);
+  });
+  ASSERT_TRUE(await_waiters(clock, 3));  // and the caller queued behind it
+
+  std::thread destroyer([&t] { t.reset(); });  // not a participant
+  auto r2 = second.get();
+  ASSERT_FALSE(r2);
+  EXPECT_EQ(r2.error().kind, ErrorKind::Cancelled);
+  EXPECT_EQ(clock.now(), kStart);
+
+  clock.sleep_for(2s);  // lets the worker out of the hook
+  auto r1 = first.get();
+  ASSERT_TRUE(r1) << r1.error().what;
+  EXPECT_EQ(to_string(*r1), "OK\r");
+  destroyer.join();
+  EXPECT_EQ(clock.now(), kStart + 2s);
 }
