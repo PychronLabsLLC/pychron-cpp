@@ -20,7 +20,7 @@ reading and writing the store). There is no flux window yet: the review step
   equals the monitor set's `sample` (default `FC-2`). Every other position
   that has an identifier is an unknown. A fit saved with `--sample` or
   `--all-positions` chose its monitors another way, and the next fit of the
-  level chooses them the same way (see Options).
+  level with the same monitor set chooses them the same way (see Options).
 - `F` of a monitor (the 40Ar*/39ArK ratio) comes from the reduction with the
   position's saved flux taken away, so a fit never depends on a J saved
   earlier. An analysis whose reduction reports an error takes no part (it
@@ -134,8 +134,8 @@ fit; with no saved fit the defaults are `plane`, unweighted, arithmetic mean,
 | `--fit-error sem\|msem\|sd` | Error of the predicted J, for every model that forms one from a fit or a mean: `sem` or `msem` of a fitted surface (Plane, Bowl, `ls1d`), and `sem`, `msem` or `sd` of the mean models' mean. `sd` on a surface is an error. See "How the errors are formed". |
 | `--neighbors N`, `--interpolation`, `--axis`, `--degree` | As the table above. |
 | `--monitors NAME` | The monitor set (below). Default: the one the saved fit used, else the store's default. |
-| `--sample NAME` | Find monitors by this sample name instead of the set's. Saved with the fit: the next fit of the level uses it until another `--sample` is given. |
-| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. Saved with the fit: the next fit of the level does the same. |
+| `--sample NAME` | Find monitors by this sample name instead of the set's. Saved with the fit: the next fit of the level under the same monitor set uses it until another `--sample` is given. It does not follow the level to another set: with `--monitors OTHER`, or when the saved set is missing from the store and the default stands in, the monitors are found by that set's own sample (give `--sample` again if you mean otherwise). Given without `--all-positions`, it also undoes a saved `--all-positions`. |
+| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. Saved with the fit: the next fit of the level does the same, unless `--sample` or `--monitor-positions` is given. |
 | `--monitor-positions` | The opposite: the monitors are the positions of the monitor sample. This is the default, so it is only needed to undo a saved `--all-positions`. Giving both is a usage error. |
 | `--omit RECORD_ID`, `--include RECORD_ID` | Leave one analysis out of its mean, or bring it back (over a tag or a saved omission). A level only. |
 | `--exclude-position HOLE` | A monitor position stays out of the fit but still gets a predicted J. Any position of the level; excluding a hole that is not a monitor does nothing and warns `hole <N> is not a monitor position: excluding it changes nothing`; a hole that is not a position is an error listing the level's holes. |
@@ -153,9 +153,10 @@ A saved fit that names a monitor set the store does not have (an imported
 level can name `FC Min`) is refitted with the store's default set, and the
 command says
 `saved fit used monitor set '<name>', which the store does not have: using '<default>'`
-unless you give `--monitors`. Check that the default is the standard you
-mean before you save: its age and decay constants are what the new J is
-computed with.
+unless you give `--monitors`. The monitors are then found by the default
+set's own sample, not the saved fit's. Check that the default is the
+standard you mean before you save: its age and decay constants are what the
+new J is computed with.
 
 ## How the errors are formed
 

@@ -91,10 +91,15 @@ bool same_flux_value(const persistence::FluxValue& a, const persistence::FluxVal
 // How the monitors of a level are chosen. What is not given is as the
 // level's newest saved fit had it, so a saved fit is repeated (F9).
 struct MonitorSelection {
-  std::string monitor_set;            // empty: the saved fit's, else the document's default
-  std::optional<std::string> sample;  // the monitor sample; nullopt: the saved fit's, else the set's
+  std::string monitor_set;  // empty: the saved fit's, else the document's default
+  // The monitor sample. nullopt: the saved fit's when the set in use is the
+  // saved fit's own, else the set's (a set named here that is not the saved
+  // one, and the default standing in for a saved set the document lacks,
+  // use their own sample).
+  std::optional<std::string> sample;
   // true: every position that has analyses is a monitor; false: the
-  // positions of the monitor sample; nullopt: as saved, else false.
+  // positions of the monitor sample; nullopt: by the sample when `sample`
+  // is given, else as saved, else false.
   std::optional<bool> all_positions;
 };
 
@@ -102,9 +107,10 @@ struct MonitorSelection {
 // analyses, reduced, and F) and the unknowns (the other positions that have
 // an identifier), each with its hole's x, y and its head flux revision.
 // The monitors are chosen as `selection` says and, where it does not say,
-// as the level's newest saved fit chose them (its `monitor_sample` and
-// `all_positions`); `LevelInputs::monitor_set.sample` and `all_positions`
-// are what was used, and what a save of the fit writes.
+// as the level's newest saved fit chose them (its `monitor_sample`, under
+// its own monitor set only, and its `all_positions`);
+// `LevelInputs::monitor_set.sample` and `all_positions` are what was used,
+// and what a save of the fit writes.
 // A position's hole is the holder hole whose ordinal is the position - 1 (a
 // hole's id is only its label). Error (Config, "flux: ...") for an
 // irradiation, level or monitor set that does not exist, an empty monitor

@@ -17,7 +17,8 @@
 //   --fit-error sem|msem|sd                error of the predicted J (not sd for a fitted surface)
 //   --neighbors N  --interpolation weighted|average|linear  --axis x|y  --degree 1..4
 //   --monitors NAME   the monitor set (default: the saved fit's, else the store's)
-//   --sample NAME     the monitor sample's name (default: the saved fit's, else the set's)
+//   --sample NAME     the monitor sample's name (default: the saved fit's under its
+//                     own monitor set, else the set's); undoes a saved --all-positions
 //   --all-positions   every position that has analyses is a monitor
 //   --monitor-positions  the monitor sample's positions (the default, unless
 //                        the saved fit used --all-positions)

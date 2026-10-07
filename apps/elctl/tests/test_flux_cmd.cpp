@@ -292,6 +292,36 @@ TEST_F(FluxCmd, ASavedSampleOverrideIsRepeated) {
   ASSERT_EQ(table_row(o.out, "Monitors", 1).size(), 15u) << o.out;
 }
 
+// R20: --monitors with another set fits that set's sample, not the saved fit's.
+TEST_F(FluxCmd, AnotherMonitorSetFitsItsOwnSample) {
+  ASSERT_EQ(fit({"--save"}).code, elctl::kOk);
+  namespace pp = pychron::processing;
+  auto sets = pp::load_monitor_sets(*store_);
+  ASSERT_TRUE(sets) << to_string(sets.error());
+  pp::MonitorSets edited = sets->sets;
+  pp::MonitorSet second = edited.sets[1];
+  second.name = "Second";
+  second.sample = "unk";  // holes 9-12
+  second.age_ma = 99.0;
+  edited.sets.push_back(second);
+  ASSERT_TRUE(pp::save_monitor_sets(*store_, actor_, edited, *sets));
+  ASSERT_TRUE(pt::seed_ingest_monitor(*store_, seeded_, "66101", 1, 30.0, "2026-01-01T19:01:00Z"));
+
+  const Outcome o = fit({"--monitors", "Second", "--model", "weighted-mean"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "monitors Second: 99 +/-")) << o.out;
+  const auto nine = table_row(o.out, "Monitors", 9);
+  ASSERT_EQ(nine.size(), 15u) << o.out;
+  EXPECT_EQ(nine[2], "unk");
+  EXPECT_EQ(nine.back(), "yes");
+  ASSERT_EQ(table_row(o.out, "Unknowns", 1).size(), 9u) << o.out;  // the FC-2 holes are unknowns of this fit
+  EXPECT_TRUE(table_row(o.out, "Monitors", 1).empty()) << o.out;
+  // With no set named the saved fit is repeated: FC-2, the default set.
+  const Outcome plain = fit({});
+  EXPECT_TRUE(contains(plain.out, "monitors FC-2 (Kuiper 2008):")) << plain.out;
+  EXPECT_EQ(table_row(plain.out, "Monitors", 1).size(), 15u) << plain.out;
+}
+
 // R17: the monitor standard does not change without a word.
 TEST_F(FluxCmd, ASavedMonitorSetTheStoreLacksWarns) {
   ps::FluxValue v;

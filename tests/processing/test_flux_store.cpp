@@ -1443,6 +1443,80 @@ TEST_F(FluxSaveLevel, ASampleOverrideIsSavedAndUsedAgain) {
   ASSERT_TRUE(named) << to_string(named.error());
   EXPECT_EQ(named->monitor_set.sample, "FCT");
   for (const auto& p : named->positions) EXPECT_FALSE(p.monitor) << p.hole;
+
+  // R20: the override belongs to the set it was saved under. That set named
+  // explicitly keeps it; another set uses its own sample, and a sample
+  // named with it still wins.
+  MonitorSelection same_set;
+  same_set.monitor_set = "FC-2 (Kuiper 2008)";
+  auto same = load(same_set);
+  ASSERT_TRUE(same) << to_string(same.error());
+  EXPECT_EQ(same->monitor_set.sample, "FC-2");
+  MonitorSelection other_set;
+  other_set.monitor_set = "FC-2 (Renne 1998)";
+  auto other = load(other_set);
+  ASSERT_TRUE(other) << to_string(other.error());
+  EXPECT_EQ(other->monitor_set.name, "FC-2 (Renne 1998)");
+  EXPECT_EQ(other->monitor_set.sample, "FCT");
+  for (const auto& p : other->positions) EXPECT_FALSE(p.monitor) << p.hole;
+  other_set.sample = "FC-2";
+  auto both = load(other_set);
+  ASSERT_TRUE(both) << to_string(both.error());
+  EXPECT_EQ(both->monitor_set.name, "FC-2 (Renne 1998)");
+  EXPECT_EQ(both->monitor_set.sample, "FC-2");
+}
+
+// R20 (narrows R18): every save writes the monitor sample, so it must not
+// follow the level to another standard: FC-2 positions fitted with another
+// set's age would be a wrong J with no word said.
+TEST_F(FluxSaveLevel, AnotherMonitorSetUsesItsOwnSample) {
+  ASSERT_EQ(save(fitted()).written, 12);  // a plain save, the default set: monitor_sample "FC-2"
+  ASSERT_EQ(parse_flux_options(head_value(1).options_json.value_or("")).monitor_sample, "FC-2");
+
+  auto sets = load_monitor_sets(store());
+  ASSERT_TRUE(sets) << to_string(sets.error());
+  MonitorSets edited = sets->sets;
+  MonitorSet second = edited.sets[1];
+  second.name = "Second";
+  second.sample = "unk";  // what holes 9-12 carry
+  second.age_ma = 99.0;
+  edited.sets.push_back(second);
+  ASSERT_TRUE(save_monitor_sets(store(), actor(), edited, *sets));
+
+  MonitorSelection other;
+  other.monitor_set = "Second";
+  auto in = load(other);
+  ASSERT_TRUE(in) << to_string(in.error());
+  EXPECT_EQ(in->monitor_set.name, "Second");
+  EXPECT_EQ(in->monitor_set.age_ma, 99.0);
+  EXPECT_EQ(in->monitor_set.sample, "unk");
+  EXPECT_EQ(in->saved_monitor_set, "FC-2 (Kuiper 2008)");
+  ASSERT_EQ(in->positions.size(), 12u);
+  for (const auto& p : in->positions) EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
+
+  // No set named: the saved fit's, and its sample, as before.
+  auto plain = load();
+  ASSERT_TRUE(plain) << to_string(plain.error());
+  EXPECT_EQ(plain->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(plain->monitor_set.sample, "FC-2");
+  for (const auto& p : plain->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
+}
+
+// R20: the default that stands in for a set the store lacks (R17) is another
+// standard too, and uses its own sample.
+TEST_F(FluxSaveLevel, TheFallbackDefaultSetUsesItsOwnSample) {
+  ps::FluxValue gone;
+  gone.j = 1.0e-3;
+  gone.j_err = 2.0e-7;
+  gone.options_json = R"({"model_kind":"Plane","monitor_reference":"FC Min","monitor_sample":"unk"})";
+  save_flux(3, gone);
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  EXPECT_EQ(in->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(in->monitor_set.sample, "FC-2");
+  EXPECT_EQ(in->saved_monitor_set, "FC Min");
+  EXPECT_TRUE(in->saved_monitor_set_missing);
+  for (const auto& p : in->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
 }
 
 TEST_F(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
@@ -1470,6 +1544,21 @@ TEST_F(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
   ASSERT_TRUE(refit) << to_string(refit.error());
   EXPECT_EQ(refit->parameters, fit->parameters);
   EXPECT_EQ(save(*refit).unchanged, 9);
+
+  // R20: a sample named, with no word on the positions, selects by sample;
+  // with every position asked for as well, it does not.
+  MonitorSelection by_name;
+  by_name.sample = "FC-2";
+  auto sampled = load(by_name);
+  ASSERT_TRUE(sampled) << to_string(sampled.error());
+  EXPECT_FALSE(sampled->all_positions);
+  ASSERT_EQ(sampled->positions.size(), 12u);
+  for (const auto& p : sampled->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
+  by_name.all_positions = true;
+  auto still_all = load(by_name);
+  ASSERT_TRUE(still_all) << to_string(still_all.error());
+  EXPECT_TRUE(still_all->all_positions);
+  EXPECT_EQ(still_all->positions.size(), 9u);
 
   // The caller can ask for the monitor sample's positions again.
   MonitorSelection sample_based;

@@ -237,11 +237,18 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     // An empty name would make a monitor of every position with no sample.
     if (selection.sample->empty()) return bad("the monitor sample name is empty");
     out.monitor_set.sample = *selection.sample;
-  } else if (!saved_sample.empty()) {
-    // The saved fit's monitors were another sample's than the set's: again.
+  } else if (!saved_sample.empty() && out.monitor_set.name == saved_set) {
+    // The saved fit's monitors were another sample's than its set's: again.
+    // Only under that set (R20): every save writes the sample, and another
+    // set (one named, or the default standing in for a set the document
+    // lacks) is another standard, whose age must not be given to the saved
+    // fit's monitors.
     out.monitor_set.sample = saved_sample;
   }
-  out.all_positions = selection.all_positions ? *selection.all_positions : saved_all_positions.value_or(false);
+  // As asked; else by the sample when one is named (a named sample undoes a
+  // saved all-positions fit); else as saved.
+  out.all_positions = selection.all_positions ? *selection.all_positions
+                                              : !selection.sample && saved_all_positions.value_or(false);
 
   // 3. Monitors and unknowns. With all_positions the analyses decide.
   std::vector<std::string> identifiers;

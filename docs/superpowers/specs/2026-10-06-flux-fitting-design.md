@@ -282,8 +282,8 @@ Result<persistence::CommitOutcome> save_monitor_sets(persistence::IStore&, const
 
 struct MonitorSelection {
   std::string monitor_set;            // empty: the saved fit's, else the document's default
-  std::optional<std::string> sample;  // nullopt: the saved fit's, else the set's
-  std::optional<bool> all_positions;  // nullopt: as saved, else false (R18)
+  std::optional<std::string> sample;  // nullopt: the saved fit's under its own set, else the set's (R18, R20)
+  std::optional<bool> all_positions;  // nullopt: by sample when `sample` is given, else as saved, else false
 };
 
 struct LevelInputs;   // positions, geometry, monitor analyses with F, saved revisions, monitor set
@@ -319,9 +319,14 @@ bool same_flux_value(const persistence::FluxValue&, const persistence::FluxValue
    (or `MonitorSelection::sample`). Unknown positions are the others that
    have an identifier. With `all_positions`, every position that has analyses
    is a monitor and appears in the monitor table only. What the selection
-   does not say is as the level's newest saved fit had it (F9, R18): its
-   `monitor_sample` when no sample is given, its `all_positions` when
-   `MonitorSelection::all_positions` is `nullopt`. `LevelInputs` carries
+   does not say is as the level's newest saved fit had it (F9, R18, R20):
+   its `monitor_sample` when no sample is given and the set in use is the
+   saved fit's own (same name as its `monitor_reference`); its
+   `all_positions` when `MonitorSelection::all_positions` is `nullopt` and
+   no sample is given. Another set (one named that is not the saved one, or
+   the default standing in for a saved set the document lacks) uses its own
+   `sample`; a sample given with no word on the positions selects by
+   sample. `LevelInputs` carries
    what was used (`monitor_set.sample`, `all_positions`), and a save writes
    it.
 4. The monitor analyses, through the source, reduced as any analysis is; F
@@ -480,7 +485,9 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
   when there is none. So does the choice of monitors: `--sample` and
   `--all-positions` of the saved fit hold until `--sample` or
   `--monitor-positions` (the opposite of `--all-positions`; giving both is a
-  usage error) says otherwise (R18). So `elctl flux fit NM-300 A --save`
+  usage error) says otherwise (R18). The saved sample holds only under the
+  saved fit's own monitor set, and `--sample` alone undoes a saved
+  `--all-positions` (R20). So `elctl flux fit NM-300 A --save`
   repeats the last fit on the data as it is now.
 - When the saved fit named a monitor set the store does not have, the
   default is used and the command warns `saved fit used monitor set
@@ -653,13 +660,24 @@ decided during implementation.
 - **R17, a monitor set the store lacks.** The fallback to the default set
   stays; `LevelInputs::saved_monitor_set` and `saved_monitor_set_missing`
   report it and `elctl flux fit` warns unless `--monitors` is given.
-- **R18, a saved fit's monitors (F9).** `options_json` gains
-  `all_positions`. With no `--sample`, the newest saved revision's
-  `monitor_sample` is the monitor sample; with neither `--all-positions`
-  nor `--monitor-positions`, its `all_positions` applies.
+- **R18, a saved fit's monitors (F9; narrowed by R20).** `options_json`
+  gains `all_positions`. With no `--sample`, the newest saved revision's
+  `monitor_sample` is the monitor sample, under that fit's own monitor set;
+  with none of `--all-positions`, `--monitor-positions` and `--sample`, its
+  `all_positions` applies.
   `MonitorSelection::all_positions` is `std::optional<bool>`. `flux show`
   asks for the monitor sample's positions, so it lists every position of
   the level whatever the saved fit used.
+- **R20, the saved sample stays with its set (narrows R18).** Every save
+  writes `monitor_sample`, so applying it whatever set was in use gave the
+  saved fit's monitors to another standard: after any save, `--monitors
+  OTHER` (and the R17 fallback default) fitted the FC-2 positions with the
+  other set's age, silently. The saved sample is applied only when the
+  resolved set's name equals the saved fit's `monitor_reference`; any other
+  set uses its own `sample`, and `MonitorSelection::sample` always wins. A
+  sample given with `all_positions` not given selects by sample even when
+  the saved fit had `all_positions: true`; `--all-positions` given
+  explicitly still wins.
 - **R19, nothing half done.** `--csv` replaces its destination only at the
   end and only when a level was fitted (temporary file and rename).
   `save_level` refuses the whole save when a J to save is not finite and
