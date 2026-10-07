@@ -222,6 +222,44 @@ TEST_P(InstrumentProfile, ShipsTheTrigaProductionOfTheNm293Fixture) {
   fs::remove_all(root);
 }
 
+TEST_P(InstrumentProfile, HasADatabaseOnThisComputerByDefault) {
+  const auto& [name, simulation] = GetParam();
+  const auto lib = library();
+  const fs::path root = scratch(name);
+  auto site = install(lib, name, {{"simulation", Value{simulation}}}, root);
+  EXPECT_EQ(site.kind, "instrument");
+  EXPECT_EQ(site.database, "sqlite:" + (root / "data" / "pychron.db").generic_string());
+  EXPECT_FALSE(fs::exists(root / ".pychron" / "credentials.toml"));
+  // A database that is not there, or cannot be opened, is not what stops an instrument.
+  DoctorOptions options;
+  options.open_database = [](const std::string&) -> Result<std::string> { return fail(ErrorKind::Io, "no such file"); };
+  bool said = false;
+  for (const auto& c : doctor(site, options)) {
+    EXPECT_NE(c.status, Check::Status::Fail) << c.name << ": " << c.detail;
+    said |= c.name == "database" && c.status == Check::Status::Warn;
+  }
+  EXPECT_TRUE(said);
+  options.open_database = [](const std::string&) -> Result<std::string> { return std::string("schema version 4"); };
+  bool ok = false;
+  for (const auto& c : doctor(site, options)) ok |= c.name == "database" && c.status == Check::Status::Ok;
+  EXPECT_TRUE(ok);
+  fs::remove_all(root);
+
+  const fs::path server = scratch(name + "-server");
+  site = install(lib, name,
+                 {{"simulation", Value{simulation}},
+                  {"data_source", Value{std::string("server")}},
+                  {"db_host", Value{std::string("db.lab.org")}},
+                  {"db_user", Value{std::string("jan")}},
+                  {"db_password", Value{std::string("p@ss word")}}},
+                 server);
+  EXPECT_EQ(site.database, "postgresql://jan@db.lab.org:5432/pychron");
+  auto url = database_url(site);
+  ASSERT_TRUE(url) << url.error().what;
+  EXPECT_EQ(*url, "postgresql://jan:p%40ss%20word@db.lab.org:5432/pychron");
+  fs::remove_all(server);
+}
+
 INSTANTIATE_TEST_SUITE_P(Shipped, InstrumentProfile,
                          ::testing::Combine(::testing::Values("argus", "helix", "ngx"), ::testing::Bool()),
                          [](const auto& param_info) {
@@ -350,5 +388,6 @@ TEST(Profiles, InstrumentPagesAreSimulationConnectionThenDetectors) {
     EXPECT_EQ(p->groups[0], "Simulation") << name;
     EXPECT_EQ(p->groups[1], "Instrument connection") << name;
     EXPECT_EQ(p->groups[2], "Detectors") << name;
+    EXPECT_EQ(p->groups.back(), "Data") << name;
   }
 }

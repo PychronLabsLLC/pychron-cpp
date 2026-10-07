@@ -133,6 +133,24 @@ void check_instrument(std::vector<Check>& out, const SiteInstall& install, const
                        "set it for the account that runs pychron (docs/notifications.md), then: elctl exp notify"));
 }
 
+// An instrument measures without its database (the catalog: samples,
+// packages), so one that does not open is a warning. An install from before
+// instruments had one names none, and nothing is said.
+void check_instrument_database(std::vector<Check>& out, const SiteInstall& install, const DoctorOptions& options) {
+  if (install.database.empty() || !options.open_database) return;
+  auto url = database_url(install);
+  if (!url) {
+    out.push_back(warn("database", url.error().what, reconfigure_hint(install)));
+    return;
+  }
+  auto opened = options.open_database(*url);
+  out.push_back(opened ? ok("database", install.database + " (" + *opened + ")")
+                       : warn("database", install.database + ": " + first_line(opened.error().what),
+                              install.database.starts_with("postgresql")
+                                  ? "check the server, the user and the password in .pychron/credentials.toml"
+                                  : reconfigure_hint(install) + " makes a missing local database"));
+}
+
 void check_data_reduction(std::vector<Check>& out, const SiteInstall& install, const DoctorOptions& options) {
   if (install.database.empty()) {
     out.push_back(failed("database", "the install names no database", reconfigure_hint(install)));
@@ -216,6 +234,7 @@ std::vector<Check> doctor(const SiteInstall& install, const DoctorOptions& optio
     check_writable(out, "data folder", install.path(install.data.empty() ? "data" : install.data));
   } else {
     check_instrument(out, install, options);
+    check_instrument_database(out, install, options);
     check_writable(out, "data folder", install.path(install.data.empty() ? "data" : install.data));
   }
   return out;
@@ -231,9 +250,11 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name) {
     auto it = plan.answers.find(id);
     return it == plan.answers.end() ? std::string{} : to_text(it->second);
   };
+  // Every install has a database: the catalog (samples, packages) and, for
+  // data reduction, the analyses.
+  s.database = database_url_for(plan.answers, plan.root, false);
   if (plan.profile.top.kind == ProfileKind::DataReduction) {
     s.kind = "data_reduction";
-    s.database = database_url_for(plan.answers, plan.root, false);
   } else {
     s.kind = "instrument";
     s.line = "extraction_line.toml";

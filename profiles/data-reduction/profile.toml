@@ -3,59 +3,10 @@ title = "Data reduction"
 kind = "data_reduction"
 summary = "Browse, reduce and plot Ar/Ar data from a database on this computer or your lab's server"
 version = 1
+includes = ["store-common"]
 
 [values]
 instrument = ""
-
-[[questions]]
-id = "data_source"
-prompt = "Where is the data?"
-type = "choice"
-choices = ["local", "server"]
-labels = ["On this computer (a new database in the install folder)", "My lab's database server (PostgreSQL)"]
-default = "local"
-group = "Data"
-help = "A database on this computer starts empty and is yours alone; a server database is shared with your lab."
-
-[[questions]]
-id = "db_host"
-prompt = "Database server"
-type = "host"
-default = "localhost"
-group = "Data"
-when = "data_source == \"server\""
-
-[[questions]]
-id = "db_port"
-prompt = "Port"
-type = "port"
-default = 5432
-group = "Data"
-when = "data_source == \"server\""
-
-[[questions]]
-id = "db_name"
-prompt = "Database"
-type = "string"
-default = "pychron"
-group = "Data"
-when = "data_source == \"server\""
-
-[[questions]]
-id = "db_user"
-prompt = "User"
-type = "string"
-default = "pychron"
-group = "Data"
-when = "data_source == \"server\""
-
-[[questions]]
-id = "db_password"
-prompt = "Password"
-type = "secret"
-group = "Data"
-when = "data_source == \"server\""
-help = "Kept in .pychron/credentials.toml in this folder (owner-readable), never in the site config."
 
 [[files]]
 template = "references.toml"
@@ -64,9 +15,3 @@ to = "data/records/references.toml"
 [[files]]
 template = "README.md"
 to = "README.md"
-
-[[files]]
-template = "credentials.toml"
-to = ".pychron/credentials.toml"
-when = "data_source == \"server\""
-secret = true
