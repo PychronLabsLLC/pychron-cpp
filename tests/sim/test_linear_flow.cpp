@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,9 +44,14 @@ struct Random {
   double log_uniform(double lo, double hi) { return lo * std::pow(hi / lo, unit()); }
 };
 
+// The flow of terms the test knows to be good. Terms that are refused leave
+// nothing to return and nothing to go on with: the test stops there.
 LinearFlow must(FlowTerms terms) {
   auto flow = LinearFlow::make(std::move(terms));
-  EXPECT_TRUE(flow.has_value()) << (flow ? "" : flow.error().what);
+  if (!flow.has_value()) {
+    std::cerr << "LinearFlow::make refused good terms: " << to_string(flow.error()) << std::endl;
+    std::abort();
+  }
   return std::move(*flow);
 }
 
@@ -338,12 +345,100 @@ TEST(LinearFlow, EdgeCases) {
   EXPECT_EQ(n[0], 1e-6 * 0.05);
   EXPECT_EQ(n[1], 0.0);
 
+  // A link from a volume to itself carries nothing anywhere: it is ignored,
+  // beside a real link and alone.
+  FlowTerms looped;
+  looped.volume = {0.05, 0.15};
+  looped.links = {{0, 0, 5.0}, {0, 1, 0.1}, {1, 1, 0.3}};
+  looped.loss = {0.0, 0.0};
+  looped.source = {0.0, 0.0};
+  const LinearFlow loop = must(looped);
+  n = {1e-6 * 0.05, 0.0};
+  loop.advance(n, 0.375);
+  EXPECT_TRUE(near_rel(n[0] / 0.05 - n[1] / 0.15, 1e-6 / std::exp(1.0), 1e-9));
+  EXPECT_DOUBLE_EQ(sum(n), 1e-6 * 0.05);
+  looped.links = {{1, 1, 0.3}};
+  const LinearFlow only_loop = must(looped);
+  n = {1e-6 * 0.05, 0.0};
+  only_loop.advance(n, 1e6);
+  EXPECT_EQ(n[0], 1e-6 * 0.05);
+  EXPECT_EQ(n[1], 0.0);
+
   // No volumes at all is a flow of nothing.
   const LinearFlow none = must(FlowTerms{});
   EXPECT_EQ(none.size(), 0U);
   n.clear();
   none.advance(n, 1.0);
   EXPECT_TRUE(n.empty());
+}
+
+TEST(LinearFlow, AStepThatIsNotATimeDoesNothing) {
+  Random random;
+  FlowTerms terms = chain(random);
+  terms.loss = {0.0, 2e-5, 0.0, 1e-3, 0.0};
+  terms.source = {1e-12, 0.0, 3e-13, 0.0, 5e-11};
+  const LinearFlow flow = must(terms);
+  const std::vector<double> start{3e-8, 0.0, 1e-9, 4e-7, 0.0};
+  // An assertion where assertions are on; where they are not, nothing.
+  for (const double dt : {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
+                          -std::numeric_limits<double>::infinity()}) {
+    std::vector<double> n = start;
+    EXPECT_DEBUG_DEATH(flow.advance(n, dt), "") << "dt = " << dt;
+    EXPECT_EQ(n, start) << "dt = " << dt;
+  }
+}
+
+TEST(LinearFlow, ManyTinyStepsDoNotDrift) {
+  // The stiff chain again. A step of a nanosecond moves almost nothing, so
+  // whatever the step adds to the sum by rounding is added a million times.
+  FlowTerms terms;
+  terms.volume = {0.05, 0.15, 0.02, 0.5, 0.08};
+  terms.links = {{0, 1, 1e3}, {1, 2, 1e-6}, {2, 3, 1e3}, {3, 4, 1e-6}};
+  terms.loss.assign(5, 0.0);
+  terms.source.assign(5, 0.0);
+  const LinearFlow flow = must(terms);
+
+  std::vector<double> n{5e-8, 0.0, 0.0, 0.0, 0.0};
+  const double before = sum(n);
+  for (int step = 0; step < 1000000; ++step) flow.advance(n, 1e-9);
+  std::ostringstream drift;
+  drift << (sum(n) - before) / before;
+  RecordProperty("relative_drift", drift.str());
+  EXPECT_TRUE(near_rel(sum(n), before, 1e-12)) << "relative drift " << drift.str();
+  for (const double value : n) EXPECT_GE(value, 0.0);
+}
+
+TEST(LinearFlow, ALosslessGroupBesideALossyOne) {
+  // Two pairs with nothing between them. 0 - 1 has a source into 0 and a
+  // loss in 1; 2 - 3 has only a source into 2.
+  const std::vector<double> v{0.05, 0.15, 0.02, 0.5};
+  const double c = 0.1;
+  const double q = 1e-12;
+  const double loss = 1e-3;
+  FlowTerms terms;
+  terms.volume = v;
+  terms.links = {{0, 1, c}, {2, 3, c}};
+  terms.loss = {0.0, loss, 0.0, 0.0};
+  terms.source = {q, 0.0, q, 0.0};
+  const LinearFlow flow = must(terms);
+
+  std::vector<double> n{4e-8 * v[0], 0.0, 3e-9 * v[2], 1e-9 * v[3]};
+  const double closed_before = n[2] + n[3];
+  double elapsed = 0.0;
+  for (const double dt : {1e-3, 7.0, 3600.0, 1e6}) {
+    flow.advance(n, dt);
+    elapsed += dt;
+    // What the closed pair holds grows by what its source gave it, exactly,
+    // whatever the pair beside it is doing.
+    EXPECT_TRUE(near_rel(n[2] + n[3], closed_before + q * elapsed, 1e-14)) << "after " << elapsed;
+  }
+  // The lossy pair is at its steady state: 1 holds what loses q, and 0 is
+  // above it by the gradient that carries q across the link.
+  EXPECT_TRUE(near_rel(n[1], q / loss, 1e-12));
+  EXPECT_TRUE(near_rel(n[0] / v[0], q / (loss * v[1]) + q / c, 1e-12));
+  flow.advance(n, 1e9);
+  EXPECT_TRUE(near_rel(n[1], q / loss, 1e-12));
+  EXPECT_TRUE(near_rel(n[0] / v[0], q / (loss * v[1]) + q / c, 1e-12));
 }
 
 TEST(LinearFlow, RefusesBadTerms) {
@@ -393,9 +488,16 @@ TEST(LinearFlow, RefusesBadTerms) {
   terms = good();
   terms.source.push_back(0.0);
   EXPECT_TRUE(refused(terms)) << "a source per volume, one extra";
+  // A link from a volume to itself is nothing, not an error; what it says
+  // of itself is still checked.
   terms = good();
   terms.links[0].b = 0;
-  EXPECT_TRUE(refused(terms)) << "a link from a volume to itself";
+  EXPECT_TRUE(LinearFlow::make(terms).has_value()) << "a link from a volume to itself";
+  terms.links[0].conductance = -0.1;
+  EXPECT_TRUE(refused(terms)) << "a self-link of negative conductance";
+  terms = good();
+  terms.links[0] = {2, 2, 0.1};
+  EXPECT_TRUE(refused(terms)) << "a self-link on a volume that is not there";
   terms = good();
   terms.links[0].conductance = inf;
   EXPECT_TRUE(refused(terms)) << "an infinite conductance";

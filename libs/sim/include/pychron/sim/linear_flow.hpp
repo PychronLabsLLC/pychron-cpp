@@ -38,12 +38,20 @@
 //     link and per loss) rather than to A, so a slow rate is found to
 //     rounding of itself, not of the fastest rate in the system.
 //
+// And one thing in the step itself: the amounts of a group that loses nothing
+// are made to add up to its mode before they are handed back, so rounding
+// that is the same on every step cannot add up over a million of them.
+//
 // Consequences the rest of the simulator leans on:
 //   - stiffness does not matter: a valve that equilibrates in a millisecond
 //     and an outgassing rate of hours coexist, at any dt;
 //   - one step of an hour equals 3600 steps of a second to rounding, so the
 //     answer does not depend on how often anything asks;
 //   - amounts stay finite and never go below zero.
+//
+// How exact: to rounding of the largest pressure in a group of linked
+// volumes, not of each volume by itself. A volume holding 1e13 times less
+// than its neighbours is right to what they round to, which may be all of it.
 //
 // Knows no clock and holds no state but the decomposition: the caller owns n.
 // Immutable once made, so `advance` may be called from any thread.
@@ -72,13 +80,15 @@ struct FlowTerms {
 
 class LinearFlow {
  public:
-  // Config error on a bad size, a link to a volume that is not there or to
-  // itself, or a non-finite or negative value (a volume must be > 0).
+  // Config error on a bad size, a link to a volume that is not there, or a
+  // non-finite or negative value (a volume must be > 0). A link from a volume
+  // to itself is physically nothing and is ignored.
   static Result<LinearFlow> make(FlowTerms terms);
 
-  // n(t + dt) from n(t); n in mbar L, one entry per volume. dt >= 0, and a dt
-  // that is not (zero, negative, NaN) leaves n alone. Does not allocate for
-  // 32 volumes or fewer.
+  // n(t + dt) from n(t); n in mbar L, one entry per volume. dt must be finite
+  // and >= 0: zero leaves n alone, and so does a dt that is negative,
+  // infinite or NaN, which is the caller's mistake and asserts in a debug
+  // build. Does not allocate for 32 volumes or fewer.
   void advance(std::vector<double>& n, double dt) const;
 
   std::size_t size() const noexcept { return size_; }
@@ -91,6 +101,9 @@ class LinearFlow {
   std::vector<double> drive_;      // g = U^T D^-1 s
   std::vector<double> to_mode_;    // U^T D^-1, row-major: y = to_mode_ n
   std::vector<double> to_amount_;  // D U, row-major: n = to_amount_ y
+  // Per volume: the mode that is the sum of its group, when the group loses
+  // nothing; size_ when it does.
+  std::vector<std::size_t> keeps_;
 };
 
 }  // namespace pychron::sim

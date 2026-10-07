@@ -88,6 +88,25 @@ void rotate_to_orthogonal_columns(std::vector<double>& g, std::size_t rows, std:
 
 bool amount(double value) { return std::isfinite(value) && value >= 0.0; }
 
+// A link that carries gas: open, and between two volumes. One from a volume
+// to itself moves nothing anywhere.
+bool carries(const FlowTerms::Link& link) { return link.conductance > 0.0 && link.a != link.b; }
+
+// What the volumes of one group hold together (those whose entry in `keeps`
+// is `first`), added so that the result is the sum rounded once and not once
+// per term (Neumaier): what each addition drops is kept and added at the end.
+double held_by(const std::vector<double>& n, const std::vector<std::size_t>& keeps, std::size_t first) {
+  double sum = 0.0;
+  double dropped = 0.0;
+  for (std::size_t i = first; i < n.size(); ++i) {
+    if (keeps[i] != first) continue;
+    const double next = sum + n[i];
+    dropped += std::abs(sum) >= std::abs(n[i]) ? (sum - next) + n[i] : (n[i] - next) + sum;
+    sum = next;
+  }
+  return sum + dropped;
+}
+
 }  // namespace
 
 Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
@@ -109,7 +128,6 @@ Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
     const FlowTerms::Link& link = terms.links[k];
     const std::string where = "linear flow: link " + std::to_string(k);
     if (link.a >= n || link.b >= n) return fail(ErrorKind::Config, where + " joins a volume that is not there");
-    if (link.a == link.b) return fail(ErrorKind::Config, where + " joins a volume to itself");
     if (!amount(link.conductance)) {
       return fail(ErrorKind::Config, where + " has a negative or non-finite conductance");
     }
@@ -123,12 +141,12 @@ Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
   // sqrt(L) e_i. Squared and summed those are the entries of A in the
   // header; A itself is never formed.
   std::size_t rows = 0;
-  for (const FlowTerms::Link& link : terms.links) rows += link.conductance > 0.0 ? 1 : 0;
+  for (const FlowTerms::Link& link : terms.links) rows += carries(link) ? 1 : 0;
   for (const double loss : terms.loss) rows += loss > 0.0 ? 1 : 0;
   std::vector<double> g(rows * n, 0.0);
   std::size_t row = 0;
   for (const FlowTerms::Link& link : terms.links) {
-    if (!(link.conductance > 0.0)) continue;
+    if (!carries(link)) continue;
     const double flow = std::sqrt(link.conductance);
     g[row * n + link.a] = flow / root[link.a];
     g[row * n + link.b] = -flow / root[link.b];
@@ -155,7 +173,7 @@ Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
     return i;
   };
   for (const FlowTerms::Link& link : terms.links) {
-    if (!(link.conductance > 0.0)) continue;
+    if (!carries(link)) continue;
     const std::size_t x = first_of(link.a);
     const std::size_t y = first_of(link.b);
     group[std::max(x, y)] = std::min(x, y);
@@ -229,6 +247,30 @@ Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
       flow.to_amount_[i * n + first] = member ? terms.volume[i] / held[first] : 0.0;
     }
   }
+  // Every other mode of such a group moves gas about inside it and adds
+  // nothing: its column sums to zero over the group. As computed it sums to
+  // rounding, and that little is made or lost on every step, which a million
+  // small steps add up. So what each column sums to is taken off it again,
+  // shared by volume, which is the one direction that changes the sum; what
+  // is left sums to zero as nearly as five numbers can.
+  for (std::size_t first = 0; first < n; ++first) {
+    if (!conserved(first)) continue;
+    for (std::size_t k = 0; k < n; ++k) {
+      if (conserved(k)) continue;
+      double excess = 0.0;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (first_of(i) == first) excess += flow.to_amount_[i * n + k];
+      }
+      if (excess == 0.0) continue;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (first_of(i) == first) flow.to_amount_[i * n + k] -= excess * (terms.volume[i] / held[first]);
+      }
+    }
+  }
+  flow.keeps_.assign(n, n);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (conserved(first_of(i))) flow.keeps_[i] = first_of(i);
+  }
   flow.drive_.assign(n, 0.0);
   for (std::size_t k = 0; k < n; ++k) {
     for (std::size_t i = 0; i < n; ++i) flow.drive_[k] += flow.to_mode_[k * n + i] * terms.source[i];
@@ -238,7 +280,8 @@ Result<LinearFlow> LinearFlow::make(FlowTerms terms) {
 
 void LinearFlow::advance(std::vector<double>& n, double dt) const {
   assert(n.size() == size_);
-  if (n.size() != size_ || !(dt > 0.0)) return;
+  assert(std::isfinite(dt) && dt >= 0.0);
+  if (n.size() != size_ || !std::isfinite(dt) || !(dt > 0.0)) return;
 
   std::array<double, kInlineModes> inline_modes;
   std::vector<double> more_modes;
@@ -250,7 +293,11 @@ void LinearFlow::advance(std::vector<double>& n, double dt) const {
 
   for (std::size_t k = 0; k < size_; ++k) {
     double mode = 0.0;
-    for (std::size_t i = 0; i < size_; ++i) mode += to_mode_[k * size_ + i] * n[i];
+    if (keeps_[k] == k) {
+      mode = held_by(n, keeps_, k);
+    } else {
+      for (std::size_t i = 0; i < size_; ++i) mode += to_mode_[k * size_ + i] * n[i];
+    }
 
     // y e^(l dt) + g (e^(l dt) - 1) / l, the last factor through expm1: it
     // is then right for every l <= 0, tending to dt as l dt goes to zero
@@ -265,8 +312,32 @@ void LinearFlow::advance(std::vector<double>& n, double dt) const {
   for (std::size_t i = 0; i < size_; ++i) {
     double value = 0.0;
     for (std::size_t k = 0; k < size_; ++k) value += to_amount_[i * size_ + k] * y[k];
+    // Finite terms and a finite step give a finite amount.
+    assert(std::isfinite(value));
     // The exact solution cannot go below zero; rounding can, by a little.
     n[i] = value > 0.0 ? value : 0.0;
+  }
+
+  // What a group that loses nothing holds is its mode, known exactly; the
+  // amounts just shared out add up to it only to rounding, and the zero
+  // above only ever adds. Either is the same little on every step while the
+  // state hardly moves, so a million small steps would make gas of it. The
+  // difference goes to the fullest volume of the group, which does not
+  // notice, and then the amounts add up to the mode: the next step, which
+  // adds them the same way, starts from the number this one ended on.
+  for (std::size_t first = 0; first < size_; ++first) {
+    if (keeps_[first] != first) continue;
+    std::size_t fullest = first;
+    for (std::size_t i = first + 1; i < size_; ++i) {
+      if (keeps_[i] == first && n[i] > n[fullest]) fullest = i;
+    }
+    // Once is nearly always enough; again when the mending itself rounded.
+    for (int pass = 0; pass < 3; ++pass) {
+      const double held = held_by(n, keeps_, first);
+      if (held == y[first]) break;
+      const double mended = n[fullest] + (y[first] - held);
+      n[fullest] = mended > 0.0 ? mended : 0.0;
+    }
   }
 }
 
