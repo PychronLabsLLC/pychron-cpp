@@ -45,6 +45,12 @@ sim::SimSettings lab() {
   s.initial_pressures = {{"bone", 1e-3}};  // gas released into the furnace
   s.pumps = {{"turbo", {1e-9, 5s}}};
   s.noise = 0.0;
+  // These tests are about valves, interlocks, scans and alarms, and state
+  // what the gas does in round numbers: walls that give nothing off, and
+  // valves wide enough that gas is across one before a pump has taken any.
+  s.outgassing = 0.0;
+  s.outgassing_active = 0.0;
+  s.valve_conductance = 1e6;
   return s;
 }
 
@@ -145,6 +151,7 @@ TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
 TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   // Expand furnace gas into prep: bone (12.5 cc) + prep (1 cc).
   ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
+  clock.advance(100us);  // long for the valve, nothing to the pump
   const double expanded = (12.5 * 1e-3 + 1e-8) / 13.5;
   EXPECT_NEAR(*line->sim()->pressure("prep"), expanded, expanded * 1e-9);
   EXPECT_TRUE(line->sim()->valve_open("A"));
@@ -162,18 +169,21 @@ TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   // (prep, turbo, IG1, PG1: 1 cc each) spikes above IG1's alarm_high.
   ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "test"));
   ASSERT_TRUE(line->actuate("C", SwitchOp::Open, "test"));
+  clock.advance(100us);
   const double spike = (expanded + 3e-8) / 4;
   // The MaxiGauge wire format carries five significant digits.
   EXPECT_NEAR(*line->read_gauge("IG1"), spike, spike * 1e-4);
   EXPECT_NEAR(*line->read_gauge("PG1"), spike, spike * 1e-4);
 
-  scan_after(1s);  // a fifth of the pump time constant: still above alarm_high
+  // The pump's 5 s is for turbo's own 1 cc; it has the region's 4 cc to
+  // empty, at a time constant of 20 s.
+  scan_after(4s);  // a fifth of the pump time constant: still above alarm_high
   const double after_1s = 1e-9 + (spike - 1e-9) * std::exp(-0.2);
   EXPECT_NEAR(latest("IG1"), after_1s, after_1s * 1e-4);
   ASSERT_EQ(events->alarms.size(), 1u);
   EXPECT_EQ(events->alarms[0].source, "IG1");
 
-  scan_after(60s);
+  scan_after(240s);
   EXPECT_LT(latest("IG1"), 1e-8);
   // Isolated behind A at the expanded pressure.
   EXPECT_NEAR(*line->sim()->pressure("bone"), expanded, expanded * 1e-9);

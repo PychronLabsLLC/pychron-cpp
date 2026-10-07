@@ -227,7 +227,9 @@ TEST(ExtractionLine, ActuateOpensValveAndMovesGas) {
   EXPECT_EQ(changes[0].state, ValveState::Open);
   EXPECT_TRUE((*line)->sim()->valve_open("A"));
 
-  // left (3 cc @ 4e-6) + right (1 cc) + IG1 (1 cc) @ 1e-8
+  // left (3 cc @ 4e-6) + right (1 cc) + IG1 (1 cc) @ 1e-8, once the gas is
+  // across A: a second is eighty of its time constants.
+  clock.advance(1s);
   auto p = (*line)->read_gauge("IG1");
   ASSERT_TRUE(p) << p.error().what;
   EXPECT_NEAR(*p, (3 * 4e-6 + 2e-8) / 5, 1e-9);

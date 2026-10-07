@@ -2,10 +2,13 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 
 #include <gtest/gtest.h>
 
 #include <map>
+
+#include "pychron/sim/gas.hpp"
 
 #include "pychron/devices/heater.hpp"
 
@@ -33,11 +36,35 @@ SimSystem::Topology three_volumes() {
   return t;
 }
 
+// No gauge noise, and walls that give nothing off: what is in a volume is
+// what was put there.
 SimSystem::Settings quiet() {
   SimSystem::Settings s;
   s.default_pressure = 1e-8;
   s.noise = 0.0;
+  s.outgassing = 0.0;
+  s.outgassing_active = 0.0;
   return s;
+}
+
+using sim::Composition;
+using sim::Species;
+constexpr std::size_t kAr36 = sim::index(Species::Ar36);
+constexpr std::size_t kAr40 = sim::index(Species::Ar40);
+constexpr std::size_t kActive = sim::index(Species::Active);
+
+// a --V-- b, 50 cc each.
+SimSystem::Topology two_volumes() {
+  SimSystem::Topology t;
+  t.volumes = {{"a", 50.0}, {"b", 50.0}};
+  t.valves = {"V"};
+  t.edges = {{"a", "V"}, {"V", "b"}};
+  return t;
+}
+
+// The clock's nearest to `seconds`.
+Duration clock_time(double seconds) {
+  return std::chrono::duration_cast<Duration>(std::chrono::duration<double>(seconds));
 }
 
 TEST(SimSystem, ClosedValvesIsolateVolumes) {
@@ -58,6 +85,7 @@ TEST(SimSystem, OpeningAValveEquilibratesByVolume) {
   SimSystem sim(clock, three_volumes(), settings);
 
   sim.set_valve("A", true);
+  clock.advance(30s);  // thousands of the valve's time constants
   // (3 cc * 4e-3 + 1 cc * 0) / 4 cc
   EXPECT_NEAR(*sim.pressure("bone"), 3e-3, 1e-12);
   EXPECT_NEAR(*sim.pressure("prep"), 3e-3, 1e-12);
@@ -73,10 +101,14 @@ TEST(SimSystem, PumpedRegionFollowsPumpDownCurve) {
   auto settings = quiet();
   settings.initial_pressures = {{"prep", 1e-2}, {"turbo", 1e-2}};
   settings.pumps = {{"turbo", {1e-9, 2s}}};
+  // The valve is no obstacle here: prep and turbo fall as one volume.
+  settings.valve_conductance = 1e6;
   SimSystem sim(clock, three_volumes(), settings);
 
   sim.set_valve("C", true);
-  clock.advance(2s);  // one time constant
+  // One time constant of the region: the pump's 2 s is for turbo alone, and
+  // through C it has prep to empty as well, twice the volume.
+  clock.advance(4s);
   const double expected = 1e-9 + (1e-2 - 1e-9) * std::exp(-1.0);
   EXPECT_NEAR(*sim.pressure("prep"), expected, expected * 1e-9);
   EXPECT_NEAR(*sim.pressure("turbo"), expected, expected * 1e-9);
@@ -116,6 +148,7 @@ TEST(SimSystem, GaugeNoiseIsBoundedAndSeeded) {
   double first = *a.gauge_reading("prep");
   EXPECT_DOUBLE_EQ(first, *b.gauge_reading("prep"));
   for (int i = 0; i < 50; ++i) {
+    clock.advance(1ms);  // a reading is a draw of its volume and its time
     double r = *a.gauge_reading("prep");
     EXPECT_NEAR(r, 1e-8, 1e-8 * 0.06);
     varied = varied || r != first;
@@ -635,6 +668,282 @@ TEST(SimSystem, MicroIonHookReportsGaugeVolumePressureAtItsAddress) {
   // A driver at the wrong address gets no reply from the simulated slave.
   GpMicroIon other("other", *transport, 8, {1});
   EXPECT_FALSE(other.read_pressure(1));
+}
+
+TEST(SimSystem, EquilibrationTakesTheValvesTimeConstant) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"a", 1e-6}, {"b", 1e-9}};
+  SimSystem sim(clock, two_volumes(), settings);
+  const auto difference = [&](std::size_t species) {
+    return (*sim.partial_pressures("a"))[species] - (*sim.partial_pressures("b"))[species];
+  };
+  const double argon_start = difference(kAr40);
+  const double active_start = difference(kActive);
+
+  sim.set_valve("V", true);
+  EXPECT_DOUBLE_EQ(*sim.pressure("a"), 1e-6);  // nothing has crossed yet
+  EXPECT_DOUBLE_EQ(*sim.pressure("b"), 1e-9);
+
+  // V1 V2 / ((V1 + V2) C) for Ar40; the lighter active gas crosses sooner.
+  const double argon_tau = 0.05 * 0.05 / (0.1 * 0.1);
+  const double active_tau = argon_tau * std::sqrt(28.0 / 39.962);
+  ASSERT_DOUBLE_EQ(argon_tau, 0.25);
+  clock.advance(clock_time(active_tau));
+  EXPECT_NEAR(difference(kActive), active_start / std::exp(1.0), active_start / std::exp(1.0) * 1e-6);
+  clock.advance(250ms - clock_time(active_tau));
+  EXPECT_NEAR(difference(kAr40), argon_start / std::exp(1.0), argon_start / std::exp(1.0) * 1e-6);
+  EXPECT_GT(*sim.pressure("a"), *sim.pressure("b"));
+
+  clock.advance(30s);
+  const double mean = (1e-6 + 1e-9) / 2;
+  EXPECT_NEAR(*sim.pressure("a"), mean, mean * 1e-12);
+  EXPECT_NEAR(*sim.pressure("b"), mean, mean * 1e-12);
+}
+
+TEST(SimSystem, GaugeReadingsDoNotDependOnCallOrder) {
+  ManualClock one_clock;
+  ManualClock other_clock;
+  auto settings = quiet();
+  settings.noise = 0.01;
+  SimSystem one(one_clock, two_volumes(), settings);
+  SimSystem other(other_clock, two_volumes(), settings);
+  one_clock.advance(3s);
+  other_clock.advance(3s);
+
+  const double a_first = *one.gauge_reading("a");
+  const double b_second = *one.gauge_reading("b");
+  const double b_first = *other.gauge_reading("b");
+  const double a_second = *other.gauge_reading("a");
+  EXPECT_EQ(a_first, a_second);
+  EXPECT_EQ(b_first, b_second);
+  // Two volumes at one pressure are still two gauges.
+  EXPECT_NE(a_first, b_first);
+  // Asking again at the same instant is the same reading; later is another.
+  EXPECT_EQ(*one.gauge_reading("a"), a_first);
+  one_clock.advance(1ms);
+  EXPECT_NE(*one.gauge_reading("a"), a_first);
+}
+
+TEST(SimSystem, PumpDownKeepsItsForm) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"line", 1e-6}};
+  settings.pumps = {{"line", {1e-9, 5s}}};
+  SimSystem::Topology topology;
+  topology.volumes = {{"line", 50.0}};
+  SimSystem sim(clock, topology, settings);
+
+  clock.advance(5s);
+  const double expected = 1e-9 + (1e-6 - 1e-9) / std::exp(1.0);
+  EXPECT_NEAR(*sim.pressure("line"), expected, expected * 1e-6);
+  clock.advance(10min);
+  EXPECT_NEAR(*sim.pressure("line"), 1e-9, 1e-9 * 1e-6);
+}
+
+TEST(SimSystem, PartialPressuresFollowTheComposition) {
+  ManualClock clock;
+  auto settings = quiet();
+  const Composition cocktail = sim::with_ar40(sim::cocktail_ratios(), 2e-7);
+  settings.compositions = {{"a", cocktail}};
+  settings.initial_pressures = {{"a", 1.0}, {"b", 4e-7}};  // a's composition says what a holds
+  SimSystem sim(clock, two_volumes(), settings);
+
+  auto a = sim.partial_pressures("a");
+  ASSERT_TRUE(a) << a.error().what;
+  for (std::size_t i = 0; i < sim::kSpeciesCount; ++i) {
+    EXPECT_DOUBLE_EQ((*a)[i], cocktail[i]) << sim::kSpeciesName[i];
+  }
+  EXPECT_DOUBLE_EQ(*sim.pressure("a"), sim::total(cocktail));
+
+  // A pressure with no composition is that much air.
+  auto b = sim.partial_pressures("b");
+  ASSERT_TRUE(b) << b.error().what;
+  EXPECT_NEAR(sim::total(*b), 4e-7, 4e-7 * 1e-12);
+  EXPECT_NEAR((*b)[kAr40] / (*b)[kAr36], 298.56, 298.56 * 1e-12);
+  EXPECT_NEAR((*b)[kActive] / sim::total(*b), 1.0 - 1.0 / 107.0, 1e-12);
+
+  auto nowhere = sim.partial_pressures("nowhere");
+  ASSERT_FALSE(nowhere);
+  EXPECT_EQ(nowhere.error().kind, ErrorKind::Config);
+}
+
+TEST(SimSystem, SetPressureScalesTheComposition) {
+  ManualClock clock;
+  auto settings = quiet();
+  const Composition cocktail = sim::with_ar40(sim::cocktail_ratios(), 2e-7);
+  settings.compositions = {{"a", cocktail}};
+  settings.initial_pressures = {{"b", 0.0}};
+  SimSystem sim(clock, two_volumes(), settings);
+
+  ASSERT_TRUE(sim.set_pressure("a", 3.0 * sim::total(cocktail)));
+  const Composition a = *sim.partial_pressures("a");
+  for (std::size_t i = 0; i < sim::kSpeciesCount; ++i) {
+    EXPECT_NEAR(a[i], 3.0 * cocktail[i], 3.0 * cocktail[i] * 1e-12) << sim::kSpeciesName[i];
+  }
+
+  // An empty volume has no proportions to keep: it is given air.
+  EXPECT_DOUBLE_EQ(*sim.pressure("b"), 0.0);
+  ASSERT_TRUE(sim.set_pressure("b", 1e-6));
+  const Composition b = *sim.partial_pressures("b");
+  EXPECT_NEAR(sim::total(b), 1e-6, 1e-6 * 1e-12);
+  EXPECT_NEAR(b[kAr40] / b[kAr36], 298.56, 298.56 * 1e-12);
+
+  // A composition is taken as given.
+  ASSERT_TRUE(sim.set_composition("b", cocktail));
+  EXPECT_EQ(*sim.partial_pressures("b"), cocktail);
+
+  for (const double bad : {-1.0, std::nan("")}) {
+    auto refused = sim.set_pressure("a", bad);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  }
+  EXPECT_FALSE(sim.set_composition("nowhere", cocktail));
+  EXPECT_NEAR(*sim.pressure("a"), 3.0 * sim::total(cocktail), sim::total(cocktail) * 1e-12);
+}
+
+TEST(SimSystem, InjectReachesTheGauge) {
+  ManualClock clock;
+  auto settings = quiet();
+  SimSystem sim(clock, two_volumes(), settings);
+  const double before = *sim.gauge_reading("a");
+
+  Composition released{};
+  released[kAr40] = 5e-9;  // mbar L, into 50 cc
+  ASSERT_TRUE(sim.inject("a", released));
+  EXPECT_NEAR(*sim.gauge_reading("a"), before + 1e-7, 1e-7 * 1e-12);
+  EXPECT_NEAR((*sim.partial_pressures("a"))[kAr40] - (*sim.partial_pressures("b"))[kAr40], 1e-7, 1e-7 * 1e-12);
+  EXPECT_DOUBLE_EQ(*sim.gauge_reading("b"), before);
+
+  // And, the valve open, the gauge on the other side.
+  sim.set_valve("V", true);
+  clock.advance(30s);
+  EXPECT_NEAR(*sim.gauge_reading("b"), before + 0.5e-7, 1e-7 * 1e-12);
+
+  released[kAr40] = -1.0;
+  EXPECT_FALSE(sim.inject("a", released));
+  EXPECT_FALSE(sim.inject("nowhere", Composition{}));
+}
+
+// Review focus 4: a switch, or a valve the canvas does not draw.
+TEST(SimSystem, AnUnmodelledValveIsTrackedWithoutPhysics) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"a", 1e-6}, {"b", 1e-9}};
+  SimSystem sim(clock, two_volumes(), settings);
+  EXPECT_FALSE(sim.valve_open("pump_power"));
+
+  sim.set_valve("pump_power", true);
+  EXPECT_TRUE(sim.valve_open("pump_power"));
+  EXPECT_FALSE(sim.valve_open("V"));
+  clock.advance(30s);
+  EXPECT_DOUBLE_EQ(*sim.pressure("a"), 1e-6);
+  EXPECT_DOUBLE_EQ(*sim.pressure("b"), 1e-9);
+  EXPECT_FALSE(sim.has_volume("pump_power"));
+
+  sim.set_valve("pump_power", false);
+  EXPECT_FALSE(sim.valve_open("pump_power"));
+  EXPECT_FALSE(sim.build_error());
+}
+
+TEST(SimSystem, ABadTopologyIsReportedNotThrown) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"bone", -1e-3}};
+  SimSystem sim(clock, three_volumes(), settings);
+
+  ASSERT_TRUE(sim.build_error());
+  EXPECT_EQ(sim.build_error()->kind, ErrorKind::Config);
+  EXPECT_NE(sim.build_error()->what.find("bone"), std::string::npos) << sim.build_error()->what;
+
+  // A line with nothing in it: no volume answers, valves are still tracked.
+  EXPECT_FALSE(sim.has_volume("bone"));
+  auto p = sim.pressure("prep");
+  ASSERT_FALSE(p);
+  EXPECT_EQ(p.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(sim.gauge_reading("prep"));
+  EXPECT_FALSE(sim.set_pressure("prep", 1e-6));
+  sim.set_valve("A", true);
+  clock.advance(1s);
+  EXPECT_TRUE(sim.valve_open("A"));
+
+  // A gauge is still given its own volume.
+  auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("ig"), *cfg));
+  ASSERT_TRUE(transport->open());
+  PfeifferMaxiGauge gauge("ig", *transport, {1});
+  auto read = gauge.read_pressure(1);
+  ASSERT_TRUE(read) << read.error().what;
+  EXPECT_NEAR(*read, 1e-8, 1e-8 * 1e-3);
+}
+
+// What a description could always get wrong and still give a line.
+TEST(SimSystem, ALooseDescriptionStillBuilds) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"bone", 4e-3}, {"prep", 0.0}, {"nowhere", 1.0}};
+  settings.pumps = {{"nowhere", {1e-9, 1s}}, {"turbo", {1e-9, 0s}}};
+  auto topology = three_volumes();
+  topology.volumes.push_back({"bone", 7.0});       // again: the first stands
+  topology.volumes.push_back({"unsized", 0.0});    // takes the default size
+  topology.valves.push_back("A");                  // again
+  topology.valves.push_back("prep");               // the name of a volume
+  topology.edges.push_back({"bone", "nowhere"});   // to nothing
+  topology.edges.push_back({"bone", "bone"});      // to itself
+  SimSystem sim(clock, topology, settings);
+  ASSERT_FALSE(sim.build_error()) << sim.build_error()->what;
+
+  sim.set_valve("A", true);
+  clock.advance(30s);
+  EXPECT_NEAR(*sim.pressure("bone"), 3e-3, 1e-12);  // 3 cc and 1 cc, as described first
+  EXPECT_NEAR(*sim.pressure("prep"), 3e-3, 1e-12);
+  EXPECT_TRUE(sim.has_volume("unsized"));
+  // A pump with no time constant is at its base at once.
+  EXPECT_NEAR(*sim.pressure("turbo"), 1e-9, 1e-9 * 1e-6);
+}
+
+TEST(SimSystem, AnIsolatedVolumeRisesByItsOutgassing) {
+  ManualClock clock;
+  SimSystem::Settings settings;  // the defaults: walls give off gas
+  settings.noise = 0.0;
+  SimSystem sim(clock, two_volumes(), settings);
+  const Composition start = *sim.partial_pressures("a");
+
+  clock.advance(1000s);
+  const Composition later = *sim.partial_pressures("a");
+  // Per litre of volume, so the same rise of pressure whatever the size.
+  EXPECT_NEAR(later[kAr40] - start[kAr40], 5e-13 * 1000, 5e-13 * 1000 * 1e-6);
+  EXPECT_NEAR(later[kAr36] - start[kAr36], 5e-13 * 1000 / 298.56, 5e-13 * 1000 / 298.56 * 1e-6);
+  EXPECT_NEAR(later[kActive] - start[kActive], 1e-10 * 1000, 1e-10 * 1000 * 1e-6);
+}
+
+TEST(SimSystem, ALeakAGetterAndAValvesOwnConductanceAreTheSettings) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"a", 1e-6}, {"b", 1e-6}};
+  settings.leaks = {{"a", 1e-12}};   // mbar L / s of Ar40, the rest as in air
+  settings.getters = {{"b", true}};
+  settings.conductances = {{"V", 0.05}};
+  SimSystem sim(clock, two_volumes(), settings);
+  const Composition a = *sim.partial_pressures("a");
+  const Composition b = *sim.partial_pressures("b");
+
+  clock.advance(100s);
+  const Composition leaked = *sim.partial_pressures("a");
+  EXPECT_NEAR(leaked[kAr40] - a[kAr40], 1e-12 * 100 / 0.05, 1e-12 * 100 / 0.05 * 1e-6);
+  EXPECT_NEAR((leaked[kAr40] - a[kAr40]) / (leaked[kAr36] - a[kAr36]), 298.56, 298.56 * 1e-6);
+  const Composition gettered = *sim.partial_pressures("b");
+  EXPECT_LT(gettered[kActive], b[kActive] * 1e-9);
+  EXPECT_NEAR(gettered[kAr40], b[kAr40], b[kAr40] * 1e-12);
+
+  // Half the conductance, twice the time constant.
+  ASSERT_TRUE(sim.set_composition("a", sim::with_ar40(sim::cocktail_ratios(), 1e-6)));
+  ASSERT_TRUE(sim.set_composition("b", Composition{}));
+  sim.set_valve("V", true);
+  clock.advance(500ms);
+  const double difference = (*sim.partial_pressures("a"))[kAr40] - (*sim.partial_pressures("b"))[kAr40];
+  EXPECT_NEAR(difference, 1e-6 / std::exp(1.0), 1e-6 / std::exp(1.0) * 1e-4);  // the leak is still there
 }
 
 TEST(SimSystem, UnknownDriverKindGetsSilentWire) {
