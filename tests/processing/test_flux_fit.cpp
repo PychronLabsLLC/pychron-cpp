@@ -321,6 +321,7 @@ TEST(FluxFitLevel, UnknownRecordIdOrHoleIsAnError) {
   ASSERT_FALSE(fit);
   EXPECT_NE(fit.error().what.find("99999-01"), std::string::npos) << fit.error().what;
   EXPECT_NE(fit.error().what.find("not an analysis of"), std::string::npos) << fit.error().what;
+  EXPECT_NE(fit.error().what.find("M3-02"), std::string::npos) << fit.error().what;
 
   Edits include;
   include.include = {"99999-01"};
@@ -328,17 +329,50 @@ TEST(FluxFitLevel, UnknownRecordIdOrHoleIsAnError) {
   ASSERT_FALSE(fit);
   EXPECT_NE(fit.error().what.find("99999-01"), std::string::npos) << fit.error().what;
   EXPECT_NE(fit.error().what.find("not an analysis of"), std::string::npos) << fit.error().what;
+  EXPECT_NE(fit.error().what.find("M8-03"), std::string::npos) << fit.error().what;
 
   Edits hole;
   hole.exclude_positions = {99};
   fit = fit_level(in, plane(false), hole);
   ASSERT_FALSE(fit);
   EXPECT_NE(fit.error().what.find("99"), std::string::npos) << fit.error().what;
-  EXPECT_NE(fit.error().what.find("1, 2, 3, 4, 5, 6, 7, 8"), std::string::npos) << fit.error().what;
+  EXPECT_NE(fit.error().what.find("1, 2, 3, 4, 5, 6, 7, 8, 101, 102, 103, 104"), std::string::npos) << fit.error().what;
 
-  Edits unknown_hole;  // an unknown's hole is not a monitor position either
+  // An unknown's hole is a position of the level: excluding it changes nothing.
+  Edits unknown_hole;
   unknown_hole.exclude_positions = {101};
-  EXPECT_FALSE(fit_level(in, plane(false), unknown_hole));
+  auto same = fit_level(in, plane(false), unknown_hole);
+  auto base = fit_level(in, plane(false), {});
+  ASSERT_TRUE(same && base);
+  EXPECT_EQ(same->dof, base->dof);
+  EXPECT_EQ(at_hole(*same, 101).j, at_hole(*base, 101).j);
+}
+
+TEST(FluxFitLevel, AMonitorWhoseEveryAnalysisGivesNoJIsLeftOut) {
+  auto in = level();
+  for (auto& a : at_hole(in, 4).analyses) a.f = pr::UFloat(0.0);
+  auto fit = fit_level(in, plane(false), {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  const auto& p = at_hole(*fit, 4);
+  EXPECT_TRUE(has(p, PositionNote::NoUsableAnalysis));
+  EXPECT_FALSE(p.used_in_fit);
+  EXPECT_FALSE(p.mean_j);
+  EXPECT_EQ(p.rejected.size(), 3u);
+  EXPECT_GT(p.j, 0);
+  EXPECT_EQ(fit->dof, 4);
+}
+
+TEST(FluxFitLevel, AnUnknownBeyondTheEndMonitorsIsExtrapolated) {
+  auto in = level();
+  for (auto& p : in.positions) p.y = 0;  // monitors spread along x only
+  at_hole(in, 101).x = 50;               // beyond the end monitors (x in [-10, 10])
+  FluxOptions o;
+  o.fit.kind = pr::ModelKind::Bracketing1D;
+  o.fit.axis = pr::Axis::X;
+  auto fit = fit_level(in, o, {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_TRUE(has(at_hole(*fit, 101), PositionNote::Extrapolated));
+  EXPECT_FALSE(has(at_hole(*fit, 102), PositionNote::Extrapolated));
 }
 
 TEST(FluxFitLevel, ModelNames) {

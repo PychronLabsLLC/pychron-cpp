@@ -69,25 +69,30 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
   const std::string where = level_name(in);
 
   std::set<std::string> records;
-  std::string holes;
-  std::set<int> monitor_holes;
+  std::string holes, record_list;
+  std::set<int> level_holes;
+  bool any_monitor = false;
   for (const auto& p : in.positions) {
-    if (!p.monitor) continue;
-    monitor_holes.insert(p.hole);
+    level_holes.insert(p.hole);
     holes += (holes.empty() ? "" : ", ") + std::to_string(p.hole);
-    for (const auto& a : p.analyses) records.insert(a.record_id);
+    if (!p.monitor) continue;
+    any_monitor = true;
+    for (const auto& a : p.analyses) {
+      records.insert(a.record_id);
+      record_list += (record_list.empty() ? "" : ", ") + a.record_id;
+    }
   }
-  if (monitor_holes.empty()) return fail(ErrorKind::Config, "flux: " + where + " has no monitor positions");
+  if (!any_monitor) return fail(ErrorKind::Config, "flux: " + where + " has no monitor positions");
 
   for (const auto* ids : {&edits.omit, &edits.include})
     for (const auto& id : *ids)
       if (!records.contains(id))
-        return fail(ErrorKind::Config, "flux: " + id + " is not an analysis of the monitors of " + where);
+        return fail(ErrorKind::Config, "flux: " + id + " is not an analysis of the monitors of " + where +
+                                           " (analyses: " + record_list + ")");
   for (int hole : edits.exclude_positions)
-    if (!monitor_holes.contains(hole))
+    if (!level_holes.contains(hole))
       return fail(ErrorKind::Config,
-                  "flux: hole " + std::to_string(hole) + " is not a monitor position of " + where + " (monitor holes: " +
-                      holes + ")");
+                  "flux: hole " + std::to_string(hole) + " is not a position of " + where + " (holes: " + holes + ")");
 
   const auto constants = in.monitor_set.constants();
 
@@ -139,13 +144,18 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
 
       bool left_out = edits.exclude_positions.contains(p.hole) ||
                       (saved_applies && p.saved->used_in_fit.has_value() && !*p.saved->used_in_fit);
-      if (!any_usable) {
+      std::optional<reduction::PositionMean> mean;
+      if (any_usable) {
+        auto m = reduction::mean_j(analyses, constants, options.mean, options.mean_error);
+        if (m) mean = std::move(*m);
+        else  // every analysis left gave no J: the position takes no part
+          for (const auto& a : analyses)
+            if (!a.omitted) fp.rejected.push_back(a.record_id);
+      }
+      if (!mean) {
         fp.notes.push_back(PositionNote::NoUsableAnalysis);
         left_out = true;
       } else {
-        auto mean = reduction::mean_j(analyses, constants, options.mean, options.mean_error);
-        if (!mean) return fail(ErrorKind::Config, "flux: hole " + std::to_string(p.hole) + " of " + where + ": " +
-                                                      mean.error().what);
         fp.n = mean->n;
         fp.mean_j = mean->j;
         fp.mean_j_err = mean->j_err;
@@ -158,7 +168,7 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
           used.push_back({std::to_string(p.hole), {p.x, p.y}, mean->j, mean->j_err});
         }
       }
-      if (left_out && any_usable) fp.notes.push_back(PositionNote::LeftOutOfFit);
+      if (left_out && mean) fp.notes.push_back(PositionNote::LeftOutOfFit);
     }
     out.positions.push_back(std::move(fp));
   }
@@ -177,7 +187,7 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
   }
   for (const auto& n : fit->notes) {
     if (n.note == reduction::FitNote::MswdOutsideLimits) out.mswd_outside_limits = true;
-    else if (n.point < out.positions.size()) out.positions[n.point].notes.push_back(PositionNote::Extrapolated);
+    else if (n.note == reduction::FitNote::Extrapolated && n.point < out.positions.size()) out.positions[n.point].notes.push_back(PositionNote::Extrapolated);
   }
 
   out.min_j = std::numeric_limits<double>::infinity();
