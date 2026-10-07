@@ -1,7 +1,8 @@
 // A level's inputs to a flux fit, read from the store (flux fitting design,
 // section 6.1): the level sheet, the monitor set, the holder's geometry, the
 // monitor analyses through the analysis source, and each position's head
-// flux_position revision.
+// flux_position revision. And a fit written back (section 6.3) as one
+// changeset of flux_position revisions.
 
 #include <algorithm>
 #include <map>
@@ -60,6 +61,29 @@ Result<std::optional<ReadFlux>> read_flux(ps::IStore& store, const ps::RefObject
     break;
   }
   return std::optional<ReadFlux>{std::move(out)};
+}
+
+struct FoundLevel {
+  ps::Uuid irradiation;
+  ps::LevelRow level;
+};
+
+Result<FoundLevel> find_level(ps::IStore& store, const std::string& irradiation, const std::string& level) {
+  auto irradiations = store.irradiations();
+  if (!irradiations) return fail(irradiations.error());
+  const auto irradiation_row = std::find_if(irradiations->begin(), irradiations->end(),
+                                            [&](const ps::IrradiationRow& r) { return r.name == irradiation; });
+  if (irradiation_row == irradiations->end()) return bad("no irradiation '" + irradiation + "'");
+  auto levels = store.levels(irradiation_row->uuid);
+  if (!levels) return fail(levels.error());
+  const auto level_row =
+      std::find_if(levels->begin(), levels->end(), [&](const ps::LevelRow& r) { return r.name == level; });
+  if (level_row == levels->end()) return bad("no level " + level + " of " + irradiation);
+  return FoundLevel{irradiation_row->uuid, *level_row};
+}
+
+std::string flux_key(const std::string& irradiation, const std::string& level, int hole) {
+  return irradiation + "/" + level + "/" + std::to_string(hole);
 }
 
 // Section 6.1 step 2: the set named; else the one the level's saved fit
@@ -134,16 +158,10 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   const std::string of_level = "level " + out.level + " of " + out.irradiation;
 
   // 1. The level sheet.
-  auto irradiations = store.irradiations();
-  if (!irradiations) return fail(irradiations.error());
-  const auto irradiation_row = std::find_if(irradiations->begin(), irradiations->end(),
-                                            [&](const ps::IrradiationRow& r) { return r.name == irradiation; });
-  if (irradiation_row == irradiations->end()) return bad("no irradiation '" + out.irradiation + "'");
-  auto levels = store.levels(irradiation_row->uuid);
-  if (!levels) return fail(levels.error());
-  const auto level_row =
-      std::find_if(levels->begin(), levels->end(), [&](const ps::LevelRow& r) { return r.name == level; });
-  if (level_row == levels->end()) return bad("no " + of_level);
+  auto level_found = find_level(store, out.irradiation, out.level);
+  if (!level_found) return fail(level_found.error());
+  const ps::Uuid irradiation_uuid = level_found->irradiation;
+  const ps::LevelRow* level_row = &level_found->level;
   auto sheet = store.level_sheet(level_row->uuid);
   if (!sheet) return fail(sheet.error());
   if (!*sheet) return bad("no " + of_level);
@@ -167,7 +185,7 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
 
   // 6. Each position's head flux revision; the most recent one with options
   // is the level's last fit.
-  auto flux_objects = store.ref_objects(ps::RefType::FluxPosition, irradiation_row->uuid);
+  auto flux_objects = store.ref_objects(ps::RefType::FluxPosition, irradiation_uuid);
   if (!flux_objects) return fail(flux_objects.error());
   std::map<std::string, const ps::RefObjectRow*> flux_by_key;
   for (const auto& object : *flux_objects) flux_by_key.emplace(object.key, &object);
@@ -175,7 +193,7 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   std::string saved_set;
   ps::ChangeSeq options_seq = 0, set_seq = 0;
   for (const auto& p : (*sheet)->positions) {
-    const auto object = flux_by_key.find(out.irradiation + "/" + out.level + "/" + std::to_string(p.position));
+    const auto object = flux_by_key.find(flux_key(out.irradiation, out.level, p.position));
     if (object == flux_by_key.end()) continue;
     auto read = read_flux(store, *object->second);
     if (!read) return fail(read.error());
@@ -246,6 +264,111 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     if (auto s = saved.find(p.position); s != saved.end()) position.saved = std::move(s->second);
     out.positions.push_back(std::move(position));
   }
+  return out;
+}
+
+ps::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position, std::string_view software) {
+  ps::FluxValue v;
+  v.j = position.j;
+  v.j_err = position.j_err;
+  if (position.monitor) {
+    v.mean_j = position.mean_j;
+    v.mean_j_err = position.mean_j_err;
+    v.mean_j_mswd = position.mean_j_mswd;
+    for (const auto& a : position.analyses) v.analyses.push_back({ps::Uuid::parse(a.uuid), a.record_id, a.omitted});
+    // Keyed by record id: the order the store reads them back in.
+    std::sort(v.analyses.begin(), v.analyses.end(),
+              [](const ps::FluxAnalysis& a, const ps::FluxAnalysis& b) { return a.record_id < b.record_id; });
+  }
+  const reduction::Measured lambda_k = fit.monitor_set.lambda_k();
+  v.lambda_k_total = lambda_k.value;
+  v.lambda_k_total_err = lambda_k.error;
+  v.monitor_name = fit.monitor_set.name;
+  v.monitor_material = fit.monitor_set.material;
+  v.monitor_age = fit.monitor_set.age_ma;  // Ma, as the legacy level file has it
+  v.monitor_age_err = fit.monitor_set.age_err_ma;
+  v.options_json =
+      flux_options_json(fit.options, fit.monitor_set, position.used_in_fit, fit.mswd, fit.dof, software);
+  return v;
+}
+
+Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, const LevelFit& fit,
+                                   const SaveSelection& selection, std::string_view software) {
+  auto level = find_level(store, fit.irradiation, fit.level);
+  if (!level) return fail(level.error());
+  auto objects = store.ref_objects(ps::RefType::FluxPosition, level->irradiation);
+  if (!objects) return fail(objects.error());
+  std::map<std::string, const ps::RefObjectRow*> by_key;
+  for (const auto& object : *objects) by_key.emplace(object.key, &object);
+
+  FluxSaveOutcome out;
+  auto uow = store.begin(actor);
+  if (!uow) return fail(uow.error());
+  std::map<ps::Uuid, int> staged;  // reference object -> hole
+  for (const FittedPosition& p : fit.positions) {
+    if (selection.skip_positions.contains(p.hole)) {
+      ++out.skipped;
+      continue;
+    }
+    const std::string hole = "hole " + std::to_string(p.hole);
+    ps::FluxValue value = flux_value_of(fit, p, software);
+    const std::string key = flux_key(fit.irradiation, fit.level, p.hole);
+    const auto existing = by_key.find(key);
+
+    // What the head holds now is not written again, whoever wrote it.
+    if (existing != by_key.end() && existing->second->head) {
+      auto payload = store.load_payload(*existing->second->head);
+      if (!payload) return fail(payload.error());
+      const auto* ref = *payload ? std::get_if<ps::RefPayload>(&**payload) : nullptr;
+      const auto* flux = ref ? std::get_if<ps::FluxValue>(ref) : nullptr;
+      if (flux && *flux == value) {
+        ++out.unchanged;
+        continue;
+      }
+    }
+
+    std::optional<ps::Uuid> expected;
+    if (p.saved_revision) {
+      expected = ps::Uuid::parse(*p.saved_revision);
+      if (!expected) return bad("the saved revision of " + hole + " is not a uuid: " + *p.saved_revision);
+    }
+    ps::Uuid object;
+    if (existing != by_key.end()) {
+      object = existing->second->uuid;
+    } else {
+      ps::RefObjectSpec spec;
+      spec.type = ps::RefType::FluxPosition;
+      spec.key = key;
+      spec.irradiation = level->irradiation;
+      spec.level = level->level.uuid;
+      spec.position = ps::Uuid::parse(p.position_uuid);
+      if (!spec.position) return bad("the position of " + hole + " is not a uuid: " + p.position_uuid);
+      auto made = store.add_ref_object(actor.client, spec);
+      if (!made) return fail(made.error());
+      object = *made;
+    }
+    auto revision =
+        (*uow)->add_revision(object, ps::Kind::RefValue, ps::RevisionPayload{ps::RefPayload{std::move(value)}}, expected);
+    if (!revision) return fail(revision.error());
+    staged.emplace(object, p.hole);
+  }
+  if (staged.empty()) return out;
+
+  auto committed = (*uow)->commit(ps::ChangesetKind::Reference, "fit flux for " + fit.irradiation + fit.level);
+  if (!committed) return fail(committed.error());
+  if (const auto* conflicts = std::get_if<std::vector<ps::Conflict>>(&*committed)) {
+    int first = 0;
+    for (const auto& conflict : *conflicts) {
+      const auto hole = staged.find(conflict.subject);
+      if (hole == staged.end() || (out.conflict && hole->second >= first)) continue;
+      first = hole->second;
+      out.conflict = conflict;
+    }
+    if (!out.conflict) return fail(ErrorKind::Protocol, "flux: the save conflicted on no position of the level");
+    out.conflict_position = "hole " + std::to_string(first);
+    return out;
+  }
+  out.written = static_cast<int>(staged.size());
   return out;
 }
 

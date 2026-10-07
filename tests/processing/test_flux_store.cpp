@@ -1,12 +1,13 @@
 // Flux monitor sets (flux fitting design, section 4): the defaults, lambda_k,
 // the revisioned document (round trip, unknown keys, conflict) and the
-// validation of a document. The options JSON of a saved fit (6.4) and
-// load_level (6.1) over the seeded level of flux_seed.hpp.
+// validation of a document. The options JSON of a saved fit (6.4),
+// load_level (6.1) and save_level (6.3) over the seeded level of flux_seed.hpp.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -16,6 +17,7 @@
 #include "../reduction/flux_golden.hpp"
 #include "flux_store_fixture.hpp"
 #include "pychron/processing/flux_store.hpp"
+#include "pychron/processing/reduced.hpp"
 
 namespace pychron::processing {
 namespace {
@@ -758,6 +760,411 @@ TEST_F(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {
     ASSERT_TRUE(p.dev_percent.has_value()) << p.hole;
     if (p.monitor) EXPECT_LT(std::abs(*p.dev_percent), 0.5) << p.hole;  // the plane is close to the saved ring J
   }
+}
+
+// ---- save_level (design section 6.3) ----------------------------------------
+
+class FluxSaveLevel : public FluxLoadLevel {
+ protected:
+  // The level loaded and fitted with a plane; an empty fit on a failure.
+  LevelFit fitted(const Edits& edits = {}) {
+    auto in = load();
+    if (!in) {
+      ADD_FAILURE() << to_string(in.error());
+      return {};
+    }
+    auto fit = fit_level(*in, plane_sem(), edits);
+    if (!fit) {
+      ADD_FAILURE() << to_string(fit.error());
+      return {};
+    }
+    return std::move(*fit);
+  }
+
+  FluxSaveOutcome save(const LevelFit& fit, const SaveSelection& selection = {}) {
+    auto outcome = save_level(store(), actor(), fit, selection, "test");
+    if (!outcome) {
+      ADD_FAILURE() << to_string(outcome.error());
+      return {};
+    }
+    return std::move(*outcome);
+  }
+
+  // The flux_position reference object of a hole; nullopt when there is none.
+  std::optional<ps::Uuid> object(int hole) {
+    auto found = store().find_catalog_row(ps::CatalogTable::RefObject,
+                                          {std::string("flux_position"), "NM-300/A/" + std::to_string(hole)});
+    EXPECT_TRUE(found) << (found ? "" : to_string(found.error()));
+    return found ? *found : std::nullopt;
+  }
+
+  std::optional<ps::Uuid> head(int hole) {
+    const auto subject = object(hole);
+    if (!subject) return std::nullopt;
+    auto revision = store().head(*subject, ps::Kind::RefValue);
+    EXPECT_TRUE(revision) << (revision ? "" : to_string(revision.error()));
+    return revision ? *revision : std::nullopt;
+  }
+
+  // The FluxValue at a hole's head; a failure and an empty value when there is none.
+  ps::FluxValue head_value(int hole) {
+    const auto revision = head(hole);
+    if (!revision) {
+      ADD_FAILURE() << "hole " << hole << " has no flux";
+      return {};
+    }
+    auto payload = store().load_payload(*revision);
+    if (!payload || !*payload) {
+      ADD_FAILURE() << "hole " << hole << " has no payload";
+      return {};
+    }
+    const auto* ref = std::get_if<ps::RefPayload>(&**payload);
+    const auto* flux = ref ? std::get_if<ps::FluxValue>(ref) : nullptr;
+    if (!flux) {
+      ADD_FAILURE() << "hole " << hole << " is not a flux";
+      return {};
+    }
+    return *flux;
+  }
+
+  ps::ChangeSeq change_seq() {
+    auto seq = store().latest_change_seq();
+    EXPECT_TRUE(seq) << (seq ? "" : to_string(seq.error()));
+    return seq ? *seq : -1;
+  }
+
+  // An analysis of an unknown of the level, with F = 30.
+  ps::Uuid ingest_unknown(const std::string& identifier, const std::string& timestamp) {
+    auto analysis = testing::seed_ingest_monitor(store(), seeded(), identifier, 1, 30.0, timestamp);
+    EXPECT_TRUE(analysis) << (analysis ? "" : to_string(analysis.error()));
+    return analysis ? *analysis : ps::Uuid{};
+  }
+
+  // The age of an analysis as the source reduces it now; nullopt when it has none.
+  std::optional<double> age(const ps::Uuid& analysis) {
+    StoreSource* opened = source();
+    if (!opened) return std::nullopt;
+    auto refreshed = opened->refresh();
+    EXPECT_TRUE(refreshed) << (refreshed ? "" : to_string(refreshed.error()));
+    auto loaded = opened->load(analysis.str());
+    if (!loaded) {
+      ADD_FAILURE() << to_string(loaded.error());
+      return std::nullopt;
+    }
+    const ReducedPtr reduced = reduce_analysis(*loaded, ReductionSettings{});
+    if (!reduced->arar || !reduced->arar->ages) return std::nullopt;
+    return reduced->arar->ages->age.nominal();
+  }
+
+  static ps::FluxValue only_j(double j) {
+    ps::FluxValue v;
+    v.j = j;
+    v.j_err = j * 1e-3;
+    return v;
+  }
+};
+
+TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
+  Edits edits;
+  edits.omit = {"66003-02"};
+  const LevelFit fit = fitted(edits);
+  ASSERT_EQ(fit.positions.size(), 12u);
+  const ps::ChangeSeq before = change_seq();
+
+  const FluxSaveOutcome outcome = save(fit);
+  EXPECT_EQ(outcome.written, 12);
+  EXPECT_EQ(outcome.unchanged, 0);
+  EXPECT_EQ(outcome.skipped, 0);
+  EXPECT_FALSE(outcome.conflict);
+  EXPECT_EQ(outcome.conflict_position, "");
+  // The new reference objects are catalog changes; the fit is one changeset.
+  auto changes = store().changes_since(before, 100);
+  ASSERT_TRUE(changes) << to_string(changes.error());
+  EXPECT_FALSE(changes->more);
+  int changeset_entries = 0, catalog_entries = 0;
+  for (const auto& entry : changes->entries) {
+    if (entry.kind == "changeset") ++changeset_entries;
+    else if (entry.kind == "catalog") ++catalog_entries;
+  }
+  EXPECT_EQ(changeset_entries, 1);
+  EXPECT_EQ(changeset_entries + catalog_entries, static_cast<int>(changes->entries.size()));
+
+  std::set<ps::Uuid> changesets;
+  for (const FittedPosition& p : fit.positions) {
+    SCOPED_TRACE("hole " + std::to_string(p.hole));
+    const ps::FluxValue v = head_value(p.hole);
+    EXPECT_EQ(v, flux_value_of(fit, p, "test"));
+    EXPECT_EQ(v.j, std::optional<double>(p.j));
+    EXPECT_EQ(v.j_err, std::optional<double>(p.j_err));
+    if (p.monitor) {
+      ASSERT_TRUE(p.mean_j);
+      EXPECT_EQ(v.mean_j, p.mean_j);
+      EXPECT_EQ(v.mean_j_err, p.mean_j_err);
+      EXPECT_EQ(v.mean_j_mswd, p.mean_j_mswd);
+      EXPECT_TRUE(v.mean_j_err);
+      EXPECT_TRUE(v.mean_j_mswd);
+      ASSERT_EQ(v.analyses.size(), 3u);
+      for (int aliquot = 1; aliquot <= 3; ++aliquot) {
+        const std::string record_id = p.identifier + "-0" + std::to_string(aliquot);
+        const ps::FluxAnalysis& a = v.analyses[static_cast<std::size_t>(aliquot - 1)];
+        EXPECT_EQ(a.record_id, record_id);
+        EXPECT_EQ(a.analysis, std::optional<ps::Uuid>(seeded().analyses.at(record_id)));
+        EXPECT_EQ(a.is_omitted, record_id == "66003-02") << record_id;
+      }
+    } else {
+      EXPECT_EQ(v.mean_j, std::nullopt);
+      EXPECT_EQ(v.mean_j_err, std::nullopt);
+      EXPECT_EQ(v.mean_j_mswd, std::nullopt);
+      EXPECT_TRUE(v.analyses.empty());
+    }
+    ASSERT_TRUE(v.lambda_k_total);
+    EXPECT_DOUBLE_EQ(*v.lambda_k_total, 5.463e-10);
+    ASSERT_TRUE(v.lambda_k_total_err);
+    EXPECT_DOUBLE_EQ(*v.lambda_k_total_err, std::hypot(9.9e-13, 1.4e-12));
+    EXPECT_EQ(v.monitor_name, std::optional<std::string>("FC-2 (Kuiper 2008)"));
+    EXPECT_EQ(v.monitor_material, std::optional<std::string>("sanidine"));
+    EXPECT_EQ(v.monitor_age, std::optional<double>(28.201));
+    EXPECT_EQ(v.monitor_age_err, std::optional<double>(0.046));
+    EXPECT_EQ(v.position_jerr, std::nullopt);  // F5
+    EXPECT_EQ(v.extra_json, std::nullopt);
+    ASSERT_TRUE(v.options_json);
+    EXPECT_EQ(*v.options_json, flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, fit.mswd, fit.dof, "test"));
+    const FluxOptionsDoc doc = parse_flux_options(*v.options_json);
+    EXPECT_EQ(doc.options, std::optional<FluxOptions>(plane_sem()));
+    EXPECT_EQ(doc.used_in_fit, std::optional<bool>(p.monitor));
+
+    const auto subject = object(p.hole);
+    ASSERT_TRUE(subject);
+    auto history = store().history(*subject, ps::Kind::RefValue);
+    ASSERT_TRUE(history) << to_string(history.error());
+    ASSERT_EQ(history->size(), 1u);
+    EXPECT_EQ(history->front().parent, std::nullopt);
+    EXPECT_EQ(history->front().changeset.message, "fit flux for NM-300A");
+    EXPECT_EQ(history->front().changeset.kind, ps::ChangesetKind::Reference);
+    EXPECT_EQ(history->front().changeset.author_user, actor().user);
+    changesets.insert(history->front().changeset.uuid);
+  }
+  EXPECT_EQ(changesets.size(), 1u);
+}
+
+TEST_F(FluxSaveLevel, ThenLoadShowsTheSavedJ) {
+  const LevelFit fit = fitted();
+  ASSERT_EQ(save(fit).written, 12);
+
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  ASSERT_EQ(in->positions.size(), 12u);
+  for (const FittedPosition& p : fit.positions) {
+    SCOPED_TRACE("hole " + std::to_string(p.hole));
+    const LevelPosition& loaded = hole(*in, p.hole);
+    ASSERT_TRUE(loaded.saved);
+    EXPECT_EQ(loaded.saved->j, std::optional<double>(p.j));
+    EXPECT_EQ(loaded.saved->j_err, std::optional<double>(p.j_err));
+    EXPECT_EQ(loaded.saved->mean_j, p.mean_j);
+    EXPECT_EQ(loaded.saved->options, std::optional<FluxOptions>(plane_sem()));
+    EXPECT_EQ(loaded.saved->used_in_fit, std::optional<bool>(p.used_in_fit));
+    EXPECT_EQ(loaded.saved->monitor_set, "FC-2 (Kuiper 2008)");
+    EXPECT_EQ(loaded.saved->saved_by, "jsmith");
+    const auto revision = head(p.hole);
+    ASSERT_TRUE(revision);
+    EXPECT_EQ(loaded.saved->revision, revision->str());
+  }
+  EXPECT_EQ(in->saved_options, std::optional<FluxOptions>(plane_sem()));
+  EXPECT_EQ(in->monitor_set.name, "FC-2 (Kuiper 2008)");
+}
+
+TEST_F(FluxSaveLevel, ASecondSaveWritesNothing) {
+  const LevelFit fit = fitted();
+  ASSERT_EQ(save(fit).written, 12);
+  const ps::ChangeSeq saved = change_seq();
+
+  // The same fit again, though it was made before any flux was saved.
+  const FluxSaveOutcome same = save(fit);
+  EXPECT_EQ(same.written, 0);
+  EXPECT_EQ(same.unchanged, 12);
+  EXPECT_EQ(same.skipped, 0);
+  EXPECT_FALSE(same.conflict);
+  EXPECT_EQ(change_seq(), saved);
+
+  // And the level loaded and fitted again from what was saved.
+  const LevelFit again = fitted();
+  ASSERT_EQ(again.positions.size(), 12u);
+  EXPECT_TRUE(again.positions[0].saved_revision);
+  const FluxSaveOutcome refit = save(again);
+  EXPECT_EQ(refit.written, 0);
+  EXPECT_EQ(refit.unchanged, 12);
+  EXPECT_FALSE(refit.conflict);
+  EXPECT_EQ(change_seq(), saved);
+  for (int n = 1; n <= 12; ++n) {
+    const auto subject = object(n);
+    ASSERT_TRUE(subject) << n;
+    auto history = store().history(*subject, ps::Kind::RefValue);
+    ASSERT_TRUE(history) << to_string(history.error());
+    EXPECT_EQ(history->size(), 1u) << n;
+  }
+}
+
+TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
+  Edits edits;
+  edits.omit = {"66002-03"};
+  edits.exclude_positions = {5};
+  const LevelFit first = fitted(edits);
+  ASSERT_EQ(first.positions.size(), 12u);
+  EXPECT_FALSE(first.positions[4].used_in_fit);
+  EXPECT_TRUE(first.positions[1].analyses[2].omitted);
+  ASSERT_EQ(save(first).written, 12);
+
+  const LevelFit second = fitted();  // no edits: the saved fit's hold
+  ASSERT_EQ(second.positions.size(), 12u);
+  EXPECT_EQ(second.options, first.options);
+  EXPECT_EQ(second.mswd, first.mswd);
+  EXPECT_EQ(second.dof, first.dof);
+  EXPECT_EQ(second.parameters, first.parameters);
+  for (std::size_t i = 0; i < 12; ++i) {
+    SCOPED_TRACE("hole " + std::to_string(i + 1));
+    const FittedPosition& a = first.positions[i];
+    const FittedPosition& b = second.positions[i];
+    EXPECT_EQ(b.j, a.j);
+    EXPECT_EQ(b.j_err, a.j_err);
+    EXPECT_EQ(b.mean_j, a.mean_j);
+    EXPECT_EQ(b.mean_j_err, a.mean_j_err);
+    EXPECT_EQ(b.n, a.n);
+    EXPECT_EQ(b.used_in_fit, a.used_in_fit);
+    ASSERT_EQ(b.analyses.size(), a.analyses.size());
+    for (std::size_t k = 0; k < a.analyses.size(); ++k) EXPECT_EQ(b.analyses[k].omitted, a.analyses[k].omitted) << k;
+    EXPECT_EQ(b.saved_j, std::optional<double>(a.j));
+  }
+  EXPECT_EQ(save(second).unchanged, 12);
+
+  Edits reset;
+  reset.reset_omits = true;
+  const LevelFit third = fitted(reset);
+  ASSERT_EQ(third.positions.size(), 12u);
+  EXPECT_TRUE(third.positions[4].used_in_fit);
+  EXPECT_FALSE(third.positions[1].analyses[2].omitted);
+  EXPECT_EQ(third.positions[1].n, 3);
+  EXPECT_NE(third.dof, first.dof);
+  EXPECT_NE(third.positions[8].j, first.positions[8].j);
+}
+
+TEST_F(FluxSaveLevel, SkippedPositionsKeepTheirHead) {
+  const ps::Uuid kept = save_flux(9, only_j(1.0e-3));
+  const LevelFit fit = fitted();
+  const FluxSaveOutcome outcome = save(fit, SaveSelection{{9}});
+  EXPECT_EQ(outcome.written, 11);
+  EXPECT_EQ(outcome.unchanged, 0);
+  EXPECT_EQ(outcome.skipped, 1);
+  EXPECT_FALSE(outcome.conflict);
+  EXPECT_EQ(head(9), std::optional<ps::Uuid>(kept));
+  EXPECT_EQ(head_value(9), only_j(1.0e-3));
+  for (int n : {1, 8, 10, 12}) EXPECT_EQ(head_value(n).j, std::optional<double>(fit.positions[static_cast<std::size_t>(n - 1)].j)) << n;
+
+  // A hole that is not on the level is no position to skip.
+  EXPECT_EQ(save(fit, SaveSelection{{9, 40}}).skipped, 1);
+}
+
+TEST_F(FluxSaveLevel, APositionWithNoReferenceObjectGetsOne) {
+  const auto keys = [&] {
+    std::set<std::string> out;
+    auto objects = store().ref_objects(ps::RefType::FluxPosition, seeded().irradiation);
+    EXPECT_TRUE(objects) << (objects ? "" : to_string(objects.error()));
+    if (objects)
+      for (const auto& o : *objects) out.insert(o.key);
+    return out;
+  };
+  EXPECT_TRUE(keys().empty());
+  const ps::Uuid analysis = ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  const LevelFit fit = fitted();
+  ASSERT_EQ(save(fit).written, 12);
+
+  const std::set<std::string> after = keys();
+  EXPECT_EQ(after.size(), 12u);
+  EXPECT_TRUE(after.contains("NM-300/A/9"));
+  auto objects = store().ref_objects(ps::RefType::FluxPosition, seeded().irradiation);
+  ASSERT_TRUE(objects) << to_string(objects.error());
+  for (const auto& o : *objects) {
+    EXPECT_EQ(o.irradiation, std::optional<ps::Uuid>(seeded().irradiation)) << o.key;
+    EXPECT_EQ(o.level, std::optional<ps::Uuid>(seeded().level)) << o.key;
+    EXPECT_TRUE(o.head) << o.key;
+  }
+  // Scoped to its position: it is the flux of the analyses run on it.
+  auto refs = store().resolve_refs(analysis, ps::RefPolicy{});
+  ASSERT_TRUE(refs) << to_string(refs.error());
+  const auto flux = std::find_if(refs->refs.begin(), refs->refs.end(),
+                                 [](const ps::ResolvedRef& r) { return r.type == ps::RefType::FluxPosition; });
+  ASSERT_NE(flux, refs->refs.end());
+  EXPECT_EQ(flux->key, "NM-300/A/9");
+  EXPECT_EQ(std::optional<ps::Uuid>(flux->revision), head(9));
+}
+
+TEST_F(FluxSaveLevel, AMovedHeadIsAConflictAndNothingIsWritten) {
+  ASSERT_EQ(save(fitted()).written, 12);
+  Edits edits;
+  edits.omit = {"66001-02"};
+  const LevelFit fit = fitted(edits);  // another J at every position, on the heads just saved
+  ASSERT_EQ(fit.positions.size(), 12u);
+  const std::optional<ps::Uuid> expected = head(7);
+  ASSERT_TRUE(expected);
+  EXPECT_EQ(fit.positions[6].saved_revision, std::optional<std::string>(expected->str()));
+
+  const ps::Uuid moved = save_flux(7, only_j(1.0e-3));  // someone else saves hole 7
+  std::map<int, std::optional<ps::Uuid>> heads;
+  for (int n = 1; n <= 12; ++n) heads[n] = head(n);
+  const ps::ChangeSeq before = change_seq();
+
+  const FluxSaveOutcome outcome = save(fit);
+  ASSERT_TRUE(outcome.conflict);
+  EXPECT_EQ(outcome.conflict_position, "hole 7");
+  EXPECT_EQ(outcome.written, 0);
+  EXPECT_EQ(outcome.conflict->subject, *object(7));
+  EXPECT_EQ(outcome.conflict->kind, ps::Kind::RefValue);
+  EXPECT_EQ(outcome.conflict->expected, expected);
+  EXPECT_EQ(outcome.conflict->actual, std::optional<ps::Uuid>(moved));
+  for (int n = 1; n <= 12; ++n) EXPECT_EQ(head(n), heads[n]) << n;
+  EXPECT_EQ(head(7), std::optional<ps::Uuid>(moved));
+  EXPECT_EQ(change_seq(), before);
+
+  // Loaded again, the same fit saves.
+  const FluxSaveOutcome retried = save(fitted(edits));
+  EXPECT_FALSE(retried.conflict);
+  EXPECT_EQ(retried.written, 12);
+}
+
+TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
+  const ps::Uuid free = ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  const ps::Uuid pinned = ingest_unknown("66102", "2026-01-01T19:02:00Z");
+  save_flux(9, only_j(1.0e-3));
+  const ps::Uuid old = save_flux(10, only_j(1.0e-3));
+  {
+    const auto flux = object(10);
+    ASSERT_TRUE(flux);
+    auto uow = store().begin(actor());
+    ASSERT_TRUE(uow) << to_string(uow.error());
+    ASSERT_TRUE((*uow)->add_revision(pinned, ps::Kind::RefPins, ps::RevisionPayload{ps::RefPins{{*flux, old}}},
+                                     std::nullopt));
+    auto committed = (*uow)->commit(ps::ChangesetKind::Reduction, "<FLUX_FREEZE>");
+    ASSERT_TRUE(committed) << to_string(committed.error());
+    ASSERT_TRUE(std::holds_alternative<ps::Committed>(*committed));
+  }
+  const std::optional<double> free_before = age(free);
+  const std::optional<double> pinned_before = age(pinned);
+  ASSERT_TRUE(free_before);
+  ASSERT_TRUE(pinned_before);
+  EXPECT_GT(*free_before, 0.0);
+
+  const LevelFit fit = fitted();
+  ASSERT_EQ(fit.positions.size(), 12u);
+  ASSERT_NE(fit.positions[8].j, 1.0e-3);
+  ASSERT_NE(fit.positions[9].j, 1.0e-3);
+  ASSERT_EQ(save(fit).written, 12);
+  EXPECT_NE(head(10), std::optional<ps::Uuid>(old));
+
+  const std::optional<double> free_after = age(free);
+  const std::optional<double> pinned_after = age(pinned);
+  ASSERT_TRUE(free_after);
+  ASSERT_TRUE(pinned_after);
+  EXPECT_NE(*free_after, *free_before);
+  EXPECT_EQ(*pinned_after, *pinned_before);
 }
 
 }  // namespace

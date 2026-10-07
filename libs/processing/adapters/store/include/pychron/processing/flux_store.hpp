@@ -7,8 +7,11 @@
 //
 // And a level's inputs (section 6.1): its positions, holder geometry, monitor
 // analyses and saved flux, with the options JSON a saved fit carries (6.4).
+//
+// And saving a fit (section 6.3): one changeset of flux_position revisions.
 
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -86,5 +89,35 @@ struct MonitorSelection {
 // sample name, a level with no holder and a position beyond the holder.
 Result<LevelInputs> load_level(IAnalysisSource& source, persistence::IStore& store, std::string_view irradiation,
                                std::string_view level, const MonitorSelection& selection);
+
+// ---- Saving a level (design section 6.3) ------------------------------------
+
+struct SaveSelection {
+  std::set<int> skip_positions;  // holes not to save
+};
+
+// (`SaveOutcome` is the revision sources' in revisions.hpp.)
+struct FluxSaveOutcome {
+  int written = 0, unchanged = 0, skipped = 0;
+  std::optional<persistence::Conflict> conflict;  // set: nothing was written
+  std::string conflict_position;                  // "hole 7"
+};
+
+// What a position of a fit is saved as: the model's J, a monitor's own mean
+// and analyses, the monitor set's constants and the options of 6.4, with the
+// position's `used_in_fit` and the level's MSWD and degrees of freedom.
+persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position, std::string_view software);
+
+// One `Reference` changeset, "fit flux for <irradiation><level>", with a
+// revision for every position of the fit that is not skipped and whose value
+// is not already its head's; a save that would write nothing commits nothing.
+// Each head moves by compare-and-swap from the revision the level was loaded
+// with (`FittedPosition::saved_revision`): a head someone moved since makes
+// the save a conflict, of the lowest such hole, and nothing is written. A
+// position that has no reference object yet gets one, scoped as the importer
+// scopes it. Error (Config, "flux: ...") for an irradiation or level that
+// does not exist.
+Result<FluxSaveOutcome> save_level(persistence::IStore& store, const persistence::Actor& actor, const LevelFit& fit,
+                                   const SaveSelection& selection, std::string_view software);
 
 }  // namespace pychron::processing
