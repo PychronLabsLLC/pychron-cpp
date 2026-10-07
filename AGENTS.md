@@ -144,3 +144,70 @@ Systems components take non-owning references (`Scheduler&`, `SignalBus&`,
 `Clock&`, role pointers such as `IIntensityAcquirer*`). Whatever they point at
 must outlive them. In tests, declare the fakes before the fixture that owns the
 component: locals are destroyed in reverse order of declaration.
+
+## Time
+
+Time is injected (`pychron::Clock`, `libs/core` `clock.hpp`). On hardware it
+is a `SteadyClock`. A simulated run uses a `VirtualClock`, which stands still
+while any thread taking part in it has work to do and jumps to the next
+deadline when all of them are waiting, so a simulated hour costs its CPU time
+(`docs/superpowers/specs/2026-10-06-virtual-clock-design.md`). The clock only
+knows about waits made through it: a thread blocked any other way looks busy
+and time stops; a thread woken any other way is not heard. Hence:
+
+- A thread on a simulated path (anything under the line, the spectrometer,
+  the executor or a script) constructs a `Clock::Participant` first thing.
+  Its starter makes a shared `Clock::Hold` before `std::thread`, the thread
+  drops its copy once its `Participant` exists, and the starter drops its own
+  after the thread is created: otherwise time can jump past a thread the
+  clock has not heard of yet.
+- It is joined after it has said it is done: as its last act, while still a
+  participant, it sets a flag under the owner's mutex and notifies through
+  the clock; the joiner waits for the flag with `clock.wait` and then calls
+  `join()`. A bare `join()` of a thread that still has to wait in the clock
+  stalls. Never wrap the join in `Clock::Detached`: that is for waits on the
+  outside world (a real program, the operator), and around a wait for a
+  participant it lets time run on without the waiter.
+- It waits for time, or for another such thread, only through the clock
+  (`wait`, `wait_until`, `sleep_for`). A condition variable waited on that
+  way is notified through the clock (`clock.notify_all(cv)`), after the state
+  its waiters test was changed under the mutex they hold. No `cv.wait_for`,
+  `std::this_thread::sleep_for`, `future.get()` or polling against
+  `steady_clock`.
+- A mutex held across clock time (a transport or device call, a settle, any
+  `clock.wait*`) is a `ClockMutex` or `RecursiveClockMutex`
+  (`clock_mutex.hpp`): a second participant blocked on a `std::mutex` looks
+  busy, and the holder's wait never ends. A mutex that guards a few fields,
+  or belongs to a condition variable, stays `std::mutex` and is never held
+  across such a call.
+- Timestamps that are written down come from `clock.wall_now()`, not
+  `system_clock::now()`, so a simulated session is stamped in simulated time.
+- On `SteadyClock` all of this is a pass-through: `Participant`, `Hold` and
+  `Detached` do nothing and the clock mutexes are plain mutexes. What is left
+  on real time on purpose (the log hub, the camera's live timeouts, a
+  script's `max_wall_time`, the notifier, the UI's own threads) is listed in
+  the spec, sections 4.4 and 4.5; add to that list rather than to the code.
+
+Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
+
+- A test in simulated time derives from `VirtualTimeTest`, declares the
+  `VirtualClock` first, makes its own thread a `Clock::Participant` and moves
+  time with `clock.sleep_for(d)`: time does not move while the test's thread
+  is running, so what it then asserts about `clock.now()` is exact.
+- Its other threads are started with `Crew`, which follows the start and
+  join rules above. `await_waiters(clock, n)` waits (in real time, with a
+  limit) until `n` threads are asleep in the clock.
+- No real sleeps for correctness. A real-time bound in a test is an upper
+  bound of 5 s or more, there only to tell "took no real time" from a stall.
+- A stuck test does not hang: the clock reports `virtual clock stalled;
+  runnable: <name>` on stderr after 10 s, naming the participants that are
+  not waiting in it (start looking there: a raw wait, a plain mutex, a bare
+  join), and the fixture aborts the test after 30 s.
+- `ManualClock` remains for single-threaded unit tests that step time by
+  hand. Nothing advances it for a waiting thread: `advance()` wakes no
+  untimed waiter, and a thread waiting on one that nobody advances waits for
+  good.
+
+Apps: `--sim` alone keeps real time. `elctl exp run --sim-speed N|max` and
+`pychron-ui --sim --sim-speed N` run on a `VirtualClock` at N simulated
+seconds a second (`max`, `elctl` only: no waiting at all).

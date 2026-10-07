@@ -1,5 +1,7 @@
 # Virtual Clock Implementation Plan
 
+Executed 2026-10-06/07; see the spec for what was built (the plan's Detached-around-join steps were replaced by done flags, and ClockMutex, RecursiveClockMutex and Clock::Hold were added).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Simulated time that jumps to the next deadline when every thread living in it is waiting, so a simulated run costs its CPU time, with `--sim-speed N` pacing for apps and reproducible wall-clock timestamps.

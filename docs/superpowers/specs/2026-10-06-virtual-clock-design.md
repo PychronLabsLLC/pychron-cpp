@@ -1,7 +1,7 @@
 # Virtual clock: simulated time that runs as fast as the work allows
 
 Date: 2026-10-06
-Status: Draft
+Status: Implemented
 Owner: Jake Ross
 Builds on: `2026-09-29-instrument-control-design.md` (the injected `Clock`,
 `Scheduler`, transports), `2026-09-29-experiment-system-design.md` §3 (run
@@ -10,20 +10,21 @@ Needed by: `2026-10-06-lab-simulator-design.md`.
 
 ## 1. Intent
 
-Time is already injected: `Clock` is abstract, `SteadyClock` is real time,
-`ManualClock` moves when a test says so, and `ClockPump` advances a
-`ManualClock` for `--sim-speed`. Simulated runs are still slow and still vary
-from run to run, for three reasons.
+Before this work time was already injected: `Clock` was abstract,
+`SteadyClock` real time, `ManualClock` moved when a test said so, and a
+`ClockPump` advanced a `ManualClock` for `--sim-speed`. Simulated runs were
+still slow and still varied from run to run, for three reasons.
 
 - A floor of real sleeps. `ManualClock::wait_until` polls every real
-  millisecond and `ClockPump` steps once per real millisecond. How fast a
-  simulated run goes is set by thread wake-ups, not by the work.
-- Waits that bypass the clock. `Executor::Resource::acquire` and the
-  executor's `wait_until(pred)` poll every 10 ms of real time; the peak-center
-  bridge in `measurement/adapters.cpp` sleeps 10 ms in a helper thread;
-  `SimTransport::do_read` and `FramePacer::wait` carry real-time deadlines.
-- No wall clock. `run.cpp`, `laser_system.cpp` and `switch_manager.cpp` call
-  `std::chrono::system_clock::now()`, so a simulated overnight queue has
+  millisecond and `ClockPump` stepped once per real millisecond. How fast a
+  simulated run went was set by thread wake-ups, not by the work.
+- Waits that bypassed the clock. `Executor::Resource::acquire` and the
+  executor's `wait_until(pred)` polled every 10 ms of real time; the
+  peak-center bridge in `measurement/adapters.cpp` slept 10 ms in a helper
+  thread; `SimTransport::do_read` and `FramePacer::wait` carried real-time
+  deadlines.
+- No wall clock. `run.cpp`, `laser_system.cpp` and `switch_manager.cpp` called
+  `std::chrono::system_clock::now()`, so a simulated overnight queue had
   analysis times a few real seconds apart, different every run.
 
 This spec adds a `VirtualClock` that jumps straight to the next deadline when
@@ -49,7 +50,7 @@ class Clock {
   virtual ~Clock() = default;
 
   virtual TimePoint now() const = 0;
-  // Calendar time for timestamps the user sees or the store keeps.
+  // Calendar time, for stamps that are written down.
   virtual WallTime wall_now() const = 0;
 
   // Block on `cv` (whose mutex `lock` holds) until notified or until this
@@ -60,7 +61,8 @@ class Clock {
   virtual void wait(std::condition_variable& cv, std::unique_lock<std::mutex>& lock) const = 0;
 
   // Wake waiters that blocked on `cv` through this clock. A condition
-  // variable waited on through a clock is notified through that clock.
+  // variable waited on through a clock is notified through that clock, after
+  // its state has been changed under the waiters' mutex.
   virtual void notify_one(std::condition_variable& cv) const = 0;
   virtual void notify_all(std::condition_variable& cv) const = 0;
 
@@ -79,23 +81,27 @@ class Clock {
   class Hold;
 
  protected:
-  virtual void enter(std::string_view name) const = 0;
-  virtual void leave() const = 0;
-  virtual void detach() const = 0;
-  virtual void reattach() const = 0;
-  virtual void hold() const = 0;
-  virtual void unhold() const = 0;
+  // What the guards call. They do nothing unless a clock overrides them.
+  virtual void enter(std::string_view name) const;
+  virtual void leave() const;
+  virtual void detach() const;
+  virtual void reattach() const;
+  virtual void hold() const;
+  virtual void unhold() const;
 };
 ```
 
-| Clock | `wait*` | `notify_*` | guards | `wall_now` |
-|---|---|---|---|---|
-| `SteadyClock` | `cv.wait[_until]` | `cv.notify_*` | no-ops | `system_clock::now()` |
-| `ManualClock` | 1 ms real poll (as today) | `cv.notify_*` | no-ops | epoch + elapsed |
-| `VirtualClock` | section 3 | section 3 | counted | epoch + elapsed |
+| Clock | `wait_until` | `wait` | `notify_*` | guards | `wall_now` |
+|---|---|---|---|---|---|
+| `SteadyClock` | `cv.wait_until` | `cv.wait` | `cv.notify_*` | no-ops | `system_clock::now()` |
+| `ManualClock` | 1 ms real poll | `cv.wait` | `cv.notify_*` | no-ops | epoch + advanced |
+| `VirtualClock` | section 3 | section 3 | section 3 | counted | epoch + elapsed |
 
 With `SteadyClock` nothing changes on real hardware: every new call is a
-pass-through. `ManualClock` stays for unit tests that step time by hand.
+pass-through. `ManualClock` stays for single-threaded unit tests that step
+time by hand: `advance()` wakes no untimed waiter (only a notify does), and a
+thread waiting on a `ManualClock` that nobody advances waits for good. A test
+with threads that wait uses a `VirtualClock`.
 
 ## 3. `VirtualClock`
 
@@ -105,13 +111,18 @@ class VirtualClock final : public Clock {
   struct Options {
     double speed = std::numeric_limits<double>::infinity();  // simulated seconds per real second
     TimePoint start = TimePoint{} + std::chrono::hours(1);
-    WallTime epoch = WallTime{} + std::chrono::years(56);    // fixed; apps pass the real time
+    WallTime epoch = WallTime{} + std::chrono::hours(24 * 365 * 56);  // fixed; apps pass the real time
     Duration stall_report_after = std::chrono::seconds(10);  // real time; zero disables
     std::function<void(std::string)> on_stall;               // default: stderr
   };
-  explicit VirtualClock(Options options = {});
-  void set_speed(double speed);
+  VirtualClock();
+  explicit VirtualClock(Options options);
+  void set_speed(double speed);  // at once, also on a jump being paced
   double speed() const;
+
+  // For tests: threads between enter and leave, and threads asleep in a wait.
+  std::size_t participants() const;
+  std::size_t waiters() const;
 };
 ```
 
@@ -210,8 +221,8 @@ wrongly: the failure is a stall, not a wrong result.
 The converse mistake is a raw `cv.notify_*` on a condition variable that is
 waited on through the clock: a `VirtualClock` waiter does not hear it. A timed
 waiter then wakes at its deadline and an untimed one never does. Section 4.2
-lists every such condition variable; the last step of the work greps for raw
-notifies on them.
+lists every such condition variable; the audit that closed the work went
+through each of them and its notifies and found no raw one.
 
 `Detached` is the escape for waits that really are on the outside world. It
 is not for waiting on another participant: when that participant finishes and
@@ -220,9 +231,9 @@ runnable and jump. Waits on participants go through `wait` and `notify_*`.
 
 A watchdog thread, started only when `stall_report_after` is non-zero, reports
 when there are timed waiters, no jump has happened for that long in real time
-and no pacing sleep is in progress. The report lists the runnable
-participants by name; when there is none and a `Hold` is alive it says that
-the clock is held.
+and no pacing sleep is in progress. The report (`virtual clock stalled;
+runnable: <names>`, once per stall) lists the runnable participants by name;
+when there is none and a `Hold` is alive it says that the clock is held.
 
 ### 3.6 What is reproducible
 
@@ -265,12 +276,12 @@ owner takes again: an owner and a depth under the inner mutex, free once the
 owner has unlocked as often as it locked. On `SteadyClock` it is a plain
 recursive mutex.
 
-Use it for a mutex that is held across a wait in clock time, a transport
-call, or a call into something that does either: "one command in flight",
-"one actuation at a time". Do not use it for a mutex that only guards a few
-fields for a few lines, and it cannot be the mutex of a
-`std::condition_variable`: such a mutex stays `std::mutex` and is never held
-across a wait other than the condition variable's own.
+A clock mutex is for a mutex that is held across a wait in clock time, a
+transport call, or a call into something that does either: "one command in
+flight", "one actuation at a time". A mutex that only guards a few fields for
+a few lines stays a `std::mutex`, and so does the mutex of a
+`std::condition_variable` (a clock mutex cannot be one): neither is ever held
+across a wait other than that condition variable's own.
 
 ## 4. Call sites
 
@@ -278,30 +289,38 @@ across a wait other than the condition variable's own.
 
 A `Clock::Participant` is constructed first thing in each of these threads:
 
-| Thread | File |
-|---|---|
-| scheduler dispatcher and workers | `libs/core/src/scheduler.cpp` |
-| `QueuedTransport` worker | `libs/transport/src/queued_transport.cpp` |
-| the caller of `Executor::execute`, for the length of the call | `libs/experiment/src/executor/executor.cpp` |
-| executor slot (one per run) | `libs/experiment/src/executor/executor.cpp` |
-| lab session (one per queue) | `libs/experiment/src/lab/session.cpp` |
-| run `post_eq` | `libs/experiment/src/run/run.cpp` |
-| NGX link reader | `libs/devices/src/spectrometer/ngx_link.cpp` |
-| the `elctl exp run` command, while a simulated queue runs | `apps/elctl/src/exp.cpp` |
+| Thread | Name in a stall report | File |
+|---|---|---|
+| scheduler dispatcher and workers | `scheduler.dispatch`, `scheduler.worker` | `libs/core/src/scheduler.cpp` |
+| `QueuedTransport` worker | `transport.<name>` | `libs/transport/src/queued_transport.cpp` |
+| the caller of `Executor::execute`, for the length of the call | `executor.run` | `libs/experiment/src/executor/executor.cpp` |
+| executor slot (one per run) | `executor.slot.<row>` | `libs/experiment/src/executor/executor.cpp` |
+| lab session (one per queue) | `lab.session` | `libs/experiment/src/lab/session.cpp` |
+| run `post_eq` | `run.post_eq` | `libs/experiment/src/run/run.cpp` |
+| NGX link reader | `ngx.reader` | `libs/devices/src/spectrometer/ngx_link.cpp` |
+| the `elctl exp run` command, on a simulated clock | `elctl` | `apps/elctl/src/exp.cpp` |
 
-The caller of `Scheduler::run_pending` (threads = 0) or of a script entry
-point is a participant if it wants time to wait for it; the tests that drive
-these construct one. A guard nests: a thread that is already a participant
-(the lab session's, inside `Executor::execute`) counts once.
+Jobs (`JobRunner`) run on the scheduler's workers. The caller of
+`Scheduler::run_pending` (threads = 0) or of a script entry point is a
+participant if it wants time to wait for it; the tests that drive these
+construct one. A guard nests: a thread that is already a participant (the lab
+session's, inside `Executor::execute`) counts once.
+
+Each of the threads in the table that is started by another is started under
+a `Clock::Hold` (3.7) and joined after a done flag waited for through the
+clock (4.2).
 
 The notifier (`libs/experiment/src/lab/notifier.cpp`) is not a participant:
 it waits untimed for work, and its work is running programs outside. A
-participant that waits for it to drain does so inside a `Detached`. Nor are
-the log hub flusher, the vision live feed, the `process.cpp` reader, the
-store-source workers, the UI's own threads (the Qt thread, the laser bridge's
-command and video threads, the entry bridge's worker) or the clock's
-watchdog: they deal with the outside world only. They may call everything on
-the clock; their waits are woken by a jump but never hold time back.
+participant that waits for it to drain does so inside a `Detached` (`elctl`
+does, as it does while it waits for the queue to end and for the operator's
+interrupt). Nor are the log hub flusher, the vision live feed, the
+`process.cpp` reader, the store-source workers, the UI's own threads (the Qt
+thread, the core and spectrometer bridges' executor threads, the laser
+bridge's command and video threads, the processing and entry bridges'
+workers) or the clock's watchdog: they deal with the outside world only. They
+may call everything on the clock; their waits are woken by a jump but never
+hold time back.
 
 ### 4.2 Waits moved onto the clock
 
@@ -314,14 +333,18 @@ the clock; their waits are woken by a jump but never hold time back.
 | executor `wait_until(pred)` | `cv.wait_for(10 ms)` | `clock.wait`; slot completion notifies through the clock |
 | `SpectrometerPeakCenter::peak_center` bridge | helper thread, `sleep_for(10 ms)` | no thread: the run's `CancelToken` gets an `on_cancel` callback that cancels this call's job token, which is linked to the job's own token when the job starts |
 | `CancelToken::cancel/abort/wake` | `cv.notify_all` | notify through the clock the current waiter passed in (remembered under the token mutex; plain notify when nobody waits) |
-| `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock |
+| `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock; `PolledAcquirer::start` and `FramePacer::start`, which move the time a frame is due, notify as well |
+| `AcquisitionEngine` (`acquisition.cpp`): `start`, `stop` and `collect` waiting for polls under way and for readings | `cv.wait` | `clock.wait` on `polls_cv_` and `collect_cv_`; notified through the clock |
+| `JobRunner::wait_idle`, `~JobRunner` | `cv.wait` | `clock.wait`; the end of a job notifies through the clock |
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
 | `NgxLink` (`ngx_link.cpp`): command timeout, read timeout, backoff, late-reply window | `steady_clock` and `cv.wait_for` | `clock_.now()` and clock waits; its reader reads a transport that, simulated, waits in clock time |
 | NGX mutexes held across a command: `NgxLink` `command_mutex_`, `connect_mutex_`, the valve mutex (`valve_mutex()`); `NgxSpectrometer` `wire_order_` | `std::mutex` | `ClockMutex` (section 3.8). `NgxLink::mutex_` and `NgxSpectrometer::acq_mutex_` guard short sections and have condition variables: they stay `std::mutex` |
 | `Spectrometer::mutex_` (every hardware operation, a move's settle included) | `std::recursive_mutex` | `RecursiveClockMutex`, on the context clock |
 | `LaserSystem::gate_` (every driver, camera and centering call) | `std::recursive_mutex` | `RecursiveClockMutex`, on the clock given at construction (the line's; `SteadyClock` when none is given). `LaserSystem::mutex_` guards fields and stays `std::mutex` |
 | `ScanService::op_mutex_` (the engine start and stop sequences) | `std::mutex` | `ClockMutex`. The service's state mutex stays `std::mutex` |
-| thread joins of participants (`Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | wait for the thread's done flag through the clock, then `join()` |
+| `SwitchManager::actuation_` (one actuation or refresh at a time, settle included), `Reconnector::mutex_` (close, open, handshake), `QtegraLink::handshake_mutex_` | `std::mutex` | `ClockMutex`. `SwitchManager::state_` stays `std::mutex` |
+| `ExtractionLine::lifecycle_` (`start` talking to the devices, `stop` waiting for the jobs under way; `running`) | `std::mutex` | `ClockMutex`, on the line's clock |
+| thread joins of participants (scheduler dispatcher and workers, `QueuedTransport` worker, NGX reader, `Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | the thread, as its last act while still a participant, sets a done flag (or drops a live count) under the owner's mutex and notifies through the clock; the joiner waits for that with `clock.wait`, then `join()`. Never a `Detached` around the join (3.5) |
 
 ### 4.3 Real-time fallbacks removed
 
@@ -337,29 +360,55 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
 
 - script `max_wall_time` (`scripting/src/python/host_state.cpp`): a guard
   against a script that spins;
-- camera live timeouts (`laser_system.cpp:775`, `pattern_runner.cpp:325`): a
-  real camera on a real bus;
-- the log hub; the vision live feed; the UI's timers.
+- camera live timeouts (the looks of a centering in `laser_system.cpp` and of
+  a glow-following pattern in `pattern_runner.cpp`): a real camera on a real
+  bus. The vision frame sources stamp frames with `steady_clock` unless given
+  a clock;
+- the log hub (record stamps, the flusher, the crash flush); the vision live
+  feed; `process.cpp` (an outside program's timeout); `asio_stream.hpp` (a
+  real socket or serial port);
+- the notifier (`lab/notifier.cpp`, and the `Date:` of a mail in
+  `lab/notifications.cpp`): it runs programs outside, on its own thread, and
+  is not a participant;
+- `CancelToken::remove_on_cancel` waiting for a callback that is running on
+  another thread: callbacks are short and do not wait;
+- `elctl exp run` waiting for the queue to end and for an interrupt: a 50 ms
+  real-time poll inside a `Detached`, so that the operator is heard whatever
+  simulated time is doing. The other `elctl` commands (`scan`, the laser
+  commands) run on a `SteadyClock` only;
+- the UI: its timers, the bridges' worker threads and their polls and
+  settles (`laser_bridge.cpp`), the log dock, the plots' axes;
+- inside the clocks: `SteadyClock`, `ManualClock::wait_until`'s 1 ms poll,
+  and the `VirtualClock`'s pacing sleep and watchdog.
 
 ### 4.5 Wall time
 
-`std::chrono::system_clock::now()` becomes `clock.wall_now()` in
-`experiment/src/run/run.cpp:35`, `laser/src/laser_system.cpp:243,443` and
-`systems/src/switch_manager.cpp:203`. `persistence/src/ids.cpp`,
-`processing/src/report.cpp` and `time_series.cpp` are not on a simulated path
-and keep real time.
+`std::chrono::system_clock::now()` became `clock.wall_now()` for the time of
+an analysis (`experiment/src/run/run.cpp`), the names of snapshots and the
+stamps of hole corrections (`laser/src/laser_system.cpp`) and the time of a
+switch's last actuation (`systems/src/switch_manager.cpp`).
+`persistence/src/ids.cpp`, `processing/src/report.cpp` and `time_series.cpp`
+are not on a simulated path and keep real time. The apps read
+`system_clock::now()` once, for the `VirtualClock`'s epoch.
 
 ### 4.6 Apps
 
-`--sim-speed` takes a positive number, or `max` for unlimited (`elctl` only:
-a UI at unlimited speed finishes a queue before it paints).
+`--sim-speed` takes a positive, finite number, or `max` for unlimited
+(`elctl` only: a UI at unlimited speed finishes a queue before it paints).
 `elctl exp run --sim-speed N` and `pychron-ui --sim --sim-speed N` build a
-`VirtualClock{.speed = N, .epoch = system_clock::now()}`. The line's scheduler
-runs with its normal dispatcher and worker pool: `options.scheduler.threads = 0`
-and `run_scheduler = false` go away. `--sim` without `--sim-speed` keeps
-`SteadyClock`. `ClockPump` (`clock_pump.hpp/.cpp`) and
-`tests/integration/sim_pump.hpp` are deleted and their users moved to
-`VirtualClock`.
+`VirtualClock{.speed = N, .epoch = system_clock::now()}` whose stall report
+goes to stderr. The line's scheduler runs with its normal dispatcher and
+worker pool: the apps no longer set `options.scheduler.threads = 0` and
+`run_scheduler = false`. `--sim` without `--sim-speed` keeps `SteadyClock`.
+
+In `elctl` the command's thread is a participant from before the line starts
+until it has stopped, and is `Detached` while it waits, in real time, for the
+queue to end, for an interrupt, and for the notifier to drain. In the UI no
+thread of the application's is a participant: the line's, the spectrometer's
+and the session's threads are, and time never waits for the event loop.
+
+`ClockPump` (`clock_pump.hpp/.cpp`), `tests/integration/sim_pump.hpp` and the
+tests' own pumps are deleted and their users moved to `VirtualClock`.
 
 ## 5. Tests
 
@@ -377,19 +426,54 @@ and `run_scheduler = false` go away. `--sim` without `--sim-speed` keeps
   moved;
 - `Detached`: a detached participant does not hold time;
 - `leave` by the last runnable participant triggers the jump;
+- `Hold`: no jump while one is alive, the jump when the last one goes, and
+  one taken during a pacing sleep ends it;
 - pacing: speed 100, a 1 s wait takes 10 ms of real time within tolerance; a
   notify during the sleep ends it early and `now` has advanced in proportion;
+  a thread that leaves hands the sleep to a waiter; `now()` moves during the
+  sleep;
 - stall report: a participant blocked on a raw condition variable is named;
 - `wall_now` is epoch plus elapsed.
 
+`tests/core/test_clock_mutex.cpp`: a contended `ClockMutex` and
+`RecursiveClockMutex` under a holder that waits in the clock (time goes on;
+with a plain mutex the test stalls), and both as plain mutexes on a
+`SteadyClock`.
+
+`tests/support/virtual_time.hpp` (`pychron::testing`) is what the tests in
+simulated time share: `VirtualTimeTest`, a fixture whose dead-man aborts a
+stuck test with a message after 30 s of real time; `Crew`, which starts test
+threads as participants under a `Hold` and joins them through the clock;
+`await_waiters`, `await_participants` and `eventually_real`, bounded real-time
+waits for another thread to get as far as its sleep in the clock. The test's
+own thread is a participant and moves time with `clock.sleep_for`.
+
 Per migrated site: its existing tests stay green on `ManualClock` or
-`SteadyClock`, and one test runs it on `VirtualClock` at infinite speed.
+`SteadyClock`, and at least one test runs it on `VirtualClock` at infinite
+speed (the `*Virtual` suites: `SchedulerVirtual`, `QueuedTransportVirtual`,
+`SimTransportVirtual`, `CancelTokenVirtual`, `ExecutorVirtual`,
+`SpectrometerPeakCenterVirtual`, `IntensityStreamVirtual`,
+`AcquisitionEngineVirtual`, `ScanServiceVirtual`, `SpectrometerVirtual`,
+`SwitchManagerVirtual`, `FramePacerVirtual`, `AdcBankVirtual`,
+`QtegraAcquireVirtual`, `NgxLinkVirtual`, `NgxSystemVirtual`,
+`LaserSystemVirtual`). The clock mutexes of the switch manager, the scan
+service, the spectrometer, the laser system and the line each have a
+contention test that stalls with a plain mutex; those of the NGX link, the
+Qtegra handshake and the reconnector are covered by `test_clock_mutex.cpp`
+only. `NgxLinkSteady`, `QtegraAcquireSteady`,
+`AdcBankSteady` and `ExampleLineSteady` keep the hardware arrangement under
+test: a `SteadyClock`, no participants, short real waits.
 
-Acceptance:
+Acceptance, as met:
 
-- `tests/integration` and `apps/elctl/tests/test_exp_commands.cpp` run on
-  `VirtualClock` with no `sleep_for` and no `Pump` in the test code;
-- the wall time of `ctest -R 'integration|exp_commands'` before and after is
-  recorded in the pull request;
-- the suite is clean under ASan/UBSan on clang and gcc, and under TSan for
-  `test_virtual_clock`.
+- `tests/integration`, the UI fixtures and
+  `apps/elctl/tests/test_exp_commands.cpp` run on `VirtualClock` with no
+  pump. The only real sleeps left in them are on purpose: the `SteadyClock`
+  smoke test of the example line, and the test that interrupts a paced queue
+  from outside the clock;
+- the integration binary went from 62.2 s to 18.7 s of wall time
+  (`tests/integration`, before and after the tests moved);
+- the suite is clean under ASan/UBSan and the `*Virtual` suites and the
+  integration binary under TSan, on Apple clang (2026-10-07); the simulated
+  suites pass twenty times in a row. gcc and clang on Linux are CI's, on the
+  pull request into `main`.

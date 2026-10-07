@@ -2,6 +2,10 @@
 
 Date: 2026-10-02
 Status: Implemented (v1)
+Superseded in part: simulated time is no longer a `ClockPump` over a
+`ManualClock` (sections 2, 3, 4.4, 5, 7 and 8 below describe it as first
+built). `--sim-speed` now runs on a `VirtualClock` and the line's scheduler
+keeps its own threads; see `2026-10-06-virtual-clock-design.md`, section 4.6.
 Owner: Jake Ross
 Depends on: `2026-09-29-experiment-system-design.md` (section 10.4, stage E7),
 `2026-10-01-spectrometer-window-design.md` (bridge pattern, QCustomPlot,
@@ -150,6 +154,9 @@ queue action, a post-run conditional) bumps the version.
 lab; queue-level fields are not editable while running.
 
 ### 4.4 `ClockPump` (`libs/core`, `pychron/core/clock_pump.hpp`)
+
+Removed: replaced by `VirtualClock` (`2026-10-06-virtual-clock-design.md`).
+What follows is the first design, kept for the record.
 
 ```cpp
 class ClockPump {
@@ -440,7 +447,8 @@ Extraction/Post-Measurement Script for the selected row) over the lab's
 - `--lab` defaults to the extraction line config's directory; `--data`
   defaults to `<lab>/data`. `--queue` opens that queue when the window
   first shows. `--sim-speed` needs `--sim` (usage error otherwise) and puts
-  the whole app on a `ManualClock` driven by a `ClockPump`.
+  the whole app on simulated time (at first a `ManualClock` driven by a
+  `ClockPump`; now a `VirtualClock` paced to the speed given).
 - The session is built after the line starts and before the windows are
   shown; a session that cannot be built (no line, bad lab) is not fatal:
   the error goes to the log dock and the menu item stays disabled.
