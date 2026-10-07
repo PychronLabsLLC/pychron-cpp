@@ -3,7 +3,8 @@
 // events, late replies, magnet moves during an integration, source
 // parameters, valves sharing the link, reconnects, and a concurrency stress.
 // Time is a VirtualClock shared by the simulator, its transport, the link and
-// the drivers; nothing waits on the wall clock.
+// the drivers; nothing waits on the wall clock. (NgxLinkSteady, at the end,
+// is the exception: the link on a SteadyClock, as on hardware.)
 
 #include <gtest/gtest.h>
 
@@ -78,6 +79,8 @@ class FlakyTransport final : public Transport {
   std::shared_ptr<NgxSimModel> model_;
 };
 
+using pychron::testing::Crew;
+
 std::string uniq(const char* base) {
   static std::atomic<int> n{0};
   return std::string(base) + std::to_string(++n);
@@ -87,7 +90,7 @@ struct Ngx : pychron::testing::VirtualTimeTest {
   VirtualClock clock;
   // The test's thread takes part: time moves only while it waits in the clock
   // (clock.sleep_for, a command, next()), and stands still otherwise.
-  std::optional<Clock::Participant> main{std::in_place, clock, "test"};
+  Clock::Participant main{clock, "test"};
   std::shared_ptr<NgxSimModel> model = [this] {
     auto m = std::make_shared<NgxSimModel>();
     m->clock = &clock;
@@ -131,14 +134,6 @@ struct Ngx : pychron::testing::VirtualTimeTest {
 
   // next() until a frame or error comes (the reader delivers asynchronously).
   Result<std::optional<Frame>> wait_frame(NgxSpectrometer& s) { return s.next(3s); }
-
-  // For the tests whose threads use the link at once. The link and the
-  // drivers serialise commands with plain mutexes held across a command, and
-  // a participant blocked on one looks runnable to the clock: time would
-  // stand while the command that holds the mutex waits for it. With no
-  // participant on the test's side time runs on by itself (the reader and the
-  // transport are the only ones to wait for), which is all these tests need.
-  void let_time_run() { main.reset(); }
 };
 
 }  // namespace
@@ -478,31 +473,37 @@ TEST_F(Ngx, ADroppedConnectionReconnectsAndLogsInFirst) {
 // integration the trigger may have started is stopped. (The move's StopAcq
 // going out first, then the StartAcq, left it running and the next StartAcq
 // was E43.)
+//
+// Every thread here is a participant, so time moves only for the commands
+// themselves: a round is a few of them, far less than the second an
+// integration lasts, and one left running is still running when the round
+// looks. (With time running free it would have finished by itself.)
 TEST_F(Ngx, AMoveRacingATriggerNeverLeavesAnIntegrationRunning) {
-  let_time_run();
   auto s = make(*sim);
   ASSERT_TRUE(s->connect());
   ASSERT_TRUE(s->start());
   for (int i = 0; i < 300; ++i) {
+    const TimePoint round_start = clock.now();
     std::atomic<int> ready{0};
     auto go = [&] {
       ++ready;
       while (ready < 2) std::this_thread::yield();
     };
-    std::thread trigger([&] {
+    Crew crew(clock);
+    crew.start("trigger", [&] {
       go();
       auto r = s->trigger();
       EXPECT_TRUE(r) << (r ? "" : r.error().what);
     });
-    std::thread move([&] {
+    crew.start("move", [&] {
       go();
       EXPECT_TRUE(s->set(36.0 + i % 3));
     });
-    trigger.join();
-    move.join();
+    crew.join();
     (void)s->next(0ms);  // drop the cancellation the move queued
     // The trigger either was aborted or armed; settle it so the next round starts idle.
     ASSERT_TRUE(s->set(39.96));
+    ASSERT_LT(clock.now() - round_start, 1s) << "round " << i << ": long enough for an integration to end by itself";
     bool running = false;
     {
       std::lock_guard lock(model->mutex);
@@ -514,7 +515,6 @@ TEST_F(Ngx, AMoveRacingATriggerNeverLeavesAnIntegrationRunning) {
 
 // Acquisition, valves and magnet moves at once, for the thread sanitizer.
 TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
-  let_time_run();
   auto s = make(*sim);
   ASSERT_TRUE(s->connect());
   LinkTransport borrowed("ngx-line", link);
@@ -522,13 +522,14 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
   auto v = NgxValves::create(DriverArgs{"valves", borrowed, none, &clock});
   ASSERT_TRUE(v);
   ASSERT_TRUE(s->start());
-  std::thread valves([&] {
+  Crew crew(clock);
+  crew.start("valves", [&] {
     for (int i = 0; i < 40; ++i) {
       EXPECT_TRUE((*v)->open(ValveAddress{std::to_string(i % 4)}));
       EXPECT_TRUE((*v)->close(ValveAddress{std::to_string(i % 4)}));
     }
   });
-  std::thread magnet([&] {
+  crew.start("magnet", [&] {
     for (int i = 0; i < 10; ++i) {
       EXPECT_TRUE(s->set(36.0 + i % 5));
       clock.sleep_for(500ms);
@@ -543,8 +544,7 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
     if (f && *f) ++frames;
     else if (!f && f.error().kind == ErrorKind::Cancelled) ++cancelled;
   }
-  valves.join();
-  magnet.join();
+  crew.join();
   EXPECT_GT(frames, 0);
   EXPECT_LE(cancelled, 10);  // at most one per move
   std::lock_guard lock(model->mutex);
@@ -612,7 +612,8 @@ TEST_F(NgxLinkVirtual, ReconnectBackoffIsClockTime) {
   NgxLink link(flaky, o, clock);
   ASSERT_TRUE(link.connect());
   const TimePoint kStart = clock.now();
-  // The reader asleep between two reads, and the transport's worker idle.
+  // Two waiters: the link's reader asleep between two reads, and the
+  // transport's worker idle.
   ASSERT_TRUE(await_waiters(clock, 2));
   const auto real_start = std::chrono::steady_clock::now();
 
@@ -631,5 +632,94 @@ TEST_F(NgxLinkVirtual, ReconnectBackoffIsClockTime) {
   EXPECT_EQ(clock.now(), *dropped + 14s);
   EXPECT_TRUE(link.up());
   EXPECT_EQ(link.stats().reconnects, 1u);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// --- the link on real time --------------------------------------------------
+
+namespace {
+
+// The hardware configuration: a SteadyClock. The timeouts are real and short;
+// what is checked is that they are kept and that nothing hangs.
+struct NgxLinkSteady : pychron::testing::VirtualTimeTest {
+  SteadyClock clock;
+  std::shared_ptr<NgxSimModel> model = [this] {
+    auto m = std::make_shared<NgxSimModel>();
+    m->clock = &clock;
+    m->mass = 39.96;
+    return m;
+  }();
+  TransportOptions transport_options() const {
+    TransportOptions o;
+    o.name = "ngx";
+    o.clock = &clock;
+    return o;
+  }
+  std::unique_ptr<SimTransport> open(std::unique_ptr<SimTransport> t) {
+    EXPECT_TRUE(t->open());
+    return t;
+  }
+  // The simulated controller, and a peer that never says anything.
+  std::unique_ptr<SimTransport> sim = open(SimTransport::hooked(ngx_sim_hook(model), transport_options(), ngx_sim_events(model)));
+  std::unique_ptr<SimTransport> silent = open(SimTransport::hooked([](const Bytes&) { return Bytes{}; }, transport_options()));
+
+  static NgxLinkOptions short_timeouts() {
+    NgxLinkOptions o;
+    o.command_timeout = 50ms;
+    o.banner_timeout = 50ms;
+    return o;
+  }
+};
+
+}  // namespace
+
+TEST_F(NgxLinkSteady, ConnectsAndAnswersACommand) {
+  NgxLinkOptions o;
+  o.command_timeout = 5s;  // an upper limit only: the reply comes at once
+  NgxLink link(*sim, o, clock);
+  ASSERT_TRUE(link.connect());
+  EXPECT_TRUE(link.up());
+  EXPECT_EQ(link.session(), 1u);
+  auto r = link.ask("GETMASS");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_DOUBLE_EQ(std::stod(*r), 39.96);
+  EXPECT_EQ(link.stats().replies_dropped, 0u);
+}
+
+TEST_F(NgxLinkSteady, ACommandToASilentPeerTimesOutInRealTime) {
+  const NgxLinkOptions o = short_timeouts();
+  NgxLink link(*silent, o, clock);
+  ASSERT_TRUE(link.connect());
+  const auto real_start = std::chrono::steady_clock::now();
+
+  auto r = link.ask("GETMASS");
+
+  const auto took = std::chrono::steady_clock::now() - real_start;
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_GE(took, 40ms);
+  EXPECT_LT(took, 5s);
+}
+
+// The link goes while a command's reply is still outstanding: the command
+// timed out, the reply is owed for late_reply_window, and the reader is in
+// its read. The destructor waits for the reader and for nothing else.
+TEST_F(NgxLinkSteady, TeardownWithAReplyOutstandingReturns) {
+  {
+    std::lock_guard lock(model->mutex);
+    model->hold_replies = 1;
+  }
+  NgxLinkOptions o = short_timeouts();
+  o.late_reply_window = 60s;
+  auto link = std::make_optional<NgxLink>(*sim, o, clock);
+  ASSERT_TRUE(link->connect());
+  auto r = link->ask("GETMASS");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  ASSERT_TRUE(link->up());
+  const auto real_start = std::chrono::steady_clock::now();
+
+  link.reset();
+
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }

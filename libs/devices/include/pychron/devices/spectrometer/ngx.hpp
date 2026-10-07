@@ -118,8 +118,9 @@ class NgxSpectrometer final : public Device,
   // Orders StartAcq and StopAcq on the wire: a StopAcq sent to end an
   // integration never overtakes the StartAcq still in flight that began it
   // (it would land first and leave that integration running: the next
-  // StartAcq is then E43). Never taken while holding acq_mutex_.
-  std::mutex wire_order_;
+  // StartAcq is then E43). Never taken while holding acq_mutex_. Held
+  // across the command, which waits in clock time: a ClockMutex.
+  ClockMutex wire_order_;
   std::condition_variable acq_cv_;
   bool running_ = false;
   State state_ = State::Idle;

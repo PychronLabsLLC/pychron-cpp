@@ -125,7 +125,8 @@ NgxSpectrometer::NgxSpectrometer(std::string name, NgxLinkHandle link, NgxOption
       link_(std::move(link)),
       options_(std::move(options)),
       clock_(clock != nullptr ? *clock : steady_),
-      params_(source_specs()) {
+      params_(source_specs()),
+      wire_order_(clock_) {
   if (auto l = link_.get()) {
     (*l)->set_event_sink([this](const ngx::AcqFrame& f, TimePoint at, std::uint64_t session) { on_event(f, at, session); });
   }

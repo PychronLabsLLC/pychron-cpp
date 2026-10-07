@@ -305,6 +305,7 @@ participants.
 | `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock |
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
 | `NgxLink` (`ngx_link.cpp`): command timeout, read timeout, backoff, late-reply window | `steady_clock` and `cv.wait_for` | `clock_.now()` and clock waits; its reader reads a transport that, simulated, waits in clock time |
+| NGX mutexes held across a command: `NgxLink` `command_mutex_`, `connect_mutex_`, the valve mutex (`valve_mutex()`); `NgxSpectrometer` `wire_order_` | `std::mutex` | `ClockMutex` (section 3.8). `NgxLink::mutex_` and `NgxSpectrometer::acq_mutex_` guard short sections and have condition variables: they stay `std::mutex` |
 | thread joins of participants (`Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | wait for the thread's done flag through the clock, then `join()` |
 
 ### 4.3 Real-time fallbacks removed

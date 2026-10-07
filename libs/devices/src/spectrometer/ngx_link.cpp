@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/ngx_link.hpp"
 
 #include <algorithm>
+#include <system_error>
 
 #include "pychron/transport/link_transport.hpp"
 
@@ -40,7 +41,12 @@ std::string shown(std::string_view command) {
 }  // namespace
 
 NgxLink::NgxLink(Transport& transport, NgxLinkOptions options, const Clock& clock)
-    : transport_(transport), options_(std::move(options)), clock_(clock) {}
+    : transport_(transport),
+      options_(std::move(options)),
+      clock_(clock),
+      connect_mutex_(clock),
+      command_mutex_(clock),
+      valve_mutex_(clock) {}
 
 NgxLink::~NgxLink() {
   {
@@ -139,15 +145,20 @@ Result<void> NgxLink::connect() {
     }
   }
   if (auto h = handshake(); !h) return h;
-  {
+  // Time does not jump until the reader has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  try {
+    // The reader's first look at the link waits for mutex_, so it sees the
+    // link started. A thread that could not be made leaves it not started:
+    // the destructor waits for no reader, and a later connect() tries again.
     std::lock_guard lock(mutex_);
+    thread_ = std::thread([this, hold]() mutable { reader(std::move(hold)); });
     started_ = true;
     up_ = true;
     ++session_;
+  } catch (const std::system_error& e) {
+    return fail(ErrorKind::Io, std::string("NGX: the reader thread could not be started: ") + e.what());
   }
-  // Time does not jump until the reader has entered the clock.
-  auto hold = std::make_shared<Clock::Hold>(clock_);
-  thread_ = std::thread([this, hold]() mutable { reader(std::move(hold)); });
   hold.reset();
   return {};
 }

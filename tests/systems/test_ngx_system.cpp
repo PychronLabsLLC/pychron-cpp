@@ -207,9 +207,12 @@ systems::ExtractionLine::Options line_options(const Clock& clock, bool sim) {
   return o;
 }
 
+// A line stuck in the clock fails with a message; it does not hang.
+struct NgxLine : pychron::testing::VirtualTimeTest {};
+
 }  // namespace
 
-TEST(NgxLine, ValvesOnTheNgxControllerWorkInSimulation) {
+TEST_F(NgxLine, ValvesOnTheNgxControllerWorkInSimulation) {
   VirtualClock clock;
   Clock::Participant main(clock, "test");
   auto line = systems::ExtractionLine::create(
@@ -223,7 +226,7 @@ TEST(NgxLine, ValvesOnTheNgxControllerWorkInSimulation) {
   (*line)->stop();
 }
 
-TEST(NgxLine, ALinkWithNoOwnerFailsActuationsPlainly) {
+TEST_F(NgxLine, ALinkWithNoOwnerFailsActuationsPlainly) {
   ManualClock clock;
   auto line = systems::ExtractionLine::create(line_config("link", "link = \"ngx-nobody\"", "ngx-nobody"),
                                               std::nullopt, line_options(clock, false));
