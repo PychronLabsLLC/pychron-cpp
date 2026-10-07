@@ -49,7 +49,7 @@ DetectorKind infer_detector_kind(std::string_view name) {
 }
 
 BeamModel::BeamModel(const Clock& clock, BeamSettings settings)
-    : clock_(clock), settings_(std::move(settings)), t0_(clock.now()) {
+    : clock_(clock), settings_(std::move(settings)), built_(clock.now()), t0_(built_) {
   if (settings_.gas.empty()) settings_.gas = default_argon_gas();
   if (!settings_.table_value) settings_.table_value = default_table_value;
   hv_ = settings_.nominal_hv;
@@ -266,7 +266,7 @@ double BeamModel::true_signal_locked(const BeamDetector& d, TimePoint t) const {
 }
 
 double BeamModel::baseline_locked(const BeamDetector& d, TimePoint t) const {
-  return d.baseline + d.baseline_drift_per_h * seconds(t - t0_) / 3600.0;
+  return d.baseline + d.baseline_drift_per_h * seconds(t - built_) / 3600.0;
 }
 
 Result<double> BeamModel::peak_center(std::string_view det, std::string_view isotope) const {
@@ -297,7 +297,7 @@ Result<BeamIntensity> BeamModel::intensity(std::string_view det, TimePoint t, Du
   double baseline = baseline_locked(*d, t);
   // The noise of this reading: of this detector at this instant, whoever
   // else read what before (keyed_noise.hpp).
-  auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(t - t0_).count();
+  auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(t - built_).count();
   BeamIntensity out;
   if (is_counter(d->kind)) {
     if (!d->protect && signal > d->overload_threshold) {

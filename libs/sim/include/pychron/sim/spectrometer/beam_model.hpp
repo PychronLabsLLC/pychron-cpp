@@ -129,9 +129,13 @@ class BeamModel {
   bool has_detector(std::string_view name) const;
   Result<BeamDetector> detector(std::string_view name) const;
 
+  // The fixed list; its rates count from now. The noise and the baseline
+  // drift do not start again: they count from when the model was built.
   void set_gas(std::vector<BeamGas> gas);
   // Replaces `BeamSettings::gas_at` (see there for what a provider may not
-  // do); an empty function goes back to the fixed list.
+  // do); an empty function goes back to the fixed list. The function is
+  // copied and kept: whatever it captures must outlive the model, or be
+  // replaced here first. It is called with the model's mutex held.
   void set_gas_provider(std::function<std::vector<BeamGas>(TimePoint)> provider);
 
   // Magnet position in table units.
@@ -176,7 +180,8 @@ class BeamModel {
 
   const Clock& clock_;
   BeamSettings settings_;
-  TimePoint t0_;
+  const TimePoint built_;  // the noise's ticks and the baseline drift count from here
+  TimePoint t0_;           // the fixed gas list's rates count from here (set_gas)
   mutable std::mutex mutex_;
   std::vector<BeamDetector> detectors_;
   std::map<spectrometer::ParamId, double> params_;

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -182,7 +183,12 @@ TEST(BeamModel, SameSeedSameNoise) {
   BeamModel a(c1, s), b(c2, s);
   a.ensure_detector("H1");
   b.ensure_detector("H1");
-  for (int i = 0; i < 5; ++i) EXPECT_EQ(a.intensity("H1")->value, b.intensity("H1")->value);
+  // Five readings, not one read five times: the noise is of the instant.
+  for (int i = 0; i < 5; ++i) {
+    c1.advance(1ms);
+    c2.advance(1ms);
+    EXPECT_EQ(a.intensity("H1")->value, b.intensity("H1")->value);
+  }
 }
 
 // Mean of `n` readings of `det`, one millisecond apart.
@@ -236,19 +242,54 @@ TEST(BeamModel, OffPeakReadsTheBaseline) {
   ASSERT_TRUE(f.beam.set_baseline("H1", 50.0, 0.0));
   f.beam.set_magnet(34.2 / 5.0);
   // sigma is the noise floor, 1 fA: the standard error of 1000 readings is
-  // 1 / sqrt(1000).
-  const double three_se = 3.0 / std::sqrt(1000.0);
-  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, three_se);
+  // 1 / sqrt(1000). The draws are fixed by the seed; five of them leave room
+  // for a change of how the noise is keyed to draw them again.
+  const double five_se = 5.0 / std::sqrt(1000.0);
+  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, five_se);
 
   // The drift counts from when the model was built, a second ago; the
   // readings span another second two hours on.
   ASSERT_TRUE(f.beam.set_baseline("H1", 50.0, 2.0));
   f.clock.advance(2h);
-  EXPECT_NEAR(mean_of(f, "H1", 1000), 54.0 + 2.0 * 1.5 / 3600.0, three_se);
+  EXPECT_NEAR(mean_of(f, "H1", 1000), 54.0 + 2.0 * 1.5 / 3600.0, five_se);
 
   // The other detectors have none.
   f.clock.advance(1s);
   EXPECT_LT(std::abs(f.read("AX")), 10.0);
+}
+
+TEST(BeamModel, SetGasDoesNotRepeatTheNoise) {
+  Fixture f;
+  f.beam.set_magnet(34.2 / 5.0);
+  // The same gas given twice: the readings after the second are not those
+  // after the first over again.
+  auto five = [&f] {
+    f.beam.set_gas(default_argon_gas());
+    std::vector<double> out;
+    for (int i = 0; i < 5; ++i) {
+      f.clock.advance(1ms);
+      out.push_back(f.read("H1"));
+    }
+    return out;
+  };
+  const std::vector<double> first = five();
+  const std::vector<double> second = five();
+  for (std::size_t i = 0; i < first.size(); ++i) EXPECT_NE(first[i], second[i]) << "reading " << i;
+}
+
+TEST(BeamModel, SetGasDoesNotRestartTheDrift) {
+  Fixture f;
+  ASSERT_TRUE(f.beam.set_baseline("H1", 50.0, 2.0));
+  f.beam.set_magnet(34.2 / 5.0);
+  f.clock.advance(2h);
+  // The drift is since the model was built, whatever gas it was given since;
+  // the gas's own rate does count from when it was given.
+  f.beam.set_gas({{"Ar40", 39.96238, 1e4, 0.05}});
+  EXPECT_NEAR(mean_of(f, "H1", 1000), 54.0 + 2.0 * 0.5 / 3600.0, 5.0 / std::sqrt(1000.0));
+  f.beam.set_magnet(f.center("H1", "Ar40"));
+  f.clock.advance(19s);  // twenty seconds since set_gas
+  const double peak = 1e4 * std::exp(1.0);
+  EXPECT_NEAR(f.read("H1"), peak + 54.0, 5.0 * (1.0 + 0.001 * peak));
 }
 
 TEST(BeamModel, TheBaselineAddsToThePeak) {
@@ -324,15 +365,15 @@ TEST(BeamModel, ABlankedBeamReadsBaselineOnly) {
   Fixture f;
   ASSERT_TRUE(f.beam.set_baseline("H1", 50.0, 0.0));
   f.beam.set_magnet(f.center("H1", "Ar40"));
-  const double three_se = 3.0 / std::sqrt(1000.0);
+  const double five_se = 5.0 / std::sqrt(1000.0);
   f.beam.blank(true);
-  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, three_se);
+  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, five_se);
   f.beam.blank(false);
   EXPECT_GT(f.read("H1"), 9e5);
 
   // A protected detector likewise.
   ASSERT_TRUE(f.beam.protect("H1", true));
-  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, three_se);
+  EXPECT_NEAR(mean_of(f, "H1", 1000), 50.0, five_se);
 }
 
 TEST(BeamModel, ACounterBaselineIsDarkCounts) {
@@ -340,13 +381,13 @@ TEST(BeamModel, ACounterBaselineIsDarkCounts) {
   ASSERT_TRUE(f.beam.set_baseline("EM", 50.0, 0.0));
   f.beam.set_magnet(34.2 / 5.0);
   // Poisson: the variance of a one-second count is its mean.
-  const double three_se = 3.0 * std::sqrt(50.0 / 1000.0);
-  EXPECT_NEAR(mean_of(f, "EM", 1000), 50.0, three_se);
+  const double five_se = 5.0 * std::sqrt(50.0 / 1000.0);
+  EXPECT_NEAR(mean_of(f, "EM", 1000), 50.0, five_se);
 
   // Protected on a large beam: dark counts only, and nothing to overload on.
   f.beam.set_magnet(f.center("EM", "Ar40"));
   ASSERT_TRUE(f.beam.protect("EM", true));
-  EXPECT_NEAR(mean_of(f, "EM", 1000), 50.0, three_se);
+  EXPECT_NEAR(mean_of(f, "EM", 1000), 50.0, five_se);
   EXPECT_FALSE(f.beam.intensity("EM")->overloaded);
   EXPECT_FALSE(f.beam.overloaded("EM"));
 }
