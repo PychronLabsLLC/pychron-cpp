@@ -1,7 +1,7 @@
 # Flux fitting
 
 Date: 2026-10-06
-Status: Draft for owner review
+Status: Approved 2026-10-07 (owner decisions in section 3)
 Owner: Jake Ross
 Depends on: `2026-10-01-dvc-schema-design.md` (reference data 6, `flux_position`
 6.1, reference resolution and pins 6.2, derived cache 4.3),
@@ -81,6 +81,8 @@ Owner decisions of 2026-10-06 are marked (owner).
 | F8 | A monitor position is saved with the **model's** J as `j` and its own mean as `mean_j`, as legacy: the J of a hole is what the level's model says it is, and the monitor's deviation from it stays visible. |
 | F9 | A fit is repeatable from what was saved: the options, the omitted analyses and the positions left out are all in the revision, and a fit with no model named starts from them. |
 | F10 | A save is one changeset, every position or none, with a compare-and-swap on each head. |
+| F12 | (owner) The default monitor sets ship with age uncertainties 0.046 Ma (Kuiper 2008) and 0.16 Ma (Renne 1998), 1 sigma as stored. |
+| F13 | (owner) `Sd` is not an error kind of the least-squares models (Plane, Bowl, LeastSquares1D). Asking for it is an error; an imported fit saved with it refits with `Msem` and says so. |
 | F11 | No store migration. `flux_value`, `flux_value_analysis` and the holder tables already hold everything (DVC spec 6.1). |
 
 ## 4. Monitor sets
@@ -114,12 +116,12 @@ saved in between). Unknown keys are kept.
   of them, ages and decay constants positive, errors not negative. A document
   that fails is an error naming the key; it is never half used.
 
-Open item for the owner (section 10, O1): the two age uncertainties above.
-Legacy carries none. 28.201 +/- 0.046 Ma is the figure of Kuiper et al. 2008;
-for Renne et al. 1998 the literature quotes 0.16 Ma (without the decay
-constant uncertainty) and 0.28 Ma (with it). Which, and at what sigma, is the
-owner's call before these ship as defaults. They affect nothing computed in
-this spec (F4): they are recorded with each J.
+Legacy carries no age uncertainty. 28.201 +/- 0.046 Ma is the figure of
+Kuiper et al. 2008; for Renne et al. 1998 the literature quotes 0.16 Ma
+(without the decay constant uncertainty) and 0.28 Ma (with it), and 0.16 is
+used since the decay constants are carried separately. The owner accepted
+both defaults (F12). They affect nothing computed in this spec (F4): they are
+recorded with each J, and a lab changes them with `elctl flux monitors set`.
 
 ## 5. Math: `libs/reduction` `flux.hpp`
 
@@ -218,13 +220,15 @@ of the monitors, which the caller gives by hole id.
 Least-squares kinds. With design matrix `X`, weights `W` (`1 / j_err^2`, or
 the identity when not `weighted`), `C = (X' W X)^-1` and `r` the residuals:
 
-- The three error kinds, with
+- The error kinds, with
   `s2 = r' W r / (n - q)` (weighted: the reduced chi-squared, so `s2` is the
   MSWD; unweighted: the residual variance):
-  - weighted, `Sem`: `x C x'`. `Msem`: `x C x' * max(s2, 1)`. `Sd`:
-    `x C x' * max(s2, 1) + median(j_err^2) * max(s2, 1)`.
+  - weighted, `Sem`: `x C x'`. `Msem`: `x C x' * max(s2, 1)`.
   - unweighted, `Sem` and `Msem`: `s2 * x C x'` (the residual variance is the
-    only scale there is, so the two are the same). `Sd`: `s2 * (1 + x C x')`.
+    only scale there is, so the two are the same).
+  - `Sd` is an error for Plane, Bowl and LeastSquares1D (F13): the scatter of
+    one position about a fitted surface has no defensible definition when
+    the fit is weighted, and legacy's is not one. The mean kinds keep it.
 - `mswd` reported for an unweighted fit is `sum((r / j_err)^2) / (n - q)`:
   the monitors' errors judge the fit even when they did not weight it.
 - `MswdOutsideLimits` (point index unused) when `mswd` is outside
@@ -248,9 +252,10 @@ Each is a rule of this spec and has its own test.
 | X10 | extrapolation past the end monitors is silent | still extrapolates (Bracketing Linear, Bracketing1D), with an `Extrapolated` note for the point |
 | X11 | NearestNeighbors needs 3 positions whatever `n_neighbors` is | needs `n_neighbors` |
 | X12 | Plane accepts 3 monitors (exact fit, error 0) | needs 4 |
+| X13 | SD offered for surface fits (`sef * sqrt(1 + x C x')`, unweighted residuals) | not offered (F13) |
 
 Unchanged from legacy: the J formula, averaging J rather than F, the two mean
-kinds, the three error kinds, neighbour selection, extrapolation, no
+kinds, the error kinds of the means, neighbour selection, extrapolation, no
 automatic outlier rejection, a Bowl with no `xy` term.
 
 ## 6. Orchestration: `libs/processing` `flux_fit.hpp`
@@ -389,7 +394,7 @@ elctl flux fit <irradiation> [<level>]
     --model plane|bowl|weighted-mean|matching|nearest|bracketing|ls1d|mean1d|bracketing1d
     --weighted | --unweighted
     --mean arithmetic|weighted          --mean-error sem|msem|sd
-    --fit-error sem|msem|sd
+    --fit-error sem|msem|sd             # sd: the mean kinds only
     --neighbors N   --interpolation weighted|average|linear
     --axis x|y      --degree 1..4
     --monitors NAME   --sample NAME   --all-positions
@@ -483,10 +488,8 @@ this differs from legacy Pychron" listing 5.4. A bullet in `AGENTS.md`.
 
 ## 10. Open items
 
-| # | Item |
-|---|---|
-| O1 | (owner) The age uncertainties of the two default monitor sets and their sigma level (section 4). |
-| O2 | The `Sd` error of a weighted surface fit (5.3) uses the median monitor variance as the scatter of one position. Legacy has no defensible counterpart; if no lab uses SD with a surface, dropping `Sd` for the least-squares kinds is simpler. |
+None. O1 (monitor age uncertainties) and O2 (`Sd` on a surface fit) were
+settled by the owner on 2026-10-07 as F12 and F13.
 
 ## 11. Not in this spec
 
