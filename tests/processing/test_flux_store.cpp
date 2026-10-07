@@ -8,8 +8,6 @@
 #include <string>
 #include <variant>
 #include <vector>
-#include <variant>
-#include <vector>
 
 #include "flux_store_fixture.hpp"
 #include "pychron/processing/flux_store.hpp"
@@ -123,6 +121,8 @@ TEST(FluxMonitorsParse, RejectsWhatIsNotValid) {
       {doc("[{\"sample\":\"FC-2\"}]"), "name"},
       {doc("[" + set("A") + "," + set("A") + "]"), "name"},
       {doc("[" + set("A") + "]", "Z"), "default"},
+      {doc("[{\"name\":\"A\",\"age_ma\":28,\"age_err_ma\":0.1,\"lambda_ec\":[5.8e-11,0],\"lambda_b\":[4.9e-10,0]}]"), "sample"},
+      {doc("[" + set("A", "28").replace(set("A", "28").find("FC-2"), 4, "") + "]"), "sample"},
       {doc("[" + set("A", "0") + "]"), "age_ma"},
       {doc("[" + set("A", "-1") + "]"), "age_ma"},
       {doc("[" + set("A", "28", "-0.1") + "]"), "age_err_ma"},
@@ -137,6 +137,14 @@ TEST(FluxMonitorsParse, RejectsWhatIsNotValid) {
     EXPECT_NE(r.error().what.find(c.names), std::string::npos) << c.json << " -> " << r.error().what;
   }
   EXPECT_TRUE(parse_monitor_sets(doc("[" + set("A") + "]")));
+}
+
+TEST(FluxMonitorsParse, ADocumentWithNoDefaultTakesTheFirstSet) {
+  auto r = parse_monitor_sets(R"({"monitors":[
+    {"name":"A","sample":"FC-2","age_ma":28,"age_err_ma":0.1,"lambda_ec":[5.8e-11,0],"lambda_b":[4.9e-10,0]},
+    {"name":"B","sample":"FC-2","age_ma":28,"age_err_ma":0.1,"lambda_ec":[5.8e-11,0],"lambda_b":[4.9e-10,0]}]})");
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_EQ(r->default_name, "A");
 }
 
 }  // namespace

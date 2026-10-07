@@ -21,7 +21,7 @@ inline constexpr std::string_view kFluxMonitorsKey = "pychron/flux_monitors.json
 struct MonitorSets {
   std::string default_name;
   std::vector<MonitorSet> sets;
-  std::string other_json = "{}";  // keys this version does not know, kept as they were
+  std::string other_json = "{}";  // top-level keys this version does not know, kept as they were (unknown keys inside a monitor object are not)
   const MonitorSet* find(std::string_view name) const;  // empty name: the default
   friend bool operator==(const MonitorSets&, const MonitorSets&) = default;
 };

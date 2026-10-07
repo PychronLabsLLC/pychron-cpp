@@ -22,6 +22,7 @@ Result<void> validate(const MonitorSets& sets) {
   for (const auto& s : sets.sets) {
     if (s.name.empty()) return bad("a set has no 'name'");
     if (!names.insert(s.name).second) return bad("'name' '" + s.name + "' is used twice");
+    if (s.sample.empty()) return bad("'sample' of '" + s.name + "' must not be empty");
     if (!finite_positive(s.age_ma)) return bad("'age_ma' of '" + s.name + "' must be positive");
     if (!std::isfinite(s.age_err_ma) || s.age_err_ma < 0) return bad("'age_err_ma' of '" + s.name + "' must not be negative");
     const std::pair<const char*, const reduction::Measured*> lambdas[] = {{"lambda_ec", &s.lambda_ec},
@@ -110,7 +111,7 @@ Result<MonitorSets> parse_monitor_sets(std::string_view text) {
         auto name = text_of(e, "name", true);
         if (!name) return fail(name.error());
         s.name = std::move(*name);
-        auto sample = text_of(e, "sample", false);
+        auto sample = text_of(e, "sample", true);
         if (!sample) return fail(sample.error());
         s.sample = std::move(*sample);
         auto material = text_of(e, "material", false);
