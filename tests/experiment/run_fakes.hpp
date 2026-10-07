@@ -29,7 +29,10 @@ inline double secs(pychron::Duration d) { return std::chrono::duration<double>(d
 
 class FakeSpectrometer final : public measurement::ISpectrometerPort {
  public:
-  explicit FakeSpectrometer(ManualClock& clock) : clock_(clock) {}
+  explicit FakeSpectrometer(ManualClock& clock) : clock_(clock), manual_(&clock) {}
+  // On a clock nobody advances by hand a reading takes its integration time
+  // on that clock.
+  explicit FakeSpectrometer(const Clock& clock) : clock_(clock) {}
 
   Result<void> position(const plan::HopTarget& target) override {
     std::lock_guard lock(mutex_);
@@ -51,7 +54,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
       std::lock_guard lock(mutex_);
       n = ++readings;
     }
-    clock_.advance(integration_);
+    if (manual_ != nullptr) manual_->advance(integration_);
+    else clock_.sleep_for(integration_);
     spectrometer::Reading r;
     r.ts = clock_.now();
     r.integration = integration_;
@@ -69,7 +73,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   std::atomic<bool> acquiring{false};
 
  private:
-  ManualClock& clock_;
+  const Clock& clock_;
+  ManualClock* manual_ = nullptr;
   std::mutex mutex_;
   std::optional<plan::HopTarget> at_;
   pychron::Duration integration_ = 1s;

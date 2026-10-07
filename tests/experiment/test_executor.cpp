@@ -6,9 +6,11 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <thread>
 
 #include "pychron/experiment/executor/executor.hpp"
 #include "run_fakes.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -508,6 +510,348 @@ TEST_F(ExecutorTest, LastRunAndNonUnknownsNeverOverlap) {
   auto r = ex.execute(q);
   ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
   EXPECT_EQ(order(), (std::vector<std::string>{"start a", "finish a", "start 12345", "finish 12345"}));
+}
+
+// ---- On a VirtualClock -----------------------------------------------------------
+//
+// The same fakes, with nothing advancing time by hand: scripts and readings
+// wait on the clock, and the clock jumps when every thread of the queue is
+// asleep in it.
+
+const TimePoint kStart = TimePoint{} + std::chrono::hours(1);
+const WallTime kEpoch = std::chrono::sys_days{std::chrono::year{2026} / 10 / 6} + std::chrono::hours(12);
+
+// "2026-10-06T12:00:10Z", as a run stamps itself.
+std::chrono::sys_seconds parse_utc(const std::string& s) {
+  if (s.size() != 20) return {};
+  const auto n = [&](std::size_t at, std::size_t len) { return std::stoi(s.substr(at, len)); };
+  const auto day = std::chrono::year{n(0, 4)} / static_cast<unsigned>(n(5, 2)) / static_cast<unsigned>(n(8, 2));
+  return std::chrono::sys_days{day} + std::chrono::hours(n(11, 2)) + std::chrono::minutes(n(14, 2)) +
+         std::chrono::seconds(n(17, 2));
+}
+
+// The file persister, remembering each run's timestamp as its extraction is saved.
+class StampingPersister final : public persist::IAnalysisPersister {
+ public:
+  explicit StampingPersister(persist::IAnalysisPersister& to) : to_(to) {}
+  Result<int> next_aliquot(const std::string& identifier) override { return to_.next_aliquot(identifier); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return to_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& record) override {
+    {
+      std::lock_guard lock(mutex_);
+      stamps_.push_back(record.identity.timestamp);
+    }
+    return to_.save_extraction(record);
+  }
+  Result<void> save_analysis(const record::AnalysisRecord& record) override { return to_.save_analysis(record); }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return to_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return to_.flush(); }
+  std::vector<std::string> stamps() {
+    std::lock_guard lock(mutex_);
+    return stamps_;
+  }
+
+ private:
+  persist::IAnalysisPersister& to_;
+  std::mutex mutex_;
+  std::vector<std::string> stamps_;
+};
+
+// A script that takes `d` on the run's clock, as a script's sleep() does.
+FakeScriptHost::Body takes(pychron::Duration d) {
+  return [d](const scripting::ScriptEnvironment& env, scripting::CancelToken& token) -> Result<void> {
+    token.wait_until(*env.clock, env.clock->now() + d);
+    return {};
+  };
+}
+
+// A run whose main block takes `counts` seconds of readings.
+RunSpec counted_run(const std::string& identifier, std::int64_t counts) {
+  RunSpec r = unknown_run(identifier);
+  r.measurement.overrides["main.hops[0].counts"] = counts;
+  return r;
+}
+
+// What a queue runs on, on a clock of the test's making.
+struct World {
+  explicit World(VirtualClock::Options o) : clock(reporting(std::move(o))) {
+    subs.push_back(bus.subscribe<RunStarted>([this](const RunStarted& e) {
+      std::lock_guard lock(mutex);
+      started.push_back(e);
+    }));
+    subs.push_back(bus.subscribe<run::RunStateChanged>([this](const run::RunStateChanged& e) {
+      std::lock_guard lock(mutex);
+      changes.push_back(e);
+    }));
+    subs.push_back(bus.subscribe<measurement::BlockStarted>([this](const measurement::BlockStarted& e) {
+      std::lock_guard lock(mutex);
+      blocks.emplace_back(e.run_id, clock.now());  // published by the run's thread: time stands
+    }));
+  }
+
+  VirtualClock::Options reporting(VirtualClock::Options o) {
+    o.start = kStart;
+    o.epoch = kEpoch;
+    o.on_stall = [this](std::string what) {
+      std::lock_guard lock(mutex);
+      stalls.push_back(std::move(what));
+    };
+    return o;
+  }
+
+  ExecutorContext context() {
+    ExecutorContext c;
+    auto& s = c.services;
+    s.clock = &clock;
+    s.bus = &bus;
+    s.scripts = &host;
+    s.resolver = &resolver;
+    s.line.device = &device;
+    s.spectrometer = &spec;
+    s.valves = &valves;
+    s.spectrometer_info = [] { return run::SpectrometerInfo{"hash", "argon", 1.0}; };
+    s.plans = &plans;
+    s.conditionals = &library;
+    s.aliquots = &lab.aliquots;
+    s.persister = &persister;
+    s.save = &lab.save;
+    s.instrument.mass_spectrometer = "argus";
+    return c;
+  }
+
+  ExecutorOptions options() {
+    ExecutorOptions o;
+    o.state_file = lab.dir() / "executor_state.json";
+    return o;
+  }
+
+  ExperimentQueue queue(std::vector<RunSpec> runs, Seconds before, Seconds between) {
+    QueueSpec q;
+    q.name = "q1";
+    q.mass_spectrometer = "argus";
+    q.delays.before_analyses = before;
+    q.delays.between_analyses = between;
+    q.runs = std::move(runs);
+    return ExperimentQueue(std::move(q));
+  }
+
+  // Three runs of 300 s of extraction and 300 s of main block (and a few
+  // seconds of settling, equilibration and baseline) each.
+  ExperimentQueue three_runs(Seconds before = Seconds{10}) {
+    host.bodies["extract"] = takes(300s);
+    return queue({counted_run("12345", 300), counted_run("12346", 300), counted_run("12347", 300)}, before,
+                 Seconds{60});
+  }
+
+  // Two runs, the first letting the second start 2 s after its inlet closes.
+  // Each extracts for 300 s; the first then measures for some 600 s, so the
+  // second is ready for the spectrometer about 300 s before it is free.
+  // No minimum pump time: the wait is for the spectrometer alone.
+  ExperimentQueue overlapped_runs() {
+    host.bodies["extract"] = takes(300s);
+    RunSpec first = counted_run("12345", 600);
+    first.overlap.duration = Seconds{2};
+    return queue({first, unknown_run("12346")}, Seconds{10}, Seconds{60});
+  }
+
+  std::string run_id(const std::string& identifier) {
+    std::lock_guard lock(mutex);
+    for (const auto& e : started)
+      if (e.identifier == identifier) return e.run_id;
+    return {};
+  }
+  // When run `id` entered `state`; nullopt if it has not.
+  std::optional<TimePoint> entered(const std::string& id, run::RunState state) {
+    std::lock_guard lock(mutex);
+    for (const auto& e : changes)
+      if (e.run_id == id && e.to == state) return e.ts;
+    return std::nullopt;
+  }
+  // When run `id`'s measurement began its first block; nullopt if it has not.
+  std::optional<TimePoint> first_block(const std::string& id) {
+    std::lock_guard lock(mutex);
+    for (const auto& [run, ts] : blocks)
+      if (run == id) return ts;
+    return std::nullopt;
+  }
+  std::vector<RunStarted> starts() {
+    std::lock_guard lock(mutex);
+    return started;
+  }
+  std::vector<std::string> stall_reports() {
+    std::lock_guard lock(mutex);
+    return stalls;
+  }
+
+  // Before the clock: its watchdog reports into these.
+  std::mutex mutex;
+  std::vector<std::string> stalls;
+  VirtualClock clock;
+  SignalBus bus;
+  FakeScriptHost host;
+  AnyScriptResolver resolver;
+  FakeDevice device;
+  FakeSpectrometer spec{static_cast<const Clock&>(clock)};
+  FakeValves valves;
+  plan::PlanLibrary plans = test_plans();
+  MapConditionalSource source;
+  ConditionalLibrary library{source};
+  Lab lab;
+  StampingPersister persister{lab.files};
+  std::vector<RunStarted> started;
+  std::vector<run::RunStateChanged> changes;
+  std::vector<std::pair<std::string, TimePoint>> blocks;
+  std::vector<SignalBus::Subscription> subs;
+};
+
+std::vector<std::string> states_of(const QueueResult& r) {
+  std::vector<std::string> out;
+  for (const auto& s : r.runs) out.push_back(s.identifier + ":" + std::string(run::to_string(s.state)));
+  return out;
+}
+
+double real_seconds_since(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+}
+
+using ExecutorVirtual = pychron::testing::VirtualTimeTest;
+
+TEST_F(ExecutorVirtual, QueueOfThreeRunsTakesNoRealTime) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  auto q = w.three_runs();
+  Executor ex(w.context(), w.options());
+  const auto began = std::chrono::steady_clock::now();
+  const auto r = ex.execute(q);
+  const double real = real_seconds_since(began);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success", "12347:success"}));
+  EXPECT_GE(w.clock.now() - kStart, 3 * 600s);
+  EXPECT_LT(w.clock.now() - kStart, 3 * 700s);  // and no more than the queue asks for
+  EXPECT_LT(real, 5.0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+TEST_F(ExecutorVirtual, RunTimestampsFollowTheClock) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  auto q = w.three_runs();
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  const auto starts = w.starts();
+  const auto stamps = w.persister.stamps();
+  ASSERT_EQ(starts.size(), 3u);
+  ASSERT_EQ(stamps.size(), 3u);
+  EXPECT_EQ(starts[0].ts, kStart + 10s);  // the delay before the first run
+  EXPECT_EQ(stamps[0], "2026-10-06T12:00:10Z");
+  EXPECT_EQ(parse_utc(stamps[0]),
+            std::chrono::floor<std::chrono::seconds>(
+                kEpoch + std::chrono::duration_cast<WallTime::duration>(starts[0].ts - kStart)));
+  EXPECT_GE(parse_utc(stamps[1]) - parse_utc(stamps[0]), 600s) << stamps[0] << " " << stamps[1];
+  EXPECT_GE(parse_utc(stamps[2]) - parse_utc(stamps[1]), 600s) << stamps[1] << " " << stamps[2];
+}
+
+// The resource two overlapped runs contend for is the spectrometer: the
+// second run's measurement begins at the instant the first run's ends.
+TEST_F(ExecutorVirtual, OverlappedRunWaitsForTheResource) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  auto q = w.overlapped_runs();
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success"}));
+  const auto first = w.run_id("12345"), second = w.run_id("12346");
+  // The first run leaves its measurement, and with it the spectrometer.
+  const auto released = w.entered(first, run::RunState::PostMeasuring);
+  // The second has extracted and asks for the spectrometer.
+  const auto asked = w.entered(second, run::RunState::Equilibrating);
+  const auto got = w.first_block(second);
+  ASSERT_TRUE(released && asked && got);
+  EXPECT_LT(*asked + 200s, *released);  // it waited, and for long
+  EXPECT_EQ(*got, *released);
+  EXPECT_EQ(w.spec.overlapping.load(), 0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+// The thread that cancels is outside the clock, and the queue is asleep in a
+// delay that is being paid for in real time.
+TEST_F(ExecutorVirtual, CancelFromOutsideEndsAPacedQueue) {
+  VirtualClock::Options o;
+  o.speed = 1;
+  World w(o);
+  auto q = w.three_runs(Seconds{60});
+  Executor ex(w.context(), w.options());
+  QueueResult r;
+  pychron::testing::Crew crew(w.clock);
+  crew.start("queue", [&] { r = ex.execute(q); });
+  // The queue is asleep in the delay before its first run, and stays there
+  // for a minute of real time unless something wakes it.
+  ASSERT_TRUE(pychron::testing::await_waiters(w.clock, 1));
+  std::this_thread::sleep_for(50ms);
+  const auto began = std::chrono::steady_clock::now();
+  ex.cancel();
+  crew.join();
+  EXPECT_LT(real_seconds_since(began), 5.0);
+  EXPECT_EQ(r.end, QueueEnd::Cancelled) << r.reason;
+  EXPECT_TRUE(r.runs.empty());
+  EXPECT_LT(w.clock.now() - kStart, 60s);  // cut short, not waited out
+}
+
+TEST_F(ExecutorVirtual, AbortWhileWaitingForAResource) {
+  VirtualClock::Options o;
+  o.stall_report_after = 200ms;
+  World w(o);
+  Clock::Participant me(w.clock, "test");
+  auto q = w.overlapped_runs();
+  Executor ex(w.context(), w.options());
+  QueueResult r;
+  pychron::testing::Crew crew(w.clock);
+  crew.start("queue", [&] { r = ex.execute(q); });
+  // By now the second run has extracted and waits for the spectrometer,
+  // which the first keeps for minutes yet. The first is half way through a
+  // reading, which nothing cuts short.
+  w.clock.sleep_for(700s + 500ms);
+  const auto at = w.clock.now();
+  const auto first = w.run_id("12345"), second = w.run_id("12346");
+  ASSERT_FALSE(second.empty());
+  ASSERT_TRUE(w.entered(second, run::RunState::Equilibrating));
+  ASSERT_FALSE(w.first_block(second));
+  ASSERT_FALSE(w.entered(first, run::RunState::PostMeasuring));
+  ex.abort();
+  crew.join();
+  EXPECT_EQ(r.end, QueueEnd::Aborted) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:aborted", "12346:aborted"}));
+  EXPECT_FALSE(w.first_block(second));  // it never got the spectrometer
+  // The abort itself ended the second run's wait, not the first run letting
+  // go of the spectrometer half a second later, when its reading was over.
+  EXPECT_EQ(w.entered(second, run::RunState::Aborted), std::optional<TimePoint>(at));
+  EXPECT_EQ(w.entered(first, run::RunState::Aborted), std::optional<TimePoint>(at + 500ms));
+  EXPECT_EQ(w.clock.now(), at + 500ms);  // and nothing else was waited out
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+TEST_F(ExecutorVirtual, ScheduledStartWaitsOnTheClock) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  w.host.bodies["extract"] = takes(300s);
+  auto q = w.queue({unknown_run("12345")}, Seconds{0}, Seconds{0});
+  auto opts = w.options();
+  opts.start_at = kStart + 8h;
+  Executor ex(w.context(), opts);
+  const auto began = std::chrono::steady_clock::now();
+  const auto r = ex.execute(q);
+  const double real = real_seconds_since(began);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  const auto starts = w.starts();
+  ASSERT_EQ(starts.size(), 1u);
+  EXPECT_EQ(starts[0].ts, kStart + 8h);
+  EXPECT_LT(real, 5.0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
 }  // namespace

@@ -66,29 +66,50 @@ std::string_view to_string(QueueEnd e) noexcept {
   return "?";
 }
 
-// A mutex-like hardware resource a run waits for (cancellable).
+// A mutex-like hardware resource a run waits for (cancellable). Held across a
+// whole phase of a run, so a run that waits for it waits through the clock.
 class Executor::Resource {
  public:
-  bool acquire(const scripting::CancelToken& token) {
-    std::unique_lock lock(mutex_);
-    while (held_) {
-      if (token.requested()) return false;
-      cv_.wait_for(lock, std::chrono::milliseconds(10));
-    }
-    held_ = true;
-    return true;
-  }
-  void release() {
+  // False when `token` was requested while the resource was held.
+  bool acquire(const Clock& clock, scripting::CancelToken& token) {
     {
       std::lock_guard lock(mutex_);
-      held_ = false;
+      if (!held_) {
+        held_ = true;
+        return true;
+      }
     }
-    cv_.notify_all();
+    // A request does not change anything mutex_ guards, so it takes the
+    // mutex before it notifies: the waiter is then either before its check
+    // of the token or asleep, and cannot miss it.
+    const auto id = token.add_on_cancel([this, &clock] {
+      std::lock_guard lock(mutex_);
+      clock.notify_all(cv_);
+    });
+    bool acquired = true;
+    {
+      std::unique_lock lock(mutex_);
+      while (held_) {
+        if (token.requested()) {
+          acquired = false;
+          break;
+        }
+        clock.wait(cv_, lock);
+      }
+      if (acquired) held_ = true;
+    }
+    token.remove_on_cancel(id);  // without mutex_: the callback takes it
+    return acquired;
+  }
+  void release(const Clock& clock) {
+    std::lock_guard lock(mutex_);
+    held_ = false;
+    clock.notify_all(cv_);
   }
 
  private:
   std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable cv_;  // waited on and notified through the clock
   bool held_ = false;
 };
 
@@ -100,8 +121,9 @@ struct Executor::Slot {
   std::unique_ptr<run::Run> run;
   run::RunResult result;
   std::thread thread;
-  std::atomic<bool> done{false};
-  std::atomic<bool> overlap_ready{false};
+  // Under Executor::mutex_, and notified on Executor::cv_ through the clock.
+  bool done = false;           // the thread has nothing more to do: it can be joined
+  bool overlap_ready = false;  // the run's inlet closed
 };
 
 Executor::Executor(ExecutorContext context, ExecutorOptions options)
@@ -138,10 +160,10 @@ void Executor::stop() {
   {
     std::lock_guard lock(mutex_);
     stop_ = true;
+    clock_.notify_all(cv_);
   }
   set_state(ExecutorState::StoppingAtBoundary, "stop requested");
   queue_token_.wake();
-  cv_.notify_all();
 }
 
 void Executor::cancel() {
@@ -154,10 +176,10 @@ void Executor::cancel() {
     // Signalled under the lock: finish() erases a slot from active_ under it
     // and then destroys the slot, so a copied pointer could dangle.
     for (auto* s : active_) s->control.cancel();
+    clock_.notify_all(cv_);
   }
   set_state(ExecutorState::Cancelling, "cancel requested");
   queue_token_.cancel();
-  cv_.notify_all();
 }
 
 void Executor::abort() {
@@ -166,10 +188,10 @@ void Executor::abort() {
     end_ = QueueEnd::Aborted;
     end_reason_ = "aborted by the operator";
     for (auto* s : active_) s->control.abort();  // under the lock, as in cancel()
+    clock_.notify_all(cv_);
   }
   set_state(ExecutorState::Aborting, "abort requested");
   queue_token_.abort();
-  cv_.notify_all();
 }
 
 void Executor::truncate(bool quick) {
@@ -218,11 +240,11 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
   hooks.acquire_extraction = [this, s] {
     if (ctx_.services.bus != nullptr)
       ctx_.services.bus->publish(ExecutorWaiting{"extraction device", {}, clock_.now(), s->run->id()});
-    return extraction_->acquire(s->control.token());
+    return extraction_->acquire(clock_, s->control.token());
   };
-  hooks.release_extraction = [this] { extraction_->release(); };
+  hooks.release_extraction = [this] { extraction_->release(clock_); };
   hooks.acquire_spectrometer = [this, s] {
-    if (!spectrometer_->acquire(s->control.token())) return false;
+    if (!spectrometer_->acquire(clock_, s->control.token())) return false;
     std::optional<TimePoint> pump;
     {
       std::lock_guard lock(mutex_);
@@ -234,15 +256,16 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
       if (clock_.now() < ready) wait(std::chrono::duration<double>(ready - clock_.now()), "minimum pump time", s->run->id());
     }
     if (s->control.requested()) {
-      spectrometer_->release();
+      spectrometer_->release(clock_);
       return false;
     }
     return true;
   };
-  hooks.release_spectrometer = [this] { spectrometer_->release(); };
+  hooks.release_spectrometer = [this] { spectrometer_->release(clock_); };
   hooks.on_overlap_ready = [this, s] {
+    std::lock_guard lock(mutex_);
     s->overlap_ready = true;
-    cv_.notify_all();
+    clock_.notify_all(cv_);
   };
   hooks.on_pump_time_started = [this] {
     std::lock_guard lock(mutex_);
@@ -260,17 +283,28 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
   }
   if (ctx_.services.bus != nullptr)
     ctx_.services.bus->publish(RunStarted{row, s->run->id(), s->spec.id.identifier, clock_.now()});
-  s->thread = std::thread([this, s] {
+  // Time does not move on between the thread's start and its Participant.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  s->thread = std::thread([this, s, hold]() mutable {
+    Clock::Participant participant(clock_, "executor.slot." + std::to_string(s->row));
+    hold.reset();
     s->result = s->run->execute(s->control);
+    // Said while this thread is still a participant.
+    std::lock_guard lock(mutex_);
     s->done = true;
-    { std::lock_guard lock(mutex_); }
-    cv_.notify_all();
+    clock_.notify_all(cv_);
   });
   return slot;
 }
 
 void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
-  if (slot.thread.joinable()) slot.thread.join();
+  {
+    // The thread may still have to wait in the clock: it says when it is
+    // done, and only then is it joined.
+    std::unique_lock lock(mutex_);
+    while (!slot.done) clock_.wait(cv_, lock);
+  }
+  slot.thread.join();
   {
     std::lock_guard lock(mutex_);
     std::erase(active_, &slot);
@@ -293,6 +327,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     if (!end_) {
       end_ = e;
       end_reason_ = std::move(why);
+      clock_.notify_all(cv_);
     }
   };
   std::size_t at;
@@ -420,6 +455,7 @@ Result<std::size_t> Executor::resume_row(const std::filesystem::path& state_file
 }
 
 QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
+  Clock::Participant participant(clock_, "executor.run");
   QueueResult out;
   {
     std::lock_guard lock(mutex_);
@@ -463,9 +499,10 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     finish(queue, *s, out);
     s.reset();
   };
+  // `pred` reads what mutex_ guards; whoever changes that notifies cv_.
   auto wait_until = [&](const std::function<bool()>& pred) {
     std::unique_lock lock(mutex_);
-    while (!pred()) cv_.wait_for(lock, std::chrono::milliseconds(10));
+    while (!pred()) clock_.wait(cv_, lock);
   };
 
   int index = 0;
@@ -525,6 +562,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
         std::lock_guard lock(mutex_);
         end_ = QueueEnd::Cancelled;
         end_reason_ = "pre-run check '" + check->name() + "': " + r.error().what;
+        clock_.notify_all(cv_);
         blocked = true;
         break;
       }
@@ -534,6 +572,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
         std::lock_guard lock(mutex_);
         end_ = QueueEnd::Cancelled;
         end_reason_ = "pre_run conditional '" + trip->name + "' (" + trip->check + ")";
+        clock_.notify_all(cv_);
         blocked = true;
       }
     }
@@ -550,8 +589,12 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     auto slot = launch(row, spec, std::move(header), index++);
     Slot* s = slot.get();
     if (overlapped) {
-      wait_until([&] { return s->done.load() || s->overlap_ready.load() || end_.has_value(); });
-      if (!s->done && s->overlap_ready && !ending()) {
+      bool overlap = false;  // the inlet closed with the run still going
+      wait_until([&] {
+        overlap = !s->done && s->overlap_ready;
+        return s->done || s->overlap_ready || end_.has_value();
+      });
+      if (overlap && !ending()) {
         settle(in_flight);  // at most two runs in flight
         if (wait(spec.overlap.duration, "overlap")) {
           in_flight = std::move(slot);
@@ -560,7 +603,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
         }
       }
     }
-    wait_until([&] { return s->done.load(); });
+    wait_until([&] { return s->done; });
     settle(in_flight);
     settle(slot);
     ++row;

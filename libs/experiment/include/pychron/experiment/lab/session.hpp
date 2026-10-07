@@ -17,6 +17,7 @@
 // Notifier: a failed run as it finishes, the queue's end after QueueEnded.
 // Each delivery is published as NotificationSent.
 
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -121,6 +122,7 @@ class LabSession {
   struct Services;
 
   void run(QueueSpec queue, std::size_t from_row);
+  void join();  // the queue thread, once it is done; the owner's thread only
   Result<void> check(const QueueSpec& queue) const;  // against the lab; names the first error
 
   const Lab& lab_;
@@ -141,6 +143,10 @@ class LabSession {
   struct QueueLease;
   std::unique_ptr<QueueLease> lease_;  // the lasers are the queue's while it runs; under mutex_
   std::thread thread_;
+  // The queue thread's last word, under mutex_; waited on and notified
+  // through the line's clock.
+  bool thread_done_ = false;
+  std::condition_variable thread_done_cv_;
 };
 
 }  // namespace pychron::experiment::lab

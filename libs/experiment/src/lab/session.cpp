@@ -99,7 +99,19 @@ LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions 
 
 LabSession::~LabSession() {
   abort();
-  if (thread_.joinable()) thread_.join();
+  join();
+}
+
+// The queue thread may still have to wait in the line's clock, so it is not
+// joined until it has said it is done; that is waited for through the clock,
+// with mutex_ released, so a subscriber may call back in meanwhile.
+void LabSession::join() {
+  if (!thread_.joinable()) return;
+  {
+    std::unique_lock lock(mutex_);
+    while (!thread_done_) hardware_.line.clock().wait(thread_done_cv_, lock);
+  }
+  thread_.join();
 }
 
 std::vector<std::string> LabSession::problems() const { return lasers_->problems(); }
@@ -137,7 +149,7 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).
-  if (thread_.joinable()) thread_.join();
+  join();
   auto ctx = services_->ctx;
   ctx.services.instrument.mass_spectrometer = queue.mass_spectrometer;
   ctx.services.instrument.analyst = queue.username;
@@ -145,11 +157,23 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
     std::lock_guard lock(mutex_);
     executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
     running_ = true;
+    thread_done_ = false;
     result_.reset();
     lease_ = std::make_unique<QueueLease>(QueueLease{std::move(*lease)});
   }
   notifier_->set_queue(queue.name, queue.email);
-  thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
+  // Time does not move on between the thread's start and its Participant.
+  const Clock& clock = hardware_.line.clock();
+  auto hold = std::make_shared<Clock::Hold>(clock);
+  thread_ = std::thread([this, &clock, hold, queue = std::move(queue), from_row]() mutable {
+    Clock::Participant participant(clock, "lab.session");
+    hold.reset();
+    run(std::move(queue), from_row);
+    // Said while this thread is still a participant.
+    std::lock_guard lock(mutex_);
+    thread_done_ = true;
+    clock.notify_all(thread_done_cv_);
+  });
   return {};
 }
 
@@ -241,7 +265,7 @@ executor::ExecutorState LabSession::state() const {
 }
 
 std::optional<executor::QueueResult> LabSession::wait() {
-  if (thread_.joinable()) thread_.join();
+  join();
   std::lock_guard lock(mutex_);
   return result_;
 }

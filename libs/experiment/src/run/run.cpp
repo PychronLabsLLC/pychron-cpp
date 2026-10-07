@@ -1,8 +1,10 @@
 #include "pychron/experiment/run/run.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <ctime>
+#include <memory>
 #include <random>
 #include <thread>
 
@@ -31,8 +33,8 @@ std::string random_uuid() {
   return buf;
 }
 
-std::string utc_now() {
-  const auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+std::string utc(WallTime now) {
+  const auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm{};
 #if defined(_WIN32)
   gmtime_s(&tm, &t);
@@ -176,7 +178,7 @@ Result<scripting::Script> Run::resolve(const std::string& name, scripting::Scrip
 }
 
 Result<void> Run::prepare() {
-  timestamp_ = s_.timestamp ? s_.timestamp() : utc_now();
+  timestamp_ = s_.timestamp ? s_.timestamp() : utc(s_.clock->wall_now());
   // This run's extraction device: the one set directly, else the lab's by
   // name. Its stage is told the queue's tray before any script runs, so a
   // hole name means a hole on that tray and no other.
@@ -366,13 +368,26 @@ Result<void> Run::measure(RunControl& control) {
   in.icfactors = s_.icfactors;
   in.arar = s_.arar;
 
+  // The post-equilibration script runs beside the measurement, on a thread
+  // that says when it is done (under post_eq_mutex, through the clock).
   std::thread post_eq;
+  std::mutex post_eq_mutex;
+  std::condition_variable post_eq_cv;
+  bool post_eq_done = false;
   measurement::EngineOptions options = s_.engine;
-  options.on_inlet_closed = [this, &control, &post_eq] {
+  options.on_inlet_closed = [&, this] {
     if (post_eq_ && !control.requested() && !post_eq.joinable()) {
-      post_eq = std::thread([this, &control] {
+      // Time does not move on between the thread's start and its Participant.
+      auto hold = std::make_shared<Clock::Hold>(*s_.clock);
+      post_eq = std::thread([&, this, hold]() mutable {
+        Clock::Participant participant(*s_.clock, "run.post_eq");
+        hold.reset();
         if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
           note("post-equilibration failed: " + r.error().what);
+        // Said while this thread is still a participant.
+        std::lock_guard lock(post_eq_mutex);
+        post_eq_done = true;
+        s_.clock->notify_all(post_eq_cv);
       });
     }
     if (hooks_.on_overlap_ready) hooks_.on_overlap_ready();
@@ -388,7 +403,14 @@ Result<void> Run::measure(RunControl& control) {
   control.attach(&engine);
   result_.measurement = engine.run(control.token());
   control.attach(nullptr);
-  if (post_eq.joinable()) post_eq.join();
+  if (post_eq.joinable()) {
+    {
+      // The script may still have to wait in the clock: joined once it has said it is done.
+      std::unique_lock lock(post_eq_mutex);
+      while (!post_eq_done) s_.clock->wait(post_eq_cv, lock);
+    }
+    post_eq.join();
+  }
   started.reset();
   // Without a bus (or before main started) the state still moves on.
   if (sm_.state() == RunState::Equilibrating && !result_.measurement.data.series.empty() &&
