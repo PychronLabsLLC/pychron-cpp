@@ -2,7 +2,7 @@
 
 #include <chrono>
 #include <cmath>
-#include <cstdio>
+#include <condition_variable>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -134,6 +134,14 @@ class Exp {
     io_.out.flush();
   }
 
+  // An error line. Under the lock say() takes: once the run has threads, a
+  // stall report can come from the clock's.
+  void complain(const std::string& line) {
+    std::lock_guard lock(out_mutex_);
+    io_.err << line << '\n';
+    io_.err.flush();
+  }
+
   int execute() {
     if (!lab_.line) {
       io_.err << "error: no extraction line config at " << g_.config.string() << '\n';
@@ -147,8 +155,7 @@ class Exp {
       VirtualClock::Options clock_options;
       clock_options.speed = a_.sim_speed;
       clock_options.epoch = std::chrono::system_clock::now();
-      // Straight to stderr: a stalled run is one that prints nothing more.
-      clock_options.on_stall = [](std::string report) { std::fprintf(stderr, "elctl: %s\n", report.c_str()); };
+      clock_options.on_stall = [this](std::string report) { complain("elctl: " + report); };
       sim_clock = std::make_unique<VirtualClock>(std::move(clock_options));
     }
 
@@ -160,15 +167,23 @@ class Exp {
     else if (fs::exists(g_.config.parent_path() / "canvas.toml")) canvas = g_.config.parent_path() / "canvas.toml";
     auto line = systems::ExtractionLine::load(g_.config, canvas, line_options);
     if (!line) {
-      io_.err << "error: " << line.error().what << '\n';
+      complain("error: " + line.error().what);
       return kFailed;
     }
     const Clock& clock = (*line)->clock();
+    // The simulated beam (below) refers to the clock: it goes on every way
+    // out, after the spectrometer and before the line and the clock.
+    struct BeamGuard {
+      bool sim;
+      ~BeamGuard() {
+        if (sim) sim::BeamModelRegistry::global().clear();
+      }
+    } beam_guard{g_.sim};
     // This thread takes part in the clock's time until the run is over:
     // simulated time moves only while it, too, is waiting in the clock.
     const Clock::Participant participant(clock, "elctl");
     if (auto r = (*line)->start(); !r) {
-      io_.err << "error: " << r.error().what << '\n';
+      complain("error: " + r.error().what);
       return kFailed;
     }
 
@@ -191,7 +206,7 @@ class Exp {
       auto assembled = spectrometer::SpectrometerAssembler::assemble(
           std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()});
       if (!assembled) {
-        io_.err << "error: " << assembled.error().what << '\n';
+        complain("error: " + assembled.error().what);
         return kFailed;
       }
       spec = std::move(*assembled);
@@ -202,7 +217,7 @@ class Exp {
     if (a_.resume) {
       auto row = lab::LabSession::resume_row(a_.data);
       if (!row) {
-        io_.err << "error: --resume: " << row.error().what << '\n';
+        complain("error: --resume: " + row.error().what);
         return kFailed;
       }
       from = *row;
@@ -215,6 +230,10 @@ class Exp {
 
     // Progress.
     auto& bus = (*line)->bus();
+    // Set when the queue has ended, to wake the wait below at once.
+    std::mutex ended_mutex;
+    std::condition_variable ended_cv;
+    bool ended = false;
     std::map<std::string, std::string> names;  // run id -> identifier
     std::mutex names_mutex;
     std::vector<SignalBus::Subscription> subs;
@@ -260,37 +279,54 @@ class Exp {
       say(e.ok ? "notified " + e.channel + ": " + e.subject : "notification " + e.channel + " failed: " + e.error);
     }));
 
+    subs.push_back(bus.subscribe<lab::QueueEnded>([&](const lab::QueueEnded&) {
+      {
+        std::lock_guard lock(ended_mutex);
+        ended = true;
+      }
+      ended_cv.notify_all();
+    }));
+
     interrupt_count() = 0;
     if (auto r = session.start(queue_, from); !r) {
-      io_.err << "error: " << r.error().what << '\n';
+      complain("error: " + r.error().what);
       return kFailed;
     }
-    int handled = 0;
-    while (session.running()) {
-      clock.sleep_for(std::chrono::milliseconds(50));
-      const int n = interrupt_count();
-      for (; handled < n; ++handled) {
-        if (handled == 0) {
-          say("interrupt: stopping after the current run (again to cancel it)");
-          session.stop();
-        } else if (handled == 1) {
-          say("interrupt: cancelling (again to abort)");
-          session.cancel();
-        } else {
-          say("interrupt: aborting");
-          session.abort();
+    // The end of the queue and the operator's interrupt are the outside
+    // world's: waited for in real time, off the clock, so that an interrupt is
+    // heard whatever simulated time is doing (paced slowly, or stalled).
+    {
+      const Clock::Detached detached(clock);
+      int handled = 0;
+      while (session.running()) {
+        {
+          std::unique_lock lock(ended_mutex);
+          ended_cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return ended; });
+        }
+        const int n = interrupt_count();
+        for (; handled < n; ++handled) {
+          if (handled == 0) {
+            say("interrupt: stopping after the current run (again to cancel it)");
+            session.stop();
+          } else if (handled == 1) {
+            say("interrupt: cancelling (again to abort)");
+            session.cancel();
+          } else {
+            say("interrupt: aborting");
+            session.abort();
+          }
         }
       }
     }
     const executor::QueueResult result = *session.wait();
+    // Nothing is left to poll for, and the queue-end message may take a while.
+    (*line)->stop();
     {
-      // The queue-end message: its commands are the outside world's, and take
-      // real time.
+      // Its commands are the outside world's, and take real time.
       const Clock::Detached detached(clock);
       session.notifier().wait_idle();
     }
     subs.clear();
-    if (g_.sim) sim::BeamModelRegistry::global().clear();
 
     say("queue " + std::string(executor::to_string(result.end)) + (result.reason.empty() ? "" : ": " + result.reason));
     int ok_runs = 0;
@@ -298,7 +334,6 @@ class Exp {
     say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; records in " +
         (a_.data / "records").string());
     if (session.pending_saves() > 0) say("warning: " + std::to_string(session.pending_saves()) + " record(s) still in the spool");
-    (*line)->stop();
     const bool good = result.end == executor::QueueEnd::Completed || result.end == executor::QueueEnd::Stopped;
     return good ? kOk : kFailed;
   }

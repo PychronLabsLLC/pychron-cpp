@@ -1,6 +1,7 @@
 // elctl exp validate / run against a scratch copy of configs/examples, which
 // doubles as an example lab (plans/, scripts/, conditionals/, experiment.toml).
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -8,8 +9,10 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "elctl_fixture.hpp"
+#include "exp.hpp"
 #include "pychron/scripting/script_host.hpp"
 
 namespace elctl::testing {
@@ -163,6 +166,55 @@ TEST_F(ElctlExpTest, SimulatedAnalysesAreStampedInSimulatedTime) {
   EXPECT_GE(*first - *blank, measurement);
   EXPECT_GE(*second - *first, measurement);
   EXPECT_GT(*second, ended);  // and it has run ahead of real time
+}
+
+// At a thousandth of real speed the queue's first delay alone is minutes long
+// and simulated time all but stands: the operator's Ctrl-C is heard in real
+// time all the same. The two interrupts are kept standing rather than timed,
+// since the command clears the count when it starts the queue.
+TEST_F(ElctlExpTest, AnInterruptStopsAPacedQueueInRealTime) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  std::atomic<bool> done{false};
+  std::thread operator_([&] {
+    while (!done) {
+      int seen = elctl::interrupt_count().load();
+      while (seen < 2 && !elctl::interrupt_count().compare_exchange_weak(seen, 2)) {
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  });
+  const auto began = std::chrono::steady_clock::now();
+  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+                (dir_ / "out").string(), "--sim-speed", "0.001"},
+               true);
+  const auto took = std::chrono::steady_clock::now() - began;
+  done = true;
+  operator_.join();
+  elctl::interrupt_count() = 0;
+  EXPECT_EQ(o.code, 1) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "interrupt: stopping after the current run")) << o.out;
+  EXPECT_TRUE(contains(o.out, "interrupt: cancelling")) << o.out;
+  EXPECT_TRUE(contains(o.out, "queue cancelled: cancelled by the operator")) << o.out;
+  EXPECT_TRUE(contains(o.out, "0/")) << o.out;
+  EXPECT_LT(took, std::chrono::seconds(5));
+}
+
+// A run that gives up after the simulated beam is in place leaves nothing
+// behind that refers to its clock: the next run in the same process is whole.
+TEST_F(ElctlExpTest, ARunThatFailsEarlyLeavesTheNextOneClean) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto data = (dir_ / "out").string();
+  // Nothing has run into this directory, so there is nothing to resume.
+  auto failed = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+                     "--data", data, "--sim-speed", "max", "--resume"},
+                    true);
+  EXPECT_EQ(failed.code, 1) << failed.out;
+  EXPECT_TRUE(contains(failed.err, "error: --resume: ")) << failed.err;
+  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+                data, "--sim-speed", "max"},
+               true);
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "3/3 run(s) succeeded")) << o.out;
 }
 
 // What a run says is printed under its state lines: here, that each hole of
