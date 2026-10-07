@@ -18,7 +18,6 @@ SIGMAS = np.array([2, 3, 2, 4, 2, 3, 2, 4]) * 1e-7
 POINTS = [(0.0, 0.0), (5.0, 5.0), (-7.0, 2.0), (10.0, 0.0)]
 
 
-
 def holes(radii):
     x = np.array([r * math.cos(math.radians(45 * i)) for i, r in enumerate(radii)])
     y = np.array([r * math.sin(math.radians(45 * i)) for i, r in enumerate(radii)])
@@ -69,10 +68,12 @@ def fit(kind, weighted, error, degree=1, which="ring"):
 # name, model kind, weighted, error, axis, degree
 CASES = [
     ("plane_unweighted_sem", "plane", False, "sem", "x", 1),
+    ("plane_unweighted_msem", "plane", False, "msem", "x", 1),
     ("plane_weighted_sem", "plane", True, "sem", "x", 1),
     ("plane_weighted_msem", "plane", True, "msem", "x", 1),
     ("bowl_unweighted_sem", "bowl", False, "sem", "x", 1),
     ("bowl_weighted_msem", "bowl", True, "msem", "x", 1),
+    ("ls1d_x_degree1_weighted_sem", "x", True, "sem", "x", 1),
     ("ls1d_x_degree1_weighted_msem", "x", True, "msem", "x", 1),
     ("ls1d_y_degree2_unweighted_sem", "y", False, "sem", "y", 2),
 ]

@@ -15,6 +15,7 @@ using Matrix = std::vector<std::vector<double>>;  // row-major, rows = observati
 struct LeastSquares {
   std::vector<double> beta;
   Matrix cov_unscaled;  // (A'A)^-1
+  double pivot_ratio = 0.0;  // min |R_kk| / max |R_kk| of the column-equilibrated R: 1 is orthogonal, 0 singular
 };
 
 // Householder QR least squares with column equilibration. Fails when the
@@ -79,6 +80,9 @@ inline Result<LeastSquares> least_squares(Matrix a, std::vector<double> y) {
   }
 
   LeastSquares out;
+  double rmin = rmax;
+  for (std::size_t k = 0; k < p; ++k) rmin = std::min(rmin, std::abs(a[k][k]));
+  out.pivot_ratio = rmin / rmax;
   out.beta.resize(p);
   out.cov_unscaled.assign(p, std::vector<double>(p, 0.0));
   for (std::size_t j = 0; j < p; ++j) out.beta[j] = z[j] / scale[j];

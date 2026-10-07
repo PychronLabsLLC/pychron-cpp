@@ -469,6 +469,20 @@ TEST(FluxLeastSquares, MatchesTheReference) {
   }
 }
 
+TEST(FluxLeastSquares, GoldenTwinsDifferWhereTheyShould) {
+  auto find = [](const char* name) -> const flux_golden::Case& {
+    for (const auto& c : flux_golden::kCases)
+      if (std::string(c.name) == name) return c;
+    ADD_FAILURE() << name;
+    return flux_golden::kCases.front();
+  };
+  const auto &sem = find("ls1d_x_degree1_weighted_sem"), &msem = find("ls1d_x_degree1_weighted_msem");
+  ASSERT_GT(sem.mswd, 1.0);
+  for (int i = 0; i < 4; ++i) expect_close(msem.j_err[i], sem.j_err[i] * std::sqrt(sem.mswd), 1e-10, "msem/sem");
+  const auto &us = find("plane_unweighted_sem"), &um = find("plane_unweighted_msem");
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(us.j_err[i], um.j_err[i]);
+}
+
 TEST(FluxLeastSquares, PlaneRecoversAKnownPlane) {  // legacy error_propagation.py:809-880
   auto f = pr::fit_flux(grid([](double x, double y) { return x + 2 * y; }), std::vector<pr::Point>{{1, 1}},
                         ls_options(pr::ModelKind::Plane, false));
@@ -588,7 +602,17 @@ TEST(FluxLeastSquares, AnUnweightedFitUsesAMonitorWithNoErrorButSkipsItInTheMswd
   ASSERT_TRUE(f) << f.error().what;
   EXPECT_EQ(f->parameters, with->parameters);  // still used in the fit
   EXPECT_EQ(f->dof, with->dof);
-  EXPECT_TRUE(std::isfinite(f->mswd));
+  // mswd = sum((r / e)^2 over the monitors with an error) / (their count - q), q = 3.
+  double sum = 0.0;
+  int used = 0;
+  for (const auto& x : m) {
+    if (x.j_err <= 0.0) continue;
+    const double r = x.j - (f->parameters[0] * x.at.x + f->parameters[1] * x.at.y + f->parameters[2]);
+    sum += (r / x.j_err) * (r / x.j_err);
+    ++used;
+  }
+  ASSERT_EQ(used, 7);
+  EXPECT_NEAR(f->mswd, sum / (used - 3), sum / (used - 3) * 1e-12);
   EXPECT_NE(f->mswd, with->mswd);
   for (auto& x : m) x.j_err = 0.0;
   auto none = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, false));
@@ -611,6 +635,26 @@ TEST(FluxLeastSquares, MswdOutsideLimitsIsNoted) {
   auto bad = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, true));
   ASSERT_TRUE(bad);
   EXPECT_EQ(bad->notes, (std::vector<pr::PointNote>{{0, pr::FitNote::MswdOutsideLimits}}));
+}
+
+TEST(FluxLeastSquares, LayoutsThatBarelyDetermineTheSurfaceAreRefused) {  // R8
+  auto rounded = monitors_of(flux_golden::kRing);
+  for (auto& m : rounded) {
+    m.at.x = std::round(m.at.x * 100.0) / 100.0;
+    m.at.y = std::round(m.at.y * 100.0) / 100.0;
+  }
+  const std::vector<pr::Point> at{{0, 0}};
+  for (bool weighted : {true, false}) {
+    auto f = pr::fit_flux(rounded, at, ls_options(pr::ModelKind::Bowl, weighted, pr::MeanErrorKind::Msem));
+    ASSERT_FALSE(f) << weighted;
+    EXPECT_NE(f.error().what.find("monitor positions do not determine"), std::string::npos) << f.error().what;
+  }
+  // Four monitors collinear to within 1e-5.
+  const std::vector<pr::Monitor> nearly{
+      {"a", {0, 0}, 1.0, 0.1}, {"b", {1, 1 + 1e-5}, 2.0, 0.1}, {"c", {2, 2 - 1e-5}, 3.5, 0.1}, {"d", {3, 3 + 3e-5}, 4.0, 0.1}};
+  auto f = pr::fit_flux(nearly, at, ls_options(pr::ModelKind::Plane, false));
+  ASSERT_FALSE(f);
+  EXPECT_NE(f.error().what.find("monitor positions do not determine"), std::string::npos) << f.error().what;
 }
 
 }  // namespace

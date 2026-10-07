@@ -129,6 +129,11 @@ Predicted interpolate(const Monitor& m0, const Monitor& m1, double f, Interpolat
 //   unweighted both var = s2 g C g'    (W = identity)
 // The reported mswd is always sum((r / j_err)^2) / (n - q).
 
+// Monitor J is known to about a part in a thousand, so a term of the surface
+// less independent than that (smallest equilibrated pivot over the largest) is
+// not determined by the data: the fit would amplify noise into the answer.
+constexpr double kMinPivotRatio = 1e-3;
+
 std::vector<double> design_row(const FitOptions& o, const Point& p) {
   switch (o.kind) {
     case ModelKind::Plane: return {p.x, p.y, 1.0};
@@ -161,6 +166,7 @@ Result<FluxFit> fit_surface(std::span<const Monitor> monitors, std::span<const P
   auto undetermined = [&] { return fail(ErrorKind::Config, "flux: monitor positions do not determine a " + name); };
   auto solved = detail::least_squares(a, y);
   if (!solved) return undetermined();
+  if (!(solved->pivot_ratio >= kMinPivotRatio)) return undetermined();
   const auto& beta = solved->beta;
   for (double b : beta)
     if (!std::isfinite(b)) return undetermined();
@@ -201,7 +207,7 @@ Result<FluxFit> fit_surface(std::span<const Monitor> monitors, std::span<const P
     } else {
       var *= s2;
     }
-    if (!std::isfinite(value) || !std::isfinite(var) || var < 0.0) return undetermined();
+    if (!std::isfinite(value) || !(value > 0.0) || !std::isfinite(var) || var < 0.0) return undetermined();
     out.at.push_back({value, std::sqrt(var)});
   }
   if (!predict_at.empty() && used > q && !mswd_acceptable(out.mswd, used, static_cast<int>(q)))
