@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <map>
@@ -39,7 +40,22 @@ namespace pychron {
 // notify_*() marks a waiter runnable at the instant of the call, not when the
 // kernel gets round to it, and time cannot jump past work that is about to be
 // done. It also means a raw cv.notify_*() is not heard: a condition variable
-// waited on through this clock is notified through it.
+// waited on through this clock is notified through it. notify_*() does call
+// the real condition variable as well (for a thread that waits on it
+// directly), so that must still be alive, as with any condition variable.
+//
+// Pacing: at a finite speed a jump of D is first paid for with D / speed of
+// real time. One thread at a time sleeps that off, with the clock's mutex
+// released, and it is always a thread that is asleep in a wait anyway: one
+// that leaves, detaches or drops a Hold hands the sleep to the waiter with
+// the earliest deadline and returns at once. Anything that may have made a
+// thread runnable (a notify that woke a waiter, a new participant, the end
+// of a Detached, a Hold) or changed the price (set_speed) ends the sleep:
+// now() moves on by what was paid for and the question whether to jump is
+// asked again. At infinite speed there is no sleep and no real time at all.
+//
+// Clock::Hold: while one is alive there is no jump and no new pacing sleep;
+// the last one to go asks the question again.
 //
 // Lock order: the caller's mutex, then the clock's. The clock never takes a
 // caller's mutex while it holds its own.
@@ -50,6 +66,12 @@ namespace pychron {
 // the waits that really are on the outside world. Threads that are not
 // participants may call everything; their waits are woken by a jump like any
 // other but never hold time back.
+//
+// The stall report is how a broken rule shows: a watchdog thread (none when
+// stall_report_after is zero) calls on_stall, once per stall, when for that
+// long in real time a timed waiter has been asleep, now() has not moved and
+// nobody was pacing. The message names the runnable participants; on_stall
+// runs on the watchdog's thread with the clock's mutex released.
 class VirtualClock final : public Clock {
  public:
   struct Options {
@@ -75,17 +97,22 @@ class VirtualClock final : public Clock {
   void notify_one(std::condition_variable& cv) const override;
   void notify_all(std::condition_variable& cv) const override;
 
+  // Takes effect at once, also on a jump being paced. Zero stops time.
   void set_speed(double speed);
   double speed() const;
 
   // Threads between enter and leave; a nested guard counts once. For tests.
   std::size_t participants() const;
+  // Threads asleep in wait()/wait_until(): registered and not woken. For tests.
+  std::size_t waiters() const;
 
  protected:
   void enter(std::string_view name) const override;
   void leave() const override;
   void detach() const override;
   void reattach() const override;
+  void hold() const override;
+  void unhold() const override;
 
  private:
   struct Member {
@@ -100,6 +127,7 @@ class VirtualClock final : public Clock {
     const void* key = nullptr;
     std::optional<TimePoint> deadline;
     bool runnable = false;
+    bool nominated = false;  // asked to do the pacing sleep
     std::thread::id owner;
     std::condition_variable wake;
   };
@@ -107,14 +135,35 @@ class VirtualClock final : public Clock {
   void block(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
              std::optional<TimePoint> deadline) const;
   void notify(std::condition_variable& cv) const;
-  void maybe_jump_locked() const;
+  // `self` is the calling thread's own record when it is inside block(), and
+  // null otherwise. Only a thread whose record is not runnable may pace.
+  void maybe_jump_locked(std::unique_lock<std::mutex>& guard, Waiter* self) const;
+  void advance_locked(TimePoint to) const;
+  void interrupt_locked() const;
+  void watch();
 
   const Options options_;
   mutable std::mutex m_;
   mutable TimePoint now_;
-  mutable double speed_;
+  double speed_;
   mutable std::map<std::thread::id, Member> members_;
   mutable std::vector<std::shared_ptr<Waiter>> waiters_;
+  mutable std::size_t holds_ = 0;
+
+  // The pacing sleep: from `pacing_` set until its thread has woken, with
+  // `interrupt_` set once it has been abandoned.
+  mutable bool pacing_ = false;
+  mutable bool interrupt_ = false;
+  mutable TimePoint pace_target_;
+  mutable double pace_speed_ = 0;
+  mutable std::chrono::steady_clock::time_point pace_real_start_;
+  mutable std::condition_variable pace_cv_;
+
+  // Counts the times now() has moved; the watchdog compares it.
+  mutable std::uint64_t advances_ = 0;
+  bool stop_ = false;
+  std::condition_variable watchdog_cv_;
+  std::thread watchdog_;
 };
 
 }  // namespace pychron

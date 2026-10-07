@@ -64,11 +64,29 @@ class Clock {
     const Clock& clock_;
   };
 
+  // While one is alive this clock does not jump. A thread that starts a
+  // participant thread makes one (shared) before std::thread and gives the
+  // child a copy; the child drops it once its Participant is constructed.
+  // Otherwise a starter that blocks first lets time go past the child, which
+  // the clock has not heard of yet.
+  class Hold {
+   public:
+    explicit Hold(const Clock& clock);
+    ~Hold();
+    Hold(const Hold&) = delete;
+    Hold& operator=(const Hold&) = delete;
+
+   private:
+    const Clock& clock_;
+  };
+
  protected:
   virtual void enter(std::string_view name) const;
   virtual void leave() const;
   virtual void detach() const;
   virtual void reattach() const;
+  virtual void hold() const;
+  virtual void unhold() const;
 };
 
 // Real monotonic time (std::chrono::steady_clock).

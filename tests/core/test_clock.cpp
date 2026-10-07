@@ -104,3 +104,13 @@ TEST(Clock, GuardsAreNoOpsOnSteadyClock) {
   }
   EXPECT_GE(clock.now(), before);
 }
+
+TEST(Clock, HoldIsANoOpOnSteadyClock) {
+  SteadyClock clock;
+  const auto before = clock.now();
+  {
+    Clock::Hold hold(clock);
+    clock.sleep_for(1ms);
+  }
+  EXPECT_GE(clock.now(), before + 1ms);
+}

@@ -19,10 +19,15 @@ Clock::Participant::~Participant() { clock_.leave(); }
 Clock::Detached::Detached(const Clock& clock) : clock_(clock) { clock_.detach(); }
 Clock::Detached::~Detached() { clock_.reattach(); }
 
+Clock::Hold::Hold(const Clock& clock) : clock_(clock) { clock_.hold(); }
+Clock::Hold::~Hold() { clock_.unhold(); }
+
 void Clock::enter(std::string_view) const {}
 void Clock::leave() const {}
 void Clock::detach() const {}
 void Clock::reattach() const {}
+void Clock::hold() const {}
+void Clock::unhold() const {}
 
 TimePoint SteadyClock::now() const { return std::chrono::steady_clock::now(); }
 
