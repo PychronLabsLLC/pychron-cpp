@@ -75,7 +75,7 @@ Owner decisions of 2026-10-06 are marked (owner).
 | F2 | (owner) **Corrected math only.** Where legacy is wrong (section 5.4) the port is right and there is no switch that reproduces the legacy number. |
 | F3 | (owner) **Core and CLI first.** No window in this spec; the review step (omit an analysis, leave a position out) is done with command-line flags. The window is a later spec on the same two layers. |
 | F4 | (owner) **`j_err` is analytical.** It comes from the monitors' F only, as in legacy. The monitor age and `lambda_k` uncertainties are systematic and common to every position of the irradiation, so they are saved beside the J (`monitor_age_err`, `lambda_k_total_err`) for an external-error stage to use, and never folded into `j_err`. |
-| F5 | (owner) **No Monte Carlo and no position error.** Every kept model has a closed-form error. New fits write no `position_jerr`; an imported one is kept and still used by the reduction. |
+| F5 | (owner) **No Monte Carlo and no position error.** Every kept model has a closed-form error. New fits write no `position_jerr`. An imported one stays in its imported revision; a position re-saved here gets a new head without it, so the reduction stops using it for that position (section 12). |
 | F6 | (owner) **Monitor sets are a revisioned document in the store**, `pychron/flux_monitors.json`, read and written like the entry settings. Every client sees the same sets. |
 | F7 | Math in `libs/reduction`, orchestration in `libs/processing`, command in `apps/elctl`: the split the ArAr reduction already has. |
 | F8 | A monitor position is saved with the **model's** J as `j` and its own mean as `mean_j`, as legacy: the J of a hole is what the level's model says it is, and the monitor's deviation from it stays visible. |
@@ -369,8 +369,9 @@ work:
    - `position_jerr`: absent (F5).
    - `analyses`: every monitor analysis of the position with `is_omitted`.
    - `options_json`: section 6.4.
-2. A position with no reference object gets one in the same transaction
-   (key `<irrad>/<level>/<pos>`).
+2. A position with no reference object gets one (key
+   `<irrad>/<level>/<pos>`), created before the changeset commits (see the
+   known limit in section 12).
 3. Each head moves by compare-and-swap from the revision `load_level` read.
 4. `commit(ChangesetKind::Reference, "fit flux for <irrad><level>")`, the legacy
    message, so history reads the same in both systems.
@@ -556,6 +557,8 @@ decided during implementation.
   column-equilibrated design is below 1e-3 of the largest, or when any
   predicted J is not finite and positive, the error is `monitor positions do
   not determine a <model>`.
+- **R4.** A test ruling only: a test may build `FitOptions` in a local variable instead of a designated initializer when the compiler warns.
+- **F5 consequence.** A position imported with a `position_jerr` and then saved here has a new head without one; the reduction no longer uses the imported value for it, which stays in the older revision.
 - **R6.** Bracketing1D is always linear; `--interpolation` applies to
   Bracketing only.
 - **R5, R5a.** In an unweighted least-squares fit a monitor with zero error

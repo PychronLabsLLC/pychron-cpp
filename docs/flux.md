@@ -54,9 +54,11 @@ warning: ...
 Each J is printed as `%.4e`, its error beside it and then as a percentage
 of the J; `-` is an absent value. `saved J` is what the store holds now,
 `mean J` the monitor position's own mean, `pred J` what the model says
-(F8: a monitor is saved with the model's J, and `dev %`, the saved minus the
-predicted over the predicted, shows how far it is from its own mean). The `fit`
-column says whether the position took part in the fit.
+(F8: a monitor is saved with the model's J, its own mean beside it). `dev %`
+is (saved J - predicted J) / predicted J x 100: how far the J now saved differs
+from the J this fit predicts; it says nothing of a monitor's own mean, and is
+`-` when the position has no saved J. The `fit` column says whether the
+position took part in the fit.
 
 Look at the warnings, change what is wrong, run again. Then repeat the same
 command with `--save`:
@@ -70,7 +72,7 @@ which prints one of
 ```
 saved 24 positions (0 unchanged)
 nothing to save: 24 positions unchanged
-not saved: 5 was saved by <user> at <time> since this fit was loaded
+not saved: hole 5 was saved by <user> at <time> since this fit was loaded
 ```
 
 Other commands:
@@ -88,7 +90,9 @@ elctl flux monitors list --db ...
 `elctl flux help` lists every flag. Exit codes: 0 done (warnings included);
 1 a level could not be fitted, a save conflicted, or a name asked for does not
 exist; 2 usage or a fatal error. With no level, a level that fails is
-reported and the rest continue; the exit code is then 1.
+reported and the rest continue; the exit code is then 1. An unknown
+irradiation with no level given exits 2; with a level named, the level fails
+and it exits 1.
 
 ## Models
 
@@ -134,7 +138,7 @@ fit; with no saved fit the defaults are `plane`, unweighted, arithmetic mean,
 | `--no-save-position HOLE` | Do not save that position. |
 | `--reset-omits` | Ignore the omissions and exclusions of the saved fit. |
 | `--csv FILE` | Write every position; with no level, every level in one file. |
-| `--save [--user NAME]` | Save. The author is `--user`, else `$USER`. |
+| `--save [--user NAME]` | Save. The author is `--user`, else `$USER`, else `pychron`. |
 
 A saved fit that used `sd` on a surface (it cannot be made here, but an
 import can carry one) is refitted with `msem`, and the command says
@@ -173,8 +177,9 @@ unless you give `--fit-error`.
   `nearest` the inverse-variance mean (error `(sum 1/sigma^2)^-1/2`);
   `bracketing` and `bracketing1d` as in the table above, with linear error
   `sqrt(((1-f) e0)^2 + (f e1)^2)`.
-- A weighted fit, or a weighted mean, given a monitor with a zero error is an
-  error naming the monitor (its weight would be infinite).
+- A weighted fit or mean, `nearest`, `bracketing` other than `average`, and
+  `bracketing1d` (which always weights by the errors), given a monitor with a
+  zero error is an error naming the monitor (its weight would be infinite).
 - **The J error is analytical** (F4): it comes from the monitors' F only. The
   age and lambda_k uncertainties are systematic, common to every position of
   the irradiation, and are saved beside the J (`monitor_age_err`,
@@ -202,8 +207,10 @@ history reads the same in both systems). Per position:
   whether the position was used in the fit, the fit MSWD and degrees of
   freedom, and the `software` that wrote it. The model strings are legacy's,
   so a fit imported from a legacy meta repository and one saved here read
-  alike. `position_jerr` is never written; an imported one is kept and still
-  used by the reduction.
+  alike. `position_jerr` is never written. A position imported from legacy
+  with one keeps it in its imported revision, but a save here makes a new head
+  with none, and the reduction stops using the imported value for that
+  position; it remains only in the older revision.
 
 Then:
 
@@ -225,7 +232,8 @@ Then:
   recomputed with the new J the next time they are used. An analysis whose
   flux is **pinned** keeps its pinned J.
 - A revision is immutable and nothing entry does can erase a fit. To undo a
-  save, move the heads back (`history`, then the store's `move_head`).
+  save, the heads can be moved back in the store (`history` shows the
+  revisions); there is no `elctl` command for it yet.
 - Known limit: a position with no reference object gets one before the
   changeset commits, so a conflicted save on a fresh level can leave
   reference objects with no value. They resolve nothing and are reused by the
@@ -262,7 +270,7 @@ elctl flux monitors set sets.json --db ...   # --user NAME names the author
 ```
 
 `set FILE` replaces the whole document: the file must list every set to keep.
-A document is checked on load and on save: unique names, each with a
+A document is checked on load and on save: a non-empty `monitors` list, unique names, each with a
 non-empty `sample`, a `default` that names one of them (a document with no
 `default` takes the first set), positive ages and decay constants,
 non-negative errors. A document that fails is an error naming the key. Only
@@ -290,7 +298,6 @@ that reproduces a legacy number (F2).
 | Nearest neighbours needs 3 positions whatever N is | It needs N |
 | Plane accepts 3 monitors (an exact fit, error 0) | It needs 4 |
 | SD is offered for surface fits (F13) | It is not; an imported fit saved with it refits with `msem` and says so |
-| The hole's x, y come from `geom[hole_id - 1]`, ignoring the file's own id | Position N is the Nth hole of the holder; `hole_id` is a label |
 | Monte Carlo errors (10 trials, unseeded) and a position error | None (F5). Every model has a closed-form error and results are reproducible |
 | Four more models (RBF, GridData, IDW, order 5 polynomial) that assign no J without Monte Carlo | Not ported (F1). A fit imported with one means "no saved options" |
 | `j_err` is the analytical error and no age uncertainty exists anywhere | Still analytical (F4); the monitor age error and lambda_k error are recorded beside every J |
@@ -300,7 +307,7 @@ that reproduces a legacy number (F2).
 | Built-in `FC Min` and `FC SJ`, plus a hand-edited yaml read at import | A shared, revisioned monitor-set document (above) |
 | A position can be in both tables with "all positions" | A monitor appears in the monitor table only |
 
-Unchanged: the J formula, averaging J rather than F, the two mean kinds and
+Unchanged: position N is the Nth hole of the holder (as in legacy and in entry; `hole_id` is a label), the J formula, averaging J rather than F, the two mean kinds and
 the error kinds of the means, neighbour selection, extrapolation, no
 automatic rejection of outliers, a Bowl with no `xy` term, and the commit
 message `fit flux for <irradiation><level>`.
