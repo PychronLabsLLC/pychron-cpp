@@ -463,7 +463,10 @@ TEST_F(FluxCmd, ShowListsTheSavedJ) {
 
 TEST_F(FluxCmd, HistoryIsNewestFirstByChangeset) {
   ASSERT_EQ(fit({"--model", "plane", "--save", "--user", "jsmith"}).code, elctl::kOk);
-  ASSERT_EQ(fit({"--model", "nearest", "--neighbors", "3", "--save", "--user", "jsmith"}).code, elctl::kOk);
+  // The second save leaves hole 9 out, so the two changesets touch different holes.
+  ASSERT_EQ(fit({"--model", "nearest", "--neighbors", "3", "--no-save-position", "9", "--save", "--user", "jsmith"}).code,
+            elctl::kOk);
+  const auto before = seq();
   Outcome o = run_raw({"flux", "history", "NM-300", "A", "--db", db_});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
   const auto lines = lines_of(o.out);
@@ -473,13 +476,14 @@ TEST_F(FluxCmd, HistoryIsNewestFirstByChangeset) {
   for (std::size_t i = 1; i < 3; ++i) {
     EXPECT_TRUE(contains(lines[i], "jsmith")) << lines[i];
     EXPECT_TRUE(contains(lines[i], "fit flux for NM-300A")) << lines[i];
-    EXPECT_TRUE(contains(lines[i], "1, 2, 3")) << lines[i];
   }
-  // Newest first: the ISO time of the first changeset is not before the second's.
-  EXPECT_GE(split_ws(lines[1])[0], split_ws(lines[2])[0]) << o.out;
+  // Newest first: the save without hole 9 comes before the save of all twelve.
+  EXPECT_TRUE(contains(lines[1], "1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12")) << lines[1];
+  EXPECT_FALSE(contains(lines[1], "9,")) << lines[1];
+  EXPECT_TRUE(contains(lines[2], "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12")) << lines[2];
 
   // One position: a line per revision, newest first, with its J.
-  o = run_raw({"flux", "history", "NM-300", "A", "9", "--db", db_});
+  o = run_raw({"flux", "history", "NM-300", "A", "10", "--db", db_});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
   const auto hole = lines_of(o.out);
   ASSERT_EQ(hole.size(), 3u) << o.out;
@@ -490,6 +494,17 @@ TEST_F(FluxCmd, HistoryIsNewestFirstByChangeset) {
   }
   EXPECT_TRUE(contains(hole[1], "Nearest Neighbors")) << hole[1];
   EXPECT_TRUE(contains(hole[2], "Plane")) << hole[2];
+
+  // Hole 9 was saved once.
+  o = run_raw({"flux", "history", "NM-300", "A", "9", "--db", db_});
+  EXPECT_EQ(lines_of(o.out).size(), 2u) << o.out;
+  o = run_raw({"flux", "show", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  o = run_raw({"flux", "monitors", "list", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  o = run_raw({"flux", "monitors", "show", "FC-2 (Kuiper 2008)", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(seq(), before) << "the read-only subcommands wrote";
 
   o = run_raw({"flux", "history", "NM-300", "A", "99", "--db", db_});
   EXPECT_EQ(o.code, elctl::kFailed);
