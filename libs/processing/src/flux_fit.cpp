@@ -148,9 +148,11 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
       // saved before `excluded` existed says it by having a mean J and still
       // not being used; `used_in_fit` false alone is also what a monitor with
       // no analyses yet was saved with.
-      const bool carried =
-          saved_applies && (p.saved->excluded ? *p.saved->excluded
-                                              : p.saved->used_in_fit == std::optional<bool>(false) && p.saved->mean_j.has_value());
+      const auto saved_excluded = [](const SavedFlux& s) {
+        if (s.excluded) return *s.excluded;
+        return s.used_in_fit == std::optional<bool>(false) && s.mean_j.has_value();
+      };
+      const bool carried = saved_applies && saved_excluded(*p.saved);
       fp.excluded = edits.exclude_positions.contains(p.hole) || carried;
       bool left_out = fp.excluded;
       std::optional<reduction::PositionMean> mean;
