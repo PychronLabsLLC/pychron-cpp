@@ -494,29 +494,242 @@ TEST_F(VirtualClockTest, SetSpeedTakesEffectDuringASleep) {
 
 TEST_F(VirtualClockTest, ALeaveHandsThePacingToASleeper) {
   VirtualClock::Options options;
-  options.speed = 100;
+  options.speed = 1;
   VirtualClock clock(options);
   const TimePoint kStart = clock.now();
   std::promise<void> release_b;
+  Real::duration leave_took{};
   Worker b([&] {
-    Clock::Participant p(clock, "b");
+    auto p = std::make_unique<Clock::Participant>(clock, "b");
     release_b.get_future().wait();
+    const auto real_before = Real::now();
+    p.reset();
+    leave_took = Real::now() - real_before;
   });
   ASSERT_TRUE(await_participants(clock, 1));
-  Real::time_point real_woke;
   Worker a([&] {
     Clock::Participant p(clock, "a");
-    clock.sleep_for(1s);
-    real_woke = Real::now();
+    clock.sleep_for(100s);
   });
   ASSERT_TRUE(await_waiters(clock, 1));
-  const auto real_release = Real::now();
   release_b.set_value();
-  // B's leave returns at once; the ten milliseconds are slept by A.
+  // B's leave returns at once; the hundred real seconds are for A to sleep.
   ASSERT_TRUE(b.join_within());
+  EXPECT_LT(leave_took, 2s);
+  EXPECT_FALSE(a.finished());
+  // A is pacing, or nobody would hear this.
+  clock.set_speed(std::numeric_limits<double>::infinity());
   ASSERT_TRUE(a.join_within());
-  EXPECT_GE(real_woke - real_release, 8ms);
+  EXPECT_EQ(clock.now(), kStart + 100s);
+}
+
+TEST_F(VirtualClockTest, NowAdvancesDuringAPace) {
+  VirtualClock::Options options;
+  options.speed = 1;
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  Worker sleeper([&] {
+    Clock::Participant p(clock, "sleeper");
+    clock.sleep_for(60s);
+  });
+  ASSERT_TRUE(await_waiters(clock, 1));
+  const TimePoint first = clock.now();
+  const WallTime wall_first = clock.wall_now();
+  std::this_thread::sleep_for(50ms);
+  const TimePoint second = clock.now();
+  const WallTime wall_second = clock.wall_now();
+  EXPECT_GE(second - first, 30ms);
+  EXPECT_LE(second - first, 2s);
+  EXPECT_GE(wall_second - wall_first, 30ms);
+  EXPECT_LE(wall_second - wall_first, 2s);
+  clock.set_speed(std::numeric_limits<double>::infinity());
+  ASSERT_TRUE(sleeper.join_within());
+  EXPECT_EQ(clock.now(), kStart + 60s);
+}
+
+TEST_F(VirtualClockTest, AnOutsidersSleepDuringAPaceTakesItsOwnTime) {
+  VirtualClock::Options options;
+  options.speed = 1;
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  Worker sleeper([&] {
+    Clock::Participant p(clock, "sleeper");
+    clock.sleep_for(60s);
+  });
+  ASSERT_TRUE(await_waiters(clock, 1));
+  std::this_thread::sleep_for(50ms);
+  const auto real_before = Real::now();
+  const TimePoint before = clock.now();
+  clock.sleep_for(100ms);
+  const TimePoint after = clock.now();
+  const auto real = Real::now() - real_before;
+  EXPECT_GE(real, 90ms);
+  EXPECT_LT(real, 2s);
+  EXPECT_GE(after - before, 100ms);
+  clock.set_speed(std::numeric_limits<double>::infinity());
+  ASSERT_TRUE(sleeper.join_within());
+  EXPECT_EQ(clock.now(), kStart + 60s);
+}
+
+namespace {
+
+// A thread outside the clock that waits on a condition variable and is woken
+// through the clock again and again: every such notify interrupts a pacing
+// sleep and leaves nobody runnable.
+class Heckler {
+ public:
+  Heckler(const VirtualClock& clock, std::chrono::microseconds every)
+      : clock_(clock),
+        listener_([this] {
+          std::unique_lock lock(m_);
+          while (!done_) clock_.wait(cv_, lock);
+        }),
+        notifier_([this, every] {
+          while (!stop_.load()) {
+            clock_.notify_all(cv_);
+            std::this_thread::sleep_for(every);
+          }
+        }) {}
+  ~Heckler() {
+    stop_.store(true);
+    notifier_.join();
+    {
+      std::lock_guard lock(m_);
+      done_ = true;
+    }
+    clock_.notify_all(cv_);
+    listener_.join();
+  }
+
+ private:
+  const VirtualClock& clock_;
+  std::mutex m_;
+  std::condition_variable cv_;
+  bool done_ = false;
+  std::atomic<bool> stop_{false};
+  std::thread listener_;
+  std::thread notifier_;
+};
+
+}  // namespace
+
+TEST_F(VirtualClockTest, NowNeverGoesBackwards) {
+  VirtualClock::Options options;
+  options.speed = 1'000;
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  std::atomic<bool> done{false};
+  std::atomic<int> backwards{0};
+  std::atomic<int> reading{0};
+  const auto reader = [&] {
+    TimePoint last = clock.now();
+    reading.fetch_add(1);
+    while (!done.load()) {
+      const TimePoint t = clock.now();
+      if (t < last) backwards.fetch_add(1);
+      last = t;
+    }
+  };
+  Worker first(reader);
+  Worker second(reader);
+  while (reading.load() != 2) std::this_thread::yield();
+  {
+    Heckler heckler(clock, 100us);
+    Worker sleeper([&] {
+      Clock::Participant p(clock, "sleeper");
+      for (int i = 0; i < 200; ++i) clock.sleep_for(10ms);
+    });
+    EXPECT_TRUE(sleeper.join_within());
+  }
+  done.store(true);
+  ASSERT_TRUE(first.join_within());
+  ASSERT_TRUE(second.join_within());
+  EXPECT_EQ(backwards.load(), 0);
+  EXPECT_EQ(clock.now(), kStart + 2s);
+}
+
+TEST_F(VirtualClockTest, FrequentNotifiesDoNotSlowPacedTime) {
+  VirtualClock::Options options;
+  options.speed = 100;
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  Real::duration real{};
+  {
+    Heckler heckler(clock, 200us);
+    Worker sleeper([&] {
+      Clock::Participant p(clock, "sleeper");
+      const auto real_start = Real::now();
+      clock.sleep_for(10s);
+      real = Real::now() - real_start;
+    });
+    EXPECT_TRUE(sleeper.join_within());
+  }
+  EXPECT_GE(real, 90ms);
+  EXPECT_LT(real, 400ms);
+  EXPECT_EQ(clock.now(), kStart + 10s);
+}
+
+TEST_F(VirtualClockTest, AHoldEndsThePacingSleepAndKeepsTimeStill) {
+  VirtualClock::Options options;
+  options.speed = 1;
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  Worker sleeper([&] {
+    Clock::Participant p(clock, "sleeper");
+    clock.sleep_for(60s);
+  });
+  ASSERT_TRUE(await_waiters(clock, 1));
+  std::this_thread::sleep_for(20ms);
+  {
+    Clock::Hold hold(clock);
+    // What had been paid for is kept, and no more is taken.
+    const TimePoint held = clock.now();
+    EXPECT_GE(held - kStart, 20ms);
+    EXPECT_LT(held - kStart, 5s);
+    std::this_thread::sleep_for(50ms);
+    EXPECT_EQ(clock.now(), held);
+    // Not even for nothing.
+    clock.set_speed(std::numeric_limits<double>::infinity());
+    std::this_thread::sleep_for(20ms);
+    EXPECT_EQ(clock.now(), held);
+    EXPECT_FALSE(sleeper.finished());
+  }
+  ASSERT_TRUE(sleeper.join_within());
+  EXPECT_EQ(clock.now(), kStart + 60s);
+}
+
+TEST_F(VirtualClockTest, AStallUnderAHoldSaysSo) {
+  std::mutex reports_mutex;
+  std::vector<std::string> reports;
+  VirtualClock::Options options;
+  options.stall_report_after = 50ms;
+  options.on_stall = [&](std::string report) {
+    std::lock_guard lock(reports_mutex);
+    reports.push_back(std::move(report));
+  };
+  VirtualClock clock(options);  // the test thread is not a participant
+  const TimePoint kStart = clock.now();
+  auto hold = std::make_unique<Clock::Hold>(clock);
+  Worker sleeper([&] {
+    Clock::Participant p(clock, "sleeper");
+    clock.sleep_for(1s);
+  });
+  const auto give_up = Real::now() + 5s;
+  for (;;) {
+    {
+      std::lock_guard lock(reports_mutex);
+      if (!reports.empty()) break;
+    }
+    if (Real::now() > give_up) break;
+    std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_EQ(clock.now(), kStart);
+  hold.reset();
+  ASSERT_TRUE(sleeper.join_within());
   EXPECT_EQ(clock.now(), kStart + 1s);
+  std::lock_guard lock(reports_mutex);
+  ASSERT_EQ(reports.size(), 1u);
+  EXPECT_EQ(reports[0], "virtual clock held; a thread being started has not entered");
 }
 
 // An outsider with the earliest deadline is the one a leave hands the pacing

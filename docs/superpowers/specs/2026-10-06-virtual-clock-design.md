@@ -74,12 +74,17 @@ class Clock {
   // RAII. A participant is blocked on the outside world (real I/O, the UI,
   // joining a thread) and must not hold time back.
   class Detached;
+  // RAII. While one is alive this clock does not jump. Held across the
+  // start of a participant thread (section 3.7).
+  class Hold;
 
  protected:
   virtual void enter(std::string_view name) const = 0;
   virtual void leave() const = 0;
   virtual void detach() const = 0;
   virtual void reattach() const = 0;
+  virtual void hold() const = 0;
+  virtual void unhold() const = 0;
 };
 ```
 
@@ -172,13 +177,26 @@ woken by a jump, but they never hold time back.
 
 ### 3.4 Pacing
 
-With a finite `speed`, a jump of Δ first sleeps `Δ / speed` of real time on an
-internal condition variable, with the clock mutex released. If anything
-becomes runnable meanwhile (a notify from the UI thread, a new participant),
-the sleep ends, `now` advances by the part of Δ already paid for, and the
-jump is abandoned; the next thread to block starts another. `set_speed` also
-ends the sleep.
+With a finite `speed`, a jump of Δ is first paid for with `Δ / speed` of real
+time, slept on an internal condition variable with the clock mutex released.
+Time is continuous meanwhile: during the sleep `now()` and `wall_now()`
+advance at `speed`, so a reader outside (the UI, a thread that is not a
+participant) sees time pass and its own waits take their own time.
 
+The sleep is always done by a thread that is already waiting in the clock,
+never by one that is leaving, detaching or dropping a hold: such a thread
+hands the sleep to the waiter with the earliest deadline and returns at once.
+Only one thread sleeps at a time.
+
+If anything may have become runnable meanwhile (a notify that wakes a waiter,
+a new participant, the end of a `Detached`), a `Hold` is taken or `set_speed`
+is called, the sleep ends. The time paid for is credited at that instant,
+and the jump check runs again at once: if somebody is runnable time stands
+where it has got to; if nobody is, the jump is still pending and goes on from
+the same real instant, so that simulated time keeps to real time × speed
+however often the sleep is broken.
+
+A speed that is not positive stops time until `set_speed` is called again.
 At infinite speed there is no sleep and no real-time dependence at all.
 
 ### 3.5 The rule, and what happens when it is broken
@@ -203,7 +221,8 @@ runnable and jump. Waits on participants go through `wait` and `notify_*`.
 A watchdog thread, started only when `stall_report_after` is non-zero, reports
 when there are timed waiters, no jump has happened for that long in real time
 and no pacing sleep is in progress. The report lists the runnable
-participants by name.
+participants by name; when there is none and a `Hold` is alive it says that
+the clock is held.
 
 ### 3.6 What is reproducible
 
@@ -212,6 +231,19 @@ of the machine. The order in which two threads runnable at the same instant
 run is not. Code that must give the same numbers on every run cannot depend
 on that order; the simulator's noise is drawn accordingly (simulator spec
 §5.3).
+
+### 3.7 Starting a thread
+
+A thread started by a participant is unknown to the clock until its own
+`Participant` is constructed. If the starter blocks first, nobody is runnable
+and time jumps past the child. So the starter makes a shared `Clock::Hold`
+before `std::thread` and gives the child a copy; the starter drops its own
+when the thread has been started and the child drops its copy once its
+`Participant` is constructed. While any copy is alive the clock does not
+jump and no pacing sleep begins; one in progress ends, with the time paid for
+kept. When the last copy goes the jump check runs again.
+
+On `SteadyClock` and `ManualClock` a `Hold` does nothing.
 
 ## 4. Call sites
 

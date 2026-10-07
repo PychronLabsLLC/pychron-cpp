@@ -50,9 +50,12 @@ namespace pychron {
 // that leaves, detaches or drops a Hold hands the sleep to the waiter with
 // the earliest deadline and returns at once. Anything that may have made a
 // thread runnable (a notify that woke a waiter, a new participant, the end
-// of a Detached, a Hold) or changed the price (set_speed) ends the sleep:
-// now() moves on by what was paid for and the question whether to jump is
-// asked again. At infinite speed there is no sleep and no real time at all.
+// of a Detached, a Hold) or changed the price (set_speed) ends the sleep, and
+// the question whether to jump is asked again at once. Time is continuous
+// meanwhile: during the sleep now() and wall_now() advance at `speed`, an
+// interruption leaves them where they had got to, and a jump still pending
+// goes on from there. A speed that is not positive stops time. At infinite
+// speed there is no sleep and no real time at all.
 //
 // Clock::Hold: while one is alive there is no jump and no new pacing sleep;
 // the last one to go asks the question again.
@@ -70,8 +73,9 @@ namespace pychron {
 // The stall report is how a broken rule shows: a watchdog thread (none when
 // stall_report_after is zero) calls on_stall, once per stall, when for that
 // long in real time a timed waiter has been asleep, now() has not moved and
-// nobody was pacing. The message names the runnable participants; on_stall
-// runs on the watchdog's thread with the clock's mutex released.
+// nobody was pacing. The message names the runnable participants, or says
+// that the clock is held when there is none; on_stall runs on the watchdog's
+// thread with the clock's mutex released.
 class VirtualClock final : public Clock {
  public:
   struct Options {
@@ -97,7 +101,7 @@ class VirtualClock final : public Clock {
   void notify_one(std::condition_variable& cv) const override;
   void notify_all(std::condition_variable& cv) const override;
 
-  // Takes effect at once, also on a jump being paced. Zero stops time.
+  // Takes effect at once, also on a jump being paced. Zero or less stops time.
   void set_speed(double speed);
   double speed() const;
 
@@ -138,6 +142,7 @@ class VirtualClock final : public Clock {
   // `self` is the calling thread's own record when it is inside block(), and
   // null otherwise. Only a thread whose record is not runnable may pace.
   void maybe_jump_locked(std::unique_lock<std::mutex>& guard, Waiter* self) const;
+  TimePoint current_locked(std::chrono::steady_clock::time_point real_now) const;
   void advance_locked(TimePoint to) const;
   void interrupt_locked() const;
   void watch();
@@ -151,12 +156,16 @@ class VirtualClock final : public Clock {
   mutable std::size_t holds_ = 0;
 
   // The pacing sleep: from `pacing_` set until its thread has woken, with
-  // `interrupt_` set once it has been abandoned.
+  // `interrupt_` set once it has been abandoned. Until then the time is not
+  // `now_` but current_locked().
   mutable bool pacing_ = false;
   mutable bool interrupt_ = false;
   mutable TimePoint pace_target_;
   mutable double pace_speed_ = 0;
   mutable std::chrono::steady_clock::time_point pace_real_start_;
+  // The real instant `now_` was reached at, while the jump it was on the way
+  // to may still be pending.
+  mutable std::optional<std::chrono::steady_clock::time_point> resume_from_;
   mutable std::condition_variable pace_cv_;
 
   // Counts the times now() has moved; the watchdog compares it.

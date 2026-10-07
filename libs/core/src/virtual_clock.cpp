@@ -42,7 +42,7 @@ VirtualClock::~VirtualClock() {
 
 TimePoint VirtualClock::now() const {
   std::lock_guard guard(m_);
-  return now_;
+  return current_locked(Real::now());
 }
 
 WallTime VirtualClock::wall_now() const {
@@ -137,7 +137,7 @@ void VirtualClock::unhold() const {
 void VirtualClock::block(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
                          std::optional<TimePoint> deadline) const {
   std::unique_lock guard(m_);
-  if (deadline && now_ >= *deadline) return;
+  if (deadline && current_locked(Real::now()) >= *deadline) return;
 
   auto waiter = std::make_shared<Waiter>();
   waiter->key = &cv;
@@ -190,21 +190,33 @@ void VirtualClock::notify(std::condition_variable& cv) const {
   cv.notify_all();
 }
 
+TimePoint VirtualClock::current_locked(Real::time_point real_now) const {
+  // Time is continuous while a jump is being paid for: it has got as far as
+  // the real time slept so far has bought.
+  if (!pacing_ || interrupt_) return now_;
+  const Seconds delta = pace_target_ - now_;
+  const Seconds paid = Seconds(real_now - pace_real_start_) * pace_speed_;
+  return paid < delta ? now_ + std::chrono::duration_cast<Duration>(paid) : pace_target_;
+}
+
 void VirtualClock::interrupt_locked() const {
   if (!pacing_ || interrupt_) return;
+  // The jump is abandoned and time stays where it has got to, settled here
+  // and not when the pacing thread gets to run: a thread woken by the caller
+  // reads the time the interruption happened at. If the jump turns out to be
+  // still pending, the next sleep is counted from this same instant.
+  const auto real_now = Real::now();
+  const TimePoint reached = current_locked(real_now);
   interrupt_ = true;
+  resume_from_ = real_now;
   pace_cv_.notify_all();
-  // The jump is abandoned and time moves by the part that has been paid for,
-  // here and not when the pacing thread gets to run: a thread woken by the
-  // caller reads the time the interruption happened at.
-  const Seconds delta = pace_target_ - now_;
-  const Seconds paid = Seconds(Real::now() - pace_real_start_) * pace_speed_;
-  advance_locked(paid < delta ? now_ + std::chrono::duration_cast<Duration>(paid) : pace_target_);
+  advance_locked(reached);
 }
 
 void VirtualClock::advance_locked(TimePoint to) const {
   // Never backwards: a waiter whose deadline had passed was not registered,
   // and every advance wakes all that are due.
+  if (to <= now_) return;
   now_ = to;
   ++advances_;
   for (const auto& waiter : waiters_) {
@@ -222,7 +234,11 @@ void VirtualClock::maybe_jump_locked(std::unique_lock<std::mutex>& guard, Waiter
   for (;;) {
     // The pacing thread asks again when its sleep ends, the last Hold when
     // it goes.
-    if (pacing_ || holds_ > 0) return;
+    if (pacing_) return;
+    if (holds_ > 0) {
+      resume_from_.reset();
+      return;
+    }
 
     // A thread is inside at most one wait, so each non-runnable waiter owned
     // by a member is one more blocked member. A member that has been woken
@@ -240,11 +256,15 @@ void VirtualClock::maybe_jump_locked(std::unique_lock<std::mutex>& guard, Waiter
         first = waiter.get();
       }
     }
-    if (blocked < members_.size()) return;  // somebody has work to do
-    if (first == nullptr) return;           // idle until a thread outside notifies
+    // Somebody has work to do, or all is idle until a thread outside notifies.
+    if (blocked < members_.size() || first == nullptr) {
+      resume_from_.reset();
+      return;
+    }
     const TimePoint target = *first->deadline;
 
     if (speed_ == kUnpaced) {
+      resume_from_.reset();
       advance_locked(target);
       continue;
     }
@@ -258,18 +278,23 @@ void VirtualClock::maybe_jump_locked(std::unique_lock<std::mutex>& guard, Waiter
       return;
     }
 
+    // A jump that was already pending (its sleep was interrupted and nobody
+    // turned out to be runnable, or the last one woke only outsiders) goes on
+    // from the real instant time last moved at, so that simulated time keeps
+    // to real time x speed however often the sleep is broken.
     pacing_ = true;
     interrupt_ = false;
     pace_target_ = target;
     pace_speed_ = speed_ > 0 ? speed_ : 0;  // zero stops time
-    pace_real_start_ = Real::now();
+    pace_real_start_ = resume_from_.value_or(Real::now());
+    resume_from_.reset();
     const double real_seconds = Seconds(target - now_).count() / pace_speed_;
     const auto interrupted = [this] { return interrupt_; };
     if (real_seconds < kLongestSleep) {
-      pace_cv_.wait_until(
-          guard,
-          pace_real_start_ + std::chrono::duration_cast<Real::duration>(Seconds(real_seconds)),
-          interrupted);
+      const auto real_end =
+          pace_real_start_ + std::chrono::duration_cast<Real::duration>(Seconds(real_seconds));
+      pace_cv_.wait_until(guard, real_end, interrupted);
+      if (!interrupt_) resume_from_ = real_end;
     } else {
       pace_cv_.wait(guard, interrupted);
     }
@@ -301,7 +326,8 @@ void VirtualClock::watch() {
     if (reported || real_now - since < options_.stall_report_after) continue;
     reported = true;
 
-    // Whoever is neither detached nor asleep in a wait is what time waits for.
+    // Whoever is neither detached nor asleep in a wait is what time waits
+    // for; with nobody, it is a Hold.
     std::string report = "virtual clock stalled; runnable: ";
     bool any = false;
     for (const auto& [id, member] : members_) {
@@ -314,6 +340,7 @@ void VirtualClock::watch() {
       report += member.name;
       any = true;
     }
+    if (!any && holds_ > 0) report = "virtual clock held; a thread being started has not entered";
 
     // Not under the clock's mutex: the callback may use the clock.
     guard.unlock();
