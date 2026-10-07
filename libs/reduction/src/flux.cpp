@@ -5,6 +5,8 @@
 #include <cmath>
 #include <numeric>
 
+#include "least_squares.hpp"
+
 namespace pychron::reduction {
 
 Result<UFloat> j_of(const UFloat& f, const MonitorConstants& monitor) {
@@ -117,6 +119,96 @@ Predicted interpolate(const Monitor& m0, const Monitor& m1, double f, Interpolat
   return {};
 }
 
+// ---- Least-squares surfaces (design section 5.3) ----------------------------
+//
+// J = X beta over the monitors, with X the plane [x, y, 1], the bowl
+// [x^2, y^2, x, y, 1] or the powers of one coordinate, highest first. Weighted:
+// rows scaled by 1 / j_err, so the solver's covariance is C = (X'WX)^-1.
+// With s2 = r'Wr / (n - q) and g the design row of a position:
+//   weighted   Sem  var = g C g'       Msem  var = g C g' max(s2, 1)
+//   unweighted both var = s2 g C g'    (W = identity)
+// The reported mswd is always sum((r / j_err)^2) / (n - q).
+
+std::vector<double> design_row(const FitOptions& o, const Point& p) {
+  switch (o.kind) {
+    case ModelKind::Plane: return {p.x, p.y, 1.0};
+    case ModelKind::Bowl: return {p.x * p.x, p.y * p.y, p.x, p.y, 1.0};
+    default: {
+      const double t = coord(p, o.axis);
+      std::vector<double> row(static_cast<std::size_t>(o.degree) + 1, 1.0);
+      for (std::size_t k = row.size() - 1; k-- > 0;) row[k] = row[k + 1] * t;
+      return row;
+    }
+  }
+}
+
+Result<FluxFit> fit_surface(std::span<const Monitor> monitors, std::span<const Point> predict_at,
+                            const FitOptions& options, const std::string& name) {
+  const std::size_t n = monitors.size();
+  detail::Matrix a;
+  std::vector<double> y;
+  for (const Monitor& m : monitors) {
+    auto row = design_row(options, m.at);
+    double yi = m.j;
+    if (options.weighted) {
+      for (double& v : row) v /= m.j_err;
+      yi /= m.j_err;
+    }
+    a.push_back(std::move(row));
+    y.push_back(yi);
+  }
+  const std::size_t q = a.front().size();
+  auto undetermined = [&] { return fail(ErrorKind::Config, "flux: monitor positions do not determine a " + name); };
+  auto solved = detail::least_squares(a, y);
+  if (!solved) return undetermined();
+  const auto& beta = solved->beta;
+  for (double b : beta)
+    if (!std::isfinite(b)) return undetermined();
+
+  // Residuals against the unscaled model.
+  double ssr = 0.0;  // r'Wr
+  double sum_z2 = 0.0;
+  std::size_t used = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const auto row = design_row(options, monitors[i].at);
+    double fit = 0.0;
+    for (std::size_t k = 0; k < q; ++k) fit += row[k] * beta[k];
+    const double r = monitors[i].j - fit;
+    const double e = monitors[i].j_err;
+    ssr += options.weighted ? (r / e) * (r / e) : r * r;
+    if (e > 0.0) {  // an unweighted fit may carry a monitor with no error; it is not in the mswd
+      sum_z2 += (r / e) * (r / e);
+      ++used;
+    }
+  }
+  const double dof = static_cast<double>(n - q);
+  const double s2 = ssr / dof;
+
+  FluxFit out;
+  out.parameters = beta;
+  out.dof = static_cast<int>(n - q);
+  out.mswd = used > q ? sum_z2 / static_cast<double>(used - q) : 0.0;
+  for (const Point& p : predict_at) {
+    const auto g = design_row(options, p);
+    double var = 0.0;
+    double value = 0.0;
+    for (std::size_t i = 0; i < q; ++i) {
+      value += g[i] * beta[i];
+      for (std::size_t k = 0; k < q; ++k) var += g[i] * solved->cov_unscaled[i][k] * g[k];
+    }
+    if (options.weighted) {
+      if (options.error == MeanErrorKind::Msem) var *= std::max(s2, 1.0);
+    } else {
+      var *= s2;
+    }
+    if (!std::isfinite(value) || !std::isfinite(var) || var < 0.0) return undetermined();
+    out.at.push_back({value, std::sqrt(var)});
+  }
+  if (!predict_at.empty() && used > q && !mswd_acceptable(out.mswd, used, static_cast<int>(q)))
+    out.notes.push_back({0, FitNote::MswdOutsideLimits});
+  return out;
+}
+
 }  // namespace
 
 bool is_least_squares(ModelKind kind) noexcept {
@@ -145,6 +237,9 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
     return fail(ErrorKind::Config, "flux: nearest neighbors needs at least 1 neighbor");
   if (options.kind == ModelKind::LeastSquares1D && (options.degree < 1 || options.degree > 4))
     return fail(ErrorKind::Config, "flux: least squares 1D degree must be 1 to 4");
+
+  if (is_least_squares(options.kind) && options.error == MeanErrorKind::Sd)
+    return fail(ErrorKind::Config, "flux: sd is not an error kind of a fitted surface");
 
   const std::size_t need = minimum_monitors(options);
   if (monitors.size() < need)
@@ -251,7 +346,7 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
     case ModelKind::Plane:
     case ModelKind::Bowl:
     case ModelKind::LeastSquares1D:
-      break;
+      return fit_surface(monitors, predict_at, options, name);
   }
   return fail(ErrorKind::Config, "flux: model not implemented");
 }

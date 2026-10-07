@@ -4,7 +4,10 @@
 
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
+
+#include "flux_golden.hpp"
 
 namespace pr = pychron::reduction;
 
@@ -398,6 +401,216 @@ TEST(FluxModels, NegativeErrorNamesTheMonitor) {
   auto f = pr::fit_flux(m, std::vector<pr::Point>{{1, 0}}, options(pr::ModelKind::Matching));
   ASSERT_FALSE(f);
   EXPECT_NE(f.error().what.find("monitor neg has a negative error"), std::string::npos) << f.error().what;
+}
+
+// ---- Least-squares models --------------------------------------------------------
+
+template <std::size_t N>
+std::vector<pr::Monitor> monitors_of(const flux_golden::MonitorRow (&rows)[N]) {
+  std::vector<pr::Monitor> out;
+  for (const auto& r : rows) out.push_back({r.label, {r.x, r.y}, r.j, r.j_err});
+  return out;
+}
+
+std::vector<pr::Point> golden_points() {
+  std::vector<pr::Point> out;
+  for (const auto& p : flux_golden::kPoints) out.push_back({p.x, p.y});
+  return out;
+}
+
+pr::FitOptions ls_options(pr::ModelKind kind, bool weighted, pr::MeanErrorKind error = pr::MeanErrorKind::Sem,
+                          pr::Axis axis = pr::Axis::X, int degree = 1) {
+  pr::FitOptions o;
+  o.kind = kind;
+  o.weighted = weighted;
+  o.error = error;
+  o.axis = axis;
+  o.degree = degree;
+  return o;
+}
+
+// A 5 x 5 grid of holes whose J is f(x, y); every error 0.1.
+template <class F>
+std::vector<pr::Monitor> grid(F f) {
+  std::vector<pr::Monitor> out;
+  for (int i = 0; i < 5; ++i)
+    for (int k = 0; k < 5; ++k)
+      out.push_back({std::to_string(i) + "," + std::to_string(k), {double(i), double(k)}, f(double(i), double(k)), 0.1});
+  return out;
+}
+
+void expect_close(double actual, double expected, double rel, const std::string& what) {
+  EXPECT_NEAR(actual, expected, std::abs(expected) * rel) << what;
+}
+
+TEST(FluxLeastSquares, MatchesTheReference) {
+  const auto ring = monitors_of(flux_golden::kRing), mixed = monitors_of(flux_golden::kMixed);
+  const auto points = golden_points();
+  for (const auto& c : flux_golden::kCases) {
+    const std::string model = c.model;
+    pr::FitOptions o;
+    o.weighted = c.weighted;
+    o.error = std::string(c.error) == "msem" ? pr::MeanErrorKind::Msem : pr::MeanErrorKind::Sem;
+    o.axis = std::string(c.axis) == "y" ? pr::Axis::Y : pr::Axis::X;
+    o.degree = c.degree;
+    o.kind = model == "plane" ? pr::ModelKind::Plane : model == "bowl" ? pr::ModelKind::Bowl : pr::ModelKind::LeastSquares1D;
+    auto f = pr::fit_flux(model == "bowl" ? mixed : ring, points, o);
+    ASSERT_TRUE(f) << c.name << ": " << f.error().what;
+    ASSERT_EQ(f->parameters.size(), c.parameters.size()) << c.name;
+    for (std::size_t i = 0; i < c.parameters.size(); ++i)
+      expect_close(f->parameters[i], c.parameters[i], 1e-10, std::string(c.name) + " parameter " + std::to_string(i));
+    expect_close(f->mswd, c.mswd, 1e-10, std::string(c.name) + " mswd");
+    EXPECT_EQ(f->dof, c.dof) << c.name;
+    ASSERT_EQ(f->at.size(), 4u) << c.name;
+    for (std::size_t i = 0; i < 4; ++i) {
+      expect_close(f->at[i].j, c.j[i], 1e-10, std::string(c.name) + " j " + std::to_string(i));
+      expect_close(f->at[i].j_err, c.j_err[i], 1e-10, std::string(c.name) + " j_err " + std::to_string(i));
+    }
+  }
+}
+
+TEST(FluxLeastSquares, PlaneRecoversAKnownPlane) {  // legacy error_propagation.py:809-880
+  auto f = pr::fit_flux(grid([](double x, double y) { return x + 2 * y; }), std::vector<pr::Point>{{1, 1}},
+                        ls_options(pr::ModelKind::Plane, false));
+  ASSERT_TRUE(f) << f.error().what;
+  ASSERT_EQ(f->parameters.size(), 3u);
+  EXPECT_NEAR(f->parameters[0], 1.0, 1e-12);
+  EXPECT_NEAR(f->parameters[1], 2.0, 1e-12);
+  EXPECT_NEAR(f->parameters[2], 0.0, 1e-12);
+  EXPECT_NEAR(f->at[0].j, 3.0, 1e-12);
+  EXPECT_EQ(f->dof, 22);
+}
+
+TEST(FluxLeastSquares, BowlRecoversAKnownBowl) {
+  auto f = pr::fit_flux(grid([](double x, double y) { return x + 2 * y; }), std::vector<pr::Point>{{1, 1}},
+                        ls_options(pr::ModelKind::Bowl, false));
+  ASSERT_TRUE(f) << f.error().what;
+  ASSERT_EQ(f->parameters.size(), 5u);
+  const double expect[5] = {0, 0, 1, 2, 0};
+  for (std::size_t i = 0; i < 5; ++i) EXPECT_NEAR(f->parameters[i], expect[i], 1e-12) << i;
+  EXPECT_NEAR(f->at[0].j, 3.0, 1e-12);
+  EXPECT_EQ(f->dof, 20);
+}
+
+TEST(FluxLeastSquares, MswdIsAboutTheSurfaceNotTheMean) {  // X1
+  std::vector<pr::Monitor> m;
+  for (int i = 0; i < 6; ++i) {
+    const double x = i, y = (i * 7) % 5;
+    m.push_back({std::to_string(i), {x, y}, 1.0 + 0.5 * x - 0.3 * y, 1e-7});
+  }
+  for (bool weighted : {true, false}) {
+    auto f = pr::fit_flux(m, std::vector<pr::Point>{{1, 1}}, ls_options(pr::ModelKind::Plane, weighted));
+    ASSERT_TRUE(f) << f.error().what;
+    EXPECT_LT(f->mswd, 1e-6) << weighted;
+  }
+}
+
+TEST(FluxLeastSquares, WeightedIsHonouredByAllThree) {  // X3
+  const auto ring = monitors_of(flux_golden::kRing), mixed = monitors_of(flux_golden::kMixed);
+  const std::vector<pr::Point> at{{0, 0}};
+  struct Case { pr::ModelKind kind; const std::vector<pr::Monitor>* m; int degree; };
+  for (const Case& c : {Case{pr::ModelKind::Plane, &ring, 1}, Case{pr::ModelKind::Bowl, &mixed, 1},
+                        Case{pr::ModelKind::LeastSquares1D, &ring, 2}}) {
+    auto w = pr::fit_flux(*c.m, at, ls_options(c.kind, true, pr::MeanErrorKind::Sem, pr::Axis::X, c.degree));
+    auto u = pr::fit_flux(*c.m, at, ls_options(c.kind, false, pr::MeanErrorKind::Sem, pr::Axis::X, c.degree));
+    ASSERT_TRUE(w);
+    ASSERT_TRUE(u);
+    ASSERT_EQ(w->parameters.size(), u->parameters.size());
+    bool differ = false;
+    for (std::size_t i = 0; i < w->parameters.size(); ++i)
+      differ = differ || std::abs(w->parameters[i] - u->parameters[i]) > 1e-9 * std::abs(u->parameters[i]);
+    EXPECT_TRUE(differ) << pr::minimum_monitors(ls_options(c.kind, true));
+  }
+}
+
+TEST(FluxLeastSquares, SdIsAnError) {  // F13/X13
+  const auto ring = monitors_of(flux_golden::kRing), mixed = monitors_of(flux_golden::kMixed);
+  for (auto kind : {pr::ModelKind::Plane, pr::ModelKind::Bowl, pr::ModelKind::LeastSquares1D})
+    for (bool weighted : {true, false}) {
+      auto f = pr::fit_flux(kind == pr::ModelKind::Bowl ? mixed : ring, std::vector<pr::Point>{{0, 0}},
+                            ls_options(kind, weighted, pr::MeanErrorKind::Sd));
+      ASSERT_FALSE(f);
+      EXPECT_NE(f.error().what.find("sd is not an error kind of a fitted surface"), std::string::npos) << f.error().what;
+    }
+}
+
+TEST(FluxLeastSquares, OneFewerThanTheMinimumIsAnError) {  // X4/X12
+  const auto ring = monitors_of(flux_golden::kRing);
+  auto first = [&](std::size_t n) { return std::vector<pr::Monitor>(ring.begin(), ring.begin() + static_cast<long>(n)); };
+  const std::vector<pr::Point> at{{0, 0}};
+  auto plane = pr::fit_flux(first(3), at, ls_options(pr::ModelKind::Plane, false));
+  ASSERT_FALSE(plane);
+  EXPECT_NE(plane.error().what.find("plane needs 4 monitor positions, 3 used"), std::string::npos) << plane.error().what;
+  auto bowl = pr::fit_flux(first(5), at, ls_options(pr::ModelKind::Bowl, false));
+  ASSERT_FALSE(bowl);
+  EXPECT_NE(bowl.error().what.find("bowl needs 6 monitor positions, 5 used"), std::string::npos) << bowl.error().what;
+  auto ls = pr::fit_flux(first(3), at, ls_options(pr::ModelKind::LeastSquares1D, false, pr::MeanErrorKind::Sem, pr::Axis::X, 2));
+  ASSERT_FALSE(ls);
+  EXPECT_NE(ls.error().what.find("least squares 1D needs 4 monitor positions, 3 used"), std::string::npos)
+      << ls.error().what;
+}
+
+TEST(FluxLeastSquares, MonitorsThatDoNotDetermineTheSurface) {  // Review Focus 1
+  auto expect_undetermined = [](const std::vector<pr::Monitor>& m, const pr::FitOptions& o) {
+    auto f = pr::fit_flux(m, std::vector<pr::Point>{{1, 1}}, o);
+    ASSERT_FALSE(f);
+    EXPECT_NE(f.error().what.find("monitor positions do not determine"), std::string::npos) << f.error().what;
+  };
+  const auto plane = ls_options(pr::ModelKind::Plane, false);
+  // Four collinear monitors.
+  expect_undetermined({{"a", {0, 0}, 1.0, 0.1}, {"b", {1, 1}, 2.0, 0.1}, {"c", {2, 2}, 3.5, 0.1}, {"d", {3, 3}, 4.0, 0.1}}, plane);
+  // Two at the same place, the rest collinear with them.
+  expect_undetermined({{"a", {0, 0}, 1.0, 0.1}, {"b", {0, 0}, 1.2, 0.1}, {"c", {2, 1}, 3.5, 0.1}, {"d", {4, 2}, 4.0, 0.1}}, plane);
+  // Every monitor at the same x.
+  expect_undetermined({{"a", {3, 0}, 1.0, 0.1}, {"b", {3, 1}, 2.0, 0.1}, {"c", {3, 2}, 3.0, 0.1}, {"d", {3, 3}, 4.0, 0.1}},
+                      ls_options(pr::ModelKind::LeastSquares1D, false));
+  // A bowl on a single ring: x^2 + y^2 is constant.
+  expect_undetermined(monitors_of(flux_golden::kRing), ls_options(pr::ModelKind::Bowl, false));
+  expect_undetermined(monitors_of(flux_golden::kRing), ls_options(pr::ModelKind::Bowl, true, pr::MeanErrorKind::Msem));
+}
+
+TEST(FluxLeastSquares, ZeroErrorInAWeightedFitNamesTheMonitor) {  // X5
+  auto m = monitors_of(flux_golden::kRing);
+  m[3].j_err = 0.0;
+  m[3].label = "zero-one";
+  auto f = pr::fit_flux(m, std::vector<pr::Point>{{0, 0}}, ls_options(pr::ModelKind::Plane, true));
+  ASSERT_FALSE(f);
+  EXPECT_NE(f.error().what.find("zero-one"), std::string::npos) << f.error().what;
+}
+
+TEST(FluxLeastSquares, AnUnweightedFitUsesAMonitorWithNoErrorButSkipsItInTheMswd) {  // R5
+  auto m = monitors_of(flux_golden::kRing);
+  const auto at = std::vector<pr::Point>{{0, 0}};
+  auto with = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, false));
+  ASSERT_TRUE(with);
+  m[3].j_err = 0.0;
+  auto f = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, false));
+  ASSERT_TRUE(f) << f.error().what;
+  EXPECT_EQ(f->parameters, with->parameters);  // still used in the fit
+  EXPECT_EQ(f->dof, with->dof);
+  EXPECT_TRUE(std::isfinite(f->mswd));
+  EXPECT_NE(f->mswd, with->mswd);
+  for (auto& x : m) x.j_err = 0.0;
+  auto none = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, false));
+  ASSERT_TRUE(none);
+  EXPECT_EQ(none->mswd, 0.0);
+}
+
+TEST(FluxLeastSquares, MswdOutsideLimitsIsNoted) {
+  auto m = monitors_of(flux_golden::kRing);
+  const std::vector<pr::Point> at{{0, 0}, {1, 1}};
+  auto good = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, true));
+  ASSERT_TRUE(good);
+  EXPECT_TRUE(good->notes.empty()) << good->mswd;
+
+  // The reference offsets, 20 times larger.
+  for (std::size_t i = 0; i < m.size(); ++i) {
+    const double base = 1e-3 * (1 + 0.002 * m[i].at.x - 0.001 * m[i].at.y);
+    m[i].j = base + 20.0 * (m[i].j - base);
+  }
+  auto bad = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, true));
+  ASSERT_TRUE(bad);
+  EXPECT_EQ(bad->notes, (std::vector<pr::PointNote>{{0, pr::FitNote::MswdOutsideLimits}}));
 }
 
 }  // namespace
