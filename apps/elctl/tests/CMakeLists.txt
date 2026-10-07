@@ -12,6 +12,7 @@ if(TARGET pychron_persistence)
   # TinyORM by its headers only: its library is already linked through persistence.
   target_include_directories(pychron_elctl_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/dvc"
+    "${PROJECT_SOURCE_DIR}/tests/processing"
     "${PROJECT_SOURCE_DIR}/libs/persistence/src"
     $<TARGET_PROPERTY:TinyOrm::TinyOrm,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(pychron_elctl_tests PRIVATE

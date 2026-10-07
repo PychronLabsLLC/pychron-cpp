@@ -32,7 +32,7 @@ inline constexpr double kSeedSpread = 2e-3;
 inline constexpr double kSeedAr39 = 100.0;
 
 struct SeededLevel {
-  persistence::Uuid acquisition_client, mass_spectrometer, irradiation, level, holder;
+  persistence::Uuid acquisition_client, mass_spectrometer, irradiation, level, holder, unknown_sample;
   std::string irradiation_name = "NM-300", level_name = "A", holder_name = "12-hole";
   std::map<int, persistence::Uuid> positions;             // by hole
   std::map<std::string, persistence::Uuid> analyses;      // by record id ("66001-01")
@@ -144,8 +144,9 @@ inline Result<persistence::Uuid> seed_ingest_monitor(persistence::IStore& store,
 
 // The whole level. `actor` publishes the references (holder, production,
 // chronology); the catalog rows and the analyses belong to a new acquisition
-// client, "acq-1".
-inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const persistence::Actor& actor) {
+// client, "acq-1". `monitor_sample` names the sample of holes 1-8.
+inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const persistence::Actor& actor,
+                                           const std::string& monitor_sample = "FC-2") {
   namespace ps = persistence;
 #define PYCHRON_SEED_TRY(var, expr) \
   auto var = (expr);                \
@@ -173,8 +174,10 @@ inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const per
   PYCHRON_SEED_TRY(pi, store.add_principal_investigator(*acq, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt}));
   PYCHRON_SEED_TRY(project, store.add_project(*acq, {"Fish Canyon", *pi, std::nullopt}));
   PYCHRON_SEED_TRY(material, store.add_material(*acq, {"sanidine", "60-80", std::nullopt}));
-  PYCHRON_SEED_TRY(monitor, store.add_sample(*acq, {.name = "FC-2", .project = *project, .material = *material}));
+  PYCHRON_SEED_TRY(monitor, store.add_sample(*acq, {.name = monitor_sample, .project = *project, .material = *material}));
   PYCHRON_SEED_TRY(unknown, store.add_sample(*acq, {.name = "unk", .project = *project, .material = *material}));
+
+  out.unknown_sample = *unknown;
 
   for (int hole = 1; hole <= 12; ++hole) {
     const bool ring = hole <= 8;
@@ -220,6 +223,22 @@ inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const per
     }
 #undef PYCHRON_SEED_TRY
   return out;
+}
+
+// A second level of the seeded irradiation, on the same holder, with one
+// unknown (identifier 66201) and no monitor: a level that cannot be fitted.
+inline Result<void> seed_level_without_monitors(persistence::IStore& store, const SeededLevel& seeded,
+                                                const std::string& name) {
+  namespace ps = persistence;
+  auto level = store.add_level(seeded.acquisition_client, {seeded.irradiation, name, seeded.holder, 0.5, std::nullopt, std::nullopt});
+  if (!level) return fail(level.error());
+  auto position = store.add_irradiation_position(seeded.acquisition_client,
+                                                 {*level, 1, seeded.unknown_sample, std::nullopt, {}, {}, std::nullopt});
+  if (!position) return fail(position.error());
+  auto added = store.add_identifier(seeded.acquisition_client,
+                                    {"66201", "unknown", std::nullopt, std::nullopt, *position, std::nullopt, std::nullopt});
+  if (!added) return fail(added.error());
+  return {};
 }
 
 // A flux_position revision of a hole, shaped as the importer and save_level
