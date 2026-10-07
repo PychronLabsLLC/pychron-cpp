@@ -6,6 +6,7 @@ file(GLOB PYCHRON_INTEGRATION_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DI
 if(PYCHRON_INTEGRATION_TESTS)
   add_executable(pychron_integration_tests ${PYCHRON_INTEGRATION_TESTS})
   target_link_libraries(pychron_integration_tests PRIVATE pychron::experiment pychron::systems GTest::gtest_main)
+  target_include_directories(pychron_integration_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
   target_compile_definitions(pychron_integration_tests PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_PLAN_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/experiment/fixtures/plans/valid")

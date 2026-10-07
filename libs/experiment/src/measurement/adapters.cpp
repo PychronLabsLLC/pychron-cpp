@@ -1,8 +1,8 @@
 #include "pychron/experiment/measurement/adapters.hpp"
 
-#include <atomic>
-#include <chrono>
-#include <thread>
+#include <cstdint>
+#include <memory>
+#include <utility>
 #include <variant>
 
 namespace pychron::experiment::measurement {
@@ -89,23 +89,31 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
   auto cfg = config_for(request);
   if (!cfg) return fail(cfg.error());
 
-  // Bridge the run's token to the job's: poll it while the job runs.
-  jobs::CancelToken job_token;
-  std::atomic<bool> running{true};
-  std::thread bridge([&] {
-    while (running) {
-      if (token.requested()) {
-        // Repeated until the job ends: it may not be registered with the runner yet.
-        job_token.cancel();
-        if (runner_ != nullptr)
-          if (auto id = runner_->current()) (void)runner_->cancel(*id);
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-  });
+  // Bridge the run's token to the job's: a cancel of the run is made on the
+  // job by the thread that requests it, for as long as the job runs. Shared:
+  // the runner keeps the job's body, which looks at it, in its history.
+  const auto job_token = std::make_shared<jobs::CancelToken>();
+  struct Bridge {
+    scripting::CancelToken& token;
+    std::uint64_t id;
+    // Waits for a call in progress: the callback refers to this frame.
+    ~Bridge() { token.remove_on_cancel(id); }
+  } bridge{token, token.add_on_cancel([&] {
+             job_token->cancel();
+             if (runner_ != nullptr)
+               if (auto id = runner_->current()) (void)runner_->cancel(*id);
+           })};
   Result<jobs::PeakCenterResult> result = fail(ErrorKind::Config, "peak center did not run");
   if (runner_ != nullptr) {
-    auto job = runner_->run(jobs::peak_center_job(*cfg, options_));
+    // The runner gives the job a token of its own, which the callback reaches
+    // only once the job is the runner's current one. A cancel made before
+    // that is on job_token alone, so the job looks at it as it starts.
+    auto spec = jobs::peak_center_job(*cfg, options_);
+    spec.body = [job_token, body = std::move(spec.body)](jobs::JobContext& ctx) -> Result<std::any> {
+      if (job_token->cancelled()) return fail(ErrorKind::Cancelled, "peak center cancelled", "peak_center");
+      return body(ctx);
+    };
+    auto job = runner_->run(std::move(spec));
     if (!job) {
       result = fail(job.error());
     } else if (job->state != jobs::JobState::Succeeded) {
@@ -115,10 +123,8 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
     }
   } else {
     jobs::Progress progress;
-    result = jobs::run_peak_center(spec_, *cfg, progress, job_token, options_);
+    result = jobs::run_peak_center(spec_, *cfg, progress, *job_token, options_);
   }
-  running = false;
-  bridge.join();
   if (!result) return fail(result.error());
 
   {

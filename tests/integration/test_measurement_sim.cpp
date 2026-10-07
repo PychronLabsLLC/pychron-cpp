@@ -21,6 +21,9 @@
 #include <thread>
 
 #include "sim_pump.hpp"
+#include "virtual_time.hpp"
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/systems/jobs/job_runner.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/executor/executor.hpp"
@@ -488,6 +491,173 @@ TEST_F(MeasurementSim, PeakCenterFindsAnOffsetPeakAndTheNextRunMeasuresOnIt) {
   }
   ASSERT_TRUE(peak_center.last());
   EXPECT_FALSE(peak_center.last()->tries.empty());
+}
+
+// ---- SpectrometerPeakCenter and the run's token ------------------------------
+
+// A peak center long enough to be cancelled part way: 80 steps of 1 s.
+jobs::PeakCenterConfig slow_peak_center() {
+  jobs::PeakCenterConfig cfg;
+  cfg.name = "slow";
+  cfg.window = 0.08;
+  cfg.step = 0.001;
+  cfg.integration = std::chrono::seconds(1);
+  return cfg;
+}
+
+PeakCenterRequest slow_request() {
+  PeakCenterRequest request;
+  request.isotope = "Ar40";
+  request.detector = "H1";
+  request.config = "slow";
+  return request;
+}
+
+class SpectrometerPeakCenterSim : public MeasurementSim {
+ protected:
+  // Cancels `token` from another thread once the job is acquiring.
+  Result<PeakCenterReport> cancel_part_way(SpectrometerPeakCenter& peak_center, scripting::CancelToken& token) {
+    std::atomic<bool> gave_up{false};
+    std::thread canceller([&] {
+      gave_up = !pychron::testing::eventually_real([&] { return spec_->acquisition().running(); });
+      token.cancel();
+    });
+    auto r = peak_center.peak_center(slow_request(), token);
+    canceller.join();
+    EXPECT_FALSE(gave_up) << "the job never started to acquire";
+    return r;
+  }
+};
+
+TEST_F(SpectrometerPeakCenterSim, CancellingTheRunCancelsTheJob) {
+  SpectrometerPeakCenter peak_center(*spec_, {{"slow", slow_peak_center()}});
+  scripting::CancelToken token;
+  auto r = cancel_part_way(peak_center, token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
+  EXPECT_FALSE(peak_center.last());
+  // Nothing of the call is left on the token: a later request calls nothing.
+  token.abort();
+}
+
+TEST_F(SpectrometerPeakCenterSim, CancellingTheRunCancelsTheJobOnARunner) {
+  jobs::JobRunner runner(*spec_, scheduler_, bus_, clock_);
+  std::mutex mutex;
+  std::vector<jobs::JobState> finished;
+  auto sub = bus_.subscribe<jobs::JobFinished>([&](const jobs::JobFinished& e) {
+    std::lock_guard lock(mutex);
+    finished.push_back(e.job.state);
+  });
+  SpectrometerPeakCenter peak_center(*spec_, {{"slow", slow_peak_center()}}, &runner);
+  scripting::CancelToken token;
+  auto r = cancel_part_way(peak_center, token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
+  EXPECT_FALSE(runner.busy());
+  {
+    std::lock_guard lock(mutex);
+    ASSERT_EQ(finished.size(), 1u);
+    EXPECT_EQ(finished[0], jobs::JobState::Cancelled);
+  }
+  token.abort();
+}
+
+// Cancelled before the job is registered with the runner, when there is no
+// current job for the cancel to find.
+TEST_F(SpectrometerPeakCenterSim, ARunAlreadyCancelledDoesNotRunTheJob) {
+  for (bool with_runner : {false, true}) {
+    SCOPED_TRACE(with_runner);
+    jobs::JobRunner runner(*spec_, scheduler_, bus_, clock_);
+    SpectrometerPeakCenter peak_center(*spec_, {{"slow", slow_peak_center()}}, with_runner ? &runner : nullptr);
+    scripting::CancelToken token;
+    token.cancel();
+    const auto before = clock_.now();
+    auto r = peak_center.peak_center(slow_request(), token);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
+    // Not one step of the 80 was measured.
+    EXPECT_LT(clock_.now() - before, 60s);
+    EXPECT_FALSE(runner.busy());
+  }
+}
+
+// The same spectrometer on a VirtualClock: the scheduler's dispatcher runs the
+// acquisition polls and the test's thread, a participant, runs the job.
+class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
+ protected:
+  static VirtualClock::Options options(SpectrometerPeakCenterVirtual* self) {
+    VirtualClock::Options o;
+    o.stall_report_after = 200ms;
+    o.on_stall = [self](std::string what) {
+      std::lock_guard lock(self->mutex_);
+      self->stalls_.push_back(std::move(what));
+    };
+    return o;
+  }
+
+  void SetUp() override {
+    auto data = spectrometer::cfg::load_spectrometer(kDir / "spectrometer.sim-integrated.toml");
+    ASSERT_TRUE(data) << data.error().what;
+    auto table = spectrometer::to_field_table(data->tables.at(data->config.magnet.field_table));
+    sim::BeamSettings settings;
+    settings.nominal_hv = *data->config.source.nominal_hv;
+    settings.table_value = [table](double mass, const std::string& det) {
+      auto v = table.value_for(mass, det);
+      return v ? *v : mass / 8.0;
+    };
+    beam_ = std::make_shared<sim::BeamModel>(clock_, settings);
+    sim::BeamModelRegistry::global().set("default", beam_);
+    auto spec = spectrometer::SpectrometerAssembler::assemble(
+        std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_});
+    ASSERT_TRUE(spec) << spec.error().what;
+    spec_ = std::move(*spec);
+    scheduler_.start();
+  }
+
+  void TearDown() override {
+    scheduler_.stop();
+    spec_.reset();
+    sim::BeamModelRegistry::global().clear();
+  }
+
+  std::vector<std::string> stalls() {
+    std::lock_guard lock(mutex_);
+    return stalls_;
+  }
+
+  std::mutex mutex_;
+  std::vector<std::string> stalls_;
+  VirtualClock clock_{options(this)};  // before everything that is given a reference to it
+  Clock::Participant test_{clock_, "test"};
+  SignalBus bus_;
+  Scheduler scheduler_{clock_, &bus_, Scheduler::Options{0}};
+  std::shared_ptr<sim::BeamModel> beam_;
+  std::unique_ptr<spectrometer::Spectrometer> spec_;
+};
+
+TEST_F(SpectrometerPeakCenterVirtual, RunsWithoutAHelperThread) {
+  jobs::PeakCenterConfig wide;
+  wide.name = "wide";
+  wide.window = 0.08;
+  wide.step = 0.002;
+  wide.integration = std::chrono::seconds(1);
+  SpectrometerPeakCenter peak_center(*spec_, {{"wide", wide}});
+  PeakCenterRequest request;
+  request.isotope = "Ar40";
+  request.detector = "H1";
+  request.config = "wide";
+
+  scripting::CancelToken token;
+  const auto started = clock_.now();
+  const auto real_started = std::chrono::steady_clock::now();
+  auto r = peak_center.peak_center(request, token);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->ok) << r->message;
+  // 40 steps of 1 s and more of simulated time, in none of real time.
+  EXPECT_GE(clock_.now() - started, 40s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_started, 5s);
+  // Nothing beside the job kept time standing.
+  EXPECT_TRUE(stalls().empty()) << stalls().front();
 }
 
 }  // namespace
