@@ -294,6 +294,92 @@ TEST(FluxOptionsJson, SdOnASurfaceReadsAsMsem) {
   EXPECT_FALSE(mean.sd_replaced);
 }
 
+// ---- "Unchanged" (R16) -------------------------------------------------------
+
+// A flat JSON object (no comma or colon inside a value) with its members in
+// the reverse order and a space after each colon and comma.
+std::string reordered_and_spaced(const std::string& json) {
+  std::vector<std::string> members;
+  std::string member;
+  for (const char c : json.substr(1, json.size() - 2)) {
+    if (c == ',') {
+      members.push_back(member);
+      member.clear();
+    } else {
+      member += c;
+      if (c == ':') member += ' ';
+    }
+  }
+  members.push_back(member);
+  std::string out = "{";
+  for (auto it = members.rbegin(); it != members.rend(); ++it) out += (it == members.rbegin() ? "" : ", ") + *it;
+  return out + "}";
+}
+
+// A jsonb column gives the options back with its own spacing and key order,
+// and the version that saved is no part of the fit.
+TEST(FluxSameValue, OptionsCompareAsJsonWithoutTheSoftware) {
+  FluxOptions o;
+  o.fit.kind = pr::ModelKind::Bowl;
+  const MonitorSet kuiper = default_monitor_sets().sets[0];
+  ps::FluxValue a;
+  a.j = 1.0e-3;
+  a.j_err = 2.0e-7;
+  a.monitor_name = kuiper.name;
+  a.options_json = flux_options_json(o, kuiper, true, false, 1.12, 5, "pychron-cpp 0.4.0");
+  EXPECT_TRUE(same_flux_value(a, a));
+
+  // As PostgreSQL returns a jsonb: its own key order, a space after each colon and comma.
+  ps::FluxValue stored = a;
+  stored.options_json = reordered_and_spaced(*a.options_json);
+  ASSERT_NE(*stored.options_json, *a.options_json);
+  ASSERT_TRUE(has(*stored.options_json, R"("model_kind": "Bowl", )")) << *stored.options_json;
+  ASSERT_EQ(parse_flux_options(*stored.options_json).options, std::optional<FluxOptions>(o));
+  EXPECT_TRUE(same_flux_value(a, stored));
+  EXPECT_TRUE(same_flux_value(stored, a));
+
+  ps::FluxValue newer = a;  // a version bump and nothing else
+  newer.options_json = flux_options_json(o, kuiper, true, false, 1.12, 5, "pychron-cpp 0.5.0");
+  EXPECT_TRUE(same_flux_value(a, newer));
+  EXPECT_TRUE(same_flux_value(stored, newer));
+
+  ps::FluxValue plane = a;
+  FluxOptions p = o;
+  p.fit.kind = pr::ModelKind::Plane;
+  plane.options_json = flux_options_json(p, kuiper, true, false, 1.12, 5, "pychron-cpp 0.4.0");
+  EXPECT_FALSE(same_flux_value(a, plane));
+  EXPECT_FALSE(same_flux_value(stored, plane));
+
+  // Every other key of the options counts, and every other field.
+  ps::FluxValue excluded = a;
+  excluded.options_json = flux_options_json(o, kuiper, true, true, 1.12, 5, "pychron-cpp 0.4.0");
+  EXPECT_FALSE(same_flux_value(a, excluded));
+  ps::FluxValue other_j = stored;
+  other_j.j = 1.1e-3;
+  EXPECT_FALSE(same_flux_value(a, other_j));
+  ps::FluxValue omitted = stored;
+  omitted.analyses = {{std::nullopt, "66001-01", true}};
+  EXPECT_FALSE(same_flux_value(a, omitted));
+}
+
+TEST(FluxSameValue, OptionsThatAreNotJsonCompareAsText) {
+  ps::FluxValue a, b;
+  EXPECT_TRUE(same_flux_value(a, b));  // neither has options
+  a.options_json = "not json";
+  EXPECT_FALSE(same_flux_value(a, b));
+  b.options_json = "not json";
+  EXPECT_TRUE(same_flux_value(a, b));
+  b.options_json = "not  json";
+  EXPECT_FALSE(same_flux_value(a, b));
+  b.options_json = "{}";
+  EXPECT_FALSE(same_flux_value(a, b));
+  a.options_json = R"({"software":"x"})";  // only the software differs
+  EXPECT_TRUE(same_flux_value(a, b));
+  a.options_json = "[1, 2]";  // not an object: nothing to leave out
+  b.options_json = "[1,2]";
+  EXPECT_TRUE(same_flux_value(a, b));
+}
+
 // ---- load_level (design section 6.1) ----------------------------------------
 
 class FluxLoadLevel : public testing::FluxStoreTest {
@@ -1015,6 +1101,21 @@ TEST_F(FluxSaveLevel, ASecondSaveWritesNothing) {
     ASSERT_TRUE(history) << to_string(history.error());
     EXPECT_EQ(history->size(), 1u) << n;
   }
+}
+
+// R16 (revises R3): the software that saved is no part of the fit, so a new
+// version saving the same fit writes nothing.
+TEST_F(FluxSaveLevel, ASaveByAnotherVersionWritesNothing) {
+  const LevelFit fit = fitted();
+  ASSERT_EQ(save(fit).written, 12);
+  const ps::ChangeSeq saved = change_seq();
+  auto outcome = save_level(store(), actor(), fitted(), {}, "pychron-cpp 9.9.9");
+  ASSERT_TRUE(outcome) << to_string(outcome.error());
+  EXPECT_EQ(outcome->written, 0);
+  EXPECT_EQ(outcome->unchanged, 12);
+  EXPECT_FALSE(outcome->conflict);
+  EXPECT_EQ(change_seq(), saved);
+  EXPECT_TRUE(has(head_value(1).options_json.value_or(""), R"("software":"test")"));
 }
 
 TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {

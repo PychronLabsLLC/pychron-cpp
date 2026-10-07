@@ -137,4 +137,31 @@ std::string flux_options_json(const FluxOptions& options, const MonitorSet& moni
   return j.dump();
 }
 
+namespace {
+
+// The options without the version that wrote them; discarded when the text
+// is not JSON.
+Json fit_of(const std::string& options_json) {
+  Json j = Json::parse(options_json, nullptr, false);
+  if (j.is_object()) j.erase("software");
+  return j;
+}
+
+bool same_options(const std::optional<std::string>& a, const std::optional<std::string>& b) {
+  if (!a || !b) return a.has_value() == b.has_value();
+  if (*a == *b) return true;
+  const Json ja = fit_of(*a), jb = fit_of(*b);
+  return !ja.is_discarded() && !jb.is_discarded() && ja == jb;
+}
+
+}  // namespace
+
+bool same_flux_value(const persistence::FluxValue& a, const persistence::FluxValue& b) {
+  if (!same_options(a.options_json, b.options_json)) return false;
+  persistence::FluxValue rest_a = a, rest_b = b;  // every other field, whatever FluxValue grows
+  rest_a.options_json.reset();
+  rest_b.options_json.reset();
+  return rest_a == rest_b;
+}
+
 }  // namespace pychron::processing

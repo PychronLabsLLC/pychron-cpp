@@ -322,7 +322,7 @@ Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, co
       if (!payload) return fail(payload.error());
       const auto* ref = *payload ? std::get_if<ps::RefPayload>(&**payload) : nullptr;
       const auto* flux = ref ? std::get_if<ps::FluxValue>(ref) : nullptr;
-      if (flux && *flux == value) {
+      if (flux && same_flux_value(*flux, value)) {
         ++out.unchanged;
         continue;
       }

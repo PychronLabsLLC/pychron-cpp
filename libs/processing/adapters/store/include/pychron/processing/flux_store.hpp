@@ -75,6 +75,13 @@ FluxOptionsDoc parse_flux_options(std::string_view options_json);
 std::string flux_options_json(const FluxOptions& options, const MonitorSet& monitor_set, bool used_in_fit,
                               bool excluded, double fit_mswd, int fit_dof, std::string_view software);
 
+// Whether two saved values are the same fit, so that saving one over the
+// other would change nothing: every field equal, and the options equal as
+// JSON (a jsonb column gives them back with its own key order and spacing)
+// with `software` left out of both: the version that saved is no part of
+// the fit. Options that are not JSON compare as text.
+bool same_flux_value(const persistence::FluxValue& a, const persistence::FluxValue& b);
+
 // ---- Loading a level (design section 6.1) -----------------------------------
 
 struct MonitorSelection {
@@ -115,7 +122,8 @@ persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& 
 
 // One `Reference` changeset, "fit flux for <irradiation><level>", with a
 // revision for every position of the fit that is not skipped and whose value
-// is not already its head's; a save that would write nothing commits nothing.
+// is not already its head's (same_flux_value: the software that saved does
+// not count); a save that would write nothing commits nothing.
 // Each head moves by compare-and-swap from the revision the level was loaded
 // with (`FittedPosition::saved_revision`): a head someone moved since makes
 // the save a conflict, of the lowest such hole, and nothing is written. A
