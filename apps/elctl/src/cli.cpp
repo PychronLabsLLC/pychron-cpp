@@ -61,7 +61,7 @@ constexpr const char* kUsageText =
     "  exp validate <experiment.toml> [--lab <dir>] [--spectrometer <file>]\n"
     "                              check a queue against the lab's plans, scripts and conditionals\n"
     "  exp run <experiment.toml> [--lab <dir>] [--data <dir>] [--spectrometer <file>]\n"
-    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
+    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max]\n"
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
     "  laser trays                 tray maps and their stage calibrations\n"

@@ -40,48 +40,58 @@ instant execute.
 
 ## 2. Interface
 
-`libs/core/include/pychron/core/clock.hpp`:
+`libs/core/include/pychron/core/clock.hpp` (the three guards are shown
+without their bodies: each is constructed with the clock, `Participant` also
+with a name, and none can be copied):
 
 ```cpp
+using Duration = std::chrono::steady_clock::duration;
+using TimePoint = std::chrono::steady_clock::time_point;
 using WallTime = std::chrono::system_clock::time_point;
 
+// Monotonic time source, injected wherever time matters so tests can drive it.
 class Clock {
  public:
   virtual ~Clock() = default;
 
   virtual TimePoint now() const = 0;
-  // Calendar time, for stamps that are written down.
-  virtual WallTime wall_now() const = 0;
 
   // Block on `cv` (whose mutex `lock` holds) until notified or until this
   // clock reaches `deadline`. Spurious returns are allowed; callers re-check.
   virtual void wait_until(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
                           TimePoint deadline) const = 0;
-  // The same with no deadline.
+
+  // Calendar time, for stamps that are written down (the monotonic now() is not).
+  virtual WallTime wall_now() const = 0;
+
+  // Block on `cv` (whose mutex `lock` holds) until notified, with no deadline.
+  // Spurious returns are allowed; callers re-check.
   virtual void wait(std::condition_variable& cv, std::unique_lock<std::mutex>& lock) const = 0;
 
-  // Wake waiters that blocked on `cv` through this clock. A condition
-  // variable waited on through a clock is notified through that clock, after
-  // its state has been changed under the waiters' mutex.
+  // A condition variable that is waited on through a clock is notified through
+  // that clock, after its state has been changed under the waiters' mutex.
   virtual void notify_one(std::condition_variable& cv) const = 0;
   virtual void notify_all(std::condition_variable& cv) const = 0;
 
-  // Blocks the calling thread for `d` of this clock's time. In a test whose
-  // main thread is a participant, this is how time is moved on.
+  // Block the calling thread for `d` of this clock's time.
   void sleep_for(Duration d) const;
 
-  // RAII. The calling thread lives in this clock's time from construction
-  // to destruction. `name` appears in the stall report.
-  class Participant;
-  // RAII. A participant is blocked on the outside world (real I/O, the UI,
-  // joining a thread) and must not hold time back.
-  class Detached;
-  // RAII. While one is alive this clock does not jump. Held across the
-  // start of a participant thread (section 3.7).
-  class Hold;
+  // A thread that takes part in a clock's time keeps one of these for as long
+  // as it does. Nothing happens on the clocks that need no bookkeeping.
+  class Participant;  // Participant(const Clock& clock, std::string_view name)
+
+  // A participant that is about to block on something outside the clock holds
+  // one of these, so the clock does not wait for it.
+  class Detached;  // explicit Detached(const Clock& clock)
+
+  // While one is alive this clock does not jump. A thread that starts a
+  // participant thread makes one (shared) before std::thread and gives the
+  // child a copy; the child drops it once its Participant is constructed.
+  // Otherwise a starter that blocks first lets time go past the child, which
+  // the clock has not heard of yet.
+  class Hold;  // explicit Hold(const Clock& clock)
 
  protected:
-  // What the guards call. They do nothing unless a clock overrides them.
   virtual void enter(std::string_view name) const;
   virtual void leave() const;
   virtual void detach() const;
@@ -90,6 +100,17 @@ class Clock {
   virtual void unhold() const;
 };
 ```
+
+The protected functions are what the guards call (`Participant`: `enter` and
+`leave`; `Detached`: `detach` and `reattach`; `Hold`: `hold` and `unhold`).
+They are not pure: in `Clock` they do nothing, and only `VirtualClock`
+overrides them. `sleep_for` is not virtual: it waits with `wait_until` on a
+condition variable of its own until `now()` has reached the deadline, and
+returns at once for a duration that is not positive. A participant's name
+appears in the stall report (3.5). "Outside the clock" for `Detached` means
+the outside world (real I/O, a program, the operator); it never means another
+participant, and so never a join of a participant thread (3.5, 4.2). In a
+test whose own thread is a participant, `sleep_for` is how time is moved on.
 
 | Clock | `wait_until` | `wait` | `notify_*` | guards | `wall_now` |
 |---|---|---|---|---|---|
@@ -269,12 +290,13 @@ contended `lock()` waits through the clock: a flag under an inner
 `clock.notify_one`. A contender is then blocked like any other waiter and
 time goes on for the holder. It is Lockable (`std::lock_guard`,
 `std::unique_lock`, `std::scoped_lock`), not recursive, and promises no order
-among contenders. On `SteadyClock` it is a plain mutex.
+among contenders. On `SteadyClock` it behaves as a plain mutex (it is still
+the flag and the condition variable, waited on for real).
 
 `pychron::RecursiveClockMutex` (same header) is the same for a mutex its
 owner takes again: an owner and a depth under the inner mutex, free once the
-owner has unlocked as often as it locked. On `SteadyClock` it is a plain
-recursive mutex.
+owner has unlocked as often as it locked. On `SteadyClock` it behaves as a
+plain recursive mutex.
 
 A clock mutex is for a mutex that is held across a wait in clock time, a
 transport call, or a call into something that does either: "one command in
@@ -333,7 +355,8 @@ hold time back.
 | executor `wait_until(pred)` | `cv.wait_for(10 ms)` | `clock.wait`; slot completion notifies through the clock |
 | `SpectrometerPeakCenter::peak_center` bridge | helper thread, `sleep_for(10 ms)` | no thread: the run's `CancelToken` gets an `on_cancel` callback that cancels this call's job token, which is linked to the job's own token when the job starts |
 | `CancelToken::cancel/abort/wake` | `cv.notify_all` | notify through the clock the current waiter passed in (remembered under the token mutex; plain notify when nobody waits) |
-| `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock; `PolledAcquirer::start` and `FramePacer::start`, which move the time a frame is due, notify as well |
+| `IntensityStream`, `collect`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock; `PolledAcquirer::start` and `FramePacer::start`, which move the time a frame is due, notify as well |
+| `SwitchManager` (a settle), `move_protocol` (the waits of a move) | already on the clock | unchanged: both only call `clock.sleep_for` and read `clock.now()`; neither has a condition variable, so there is nothing to notify |
 | `AcquisitionEngine` (`acquisition.cpp`): `start`, `stop` and `collect` waiting for polls under way and for readings | `cv.wait` | `clock.wait` on `polls_cv_` and `collect_cv_`; notified through the clock |
 | `JobRunner::wait_idle`, `~JobRunner` | `cv.wait` | `clock.wait`; the end of a job notifies through the clock |
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
@@ -437,7 +460,7 @@ tests' own pumps are deleted and their users moved to `VirtualClock`.
 
 `tests/core/test_clock_mutex.cpp`: a contended `ClockMutex` and
 `RecursiveClockMutex` under a holder that waits in the clock (time goes on;
-with a plain mutex the test stalls), and both as plain mutexes on a
+with a plain mutex the test stalls), and both behaving as plain mutexes on a
 `SteadyClock`.
 
 `tests/support/virtual_time.hpp` (`pychron::testing`) is what the tests in

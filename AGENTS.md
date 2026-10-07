@@ -183,7 +183,8 @@ and time stops; a thread woken any other way is not heard. Hence:
 - Timestamps that are written down come from `clock.wall_now()`, not
   `system_clock::now()`, so a simulated session is stamped in simulated time.
 - On `SteadyClock` all of this is a pass-through: `Participant`, `Hold` and
-  `Detached` do nothing and the clock mutexes are plain mutexes. What is left
+  `Detached` do nothing and the clock mutexes behave as plain mutexes (each
+  is still a flag and a condition variable, not a `std::mutex`). What is left
   on real time on purpose (the log hub, the camera's live timeouts, a
   script's `max_wall_time`, the notifier, the UI's own threads) is listed in
   the spec, sections 4.4 and 4.5; add to that list rather than to the code.
@@ -197,12 +198,19 @@ Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
 - Its other threads are started with `Crew`, which follows the start and
   join rules above. `await_waiters(clock, n)` waits (in real time, with a
   limit) until `n` threads are asleep in the clock.
-- No real sleeps for correctness. A real-time bound in a test is an upper
-  bound of 5 s or more, there only to tell "took no real time" from a stall.
-- A stuck test does not hang: the clock reports `virtual clock stalled;
-  runnable: <name>` on stderr after 10 s, naming the participants that are
-  not waiting in it (start looking there: a raw wait, a plain mutex, a bare
-  join), and the fixture aborts the test after 30 s.
+- In a simulated-time test, no real sleeps for correctness, and a real-time
+  bound is an upper bound of 5 s or more, there only to tell "took no real
+  time" from a stall. The `*Steady` tests (`ExampleLineSteady`,
+  `NgxLinkSteady`, `QtegraAcquireSteady`, `AdcBankSteady`) are the exception
+  by design: they keep the hardware arrangement under test on a
+  `SteadyClock`, with short real sleeps and real lower bounds.
+- A stuck test does not hang: the fixture's dead-man always aborts it after
+  30 s of real time, with a message. When some thread is waiting in the clock
+  for a deadline, the clock also reports `virtual clock stalled; runnable:
+  <name>` on stderr after 10 s, naming the participants that are not waiting
+  in it (start looking there: a raw wait, a plain mutex, a bare join). With
+  no timed waiter (everybody waiting untimed, say for a notify that never
+  comes) there is no such report, only the abort.
 - `ManualClock` remains for single-threaded unit tests that step time by
   hand. Nothing advances it for a waiting thread: `advance()` wakes no
   untimed waiter, and a thread waiting on one that nobody advances waits for
