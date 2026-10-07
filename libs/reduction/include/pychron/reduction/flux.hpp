@@ -8,6 +8,7 @@
 // Documented deviations are marked "Deviation:".
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
@@ -57,5 +58,73 @@ struct PositionMean {
 // silently.
 Result<PositionMean> mean_j(std::span<const MonitorAnalysis> analyses, const MonitorConstants& monitor,
                             MeanKind kind, MeanErrorKind error);
+
+// ---- Flux models (design section 5.3) ---------------------------------------
+
+struct Point {
+  double x = 0, y = 0;
+};
+
+// A monitor position's mean J and its error.
+struct Monitor {
+  std::string label;
+  Point at;
+  double j = 0, j_err = 0;
+};
+
+enum class ModelKind {
+  Plane,
+  Bowl,
+  WeightedMean,
+  Matching,
+  NearestNeighbors,
+  Bracketing,
+  LeastSquares1D,
+  WeightedMean1D,
+  Bracketing1D
+};
+enum class Interpolation { WeightedMean, Average, Linear };
+enum class Axis { X, Y };
+
+struct FitOptions {
+  ModelKind kind = ModelKind::Plane;
+  bool weighted = false;                       // least-squares kinds
+  MeanErrorKind error = MeanErrorKind::Msem;   // mean kinds
+  int n_neighbors = 2;                         // NearestNeighbors
+  Interpolation interpolation = Interpolation::WeightedMean;  // Bracketing, Bracketing1D
+  Axis axis = Axis::X;                         // the 1D kinds
+  int degree = 1;                              // LeastSquares1D, 1..4
+  friend bool operator==(const FitOptions&, const FitOptions&) = default;
+};
+
+struct Predicted {
+  double j = 0, j_err = 0;
+};
+
+enum class FitNote { Extrapolated, MswdOutsideLimits };
+struct PointNote {
+  std::size_t point = 0;  // index into the predicted positions
+  FitNote note = FitNote::Extrapolated;
+  friend bool operator==(const PointNote&, const PointNote&) = default;
+};
+
+struct FluxFit {
+  std::vector<Predicted> at;  // one per predicted position
+  std::vector<double> parameters;
+  double mswd = 0;
+  int dof = 0;
+  std::vector<PointNote> notes;
+};
+
+bool is_least_squares(ModelKind kind) noexcept;  // Plane, Bowl, LeastSquares1D
+// Fewest monitor positions the model can be fitted with (design table 5.4).
+std::size_t minimum_monitors(const FitOptions& options);
+
+// J and its error at each position of `predict_at`. Error (Config,
+// "flux: ...") on non-finite input (naming the monitor or the point), a zero
+// error in a weighted model (naming the monitor), bad options or too few
+// monitors.
+Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Point> predict_at,
+                         const FitOptions& options);
 
 }  // namespace pychron::reduction
