@@ -1,9 +1,16 @@
 // ExperimentWindow end to end on the sim lab (simulated time paced at 400x): open the example
 // queue, run it, follow it; confirmations, saving, and View > Experiment.
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <QAction>
 #include <QComboBox>

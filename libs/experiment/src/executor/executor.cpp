@@ -1,9 +1,13 @@
 #include "pychron/experiment/executor/executor.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <string_view>
+#include <system_error>
 
 #include "pychron/experiment/conditionals/metrics.hpp"
 

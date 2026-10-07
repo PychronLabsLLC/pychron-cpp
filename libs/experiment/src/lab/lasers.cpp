@@ -1,5 +1,6 @@
 #include "pychron/experiment/lab/lasers.hpp"
 
+#include <optional>
 #include <utility>
 
 #include "pychron/devices/extraction/interfaces.hpp"

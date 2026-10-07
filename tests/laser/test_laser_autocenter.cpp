@@ -2,9 +2,12 @@
 // autocenter design, sections 5 and 6). The laser system on the Chromium
 // simulator, with the simulated camera seeing the tray where it really is.
 
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 

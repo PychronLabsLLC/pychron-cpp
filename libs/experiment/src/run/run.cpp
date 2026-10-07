@@ -2,10 +2,13 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <memory>
 #include <random>
+#include <string_view>
 #include <thread>
 
 #include "pychron/experiment/measurement/results.hpp"

@@ -23,6 +23,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <string_view>
+#include <cstdint>
+#include <cstddef>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"

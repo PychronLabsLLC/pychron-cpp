@@ -20,6 +20,12 @@
 #include <mutex>
 #include <sstream>
 #include <set>
+#include <memory>
+#include <vector>
+#include <string>
+#include <string_view>
+#include <algorithm>
+#include <system_error>
 
 #include "virtual_time.hpp"
 #include "pychron/core/virtual_clock.hpp"

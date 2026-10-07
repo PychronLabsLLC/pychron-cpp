@@ -11,6 +11,7 @@
 #include <locale>
 #include <optional>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 #include "pychron/vision/finder.hpp"

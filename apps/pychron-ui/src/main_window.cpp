@@ -5,6 +5,7 @@
 #include "shortcuts.hpp"
 #include "theme.hpp"
 
+#include <string>
 #include <utility>
 
 #include <QApplication>

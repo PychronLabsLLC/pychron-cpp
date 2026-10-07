@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <set>
 
 namespace pychron::spectrometer {

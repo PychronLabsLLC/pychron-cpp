@@ -7,8 +7,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"

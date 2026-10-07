@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <istream>
@@ -12,6 +13,8 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
+#include <system_error>
 #include <thread>
 
 #include "duration.hpp"

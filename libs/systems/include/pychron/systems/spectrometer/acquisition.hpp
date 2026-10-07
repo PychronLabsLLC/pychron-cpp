@@ -9,7 +9,9 @@
 // Policy (saturation protection, recording) is not here: the engine flags,
 // subscribers and Spectrometer decide.
 
+#include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>

@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 #include "laser_harness.hpp"
 #include "pychron/vision/pgm.hpp"
 

@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <iomanip>
 #include <locale>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <sstream>

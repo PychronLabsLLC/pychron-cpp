@@ -1,9 +1,13 @@
 // ExtractionLine valve locks: facade, SwitchLockChanged events, Snapshot and
 // persistence across restarts via the state file.
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>

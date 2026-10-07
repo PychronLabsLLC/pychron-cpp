@@ -9,9 +9,15 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/virtual_clock.hpp"

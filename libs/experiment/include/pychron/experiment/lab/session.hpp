@@ -28,6 +28,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <cstddef>
 
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/executor/executor.hpp"

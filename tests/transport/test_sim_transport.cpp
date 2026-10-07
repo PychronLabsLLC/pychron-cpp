@@ -3,9 +3,12 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "virtual_time.hpp"

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <string_view>
 
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"
 #include "pychron/transport/link_transport.hpp"

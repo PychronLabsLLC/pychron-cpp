@@ -1,5 +1,7 @@
 #include "pychron/devices/spectrometer/qtegra_link.hpp"
 
+#include <mutex>
+
 namespace pychron::spectrometer {
 
 QtegraLink::QtegraLink(Transport& transport, codec::qtegra::Terminator terminator, const Clock& clock)

@@ -3,10 +3,14 @@
 // gauge values and alarm colouring.
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 

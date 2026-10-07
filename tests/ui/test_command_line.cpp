@@ -1,6 +1,7 @@
 // pychron-ui argument parsing: positional files, --sim, --spectrometer and the
 // experiment options.
 
+#include <cstddef>
 #include <filesystem>
 
 #include <QtTest/QtTest>

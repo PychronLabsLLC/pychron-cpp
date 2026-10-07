@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"

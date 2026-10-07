@@ -1,7 +1,9 @@
 #include "pychron/systems/spectrometer/move_protocol.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 
 namespace pychron::spectrometer {

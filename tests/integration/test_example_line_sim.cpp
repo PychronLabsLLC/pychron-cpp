@@ -15,9 +15,11 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 

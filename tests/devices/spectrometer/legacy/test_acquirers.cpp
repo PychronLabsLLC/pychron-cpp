@@ -1,7 +1,13 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <future>
+#include <memory>
+#include <optional>
+#include <vector>
 
 #include "pychron/codecs/modbus_adc.hpp"
 #include "pychron/core/virtual_clock.hpp"

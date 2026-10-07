@@ -10,8 +10,11 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "pychron/devices/extraction/interfaces.hpp"

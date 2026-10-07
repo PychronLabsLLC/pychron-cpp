@@ -1,9 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"

@@ -7,7 +7,9 @@
 #include "laser_harness.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <memory>

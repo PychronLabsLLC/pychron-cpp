@@ -2,7 +2,10 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <future>
+#include <memory>
+#include <optional>
 
 #include <gtest/gtest.h>
 

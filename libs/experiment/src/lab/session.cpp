@@ -1,5 +1,6 @@
 #include "pychron/experiment/lab/session.hpp"
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <utility>

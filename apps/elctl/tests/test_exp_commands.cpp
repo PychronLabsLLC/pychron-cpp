@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "elctl_fixture.hpp"
 #include "exp.hpp"

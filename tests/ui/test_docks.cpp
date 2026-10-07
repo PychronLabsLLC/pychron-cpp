@@ -1,6 +1,8 @@
 // LogDock, AlarmDock, HealthBar and the assembled MainWindow wiring.
 
 #include <chrono>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>

@@ -1,7 +1,9 @@
 #include "pychron/devices/spectrometer/ngx.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 
 #include "pychron/core/env.hpp"
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"

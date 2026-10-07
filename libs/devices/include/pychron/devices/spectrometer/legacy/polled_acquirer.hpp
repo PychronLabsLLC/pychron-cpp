@@ -6,6 +6,7 @@
 // stamps it with host time. A failed read still consumes a seq number, so
 // consumers see the gap as a dropped frame.
 
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>

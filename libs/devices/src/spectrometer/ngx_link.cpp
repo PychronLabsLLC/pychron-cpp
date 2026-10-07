@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/ngx_link.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <system_error>
 
 #include "pychron/transport/link_transport.hpp"

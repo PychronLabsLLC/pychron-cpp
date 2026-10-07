@@ -11,10 +11,14 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"

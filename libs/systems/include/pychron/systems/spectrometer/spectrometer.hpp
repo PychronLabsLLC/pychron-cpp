@@ -16,6 +16,7 @@
 // clock's time.
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>

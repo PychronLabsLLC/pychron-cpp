@@ -1,5 +1,7 @@
 #include "pychron/devices/reconnect.hpp"
 
+#include <mutex>
+
 namespace pychron {
 
 Reconnector::Reconnector(Transport& transport, const Clock& clock, Duration min_interval)

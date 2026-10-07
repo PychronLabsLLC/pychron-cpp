@@ -2,10 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 

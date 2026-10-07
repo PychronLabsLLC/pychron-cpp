@@ -4,11 +4,15 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/sim/spectrometer/sim_drivers.hpp"

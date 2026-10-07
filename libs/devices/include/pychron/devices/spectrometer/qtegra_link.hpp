@@ -13,6 +13,7 @@
 // the spectrometer driver always did: reopen the transport, run the owner's
 // handshake, retry. Borrowers trigger the same repair.
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>

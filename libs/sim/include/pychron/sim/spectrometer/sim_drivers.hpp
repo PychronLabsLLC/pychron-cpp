@@ -15,7 +15,9 @@
 // (default "default"); tests construct them directly with a model. Time comes
 // from the model's Clock, so a ManualClock drives frame pacing and motion.
 
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>

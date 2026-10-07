@@ -5,12 +5,17 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra.hpp"
