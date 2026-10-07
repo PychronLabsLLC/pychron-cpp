@@ -182,7 +182,7 @@ TEST(FluxModels, BracketingLinearPicksTheTwoNearestOfFour) {  // regression.py:3
 TEST(FluxModels, Bracketing1D) {  // regression.py:579-656
   const std::vector<pr::Monitor> m{{"1", {0, 0}, 1.0, 0.1}, {"2", {10, 0}, 2.0, 0.2}, {"3", {20, 0}, 4.0, 0.4}};
   const std::vector<pr::Point> at{{5, 0}, {2.5, 0}, {-10, 0}, {30, 0}};
-  auto o = options(pr::ModelKind::Bracketing1D, pr::Interpolation::Linear);
+  auto o = options(pr::ModelKind::Bracketing1D);
   auto f = pr::fit_flux(m, at, o);
   ASSERT_TRUE(f);
   EXPECT_NEAR(f->at[0].j, 1.5, 1e-12);
@@ -208,12 +208,23 @@ TEST(FluxModels, Bracketing1D) {  // regression.py:579-656
   auto h = pr::fit_flux(along_y, at_y, o);
   ASSERT_TRUE(h);
   for (std::size_t i = 0; i < at.size(); ++i) EXPECT_DOUBLE_EQ(h->at[i].j, f->at[i].j);
+
+  // Always linear: `interpolation` is ignored.
+  for (auto how : {pr::Interpolation::WeightedMean, pr::Interpolation::Average, pr::Interpolation::Linear}) {
+    auto k = pr::fit_flux(m, at, options(pr::ModelKind::Bracketing1D, how));
+    ASSERT_TRUE(k);
+    EXPECT_EQ(k->notes, f->notes);
+    for (std::size_t i = 0; i < at.size(); ++i) {
+      EXPECT_DOUBLE_EQ(k->at[i].j, f->at[i].j);
+      EXPECT_DOUBLE_EQ(k->at[i].j_err, f->at[i].j_err);
+    }
+  }
 }
 
 TEST(FluxModels, ExtrapolationIsNoted) {  // X10
   const std::vector<pr::Monitor> m{{"1", {0, 0}, 1.0, 0.1}, {"2", {10, 0}, 2.0, 0.2}, {"3", {20, 0}, 4.0, 0.4}};
   auto f = pr::fit_flux(m, std::vector<pr::Point>{{-10, 0}, {5, 0}, {30, 0}},
-                        options(pr::ModelKind::Bracketing1D, pr::Interpolation::Linear));
+                        options(pr::ModelKind::Bracketing1D));
   ASSERT_TRUE(f);
   EXPECT_EQ(f->notes, (std::vector<pr::PointNote>{{0, pr::FitNote::Extrapolated}, {2, pr::FitNote::Extrapolated}}));
 
@@ -340,7 +351,7 @@ TEST(FluxModels, NonFiniteInputNamesTheMonitor) {
 
 TEST(FluxModels, Bracketing1DWithCoincidentMonitors) {
   const std::vector<pr::Monitor> m{{"a", {5, 0}, 1.0, 0.1}, {"b", {5, 0}, 3.0, 0.1}};
-  auto f = pr::fit_flux(m, std::vector<pr::Point>{{5, 0}}, options(pr::ModelKind::Bracketing1D, pr::Interpolation::Linear));
+  auto f = pr::fit_flux(m, std::vector<pr::Point>{{5, 0}}, options(pr::ModelKind::Bracketing1D));
   ASSERT_TRUE(f);
   EXPECT_DOUBLE_EQ(f->at[0].j, 1.0);
   EXPECT_TRUE(std::isfinite(f->at[0].j_err));
@@ -351,12 +362,42 @@ TEST(FluxModels, BadOptionsAreErrors) {
   const std::vector<pr::Point> at{{1, 0}};
   auto o = options(pr::ModelKind::NearestNeighbors);
   o.n_neighbors = 0;
-  EXPECT_FALSE(pr::fit_flux(m, at, o));
+  auto n = pr::fit_flux(m, at, o);
+  ASSERT_FALSE(n);
+  EXPECT_NE(n.error().what.find("at least 1 neighbor"), std::string::npos) << n.error().what;
   o = options(pr::ModelKind::LeastSquares1D);
-  o.degree = 0;
-  EXPECT_FALSE(pr::fit_flux(m, at, o));
-  o.degree = 5;
-  EXPECT_FALSE(pr::fit_flux(m, at, o));
+  for (int degree : {0, 5}) {
+    o.degree = degree;
+    auto f = pr::fit_flux(m, at, o);
+    ASSERT_FALSE(f);
+    EXPECT_NE(f.error().what.find("degree must be 1 to 4"), std::string::npos) << f.error().what;
+  }
+}
+
+TEST(FluxModels, MswdOutsideLimitsIsNoted) {
+  auto o = options(pr::ModelKind::WeightedMean);
+  o.error = pr::MeanErrorKind::Sem;
+  const std::vector<pr::Point> at{{0, 0}, {1, 1}};
+  const std::vector<pr::Monitor> apart{{"a", {0, 0}, 1.0, 0.01}, {"b", {10, 0}, 2.0, 0.01}, {"c", {20, 0}, 3.0, 0.01}};
+  auto f = pr::fit_flux(apart, at, o);
+  ASSERT_TRUE(f);
+  EXPECT_EQ(f->notes, (std::vector<pr::PointNote>{{0, pr::FitNote::MswdOutsideLimits}}));
+
+  const std::vector<pr::Monitor> together{{"a", {0, 0}, 1.000, 0.001}, {"b", {10, 0}, 1.001, 0.001}, {"c", {20, 0}, 0.999, 0.001}};
+  auto g = pr::fit_flux(together, at, o);
+  ASSERT_TRUE(g);
+  EXPECT_TRUE(g->notes.empty());
+
+  auto h = pr::fit_flux(std::vector<pr::Monitor>{apart[0]}, at, o);
+  ASSERT_TRUE(h);
+  EXPECT_TRUE(h->notes.empty());
+}
+
+TEST(FluxModels, NegativeErrorNamesTheMonitor) {
+  const std::vector<pr::Monitor> m{{"a", {0, 0}, 1.0, 0.1}, {"neg", {10, 0}, 2.0, -0.2}};
+  auto f = pr::fit_flux(m, std::vector<pr::Point>{{1, 0}}, options(pr::ModelKind::Matching));
+  ASSERT_FALSE(f);
+  EXPECT_NE(f.error().what.find("monitor neg has a negative error"), std::string::npos) << f.error().what;
 }
 
 }  // namespace

@@ -87,8 +87,9 @@ bool uses_errors(const FitOptions& o) {
     case ModelKind::NearestNeighbors:
       return true;
     case ModelKind::Bracketing:
-    case ModelKind::Bracketing1D:
       return o.interpolation != Interpolation::Average;
+    case ModelKind::Bracketing1D:  // always linear
+      return true;
     default:
       return false;
   }
@@ -152,9 +153,9 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
 
   const bool weighted = uses_errors(options) || (is_least_squares(options.kind) && options.weighted);
   for (const Monitor& m : monitors) {
-    if (!std::isfinite(m.at.x) || !std::isfinite(m.at.y) || !std::isfinite(m.j) || !std::isfinite(m.j_err) ||
-        m.j_err < 0.0)
+    if (!std::isfinite(m.at.x) || !std::isfinite(m.at.y) || !std::isfinite(m.j) || !std::isfinite(m.j_err))
       return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a non-finite position, J or error");
+    if (m.j_err < 0.0) return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a negative error");
     if (weighted && m.j_err == 0.0)
       return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a zero J error, which a weighted model cannot use");
   }
@@ -242,9 +243,8 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
         const Monitor& m1 = monitors[idx[hi]];
         const double c0 = coord(m0.at, options.axis), span = coord(m1.at, options.axis) - c0;
         const double f = span == 0.0 ? 0.0 : (p - c0) / span;
-        out.at.push_back(interpolate(m0, m1, f, options.interpolation));
-        if (options.interpolation == Interpolation::Linear && (f < 0.0 || f > 1.0))
-          out.notes.push_back({i, FitNote::Extrapolated});
+        out.at.push_back(interpolate(m0, m1, f, Interpolation::Linear));  // always linear
+        if (f < 0.0 || f > 1.0) out.notes.push_back({i, FitNote::Extrapolated});
       }
       return out;
     }
