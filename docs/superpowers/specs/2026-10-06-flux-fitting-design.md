@@ -282,8 +282,8 @@ Result<persistence::CommitOutcome> save_monitor_sets(persistence::IStore&, const
 
 struct MonitorSelection {
   std::string monitor_set;            // empty: the saved fit's, else the document's default
-  std::optional<std::string> sample;  // overrides the set's sample name
-  bool all_positions = false;
+  std::optional<std::string> sample;  // nullopt: the saved fit's, else the set's
+  std::optional<bool> all_positions;  // nullopt: as saved, else false (R18)
 };
 
 struct LevelInputs;   // positions, geometry, monitor analyses with F, saved revisions, monitor set
@@ -295,14 +295,15 @@ struct FluxOptions {  // reduction::FitOptions plus the mean
 struct Edits {
   std::set<std::string> omit, include;   // record ids; `include` overrides a tag or a saved omission
   std::set<int> exclude_positions;       // holes left out of the fit
-  bool reset_omits = false;              // ignore the omissions of the saved fit
+  bool reset_omits = false;              // ignore the omissions and exclusions of the saved fit
 };
 
 Result<LevelInputs> load_level(IAnalysisSource&, persistence::IStore&, std::string_view irradiation,
                                std::string_view level, const MonitorSelection&);
 Result<LevelFit>    fit_level(const LevelInputs&, const FluxOptions&, const Edits&);   // pure
-Result<SaveOutcome> save_level(persistence::IStore&, const persistence::Actor&, const LevelFit&,
-                               const SaveSelection&);
+Result<FluxSaveOutcome> save_level(persistence::IStore&, const persistence::Actor&, const LevelFit&,
+                                   const SaveSelection&, std::string_view software);
+bool same_flux_value(const persistence::FluxValue&, const persistence::FluxValue&);   // "unchanged" (R16)
 ```
 
 ### 6.1 `load_level`
@@ -310,11 +311,19 @@ Result<SaveOutcome> save_level(persistence::IStore&, const persistence::Actor&, 
 1. The level sheet (`IStore::level_sheet`): positions, samples, identifiers.
    An unknown irradiation or level is an error.
 2. The monitor set (F6). With no set named, the one the level's saved fit
-   used; failing that, the document's default.
+   used; failing that, the document's default. When the saved fit names a
+   set the document does not have, the default is used and
+   `LevelInputs::saved_monitor_set` / `saved_monitor_set_missing` say so
+   (R17).
 3. Monitor positions are those whose sample name equals the set's `sample`
    (or `MonitorSelection::sample`). Unknown positions are the others that
    have an identifier. With `all_positions`, every position that has analyses
-   is a monitor and appears in the monitor table only.
+   is a monitor and appears in the monitor table only. What the selection
+   does not say is as the level's newest saved fit had it (F9, R18): its
+   `monitor_sample` when no sample is given, its `all_positions` when
+   `MonitorSelection::all_positions` is `nullopt`. `LevelInputs` carries
+   what was used (`monitor_set.sample`, `all_positions`), and a save writes
+   it.
 4. The monitor analyses, through the source, reduced as any analysis is; F
    is `ReducedAnalysis::arar->f`, which needs no J. An analysis whose
    reduction failed is carried with its error and takes no part. An analysis
@@ -332,9 +341,17 @@ Result<SaveOutcome> save_level(persistence::IStore&, const persistence::Actor&, 
 
 Pure. An analysis is omitted when it is in `Edits::omit`, or (unless
 `reset_omits`) was omitted in the saved fit, or starts omitted by its tag,
-and is not in `Edits::include`. A monitor position is left out of the fit
-when it is in `exclude_positions`, was left out in the saved fit (unless
-`reset_omits`), or has no usable analysis; it still gets a predicted J.
+and is not in `Edits::include`. An analysis that did not reduce, or gives
+no J, takes no part but is not "omitted": a save does not carry it forward
+as an omission (R15). A monitor position is left out of the fit when it is
+excluded or has no usable analysis; it still gets a predicted J. It is
+excluded (`FittedPosition::excluded`) when it is in `exclude_positions`, or
+(unless `reset_omits`) the saved fit says `excluded: true`. A saved revision
+with no `excluded` key (saved before R15, or imported) excludes a monitor
+only when it says `used_in_fit: false` and has a `mean_j`: the monitor had
+analyses and still was not used. `used_in_fit: false` alone excludes
+nothing, since it is also what a monitor with no analyses yet, and every
+unknown, is saved with.
 
 Result, per position: hole, identifier, sample, x, y, `n`, saved `j`, mean
 `j` and error and MSWD (monitors), predicted `j` and error,
@@ -367,7 +384,9 @@ work:
      `monitor_material`, `monitor_age`, `monitor_age_err`: from the monitor
      set (F4).
    - `position_jerr`: absent (F5).
-   - `analyses`: every monitor analysis of the position with `is_omitted`.
+   - `analyses`: every monitor analysis of the position with `is_omitted`,
+     true only for an analysis omitted by rule (tag, `--omit`, a carried
+     saved omission), never for one that could not be used (R15).
    - `options_json`: section 6.4.
 2. A position with no reference object gets one (key
    `<irrad>/<level>/<pos>`), created before the changeset commits (see the
@@ -376,8 +395,17 @@ work:
 4. `commit(ChangesetKind::Reference, "fit flux for <irrad><level>")`, the legacy
    message, so history reads the same in both systems.
 
-A position whose new `FluxValue` equals its head's is not written; a save
-that would write nothing commits nothing and says so. Any head that moved
+Before anything is written, every position to be saved is checked (R19):
+its `j` (and a monitor's `mean_j`) must be finite and above zero, and
+`j_err` (`mean_j_err`) finite and not negative. Otherwise the whole save is
+an error naming the lowest such hole and nothing is written, not even a
+reference object.
+
+A position whose new `FluxValue` is the same as its head's is not written; a
+save that would write nothing commits nothing and says so. "The same" is
+`same_flux_value` (R16): every field equal, and `options_json` equal as
+parsed JSON (key order and spacing ignored, since a jsonb column returns its
+own) with the `software` key left out of both. Any head that moved
 since the load to a different value makes the whole save a `Conflict` naming
 the position, who saved and when; a head that moved to a value equal to the
 new one counts as unchanged (R14). The outcome type is `FluxSaveOutcome`
@@ -396,9 +424,18 @@ undo is moving a head back (`history`, `move_head`).
   "predicted_j_error_type": "msem", "error_kind": "msem", "mean_kind": "arithmetic",
   "n_neighbors": 2, "interpolation_style": "Weighted Mean", "one_d_axis": "X", "degree": 1,
   "monitor_reference": "FC-2 (Kuiper 2008)", "monitor_sample": "FC-2",
-  "used_in_fit": true, "fit_mswd": 1.12, "fit_dof": 5,
+  "used_in_fit": true, "excluded": false, "all_positions": false,
+  "fit_mswd": 1.12, "fit_dof": 5,
   "software": "pychron-cpp 0.4.0" }
 ```
+
+`used_in_fit` is information: it is false for every position that took no
+part, unknowns included. `excluded` is true only for a monitor the user left
+out, and is what a refit carries forward (R15). `monitor_sample` and
+`all_positions` are how the fit's monitors were chosen, which the next load
+repeats (R18). `software` is not part of the comparison that decides
+"unchanged" (R16). Keys are only ever added; an existing key is never
+renamed.
 
 `model_kind`, `use_weighted_fit`, `predicted_j_error_type`,
 `interpolation_style` and `monitor_reference` are the legacy keys with the
@@ -419,10 +456,10 @@ elctl flux fit <irradiation> [<level>]
     --model plane|bowl|weighted-mean|matching|nearest|bracketing|ls1d|mean1d|bracketing1d
     --weighted | --unweighted
     --mean arithmetic|weighted          --mean-error sem|msem|sd
-    --fit-error sem|msem|sd             # sd: the mean kinds only
+    --fit-error sem|msem|sd             # error of the predicted J; sd: the mean kinds only
     --neighbors N   --interpolation weighted|average|linear
     --axis x|y      --degree 1..4
-    --monitors NAME   --sample NAME   --all-positions
+    --monitors NAME   --sample NAME   --all-positions | --monitor-positions
     --omit RECORD_ID...   --include RECORD_ID...   --reset-omits
     --exclude-position HOLE...
     --no-save-position HOLE...
@@ -440,8 +477,17 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
   `--no-save-position` need a level.
 - Options not given come from the level's saved fit, and from the defaults
   (Plane, unweighted, arithmetic mean, `msem` for both errors: legacy's)
-  when there is none. So `elctl flux fit NM-300 A --save` repeats the last
-  fit on the data as it is now.
+  when there is none. So does the choice of monitors: `--sample` and
+  `--all-positions` of the saved fit hold until `--sample` or
+  `--monitor-positions` (the opposite of `--all-positions`; giving both is a
+  usage error) says otherwise (R18). So `elctl flux fit NM-300 A --save`
+  repeats the last fit on the data as it is now.
+- When the saved fit named a monitor set the store does not have, the
+  default is used and the command warns `saved fit used monitor set
+  '<name>', which the store does not have: using '<default>'`, unless
+  `--monitors` is given (R17). `--exclude-position` on a hole that is not a
+  monitor warns `hole <N> is not a monitor position: excluding it changes
+  nothing`.
 - Output: a header (irradiation, level, holder, monitor set with age and
   `lambda_k`, model and options), the monitor table, the unknown table, the
   level summary, then warnings: rejected analyses, extrapolated positions, a
@@ -449,7 +495,13 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
   its error and the error as a percentage.
 - `--csv` writes both tables (RFC 4180, every row the width of the header,
   monitors then unknowns with a `kind` column) and passes the file through
-  `mark_as_user_file`.
+  `mark_as_user_file`. The destination is never truncated before the run
+  has succeeded (R19): up front only its directory is checked (by making a
+  sibling temporary file, so an unwritable destination still stops the run
+  before anything is saved); the rows are written to the temporary, which is
+  renamed over the destination at the end. When no level was fitted nothing
+  is written and an earlier file is left as it was; the temporary is removed
+  on every failure.
 - `show` prints the saved J of each position with its model, who saved it
   and when. `history` lists the revisions of the level's positions, newest
   first, grouped by changeset.
@@ -505,7 +557,7 @@ legacy:
 - a missing holder, a missing hole, no monitors: errors that name the cause.
 - monitor sets: defaults when absent, validation, round trip, conflict.
 
-`apps/elctl/tests/test_flux_commands.cpp`: `fit` printing and `--save`;
+`apps/elctl/tests/test_flux_cmd.cpp`: `fit` printing and `--save`;
 whole irradiation with one failing level; `show`, `history`, `monitors`;
 the CSV's header and row widths; the stub's message without persistence.
 
@@ -537,7 +589,8 @@ settled by the owner on 2026-10-07 as F12 and F13.
 ## 12. Implementation notes (2026-10-07)
 
 What ended up different from, or more precise than, the text above (sections
-2, 5.3, 6.1-6.3, 7 and 8 are amended to match). Rulings are numbered as
+2, 5.3, 6, 6.1-6.4, 7 and 8 are amended to match; R15-R19 are the rulings of
+the final review). Rulings are numbered as
 decided during implementation.
 
 - **R12, hole lookup (a correction to this spec).** A position's hole is the
@@ -576,9 +629,41 @@ decided during implementation.
 - **R14.** A position whose head moved since the load to a value equal to
   the new one counts as unchanged, not as a conflict; a head moved to a
   different value is a conflict and nothing is written.
-- **R3.** The `software` key is part of `options_json` and of the equality
-  that decides "unchanged", so the first save after an upgrade rewrites every
-  position.
+- **R3 (revised by R16).** The `software` key is part of `options_json`.
+  It was also part of the equality that decides "unchanged"; it no longer
+  is.
+- **R15, what a refit carries forward.** `options_json` gains `excluded`,
+  true only for a monitor the user left out (`--exclude-position`, or an
+  exclusion carried from the saved fit). `used_in_fit` stays as information
+  and is no longer read as an exclusion: it is false for a monitor with no
+  analyses yet and for every unknown, and reading it back left monitors
+  measured after a save silently out of the fit. A revision without the key
+  (saved earlier, or imported) excludes a monitor only when it says
+  `used_in_fit: false` and has a `mean_j`. Likewise `is_omitted` is saved
+  true only for an analysis omitted by rule; one that did not reduce or gave
+  no J is saved not omitted, so it returns once it is usable.
+  `--reset-omits` discards both the carried omissions and the carried
+  exclusions.
+- **R16, "unchanged" (revises R3).** A position is unchanged when every
+  field of its `FluxValue` equals the head's and the options are equal as
+  parsed JSON without the `software` key (`same_flux_value`). Text equality
+  never held on PostgreSQL, whose jsonb returns its own key order and
+  spacing; and a version bump alone no longer rewrites every position (the
+  new version is recorded when something else changes).
+- **R17, a monitor set the store lacks.** The fallback to the default set
+  stays; `LevelInputs::saved_monitor_set` and `saved_monitor_set_missing`
+  report it and `elctl flux fit` warns unless `--monitors` is given.
+- **R18, a saved fit's monitors (F9).** `options_json` gains
+  `all_positions`. With no `--sample`, the newest saved revision's
+  `monitor_sample` is the monitor sample; with neither `--all-positions`
+  nor `--monitor-positions`, its `all_positions` applies.
+  `MonitorSelection::all_positions` is `std::optional<bool>`. `flux show`
+  asks for the monitor sample's positions, so it lists every position of
+  the level whatever the saved fit used.
+- **R19, nothing half done.** `--csv` replaces its destination only at the
+  end and only when a level was fitted (temporary file and rename).
+  `save_level` refuses the whole save when a J to save is not finite and
+  above zero, or its error not finite and at least zero, naming the hole.
 - **R9.** The flux store tests run on SQLite only; `PYCHRON_TEST_PG_URL` is
   not exercised by them.
 - **R2.** Level seeding for tests lives in `tests/processing/flux_seed.hpp`
@@ -590,9 +675,10 @@ decided during implementation.
 - **Reduction of monitors.** Monitors are reduced with the position's saved
   flux removed, so F never depends on a previously saved J; an analysis whose
   reduction reports an error takes no part.
-- **The saved fit of a level** (for default options and monitor set) is the
-  newest saved revision over all its positions; a saved monitor-set name the
-  document lacks falls back to the default set.
+- **The saved fit of a level** (for default options, monitor set, monitor
+  sample and `all_positions`) is the newest saved revision over all its
+  positions that says the thing in question; a saved monitor-set name the
+  document lacks falls back to the default set, with a warning (R17).
 - **`elctl flux`.** The store is named with `--db <url>`; exit codes 0 / 1 /
   2 as in section 7 (`flux.hpp` is the authority); a value-taking flag refuses
   a value starting with `--`. Orchestration is split in two headers

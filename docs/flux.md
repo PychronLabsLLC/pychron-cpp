@@ -18,11 +18,14 @@ reading and writing the store). There is no flux window yet: the review step
   `position <N> of level <L> of <irradiation> is beyond holder <name> (<M> holes)`.
 - Monitors are found by sample name: the analyses of the level whose sample
   equals the monitor set's `sample` (default `FC-2`). Every other position
-  that has an identifier is an unknown.
+  that has an identifier is an unknown. A fit saved with `--sample` or
+  `--all-positions` chose its monitors another way, and the next fit of the
+  level chooses them the same way (see Options).
 - `F` of a monitor (the 40Ar*/39ArK ratio) comes from the reduction with the
   position's saved flux taken away, so a fit never depends on a J saved
-  earlier. An analysis whose reduction reports an error takes no part; an
-  analysis tagged `omit`, `invalid`, `outlier` or `skip` starts omitted.
+  earlier. An analysis whose reduction reports an error takes no part (it
+  is not "omitted": it is back as soon as it reduces); an analysis tagged
+  `omit`, `invalid`, `outlier` or `skip` starts omitted.
 
 ## A worked example
 
@@ -128,22 +131,31 @@ fit; with no saved fit the defaults are `plane`, unweighted, arithmetic mean,
 | `--weighted`, `--unweighted` | Plane, Bowl, `ls1d`: weight the fit by `1 / j_err^2`. |
 | `--mean arithmetic\|weighted` | How the analyses of one monitor position are averaged (J, not F). |
 | `--mean-error sem\|msem\|sd` | Error of that mean. `msem` is the SEM scaled by sqrt(MSWD) when the MSWD is above 1. |
-| `--fit-error sem\|msem\|sd` | Error of the prediction. `sd` is only for the mean models; asking for it on a surface is an error. |
+| `--fit-error sem\|msem\|sd` | Error of the predicted J, for every model that forms one from a fit or a mean: `sem` or `msem` of a fitted surface (Plane, Bowl, `ls1d`), and `sem`, `msem` or `sd` of the mean models' mean. `sd` on a surface is an error. See "How the errors are formed". |
 | `--neighbors N`, `--interpolation`, `--axis`, `--degree` | As the table above. |
 | `--monitors NAME` | The monitor set (below). Default: the one the saved fit used, else the store's default. |
-| `--sample NAME` | Find monitors by this sample name instead of the set's. |
-| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. |
+| `--sample NAME` | Find monitors by this sample name instead of the set's. Saved with the fit: the next fit of the level uses it until another `--sample` is given. |
+| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. Saved with the fit: the next fit of the level does the same. |
+| `--monitor-positions` | The opposite: the monitors are the positions of the monitor sample. This is the default, so it is only needed to undo a saved `--all-positions`. Giving both is a usage error. |
 | `--omit RECORD_ID`, `--include RECORD_ID` | Leave one analysis out of its mean, or bring it back (over a tag or a saved omission). A level only. |
-| `--exclude-position HOLE` | A monitor position stays out of the fit but still gets a predicted J. Any position of the level; excluding a hole that is not a monitor does nothing, a hole that is not a position is an error listing the level's holes. |
+| `--exclude-position HOLE` | A monitor position stays out of the fit but still gets a predicted J. Any position of the level; excluding a hole that is not a monitor does nothing and warns `hole <N> is not a monitor position: excluding it changes nothing`; a hole that is not a position is an error listing the level's holes. |
 | `--no-save-position HOLE` | Do not save that position. |
-| `--reset-omits` | Ignore the omissions and exclusions of the saved fit. |
-| `--csv FILE` | Write every position; with no level, every level in one file. |
+| `--reset-omits` | Ignore the omissions and exclusions of the saved fit (all of them: there is no flag to drop one exclusion; `--include` brings one analysis back). |
+| `--csv FILE` | Write every position; with no level, every level in one file. The file is replaced at the end of the run and only when at least one level was fitted: a mistyped irradiation, or a level that cannot be fitted, leaves an earlier file as it was. A destination whose directory cannot be written stops the run before anything is saved. |
 | `--save [--user NAME]` | Save. The author is `--user`, else `$USER`, else `pychron`. |
 
 A saved fit that used `sd` on a surface (it cannot be made here, but an
 import can carry one) is refitted with `msem`, and the command says
 `saved fit used SD, which a fitted surface does not have: using msem`
 unless you give `--fit-error`.
+
+A saved fit that names a monitor set the store does not have (an imported
+level can name `FC Min`) is refitted with the store's default set, and the
+command says
+`saved fit used monitor set '<name>', which the store does not have: using '<default>'`
+unless you give `--monitors`. Check that the default is the standard you
+mean before you save: its age and decay constants are what the new J is
+computed with.
 
 ## How the errors are formed
 
@@ -201,11 +213,15 @@ history reads the same in both systems). Per position:
 - `monitor_name`, `monitor_material`, `monitor_age`, `monitor_age_err`,
   `lambda_k_total`, `lambda_k_total_err`: from the monitor set.
 - `analyses`: every analysis of a monitor position with whether it was
-  omitted.
+  omitted. Omitted means by rule: its tag, `--omit`, or an omission carried
+  from the saved fit. An analysis that could not be reduced or gave no J is
+  saved as not omitted.
 - the options (`options_json`): model, weighted or not, error kinds, mean
   kind, neighbours, interpolation, axis, degree, monitor set and sample,
-  whether the position was used in the fit, the fit MSWD and degrees of
-  freedom, and the `software` that wrote it. The model strings are legacy's,
+  whether every position was a monitor (`all_positions`), whether the
+  position was used in the fit (`used_in_fit`), whether you left it out
+  (`excluded`), the fit MSWD and degrees of freedom, and the `software` that
+  wrote it. The model strings are legacy's,
   so a fit imported from a legacy meta repository and one saved here read
   alike. `position_jerr` is never written. A position imported from legacy
   with one keeps it in its imported revision, but a save here makes a new head
@@ -214,19 +230,37 @@ history reads the same in both systems). Per position:
 
 Then:
 
+- Nothing is saved unless every J to save is a J: finite and above zero,
+  with an error that is finite and not negative (a monitor's mean J
+  likewise). A neighbour model can extrapolate to a zero or negative J; the
+  save is then refused whole, with
+  `hole <N> of <irradiation><level> has J <value>: nothing was saved (...)`.
+  Change the model, or keep that position out with `--no-save-position`.
 - A position whose new value is the same as its head's is not written. A
   save that would write nothing commits nothing and says
-  `nothing to save: ... positions unchanged`. The `software` key is part of
-  that comparison, so the first save after an upgrade rewrites every
-  position.
+  `nothing to save: ... positions unchanged`. The options are compared as
+  JSON (key order and spacing do not matter) and the `software` key is not
+  part of the comparison: a save after an upgrade, with nothing else
+  changed, writes nothing, and the new version is recorded the next time a
+  position's value changes.
 - Each head moves by compare-and-swap from the revision the fit read. If
   another user saved a position in between with a different value, the whole
   save is a conflict: nothing is written, the output names the position, who
   and when, and the exit code is 1. Run the fit again. A head that moved to
   a value equal to the new one counts as unchanged.
-- The omissions, the excluded positions and the options are in the revision,
-  so `elctl flux fit NM-300 A --save` with no flags repeats the fit on the
-  data as it is now (`--reset-omits` discards the omissions).
+- The omissions, the excluded positions, the options and the choice of
+  monitors (`--sample`, `--all-positions`) are in the revision, so
+  `elctl flux fit NM-300 A --save` with no flags repeats the fit on the data
+  as it is now.
+- What a refit carries forward, and what it does not. Carried: the analyses
+  you omitted (`--omit`) and the monitor positions you left out
+  (`--exclude-position`), until `--reset-omits` discards them all or
+  `--include` brings one analysis back. Not carried: a monitor that was out
+  of the last fit only because it had no usable analysis then (it joins the
+  fit as soon as it has one), and an analysis that did not reduce or gave no
+  J then. A revision saved before the `excluded` key existed, or imported,
+  is read as excluding a monitor only when it recorded a mean J for it and
+  still says it was not used.
 - **Unknowns' ages**: the derived cache is keyed by an input fingerprint that
   includes the flux revision, so the ages of the level's unknowns are
   recomputed with the new J the next time they are used. An analysis whose
@@ -276,7 +310,7 @@ non-empty `sample`, a `default` that names one of them (a document with no
 non-negative errors. A document that fails is an error naming the key. Only
 unknown top-level keys are kept. The level's monitor set is the one its newest
 saved revision used; a saved name the document no longer has falls back to the
-default set.
+default set, with the warning described under Options.
 
 ## How this differs from legacy Pychron
 
