@@ -535,6 +535,10 @@ struct Session {
     std::vector<std::string> warnings;
     if (loaded->saved_options && loaded->saved_sd_replaced && !a.fit_error && r::is_least_squares(options.fit.kind))
       warnings.push_back("saved fit used SD, which a fitted surface does not have: using msem");
+    // The standard is not changed silently; with --monitors the user chose it.
+    if (loaded->saved_monitor_set_missing && a.selection.monitor_set.empty())
+      warnings.push_back("saved fit used monitor set '" + loaded->saved_monitor_set +
+                         "', which the store does not have: using '" + loaded->monitor_set.name + "'");
     auto fitted = pp::fit_level(*loaded, options, a.edits);
     if (!fitted) return fail_level(fitted.error());
     std::set<int> holes;

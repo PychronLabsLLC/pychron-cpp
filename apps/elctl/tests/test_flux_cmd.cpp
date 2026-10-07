@@ -250,6 +250,31 @@ TEST_F(FluxCmd, ASavedLeastSquaresFitWithSdWarnsAndUsesMsem) {
   EXPECT_TRUE(contains(o.out, "fit error sem")) << o.out;
 }
 
+// R17: the monitor standard does not change without a word.
+TEST_F(FluxCmd, ASavedMonitorSetTheStoreLacksWarns) {
+  ps::FluxValue v;
+  v.j = 0.001;
+  v.j_err = 1e-6;
+  v.options_json = R"({"model_kind":"Plane","monitor_reference":"FC Min"})";  // as imported
+  ASSERT_TRUE(pt::seed_save_flux(*store_, actor_, seeded_, 1, v));
+  const std::string warning =
+      "warning: saved fit used monitor set 'FC Min', which the store does not have: using 'FC-2 (Kuiper 2008)'\n";
+  Outcome o = fit({});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, warning)) << o.out;
+  EXPECT_TRUE(contains(o.out, "monitors FC-2 (Kuiper 2008):")) << o.out;
+  // The user names the set: nothing to warn of.
+  for (const char* named : {"FC-2 (Kuiper 2008)", "FC-2 (Renne 1998)"}) {
+    o = fit({"--monitors", named});
+    EXPECT_EQ(o.code, elctl::kOk) << o.err;
+    EXPECT_FALSE(contains(o.out, "which the store does not have")) << o.out;
+  }
+  // Saved with the default, the level names a set the store has.
+  ASSERT_EQ(fit({"--save"}).code, elctl::kOk);
+  o = fit({});
+  EXPECT_FALSE(contains(o.out, "which the store does not have")) << o.out;
+}
+
 TEST_F(FluxCmd, AValueFlagDoesNotTakeTheNextFlag) {
   Outcome o = fit({"--csv", "--save"});
   EXPECT_EQ(o.code, elctl::kUsage);

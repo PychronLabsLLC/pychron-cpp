@@ -82,6 +82,10 @@ struct LevelInputs {
   MonitorSet monitor_set;
   std::vector<LevelPosition> positions;      // by hole
   std::optional<FluxOptions> saved_options;  // of the level's last fit (any monitor position's)
+  std::string saved_monitor_set;             // the set that fit named; may be empty
+  // The store has no set of that name (an imported "FC Min"): unless the
+  // caller named one, `monitor_set` is the default in its place.
+  bool saved_monitor_set_missing = false;
   bool saved_sd_replaced = false;            // the saved fit was least squares saved with SD (not read here)
 };
 

@@ -88,7 +88,8 @@ std::string flux_key(const std::string& irradiation, const std::string& level, i
 }
 
 // Section 6.1 step 2: the set named; else the one the level's saved fit
-// names, if the document has it; else the document's default.
+// names, if the document has it; else the document's default (the caller
+// is told: LevelInputs::saved_monitor_set_missing).
 Result<MonitorSet> resolve_monitor_set(const MonitorSets& sets, const MonitorSelection& selection,
                                        const std::string& saved_name) {
   if (!selection.monitor_set.empty()) {
@@ -217,6 +218,8 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   auto set = resolve_monitor_set(sets->sets, selection, saved_set);
   if (!set) return fail(set.error());
   out.monitor_set = std::move(*set);
+  out.saved_monitor_set = saved_set;
+  out.saved_monitor_set_missing = !saved_set.empty() && !sets->sets.find(saved_set);
   if (selection.sample) {
     // An empty name would make a monitor of every position with no sample.
     if (selection.sample->empty()) return bad("the monitor sample name is empty");

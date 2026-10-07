@@ -517,12 +517,16 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   auto fresh = load();
   ASSERT_TRUE(fresh) << to_string(fresh.error());
   EXPECT_EQ(fresh->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(fresh->saved_monitor_set, "");
+  EXPECT_FALSE(fresh->saved_monitor_set_missing);
 
   // A saved fit names the set it used.
   save_flux(5, saved_with(plane_sem(), defaults.sets[1]));
   auto saved = load();
   ASSERT_TRUE(saved) << to_string(saved.error());
   EXPECT_EQ(saved->monitor_set, defaults.sets[1]);
+  EXPECT_EQ(saved->saved_monitor_set, "FC-2 (Renne 1998)");
+  EXPECT_FALSE(saved->saved_monitor_set_missing);
 
   // A set named explicitly wins over the saved fit's.
   MonitorSelection kuiper;
@@ -530,6 +534,8 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   auto named = load(kuiper);
   ASSERT_TRUE(named) << to_string(named.error());
   EXPECT_EQ(named->monitor_set, defaults.sets[0]);
+  EXPECT_EQ(named->saved_monitor_set, "FC-2 (Renne 1998)");
+  EXPECT_FALSE(named->saved_monitor_set_missing);
 
   // A name that does not exist is an error listing the ones that do.
   MonitorSelection nope;
@@ -542,7 +548,8 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   EXPECT_TRUE(has(unknown.error().what, "FC-2 (Renne 1998)")) << unknown.error().what;
 
   // A later saved fit naming a set the document does not have (an imported
-  // "FC Min") falls through to the default.
+  // "FC Min") falls through to the default, and the level says so (R17):
+  // the standard is not changed silently.
   ps::FluxValue legacy;
   legacy.j = 1.0e-3;
   legacy.j_err = 2.0e-7;
@@ -551,6 +558,14 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   auto fallen = load();
   ASSERT_TRUE(fallen) << to_string(fallen.error());
   EXPECT_EQ(fallen->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(fallen->saved_monitor_set, "FC Min");
+  EXPECT_TRUE(fallen->saved_monitor_set_missing);
+  // The store still lacks it when the caller names a set; the caller chose.
+  auto chosen = load(kuiper);
+  ASSERT_TRUE(chosen) << to_string(chosen.error());
+  EXPECT_EQ(chosen->monitor_set, defaults.sets[0]);
+  EXPECT_EQ(chosen->saved_monitor_set, "FC Min");
+  EXPECT_TRUE(chosen->saved_monitor_set_missing);
 
   // The newest saved fit decides, wherever it is: a later save on a lower
   // hole than the ones above, then one on a hole between them.
@@ -558,6 +573,8 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   auto newest = load();
   ASSERT_TRUE(newest) << to_string(newest.error());
   EXPECT_EQ(newest->monitor_set.name, "FC-2 (Renne 1998)");
+  EXPECT_EQ(newest->saved_monitor_set, "FC-2 (Renne 1998)");
+  EXPECT_FALSE(newest->saved_monitor_set_missing);
   FluxOptions bowl;
   bowl.fit.kind = pr::ModelKind::Bowl;
   save_flux(6, saved_with(bowl, defaults.sets[0]));
@@ -826,8 +843,10 @@ TEST_F(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
   ASSERT_EQ(in->positions.size(), 12u);
-  // "FC Min" is no set of the document: the default.
+  // "FC Min" is no set of the document: the default, and the level says so.
   EXPECT_EQ(in->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(in->saved_monitor_set, "FC Min");
+  EXPECT_TRUE(in->saved_monitor_set_missing);
   // Plane saved with SD reads as Msem, and says so (F13).
   ASSERT_TRUE(in->saved_options);
   EXPECT_EQ(in->saved_options->fit.kind, pr::ModelKind::Plane);
