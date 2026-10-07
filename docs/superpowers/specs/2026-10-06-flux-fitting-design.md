@@ -1,7 +1,7 @@
 # Flux fitting
 
 Date: 2026-10-06
-Status: Approved 2026-10-07 (owner decisions in section 3)
+Status: Implemented (owner decisions in section 3; implementation notes in section 12)
 Owner: Jake Ross
 Depends on: `2026-10-01-dvc-schema-design.md` (reference data 6, `flux_position`
 6.1, reference resolution and pins 6.2, derived cache 4.3),
@@ -50,7 +50,7 @@ editor, save (`pipeline/pipeline_defaults.py:347-357`).
 | Area | Legacy behaviour | Problems to avoid |
 |---|---|---|
 | Finding monitors | analyses of the level whose **sample name** equals the monitor name (default `FC-2`), tag not `invalid` (`dvc/dvc_database.py:2734-2757`); or picked by hand in the browser; or every position (`pipeline/nodes/find.py:370-381`). Unknowns are the positions with any other sample (`dvc_database.py:2874-2890`) | with "all positions" a position can be in both tables |
-| Geometry | hole x, y from `irradiation_holders/<holder>.txt`, looked up as `geom[hole_id - 1]` (`pipeline/editors/flux_results_editor.py:284`) | the file's own hole id is ignored |
+| Geometry | hole x, y from `irradiation_holders/<holder>.txt`, looked up as `geom[hole_id - 1]` (`pipeline/editors/flux_results_editor.py:284`), that is, position N is the Nth hole | none: entry, the UI grid and this port place position N at the Nth hole too (section 12, R12) |
 | Per-analysis J | `J = (exp(lambda_k * t) - 1) / F` (`processing/argon_calculations.py:223-246`); monitor age and `lambda_k` enter as plain numbers | zero F returns `J = 1` (`:245-246`) |
 | Position mean | J (not F) of the non-omitted analyses averaged, arithmetic or inverse-variance weighted (`processing/flux.py:22-43`); error SEM, SD, or SEM scaled by `sqrt(MSWD)` when MSWD > 1, the default (`core/regression/mean_regressor.py:105-135`); no automatic outlier rejection | arithmetic mean of one analysis has error 0 (`core/regression/base_regressor.py:137-149`); the arithmetic mean's MSWD is taken about the weighted mean (`core/stats/core.py:40-41`); SD of a weighted mean is the unweighted SD (`mean_regressor.py:130-131`) |
 | Models | thirteen option strings (`pychron_constants.py:367-395`). Nine produce a J: Plane, Bowl, Weighted Mean, Matching, Nearest Neighbors, Bracketing, LeastSquares1D, WeightedMean1D, Bracketing1D | RBF, GridData, IDW and "Order 5 Polynomial" assign no J unless Monte Carlo is on (`pipeline/editors/flux_visualization_editor.py:301-302`) |
@@ -205,17 +205,17 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
 | Kind | Form | Minimum monitors | Predicted J and error |
 |---|---|---|---|
 | Plane | `a x + b y + c` | 4 (3 gives no error) | least squares; `sigma^2 = x C x'` |
-| Bowl | `a x^2 + b y^2 + c x + d y + e`, no `xy` term, as legacy | 6 | as Plane |
+| Bowl | `a x^2 + b y^2 + c x + d y + e`, no `xy` term, as legacy | 6, at more than one radius (R7) | as Plane |
 | LeastSquares1D | polynomial of `degree` along `axis` | `degree + 2` | as Plane |
 | WeightedMean, WeightedMean1D | one J for the level, inverse-variance | 1 | `weighted_mean` with `error` |
 | Matching | the nearest monitor | 1 | its `j`, `j_err` |
 | NearestNeighbors | the `n_neighbors` nearest, inverse-variance mean | `n_neighbors` | `(sum 1/sigma^2)^-1/2` |
 | Bracketing | the two nearest, by `interpolation` | 2 | WeightedMean: as above. Average: mean and sample SD. Linear: `j0 + f (j1 - j0)` with `f` the projection of the point on the segment, `sigma^2 = ((1-f) e0)^2 + (f e1)^2` |
-| Bracketing1D | the monitors either side along `axis`, linear | 2 | as Bracketing Linear |
+| Bracketing1D | the monitors either side along `axis`, always linear (`interpolation` applies to Bracketing only, R6) | 2 | as Bracketing Linear |
 
 Nearness is the plain distance in x, y, as legacy
 (`core/regression/flux_regressor.py:154-161`); a tie is broken by the order
-of the monitors, which the caller gives by hole id.
+of the monitors, which the caller gives by hole.
 
 Least-squares kinds. With design matrix `X`, weights `W` (`1 / j_err^2`, or
 the identity when not `weighted`), `C = (X' W X)^-1` and `r` the residuals:
@@ -230,7 +230,15 @@ the identity when not `weighted`), `C = (X' W X)^-1` and `r` the residuals:
     one position about a fitted surface has no defensible definition when
     the fit is weighted, and legacy's is not one. The mean kinds keep it.
 - `mswd` reported for an unweighted fit is `sum((r / j_err)^2) / (n - q)`:
-  the monitors' errors judge the fit even when they did not weight it.
+  the monitors' errors judge the fit even when they did not weight it. A
+  monitor with zero error is used in the fit but skipped in this sum, whose
+  divisor is the monitors with non-zero error minus q (R5).
+- A fit that barely determines the surface is refused, not only an exactly
+  degenerate one: when the smallest pivot of the column-equilibrated design
+  is below 1e-3 of the largest, or when any predicted J is not finite and
+  positive, the error is `monitor positions do not determine a <model>` (R7,
+  R8). A single ring of monitors cannot determine a Bowl, since `x^2 + y^2`
+  is constant on it.
 - `MswdOutsideLimits` (point index unused) when `mswd` is outside
   `mswd_limits(n, q)`.
 
@@ -312,9 +320,11 @@ Result<SaveOutcome> save_level(persistence::IStore&, const persistence::Actor&, 
    reduction failed is carried with its error and takes no part. An analysis
    starts omitted when its tag is `omit`, `invalid`, `outlier` or `skip`
    (legacy `EXCLUDE_TAGS`, `pychron_constants.py:192`).
-5. Hole x, y from the level's holder (`irradiation_holder` reference), by
-   **hole id**. A level with no holder, or a position whose hole the holder
-   lacks, is an error naming it.
+5. Hole x, y from the level's holder (`irradiation_holder` reference): a
+   position's hole is the holder hole with `ordinal == position - 1`;
+   `hole_id` is only a label (R12). A level with no holder, or a position
+   beyond the holder, is an error naming it: `position <N> of level <L> of
+   <irrad> is beyond holder <name> (<M> holes)`.
 6. Each position's head `flux_position` revision, if any: the saved J, and
    for monitors the saved omissions and options.
 
@@ -333,8 +343,17 @@ fit, and its notes. For the level: the options and monitor set used, the fit
 MSWD and degrees of freedom, the parameters, min and max predicted J and
 `(max - min) / max * 100`.
 
+A monitor position whose every analysis is rejected (no J from its F) is
+left out of the fit and noted, not a failure of the level (R11).
+`exclude_positions` accepts any position of the level; excluding a position
+that is not a monitor does nothing, a hole that is not a position is an
+error listing the level's holes (R10). `LevelInputs::saved_sd_replaced` is
+set when the saved fit asked for `Sd` of a surface and `Msem` was used
+instead (R1).
+
 Errors (nothing is fitted): no monitor positions; fewer used monitors than
-the model needs (X4); a zero error in a weighted fit (X5).
+the model needs (X4); a zero error in a weighted fit (X5); a layout that does
+not determine the model (R8).
 
 ### 6.3 `save_level`
 
@@ -358,8 +377,10 @@ work:
 
 A position whose new `FluxValue` equals its head's is not written; a save
 that would write nothing commits nothing and says so. Any head that moved
-since the load makes the whole save a `Conflict` naming the position, who
-saved and when.
+since the load to a different value makes the whole save a `Conflict` naming
+the position, who saved and when; a head that moved to a value equal to the
+new one counts as unchanged (R14). The outcome type is `FluxSaveOutcome`
+(R13).
 
 Consequences that need no code here: the derived cache is keyed by an input
 fingerprint that includes the flux revision (DVC spec 4.3), so the ages of
@@ -434,7 +455,11 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
 - `monitors set FILE` validates and saves the document from a JSON file;
   `default NAME` changes the default.
 - Exit codes, as `export`: 0 on success (warnings included); 1 when a level
-  could not be fitted or a save conflicted; 2 for usage and fatal errors.
+  could not be fitted, a save conflicted, or a name asked for does not
+  exist; 2 for usage and fatal errors. A flag that takes a value refuses a
+  value starting with `--`. When the saved fit used `Sd` on a surface the
+  command prints `saved fit used SD, which a fitted surface does not have:
+  using msem` unless `--fit-error` is given (R1).
 
 ## 8. Testing
 
@@ -464,8 +489,7 @@ legacy:
 - ties and co-located monitors in the neighbour kinds; `x1 == x0` in
   Bracketing1D.
 
-`tests/processing/test_flux_fit.cpp` (SQLite; PostgreSQL too when
-`PYCHRON_TEST_PG_URL` is set):
+`tests/processing/test_flux_fit.cpp` (SQLite only, R9):
 - a built level: tables equal the math layer's on the same numbers.
 - monitors found by sample name; `--sample`; all positions.
 - tags start an analysis omitted; `include` brings it back.
@@ -508,3 +532,70 @@ settled by the owner on 2026-10-07 as F12 and F13.
   `lambda_k_total_err` (F4): the ArAr reduction's concern.
 - **Interpolant models**, a joint fit of several levels, MassSpec flux
   transfer, estimating J from the chronology (entry already does).
+
+## 12. Implementation notes (2026-10-07)
+
+What ended up different from, or more precise than, the text above (sections
+2, 5.3, 6.1-6.3, 7 and 8 are amended to match). Rulings are numbered as
+decided during implementation.
+
+- **R12, hole lookup (a correction to this spec).** A position's hole is the
+  holder hole with `ordinal == position - 1`; `hole_id` is only a label.
+  Section 6.1(5) said "by hole id" and section 2 listed legacy's
+  `geom[hole_id - 1]` as a problem: both were wrong. Entry, the UI grid and
+  legacy all place position N at the Nth hole, and the importer's ids for
+  holders without hole numbers are file line numbers. The error for a
+  position beyond the holder is `position <N> of level <L> of <irrad> is
+  beyond holder <name> (<M> holes)`.
+- **R7, a ring cannot determine a Bowl.** Monitors all at one radius make
+  `x^2 + y^2` constant, so the Bowl is refused; it needs monitors at more
+  than one radius. The golden header has a second monitor set, `kMixed`, for
+  the bowl cases.
+- **R8, conditioning.** A least-squares fit (Plane, Bowl, LeastSquares1D)
+  refuses a layout that barely determines it: when the smallest pivot of the
+  column-equilibrated design is below 1e-3 of the largest, or when any
+  predicted J is not finite and positive, the error is `monitor positions do
+  not determine a <model>`.
+- **R6.** Bracketing1D is always linear; `--interpolation` applies to
+  Bracketing only.
+- **R5, R5a.** In an unweighted least-squares fit a monitor with zero error
+  is used in the fit but skipped in the reported MSWD, whose divisor is
+  (monitors with non-zero error - q).
+- **R10.** `--exclude-position` accepts any position of the level; excluding
+  an unknown is a no-op; a hole that is not a position is an error listing
+  the level's holes.
+- **R11.** A monitor position whose every analysis is rejected (no J from
+  its F) is left out of the fit and noted, not a failure of the level.
+- **R1.** `LevelInputs::saved_sd_replaced`; the CLI warning `saved fit used
+  SD, which a fitted surface does not have: using msem` is printed unless
+  `--fit-error` is given or the resolved model is not least-squares.
+- **R13.** The save outcome type is `FluxSaveOutcome`.
+- **R14.** A position whose head moved since the load to a value equal to
+  the new one counts as unchanged, not as a conflict; a head moved to a
+  different value is a conflict and nothing is written.
+- **R3.** The `software` key is part of `options_json` and of the equality
+  that decides "unchanged", so the first save after an upgrade rewrites every
+  position.
+- **R9.** The flux store tests run on SQLite only; `PYCHRON_TEST_PG_URL` is
+  not exercised by them.
+- **R2.** Level seeding for tests lives in `tests/processing/flux_seed.hpp`
+  (free functions, shared with `apps/elctl/tests`).
+- **Monitor sets.** A set needs a non-empty `sample`; a document with no
+  `default` key takes the first set; only unknown top-level keys are kept;
+  `monitors set FILE` replaces the whole document (the file must list every
+  set to keep).
+- **Reduction of monitors.** Monitors are reduced with the position's saved
+  flux removed, so F never depends on a previously saved J; an analysis whose
+  reduction reports an error takes no part.
+- **The saved fit of a level** (for default options and monitor set) is the
+  newest saved revision over all its positions; a saved monitor-set name the
+  document lacks falls back to the default set.
+- **`elctl flux`.** The store is named with `--db <url>`; exit codes 0 / 1 /
+  2 as in section 7 (`flux.hpp` is the authority); a value-taking flag refuses
+  a value starting with `--`. Orchestration is split in two headers
+  (`flux_fit.hpp` pure, `flux_store.hpp` store and JSON) and the admin
+  subcommands (`show`, `history`, `monitors`) live in `flux_admin.cpp`.
+- **Known limit.** A new reference object for a position is created before
+  the changeset commits, so a conflicted save on a fresh level can leave
+  reference objects with no value. They resolve nothing and are reused by the
+  next save.
