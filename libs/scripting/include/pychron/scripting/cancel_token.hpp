@@ -20,8 +20,12 @@
 // What cannot wait on the token (a job with a token of its own) registers a
 // callback with add_on_cancel(). Callbacks are called on the thread that
 // requests, with the token unlocked, so one may take other locks and may use
-// the token. remove_on_cancel() waits for a call in progress outside any
-// clock: a callback is brief and does not wait in clock time.
+// the token. A callback may be called on two threads at once (a cancel() and
+// an abort(), or the call made at registration and an abort()), and one
+// registered late may so be called twice for what its owner sees as one
+// request: it is written to stand both. remove_on_cancel() waits for a call
+// in progress outside any clock: a callback is brief and does not wait in
+// clock time, and the remover holds no lock the callback takes.
 
 #include <atomic>
 #include <condition_variable>
@@ -62,11 +66,14 @@ class CancelToken {
   // requested, an abort() of one that was not aborted. reset() and wake()
   // call nothing, and reset() leaves the callbacks registered. If the token
   // is already requested the callback is called before add_on_cancel returns.
-  // Returns an id for remove_on_cancel.
+  // Returns an id for remove_on_cancel. What the callback throws comes out
+  // of cancel() or abort(), with the callbacks after it not called, or out of
+  // add_on_cancel, which then has not registered it.
   std::uint64_t add_on_cancel(std::function<void()> callback);
   // The callback is not called after this returns: a call in progress on
   // another thread is waited for. Called from inside the callback itself it
-  // returns at once. An id that is not registered is ignored.
+  // returns at once. An id that is not registered is ignored. The caller
+  // holds no lock the callback takes.
   void remove_on_cancel(std::uint64_t id);
 
  private:

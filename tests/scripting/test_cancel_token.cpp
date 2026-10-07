@@ -8,9 +8,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 
 #include "pychron/core/virtual_clock.hpp"
@@ -277,6 +279,43 @@ TEST(CancelToken, RemoveWaitsForARunningCallback) {
   canceller.join();
   remover.join();
   EXPECT_TRUE(removed);
+}
+
+// A callback that throws is no longer being called: a remove from another
+// thread does not wait for it.
+TEST(CancelToken, ACallbackThatThrowsLeavesNothingToWaitFor) {
+  CancelToken token;
+  const auto id = token.add_on_cancel([] { throw std::runtime_error("no"); });
+  EXPECT_THROW(token.cancel(), std::runtime_error);
+  EXPECT_EQ(token.mode(), CancelMode::Cancel);
+
+  auto removed = std::make_shared<std::atomic<bool>>(false);
+  std::thread remover([&token, id, removed] {
+    token.remove_on_cancel(id);
+    *removed = true;
+  });
+  if (!eventually_real([&] { return removed->load(); })) {
+    remover.detach();  // stuck in the token: it cannot be joined
+    FAIL() << "remove_on_cancel waits for a callback that threw";
+    std::abort();      // nor can the token be destroyed under it
+  }
+  remover.join();
+}
+
+// Thrown out of add_on_cancel, for which the caller has no id: the callback
+// is not left registered.
+TEST(CancelToken, ACallbackThatThrowsAtRegistrationIsNotRegistered) {
+  CancelToken token;
+  token.cancel();
+  int calls = 0;
+  EXPECT_THROW(token.add_on_cancel([&] {
+    ++calls;
+    throw std::runtime_error("no");
+  }),
+               std::runtime_error);
+  EXPECT_EQ(calls, 1);
+  token.abort();
+  EXPECT_EQ(calls, 1);
 }
 
 // Registered while a cancel is being made on another thread, a callback is

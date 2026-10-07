@@ -22,14 +22,22 @@ void CancelToken::call(const std::vector<std::shared_ptr<Callback>>& callbacks) 
       if (callback->removed) continue;  // since the request, perhaps by an earlier callback
       callback->callers.push_back(self);
     }
+    // Also when the callback throws: a remover must not wait for a call that
+    // has ended.
+    struct Called {
+      CancelToken& token;
+      Callback& callback;
+      std::thread::id self;
+      ~Called() {
+        std::lock_guard lock(token.mutex_);
+        callback.callers.erase(std::find(callback.callers.begin(), callback.callers.end(), self));
+        // Under the lock: what the callback refers to may go once the
+        // remover has returned, and the remover returns holding this lock.
+        token.called_.notify_all();
+      }
+    } called{*this, *callback, self};
     // Unlocked: the callback may take other locks, or use the token.
     callback->call();
-    {
-      std::lock_guard lock(mutex_);
-      callback->callers.erase(std::find(callback->callers.begin(), callback->callers.end(), self));
-      // Under the lock: the remover may destroy the token once it has returned.
-      called_.notify_all();
-    }
   }
 }
 
@@ -101,7 +109,15 @@ std::uint64_t CancelToken::add_on_cancel(std::function<void()> callback) {
     // before did not.
     now = requested();
   }
-  if (now) call({entry});
+  if (now) {
+    try {
+      call({entry});
+    } catch (...) {
+      // The caller gets no id to remove it with.
+      remove_on_cancel(entry->id);
+      throw;
+    }
+  }
   return entry->id;
 }
 
