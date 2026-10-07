@@ -758,4 +758,87 @@ TEST(GasNetwork, ManyTogglesStayPhysical) {
   }
 }
 
+TEST(GasNetwork, ConservesEachSpeciesThroughValveToggles) {
+  // Nothing comes in and nothing leaves: no pump, no loss, no source. A
+  // manifold in two parts joined by a bare edge, and a valve the canvas
+  // gave no neighbours.
+  GasTopology topology;
+  topology.volumes = {{"tank", 1.0, air(1e-6), {}, {}},        {"pipette", 1e-4, {}, {}, {}},
+                      {"stage", 0.1, air(1e-9), {}, {}},       {"inlet", 0.02, air(1e-3), {}, {}},
+                      {"manifold", 0.5, air(1e-8), {}, {}},    {"manifold_arm", 0.05, air(1e-5), {}, {}},
+                      {"spectrometer", 1.0, air(1e-10), {}, {}}};
+  topology.valves = {{"T", 0.1}, {"L", 0.1}, {"I", 1e-3}, {"M", 1000.0}, {"P", 10.0}, {"Q", 1e-6}, {"loose", 0.1}};
+  topology.edges = {{"tank", "T"},     {"T", "pipette"},          {"pipette", "L"},      {"L", "stage"},
+                    {"stage", "I"},    {"I", "inlet"},            {"inlet", "M"},        {"M", "spectrometer"},
+                    {"stage", "P"},    {"P", "manifold"},         {"manifold", "manifold_arm"},
+                    {"manifold_arm", "Q"}, {"Q", "spectrometer"}};
+  GasNetwork network = must(topology);
+
+  // Per species, the gas in the whole network. The two parts of the manifold
+  // answer with one pressure, so each part's size times it adds to the whole.
+  const auto held = [&] {
+    Composition sum{};
+    for (const GasVolume& volume : topology.volumes) {
+      const Composition pressures = at(network, volume.name);
+      for (std::size_t i = 0; i < kSpeciesCount; ++i) sum[i] += pressures[i] * volume.litres;
+    }
+    return sum;
+  };
+  const Composition start = held();
+
+  Random random;
+  for (int step = 0; step < 5000; ++step) {
+    const GasValve& valve = topology.valves[random.below(topology.valves.size())];
+    network.set_valve(valve.name, !network.valve_open(valve.name));
+    network.advance(random.log_uniform(1e-6, 1e5));
+    ASSERT_TRUE(near_rel(held(), start, 1e-12)) << "at step " << step;
+    ASSERT_EQ(at(network, "manifold"), at(network, "manifold_arm")) << "at step " << step;
+  }
+}
+
+TEST(GasNetwork, OneStepEqualsManyOnAPumpedNetwork) {
+  // The line of ManyTogglesStayPhysical: a leak, a getter, a spectrometer
+  // that uses up its gas and a pumped manifold.
+  GasTopology topology;
+  GasVolume stage{"stage", 0.1, air(1e-8), scaled(air(1.0), 1e-12), {}};
+  GasVolume spectrometer{"spectrometer", 1.0, air(1e-9), {}, {}};
+  spectrometer.loss_per_s[kAr40] = 2e-5;
+  topology.volumes = {{"tank", 1.0, air(1e-6), {}, {}},
+                      {"pipette", 1e-4, air(1e-6), {}, {}},
+                      stage,
+                      {"getter", 0.05, air(1e-8), scaled(air(1.0), 1e-15), {}},
+                      {"inlet", 0.02, air(1e-5), {}, {}},
+                      spectrometer,
+                      {"manifold", 0.5, air(1e-8), {}, {}}};
+  topology.valves = {{"T", 0.1}, {"L", 0.1}, {"G", 1.0}, {"I", 1e-3}, {"M", 1000.0}, {"P", 10.0}, {"Q", 1e-6}};
+  topology.edges = {{"tank", "T"},  {"T", "pipette"},      {"pipette", "L"}, {"L", "stage"},        {"stage", "G"},
+                    {"G", "getter"}, {"stage", "I"},        {"I", "inlet"},   {"inlet", "M"},        {"M", "spectrometer"},
+                    {"stage", "P"},  {"P", "manifold"},     {"spectrometer", "Q"}, {"Q", "manifold"}};
+  topology.pumps = {{"manifold", 50.0, 1e-9, true, true}, {"getter", 1.0, 0.0, false, true}};
+
+  const std::vector<std::vector<std::string>> states = {
+      {},                                  // every volume by itself
+      {"L", "G"},                          // a shot gettering, static
+      {"L", "G", "I", "M"},                // let into the spectrometer
+      {"P", "Q"},                          // pumping out from both sides
+      {"T", "L", "G", "I", "M", "P", "Q"}  // everything open
+  };
+  for (const auto& open : states) {
+    GasNetwork once = must(topology);
+    GasNetwork many = must(topology);
+    std::string state;
+    for (const std::string& valve : open) {
+      once.set_valve(valve, true);
+      many.set_valve(valve, true);
+      state += valve;
+    }
+    once.advance(3600.0);
+    for (int second = 0; second < 3600; ++second) many.advance(1.0);
+    for (const GasVolume& volume : topology.volumes) {
+      EXPECT_TRUE(near_rel(at(many, volume.name), at(once, volume.name), 1e-9))
+          << volume.name << " with open '" << state << "'";
+    }
+  }
+}
+
 }  // namespace
