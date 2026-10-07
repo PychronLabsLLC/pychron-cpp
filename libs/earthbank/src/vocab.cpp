@@ -20,8 +20,7 @@ using namespace std::string_view_literals;
 constexpr std::string_view kUncertaintyUnit = "/api/arar/LUncertaintyUnit";
 constexpr std::string_view kMaterials = "/api/core/materials";
 
-// Legacy LOOKUP_ENDPOINTS, and one more: `lithologyName`, which legacy sent
-// by name without asking any list.
+// Legacy LOOKUP_ENDPOINTS, entry for entry.
 constexpr std::array kLookupSpecs = {
     LookupSpec{"analysisScaleName", "analysisScaleId", "/api/arar/LAnalysisScale"},
     LookupSpec{"analyticalUncertaintyUnitName", "analyticalUncertaintyUnitId", kUncertaintyUnit},
@@ -42,7 +41,6 @@ constexpr std::array kLookupSpecs = {
     LookupSpec{"plateauStepName", "plateauStepId", ""},
     LookupSpec{"inverseIsoStepName", "inverseIsoStepId", ""},
     LookupSpec{"weightedMeanStepName", "weightedMeanStepId", ""},
-    LookupSpec{"lithologyName", "lithologyId", ""},
     // The sample.
     LookupSpec{"sampleKindName", "sampleKindId", "/api/core/l-sample-kinds"},
     LookupSpec{"sampleMethodName", "sampleMethodId", "/api/core/l-sample-methods"},

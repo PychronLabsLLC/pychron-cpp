@@ -1,5 +1,6 @@
 #include "pychron/earthbank/model.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -15,6 +16,16 @@ namespace {
 template <typename T>
 void put(nlohmann::json& out, const char* name, const std::optional<T>& field) {
   if (field) out[name] = *field;
+}
+
+// A number that is not finite has no JSON form; it is not sent.
+void put(nlohmann::json& out, const char* name, const Number& field) {
+  if (field && std::isfinite(*field)) out[name] = *field;
+}
+
+// An empty string tells the service nothing; it is not sent.
+void put(nlohmann::json& out, const char* name, const Text& field) {
+  if (field && !field->empty()) out[name] = *field;
 }
 
 template <typename Record>

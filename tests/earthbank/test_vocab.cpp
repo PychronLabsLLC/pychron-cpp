@@ -158,9 +158,10 @@ TEST(Vocab, AgeTypeNames) {
 }
 
 TEST(Vocab, LookupSpecsCoverEveryNameField) {
-  // Names that are not terms of any vocabulary: an aliquot's own name, and
-  // the name given to the sample's location.
-  const std::set<std::string> free_text = {"aliquotName", "locationName"};
+  // Names that are not terms of any vocabulary the service is asked about: an
+  // aliquot's own name, the name given to the sample's location, and the
+  // lithology, which the legacy integration sent by name and never looked up.
+  const std::set<std::string> free_text = {"aliquotName", "locationName", "lithologyName"};
 
   std::set<std::string> name_fields, all_keys;
   for (const nlohmann::json& record :
@@ -181,7 +182,7 @@ TEST(Vocab, LookupSpecsCoverEveryNameField) {
     EXPECT_TRUE(spec.endpoint.empty()) << spec.name_field;
     EXPECT_FALSE(looked_up.contains(std::string(spec.name_field))) << spec.name_field;
   }
-  EXPECT_EQ(lookup_specs().size(), 25u);
+  EXPECT_EQ(lookup_specs().size(), 24u);  // the legacy table, entry for entry
   EXPECT_EQ(uncertainty_type_specs().size(), 6u);
 
   // Every name field is in exactly one table, and the tables name nothing else.
@@ -221,7 +222,9 @@ TEST(Vocab, LookupEndpoints) {
   EXPECT_EQ(endpoint_of("plateauStepName"), "");
   EXPECT_EQ(endpoint_of("inverseIsoStepName"), "");
   EXPECT_EQ(endpoint_of("weightedMeanStepName"), "");
-  EXPECT_EQ(endpoint_of("lithologyName"), "");
+  // Not a term that is looked up at all.
+  EXPECT_EQ(endpoint_of("lithologyName"), "<none>");
+  EXPECT_EQ(endpoint_of("aliquotName"), "<none>");
 }
 
 }  // namespace

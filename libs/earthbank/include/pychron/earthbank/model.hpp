@@ -14,7 +14,8 @@
 // the service's record, named exactly as the service names it, misspellings
 // included (`apparentAgeUncertainityTypeName`, `stratographicUnitName`). The
 // lists are those of the legacy integration's payload builder. A field left
-// empty is not sent.
+// empty is not sent, and nor is one that holds nothing the service could
+// take: a number that is not finite (NaN, an infinity) or an empty string.
 //
 // A controlled term appears twice: as `<term>Name`, which is what the mapping
 // fills and what the vendor's spreadsheet takes, and as `<term>Id`, which is
@@ -311,8 +312,10 @@ struct Submission {
 
 // The record as the service takes it: an object holding the fields that are
 // set, and only those, under their service names. Keys come out sorted. A
-// number that is not finite dumps as null (nlohmann's rule); the mapping does
-// not set one.
+// number that is not finite is left out as if it were unset (JSON has no form
+// for it, and null under a numeric key is not something to send), and so is
+// a text field set to the empty string. Two records that differ only in such
+// a field compare unequal with == and give the same JSON and the same hash.
 nlohmann::json to_json(const Sample& record);
 nlohmann::json to_json(const Location& record);
 nlohmann::json to_json(const DataPoint& record);

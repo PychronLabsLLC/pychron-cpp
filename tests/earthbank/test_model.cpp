@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <initializer_list>
+#include <limits>
 #include <set>
 #include <string>
 #include <string_view>
@@ -120,6 +122,51 @@ TEST(Model, ToJsonHasOnlySetFieldsUnderServiceNames) {
   EXPECT_EQ(to_json(Measurement{}).dump(), "{}");
 }
 
+// A number that is not finite has no JSON form (nlohmann would write null
+// under a numeric key): it is left out, as if the field were unset.
+TEST(Model, NonFiniteNumbersAreNotEmitted) {
+  Measurement m;
+  m.ar40Corr = 1.5;
+  m.ar40CorrUncertainty = std::numeric_limits<double>::quiet_NaN();
+  m.ar39Corr = std::numeric_limits<double>::infinity();
+  m.ar38Corr = -std::numeric_limits<double>::infinity();
+  m.stepNumber = 0.0;  // zero is a number
+  EXPECT_EQ(to_json(m).dump(), R"({"ar40Corr":1.5,"stepNumber":0.0})");
+
+  Location l;
+  l.lat = std::nan("");
+  l.lon = -106.5;
+  EXPECT_EQ(to_json(l).dump(), R"({"lon":-106.5})");
+
+  // So it takes no part in the hash either.
+  Submission with = submission();
+  with.measurements[0].apparentAge = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(content_hash(with), content_hash(submission()));
+}
+
+// An empty string says nothing to the service: it is left out like an unset
+// field. The two still compare unequal as records.
+TEST(Model, EmptyTextIsNotEmitted) {
+  Sample s;
+  s.name = "S-1";
+  s.igsn = "";
+  s.materialName = "";
+  EXPECT_EQ(to_json(s).dump(), R"({"name":"S-1"})");
+
+  Sample unset;
+  unset.name = "S-1";
+  EXPECT_EQ(to_json(unset), to_json(s));
+  EXPECT_NE(unset, s);
+
+  // Blank is not empty: only the empty string is dropped.
+  s.igsn = " ";
+  EXPECT_EQ(to_json(s).dump(), R"({"igsn":" ","name":"S-1"})");
+
+  Submission with = submission();
+  with.age_summary.description = "";
+  EXPECT_EQ(content_hash(with), content_hash(submission()));
+}
+
 TEST(Model, EveryLegacyFieldIsPresent) {
   EXPECT_EQ(keys_of(all_fields<Sample>()), as_set(kSampleFields));
   EXPECT_EQ(keys_of(all_fields<Location>()), as_set(kLocationFields));
@@ -214,6 +261,20 @@ TEST(Model, ContentHashIgnoresNotesAndFieldOrder) {
   b.sample.name = "S-1";
   EXPECT_EQ(b, a);
   EXPECT_EQ(content_hash(b), hash);
+}
+
+// The hash of submission() above, worked out apart from this code: the
+// SHA-256 of the text below. A platform that writes a number another way
+// (28.2 as 28.199999999999999, 1.0 as 1) fails here.
+TEST(Model, ContentHashOfAKnownSubmission) {
+  const std::string text =
+      R"([{"materialName":"Sanidine","name":"S-1"},{"lat":35.0,"lon":-106.5},)"
+      R"({"arMethodName":"Step-heating - laser"},[{"aliquotName":"10001-01"}],)"
+      R"([{"aliquotName":"10001-01","ar40Corr":1.5,"stepNumber":1.0},)"
+      R"({"aliquotName":"10001-01","ar40Corr":2.5,"stepNumber":2.0}],)"
+      R"({"airRatioName":"Lee et al. 2006"},)"
+      R"({"age":28.2,"ageUncertainty":0.05,"nAnalysisGrouped":2,"preferredAge":true}])";
+  EXPECT_EQ(content_hash(submission()), "7083410e126739a1bf1895409a325f42b1772832061f2fd6b6fb47de86efe5bc") << text;
 }
 
 TEST(Model, ContentHashChangesWithAValue) {

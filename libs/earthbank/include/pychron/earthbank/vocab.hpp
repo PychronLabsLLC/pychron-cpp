@@ -28,8 +28,12 @@ struct LookupSpec {
 };
 
 // One per name field that is resolved against the service (the legacy
-// integration's table), in no particular order. A field name is the same in
-// every record that has it.
+// integration's table, entry for entry), in no particular order. A field name
+// is the same in every record that has it. Three `*Name` fields are in
+// neither this table nor the next, because they are free text and not terms:
+// `aliquotName` (the aliquot's own name), `locationName` (the name given to
+// the place) and `lithologyName` (sent by name; the legacy integration never
+// looked it up).
 std::span<const LookupSpec> lookup_specs();
 
 // The uncertainty type fields (the sigma level a number is quoted at). Their
