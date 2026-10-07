@@ -91,26 +91,24 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
 
   // Bridge the run's token to the job's: a cancel of the run is made on the
   // job by the thread that requests it, for as long as the job runs. Shared:
-  // the runner keeps the job's body, which looks at it, in its history.
+  // the runner keeps the job's body, which holds it, in its history.
   const auto job_token = std::make_shared<jobs::CancelToken>();
   struct Bridge {
     scripting::CancelToken& token;
     std::uint64_t id;
     // Waits for a call in progress: the callback refers to this frame.
     ~Bridge() { token.remove_on_cancel(id); }
-  } bridge{token, token.add_on_cancel([&] {
-             job_token->cancel();
-             if (runner_ != nullptr)
-               if (auto id = runner_->current()) (void)runner_->cancel(*id);
-           })};
+  } bridge{token, token.add_on_cancel([&] { job_token->cancel(); })};
   Result<jobs::PeakCenterResult> result = fail(ErrorKind::Config, "peak center did not run");
   if (runner_ != nullptr) {
-    // The runner gives the job a token of its own, which the callback reaches
-    // only once the job is the runner's current one. A cancel made before
-    // that is on job_token alone, so the job looks at it as it starts.
+    // The runner gives the job a token of its own: the job links job_token
+    // to it for as long as it runs, so this call cancels its own job and no
+    // other on the runner. A cancel made before the job starts is passed on
+    // as the link is made.
     auto spec = jobs::peak_center_job(*cfg, options_);
     spec.body = [job_token, body = std::move(spec.body)](jobs::JobContext& ctx) -> Result<std::any> {
-      if (job_token->cancelled()) return fail(ErrorKind::Cancelled, "peak center cancelled", "peak_center");
+      auto link = job_token->on_cancel([&ctx] { ctx.cancel.cancel(); });
+      if (ctx.cancel.cancelled()) return fail(ErrorKind::Cancelled, "peak center cancelled", "peak_center");
       return body(ctx);
     };
     auto job = runner_->run(std::move(spec));

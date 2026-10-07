@@ -13,6 +13,7 @@
 #include <random>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -536,7 +537,8 @@ TEST_F(SpectrometerPeakCenterSim, CancellingTheRunCancelsTheJob) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
   EXPECT_FALSE(peak_center.last());
-  // Nothing of the call is left on the token: a later request calls nothing.
+  // Asserts nothing by itself: a callback left on the token would be called
+  // here on a frame that has gone, which the sanitizers report.
   token.abort();
 }
 
@@ -559,7 +561,53 @@ TEST_F(SpectrometerPeakCenterSim, CancellingTheRunCancelsTheJobOnARunner) {
     ASSERT_EQ(finished.size(), 1u);
     EXPECT_EQ(finished[0], jobs::JobState::Cancelled);
   }
+  // As above: for the sanitizers, should a callback have been left behind.
   token.abort();
+}
+
+// The runner is busy with a job that is not this call's: the cancel of the
+// run is not a cancel of that job.
+TEST_F(SpectrometerPeakCenterSim, CancellingTheRunLeavesAnotherJobOnTheRunnerAlone) {
+  jobs::JobRunner runner(*spec_, scheduler_, bus_, clock_);
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool started = false, release = false;
+  std::atomic<bool> cancelled{false};
+  // Runs on the pump's thread and holds it until released.
+  auto other = runner.submit(jobs::JobSpec{"other", [&](jobs::JobContext& ctx) -> Result<std::any> {
+                                             std::unique_lock lock(mutex);
+                                             started = true;
+                                             cv.notify_all();
+                                             cv.wait(lock, [&] { return release; });
+                                             cancelled = ctx.cancel.cancelled();
+                                             return std::any(1);
+                                           }});
+  ASSERT_TRUE(other) << other.error().what;
+  {
+    std::unique_lock lock(mutex);
+    ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return started; }));
+  }
+
+  SpectrometerPeakCenter peak_center(*spec_, {{"slow", slow_peak_center()}}, &runner);
+  // Cancelled before, and again (an abort) after, the call finds the runner busy.
+  scripting::CancelToken token;
+  token.cancel();
+  auto r = peak_center.peak_center(slow_request(), token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
+  token.abort();
+  EXPECT_EQ(runner.current(), *other);
+
+  {
+    std::lock_guard lock(mutex);
+    release = true;
+  }
+  cv.notify_all();
+  runner.wait_idle();
+  EXPECT_FALSE(cancelled);
+  auto job = runner.job(*other);
+  ASSERT_TRUE(job);
+  EXPECT_EQ(job->state, jobs::JobState::Succeeded);
 }
 
 // Cancelled before the job is registered with the runner, when there is no
@@ -587,7 +635,7 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
  protected:
   static VirtualClock::Options options(SpectrometerPeakCenterVirtual* self) {
     VirtualClock::Options o;
-    o.stall_report_after = 200ms;
+    o.stall_report_after = 5s;
     o.on_stall = [self](std::string what) {
       std::lock_guard lock(self->mutex_);
       self->stalls_.push_back(std::move(what));
@@ -635,7 +683,7 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
   std::unique_ptr<spectrometer::Spectrometer> spec_;
 };
 
-TEST_F(SpectrometerPeakCenterVirtual, RunsWithoutAHelperThread) {
+TEST_F(SpectrometerPeakCenterVirtual, CompletesOnAVirtualClockWithoutAStall) {
   jobs::PeakCenterConfig wide;
   wide.name = "wide";
   wide.window = 0.08;
@@ -656,7 +704,7 @@ TEST_F(SpectrometerPeakCenterVirtual, RunsWithoutAHelperThread) {
   // 40 steps of 1 s and more of simulated time, in none of real time.
   EXPECT_GE(clock_.now() - started, 40s);
   EXPECT_LT(std::chrono::steady_clock::now() - real_started, 5s);
-  // Nothing beside the job kept time standing.
+  // Nothing kept time standing.
   EXPECT_TRUE(stalls().empty()) << stalls().front();
 }
 

@@ -300,7 +300,7 @@ participants.
 | `QueuedTransport::Impl::submit` | `promise` / `future.get()` | a result slot guarded by the queue mutex, waited with `clock.wait` |
 | `Executor::Resource::acquire` | `cv.wait_for(10 ms)` | `clock.wait`; `release` and the run's token notify through the clock |
 | executor `wait_until(pred)` | `cv.wait_for(10 ms)` | `clock.wait`; slot completion notifies through the clock |
-| `SpectrometerPeakCenter::peak_center` bridge | helper thread, `sleep_for(10 ms)` | no thread: the run's `CancelToken` gets an `on_cancel` callback that cancels the job token and the runner's current job |
+| `SpectrometerPeakCenter::peak_center` bridge | helper thread, `sleep_for(10 ms)` | no thread: the run's `CancelToken` gets an `on_cancel` callback that cancels this call's job token, which is linked to the job's own token when the job starts |
 | `CancelToken::cancel/abort/wake` | `cv.notify_all` | notify through the clock the current waiter passed in (remembered under the token mutex; plain notify when nobody waits) |
 | `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock |
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
