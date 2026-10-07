@@ -258,9 +258,12 @@ Unchanged from legacy: the J formula, averaging J rather than F, the two mean
 kinds, the error kinds of the means, neighbour selection, extrapolation, no
 automatic outlier rejection, a Bowl with no `xy` term.
 
-## 6. Orchestration: `libs/processing` `flux_fit.hpp`
+## 6. Orchestration: `libs/processing`
 
-Qt-free. Built only with persistence, like the store source.
+Qt-free, in two headers. `flux_fit.hpp` in `libs/processing` proper holds the
+types and the pure `fit_level` (no store, no JSON). `flux_store.hpp` in the
+`processing_store` adapter, built only with persistence, holds the monitor
+sets, the options JSON, `load_level` and `save_level`.
 
 ```cpp
 struct MonitorSet { /* one entry of section 4 */ };
@@ -387,7 +390,7 @@ imported `RBF` fit) means "no saved options", and legacy error strings
 ## 7. `elctl flux`
 
 `flux.cpp` with a `flux_stub.cpp` for builds without persistence, like
-`export`. `--install` and `--database` as the other store commands.
+`export`. The store is named with `--db <url>`, as in `export` and `entry`.
 
 ```
 elctl flux fit <irradiation> [<level>]
@@ -411,7 +414,7 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
 - Without `--save` nothing is written.
 - With no `<level>`, each level of the irradiation in turn, fitted
   independently; a level that fails is reported and the rest continue; the
-  exit code is non-zero if any failed. `--omit`, `--exclude-position` and
+  exit code is 1 if any failed. `--omit`, `--exclude-position` and
   `--no-save-position` need a level.
 - Options not given come from the level's saved fit, and from the defaults
   (Plane, unweighted, arithmetic mean, `msem` for both errors: legacy's)
@@ -430,7 +433,8 @@ elctl flux monitors [list | show NAME | set FILE | default NAME]
   first, grouped by changeset.
 - `monitors set FILE` validates and saves the document from a JSON file;
   `default NAME` changes the default.
-- Exit code: 0 on success (warnings included), 1 on any error or conflict.
+- Exit codes, as `export`: 0 on success (warnings included); 1 when a level
+  could not be fitted or a save conflicted; 2 for usage and fatal errors.
 
 ## 8. Testing
 
