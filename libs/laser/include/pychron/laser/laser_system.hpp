@@ -118,7 +118,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // a stage, the system runs the lab's patterns over it.
   // `clock` (which must outlive the system as well) is the one a caller waits
   // on for the gate while another's call is with the device: the clock the
-  // driver's transport waits on. SteadyClock if null.
+  // driver's transport waits on. SteadyClock if null. A camera attached to a
+  // system that was given one is on the same clock.
   LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
               const CalibrationStore& calibrations, const PatternLibrary* patterns = nullptr,
               const Clock* clock = nullptr);
@@ -290,6 +291,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // and before mutex_. Recursive: a pattern's step moves this system's stage.
   // Held across the device's replies, which wait in clock time: a clock mutex.
   mutable RecursiveClockMutex gate_;
+  const Clock* const gate_clock_;  // the constructor's; null when none was given
   std::atomic<bool> stopped_{false};  // the emergency stop's latch
   std::atomic<bool> moving_{false};   // a move was started, and moving() has not yet said it is over
 

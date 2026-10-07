@@ -86,6 +86,18 @@ TEST(SnapshotsWithout, NoCameraNoImaging) {
   EXPECT_EQ(h.system.imaging(), nullptr);
 }
 
+// Asked for the time as a name, a system with no camera says so: it has no
+// clock of a camera's to read it from, and nothing to take a picture with.
+TEST(SnapshotsWithout, ANamelessSnapshotWithNoCameraSaysSo) {
+  LaserHarness h;
+  h.system.set_snapshot_dir(h.lab.dir / "snapshots");
+  const auto saved = static_cast<extraction::IImaging&>(h.system).snapshot("");
+  ASSERT_FALSE(saved);
+  EXPECT_EQ(saved.error().kind, ErrorKind::Config);
+  EXPECT_NE(saved.error().what.find("no camera"), std::string::npos) << saved.error().what;
+  EXPECT_FALSE(fs::exists(h.lab.dir / "snapshots"));
+}
+
 TEST(SnapshotsWithout, NoDirectoryIsSaid) {
   CameraHarness h;
   ASSERT_NE(h.system.imaging(), nullptr);

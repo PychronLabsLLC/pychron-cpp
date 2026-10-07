@@ -3,6 +3,7 @@
 #include "pychron/laser/pattern_runner.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -37,7 +38,8 @@ LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver
       driver_(driver),
       trays_(trays),
       calibrations_(calibrations),
-      gate_(clock != nullptr ? *clock : default_clock()) {
+      gate_(clock != nullptr ? *clock : default_clock()),
+      gate_clock_(clock) {
   // The runner moves this system's stage, not the driver's directly, so
   // whatever the system adds to a move applies to a pattern's too.
   if (patterns != nullptr) runner_ = std::make_unique<PatternRunner>(name_, *this, *patterns);
@@ -48,11 +50,9 @@ namespace {
 using Gate = std::lock_guard<RecursiveClockMutex>;
 
 // Calendar time for a stamp that is written down: the clock's, so a simulated
-// session is stamped in simulated time. A system with no camera has been
-// given no clock, and gets the computer's.
-std::tm utc_parts(const Clock* clock) {
-  const std::time_t now =
-      std::chrono::system_clock::to_time_t(clock != nullptr ? clock->wall_now() : std::chrono::system_clock::now());
+// session is stamped in simulated time.
+std::tm utc_parts(const Clock& clock) {
+  const std::time_t now = std::chrono::system_clock::to_time_t(clock.wall_now());
   std::tm parts{};
 #ifdef _WIN32
   gmtime_s(&parts, &now);
@@ -270,10 +270,11 @@ Result<std::string> LaserSystem::snapshot(std::string_view name) {
   if (stem.empty()) {
     const Clock* clock = nullptr;
     {
-      Gate gate(gate_);  // attach_camera() sets it
+      Gate gate(gate_);  // attach_camera() sets both
+      if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
       clock = clock_;
     }
-    const std::tm parts = utc_parts(clock);
+    const std::tm parts = utc_parts(*clock);
     char text[32];
     std::strftime(text, sizeof text, "%Y%m%d-%H%M%S", &parts);
     stem = text;
@@ -466,7 +467,7 @@ constexpr int kStaleTries = 5;
 
 double apart(StageXY a, StageXY b) { return std::hypot(a.x - b.x, a.y - b.y); }
 
-std::string utc_now(const Clock* clock) {
+std::string utc_now(const Clock& clock) {
   const std::tm parts = utc_parts(clock);
   char text[32];
   std::strftime(text, sizeof text, "%Y-%m-%dT%H:%M:%SZ", &parts);
@@ -490,6 +491,7 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   camera_ = std::move(config);
   frames_ = std::move(frames);
   centers_ = true;
+  assert(gate_clock_ == nullptr || gate_clock_ == &clock);  // one system, one clock
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
@@ -506,6 +508,7 @@ Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vis
   camera_ = std::move(config);
   frames_ = std::move(frames);
   centers_ = false;
+  assert(gate_clock_ == nullptr || gate_clock_ == &clock);  // one system, one clock
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   if (runner_ != nullptr) runner_->set_vision({});  // nothing to follow the glow with
@@ -843,7 +846,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
     outcome.found = here;
     outcome.moved_mm = {here.x - c.start.x, here.y - c.start.y};
     outcome.residual_mm = c.residual;
-    const HoleCorrection correction{here.x, here.y, c.residual, utc_now(clock_)};
+    const HoleCorrection correction{here.x, here.y, c.residual, utc_now(*clock_)};
     const std::string hole = c.hole;
     centering_.reset();
 

@@ -357,3 +357,30 @@ TEST_F(LaserSystemVirtual, TwoCallersContendWithoutStallingTime) {
   EXPECT_EQ(clock.now(), start + 3s);
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
+
+// A system given a clock waits for its gate on it, and its camera's settle
+// and stamps are read from the camera's: two clocks in one system would let
+// simulated time and real time meet. Refused where asserts are on.
+TEST(LaserSystemClocks, ACameraIsOnTheClockTheSystemWasGiven) {
+  LabDir lab;
+  ManualClock clock;
+  ManualClock other;
+  ChromiumSim sim{clock};
+  auto wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "laser_pc", .clock = &clock});
+  ASSERT_TRUE(wire->open());
+  ChromiumLaser driver("co2", *wire, options());
+  const TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  LaserSystem system{"co2", driver, trays, store, nullptr, &clock};
+  const CameraConfig config = camera_config();
+  EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock));
+#ifndef NDEBUG
+  GTEST_FLAG_SET(death_test_style, "threadsafe");  // the process has other threads
+  EXPECT_DEATH(
+      (void)system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other),
+      "gate_clock_");
+  EXPECT_DEATH(
+      (void)system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other),
+      "gate_clock_");
+#endif
+}
