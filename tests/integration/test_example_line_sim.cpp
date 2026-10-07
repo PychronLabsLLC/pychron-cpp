@@ -163,6 +163,9 @@ TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   ASSERT_EQ(events->failures.size(), 1u);
   EXPECT_EQ(events->failures[0].valve, "C");
   EXPECT_FALSE(line->sim()->valve_open("C"));
+  // Long enough for an open C to have shown on IG1; the pump has taken a
+  // tenth of the tolerance.
+  clock.advance(100us);
   EXPECT_NEAR(*line->read_gauge("IG1"), 1e-8, 1e-12);
 
   // Isolate the furnace, then pump prep through C. The turbo region

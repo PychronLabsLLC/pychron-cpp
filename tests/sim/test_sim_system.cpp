@@ -93,6 +93,7 @@ TEST(SimSystem, OpeningAValveEquilibratesByVolume) {
 
   sim.set_valve("A", false);
   sim.set_pressure("prep", 1.0);
+  clock.advance(30s);  // an open A would have brought it across
   EXPECT_NEAR(*sim.pressure("bone"), 3e-3, 1e-12);
 }
 
@@ -812,6 +813,7 @@ TEST(SimSystem, InjectReachesTheGauge) {
   released[kAr40] = 5e-9;  // mbar L, into 50 cc
   ASSERT_TRUE(sim.inject("a", released));
   EXPECT_NEAR(*sim.gauge_reading("a"), before + 1e-7, 1e-7 * 1e-12);
+  clock.advance(30s);  // V is closed: none of it reaches b, however long
   EXPECT_NEAR((*sim.partial_pressures("a"))[kAr40] - (*sim.partial_pressures("b"))[kAr40], 1e-7, 1e-7 * 1e-12);
   EXPECT_DOUBLE_EQ(*sim.gauge_reading("b"), before);
 
