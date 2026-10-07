@@ -245,6 +245,7 @@ TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
 TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
   VirtualClock clock;
   Clock::Participant test(clock, "test");
+  std::atomic<int> slow_runs{0};  // the line's job counts here: declared before the line, so it outlives it
   ExtractionLine::Options options;
   options.clock = &clock;
   options.sim = lab();
@@ -257,7 +258,6 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
 
   // A job that takes ten seconds of the clock's time, once.
   const TimePoint start = clock.now();
-  std::atomic<int> slow_runs{0};
   ASSERT_TRUE(line.scheduler().every("slow", 1s, [&] {
     if (slow_runs.fetch_add(1) == 0) clock.sleep_for(10s);
   }));
