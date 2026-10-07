@@ -306,7 +306,8 @@ cd configs/examples
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
-`--sim-speed` runs simulated time faster than real time. Records, the spool
+`--sim-speed` runs simulated time faster than real time (`--sim-speed max`:
+as fast as the machine goes, without waiting at all). Records, the spool
 and `executor_state.json` go to `./data` (ignored by git); `--resume` continues
 after the last started run. Ctrl-C stops after the current run, a second
 Ctrl-C cancels it, a third aborts.

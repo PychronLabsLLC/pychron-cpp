@@ -2,18 +2,19 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <ostream>
 #include <sstream>
-#include <thread>
 
-#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/process.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -42,7 +43,8 @@ namespace {
 constexpr const char* kExpUsage =
     "usage: elctl [-c <extraction_line.toml>] [--sim] exp <validate|run> <experiment.toml>\n"
     "         [--lab <dir>] [--data <dir>] [--spectrometer <file>] [--canvas <file>]\n"
-    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
+    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max]\n"
+    "       --sim-speed (with --sim): simulated time, <x> times faster than real time; max does not wait at all\n"
     "       elctl exp notify [--lab <dir>]   send a test notification (<lab>/notifications.toml)\n";
 
 std::string clock_text(experiment::Duration d) {
@@ -58,7 +60,7 @@ struct ExpArgs {
   fs::path queue_file, lab, data, spectrometer, canvas;
   std::optional<std::size_t> from;
   bool resume = false, dry_run = false;
-  double sim_speed = 0;
+  double sim_speed = 0;  // 0: real time; infinity: --sim-speed max
 };
 
 class Exp {
@@ -137,22 +139,22 @@ class Exp {
       io_.err << "error: no extraction line config at " << g_.config.string() << '\n';
       return kFailed;
     }
-    // Clock: real time, or simulated time running sim_speed times faster,
-    // with the line's scheduler driven by the pump (see ClockPump).
-    std::unique_ptr<ManualClock> manual;
-    std::unique_ptr<ClockPump> pump;
+    // Clock: real time, or simulated time running sim_speed times faster
+    // (VirtualClock), which starts at the real time of day. Declared before
+    // everything that is given it, so it is the last to go.
+    std::unique_ptr<VirtualClock> sim_clock;
     if (a_.sim_speed > 0) {
-      manual = std::make_unique<ManualClock>(TimePoint{} + std::chrono::hours(1));
-      pump = std::make_unique<ClockPump>(*manual, a_.sim_speed);
+      VirtualClock::Options clock_options;
+      clock_options.speed = a_.sim_speed;
+      clock_options.epoch = std::chrono::system_clock::now();
+      // Straight to stderr: a stalled run is one that prints nothing more.
+      clock_options.on_stall = [](std::string report) { std::fprintf(stderr, "elctl: %s\n", report.c_str()); };
+      sim_clock = std::make_unique<VirtualClock>(std::move(clock_options));
     }
 
     systems::ExtractionLine::Options line_options;
-    line_options.clock = manual.get();
+    line_options.clock = sim_clock.get();
     line_options.force_sim = g_.sim;
-    if (manual) {
-      line_options.scheduler.threads = 0;
-      line_options.run_scheduler = false;
-    }
     std::optional<fs::path> canvas;
     if (!a_.canvas.empty()) canvas = a_.canvas;
     else if (fs::exists(g_.config.parent_path() / "canvas.toml")) canvas = g_.config.parent_path() / "canvas.toml";
@@ -161,19 +163,14 @@ class Exp {
       io_.err << "error: " << line.error().what << '\n';
       return kFailed;
     }
-    // Declared after the line, so the pump stops before the line goes.
-    struct PumpGuard {
-      ClockPump* pump;
-      ~PumpGuard() {
-        if (pump) pump->stop();
-      }
-    } pump_guard{pump.get()};
-    if (pump) pump->drive(&(*line)->scheduler());
+    const Clock& clock = (*line)->clock();
+    // This thread takes part in the clock's time until the run is over:
+    // simulated time moves only while it, too, is waiting in the clock.
+    const Clock::Participant participant(clock, "elctl");
     if (auto r = (*line)->start(); !r) {
       io_.err << "error: " << r.error().what << '\n';
       return kFailed;
     }
-    const Clock& clock = (*line)->clock();
 
     // Spectrometer. With --sim its beam follows the config's field table.
     std::unique_ptr<spectrometer::Spectrometer> spec;
@@ -270,7 +267,7 @@ class Exp {
     }
     int handled = 0;
     while (session.running()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      clock.sleep_for(std::chrono::milliseconds(50));
       const int n = interrupt_count();
       for (; handled < n; ++handled) {
         if (handled == 0) {
@@ -286,7 +283,12 @@ class Exp {
       }
     }
     const executor::QueueResult result = *session.wait();
-    session.notifier().wait_idle();  // the queue-end message
+    {
+      // The queue-end message: its commands are the outside world's, and take
+      // real time.
+      const Clock::Detached detached(clock);
+      session.notifier().wait_idle();
+    }
     subs.clear();
     if (g_.sim) sim::BeamModelRegistry::global().clear();
 
@@ -343,11 +345,18 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
           return usage("--from needs a row number");
         }
       } else {
+        if (*v == "max") {
+          a.sim_speed = std::numeric_limits<double>::infinity();
+          continue;
+        }
+        // std::stod reads "inf" and "nan", and stops at what it cannot read.
+        std::size_t read = 0;
         try {
-          a.sim_speed = std::stod(*v);
+          a.sim_speed = std::stod(*v, &read);
         } catch (...) {
           return usage("--sim-speed needs a number");
         }
+        if (read != v->size() || !std::isfinite(a.sim_speed)) return usage("--sim-speed needs a number");
         if (a.sim_speed <= 0) return usage("--sim-speed must be positive");
       }
     } else if (x == "--resume") {

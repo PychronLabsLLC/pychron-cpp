@@ -1,9 +1,12 @@
 // elctl exp validate / run against a scratch copy of configs/examples, which
 // doubles as an example lab (plans/, scripts/, conditionals/, experiment.toml).
 
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 
 #include "elctl_fixture.hpp"
@@ -40,6 +43,28 @@ class ElctlExpTest : public ElctlTest {
     all.insert(all.end(), args.begin(), args.end());
     return run_raw(all);
   }
+
+  // The example queue on the sim at unlimited speed, records under <dir>/out.
+  Outcome run_example_queue() const {
+    return exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+                (dir_ / "out").string(), "--sim-speed", "max"},
+               true);
+  }
+
+  // When a record says its analysis began (identity.timestamp, UTC to the second).
+  std::optional<std::chrono::sys_seconds> stamp(const std::string& record) const {
+    std::ifstream in(dir_ / "out" / "records" / record);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto key = text.find("\"timestamp\"");
+    if (key == std::string::npos) return std::nullopt;
+    const auto open = text.find('"', text.find(':', key));
+    if (open == std::string::npos) return std::nullopt;
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+    if (std::sscanf(text.c_str() + open, "\"%d-%d-%dT%d:%d:%dZ\"", &y, &mo, &d, &h, &mi, &sec) != 6) return std::nullopt;
+    const std::chrono::year_month_day day{std::chrono::year{y}, std::chrono::month{static_cast<unsigned>(mo)},
+                                          std::chrono::day{static_cast<unsigned>(d)}};
+    return std::chrono::sys_days{day} + std::chrono::hours{h} + std::chrono::minutes{mi} + std::chrono::seconds{sec};
+  }
 };
 
 TEST_F(ElctlExpTest, ValidateTheExampleQueue) {
@@ -75,7 +100,7 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto data = (dir_ / "out").string();
   auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
-                data, "--sim-speed", "400"},
+                data, "--sim-speed", "max"},
                true);
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "run 0 bu-1: success")) << o.out;
@@ -93,18 +118,51 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
 
   // Everything ran, so a resume has nothing left to do.
   auto again = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
-                    "--data", data, "--sim-speed", "400", "--resume"},
+                    "--data", data, "--sim-speed", "max", "--resume"},
                    true);
   EXPECT_EQ(again.code, 0) << again.err;
   EXPECT_TRUE(contains(again.out, "0/0 run(s)")) << again.out;
 
   // --from skips rows.
   auto from = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
-                   "--data", data, "--sim-speed", "400", "--from", "2"},
+                   "--data", data, "--sim-speed", "max", "--from", "2"},
                   true);
   EXPECT_EQ(from.code, 0) << from.err;
   EXPECT_TRUE(contains(from.out, "run 2 66001-3: success")) << from.out;
   EXPECT_FALSE(contains(from.out, "run 0 ")) << from.out;
+}
+
+// The queue is some eight minutes of delays, extraction and counting; on the
+// virtual clock at unlimited speed nothing waits for real time.
+TEST_F(ElctlExpTest, SimulatedQueueTakesNoRealTime) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto began = std::chrono::steady_clock::now();
+  auto o = run_example_queue();
+  const auto took = std::chrono::steady_clock::now() - began;
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "3/3 run(s) succeeded")) << o.out;
+  EXPECT_LT(took, std::chrono::seconds(5));
+}
+
+// Simulated time starts at the real time of day and runs on from there: each
+// analysis is stamped later than the one before by at least what the one
+// before spent counting its main block (sim_multicollect: 2 cycles of two
+// hops of 15 one-second counts).
+TEST_F(ElctlExpTest, SimulatedAnalysesAreStampedInSimulatedTime) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto began = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+  auto o = run_example_queue();
+  const auto ended = std::chrono::system_clock::now();
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  const auto blank = stamp("bu/bu-1.json");
+  const auto first = stamp("66001/66001-1.json");
+  const auto second = stamp("66001/66001-2.json");
+  ASSERT_TRUE(blank && first && second) << o.out;
+  const auto measurement = std::chrono::seconds(2 * (15 + 15));
+  EXPECT_GE(*blank, began);  // the epoch is now, not 1970
+  EXPECT_GE(*first - *blank, measurement);
+  EXPECT_GE(*second - *first, measurement);
+  EXPECT_GT(*second, ended);  // and it has run ahead of real time
 }
 
 // What a run says is printed under its state lines: here, that each hole of
@@ -112,7 +170,7 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
 TEST_F(ElctlExpTest, ARunsLogIsPrinted) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   auto o = exp({"run", lab("experiment.laser.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
-                "--data", (dir_ / "out").string(), "--sim-speed", "400"},
+                "--data", (dir_ / "out").string(), "--sim-speed", "max"},
                true);
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "\n  66001: hole 3: centered, moved ")) << o.out;
@@ -176,6 +234,17 @@ TEST_F(ElctlExpTest, UsageErrors) {
   EXPECT_EQ(exp({"launch", lab("experiment.toml")}).code, 2);
   EXPECT_EQ(exp({"run"}).code, 2);
   EXPECT_EQ(exp({"run", lab("experiment.toml"), "--sim-speed", "10"}).code, 2);  // needs --sim
+  EXPECT_EQ(exp({"run", lab("experiment.toml"), "--sim-speed", "max"}).code, 2);  // so does max
+  for (const char* bad : {"fast", "nan", "inf", "infinity", "4x", "maximum", ""}) {
+    auto o = exp({"run", lab("experiment.toml"), "--sim-speed", bad}, true);
+    EXPECT_EQ(o.code, 2) << bad;
+    EXPECT_TRUE(contains(o.err, "--sim-speed needs a number")) << bad << ": " << o.err;
+  }
+  for (const char* bad : {"0", "-2"}) {
+    auto o = exp({"run", lab("experiment.toml"), "--sim-speed", bad}, true);
+    EXPECT_EQ(o.code, 2) << bad;
+    EXPECT_TRUE(contains(o.err, "--sim-speed must be positive")) << bad << ": " << o.err;
+  }
   EXPECT_EQ(exp({"run", lab("experiment.toml"), "--from", "1", "--resume"}).code, 2);
   EXPECT_EQ(exp({"run", lab("experiment.toml"), "--from", "x"}).code, 2);
   auto missing = exp({"validate", lab("nope.toml")});
