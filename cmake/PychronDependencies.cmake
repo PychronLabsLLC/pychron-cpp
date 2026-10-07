@@ -212,19 +212,18 @@ if(PYCHRON_PERSISTENCE_ENABLED)
   endif()
 endif()
 
-# JSON for libs/dvc (legacy repository files) and libs/ingest (the verifier
-# reads stored detail). Header-only and PRIVATE to both: it appears in no
-# public header.
-if(PYCHRON_PERSISTENCE_ENABLED)
-  set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-  set(JSON_Install OFF CACHE BOOL "" FORCE)
-  # Third-party headers must not trip PYCHRON_WARNINGS_AS_ERRORS.
-  set(JSON_SystemInclude ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(nlohmann_json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SYSTEM
-    FIND_PACKAGE_ARGS CONFIG)
-  FetchContent_MakeAvailable(nlohmann_json)
-endif()
+# JSON for libs/dvc (legacy repository files), libs/ingest (the verifier
+# reads stored detail) and libs/earthbank (the service's records are JSON, and
+# its public headers say so). Header-only. Fetched whether or not persistence
+# is built: libs/earthbank builds on every platform.
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+# Third-party headers must not trip PYCHRON_WARNINGS_AS_ERRORS.
+set(JSON_SystemInclude ON CACHE BOOL "" FORCE)
+FetchContent_Declare(nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SYSTEM
+  FIND_PACKAGE_ARGS CONFIG)
+FetchContent_MakeAvailable(nlohmann_json)

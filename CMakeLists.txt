@@ -26,8 +26,9 @@ include(PychronDependencies)
 # Libraries in dependency order: core <- transport <- codecs <- devices <- systems.
 # persistence depends on core only (DVC schema spec, section 12.1).
 # sim depends on transport and devices only. A library is added once its
-# directory exists so each unit can land independently.
-set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing setup)
+# directory exists so each unit can land independently. earthbank (records for
+# the EarthBank data platform) sits on processing.
+set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing earthbank setup)
 
 if(NOT PYCHRON_METRICS)
   list(REMOVE_ITEM PYCHRON_LIBS metrics)
