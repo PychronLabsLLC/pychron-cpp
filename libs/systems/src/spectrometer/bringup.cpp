@@ -1,6 +1,7 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -9,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 
 namespace pychron::spectrometer {
@@ -47,21 +49,27 @@ std::optional<std::string> first_non_simulated(const cfg::SpectrometerConfig& co
 }  // namespace
 
 Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
+  // Everything is checked first: nothing below the checks can fail.
+  if (&beam.clock() != &line.clock()) {
+    return fail(ErrorKind::Config, "the simulated beam and the simulated line are on different clocks: a reading's "
+                                   "instant would not be the line's time");
+  }
   const sim::SimSettings& settings = line.settings();
+  const std::string where = settings.file.empty() ? std::string("sim settings") : settings.file;
   const std::vector<std::string> known = beam.detector_names();
   for (const auto& [name, detector] : settings.detectors) {
-    if (std::ranges::find(known, name) != known.end()) continue;
-    std::string what = (settings.file.empty() ? std::string("sim settings") : settings.file) + ": detectors." + name +
-                       ": unknown detector '" + name + "'; known: ";
-    for (std::size_t i = 0; i < known.size(); ++i) what += (i == 0 ? "" : ", ") + known[i];
-    if (known.empty()) what += "none";
-    return fail(ErrorKind::Config, std::move(what));
+    if (std::ranges::find(known, name) == known.end()) {
+      std::string what = where + ": detectors." + name + ": unknown detector '" + name + "'; known: ";
+      for (std::size_t i = 0; i < known.size(); ++i) what += (i == 0 ? "" : ", ") + known[i];
+      if (known.empty()) what += "none";
+      return fail(ErrorKind::Config, std::move(what));
+    }
+    if (!std::isfinite(detector.baseline) || !std::isfinite(detector.drift_per_h)) {
+      return fail(ErrorKind::Config, where + ": detectors." + name + ": baseline and drift must be finite numbers");
+    }
   }
   for (const auto& [name, detector] : settings.detectors) {
-    if (auto set = beam.set_baseline(name, detector.baseline, detector.drift_per_h); !set) {
-      return fail(ErrorKind::Config, (settings.file.empty() ? std::string("sim settings") : settings.file) +
-                                         ": detectors." + name + ": " + set.error().what);
-    }
+    (void)beam.set_baseline(name, detector.baseline, detector.drift_per_h);  // checked above
   }
   if (auto gas = line.beam_gas()) beam.set_gas_provider(std::move(gas));
   return {};

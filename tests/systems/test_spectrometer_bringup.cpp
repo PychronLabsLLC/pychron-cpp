@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -246,6 +247,76 @@ TEST_F(SpectrometerBringupLine, ABeamReadAfterItsLineIsGoneReadsNoGas) {
   spec_.reset();
   line_.reset();
   EXPECT_NEAR(mean_h1(*beam), 0.0, 0.5);
+}
+
+// A line with no spectrometer volume (one loaded without its canvas, say)
+// leaves the beam its fixed gas, and its detectors still get their baselines.
+TEST_F(SpectrometerBringupLine, BaselinesApplyEvenWithoutASpectrometerVolume) {
+  sim::SimTopology topology;
+  topology.volumes = {{"prep", 50.0}};
+  sim::SimSettings settings = still();
+  settings.detectors["H1"] = {50.0, 2.0};
+  sim::SimSystem line(clock_, topology, settings);
+  ASSERT_FALSE(line.spectrometer_volume());
+  sim::BeamModel beam(clock_);
+  beam.ensure_detector("H1");
+  auto fed = feed_beam_from_line(beam, line);
+  ASSERT_TRUE(fed) << fed.error().what;
+  EXPECT_EQ(beam.detector("H1")->baseline, 50.0);
+  EXPECT_EQ(beam.detector("H1")->baseline_drift_per_h, 2.0);
+  beam.set_magnet(*beam.peak_center("H1", "Ar40"));
+  EXPECT_NEAR(mean_h1(beam), 1e6 + 50.0, 1e6 * 0.01);
+}
+
+// A reading's instant is the line's time: a beam on another clock is refused.
+TEST_F(SpectrometerBringupLine, ABeamOnAnotherClockIsRefused) {
+  ManualClock other;
+  sim::BeamModel beam(other);
+  beam.ensure_detector("H1");
+  auto fed = feed_beam_from_line(beam, *line_->sim());
+  ASSERT_FALSE(fed);
+  EXPECT_EQ(fed.error().kind, ErrorKind::Config);
+  EXPECT_NE(fed.error().what.find("different clocks"), std::string::npos) << fed.error().what;
+  // And nothing was done to it: it still reads its own argon.
+  beam.set_magnet(*beam.peak_center("H1", "Ar40"));
+  EXPECT_NEAR(beam.intensity("H1")->value, 1e6, 1e6 * 0.01);
+}
+
+// Refused for one detector, the beam is as it was for all of them.
+TEST_F(SpectrometerBringupLine, ARefusedFeedChangesNothing) {
+  sim::SimSettings settings = still();
+  settings.compositions["source"] = sim::with_ar40(sim::air_ratios(), 1e-8);
+  sim::SimTopology topology;
+  topology.volumes = {{"source", 50.0, sim::SimRole::Spectrometer}};
+  sim::BeamModel beam(clock_);
+  beam.ensure_detector("AX");
+  beam.ensure_detector("H1");
+  const auto unchanged = [&](const char* why) {
+    EXPECT_EQ(beam.detector("AX")->baseline, 0.0) << why;
+    EXPECT_EQ(beam.detector("H1")->baseline, 0.0) << why;
+    beam.set_magnet(*beam.peak_center("H1", "Ar40"));
+    EXPECT_NEAR(mean_h1(beam), 1e6, 1e6 * 0.01) << why << ": the fixed gas, not the line's 1e4 fA";
+  };
+
+  // AX is good and comes first by name; H1's baseline is no number.
+  settings.detectors = {{"AX", {5.0, 0.0}}, {"H1", {std::numeric_limits<double>::quiet_NaN(), 0.0}}};
+  {
+    sim::SimSystem line(clock_, topology, settings);
+    auto fed = feed_beam_from_line(beam, line);
+    ASSERT_FALSE(fed);
+    EXPECT_EQ(fed.error().kind, ErrorKind::Config);
+    EXPECT_NE(fed.error().what.find("detectors.H1"), std::string::npos) << fed.error().what;
+    unchanged("a baseline that is not finite");
+  }
+  // AX is good; ZZ is not a detector.
+  settings.detectors = {{"AX", {5.0, 0.0}}, {"ZZ", {1.0, 0.0}}};
+  {
+    sim::SimSystem line(clock_, topology, settings);
+    auto fed = feed_beam_from_line(beam, line);
+    ASSERT_FALSE(fed);
+    EXPECT_NE(fed.error().what.find("detectors.ZZ"), std::string::npos) << fed.error().what;
+    unchanged("an unknown detector");
+  }
 }
 
 class SpectrometerBringupLineBaselines : public SpectrometerBringupLine {

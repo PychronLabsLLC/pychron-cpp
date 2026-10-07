@@ -221,6 +221,8 @@ class SimSystem {
   // system's lock, so it may be called from any thread that holds none of
   // this system's.
   std::function<std::vector<BeamGas>(TimePoint)> beam_gas();
+  // The clock this system keeps its time by.
+  const Clock& clock() const noexcept { return clock_; }
   // As given, with a sim.toml's numbers over them where the line read one.
   const Settings& settings() const noexcept { return settings_; }
   // The valves that have a state and no physics, each with why (a dangling

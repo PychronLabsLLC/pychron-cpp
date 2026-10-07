@@ -14,10 +14,13 @@
 #include <memory>
 
 #include "pychron/core/error.hpp"
-#include "pychron/sim/sim_system.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
+
+namespace pychron::sim {
+class SimSystem;
+}
 
 namespace pychron::spectrometer {
 
@@ -30,7 +33,11 @@ struct SpectrometerBringup {
   bool require_sim = false;
   // With sim_beam_from_table: the simulated line whose source volume that
   // beam reads (feed_beam_from_line, once the spectrometer is assembled).
-  // Null: no line, and the beam's fixed gas. It need not outlive the beam.
+  // Null: no line, and the beam's fixed gas. On the same clock as the
+  // spectrometer. The SimSystem itself need not outlive the beam (the beam
+  // holds it weakly), but the beam also refers to its clock, which in the
+  // applications is the line's: they destroy the spectrometer and clear the
+  // beam registry before the line for that reason.
   sim::SimSystem* line_sim = nullptr;
 };
 
@@ -47,13 +54,18 @@ sim::BeamSettings beam_settings_from_config(const cfg::SpectrometerData& data);
 // Joins a simulated beam to a simulated line. The beam's gas becomes what the
 // line's spectrometer volume holds at the instant of each reading
 // (`SimSystem::beam_gas`); a line with no such volume leaves the beam its
-// fixed gas. Each `[detectors.<name>]` of the line's sim.toml is that
-// detector's baseline and drift: call this once the beam has its detectors
-// (the sim drivers add them as the spectrometer is assembled), since a name
-// the beam does not have is a Config error naming the file, the key and the
-// detectors there are; the beam is then left as it was. The beam may outlive
-// the line: it then reads its baselines and no gas. Lock order: the beam's
-// mutex, then the line's; the line never calls a beam.
+// fixed gas. Each `[detectors.<name>]` of the line's settings is that
+// detector's baseline and drift, and is applied whether or not the line has
+// a spectrometer volume (a line loaded without its canvas has none, and its
+// detectors may still be given baselines). Call this once the beam has its
+// detectors (the sim drivers add them as the spectrometer is assembled).
+// Config errors: a detector name the beam does not have (naming the file,
+// the key and the detectors there are), a baseline that is not finite, a
+// beam and a line on different clocks (a reading's instant is the line's
+// time). Everything is checked before anything is changed: on an error the
+// beam is as it was. The line's SimSystem need not outlive the beam, which
+// then reads its baselines and no gas; the beam's clock must. Lock order:
+// the beam's mutex, then the line's; the line never calls a beam.
 Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line);
 
 // Errors from loading or assembling are returned unchanged. With require_sim,
