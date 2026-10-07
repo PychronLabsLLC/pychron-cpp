@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -878,6 +879,43 @@ TEST(SimSystem, ABadTopologyIsReportedNotThrown) {
   auto read = gauge.read_pressure(1);
   ASSERT_TRUE(read) << read.error().what;
   EXPECT_NEAR(*read, 1e-8, 1e-8 * 1e-3);
+}
+
+TEST(SimSystem, ARefusedGaugeVolumeIsReported) {
+  auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"IG1", -1e-6}, {"MI1", -2e-6}};  // gauges the topology does not have
+  SimSystem sim(clock, three_volumes(), settings);
+  ASSERT_FALSE(sim.build_error()) << sim.build_error()->what;  // the line itself is sound
+
+  auto transport = SimTransport::hooked(sim.hook_for(cfg->drivers.at("ig"), *cfg));
+  ASSERT_TRUE(sim.build_error());
+  EXPECT_EQ(sim.build_error()->kind, ErrorKind::Config);
+  EXPECT_NE(sim.build_error()->what.find("IG1"), std::string::npos) << sim.build_error()->what;
+  // The gauge has no volume and reads nothing; the line is as it was.
+  EXPECT_FALSE(sim.has_volume("IG1"));
+  ASSERT_TRUE(transport->open());
+  PfeifferMaxiGauge gauge("ig", *transport, {1});
+  EXPECT_FALSE(gauge.read_pressure(1));
+  EXPECT_DOUBLE_EQ(*sim.pressure("prep"), 1e-8);
+
+  // The first refusal is the one kept.
+  (void)sim.hook_for(cfg->drivers.at("mi"), *cfg);
+  EXPECT_NE(sim.build_error()->what.find("IG1"), std::string::npos) << sim.build_error()->what;
+}
+
+TEST(SimSystem, NoiseThatIsNoNumberIsNoNoise) {
+  for (const double noise : {std::nan(""), -0.01, std::numeric_limits<double>::infinity()}) {
+    ManualClock clock;
+    auto settings = quiet();
+    settings.noise = noise;
+    SimSystem sim(clock, three_volumes(), settings);
+    clock.advance(3s);
+    EXPECT_EQ(*sim.gauge_reading("prep"), *sim.pressure("prep")) << noise;
+    EXPECT_DOUBLE_EQ(*sim.gauge_reading("prep"), 1e-8) << noise;
+  }
 }
 
 // What a description could always get wrong and still give a line.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -136,12 +137,12 @@ void SimSystem::add_volume_locked(const std::string& name, double cc) {
   if (network_.has_volume(name)) return;
   // No part of the line, so no walls of it either: it holds what it is
   // given. Refused (the name of a valve, a pressure that cannot be), the
-  // gauge has no volume and reads nothing.
+  // gauge has no volume and reads nothing, and the line says why.
   GasVolume volume;
   volume.name = name;
   volume.litres = litres_of(cc, settings_);
   volume.initial = initial_of(name, settings_);
-  (void)network_.add_volume(std::move(volume));
+  if (auto added = network_.add_volume(std::move(volume)); !added && !build_error_) build_error_ = added.error();
 }
 
 TimePoint SimSystem::advance_locked() const {
@@ -219,7 +220,9 @@ Result<double> SimSystem::gauge_reading(std::string_view volume) const {
   if (!network_.has_volume(volume)) return unknown_volume(volume);
   const TimePoint now = advance_locked();
   const auto p = network_.pressure(volume);
-  if (!p || settings_.noise <= 0) return p;
+  // A noise that is negative or no number is no noise (sim.toml refuses one
+  // before it gets here).
+  if (!p || !(settings_.noise > 0) || !std::isfinite(settings_.noise)) return p;
   // Keyed by the volume and by the clock's time since this system was built.
   const auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(now - start_).count();
   return std::max(0.0, *p * (1.0 + settings_.noise * keyed_gauss(settings_.seed, volume, tick)));

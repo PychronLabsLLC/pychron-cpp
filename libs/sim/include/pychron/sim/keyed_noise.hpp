@@ -15,9 +15,12 @@
 // The hash is FNV-1a over the key, folded with the seed and the tick through
 // the splitmix64 finalizer (Steele, Lea and Flood 2014), and a draw is the
 // first output of a splitmix64 generator started there; a Gaussian draw uses
-// the first two. Fixed arithmetic on 64-bit integers: the same bits from
-// every compiler and standard library, which <random>'s distributions do
-// not promise.
+// the first two. `keyed_bits` is fixed arithmetic on 64-bit integers: the
+// same bits from every compiler and standard library, which <random>'s
+// distributions do not promise. `keyed_gauss` takes those bits through
+// std::log and std::cos, which maths libraries may round differently in the
+// last place: the same draw on one platform, and to about one part in 1e16
+// across platforms.
 
 #include <cmath>
 #include <cstdint>
@@ -55,7 +58,8 @@ constexpr std::uint64_t keyed_bits(std::uint64_t seed, std::string_view key, std
 }
 
 // A draw from the normal distribution of mean 0 and sigma 1 (Box-Muller);
-// finite, and the same for the same (seed, key, tick).
+// finite, and the same for the same (seed, key, tick) (to the last place
+// across maths libraries, see above).
 inline double keyed_gauss(std::uint64_t seed, std::string_view key, std::int64_t tick) noexcept {
   std::uint64_t state = keyed_noise_detail::start(seed, key, tick);
   // 53 bits each: the radius from (0, 1], so its logarithm is finite; the

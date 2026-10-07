@@ -152,7 +152,11 @@ class SimSystem {
 
   // Set when the topology and settings do not describe a network (a
   // negative pressure, a size that is not a number): the line is then empty,
-  // no volume answers, and valves are still tracked.
+  // no volume answers, and valves are still tracked. Set as well, if not
+  // already, when hook_for cannot give a gauge off the canvas its own volume
+  // (its name is a valve's, its pressure cannot be): that gauge reads
+  // nothing. Written only while the line is being built, by the constructor
+  // and the hook_for calls: read it once the hooks are made.
   const std::optional<Error>& build_error() const;
 
   // Hook for a SimTransport answering as `driver` would, given the system
@@ -213,7 +217,7 @@ class SimSystem {
   const Clock& clock_;
   Settings settings_;
   mutable std::mutex mutex_;
-  std::optional<Error> build_error_;  // set in the constructor, never after
+  std::optional<Error> build_error_;  // the first refusal; see build_error()
   mutable GasNetwork network_;        // only under mutex_
   // What every name was last told, the network's valves and the names it
   // does not have (switches, unmodelled valves) alike.
