@@ -245,6 +245,28 @@ kept. When the last copy goes the jump check runs again.
 
 On `SteadyClock` and `ManualClock` a `Hold` does nothing.
 
+### 3.8 Mutexes held across simulated time
+
+A thread blocked on a `std::mutex` is blocked in the kernel, where the clock
+cannot see it: it looks runnable. If the holder of that mutex is waiting in
+the clock (a command waiting for its reply, a connect waiting for a banner),
+time stands, the holder's wait never ends, and the program stalls.
+
+`pychron::ClockMutex` (`libs/core`, `clock_mutex.hpp`) is a mutex whose
+contended `lock()` waits through the clock: a flag under an inner
+`std::mutex`, waited for with `clock.wait` and released with
+`clock.notify_one`. A contender is then blocked like any other waiter and
+time goes on for the holder. It is Lockable (`std::lock_guard`,
+`std::unique_lock`, `std::scoped_lock`), not recursive, and promises no order
+among contenders. On `SteadyClock` it is a plain mutex.
+
+Use it for a mutex that is held across a wait in clock time, a transport
+call, or a call into something that does either: "one command in flight",
+"one actuation at a time". Do not use it for a mutex that only guards a few
+fields for a few lines, and it cannot be the mutex of a
+`std::condition_variable`: such a mutex stays `std::mutex` and is never held
+across a wait other than the condition variable's own.
+
 ## 4. Call sites
 
 ### 4.1 Participants

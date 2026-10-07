@@ -4,6 +4,7 @@ add_library(pychron_core
   src/error.cpp
   src/clock.cpp
   src/virtual_clock.cpp
+  src/clock_mutex.cpp
   src/time_series_ring.cpp
   src/signal_bus.cpp
   src/logger.cpp

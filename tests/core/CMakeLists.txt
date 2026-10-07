@@ -3,6 +3,7 @@ add_executable(pychron_core_tests
   test_error.cpp
   test_clock.cpp
   test_virtual_clock.cpp
+  test_clock_mutex.cpp
   test_time_series_ring.cpp
   test_signal_bus.cpp
   test_logger.cpp

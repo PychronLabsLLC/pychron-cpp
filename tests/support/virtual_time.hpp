@@ -17,10 +17,12 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "pychron/core/virtual_clock.hpp"
 
@@ -98,5 +100,57 @@ template <class Pred>
 [[nodiscard]] inline bool await_waiters(const VirtualClock& clock, std::size_t n) {
   return eventually_real([&] { return clock.waiters() == n; });
 }
+
+// Threads that take part in a clock's time, started and joined by the rules:
+// time does not jump between a thread's start and its Participant, and the
+// join waits through the clock for the threads to say they have finished (a
+// bare join() of a thread that still has to wait in the clock would hold time
+// still for good). join() is called by the thread that started them.
+class Crew {
+ public:
+  explicit Crew(const Clock& clock) : clock_(clock) {}
+  ~Crew() { join(); }
+  Crew(const Crew&) = delete;
+  Crew& operator=(const Crew&) = delete;
+
+  template <class F>
+  void start(std::string name, F body) {
+    auto hold = std::make_shared<Clock::Hold>(clock_);
+    {
+      std::lock_guard lock(mutex_);
+      ++live_;
+    }
+    threads_.emplace_back([this, hold, name = std::move(name), body = std::move(body)]() mutable {
+      Clock::Participant participant(clock_, name);
+      hold.reset();
+      // Said while this thread is still a participant.
+      struct Done {
+        Crew& crew;
+        ~Done() {
+          std::lock_guard lock(crew.mutex_);
+          --crew.live_;
+          crew.clock_.notify_all(crew.cv_);
+        }
+      } done{*this};
+      body();
+    });
+  }
+
+  void join() {
+    {
+      std::unique_lock lock(mutex_);
+      while (live_ != 0) clock_.wait(cv_, lock);
+    }
+    for (auto& t : threads_) t.join();
+    threads_.clear();
+  }
+
+ private:
+  const Clock& clock_;
+  std::mutex mutex_;
+  std::condition_variable cv_;  // waited on and notified through clock_
+  std::size_t live_ = 0;
+  std::vector<std::thread> threads_;
+};
 
 }  // namespace pychron::testing
