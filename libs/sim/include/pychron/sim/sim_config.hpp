@@ -5,7 +5,8 @@
 // Optional. A simulated line works with the defaults of `SimSettings`; this
 // file overrides them, for the whole line or by name. It is read over a
 // `base`: a key that is in the file replaces what the base has, and a key
-// that is not leaves it.
+// that is not leaves it. So what is in force is the built-in defaults, then
+// what the caller set in the base, then the keys present in the file.
 //
 //   [defaults]             every volume and valve not named below
 //     pressure             mbar, as air                    default_pressure
@@ -28,8 +29,11 @@
 //   [valves.<name>]
 //     conductance          L/s for Ar40                    conductances
 //   [pumps.<name>]         a pump on that volume           pumps, pump_speeds
-//     speed                L/s  (not given: pump_speed)
-//     base                 mbar (not given: pump_base)
+//     speed                L/s
+//     base                 mbar
+//                          One not given is what the base's pump on that
+//                          volume has; with no pump there, a pump stage's
+//                          (pump_speed, pump_base).
 //   [spectrometer]                                         source
 //     sensitivity          fA per mbar of an isotope in the source
 //     consumption          1/s
@@ -45,7 +49,10 @@
 // in `compositions`, or in `initial_pressures` for a pressure of air.
 //
 // Everything is checked, and every problem is reported, as
-// `file:line:key: message` (a `Config` error):
+// `file:line:key: message` (a `Config` error). After a name or a key that is
+// not known the message lists the ones that are (`; known: a, b, c`), or
+// counts them when there are more than twelve; a number out of range is
+// told its range with the unit.
 //   - a key or a table the file may not have, a species that is not one;
 //   - a volume, valve or pump name that `topology` does not have. The line
 //     passes its canvas, and with it the gauges it has off the canvas (each
@@ -57,7 +64,8 @@
 //     conductances and pump speeds 0 to 1e9 L/s; outgassing and leaks 0 to
 //     1e3 mbar L / s; consumption 0 to 1e6 1/s; sensitivity above 0 to 1e30;
 //     noise 0 to 10; ratios 0 to 1e9; memory 0 to 1e30 fA/s, and no more
-//     than 1e3 mbar/s through the sensitivity; baselines within 1e30 either
+//     than 1e3 mbar/s through the sensitivity (reported at whichever of the
+//     two the file gives, the memory if both); baselines within 1e30 either
 //     side of zero. The network's guarantees hold well inside these.
 
 #include <filesystem>

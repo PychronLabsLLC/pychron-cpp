@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -29,24 +30,30 @@ namespace {
 using config::Diagnostic;
 using config::SourceLoc;
 
-// The closed range a number must lie in; `open_low`: above `low`, not at it.
+// The closed range a number must lie in, and what it is a number of;
+// `open_low`: above `low`, not at it.
 struct Range {
   double low = 0.0;
   double high = 0.0;
+  std::string_view unit;
   bool open_low = false;
 };
 
-constexpr Range kPressure{0.0, 1e4};         // mbar
-constexpr Range kSize{1e-6, 1e9};            // cc
-constexpr Range kFlow{0.0, 1e9};             // L/s: conductances and pump speeds
-constexpr Range kGasRate{0.0, 1e3};          // mbar L / s: outgassing, leaks
-constexpr Range kRate{0.0, 1e6};             // 1/s
-constexpr Range kSensitivity{0.0, 1e30, true};
-constexpr Range kNoise{0.0, 10.0};
-constexpr Range kRatio{0.0, 1e9};
-constexpr Range kMemory{0.0, 1e30};          // fA/s
-constexpr Range kBaseline{-1e30, 1e30};      // finite, either sign
-constexpr double kMemoryMbarPerS = 1e3;      // the most the memory may be, through the sensitivity
+constexpr Range kPressure{0.0, 1e4, "mbar"};
+constexpr Range kSize{1e-6, 1e9, "cc"};
+constexpr Range kFlow{0.0, 1e9, "L/s"};  // conductances and pump speeds
+constexpr Range kGasRate{0.0, 1e3, "mbar L/s"};  // outgassing, leaks
+constexpr Range kRate{0.0, 1e6, "1/s"};
+constexpr Range kSensitivity{0.0, 1e30, "fA per mbar", true};
+constexpr Range kNoise{0.0, 10.0, "as a fraction of the reading"};
+constexpr Range kRatio{0.0, 1e9, "as a ratio to Ar36"};
+constexpr Range kMemory{0.0, 1e30, "fA/s"};
+constexpr Range kBaseline{-1e30, 1e30, "fA (cps on a counting detector)"};  // finite, either sign
+// The most the memory may be as gas, through the sensitivity.
+constexpr Range kMemoryAsGas{0.0, 1e3, "mbar/s"};
+
+// How many names a message lists before it only counts them.
+constexpr std::size_t kNamesListed = 12;
 
 std::string shown(double value) {
   std::ostringstream out;
@@ -55,7 +62,24 @@ std::string shown(double value) {
 }
 
 std::string described(const Range& range) {
-  return std::string(range.open_low ? "above " : "from ") + shown(range.low) + " to " + shown(range.high);
+  return std::string(range.open_low ? "above " : "from ") + shown(range.low) + " to " + shown(range.high) + " " +
+         std::string(range.unit);
+}
+
+// What would have been right, after a name or a key that is not: the
+// candidates, while they are few enough to read, else how many there are.
+template <typename Names>
+std::string known(const Names& names) {
+  const std::size_t count = static_cast<std::size_t>(std::distance(std::begin(names), std::end(names)));
+  if (count == 0) return "; there is none";
+  if (count > kNamesListed) return "; " + std::to_string(count) + " are known";
+  std::string out = "; known: ";
+  bool first = true;
+  for (const auto& name : names) {
+    out += (first ? "" : ", ") + std::string(name);
+    first = false;
+  }
+  return out;
 }
 
 // `air` and `cocktail`; a [compositions.*] table of either name goes first.
@@ -112,11 +136,12 @@ class Reader {
     return path.empty() ? std::string(key) : path + "." + std::string(key);
   }
 
-  void reject_unknown(const toml::table& t, const std::string& path, std::initializer_list<std::string_view> known) {
+  void reject_unknown(const toml::table& t, const std::string& path,
+                      std::initializer_list<std::string_view> known_keys) {
     for (auto&& [key, node] : t) {
       bool found = false;
-      for (const auto k : known) found = found || k == key.str();
-      if (!found) problem(node, join(path, key.str()), "unknown key");
+      for (const auto k : known_keys) found = found || k == key.str();
+      if (!found) problem(node, join(path, key.str()), "unknown key" + known(known_keys));
     }
   }
 
@@ -201,7 +226,7 @@ class Reader {
         if (kSpeciesName[s] == key.str()) species = s;
       }
       if (species == kSpeciesCount) {
-        problem(node, join(path, key.str()), "unknown key (a species: Ar36, Ar37, Ar38, Ar39, Ar40, active)");
+        problem(node, join(path, key.str()), "unknown key" + known(kSpeciesName));
       } else if (auto v = number(t, path, key.str(), kRatio)) {
         ratios[species] = *v;
       }
@@ -210,9 +235,9 @@ class Reader {
   }
 
   void read_volume(const std::string& path, const std::string& name, const toml::table& t) {
-    const auto known = roles_.find(name);
-    if (known == roles_.end()) {
-      problem(t, path, "unknown volume '" + name + "'");
+    const auto role = roles_.find(name);
+    if (role == roles_.end()) {
+      problem(t, path, "unknown volume '" + name + "'" + known(volume_names()));
       return;
     }
     reject_unknown(t, path, {"composition", "argon40", "pressure", "leak", "volume_cc"});
@@ -233,7 +258,9 @@ class Reader {
       } else if (auto given = built_in(text->get())) {
         ratios = *given;
       } else {
-        problem(*named, join(path, "composition"), "unknown composition '" + text->get() + "'");
+        std::set<std::string, std::less<>> names{"air", "cocktail"};
+        for (const auto& [own_name, ratios_of] : settings_.named) names.insert(own_name);
+        problem(*named, join(path, "composition"), "unknown composition '" + text->get() + "'" + known(names));
         return;
       }
     }
@@ -258,7 +285,7 @@ class Reader {
     const toml::node& where = ar40 ? *ar40_node : pressure ? *pressure_node : *named;
     const std::string_view key = ar40 ? "argon40" : pressure ? "pressure" : "composition";
     Composition held{};
-    if (ar40 || (!pressure && known->second == SimRole::Tank)) {
+    if (ar40 || (!pressure && role->second == SimRole::Tank)) {
       if (!(proportions[index(Species::Ar40)] > 0.0)) {
         problem(where, join(path, key), "the composition has no Ar40 to set a pressure of");
         return;
@@ -285,7 +312,11 @@ class Reader {
 
   void read_valve(const std::string& path, const std::string& name, const toml::table& t) {
     if (!valves_.contains(name) || roles_.contains(name)) {  // a valve with a volume's name is not there
-      problem(t, path, "unknown valve '" + name + "'");
+      std::set<std::string, std::less<>> names;
+      for (const auto& valve : valves_) {
+        if (!roles_.contains(valve)) names.insert(valve);
+      }
+      problem(t, path, "unknown valve '" + name + "'" + known(names));
       return;
     }
     reject_unknown(t, path, {"conductance"});
@@ -294,16 +325,30 @@ class Reader {
 
   void read_pump(const std::string& path, const std::string& name, const toml::table& t) {
     if (!roles_.contains(name)) {
-      problem(t, path, "unknown volume '" + name + "' for a pump");
+      problem(t, path, "unknown volume '" + name + "' for a pump" + known(volume_names()));
       return;
     }
     reject_unknown(t, path, {"speed", "base"});
     const auto speed = number(t, path, "speed", kFlow);
     const auto base = number(t, path, "base", kPressure);
+    // Over the pump the base has on that volume, a key that is not there
+    // leaving what it had (a pump given by its time constant keeps that);
+    // with none there, over a pump stage's.
+    const auto had = settings_.pumps.find(name);
+    const bool fresh = had == settings_.pumps.end();
     SimPump pump;
-    pump.base = base ? *base : settings_.pump_base;
+    if (fresh) {
+      pump.base = settings_.pump_base;
+    } else {
+      pump = had->second;
+    }
+    if (base) pump.base = *base;
     settings_.pumps[name] = pump;
-    settings_.pump_speeds[name] = speed ? *speed : settings_.pump_speed;
+    if (speed) {
+      settings_.pump_speeds[name] = *speed;
+    } else if (fresh) {
+      settings_.pump_speeds[name] = settings_.pump_speed;
+    }
   }
 
   void read_spectrometer(const toml::table& t) {
@@ -312,12 +357,21 @@ class Reader {
     if (auto v = number(t, path, "sensitivity", kSensitivity)) settings_.source.sensitivity = *v;
     if (auto v = number(t, path, "consumption", kRate)) settings_.source.consumption = *v;
     if (auto v = number(t, path, "memory_fA_per_s", kMemory)) settings_.source.memory_fa_per_s = *v;
-    // As gas: fA/s over fA/mbar. Whichever of the two the file gives.
+    // As gas: fA/s over fA/mbar, whichever of the two the file gives. Out
+    // of range, the key at fault is the memory if the file has it, else the
+    // sensitivity it gives.
     const double mbar_per_s = settings_.source.memory_fa_per_s / settings_.source.sensitivity;
-    if (!(mbar_per_s <= kMemoryMbarPerS)) {
-      const auto* node = t.get("memory_fA_per_s");
-      problem(node != nullptr ? *node : static_cast<const toml::node&>(t), join(path, "memory_fA_per_s"),
-              "is " + shown(mbar_per_s) + " mbar/s at this sensitivity, must be from 0 to " + shown(kMemoryMbarPerS));
+    if (!(mbar_per_s <= kMemoryAsGas.high)) {
+      const auto* memory = t.get("memory_fA_per_s");
+      const auto* sensitivity = t.get("sensitivity");
+      if (memory == nullptr && sensitivity != nullptr) {
+        problem(*sensitivity, join(path, "sensitivity"),
+                "the memory (" + shown(settings_.source.memory_fa_per_s) + " fA/s) is then " + shown(mbar_per_s) +
+                    " mbar/s, must be " + described(kMemoryAsGas));
+      } else {
+        problem(memory != nullptr ? *memory : static_cast<const toml::node&>(t), join(path, "memory_fA_per_s"),
+                "is " + shown(mbar_per_s) + " mbar/s at this sensitivity, must be " + described(kMemoryAsGas));
+      }
     }
   }
 
@@ -328,6 +382,12 @@ class Reader {
     if (auto v = number(t, path, "baseline", kBaseline)) detector.baseline = *v;
     if (auto v = number(t, path, "baseline_drift_per_h", kBaseline)) detector.drift_per_h = *v;
     settings_.detectors[name] = detector;
+  }
+
+  std::vector<std::string_view> volume_names() const {
+    std::vector<std::string_view> names;
+    for (const auto& [name, role] : roles_) names.push_back(name);
+    return names;
   }
 
   std::string file_;

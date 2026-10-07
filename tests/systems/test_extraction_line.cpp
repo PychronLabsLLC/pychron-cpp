@@ -1007,7 +1007,7 @@ TEST(ExtractionLine, WarnsOnceOfASecondSpectrometerStage) {
 }
 
 // The example lab: each stage is to the gas what the canvas says it is.
-// With its sim.toml, which repeats the defaults, or with no file at all.
+// With its sim.toml, which as shipped sets nothing, or with no file at all.
 void expect_the_example_lab(bool with_sim_toml) {
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   ASSERT_TRUE(std::filesystem::is_regular_file(dir / "sim.toml"));
