@@ -285,6 +285,79 @@ TEST_F(ElctlExpTest, ASimTomlDetectorTheSpectrometerLacksStopsTheRun) {
   EXPECT_NEAR(std::strtod(record.c_str() + record.find(':', value) + 1, nullptr), 50.0, 2.0) << record.substr(h1, 400);
 }
 
+// The example lab is simulated by its own files (every transport is
+// `kind = "sim"`): its two simulators are joined whether or not --sim says
+// so. Without --sim the run is in real time, so the queue here is one short
+// run: two seconds of equilibration and three one-second counts.
+TEST_F(ElctlExpTest, AConfigSimulatedLabIsJoinedWithoutTheSimFlag) {
+  std::ofstream(dir_ / "lab" / "plans" / "quick.toml") << R"([plan]
+name = "quick"
+instrument_family = "sim"
+analysis_types = ["unknown", "blank_unknown", "air"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = 2
+inlet_delay_s = 0
+
+[main]
+cycles = 1
+integration_s = 1
+
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "H2" }
+counts = 3
+settle_s = 1
+
+[fits]
+signal = { default = "average" }
+)";
+  std::ofstream(dir_ / "lab" / "quick.toml") << R"([queue]
+name = "quick"
+mass_spectrometer = "sim"
+username = "example"
+
+[queue.delays]
+before_analyses = 0
+between_analyses = 0
+after_blank = 0
+
+[[runs]]
+identifier = "bu"
+measurement = { plan = "quick" }
+)";
+  const std::vector<std::string> run{"run", lab("quick.toml"), "--spectrometer",
+                                     lab("spectrometer.sim-integrated.toml"), "--data", (dir_ / "out").string()};
+
+  // A detector the spectrometer lacks is found, which only the two together can.
+  std::ofstream(dir_ / "lab" / "sim.toml") << "[detectors.H9]\nbaseline = 50\n";
+  auto refused = exp(run);
+  EXPECT_EQ(refused.code, 1) << refused.out;
+  EXPECT_TRUE(contains(refused.err, "detectors.H9")) << refused.err;
+  EXPECT_FALSE(fs::exists(dir_ / "out" / "records")) << "nothing was run";
+  fs::remove(dir_ / "lab" / "sim.toml");
+
+  auto o = exp(run);
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  std::ifstream in(dir_ / "out" / "records" / "bu" / "bu-1.json");
+  const std::string record((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  // results.intercepts.Ar40.value, the last key of its table: what the line's
+  // source holds (about a hundred fA), not the 1e6 fA of a beam on its own.
+  const auto intercepts = record.find("\"intercepts\"");
+  ASSERT_NE(intercepts, std::string::npos);
+  const auto ar40 = record.find("\"Ar40\"", intercepts);
+  ASSERT_NE(ar40, std::string::npos);
+  const auto value = record.find("\"value\"", ar40);
+  ASSERT_NE(value, std::string::npos);
+  const double fa = std::strtod(record.c_str() + record.find(':', value) + 1, nullptr);
+  EXPECT_GT(fa, 50.0) << record.substr(ar40, 600);
+  EXPECT_LT(fa, 1000.0) << record.substr(ar40, 600);
+}
+
 TEST_F(ElctlExpTest, InvalidQueueIsNotRun) {
   std::ofstream(dir_ / "lab" / "bad.toml") << "[queue]\n[[runs]]\nidentifier = \"1\"\nmeasurement = { plan = \"nope\" }\n";
   auto o = exp({"run", lab("bad.toml"), "--sim-speed", "100"}, true);

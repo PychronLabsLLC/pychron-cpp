@@ -173,6 +173,13 @@ class Exp {
       return kFailed;
     }
     const Clock& clock = (*line)->clock();
+    // A spectrometer is simulated when --sim says so or when its own file
+    // is (every transport and driver a simulator's), as the line is when its
+    // transports are. Its beam then follows the config's field table and,
+    // where the line is simulated too, measures what the line's source volume
+    // holds. A simulated spectrometer on a real line has no simulated gas to
+    // read and keeps the beam's fixed argon; a real spectrometer has no beam.
+    const bool sim_spectrometer = lab_.spectrometer && (g_.sim || spectrometer::is_simulated(*lab_.spectrometer));
     // The simulated beam (below) refers to the clock: it goes on every way
     // out, after the spectrometer and before the line and the clock.
     struct BeamGuard {
@@ -180,7 +187,7 @@ class Exp {
       ~BeamGuard() {
         if (sim) sim::BeamModelRegistry::global().clear();
       }
-    } beam_guard{g_.sim};
+    } beam_guard{sim_spectrometer};
     // This thread takes part in the clock's time until the run is over:
     // simulated time moves only while it, too, is waiting in the clock.
     const Clock::Participant participant(clock, "elctl");
@@ -189,13 +196,12 @@ class Exp {
       return kFailed;
     }
 
-    // Spectrometer. With --sim its beam follows the config's field table and
-    // measures what the simulated line's source volume holds.
+    // Spectrometer.
     std::unique_ptr<spectrometer::Spectrometer> spec;
     if (lab_.spectrometer) {
       auto data = *lab_.spectrometer;
       std::shared_ptr<sim::BeamModel> sim_beam;
-      if (g_.sim) {
+      if (sim_spectrometer) {
         sim::BeamSettings beam;
         if (data.config.source.nominal_hv) beam.nominal_hv = *data.config.source.nominal_hv;
         if (auto it = data.tables.find(data.config.magnet.field_table); it != data.tables.end()) {
