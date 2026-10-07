@@ -179,10 +179,16 @@ TEST(BeamModel, CddVoltageBelowPlateauKillsGain) {
 TEST(BeamModel, CounterYieldIsThePlateauAtTheDetectorsVoltage) {
   Fixture f;
   // The defaults: 1450 V on a plateau centred at 1200 V, 60 V wide.
-  EXPECT_NEAR(*f.beam.counter_yield("EM"), 1.0 / (1.0 + std::exp(-250.0 / 60.0)), 1e-15);
-  EXPECT_EQ(*f.beam.counter_yield("H1"), 1.0);
+  const auto counter = f.beam.counter_yield("EM");
+  ASSERT_TRUE(counter) << counter.error().what;
+  EXPECT_NEAR(*counter, 1.0 / (1.0 + std::exp(-250.0 / 60.0)), 1e-15);
+  const auto faraday = f.beam.counter_yield("H1");
+  ASSERT_TRUE(faraday) << faraday.error().what;
+  EXPECT_EQ(*faraday, 1.0);
   ASSERT_TRUE(f.beam.set_cdd_voltage("EM", 1200.0));
-  EXPECT_DOUBLE_EQ(*f.beam.counter_yield("EM"), 0.5);
+  const auto at_centre = f.beam.counter_yield("EM");
+  ASSERT_TRUE(at_centre) << at_centre.error().what;
+  EXPECT_DOUBLE_EQ(*at_centre, 0.5);
   auto unknown = f.beam.counter_yield("nope");
   ASSERT_FALSE(unknown);
   EXPECT_EQ(unknown.error().kind, ErrorKind::Config);
@@ -204,7 +210,9 @@ TEST(BeamModel, CounterYieldIsThePlateauAtTheDetectorsVoltage) {
   settings.cdd_plateau_width = 25.0;
   BeamModel other(clock, settings);
   other.ensure_detector("CDD");
-  EXPECT_NEAR(*other.counter_yield("CDD"), 1.0 / (1.0 + std::exp(-2.0)), 1e-15);
+  const auto own = other.counter_yield("CDD");
+  ASSERT_TRUE(own) << own.error().what;
+  EXPECT_NEAR(*own, 1.0 / (1.0 + std::exp(-2.0)), 1e-15);
 }
 
 TEST(BeamModel, SameSeedSameNoise) {

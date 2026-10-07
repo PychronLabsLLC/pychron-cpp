@@ -1,6 +1,7 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -69,7 +70,9 @@ Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
     }
   }
   for (const auto& [name, detector] : settings.detectors) {
-    (void)beam.set_baseline(name, detector.baseline, detector.drift_per_h);  // checked above
+    // Cannot fail: the name and both numbers were checked above.
+    [[maybe_unused]] const auto set = beam.set_baseline(name, detector.baseline, detector.drift_per_h);
+    assert(set && "feed_beam_from_line: a baseline was refused after it was checked");
   }
   if (auto gas = line.beam_gas()) beam.set_gas_provider(std::move(gas));
   return {};

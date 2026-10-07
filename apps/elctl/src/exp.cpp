@@ -181,13 +181,17 @@ class Exp {
     // read and keeps the beam's fixed argon; a real spectrometer has no beam.
     const bool sim_spectrometer = lab_.spectrometer && (g_.sim || spectrometer::is_simulated(*lab_.spectrometer));
     // The simulated beam (below) refers to the clock: it goes on every way
-    // out, after the spectrometer and before the line and the clock.
+    // out, after the spectrometer and before the line and the clock. Only
+    // once this run has put a beam in the registry (`registered`, set where
+    // it does): a run that fails before then leaves the registry as it found
+    // it. The registry is cleared whole, since the drivers of this
+    // spectrometer may have made beams of other names on the same clock.
     struct BeamGuard {
-      bool sim;
+      bool registered = false;
       ~BeamGuard() {
-        if (sim) sim::BeamModelRegistry::global().clear();
+        if (registered) sim::BeamModelRegistry::global().clear();
       }
-    } beam_guard{sim_spectrometer};
+    } beam_guard;
     // This thread takes part in the clock's time until the run is over:
     // simulated time moves only while it, too, is waiting in the clock.
     const Clock::Participant participant(clock, "elctl");
@@ -212,6 +216,7 @@ class Exp {
           };
         }
         sim_beam = std::make_shared<sim::BeamModel>(clock, beam);
+        beam_guard.registered = true;  // before the registry and the drivers have one
         sim::BeamModelRegistry::global().set("default", sim_beam);
       }
       auto assembled = spectrometer::SpectrometerAssembler::assemble(

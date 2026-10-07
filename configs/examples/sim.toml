@@ -58,7 +58,7 @@
 #   leak         mbar L / s of Ar40 leaking in as air
 #   volume_cc    cc, over the canvas's `volume`
 # The pipe between two valves joined directly is a volume too, named for the
-# two in alphabetical order: [volumes."V1~V2"].
+# two in byte order (capitals before small letters): [volumes."V1~V2"].
 # [volumes.air_tank]
 # composition = "air"
 # argon40 = 3e-5             # mbar of Ar40: what a tank starts with unasked

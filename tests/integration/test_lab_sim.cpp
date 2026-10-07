@@ -317,7 +317,7 @@ struct Measured {
   Line signal;
   double baseline = 0;
   double leverage = 0;  // intercept_leverage of the signal's times
-  double spacing = 0;   // the shortest time from one reading to the next, s
+  double gate = 0;      // what one reading was integrated over, s: the record's integration time
   // The time-zero intercept less the baseline, and its standard error.
   double value() const { return signal.intercept - baseline; }
   double error() const { return signal.intercept_error; }
@@ -332,9 +332,7 @@ std::optional<Measured> measured(const record::AnalysisRecord& rec, std::string_
   const auto line = line_through(series);
   const auto mean = reduction::fit(series_of(*baseline), {.kind = reduction::FitKind::Average});
   if (!line || !mean) return std::nullopt;
-  double spacing = series.x.back() - series.x.front();
-  for (std::size_t i = 1; i < series.x.size(); ++i) spacing = std::min(spacing, series.x[i] - series.x[i - 1]);
-  return Measured{*line, mean->value, intercept_leverage(series), spacing};
+  return Measured{*line, mean->value, intercept_leverage(series), rec.spectrometer.integration_time};
 }
 
 // --- the lab's numbers ------------------------------------------------------
@@ -591,11 +589,14 @@ TEST_F(LabSim, AirHasTheAtmosphericRatio) {
 
     // The error this run was designed to have, from the lab's numbers and
     // the plan's layout alone, no reading in it. A counter's reading over
-    // `spacing` seconds of a rate scatters by sqrt(rate / spacing) (Poisson;
-    // the plan reads back to back, one integration time apart); a Faraday's
-    // by its noise. The intercept has that times the layout's leverage.
+    // `gate` seconds of a rate scatters by sqrt(rate / gate) (Poisson; the
+    // gate is the integration time the run recorded, the plan's); a
+    // Faraday's by its noise. The intercept has that times the layout's
+    // leverage.
+    ASSERT_GT(ar36->gate, 0.0);
     const double rate = shot / air * yield;  // counts per second of Ar36
-    const double ar36_error = std::sqrt(rate / ar36->spacing) * ar36->leverage / rate;
+    const double ar36_error = std::sqrt(rate / ar36->gate) * ar36->leverage / rate;
+    record_value("ar36_gate_s_" + std::to_string(i + 1), ar36->gate);
     const double ar40_error = faraday_sigma(*h1, shot) * ar40->leverage / shot;
     variance += (ar36_error * ar36_error + ar40_error * ar40_error) / (shots * shots);
     record_value("ar36_design_cps_" + std::to_string(i + 1), rate);
@@ -651,9 +652,14 @@ TEST_F(LabSim, ABlankIsSmall) {
   // the source (a blank's worth of wall gas is a ten-thousandth of it).
   EXPECT_NEAR(air->value(), lab_is.first_shot(), 0.01 * lab_is.first_shot());
 
-  // And the blank is what a pumped source holds and what its walls and its
-  // memory gave from when the lab was built, shut, to the blank's time zero
-  // (the first test's expression for the reading before the inlet).
+  // And the blank is, nearly, what a pumped source holds and what its walls
+  // and its memory gave from when the lab was built, shut, to the blank's
+  // time zero (the first test's expression for the reading before the
+  // inlet). Nearly: `pumped + rise * t` leaves out that at equilibration the
+  // source shares its gas with prep, which was on the turbo until the script
+  // shut C and has no memory term, so the blank reads under the expression,
+  // by about 8 % here (10.3 fA against 11.2). That is why the band is 30 %
+  // and not a few standard errors.
   const auto shut = lab.valve_times(kInlet, ValveState::Closed);
   ASSERT_FALSE(shut.empty());
   const double level = lab_is.pumped + lab_is.rise * lab.since_start(shut[0]);

@@ -42,9 +42,14 @@ sim::SimRole role_of(canvas::SourceKind kind) {
   return sim::SimRole::Plain;
 }
 
-// The pipe between two valves joined directly: named for the two, in
-// lexical order, so that it is the one name whichever valve is asked.
-std::string pipe_between(const std::string& a, const std::string& b) { return a < b ? a + "~" + b : b + "~" + a; }
+// The pipe between two valves joined directly: named for the two, in byte
+// order (as std::string compares: "B" before "a"), so that it is the one
+// name whichever valve is asked. `kPipeMark` is in no valve's name
+// (build_sim refuses one), so two pairs cannot make one name.
+constexpr char kPipeMark = '~';
+std::string pipe_between(const std::string& a, const std::string& b) {
+  return a < b ? a + kPipeMark + b : b + kPipeMark + a;
+}
 
 // Whether two valves are both joined to one volume: the two valve ends of a
 // tee (or of a cross) whose other end is that volume. The junction is then
@@ -281,8 +286,20 @@ Result<void> ExtractionLine::build() {
 // roles, the simulator's numbers from `Options::sim` with a sim.toml over
 // them, a warning of a second spectrometer, and one line at info naming the
 // valves that carry no gas (a drawing may well leave a valve's far side off).
+// Config error on a canvas valve with `~` in its name, and on what the
+// sim.toml refuses.
 Result<void> ExtractionLine::build_sim() {
   const sim::SimTopology topology = network_ ? topology_of(*network_, *canvas_) : sim::SimTopology{};
+  // A pipe is named `<a>~<b>`: with the mark in a valve's own name, valves
+  // `A`, `B~C` and `A~B`, `C` would make one pipe name between them.
+  for (const auto& valve : topology.valves) {
+    if (valve.find(kPipeMark) != std::string::npos) {
+      return fail(ErrorKind::Config, "sim: valve '" + valve + "': a valve's name may not contain '" +
+                                         std::string(1, kPipeMark) +
+                                         "' on a simulated line (the pipe between two valves joined directly is "
+                                         "named '<a>~<b>')");
+    }
+  }
 
   std::filesystem::path file;
   if (options_.sim_file) {

@@ -744,7 +744,7 @@ end = "line"
   EXPECT_TRUE(lab.valves_without_physics().empty());
   EXPECT_TRUE(log.no_gas.empty()) << log.no_gas[0].message;
   EXPECT_TRUE(log.warnings.empty()) << log.warnings[0];
-  ASSERT_TRUE(lab.has_volume("V1~V2")) << "named for the two valves, in lexical order";
+  ASSERT_TRUE(lab.has_volume("V1~V2")) << "named for the two valves, in byte order";
   EXPECT_FALSE(lab.has_volume("V2~V1"));
   EXPECT_NEAR(*lab.pressure("V1~V2"), 1e-8, 1e-20);
 
@@ -804,6 +804,78 @@ TEST(ExtractionLine, SimTomlSizesAPipeBetweenTwoValves) {
 
   lab.write("sim.toml", "[volumes.\"V1~V3\"]\nvolume_cc = 2\n");
   EXPECT_FALSE(lab.load(manual(clock))) << "no such pipe";
+}
+
+// A pipe is named `<a>~<b>`, so a valve with a `~` in its own name could be
+// taken for one (valves `A`, `B~C` and `A~B`, `C` make the same pipe name):
+// a simulated line refuses the valve, by name. A line that simulates
+// nothing has no pipes and takes it.
+TEST(ExtractionLine, AValveNamedLikeAPipeIsRefusedByTheSim) {
+  ManualClock clock;
+  const char* system = R"(
+[system]
+name = "t"
+
+[transports.bus]
+kind = "sim"
+
+[drivers.relay]
+kind = "proxr_relay"
+transport = "bus"
+
+[[valves]]
+name = "V1"
+actuator = "relay"
+address = "1"
+
+[[valves]]
+name = "V1~V2"
+actuator = "relay"
+address = "2"
+)";
+  const char* canvas = R"(
+[[valve]]
+name = "V1"
+pos = [0, 0]
+
+[[valve]]
+name = "V1~V2"
+pos = [0, 0]
+
+[[stage]]
+name = "tank"
+pos = [0, 0]
+
+[[stage]]
+name = "line"
+pos = [0, 0]
+
+[[connection]]
+start = "tank"
+end = "V1"
+
+[[connection]]
+start = "V1"
+end = "line"
+
+[[connection]]
+start = "line"
+end = "V1~V2"
+)";
+  auto made = ExtractionLine::create(system_config(system), canvas_model(canvas), manual(clock));
+  ASSERT_FALSE(made);
+  EXPECT_EQ(made.error().kind, ErrorKind::Config);
+  EXPECT_NE(made.error().what.find("'V1~V2'"), std::string::npos) << made.error().what;
+  EXPECT_NE(made.error().what.find('~'), std::string::npos) << made.error().what;
+
+  // Not simulated: the same names load.
+  std::string real = system;
+  real.replace(real.find("kind = \"sim\""), 12, "kind = \"tcp\"\nhost = \"127.0.0.1\"\nport = 1");
+  auto opts = manual(clock);
+  opts.force_sim = false;
+  auto unsimulated = ExtractionLine::create(system_config(real.c_str()), canvas_model(canvas), opts);
+  ASSERT_TRUE(unsimulated) << unsimulated.error().what;
+  EXPECT_EQ((*unsimulated)->sim(), nullptr);
 }
 
 // Two valves on a tee with a volume are both on that volume: the tee is the

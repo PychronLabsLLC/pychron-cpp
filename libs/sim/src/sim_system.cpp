@@ -48,7 +48,12 @@ double litres_of(const std::string& name, double cc, SimRole role, const SimSett
       case SimRole::Pipette: cc = settings.pipette_cc; break;
       case SimRole::Gauge: cc = settings.gauge_cc; break;
       case SimRole::Pipe: cc = settings.pipe_cc; break;
-      default: cc = settings.default_volume_cc; break;
+      // Each of the rest by name: a new role is then sized on purpose.
+      case SimRole::Plain:
+      case SimRole::Pump:
+      case SimRole::Getter:
+      case SimRole::Tank:
+      case SimRole::Spectrometer: cc = settings.default_volume_cc; break;
     }
   }
   return cc / 1000.0;

@@ -20,7 +20,8 @@
 //   [compositions.<name>]  ratios to Ar36, by species      named
 //     Ar36 Ar37 Ar38 Ar39 Ar40 active   (one not given is 0)
 //   [volumes.<name>]       a stage, pipette or gauge; or "<a>~<b>", the pipe
-//                          between valves a and b drawn joined (a before b)
+//                          between valves a and b drawn joined (a before b
+//                          in byte order, as std::string compares)
 //     composition          `air`, `cocktail` or a [compositions.*] name
 //     argon40              mbar of Ar40; the rest follows the composition
 //     pressure             mbar in all; the composition's proportions
