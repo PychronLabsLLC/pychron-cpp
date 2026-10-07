@@ -4,7 +4,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <random>
 #include <utility>
 
 #include "pychron/sim/keyed_noise.hpp"
@@ -316,12 +315,9 @@ Result<BeamIntensity> BeamModel::intensity(std::string_view det, TimePoint t, Du
     double g = std::max(seconds(gate), 1e-9);
     // Dark counts come after the dead time and never overload.
     double mean = std::clamp(measured * g + baseline * g, 0.0, 1e12);
-    double counts = 0.0;
-    if (mean > 0.0) {
-      std::mt19937_64 rng(keyed_bits(settings_.seed, d->name, tick));
-      counts = static_cast<double>(std::poisson_distribution<std::int64_t>(mean)(rng));
-    }
-    out.value = counts / g;
+    // Counted by keyed_poisson, not <random>: the same counts on every
+    // platform.
+    out.value = static_cast<double>(keyed_poisson(settings_.seed, d->name, tick, mean)) / g;
   } else {
     double sigma = d->noise_floor + d->noise_rel * std::abs(signal);
     out.value = signal + baseline + sigma * keyed_gauss(settings_.seed, d->name, tick);
