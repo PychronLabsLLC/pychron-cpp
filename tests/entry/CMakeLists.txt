@@ -11,7 +11,9 @@ add_executable(pychron_entry_tests ${PYCHRON_ENTRY_TESTS})
 target_include_directories(pychron_entry_tests PRIVATE
   "${PROJECT_SOURCE_DIR}/tests/persistence"
   "${PROJECT_SOURCE_DIR}/libs/persistence/src")
-target_compile_definitions(pychron_entry_tests PRIVATE QT_NO_KEYWORDS)
+# test_seed.cpp reads the seed an install ships.
+target_compile_definitions(pychron_entry_tests PRIVATE QT_NO_KEYWORDS
+  PYCHRON_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles")
 target_link_libraries(pychron_entry_tests PRIVATE pychron::entry pychron::persistence TinyOrm::TinyOrm Qt6::Core
   Qt6::Sql GTest::gtest_main)
 pychron_set_warnings(pychron_entry_tests)
