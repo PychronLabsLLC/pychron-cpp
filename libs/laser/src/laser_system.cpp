@@ -3,7 +3,6 @@
 #include "pychron/laser/pattern_runner.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -478,9 +477,23 @@ std::string utc_now(const Clock& clock) {
 
 void LaserSystem::set_corrections(const CorrectionStore& corrections) { correction_store_ = &corrections; }
 
+// The gate is waited for on the system's clock and the camera's settle and
+// stamps are read from the camera's: with two, a wait in simulated time would
+// be measured against real time. A system given no clock is on real time, and
+// one SteadyClock is as good as another.
+Result<void> LaserSystem::one_clock(const Clock& clock) const {
+  if (gate_clock_ == &clock) return {};
+  if (gate_clock_ == nullptr && dynamic_cast<const SteadyClock*>(&clock) != nullptr) return {};
+  return fail(ErrorKind::Config,
+              "two clocks in " + name_ + ": its camera is on another clock than the one the system was " +
+                  (gate_clock_ != nullptr ? "given" : "left on (real time, none given)"),
+              name_);
+}
+
 Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
   Gate gate(gate_);
+  if (auto same = one_clock(clock); !same) return same;
   // Whether the stage and the camera suit each other is the caller's to
   // know; that a recording, or a camera for looking, never moves a stage is
   // known here.
@@ -491,7 +504,6 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   camera_ = std::move(config);
   frames_ = std::move(frames);
   centers_ = true;
-  assert(gate_clock_ == nullptr || gate_clock_ == &clock);  // one system, one clock
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
@@ -504,11 +516,11 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
 Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
   Gate gate(gate_);
+  if (auto same = one_clock(clock); !same) return same;
   if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
   centers_ = false;
-  assert(gate_clock_ == nullptr || gate_clock_ == &clock);  // one system, one clock
   clock_ = &clock;
   finder_ = std::make_unique<vision::SimpleFinder>();
   if (runner_ != nullptr) runner_->set_vision({});  // nothing to follow the glow with

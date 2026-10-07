@@ -118,8 +118,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // a stage, the system runs the lab's patterns over it.
   // `clock` (which must outlive the system as well) is the one a caller waits
   // on for the gate while another's call is with the device: the clock the
-  // driver's transport waits on. SteadyClock if null. A camera attached to a
-  // system that was given one is on the same clock.
+  // driver's transport waits on. SteadyClock if null. A camera is on the same
+  // clock: attach_camera() and attach_viewer() refuse any other.
   LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
               const CalibrationStore& calibrations, const PatternLibrary* patterns = nullptr,
               const Clock* clock = nullptr);
@@ -141,7 +141,9 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // moving(): the caller's poll loop drives it, one stage command per poll.
   void set_corrections(const CorrectionStore& corrections);
   // Config error, and no camera, for one that does not follow the stage (a
-  // recording): see usable_for_autocenter().
+  // recording): see usable_for_autocenter(). The same, here and in
+  // attach_viewer(), for a `clock` that is not the system's: the one given at
+  // construction or, when none was, real time (any SteadyClock).
   Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
   // A camera for looking only: view() shows its picture and what the finder
   // makes of it; a hole move is not centered by it and a pattern cannot
@@ -265,6 +267,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
 
   // Interlock error while the emergency stop is latched.
   Result<void> allowed() const;
+  // Whether a camera on `clock` is on the gate's clock; a Config error when not.
+  Result<void> one_clock(const Clock& clock) const;
   // The system's own runner, or the driver's; null when neither.
   extraction::IPatternRunner* inner_runner();
 
@@ -291,7 +295,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // and before mutex_. Recursive: a pattern's step moves this system's stage.
   // Held across the device's replies, which wait in clock time: a clock mutex.
   mutable RecursiveClockMutex gate_;
-  const Clock* const gate_clock_;  // the constructor's; null when none was given
+  const Clock* const gate_clock_;  // the constructor's; null when none was given (the gate is then on real time)
   std::atomic<bool> stopped_{false};  // the emergency stop's latch
   std::atomic<bool> moving_{false};   // a move was started, and moving() has not yet said it is over
 

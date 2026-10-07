@@ -358,9 +358,9 @@ TEST_F(LaserSystemVirtual, TwoCallersContendWithoutStallingTime) {
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
 
-// A system given a clock waits for its gate on it, and its camera's settle
-// and stamps are read from the camera's: two clocks in one system would let
-// simulated time and real time meet. Refused where asserts are on.
+// A system waits for its gate on the clock it was given, and its camera's
+// settle and stamps are read from the camera's: two clocks in one system
+// would let simulated time and real time meet. Refused, in every build.
 TEST(LaserSystemClocks, ACameraIsOnTheClockTheSystemWasGiven) {
   LabDir lab;
   ManualClock clock;
@@ -373,14 +373,45 @@ TEST(LaserSystemClocks, ACameraIsOnTheClockTheSystemWasGiven) {
   const CalibrationStore store{lab.dir / "stage_calibrations"};
   LaserSystem system{"co2", driver, trays, store, nullptr, &clock};
   const CameraConfig config = camera_config();
+
+  const auto viewer = system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other);
+  ASSERT_FALSE(viewer);
+  EXPECT_EQ(viewer.error().kind, ErrorKind::Config);
+  EXPECT_NE(viewer.error().what.find("two clocks"), std::string::npos) << viewer.error().what;
+  const auto camera = system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other);
+  ASSERT_FALSE(camera);
+  EXPECT_EQ(camera.error().kind, ErrorKind::Config);
+  EXPECT_NE(camera.error().what.find("two clocks"), std::string::npos) << camera.error().what;
+  EXPECT_FALSE(system.has_camera());  // a refused camera is not kept
+
   EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock));
-#ifndef NDEBUG
-  GTEST_FLAG_SET(death_test_style, "threadsafe");  // the process has other threads
-  EXPECT_DEATH(
-      (void)system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other),
-      "gate_clock_");
-  EXPECT_DEATH(
-      (void)system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other),
-      "gate_clock_");
-#endif
+  EXPECT_TRUE(system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock));
+}
+
+// A system given no clock waits for its gate in real time, so its camera is
+// on real time too: any SteadyClock, and no other kind.
+TEST(LaserSystemClocks, ASystemGivenNoClockTakesOnlyACameraOnRealTime) {
+  LabDir lab;
+  ManualClock clock;
+  const SteadyClock real;
+  ChromiumSim sim{clock};
+  auto wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "laser_pc", .clock = &clock});
+  ASSERT_TRUE(wire->open());
+  ChromiumLaser driver("co2", *wire, options());
+  const TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  LaserSystem system{"co2", driver, trays, store};
+  const CameraConfig config = camera_config();
+
+  const auto viewer = system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock);
+  ASSERT_FALSE(viewer);
+  EXPECT_EQ(viewer.error().kind, ErrorKind::Config);
+  EXPECT_NE(viewer.error().what.find("two clocks"), std::string::npos) << viewer.error().what;
+  const auto camera = system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock);
+  ASSERT_FALSE(camera);
+  EXPECT_EQ(camera.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(system.has_camera());
+
+  EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
+  EXPECT_TRUE(system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
 }

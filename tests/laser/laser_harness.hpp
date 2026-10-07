@@ -79,7 +79,7 @@ struct LaserHarness {
   TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
   CalibrationStore store{lab.dir / "stage_calibrations"};
   PatternLibrary patterns = PatternLibrary::load(lab.dir / "patterns");
-  LaserSystem system{"co2", driver, trays, store, &patterns};
+  LaserSystem system{"co2", driver, trays, store, &patterns, &clock};
 
   explicit LaserHarness(ChromiumOptions o = options()) : driver("co2", *wire, o) {
     EXPECT_TRUE(wire->open());
