@@ -386,6 +386,8 @@ int main(int argc, char** argv) {
   if (!spectrometer_config.empty()) {
     const fs::path& file = spectrometer_config;
     splash.status(QStringLiteral("Bringing up the spectrometer: %1").arg(QString::fromStdString(file.filename().string())));
+    // Written only when a simulated beam was fed from a simulated line.
+    auto fed = pychron::spectrometer::BeamFeed::LineGas;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       auto data = pychron::spectrometer::cfg::load_spectrometer(file);
       if (!data) return pychron::fail(data.error());
@@ -395,8 +397,13 @@ int main(int argc, char** argv) {
           pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
           // A simulated spectrometer measures the simulated line's gas.
           pychron::spectrometer::SpectrometerBringup{
-              .sim_beam_from_table = simulation, .require_sim = sim, .line_sim = (*line)->sim()});
+              .sim_beam_from_table = simulation, .require_sim = sim, .line_sim = (*line)->sim(), .fed = &fed});
     }();
+    if (loaded && fed == pychron::spectrometer::BeamFeed::FixedGas) {
+      std::fprintf(stderr, "pychron-ui: the simulated spectrometer is not joined to the line: %s\n",
+                   (*line)->canvas() != nullptr ? "the canvas has no spectrometer stage"
+                                                : "the line was loaded without its canvas");
+    }
     if (loaded) {
       spectrometer = std::move(*loaded);
       scan = std::make_unique<pychron::spectrometer::ScanService>(*spectrometer, (*line)->bus(), (*line)->clock());

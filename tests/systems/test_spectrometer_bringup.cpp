@@ -292,6 +292,34 @@ TEST_F(SpectrometerBringupLine, BaselinesApplyEvenWithoutASpectrometerVolume) {
   EXPECT_NEAR(mean_h1(beam), 1e6 + 50.0, 1e6 * 0.01);
 }
 
+// The answer says what the beam was left reading, for a caller to tell its
+// user of a spectrometer that is not joined to the line.
+TEST_F(SpectrometerBringupLine, TheFeedSaysWhetherTheBeamReadsTheLine) {
+  sim::BeamModel beam(clock_);
+  beam.ensure_detector("H1");
+  auto joined = feed_beam_from_line(beam, *line_->sim());
+  ASSERT_TRUE(joined) << joined.error().what;
+  EXPECT_EQ(*joined, BeamFeed::LineGas);
+
+  sim::SimTopology topology;
+  topology.volumes = {{"prep", 50.0}};
+  sim::SimSystem no_source(clock_, topology, still());
+  sim::BeamModel alone(clock_);
+  alone.ensure_detector("H1");
+  auto fixed = feed_beam_from_line(alone, no_source);
+  ASSERT_TRUE(fixed) << fixed.error().what;
+  EXPECT_EQ(*fixed, BeamFeed::FixedGas);
+
+  // And through the bring-up, to whoever asks.
+  BeamFeed fed = BeamFeed::FixedGas;
+  auto spec = load_spectrometer_for_app(
+      kDir / "spectrometer.sim-integrated.toml", SpectrometerContext{clock_, line_->scheduler(), line_->bus()},
+      SpectrometerBringup{.sim_beam_from_table = true, .line_sim = line_->sim(), .fed = &fed});
+  ASSERT_TRUE(spec) << spec.error().what;
+  spec_ = std::move(*spec);
+  EXPECT_EQ(fed, BeamFeed::LineGas);
+}
+
 // One seed for the simulated lab: a line given a seed gives it to the beam,
 // and a line left at the default leaves the beam the seed it was built with.
 TEST_F(SpectrometerBringupLine, TheLinesSeedSeedsTheBeam) {

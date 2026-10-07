@@ -24,6 +24,12 @@ class SimSystem;
 
 namespace pychron::spectrometer {
 
+// What a beam joined to a line reads (`feed_beam_from_line`).
+enum class BeamFeed {
+  LineGas,   // what the line's spectrometer volume holds
+  FixedGas,  // the line has no spectrometer volume: the beam keeps its fixed argon
+};
+
 struct SpectrometerBringup {
   // Register a BeamModel following the config's field table as "default"
   // before assembling. Leave false for real hardware or a caller-built beam.
@@ -39,6 +45,10 @@ struct SpectrometerBringup {
   // applications is the line's: they destroy the spectrometer and clear the
   // beam registry before the line for that reason.
   sim::SimSystem* line_sim = nullptr;
+  // With line_sim: where to write what the beam was left reading, once it is
+  // fed, for a caller that tells its user of a spectrometer not joined to
+  // the line. Null: nobody asks. Not written when nothing was fed.
+  BeamFeed* fed = nullptr;
 };
 
 // True when nothing in the config can reach hardware: every declared
@@ -54,10 +64,11 @@ sim::BeamSettings beam_settings_from_config(const cfg::SpectrometerData& data);
 // Joins a simulated beam to a simulated line. The beam's gas becomes what the
 // line's spectrometer volume holds at the instant of each reading
 // (`SimSystem::beam_gas`); a line with no such volume leaves the beam its
-// fixed gas. Each `[detectors.<name>]` of the line's settings is that
-// detector's baseline and drift, and is applied whether or not the line has
-// a spectrometer volume (a line loaded without its canvas has none, and its
-// detectors may still be given baselines). The line's seed, when it was
+// fixed gas, and the answer says which it was (nothing is logged here: the
+// caller tells its user). Each `[detectors.<name>]` of the line's settings is
+// that detector's baseline and drift, and is applied whether or not the line
+// has a spectrometer volume (a line loaded without its canvas has none, and
+// its detectors may still be given baselines). The line's seed, when it was
 // given one (`[defaults] seed`, or by whoever built the line: any seed but
 // `SimSettings`' default), becomes the beam's, so that one seed serves the
 // gauges and the detectors; with none given the beam keeps the seed it was
@@ -70,7 +81,7 @@ sim::BeamSettings beam_settings_from_config(const cfg::SpectrometerData& data);
 // beam is as it was. The line's SimSystem need not outlive the beam, which
 // then reads its baselines and no gas; the beam's clock must. Lock order:
 // the beam's mutex, then the line's; the line never calls a beam.
-Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line);
+Result<BeamFeed> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line);
 
 // Errors from loading or assembling are returned unchanged. With require_sim,
 // a config that is not simulated is a Config error naming the first

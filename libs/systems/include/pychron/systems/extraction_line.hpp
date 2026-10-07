@@ -14,11 +14,12 @@
 // (pychron/sim/sim_config.hpp): the file `[sim] file` names, relative to the
 // line's, else a `sim.toml` beside the line's file when load() finds one.
 // Its names are the canvas's: a line loaded without its canvas reads
-// neither (only a file the caller names in Options::sim_file). A sim.toml
-// that does not read, or a line the simulator cannot describe, fails the
-// load. Two valves drawn joined directly have a small pipe volume between
-// them, `<a>~<b>`; the valves it still cannot give physics (one side drawn,
-// or neither) are named in one line of the log, at info.
+// neither (only a file the caller names in Options::sim_file), and says in
+// the log, at info, which file it left alone. A sim.toml that does not
+// read, or a line the simulator cannot describe, fails the load. Two valves
+// drawn joined directly have a small pipe volume between them, `<a>~<b>`;
+// the valves it still cannot give physics (one side drawn, or neither) are
+// named in one line of the log, at info.
 //
 // start():
 //   1. opens every transport (all-or-nothing: on any failure all are closed
@@ -219,6 +220,9 @@ class ExtractionLine {
   std::map<std::string, SwitchStats> remembered_stats_;
   std::atomic<bool> restored_{false};
   Options options_;
+  // load(): the sim.toml beside a line loaded without its canvas, which
+  // build_sim() says it did not read. Empty: there was none to skip.
+  std::filesystem::path sim_beside_skipped_;
 
   // Declaration order is construction order; teardown runs in reverse, so
   // the scanner and scheduler stop before the drivers they call, drivers go

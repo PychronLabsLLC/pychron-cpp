@@ -285,6 +285,26 @@ TEST_F(ElctlExpTest, ASimTomlDetectorTheSpectrometerLacksStopsTheRun) {
   EXPECT_NEAR(std::strtod(record.c_str() + record.find(':', value) + 1, nullptr), 50.0, 2.0) << record.substr(h1, 400);
 }
 
+// A simulated spectrometer that could not be joined to the simulated line
+// reads its fixed argon whatever the valves do: the run says so, once. The
+// example lab's is joined, and nothing is said.
+TEST_F(ElctlExpTest, ASpectrometerNotJoinedToTheLineIsSaid) {
+  const std::string note = "note: the simulated spectrometer is not joined to the line: ";
+  // (The note comes before the first run, whether or not there is a script
+  // host to run the queue with.)
+  auto joined = run_example_queue();
+  EXPECT_FALSE(contains(joined.out, note)) << joined.out;
+
+  // Without its canvas the line has no spectrometer stage for the beam to read.
+  fs::remove(dir_ / "lab" / "canvas.toml");
+  fs::remove_all(dir_ / "out");
+  auto alone = run_example_queue();
+  EXPECT_TRUE(contains(alone.out, note + "the line was loaded without its canvas")) << alone.out << alone.err;
+  const auto first = alone.out.find(note);
+  ASSERT_NE(first, std::string::npos);
+  EXPECT_EQ(alone.out.find(note, first + 1), std::string::npos) << "said once";
+}
+
 // The example lab is simulated by its own files (every transport is
 // `kind = "sim"`): its two simulators are joined whether or not --sim says
 // so. Without --sim the run is in real time, so the queue here is one short

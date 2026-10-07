@@ -283,7 +283,9 @@ void LinearFlow::advance(std::vector<double>& n, double dt) const {
   assert(std::isfinite(dt) && dt >= 0.0);
   if (n.size() != size_ || !std::isfinite(dt) || !(dt > 0.0)) return;
 
-  std::array<double, kInlineModes> inline_modes;
+  // Zeroed: it is filled and read back through `y`, which gcc at an
+  // optimized build may not see (-Wmaybe-uninitialized).
+  std::array<double, kInlineModes> inline_modes{};
   std::vector<double> more_modes;
   double* y = inline_modes.data();
   if (size_ > kInlineModes) {

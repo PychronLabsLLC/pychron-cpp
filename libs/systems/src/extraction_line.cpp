@@ -143,14 +143,25 @@ Result<std::unique_ptr<ExtractionLine>> ExtractionLine::load(const std::filesyst
   if (options.state_file.empty()) {
     options.state_file = std::filesystem::path(system_file).replace_extension(".state.toml");
   }
-  if (!options.sim_file && config->sim.file.empty() && canvas) {
+  std::filesystem::path skipped;
+  if (!options.sim_file && config->sim.file.empty()) {
     // Not named: the sim.toml beside the line, if the lab has one. Its names
-    // are the canvas's, so it is the lab's only when the canvas is loaded.
+    // are the canvas's, so it is the lab's only when the canvas is loaded;
+    // without, a simulated line says that it left the file alone.
     const auto beside = std::filesystem::path(system_file).parent_path() / "sim.toml";
     std::error_code ec;
-    if (std::filesystem::is_regular_file(beside, ec)) options.sim_file = beside;
+    if (std::filesystem::is_regular_file(beside, ec)) {
+      if (canvas) {
+        options.sim_file = beside;
+      } else {
+        skipped = beside;
+      }
+    }
   }
-  return create(std::move(*config), std::move(canvas), std::move(options));
+  std::unique_ptr<ExtractionLine> line(new ExtractionLine(std::move(*config), std::move(canvas), std::move(options)));
+  line->sim_beside_skipped_ = std::move(skipped);
+  if (auto built = line->build(); !built) return fail(built.error());
+  return line;
 }
 
 Result<std::unique_ptr<ExtractionLine>> ExtractionLine::create(config::SystemConfig config,
@@ -301,17 +312,20 @@ Result<void> ExtractionLine::build_sim() {
     }
   }
 
+  // The same line file serves a tool that loads no canvas (elctl laser): the
+  // lab its sim file describes is not there to be given numbers. Said once,
+  // for the file `[sim] file` names and for the one beside the line alike.
   std::filesystem::path file;
+  std::filesystem::path skipped;
   if (options_.sim_file) {
     file = *options_.sim_file;
   } else if (!config_.sim.file.empty()) {
-    if (canvas_) {
-      file = std::filesystem::path(config_.source_file).parent_path() / config_.sim.file;
-    } else {
-      // The same line file serves a tool that loads no canvas (elctl laser):
-      // the lab the sim file describes is not there to be given numbers.
-      log(LogLevel::Info, "sim: '" + config_.sim.file + "' is not read: the line was loaded without its canvas");
-    }
+    (canvas_ ? file : skipped) = std::filesystem::path(config_.source_file).parent_path() / config_.sim.file;
+  } else {
+    skipped = sim_beside_skipped_;
+  }
+  if (!skipped.empty()) {
+    log(LogLevel::Info, "sim: " + skipped.generic_string() + " not read: the line was loaded without its canvas");
   }
   if (!file.empty()) {
     // A gauge off the canvas is a volume of its own once its controller is

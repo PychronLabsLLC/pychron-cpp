@@ -49,7 +49,7 @@ std::optional<std::string> first_non_simulated(const cfg::SpectrometerConfig& co
 
 }  // namespace
 
-Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
+Result<BeamFeed> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
   // Everything is checked first: nothing below the checks can fail.
   if (&beam.clock() != &line.clock()) {
     return fail(ErrorKind::Config, "the simulated beam and the simulated line are on different clocks: a reading's "
@@ -78,8 +78,10 @@ Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
   // line left at the default seed leaves the beam the seed it was built with
   // (the same number, unless whoever built the beam chose another).
   if (settings.seed != sim::SimSettings{}.seed) beam.set_seed(settings.seed);
-  if (auto gas = line.beam_gas()) beam.set_gas_provider(std::move(gas));
-  return {};
+  auto gas = line.beam_gas();
+  if (!gas) return BeamFeed::FixedGas;
+  beam.set_gas_provider(std::move(gas));
+  return BeamFeed::LineGas;
 }
 
 bool is_simulated(const cfg::SpectrometerData& data) { return !first_non_simulated(data.config).has_value(); }
@@ -109,7 +111,9 @@ Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(cfg::Spectromete
   // The line's gas and baselines, now that the drivers have given the beam
   // its detectors.
   if (spec && beam && options.line_sim != nullptr) {
-    if (auto fed = feed_beam_from_line(*beam, *options.line_sim); !fed) return fail(fed.error());
+    auto fed = feed_beam_from_line(*beam, *options.line_sim);
+    if (!fed) return fail(fed.error());
+    if (options.fed != nullptr) *options.fed = *fed;
   }
   return spec;
 }

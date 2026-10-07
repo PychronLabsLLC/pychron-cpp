@@ -12,6 +12,7 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <string>
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/process.hpp"
@@ -229,9 +230,15 @@ class Exp {
       // Now that the beam has its detectors: the line's gas, and sim.toml's
       // baselines.
       if (sim_beam && (*line)->sim() != nullptr) {
-        if (auto fed = spectrometer::feed_beam_from_line(*sim_beam, *(*line)->sim()); !fed) {
+        auto fed = spectrometer::feed_beam_from_line(*sim_beam, *(*line)->sim());
+        if (!fed) {
           complain("error: " + fed.error().what);
           return kFailed;
+        }
+        if (*fed == spectrometer::BeamFeed::FixedGas) {
+          say(std::string("note: the simulated spectrometer is not joined to the line: ") +
+              ((*line)->canvas() != nullptr ? "the canvas has no spectrometer stage"
+                                            : "the line was loaded without its canvas"));
         }
       }
     }

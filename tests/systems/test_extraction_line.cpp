@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -711,6 +712,40 @@ TEST(ExtractionLine, ARealLineIgnoresASimTomlBesideIt) {
     opts.force_sim = true;
     EXPECT_FALSE(lab.load(opts)) << sim_toml;
   }
+}
+
+// A simulated line loaded without its canvas says which sim file it left
+// alone, once, at info: the one beside it and the one `[sim] file` names
+// alike.
+TEST(ExtractionLine, ALineLoadedWithoutItsCanvasSaysWhichSimTomlItSkipped) {
+  ManualClock clock;
+  SimLab lab("skipped");
+  const auto file = lab.write("sim.toml", "[volumes.left]\npressure = 4e-6\n");
+  const std::string expected =
+      "sim: " + file.generic_string() + " not read: the line was loaded without its canvas";
+  const auto said = [&](const std::optional<std::filesystem::path>& canvas) {
+    BuildLog log(clock);
+    auto opts = manual(clock);
+    opts.log_hub = log.hub;
+    auto line = ExtractionLine::load(lab.dir() / "extraction_line.toml", canvas, opts);
+    EXPECT_TRUE(line) << line.error().what;
+    log.hub->flush();
+    EXPECT_EQ(log.count("not read"), 0) << "it is no warning";
+    std::vector<std::string> lines;
+    for (const auto& message : log.infos) {
+      if (message.find("not read") != std::string::npos) lines.push_back(message);
+    }
+    return lines;
+  };
+
+  // Beside the line, not named.
+  EXPECT_EQ(said(std::nullopt), std::vector<std::string>{expected});
+  // With the canvas it is read, and there is nothing to say.
+  EXPECT_TRUE(said(lab.dir() / "canvas.toml").empty());
+  // Named by `[sim] file`: the same line.
+  lab.write("extraction_line.toml", std::string(kSystem) + "\n[sim]\nfile = \"sim.toml\"\n");
+  EXPECT_EQ(said(std::nullopt), std::vector<std::string>{expected});
+  EXPECT_TRUE(said(lab.dir() / "canvas.toml").empty());
 }
 
 constexpr const char* kTwoValves = R"(
