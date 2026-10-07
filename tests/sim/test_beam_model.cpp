@@ -176,6 +176,37 @@ TEST(BeamModel, CddVoltageBelowPlateauKillsGain) {
   EXPECT_LT(f.read("EM"), 200.0);
 }
 
+TEST(BeamModel, CounterYieldIsThePlateauAtTheDetectorsVoltage) {
+  Fixture f;
+  // The defaults: 1450 V on a plateau centred at 1200 V, 60 V wide.
+  EXPECT_NEAR(*f.beam.counter_yield("EM"), 1.0 / (1.0 + std::exp(-250.0 / 60.0)), 1e-15);
+  EXPECT_EQ(*f.beam.counter_yield("H1"), 1.0);
+  ASSERT_TRUE(f.beam.set_cdd_voltage("EM", 1200.0));
+  EXPECT_DOUBLE_EQ(*f.beam.counter_yield("EM"), 0.5);
+  auto unknown = f.beam.counter_yield("nope");
+  ASSERT_FALSE(unknown);
+  EXPECT_EQ(unknown.error().kind, ErrorKind::Config);
+
+  // It is what the readings have: half the Ar36 is counted at the centre.
+  f.beam.set_magnet(f.center("EM", "Ar36"));
+  double sum = 0.0;
+  const int n = 1000;
+  for (int i = 0; i < n; ++i) {
+    f.clock.advance(1ms);
+    sum += f.read("EM");
+  }
+  EXPECT_NEAR(sum / n, 3e3 * 0.5, 5.0 * std::sqrt(3e3 * 0.5 / n));
+
+  // The plateau is the model's own, not the default one.
+  ManualClock clock;
+  BeamSettings settings;
+  settings.cdd_plateau_center = 1400.0;
+  settings.cdd_plateau_width = 25.0;
+  BeamModel other(clock, settings);
+  other.ensure_detector("CDD");
+  EXPECT_NEAR(*other.counter_yield("CDD"), 1.0 / (1.0 + std::exp(-2.0)), 1e-15);
+}
+
 TEST(BeamModel, SameSeedSameNoise) {
   ManualClock c1, c2;
   BeamSettings s;

@@ -175,6 +175,13 @@ Result<void> BeamModel::set_cdd_voltage(std::string_view det, double volts) {
   return {};
 }
 
+Result<double> BeamModel::counter_yield(std::string_view det) const {
+  std::scoped_lock lock(mutex_);
+  const auto* d = find_locked(det);
+  if (d == nullptr) return fail(unknown_detector(det));
+  return 1.0 / plateau_locked(*d);
+}
+
 Result<void> BeamModel::set_baseline(std::string_view det, double baseline, double drift_per_h) {
   std::scoped_lock lock(mutex_);
   auto* d = find_locked(det);
@@ -240,10 +247,14 @@ double BeamModel::sensitivity_locked(const BeamDetector& d) const {
   double focus = (param_locked(ParamId{SourceParam::ExtractionFocus}) - settings_.extraction_focus_optimum) /
                  settings_.extraction_focus_width;
   s *= std::exp(-0.5 * focus * focus);
-  if (is_counter(d.kind)) {
-    s /= 1.0 + std::exp(-(d.cdd_voltage - settings_.cdd_plateau_center) / settings_.cdd_plateau_width);
-  }
-  return s;
+  return s / plateau_locked(d);
+}
+
+// What a detector's signal is divided by for the ions it does not count: a
+// counter's plateau at its voltage; 1 for a Faraday.
+double BeamModel::plateau_locked(const BeamDetector& d) const {
+  if (!is_counter(d.kind)) return 1.0;
+  return 1.0 + std::exp(-(d.cdd_voltage - settings_.cdd_plateau_center) / settings_.cdd_plateau_width);
 }
 
 double BeamModel::shape_locked(double magnet, double center) const {

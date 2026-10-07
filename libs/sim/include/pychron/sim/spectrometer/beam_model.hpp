@@ -153,6 +153,10 @@ class BeamModel {
   Result<void> set_deflection(std::string_view det, double value);
   Result<void> set_gain(std::string_view det, double value);
   Result<void> set_cdd_voltage(std::string_view det, double volts);
+  // The fraction of the ions reaching `det` that it counts: for a counter
+  // the multiplier's plateau at its voltage, as its readings have it; 1 for
+  // a Faraday.
+  Result<double> counter_yield(std::string_view det) const;
   // Baseline and its drift per hour; both finite.
   Result<void> set_baseline(std::string_view det, double baseline, double drift_per_h);
   Result<void> protect(std::string_view det, bool on);
@@ -176,6 +180,7 @@ class BeamModel {
   double param_locked(const spectrometer::ParamId& id) const;
   double center_locked(const BeamDetector& d, double mass) const;
   double shift_locked(const BeamDetector& d) const;
+  double plateau_locked(const BeamDetector& d) const;
   double sensitivity_locked(const BeamDetector& d) const;
   double shape_locked(double magnet, double center) const;
   double true_signal_locked(const BeamDetector& d, TimePoint t) const;

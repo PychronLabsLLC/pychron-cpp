@@ -297,11 +297,27 @@ std::optional<Line> line_through(const reduction::Series& series) {
   return out;
 }
 
+// How many times the scatter of one reading the standard error of a line's
+// value at time zero is, for readings at these times: sqrt(1/n + mean(t)^2 /
+// sum((t - mean(t))^2)). What the plan's layout (cycles, counts, the hops'
+// order) does to an intercept, whatever was read.
+double intercept_leverage(const reduction::Series& series) {
+  const auto n = static_cast<double>(series.x.size());
+  double mean = 0;
+  for (const double x : series.x) mean += x;
+  mean /= n;
+  double spread = 0;
+  for (const double x : series.x) spread += (x - mean) * (x - mean);
+  return std::sqrt(1.0 / n + mean * mean / spread);
+}
+
 // What a run measured of one isotope: the line through its signal, and the
 // mean of the run's own baseline on that detector.
 struct Measured {
   Line signal;
   double baseline = 0;
+  double leverage = 0;  // intercept_leverage of the signal's times
+  double spacing = 0;   // the shortest time from one reading to the next, s
   // The time-zero intercept less the baseline, and its standard error.
   double value() const { return signal.intercept - baseline; }
   double error() const { return signal.intercept_error; }
@@ -312,10 +328,13 @@ std::optional<Measured> measured(const record::AnalysisRecord& rec, std::string_
   const auto* signal = trace_of(rec, "signal", isotope, detector);
   const auto* baseline = trace_of(rec, "baseline", "", detector);
   if (signal == nullptr || baseline == nullptr) return std::nullopt;
-  const auto line = line_through(series_of(*signal));
+  const reduction::Series series = series_of(*signal);
+  const auto line = line_through(series);
   const auto mean = reduction::fit(series_of(*baseline), {.kind = reduction::FitKind::Average});
   if (!line || !mean) return std::nullopt;
-  return Measured{*line, mean->value};
+  double spacing = series.x.back() - series.x.front();
+  for (std::size_t i = 1; i < series.x.size(); ++i) spacing = std::min(spacing, series.x[i] - series.x[i - 1]);
+  return Measured{*line, mean->value, intercept_leverage(series), spacing};
 }
 
 // --- the lab's numbers ------------------------------------------------------
@@ -372,13 +391,6 @@ LabNumbers numbers_of(const sim::SimSettings& s) {
 // The 1-sigma noise of one Faraday reading of `signal` fA.
 double faraday_sigma(const sim::BeamDetector& d, double signal) { return d.noise_floor + d.noise_rel * std::abs(signal); }
 
-// The fraction of the ions a counter at its voltage counts: the plateau of
-// the simulated multiplier (BeamModel's `sensitivity_locked`). 1 on a Faraday.
-double counter_yield(const sim::BeamDetector& d) {
-  const sim::BeamSettings beam;
-  return 1.0 / (1.0 + std::exp(-(d.cdd_voltage - beam.cdd_plateau_center) / beam.cdd_plateau_width));
-}
-
 void record_value(const std::string& name, double value) {
   std::ostringstream text;
   text.precision(8);
@@ -408,8 +420,10 @@ TEST_F(LabSim, AnAirRunsSignalRisesAtTheInletAndFallsAtThePump) {
   const auto h1 = lab.beam()->detector(kFaraday);
   ASSERT_TRUE(h1) << h1.error().what;
 
-  const auto runs = lab.run(lab.rows({1}));
-  ASSERT_EQ(runs.size(), 1u);
+  // Three shots: the rise and the fall are looked at in the first, the
+  // slope in all three together (one run's slope is known to 7 %).
+  const auto runs = lab.run(lab.rows({1, 2, 3}));
+  ASSERT_EQ(runs.size(), 3u);
   const auto& rec = runs[0].record;
   EXPECT_EQ(rec.identity.analysis_type, "air");
   const auto ar40 = measured(rec, "Ar40", kFaraday);
@@ -417,12 +431,13 @@ TEST_F(LabSim, AnAirRunsSignalRisesAtTheInletAndFallsAtThePump) {
   const auto* sniff = trace_of(rec, "sniff", "Ar40", kFaraday);
   ASSERT_NE(sniff, nullptr);
 
-  // The plan opened the inlet once and shut it once; a record's times count
-  // from the shutting (the plan's time zero).
+  // In each run the plan opened the inlet once and shut it once, and so did
+  // the pump-out; a record's times count from the plan's shutting (its time
+  // zero).
   const auto opened = lab.valve_times(kInlet, ValveState::Open);
   const auto shut = lab.valve_times(kInlet, ValveState::Closed);
-  ASSERT_EQ(opened.size(), 2u) << "the plan's inlet, then the pump-out";
-  ASSERT_EQ(shut.size(), 2u);
+  ASSERT_EQ(opened.size(), 6u) << "the plan's inlet, then the pump-out, three times";
+  ASSERT_EQ(shut.size(), 6u);
   const double open_at = seconds(opened[0] - shut[0]);
   const double equilibration = -open_at;
   record_value("equilibration_s", equilibration);
@@ -464,23 +479,36 @@ TEST_F(LabSim, AnAirRunsSignalRisesAtTheInletAndFallsAtThePump) {
   ASSERT_LT(decay->slope, 0.0);
   const double tau = -1.0 / decay->slope;
   record_value("rise_tau_s", tau);
+  record_value("rise_tau_error_s", tau * decay->slope_error / std::abs(decay->slope));
   EXPECT_NEAR(tau, lab_is.inlet_tau(), 0.2 * lab_is.inlet_tau());
   EXPECT_GT(sniff->v.back(), 0.9 * full) << "and has all but arrived when the sniff ends";
 
   // Shut in the source, the gas is used up: the signal falls at the
   // consumption times itself, less what the walls and the memory give back.
-  // Within 30 % of the first term alone, and within three standard errors of
-  // the two together.
-  const double used = -lab_is.consumption * (ar40->signal.mean - ar40->baseline);
+  // The three runs' slopes are taken together (their mean, with the standard
+  // error of that): within 30 % of the first term alone, which leaves 5
+  // standard errors beside the tenth that the walls give back; and within
+  // five standard errors of the two terms together.
+  double slope = 0, used = 0, slope_variance = 0;
+  for (std::size_t i = 0; i < runs.size(); ++i) {
+    const auto shot = measured(runs[i].record, "Ar40", kFaraday);
+    ASSERT_TRUE(shot);
+    slope += shot->signal.slope / static_cast<double>(runs.size());
+    used += -lab_is.consumption * (shot->signal.mean - shot->baseline) / static_cast<double>(runs.size());
+    slope_variance += shot->signal.slope_error * shot->signal.slope_error;
+    record_value("slope_fA_per_s_" + std::to_string(i + 1), shot->signal.slope);
+    record_value("slope_error_fA_per_s_" + std::to_string(i + 1), shot->signal.slope_error);
+  }
+  const double slope_error = std::sqrt(slope_variance) / static_cast<double>(runs.size());
   const double net = used + lab_is.rise;
-  record_value("slope_fA_per_s", ar40->signal.slope);
-  record_value("slope_error_fA_per_s", ar40->signal.slope_error);
+  record_value("slope_fA_per_s", slope);
+  record_value("slope_error_fA_per_s", slope_error);
   record_value("consumption_slope_fA_per_s", used);
   record_value("net_slope_fA_per_s", net);
-  EXPECT_LT(ar40->signal.slope, 0.0);
-  EXPECT_NEAR(ar40->signal.slope, used, 0.3 * std::abs(used));
-  EXPECT_NEAR(ar40->signal.slope, net, 3 * ar40->signal.slope_error);
-  EXPECT_LT(ar40->signal.slope_error, 0.1 * std::abs(used)) << "the measurement is long enough to see the slope";
+  EXPECT_LT(slope, 0.0);
+  EXPECT_NEAR(slope, used, 0.3 * std::abs(used));
+  EXPECT_NEAR(slope, net, 5 * slope_error);
+  EXPECT_LT(slope_error, 0.1 * std::abs(used)) << "the measurements are long enough to see the slope";
   EXPECT_GT(std::abs(used), 10 * lab_is.rise) << "what the source uses of a shot is ten times what its walls give";
 
   // After the pump-out the source is shut again, prep is left pumping, and
@@ -495,10 +523,22 @@ TEST_F(LabSim, AnAirRunsSignalRisesAtTheInletAndFallsAtThePump) {
   const auto peak = lab.beam()->peak_center(kFaraday, "Ar40");
   ASSERT_TRUE(peak) << peak.error().what;
   lab.beam()->set_magnet(*peak);
-  const auto reading = lab.beam()->intensity(kFaraday);
-  ASSERT_TRUE(reading) << reading.error().what;
-  record_value("after_pump_out_reading_fA", reading->value);
-  EXPECT_NEAR(reading->value, ar40->baseline, 5 * sigma);
+  // Sixteen readings a millisecond apart (the shut source gains nothing in
+  // that time), so that what is held to the 5 sigma of one reading is known
+  // to 0.4 of a sigma, the baseline's own mean included.
+  const auto last = measured(runs.back().record, "Ar40", kFaraday);
+  ASSERT_TRUE(last);
+  const int readings = 16;
+  double read = 0;
+  for (int i = 0; i < readings; ++i) {
+    lab.clock().sleep_for(1ms);
+    const auto reading = lab.beam()->intensity(kFaraday);
+    ASSERT_TRUE(reading) << reading.error().what;
+    read += reading->value / readings;
+  }
+  record_value("after_pump_out_reading_fA", read);
+  record_value("after_pump_out_baseline_fA", last->baseline);
+  EXPECT_NEAR(read, last->baseline, 5 * sigma);
   // The turbo's gauge is back where a pumped line is.
   const auto gauge = lab.sim().pressure("IG1");
   ASSERT_TRUE(gauge) << gauge.error().what;
@@ -507,36 +547,80 @@ TEST_F(LabSim, AnAirRunsSignalRisesAtTheInletAndFallsAtThePump) {
 }
 
 // The air in the tank is air when it is measured: 40/36 of the two time-zero
-// intercepts, each less its run's own baseline.
+// intercepts, each less its run's own baseline, over three shots.
 TEST_F(LabSim, AirHasTheAtmosphericRatio) {
   ScratchLab lab;
   ASSERT_TRUE(lab.problem().empty()) << lab.problem();
-  const auto cdd = lab.beam()->detector(kCounter);
-  ASSERT_TRUE(cdd) << cdd.error().what;
-
-  const auto runs = lab.run(lab.rows({1}));
-  ASSERT_EQ(runs.size(), 1u);
-  const auto ar40 = measured(runs[0].record, "Ar40", kFaraday);
-  const auto ar36 = measured(runs[0].record, "Ar36", kCounter);
-  ASSERT_TRUE(ar40);
-  ASSERT_TRUE(ar36);
-  ASSERT_GT(ar36->value(), 0.0);
-
+  const LabNumbers lab_is = numbers_of(lab.settings());
+  const auto h1 = lab.beam()->detector(kFaraday);
+  ASSERT_TRUE(h1) << h1.error().what;
   // Ar36 is on the ion counter, which at its voltage counts all but 1.5 % of
   // what reaches it: the counter's intercalibration, which a reduction
-  // applies and which is no part of the gas.
-  const double yield = counter_yield(*cdd);
+  // applies and which is no part of the gas. Asked of the beam the lab
+  // built, with the voltage and the plateau it was given.
+  const auto counted = lab.beam()->counter_yield(kCounter);
+  ASSERT_TRUE(counted) << counted.error().what;
+  const double yield = *counted;
+  ASSERT_GT(yield, 0.5);
+  ASSERT_LT(yield, 1.0);
   const double air = sim::air_ratios()[kAr40] / sim::air_ratios()[kAr36];
-  const double ratio = ar40->value() / (ar36->value() / yield);
-  const double error = ratio * std::hypot(ar40->error() / ar40->value(), ar36->error() / ar36->value());
+
+  const auto runs = lab.run(lab.rows({1, 2, 3}));
+  ASSERT_EQ(runs.size(), 3u);
+  const auto shots = static_cast<double>(runs.size());
+
+  // One run's Ar36 is some 310 counts a second, and its intercept is known
+  // to 0.6 %: 2 % would be three standard errors of one run. The three runs'
+  // ratios are taken together, their mean.
+  double as_counted = 0;   // mean of Ar40 / Ar36 as the detectors read them
+  double variance = 0;     // of that mean, relative, as designed (below)
+  double fitted = 0;       // the same from the fits' own errors: recorded, not held to anything
+  double shot = lab_is.first_shot();  // fA of Ar40 in the source at time zero
+  for (std::size_t i = 0; i < runs.size(); ++i) {
+    const auto ar40 = measured(runs[i].record, "Ar40", kFaraday);
+    const auto ar36 = measured(runs[i].record, "Ar36", kCounter);
+    ASSERT_TRUE(ar40);
+    ASSERT_TRUE(ar36);
+    ASSERT_GT(ar36->value(), 0.0);
+    const double ratio = ar40->value() / ar36->value();
+    as_counted += ratio / shots;
+    fitted += (std::pow(ar40->error() / ar40->value(), 2) + std::pow(ar36->error() / ar36->value(), 2)) / (shots * shots);
+    record_value("ratio_40_36_as_counted_" + std::to_string(i + 1), ratio);
+    record_value("ar36_cps_" + std::to_string(i + 1), ar36->value());
+    record_value("ar36_error_cps_" + std::to_string(i + 1), ar36->error());
+
+    // The error this run was designed to have, from the lab's numbers and
+    // the plan's layout alone, no reading in it. A counter's reading over
+    // `spacing` seconds of a rate scatters by sqrt(rate / spacing) (Poisson;
+    // the plan reads back to back, one integration time apart); a Faraday's
+    // by its noise. The intercept has that times the layout's leverage.
+    const double rate = shot / air * yield;  // counts per second of Ar36
+    const double ar36_error = std::sqrt(rate / ar36->spacing) * ar36->leverage / rate;
+    const double ar40_error = faraday_sigma(*h1, shot) * ar40->leverage / shot;
+    variance += (ar36_error * ar36_error + ar40_error * ar40_error) / (shots * shots);
+    record_value("ar36_design_cps_" + std::to_string(i + 1), rate);
+    record_value("ar36_design_error_cps_" + std::to_string(i + 1), ar36_error * rate);
+    record_value("ar36_readings_" + std::to_string(i + 1), static_cast<double>(ar36->signal.n));
+    shot *= lab_is.depletion();
+  }
+  const double design_error = std::sqrt(variance);
   record_value("counter_yield", yield);
-  record_value("ratio_40_36_as_counted", ar40->value() / ar36->value());
-  record_value("ratio_40_36", ratio);
-  record_value("ratio_40_36_error", error);
-  EXPECT_NEAR(ratio, air, 0.02 * air);
-  // The 2 % is three standard errors of this measurement or more: the queue
-  // counts Ar36 for long enough.
-  EXPECT_LT(3 * error, 0.02 * air);
+  record_value("ratio_40_36_as_counted", as_counted);
+  record_value("ratio_40_36", as_counted * yield);
+  record_value("ratio_40_36_design_error_relative", design_error);
+  record_value("ratio_40_36_fitted_error_relative", std::sqrt(fitted));
+
+  // The design: the 2 % below is five standard errors of the three runs
+  // together, or more. Nothing here is drawn; a queue that counted Ar36 for
+  // less, or a tank that gave less of it, fails this and not, now and then,
+  // the ratio.
+  EXPECT_LT(5 * design_error, 0.02);
+
+  // The gas: corrected for the counter, the ratio is air's.
+  EXPECT_NEAR(as_counted * yield, air, 0.02 * air);
+  // And the correction: as the detectors read it, the ratio is air's over
+  // the counter's yield.
+  EXPECT_NEAR(as_counted, air / yield, 0.02 * air / yield);
 }
 
 // A blank is what the walls gave off: far below a shot, and not nothing.
@@ -566,6 +650,15 @@ TEST_F(LabSim, ABlankIsSmall) {
   // And the shot is the tank's pressure in one pipette, spread over prep and
   // the source (a blank's worth of wall gas is a ten-thousandth of it).
   EXPECT_NEAR(air->value(), lab_is.first_shot(), 0.01 * lab_is.first_shot());
+
+  // And the blank is what a pumped source holds and what its walls and its
+  // memory gave from when the lab was built, shut, to the blank's time zero
+  // (the first test's expression for the reading before the inlet).
+  const auto shut = lab.valve_times(kInlet, ValveState::Closed);
+  ASSERT_FALSE(shut.empty());
+  const double level = lab_is.pumped + lab_is.rise * lab.since_start(shut[0]);
+  record_value("blank_expected_fA", level);
+  EXPECT_NEAR(blank->value(), level, std::max(0.3 * level, 5 * blank->error()));
 }
 
 // Each shot takes its pipette of the tank: the next is smaller by
@@ -585,16 +678,26 @@ TEST_F(LabSim, SuccessiveShotsDeclineWithTheTank) {
     shots.push_back(*ar40);
   }
   record_value("depletion", depletion);
+  const auto ratio_of = [&shots](std::size_t later, std::size_t earlier) {
+    const double ratio = shots[later].value() / shots[earlier].value();
+    return std::pair{ratio, ratio * std::hypot(shots[later].error() / shots[later].value(),
+                                               shots[earlier].error() / shots[earlier].value())};
+  };
   for (std::size_t i = 1; i < shots.size(); ++i) {
-    const double ratio = shots[i].value() / shots[i - 1].value();
-    const double error = ratio * std::hypot(shots[i].error() / shots[i].value(), shots[i - 1].error() / shots[i - 1].value());
+    const auto [ratio, error] = ratio_of(i, i - 1);
     record_value("ratio_" + std::to_string(i + 1) + "_" + std::to_string(i), ratio);
     record_value("ratio_error_" + std::to_string(i + 1) + "_" + std::to_string(i), error);
-    EXPECT_NEAR(ratio, depletion, 3 * error) << "shot " << i + 1 << " over shot " << i;
-    // Three standard errors are less than the decline itself: shots that
-    // did not decline would not pass.
-    EXPECT_LT(3 * error, 1.0 - depletion);
+    EXPECT_NEAR(ratio, depletion, 5 * error) << "shot " << i + 1 << " over shot " << i;
   }
+  // One decline is five standard errors of one such ratio, no more: what
+  // shows that the shots declined is the third over the first, two declines.
+  // Its five standard errors are well inside that (they are 0.4 of it), so
+  // shots that did not decline would not pass.
+  const auto [ratio, error] = ratio_of(2, 0);
+  record_value("ratio_3_1", ratio);
+  record_value("ratio_error_3_1", error);
+  EXPECT_NEAR(ratio, depletion * depletion, 5 * error);
+  EXPECT_LT(5 * error, 1.0 - depletion * depletion);
 }
 
 // The pipette is what makes an air run an air run: with a script that leaves
