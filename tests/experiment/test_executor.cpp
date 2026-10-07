@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <filesystem>
+#include <limits>
 #include <thread>
 
 #include "pychron/experiment/executor/executor.hpp"
@@ -804,7 +806,7 @@ TEST_F(ExecutorVirtual, CancelFromOutsideEndsAPacedQueue) {
 
 TEST_F(ExecutorVirtual, AbortWhileWaitingForAResource) {
   VirtualClock::Options o;
-  o.stall_report_after = 200ms;
+  o.stall_report_after = 5s;  // real: generous, the queue thread writes files
   World w(o);
   Clock::Participant me(w.clock, "test");
   auto q = w.overlapped_runs();
@@ -832,6 +834,80 @@ TEST_F(ExecutorVirtual, AbortWhileWaitingForAResource) {
   EXPECT_EQ(w.entered(second, run::RunState::Aborted), std::optional<TimePoint>(at));
   EXPECT_EQ(w.entered(first, run::RunState::Aborted), std::optional<TimePoint>(at + 500ms));
   EXPECT_EQ(w.clock.now(), at + 500ms);  // and nothing else was waited out
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+// The second run waits for the spectrometer, which the first keeps for ten
+// minutes that are paid for in real time: only the cancel can end the wait.
+// The thread that cancels is outside the clock.
+TEST_F(ExecutorVirtual, CancelFromOutsideReachesARunWaitingForAResource) {
+  World w({});
+  std::atomic<bool> paced{false};
+  // Well into the first run's main block, long after the second has
+  // extracted: from here time is real, and the first run sits in a reading
+  // that nothing cuts short.
+  w.spec.on_reading = [&](int n) {
+    if (n != 500) return;
+    w.clock.set_speed(1);
+    paced = true;
+    w.clock.sleep_for(600s);
+  };
+  auto q = w.overlapped_runs();
+  Executor ex(w.context(), w.options());
+  QueueResult r;
+  pychron::testing::Crew crew(w.clock);
+  crew.start("queue", [&] { r = ex.execute(q); });
+  // Asleep in the clock: the queue (for the second run), the first run (in
+  // its reading) and the second (for the spectrometer).
+  ASSERT_TRUE(pychron::testing::eventually_real([&] { return paced.load() && w.clock.waiters() == 3; }));
+  const auto first = w.run_id("12345"), second = w.run_id("12346");
+  ASSERT_TRUE(w.entered(second, run::RunState::Equilibrating));
+  ASSERT_FALSE(w.first_block(second));
+  const auto began = std::chrono::steady_clock::now();
+  ex.cancel();
+  // The second run is cancelled while the first still holds the spectrometer.
+  EXPECT_TRUE(pychron::testing::eventually_real(
+      [&] { return w.entered(second, run::RunState::Cancelled).has_value(); }));
+  EXPECT_FALSE(w.entered(first, run::RunState::Cancelled));
+  EXPECT_FALSE(w.entered(first, run::RunState::PostMeasuring));
+  w.clock.set_speed(std::numeric_limits<double>::infinity());  // the first run's reading, at no cost
+  crew.join();
+  EXPECT_LT(real_seconds_since(began), 5.0);
+  EXPECT_EQ(r.end, QueueEnd::Cancelled) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:cancelled", "12346:cancelled"}));
+  EXPECT_FALSE(w.first_block(second));  // it never got the spectrometer
+}
+
+// The post-equilibration script runs beside the measurement on a thread of
+// its own, and the run does not go on until it has ended.
+TEST_F(ExecutorVirtual, APostEquilibrationScriptThatOutlastsTheMeasurementIsWaitedFor) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  std::mutex mutex;
+  std::optional<TimePoint> script_began, last_reading;
+  w.host.bodies["post_eq"] = [&](const scripting::ScriptEnvironment& env, scripting::CancelToken& token) -> Result<void> {
+    {
+      std::lock_guard lock(mutex);
+      script_began = env.clock->now();
+    }
+    token.wait_until(*env.clock, env.clock->now() + 1000s);
+    return {};
+  };
+  w.spec.on_reading = [&](int) {
+    std::lock_guard lock(mutex);
+    last_reading = w.clock.now();
+  };
+  auto q = w.queue({unknown_run("12345")}, Seconds{0}, Seconds{0});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), std::vector<std::string>{"12345:success"});
+  ASSERT_TRUE(script_began && last_reading);
+  const auto script_ended = *script_began + 1000s;
+  EXPECT_LT(*last_reading + 900s, script_ended);  // the measurement was over long before
+  // The run leaves its measurement when the script ends, and not before.
+  EXPECT_EQ(w.entered(w.run_id("12345"), run::RunState::PostMeasuring), std::optional<TimePoint>(script_ended));
+  EXPECT_EQ(w.clock.now(), script_ended);
   EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
