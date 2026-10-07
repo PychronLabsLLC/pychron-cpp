@@ -2,6 +2,8 @@
 // simulator: the session, acquisition by events, replies interleaved with
 // events, late replies, magnet moves during an integration, source
 // parameters, valves sharing the link, reconnects, and a concurrency stress.
+// Time is a VirtualClock shared by the simulator, its transport, the link and
+// the drivers; nothing waits on the wall clock.
 
 #include <gtest/gtest.h>
 
@@ -11,13 +13,17 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/ngx.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/transport/link_transport.hpp"
 #include "valve_conformance.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -26,17 +32,23 @@ using namespace std::chrono_literals;
 namespace {
 
 // Forwards to a SimTransport; can fail the next read with Io (a dropped
-// connection) and tells the model about reopens so it greets again.
+// connection), refuse the next opens, and tells the model (when there is one)
+// about reopens so it greets again.
 class FlakyTransport final : public Transport {
  public:
   FlakyTransport(Transport& inner, std::shared_ptr<NgxSimModel> model) : inner_(inner), model_(std::move(model)) {}
   const std::string& name() const override { return inner_.name(); }
   Result<void> open() override {
-    {
+    if (model_) {
       std::lock_guard lock(model_->mutex);
       model_->banner_pending = true;
     }
     ++opens;
+    if (on_open) on_open();
+    if (refuse_opens > 0) {
+      --refuse_opens;
+      return fail(ErrorKind::Io, "connection refused");
+    }
     return inner_.open();
   }
   void close() override { inner_.close(); }
@@ -46,14 +58,19 @@ class FlakyTransport final : public Transport {
     return inner_.write(std::move(tx));
   }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override {
-    if (drop_next.exchange(false)) return fail(ErrorKind::Io, "connection reset");
+    if (drop_next.exchange(false)) {
+      if (on_drop) on_drop();
+      return fail(ErrorKind::Io, "connection reset");
+    }
     return inner_.read(std::move(rs), timeout);
   }
   Result<void> transaction(std::function<Result<void>()> body) override { return inner_.transaction(std::move(body)); }
   Health health() const override { return inner_.health(); }
 
   std::function<void(const std::string&)> before_write;  // set before connect()
+  std::function<void()> on_open, on_drop;                // likewise; called on the reader
   std::atomic<bool> drop_next{false};
+  std::atomic<int> refuse_opens{0};
   std::atomic<int> opens{0};
 
  private:
@@ -66,8 +83,11 @@ std::string uniq(const char* base) {
   return std::string(base) + std::to_string(++n);
 }
 
-struct Ngx : ::testing::Test {
-  ManualClock clock{TimePoint{} + 12h};
+struct Ngx : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  // The test's thread takes part: time moves only while it waits in the clock
+  // (clock.sleep_for, a command, next()), and stands still otherwise.
+  std::optional<Clock::Participant> main{std::in_place, clock, "test"};
   std::shared_ptr<NgxSimModel> model = [this] {
     auto m = std::make_shared<NgxSimModel>();
     m->clock = &clock;
@@ -78,6 +98,7 @@ struct Ngx : ::testing::Test {
   std::unique_ptr<SimTransport> sim = [this] {
     TransportOptions o;
     o.name = "ngx";
+    o.clock = &clock;
     auto t = SimTransport::hooked(ngx_sim_hook(model), o, ngx_sim_events(model));
     EXPECT_TRUE(t->open());
     return t;
@@ -110,6 +131,14 @@ struct Ngx : ::testing::Test {
 
   // next() until a frame or error comes (the reader delivers asynchronously).
   Result<std::optional<Frame>> wait_frame(NgxSpectrometer& s) { return s.next(3s); }
+
+  // For the tests whose threads use the link at once. The link and the
+  // drivers serialise commands with plain mutexes held across a command, and
+  // a participant blocked on one looks runnable to the clock: time would
+  // stand while the command that holds the mutex waits for it. With no
+  // participant on the test's side time runs on by itself (the reader and the
+  // transport are the only ones to wait for), which is all these tests need.
+  void let_time_run() { main.reset(); }
 };
 
 }  // namespace
@@ -132,7 +161,7 @@ TEST_F(Ngx, TheSessionLogsInAndNeverShowsThePassword) {
   // Every command ends with the configured terminator, "\r" by default.
   for (const auto& tx : sim->written()) EXPECT_EQ(tx.back(), '\r');
   // The reader polls constantly; an idle link is not a failing transport.
-  std::this_thread::sleep_for(100ms);
+  clock.sleep_for(100ms);
   EXPECT_EQ(sim->health().state, HealthState::Connected);
   EXPECT_EQ(sim->health().consecutive_failures, 0u);
 }
@@ -163,7 +192,7 @@ TEST_F(Ngx, AnIntegrationCompletesOnTheBufferedEvent) {
   auto early = s->next(100ms);
   ASSERT_TRUE(early);
   EXPECT_FALSE(*early);
-  clock.advance(2s);
+  clock.sleep_for(2s);
   auto f = wait_frame(*s);
   ASSERT_TRUE(f) << f.error().what;
   ASSERT_TRUE(*f);
@@ -188,11 +217,11 @@ TEST_F(Ngx, LastAcqCompletesOnTheNthEvent) {
   ASSERT_TRUE(s->configure(3s));
   ASSERT_TRUE(s->start());
   ASSERT_TRUE(s->trigger());
-  clock.advance(2s);
+  clock.sleep_for(2s);
   auto none = s->next(200ms);
   ASSERT_TRUE(none);
   EXPECT_FALSE(*none);  // two of three
-  clock.advance(1s);
+  clock.sleep_for(1s);
   auto f = wait_frame(*s);
   ASSERT_TRUE(f && *f);
   EXPECT_EQ((*f)->span, 3s);
@@ -361,10 +390,10 @@ TEST_F(Ngx, AValveActuationDuringAnIntegrationLeavesItAlone) {
   ASSERT_TRUE(s->configure(5s));
   ASSERT_TRUE(s->start());
   ASSERT_TRUE(s->trigger());
-  clock.advance(2s);
+  clock.sleep_for(2s);
   ASSERT_TRUE((*v)->open(ValveAddress{"7"}));
   EXPECT_EQ(count("StopAcq"), 2);  // connect + start: none from the valve
-  clock.advance(3s);
+  clock.sleep_for(3s);
   auto f = wait_frame(*s);
   ASSERT_TRUE(f && *f);
   EXPECT_EQ(s->acq_stats().completed, 1u);
@@ -403,7 +432,7 @@ TEST_F(Ngx, AWrongNumberOfValuesIsAProtocolError) {
   ASSERT_TRUE(s->connect());
   ASSERT_TRUE(s->start());
   ASSERT_TRUE(s->trigger());
-  clock.advance(1s);
+  clock.sleep_for(1s);
   auto f = wait_frame(*s);
   ASSERT_FALSE(f);
   EXPECT_EQ(f.error().kind, ErrorKind::Protocol);
@@ -418,7 +447,7 @@ TEST_F(Ngx, AnIntegrationThatNeverCompletesTimesOutAndStops) {
   ASSERT_TRUE(s->connect());
   ASSERT_TRUE(s->start());
   ASSERT_TRUE(s->trigger());
-  clock.advance(7s);
+  clock.sleep_for(7s);
   auto f = s->next(1s);
   ASSERT_FALSE(f);
   EXPECT_EQ(f.error().kind, ErrorKind::Timeout);
@@ -436,7 +465,7 @@ TEST_F(Ngx, ADroppedConnectionReconnectsAndLogsInFirst) {
   const auto session = (*l)->session();
   flaky.drop_next = true;
   // The reader reconnects in the background; the next command waits for it.
-  for (int i = 0; i < 200 && (*l)->stats().reconnects == 0; ++i) std::this_thread::sleep_for(10ms);
+  for (int i = 0; i < 200 && (*l)->stats().reconnects == 0; ++i) clock.sleep_for(10ms);
   EXPECT_EQ((*l)->stats().reconnects, 1u);
   EXPECT_GT((*l)->session(), session);
   auto m = s->read();
@@ -450,6 +479,7 @@ TEST_F(Ngx, ADroppedConnectionReconnectsAndLogsInFirst) {
 // going out first, then the StartAcq, left it running and the next StartAcq
 // was E43.)
 TEST_F(Ngx, AMoveRacingATriggerNeverLeavesAnIntegrationRunning) {
+  let_time_run();
   auto s = make(*sim);
   ASSERT_TRUE(s->connect());
   ASSERT_TRUE(s->start());
@@ -484,6 +514,7 @@ TEST_F(Ngx, AMoveRacingATriggerNeverLeavesAnIntegrationRunning) {
 
 // Acquisition, valves and magnet moves at once, for the thread sanitizer.
 TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
+  let_time_run();
   auto s = make(*sim);
   ASSERT_TRUE(s->connect());
   LinkTransport borrowed("ngx-line", link);
@@ -491,13 +522,6 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
   auto v = NgxValves::create(DriverArgs{"valves", borrowed, none, &clock});
   ASSERT_TRUE(v);
   ASSERT_TRUE(s->start());
-  std::atomic<bool> done{false};
-  std::thread ticker([&] {
-    while (!done) {
-      clock.advance(200ms);
-      std::this_thread::sleep_for(2ms);
-    }
-  });
   std::thread valves([&] {
     for (int i = 0; i < 40; ++i) {
       EXPECT_TRUE((*v)->open(ValveAddress{std::to_string(i % 4)}));
@@ -507,7 +531,7 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
   std::thread magnet([&] {
     for (int i = 0; i < 10; ++i) {
       EXPECT_TRUE(s->set(36.0 + i % 5));
-      std::this_thread::sleep_for(5ms);
+      clock.sleep_for(500ms);
     }
   });
   int frames = 0, cancelled = 0;  // a move aborts the integration it lands in
@@ -521,11 +545,91 @@ TEST_F(Ngx, ConcurrentAcquisitionValvesAndMovesStayConsistent) {
   }
   valves.join();
   magnet.join();
-  done = true;
-  ticker.join();
   EXPECT_GT(frames, 0);
   EXPECT_LE(cancelled, 10);  // at most one per move
   std::lock_guard lock(model->mutex);
   EXPECT_EQ(model->unbracketed_actuations, 0);
   EXPECT_FALSE(model->sab);
+}
+
+// --- the link's own time --------------------------------------------------
+
+namespace {
+
+using pychron::testing::await_waiters;
+
+// The link over a peer that never says anything: no banner, no reply, no
+// event. A read of it does not wait (it has no event source), so the only
+// clock time that passes is what the link itself waits for.
+struct NgxLinkVirtual : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+  std::unique_ptr<SimTransport> silent = [this] {
+    TransportOptions o;
+    o.name = "ngx";
+    o.clock = &clock;
+    auto t = SimTransport::hooked([](const Bytes&) { return Bytes{}; }, o);
+    EXPECT_TRUE(t->open());
+    return t;
+  }();
+};
+
+}  // namespace
+
+TEST_F(NgxLinkVirtual, CommandTimeoutIsClockTime) {
+  NgxLinkOptions o;
+  o.command_timeout = 10s;
+  NgxLink link(*silent, o, clock);
+  ASSERT_TRUE(link.connect());
+  const TimePoint kStart = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  auto r = link.ask("GETMASS");
+
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(clock.now(), kStart + o.command_timeout);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+TEST_F(NgxLinkVirtual, ReconnectBackoffIsClockTime) {
+  FlakyTransport flaky(*silent, nullptr);
+  std::mutex mutex;
+  std::optional<TimePoint> dropped;
+  std::vector<TimePoint> opened;
+  flaky.on_drop = [&] {
+    std::lock_guard lock(mutex);
+    dropped = clock.now();
+  };
+  flaky.on_open = [&] {
+    std::lock_guard lock(mutex);
+    opened.push_back(clock.now());
+  };
+  NgxLinkOptions o;
+  o.command_timeout = 60s;  // how long connect() waits for a link that is coming back
+  o.reconnect_min = 2s;
+  o.reconnect_max = 60s;
+  NgxLink link(flaky, o, clock);
+  ASSERT_TRUE(link.connect());
+  const TimePoint kStart = clock.now();
+  // The reader asleep between two reads, and the transport's worker idle.
+  ASSERT_TRUE(await_waiters(clock, 2));
+  const auto real_start = std::chrono::steady_clock::now();
+
+  // The connection drops and the peer is down for the first two opens.
+  flaky.refuse_opens = 2;
+  flaky.drop_next = true;
+  clock.sleep_for(o.read_timeout + 1ms);  // past the reader's next read
+  ASSERT_FALSE(link.up());
+  ASSERT_TRUE(link.connect());  // returns when the reader has the link up again
+
+  std::lock_guard lock(mutex);
+  ASSERT_TRUE(dropped);
+  EXPECT_EQ(*dropped, kStart + o.read_timeout);
+  // 2 s, then 4 s, then 8 s: the third open succeeds.
+  EXPECT_EQ(opened, (std::vector<TimePoint>{*dropped + 2s, *dropped + 6s, *dropped + 14s}));
+  EXPECT_EQ(clock.now(), *dropped + 14s);
+  EXPECT_TRUE(link.up());
+  EXPECT_EQ(link.stats().reconnects, 1u);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }

@@ -303,7 +303,7 @@ void AcquisitionEngine::cancel() {
     std::lock_guard lock(mutex_);
     cancel_ = true;
   }
-  collect_cv_.notify_all();
+  clock_.notify_all(collect_cv_);
 }
 
 TimePoint AcquisitionEngine::bin_end(std::int64_t index) const {
@@ -495,7 +495,7 @@ void AcquisitionEngine::deliver(std::vector<Reading>& readings, std::vector<Alar
       std::lock_guard lock(mutex_);
       if (collecting_) collect_error_ = err;
     }
-    collect_cv_.notify_all();
+    clock_.notify_all(collect_cv_);
   }
   if (!readings.empty()) {
     for (const auto& r : readings) stream_->push(r);
@@ -503,7 +503,7 @@ void AcquisitionEngine::deliver(std::vector<Reading>& readings, std::vector<Alar
       std::lock_guard lock(mutex_);
       if (collecting_) collected_.insert(collected_.end(), readings.begin(), readings.end());
     }
-    collect_cv_.notify_all();
+    clock_.notify_all(collect_cv_);
   }
   for (auto& r : readings) bus_.publish(IntensityReading{std::move(r)});
   for (const auto& a : alarms) bus_.publish(a);

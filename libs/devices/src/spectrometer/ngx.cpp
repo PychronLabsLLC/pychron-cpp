@@ -221,7 +221,7 @@ void NgxSpectrometer::abort_locked(const std::string& why) {
   state_ = State::Stopping;
   ++stats_.aborted;
   if (!why.empty()) ready_.push_back(fail(ErrorKind::Cancelled, why));
-  acq_cv_.notify_all();
+  clock_.notify_all(acq_cv_);
 }
 
 void NgxSpectrometer::stopped() {
@@ -229,7 +229,7 @@ void NgxSpectrometer::stopped() {
     std::lock_guard lock(acq_mutex_);
     if (state_ == State::Stopping) state_ = State::Idle;
   }
-  acq_cv_.notify_all();
+  clock_.notify_all(acq_cv_);
 }
 
 void NgxSpectrometer::on_event(const ngx::AcqFrame& frame, TimePoint at, std::uint64_t session) {
@@ -261,7 +261,7 @@ void NgxSpectrometer::on_event(const ngx::AcqFrame& frame, TimePoint at, std::ui
     ready_.push_back(std::move(out));
     ++stats_.completed;
   }
-  acq_cv_.notify_all();
+  clock_.notify_all(acq_cv_);
 }
 
 Result<void> NgxSpectrometer::configure(Duration integration) {
@@ -305,7 +305,7 @@ Result<void> NgxSpectrometer::stop() {
     was_armed = state_ != State::Idle;
     state_ = State::Idle;
     ready_.clear();
-    acq_cv_.notify_all();
+    clock_.notify_all(acq_cv_);
   }
   if (was_armed) return observe(stop_acq());
   return {};
@@ -316,7 +316,8 @@ Result<void> NgxSpectrometer::trigger() {
   {
     std::unique_lock lock(acq_mutex_);
     // An integration ended here is still being stopped: StartAcq now would be E43.
-    acq_cv_.wait_for(lock, kStopWait, [&] { return state_ != State::Stopping; });
+    const TimePoint until = clock_.now() + kStopWait;
+    while (state_ == State::Stopping && clock_.now() < until) clock_.wait_until(acq_cv_, lock, until);
     if (!running_) return fail(ErrorKind::Config, "acquirer not started");
     if (state_ == State::Stopping) return fail(ErrorKind::Timeout, "the previous integration is still being stopped");
     if (state_ != State::Idle) return {};  // never a second StartAcq (E43)
@@ -357,7 +358,6 @@ Result<std::optional<Frame>> NgxSpectrometer::next(Duration timeout) {
   std::unique_lock lock(acq_mutex_);
   if (!running_) return observe(Next(fail(ErrorKind::Config, "acquirer not started")));
   const TimePoint deadline = clock_.now() + timeout;
-  const auto real_deadline = std::chrono::steady_clock::now() + timeout;
   while (ready_.empty()) {
     if (!running_) return std::optional<Frame>{};
     if (state_ == State::Armed && clock_.now() > armed_at_ + std::chrono::seconds(seconds_) + kArmGrace) {
@@ -372,8 +372,8 @@ Result<std::optional<Frame>> NgxSpectrometer::next(Duration timeout) {
                                                                        : "final ACQ") +
                                                        " event)")));
     }
-    if (clock_.now() >= deadline || std::chrono::steady_clock::now() >= real_deadline) return std::optional<Frame>{};
-    acq_cv_.wait_for(lock, std::chrono::milliseconds(10));
+    if (clock_.now() >= deadline) return std::optional<Frame>{};
+    clock_.wait_until(acq_cv_, lock, clock_.now() + std::chrono::milliseconds(10));
   }
   auto front = std::move(ready_.front());
   ready_.pop_front();

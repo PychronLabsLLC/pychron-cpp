@@ -15,6 +15,10 @@
 // connect() opens the session: one banner line (content not checked), then
 // "Login user,password" when credentials are set. The reader repeats it after
 // a dropped connection before any queued command runs, and bumps session().
+//
+// Every timeout, window and backoff is time on the link's clock, and the
+// reader is a participant in it (Clock::Participant): the transport should
+// keep the same clock.
 
 #include <atomic>
 #include <chrono>
@@ -96,7 +100,7 @@ class NgxLink {
   Result<void> handshake();
   Result<std::string> read_line(Duration timeout);
   Result<void> send(std::string_view command);
-  void reader();
+  void reader(std::shared_ptr<Clock::Hold> started);
   void route(std::string line);
   void went_down(const Error& why);
 
@@ -108,14 +112,15 @@ class NgxLink {
   std::mutex command_mutex_;  // one command in flight
   std::mutex valve_mutex_;
 
-  mutable std::mutex mutex_;  // everything below
-  std::condition_variable cv_;
+  mutable std::mutex mutex_;    // everything below
+  std::condition_variable cv_;  // waited on and notified through clock_
   bool started_ = false, up_ = false, stop_ = false;
+  bool reader_done_ = false;  // the reader has left its loop
   std::optional<Error> down_reason_;
   std::uint64_t session_ = 0;
   std::uint64_t armed_ = 0, next_command_ = 0;  // armed_: the command awaiting a reply, 0 none
   std::optional<std::string> reply_;
-  std::optional<std::chrono::steady_clock::time_point> owed_until_;  // a timed-out command's reply
+  std::optional<TimePoint> owed_until_;  // a timed-out command's reply
   EventSink sink_;
   int sink_calls_ = 0;  // deliveries in progress (outside mutex_)
   Stats stats_;

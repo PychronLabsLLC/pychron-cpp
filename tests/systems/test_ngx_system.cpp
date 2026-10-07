@@ -2,22 +2,24 @@
 // spectrometer config loads and validates; assembled over the NGX simulator
 // it positions by mass and acquires by events; an extraction line drives NGX
 // valves in simulation, and a line whose NGX link has no owner fails its
-// actuations plainly.
+// actuations plainly. Time is a VirtualClock: the test's thread takes part in
+// it, the scheduler runs on its own threads, and nothing waits on the wall
+// clock.
 
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <thread>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -26,30 +28,6 @@ using namespace std::chrono_literals;
 namespace {
 
 const std::filesystem::path kNgx = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "spectrometer.ngx.toml";
-
-// Advances the clock and drives the scheduler, as the app's pump does.
-class Pump {
- public:
-  Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
-    thread_ = std::thread([this] {
-      while (!done_) {
-        clock_.advance(20ms);
-        scheduler_.run_pending();
-        std::this_thread::sleep_for(200us);
-      }
-    });
-  }
-  ~Pump() {
-    done_ = true;
-    thread_.join();
-  }
-
- private:
-  ManualClock& clock_;
-  Scheduler& scheduler_;
-  std::atomic<bool> done_{false};
-  std::thread thread_;
-};
 
 }  // namespace
 
@@ -85,17 +63,18 @@ TEST(NgxExampleConfig, ALinkTransportLoads) {
   fs::remove_all(dir);
 }
 
-class NgxSystem : public ::testing::Test {
+class NgxSystem : public pychron::testing::VirtualTimeTest {
  protected:
+  // Ten simulated minutes cost some twenty seconds under the thread sanitizer.
+  NgxSystem() : VirtualTimeTest(50s) {}
+
   void SetUp() override {
     model_->clock = &clock_;
     model_->values = {400, 39, 0, 0, 38, 37, 36, 0, 0, 0};  // H4 .. L5
     model_->params["IE"] = 4500;
+    scheduler_.start();
   }
-  void TearDown() override {
-    pump_.reset();
-    spec_.reset();
-  }
+  void TearDown() override { spec_.reset(); }
 
   void assemble() {
     auto data = cfg::load_spectrometer(kNgx);
@@ -113,7 +92,6 @@ class NgxSystem : public ::testing::Test {
                                                 std::move(options));
     ASSERT_TRUE(spec.has_value()) << to_string(spec.error());
     spec_ = std::move(*spec);
-    pump_ = std::make_unique<Pump>(clock_, scheduler_);
   }
 
   std::vector<std::string> commands() {
@@ -121,13 +99,16 @@ class NgxSystem : public ::testing::Test {
     return model_->commands;
   }
 
-  ManualClock clock_{TimePoint{} + 12h};
+  VirtualClock clock_;
+  // Time moves only while the test waits in the clock (a command, acquire()).
+  Clock::Participant main_{clock_, "test"};
   SignalBus bus_;
-  Scheduler scheduler_{clock_, &bus_, Scheduler::Options{0}};
+  Scheduler scheduler_{clock_, &bus_};
   std::shared_ptr<NgxSimModel> model_ = std::make_shared<NgxSimModel>();
   std::unique_ptr<Spectrometer> spec_;
-  std::unique_ptr<Pump> pump_;
 };
+
+using NgxSystemVirtual = NgxSystem;
 
 TEST_F(NgxSystem, PositionsByMassAndAcquiresByEvents) {
   assemble();
@@ -157,6 +138,35 @@ TEST_F(NgxSystem, PositionsByMassAndAcquiresByEvents) {
   auto hv = spec_->read_hv();
   ASSERT_TRUE(hv) << to_string(hv.error());
   EXPECT_DOUBLE_EQ(*hv, 4500);
+}
+
+// Ten minutes of one-second integrations, each started by its own StartAcq
+// and completed by the instrument's event, in no real time to speak of.
+TEST_F(NgxSystemVirtual, AcquiresSixHundredFramesWithNoPump) {
+  assemble();
+  const TimePoint kStart = clock_.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  auto readings = spec_->acquire(std::size_t{600});
+
+  ASSERT_TRUE(readings) << to_string(readings.error());
+  ASSERT_EQ(readings->size(), 600u);
+  for (const auto& r : *readings) {
+    ASSERT_TRUE(r.values.at("H4").has_value());
+    EXPECT_DOUBLE_EQ(r.values.at("H4")->mean, 400);
+  }
+  int starts = 0;
+  for (const auto& c : commands()) starts += c.starts_with("StartAcq") ? 1 : 0;
+  EXPECT_EQ(starts, 600);
+  // A second each, and between two the reply to StartAcq and the poll that
+  // picks the frame up (one poll interval, 20 ms).
+  const Duration took = clock_.now() - kStart;
+  EXPECT_GE(took, 600s);
+  EXPECT_LT(took, 630s);
+  // The simulated peer is read every millisecond of clock time, which is
+  // 600 000 reads here: two or three seconds as built for debugging, twenty
+  // under the thread sanitizer. The bound tells that from the ten minutes.
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 40s);
 }
 
 namespace {
@@ -200,7 +210,8 @@ systems::ExtractionLine::Options line_options(const Clock& clock, bool sim) {
 }  // namespace
 
 TEST(NgxLine, ValvesOnTheNgxControllerWorkInSimulation) {
-  ManualClock clock;
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
   auto line = systems::ExtractionLine::create(
       line_config("tcp", "host = \"10.0.0.20\"\nport = 1090", "ngx-sim-line"), std::nullopt, line_options(clock, true));
   ASSERT_TRUE(line) << line.error().what;
