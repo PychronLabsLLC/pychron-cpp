@@ -14,7 +14,7 @@
 //   --weighted | --unweighted              least-squares models
 //   --mean arithmetic|weighted             how a position's mean J is formed
 //   --mean-error sem|msem|sd               error of that mean
-//   --fit-error sem|msem|sd                error of the mean models' prediction
+//   --fit-error sem|msem|sd                error of the predicted J (not sd for a fitted surface)
 //   --neighbors N  --interpolation weighted|average|linear  --axis x|y  --degree 1..4
 //   --monitors NAME   the monitor set (default: the saved fit's, else the store's)
 //   --sample NAME     the monitor sample's name (default: the saved fit's, else the set's)
@@ -26,7 +26,8 @@
 //   --no-save-position HOLE
 // And:
 //   --reset-omits     ignore the omissions and exclusions of the saved fit
-//   --csv FILE        every position, one row each (all levels in one file)
+//   --csv FILE        every position, one row each (all levels in one file);
+//                     the file is replaced only when a level was fitted
 //   --save            save the fit (one changeset per level); --user NAME
 //
 // Prints the monitor and the unknown tables and the warnings. Without
@@ -79,6 +80,11 @@ std::string flux_csv_header();
 std::string flux_csv_rows(const pychron::processing::LevelFit& fit);
 
 // ---- Shared by flux.cpp and flux_admin.cpp ----------------------------------
+
+// The value of the flag at `args[i]`, which it steps over (`i` is then at the
+// value). An error when there is none, or when what follows is itself a
+// flag: "--csv --save" names no file.
+pychron::Result<std::string> flux_flag_value(const std::vector<std::string>& args, std::size_t& i);
 
 // The store behind `url` for a command that reads: a SQLite path that is not
 // a store is an error, not a new empty one.

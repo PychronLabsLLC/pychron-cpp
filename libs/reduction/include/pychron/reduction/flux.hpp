@@ -89,9 +89,9 @@ enum class Axis { X, Y };
 struct FitOptions {
   ModelKind kind = ModelKind::Plane;
   bool weighted = false;                       // least-squares kinds
-  MeanErrorKind error = MeanErrorKind::Msem;   // mean kinds
+  MeanErrorKind error = MeanErrorKind::Msem;   // least-squares kinds (Sem or Msem, never Sd) and mean kinds
   int n_neighbors = 2;                         // NearestNeighbors
-  Interpolation interpolation = Interpolation::WeightedMean;  // Bracketing, Bracketing1D
+  Interpolation interpolation = Interpolation::WeightedMean;  // Bracketing only (Bracketing1D is always linear)
   Axis axis = Axis::X;                         // the 1D kinds
   int degree = 1;                              // LeastSquares1D, 1..4
   friend bool operator==(const FitOptions&, const FitOptions&) = default;
@@ -117,7 +117,7 @@ struct FluxFit {
 };
 
 bool is_least_squares(ModelKind kind) noexcept;  // Plane, Bowl, LeastSquares1D
-// Fewest monitor positions the model can be fitted with (design table 5.4).
+// Fewest monitor positions the model can be fitted with (the model table of design section 5.3).
 std::size_t minimum_monitors(const FitOptions& options);
 
 // J and its error at each position of `predict_at`. Error (Config,

@@ -65,8 +65,9 @@ Result<Args> parse(const std::vector<std::string>& args) {
       continue;
     }
     if (flag != "--db" && flag != "--user") return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
-    if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
-    (flag == "--db" ? a.db : a.user) = args[++i];
+    auto value = flux_flag_value(args, i);
+    if (!value) return fail(value.error());
+    (flag == "--db" ? a.db : a.user) = *value;
   }
   if (a.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
   return a;

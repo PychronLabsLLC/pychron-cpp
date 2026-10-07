@@ -65,7 +65,8 @@ constexpr const char* kUsageText =
     "  --model plane|bowl|weighted-mean|matching|nearest|bracketing|ls1d|mean1d|bracketing1d\n"
     "  --weighted | --unweighted  least-squares models\n"
     "  --mean arithmetic|weighted --mean-error sem|msem|sd   a position's mean J\n"
-    "  --fit-error sem|msem|sd    error of the mean models' prediction (not sd for a surface)\n"
+    "  --fit-error sem|msem|sd    error of the predicted J: of the mean models' mean, and sem or\n"
+    "                             msem of a fitted surface (plane, bowl, ls1d; not sd)\n"
     "  --neighbors N              nearest\n"
     "  --interpolation weighted|average|linear   bracketing\n"
     "  --axis x|y                 the 1D models\n"
@@ -82,7 +83,8 @@ constexpr const char* kUsageText =
     "  --no-save-position HOLE    do not save that position\n"
     "  --reset-omits              ignore the omissions and exclusions of the saved fit\n"
     "Output:\n"
-    "  --csv FILE                 every position, one row each\n"
+    "  --csv FILE                 every position, one row each; written at the end, and only\n"
+    "                             when a level was fitted\n"
     "  --save [--user NAME]       save the fit; nothing is written without it\n"
     "\n"
     "elctl flux show <irradiation> <level> --db <url>\n"
@@ -190,9 +192,9 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.save = true;
       continue;
     }
-    if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
-    const std::string& value = args[++i];
-    if (value.rfind("--", 0) == 0) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
+    auto given = flux_flag_value(args, i);
+    if (!given) return fail(given.error());
+    const std::string& value = *given;
     auto bad = [&](const std::string& what) { return fail(ErrorKind::Config, flag + " is " + what + "; got '" + value + "'"); };
     if (flag == "--db") {
       a.db = value;
@@ -311,9 +313,9 @@ std::string model_line(const pp::FluxOptions& o) {
       s << ", " << (o.fit.weighted ? "weighted" : "unweighted") << ", degree " << o.fit.degree << ", axis "
         << (o.fit.axis == r::Axis::X ? 'x' : 'y');
       break;
-    case r::ModelKind::WeightedMean1D: s << ", axis " << (o.fit.axis == r::Axis::X ? 'x' : 'y'); break;
-    case r::ModelKind::Bracketing1D:
-      s << ", " << interpolation_name(o.fit.interpolation) << ", axis " << (o.fit.axis == r::Axis::X ? 'x' : 'y');
+    case r::ModelKind::WeightedMean1D:
+    case r::ModelKind::Bracketing1D:  // always linear: no interpolation to name
+      s << ", axis " << (o.fit.axis == r::Axis::X ? 'x' : 'y');
       break;
     case r::ModelKind::WeightedMean:
     case r::ModelKind::Matching: break;
@@ -557,6 +559,10 @@ struct Session {
         e.what = "--no-save-position: hole " + std::to_string(hole) + " is not a position of " + where + " (holes: " + list + ")";
         return fail_level(e);
       }
+    // R10: any position of the level may be named; one that is no monitor has nothing to exclude.
+    for (const auto& p : fitted->positions)
+      if (!p.monitor && a.edits.exclude_positions.contains(p.hole))
+        warnings.push_back("hole " + std::to_string(p.hole) + " is not a monitor position: excluding it changes nothing");
     any_fitted = true;
     io.out << format_flux_fit(*fitted, warnings);
     csv_rows += flux_csv_rows(*fitted);
@@ -569,6 +575,14 @@ struct Session {
 };
 
 }  // namespace
+
+Result<std::string> flux_flag_value(const std::vector<std::string>& args, std::size_t& i) {
+  const std::string& flag = args[i];
+  if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
+  const std::string& value = args[++i];
+  if (value.rfind("--", 0) == 0) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
+  return value;
+}
 
 Result<std::unique_ptr<ps::IStore>> open_flux_store(const std::string& db) {
   // A command reads: a mistyped SQLite path is an error, not a new empty store.

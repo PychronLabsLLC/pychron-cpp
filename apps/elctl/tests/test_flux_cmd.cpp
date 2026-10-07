@@ -411,6 +411,52 @@ TEST_F(FluxCmd, OmitAndExcludeChangeTheFit) {
   EXPECT_TRUE(contains(o.out, "warning: hole 3 left out of the fit")) << o.out;
 }
 
+// R10 keeps it a no-op; it is not a silent one.
+TEST_F(FluxCmd, ExcludingAnUnknownsHoleWarnsAndChangesNothing) {
+  const Outcome plain = fit({});
+  const Outcome o = fit({"--exclude-position", "9", "--exclude-position", "3"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "warning: hole 9 is not a monitor position: excluding it changes nothing\n")) << o.out;
+  EXPECT_FALSE(contains(o.out, "hole 3 is not a monitor position")) << o.out;
+  EXPECT_FALSE(contains(plain.out, "is not a monitor position")) << plain.out;
+  const Outcome only = fit({"--exclude-position", "9"});
+  EXPECT_TRUE(contains(only.out, "(5 dof)")) << only.out;
+  EXPECT_EQ(table_row(only.out, "Unknowns", 9), table_row(plain.out, "Unknowns", 9));
+}
+
+// Bracketing 1D is always linear: its model line names no interpolation.
+TEST_F(FluxCmd, TheModelLineOfBracketing1dNamesNoInterpolation) {
+  const Outcome o = fit({"--model", "bracketing1d", "--interpolation", "average", "--axis", "y"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "model bracketing1d, axis y; mean")) << o.out;
+  EXPECT_FALSE(contains(o.out, "average")) << o.out;
+  // Bracketing has one.
+  EXPECT_TRUE(contains(fit({"--model", "bracketing", "--interpolation", "average"}).out, "model bracketing, average; mean"));
+}
+
+TEST_F(FluxCmd, HelpSaysWhatTheFlagsDo) {
+  const Outcome o = run_raw({"flux", "help"});
+  EXPECT_EQ(o.code, elctl::kOk);
+  // --fit-error is the surfaces' error too, not only the mean models'.
+  EXPECT_TRUE(contains(o.out, "msem of a fitted surface (plane, bowl, ls1d; not sd)")) << o.out;
+  EXPECT_FALSE(contains(o.out, "error of the mean models' prediction")) << o.out;
+  EXPECT_TRUE(contains(o.out, "--monitor-positions")) << o.out;
+}
+
+// show, history and monitors read a flag's value as fit does.
+TEST_F(FluxCmd, AnAdminValueFlagDoesNotTakeTheNextFlag) {
+  Outcome o = run_raw({"flux", "show", "NM-300", "A", "--db", "--user"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--db needs a value; got the flag '--user'")) << o.err;
+  o = run_raw({"flux", "monitors", "list", "--db", db_, "--user", "--db"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--user needs a value; got the flag '--db'")) << o.err;
+  o = run_raw({"flux", "history", "NM-300", "A", "--db"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--db needs a value")) << o.err;
+  EXPECT_EQ(o.out, "");
+}
+
 TEST_F(FluxCmd, OmissionsSurviveASaveUntilReset) {
   ASSERT_EQ(fit({"--omit", "66001-02", "--save"}).code, elctl::kOk);
   EXPECT_EQ(table_row(fit({}).out, "Monitors", 1)[3], "2");

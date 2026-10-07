@@ -137,10 +137,11 @@ persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& 
 // is not already its head's (same_flux_value: the software that saved does
 // not count); a save that would write nothing commits nothing.
 // Each head moves by compare-and-swap from the revision the level was loaded
-// with (`FittedPosition::saved_revision`): a head someone moved since makes
-// the save a conflict, of the lowest such hole, and nothing is written. A
-// position that has no reference object yet gets one, scoped as the importer
-// scopes it. Error (Config, "flux: ...") for an irradiation or level that
+// with (`FittedPosition::saved_revision`): a head someone moved since to a
+// value other than the one being saved makes the save a conflict, of the
+// lowest such hole, and nothing is written (a head moved to the same value
+// is that position unchanged). A position that has no reference object yet
+// gets one, scoped as the importer scopes it. Error (Config, "flux: ...") for an irradiation or level that
 // does not exist, and, naming the lowest such hole and with nothing written,
 // when a position to save has a J (or a mean J) that is not finite and above
 // zero or an error of one that is not finite and at least zero.
