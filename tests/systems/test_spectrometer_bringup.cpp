@@ -5,12 +5,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/scheduler.hpp"
@@ -288,6 +290,88 @@ TEST_F(SpectrometerBringupLine, BaselinesApplyEvenWithoutASpectrometerVolume) {
   EXPECT_EQ(beam.detector("H1")->baseline_drift_per_h, 2.0);
   beam.set_magnet(*beam.peak_center("H1", "Ar40"));
   EXPECT_NEAR(mean_h1(beam), 1e6 + 50.0, 1e6 * 0.01);
+}
+
+// One seed for the simulated lab: a line given a seed gives it to the beam,
+// and a line left at the default leaves the beam the seed it was built with.
+TEST_F(SpectrometerBringupLine, TheLinesSeedSeedsTheBeam) {
+  sim::SimTopology topology;
+  topology.volumes = {{"source", 50.0, sim::SimRole::Spectrometer}};
+  // Off every peak: the readings are noise and nothing else.
+  const auto five = [](sim::BeamModel& beam, ManualClock& clock) {
+    beam.set_magnet(34.2 / 5.0);
+    std::vector<double> out;
+    for (int i = 0; i < 5; ++i) {
+      clock.advance(1ms);
+      out.push_back(beam.intensity("H1")->value);
+    }
+    return out;
+  };
+  // What a beam of each seed reads, each on a clock of its own from zero.
+  const auto of_seed = [&](std::uint64_t seed, const sim::SimSettings* line_settings) {
+    ManualClock clock;
+    sim::BeamSettings settings;
+    settings.seed = seed;
+    sim::BeamModel beam(clock, settings);
+    beam.ensure_detector("H1");
+    if (line_settings != nullptr) {
+      sim::SimSystem line(clock, topology, *line_settings);
+      auto fed = feed_beam_from_line(beam, line);
+      EXPECT_TRUE(fed) << fed.error().what;
+      // No gas of the line's off the peaks either; and the line is gone.
+    }
+    return five(beam, clock);
+  };
+  const std::uint64_t standard = sim::BeamSettings{}.seed;
+  ASSERT_EQ(standard, sim::SimSettings{}.seed) << "one default seed for the gauges and the detectors";
+  const auto by_default = of_seed(standard, nullptr);
+  const auto of_seven = of_seed(7, nullptr);
+  ASSERT_NE(by_default, of_seven);
+
+  // A line with no seed of its own: the beam is as it was, whatever its seed.
+  sim::SimSettings settings = still();
+  EXPECT_EQ(of_seed(standard, &settings), by_default);
+  EXPECT_EQ(of_seed(7, &settings), of_seven);
+  // A line given one: the beam reads as a beam built with it.
+  settings.seed = 7;
+  EXPECT_EQ(of_seed(standard, &settings), of_seven);
+  settings.seed = 8;
+  EXPECT_NE(of_seed(standard, &settings), of_seven);
+  EXPECT_EQ(of_seed(standard, &settings), of_seed(8, nullptr));
+}
+
+class SpectrometerBringupLineSeed : public SpectrometerBringupLine {
+ protected:
+  void SetUp() override {
+    write_sim_file("[defaults]\nseed = 7\n");
+    SpectrometerBringupLine::SetUp();
+  }
+};
+
+// And from sim.toml, through the bring-up the applications use.
+TEST_F(SpectrometerBringupLineSeed, ASeedInSimTomlReachesTheDetectors) {
+  ASSERT_EQ(line_->sim()->settings().seed, 7u);
+  auto spec = load(line_->sim());
+  ASSERT_TRUE(spec) << spec.error().what;
+  spec_ = std::move(*spec);
+  ASSERT_TRUE(line_->sim()->set_composition(*line_->sim()->spectrometer_volume(), sim::Composition{}));
+  auto beam = beam_on_ar40();
+  // A beam built at the same instant with that seed and no line reads the
+  // same noise (the source is empty, and neither has a baseline).
+  sim::BeamSettings settings;
+  settings.seed = 7;
+  sim::BeamModel seven(clock_, settings);
+  sim::BeamModel standard(clock_);
+  for (auto* m : {&seven, &standard}) {
+    m->ensure_detector("H1");
+    m->set_magnet(34.2 / 5.0);
+  }
+  for (int i = 0; i < 5; ++i) {
+    clock_.advance(1ms);
+    const double read = beam->intensity("H1")->value;
+    EXPECT_EQ(read, seven.intensity("H1")->value);
+    EXPECT_NE(read, standard.intensity("H1")->value);
+  }
 }
 
 // A reading's instant is the line's time: a beam on another clock is refused.

@@ -437,7 +437,7 @@ gauge_cc = 1               # a gauge
 valve_conductance = 0.1    # L/s for Ar40; tau = V1 V2 / ((V1 + V2) C)
 outgassing = 5e-13         # mbar L / s of Ar40 per litre of volume
 noise = 0.01               # relative 1-sigma on gauges
-seed = 0x5eed              # of the gauge noise
+seed = 0x5eed              # of the gauge noise, and of the detectors'
 
 [compositions.cocktail]    # ratios to Ar36; a species not given is 0
 Ar36 = 1
@@ -646,9 +646,10 @@ and queue; expected values are worked out from the settings the line loaded:
 - **The gas model behind `elctl`'s hardware commands.** `elctl open`,
   `read`, `scan` and the `sim` session use `elctl`'s own device sims, not
   `ExtractionLine`: gauges there read a fixed number.
-- **A seed for the detectors from `sim.toml`.** `[defaults] seed` is the
-  gauges'; the beam's is `BeamSettings::seed`, which the applications leave
-  at its default.
+- **A seed for a spectrometer simulated on its own.** `[defaults] seed`
+  seeds the gauges and, through the join, the detectors (section 11). With
+  no simulated line there is no `sim.toml`, and the beam keeps
+  `BeamSettings::seed`, which the applications leave at its default.
 - **A check of a queue's plan against the plan's `analysis_types`.**
 - Fault injection and a simulator control panel, as in section 1.
 

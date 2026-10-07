@@ -230,6 +230,43 @@ TEST(BeamModel, SameSeedSameNoise) {
   }
 }
 
+// A seed set afterwards is the seed from then on: the readings are those of
+// a model built with it, not those of the seed before, on a Faraday and on a
+// counter alike. The signal under the noise is the same.
+TEST(BeamModel, ADifferentSeedGivesDifferentNoise) {
+  ManualClock c1, c2, c3;
+  BeamSettings s;
+  BeamModel kept(c1, s), changed(c2, s);
+  s.seed = 43;
+  BeamModel built(c3, s);
+  for (auto* m : {&kept, &changed, &built}) {
+    m->ensure_detector("H1");
+    m->ensure_detector("CDD");
+    m->set_magnet(*m->peak_center("CDD", "Ar36"));  // 3e3 fA on the counter, off the peak on H1
+  }
+  changed.set_seed(43);
+  int faraday_differs = 0, counter_differs = 0;
+  double kept_sum = 0, changed_sum = 0;
+  const int n = 200;
+  for (int i = 0; i < n; ++i) {
+    for (auto* c : {&c1, &c2, &c3}) c->advance(1ms);
+    const double h1 = changed.intensity("H1")->value;
+    const double cdd = changed.intensity("CDD")->value;
+    EXPECT_EQ(h1, built.intensity("H1")->value);
+    EXPECT_EQ(cdd, built.intensity("CDD")->value);
+    const double kept_cdd = kept.intensity("CDD")->value;
+    faraday_differs += h1 != kept.intensity("H1")->value ? 1 : 0;
+    counter_differs += cdd != kept_cdd ? 1 : 0;
+    kept_sum += kept_cdd;
+    changed_sum += cdd;
+  }
+  EXPECT_EQ(faraday_differs, n);
+  EXPECT_GT(counter_differs, n * 9 / 10) << "two counts of about 3000 are seldom the same";
+  // About 2954 counts a reading (3e3 less the plateau's 1.5 %): the means of
+  // 200 are within five standard errors of each other.
+  EXPECT_NEAR(kept_sum / n, changed_sum / n, 5 * std::sqrt(2 * 3000.0 / n));
+}
+
 // Mean of `n` readings of `det`, one millisecond apart.
 double mean_of(Fixture& f, const char* det, int n) {
   double sum = 0.0;

@@ -220,7 +220,7 @@ given off mbar L/s, time s. A number outside its range is refused.
 | `valve_conductance` | L/s for Ar40 | 0.1 | 0 to 1e9 | every valve not in `[valves.*]`. Two 50 cc volumes equilibrate through 0.1 L/s with a time constant of 0.25 s |
 | `outgassing` | mbar L/s of Ar40, per litre of volume | 5e-13 | 0 to 1e3 | what the walls give off: the blank. Ar36 and Ar38 come with it as in air. With the default sensitivity 5e-13 is a rise of 0.5 fA/s of Ar40 in any volume shut off from its pumps |
 | `noise` | fraction of the reading | 0.01 | 0 to 10 | 1-sigma noise on every gauge reading; 0 for none |
-| `seed` | whole number, 0 or more | 0x5eed | | the seed of the gauge noise |
+| `seed` | whole number, 0 or more | 0x5eed | | the seed of the noise: of every gauge reading, and of every detector of a simulated spectrometer joined to the line. See [Reproducibility](#reproducibility) |
 
 The walls also give off active gas, 1e-10 mbar L/s per litre. It has no key.
 It is what a gauge on a static volume sees rise: 1e-10 mbar a second.
@@ -571,8 +571,12 @@ checksum.
   of the reading counted from when the program started. It is not the next
   number from a shared generator, so it does not depend on what else was
   read, how often, or in what order.
-- `[defaults] seed` is the seed of the gauge noise. Change it and the gauges
-  scatter differently; the gas does not change. The detectors' seed is fixed.
+- `[defaults] seed` is the one seed of the simulated lab: of the gauges'
+  noise and of the detectors'. Change it and every reading scatters
+  differently: another run of the same lab, as a second day's would be. The
+  gas does not change, so intercepts and ratios agree within their errors.
+  With no seed in the file both use 0x5eed, and so does a spectrometer
+  simulated on its own, beside a real line, which has no `sim.toml`.
 - The gas itself has no randomness.
 
 What does change the numbers:

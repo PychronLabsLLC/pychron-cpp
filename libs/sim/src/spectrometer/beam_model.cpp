@@ -114,6 +114,11 @@ void BeamModel::set_gas_provider(std::function<std::vector<BeamGas>(TimePoint)> 
   settings_.gas_at = std::move(provider);
 }
 
+void BeamModel::set_seed(std::uint64_t seed) {
+  std::scoped_lock lock(mutex_);
+  settings_.seed = seed;
+}
+
 void BeamModel::set_magnet(double value) {
   std::scoped_lock lock(mutex_);
   magnet_ = value;

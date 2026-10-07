@@ -57,8 +57,12 @@ sim::BeamSettings beam_settings_from_config(const cfg::SpectrometerData& data);
 // fixed gas. Each `[detectors.<name>]` of the line's settings is that
 // detector's baseline and drift, and is applied whether or not the line has
 // a spectrometer volume (a line loaded without its canvas has none, and its
-// detectors may still be given baselines). Call this once the beam has its
-// detectors (the sim drivers add them as the spectrometer is assembled).
+// detectors may still be given baselines). The line's seed, when it was
+// given one (`[defaults] seed`, or by whoever built the line: any seed but
+// `SimSettings`' default), becomes the beam's, so that one seed serves the
+// gauges and the detectors; with none given the beam keeps the seed it was
+// built with. Call this once the beam has its detectors (the sim drivers add
+// them as the spectrometer is assembled).
 // Config errors: a detector name the beam does not have (naming the file,
 // the key and the detectors there are), a baseline that is not finite, a
 // beam and a line on different clocks (a reading's instant is the line's

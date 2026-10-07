@@ -74,6 +74,10 @@ Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
     [[maybe_unused]] const auto set = beam.set_baseline(name, detector.baseline, detector.drift_per_h);
     assert(set && "feed_beam_from_line: a baseline was refused after it was checked");
   }
+  // One seed for the simulated lab: the line's, when it was given one. A
+  // line left at the default seed leaves the beam the seed it was built with
+  // (the same number, unless whoever built the beam chose another).
+  if (settings.seed != sim::SimSettings{}.seed) beam.set_seed(settings.seed);
   if (auto gas = line.beam_gas()) beam.set_gas_provider(std::move(gas));
   return {};
 }

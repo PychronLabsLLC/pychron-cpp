@@ -16,7 +16,8 @@
 //     valve_conductance    L/s for Ar40                    valve_conductance
 //     outgassing           mbar L / s of Ar40 per litre    outgassing
 //     noise                relative 1-sigma on gauges      noise
-//     seed                 of that noise                   seed
+//     seed                 of that noise, and of the       seed
+//                          detectors' (feed_beam_from_line)
 //   [compositions.<name>]  ratios to Ar36, by species      named
 //     Ar36 Ar37 Ar38 Ar39 Ar40 active   (one not given is 0)
 //   [volumes.<name>]       a stage, pipette or gauge; or "<a>~<b>", the pipe

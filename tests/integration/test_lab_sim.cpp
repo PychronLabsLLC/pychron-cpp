@@ -843,6 +843,79 @@ TEST_F(LabSim, TheSameQueueGivesTheSameNumbers) {
   EXPECT_GT(readings, 1000u) << "there were readings to compare";
 }
 
+// One seed for the whole simulated lab: `[defaults] seed` in sim.toml is the
+// gauges' and the detectors'. Another seed is another scatter on every
+// reading and the same gas underneath.
+TEST_F(LabSim, ADifferentSeedGivesDifferentReadingsAndTheSamePhysics) {
+  struct Seeded {
+    std::vector<Analysis> runs;
+    double gauge = 0, gauge_pressure = 0;  // IG1 as its gauge reads it, and what is there
+    double tank = 0;                       // mbar in the tank after the shot
+  };
+  const auto run_with = [](int seed) {
+    Seeded out;
+    ScratchLab lab([seed](const fs::path& dir) {
+      // The example file has its [defaults] already: the seed goes in it.
+      std::ifstream in(dir / "sim.toml", std::ios::binary);
+      std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      const std::string section = "\n[defaults]\n";
+      const auto at = text.find(section);
+      ASSERT_NE(at, std::string::npos);
+      text.insert(at + section.size(), "seed = " + std::to_string(seed) + "\n");
+      std::ofstream(dir / "sim.toml", std::ios::binary | std::ios::trunc) << text;
+    });
+    EXPECT_TRUE(lab.problem().empty()) << lab.problem();
+    if (!lab.problem().empty()) return out;
+    EXPECT_EQ(lab.settings().seed, static_cast<std::uint64_t>(seed));
+    out.gauge = lab.sim().gauge_reading("IG1").value_or(-1.0);
+    out.gauge_pressure = lab.sim().pressure("IG1").value_or(-1.0);
+    out.runs = lab.run(lab.rows({1}));
+    out.tank = lab.sim().pressure(kTank).value_or(-1.0);
+    return out;
+  };
+  const Seeded one = run_with(1);
+  const Seeded two = run_with(2);
+  ASSERT_EQ(one.runs.size(), 1u);
+  ASSERT_EQ(two.runs.size(), 1u);
+
+  // The gauges: another scatter on the same pressure.
+  EXPECT_GT(one.gauge_pressure, 0.0);
+  EXPECT_EQ(one.gauge_pressure, two.gauge_pressure);
+  EXPECT_NE(one.gauge, two.gauge);
+  // The detectors: every series was read at the same times and no series
+  // reads the same.
+  const auto& a = one.runs[0].record;
+  const auto& b = two.runs[0].record;
+  ASSERT_EQ(a.data.series.size(), b.data.series.size());
+  std::size_t differing = 0;
+  for (std::size_t s = 0; s < a.data.series.size(); ++s) {
+    const auto& x = a.data.series[s];
+    const auto& y = b.data.series[s];
+    EXPECT_EQ(x.trace.t, y.trace.t) << x.kind << " " << x.iso << " " << x.det;
+    // But the counter's baseline: off the peaks, with no dark counts, it
+    // counts nothing under any seed.
+    if (x.kind == "baseline" && x.det == kCounter) continue;
+    EXPECT_NE(x.trace.v, y.trace.v) << x.kind << " " << x.iso << " " << x.det;
+    ++differing;
+  }
+  EXPECT_GE(differing, 3u) << "Ar40 and its baseline on the Faraday, Ar36 on the counter";
+  // The gas: the tank gave the same shot, and the two analyses measured it
+  // the same within their errors.
+  EXPECT_GT(one.tank, 0.0);
+  EXPECT_EQ(one.tank, two.tank);
+  const auto first = measured(a, "Ar40", kFaraday);
+  const auto second = measured(b, "Ar40", kFaraday);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  record_value("ar40_fA_seed_1", first->value());
+  record_value("ar40_fA_seed_2", second->value());
+  record_value("ar40_error_seed_1", first->error());
+  record_value("ar40_error_seed_2", second->error());
+  EXPECT_NE(first->value(), second->value());
+  EXPECT_NEAR(first->value(), second->value(), 5 * std::hypot(first->error(), second->error()));
+  EXPECT_GT(first->value(), 1e4) << "an air shot";
+}
+
 // An hour of the lab costs its arithmetic, not an hour.
 TEST_F(LabSim, FiveRunsTakeNoRealTime) {
   ScratchLab lab;

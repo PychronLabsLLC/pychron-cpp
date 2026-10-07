@@ -37,7 +37,8 @@
 #                            # active gas as well, far more of it, and that has no key: it is
 #                            # what a gauge on a volume shut off from its pumps sees rise
 # noise = 0.01               # relative 1-sigma noise on every gauge reading
-# seed = 0x5eed              # of that noise: the same seed, the same readings
+# seed = 0x5eed              # of that noise and of the detectors': the same seed, the same
+#                            # readings; another, another scatter on the same gas
 
 # Named compositions, as ratios to Ar36; a species not given is 0. `air`
 # (40/36 298.56, 38/36 0.1885, active 106 times the argon) and `cocktail` are

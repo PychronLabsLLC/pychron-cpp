@@ -140,6 +140,12 @@ class BeamModel {
   // copied and kept: whatever it captures must outlive the model, or be
   // replaced here first. It is called with the model's mutex held.
   void set_gas_provider(std::function<std::vector<BeamGas>(TimePoint)> provider);
+  // Replaces `BeamSettings::seed`: every reading from now on has the noise of
+  // this seed (a reading is a function of seed, detector and instant, so
+  // nothing carries over from the old one). The gas, the peaks and the
+  // baselines are untouched. A simulated line's seed comes this way
+  // (`feed_beam_from_line`), so that one seed serves the whole simulated lab.
+  void set_seed(std::uint64_t seed);
 
   // Magnet position in table units.
   void set_magnet(double value);

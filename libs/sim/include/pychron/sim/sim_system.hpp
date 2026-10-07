@@ -119,6 +119,9 @@ struct SimSettings {
   // Goes before the pump's `tau`.
   std::map<std::string, double> pump_speeds;
   double noise = 0.01;                   // relative 1-sigma gauge noise
+  // Of the gauge noise; and, when it is not this default, of the detectors
+  // of a beam joined to the line (feed_beam_from_line), whose own default
+  // seed is the same number.
   std::uint64_t seed = 0x5eed;
 
   double default_volume_cc = 50.0;  // volumes with no size
