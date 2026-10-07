@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -276,6 +277,40 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
   EXPECT_EQ(clock.now(), start + 11s) << "the asker waited, in the clock, for the stop to finish";
   crew.join();
   EXPECT_EQ(stopped, start + 11s);
+}
+
+// On hardware the clock is a SteadyClock and nobody is a participant: the
+// same files, the scheduler's own threads, real time.
+TEST(ExampleLineSteady, ActuatesAndScansInRealTime) {
+  ExtractionLine::Options options;  // no clock given: the line's own SteadyClock
+  options.sim = lab();
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-steady.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  Recorder events(line.bus());
+  ASSERT_TRUE(line.start());
+  EXPECT_TRUE(line.running());
+
+  const auto before = std::chrono::steady_clock::now();
+  ASSERT_TRUE(line.actuate("A", SwitchOp::Open, "test"));
+  EXPECT_EQ(line.snapshot().valves.at("A"), ValveState::Open);
+  EXPECT_GE(std::chrono::steady_clock::now() - before, 500ms) << "A's settle is waited for, in real time";
+
+  // The gauges are scanned once a second, on a worker.
+  const auto scanned = events.samples_of("IG1");
+  EXPECT_TRUE(pychron::testing::eventually_real([&] { return events.samples_of("IG1") > scanned; }, 10s))
+      << "IG1 was not scanned in 10 s";
+  const auto pressure = line.read_gauge("IG1");
+  ASSERT_TRUE(pressure) << pressure.error().what;
+  EXPECT_GT(*pressure, 0.0);
+
+  line.stop();
+  EXPECT_FALSE(line.running());
+  const auto n = events.samples_of("IG1");
+  std::this_thread::sleep_for(1200ms);  // more than a scan interval: nothing scans a stopped line
+  EXPECT_EQ(events.samples_of("IG1"), n);
 }
 
 }  // namespace
