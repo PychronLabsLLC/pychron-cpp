@@ -5,6 +5,7 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 #include <toml++/toml.hpp>
 
@@ -77,10 +78,25 @@ Result<IdentifierRules> IdentifierRules::from_toml(std::string_view text, std::s
     for (const auto& [key, node] : *prefixes) {
       auto type = parse_analysis_type(key.str());
       if (!type) return fail(ErrorKind::Config, std::string(name) + ": unknown analysis type '" + std::string(key.str()) + "'");
-      auto s = node.value<std::string>();
-      if (!s || s->empty()) return fail(ErrorKind::Config, std::string(name) + ": prefix for '" + std::string(key.str()) + "' must be a non-empty string");
-      auto [it, ok] = r.by_prefix_.emplace(lower(*s), *type);
-      if (!ok) return fail(ErrorKind::Config, std::string(name) + ": duplicate prefix '" + *s + "'");
+      // One identifier, or several: ["bu", "b"].
+      std::vector<std::string> given;
+      bool bad = false;
+      if (const auto* list = node.as_array()) {
+        for (const auto& item : *list) {
+          auto s = item.value<std::string>();
+          if (!s || s->empty()) bad = true;
+          else given.push_back(*s);
+        }
+      } else if (auto s = node.value<std::string>(); s && !s->empty()) {
+        given.push_back(*s);
+      }
+      if (bad || given.empty())
+        return fail(ErrorKind::Config, std::string(name) + ": prefix for '" + std::string(key.str()) +
+                                           "' must be a non-empty string, or a list of them");
+      for (const auto& s : given) {
+        auto [it, ok] = r.by_prefix_.emplace(lower(s), *type);
+        if (!ok) return fail(ErrorKind::Config, std::string(name) + ": duplicate prefix '" + s + "'");
+      }
     }
   } else if (root.contains("prefixes")) {
     return fail(ErrorKind::Config, std::string(name) + ": 'prefixes' must be a table");
