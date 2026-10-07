@@ -171,7 +171,7 @@ struct Fixture {
   }
 
   ManualClock clock;
-  WallTime wall{1'000'000s};  // SwitchStats times; a test moves it by hand
+  systems::WallTime wall{1'000'000s};  // SwitchStats times; a test moves it by hand
   SignalBus bus;
   FakeActuator act{&clock};
   Recorder rec{bus};
@@ -300,7 +300,7 @@ TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   EXPECT_EQ(a.opens, 2);
   EXPECT_EQ(a.closes, 1);
   EXPECT_EQ(a.failures, 2);
-  EXPECT_EQ(a.last_actuation, WallTime{1'000'000s});  // a failure is not an actuation
+  EXPECT_EQ(a.last_actuation, systems::WallTime{1'000'000s});  // a failure is not an actuation
   EXPECT_EQ(f.mgr->info("B")->stats, SwitchStats{});
   EXPECT_EQ(f.mgr->info("M")->stats.opens, 1);
 }
@@ -313,14 +313,14 @@ TEST(SwitchManager, StatsTimeTheStateAndAddUpTheTimeOpen) {
   EXPECT_FALSE(f.mgr->info("A")->stats.since);  // first read back closed
   f.wall += 10s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'010s});
   f.wall += 5s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));  // no change: the spell goes on
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
-  EXPECT_EQ(f.mgr->info("A")->stats.last_actuation, WallTime{1'000'015s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'010s});
+  EXPECT_EQ(f.mgr->info("A")->stats.last_actuation, systems::WallTime{1'000'015s});
   f.wall += 25s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'040s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'040s});
   EXPECT_EQ(f.mgr->info("A")->stats.open_time, 30s);
 
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
@@ -341,7 +341,7 @@ TEST(SwitchManager, SeedStatsReplacesTheHistory) {
   SwitchStats kept;
   kept.opens = 1200;
   kept.closes = 1199;
-  kept.since = WallTime{500s};
+  kept.since = systems::WallTime{500s};
   kept.open_time = 3600s;
   f.mgr->seed_stats("A", kept);
   f.mgr->seed_stats("nope", kept);
@@ -349,7 +349,7 @@ TEST(SwitchManager, SeedStatsReplacesTheHistory) {
   f.wall += 10s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
   EXPECT_EQ(f.mgr->info("A")->stats.closes, 1200);
-  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 3600s + (WallTime{1'000'010s} - WallTime{500s}));
+  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 3600s + (systems::WallTime{1'000'010s} - systems::WallTime{500s}));
 }
 
 TEST(SwitchManager, CommandFailureLeavesUnknownAndPublishes) {

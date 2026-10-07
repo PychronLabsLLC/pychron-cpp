@@ -15,6 +15,7 @@ namespace {
 
 using namespace pychron;
 using namespace pychron::systems;
+using pychron::systems::WallTime;  // not pychron::WallTime, the clock's
 
 constexpr const char* kSystem = R"(
 [system]
