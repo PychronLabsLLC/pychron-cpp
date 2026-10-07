@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 
 #include "pychron/core/clock.hpp"
 
@@ -31,6 +32,26 @@ class ClockMutex {
   std::mutex inner_;                 // held_, and never across a wait
   std::condition_variable released_;  // waited on and notified through clock_
   bool held_ = false;
+};
+
+// ClockMutex that the owning thread may lock again. Same use and limits; it
+// is free once the owner has unlocked as often as it locked.
+class RecursiveClockMutex {
+ public:
+  explicit RecursiveClockMutex(const Clock& clock);
+  RecursiveClockMutex(const RecursiveClockMutex&) = delete;
+  RecursiveClockMutex& operator=(const RecursiveClockMutex&) = delete;
+
+  void lock();
+  bool try_lock();
+  void unlock();
+
+ private:
+  const Clock& clock_;
+  std::mutex inner_;                 // owner_ and depth_, and never across a wait
+  std::condition_variable released_;  // waited on and notified through clock_
+  std::thread::id owner_;            // nobody's while depth_ is 0
+  unsigned depth_ = 0;               // locks the owner has not yet given back
 };
 
 }  // namespace pychron

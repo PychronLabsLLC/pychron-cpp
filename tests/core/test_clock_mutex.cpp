@@ -1,5 +1,6 @@
 // ClockMutex: a plain mutex on a SteadyClock, and on a VirtualClock one whose
 // contenders are asleep in the clock, so time goes on for the holder.
+// RecursiveClockMutex: the same, and its owner may lock it again.
 
 #include <gtest/gtest.h>
 
@@ -32,6 +33,9 @@ struct ClockMutexVirtual : pychron::testing::VirtualTimeTest {
   Clock::Participant main{clock, "test"};
   const TimePoint kStart = clock.now();
 };
+
+struct RecursiveClockMutex : pychron::testing::VirtualTimeTest {};
+using RecursiveClockMutexVirtual = ClockMutexVirtual;
 
 }  // namespace
 
@@ -104,4 +108,72 @@ TEST_F(ClockMutexVirtual, HandOffIsInOrderOfNothingButCorrectness) {
   std::sort(taken.begin(), taken.end());
   EXPECT_EQ(taken, (std::vector<TimePoint>{kStart, kStart + 1s, kStart + 2s}));
   EXPECT_EQ(clock.now(), kStart + 3s);
+}
+
+TEST_F(RecursiveClockMutex, TheOwnerLocksAgain) {
+  SteadyClock clock;
+  pychron::RecursiveClockMutex mutex(clock);
+  const auto other_gets_it = [&] {
+    bool got = false;
+    std::thread([&] {
+      got = mutex.try_lock();
+      if (got) mutex.unlock();
+    }).join();
+    return got;
+  };
+  mutex.lock();
+  ASSERT_TRUE(mutex.try_lock());  // the owner's second
+  EXPECT_FALSE(other_gets_it());
+  mutex.unlock();
+  EXPECT_FALSE(other_gets_it());  // once of twice: still the owner's
+  mutex.unlock();
+  EXPECT_TRUE(other_gets_it());
+  // And free for the first owner again.
+  std::unique_lock again(mutex, std::try_to_lock);
+  EXPECT_TRUE(again.owns_lock());
+}
+
+TEST_F(RecursiveClockMutex, ExcludesOnSteadyClock) {
+  SteadyClock clock;
+  pychron::RecursiveClockMutex mutex(clock);
+  int total = 0;  // plain: only the mutex keeps the increments apart
+  std::vector<std::thread> threads;
+  for (int t = 0; t < 4; ++t) {
+    threads.emplace_back([&] {
+      for (int i = 0; i < 10000; ++i) {
+        std::lock_guard outer(mutex);
+        std::lock_guard inner(mutex);
+        ++total;
+      }
+    });
+  }
+  for (auto& t : threads) t.join();
+  EXPECT_EQ(total, 40000);
+}
+
+// As ClockMutexVirtual.AContenderDoesNotHoldTime, with a holder that has
+// locked twice and gives one of the two back before it sleeps: the contender
+// waits for the other.
+TEST_F(RecursiveClockMutexVirtual, AContenderDoesNotHoldTime) {
+  pychron::RecursiveClockMutex mutex(clock);
+  const auto real_start = std::chrono::steady_clock::now();
+  TimePoint got{};
+  Crew crew(clock);
+  crew.start("holder", [&] {
+    std::lock_guard outer(mutex);
+    {
+      std::lock_guard inner(mutex);
+      clock.sleep_for(2s);
+    }
+    clock.sleep_for(3s);
+  });
+  ASSERT_TRUE(await_waiters(clock, 1));  // the holder, asleep with the mutex
+  crew.start("contender", [&] {
+    std::lock_guard lock(mutex);
+    got = clock.now();
+  });
+  crew.join();
+  EXPECT_EQ(got, kStart + 5s);
+  EXPECT_EQ(clock.now(), kStart + 5s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
