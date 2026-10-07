@@ -250,6 +250,7 @@ participants.
 | `CancelToken::cancel/abort/wake` | `cv.notify_all` | notify through the clock the current waiter passed in (remembered under the token mutex; plain notify when nobody waits) |
 | `IntensityStream`, `collect`, `SwitchManager`, `move_protocol`, `FramePacer`, Qtegra and polled acquirers | already `clock.wait_until` | their notifies go through the clock |
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
+| `NgxLink` (`ngx_link.cpp`): command timeout, read timeout, backoff, late-reply window | `steady_clock` and `cv.wait_for` | `clock_.now()` and clock waits; its reader reads a transport that, simulated, waits in clock time |
 | thread joins of participants (`Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | wait for the thread's done flag through the clock, then `join()` |
 
 ### 4.3 Real-time fallbacks removed
@@ -268,7 +269,7 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   against a script that spins;
 - camera live timeouts (`laser_system.cpp:775`, `pattern_runner.cpp:325`): a
   real camera on a real bus;
-- `ngx_link.cpp` socket timeouts and backoff; the log hub; the UI's timers.
+- the log hub; the vision live feed; the UI's timers.
 
 ### 4.5 Wall time
 
@@ -280,6 +281,8 @@ and keep real time.
 
 ### 4.6 Apps
 
+`--sim-speed` takes a positive number, or `max` for unlimited (`elctl` only:
+a UI at unlimited speed finishes a queue before it paints).
 `elctl exp run --sim-speed N` and `pychron-ui --sim --sim-speed N` build a
 `VirtualClock{.speed = N, .epoch = system_clock::now()}`. The line's scheduler
 runs with its normal dispatcher and worker pool: `options.scheduler.threads = 0`
