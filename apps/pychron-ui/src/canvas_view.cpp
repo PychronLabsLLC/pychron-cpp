@@ -94,7 +94,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     item->set_on_click([this](const std::string& name) { on_click(name); });
     item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
     item->set_on_hover([this, item, name = v.name] {
-      item->set_details(valve_details(bridge_.state(), name, QDateTime::currentDateTime()));
+      item->set_details(valve_details(bridge_.state(), name, bridge_.wall_now()));
     });
     scene_.addItem(item);
     valves_[v.name] = item;
@@ -369,7 +369,7 @@ void CanvasView::apply_state() {
       item->set_locked(it->second.locked);
     }
     item->set_pending(bridge_.pending(name));
-    item->set_details(valve_details(state, name, QDateTime::currentDateTime()));
+    item->set_details(valve_details(state, name, bridge_.wall_now()));
   }
   for (auto& [name, item] : gauges_) {
     if (auto it = state.pressures.find(name); it != state.pressures.end()) {

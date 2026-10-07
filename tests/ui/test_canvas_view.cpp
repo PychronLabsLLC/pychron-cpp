@@ -10,10 +10,13 @@
 #include <thread>
 #include <vector>
 
+#include <QGraphicsScene>
+#include <QGraphicsSceneHoverEvent>
 #include <QtTest/QtTest>
 
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "theme.hpp"
 #include "ui_fixture.hpp"
 
@@ -126,6 +129,45 @@ class TestCanvasView : public QObject {
     QVERIFY(b->toolTip().contains(QStringLiteral("Prep to spectrometer")));
     QVERIFY(b->toolTip().contains(QStringLiteral("Last actuated ")));
     QVERIFY(b->toolTip().contains(QStringLiteral("Time open ")));
+  }
+
+  // "Since" is counted on the line's clock, which stamped the actuation: on a
+  // simulated line that is simulated time, here a quarter of a century from
+  // the real time of day.
+  void valveDetailsAreAsOfTheLinesClock() {
+    using namespace std::chrono_literals;
+    VirtualClock::Options at;
+    at.epoch = WallTime{} + std::chrono::hours(24 * 365 * 31);
+    VirtualClock clock(at);  // outlives the line
+    auto line = ui::test::make_example_line({}, &clock);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    QVERIFY(line->start().has_value());
+    ui::ValveItem* c = view.valve("C");
+    QVERIFY(c != nullptr);
+    bridge.actuate("C", SwitchOp::Open);
+    QTRY_VERIFY(c->toolTip().contains(QStringLiteral("Open since ")));
+    QTRY_VERIFY(!c->is_pending());
+    // Stamped a moment ago, at the clock's time of day.
+    const auto since = QRegularExpression(QStringLiteral("Open since (\\d\\d:\\d\\d:\\d\\d) \\(\\d s\\)")).match(c->toolTip());
+    QVERIFY2(since.hasMatch(), qPrintable(c->toolTip()));
+    const QString opened = since.captured(1);
+    const QTime simulated =
+        QDateTime::fromSecsSinceEpoch(std::chrono::duration_cast<std::chrono::seconds>(clock.wall_now().time_since_epoch()).count())
+            .time();
+    QVERIFY2((QTime::fromString(opened, QStringLiteral("HH:mm:ss")).secsTo(simulated) + 86400) % 86400 < 10, qPrintable(opened));
+
+    // Hovering brings the tooltip up to date.
+    clock.sleep_for(90s);
+    QGraphicsSceneHoverEvent hover(QEvent::GraphicsSceneHoverEnter);
+    view.scene()->sendEvent(c, &hover);
+    QVERIFY2(c->toolTip().contains(QStringLiteral("Open since %1 (1 min)").arg(opened)), qPrintable(c->toolTip()));
+
+    // So does anything the line reports: every valve is redrawn.
+    clock.sleep_for(60s);
+    QVERIFY(bridge.set_locked("C", true).has_value());
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("Open since %1 (2 min), locked").arg(opened)), qPrintable(c->toolTip()));
+    line->stop();
   }
 
   // The lines under a valve's name, from its history and as of a given moment.

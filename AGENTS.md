@@ -182,6 +182,9 @@ and time stops; a thread woken any other way is not heard. Hence:
   across such a call.
 - Timestamps that are written down come from `clock.wall_now()`, not
   `system_clock::now()`, so a simulated session is stamped in simulated time.
+  What the UI shows against such a stamp ("since", "ago", an alarm's time)
+  reads the same clock (`CoreBridge::wall_now()` and `now()`), never
+  `QDateTime::currentDateTime()` or `steady_clock::now()`.
 - On `SteadyClock` all of this is a pass-through: `Participant`, `Hold` and
   `Detached` do nothing and the clock mutexes behave as plain mutexes (each
   is still a flag and a condition variable, not a `std::mutex`). What is left

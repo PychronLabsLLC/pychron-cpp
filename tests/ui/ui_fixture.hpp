@@ -10,18 +10,22 @@
 
 #include <QtTest/QtTest>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
 namespace pychron::ui::test {
 
 // `canvas`: another drawing of the example line (default: the example's own).
-inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {}) {
+// `clock`: the line's clock, which must outlive it (default: real time).
+inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {},
+                                                                  const Clock* clock = nullptr) {
   using namespace std::chrono_literals;
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   systems::ExtractionLine::Options options;
   options.force_sim = true;
   options.run_scheduler = false;
+  options.clock = clock;
   options.sim.default_pressure = 1e-8;
   options.sim.initial_pressures = {{"bone", 1e-3}};
   options.sim.pumps = {{"turbo", {1e-9, 5s}}};

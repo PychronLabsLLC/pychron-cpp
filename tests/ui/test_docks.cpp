@@ -15,6 +15,7 @@
 #include <QtTest/QtTest>
 
 #include "main_window.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_fixture.hpp"
 #include "ui_fixture.hpp"
 
@@ -282,6 +283,55 @@ class TestDocks : public QObject {
     QVERIFY(dock.is_active("PG1"));
     dock.acknowledge_all();
     QCOMPARE(dock.active_count(), 0);
+  }
+
+  // An alarm's row carries the time the dock is given: real time unless told.
+  void alarmDockStampsARowWithItsOwnTimeSource() {
+    AlarmDock dock(nullptr, [] { return QDateTime(QDate(2001, 2, 3), QTime(4, 5, 6)); });
+    dock.add_alarm(Alarm{"IG1", AlarmSeverity::Critical, "high", {}});
+    QCOMPARE(dock.tree()->topLevelItem(0)->text(3), QStringLiteral("04:05:06"));
+
+    AlarmDock real;
+    const QTime before = QTime::currentTime();
+    real.add_alarm(Alarm{"IG1", AlarmSeverity::Critical, "high", {}});
+    const QTime shown = QTime::fromString(real.tree()->topLevelItem(0)->text(3), QStringLiteral("HH:mm:ss"));
+    QVERIFY(shown.isValid());
+    const int late = (before.secsTo(shown) + 86400) % 86400;  // across midnight too
+    QVERIFY2(late <= 5, qPrintable(real.tree()->topLevelItem(0)->text(3)));
+  }
+
+  // On a simulated line the window tells the time by the line's clock: an
+  // alarm's row has that clock's time of day, and a transport's "ok ... ago"
+  // is counted on it. Here it is six hours from the real time of day and its
+  // monotonic time ten hours behind the real one.
+  void mainWindowTellsTheTimeByTheLinesClock() {
+    VirtualClock::Options at;
+    at.epoch = std::chrono::system_clock::now() + 6h;
+    at.start = std::chrono::steady_clock::now() - 10h;
+    VirtualClock clock(at);  // outlives the line
+    auto line = ui::test::make_example_line({}, &clock);
+    {
+      ui::MainWindow window(*line);
+      QVERIFY(line->start().has_value());
+
+      line->bus().publish(Alarm{"IG1", AlarmSeverity::Critical, "high", clock.now()});
+      QTRY_VERIFY(window.alarm_dock()->is_active("IG1"));
+      const QTime shown = QTime::fromString(window.alarm_dock()->tree()->topLevelItem(0)->text(3), QStringLiteral("HH:mm:ss"));
+      const QTime simulated =
+          QDateTime::fromMSecsSinceEpoch(
+                  std::chrono::duration_cast<std::chrono::milliseconds>(clock.wall_now().time_since_epoch()).count())
+              .time();
+      const int off = (shown.secsTo(simulated) + 86400) % 86400;  // across midnight too
+      QVERIFY2(off <= 60, qPrintable(window.alarm_dock()->tree()->topLevelItem(0)->text(3)));
+
+      line->bus().publish(TransportHealth{"valve_bus", true, 0, "", clock.now()});
+      QTRY_COMPARE(*window.health_bar()->status("valve_bus"), HealthBar::Status::Ok);
+      clock.sleep_for(5s);
+      window.health_bar()->refresh();
+      QVERIFY2(window.health_bar()->chip("valve_bus")->text().endsWith(QStringLiteral(" 5s")),
+               qPrintable(window.health_bar()->chip("valve_bus")->text()));
+      line->stop();
+    }
   }
 
   void healthBarChipsTrackStatusAndAge() {

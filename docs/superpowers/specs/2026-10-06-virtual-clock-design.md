@@ -400,7 +400,17 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   simulated time is doing. The other `elctl` commands (`scan`, the laser
   commands) run on a `SteadyClock` only;
 - the UI: its timers, the bridges' worker threads and their polls and
-  settles (`laser_bridge.cpp`), the log dock, the plots' axes;
+  settles (`laser_bridge.cpp`), the plots' autoscale. Not what it shows
+  against a stamp of the line's: a valve's "since" and "last actuated"
+  (`canvas_view.cpp`), the time on an alarm's row (`alarm_dock.cpp`) and a
+  transport's "ok so long ago" (`health_bar.cpp`) are told by the line's
+  clock, read through `CoreBridge::wall_now()` and `now()`. On a
+  `SteadyClock` that is the real time, as before;
+- known defect, older than this work and not fixed by it: the log dock
+  (`log_model.cpp`, `log_wall_time`) turns the stamp of a `Log` event, which
+  is the line's monotonic time, into a time of day through an anchor taken
+  from the real clocks. On a simulated clock the times of day of those lines
+  are wrong (lines the UI writes itself, and the log file, are in real time);
 - inside the clocks: `SteadyClock`, `ManualClock::wait_until`'s 1 ms poll,
   and the `VirtualClock`'s pacing sleep and watchdog.
 

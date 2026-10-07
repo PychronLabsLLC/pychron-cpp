@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include <QDateTime>
 #include <QObject>
 #include <QString>
 #include <QThread>
@@ -66,6 +67,13 @@ class CoreBridge : public QObject {
   const canvas::Canvas* canvas() const noexcept { return line_.canvas(); }
   const systems::NetworkGraph* network() const noexcept { return line_.network(); }
   const config::SystemConfig& config() const noexcept { return line_.config(); }
+
+  // The time by the line's clock, for a view that shows when, or how long
+  // ago, something the line stamped happened: the real time unless the line
+  // was given a simulated clock, whose stamps are in its time. Safe from the
+  // main thread at any time.
+  QDateTime wall_now() const;
+  TimePoint now() const { return line_.clock().now(); }
 
   // Non-blocking. A second request for a valve already pending is rejected
   // at once with a Cancelled result.

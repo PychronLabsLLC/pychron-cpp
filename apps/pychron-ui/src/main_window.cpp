@@ -152,8 +152,9 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       bridge_(line),
       canvas_(new CanvasView(bridge_, this)),
       log_(new LogDock(this)),
-      alarms_(new AlarmDock(this)),
-      health_(new HealthBar(this)),
+      // Both tell the time by the line's clock, which stamped what they show.
+      alarms_(new AlarmDock(this, [this] { return bridge_.wall_now(); })),
+      health_(new HealthBar(this, [this] { return bridge_.now(); })),
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
