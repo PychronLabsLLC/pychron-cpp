@@ -2,10 +2,13 @@
 
 #include <chrono>
 #include <cmath>
+#include <future>
 
 #include <gtest/gtest.h>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 namespace {
 
@@ -293,6 +296,90 @@ TEST(SimDrivers, HvScalingSeenThroughLegacyStack) {
   ASSERT_TRUE(dac.set(c * std::sqrt(2000.0 / 4500.0)));
   b.clock.advance(100ms);
   EXPECT_NEAR(*(**adc.next(0ms)).value("H1"), 1e6, 2e4);
+}
+
+// --- FramePacer: the clock's time is the only time -----------------------------
+
+// A timeout is the clock's alone: real time going by does not end the wait.
+// (The 200 ms only give a wait that ends on real time the chance to show.)
+TEST(FramePacer, ATimeoutWaitsForTheClockNotForRealTime) {
+  ManualClock clock;
+  sim::detail::FramePacer pacer(clock);
+  pacer.start(1h);
+  auto waited = std::async(std::launch::async, [&] {
+    std::uint64_t seq = 0;
+    return pacer.wait(50ms, seq);
+  });
+  EXPECT_EQ(waited.wait_for(200ms), std::future_status::timeout) << "the wait ended with the clock at its start";
+  clock.advance(50ms);
+  ASSERT_EQ(waited.wait_for(10s), std::future_status::ready);
+  EXPECT_FALSE(waited.get().has_value());
+}
+
+struct FramePacerVirtual : pychron::testing::VirtualTimeTest {};
+
+// Ten minutes of one-second frames, each stamped on its second.
+TEST_F(FramePacerVirtual, FramesArriveOnThePeriodWithNoRealDelay) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+  sim::detail::FramePacer pacer(clock);
+  pacer.start(1s);
+  for (std::uint64_t k = 1; k <= 600; ++k) {
+    std::uint64_t seq = 0;
+    auto ts = pacer.wait(2s, seq);
+    ASSERT_TRUE(ts.has_value()) << k;
+    ASSERT_EQ(seq, k);
+    ASSERT_EQ(*ts, kStart + k * 1s);
+  }
+  EXPECT_EQ(clock.now(), kStart + 600s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// At half speed 100 ms of the clock's time cost 200 ms: the wait runs to the
+// clock's deadline, however long that takes.
+TEST_F(FramePacerVirtual, TimeoutIsClockTimeOnly) {
+  VirtualClock::Options options;
+  options.speed = 0.5;
+  VirtualClock clock(options);
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  sim::detail::FramePacer pacer(clock);
+  pacer.start(1h);  // running, with no frame due inside the timeout
+  const auto real_start = std::chrono::steady_clock::now();
+  std::uint64_t seq = 0;
+  auto ts = pacer.wait(100ms, seq);
+  const auto real = std::chrono::steady_clock::now() - real_start;
+  EXPECT_FALSE(ts.has_value());
+  EXPECT_EQ(clock.now(), kStart + 100ms);
+  EXPECT_GE(real, 190ms);
+  EXPECT_LT(real, 5s);
+}
+
+// stop() reaches a waiter asleep in the clock, at the time of the stop and
+// not at the waiter's own deadline.
+TEST_F(FramePacerVirtual, StopWakesAWaiter) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  sim::detail::FramePacer pacer(clock);
+  pacer.start(1h);
+  std::optional<TimePoint> frame;
+  TimePoint returned{};
+  pychron::testing::Crew crew(clock);
+  crew.start("waiter", [&] {
+    std::uint64_t seq = 0;
+    frame = pacer.wait(10s, seq);
+    returned = clock.now();
+  });
+  // The crew's thread takes part in the clock from its start, so time stands
+  // until it is asleep in its wait: the sleep below ends with it waiting.
+  clock.sleep_for(1s);
+  pacer.stop();
+  crew.join();
+  EXPECT_FALSE(frame.has_value());
+  EXPECT_EQ(returned, kStart + 1s);
 }
 
 }  // namespace

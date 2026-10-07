@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <set>
 #include <utility>
 
@@ -199,10 +198,12 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
 SwitchManager::SwitchManager(std::vector<std::unique_ptr<Entry>> entries, Options options)
     : clock_(options.clock ? options.clock : &default_clock()),
       bus_(options.bus),
-      wall_(options.wall ? std::move(options.wall) : std::function<WallTime()>([] {
-        return std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+      // The clock's calendar time: under a simulated clock, simulated time.
+      wall_(options.wall ? std::move(options.wall) : std::function<WallTime()>([clock = clock_] {
+        return std::chrono::floor<std::chrono::seconds>(clock->wall_now());
       })),
-      entries_(std::move(entries)) {
+      entries_(std::move(entries)),
+      actuation_(*clock_) {
   for (auto& e : entries_) by_name_.emplace(e->spec.name, e.get());
 }
 
@@ -327,14 +328,7 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   return {};
 }
 
-void SwitchManager::settle(Duration d) const {
-  if (d <= Duration::zero()) return;
-  const auto deadline = clock_->now() + d;
-  std::mutex m;
-  std::condition_variable cv;
-  std::unique_lock lk(m);
-  while (clock_->now() < deadline) clock_->wait_until(cv, lk, deadline);
-}
+void SwitchManager::settle(Duration d) const { clock_->sleep_for(d); }
 
 bool SwitchManager::record(Entry& e, ValveState s) {
   std::lock_guard lk(state_);

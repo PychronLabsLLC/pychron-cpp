@@ -17,9 +17,11 @@
 #include <vector>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::systems;
@@ -267,6 +269,64 @@ TEST(SwitchManager, WaitsSettleTimeBeforeReadBack) {
   auto reads = f.act.read_times();
   ASSERT_FALSE(reads.empty());
   EXPECT_GE(reads.back() - start, 1000ms);
+}
+
+namespace {
+
+struct SwitchManagerVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// The same settle on a VirtualClock: the second passes on the clock and
+// costs no real time.
+TEST_F(SwitchManagerVirtual, ActuationDelayIsClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  FakeActuator act{&clock};
+  auto a = valve("A", "1");
+  a.settle = 1000ms;
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({a}, [&](const std::string&) -> IValveActuator* { return &act; }, options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  const auto start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  ASSERT_TRUE((*mgr)->actuate("A", SwitchOp::Open, "op"));
+
+  auto reads = act.read_times();
+  ASSERT_FALSE(reads.empty());
+  EXPECT_EQ(reads.back() - start, 1000ms);
+  EXPECT_EQ(clock.now() - start, 1000ms);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// With no wall function given, the times a switch's history is kept in (when
+// it was last actuated, since when it has been in its state) are the clock's
+// calendar time, to the second: under a simulated clock, simulated time.
+TEST(SwitchManager, LockTimeIsTheClocksWallTime) {
+  const pychron::WallTime epoch = pychron::WallTime{} + 1'700'000'000s + 250ms;
+  ManualClock clock{TimePoint{}, epoch};
+  SignalBus bus;
+  FakeActuator act{&clock};
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({valve("A", "1")}, [&](const std::string&) -> IValveActuator* { return &act; },
+                                   options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  ASSERT_TRUE((*mgr)->refresh());
+
+  clock.advance(90s + 900ms);
+  ASSERT_TRUE((*mgr)->actuate("A", SwitchOp::Open, "op"));
+
+  // epoch + elapsed is 1 700 000 091.15 s.
+  const systems::WallTime expected{1'700'000'091s};
+  const SwitchStats stats = (*mgr)->info("A")->stats;
+  EXPECT_EQ(stats.last_actuation, expected);
+  EXPECT_EQ(stats.since, expected);
 }
 
 TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {

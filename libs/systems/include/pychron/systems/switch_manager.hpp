@@ -65,6 +65,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
@@ -140,7 +141,7 @@ using ActuatorLookup = std::function<IValveActuator*(const std::string& name)>;
 struct SwitchManagerOptions {
   const Clock* clock = nullptr;  // settle waits and event stamps; SteadyClock if null
   SignalBus* bus = nullptr;      // events are dropped if null
-  std::function<WallTime()> wall = {};  // stamps SwitchStats; the system clock if empty
+  std::function<WallTime()> wall = {};  // stamps SwitchStats; the clock's wall_now() if empty
 };
 
 class SwitchManager {
@@ -217,8 +218,10 @@ class SwitchManager {
   std::function<WallTime()> wall_;
   std::vector<std::unique_ptr<Entry>> entries_;
   std::map<std::string, Entry*, std::less<>> by_name_;
-  std::mutex actuation_;      // one actuation (or refresh) at a time
-  mutable std::mutex state_;  // guards recorded state, locks and owners
+  // One actuation (or refresh) at a time. Held across the command, the settle
+  // time and the read-back, all of which wait in clock time: a ClockMutex.
+  ClockMutex actuation_;
+  mutable std::mutex state_;  // guards recorded state, locks and owners; never held across a wait
 };
 
 }  // namespace pychron::systems

@@ -3,10 +3,10 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <optional>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -17,7 +17,8 @@ namespace pychron {
 // step and retry the operation once. Other errors pass through untouched.
 //
 // Thread-safe. The mutex guards only the reconnect step and its bookkeeping,
-// never `op`. Each run() notes the reconnect generation before calling `op`;
+// never `op`. The step reopens the transport and runs `on_connect`, both of
+// which may wait in clock time, so it is a ClockMutex. Each run() notes the reconnect generation before calling `op`;
 // a caller whose failure was already repaired by another thread's reconnect
 // (generation moved on) just retries, so concurrent failures reconnect once.
 //
@@ -65,7 +66,7 @@ class Reconnector {
   Transport& transport_;
   const Clock& clock_;
   Duration min_interval_;
-  std::mutex mutex_;
+  ClockMutex mutex_;
   std::optional<TimePoint> last_attempt_;
   std::atomic<std::uint64_t> generation_{0};
 };

@@ -1,8 +1,8 @@
 // The thermo_qtegra driver through the Spectrometer facade and ScanService,
 // over its simulated wire (QtegraSimModel behind a hooked SimTransport that
 // the assembler is handed in place of the configured transport). Time is a
-// ManualClock pumped by a helper thread that also drives the Scheduler, so
-// nothing waits on the wall clock.
+// VirtualClock: the test's thread takes part in it, the scheduler runs on its
+// own threads, and nothing waits on the wall clock.
 
 #include <gtest/gtest.h>
 
@@ -13,15 +13,16 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
-#include <future>
 #include <mutex>
-#include <thread>
+#include <optional>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -35,37 +36,25 @@ const std::filesystem::path kSimIntegrated = kDir / "spectrometer.sim-integrated
 
 double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 
-class Pump {
- public:
-  Pump(ManualClock& clock, Scheduler& scheduler) : clock_(clock), scheduler_(scheduler) {
-    thread_ = std::thread([this] {
-      while (!done_) {
-        clock_.advance(20ms);
-        scheduler_.run_pending();
-        std::this_thread::sleep_for(200us);
-      }
-    });
-  }
-  ~Pump() {
-    done_ = true;
-    thread_.join();
-  }
-
- private:
-  ManualClock& clock_;
-  Scheduler& scheduler_;
-  std::atomic<bool> done_{false};
-  std::thread thread_;
-};
+// How long a test waits, in the clock's time, for something a scan should
+// have done within seconds.
+constexpr Duration kPatience = 120s;
 
 // What a test shares with the transport the Spectrometer owns.
 struct Link {
+  explicit Link(const Clock& c) : clock(c) {}
+
+  const Clock& clock;
   std::atomic<bool> down{false};  // every exchange fails with Io (a dropped connection)
   std::atomic<int> opens{0};      // open() calls, the assembler's included
 
   // Gate: while `hold` is set a GetData exchange stops here, before the wire.
+  // The poll that stops here waits past the clock, on purpose: it looks
+  // runnable, so time stands for as long as the read is held, and nothing
+  // that has to wait for the read can get ahead by waiting it out.
   std::mutex mutex;
-  std::condition_variable cv;
+  std::condition_variable held_cv;     // `held` set; waited on and notified through the clock
+  std::condition_variable release_cv;  // `hold` cleared; plain
   bool hold = false;
   bool held = false;  // a GetData is waiting at the gate
 
@@ -73,16 +62,22 @@ struct Link {
     std::lock_guard lock(mutex);
     hold = true;
   }
+  // Lets time run until a poll is at the gate; false when none comes.
   bool wait_held() {
+    const TimePoint give_up = clock.now() + kPatience;
     std::unique_lock lock(mutex);
-    return cv.wait_for(lock, 10s, [&] { return held; });
+    while (!held) {
+      if (clock.now() >= give_up) return false;
+      clock.wait_until(held_cv, lock, give_up);
+    }
+    return true;
   }
   void release() {
     {
       std::lock_guard lock(mutex);
       hold = false;
     }
-    cv.notify_all();
+    release_cv.notify_all();
   }
 };
 
@@ -105,8 +100,8 @@ class LinkTransport final : public Transport {
       std::unique_lock lock(link_->mutex);
       if (link_->hold) {
         link_->held = true;
-        link_->cv.notify_all();
-        link_->cv.wait(lock, [&] { return !link_->hold; });
+        link_->clock.notify_all(link_->held_cv);
+        link_->release_cv.wait(lock, [&] { return !link_->hold; });
         link_->held = false;
       }
     }
@@ -124,9 +119,9 @@ class LinkTransport final : public Transport {
   std::shared_ptr<Link> link_;
 };
 
-// Consecutive readings are one period apart. The poll that reads a frame runs
-// on the first pump tick (20 ms) at or after the frame is due, so each
-// timestamp is at most one tick late.
+// Consecutive readings are one period apart. The poll that reads a frame is
+// the first (they are 20 ms apart) at or after the frame is due, so each
+// timestamp is at most one poll interval late.
 void expect_cadence(const std::vector<IntensityReading>& readings, double period_s) {
   for (std::size_t i = 1; i < readings.size(); ++i) {
     EXPECT_NEAR(seconds(readings[i].reading.ts - readings[i - 1].reading.ts), period_s, 0.020 + 1e-9) << i;
@@ -137,20 +132,25 @@ void expect_cadence(const std::vector<IntensityReading>& readings, double period
 template <class E>
 class Collector {
  public:
-  explicit Collector(SignalBus& bus) {
+  Collector(SignalBus& bus, const Clock& clock) : clock_(clock) {
     sub_ = bus.subscribe<E>([this](const E& e) {
       {
         std::lock_guard lock(mutex_);
         events_.push_back(e);
       }
-      cv_.notify_all();
+      clock_.notify_all(cv_);
     });
   }
 
-  // Blocks until `pred(events)` holds; false after 10 s of real time.
+  // Lets time run until `pred(events)` holds; false after kPatience of it.
   bool wait(const std::function<bool(const std::vector<E>&)>& pred) {
+    const TimePoint give_up = clock_.now() + kPatience;
     std::unique_lock lock(mutex_);
-    return cv_.wait_for(lock, 10s, [&] { return pred(events_); });
+    while (!pred(events_)) {
+      if (clock_.now() >= give_up) return false;
+      clock_.wait_until(cv_, lock, give_up);
+    }
+    return true;
   }
   std::vector<E> events() {
     std::lock_guard lock(mutex_);
@@ -162,28 +162,28 @@ class Collector {
   }
 
  private:
+  const Clock& clock_;
   std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable cv_;  // waited on and notified through clock_
   std::vector<E> events_;
   SignalBus::Subscription sub_;
 };
 
-class QtegraSystem : public ::testing::Test {
+class QtegraSystem : public pychron::testing::VirtualTimeTest {
  protected:
   void SetUp() override {
+    scheduler_.start();
     model_->clock = &clock_;
     model_->hv = 4500.0;
     model_->intensities = {{"H2", 10.0}, {"H1", 100.0}, {"AX", 20.0}, {"L1", 30.0}, {"L2", 40.0}, {"CDD", 500.0}};
   }
 
   void TearDown() override {
-    link_->release();  // a failed test must not leave the pump at the gate
-    pump_.reset();
+    link_->release();  // a failed test must not leave a poll at the gate
     spec_.reset();
   }
 
-  // Assembles `data` with every transport replaced by the Qtegra sim wire,
-  // then starts the pump.
+  // Assembles `data` with every transport replaced by the Qtegra sim wire.
   void assemble(cfg::SpectrometerData data) {
     AssemblerOptions options;
     options.make_transport = [this](const cfg::TransportConfig& tc,
@@ -198,7 +198,6 @@ class QtegraSystem : public ::testing::Test {
                                                 std::move(options));
     ASSERT_TRUE(spec.has_value()) << to_string(spec.error());
     spec_ = std::move(*spec);
-    pump_ = std::make_unique<Pump>(clock_, scheduler_);
   }
 
   void assemble_example() {
@@ -216,15 +215,17 @@ class QtegraSystem : public ::testing::Test {
     model_->commands.clear();
   }
 
-  ManualClock clock_{TimePoint{} + 1000s};
+  VirtualClock clock_;
+  // Time moves only while the test waits in the clock (a command, acquire(),
+  // a Collector's wait).
+  Clock::Participant main_{clock_, "test"};
   SignalBus bus_;
-  Scheduler scheduler_{clock_, &bus_, Scheduler::Options{0}};
+  Scheduler scheduler_{clock_, &bus_};
   std::shared_ptr<QtegraSimModel> model_ = std::make_shared<QtegraSimModel>();
-  std::shared_ptr<Link> link_ = std::make_shared<Link>();
-  Collector<IntensityReading> readings_{bus_};
-  Collector<ScanStatus> statuses_{bus_};
+  std::shared_ptr<Link> link_ = std::make_shared<Link>(clock_);
+  Collector<IntensityReading> readings_{bus_, clock_};
+  Collector<ScanStatus> statuses_{bus_, clock_};
   std::unique_ptr<Spectrometer> spec_;
-  std::unique_ptr<Pump> pump_;
 };
 
 TEST(QtegraExampleConfig, ExampleConfigLoadsAndValidates) {
@@ -388,18 +389,37 @@ TEST_F(QtegraSystem, SetIntegrationWaitsForAReadInFlight) {
   ASSERT_TRUE(readings_.wait([](const auto& rs) { return !rs.empty(); }));
 
   link_->hold_get_data();
-  ASSERT_TRUE(link_->wait_held());  // the pump thread is inside next(), at the gate
+  ASSERT_TRUE(link_->wait_held());  // a scheduler thread is inside next(), at the gate
   clear_commands();
-  auto changed = std::async(std::launch::async, [&] { return service.set_integration(500ms); });
-  // Only EXPECTs until the gate is open: `changed` cannot finish before then.
-  // The bounded real-time wait is what gives an overlapping configure() the
-  // chance to show itself.
-  EXPECT_EQ(changed.wait_for(100ms), std::future_status::timeout);
+  // Time stands while the read is held (see Link), so set_integration cannot
+  // get past it by waiting: it can only overlap it, or wait for it. Everyone
+  // who takes part in the clock is now asleep in it but two: this thread and
+  // the poll at the gate.
+  const std::size_t crowd = clock_.participants();
+  ASSERT_TRUE(pychron::testing::eventually_real([&] { return clock_.waiters() == crowd - 2; }));
+  std::mutex m;
+  std::optional<Result<void>> result;
+  pychron::testing::Crew crew(clock_);
+  crew.start("set_integration", [&] {
+    auto r = service.set_integration(500ms);
+    std::lock_guard lock(m);
+    result = std::move(r);
+  });
+  // Only EXPECTs until the gate is open: the crew cannot be joined before then.
+  // One more takes part, and it is asleep too.
+  EXPECT_TRUE(pychron::testing::eventually_real(
+      [&] { return clock_.participants() == crowd + 1 && clock_.waiters() == crowd - 1; }))
+      << "set_integration is not waiting for the read in flight";
+  {
+    std::lock_guard lock(m);
+    EXPECT_FALSE(result.has_value());
+  }
   EXPECT_TRUE(commands().empty());
 
   link_->release();
-  auto result = changed.get();
-  ASSERT_TRUE(result.has_value()) << to_string(result.error());
+  crew.join();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_TRUE(result->has_value()) << to_string(result->error());
   const auto log = commands();
   ASSERT_GE(log.size(), 2U);
   EXPECT_EQ(log[0], "GetData");

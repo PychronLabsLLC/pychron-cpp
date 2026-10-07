@@ -66,7 +66,7 @@ void IntensityStream::push(Reading reading) {
     }
     queue_.push_back(std::move(reading));
   }
-  cv_.notify_all();
+  clock_.notify_all(cv_);
 }
 
 void IntensityStream::fail(Error error) {
@@ -74,7 +74,7 @@ void IntensityStream::fail(Error error) {
     std::lock_guard lock(mutex_);
     error_ = std::move(error);
   }
-  cv_.notify_all();
+  clock_.notify_all(cv_);
 }
 
 void IntensityStream::clear() {
@@ -194,7 +194,7 @@ Result<void> AcquisitionEngine::start(Duration integration) {
       // or a stop() queued behind it may come to wait for this poll.
       if (starting_) return fail(ErrorKind::Config, "acquisition is starting", "acquisition");
     } else {
-      polls_cv_.wait(lock, [&] { return settled(); });
+      while (!settled()) clock_.wait(polls_cv_, lock);
     }
     if (running_) return fail(ErrorKind::Config, "acquisition already running");
     integration_ = integration;
@@ -209,7 +209,7 @@ Result<void> AcquisitionEngine::start(Duration integration) {
     void clear() {
       armed = false;
       engine.starting_ = false;
-      engine.polls_cv_.notify_all();
+      engine.clock_.notify_all(engine.polls_cv_);
     }
     ~Starting() {
       if (!armed) return;
@@ -269,13 +269,17 @@ void AcquisitionEngine::stop() {
     // A start() in progress on another thread is about to bring the engine
     // up: wait for it, then stop what it started. Not from inside a poll (see
     // below).
-    if (own == 0) polls_cv_.wait(lock, [&] { return !starting_; });
+    if (own == 0) {
+      while (starting_) clock_.wait(polls_cv_, lock);
+    }
     if (!running_) {
       // Already stopped, perhaps by a stop() still in progress on another
       // thread: return only once that one has stopped the acquirers, or the
       // engine has been started again since. Not from inside a poll, though:
       // that stopper may be waiting for this very poll.
-      if (own == 0) polls_cv_.wait(lock, [&] { return settled(); });
+      if (own == 0) {
+        while (!settled()) clock_.wait(polls_cv_, lock);
+      }
       return;
     }
     running_ = false;
@@ -286,15 +290,18 @@ void AcquisitionEngine::stop() {
   {
     // Scheduler::cancel() lets an execution in progress finish; wait for it,
     // without the lock a poll needs to finish. Polls on this thread are our
-    // own callers and cannot be waited for.
+    // own callers and cannot be waited for. Through the clock, as every wait
+    // on polls_cv_ is: the poll may itself be waiting in the clock's time
+    // (a driver reading its wire), which passes only while this thread is
+    // seen to wait.
     std::unique_lock lock(mutex_);
-    polls_cv_.wait(lock, [&] { return polling_.size() == polls_on_this_thread(); });
+    while (polling_.size() != polls_on_this_thread()) clock_.wait(polls_cv_, lock);
   }
   for (auto* a : acquirers_) (void)a->stop();
   {
     std::lock_guard lock(mutex_);
     stopping_ = false;
-    polls_cv_.notify_all();
+    clock_.notify_all(polls_cv_);
   }
 }
 
@@ -522,7 +529,7 @@ void AcquisitionEngine::poll(std::size_t index) {
       std::lock_guard lock(engine.mutex_);
       auto& ids = engine.polling_;
       ids.erase(std::find(ids.begin(), ids.end(), std::this_thread::get_id()));
-      engine.polls_cv_.notify_all();
+      engine.clock_.notify_all(engine.polls_cv_);
     }
   };
   {
@@ -601,7 +608,11 @@ Result<std::vector<Reading>> AcquisitionEngine::acquire_impl(std::size_t n,
     std::unique_lock lock(mutex_);
     while (collected_.size() <= seen && !cancel_ && !collect_error_ &&
            !(duration && clock_.now() >= deadline)) {
-      clock_.wait_until(collect_cv_, lock, duration ? deadline : clock_.now() + std::chrono::hours(1));
+      if (duration) {
+        clock_.wait_until(collect_cv_, lock, deadline);
+      } else {
+        clock_.wait(collect_cv_, lock);  // a reading, an error or cancel() ends it
+      }
     }
     if (cancel_) {
       failure = Error{ErrorKind::Cancelled, "acquire cancelled", "acquisition"};

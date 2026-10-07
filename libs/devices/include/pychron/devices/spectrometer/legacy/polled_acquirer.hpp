@@ -48,7 +48,7 @@ class PolledAcquirer : public Device, public IIntensityAcquirer {
   Duration period_;
   const Clock& clock_;
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable cv_;  // waited on and notified through clock_
   bool running_ = false;
   TimePoint due_{};
   std::uint64_t seq_ = 0;

@@ -3,7 +3,7 @@
 namespace pychron::spectrometer {
 
 QtegraLink::QtegraLink(Transport& transport, codec::qtegra::Terminator terminator, const Clock& clock)
-    : transport_(transport), terminator_(terminator), reconnector_(transport, clock) {}
+    : transport_(transport), terminator_(terminator), reconnector_(transport, clock), handshake_mutex_(clock) {}
 
 void QtegraLink::set_handshake(Handshake handshake) {
   std::lock_guard lock(handshake_mutex_);

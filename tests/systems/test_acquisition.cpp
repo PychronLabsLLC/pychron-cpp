@@ -10,8 +10,11 @@
 #include <mutex>
 #include <thread>
 
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/sim/spectrometer/sim_drivers.hpp"
 #include "pychron/systems/spectrometer/acquisition.hpp"
 #include "spectrometer_fakes.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -792,4 +795,106 @@ TEST(AcquisitionEngine, FailedStartDoesNotBlockLaterStartOrStop) {
   ASSERT_EQ(restarted.wait_for(2s), std::future_status::ready);
   EXPECT_TRUE(restarted.get().has_value());
   f.engine->stop();
+}
+
+// ---- On a VirtualClock: the test's thread takes part in the clock's time ----
+
+namespace {
+
+struct IntensityStreamVirtual : pychron::testing::VirtualTimeTest {};
+struct AcquisitionEngineVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// A reading reaches a consumer asleep in the clock when it is pushed, not
+// when the consumer's own timeout runs out.
+TEST_F(IntensityStreamVirtual, NextWakesOnAPush) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  SignalBus bus;
+  FakeAcquirer a({"H1"}, true);
+  Scheduler sched{clock, &bus, Scheduler::Options{0}};  // polled by hand below
+  auto engine = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, sched, bus, clock);
+  ASSERT_TRUE(engine.has_value()) << to_string(engine.error());
+  ASSERT_TRUE((*engine)->start(1s).has_value());
+  auto stream = (*engine)->stream();
+
+  Result<std::optional<Reading>> got = std::optional<Reading>{};
+  TimePoint returned{};
+  pychron::testing::Crew crew(clock);
+  crew.start("consumer", [&] {
+    got = stream->next(10s);
+    returned = clock.now();
+  });
+  // The crew's thread takes part in the clock from its start, so time stands
+  // until it is asleep in its wait: the sleep below ends with it waiting.
+  clock.sleep_for(1s);
+  a.push(integrated(kStart + 1s, 1, {{"H1", 5.0}}));
+  (*engine)->poll(0);
+  crew.join();
+
+  ASSERT_TRUE(got.has_value()) << to_string(got.error());
+  ASSERT_TRUE(got->has_value());
+  EXPECT_DOUBLE_EQ((*got)->values.at("H1")->mean, 5.0);
+  EXPECT_EQ(returned, kStart + 1s);
+  (*engine)->stop();
+}
+
+// Five minutes of one-second readings from the simulated instrument, polled
+// by the scheduler's own threads: acquire(duration) ends on its deadline.
+TEST_F(IntensityStreamVirtual, CollectForADurationEndsAtTheDeadline) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  sim::SimIntegrated acquirer("sim", std::make_shared<sim::BeamModel>(clock), {});
+  Scheduler sched{clock, &bus};
+  sched.start();
+  auto engine = AcquisitionEngine::create({&acquirer}, {faraday("H1", "H1")}, sched, bus, clock);
+  ASSERT_TRUE(engine.has_value()) << to_string(engine.error());
+  const TimePoint kStart = clock.now();
+
+  auto readings = (*engine)->acquire(300s);
+
+  ASSERT_TRUE(readings.has_value()) << to_string(readings.error());
+  EXPECT_NEAR(static_cast<double>(readings->size()), 300.0, 1.0);
+  EXPECT_EQ(clock.now(), kStart + 300s);
+  EXPECT_FALSE((*engine)->running());
+}
+
+// stop() waits for a poll in flight. When that poll is itself waiting in the
+// clock (a driver reading its simulated wire), the stopper has to wait through
+// the clock too: otherwise it looks runnable, time stands, and neither ends.
+TEST_F(AcquisitionEngineVirtual, StopWaitsForAPollInFlightWithoutStallingTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  fakes::CallLog log;
+  fakes::FakeAcquirer a({"H1"});
+  a.log = &log;
+  std::atomic<int> polls{0};
+  std::mutex m;
+  TimePoint entered{};
+  a.on_next = [&] {
+    {
+      std::lock_guard lock(m);
+      entered = clock.now();
+    }
+    ++polls;
+    clock.sleep_for(1s);  // the read takes a second of the clock's time
+  };
+  Scheduler sched{clock, &bus};
+  sched.start();
+  auto engine = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, sched, bus, clock);
+  ASSERT_TRUE(engine.has_value()) << to_string(engine.error());
+  ASSERT_TRUE((*engine)->start(1s).has_value());
+  clock.sleep_for(30ms);  // past the first poll (20 ms), which is now in its read
+  ASSERT_EQ(polls.load(), 1);
+
+  (*engine)->stop();
+
+  // The poll ran to its end, a second after it began, and stop() came back then.
+  EXPECT_EQ(log, (fakes::CallLog{"start", "next-enter", "next-exit", "stop"}));
+  std::lock_guard lock(m);
+  EXPECT_EQ(clock.now(), entered + 1s);
 }

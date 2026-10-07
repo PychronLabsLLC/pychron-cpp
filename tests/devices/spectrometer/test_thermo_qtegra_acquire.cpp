@@ -1,5 +1,6 @@
 // QtegraSpectrometer as a polled, vendor-integrating acquirer, on the Qtegra
-// sim hook with a ManualClock; and a replay of a synthetic session trace.
+// sim hook with a ManualClock; its waits on a VirtualClock and, as on
+// hardware, on a SteadyClock; and a replay of a synthetic session trace.
 
 #include <gtest/gtest.h>
 
@@ -11,9 +12,11 @@
 #include <optional>
 #include <thread>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -133,12 +136,15 @@ TEST_F(QtegraAcquire, NotDueReturnsNulloptWithoutTraffic) {
   expect_not_due();
 }
 
-TEST_F(QtegraAcquire, NotDueWaitsNoLongerThanTimeoutOnAStoppedClock) {
+// A timeout is the clock's alone: real time going by does not end the wait.
+// (The 200 ms only give a wait that ends on real time the chance to show.)
+TEST_F(QtegraAcquire, NotDueWaitsForTheClockNotForRealTime) {
   ASSERT_TRUE(q.configure(1s));
   ASSERT_TRUE(q.start());
   const auto before = sim->written().size();
-  // Nobody advances the ManualClock: the wait is bounded by real time.
   auto pending = std::async(std::launch::async, [this] { return q.next(5ms); });
+  EXPECT_EQ(pending.wait_for(200ms), std::future_status::timeout) << "the wait ended with the clock at its start";
+  clock.advance(5ms);
   if (pending.wait_for(10s) != std::future_status::ready) {
     ADD_FAILURE() << "next(5ms) did not return";
     q.stop();  // wakes it
@@ -419,6 +425,128 @@ TEST_F(QtegraAcquire, ReplyNamingNoConfiguredChannelIsQuotedTruncated) {
   EXPECT_NE(r.error().what.find("D0,1.5,D1,1.5"), std::string::npos) << r.error().what;
   EXPECT_EQ(r.error().what.find("D199"), std::string::npos) << r.error().what;
   EXPECT_LT(r.error().what.size(), 300U);
+}
+
+// --- the waits of next() on a VirtualClock, and on a SteadyClock ------------------
+
+namespace {
+
+// The driver, its wire and the instrument's model on one clock.
+template <class ClockT>
+struct QtegraOn {
+  explicit QtegraOn(const ClockT& clock) {
+    model->clock = &clock;
+    TransportOptions options = bus_options();
+    options.clock = &clock;
+    sim = opened(SimTransport::hooked(qtegra_sim_hook(model), options));
+    q = std::make_unique<QtegraSpectrometer>("argus", *sim, QtegraOptions{}, &clock);
+  }
+  std::shared_ptr<QtegraSimModel> model = make_model();
+  std::unique_ptr<SimTransport> sim;
+  std::unique_ptr<QtegraSpectrometer> q;
+};
+
+struct QtegraAcquireVirtual : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+  QtegraOn<VirtualClock> rig{clock};
+  QtegraSpectrometer& q = *rig.q;
+};
+
+// On hardware the clock is a SteadyClock: the timeouts are real, and short.
+struct QtegraAcquireSteady : pychron::testing::VirtualTimeTest {
+  SteadyClock clock;
+  QtegraOn<SteadyClock> rig{clock};
+  QtegraSpectrometer& q = *rig.q;
+};
+
+}  // namespace
+
+TEST_F(QtegraAcquireVirtual, ATimeoutEndsOnTheClockWithoutTraffic) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.configure(1s));  // nothing is due for two periods
+  ASSERT_TRUE(q.start());
+  const auto before = rig.sim->written().size();
+  const TimePoint began = clock.now();
+  auto r = q.next(5ms);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_FALSE(r->has_value());
+  EXPECT_EQ(clock.now(), began + 5ms);
+  EXPECT_EQ(rig.sim->written().size(), before);
+}
+
+TEST_F(QtegraAcquireVirtual, AFrameArrivesWhenItIsDue) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.configure(1s));
+  ASSERT_TRUE(q.start());
+  const TimePoint began = clock.now();
+  auto r = q.next(60s);
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_TRUE(r->has_value());
+  EXPECT_EQ((*r)->span, kOne);
+  // The settle time, then the read itself, which takes none on this wire.
+  EXPECT_EQ((*r)->ts, began + 2 * kOne);
+}
+
+// stop() reaches a next() asleep in the clock at the time of the stop, not
+// at that next()'s own deadline.
+TEST_F(QtegraAcquireVirtual, StopWakesANextWaitingForItsFrame) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.configure(1s));
+  ASSERT_TRUE(q.start());
+  const TimePoint began = clock.now();
+  Result<std::optional<Frame>> got = std::optional<Frame>{Frame{}};
+  TimePoint returned{};
+  pychron::testing::Crew crew(clock);
+  crew.start("next", [&] {
+    got = q.next(2s);
+    returned = clock.now();
+  });
+  // The crew's thread takes part in the clock from its start, so time stands
+  // until it is asleep in its wait: the sleep below ends with it waiting.
+  clock.sleep_for(500ms);
+  ASSERT_TRUE(q.stop());
+  crew.join();
+  ASSERT_TRUE(got) << to_string(got.error());
+  EXPECT_FALSE(got->has_value());
+  EXPECT_EQ(returned, began + 500ms);
+}
+
+TEST_F(QtegraAcquireSteady, ATimeoutIsRealTime) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.configure(1s));
+  ASSERT_TRUE(q.start());
+  const auto began = std::chrono::steady_clock::now();
+  auto r = q.next(20ms);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_FALSE(r->has_value());
+  const auto took = std::chrono::steady_clock::now() - began;
+  EXPECT_GE(took, 20ms);
+  EXPECT_LT(took, 2s);  // well short of the two periods a frame is held back for
+}
+
+TEST_F(QtegraAcquireSteady, AFrameArrivesAndStopEndsAWait) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.start());  // the period is the instrument's: a frame is due at once
+  auto first = q.next(5s);
+  ASSERT_TRUE(first) << to_string(first.error());
+  ASSERT_TRUE(first->has_value());
+  EXPECT_EQ((*first)->span, kHalf);
+
+  ASSERT_TRUE(q.configure(1s));  // the next frame is two seconds off
+  std::promise<void> about_to_wait;
+  auto pending = std::async(std::launch::async, [&] {
+    about_to_wait.set_value();
+    return q.next(30s);
+  });
+  about_to_wait.get_future().wait();
+  std::this_thread::sleep_for(50ms);  // lets it get into its wait; either way no frame comes
+  const auto began = std::chrono::steady_clock::now();
+  ASSERT_TRUE(q.stop());
+  ASSERT_EQ(pending.wait_for(5s), std::future_status::ready);
+  EXPECT_LT(std::chrono::steady_clock::now() - began, 1500ms);  // not the two seconds, nor the thirty
+  auto r = pending.get();
+  EXPECT_TRUE(!r || !r->has_value());  // woken with nothing, or (not yet waiting) refused as not started
 }
 
 // --- stop() against a next() blocked in the wire read -----------------------------

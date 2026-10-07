@@ -164,8 +164,8 @@ class QtegraSpectrometer final : public Device,
   std::atomic<double> integration_s_{0.0};
 
   // Acquirer state.
-  std::mutex mutex_;
-  std::condition_variable cv_;
+  std::mutex mutex_;  // never held across the wire
+  std::condition_variable cv_;  // waited on and notified through clock_
   bool running_ = false;
   // Bumped by stop() and by a configure() that changes the period; a read
   // begun under an earlier value is dropped.

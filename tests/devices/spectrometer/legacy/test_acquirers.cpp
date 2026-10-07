@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <future>
 
 #include "pychron/codecs/modbus_adc.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/spectrometer/legacy/adc_bank.hpp"
 #include "pychron/devices/spectrometer/legacy/pulse_counter.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -45,7 +48,7 @@ TEST(AdcBank, WaitsForNextSamplePeriodOnClock) {
   AdcBank adc("faradays", *sim, {"H1"}, {100.0, 1, 0, 1.0}, &clock);
   ASSERT_TRUE(adc.start());
   ASSERT_TRUE(*adc.next(1s));
-  auto early = adc.next(5ms);  // clock not advanced: next sample not due
+  auto early = adc.next(0ms);  // clock not advanced: next sample not due
   ASSERT_TRUE(early);
   EXPECT_FALSE(*early);
   clock.advance(10ms);
@@ -53,6 +56,93 @@ TEST(AdcBank, WaitsForNextSamplePeriodOnClock) {
   ASSERT_TRUE(f && *f);
   EXPECT_EQ((*f)->seq, 2U);
   EXPECT_EQ((*f)->ts, TimePoint{} + 10ms);
+}
+
+// A timeout is the clock's alone: real time going by does not end the wait.
+// (The 200 ms only give a wait that ends on real time the chance to show.)
+TEST(AdcBank, ATimeoutWaitsForTheClockNotForRealTime) {
+  ManualClock clock;
+  auto sim = open_hooked(adc_sim_hook({1, 0, [](std::size_t) { return 0.1; }}));
+  AdcBank adc("faradays", *sim, {"H1"}, {100.0, 1, 0, 1.0}, &clock);
+  ASSERT_TRUE(adc.start());
+  ASSERT_TRUE(*adc.next(1s));
+  auto pending = std::async(std::launch::async, [&] { return adc.next(5ms); });
+  EXPECT_EQ(pending.wait_for(200ms), std::future_status::timeout) << "the wait ended with the clock at its start";
+  clock.advance(5ms);
+  if (pending.wait_for(10s) != std::future_status::ready) {
+    ADD_FAILURE() << "next(5ms) did not return";
+    (void)adc.stop();  // wakes it
+  }
+  auto early = pending.get();
+  ASSERT_TRUE(early);
+  EXPECT_FALSE(*early);
+}
+
+namespace {
+
+struct AdcBankVirtual : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+  std::unique_ptr<SimTransport> sim = open_hooked(adc_sim_hook({1, 0, [](std::size_t) { return 0.1; }}));
+  AdcBank adc{"faradays", *sim, {"H1"}, {100.0, 1, 0, 1.0}, &clock};  // a sample every 10 ms
+};
+
+}  // namespace
+
+TEST_F(AdcBankVirtual, SamplesArriveOnThePeriodAndATimeoutEndsOnTheClock) {
+  const TimePoint began = clock.now();
+  ASSERT_TRUE(adc.start());
+  ASSERT_TRUE(*adc.next(1s));  // due at once
+  auto early = adc.next(5ms);
+  ASSERT_TRUE(early);
+  EXPECT_FALSE(*early);
+  EXPECT_EQ(clock.now(), began + 5ms);
+  auto f = adc.next(1s);
+  ASSERT_TRUE(f && *f);
+  EXPECT_EQ((*f)->seq, 2U);
+  EXPECT_EQ((*f)->ts, began + 10ms);
+}
+
+// stop() reaches a next() asleep in the clock at the time of the stop, not
+// at the time its sample would have been due.
+TEST_F(AdcBankVirtual, StopWakesANextWaitingForItsSample) {
+  const TimePoint began = clock.now();
+  ASSERT_TRUE(adc.start());
+  ASSERT_TRUE(*adc.next(1s));
+  Result<std::optional<Frame>> got = std::optional<Frame>{Frame{}};
+  TimePoint returned{};
+  pychron::testing::Crew crew(clock);
+  crew.start("next", [&] {
+    got = adc.next(1s);  // the sample is due in 10 ms
+    returned = clock.now();
+  });
+  // The crew's thread takes part in the clock from its start, so time stands
+  // until it is asleep in its wait: the sleep below ends with it waiting.
+  clock.sleep_for(4ms);
+  ASSERT_TRUE(adc.stop());
+  crew.join();
+  ASSERT_TRUE(got) << to_string(got.error());
+  EXPECT_FALSE(got->has_value());
+  EXPECT_EQ(returned, began + 4ms);
+}
+
+// On hardware the clock is a SteadyClock: the period and the timeout are real.
+TEST(AdcBankSteady, ATimeoutAndThePeriodAreRealTime) {
+  SteadyClock clock;
+  auto sim = open_hooked(adc_sim_hook({1, 0, [](std::size_t) { return 0.1; }}));
+  AdcBank adc("faradays", *sim, {"H1"}, {1.0, 1, 0, 1.0}, &clock);  // a sample a second
+  const auto began = std::chrono::steady_clock::now();
+  ASSERT_TRUE(adc.start());
+  ASSERT_TRUE(*adc.next(1s));  // due at once
+  const auto asked = std::chrono::steady_clock::now();
+  auto early = adc.next(20ms);
+  ASSERT_TRUE(early);
+  EXPECT_FALSE(*early);  // the timeout came first, not the sample
+  EXPECT_GE(std::chrono::steady_clock::now() - asked, 20ms);
+  auto f = adc.next(5s);
+  ASSERT_TRUE(f && *f);
+  EXPECT_EQ((*f)->seq, 2U);
+  EXPECT_GE(std::chrono::steady_clock::now() - began, 1s);
 }
 
 TEST(AdcBank, ExceptionReplyIsProtocolErrorAndConsumesSeq) {

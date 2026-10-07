@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <condition_variable>
-#include <mutex>
 #include <numbers>
 
 namespace pychron::spectrometer {
@@ -26,14 +24,7 @@ std::vector<double> af_demag_trajectory(double from, double target, const AfDema
   return out;
 }
 
-void sleep_on(const Clock& clock, Duration d) {
-  if (d <= Duration::zero()) return;
-  std::mutex m;
-  std::condition_variable cv;
-  std::unique_lock lock(m);
-  const TimePoint deadline = clock.now() + d;
-  while (clock.now() < deadline) clock.wait_until(cv, lock, deadline);
-}
+void sleep_on(const Clock& clock, Duration d) { clock.sleep_for(d); }
 
 namespace {
 

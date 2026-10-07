@@ -74,7 +74,7 @@ class IntensityStream {
   const Clock& clock_;
   std::size_t capacity_;
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable cv_;  // waited on and notified through clock_
   std::deque<Reading> queue_;
   std::optional<Error> error_;
   std::uint64_t dropped_ = 0;
@@ -201,14 +201,16 @@ class AcquisitionEngine {
   std::shared_ptr<IntensityStream> stream_;
 
   mutable std::mutex mutex_;
-  std::condition_variable collect_cv_;
+  std::condition_variable collect_cv_;  // waited on and notified through clock_
   bool running_ = false;
   Duration integration_{};
   TimePoint request_start_{};
   TimePoint epoch_{};
   std::vector<JobId> jobs_;
   std::vector<std::thread::id> polling_;  // one entry per poll() in flight
-  std::condition_variable polls_cv_;      // polling_ shrank, or stopping_ or starting_ cleared
+  // polling_ shrank, or stopping_ or starting_ cleared. Waited on and
+  // notified through clock_: a poll in flight may be waiting in clock time.
+  std::condition_variable polls_cv_;
   bool stopping_ = false;                 // a stop() has yet to stop the acquirers
   bool starting_ = false;                 // a start() is between its check and its result
   std::vector<Bin> bins_;
