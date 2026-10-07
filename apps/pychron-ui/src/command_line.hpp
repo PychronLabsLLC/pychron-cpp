@@ -26,7 +26,7 @@ struct CommandLine {
   std::optional<std::filesystem::path> lab;    // default: the line config's directory
   std::optional<std::filesystem::path> data;   // default: <lab>/data
   std::optional<std::filesystem::path> queue;  // opened in the experiment window
-  double sim_speed = 0;                        // 0: real time
+  double sim_speed = 0;                        // 0: real time; else simulated, this many times faster
   std::optional<std::string> db;  // DVC store url: View > Data browses it instead of the records
   std::optional<std::string> install;  // an install from the site config
   bool setup = false;                  // run the setup wizard first
@@ -40,8 +40,9 @@ struct CommandLine {
 
 // A Config error is a usage error: an unknown option, an option without a
 // value (which includes one followed by another option, "--spectrometer
-// --sim"), a --sim-speed that is not a positive number, --sim-speed without
-// --sim, more than one of config files, --install, --setup, --examples,
+// --sim"), a --sim-speed that is not a positive number (elctl's "max",
+// unlimited speed, is refused by name), --sim-speed without --sim, more than
+// one of config files, --install, --setup, --examples,
 // --device without --laser, or --laser with --queue or --spectrometer.
 Result<CommandLine> parse_command_line(const QStringList& args);
 

@@ -23,7 +23,8 @@
 // the install folder or the line config's directory; records under --data,
 // default <lab>/data). --queue opens a queue there. --sim-speed (with --sim)
 // puts the whole app on simulated time running that many times faster than
-// real time.
+// real time, from the real time of day. It takes a number: unlimited speed
+// (elctl's --sim-speed max) would finish a queue before the window painted.
 //
 // View > Data browses the records under the data directory
 // (<data>/records) and plots them; with --db it browses that DVC store
@@ -77,8 +78,8 @@
 #include "pychron/setup/site.hpp"
 #include "setup_support.hpp"
 #include "setup_wizard.hpp"
-#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/sim/sim_system.hpp"
@@ -324,16 +325,19 @@ int main(int argc, char** argv) {
 
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = sim;
-  // Simulated time: the pump advances the clock and runs the line's scheduler
-  // inline (no dispatcher), so polling keeps pace however fast time runs.
-  std::unique_ptr<pychron::ManualClock> sim_clock;
-  std::unique_ptr<pychron::ClockPump> pump;
+  // Simulated time: a VirtualClock paced to the speed asked for, starting at
+  // the real time of day. The line's threads take part in it; this one (the
+  // UI's) does not, so time never waits for the event loop. Declared before
+  // the line and everything else that is given it, so it is the last to go.
+  std::unique_ptr<pychron::VirtualClock> sim_clock;
   if (cli->sim_speed > 0) {
-    sim_clock = std::make_unique<pychron::ManualClock>(pychron::TimePoint{} + std::chrono::hours(1));
-    pump = std::make_unique<pychron::ClockPump>(*sim_clock, cli->sim_speed);
+    pychron::VirtualClock::Options clock_options;
+    clock_options.speed = cli->sim_speed;
+    clock_options.epoch = std::chrono::system_clock::now();
+    // The line's log hub does not exist yet and goes before this clock does.
+    clock_options.on_stall = [](std::string report) { std::fprintf(stderr, "pychron-ui: %s\n", report.c_str()); };
+    sim_clock = std::make_unique<pychron::VirtualClock>(std::move(clock_options));
     options.clock = sim_clock.get();
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
   }
   const std::vector<fs::path>& files = cli->files;
 
@@ -359,8 +363,6 @@ int main(int argc, char** argv) {
     return fatal(what);
   }
 
-  if (pump) pump->drive(&(*line)->scheduler());
-
   // The spectrometer shares the line's clock, scheduler and bus. None of these
   // is left to declaration order: the teardown after the event loop resets
   // each one explicitly, and that order is the one that matters.
@@ -375,9 +377,7 @@ int main(int argc, char** argv) {
   const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
   if (cli->laser) {
     const int laser_rc = run_laser(**line, *cli, lab_dir, system_file, splash);
-    if (pump) pump->drive(nullptr);  // waits for a step in progress
     (*line)->stop();
-    if (pump) pump->stop();
     return laser_rc;
   }
 
@@ -549,10 +549,8 @@ int main(int argc, char** argv) {
   lasers.reset();
   spectrometer_bridge.reset();
   scan.reset();
-  if (pump) pump->drive(nullptr);  // waits for a step in progress
   (*line)->stop();
   spectrometer.reset();
   pychron::sim::BeamModelRegistry::global().clear();
-  if (pump) pump->stop();
   return rc;
 }

@@ -85,11 +85,19 @@ class TestCommandLine : public QObject {
              QStringLiteral("--lab needs a directory"));
     QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--queue"), QStringLiteral("--sim")}).error().what),
              QStringLiteral("--queue needs a file"));
-    for (const char* bad : {"0", "-2", "fast", "inf"}) {
+    for (const char* bad : {"0", "-2", "fast", "inf", "nan", "maximum"}) {
       auto cli = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QString::fromLatin1(bad)});
       QVERIFY2(!cli.has_value(), bad);
+      QCOMPARE(QString::fromStdString(cli.error().what), QStringLiteral("--sim-speed needs a positive number"));
     }
     QVERIFY(!parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed")}).has_value());
+    // Unlimited speed is elctl's: a window would finish a queue before it painted.
+    auto max = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("max")});
+    QVERIFY(!max.has_value());
+    QCOMPARE(QString::fromStdString(max.error().what), QStringLiteral("--sim-speed max is for tests; give a number"));
+    auto paced = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("50")});
+    QVERIFY(paced.has_value());
+    QCOMPARE(paced->sim_speed, 50.0);
     auto no_sim = parse_command_line({QStringLiteral("--sim-speed"), QStringLiteral("10")});
     QVERIFY(!no_sim.has_value());
     QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));

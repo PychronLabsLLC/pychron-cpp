@@ -56,6 +56,11 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.write_icons = std::filesystem::path(v->toStdString());
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
+      // Unlimited speed is elctl's: a window would finish a queue before it painted.
+      if (v && *v == QStringLiteral("max")) {
+        return fail(ErrorKind::Config, "--sim-speed max is for tests; give a number");
+      }
+      // QString::toDouble reads "inf" and "nan".
       bool ok = false;
       const double speed = v ? v->toDouble(&ok) : 0.0;
       if (!ok || !std::isfinite(speed) || speed <= 0) {
