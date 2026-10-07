@@ -307,7 +307,11 @@ TEST(ExtractionLine, NoSimTransportsMeansNoSimSystem) {
 TEST(ExtractionLine, LoadsExampleFiles) {
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   ManualClock clock;
-  auto line = ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", manual(clock));
+  auto opts = manual(clock);
+  // Not the valve states of somebody's run in the examples folder.
+  opts.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-files.state.toml";
+  std::filesystem::remove(opts.state_file);
+  auto line = ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", opts);
   ASSERT_TRUE(line) << line.error().what;
   EXPECT_TRUE((*line)->switches().contains("pump_power"));
   EXPECT_NE((*line)->canvas(), nullptr);
@@ -673,6 +677,41 @@ struct BuildLog {
   SignalBus::Subscription sub;
   std::shared_ptr<LogHub> hub;
 };
+
+// Every transport real: there is no simulated lab, so a sim.toml beside the
+// line is nobody's. It is not read (a malformed one does not fail the load,
+// one naming a volume the canvas lacks is not checked), and the log says
+// nothing of the simulator.
+TEST(ExtractionLine, ARealLineIgnoresASimTomlBesideIt) {
+  ManualClock clock;
+  std::string real = std::string(kSystem);
+  for (const char* t : {"[transports.bus]\nkind = \"sim\"", "[transports.gnet]\nkind = \"sim\""}) {
+    const std::string from = t;
+    const std::string to = from.substr(0, from.find('\n')) + "\nkind = \"tcp\"\nhost = \"127.0.0.1\"\nport = 1";
+    ASSERT_NE(real.find(from), std::string::npos);
+    real.replace(real.find(from), from.size(), to);
+  }
+  for (const char* sim_toml : {"[defaults\nthis is not toml = = =\n", "[volumes.nosuch]\npressure = 4e-6\n"}) {
+    SimLab lab("real");
+    lab.write("extraction_line.toml", real);
+    lab.write("sim.toml", sim_toml);
+    BuildLog log(clock);
+    auto opts = manual(clock);
+    opts.log_hub = log.hub;
+    auto line = lab.load(opts);
+    ASSERT_TRUE(line) << sim_toml << ": " << line.error().what;
+    EXPECT_EQ((*line)->sim(), nullptr) << sim_toml;
+    log.hub->flush();
+    for (const auto* said : {&log.infos, &log.warnings}) {
+      for (const auto& message : *said) {
+        EXPECT_EQ(message.find("sim"), std::string::npos) << sim_toml << ": " << message;
+      }
+    }
+    // The same two files are a simulated line's business: it refuses both.
+    opts.force_sim = true;
+    EXPECT_FALSE(lab.load(opts)) << sim_toml;
+  }
+}
 
 constexpr const char* kTwoValves = R"(
 [system]

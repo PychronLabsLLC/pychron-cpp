@@ -142,7 +142,13 @@ class SpectrometerBringupLine : public ::testing::Test {
     options.clock = &clock_;
     options.force_sim = true;
     options.sim = sim_;
-    if (!sim_file_.empty()) options.sim_file = sim_file_;
+    // The fixture's own numbers and no others: named and empty, there is no
+    // sim file, so the example's tuned sim.toml beside the line is not read.
+    options.sim_file = sim_file_;
+    // And the valve states of nobody's earlier run in the examples folder.
+    state_file_ = std::filesystem::temp_directory_path() /
+                  ("pychron-bringup-line-" + std::to_string(std::random_device{}()) + ".state.toml");
+    options.state_file = state_file_;
     auto line = systems::ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
     ASSERT_TRUE(line) << line.error().what;
     line_ = std::move(*line);
@@ -153,6 +159,7 @@ class SpectrometerBringupLine : public ::testing::Test {
     sim::BeamModelRegistry::global().clear();
     line_.reset();
     if (!sim_file_.empty()) std::filesystem::remove(sim_file_);
+    std::filesystem::remove(state_file_);
   }
 
   Result<std::unique_ptr<Spectrometer>> load(sim::SimSystem* line_sim) {
@@ -196,6 +203,7 @@ class SpectrometerBringupLine : public ::testing::Test {
   ManualClock clock_;
   sim::SimSettings sim_ = still();
   std::filesystem::path sim_file_;
+  std::filesystem::path state_file_;
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<Spectrometer> spec_;
 };
@@ -219,6 +227,20 @@ TEST_F(SpectrometerBringupLine, ALineSimFeedsTheBeam) {
   ASSERT_TRUE(line_->sim()->set_composition(*source, sim::Composition{}));
   beam->set_magnet(*beam->peak_center("H1", "Ar40"));
   EXPECT_NEAR(mean_h1(*beam), 0.0, 0.5);
+}
+
+// The fixture's numbers are the ones in force, not the example sim.toml's
+// (1e-10 mbar to start with, walls that give gas off): a volume behind closed
+// valves starts at the default pressure and holds it exactly for an hour.
+TEST_F(SpectrometerBringupLine, TheFixturesOwnNumbersAreInForce) {
+  EXPECT_TRUE(line_->sim()->settings().file.empty()) << line_->sim()->settings().file;
+  const auto source = line_->sim()->spectrometer_volume();
+  ASSERT_TRUE(source);
+  const double before = *line_->sim()->pressure(*source);
+  EXPECT_DOUBLE_EQ(before, 1e-8);
+  clock_.advance(1h);
+  EXPECT_EQ(*line_->sim()->pressure(*source), before);
+  EXPECT_DOUBLE_EQ(*line_->sim()->pressure("prep"), 1e-8);
 }
 
 TEST_F(SpectrometerBringupLine, WithoutALineSimTheBeamIsAsBefore) {

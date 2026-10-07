@@ -27,6 +27,7 @@
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "virtual_time.hpp"
@@ -54,6 +55,18 @@ sim::SimSettings lab() {
   // And every stage the canvas gives no size is 1 cc.
   s.default_volume_cc = 1.0;
   return s;
+}
+
+// lab()'s numbers are the ones in force, not the example sim.toml's (1e-10
+// mbar to start with, walls that give gas off): the pipette, between P1 and
+// P2, which no test that asks this opens, is at lab()'s pressure and has
+// held it exactly however long the line has run.
+void expect_labs_own_numbers(ExtractionLine& line) {
+  ASSERT_NE(line.sim(), nullptr);
+  EXPECT_TRUE(line.sim()->settings().file.empty()) << line.sim()->settings().file;
+  const auto pipette = line.sim()->pressure("air");
+  ASSERT_TRUE(pipette) << pipette.error().what;
+  EXPECT_DOUBLE_EQ(*pipette, lab().default_pressure);
 }
 
 // Every captured event, in order, across bus threads.
@@ -226,6 +239,7 @@ TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
   ExtractionLine::Options options;
   options.clock = &clock;
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
   // Valve states and locks persist beside the config by default: keep the
   // test out of the repo and independent of earlier runs.
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line.state.toml";
@@ -253,6 +267,7 @@ TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
   const auto n = events.samples_of("IG1");
   clock.sleep_for(1200ms);
   EXPECT_EQ(events.samples_of("IG1"), n);
+  expect_labs_own_numbers(line);
 }
 
 // stop() keeps the line's start-and-stop mutex while it waits for a job under
@@ -266,6 +281,7 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
   ExtractionLine::Options options;
   options.clock = &clock;
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-stop.state.toml";
   std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
@@ -294,6 +310,7 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
   EXPECT_EQ(clock.now(), start + 11s) << "the asker waited, in the clock, for the stop to finish";
   crew.join();
   EXPECT_EQ(stopped, start + 11s);
+  expect_labs_own_numbers(line);
 }
 
 // On hardware the clock is a SteadyClock and nobody is a participant: the
@@ -301,6 +318,7 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
 TEST(ExampleLineSteady, ActuatesAndScansInRealTime) {
   ExtractionLine::Options options;  // no clock given: the line's own SteadyClock
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-steady.state.toml";
   std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
@@ -328,6 +346,7 @@ TEST(ExampleLineSteady, ActuatesAndScansInRealTime) {
   const auto n = events.samples_of("IG1");
   std::this_thread::sleep_for(1200ms);  // more than a scan interval: nothing scans a stopped line
   EXPECT_EQ(events.samples_of("IG1"), n);
+  expect_labs_own_numbers(line);
 }
 
 }  // namespace

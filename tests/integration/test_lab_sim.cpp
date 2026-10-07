@@ -855,7 +855,9 @@ TEST_F(LabSim, FiveRunsTakeNoRealTime) {
   ASSERT_EQ(runs.size(), 5u);
   record_value("real_s", real);
   record_value("simulated_s", simulated);
-  EXPECT_LT(real, 60.0);
+  // Under the fixture's dead-man (55 s), which would abort first: a bound
+  // that can fail.
+  EXPECT_LT(real, 45.0);
   EXPECT_GT(simulated, 1800.0) << "the queue was half an hour of the lab's time or more";
 
   // Blank, air, air, air, blank.

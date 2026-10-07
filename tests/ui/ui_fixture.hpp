@@ -32,6 +32,9 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::fil
   options.sim.initial_pressures = {{"bone", 1e-3}};
   options.sim.pumps = {{"turbo", {1e-9, 5s}}};
   options.sim.noise = 0.0;
+  // These numbers and no others: named and empty, there is no sim file, so
+  // the example's tuned sim.toml beside the line is not read.
+  options.sim_file = std::filesystem::path{};
   // Locks persist beside the config by default; keep tests out of the repo
   // and independent of each other.
   options.state_file = std::filesystem::temp_directory_path() /
