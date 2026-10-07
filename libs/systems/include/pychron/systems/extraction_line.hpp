@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/config/diagnostic.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
@@ -224,7 +225,9 @@ class ExtractionLine {
   std::unique_ptr<GaugeScanner> scanner_;
   std::vector<SignalBus::Subscription> subscriptions_;
 
-  mutable std::mutex lifecycle_;  // start()/stop()
+  // start()/stop(). Held while the devices answer and while stop() waits for
+  // the jobs under way, which is clock time: a clock mutex.
+  mutable ClockMutex lifecycle_;
   bool running_ = false;
   mutable std::mutex locks_mutex_;  // serializes set_locked() and the state file
   mutable std::mutex pressures_mutex_;

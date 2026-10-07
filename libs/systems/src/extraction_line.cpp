@@ -56,7 +56,8 @@ ExtractionLine::ExtractionLine(config::SystemConfig config, std::optional<canvas
     : config_(std::move(config)),
       canvas_(std::move(canvas)),
       options_(std::move(options)),
-      clock_(options_.clock ? options_.clock : &steady_clock_) {}
+      clock_(options_.clock ? options_.clock : &steady_clock_),
+      lifecycle_(*clock_) {}
 
 ExtractionLine::~ExtractionLine() {
   stop();

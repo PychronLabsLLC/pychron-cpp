@@ -12,6 +12,7 @@
 //                      IG1         PG1
 // A and C interlock each other; IG1 has alarm_high = 1e-4.
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -234,6 +235,47 @@ TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
   const auto n = events.samples_of("IG1");
   clock.sleep_for(1200ms);
   EXPECT_EQ(events.samples_of("IG1"), n);
+}
+
+// stop() keeps the line's start-and-stop mutex while it waits for a job under
+// way, and the job takes clock time. Another thread that asks whether the
+// line is running waits for that mutex through the clock: blocked any other
+// way it looks runnable, time stands, and the job never ends.
+TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
+  VirtualClock clock;
+  Clock::Participant test(clock, "test");
+  ExtractionLine::Options options;
+  options.clock = &clock;
+  options.sim = lab();
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-stop.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  ASSERT_TRUE(line.start());
+
+  // A job that takes ten seconds of the clock's time, once.
+  const TimePoint start = clock.now();
+  std::atomic<int> slow_runs{0};
+  ASSERT_TRUE(line.scheduler().every("slow", 1s, [&] {
+    if (slow_runs.fetch_add(1) == 0) clock.sleep_for(10s);
+  }));
+  clock.sleep_for(1500ms);
+  ASSERT_EQ(slow_runs.load(), 1) << "the job is under way, asleep until start + 11 s";
+
+  TimePoint stopped{};
+  pychron::testing::Crew crew(clock);
+  crew.start("stopper", [&] {
+    line.stop();
+    stopped = clock.now();
+  });
+  // stop() has the mutex by the time it has stopped the dispatcher, and keeps
+  // it while it waits for the job. This thread is runnable, so time stands.
+  ASSERT_TRUE(pychron::testing::eventually_real([&] { return !line.scheduler().started(); }));
+  EXPECT_FALSE(line.running());
+  EXPECT_EQ(clock.now(), start + 11s) << "the asker waited, in the clock, for the stop to finish";
+  crew.join();
+  EXPECT_EQ(stopped, start + 11s);
 }
 
 }  // namespace
