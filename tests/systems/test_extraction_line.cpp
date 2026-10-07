@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -1006,8 +1007,9 @@ TEST(ExtractionLine, WarnsOnceOfASecondSpectrometerStage) {
   EXPECT_NE(log.warnings[0].find("'argus'"), std::string::npos) << log.warnings[0];
 }
 
-// The example lab: each stage is to the gas what the canvas says it is.
-// With its sim.toml, which as shipped sets nothing, or with no file at all.
+// The example lab: each stage is to the gas what the canvas says it is,
+// with its sim.toml or with no file at all. The file changes numbers only:
+// the air in the tank, what a pumped volume holds, the inlet, the walls.
 void expect_the_example_lab(bool with_sim_toml) {
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   ASSERT_TRUE(std::filesystem::is_regular_file(dir / "sim.toml"));
@@ -1036,12 +1038,33 @@ void expect_the_example_lab(bool with_sim_toml) {
   ASSERT_TRUE(lab.spectrometer_volume());
   EXPECT_EQ(*lab.spectrometer_volume(), "spec");
 
+  // What sim.toml sets, and what the simulator has unasked.
+  const sim::SimSettings defaults;
+  const sim::SimSettings& set = lab.settings();
+  const double tank_ar40 = with_sim_toml ? 9.5e-5 : defaults.tank_argon40;
+  const double pumped = with_sim_toml ? 1e-10 : defaults.default_pressure;
+  EXPECT_EQ(set.default_pressure, pumped);
+  EXPECT_EQ(set.outgassing, with_sim_toml ? 1.5e-13 : defaults.outgassing);
+  if (with_sim_toml) {
+    EXPECT_EQ(set.conductances, (std::map<std::string, double>{{"B", 0.02}}));
+    ASSERT_TRUE(set.pumps.contains("turbo"));
+    EXPECT_EQ(set.pumps.at("turbo").base, 1e-10);
+    EXPECT_EQ(set.pump_speeds.at("turbo"), defaults.pump_speed);
+  } else {
+    EXPECT_TRUE(set.conductances.empty());
+    EXPECT_TRUE(set.pumps.empty());
+  }
+  EXPECT_EQ(set.source.consumption, defaults.source.consumption);
+  EXPECT_EQ(set.source.sensitivity, defaults.source.sensitivity);
+  EXPECT_EQ(set.source.memory_fa_per_s, defaults.source.memory_fa_per_s);
+  EXPECT_TRUE(set.sizes.empty());
+
   // The tank starts with air, and nothing else does.
   const sim::Composition tank = *lab.partial_pressures("air_tank");
-  EXPECT_EQ(tank, sim::with_ar40(sim::air_ratios(), 3e-5));
+  EXPECT_EQ(tank, sim::with_ar40(sim::air_ratios(), tank_ar40));
   EXPECT_DOUBLE_EQ(tank[ar40] / tank[ar36], 298.56);
   EXPECT_GT(tank[active], 100 * tank[ar40]);
-  EXPECT_NEAR(*lab.pressure("prep"), 1e-8, 1e-12);
+  EXPECT_NEAR(*lab.pressure("prep"), pumped, pumped * 1e-4);
 
   // The pipette is a volume between two valves, the tank on one side and
   // the line on the other.
@@ -1060,7 +1083,7 @@ void expect_the_example_lab(bool with_sim_toml) {
   clock.advance(10s);
   lab.set_valve("P2", false);
   const double loaded_ar40 = (*lab.partial_pressures("air"))[ar40];
-  EXPECT_NEAR(loaded_ar40, 3e-5 * 50.0 / 50.1, 3e-5 * 1e-6);
+  EXPECT_NEAR(loaded_ar40, tank_ar40 * 50.0 / 50.1, tank_ar40 * 1e-6);
   lab.set_valve("P1", true);
   clock.advance(100ms);  // a hundred of the valve's time constants; outgassing has added 5e-14
   EXPECT_NEAR((*lab.partial_pressures("prep"))[ar40], loaded_ar40 * 0.1 / 50.1, loaded_ar40 * 0.1 / 50.1 * 1e-4);

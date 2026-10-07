@@ -121,7 +121,8 @@ class TestScriptEditor : public QObject {
     if (python_) {
       QTRY_VERIFY_WITH_TIMEOUT(!w.diagnostic_lines().isEmpty(), 5000);
       QVERIFY(w.diagnostic_lines().front().contains(QStringLiteral("frobnicate")));
-      QVERIFY(w.diagnostic_lines().front().startsWith(QStringLiteral("10: error")));
+      // sim_extract.py is 21 lines: the one typed is the next.
+      QVERIFY(w.diagnostic_lines().front().startsWith(QStringLiteral("22: error")));
     // Listed in line order.
     w.current_editor()->moveCursor(QTextCursor::Start);
     w.current_editor()->insertPlainText(QStringLiteral("zap = nope\n"));
@@ -132,7 +133,7 @@ class TestScriptEditor : public QObject {
     w.check_now();
       QVERIFY(w.estimate_text().contains(QStringLiteral("error")));
       QCOMPARE(w.current_editor()->diagnostics().size(), std::size_t{1});
-      QCOMPARE(w.current_editor()->diagnostics().front().line, 10);
+      QCOMPARE(w.current_editor()->diagnostics().front().line, 22);
     }
     QString error;
     QVERIFY2(w.save(&error), qPrintable(error));

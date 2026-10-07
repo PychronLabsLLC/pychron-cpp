@@ -79,12 +79,10 @@ class TestExperimentWindow : public QObject {
     int counts_max = 0;
     connect(&bridge, &ExperimentBridge::countsProgress, this,
             [&] { counts_max = std::max(counts_max, pane->counts_maximum()); });
-    // The beam measures what the line's source holds: gettered air with
-    // 2e-6 mbar of Ar40 there, a beam of 2e6 fA before the first run.
-    auto argon = pychron::sim::with_ar40(pychron::sim::air_ratios(), 2e-6);
-    argon[pychron::sim::index(pychron::sim::Species::Active)] = 0.0;
+    // The beam measures what the line's source holds, and the example's
+    // extraction script lets a pipette of the tank's air into the line for
+    // each run that is not a blank (sim_extract.py).
     QVERIFY(sim.line->sim() != nullptr);
-    QVERIFY(sim.line->sim()->set_composition("spec", argon).has_value());
     pane->request_start();
     QVERIFY(pane->running());
     QVERIFY(window.model().live());  // editable after the rows the executor reached
@@ -113,10 +111,20 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!evo->intercept_lines().isEmpty());
     const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
     QVERIFY(ar40.has_value());
-    // Each run lets the source into a prep section of its own size, pumped
-    // out since the run before: half of it stays. This is the third run, so
-    // an eighth of the 2e6 fA, less the percent or so the source used.
-    QVERIFY2(std::abs(ar40->value - 2.5e5) < 0.02 * 2.5e5, qPrintable(QString::number(ar40->value)));
+    // This is the third run, the second after the blank to take a shot:
+    // the tank's Ar40 less the first pipette of it, one pipette of that let
+    // into prep, and prep's share of it through the inlet into the source
+    // (canvas.toml sizes none of the four, so each is its kind's default).
+    const auto& lab = sim.line->sim()->settings();
+    QVERIFY(lab.compositions.contains("air_tank"));
+    const double tank = lab.default_volume_cc, prep = lab.default_volume_cc, source = lab.default_volume_cc;
+    const double pipette = lab.pipette_cc;
+    const double filled = lab.compositions.at("air_tank")[pychron::sim::index(pychron::sim::Species::Ar40)] *
+                          tank / (tank + pipette);
+    const double shot = filled * pipette / (pipette + prep) * prep / (prep + source) * lab.source.sensitivity;
+    const double second = shot * tank / (tank + pipette);
+    QVERIFY(second > 1e4);
+    QVERIFY2(std::abs(ar40->value - second) < 0.02 * second, qPrintable(QString::number(ar40->value)));
     QCOMPARE(evo->peak_centers().size(), 1);
     QVERIFY(evo->peak_centers().front().contains(QStringLiteral("table updated")));
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);

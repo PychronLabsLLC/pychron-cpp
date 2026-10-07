@@ -1,5 +1,6 @@
 #include "pychron/sim/sim_config.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -764,9 +765,10 @@ TEST_F(SimConfig, AMessageNamesWhatIsKnownAndTheUnit) {
 }
 
 // configs/examples/sim.toml has every key with its unit, its meaning and its
-// default, each commented out. As shipped it changes nothing; with every
-// `# key = value` line (and `# [section]`) uncommented it says the defaults,
-// so what it documents cannot drift from the code.
+// default, each commented out, and after them the few numbers the example
+// lab sets for itself. As shipped it changes those and nothing else; with
+// every `# key = value` line (and `# [section]`) uncommented in their place
+// it says the defaults, so what it documents cannot drift from the code.
 TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   const std::filesystem::path example = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "sim.toml";
   SimTopology canvas;  // the example canvas's names
@@ -774,16 +776,24 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   canvas.volumes[5].role = SimRole::Tank;
   canvas.valves = {"A", "B", "C", "P1", "P2", "M1"};
 
-  // As shipped: nothing but comments, and a base that is nobody's default
-  // comes back as it went in.
+  // As shipped: comments, then what the example sets; a base that is
+  // nobody's default comes back as it went in but for those.
   std::ifstream in(example);
   ASSERT_TRUE(in) << example;
   const std::regex commented_out(R"(^# (\[[A-Za-z0-9_."~-]+\]\s*$|[A-Za-z0-9_]+ = \S))");
   std::ostringstream uncommented;
   std::vector<std::string> keys;
   int sections = 0;
+  std::vector<std::string> in_force;  // the lines that are not comments, less their own
   for (std::string line; std::getline(in, line);) {
-    EXPECT_TRUE(line.empty() || line[0] == '#') << "not commented out: " << line;
+    if (!line.empty() && line[0] != '#') {
+      // The example's own: not among the documented defaults, which a
+      // second [section] of the same name would not parse beside.
+      line.erase(std::min(line.find('#'), line.size()));
+      line.erase(line.find_last_not_of(' ') + 1);
+      if (!line.empty()) in_force.push_back(line);  // not the rest of a comment beside a key
+      continue;
+    }
     if (std::regex_search(line, commented_out)) {
       line.erase(0, 2);
       if (line[0] == '[') {
@@ -816,7 +826,18 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   base.detectors["H1"] = {12.0, 0.25};
   const auto shipped = sim::load_sim_settings(example, canvas, base);
   ASSERT_TRUE(shipped) << shipped.error().what;
-  expect_same(*shipped, base);
+  // What the example lab sets (the reasons are in the file, and
+  // tests/integration/test_lab_sim.cpp holds the lab to them).
+  EXPECT_EQ(in_force, (std::vector<std::string>{"[defaults]", "pressure = 1e-10", "outgassing = 1.5e-13",
+                                                "[volumes.air_tank]", "argon40 = 9.5e-5", "[valves.B]",
+                                                "conductance = 0.02", "[pumps.turbo]", "base = 1e-10"}));
+  SimSettings tuned = base;
+  tuned.default_pressure = 1e-10;
+  tuned.outgassing = 1.5e-13;
+  tuned.compositions["air_tank"] = sim::with_ar40(sim::air_ratios(), 9.5e-5);
+  tuned.conductances["B"] = 0.02;
+  tuned.pumps["turbo"].base = 1e-10;
+  expect_same(*shipped, tuned);
 
   // Uncommented: every key of the format, each at its default.
   EXPECT_EQ(sections, 11);

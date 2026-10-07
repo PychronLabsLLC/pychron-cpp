@@ -83,6 +83,13 @@ and the simulated-lab versions:
 def main():
     info('extracting {} at {} {}'.format(run_identifier, extract_value, extract_units))
     close('C')
+    if not analysis_type.startswith('blank'):
+        open('P2')
+        sleep(2)
+        close('P2')
+        open('P1')
+        sleep(2)
+        close('P1')
     sleep(duration)
     sleep(2)
 ```
@@ -92,9 +99,16 @@ def main():
 def main():
     signal_pump_time_start()
     open('C')
-    info('pumping prep after {}'.format(run_identifier))
-    sleep(5)
+    open('B')
+    info('pumping the spectrometer and prep after {}'.format(run_identifier))
+    sleep(50)
+    close('B')
 ```
+
+(Nothing in the simulated lab gives gas off when it is heated, so
+`sim_extract` lets one pipette of the tank's air into the line in its place
+for any run but a blank; `sim_air.py` and `sim_blank.py` are the air shot and
+its blank on their own.)
 
 The `#! pychron:` line is a header (section 8). Lines starting with `#` are
 comments. Indentation (four spaces) shows what belongs to `main()` and to

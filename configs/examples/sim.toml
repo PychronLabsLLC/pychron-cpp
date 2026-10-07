@@ -10,11 +10,12 @@
 # small volume between its two valves, and the spectrometer is the source the
 # beam reads. This file only changes numbers, for the whole line or by name.
 #
-# Every key is below with its unit, what it means and its default, and every
-# one is commented out: as shipped, this file changes nothing. To set a
-# number, take the "# " off its line and off the [section] line above it.
-# What is in force is the simulator's built-in defaults, then whatever the
-# program that loads the line sets itself, then the keys present here.
+# Every key is below with its unit, what it means and its default, each
+# commented out; the few numbers this example lab sets for itself are at the
+# end, with why. To set another, put it there: its key under its [section]
+# (a section may be given only once). What is in force is the simulator's
+# built-in defaults, then whatever the program that loads the line sets
+# itself, then the keys present here.
 #
 # Names are canvas.toml's (and gauges of extraction_line.toml that are not on
 # the canvas). An unknown name or key, or a number no line can have, stops
@@ -95,3 +96,37 @@
 # [detectors.H1]
 # baseline = 0               # fA (cps on a counting detector): what it reads with no beam on it
 # baseline_drift_per_h = 0   # the same, per hour
+
+# ---------------------------------------------------------------------------
+# What this example lab sets, so that experiment.sim-air.toml (blank, air,
+# air, air, blank) reads like a lab: an air shot of about 9.5e4 fA of Ar40
+# that the source uses up at 1.9 fA/s, a blank of about 10 fA, an inlet whose
+# rise can be seen, and a source that pumps back to nothing. Everything above
+# is commented out; these are in force.
+
+[defaults]
+pressure = 1e-10           # the lab starts pumped down: every volume at the turbo's base,
+                           # which is how each run's pump-out leaves prep and the source
+outgassing = 1.5e-13       # 0.15 fA/s of Ar40 in any static volume. A blank is static for
+                           # about a minute before its time zero: about 10 fA. With the
+                           # memory (0.01 fA/s) that is a twelfth of what the source
+                           # uses of an air shot, so an air shot's signal falls
+
+[volumes.air_tank]
+argon40 = 9.5e-5           # one 0.1 cc pipette of it, spread over prep and the source
+                           # (50 cc each), is 9.5e-8 mbar: 9.5e4 fA of Ar40 on a Faraday
+                           # and 317 fA (cps) of Ar36 on the counter. Each shot leaves
+                           # the 50 cc tank at 50 / 50.1 of what it was
+
+[valves.B]
+conductance = 0.02         # the inlet: prep and the source equilibrate with
+                           # tau = 50 cc * 50 cc / (100 cc * 0.02 L/s) = 1.25 s, which a
+                           # 1 s sniff can follow; extraction_line.toml's 20 s of
+                           # equilibration is 16 of them. Pumping the source out through
+                           # it and prep takes about 3 s a time constant
+
+[pumps.turbo]
+base = 1e-10               # mbar in all, 0.93 % of it Ar40, which is 0.93 fA. A source
+                           # pumped through the inlet ends 0.4 fA above that (its walls
+                           # against the inlet's conductance): inside the 1 fA noise of
+                           # a Faraday. At the default 1e-9 it would read 9.7 fA
