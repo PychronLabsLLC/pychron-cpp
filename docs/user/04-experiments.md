@@ -773,7 +773,12 @@ elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/ex
 
 The simulation uses the same queues, scripts, plans and conditionals as the
 real instrument, but its spectrometer, valves and lasers are models, so
-signal sizes and timings are not those of your instrument.
+signal sizes and timings are not those of your instrument. The signals do
+follow the valves: gas goes from the example's air tank through the pipette
+and the inlet into the spectrometer, and `experiment.sim-air.toml` is a queue
+of air shots and blanks that shows it. A laser or furnace releases no gas in
+simulation. [The simulated lab](../simulator.md) has the details and the
+figures.
 
 ## 10. Unverified / not yet implemented
 

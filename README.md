@@ -96,6 +96,12 @@ cd configs/examples
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
+`experiment.sim-air.toml` there is a queue of air shots and blanks: the
+simulated line carries gas by species from the tank through the valves into
+the spectrometer's source, so the signals follow what the scripts did. What
+is modelled, how to give the simulated lab your own numbers (`sim.toml`) and
+what the example reads are in [docs/simulator.md](docs/simulator.md).
+
 `elctl help` lists every command.
 
 ## Hardware status

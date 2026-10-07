@@ -291,9 +291,10 @@ below) along with the problem report.
 ## Simulation versus real hardware
 
 - `kind = "sim"` on a transport makes that transport a simulated one. A
-  simulated line runs the same code as a real one: opening a valve changes
-  the pressures the simulated gauges report, pumped volumes pump down,
-  gauges have a little noise.
+  simulated line runs the same code as a real one: opening a valve lets gas
+  through at the valve's conductance, so the pressures the simulated gauges
+  report change over a moment, not at once; pumped volumes pump down, static
+  ones rise, and gauges have a little noise.
 - `pychron-ui --sim` forces **every** transport to `sim`, whatever the config
   says. An installation set up "for simulation" does this automatically. With
   nothing installed, `--sim` (or `--examples`) opens the example line shipped
@@ -304,12 +305,17 @@ below) along with the problem report.
   splash if you are unsure.
 - `--sim-speed <x>` (with `--sim`) runs simulated time `x` times faster than
   the clock, handy for rehearsing a queue.
-- A valve on a simulated controller starts closed on every run (locks and
-  manual-valve states are still restored from the state file).
-- The simulator is not a physics model of your line. It uses a handful of
-  volumes, instantaneous equilibration of connected volumes, exponential
-  pump-down and 1 % gauge noise. Do not use it to estimate real equilibration
-  or pump-down times.
+- A simulated controller starts with every valve closed, and the line then
+  puts its valves back as the state file remembers them (a real valve is
+  never moved from memory: the hardware is read back and is the truth).
+  Locks and manual-valve states are restored either way.
+- The simulator is a model of the canvas, not of your line: gas by species
+  in the canvas's volumes, valves with a conductance, pumps, outgassing, a
+  tank and a pipette, and 1 % gauge noise, with default sizes and rates
+  unless a `sim.toml` beside the line gives yours.
+  [The simulated lab](../simulator.md) has the model, every `sim.toml` key
+  and what the example reads. Do not use it to estimate real equilibration
+  or pump-down times until its numbers are your line's.
 
 To move from simulation to a real line, change each transport from
 `kind = "sim"` to `serial` or `tcp` with a port or host (see below), run
@@ -576,7 +582,8 @@ elctl doctor                                 # check an installation
   code that draws them in the window. Treat as not working.
 - **`[colors] valve`** and the stage `fill` / `volume` keys are read but not
   used by the window as far as the source shows (`stage` and `pipette`
-  colours are used).
+  colours are used). The simulated line does use `volume`: it is the
+  stage's size in cc.
 - **Claiming valves** (owner semantics) exists in the line software but the
   window never claims or releases; there is no button for it.
 - **Pump control** beyond a power switch, bake-out sequencing and automated

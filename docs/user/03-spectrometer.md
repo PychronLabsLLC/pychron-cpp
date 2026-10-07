@@ -442,7 +442,9 @@ elctl conditionals-check <file> --spectrometer spectrometer.toml
 
 What that means in practice:
 
-- **Simulated** is safe and complete. `pychron-ui --sim` refuses to load a
+- **Simulated** is safe and complete. Beside a simulated extraction line it
+  measures the gas in the line's spectrometer stage; on its own it shows a
+  fixed argon ([The simulated lab](../simulator.md)). `pychron-ui --sim` refuses to load a
   spectrometer config that is not fully simulated (every transport `sim`, and
   every driver a `sim_*` one), so it cannot be used to rehearse against
   hardware by accident. Error: `simulation requested but <file> is not a

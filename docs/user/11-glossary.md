@@ -32,7 +32,7 @@ Terms as pychron uses them. Longer explanations are linked.
 | **Recall** | Re-opening a saved analysis. |
 | **Run** | One extraction plus measurement. |
 | **Spool** | Local holding area for records that could not yet be saved to the store. |
-| **Simulation (`--sim`)** | Everything runs against built-in simulated hardware. |
+| **Simulation (`--sim`)** | Everything runs against built-in simulated hardware. See [The simulated lab](../simulator.md). |
 | **Strip chart** | Live intensity-versus-time plot in the spectrometer window. |
 | **Tray map** | File listing the holes of a sample tray and their coordinates. |
 | **Truncate** | Cut a run's measurement short based on a conditional. |

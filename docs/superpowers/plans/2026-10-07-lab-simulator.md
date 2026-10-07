@@ -1,5 +1,7 @@
 # Lab Simulator Implementation Plan
 
+> Executed 2026-10-07 on `feat/lab-simulator`. The plan grew while it ran; what was built is in the spec, `docs/superpowers/specs/2026-10-06-lab-simulator-design.md` (section 11 lists the departures), and the user guide is `docs/simulator.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A simulated lab in which gas moves by species from tanks and leaks through the valves into the spectrometer's source, so the measured signal follows what the extraction script did.

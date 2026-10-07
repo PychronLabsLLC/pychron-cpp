@@ -84,7 +84,9 @@ persistence; the release packages are.
 **Simulation mode.** Every hardware connection ("transport") can be replaced by
 a simulated one, so the same program runs with no instrument: a simulated line
 with gauges that pump down, a simulated spectrometer with a beam, a simulated
-laser. Simulation is switched on by the `--sim` flag, or because an install was
+laser. The simulated spectrometer measures the gas the simulated line lets
+into it, so an air shot reads as one and a blank as a blank
+([The simulated lab](../simulator.md) says what is modelled). Simulation is switched on by the `--sim` flag, or because an install was
 set up "in simulation". A window running against simulators says
 "(Simulation)" in its title. `--sim` will not load a spectrometer
 config that is not fully simulated, so the flag cannot be used to dry-run

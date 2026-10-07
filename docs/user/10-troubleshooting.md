@@ -20,6 +20,7 @@ differ slightly.
 | You see | Cause | Do |
 |---|---|---|
 | `--sim-speed needs --sim`, `--device needs --laser` | Flag used without the flag it depends on. Exit code 2. | Add the missing flag. See [getting started](01-getting-started.md). |
+| `sim.toml:<line>:<key>: unknown volume 'X'; known: ...`, `... out of range, must be ...` | A name or number in the simulated lab's `sim.toml` is wrong. The line does not load. | Fix the key the message names. See [The simulated lab](../simulator.md#errors-you-will-meet). |
 | `--laser opens only the laser window: it takes no --queue/--spectrometer` | Incompatible flags | Drop `--queue` / `--spectrometer`. |
 | `config files, --install, --setup and --examples exclude each other` | More than one way to say which config | Use one. |
 | `--queue needs a file` | The next word began with `--` and was read as a flag | Give the file name right after `--queue`. |

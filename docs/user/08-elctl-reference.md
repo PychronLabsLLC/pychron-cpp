@@ -417,7 +417,7 @@ elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
 | `--from ROW` | Start at this row number (0 is the first row, as printed by validate). |
 | `--resume` | Continue where a stopped or crashed queue left off, using the saved state in the data folder. Exclusive with `--from`. |
 | `--dry-run` | Validate and print the queue (as `exp validate`) and stop. |
-| `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim`, and `X` must be positive. |
+| `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim`, and `X` must be positive; `max` does not wait at all. What a simulated queue measures is in [The simulated lab](../simulator.md). |
 
 It first prints the same report as `exp validate`; if the queue has errors, it
 prints `error: the queue has errors; nothing was run` and exits 1. While running

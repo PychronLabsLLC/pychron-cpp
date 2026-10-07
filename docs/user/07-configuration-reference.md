@@ -141,7 +141,7 @@ The valves, switches, gauges, heaters, pumps and the controllers that drive
 them. Example: `configs/examples/extraction_line.toml`. Sections (anything
 else at top level is an error): `[system]`, `[logging]`, `[transports.*]`,
 `[drivers.*]`, `[[valves]]`, `[[manual_valves]]`, `[[switches]]`,
-`[[gauges]]`, `[[heaters]]`, `[[pipettes]]`, `[cryo]`, `[aliases]`.
+`[[gauges]]`, `[[heaters]]`, `[[pipettes]]`, `[cryo]`, `[aliases]`, `[sim]`.
 
 ### [system] (required)
 
@@ -279,6 +279,14 @@ extraction.eqtime = 20
 
 A key under `valves.` must be the name of a valve or manual valve.
 
+### [sim] (optional)
+
+For a line with simulated transports.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `file` | path, relative to this file | `sim.toml` beside this file, if there is one | the numbers of the simulated lab: sizes, pressures, conductances, pump speeds, the gas in a tank, the ion source, detector baselines. Its keys are in [The simulated lab](../simulator.md#simtoml). A file named here and not found is an error |
+
 ### What the check also enforces
 
 Unknown transport or driver names; a duplicate valve, gauge, heater or
@@ -318,7 +326,7 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | `[[gauge]]` | `name`, `pos` | required | | |
 | `[[stage]]` | `name`, `pos` | required | | a box: a volume, pump, tank, spectrometer |
 | | `size` | `[w, h]` | `[50, 50]` | |
-| | `volume` | number | none | cc |
+| | `volume` | number | none | cc: its size in the simulated line (50 cc with none) |
 | | `fill` | true/false | false | |
 | | `display_name` | text | the name | `""` for no label |
 | | `use_symbol`, `symbol` | true/false; `spectrometer`, `quadrupole`, `laser`, `turbo`, `getter`, `ion_pump` | false | a glyph in the box |

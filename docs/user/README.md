@@ -15,6 +15,7 @@ includes a 15-minute walkthrough in the simulator. Developers want
 |---|---|
 | Install it on a lab computer | [Installation runbook](../installation_runbook.md) |
 | Try it without hardware | [01 Getting started](01-getting-started.md) |
+| Know what the simulated lab models, or give it my line's numbers | [The simulated lab](../simulator.md) |
 | Operate valves, gauges, heaters | [02 Extraction line](02-extraction-line.md) |
 | Run the mass spectrometer, edit measurement plans | [03 Spectrometer](03-spectrometer.md) |
 | Build and run a queue of runs, write conditionals | [04 Experiments](04-experiments.md) |
@@ -46,4 +47,4 @@ includes a 15-minute walkthrough in the simulator. Developers want
 Other guides, one topic each: [installation](../installation_runbook.md),
 [legacy import](../legacy_import.md), [entry](../entry.md),
 [export](../export.md), [notifications](../notifications.md),
-[vision fixtures](../vision_fixtures.md).
+[the simulated lab](../simulator.md), [vision fixtures](../vision_fixtures.md).

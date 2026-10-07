@@ -132,6 +132,24 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   (`docs/installation_runbook.md` section 1.4). Something the programs newly
   need under the hardened runtime (a device, a kind of library) is an
   entitlement in `packaging/macos/entitlements.plist`.
+- The simulated lab's physics is `libs/sim` `GasNetwork` on `LinearFlow`: gas
+  by species in volumes, solved exactly between valve events, pure and
+  clock-free (standard library and `core/error.hpp` only). `SimSystem` holds
+  the clock, the mutex and the device sims and moves the network to
+  `clock.now()` on each query. The noise on a reading is keyed by (seed,
+  name, time) (`keyed_noise.hpp`: `keyed_gauss` for Faradays and gauges,
+  `keyed_poisson` for counters, one key for one of the two), so a simulated
+  run gives the same numbers every time: no code draws simulator noise from
+  a shared generator or a `<random>` distribution. Gas enters through
+  `SimSystem::inject` or a volume's source term, never through the beam;
+  `feed_beam_from_line` (`libs/systems` bringup) is the one place a beam is
+  joined to a line, and the two share a clock that outlives the beam.
+  Equilibration takes time: a test that opens a valve advances the clock
+  before it reads, and zeroes outgassing where it asserts an exact hold. A
+  `sim.toml` key is read and range-checked in `sim_config.cpp`, listed
+  commented out with its default in `configs/examples/sim.toml`
+  (`SimConfig.TheExampleFileIsTheDefaults` holds the two together) and given
+  a row in the user guide, `docs/simulator.md`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang
