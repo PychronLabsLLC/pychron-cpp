@@ -37,27 +37,32 @@ Result<void> validate(const MonitorSets& sets) {
   return {};
 }
 
-Result<std::string> text_of(const Json& set, const char* key, bool required) {
+// "'key' of 'set' ..." once the set's name is known, "'key' ..." for the name itself.
+std::string of_set(const char* key, const std::string& set_name) {
+  return std::string("flux monitors: '") + key + "'" + (set_name.empty() ? "" : " of '" + set_name + "'");
+}
+
+Result<std::string> text_of(const Json& set, const char* key, bool required, const std::string& set_name = {}) {
   auto it = set.find(key);
   if (it == set.end()) {
-    if (required) return fail(ErrorKind::Config, std::string("flux monitors: a set has no '") + key + "'");
+    if (required) return fail(ErrorKind::Config, of_set(key, set_name) + " is missing");
     return std::string();
   }
-  if (!it->is_string()) return fail(ErrorKind::Config, std::string("flux monitors: '") + key + "' must be text");
+  if (!it->is_string()) return fail(ErrorKind::Config, of_set(key, set_name) + " must be text");
   return it->get<std::string>();
 }
 
-Result<double> number_of(const Json& set, const char* key) {
+Result<double> number_of(const Json& set, const char* key, const std::string& set_name) {
   auto it = set.find(key);
   if (it == set.end() || !it->is_number())
-    return fail(ErrorKind::Config, std::string("flux monitors: '") + key + "' must be a number");
+    return fail(ErrorKind::Config, of_set(key, set_name) + " must be a number");
   return it->get<double>();
 }
 
-Result<reduction::Measured> pair_of(const Json& set, const char* key) {
+Result<reduction::Measured> pair_of(const Json& set, const char* key, const std::string& set_name) {
   auto it = set.find(key);
   if (it == set.end() || !it->is_array() || it->size() != 2 || !(*it)[0].is_number() || !(*it)[1].is_number())
-    return fail(ErrorKind::Config, std::string("flux monitors: '") + key + "' must be a [value, sigma] pair");
+    return fail(ErrorKind::Config, of_set(key, set_name) + " must be a [value, sigma] pair");
   return reduction::Measured{(*it)[0].get<double>(), (*it)[1].get<double>()};
 }
 
@@ -111,22 +116,22 @@ Result<MonitorSets> parse_monitor_sets(std::string_view text) {
         auto name = text_of(e, "name", true);
         if (!name) return fail(name.error());
         s.name = std::move(*name);
-        auto sample = text_of(e, "sample", true);
+        auto sample = text_of(e, "sample", true, s.name);
         if (!sample) return fail(sample.error());
         s.sample = std::move(*sample);
-        auto material = text_of(e, "material", false);
+        auto material = text_of(e, "material", false, s.name);
         if (!material) return fail(material.error());
         s.material = std::move(*material);
-        auto age = number_of(e, "age_ma");
+        auto age = number_of(e, "age_ma", s.name);
         if (!age) return fail(age.error());
         s.age_ma = *age;
-        auto age_err = number_of(e, "age_err_ma");
+        auto age_err = number_of(e, "age_err_ma", s.name);
         if (!age_err) return fail(age_err.error());
         s.age_err_ma = *age_err;
-        auto ec = pair_of(e, "lambda_ec");
+        auto ec = pair_of(e, "lambda_ec", s.name);
         if (!ec) return fail(ec.error());
         s.lambda_ec = *ec;
-        auto b = pair_of(e, "lambda_b");
+        auto b = pair_of(e, "lambda_b", s.name);
         if (!b) return fail(b.error());
         s.lambda_b = *b;
         out.sets.push_back(std::move(s));

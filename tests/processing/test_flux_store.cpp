@@ -136,6 +136,13 @@ TEST(FluxMonitorsParse, RejectsWhatIsNotValid) {
     ASSERT_FALSE(r) << c.json;
     EXPECT_NE(r.error().what.find(c.names), std::string::npos) << c.json << " -> " << r.error().what;
   }
+  // Errors in a set name the key and the set.
+  const std::string no_sample =
+      R"j({"monitors":[{"name":"FC-2 (X)","age_ma":28,"age_err_ma":0.1,"lambda_ec":[5.8e-11,0],"lambda_b":[4.9e-10,0]}]})j";
+  auto r = parse_monitor_sets(no_sample);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("'sample'"), std::string::npos) << r.error().what;
+  EXPECT_NE(r.error().what.find("FC-2 (X)"), std::string::npos) << r.error().what;
   EXPECT_TRUE(parse_monitor_sets(doc("[" + set("A") + "]")));
 }
 
