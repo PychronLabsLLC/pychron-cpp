@@ -4,10 +4,17 @@
 // beside its samples. Qt-free and JSON-free; the store adapter reads and
 // writes the document.
 
+#include <optional>
+#include <set>
 #include <string>
+#include <string_view>
+#include <vector>
 
+#include "pychron/core/error.hpp"
 #include "pychron/reduction/arar_types.hpp"
 #include "pychron/reduction/flux.hpp"
+#include "pychron/reduction/stats.hpp"
+#include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {
 
@@ -26,5 +33,106 @@ struct MonitorSet {
            a.lambda_b.error == b.lambda_b.error;
   }
 };
+
+// ---- Fitting a level (design section 6.2) -----------------------------------
+
+// What the user picks: the model and how a position's mean J is formed.
+struct FluxOptions {
+  reduction::FitOptions fit;
+  reduction::MeanKind mean = reduction::MeanKind::Arithmetic;
+  reduction::MeanErrorKind mean_error = reduction::MeanErrorKind::Msem;
+  friend bool operator==(const FluxOptions&, const FluxOptions&) = default;
+};
+
+// The legacy model strings ("Plane", "Nearest Neighbors", ...). parse_model_kind
+// reads those (any case) and the `elctl flux` spellings: plane, bowl,
+// weighted-mean, matching, nearest, bracketing, ls1d, mean1d, bracketing1d.
+std::string_view legacy_model_name(reduction::ModelKind kind) noexcept;
+std::optional<reduction::ModelKind> parse_model_kind(std::string_view text) noexcept;
+
+struct LevelAnalysis {
+  std::string uuid, record_id, tag;
+  std::optional<reduction::UFloat> f;  // nullopt: the reduction failed
+  std::string reduction_error;
+};
+
+// The head flux_position revision of a position, as read.
+struct SavedFlux {
+  std::string revision;  // uuid text; the compare-and-swap expectation
+  std::optional<double> j, j_err, mean_j, mean_j_err, mean_j_mswd;
+  std::optional<FluxOptions> options;  // nullopt: none saved, or not one of the nine models
+  std::optional<bool> used_in_fit;
+  std::string monitor_set;       // options' monitor_reference; may be empty
+  std::set<std::string> omitted;  // record ids saved with is_omitted
+  std::string saved_by, saved_utc;
+};
+
+struct LevelPosition {
+  int hole = 0;
+  std::string position_uuid, identifier, sample;
+  double x = 0, y = 0;
+  bool monitor = false;
+  std::vector<LevelAnalysis> analyses;  // monitors only
+  std::optional<SavedFlux> saved;
+};
+
+struct LevelInputs {
+  std::string irradiation, level, holder;
+  MonitorSet monitor_set;
+  std::vector<LevelPosition> positions;      // by hole
+  std::optional<FluxOptions> saved_options;  // of the level's last fit (any monitor position's)
+  bool saved_sd_replaced = false;            // the saved fit was least squares saved with SD (not read here)
+};
+
+struct Edits {
+  std::set<std::string> omit, include;
+  std::set<int> exclude_positions;
+  bool reset_omits = false;  // ignore the omissions and exclusions of the saved fit
+};
+
+enum class PositionNote {
+  Extrapolated,
+  MeanMswdOutsideLimits,
+  NoUsableAnalysis,
+  LeftOutOfFit,
+  AnalysisRejected,
+  AnalysisNotReduced
+};
+
+struct FittedPosition {
+  int hole = 0;
+  std::string position_uuid, identifier, sample;
+  double x = 0, y = 0;
+  bool monitor = false;
+  int n = 0;  // analyses in the mean
+  std::optional<double> saved_j, saved_j_err, mean_j, mean_j_err, mean_j_mswd;
+  double j = 0, j_err = 0;  // predicted
+  std::optional<double> dev_percent;  // (saved - predicted) / predicted * 100
+  bool used_in_fit = false;
+  struct UsedAnalysis {
+    std::string uuid, record_id;
+    bool omitted = false;
+  };
+  std::vector<UsedAnalysis> analyses;
+  std::vector<PositionNote> notes;
+  std::vector<std::string> rejected;  // record ids
+  std::optional<std::string> saved_revision;
+};
+
+struct LevelFit {
+  std::string irradiation, level, holder;
+  MonitorSet monitor_set;
+  FluxOptions options;
+  std::vector<FittedPosition> positions;  // by hole
+  std::vector<double> parameters;
+  double mswd = 0;
+  int dof = 0;
+  bool mswd_outside_limits = false;
+  double min_j = 0, max_j = 0, delta_j_percent = 0;  // (max - min) / max * 100 over predicted J
+};
+
+// Pure: the monitor and unknown tables of a level. Never reads
+// `inputs.saved_options`; the caller resolves the options.
+Result<LevelFit> fit_level(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);
 
 }  // namespace pychron::processing
