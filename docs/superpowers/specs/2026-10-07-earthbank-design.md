@@ -273,7 +273,7 @@ create the data point: one POST of { dataPointDTO: {dataStructure "ARARDATAPOINT
 create each aliquot, each measurement, the age calculation, the age summary
 ```
 
-Three rules that differ from legacy, all because there is no sandbox:
+Four rules that differ from legacy, all because there is no sandbox:
 
 - **Check first.** Upload runs pre-flight and stops before the first write if
   any term is unknown, listing them. `allow_unresolved` drops those fields and
@@ -289,6 +289,15 @@ Three rules that differ from legacy, all because there is no sandbox:
 - **Say who and where.** Before the first write the caller is given the
   account's login, the package's name and the count of records, and must
   confirm (`--yes` on the command line, a prompt in the UI).
+
+- **Never guess an unanswered write.** Before each POST the journal records
+  that record as in doubt; the answer clears it. A POST that times out or
+  loses its connection may or may not have been written, and the service
+  offers no way to ask by name for most records. The sample stops there: the
+  user is told which record is in doubt, looks on EarthBank, and re-runs
+  saying either that it is there (with its id) or that it is not. Only the
+  sample record itself is resolved automatically, by the package-scoped
+  search.
 
 A failure before the data point exists stops the submission. A failure after
 it is recorded and the remaining sub-records are still attempted; the result
@@ -427,14 +436,16 @@ Nothing in CI reaches EarthBank.
   rejections legacy met: a data point without `dataPointDTO` is `500
   "Package is not writable by user."`; an uncertainty id from the wrong table
   is a constraint violation; a write to a package the user cannot write is
-  refused. Its response shapes come from fixtures captured once from the live
-  service with legacy's probe scripts (`tests/packages_probe.py`,
-  `tests/arar_post_probe.py`), with names and ids of real people and
-  packages replaced, committed as JSON.
+  refused. Its vocabularies and response shapes are fixtures written from
+  legacy's code, README and probe scripts with invented people and ids; a
+  person with a login replaces them with captures made with legacy's probe
+  scripts (`tests/packages_probe.py`, `tests/arar_post_probe.py`), names and
+  ids of real people and packages replaced, before the first live upload.
 - **Mapping.** A fixture of two samples (one step-heating with a plateau, one
-  fusion) gives records compared field by field with what legacy builds for
-  the same analyses, captured once; every difference is either fixed or
-  listed in this spec's section 4.5.
+  fusion): every value of every record is compared with the reduction's own
+  result for the same analysis, and the fields of section 4.5 are absent.
+  A comparison with what legacy builds for the same analyses is made once by
+  hand during the live run (section 10, stage 7), not in the suite.
 - **Vocabulary.** Each table: every row, and the nearest miss.
 - **Lookup.** Each strategy; the order; "could not ask" against "unknown".
 - **Upload.** The order of calls; the wrapper's shape; the package scope of
