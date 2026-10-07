@@ -22,7 +22,15 @@ on:
       - cmake/PychronPackaging.cmake
       - packaging/**
       - .github/workflows/release.yml
+  # By hand: the packages as workflow artifacts; given a tag, built from it and
+  # attached to its release (to make up a release whose packages failed).
   workflow_dispatch:
+    inputs:
+      tag:
+        description: A release's tag (vX.Y.Z) to build and attach to; empty for artifacts only.
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       tag:
@@ -83,8 +91,12 @@ jobs:
         run: |
           url="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PBS_PYTHON}+${PBS_RELEASE}-${{ matrix.pbs }}-install_only.tar.gz"
           curl -sSfL "$url" -o python.tar.gz
-          mkdir -p "$RUNNER_TEMP/pbs" && tar xzf python.tar.gz -C "$RUNNER_TEMP/pbs"
-          pbs="$RUNNER_TEMP/pbs/python"
+          tmp="$RUNNER_TEMP"
+          # D:/a/_temp, not D:\a\_temp: CMake reads it; and tar is never handed a
+          # path with a drive letter, which it takes for host:path.
+          if [ "$RUNNER_OS" = Windows ]; then tmp=$(cygpath -m "$RUNNER_TEMP"); fi
+          mkdir -p "$tmp/pbs" && (cd "$tmp/pbs" && tar xzf "$OLDPWD/python.tar.gz")
+          pbs="$tmp/pbs/python"
           if [ "$RUNNER_OS" = macOS ]; then
             # Link it through the RPATH the install sets.
             install_name_tool -id @rpath/libpython3.12.dylib "$pbs/lib/libpython3.12.dylib"
