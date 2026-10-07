@@ -3,6 +3,12 @@
 #         --spectrometer spectrometer.sim-integrated.toml
 # Plans, scripts and conditionals are found under this directory (the lab);
 # records, the spool and executor_state.json go to ./data.
+#
+# In the simulated lab nothing gives gas off when it is heated, so for each
+# run that is not a blank the extraction script (sim_extract.py) lets in one
+# pipette of the air tank's air in place of the sample's gas. The unknowns
+# here therefore read like air shots: about 9.5e4 fA of Ar40 at the 40/36 of
+# air. The blank reads a few fA.
 
 [queue]
 name = "sim-example"

@@ -111,10 +111,16 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!evo->intercept_lines().isEmpty());
     const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
     QVERIFY(ar40.has_value());
-    // This is the third run, the second after the blank to take a shot:
-    // the tank's Ar40 less the first pipette of it, one pipette of that let
-    // into prep, and prep's share of it through the inlet into the source
-    // (canvas.toml sizes none of the four, so each is its kind's default).
+    // The run measured one pipette of the tank's air, and nothing left of
+    // the run before it: within 2 % of a shot worked out from the lab's
+    // numbers. The shot is the second (this is the third run, the second
+    // after the blank to take one): the tank's Ar40 less the first pipette
+    // of it, one pipette of that let into prep, and prep's share of it
+    // through the inlet into the source (canvas.toml sizes none of the four,
+    // so each is its kind's default). The first shot is 0.2 % larger: 2 %
+    // does not tell the two apart, and is not meant to (LabSim's
+    // SuccessiveShotsDeclineWithTheTank does); it tells a shot from a source
+    // that was not pumped out or took no gas.
     const auto& lab = sim.line->sim()->settings();
     QVERIFY(lab.compositions.contains("air_tank"));
     const double tank = lab.default_volume_cc, prep = lab.default_volume_cc, source = lab.default_volume_cc;

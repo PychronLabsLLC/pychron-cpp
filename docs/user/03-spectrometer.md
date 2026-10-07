@@ -175,7 +175,7 @@ executes the blocks in this fixed order, skipping any that are switched off:
 name = "sim_multicollect"             # what a run refers to
 instrument_family = "sim"             # required
 description = "Example two-hop measurement for the simulated lab"
-analysis_types = ["unknown", "blank_unknown", "air"]  # run types it applies to
+analysis_types = ["unknown", "blank_unknown", "air", "blank_air"]  # run types it applies to
 
 [detectors]
 reference = "H1"        # must be a detector in the spectrometer config

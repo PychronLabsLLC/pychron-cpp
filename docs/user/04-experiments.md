@@ -84,6 +84,12 @@ post_measurement = "sim_pump"
 sample = { sample = "FC-2", material = "sanidine", project = "examples" }
 ```
 
+In the simulated lab nothing gives gas off when it is heated. For each run
+that is not a blank, the example extraction scripts (`sim_extract.py`,
+`laser_extract.py`) let in one pipette of air from the air tank in place of
+the sample's gas. So the "unknown" here reads like an air shot: about
+9.5e4 fA of Ar40, at the atmospheric 40/36. The blank reads a few fA.
+
 A mistyped key is an error, not silently ignored: the file is refused with a
 message such as `runs[1].extraction: unknown key 'durration'`.
 

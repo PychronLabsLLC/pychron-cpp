@@ -6,7 +6,7 @@
 name = "sim_multicollect"
 instrument_family = "sim"
 description = "Example two-hop measurement for the simulated lab"
-analysis_types = ["unknown", "blank_unknown", "air"]
+analysis_types = ["unknown", "blank_unknown", "air", "blank_air"]
 
 [detectors]
 reference = "H1"
