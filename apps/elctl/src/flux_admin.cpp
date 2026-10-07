@@ -18,6 +18,7 @@
 #include "flux.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/flux_fit.hpp"
+#include "pychron/processing/flux_view.hpp"
 #include "pychron/processing/flux_store.hpp"
 #include "pychron/processing/store_source.hpp"
 
@@ -90,7 +91,7 @@ int show(const Args& a, Io io) {
     Row row{std::to_string(p.hole), or_dash(p.identifier), or_dash(p.sample)};
     if (p.saved) {
       const auto& s = *p.saved;
-      row.insert(row.end(), {flux_j_text(s.j), flux_j_text(s.j_err), flux_percent_of(s.j_err, s.j), model_of(s.options),
+      row.insert(row.end(), {pychron::processing::flux_j_text(s.j), pychron::processing::flux_j_text(s.j_err), pychron::processing::flux_percent_of(s.j_err, s.j), model_of(s.options),
                              or_dash(s.saved_by), or_dash(s.saved_utc)});
     } else {
       row.insert(row.end(), 6, "-");
@@ -174,8 +175,8 @@ int history(const Args& a, Io io) {
       const ps::FluxValue& v = saved.value ? *saved.value : empty;
       std::optional<pp::FluxOptions> options;
       if (v.options_json) options = pp::parse_flux_options(*v.options_json).options;
-      rows.push_back({r.changeset.created.iso(), or_dash(r.author_name), or_dash(r.changeset.message), flux_j_text(v.j),
-                      flux_j_text(v.j_err), flux_percent_of(v.j_err, v.j), model_of(options)});
+      rows.push_back({r.changeset.created.iso(), or_dash(r.author_name), or_dash(r.changeset.message), pychron::processing::flux_j_text(v.j),
+                      pychron::processing::flux_j_text(v.j_err), pychron::processing::flux_percent_of(v.j_err, v.j), model_of(options)});
     }
     io.out << flux_table({"saved (UTC)", "by", "message", "J", "+/-", "%", "model"}, rows);
     return kOk;

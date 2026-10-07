@@ -33,6 +33,7 @@ TEST(FluxCmd, StubWithoutPersistence) {
 #include "flux_seed.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/processing/flux_view.hpp"
 
 namespace {
 
@@ -1006,6 +1007,14 @@ TEST_F(FluxCmd, UnknownSubcommandIsUsage) {
   EXPECT_EQ(o.code, elctl::kUsage);
   o = run_raw({"flux", "monitors", "bogus", "--db", db_});
   EXPECT_EQ(o.code, elctl::kUsage);
+}
+
+TEST(FluxCmdFormat, CsvFieldQuotesOnlyWhatNeedsIt) {
+  EXPECT_EQ(pychron::processing::csv_field("plain"), "plain");
+  EXPECT_EQ(pychron::processing::csv_field("a,b"), "\"a,b\"");
+  EXPECT_EQ(pychron::processing::csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+  EXPECT_EQ(pychron::processing::csv_field("two\nlines"), "\"two\nlines\"");
+  EXPECT_EQ(pychron::processing::csv_field(""), "");
 }
 
 TEST(FluxCmdFormat, ASaveConflictExitsOne) {

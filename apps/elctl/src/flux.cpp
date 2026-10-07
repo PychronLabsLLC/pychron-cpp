@@ -23,6 +23,7 @@
 #include "pychron/core/user_file.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/flux_fit.hpp"
+#include "pychron/processing/flux_view.hpp"
 #include "pychron/processing/flux_store.hpp"
 #include "pychron/processing/report.hpp"
 #include "pychron/processing/store_source.hpp"
@@ -132,30 +133,6 @@ std::string lower(std::string s) {
   return s;
 }
 
-std::string_view model_cli_name(r::ModelKind kind) {
-  switch (kind) {
-    case r::ModelKind::Plane: return "plane";
-    case r::ModelKind::Bowl: return "bowl";
-    case r::ModelKind::WeightedMean: return "weighted-mean";
-    case r::ModelKind::Matching: return "matching";
-    case r::ModelKind::NearestNeighbors: return "nearest";
-    case r::ModelKind::Bracketing: return "bracketing";
-    case r::ModelKind::LeastSquares1D: return "ls1d";
-    case r::ModelKind::WeightedMean1D: return "mean1d";
-    case r::ModelKind::Bracketing1D: return "bracketing1d";
-  }
-  return "plane";
-}
-
-std::string_view interpolation_name(r::Interpolation i) {
-  switch (i) {
-    case r::Interpolation::WeightedMean: return "weighted";
-    case r::Interpolation::Average: return "average";
-    case r::Interpolation::Linear: return "linear";
-  }
-  return "weighted";
-}
-
 constexpr const char* kSdOfSurface = "sd is not an error kind of a fitted surface";
 
 Result<Args> parse(const std::vector<std::string>& args) {
@@ -259,22 +236,6 @@ Result<Args> parse(const std::vector<std::string>& args) {
 
 // ---- printing ---------------------------------------------------------------
 
-std::string fixed(double v, const char* format) {
-  if (!std::isfinite(v)) return "-";
-  char buf[64];
-  std::snprintf(buf, sizeof buf, format, v);
-  return buf;
-}
-
-std::string j_text(double v) { return fixed(v, "%.4e"); }
-std::string j_text(const std::optional<double>& v) { return v ? j_text(*v) : "-"; }
-std::string pct_text(double v) { return fixed(v, "%.2f"); }
-std::string pct_text(const std::optional<double>& v) { return v ? pct_text(*v) : "-"; }
-std::string percent_of(double err, double value) { return value != 0.0 ? pct_text(err / value * 100.0) : "-"; }
-std::string percent_of(const std::optional<double>& err, const std::optional<double>& value) {
-  return err && value ? percent_of(*err, *value) : "-";
-}
-
 using Row = std::vector<std::string>;
 
 // The rows, left aligned, columns two spaces apart (the head row's cells as given).
@@ -295,122 +256,34 @@ void print_table(std::ostringstream& out, const Row& head, const std::vector<Row
   for (const auto& row : rows) line(row);
 }
 
-std::string model_line(const pp::FluxOptions& o) {
-  std::ostringstream s;
-  s << "model " << model_cli_name(o.fit.kind);
-  switch (o.fit.kind) {
-    case r::ModelKind::Plane:
-    case r::ModelKind::Bowl: s << (o.fit.weighted ? ", weighted" : ", unweighted"); break;
-    case r::ModelKind::NearestNeighbors: s << ", " << o.fit.n_neighbors << " neighbors"; break;
-    case r::ModelKind::Bracketing: s << ", " << interpolation_name(o.fit.interpolation); break;
-    case r::ModelKind::LeastSquares1D:
-      s << ", " << (o.fit.weighted ? "weighted" : "unweighted") << ", degree " << o.fit.degree << ", axis "
-        << (o.fit.axis == r::Axis::X ? 'x' : 'y');
-      break;
-    case r::ModelKind::WeightedMean1D:
-    case r::ModelKind::Bracketing1D:  // always linear: no interpolation to name
-      s << ", axis " << (o.fit.axis == r::Axis::X ? 'x' : 'y');
-      break;
-    case r::ModelKind::WeightedMean:
-    case r::ModelKind::Matching: break;
-  }
-  s << "; mean " << r::to_string(o.mean) << " (" << r::to_string(o.mean_error) << "); fit error "
-    << r::to_string(o.fit.error);
-  return s.str();
-}
-
-std::vector<std::string> warnings_of(const pp::LevelFit& fit) {
-  std::vector<std::string> out;
-  const auto hole = [](const pp::FittedPosition& p) { return "hole " + std::to_string(p.hole); };
-  for (const auto& p : fit.positions) {
-    for (const auto note : p.notes) {
-      switch (note) {
-        case pp::PositionNote::AnalysisNotReduced: break;  // named below, by record id
-        case pp::PositionNote::NoUsableAnalysis: out.push_back(hole(p) + " has no usable analysis"); break;
-        case pp::PositionNote::LeftOutOfFit: out.push_back(hole(p) + " left out of the fit"); break;
-        case pp::PositionNote::MeanMswdOutsideLimits:
-          out.push_back(hole(p) + ": mean MSWD " + pct_text(p.mean_j_mswd) + " is outside its limits");
-          break;
-        case pp::PositionNote::Extrapolated: out.push_back(hole(p) + " is extrapolated (outside the monitors)"); break;
-        case pp::PositionNote::AnalysisRejected: break;  // named below, by record id
-      }
-    }
-  }
-  if (fit.mswd_outside_limits) out.push_back("fit MSWD " + pct_text(fit.mswd) + " is outside its limits");
-  for (const auto& p : fit.positions)
-    for (const auto& a : p.analyses) {
-      std::string why;
-      switch (a.state) {
-        case pp::AnalysisState::Used: continue;
-        case pp::AnalysisState::OmittedByTag: why = "omitted (tag " + a.tag + ")"; break;
-        case pp::AnalysisState::OmittedBySavedFit: why = "omitted (saved fit)"; break;
-        case pp::AnalysisState::OmittedByEdit: why = "omitted (here)"; break;
-        case pp::AnalysisState::NotReduced: why = "not reduced: " + a.reduction_error; break;
-        case pp::AnalysisState::NoJ: why = "no J"; break;
-      }
-      out.push_back(hole(p) + ": " + a.record_id + " " + why);
-    }
-  return out;
-}
-
-std::string notes_text(const pp::FittedPosition& p) {
-  std::string text;
-  const auto add = [&](const std::string& s) { text += (text.empty() ? "" : "; ") + s; };
-  for (const auto& id : p.rejected) add("rejected " + id);
-  for (const auto note : p.notes) {
-    switch (note) {
-      case pp::PositionNote::Extrapolated: add("extrapolated"); break;
-      case pp::PositionNote::MeanMswdOutsideLimits: add("mean MSWD outside limits"); break;
-      case pp::PositionNote::NoUsableAnalysis: add("no usable analysis"); break;
-      case pp::PositionNote::LeftOutOfFit: add("left out of fit"); break;
-      case pp::PositionNote::AnalysisNotReduced: add("analysis not reduced"); break;
-      case pp::PositionNote::AnalysisRejected: break;
-    }
-  }
-  return text;
-}
-
-// Seventeen significant digits: a double reads back as it was.
-std::string number17(double v) {
-  if (!std::isfinite(v)) return "";
-  char buf[64];
-  std::snprintf(buf, sizeof buf, "%.17g", v);
-  return buf;
-}
-std::string number17(const std::optional<double>& v) { return v ? number17(*v) : ""; }
-
 }  // namespace
 
-std::string flux_j_text(const std::optional<double>& v) { return j_text(v); }
-std::string flux_percent_of(const std::optional<double>& err, const std::optional<double>& value) {
-  return percent_of(err, value);
-}
 std::string flux_table(const std::vector<std::string>& head, const std::vector<std::vector<std::string>>& rows) {
   std::ostringstream out;
   print_table(out, head, rows);
   return out.str();
 }
 
-std::string format_flux_fit(const pp::LevelFit& fit, const std::vector<std::string>& extra_warnings) {
+std::string format_flux_fit(const pp::LevelFit& fit, const std::vector<std::string>& warnings) {
   std::ostringstream out;
   const auto& m = fit.monitor_set;
   char age[96];
   std::snprintf(age, sizeof age, "%g +/- %g Ma, lambda_k %.3e", m.age_ma, m.age_err_ma, m.lambda_k().value);
   out << fit.irradiation << ' ' << fit.level << "   holder " << (fit.holder.empty() ? "-" : fit.holder)
       << "   monitors " << m.name << ": " << age << '\n';
-  out << model_line(fit.options) << "\n\n";
+  out << "model " << pp::flux_model_line(fit.options) << "\n\n";
 
   std::vector<Row> monitors, unknowns;
   for (const auto& p : fit.positions) {
     const std::string hole = std::to_string(p.hole);
     if (p.monitor) {
-      monitors.push_back({hole, p.identifier, p.sample, std::to_string(p.n), j_text(p.saved_j), j_text(p.saved_j_err),
-                          j_text(p.mean_j), j_text(p.mean_j_err), percent_of(p.mean_j_err, p.mean_j),
-                          pct_text(p.mean_j_mswd), j_text(p.j), j_text(p.j_err), percent_of(p.j_err, p.j),
-                          pct_text(p.dev_percent), p.used_in_fit ? "yes" : "no"});
+      monitors.push_back({hole, p.identifier, p.sample, std::to_string(p.n), pp::flux_j_text(p.saved_j), pp::flux_j_text(p.saved_j_err),
+                          pp::flux_j_text(p.mean_j), pp::flux_j_text(p.mean_j_err), pp::flux_percent_of(p.mean_j_err, p.mean_j),
+                          pp::flux_pct_text(p.mean_j_mswd), pp::flux_j_text(p.j), pp::flux_j_text(p.j_err), pp::flux_percent_of(p.j_err, p.j),
+                          pp::flux_pct_text(p.dev_percent), p.used_in_fit ? "yes" : "no"});
     } else {
-      unknowns.push_back({hole, p.identifier, p.sample, j_text(p.saved_j), j_text(p.saved_j_err), j_text(p.j),
-                          j_text(p.j_err), percent_of(p.j_err, p.j), pct_text(p.dev_percent)});
+      unknowns.push_back({hole, p.identifier, p.sample, pp::flux_j_text(p.saved_j), pp::flux_j_text(p.saved_j_err), pp::flux_j_text(p.j),
+                          pp::flux_j_text(p.j_err), pp::flux_percent_of(p.j_err, p.j), pp::flux_pct_text(p.dev_percent)});
     }
   }
   out << "Monitors\n";
@@ -419,10 +292,8 @@ std::string format_flux_fit(const pp::LevelFit& fit, const std::vector<std::stri
               monitors);
   out << "\nUnknowns\n";
   print_table(out, {"hole", "identifier", "sample", "saved J", "+/-", "pred J", "+/-", "%", "dev %"}, unknowns);
-  out << "\nfit MSWD " << pct_text(fit.mswd) << " (" << fit.dof << " dof)   J min " << j_text(fit.min_j) << "  max "
-      << j_text(fit.max_j) << "  delta " << pct_text(fit.delta_j_percent) << " %\n";
-  for (const auto& w : warnings_of(fit)) out << "warning: " << w << '\n';
-  for (const auto& w : extra_warnings) out << "warning: " << w << '\n';
+  out << '\n' << pp::flux_summary(fit) << '\n';
+  for (const auto& w : warnings) out << "warning: " << w << '\n';
   return out.str();
 }
 
@@ -443,39 +314,6 @@ std::string format_flux_save(const pp::FluxSaveOutcome& outcome, std::string_vie
     out << '\n';
   }
   return out.str();
-}
-
-std::string flux_csv_header() {
-  return "kind,irradiation,level,hole,identifier,sample,x,y,n,saved_j,saved_j_err,mean_j,mean_j_err,mean_j_mswd,j,j_err,"
-         "dev_percent,used_in_fit,notes\r\n";
-}
-
-std::string flux_csv_rows(const pp::LevelFit& fit) {
-  std::string out;
-  for (const auto& p : fit.positions) {
-    const std::vector<std::string> cells = {p.monitor ? "monitor" : "unknown",
-                                            fit.irradiation,
-                                            fit.level,
-                                            std::to_string(p.hole),
-                                            p.identifier,
-                                            p.sample,
-                                            number17(p.x),
-                                            number17(p.y),
-                                            p.monitor ? std::to_string(p.n) : "",
-                                            number17(p.saved_j),
-                                            number17(p.saved_j_err),
-                                            number17(p.mean_j),
-                                            number17(p.mean_j_err),
-                                            number17(p.mean_j_mswd),
-                                            number17(p.j),
-                                            number17(p.j_err),
-                                            number17(p.dev_percent),
-                                            p.monitor ? (p.used_in_fit ? "yes" : "no") : "",
-                                            notes_text(p)};
-    for (std::size_t i = 0; i < cells.size(); ++i) out += (i ? "," : "") + pp::csv_quote(cells[i]);
-    out += "\r\n";
-  }
-  return out;
 }
 
 namespace {
@@ -533,13 +371,6 @@ struct Session {
     auto loaded = pp::load_level(source, store, a.irradiation, name, a.selection);
     if (!loaded) return fail_level(loaded.error());
     const pp::FluxOptions options = resolve(a, *loaded);
-    std::vector<std::string> warnings;
-    if (loaded->saved_options && loaded->saved_sd_replaced && !a.fit_error && r::is_least_squares(options.fit.kind))
-      warnings.push_back("saved fit used SD, which a fitted surface does not have: using msem");
-    // The standard is not changed silently; with --monitors the user chose it.
-    if (loaded->saved_monitor_set_missing && a.selection.monitor_set.empty())
-      warnings.push_back("saved fit used monitor set '" + loaded->saved_monitor_set +
-                         "', which the store does not have: using '" + loaded->monitor_set.name + "'");
     auto fitted = pp::fit_level(*loaded, options, a.edits);
     if (!fitted) return fail_level(fitted.error());
     std::set<int> holes;
@@ -553,13 +384,16 @@ struct Session {
         e.what = "--no-save-position: hole " + std::to_string(hole) + " is not a position of " + where + " (holes: " + list + ")";
         return fail_level(e);
       }
+    // The shared warnings, then the ones that depend on the edits given here.
+    std::vector<std::string> warnings = pp::flux_warnings(
+        *loaded, *fitted, pp::FluxWarningContext{!a.selection.monitor_set.empty(), a.fit_error.has_value()});
     // R10: any position of the level may be named; one that is no monitor has nothing to exclude.
     for (const auto& p : fitted->positions)
       if (!p.monitor && a.edits.exclude_positions.contains(p.hole))
         warnings.push_back("hole " + std::to_string(p.hole) + " is not a monitor position: excluding it changes nothing");
     any_fitted = true;
     io.out << format_flux_fit(*fitted, warnings);
-    csv_rows += flux_csv_rows(*fitted);
+    csv_rows += pp::flux_csv_rows(*fitted);
     if (!a.save) return;
     auto saved = pp::save_level(store, *actor, *fitted, pp::SaveSelection{a.no_save}, software());
     if (!saved) return fail_level(saved.error());
@@ -722,7 +556,7 @@ int run(const Args& a, Io io) {
 
   // Only what was fitted is written: no level, no file (and an earlier one stays).
   if (!a.csv.empty() && s.any_fitted) {
-    if (auto written = csv.commit(flux_csv_header() + s.csv_rows); !written) return fatal(io, written.error().what);
+    if (auto written = csv.commit(pp::flux_csv_header() + s.csv_rows); !written) return fatal(io, written.error().what);
     pychron::mark_as_user_file(a.csv);
     io.out << "wrote " << a.csv << '\n';
   }

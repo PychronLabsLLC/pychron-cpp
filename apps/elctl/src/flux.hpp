@@ -66,17 +66,13 @@ int flux_command(const std::vector<std::string>& args, Io io);
 #ifdef PYCHRON_ELCTL_HAS_STORE
 
 // The printed form of a fit: heading, model line, the Monitors and Unknowns
-// tables, the fit line and one `warning:` line per thing to look at (those
-// of `fit`, then `extra_warnings`).
-std::string format_flux_fit(const pychron::processing::LevelFit& fit, const std::vector<std::string>& extra_warnings = {});
+// tables, the fit line and one `warning:` line per entry of `warnings`
+// (processing/flux_view.hpp `flux_warnings`, then any of the command's own).
+std::string format_flux_fit(const pychron::processing::LevelFit& fit, const std::vector<std::string>& warnings = {});
 
 // What a save says; "not saved: ..." when it conflicted. `saved_by` is the
 // author of the head that moved (empty: unknown).
 std::string format_flux_save(const pychron::processing::FluxSaveOutcome& outcome, std::string_view saved_by);
-
-// The head line, and a row for every position of the fit; rows end in CRLF.
-std::string flux_csv_header();
-std::string flux_csv_rows(const pychron::processing::LevelFit& fit);
 
 // ---- Shared by flux.cpp and flux_admin.cpp ----------------------------------
 
@@ -104,9 +100,6 @@ pychron::Result<std::unique_ptr<pychron::persistence::IStore>> open_flux_store(c
 // The actor that writes: this machine as a client, `user_name` (else $USER) as the user.
 pychron::Result<pychron::persistence::Actor> flux_actor(pychron::persistence::IStore& store, const std::string& user_name);
 
-// `%.4e`, "-" for an absent or non-finite value; the share of `err` in `value` in percent.
-std::string flux_j_text(const std::optional<double>& v);
-std::string flux_percent_of(const std::optional<double>& err, const std::optional<double>& value);
 // Left aligned columns two spaces apart; the head row first; every line ends in a line break.
 std::string flux_table(const std::vector<std::string>& head, const std::vector<std::vector<std::string>>& rows);
 
