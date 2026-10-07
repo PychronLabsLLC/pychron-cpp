@@ -165,9 +165,11 @@ void Executor::stop() {
     std::lock_guard lock(mutex_);
     stop_ = true;
     clock_.notify_all(cv_);
+    // Under the lock, with what it goes with: execute() clears both together
+    // when its queue has ended.
+    queue_token_.wake();
   }
   set_state(ExecutorState::StoppingAtBoundary, "stop requested");
-  queue_token_.wake();
 }
 
 void Executor::cancel() {
@@ -181,9 +183,9 @@ void Executor::cancel() {
     // and then destroys the slot, so a copied pointer could dangle.
     for (auto* s : active_) s->control.cancel();
     clock_.notify_all(cv_);
+    queue_token_.cancel();  // under the lock, as in stop()
   }
   set_state(ExecutorState::Cancelling, "cancel requested");
-  queue_token_.cancel();
 }
 
 void Executor::abort() {
@@ -193,9 +195,9 @@ void Executor::abort() {
     end_reason_ = "aborted by the operator";
     for (auto* s : active_) s->control.abort();  // under the lock, as in cancel()
     clock_.notify_all(cv_);
+    queue_token_.abort();  // under the lock, as in stop()
   }
   set_state(ExecutorState::Aborting, "abort requested");
-  queue_token_.abort();
 }
 
 void Executor::truncate(bool quick) {
@@ -458,18 +460,28 @@ Result<std::size_t> Executor::resume_row(const std::filesystem::path& state_file
   return static_cast<std::size_t>(std::stoull(m[1].str()));
 }
 
+void Executor::ended(QueueResult& out, bool read) {
+  std::lock_guard lock(mutex_);
+  if (read) {
+    out.end = end_ ? *end_ : (stop_ ? QueueEnd::Stopped : QueueEnd::Completed);
+    out.reason = end_ ? end_reason_ : (stop_ ? "stopped at a run boundary" : "");
+  }
+  stop_ = false;
+  end_.reset();
+  end_reason_.clear();
+  queue_token_.reset();
+}
+
 QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
   Clock::Participant participant(clock_, "executor.run");
   QueueResult out;
   {
+    // A stop, cancel or abort already asked for is left as it is: it was
+    // meant for this queue (see ended()).
     std::lock_guard lock(mutex_);
-    stop_ = false;
-    end_.reset();
-    end_reason_.clear();
     pump_started_.reset();
     active_.clear();
   }
-  queue_token_.reset();
   previous_spec_.reset();
   set_state(ExecutorState::Preparing, "queue " + queue.spec().name);
 
@@ -480,6 +492,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     if (!set) {
       out.end = QueueEnd::Failed;
       out.reason = "queue conditionals: " + set.error().what;
+      ended(out, false);
       set_state(ExecutorState::Idle, out.reason);
       return out;
     }
@@ -493,7 +506,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     version_ = 0;
   }
 
-  if (options_.start_at && clock_.now() < *options_.start_at)
+  if (options_.start_at && !ending() && clock_.now() < *options_.start_at)
     wait(std::chrono::duration<double>(*options_.start_at - clock_.now()), "scheduled start");
   if (!ending()) set_state(ExecutorState::Running);
 
@@ -619,11 +632,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
   }
 
   set_state(ExecutorState::Finalizing);
-  {
-    std::lock_guard lock(mutex_);
-    out.end = end_ ? *end_ : (stop_ ? QueueEnd::Stopped : QueueEnd::Completed);
-    out.reason = end_ ? end_reason_ : (stop_ ? "stopped at a run boundary" : "");
-  }
+  ended(out, true);
   write_state(queue, row, out);
   set_state(ExecutorState::Idle, std::string(to_string(out.end)));
   return out;

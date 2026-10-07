@@ -142,6 +142,15 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
     fs::remove_all(dir_);
   }
 
+  // For a queue aborted straight after start(), as a test does that has
+  // nothing more to ask of it.
+  void expect_aborted_before_any_run() {
+    const auto result = session_->wait();
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->end, executor::QueueEnd::Aborted) << result->reason;
+    EXPECT_TRUE(result->runs.empty());
+  }
+
   std::vector<QueueEnded> ended() {
     std::lock_guard lock(mutex_);
     return ended_;
@@ -267,7 +276,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileTheLaserIsDrivenByHand) {
   hand->release();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
@@ -280,7 +289,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
   lasers_->find("co2")->reset_stop();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // A beam somebody opened by hand has no owner once that command is over: a
@@ -300,7 +309,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileABeamIsOn) {
   EXPECT_TRUE(lasers_->firing().empty());
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
@@ -308,7 +317,7 @@ TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::Queue);
   EXPECT_FALSE(lasers_->drive(Lasers::Driver::Manual));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
   // given back by the time anyone is told the queue has ended
   ASSERT_FALSE(ended().empty());
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
@@ -437,7 +446,7 @@ TEST_F(LiveViewCameraThatIsNotThereTest, IsANoteAndStopsNoQueue) {
   EXPECT_NE(lasers_->notes().front().find("co2"), std::string::npos) << lasers_->notes().front();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // --- laser queues (laser system design, sections 5 and 7) --------------------
@@ -817,7 +826,7 @@ TEST_F(SimCameraOnARealLaserTest, ASimulatedCameraOnARealLaserStopsItsQueues) {
   // a queue with no laser in it is not held up by the laser's camera
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // A pattern that runs off the edge of the stage's travel: the stage refuses
@@ -1002,6 +1011,49 @@ TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {
   result = session_->wait();
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+}
+
+// A request made straight after start() comes before the queue's thread has
+// got as far as the executor: it ends the queue all the same. The test's
+// thread does not wait in the clock in between, so no run can have started.
+TEST_F(LabSessionTest, AnAbortStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Aborted) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+  EXPECT_FALSE(fs::exists(dir_ / "data" / "records"));
+}
+
+TEST_F(LabSessionTest, ACancelStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->cancel();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Cancelled) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+}
+
+TEST_F(LabSessionTest, AStopStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->stop();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Stopped) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+}
+
+TEST_F(LabSessionTest, DestroyingASessionStraightAfterStartAbortsItsQueue) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_.reset();
+  ASSERT_EQ(ended().size(), 1u);
+  EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Aborted) << ended().front().result.reason;
+  EXPECT_TRUE(ended().front().result.runs.empty());
+  EXPECT_EQ(started_.load(), 0);
 }
 
 // A cancel from a thread the clock knows nothing of (the UI's, a signal's)

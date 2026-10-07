@@ -155,7 +155,9 @@ class Executor {
   // Runs `queue` from `from_row` on the calling thread until it ends.
   QueueResult execute(ExperimentQueue& queue, std::size_t from_row = 0);
 
-  // Thread-safe controls.
+  // Thread-safe controls. One made while no queue is running is kept for the
+  // next execute(), which ends before its first run: the thread that is to
+  // call execute() may not have got there yet. A queue's end clears them.
   void stop();                       // finish the current run(s), start no more
   void cancel();                     // cancel the active run(s) and end the queue
   void abort();                      // abort the active run(s) and end the queue
@@ -186,6 +188,10 @@ class Executor {
   void freeze(std::size_t rows);  // caller holds queue_mutex_
   void finish(ExperimentQueue& queue, Slot& slot, QueueResult& out);
   void write_state(const ExperimentQueue& queue, std::size_t next_row, const QueueResult& out);
+  // The queue is over: its end is read into `out` (when `read`) and the
+  // requests that ended it are cleared, in one step under mutex_, so a
+  // request is either this queue's or the next one's.
+  void ended(QueueResult& out, bool read);
 
   ExecutorContext ctx_;
   ExecutorOptions options_;
@@ -197,7 +203,7 @@ class Executor {
   bool stop_ = false;
   std::optional<QueueEnd> end_;  // why the queue is ending early
   std::string end_reason_;
-  scripting::CancelToken queue_token_;  // cuts executor waits short
+  scripting::CancelToken queue_token_;  // cuts executor waits short; changed under mutex_
   std::vector<Slot*> active_;
 
   std::unique_ptr<Resource> extraction_, spectrometer_;

@@ -199,6 +199,50 @@ TEST_F(ExecutorTest, StopFinishesTheCurrentRun) {
   EXPECT_EQ(states(r), std::vector<std::string>{"12345:success"});
 }
 
+// A request may come before the queue's thread has got as far as execute()
+// (LabSession starts that thread and returns): it is not lost.
+TEST_F(ExecutorTest, ARequestMadeBeforeExecuteIsHonoured) {
+  {
+    Executor ex(context(), options());
+    ex.abort();
+    auto q = queue({unknown_run("12345"), unknown_run("12346")});
+    auto r = ex.execute(q);
+    EXPECT_EQ(r.end, QueueEnd::Aborted) << r.reason;
+    EXPECT_TRUE(r.runs.empty());
+  }
+  {
+    Executor ex(context(), options());
+    ex.cancel();
+    auto q = queue({unknown_run("22345"), unknown_run("22346")});
+    auto r = ex.execute(q);
+    EXPECT_EQ(r.end, QueueEnd::Cancelled) << r.reason;
+    EXPECT_TRUE(r.runs.empty());
+  }
+  {
+    Executor ex(context(), options());
+    ex.stop();
+    auto q = queue({unknown_run("32345"), unknown_run("32346")});
+    auto r = ex.execute(q);
+    EXPECT_EQ(r.end, QueueEnd::Stopped) << r.reason;
+    EXPECT_TRUE(r.runs.empty());
+  }
+  EXPECT_EQ(spec_.readings.load(), 0) << "nothing was measured";
+  EXPECT_TRUE(order().empty());
+}
+
+// The request belongs to the queue it ended: the next one runs.
+TEST_F(ExecutorTest, ARequestEndsOneQueueOnly) {
+  Executor ex(context(), options());
+  ex.abort();
+  auto q = queue({unknown_run("12345")});
+  EXPECT_EQ(ex.execute(q).end, QueueEnd::Aborted);
+  EXPECT_EQ(ex.state(), ExecutorState::Idle);
+  auto q2 = queue({unknown_run("12346")});
+  auto r = ex.execute(q2);
+  EXPECT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states(r), std::vector<std::string>{"12346:success"});
+}
+
 TEST_F(ExecutorTest, CancelAndAbortEndTheQueue) {
   {
     Executor ex(context(), options());
@@ -916,6 +960,23 @@ TEST_F(ExecutorVirtual, APostEquilibrationScriptThatOutlastsTheMeasurementIsWait
   // The run leaves its measurement when the script ends, and not before.
   EXPECT_EQ(w.entered(w.run_id("12345"), run::RunState::PostMeasuring), std::optional<TimePoint>(script_ended));
   EXPECT_EQ(w.clock.now(), script_ended);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+// A stop asked for before execute() is not slept through: the queue does not
+// wait for its scheduled start to find out it is not to run.
+TEST_F(ExecutorVirtual, AStopBeforeExecuteDoesNotWaitForTheScheduledStart) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  auto q = w.queue({unknown_run("12345")}, Seconds{0}, Seconds{0});
+  auto opts = w.options();
+  opts.start_at = kStart + 8h;
+  Executor ex(w.context(), opts);
+  ex.stop();
+  const auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Stopped) << r.reason;
+  EXPECT_TRUE(r.runs.empty());
+  EXPECT_EQ(w.clock.now(), kStart);
   EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
