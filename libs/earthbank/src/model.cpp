@@ -58,6 +58,7 @@ PYCHRON_EARTHBANK_TO_JSON(AgeSummary, PYCHRON_EARTHBANK_AGE_SUMMARY_FIELDS)
 
 std::string content_hash(const Submission& submission) {
   nlohmann::json records = nlohmann::json::array();
+  records.push_back(submission.datapoint_name);
   records.push_back(to_json(submission.sample));
   records.push_back(submission.location ? to_json(*submission.location) : nlohmann::json(nullptr));
   records.push_back(to_json(submission.data_point));

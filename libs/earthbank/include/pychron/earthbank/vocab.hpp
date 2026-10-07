@@ -72,6 +72,18 @@ std::string normalize_citation(std::string_view override_text, bool decay);
 // from Kuiper et al. 2008 (28.201 Ma)`), so this is a query, not a name.
 std::string flux_monitor_query(std::string_view name, std::optional<double> age_ma);
 
+// Terms the mapping writes that never vary, spelled as the template's lists
+// have them: the unit of every intensity, the unit of every uncertainty
+// (absolute, never percent), the sigma level of a single analysis's
+// uncertainties, the answer in a "step included" column, the tool that made
+// the interpretation, and the interpretation when the lab gives none.
+inline constexpr std::string_view kIntensityUnits = "fA";
+inline constexpr std::string_view kAbsoluteUncertainty = "abs.";
+inline constexpr std::string_view kOneSigma = "1 sigma";
+inline constexpr std::string_view kYes = "Yes";
+inline constexpr std::string_view kInterpretationTool = "Pychron";
+inline constexpr std::string_view kUnknownInterpretation = "Unknown";
+
 // The kinds of summary age pychron-cpp computes for a sample.
 enum class AgeKind { Plateau, WeightedMean, Isochron, Integrated };
 // The service's name for the kind of summary age, from its lookup list.

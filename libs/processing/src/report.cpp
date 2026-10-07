@@ -16,6 +16,7 @@
 #include "figure_common.hpp"
 #include "pychron/core/user_file.hpp"
 #include "pychron/processing/arar_groups.hpp"
+#include "pychron/processing/group_ages.hpp"
 #include "pychron/reduction/arar_reduction.hpp"
 
 namespace pychron::processing {
@@ -107,31 +108,12 @@ double now_utc_seconds() {
   return static_cast<double>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 }
 
-// Step order within a group: increment, then time (as the spectrum).
-GroupItems ordered(GroupItems items) {
-  std::stable_sort(items.begin(), items.end(), [](const DatasetItem* a, const DatasetItem* b) {
-    const auto& x = *a->analysis->analysis;
-    const auto& y = *b->analysis->analysis;
-    if (x.increment != y.increment) return x.increment < y.increment;
-    return x.timestamp < y.timestamp;
-  });
-  return items;
-}
-
 // The dataset's group name ("Group N" when the grouping named none), under
 // the graph's when there are several graphs.
 std::string group_label(const Dataset& d, int graph, int group) {
   const std::string name = d.group_name(group);
   if (d.graphs().size() > 1) return d.graph_name(graph) + " / " + name;
   return name;
-}
-
-bool has_ages(const DatasetItem& it) { return it.analysis->arar && it.analysis->arar->ages; }
-
-// The analytical age of an item (no J error), when it has one.
-std::optional<r::UFloat> analytical_age(const DatasetItem& it) {
-  if (!has_ages(it)) return std::nullopt;
-  return it.analysis->arar->ages->age;
 }
 
 double k39_of(const DatasetItem& it) {
@@ -397,7 +379,7 @@ std::vector<GroupRef> groups_of(const Dataset& d) {
   std::vector<GroupRef> out;
   for (int graph : d.graphs())
     for (const auto& [group, items] : d.groups_of_graph(graph))
-      out.push_back({graph, group, group_label(d, graph, group), ordered(items)});
+      out.push_back({graph, group, group_label(d, graph, group), step_ordered(items)});
   return out;
 }
 
@@ -596,44 +578,21 @@ void summary_table(const std::vector<GroupRef>& groups, const r::AgeUnits units,
 
     // Plateau, over the steps with an age and gas, excluded ones flagged.
     if (step_heated && !reduced.empty()) {
-      std::vector<double> vs, es, ws;
-      std::vector<const DatasetItem*> steps;
-      for (const auto* it : reduced) {
-        const double k = k39_of(*it);
-        if (!(k > 0)) continue;
-        const auto age = analytical_age(*it);
-        vs.push_back(age->nominal());
-        es.push_back(age->std_dev());
-        ws.push_back(k);
-        steps.push_back(it);
-      }
-      const std::size_t n = steps.size();
-      std::unique_ptr<bool[]> ex(new bool[std::max<std::size_t>(1, n)]);
-      for (std::size_t i = 0; i < n; ++i) ex[i] = steps[i]->exclusion.excluded();
-      const std::span<const bool> excluded(ex.get(), n);
-      if (auto range = r::find_plateau(vs, es, ws, excluded, o.plateau)) {
-        if (auto pm = r::plateau_mean(vs, es, ws, excluded, *range, o.plateau_weighting, o.mean_error)) {
-          row[plateau_steps] = Cell{steps[range->first]->analysis->analysis->step() + "-" +
-                                    steps[range->last]->analysis->analysis->step()};
-          row[plateau_n] = Cell{static_cast<double>(pm->nsteps)};
-          row[plateau_gas] = num(pm->gas_fraction);
-          set_age(row, plateau, pm->mean.value, pm->mean.error,
-                  with_external_error(pm->mean.value, pm->mean.error, j_rel));
-          row[plateau_mswd] = num(pm->mean.mswd);
-          row[plateau_p] = num(r::mswd_probability(pm->mean.mswd, static_cast<int>(pm->nsteps) - 1));
-        }
+      if (const auto found = group_plateau(reduced, o.plateau, o.plateau_weighting, o.mean_error)) {
+        const r::PlateauMean& pm = found->mean;
+        row[plateau_steps] = Cell{found->steps[found->range.first]->analysis->analysis->step() + "-" +
+                                  found->steps[found->range.last]->analysis->analysis->step()};
+        row[plateau_n] = Cell{static_cast<double>(pm.nsteps)};
+        row[plateau_gas] = num(pm.gas_fraction);
+        set_age(row, plateau, pm.mean.value, pm.mean.error, with_external_error(pm.mean.value, pm.mean.error, j_rel));
+        row[plateau_mswd] = num(pm.mean.mswd);
+        row[plateau_p] = num(r::mswd_probability(pm.mean.mswd, static_cast<int>(pm.nsteps) - 1));
       }
     }
 
     // Weighted mean of the included ages.
     if (!included.empty()) {
-      std::vector<double> vs, es;
-      for (const auto* it : included) {
-        const auto age = analytical_age(*it);
-        vs.push_back(age->nominal());
-        es.push_back(age->std_dev());
-      }
-      if (auto m = r::weighted_mean(vs, es, o.mean_error)) {
+      if (auto m = group_weighted_mean(included, o.mean_error)) {
         row[mean_n] = Cell{static_cast<double>(m->n)};
         set_age(row, mean, m->value, m->error, with_external_error(m->value, m->error, j_rel));
         row[mean_mswd] = num(m->mswd);

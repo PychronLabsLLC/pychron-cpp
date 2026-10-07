@@ -296,9 +296,13 @@ struct AgeSummary {
 
 // Everything published for one sample. It is built once and is what the
 // pre-flight check reads, what the spreadsheet is filled from and what is
-// uploaded. `notes` are for the user (which age was chosen and why, what was
-// left out); they are not sent.
+// uploaded. `datapoint_name` is the data point's own name: not a field of the
+// Ar-Ar record, it goes into the umbrella record an upload wraps it in and is
+// the key that ties the spreadsheet's rows together, so it is unique among
+// the submissions of one build. `notes` are for the user (which age was
+// chosen and why, what was left out); they are not sent.
 struct Submission {
+  std::string datapoint_name;
   Sample sample;
   std::optional<Location> location;
   DataPoint data_point;
@@ -324,10 +328,11 @@ nlohmann::json to_json(const Measurement& record);
 nlohmann::json to_json(const AgeCalc& record);
 nlohmann::json to_json(const AgeSummary& record);
 
-// Lower-case hex SHA-256 of the submission's records: to_json of the sample,
-// the location (null when there is none), the data point, the aliquots, the
-// measurements, the age calculation and the age summary, in that order, as
-// one JSON array dumped without whitespace. `notes` take no part. Two
+// Lower-case hex SHA-256 of what the submission sends: the data point's
+// name, then to_json of the sample, the location (null when there is none),
+// the data point, the aliquots, the measurements, the age calculation and the
+// age summary, in that order, as one JSON array dumped without whitespace.
+// `notes` take no part. Two
 // submissions with the same hash would send the same thing; the order of
 // aliquots and of measurements counts.
 std::string content_hash(const Submission& submission);

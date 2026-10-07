@@ -13,6 +13,7 @@
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/reduction/arar_types.hpp"
+#include "pychron/reduction/stats.hpp"
 #include "records_support.hpp"
 
 namespace pychron::earthbank {
@@ -155,6 +156,30 @@ TEST(Vocab, AgeTypeNames) {
   EXPECT_EQ(age_type_name(AgeKind::WeightedMean), "Weighted Mean Age");
   EXPECT_EQ(age_type_name(AgeKind::Isochron), "Inverse Isochron Age");
   EXPECT_EQ(age_type_name(AgeKind::Integrated), "Total Gas Age");
+}
+
+// The words pychron-cpp has for the error of a mean each have an id: they
+// are what the mapping writes as an uncertainty type.
+TEST(Vocab, MeanErrorKindsAreUncertaintyTypes) {
+  for (const reduction::MeanErrorKind kind :
+       {reduction::MeanErrorKind::Sd, reduction::MeanErrorKind::Sem, reduction::MeanErrorKind::Msem}) {
+    EXPECT_EQ(uncertainty_type_id(reduction::to_string(kind)), 1) << reduction::to_string(kind);
+  }
+  EXPECT_EQ(reduction::to_string(reduction::MeanErrorKind::Sd), "sd");
+  EXPECT_EQ(reduction::to_string(reduction::MeanErrorKind::Sem), "sem");
+  EXPECT_EQ(reduction::to_string(reduction::MeanErrorKind::Msem), "msem");
+}
+
+// From the template's lists: `Uncertainty Unit`, `Uncertainty Type`, `Yes/No`,
+// `Data Interpretation` and `Age Interpretation`.
+TEST(Vocab, FixedTerms) {
+  EXPECT_EQ(kIntensityUnits, "fA");
+  EXPECT_EQ(kAbsoluteUncertainty, "abs.");
+  EXPECT_EQ(kOneSigma, "1 sigma");
+  EXPECT_EQ(uncertainty_type_id(kOneSigma), 1);
+  EXPECT_EQ(kYes, "Yes");
+  EXPECT_EQ(kInterpretationTool, "Pychron");
+  EXPECT_EQ(kUnknownInterpretation, "Unknown");
 }
 
 TEST(Vocab, LookupSpecsCoverEveryNameField) {

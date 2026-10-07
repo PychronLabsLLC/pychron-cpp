@@ -88,6 +88,7 @@ const std::vector<std::string> kAgeSummaryFields = {
 
 Submission submission() {
   Submission s;
+  s.datapoint_name = "S-1 Sanidine";
   s.sample.name = "S-1";
   s.sample.materialName = "Sanidine";
   s.location = Location{};
@@ -259,6 +260,7 @@ TEST(Model, ContentHashIgnoresNotesAndFieldOrder) {
   b.location = location;
   b.sample.materialName = "Sanidine";
   b.sample.name = "S-1";
+  b.datapoint_name = "S-1 Sanidine";
   EXPECT_EQ(b, a);
   EXPECT_EQ(content_hash(b), hash);
 }
@@ -268,13 +270,13 @@ TEST(Model, ContentHashIgnoresNotesAndFieldOrder) {
 // (28.2 as 28.199999999999999, 1.0 as 1) fails here.
 TEST(Model, ContentHashOfAKnownSubmission) {
   const std::string text =
-      R"([{"materialName":"Sanidine","name":"S-1"},{"lat":35.0,"lon":-106.5},)"
+      R"(["S-1 Sanidine",{"materialName":"Sanidine","name":"S-1"},{"lat":35.0,"lon":-106.5},)"
       R"({"arMethodName":"Step-heating - laser"},[{"aliquotName":"10001-01"}],)"
       R"([{"aliquotName":"10001-01","ar40Corr":1.5,"stepNumber":1.0},)"
       R"({"aliquotName":"10001-01","ar40Corr":2.5,"stepNumber":2.0}],)"
       R"({"airRatioName":"Lee et al. 2006"},)"
       R"({"age":28.2,"ageUncertainty":0.05,"nAnalysisGrouped":2,"preferredAge":true}])";
-  EXPECT_EQ(content_hash(submission()), "7083410e126739a1bf1895409a325f42b1772832061f2fd6b6fb47de86efe5bc") << text;
+  EXPECT_EQ(content_hash(submission()), "ac663e474a26bdfbab8ca65cd1e4f3546f648b7d6e6276b73b4bacbe5d9a2366") << text;
 }
 
 TEST(Model, ContentHashChangesWithAValue) {
@@ -292,6 +294,10 @@ TEST(Model, ContentHashChangesWithAValue) {
   Submission added = a;
   added.age_summary.mswd = 1.1;
   EXPECT_NE(content_hash(added), hash);
+
+  Submission named = a;
+  named.datapoint_name = "S-1";
+  EXPECT_NE(content_hash(named), hash);
 
   Submission no_location = a;
   no_location.location.reset();
