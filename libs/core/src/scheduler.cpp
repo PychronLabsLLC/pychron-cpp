@@ -1,6 +1,7 @@
 #include "pychron/core/scheduler.hpp"
 
 #include <algorithm>
+#include <system_error>
 #include <utility>
 
 #include "pychron/core/signal_bus.hpp"
@@ -26,11 +27,27 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
   if (log_hub_) logger_.emplace(log_hub_->logger("scheduler"));
   if (options_.threads == 0) return;
   workers_.reserve(options_.threads);
-  live_workers_ = options_.threads;
   // Time does not jump until every worker has entered the clock.
   auto hold = std::make_shared<Clock::Hold>(clock_);
-  for (std::size_t i = 0; i < options_.threads; ++i) {
-    workers_.emplace_back([this, hold]() mutable { worker_loop(std::move(hold)); });
+  // A worker takes the mutex before anything else it does with the scheduler,
+  // so it sees the count of the threads that exist, and that count is of
+  // threads really started: the wait for them below, or in the destructor,
+  // is then for threads that will answer.
+  std::unique_lock lock(mutex_);
+  try {
+    for (std::size_t i = 0; i < options_.threads; ++i) {
+      workers_.emplace_back([this, hold]() mutable { worker_loop(std::move(hold)); });
+      ++live_workers_;
+    }
+  } catch (...) {
+    // A thread could not be started. The destructor does not run for an
+    // object whose constructor threw, so the workers there are go here.
+    shutting_down_ = true;
+    clock_.notify_all(work_ready_);
+    while (live_workers_ != 0) clock_.wait(exited_, lock);
+    lock.unlock();
+    for (auto& w : workers_) w.join();
+    throw;
   }
 }
 
@@ -230,17 +247,26 @@ void Scheduler::worker_loop(std::shared_ptr<Clock::Hold> started) {
 void Scheduler::start() {
   std::lock_guard lock(mutex_);
   if (dispatching_) return;
-  dispatching_ = true;
-  dispatcher_done_ = false;
   // Time does not jump until the dispatcher has entered the clock.
   auto hold = std::make_shared<Clock::Hold>(clock_);
   dispatcher_ = std::thread([this, hold]() mutable { dispatcher_loop(std::move(hold)); });
+  // Only once the thread exists: if it could not be started, stop() has
+  // nothing to wait for. The dispatcher needs the mutex held here before it
+  // reads either flag.
+  dispatching_ = true;
+  dispatcher_done_ = false;
 }
 
 void Scheduler::stop() {
   {
     std::unique_lock lock(mutex_);
     if (!dispatching_) return;
+    // A job the dispatcher runs inline would wait here for itself. Refused
+    // before anything is changed, so the scheduler goes on dispatching.
+    if (dispatcher_.get_id() == std::this_thread::get_id()) {
+      throw std::system_error(std::make_error_code(std::errc::resource_deadlock_would_occur),
+                              "Scheduler::stop() called from a job on its own dispatcher thread");
+    }
     dispatching_ = false;
     clock_.notify_all(wake_);
     // Waited for in the clock, where the dispatcher says it has finished; the

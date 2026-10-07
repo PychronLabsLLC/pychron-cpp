@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -94,6 +95,10 @@ class Scheduler {
   std::size_t run_pending();
 
   // Background dispatcher thread that calls run_pending() as jobs fall due.
+  // stop() waits for that thread, so a job running on it (no worker pool)
+  // cannot call it: it throws std::system_error with
+  // resource_deadlock_would_occur, which makes the job a failed one, and the
+  // scheduler goes on dispatching.
   void start();
   void stop();
   bool started() const;

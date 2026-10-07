@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -10,6 +11,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -540,6 +542,47 @@ TEST_F(SchedulerVirtual, StopWaitsForAJobTheDispatcherRunsInline) {
 
   EXPECT_TRUE(finished.load());
   EXPECT_EQ(clock.now(), kStart + 6s);
+}
+
+// stop() waits for the dispatcher to say it has finished, and a job the
+// dispatcher runs inline is the dispatcher: it would wait for itself. It is
+// refused instead, and the job is a failed job like any that throws.
+TEST_F(SchedulerVirtual, StopFromItsOwnJobIsAnErrorNotAHang) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  Scheduler s(clock, nullptr, inline_pool());
+  s.start();
+  std::mutex m;
+  std::error_code refused;
+  auto id = s.every("stops itself", 1s, [&] {
+    try {
+      s.stop();
+    } catch (const std::system_error& e) {
+      std::lock_guard lock(m);
+      refused = e.code();
+      throw;
+    }
+  });
+  ASSERT_TRUE(id);
+
+  clock.sleep_for(1s + 1ms);
+  s.wait_idle();
+
+  auto stats = s.stats(*id);
+  ASSERT_TRUE(stats);
+  EXPECT_EQ(stats->runs, 1u);
+  EXPECT_EQ(stats->failures, 1u);
+  {
+    std::lock_guard lock(m);
+    EXPECT_EQ(refused, std::make_error_code(std::errc::resource_deadlock_would_occur));
+  }
+  // Nothing was half stopped: it is still dispatching, and stops when asked
+  // from outside.
+  EXPECT_TRUE(s.started());
+  s.stop();
+  EXPECT_FALSE(s.started());
+  EXPECT_EQ(clock.now(), kStart + 1s + 1ms);
 }
 
 TEST_F(SchedulerVirtual, RunPendingInlineStillWorks) {
