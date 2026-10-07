@@ -15,6 +15,8 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
+#include "pychron/sim/sim_config.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/heater_ops.hpp"
 #include "pychron/systems/canvas/loader.hpp"
@@ -24,15 +26,37 @@ namespace pychron::systems {
 
 namespace {
 
-// Sim topology from the canvas plumbing: stage volumes (cc) where declared.
+// What a stage is to the gas in it.
+sim::SimRole role_of(canvas::SourceKind kind) {
+  switch (kind) {
+    case canvas::SourceKind::Pump: return sim::SimRole::Pump;
+    case canvas::SourceKind::Getter: return sim::SimRole::Getter;
+    case canvas::SourceKind::Tank: return sim::SimRole::Tank;
+    case canvas::SourceKind::Pipette: return sim::SimRole::Pipette;
+    case canvas::SourceKind::Spectrometer: return sim::SimRole::Spectrometer;
+    case canvas::SourceKind::Laser:
+    case canvas::SourceKind::None: return sim::SimRole::Plain;
+  }
+  return sim::SimRole::Plain;
+}
+
+// Sim topology from the canvas plumbing. Every volume of the graph (a stage,
+// a pipette, a gauge) is a volume, with the stage's size (cc) where it gives
+// one and its kind as its role; a `[[pipette]]` is a pipette, wired as it is
+// drawn.
 sim::SimTopology topology_of(const NetworkGraph& graph, const canvas::Canvas& canvas) {
   sim::SimTopology t;
   for (const auto& v : graph.volumes()) {
-    double cc = 1.0;
+    sim::SimVolume volume{v};  // no size: the simulator's default for its role
     for (const auto& s : canvas.stages) {
-      if (s.name == v && s.volume) cc = *s.volume;
+      if (s.name != v) continue;
+      if (s.volume) volume.cc = *s.volume;
+      volume.role = role_of(canvas::source_kind(s));
     }
-    t.volumes.push_back({v, cc});
+    for (const auto& p : canvas.pipettes) {
+      if (p.name == v) volume.role = sim::SimRole::Pipette;
+    }
+    t.volumes.push_back(std::move(volume));
   }
   for (const auto& v : graph.valves()) t.valves.push_back(v);
   for (const auto& n : graph.volumes()) {
@@ -80,6 +104,13 @@ Result<std::unique_ptr<ExtractionLine>> ExtractionLine::load(const std::filesyst
   if (options.state_file.empty()) {
     options.state_file = std::filesystem::path(system_file).replace_extension(".state.toml");
   }
+  if (!options.sim_file && config->sim.file.empty() && canvas) {
+    // Not named: the sim.toml beside the line, if the lab has one. Its names
+    // are the canvas's, so it is the lab's only when the canvas is loaded.
+    const auto beside = std::filesystem::path(system_file).parent_path() / "sim.toml";
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(beside, ec)) options.sim_file = beside;
+  }
   return create(std::move(*config), std::move(canvas), std::move(options));
 }
 
@@ -99,15 +130,6 @@ Result<void> ExtractionLine::build() {
     network_ = NetworkGraph::from_canvas(*canvas_);
   }
 
-  const bool any_sim =
-      options_.force_sim || std::any_of(config_.transports.begin(), config_.transports.end(), [](const auto& t) {
-        return t.second.kind == config::TransportKind::Sim;
-      });
-  if (any_sim) {
-    sim_ = std::make_unique<sim::SimSystem>(*clock_, network_ ? topology_of(*network_, *canvas_) : sim::SimTopology{},
-                                            options_.sim);
-  }
-
   log_hub_ = options_.log_hub;
   if (!log_hub_) {
     // Logging must never stop the line: warn and carry on without a hub.
@@ -120,6 +142,14 @@ Result<void> ExtractionLine::build() {
   if (log_hub_) {
     logger_.emplace(log_hub_->logger("extraction_line"));
     switches_logger_.emplace(log_hub_->logger("switches"));
+  }
+
+  const bool any_sim =
+      options_.force_sim || std::any_of(config_.transports.begin(), config_.transports.end(), [](const auto& t) {
+        return t.second.kind == config::TransportKind::Sim;
+      });
+  if (any_sim) {
+    if (auto built = build_sim(); !built) return fail(built.error());
   }
 
   bool tracing = false;
@@ -147,6 +177,10 @@ Result<void> ExtractionLine::build() {
     auto transport = make_transport(tc, context);
     if (!transport) return fail(transport.error());
     transports_.emplace_back(name, std::move(*transport));
+  }
+  // Every hook is made: a line, or a gauge's volume, the simulator refused.
+  if (sim_) {
+    if (auto refused = sim_->build_error()) return fail(*refused);
   }
 
   for (const auto& [name, dc] : config_.drivers) {
@@ -205,6 +239,49 @@ Result<void> ExtractionLine::build() {
         if (m.name == e.valve) sim_->set_valve(e.valve, e.state == ValveState::Open);
       }
     }));
+  }
+  return {};
+}
+
+// The simulated lab behind the sim transports: the canvas as volumes with
+// roles, the simulator's numbers from `Options::sim` with a sim.toml over
+// them, and a warning for each thing on the canvas it cannot model.
+Result<void> ExtractionLine::build_sim() {
+  const sim::SimTopology topology = network_ ? topology_of(*network_, *canvas_) : sim::SimTopology{};
+
+  std::filesystem::path file;
+  if (options_.sim_file) {
+    file = *options_.sim_file;
+  } else if (!config_.sim.file.empty()) {
+    if (canvas_) {
+      file = std::filesystem::path(config_.source_file).parent_path() / config_.sim.file;
+    } else {
+      // The same line file serves a tool that loads no canvas (elctl laser):
+      // the lab the sim file describes is not there to be given numbers.
+      log(LogLevel::Info, "sim: '" + config_.sim.file + "' is not read: the line was loaded without its canvas");
+    }
+  }
+  if (!file.empty()) {
+    // A gauge off the canvas is a volume of its own once its controller is
+    // simulated, so the file may name one.
+    sim::SimTopology known = topology;
+    for (const auto& g : config_.gauges) known.volumes.push_back({g.name});
+    auto settings = sim::load_sim_settings(file, known, std::move(options_.sim));
+    if (!settings) return fail(settings.error());
+    options_.sim = std::move(*settings);
+  }
+
+  sim_ = std::make_unique<sim::SimSystem>(*clock_, topology, options_.sim);
+
+  const auto source = sim_->spectrometer_volume();
+  for (const auto& v : topology.volumes) {
+    if (v.role == sim::SimRole::Spectrometer && source && v.name != *source) {
+      log(LogLevel::Warn, "sim: stage '" + v.name + "' is a second spectrometer; the simulated source is '" +
+                              *source + "'");
+    }
+  }
+  for (const auto& [valve, why] : sim_->valves_without_physics()) {
+    log(LogLevel::Warn, "sim: valve '" + valve + "' carries no gas in the simulation: " + why);
   }
   return {};
 }

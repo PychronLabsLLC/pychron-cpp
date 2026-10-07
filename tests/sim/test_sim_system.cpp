@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -996,6 +997,273 @@ TEST(SimSystem, UnknownDriverKindGetsSilentWire) {
   auto hook = sim.hook_for(dc, *cfg);
   ASSERT_TRUE(hook);
   EXPECT_TRUE(hook(Bytes{0x01}).empty());
+}
+
+// A line as the canvas gives it: stages with their kinds, sizes mostly unset.
+//   tank --T-- pipette --L-- line --I-- source --Q-- ion
+//                             |\
+//                             G P
+//                             |  \
+//                           getter turbo
+SimSystem::Topology a_lab() {
+  using sim::SimRole;
+  SimSystem::Topology t;
+  t.volumes = {{"tank", 1000.0, SimRole::Tank},
+               {"pipette", 0.0, SimRole::Pipette},
+               {"line", 0.0, SimRole::Plain},
+               {"getter", 0.0, SimRole::Getter},
+               {"turbo", 0.0, SimRole::Pump},
+               {"source", 0.0, SimRole::Spectrometer},
+               {"ion", 0.0, SimRole::Pump}};
+  t.valves = {"T", "L", "G", "P", "I", "Q"};
+  t.edges = {{"tank", "T"},   {"T", "pipette"}, {"pipette", "L"}, {"L", "line"},   {"line", "G"},   {"G", "getter"},
+             {"line", "P"},   {"P", "turbo"},   {"line", "I"},    {"I", "source"}, {"source", "Q"}, {"Q", "ion"}};
+  return t;
+}
+
+TEST(SimSystem, ATankStartsFullOfAir) {
+  ManualClock clock;
+  SimSystem sim(clock, a_lab(), quiet());
+  const Composition tank = *sim.partial_pressures("tank");
+  EXPECT_EQ(tank, sim::with_ar40(sim::air_ratios(), 3e-5));
+  EXPECT_DOUBLE_EQ(tank[kAr40] / tank[kAr36], 298.56);
+  EXPECT_NEAR(*sim.pressure("line"), 1e-8, 1e-20);  // and nothing else does
+
+  // Unless it is said what it holds, either way.
+  auto settings = quiet();
+  settings.tank_argon40 = 1e-6;
+  SimSystem lean(clock, a_lab(), settings);
+  EXPECT_EQ((*lean.partial_pressures("tank"))[kAr40], 1e-6);
+  settings.compositions = {{"tank", sim::with_ar40(sim::cocktail_ratios(), 2e-7)}};
+  SimSystem cocktail(clock, a_lab(), settings);
+  EXPECT_EQ(*cocktail.partial_pressures("tank"), sim::with_ar40(sim::cocktail_ratios(), 2e-7));
+  settings.compositions.clear();
+  settings.initial_pressures = {{"tank", 5e-4}};
+  SimSystem set(clock, a_lab(), settings);
+  EXPECT_DOUBLE_EQ(*set.pressure("tank"), 5e-4);
+}
+
+TEST(SimSystem, APipetteIsSmallAndAShotIsWhatItHeld) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.compositions = {{"pipette", Composition{}}, {"line", Composition{}}};
+  SimSystem sim(clock, a_lab(), settings);
+  const double tank = (*sim.partial_pressures("tank"))[kAr40];
+
+  // Load: 0.1 cc opened to a litre.
+  sim.set_valve("T", true);
+  clock.advance(10s);
+  sim.set_valve("T", false);
+  const double loaded = (*sim.partial_pressures("pipette"))[kAr40];
+  EXPECT_NEAR(loaded, tank * 1000.0 / 1000.1, tank * 1e-9);
+  // Deliver: into the line's 50 cc.
+  sim.set_valve("L", true);
+  clock.advance(10s);
+  EXPECT_NEAR((*sim.partial_pressures("line"))[kAr40], loaded * 0.1 / 50.1, loaded * 0.1 / 50.1 * 1e-9);
+
+  // A size of its own goes first: the settings', then the topology's.
+  auto topology = a_lab();
+  topology.volumes[1].cc = 0.2;
+  settings.sizes = {{"line", 99.8}};
+  SimSystem sized(clock, topology, settings);
+  ASSERT_TRUE(sized.set_composition("pipette", sim::with_ar40(sim::air_ratios(), 1e-6)));
+  sized.set_valve("L", true);
+  clock.advance(10s);
+  EXPECT_NEAR((*sized.partial_pressures("line"))[kAr40], 1e-6 * 0.2 / 100.0, 1e-6 * 0.2 / 100.0 * 1e-9);
+}
+
+TEST(SimSystem, APumpStagePumps) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"turbo", 1e-3}, {"line", 1e-3}};
+  SimSystem sim(clock, a_lab(), settings);
+  // 50 L/s on its own 50 cc: a millisecond is one time constant.
+  clock.advance(1ms);
+  const double expected = 1e-9 + (1e-3 - 1e-9) * std::exp(-1.0);
+  EXPECT_NEAR(*sim.pressure("turbo"), expected, expected * 1e-9);
+  clock.advance(1s);
+  EXPECT_NEAR(*sim.pressure("turbo"), 1e-9, 1e-15);
+  EXPECT_DOUBLE_EQ(*sim.pressure("line"), 1e-3) << "valved off from it";
+
+  // The settings' speed and base, and a pump of the settings' own on it.
+  settings.pump_speed = 5.0;
+  settings.pump_base = 1e-7;
+  SimSystem slow(clock, a_lab(), settings);
+  clock.advance(10ms);
+  const double slower = 1e-7 + (1e-3 - 1e-7) * std::exp(-1.0);
+  EXPECT_NEAR(*slow.pressure("turbo"), slower, slower * 1e-9);
+  settings.pumps = {{"turbo", {1e-8, 2s}}};
+  SimSystem own(clock, a_lab(), settings);
+  clock.advance(2s);
+  const double owned = 1e-8 + (1e-3 - 1e-8) * std::exp(-1.0);
+  EXPECT_NEAR(*own.pressure("turbo"), owned, owned * 1e-9) << "its own pump, and not the stage's as well";
+  settings.pump_speeds = {{"turbo", 0.05}};  // L/s on 50 cc: a second
+  SimSystem given(clock, a_lab(), settings);
+  clock.advance(1s);
+  EXPECT_NEAR(*given.pressure("turbo"), owned, owned * 1e-9);
+}
+
+TEST(SimSystem, AGetterStageRemovesActiveGas) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.initial_pressures = {{"getter", 1e-5}, {"line", 1e-5}};
+  SimSystem sim(clock, a_lab(), settings);
+  const Composition before = *sim.partial_pressures("getter");
+  // 1 L/s on 50 cc: 50 ms is one time constant.
+  clock.advance(50ms);
+  const Composition after = *sim.partial_pressures("getter");
+  EXPECT_NEAR(after[kActive], before[kActive] * std::exp(-1.0), before[kActive] * 1e-9);
+  EXPECT_DOUBLE_EQ(after[kAr40], before[kAr40]);
+  EXPECT_DOUBLE_EQ(after[kAr36], before[kAr36]);
+  EXPECT_DOUBLE_EQ((*sim.partial_pressures("line"))[kActive], before[kActive]) << "no getter there";
+
+  // The settings' speed; and the old map agrees with the role: it may say a
+  // getter stage is none, or make one of a plain volume.
+  settings.getter_speed = 0.1;
+  settings.getters = {{"line", true}};
+  SimSystem slow(clock, a_lab(), settings);
+  clock.advance(500ms);
+  EXPECT_NEAR((*slow.partial_pressures("getter"))[kActive], before[kActive] * std::exp(-1.0), before[kActive] * 1e-9);
+  EXPECT_NEAR((*slow.partial_pressures("line"))[kActive], before[kActive] * std::exp(-1.0), before[kActive] * 1e-9);
+  settings.getters = {{"getter", false}};
+  SimSystem none(clock, a_lab(), settings);
+  clock.advance(10s);
+  EXPECT_DOUBLE_EQ((*none.partial_pressures("getter"))[kActive], before[kActive]);
+}
+
+TEST(SimSystem, TheSpectrometerStageConsumesAndRemembers) {
+  ManualClock clock;
+  // Static: valved off from everything. A large signal falls by what the
+  // source uses of it.
+  auto settings = quiet();
+  settings.source.memory_fa_per_s = 0.0;
+  settings.compositions = {{"source", sim::with_ar40(sim::air_ratios(), 1e-8)}, {"line", sim::with_ar40(sim::air_ratios(), 1e-8)}};
+  SimSystem falling(clock, a_lab(), settings);
+  const Composition before = *falling.partial_pressures("source");
+  clock.advance(600s);
+  const Composition after = *falling.partial_pressures("source");
+  const double fall = 1e-8 * 2e-5 * 600;
+  EXPECT_NEAR(before[kAr40] - after[kAr40], fall, fall * 0.01);
+  EXPECT_NEAR(after[kAr40], 1e-8 * std::exp(-2e-5 * 600), 1e-8 * 1e-12);
+  EXPECT_NEAR(after[kAr36] / before[kAr36], after[kAr40] / before[kAr40], 1e-12) << "each argon alike";
+  EXPECT_DOUBLE_EQ(after[kActive], before[kActive]) << "and not the active gas";
+  EXPECT_EQ(*falling.partial_pressures("line"), settings.compositions.at("line")) << "nor any other volume";
+
+  // From nothing it rises by its memory: 0.01 fA/s at 1e12 fA/mbar.
+  settings = quiet();
+  settings.compositions = {{"source", Composition{}}};
+  SimSystem rising(clock, a_lab(), settings);
+  clock.advance(600s);
+  const Composition risen = *rising.partial_pressures("source");
+  const double rise = 0.01 * 600 / 1e12;
+  EXPECT_NEAR(risen[kAr40], rise, rise * 0.01);
+  EXPECT_EQ(risen[kAr36], 0.0);
+  EXPECT_EQ(risen[kActive], 0.0);
+
+  // Whatever the source's size: memory is a signal, so a pressure.
+  settings.sizes = {{"source", 500.0}};
+  settings.source = {1e11, 0.0, 0.5};
+  SimSystem large(clock, a_lab(), settings);
+  clock.advance(100s);
+  EXPECT_NEAR((*large.partial_pressures("source"))[kAr40], 0.5 * 100 / 1e11, 0.5 * 100 / 1e11 * 1e-9);
+}
+
+TEST(SimSystem, EveryVolumeOfARoleStillHasItsWalls) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.outgassing = 5e-13;
+  settings.source = {1e12, 0.0, 0.0};
+  settings.compositions = {{"pipette", Composition{}}, {"source", Composition{}}, {"line", Composition{}}};
+  settings.leaks = {{"line", 1e-12}};
+  SimSystem sim(clock, a_lab(), settings);
+  clock.advance(1000s);
+  // Per litre of each, so the same pressure in each; and the leak on top.
+  EXPECT_NEAR((*sim.partial_pressures("pipette"))[kAr40], 5e-10, 5e-10 * 1e-9);
+  EXPECT_NEAR((*sim.partial_pressures("source"))[kAr40], 5e-10, 5e-10 * 1e-9);
+  EXPECT_NEAR((*sim.partial_pressures("line"))[kAr40], 5e-10 + 1e-12 * 1000 / 0.05, 2.05e-8 * 1e-9);
+}
+
+TEST(SimSystem, NoSpectrometerStageMeansNoSpectrometerVolume) {
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  EXPECT_FALSE(sim.spectrometer_volume());
+  SimSystem lab(clock, a_lab(), quiet());
+  ASSERT_TRUE(lab.spectrometer_volume());
+  EXPECT_EQ(*lab.spectrometer_volume(), "source");
+}
+
+TEST(SimSystem, TwoSpectrometerStagesTakeTheFirstByName) {
+  ManualClock clock;
+  auto topology = a_lab();
+  topology.volumes.push_back({"argus", 0.0, sim::SimRole::Spectrometer});
+  topology.volumes.push_back({"zeta", 0.0, sim::SimRole::Spectrometer});
+  SimSystem sim(clock, topology, quiet());
+  ASSERT_TRUE(sim.spectrometer_volume());
+  EXPECT_EQ(*sim.spectrometer_volume(), "argus");
+  // Both are sources to the gas all the same.
+  ASSERT_TRUE(sim.set_composition("zeta", sim::with_ar40(sim::air_ratios(), 1e-8)));
+  clock.advance(600s);
+  EXPECT_LT((*sim.partial_pressures("zeta"))[kAr40], 1e-8 * 0.99);
+
+  // A line the network refused has none.
+  auto settings = quiet();
+  settings.default_pressure = -1.0;
+  SimSystem refused(clock, topology, settings);
+  ASSERT_TRUE(refused.build_error());
+  EXPECT_FALSE(refused.spectrometer_volume());
+}
+
+TEST(SimSystem, SaysWhichValvesHaveNoPhysics) {
+  ManualClock clock;
+  auto topology = three_volumes();
+  topology.valves.push_back("X");
+  topology.valves.push_back("Y");
+  topology.edges.emplace_back("bone", "X");
+  topology.edges.emplace_back("X", "Y");
+  topology.edges.emplace_back("Y", "turbo");
+  SimSystem sim(clock, topology, quiet());
+  const auto without = sim.valves_without_physics();
+  ASSERT_EQ(without.size(), 2u);
+  EXPECT_EQ(without[0].first, "X");
+  EXPECT_NE(without[0].second.find("valve 'Y'"), std::string::npos) << without[0].second;
+  EXPECT_EQ(without[1].first, "Y");
+  SimSystem sound(clock, three_volumes(), quiet());
+  EXPECT_TRUE(sound.valves_without_physics().empty());
+}
+
+// A gauge off the canvas gets its volume when its hook is made, and what the
+// settings say of its name with it.
+TEST(SimSystem, AGaugeVolumeOffTheCanvasHasItsSettings) {
+  auto cfg = config::load_system_config_from_string(kConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  auto settings = quiet();
+  settings.outgassing = 5e-13;  // not for it: it has no walls of the line
+  settings.initial_pressures = {{"IG1", 1e-3}, {"MI1", 1e-6}};
+  settings.pumps = {{"IG1", {1e-9, 5s}}};
+  settings.pump_speeds = {{"IG1", 0.02}};
+  settings.sizes = {{"IG1", 20.0}, {"MI1", 10.0}};
+  settings.leaks = {{"MI1", 1e-12}};
+  settings.getters = {{"MI1", true}};
+  SimSystem sim(clock, three_volumes(), settings);
+  ASSERT_FALSE(sim.has_volume("IG1"));
+  (void)sim.hook_for(cfg->drivers.at("ig"), *cfg);
+  (void)sim.hook_for(cfg->drivers.at("mi"), *cfg);
+  ASSERT_FALSE(sim.build_error()) << sim.build_error()->what;
+  ASSERT_TRUE(sim.has_volume("IG1"));
+  ASSERT_TRUE(sim.has_volume("MI1"));
+
+  const Composition before = *sim.partial_pressures("MI1");
+  clock.advance(1s);  // 0.02 L/s on 20 cc: one time constant
+  const double expected = 1e-9 + (1e-3 - 1e-9) * std::exp(-1.0);
+  EXPECT_NEAR(*sim.pressure("IG1"), expected, expected * 1e-9);
+  const Composition after = *sim.partial_pressures("MI1");
+  EXPECT_NEAR(after[kAr40] - before[kAr40], 1e-12 * 1 / 0.01, 1e-10 * 1e-6) << "its leak, into its 10 cc";
+  // Its getter, 1 L/s: the active gas it had is gone, and what the leak
+  // brings stands at leak / speed.
+  const double leaking = sim::with_ar40(sim::air_ratios(), 1e-12)[kActive];
+  EXPECT_NEAR(after[kActive], leaking / 1.0, leaking * 1e-6);
+  EXPECT_LT(after[kActive], before[kActive] * 1e-3);
 }
 
 }  // namespace

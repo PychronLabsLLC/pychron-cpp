@@ -244,7 +244,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "cryo", "heaters", "logging", "aliases"});
+                           "pipettes", "cryo", "heaters", "logging", "aliases", "sim"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -290,6 +290,9 @@ class ConfigBuilder {
     }
     if (const auto* n = root.get("cryo")) {
       if (const auto* t = p_.as_table(*n, "cryo")) c.cryo = parse_cryo(*t);
+    }
+    if (const auto* n = root.get("sim")) {
+      if (const auto* t = p_.as_table(*n, "sim")) parse_sim(*t, c.sim);
     }
     return c;
   }
@@ -387,6 +390,13 @@ class ConfigBuilder {
     p_.reject_unknown(t, s, Keys{"name", "scan_interval_ms"});
     p_.read(get, s, "name", s.name, true);
     p_.read(get, s, "scan_interval_ms", s.scan_interval_ms, false, 1);
+  }
+
+  void parse_sim(const toml::table& t, SimSection& s) {
+    p_.begin(s, t, "sim");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, s, Keys{"file"});
+    p_.read(get, s, "file", s.file, true);
   }
 
   void parse_logging(const toml::table& t, LoggingConfig& l) {

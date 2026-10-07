@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/gas_network.hpp"
@@ -39,23 +40,77 @@ bool is_plc_kind(std::string_view kind) {
 }
 
 // The canvas gives cc and the network holds litres: the one place they meet.
-double litres_of(double cc, const SimSettings& settings) {
-  return (cc > 0 ? cc : settings.default_volume_cc) / 1000.0;
+// A size the settings give goes first, then the topology's, then the role's.
+double litres_of(const std::string& name, double cc, SimRole role, const SimSettings& settings) {
+  if (auto own = settings.sizes.find(name); own != settings.sizes.end()) cc = own->second;
+  if (!(cc > 0)) cc = role == SimRole::Pipette ? settings.pipette_cc : settings.default_volume_cc;
+  return cc / 1000.0;
 }
 
 // `mbar` of air.
 Composition air_at(double mbar) { return scaled(air_ratios(), mbar / total(air_ratios())); }
 
-// What a volume holds at the start: its composition, else its pressure (or
-// the default) as air.
-Composition initial_of(const std::string& name, const SimSettings& settings) {
+// What a volume holds at the start: its composition, else its pressure as
+// air, else a tank's air, else the default pressure as air.
+Composition initial_of(const std::string& name, SimRole role, const SimSettings& settings) {
   if (auto given = settings.compositions.find(name); given != settings.compositions.end()) return given->second;
-  auto init = settings.initial_pressures.find(name);
-  return air_at(init == settings.initial_pressures.end() ? settings.default_pressure : init->second);
+  if (auto init = settings.initial_pressures.find(name); init != settings.initial_pressures.end()) {
+    return air_at(init->second);
+  }
+  if (role == SimRole::Tank) return with_ar40(air_ratios(), settings.tank_argon40);
+  return air_at(settings.default_pressure);
 }
 
-// A getter's pumping speed for active gas, L/s.
-constexpr double kGetterSpeed = 1.0;
+// One volume as the network has it. `walls`: it is part of the line and its
+// walls give gas off; a gauge off the canvas is not.
+GasVolume volume_of(const std::string& name, double cc, SimRole role, bool walls, const SimSettings& settings) {
+  GasVolume volume;
+  volume.name = name;
+  volume.litres = litres_of(name, cc, role, settings);
+  volume.initial = initial_of(name, role, settings);
+  if (walls) {
+    // Per litre, argon as in air and active gas at its own rate.
+    volume.source_per_s = scaled(with_ar40(air_ratios(), settings.outgassing), volume.litres);
+    volume.source_per_s[index(Species::Active)] = settings.outgassing_active * volume.litres;
+  }
+  if (auto leak = settings.leaks.find(name); leak != settings.leaks.end()) {
+    const Composition air = with_ar40(air_ratios(), leak->second);
+    for (std::size_t s = 0; s < kSpeciesCount; ++s) volume.source_per_s[s] += air[s];
+  }
+  if (role == SimRole::Spectrometer) {
+    // The ion source uses each argon at the same rate, and its memory comes
+    // back as Ar40: fA/s over fA/mbar is mbar/s, of this volume.
+    for (const Species s : {Species::Ar36, Species::Ar37, Species::Ar38, Species::Ar39, Species::Ar40}) {
+      volume.loss_per_s[index(s)] = settings.source.consumption;
+    }
+    volume.source_per_s[index(Species::Ar40)] +=
+        settings.source.memory_fa_per_s / settings.source.sensitivity * volume.litres;
+  }
+  return volume;
+}
+
+// The pumps on a volume of `litres`: the settings' own for the name, else a
+// pump stage's; and a getter's, where the stage or the settings make it one.
+std::vector<GasPump> pumps_of(const std::string& name, SimRole role, double litres, const SimSettings& settings) {
+  std::vector<GasPump> out;
+  if (auto own = settings.pumps.find(name); own != settings.pumps.end()) {
+    const SimPump& pump = own->second;
+    // speed = V / tau with V the pump's own volume as described: what that
+    // volume is merged with, or opened to, is not the pump's. A pump with no
+    // time constant is as fast as the clock can tell. A speed given outright
+    // goes first.
+    const double tau = std::max(seconds(pump.tau), seconds(Duration{1}));
+    const auto speed = settings.pump_speeds.find(name);
+    out.push_back({name, speed == settings.pump_speeds.end() ? litres / tau : speed->second, pump.base, true, true});
+  } else if (role == SimRole::Pump) {
+    out.push_back({name, settings.pump_speed, settings.pump_base, true, true});
+  }
+  const auto listed = settings.getters.find(name);
+  if (listed == settings.getters.end() ? role == SimRole::Getter : listed->second) {
+    out.push_back({name, settings.getter_speed, 0.0, false, true});
+  }
+  return out;
+}
 
 // The network's description of a line. What a SimTopology may say loosely
 // (a name twice, a valve with the name of a volume, settings for names that
@@ -64,46 +119,34 @@ constexpr double kGetterSpeed = 1.0;
 // or pump base.
 GasTopology describe(const SimTopology& topology, const SimSettings& settings) {
   GasTopology out;
-  std::map<std::string, double, std::less<>> litres;  // by volume
+  std::set<std::string, std::less<>> volumes;
   for (const auto& v : topology.volumes) {
-    if (v.name.empty() || litres.contains(v.name)) continue;
-    GasVolume volume;
-    volume.name = v.name;
-    volume.litres = litres_of(v.cc, settings);
-    volume.initial = initial_of(v.name, settings);
-    // Walls: per litre, argon as in air and active gas at its own rate.
-    volume.source_per_s = scaled(with_ar40(air_ratios(), settings.outgassing), volume.litres);
-    volume.source_per_s[index(Species::Active)] = settings.outgassing_active * volume.litres;
-    if (auto leak = settings.leaks.find(v.name); leak != settings.leaks.end()) {
-      const Composition air = with_ar40(air_ratios(), leak->second);
-      for (std::size_t s = 0; s < kSpeciesCount; ++s) volume.source_per_s[s] += air[s];
-    }
-    litres.emplace(v.name, volume.litres);
+    if (v.name.empty() || !volumes.insert(v.name).second) continue;
+    GasVolume volume = volume_of(v.name, v.cc, v.role, true, settings);
+    for (auto& pump : pumps_of(v.name, v.role, volume.litres, settings)) out.pumps.push_back(std::move(pump));
     out.volumes.push_back(std::move(volume));
   }
 
   std::set<std::string, std::less<>> valves;
   for (const auto& name : topology.valves) {
-    if (name.empty() || litres.contains(name) || !valves.insert(name).second) continue;
+    if (name.empty() || volumes.contains(name) || !valves.insert(name).second) continue;
     auto own = settings.conductances.find(name);
     out.valves.push_back({name, own == settings.conductances.end() ? settings.valve_conductance : own->second});
   }
 
-  for (const auto& [name, pump] : settings.pumps) {
-    auto volume = litres.find(name);
-    if (volume == litres.end()) continue;
-    // speed = V / tau with V the pump's own volume as described: what that
-    // volume is merged with, or opened to, is not the pump's. A pump with no
-    // time constant is as fast as the clock can tell.
-    const double tau = std::max(seconds(pump.tau), seconds(Duration{1}));
-    out.pumps.push_back({name, volume->second / tau, pump.base, true, true});
-  }
-  for (const auto& [name, getter] : settings.getters) {
-    if (getter && litres.contains(name)) out.pumps.push_back({name, kGetterSpeed, 0.0, false, true});
-  }
-
   out.edges = topology.edges;
   return out;
+}
+
+// The first spectrometer volume by name order, as the network will have it.
+std::optional<std::string> spectrometer_of(const SimTopology& topology) {
+  std::optional<std::string> first;
+  std::set<std::string, std::less<>> seen;
+  for (const auto& v : topology.volumes) {
+    if (v.name.empty() || !seen.insert(v.name).second) continue;  // the first of a name is the volume
+    if (v.role == SimRole::Spectrometer && (!first || v.name < *first)) first = v.name;
+  }
+  return first;
 }
 
 // The network of a line; an empty one, and why, if it is refused.
@@ -123,6 +166,7 @@ Unexpected<Error> unknown_volume(std::string_view volume) {
 SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
     : clock_(clock),
       settings_(std::move(settings)),
+      spectrometer_(spectrometer_of(topology)),
       network_(build(topology, settings_, build_error_)),
       start_(clock.now()),
       last_(start_) {
@@ -131,18 +175,32 @@ SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
 
 SimSystem::~SimSystem() = default;
 
-const std::optional<Error>& SimSystem::build_error() const { return build_error_; }
+std::optional<Error> SimSystem::build_error() const {
+  std::lock_guard lock(mutex_);
+  return build_error_;
+}
+
+std::optional<std::string> SimSystem::spectrometer_volume() const {
+  std::lock_guard lock(mutex_);
+  return spectrometer_ && network_.has_volume(*spectrometer_) ? spectrometer_ : std::nullopt;
+}
+
+std::vector<std::pair<std::string, std::string>> SimSystem::valves_without_physics() const {
+  std::lock_guard lock(mutex_);
+  return network_.valves_without_physics();
+}
 
 void SimSystem::add_volume_locked(const std::string& name, double cc) {
   if (network_.has_volume(name)) return;
   // No part of the line, so no walls of it either: it holds what it is
-  // given. Refused (the name of a valve, a pressure that cannot be), the
-  // gauge has no volume and reads nothing, and the line says why.
-  GasVolume volume;
-  volume.name = name;
-  volume.litres = litres_of(cc, settings_);
-  volume.initial = initial_of(name, settings_);
-  if (auto added = network_.add_volume(std::move(volume)); !added && !build_error_) build_error_ = added.error();
+  // given, and has the leak and the pumps the settings give its name.
+  // Refused (the name of a valve, a pressure that cannot be), the gauge has
+  // no volume and reads nothing, and the line says why.
+  GasVolume volume = volume_of(name, cc, SimRole::Plain, false, settings_);
+  const std::vector<GasPump> pumps = pumps_of(name, SimRole::Plain, volume.litres, settings_);
+  if (auto added = network_.add_volume(std::move(volume), pumps); !added && !build_error_) {
+    build_error_ = added.error();
+  }
 }
 
 TimePoint SimSystem::advance_locked() const {

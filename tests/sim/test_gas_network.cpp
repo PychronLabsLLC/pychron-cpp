@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <random>
 #include <string>
 #include <string_view>
@@ -839,6 +840,64 @@ TEST(GasNetwork, OneStepEqualsManyOnAPumpedNetwork) {
           << volume.name << " with open '" << state << "'";
     }
   }
+}
+
+// What the line's builder warns of: each valve that will carry nothing, and
+// why.
+TEST(GasNetwork, SaysWhichValvesHaveNoPhysicsAndWhy) {
+  GasTopology topology;
+  for (const char* name : {"a", "b", "c", "d"}) topology.volumes.push_back({name, 0.05, {}, {}, {}});
+  topology.valves = {{"good", 0.1}, {"V1", 0.1}, {"V2", 0.1}, {"tee", 0.1}, {"end", 0.1}, {"loose", 0.1},
+                     {"loop", 0.1}};
+  topology.edges = {{"a", "good"},  {"good", "b"},                  // a link
+                    {"a", "V1"},    {"V1", "V2"},   {"V2", "b"},    // two valves with no volume between
+                    {"a", "tee"},   {"tee", "b"},   {"tee", "d"},   // a tee on a valve
+                    {"a", "end"},                                   // a dangling valve
+                    {"c", "d"},     {"c", "loop"},  {"loop", "d"}}; // both sides the same merged volume
+  const GasNetwork network = must(topology);
+  const auto without = network.valves_without_physics();
+  std::map<std::string, std::string> why(without.begin(), without.end());
+  ASSERT_EQ(without.size(), why.size());
+  EXPECT_FALSE(why.contains("good"));
+  ASSERT_EQ(why.size(), 6u);
+  EXPECT_NE(why.at("V1").find("valve 'V2'"), std::string::npos) << why.at("V1");
+  EXPECT_NE(why.at("V1").find("one volume only ('a')"), std::string::npos) << why.at("V1");
+  EXPECT_NE(why.at("V2").find("valve 'V1'"), std::string::npos) << why.at("V2");
+  EXPECT_NE(why.at("tee").find("3 volumes"), std::string::npos) << why.at("tee");
+  EXPECT_NE(why.at("end").find("one volume only ('a')"), std::string::npos) << why.at("end");
+  EXPECT_NE(why.at("loose").find("no volume"), std::string::npos) << why.at("loose");
+  EXPECT_NE(why.at("loop").find("one volume"), std::string::npos) << why.at("loop");
+  EXPECT_NE(why.at("loop").find("'c' and 'd'"), std::string::npos) << why.at("loop");
+  // By name, each once.
+  for (std::size_t i = 1; i < without.size(); ++i) EXPECT_LT(without[i - 1].first, without[i].first);
+
+  EXPECT_TRUE(must(pipette_line()).valves_without_physics().empty());
+}
+
+// A volume added later may have pumps, as one described at the start may.
+TEST(GasNetwork, AnAddedVolumeMayBePumped) {
+  GasTopology described;
+  described.volumes = {{"v", 0.05, sim::with_ar40(sim::air_ratios(), 1e-6), {}, {}}};
+  described.pumps = {{"v", 2.0, 1e-9, true, true}, {"v", 1.0, 0.0, false, true}};
+  GasNetwork at_start = must(described);
+
+  GasNetwork later = must(GasTopology{});
+  ASSERT_TRUE(later.add_volume(described.volumes[0], described.pumps));
+  at_start.advance(0.1);
+  later.advance(0.1);
+  const Composition expected = *at_start.partial_pressures("v");
+  const Composition got = *later.partial_pressures("v");
+  for (std::size_t s = 0; s < sim::kSpeciesCount; ++s) EXPECT_DOUBLE_EQ(got[s], expected[s]) << s;
+  EXPECT_LT(got[sim::index(Species::Ar40)], 1e-6 * 0.02);  // four of the pump's time constants
+
+  // A pump that cannot be is refused, and the network is as it was.
+  GasVolume other = described.volumes[0];
+  other.name = "w";
+  const auto refused = later.add_volume(other, {{"w", -1.0, 1e-9, true, true}});
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_NE(refused.error().what.find("'w'"), std::string::npos) << refused.error().what;
+  EXPECT_FALSE(later.has_volume("w"));
 }
 
 }  // namespace

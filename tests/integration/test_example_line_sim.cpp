@@ -51,6 +51,8 @@ sim::SimSettings lab() {
   s.outgassing = 0.0;
   s.outgassing_active = 0.0;
   s.valve_conductance = 1e6;
+  // And every stage the canvas gives no size is 1 cc.
+  s.default_volume_cc = 1.0;
   return s;
 }
 
@@ -224,6 +226,7 @@ TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
   ExtractionLine::Options options;
   options.clock = &clock;
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, with no sim.toml over them
   // Valve states and locks persist beside the config by default: keep the
   // test out of the repo and independent of earlier runs.
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line.state.toml";
@@ -264,6 +267,7 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
   ExtractionLine::Options options;
   options.clock = &clock;
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, with no sim.toml over them
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-stop.state.toml";
   std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
@@ -299,6 +303,7 @@ TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
 TEST(ExampleLineSteady, ActuatesAndScansInRealTime) {
   ExtractionLine::Options options;  // no clock given: the line's own SteadyClock
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, with no sim.toml over them
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-steady.state.toml";
   std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);

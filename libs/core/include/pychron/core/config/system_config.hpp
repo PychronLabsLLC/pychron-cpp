@@ -21,6 +21,13 @@ struct SystemSection : Located {
   std::int64_t scan_interval_ms = 1000;
 };
 
+// `[sim]`: for a line with simulated transports.
+struct SimSection : Located {
+  // The simulator's numbers (sim.toml), relative to this file. Empty: a
+  // `sim.toml` beside this file, if there is one.
+  std::string file;
+};
+
 enum class TransportKind { Serial, Tcp, Udp, ModbusRtu, ModbusTcp, Sim, Link };
 
 enum class Parity { None, Even, Odd };
@@ -192,6 +199,7 @@ struct SystemConfig {
   std::vector<HeaterConfig> heaters;
   LoggingConfig logging;
   std::map<std::string, AliasConfig> aliases;  // by key
+  SimSection sim;
 };
 
 }  // namespace pychron::config

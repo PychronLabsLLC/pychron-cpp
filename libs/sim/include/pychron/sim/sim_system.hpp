@@ -23,6 +23,11 @@
 //     and whatever is open to it follows through the valves between.
 //   - Walls give off gas (`Settings::outgassing`), so a volume valved off
 //     from every pump rises; a leak adds air, a getter takes active gas.
+//   - What a volume is to the gas is its role, which the line takes from
+//     the canvas (lab simulator spec section 6.1): a pump stage pumps, a
+//     getter takes active gas, a tank starts full of air, a pipette is
+//     small, and the spectrometer's source uses its argon up slowly and
+//     gives a little back (ion consumption and memory, spec section 5.1).
 //   - Gauge readings add Gaussian noise (relative, `Settings::noise`) that
 //     is a function of the seed, the volume and the time of the reading
 //     (keyed_noise.hpp), not of how many readings came before.
@@ -64,9 +69,15 @@
 
 namespace pychron::sim {
 
+// What a volume is to the gas, from the canvas stage's kind.
+enum class SimRole { Plain, Pump, Getter, Tank, Pipette, Spectrometer };
+
 struct SimVolume {
   std::string name;
-  double cc = 1.0;  // size; zero or less: SimSettings::default_volume_cc
+  // Size. Zero or less is unset: SimSettings::sizes, else pipette_cc for a
+  // pipette, else default_volume_cc.
+  double cc = 0.0;
+  SimRole role = SimRole::Plain;
 };
 
 struct SimTopology {
@@ -94,7 +105,12 @@ struct SimPump {
 struct SimSettings {
   double default_pressure = 1e-8;  // volumes not listed below
   std::map<std::string, double> initial_pressures;  // totals, mbar, as air
-  std::map<std::string, SimPump> pumps;  // keyed by volume name
+  // Keyed by volume name. A pump stage with no entry here has a pump of
+  // `pump_speed` and `pump_base`.
+  std::map<std::string, SimPump> pumps;
+  // By volume, for a pump in `pumps`: its speed, L/s, as sim.toml gives it.
+  // Goes before the pump's `tau`.
+  std::map<std::string, double> pump_speeds;
   double noise = 0.01;                   // relative 1-sigma gauge noise
   std::uint64_t seed = 0x5eed;
 
@@ -110,7 +126,35 @@ struct SimSettings {
   std::map<std::string, double> conductances;  // by valve: L/s for Ar40
   // By volume: a leak of air, as mbar L / s of Ar40; the rest follows.
   std::map<std::string, double> leaks;
-  std::map<std::string, bool> getters;  // by volume: a pump of active gas only
+  // By volume: a pump of active gas only, of `getter_speed`. A getter stage
+  // is one unless it is false here.
+  std::map<std::string, bool> getters;
+
+  // By volume: its size, cc. Goes before the topology's.
+  std::map<std::string, double> sizes;
+  // mbar of Ar40 a tank starts with, the rest in the ratios of air, unless
+  // `compositions` or `initial_pressures` says what it holds.
+  double tank_argon40 = 3e-5;
+  double pipette_cc = 0.1;    // a pipette with no size
+  double pump_speed = 50.0;   // L/s: a pump stage's
+  double pump_base = 1e-9;    // mbar: its ultimate pressure
+  double getter_speed = 1.0;  // L/s for active gas
+  // The spectrometer's source volume (spec section 5.1).
+  struct Source {
+    double sensitivity = 1e12;      // fA per mbar of an isotope in the source
+    double consumption = 2e-5;      // 1/s: what the ion source uses of each argon
+    double memory_fa_per_s = 0.01;  // what the source gives back, as Ar40 signal
+  } source;
+  // By detector: what it reads with no beam on it, and how that drifts. Not
+  // the line's: whoever builds the simulated spectrometer reads them.
+  struct DetectorBaseline {
+    double baseline = 0.0;     // fA (or cps on a counting detector)
+    double drift_per_h = 0.0;  // the same, per hour
+  };
+  std::map<std::string, DetectorBaseline> detectors;
+  // Compositions by name, as ratios to Ar36 (`[compositions.<name>]` of
+  // sim.toml); `air` and `cocktail` are there without being listed.
+  std::map<std::string, Composition> named;
 };
 
 class SimSystem {
@@ -150,14 +194,21 @@ class SimSystem {
 
   bool has_volume(std::string_view name) const;
 
+  // The spectrometer's source: the first volume of that role by name order;
+  // nothing when the line has none.
+  std::optional<std::string> spectrometer_volume() const;
+  // The valves that have a state and no physics, each with why (a valve
+  // joined to another valve, a tee on a valve, a dangling valve): what the
+  // line warns of when it builds this.
+  std::vector<std::pair<std::string, std::string>> valves_without_physics() const;
+
   // Set when the topology and settings do not describe a network (a
   // negative pressure, a size that is not a number): the line is then empty,
   // no volume answers, and valves are still tracked. Set as well, if not
   // already, when hook_for cannot give a gauge off the canvas its own volume
   // (its name is a valve's, its pressure cannot be): that gauge reads
-  // nothing. Written only while the line is being built, by the constructor
-  // and the hook_for calls: read it once the hooks are made.
-  const std::optional<Error>& build_error() const;
+  // nothing. The first refusal stands; read it once the hooks are made.
+  std::optional<Error> build_error() const;
 
   // Hook for a SimTransport answering as `driver` would, given the system
   // config it belongs to:
@@ -210,14 +261,16 @@ class SimSystem {
 
   // Moves the network to clock.now(), and says when that is.
   TimePoint advance_locked() const;
-  // An isolated volume for a gauge the topology does not have; nothing if a
-  // volume has the name already.
+  // An isolated volume for a gauge the topology does not have, with what
+  // the settings say of that name (size, gas, leak, pump, getter); nothing
+  // if a volume has the name already.
   void add_volume_locked(const std::string& name, double cc);
 
   const Clock& clock_;
   Settings settings_;
   mutable std::mutex mutex_;
-  std::optional<Error> build_error_;  // the first refusal; see build_error()
+  std::optional<Error> build_error_;         // the first refusal; under mutex_
+  std::optional<std::string> spectrometer_;  // see spectrometer_volume()
   mutable GasNetwork network_;        // only under mutex_
   // What every name was last told, the network's valves and the names it
   // does not have (switches, unmodelled valves) alike.

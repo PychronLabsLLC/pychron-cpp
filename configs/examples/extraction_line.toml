@@ -21,6 +21,12 @@ default_level = "info"
 # "*.wire" = "trace"
 # "scheduler" = "debug"
 
+# What the simulated lab behind the `kind = "sim"` transports is like (its
+# pressures, pump speeds, the gas in the tank) is in sim.toml beside this
+# file, if there is one. To name another:
+# [sim]
+# file = "sim.toml"
+
 [transports.valve_bus]
 kind = "sim"
 timeout_ms = 500

@@ -124,9 +124,14 @@ class GasNetwork {
   Result<void> set_partial_pressures(std::string_view volume, const Composition& mbar);
   Result<void> inject(std::string_view volume, const Composition& mbar_litres);
 
-  // A volume joined to nothing (a gauge off the canvas). Config error as in
+  // A volume joined to nothing (a gauge off the canvas), with the pumps on
+  // it (their `volume` is not read: they are this one's). Config error as in
   // `make`, and when a volume or valve already has the name.
-  Result<void> add_volume(GasVolume volume);
+  Result<void> add_volume(GasVolume volume, const std::vector<GasPump>& pumps = {});
+
+  // The valves that carry nothing whatever their state, by name, each with
+  // why: what the line's builder tells the user it could not model.
+  std::vector<std::pair<std::string, std::string>> valves_without_physics() const;
 
  private:
   GasNetwork() = default;
@@ -145,6 +150,9 @@ class GasNetwork {
     std::size_t b = 0;
   };
 
+  // A pump is a loss of speed / V on its (merged) volume and a source of
+  // its base share times its speed: together, -(speed / V) (p - share).
+  static void fit(Volume& whole, const GasPump& pump);
   // The six flows of the volumes and open valves as they are now.
   Result<void> rebuild();
   // Index into volumes_, or volumes_.size() for a name that is no volume.
@@ -154,6 +162,7 @@ class GasNetwork {
   std::map<std::string, std::size_t, std::less<>> volume_of_;  // every original name
   std::vector<Valve> valves_;
   std::map<std::string, std::size_t, std::less<>> valve_of_;
+  std::map<std::string, std::string, std::less<>> unlinked_;  // valve -> why it has no physics
   // mbar L, per species, per volume: what `LinearFlow` advances.
   std::array<std::vector<double>, kSpeciesCount> amount_;
   std::vector<LinearFlow> flows_;  // one per species

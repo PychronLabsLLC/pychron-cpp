@@ -8,7 +8,15 @@
 // `kind = "sim"` transports (or every transport, with force_sim) are hooked
 // to one SimSystem whose topology comes from the canvas NetworkGraph, so the
 // identical code path runs with no hardware. The hook on a sim transport is
-// chosen by the first driver configured on it.
+// chosen by the first driver configured on it. Each canvas stage is to the
+// gas what its kind says (a pump pumps, a tank holds air, ...), and the
+// simulator's numbers are its defaults with a `sim.toml` over them
+// (pychron/sim/sim_config.hpp): the file `[sim] file` names, relative to the
+// line's, else a `sim.toml` beside the line's file when load() finds one.
+// Its names are the canvas's: a line loaded without its canvas reads
+// neither (only a file the caller names in Options::sim_file). A sim.toml
+// that does not read, or a line the simulator cannot describe, fails the
+// load; a valve it cannot give physics is a warning in the log.
 //
 // start():
 //   1. opens every transport (all-or-nothing: on any failure all are closed
@@ -65,6 +73,11 @@ struct ExtractionLineOptions {
   std::set<std::string> trace;   // transports to record, on top of config `trace = true`
   std::filesystem::path trace_dir = "traces";
   sim::SimSettings sim;          // initial pressures, pumps, noise for the SimSystem
+  // A sim.toml read over `sim` (what the file says goes first). Unset: with
+  // a canvas, the config's `[sim] file`, else, in load(), a `sim.toml`
+  // beside the system file if there is one. Set and empty: none, whatever
+  // the config says.
+  std::optional<std::filesystem::path> sim_file;
   Scheduler::Options scheduler;
   // Where software locks, valve states and each valve's history (counts
   // and times, SwitchStats) persist between runs (TOML: `locked = ["A", ...]`,
@@ -180,6 +193,7 @@ class ExtractionLine {
   ExtractionLine(config::SystemConfig config, std::optional<canvas::Canvas> canvas, Options options);
 
   Result<void> build();
+  Result<void> build_sim();
   void read_all_gauges();
   void record_pressure(const std::string& gauge, double value, TimePoint ts);
   Result<IHeater*> heater_or_error(std::string_view name) const;
