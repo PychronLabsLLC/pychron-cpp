@@ -1,9 +1,11 @@
 #pragma once
 
 // Shared set-up for the experiment UI suites: a scratch copy of the example
-// lab (configs/examples) on a simulated clock pumped 400x that drives the
-// line's scheduler, the sim spectrometer and a LabSession, as
-// `pychron-ui --sim --sim-speed 400` builds them.
+// lab (configs/examples) on a VirtualClock paced at 400x, the line with its
+// own scheduler threads, the sim spectrometer and a LabSession, as
+// `pychron-ui --sim --sim-speed 400` builds them. The Qt thread does not take
+// part in the clock: simulated time goes on while a test looks, and a test
+// waits for what it expects in real time (QTRY_*, QSignalSpy::wait).
 
 #include <random>
 #include <chrono>
@@ -15,7 +17,7 @@
 
 #include <QtTest/QtTest>
 
-#include "pychron/core/clock_pump.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/scripting/script_host.hpp"
@@ -56,8 +58,7 @@ inline experiment::QueueSpec example_queue(const std::filesystem::path& dir, con
 // Destroy any bridge or window built on this before the fixture itself.
 struct SimLab {
   std::filesystem::path dir = scratch_lab();
-  ManualClock clock{TimePoint{} + std::chrono::hours(1)};
-  ClockPump pump{clock, 400};
+  VirtualClock clock{VirtualClock::Options{.speed = 400}};  // outlives everything below
   std::unique_ptr<systems::ExtractionLine> line;
   std::unique_ptr<spectrometer::Spectrometer> spec;
   std::unique_ptr<spectrometer::ScanService> scan;
@@ -72,13 +73,10 @@ struct SimLab {
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
     options.state_file = dir / "line.state.toml";
     auto made = systems::ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", options);
     if (!made) qFatal("cannot load the example line: %s", made.error().what.c_str());
     line = std::move(*made);
-    pump.drive(&line->scheduler());
     if (!line->start()) qFatal("the example line did not start");
     auto loaded = spectrometer::load_spectrometer_for_app(
         dir / "spectrometer.sim-integrated.toml", spectrometer::SpectrometerContext{clock, line->scheduler(), line->bus()},
@@ -98,8 +96,6 @@ struct SimLab {
   ~SimLab() {
     session.reset();  // aborts and joins a running queue
     scan.reset();
-    pump.drive(nullptr);
-    pump.stop();
     line->stop();
     spec.reset();
     sim::BeamModelRegistry::global().clear();

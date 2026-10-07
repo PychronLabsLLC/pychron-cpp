@@ -1,5 +1,8 @@
 // LabSession on the sim lab: a scratch copy of configs/examples run on a
-// simulated clock pumped 400x, as `elctl exp run --sim --sim-speed 400` does.
+// VirtualClock at unlimited speed, as `elctl exp run --sim --sim-speed max`
+// does. The test's thread takes part in the clock: time moves only while it
+// waits there (session.wait(), eventually()), so what a test does between two
+// waits happens at one instant of the queue's time.
 
 #include <gtest/gtest.h>
 
@@ -21,7 +24,7 @@
 #include <thread>
 #include <vector>
 
-#include "pychron/core/clock_pump.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
@@ -35,6 +38,7 @@
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
+#include "virtual_time.hpp"
 
 namespace pychron::experiment::lab {
 namespace {
@@ -42,18 +46,24 @@ namespace {
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
-template <class F>
-bool eventually(F done, std::chrono::seconds limit = 30s) {
-  const auto until = std::chrono::steady_clock::now() + limit;
-  while (!done()) {
-    if (std::chrono::steady_clock::now() > until) return false;
-    std::this_thread::sleep_for(2ms);
-  }
-  return true;
-}
-
-class LabSessionTest : public ::testing::Test {
+class LabSessionTest : public pychron::testing::VirtualTimeTest {
  protected:
+  // A dragonfly's twelve seconds are some four hundred pictures made and
+  // searched: under the thread sanitizer that alone is nearly twenty seconds.
+  LabSessionTest() : VirtualTimeTest(50s) {}
+
+  // Waits in the clock's time, looking every 100 ms of it, until `done`;
+  // false when an hour of it has passed first.
+  template <class F>
+  bool eventually(F done) {
+    const TimePoint until = clock_.now() + std::chrono::hours(1);
+    while (!done()) {
+      if (clock_.now() > until) return false;
+      clock_.sleep_for(100ms);
+    }
+    return true;
+  }
+
   void SetUp() override {
     dir_ = fs::temp_directory_path() /
            ("pychron-session-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
@@ -65,13 +75,10 @@ class LabSessionTest : public ::testing::Test {
     systems::ExtractionLine::Options options;
     options.clock = &clock_;
     options.force_sim = true;
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
     options.state_file = dir_ / "line.state.toml";
     auto line = systems::ExtractionLine::load(dir_ / "extraction_line.toml", dir_ / "canvas.toml", options);
     ASSERT_TRUE(line) << line.error().what;
     line_ = std::move(*line);
-    pump_.drive(&line_->scheduler());
     ASSERT_TRUE(line_->start());
 
     auto spec = spectrometer::load_spectrometer_for_app(
@@ -124,8 +131,6 @@ class LabSessionTest : public ::testing::Test {
     subs_.clear();
     session_.reset();
     scan_.reset();
-    pump_.drive(nullptr);
-    pump_.stop();
     if (line_) line_->stop();
     spec_.reset();
     sim::BeamModelRegistry::global().clear();
@@ -139,8 +144,8 @@ class LabSessionTest : public ::testing::Test {
   }
 
   fs::path dir_;
-  ManualClock clock_{TimePoint{} + std::chrono::hours(1)};
-  ClockPump pump_{clock_, 400};
+  VirtualClock clock_;  // before everything that is given a reference to it
+  Clock::Participant test_{clock_, "test"};
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<spectrometer::Spectrometer> spec_;
   std::unique_ptr<spectrometer::ScanService> scan_;
@@ -177,8 +182,8 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   ASSERT_TRUE(row);
   EXPECT_EQ(*row, 3u);
 
-  // QueueEnded comes after the scan is resumed.
-  ASSERT_TRUE(eventually([&] { return !ended().empty(); }));
+  // QueueEnded comes after the scan is resumed, and before wait() returns.
+  ASSERT_FALSE(ended().empty());
   EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Completed);
   EXPECT_TRUE(scan_->running());
   EXPECT_FALSE(scan_->paused());
@@ -301,7 +306,7 @@ TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
   session_->abort();
   session_->wait();
   // given back by the time anyone is told the queue has ended
-  ASSERT_TRUE(eventually([&] { return !ended().empty(); }));
+  ASSERT_FALSE(ended().empty());
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
   EXPECT_TRUE(lasers_->drive(Lasers::Driver::Manual));
 }
@@ -960,7 +965,11 @@ TEST_F(LabSessionTest, TheQueueEndIsNotified) {
   ASSERT_TRUE(session_->start(queue_));
   auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
-  session_->notifier().wait_idle();
+  {
+    // The notifier's commands are the outside world's: not waited for in the clock.
+    const Clock::Detached detached(clock_);
+    session_->notifier().wait_idle();
+  }
   std::lock_guard lock(m);
   ASSERT_EQ(sent.size(), 1u);
   EXPECT_TRUE(sent[0].ok) << sent[0].error;
@@ -991,20 +1000,42 @@ TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
 }
 
+// A cancel from a thread the clock knows nothing of (the UI's, a signal's)
+// reaches a queue that is asleep in simulated time. The test's thread keeps
+// time where it is meanwhile, so the cancel lands in the first run.
+TEST_F(LabSessionTest, ACancelFromOutsideTheClockEndsTheQueue) {
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(eventually([&] { return started_ > 0; }));
+  const TimePoint at = clock_.now();
+  std::thread outsider([&] { session_->cancel(); });
+  outsider.join();  // not a participant: nothing for the clock to wait for
+  EXPECT_EQ(clock_.now(), at);
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Cancelled) << result->reason;
+  // The run that had started is the only one, and it did not finish.
+  ASSERT_EQ(result->runs.size(), 1u);
+  EXPECT_EQ(result->runs.front().state, run::RunState::Cancelled);
+  EXPECT_FALSE(session_->running());
+}
+
 // A QueueEnded subscriber may call back into the session while the owner
 // starts the next queue (which joins the previous queue's thread).
 TEST_F(LabSessionTest, AQueueEndedSubscriberMayCallBackIn) {
   std::atomic<int> called{0};
   subs_.push_back(line_->bus().subscribe<QueueEnded>([this, &called](const QueueEnded&) {
-    std::this_thread::sleep_for(200ms);  // still publishing when the next start() comes
+    clock_.sleep_for(200ms);  // still publishing when the next start() comes
     (void)session_->running();
     (void)session_->state();
     ++called;
   }));
   queue_.runs.resize(1);
   ASSERT_TRUE(session_->start(queue_));
+  // Seen within 100 ms of the queue's end: the subscriber has 200 ms to go.
   ASSERT_TRUE(eventually([&] { return !session_->running(); }));
+  EXPECT_EQ(called.load(), 0);
   ASSERT_TRUE(session_->start(queue_));  // joins the first thread mid-publish
+  EXPECT_EQ(called.load(), 1);
   ASSERT_TRUE(session_->wait().has_value());
   EXPECT_EQ(called.load(), 2);
 }

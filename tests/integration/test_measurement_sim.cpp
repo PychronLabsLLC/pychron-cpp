@@ -2,8 +2,9 @@
 // (SimSystem) and the integrated sim spectrometer (BeamModel) from
 // configs/examples, a plan resolved through the shipped [aliases] and detector
 // config, and the MeasurementEngine driving both through the real adapters.
-// Time is a ManualClock pumped by a helper thread that also drives the
-// spectrometer's Scheduler.
+// Time is a VirtualClock: the test's thread takes part in it, the line's and
+// the spectrometer's schedulers run on their own threads, and nothing waits on
+// the wall clock.
 //
 // The example field table is laid out so that with Ar40 on H1, Ar39 sits on
 // H2; Ar36 is measured on CDD by a separate hop.
@@ -19,9 +20,7 @@
 #include <mutex>
 #include <sstream>
 #include <set>
-#include <thread>
 
-#include "sim_pump.hpp"
 #include "virtual_time.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/jobs/job_runner.hpp"
@@ -65,8 +64,6 @@ MeasurementInputs inputs(plan::MeasurementPlan p, std::string run_id, Conditiona
   in.run_id = std::move(run_id);
   return in;
 }
-
-using pychron::testing::Pump;
 
 // No peak-center job yet in this test: centering is covered by the spectrometer
 // sim test and the peak_center unit.
@@ -119,7 +116,7 @@ baseline = { default = "average" }
 expose = ["main.cycles"]
 )";
 
-class MeasurementSim : public ::testing::Test {
+class MeasurementSim : public pychron::testing::VirtualTimeTest {
  protected:
   void SetUp() override {
     // Extraction line: settle times zeroed so valve moves do not wait.
@@ -131,8 +128,6 @@ class MeasurementSim : public ::testing::Test {
     ASSERT_TRUE(canvas) << canvas.error().what;
     systems::ExtractionLine::Options line_options;
     line_options.clock = &clock_;
-    line_options.scheduler.threads = 0;
-    line_options.run_scheduler = false;
     auto line = systems::ExtractionLine::create(std::move(*cfg), std::move(*canvas), line_options);
     ASSERT_TRUE(line) << line.error().what;
     line_ = std::move(*line);
@@ -159,11 +154,11 @@ class MeasurementSim : public ::testing::Test {
         std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_});
     ASSERT_TRUE(spec) << spec.error().what;
     spec_ = std::move(*spec);
-    pump_ = std::make_unique<Pump>(clock_, scheduler_);
+    scheduler_.start();
   }
 
   void TearDown() override {
-    pump_.reset();
+    scheduler_.stop();
     spec_.reset();
     line_.reset();
     sim::BeamModelRegistry::global().clear();
@@ -171,15 +166,16 @@ class MeasurementSim : public ::testing::Test {
 
   plan::PlanResolvers resolvers() const { return plan::PlanResolvers{aliases_.get(), catalog_.get()}; }
 
-  ManualClock clock_{TimePoint{} + 1000s};
+  VirtualClock clock_;  // before everything that is given a reference to it
+  // Time moves only while the test waits in the clock (a measurement, a job).
+  Clock::Participant test_{clock_, "test"};
   SignalBus bus_;
-  Scheduler scheduler_{clock_, &bus_, Scheduler::Options{0}};
+  Scheduler scheduler_{clock_, &bus_};
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<SystemConfigAliases> aliases_;
   std::unique_ptr<SpectrometerCatalog> catalog_;
   std::shared_ptr<sim::BeamModel> beam_;
   std::unique_ptr<spectrometer::Spectrometer> spec_;
-  std::unique_ptr<Pump> pump_;
   SignalBus::Subscription valve_sub_;
   std::mutex mutex_;
   std::vector<std::string> valve_events_;
@@ -516,16 +512,23 @@ PeakCenterRequest slow_request() {
 
 class SpectrometerPeakCenterSim : public MeasurementSim {
  protected:
-  // Cancels `token` from another thread once the job is acquiring.
+  // Cancels `token` from another thread once the job is acquiring. That
+  // thread takes part in the clock and looks every 100 ms of its time, so the
+  // cancel falls in the first of the job's 80 s however fast the machine is.
   Result<PeakCenterReport> cancel_part_way(SpectrometerPeakCenter& peak_center, scripting::CancelToken& token) {
     std::atomic<bool> gave_up{false};
-    std::thread canceller([&] {
-      gave_up = !pychron::testing::eventually_real([&] { return spec_->acquisition().running(); });
+    const auto started = clock_.now();
+    pychron::testing::Crew crew(clock_);
+    crew.start("canceller", [&] {
+      while (!spec_->acquisition().running() && clock_.now() - started < 60s) clock_.sleep_for(100ms);
+      gave_up = !spec_->acquisition().running();
       token.cancel();
     });
     auto r = peak_center.peak_center(slow_request(), token);
-    canceller.join();
+    crew.join();
     EXPECT_FALSE(gave_up) << "the job never started to acquire";
+    // Cancelled part way: not the 80 steps of 1 s.
+    EXPECT_LT(clock_.now() - started, 60s);
     return r;
   }
 };
@@ -573,19 +576,20 @@ TEST_F(SpectrometerPeakCenterSim, CancellingTheRunLeavesAnotherJobOnTheRunnerAlo
   std::condition_variable cv;
   bool started = false, release = false;
   std::atomic<bool> cancelled{false};
-  // Runs on the pump's thread and holds it until released.
+  // Runs on a scheduler thread and holds the runner until released. Both
+  // threads take part in the clock, so they wait for each other through it.
   auto other = runner.submit(jobs::JobSpec{"other", [&](jobs::JobContext& ctx) -> Result<std::any> {
                                              std::unique_lock lock(mutex);
                                              started = true;
-                                             cv.notify_all();
-                                             cv.wait(lock, [&] { return release; });
+                                             clock_.notify_all(cv);
+                                             while (!release) clock_.wait(cv, lock);
                                              cancelled = ctx.cancel.cancelled();
                                              return std::any(1);
                                            }});
   ASSERT_TRUE(other) << other.error().what;
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return started; }));
+    while (!started) clock_.wait(cv, lock);
   }
 
   SpectrometerPeakCenter peak_center(*spec_, {{"slow", slow_peak_center()}}, &runner);
@@ -601,11 +605,28 @@ TEST_F(SpectrometerPeakCenterSim, CancellingTheRunLeavesAnotherJobOnTheRunnerAlo
   {
     std::lock_guard lock(mutex);
     release = true;
+    clock_.notify_all(cv);
   }
-  cv.notify_all();
   runner.wait_idle();
   EXPECT_FALSE(cancelled);
   auto job = runner.job(*other);
+  ASSERT_TRUE(job);
+  EXPECT_EQ(job->state, jobs::JobState::Succeeded);
+}
+
+// The job's time passes while its submitter waits for the runner: that wait
+// is in the clock, or time would stand with the job asleep in it.
+TEST_F(SpectrometerPeakCenterSim, WaitingForTheRunnerLetsTheJobsTimePass) {
+  jobs::JobRunner runner(*spec_, scheduler_, bus_, clock_);
+  const auto before = clock_.now();
+  auto id = runner.submit(jobs::JobSpec{"sleeper", [&](jobs::JobContext&) -> Result<std::any> {
+                                          clock_.sleep_for(30s);
+                                          return std::any(1);
+                                        }});
+  ASSERT_TRUE(id) << id.error().what;
+  runner.wait_idle();
+  EXPECT_GE(clock_.now() - before, 30s);
+  auto job = runner.job(*id);
   ASSERT_TRUE(job);
   EXPECT_EQ(job->state, jobs::JobState::Succeeded);
 }
@@ -629,8 +650,9 @@ TEST_F(SpectrometerPeakCenterSim, ARunAlreadyCancelledDoesNotRunTheJob) {
   }
 }
 
-// The same spectrometer on a VirtualClock: the scheduler's dispatcher runs the
-// acquisition polls and the test's thread, a participant, runs the job.
+// The same spectrometer with nothing but the scheduler's dispatcher (no
+// workers): it runs the acquisition polls and the test's thread, a
+// participant, runs the job. A stall is reported to the test.
 class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
  protected:
   static VirtualClock::Options options(SpectrometerPeakCenterVirtual* self) {

@@ -2,7 +2,9 @@
 
 // Shared set-up for the laser UI suites: a scratch copy of the example lab,
 // its line with every transport simulated and started, and the lab's lasers.
-// Time is simulated and pumped fast, so a stage move takes milliseconds.
+// Time is a VirtualClock paced fast, so a stage move takes milliseconds; the
+// Qt thread does not take part in it and waits for what it expects in real
+// time.
 
 #include <chrono>
 #include <filesystem>
@@ -15,8 +17,7 @@
 #include <QtTest/QtTest>
 
 #include "laser_bridge.hpp"
-#include "pychron/core/clock.hpp"
-#include "pychron/core/clock_pump.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
@@ -28,8 +29,7 @@ namespace pychron::ui::test {
 // Destroy any bridge or window built on this before the fixture itself.
 struct SimLaserLab {
   std::filesystem::path dir;
-  ManualClock clock{TimePoint{} + std::chrono::hours(1)};
-  ClockPump pump;
+  VirtualClock clock;  // outlives everything below
   std::unique_ptr<systems::ExtractionLine> line;
   experiment::lab::Lab lab;
   std::unique_ptr<experiment::lab::Lasers> lasers;
@@ -37,7 +37,7 @@ struct SimLaserLab {
   // `speed`: simulated seconds per real second. A test that stops a move
   // part way takes it slowly, so that the move cannot end first on a busy
   // machine: 40 mm at the stage's 5 mm/s is 1.6 s at 5x.
-  explicit SimLaserLab(double speed = 50) : pump(clock, speed) {
+  explicit SimLaserLab(double speed = 50) : clock(VirtualClock::Options{.speed = speed}) {
     namespace fs = std::filesystem;
     std::random_device rd;
     dir = fs::temp_directory_path() / ("pychron-ui-laser-" + std::to_string(rd()) + std::to_string(rd()));
@@ -47,13 +47,10 @@ struct SimLaserLab {
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
     options.state_file = dir / "line.state.toml";
     auto loaded = systems::ExtractionLine::load(dir / "extraction_line.toml", dir / "canvas.toml", options);
     if (!loaded) qFatal("cannot load example line: %s", to_string(loaded.error()).c_str());
     line = std::move(*loaded);
-    pump.drive(&line->scheduler());
     if (auto started = line->start(); !started) qFatal("line did not start: %s", to_string(started.error()).c_str());
     lab = experiment::lab::load_lab({dir, dir / "extraction_line.toml", {}});
     lasers = std::make_unique<experiment::lab::Lasers>(lab, *line);
@@ -62,8 +59,6 @@ struct SimLaserLab {
   SimLaserLab& operator=(const SimLaserLab&) = delete;
   ~SimLaserLab() {
     lasers.reset();
-    pump.drive(nullptr);
-    pump.stop();
     if (line) line->stop();
     line.reset();
     std::error_code ec;

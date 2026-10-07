@@ -282,19 +282,26 @@ A `Clock::Participant` is constructed first thing in each of these threads:
 |---|---|
 | scheduler dispatcher and workers | `libs/core/src/scheduler.cpp` |
 | `QueuedTransport` worker | `libs/transport/src/queued_transport.cpp` |
+| the caller of `Executor::execute`, for the length of the call | `libs/experiment/src/executor/executor.cpp` |
 | executor slot (one per run) | `libs/experiment/src/executor/executor.cpp` |
-| lab session | `libs/experiment/src/lab/session.cpp` |
+| lab session (one per queue) | `libs/experiment/src/lab/session.cpp` |
 | run `post_eq` | `libs/experiment/src/run/run.cpp` |
-| notifier | `libs/experiment/src/lab/notifier.cpp` |
 | NGX link reader | `libs/devices/src/spectrometer/ngx_link.cpp` |
+| the `elctl exp run` command, while a simulated queue runs | `apps/elctl/src/exp.cpp` |
 
-The caller of `Executor::run`, `Scheduler::run_pending` (threads = 0) or a
-script entry point is a participant if it wants time to wait for it; the
-elctl commands and the tests that drive these construct one.
+The caller of `Scheduler::run_pending` (threads = 0) or of a script entry
+point is a participant if it wants time to wait for it; the tests that drive
+these construct one. A guard nests: a thread that is already a participant
+(the lab session's, inside `Executor::execute`) counts once.
 
-The log hub flusher, the vision live feed, the `process.cpp` reader and the
-store-source workers deal with the outside world only and are not
-participants.
+The notifier (`libs/experiment/src/lab/notifier.cpp`) is not a participant:
+it waits untimed for work, and its work is running programs outside. A
+participant that waits for it to drain does so inside a `Detached`. Nor are
+the log hub flusher, the vision live feed, the `process.cpp` reader, the
+store-source workers, the UI's own threads (the Qt thread, the laser bridge's
+command and video threads, the entry bridge's worker) or the clock's
+watchdog: they deal with the outside world only. They may call everything on
+the clock; their waits are woken by a jump but never hold time back.
 
 ### 4.2 Waits moved onto the clock
 

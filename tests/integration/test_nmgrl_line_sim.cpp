@@ -1,13 +1,17 @@
 // The NMGRL valve box (configs/examples/nmgrl): a full-size line converted
 // from its legacy setupfiles, every controller simulated. The files load as
 // committed, the canvas matches the line, and valves on each of the five
-// controllers actuate with the pipette interlocks enforced.
+// controllers actuate with the pipette interlocks enforced. Time is a
+// VirtualClock the test's thread takes part in: the drivers' waits for their
+// instruments are in its time.
 
 #include <filesystem>
 
 #include <gtest/gtest.h>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "virtual_time.hpp"
 
 namespace {
 
@@ -16,10 +20,15 @@ using namespace pychron::systems;
 
 const std::filesystem::path kDir = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "nmgrl";
 
-TEST(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
+using NmgrlLineSim = pychron::testing::VirtualTimeTest;
+
+TEST_F(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
+  VirtualClock clock;
+  Clock::Participant test(clock, "test");
   // Valve states and locks persist beside the config by default: keep the
   // test out of the repo, and out of the state of anyone running this line.
   ExtractionLine::Options options;
+  options.clock = &clock;
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-nmgrl-line.state.toml";
   std::filesystem::remove(options.state_file);
   auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);

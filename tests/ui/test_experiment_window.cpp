@@ -1,4 +1,4 @@
-// ExperimentWindow end to end on the sim lab (pumped 400x): open the example
+// ExperimentWindow end to end on the sim lab (simulated time paced at 400x): open the example
 // queue, run it, follow it; confirmations, saving, and View > Experiment.
 
 #include <atomic>

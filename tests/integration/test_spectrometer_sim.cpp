@@ -1,20 +1,20 @@
 // End-to-end: example spectrometer config -> SpectrometerAssembler -> sim
 // drivers on one BeamModel -> position, acquire, a coarse centering scan,
 // table update, re-position. Runs identically against the integrated-vendor
-// and legacy-split configs. Time is a ManualClock pumped by a helper thread
-// that also drives the Scheduler, so nothing waits on the wall clock.
+// and legacy-split configs. Time is a VirtualClock: the test's thread takes
+// part in it, the scheduler runs on its own threads, and nothing waits on the
+// wall clock.
 
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
-#include <thread>
 
-#include "sim_pump.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -24,8 +24,6 @@ namespace {
 
 const std::filesystem::path kDir(PYCHRON_EXAMPLE_CONFIGS_DIR);
 constexpr double kAr40 = 39.9623831237;
-
-using pychron::testing::Pump;
 
 double mean_on(const std::vector<Reading>& readings, const DetectorId& det) {
   double sum = 0.0;
@@ -40,7 +38,7 @@ double mean_on(const std::vector<Reading>& readings, const DetectorId& det) {
   return n > 0 ? sum / n : 0.0;
 }
 
-class SpectrometerSim : public ::testing::TestWithParam<const char*> {
+class SpectrometerSim : public pychron::testing::VirtualTimeTest, public ::testing::WithParamInterface<const char*> {
  protected:
   void SetUp() override {
     auto data = cfg::load_spectrometer(kDir / GetParam());
@@ -61,25 +59,26 @@ class SpectrometerSim : public ::testing::TestWithParam<const char*> {
     ASSERT_TRUE(spec.has_value()) << spec.error().what;
     spec_ = std::move(*spec);
     moved_ = bus_.subscribe<MagnetMoved>([this](const MagnetMoved& m) { moves_.push_back(m); });
-    pump_ = std::make_unique<Pump>(clock_, scheduler_);
+    scheduler_.start();
   }
 
   void TearDown() override {
-    pump_.reset();
+    scheduler_.stop();
     spec_.reset();
     sim::BeamModelRegistry::global().clear();
   }
 
   static constexpr double kOffset = 0.012;
-  ManualClock clock_{TimePoint{} + 1000s};
+  VirtualClock clock_;  // before everything that is given a reference to it
+  // Time moves only while the test waits in the clock (a move's settle, acquire()).
+  Clock::Participant test_{clock_, "test"};
   SignalBus bus_;
-  Scheduler scheduler_{clock_, &bus_, Scheduler::Options{0}};
+  Scheduler scheduler_{clock_, &bus_};
   FieldTable table_;
   std::shared_ptr<sim::BeamModel> beam_;
   std::unique_ptr<Spectrometer> spec_;
   SignalBus::Subscription moved_;
   std::vector<MagnetMoved> moves_;
-  std::unique_ptr<Pump> pump_;
 };
 
 TEST_P(SpectrometerSim, PositionAcquireCenterUpdateReposition) {
