@@ -180,6 +180,12 @@ and time stops; a thread woken any other way is not heard. Hence:
   busy, and the holder's wait never ends. A mutex that guards a few fields,
   or belongs to a condition variable, stays `std::mutex` and is never held
   across such a call.
+- A scripting host call that waits or talks to a device releases the
+  interpreter lock first (`host_state.cpp`): the lock is a plain mutex to the
+  clock, and held across simulated time it stalls the next script thread.
+- One clock per `CancelToken` and per `LaserSystem`: a token is waited on and
+  woken through the clock of its waiters, and a laser system's camera is on
+  the clock the system was given (one on another is refused).
 - Timestamps that are written down come from `clock.wall_now()`, not
   `system_clock::now()`, so a simulated session is stamped in simulated time.
   What the UI shows against such a stamp ("since", "ago", an alarm's time)
@@ -197,7 +203,9 @@ Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
 - A test in simulated time derives from `VirtualTimeTest`, declares the
   `VirtualClock` first, makes its own thread a `Clock::Participant` and moves
   time with `clock.sleep_for(d)`: time does not move while the test's thread
-  is running, so what it then asserts about `clock.now()` is exact.
+  is running, so what it then asserts about `clock.now()` is exact. With no
+  participant at all a timed wait on a `VirtualClock` returns at once, at its
+  deadline: a test whose thread is not one has nothing holding time back.
 - Its other threads are started with `Crew`, which follows the start and
   join rules above. `await_waiters(clock, n)` waits (in real time, with a
   limit) until `n` threads are asleep in the clock.
