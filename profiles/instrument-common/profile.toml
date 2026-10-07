@@ -1,7 +1,7 @@
 name = "instrument-common"
 title = "Instrument lab files"
 kind = "fragment"
-summary = "Starter measurement plans, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
+summary = "Starter measurement plans, peak-center config, run defaults, special identifiers, reference samples, a blank block and an example queue, built from the instrument's detectors"
 version = 1
 includes = ["lab-common", "extraction-line-starter"]
 groups = ["Simulation", "Instrument connection", "Detectors", "Extraction line"]
@@ -54,6 +54,14 @@ to = "peak_center.toml"
 [[files]]
 template = "defaults.toml"
 to = "defaults.toml"
+
+[[files]]
+template = "identifiers.toml"
+to = "identifiers.toml"
+
+[[files]]
+template = "seed.toml"
+to = "seed.toml"
 
 [[files]]
 template = "blocks/blank_pair.toml"

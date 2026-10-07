@@ -1,0 +1,67 @@
+# What pychron setup puts in a new database: the project and samples that
+# blanks, airs and cocktails are of, and the production ratios of a reactor.
+# Rows already there are left as they are; setup never changes or removes
+# one. After editing this file: elctl entry seed
+
+project = "references"
+
+[[samples]]
+identifier = "bu"            # the special identifier, as in identifiers.toml
+analysis_type = "blank_unknown"
+sample = "blank_unknown"
+material = "blank"
+
+[[samples]]
+identifier = "ba"
+analysis_type = "blank_air"
+sample = "blank_air"
+material = "blank"
+
+[[samples]]
+identifier = "bc"
+analysis_type = "blank_cocktail"
+sample = "blank_cocktail"
+material = "blank"
+
+[[samples]]
+identifier = "be"
+analysis_type = "blank_extractionline"
+sample = "blank_extractionline"
+material = "blank"
+
+[[samples]]
+identifier = "bg"
+analysis_type = "background"
+sample = "background"
+material = "blank"
+
+[[samples]]
+identifier = "a"
+analysis_type = "air"
+sample = "air"
+material = "air"
+
+[[samples]]
+identifier = "c"
+analysis_type = "cocktail"
+sample = "cocktail"
+material = "cocktail"
+
+[[samples]]
+identifier = "ic"
+analysis_type = "detector_ic"
+sample = "detector_ic"
+material = "air"
+
+# Interference production ratios, [value, error]. A package made with this
+# reactor starts with them (elctl entry package add --reactor Triga).
+[reactors.Triga]
+K4039 = [0.00873, 0.00017]
+K3839 = [0.013, 0.0]
+K3739 = [0.0, 0.0]
+Ca3937 = [0.000758, 7e-06]
+Ca3837 = [4e-05, 2e-05]
+Ca3637 = [0.000286, 5e-07]
+Cl3638 = [250.0, 0.0]
+Ca_K = [1.96, 0.0]
+Cl_K = [0.227, 0.0]

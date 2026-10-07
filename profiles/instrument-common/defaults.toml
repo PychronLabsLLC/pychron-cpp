@@ -1,5 +1,6 @@
 # What a new run starts with in the run factory, per analysis type
-# (written by pychron setup).
+# (written by pychron setup). The sample tables name the reference samples
+# of seed.toml, so a new blank or air is recorded as one of them.
 
 [unknown."*"]
 template = "multicollect"
@@ -19,10 +20,86 @@ post_measurement = "sim_pump"
 [blank_unknown."*".extraction]
 duration = 2
 
+[blank_unknown."*".sample]
+sample = "blank_unknown"
+material = "blank"
+project = "references"
+
+[blank_air."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[blank_air."*".extraction]
+duration = 2
+
+[blank_air."*".sample]
+sample = "blank_air"
+material = "blank"
+project = "references"
+
+[blank_cocktail."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[blank_cocktail."*".extraction]
+duration = 2
+
+[blank_cocktail."*".sample]
+sample = "blank_cocktail"
+material = "blank"
+project = "references"
+
+[blank_extractionline."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[blank_extractionline."*".extraction]
+duration = 2
+
+[blank_extractionline."*".sample]
+sample = "blank_extractionline"
+material = "blank"
+project = "references"
+
+[background."*"]
+template = "multicollect"
+script = "sim_extract"
+post_measurement = "sim_pump"
+
+[background."*".extraction]
+duration = 2
+
+[background."*".sample]
+sample = "background"
+material = "blank"
+project = "references"
+
 [air."*"]
 template = "multicollect"
 post_measurement = "sim_pump"
 
+[air."*".sample]
+sample = "air"
+material = "air"
+project = "references"
+
+[cocktail."*"]
+template = "multicollect"
+post_measurement = "sim_pump"
+
+[cocktail."*".sample]
+sample = "cocktail"
+material = "cocktail"
+project = "references"
+
 [detector_ic."*"]
 template = "detector_ic"
 post_measurement = "sim_pump"
+
+[detector_ic."*".sample]
+sample = "detector_ic"
+material = "air"
+project = "references"

@@ -17,6 +17,7 @@ identifier = "bu"
 extraction = { script = "sim_extract", duration = 2 }
 measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
+sample = { sample = "blank_unknown", material = "blank", project = "references" }
 
 [[runs]]
 identifier = "66001"
