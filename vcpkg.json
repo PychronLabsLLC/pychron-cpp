@@ -1,6 +1,6 @@
 {
   "name": "pychron-cpp",
-  "version-string": "0.2.0",
+  "version-string": "0.3.0",
   "description": "Instrument control for noble-gas extraction lines (pychron replacement)",
   "dependencies": [
     "asio",
@@ -13,7 +13,14 @@
     "ui": {
       "description": "Qt6 UI (apps/pychron-ui)",
       "dependencies": [
-        { "name": "qtbase", "default-features": false, "features": ["widgets", "gui"] }
+        {
+          "name": "qtbase",
+          "default-features": false,
+          "features": [
+            "widgets",
+            "gui"
+          ]
+        }
       ]
     },
     "scripting": {

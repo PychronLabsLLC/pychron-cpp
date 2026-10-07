@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(pychron_cpp VERSION 0.2.0 LANGUAGES CXX)  # x-release-please-version
+project(pychron_cpp VERSION 0.3.0 LANGUAGES CXX)  # x-release-please-version
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
