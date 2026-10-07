@@ -323,23 +323,33 @@ std::vector<std::string> warnings_of(const pp::LevelFit& fit) {
   std::vector<std::string> out;
   const auto hole = [](const pp::FittedPosition& p) { return "hole " + std::to_string(p.hole); };
   for (const auto& p : fit.positions) {
-    for (const auto& id : p.rejected) out.push_back("analysis " + id + " of " + hole(p) + " was rejected: it gives no J");
     for (const auto note : p.notes) {
       switch (note) {
-        case pp::PositionNote::AnalysisNotReduced:
-          out.push_back("an analysis of " + hole(p) + " could not be reduced and was left out");
-          break;
+        case pp::PositionNote::AnalysisNotReduced: break;  // named below, by record id
         case pp::PositionNote::NoUsableAnalysis: out.push_back(hole(p) + " has no usable analysis"); break;
         case pp::PositionNote::LeftOutOfFit: out.push_back(hole(p) + " left out of the fit"); break;
         case pp::PositionNote::MeanMswdOutsideLimits:
           out.push_back(hole(p) + ": mean MSWD " + pct_text(p.mean_j_mswd) + " is outside its limits");
           break;
         case pp::PositionNote::Extrapolated: out.push_back(hole(p) + " is extrapolated (outside the monitors)"); break;
-        case pp::PositionNote::AnalysisRejected: break;  // named above, by record id
+        case pp::PositionNote::AnalysisRejected: break;  // named below, by record id
       }
     }
   }
   if (fit.mswd_outside_limits) out.push_back("fit MSWD " + pct_text(fit.mswd) + " is outside its limits");
+  for (const auto& p : fit.positions)
+    for (const auto& a : p.analyses) {
+      std::string why;
+      switch (a.state) {
+        case pp::AnalysisState::Used: continue;
+        case pp::AnalysisState::OmittedByTag: why = "omitted (tag " + a.tag + ")"; break;
+        case pp::AnalysisState::OmittedBySavedFit: why = "omitted (saved fit)"; break;
+        case pp::AnalysisState::OmittedByEdit: why = "omitted (here)"; break;
+        case pp::AnalysisState::NotReduced: why = "not reduced: " + a.reduction_error; break;
+        case pp::AnalysisState::NoJ: why = "no J"; break;
+      }
+      out.push_back(hole(p) + ": " + a.record_id + " " + why);
+    }
   return out;
 }
 

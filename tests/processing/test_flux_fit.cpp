@@ -474,5 +474,133 @@ TEST(FluxFitLevel, ModelNames) {
   EXPECT_FALSE(parse_model_kind(""));
 }
 
+const FittedPosition::UsedAnalysis& by_record(const FittedPosition& p, const std::string& id) {
+  return *std::find_if(p.analyses.begin(), p.analyses.end(), [&](auto& a) { return a.record_id == id; });
+}
+
+TEST(FluxFitLevel, EachAnalysisCarriesItsJ) {
+  auto in = level();
+  auto fit = fit_level(in, plane(true), {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  const auto& p = at_hole(*fit, 1);
+  const auto& src = at_hole(in, 1);
+  ASSERT_EQ(p.analyses.size(), 3u);
+  for (std::size_t i = 0; i < 3; ++i) {
+    const auto j = pr::j_of(*src.analyses[i].f, in.monitor_set.constants());
+    ASSERT_TRUE(j);
+    const auto& a = p.analyses[i];
+    EXPECT_EQ(a.state, AnalysisState::Used);
+    EXPECT_EQ(a.tag, "ok");
+    ASSERT_TRUE(a.j && a.j_err);
+    EXPECT_NEAR(*a.j, j->nominal(), std::abs(j->nominal()) * 1e-15);
+    EXPECT_NEAR(*a.j_err, j->std_dev(), std::abs(j->std_dev()) * 1e-15);
+  }
+}
+
+TEST(FluxFitLevel, AnalysisStateSaysWhyItIsOut) {
+  auto in = level();
+  at_hole(in, 1).analyses[0].tag = "outlier";
+  at_hole(in, 2).saved = SavedFlux{};
+  at_hole(in, 2).saved->revision = "rev-2";
+  at_hole(in, 2).saved->omitted = {"M2-02"};
+  at_hole(in, 3).analyses[0].f.reset();
+  at_hole(in, 3).analyses[0].reduction_error = "no peaks";
+  at_hole(in, 4).analyses[1].f = pr::UFloat::variable(0.0, 0.0);
+  Edits edits;
+  edits.omit = {"M5-03"};
+  auto fit = fit_level(in, plane(false), edits);
+  ASSERT_TRUE(fit) << fit.error().what;
+
+  const auto& tagged = by_record(at_hole(*fit, 1), "M1-01");
+  EXPECT_EQ(tagged.state, AnalysisState::OmittedByTag);
+  EXPECT_EQ(tagged.tag, "outlier");
+  EXPECT_TRUE(tagged.omitted);
+  EXPECT_TRUE(tagged.j && tagged.j_err);  // an omitted analysis with an F still has its J
+
+  const auto& saved = by_record(at_hole(*fit, 2), "M2-02");
+  EXPECT_EQ(saved.state, AnalysisState::OmittedBySavedFit);
+  EXPECT_TRUE(saved.omitted && saved.j);
+
+  const auto& unreduced = by_record(at_hole(*fit, 3), "M3-01");
+  EXPECT_EQ(unreduced.state, AnalysisState::NotReduced);
+  EXPECT_EQ(unreduced.reduction_error, "no peaks");
+  EXPECT_FALSE(unreduced.omitted);
+  EXPECT_FALSE(unreduced.j || unreduced.j_err);
+
+  const auto& noj = by_record(at_hole(*fit, 4), "M4-02");
+  EXPECT_EQ(noj.state, AnalysisState::NoJ);
+  EXPECT_FALSE(noj.omitted);
+  EXPECT_FALSE(noj.j || noj.j_err);
+
+  const auto& edited = by_record(at_hole(*fit, 5), "M5-03");
+  EXPECT_EQ(edited.state, AnalysisState::OmittedByEdit);
+  EXPECT_TRUE(edited.omitted && edited.j);
+
+  // Out by rule first, and it also failed to reduce: the omission is named.
+  auto both = level();
+  at_hole(both, 1).analyses[0].tag = "omit";
+  at_hole(both, 1).analyses[0].f.reset();
+  auto fit2 = fit_level(both, plane(false), {});
+  ASSERT_TRUE(fit2) << fit2.error().what;
+  const auto& a = by_record(at_hole(*fit2, 1), "M1-01");
+  EXPECT_EQ(a.state, AnalysisState::OmittedByTag);
+  EXPECT_FALSE(a.j);
+
+  EXPECT_EQ(to_string(AnalysisState::Used), "used");
+  EXPECT_EQ(to_string(AnalysisState::OmittedByTag), "omitted by tag");
+  EXPECT_EQ(to_string(AnalysisState::OmittedBySavedFit), "omitted by saved fit");
+  EXPECT_EQ(to_string(AnalysisState::OmittedByEdit), "omitted here");
+  EXPECT_EQ(to_string(AnalysisState::NotReduced), "not reduced");
+  EXPECT_EQ(to_string(AnalysisState::NoJ), "no J");
+}
+
+TEST(FluxFitLevel, StatePrecedenceIsEditThenSavedThenTag) {
+  auto in = level();
+  at_hole(in, 1).analyses[0].tag = "outlier";
+  at_hole(in, 1).analyses[1].tag = "outlier";
+  at_hole(in, 1).saved = SavedFlux{};
+  at_hole(in, 1).saved->revision = "rev-1";
+  at_hole(in, 1).saved->omitted = {"M1-01", "M1-02"};
+  Edits edits;
+  edits.omit = {"M1-01"};
+  auto fit = fit_level(in, plane(false), edits);
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_EQ(by_record(at_hole(*fit, 1), "M1-01").state, AnalysisState::OmittedByEdit);
+  EXPECT_EQ(by_record(at_hole(*fit, 1), "M1-02").state, AnalysisState::OmittedBySavedFit);
+}
+
+TEST(FluxFitLevel, IncludeClearsTheState) {
+  auto in = level();
+  at_hole(in, 1).analyses[0].tag = "outlier";
+  Edits edits;
+  edits.include = {"M1-01"};
+  auto fit = fit_level(in, plane(false), edits);
+  ASSERT_TRUE(fit) << fit.error().what;
+  const auto& a = by_record(at_hole(*fit, 1), "M1-01");
+  EXPECT_EQ(a.state, AnalysisState::Used);
+  EXPECT_FALSE(a.omitted);
+  EXPECT_TRUE(a.j);
+}
+
+TEST(FluxFitLevel, OmittedIsUnchangedByTheNewFields) {
+  auto in = level();
+  at_hole(in, 1).analyses[0].tag = "outlier";
+  at_hole(in, 2).analyses[0].f.reset();
+  at_hole(in, 3).analyses[1].f = pr::UFloat::variable(0.0, 0.0);
+  Edits edits;
+  edits.omit = {"M4-01"};
+  auto fit = fit_level(in, plane(false), edits);
+  ASSERT_TRUE(fit) << fit.error().what;
+  int seen = 0;
+  for (const auto& p : fit->positions)
+    for (const auto& a : p.analyses) {
+      const bool out = a.state == AnalysisState::OmittedByTag || a.state == AnalysisState::OmittedBySavedFit ||
+                       a.state == AnalysisState::OmittedByEdit;
+      EXPECT_EQ(a.omitted, out) << a.record_id;
+      ++seen;
+    }
+  EXPECT_EQ(seen, 24);
+}
+
 }  // namespace
 }  // namespace pychron::processing

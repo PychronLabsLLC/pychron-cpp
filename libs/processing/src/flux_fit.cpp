@@ -59,6 +59,18 @@ std::string_view legacy_model_name(reduction::ModelKind kind) noexcept {
   return {};
 }
 
+std::string_view to_string(AnalysisState s) noexcept {
+  switch (s) {
+    case AnalysisState::Used: return "used";
+    case AnalysisState::OmittedByTag: return "omitted by tag";
+    case AnalysisState::OmittedBySavedFit: return "omitted by saved fit";
+    case AnalysisState::OmittedByEdit: return "omitted here";
+    case AnalysisState::NotReduced: return "not reduced";
+    case AnalysisState::NoJ: return "no J";
+  }
+  return "used";
+}
+
 std::optional<reduction::ModelKind> parse_model_kind(std::string_view text) noexcept {
   for (const auto& m : kModelNames)
     if (equal_nocase(text, m.legacy) || equal_nocase(text, m.cli)) return m.kind;
@@ -129,12 +141,34 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
       std::vector<reduction::MonitorAnalysis> analyses;
       bool any_unreduced = false, any_usable = false;
       for (const auto& a : p.analyses) {
-        bool omitted = tag_omits(a.tag) || edits.omit.contains(a.record_id) ||
-                       (saved_applies && p.saved->omitted.contains(a.record_id));
+        const bool by_edit = edits.omit.contains(a.record_id);
+        const bool by_saved = saved_applies && p.saved->omitted.contains(a.record_id);
+        const bool by_tag = tag_omits(a.tag);
+        bool omitted = by_tag || by_edit || by_saved;
         if (edits.include.contains(a.record_id)) omitted = false;
         // Omitted is by rule only: an analysis that did not reduce takes no
         // part, but a save must not carry it forward as an omission.
-        fp.analyses.push_back({a.uuid, a.record_id, omitted});
+        FittedPosition::UsedAnalysis ua;
+        ua.uuid = a.uuid;
+        ua.record_id = a.record_id;
+        ua.tag = a.tag;
+        ua.omitted = omitted;
+        if (omitted)
+          ua.state = by_edit    ? AnalysisState::OmittedByEdit
+                     : by_saved ? AnalysisState::OmittedBySavedFit
+                                : AnalysisState::OmittedByTag;
+        if (a.f) {
+          if (auto j = reduction::j_of(*a.f, constants)) {
+            ua.j = j->nominal();
+            ua.j_err = j->std_dev();
+          } else if (!omitted) {
+            ua.state = AnalysisState::NoJ;
+          }
+        } else if (!omitted) {
+          ua.state = AnalysisState::NotReduced;
+          ua.reduction_error = a.reduction_error;
+        }
+        fp.analyses.push_back(std::move(ua));
         if (!a.f) {
           any_unreduced = true;
           continue;
@@ -180,6 +214,14 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
         }
       }
       if (left_out && mean) fp.notes.push_back(PositionNote::LeftOutOfFit);
+      // A rejected analysis gives no usable J (a weighted mean also refuses
+      // one whose error is zero): the reason says so, whatever j_of gave.
+      for (auto& ua : fp.analyses)
+        if (!ua.omitted && std::find(fp.rejected.begin(), fp.rejected.end(), ua.record_id) != fp.rejected.end()) {
+          ua.state = AnalysisState::NoJ;
+          ua.j.reset();
+          ua.j_err.reset();
+        }
     }
     out.positions.push_back(std::move(fp));
   }

@@ -576,6 +576,14 @@ TEST_F(FluxCmd, OmitAndExcludeChangeTheFit) {
   EXPECT_TRUE(contains(o.out, "warning: hole 3 left out of the fit")) << o.out;
 }
 
+TEST_F(FluxCmd, AnAnalysisThatIsOutIsNamedWithItsReason) {
+  ASSERT_TRUE(pt::seed_tag(*store_, actor_, seeded_, "66001-02", "outlier"));
+  const Outcome o = fit({"--omit", "66002-01"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "warning: hole 1: 66001-02 omitted (tag outlier)\n")) << o.out;
+  EXPECT_TRUE(contains(o.out, "warning: hole 2: 66002-01 omitted (here)\n")) << o.out;
+}
+
 // R10 keeps it a no-op; it is not a silent one.
 TEST_F(FluxCmd, ExcludingAnUnknownsHoleWarnsAndChangesNothing) {
   const Outcome plain = fit({});

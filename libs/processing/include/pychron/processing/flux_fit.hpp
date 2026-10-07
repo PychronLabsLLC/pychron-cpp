@@ -105,6 +105,14 @@ enum class PositionNote {
   AnalysisNotReduced
 };
 
+// Why a monitor analysis takes part in the mean or does not. When more than
+// one omission applies, the edit is named before the saved fit, and that
+// before the tag. An analysis omitted by rule that also failed to reduce is
+// named by the omission.
+enum class AnalysisState { Used, OmittedByTag, OmittedBySavedFit, OmittedByEdit, NotReduced, NoJ };
+// "used", "omitted by tag", "omitted by saved fit", "omitted here", "not reduced", "no J"
+std::string_view to_string(AnalysisState) noexcept;
+
 struct FittedPosition {
   int hole = 0;
   std::string position_uuid, identifier, sample;
@@ -120,8 +128,11 @@ struct FittedPosition {
   // usable analysis is not excluded.
   bool excluded = false;
   struct UsedAnalysis {
-    std::string uuid, record_id;
+    std::string uuid, record_id, tag;  // tag as loaded
     bool omitted = false;  // by rule (tag, Edits::omit, the saved fit's); not "could not be used"
+    AnalysisState state = AnalysisState::Used;
+    std::optional<double> j, j_err;  // absent for NotReduced and NoJ; present for an omitted analysis with an F
+    std::string reduction_error;     // NotReduced only
   };
   std::vector<UsedAnalysis> analyses;
   std::vector<PositionNote> notes;
