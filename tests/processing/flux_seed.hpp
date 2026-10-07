@@ -142,11 +142,26 @@ inline Result<persistence::Uuid> seed_ingest_monitor(persistence::IStore& store,
   return id;
 }
 
+// The three analyses of ring hole `hole` (1..8), run at 1<hole>:01 .. :03.
+inline Result<void> seed_monitor_analyses(persistence::IStore& store, SeededLevel& level, int hole) {
+  for (int aliquot = 1; aliquot <= 3; ++aliquot) {
+    const std::string identifier = std::to_string(66000 + hole);
+    const std::string timestamp =
+        "2026-01-01T1" + std::to_string(hole) + ":0" + std::to_string(aliquot) + ":00Z";  // 11:01 .. 18:03
+    auto analysis = seed_ingest_monitor(store, level, identifier, aliquot, seed_f(seed_j(hole, aliquot)), timestamp);
+    if (!analysis) return fail(analysis.error());
+    level.analyses[identifier + "-0" + std::to_string(aliquot)] = *analysis;
+  }
+  return {};
+}
+
 // The whole level. `actor` publishes the references (holder, production,
 // chronology); the catalog rows and the analyses belong to a new acquisition
-// client, "acq-1". `monitor_sample` names the sample of holes 1-8.
+// client, "acq-1". `monitor_sample` names the sample of holes 1-8; only the
+// first `analysed` of them get their three analyses (seed_monitor_analyses
+// gives a hole its own later).
 inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const persistence::Actor& actor,
-                                           const std::string& monitor_sample = "FC-2") {
+                                           const std::string& monitor_sample = "FC-2", int analysed = 8) {
   namespace ps = persistence;
 #define PYCHRON_SEED_TRY(var, expr) \
   auto var = (expr);                \
@@ -212,15 +227,9 @@ inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const per
                                 ps::ChronologyValue{{{0, 1.0, *ps::UtcTime::parse("2026-01-01T00:00:00Z"),
                                                       *ps::UtcTime::parse("2026-01-01T10:00:00Z")}}}));
 
-  for (int hole = 1; hole <= 8; ++hole)
-    for (int aliquot = 1; aliquot <= 3; ++aliquot) {
-      const std::string identifier = std::to_string(66000 + hole);
-      const std::string timestamp =
-          "2026-01-01T1" + std::to_string(hole) + ":0" + std::to_string(aliquot) + ":00Z";  // 11:01 .. 18:03
-      PYCHRON_SEED_TRY(analysis,
-                       seed_ingest_monitor(store, out, identifier, aliquot, seed_f(seed_j(hole, aliquot)), timestamp));
-      out.analyses[identifier + "-0" + std::to_string(aliquot)] = *analysis;
-    }
+  for (int hole = 1; hole <= analysed; ++hole) {
+    PYCHRON_SEED_TRY(ingested, seed_monitor_analyses(store, out, hole));
+  }
 #undef PYCHRON_SEED_TRY
   return out;
 }

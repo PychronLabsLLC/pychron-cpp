@@ -61,6 +61,7 @@ struct FluxOptionsDoc {
   std::optional<FluxOptions> options;  // nullopt: no model_kind, or not one of the nine
   std::string monitor_set, monitor_sample;  // monitor_reference, monitor_sample
   std::optional<bool> used_in_fit;
+  std::optional<bool> excluded;  // nullopt: a revision saved before the key existed, or imported
   bool sd_replaced = false;  // F13: a least-squares model saved with SD reads as Msem
 };
 
@@ -69,8 +70,10 @@ struct FluxOptionsDoc {
 // legacy dict (model strings, "SEM", "SE but if MSWD>1 use SE * sqrt(MSWD)")
 // and what flux_options_json writes.
 FluxOptionsDoc parse_flux_options(std::string_view options_json);
+// `used_in_fit` is information; `excluded` is true only for a monitor the
+// user left out (FittedPosition::excluded), and is what a refit carries.
 std::string flux_options_json(const FluxOptions& options, const MonitorSet& monitor_set, bool used_in_fit,
-                              double fit_mswd, int fit_dof, std::string_view software);
+                              bool excluded, double fit_mswd, int fit_dof, std::string_view software);
 
 // ---- Loading a level (design section 6.1) -----------------------------------
 
@@ -105,7 +108,9 @@ struct FluxSaveOutcome {
 
 // What a position of a fit is saved as: the model's J, a monitor's own mean
 // and analyses, the monitor set's constants and the options of 6.4, with the
-// position's `used_in_fit` and the level's MSWD and degrees of freedom.
+// position's `used_in_fit` and `excluded` and the level's MSWD and degrees
+// of freedom. An analysis is saved omitted only when it was omitted by rule,
+// never because it could not be reduced or gave no J.
 persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position, std::string_view software);
 
 // One `Reference` changeset, "fit flux for <irradiation><level>", with a

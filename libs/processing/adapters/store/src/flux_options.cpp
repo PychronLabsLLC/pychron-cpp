@@ -81,6 +81,7 @@ FluxOptionsDoc parse_flux_options(std::string_view options_json) {
   doc.monitor_set = text_at(j, "monitor_reference").value_or("");
   doc.monitor_sample = text_at(j, "monitor_sample").value_or("");
   doc.used_in_fit = bool_at(j, "used_in_fit");
+  doc.excluded = bool_at(j, "excluded");
 
   const auto model = text_at(j, "model_kind");
   const auto kind = model ? parse_model_kind(*model) : std::nullopt;
@@ -115,7 +116,7 @@ FluxOptionsDoc parse_flux_options(std::string_view options_json) {
 }
 
 std::string flux_options_json(const FluxOptions& options, const MonitorSet& monitor_set, bool used_in_fit,
-                              double fit_mswd, int fit_dof, std::string_view software) {
+                              bool excluded, double fit_mswd, int fit_dof, std::string_view software) {
   Json j = Json::object();
   j["model_kind"] = legacy_model_name(options.fit.kind);
   j["use_weighted_fit"] = options.fit.weighted;
@@ -129,6 +130,7 @@ std::string flux_options_json(const FluxOptions& options, const MonitorSet& moni
   j["monitor_reference"] = monitor_set.name;
   j["monitor_sample"] = monitor_set.sample;
   j["used_in_fit"] = used_in_fit;
+  j["excluded"] = excluded;
   j["fit_mswd"] = fit_mswd;  // not finite: null
   j["fit_dof"] = fit_dof;
   j["software"] = software;

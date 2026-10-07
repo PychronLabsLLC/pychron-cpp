@@ -61,7 +61,8 @@ struct SavedFlux {
   std::string revision;  // uuid text; the compare-and-swap expectation
   std::optional<double> j, j_err, mean_j, mean_j_err, mean_j_mswd;
   std::optional<FluxOptions> options;  // nullopt: none saved, or not one of the nine models
-  std::optional<bool> used_in_fit;
+  std::optional<bool> used_in_fit;  // information: false too for a position nobody left out
+  std::optional<bool> excluded;     // the user left the monitor out; nullopt: saved before the key existed
   std::string monitor_set;       // options' monitor_reference; may be empty
   std::set<std::string> omitted;  // record ids saved with is_omitted
   std::string saved_by, saved_utc;
@@ -109,9 +110,13 @@ struct FittedPosition {
   double j = 0, j_err = 0;  // predicted
   std::optional<double> dev_percent;  // (saved - predicted) / predicted * 100
   bool used_in_fit = false;
+  // The user left this monitor out (Edits::exclude_positions, or the saved
+  // fit's exclusion carried forward). A monitor that is out for want of a
+  // usable analysis is not excluded.
+  bool excluded = false;
   struct UsedAnalysis {
     std::string uuid, record_id;
-    bool omitted = false;
+    bool omitted = false;  // by rule (tag, Edits::omit, the saved fit's); not "could not be used"
   };
   std::vector<UsedAnalysis> analyses;
   std::vector<PositionNote> notes;
@@ -133,6 +138,11 @@ struct LevelFit {
 
 // Pure: the monitor and unknown tables of a level. Never reads
 // `inputs.saved_options`; the caller resolves the options.
+// What a saved fit carries forward (unless `edits.reset_omits`): the analyses
+// it saved omitted, and a monitor it saved `excluded`. A revision saved
+// before `excluded` existed is read as excluding a monitor when it says
+// `used_in_fit` false and has a mean J (the monitor had analyses and still
+// was not used). A position that was merely not used is not carried.
 Result<LevelFit> fit_level(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);
 
 }  // namespace pychron::processing

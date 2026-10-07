@@ -49,11 +49,23 @@ class FluxStoreTest : public ::testing::Test {
   const persistence::Actor& actor() const { return actor_; }
   const std::string& url() const { return url_; }
 
-  // NM-300 level A (flux_seed.hpp). Call once, before source().
-  void seed_level() {
-    auto seeded = seed_flux_level(*store_, actor_);
+  // NM-300 level A (flux_seed.hpp). Call once, before source(). Only the
+  // first `analysed` monitor holes get their analyses.
+  void seed_level(int analysed = 8) {
+    auto seeded = seed_flux_level(*store_, actor_, "FC-2", analysed);
     ASSERT_TRUE(seeded) << to_string(seeded.error());
     level_ = std::move(*seeded);
+  }
+
+  // The three analyses of a monitor hole seeded without them; an open
+  // source sees them.
+  void add_monitor_analyses(int hole) {
+    auto added = seed_monitor_analyses(*store_, level_, hole);
+    ASSERT_TRUE(added) << to_string(added.error());
+    if (source_) {
+      auto refreshed = source_->refresh();
+      EXPECT_TRUE(refreshed) << (refreshed ? "" : to_string(refreshed.error()));
+    }
   }
   const SeededLevel& seeded() const { return level_; }
 

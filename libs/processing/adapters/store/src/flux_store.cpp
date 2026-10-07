@@ -47,6 +47,7 @@ Result<std::optional<ReadFlux>> read_flux(ps::IStore& store, const ps::RefObject
   if (flux->options_json) out.doc = parse_flux_options(*flux->options_json);
   s.options = out.doc.options;
   s.used_in_fit = out.doc.used_in_fit;
+  s.excluded = out.doc.excluded;
   s.monitor_set = out.doc.monitor_set;
   for (const auto& a : flux->analyses)
     if (a.is_omitted) s.omitted.insert(a.record_id);
@@ -287,8 +288,8 @@ ps::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position,
   v.monitor_material = fit.monitor_set.material;
   v.monitor_age = fit.monitor_set.age_ma;  // Ma, as the legacy level file has it
   v.monitor_age_err = fit.monitor_set.age_err_ma;
-  v.options_json =
-      flux_options_json(fit.options, fit.monitor_set, position.used_in_fit, fit.mswd, fit.dof, software);
+  v.options_json = flux_options_json(fit.options, fit.monitor_set, position.used_in_fit, position.excluded, fit.mswd,
+                                     fit.dof, software);
   return v;
 }
 

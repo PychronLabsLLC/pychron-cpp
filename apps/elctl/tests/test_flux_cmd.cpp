@@ -290,6 +290,18 @@ TEST_F(FluxCmd, OmissionsSurviveASaveUntilReset) {
   EXPECT_EQ(table_row(fit({"--reset-omits"}).out, "Monitors", 1)[3], "3");
 }
 
+// The user's exclusion is carried by a save (R15).
+TEST_F(FluxCmd, AnExclusionSurvivesASaveUntilReset) {
+  ASSERT_EQ(fit({"--exclude-position", "3", "--save"}).code, elctl::kOk);
+  const Outcome again = fit({});
+  EXPECT_EQ(table_row(again.out, "Monitors", 3).back(), "no");
+  EXPECT_EQ(table_row(again.out, "Monitors", 4).back(), "yes");
+  EXPECT_TRUE(contains(again.out, "(4 dof)")) << again.out;
+  const Outcome reset = fit({"--reset-omits"});
+  EXPECT_EQ(table_row(reset.out, "Monitors", 3).back(), "yes");
+  EXPECT_TRUE(contains(reset.out, "(5 dof)")) << reset.out;
+}
+
 TEST_F(FluxCmd, AWholeIrradiationContinuesPastAFailingLevel) {
   ASSERT_TRUE(pt::seed_level_without_monitors(*store_, seeded_, "B"));
   const Outcome o = run_raw({"flux", "fit", "NM-300", "--db", db_});

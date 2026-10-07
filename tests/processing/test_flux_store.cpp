@@ -179,12 +179,12 @@ TEST(FluxOptionsJson, RoundTrip) {
   o.mean = pr::MeanKind::Weighted;
   o.mean_error = pr::MeanErrorKind::Sem;
   const MonitorSet renne = default_monitor_sets().sets[1];
-  const std::string json = flux_options_json(o, renne, false, 1.12, 5, "pychron-cpp 0.4.0");
+  const std::string json = flux_options_json(o, renne, false, true, 1.12, 5, "pychron-cpp 0.4.0");
   for (const char* member :
        {R"j("model_kind":"Nearest Neighbors")j", R"j("use_weighted_fit":true)j", R"j("predicted_j_error_type":"sd")j",
         R"j("error_kind":"sem")j", R"j("mean_kind":"weighted")j", R"j("n_neighbors":3)j", R"j("interpolation_style":"Linear")j",
         R"j("one_d_axis":"Y")j", R"j("degree":3)j", R"j("monitor_reference":"FC-2 (Renne 1998)")j",
-        R"j("monitor_sample":"FC-2")j", R"j("used_in_fit":false)j", R"j("fit_mswd":1.12)j", R"j("fit_dof":5)j",
+        R"j("monitor_sample":"FC-2")j", R"j("used_in_fit":false)j", R"j("excluded":true)j", R"j("fit_mswd":1.12)j", R"j("fit_dof":5)j",
         R"j("software":"pychron-cpp 0.4.0")j"})
     EXPECT_TRUE(has(json, member)) << member << " in " << json;
 
@@ -195,6 +195,7 @@ TEST(FluxOptionsJson, RoundTrip) {
   EXPECT_EQ(doc.monitor_sample, "FC-2");
   ASSERT_TRUE(doc.used_in_fit.has_value());
   EXPECT_FALSE(*doc.used_in_fit);
+  EXPECT_EQ(doc.excluded, std::optional<bool>(true));
   EXPECT_FALSE(doc.sd_replaced);
 
   // Every model, interpolation, axis and error kind comes back as written.
@@ -210,10 +211,11 @@ TEST(FluxOptionsJson, RoundTrip) {
           each.fit.axis = axis;
           each.fit.error = error;
           each.mean_error = pr::MeanErrorKind::Sd;
-          const FluxOptionsDoc back = parse_flux_options(flux_options_json(each, renne, true, 0.5, 2, "t"));
+          const FluxOptionsDoc back = parse_flux_options(flux_options_json(each, renne, true, false, 0.5, 2, "t"));
           ASSERT_TRUE(back.options) << legacy_model_name(kind);
           EXPECT_EQ(*back.options, each) << legacy_model_name(kind);
           EXPECT_EQ(back.used_in_fit, std::optional<bool>(true));
+          EXPECT_EQ(back.excluded, std::optional<bool>(false));
           EXPECT_FALSE(back.sd_replaced);
         }
 }
@@ -232,6 +234,7 @@ TEST(FluxOptionsJson, ReadsALegacyDict) {
   EXPECT_EQ(doc.monitor_set, "FC Min");
   EXPECT_EQ(doc.monitor_sample, "");
   EXPECT_FALSE(doc.used_in_fit.has_value());
+  EXPECT_FALSE(doc.excluded.has_value());  // a key of this version only
   EXPECT_FALSE(doc.sd_replaced);
 }
 
@@ -268,11 +271,12 @@ TEST(FluxOptionsJson, UnknownModelOrGarbageMeansNoOptions) {
   // A mistyped member takes its default.
   const FluxOptionsDoc odd = parse_flux_options(
       R"({"model_kind":"plane","use_weighted_fit":"yes","n_neighbors":"3","degree":2.5,"one_d_axis":4,
-          "predicted_j_error_type":"nonsense","monitor_reference":12,"used_in_fit":"no"})");
+          "predicted_j_error_type":"nonsense","monitor_reference":12,"used_in_fit":"no","excluded":1})");
   ASSERT_TRUE(odd.options);
   EXPECT_EQ(*odd.options, FluxOptions{});
   EXPECT_EQ(odd.monitor_set, "");
   EXPECT_FALSE(odd.used_in_fit.has_value());
+  EXPECT_FALSE(odd.excluded.has_value());
 }
 
 TEST(FluxOptionsJson, SdOnASurfaceReadsAsMsem) {
@@ -297,8 +301,11 @@ class FluxLoadLevel : public testing::FluxStoreTest {
   void SetUp() override {
     FluxStoreTest::SetUp();
     if (HasFatalFailure()) return;
-    seed_level();
+    seed_level(analysed());
   }
+
+  // How many of the eight monitor holes are seeded with their analyses.
+  virtual int analysed() const { return 8; }
 
   Result<LevelInputs> load(const MonitorSelection& selection = {}, const std::string& level = "A",
                            const std::string& irradiation = "NM-300") {
@@ -325,11 +332,12 @@ class FluxLoadLevel : public testing::FluxStoreTest {
   }
 
   // A saved J with options naming a monitor set.
-  static ps::FluxValue saved_with(const FluxOptions& options, const MonitorSet& set, bool used_in_fit = true) {
+  static ps::FluxValue saved_with(const FluxOptions& options, const MonitorSet& set, bool used_in_fit = true,
+                                  bool excluded = false) {
     ps::FluxValue v;
     v.j = 1.0e-3;
     v.j_err = 2.0e-7;
-    v.options_json = flux_options_json(options, set, used_in_fit, 1.12, 5, "test");
+    v.options_json = flux_options_json(options, set, used_in_fit, excluded, 1.12, 5, "test");
     return v;
   }
 };
@@ -537,7 +545,7 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   options.fit.error = pr::MeanErrorKind::Sem;
   options.mean = pr::MeanKind::Weighted;
   options.mean_error = pr::MeanErrorKind::Sd;
-  ps::FluxValue v = saved_with(options, default_monitor_sets().sets[1], false);
+  ps::FluxValue v = saved_with(options, default_monitor_sets().sets[1], false, true);  // the user left it out
   v.j = 1.0031e-3;
   v.j_err = 2.5e-7;
   v.mean_j = 1.0029e-3;
@@ -567,6 +575,7 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   ASSERT_TRUE(s.options);
   EXPECT_EQ(*s.options, options);
   EXPECT_EQ(s.used_in_fit, std::optional<bool>(false));
+  EXPECT_EQ(s.excluded, std::optional<bool>(true));
   EXPECT_EQ(s.monitor_set, "FC-2 (Renne 1998)");
   EXPECT_EQ(s.omitted, (std::set<std::string>{"66003-02", "66003-03"}));
   EXPECT_EQ(s.saved_by, "jsmith");
@@ -589,6 +598,7 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   ASSERT_TRUE(fit) << to_string(fit.error());
   const FittedPosition& fitted = fit->positions[2];
   EXPECT_FALSE(fitted.used_in_fit);
+  EXPECT_TRUE(fitted.excluded);
   EXPECT_EQ(fitted.n, 1);
   EXPECT_EQ(fitted.saved_revision, std::optional<std::string>(revision.str()));
 
@@ -928,10 +938,12 @@ TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
     EXPECT_EQ(v.position_jerr, std::nullopt);  // F5
     EXPECT_EQ(v.extra_json, std::nullopt);
     ASSERT_TRUE(v.options_json);
-    EXPECT_EQ(*v.options_json, flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, fit.mswd, fit.dof, "test"));
+    EXPECT_EQ(*v.options_json,
+              flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, false, fit.mswd, fit.dof, "test"));
     const FluxOptionsDoc doc = parse_flux_options(*v.options_json);
     EXPECT_EQ(doc.options, std::optional<FluxOptions>(plane_sem()));
     EXPECT_EQ(doc.used_in_fit, std::optional<bool>(p.monitor));
+    EXPECT_EQ(doc.excluded, std::optional<bool>(false));  // an unknown is not used, and nobody excluded it
 
     const auto subject = object(p.hole);
     ASSERT_TRUE(subject);
@@ -963,6 +975,7 @@ TEST_F(FluxSaveLevel, ThenLoadShowsTheSavedJ) {
     EXPECT_EQ(loaded.saved->mean_j, p.mean_j);
     EXPECT_EQ(loaded.saved->options, std::optional<FluxOptions>(plane_sem()));
     EXPECT_EQ(loaded.saved->used_in_fit, std::optional<bool>(p.used_in_fit));
+    EXPECT_EQ(loaded.saved->excluded, std::optional<bool>(false));
     EXPECT_EQ(loaded.saved->monitor_set, "FC-2 (Kuiper 2008)");
     EXPECT_EQ(loaded.saved->saved_by, "jsmith");
     const auto revision = head(p.hole);
@@ -1011,8 +1024,15 @@ TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
   const LevelFit first = fitted(edits);
   ASSERT_EQ(first.positions.size(), 12u);
   EXPECT_FALSE(first.positions[4].used_in_fit);
+  EXPECT_TRUE(first.positions[4].excluded);
   EXPECT_TRUE(first.positions[1].analyses[2].omitted);
   ASSERT_EQ(save(first).written, 12);
+  // Only the position the user left out says so: the unknowns are not used either.
+  for (int n = 1; n <= 12; ++n) {
+    const FluxOptionsDoc doc = parse_flux_options(head_value(n).options_json.value_or(""));
+    EXPECT_EQ(doc.excluded, std::optional<bool>(n == 5)) << n;
+    EXPECT_EQ(doc.used_in_fit, std::optional<bool>(n <= 8 && n != 5)) << n;
+  }
 
   const LevelFit second = fitted();  // no edits: the saved fit's hold
   ASSERT_EQ(second.positions.size(), 12u);
@@ -1030,6 +1050,7 @@ TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
     EXPECT_EQ(b.mean_j_err, a.mean_j_err);
     EXPECT_EQ(b.n, a.n);
     EXPECT_EQ(b.used_in_fit, a.used_in_fit);
+    EXPECT_EQ(b.excluded, a.excluded);
     ASSERT_EQ(b.analyses.size(), a.analyses.size());
     for (std::size_t k = 0; k < a.analyses.size(); ++k) EXPECT_EQ(b.analyses[k].omitted, a.analyses[k].omitted) << k;
     EXPECT_EQ(b.saved_j, std::optional<double>(a.j));
@@ -1041,10 +1062,34 @@ TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
   const LevelFit third = fitted(reset);
   ASSERT_EQ(third.positions.size(), 12u);
   EXPECT_TRUE(third.positions[4].used_in_fit);
+  EXPECT_FALSE(third.positions[4].excluded);
   EXPECT_FALSE(third.positions[1].analyses[2].omitted);
   EXPECT_EQ(third.positions[1].n, 3);
   EXPECT_NE(third.dof, first.dof);
   EXPECT_NE(third.positions[8].j, first.positions[8].j);
+}
+
+// R15: what a save says of an analysis that could not be used is not an
+// omission, so the analysis is back once it reduces.
+TEST_F(FluxSaveLevel, AnAnalysisNotReducedAtSaveIsNotOmittedAfterwards) {
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  LevelInputs broken = *in;
+  ASSERT_EQ(broken.positions[2].analyses.size(), 3u);
+  broken.positions[2].analyses[1].f.reset();
+  broken.positions[2].analyses[1].reduction_error = "no isotopes";
+  auto fit = fit_level(broken, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  EXPECT_EQ(fit->positions[2].n, 2);
+  ASSERT_EQ(save(*fit).written, 12);
+  const ps::FluxValue saved = head_value(3);
+  ASSERT_EQ(saved.analyses.size(), 3u);
+  for (const auto& a : saved.analyses) EXPECT_FALSE(a.is_omitted) << a.record_id;
+
+  const LevelFit again = fitted();  // it reduces now
+  ASSERT_EQ(again.positions.size(), 12u);
+  EXPECT_EQ(again.positions[2].n, 3);
+  for (const auto& a : again.positions[2].analyses) EXPECT_FALSE(a.omitted) << a.record_id;
 }
 
 TEST_F(FluxSaveLevel, SkippedPositionsKeepTheirHead) {
@@ -1165,6 +1210,66 @@ TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
   ASSERT_TRUE(pinned_after);
   EXPECT_NE(*free_after, *free_before);
   EXPECT_EQ(*pinned_after, *pinned_before);
+}
+
+// ---- A level saved before all its monitors were measured (R15) ---------------
+
+class FluxSaveSparseLevel : public FluxSaveLevel {
+ protected:
+  int analysed() const override { return 6; }  // holes 7 and 8 have no analyses yet
+};
+
+TEST_F(FluxSaveSparseLevel, MonitorsMeasuredAfterASaveJoinTheFit) {
+  const LevelFit first = fitted();
+  ASSERT_EQ(first.positions.size(), 12u);
+  EXPECT_EQ(first.dof, 3);  // 6 monitors, 3 parameters
+  for (int n : {7, 8}) {
+    const FittedPosition& p = first.positions[static_cast<std::size_t>(n - 1)];
+    EXPECT_TRUE(p.monitor) << n;
+    EXPECT_FALSE(p.used_in_fit) << n;
+    EXPECT_FALSE(p.excluded) << n;
+    EXPECT_FALSE(p.mean_j) << n;
+  }
+  ASSERT_EQ(save(first).written, 12);
+  for (int n : {7, 8}) {
+    const FluxOptionsDoc doc = parse_flux_options(head_value(n).options_json.value_or(""));
+    EXPECT_EQ(doc.used_in_fit, std::optional<bool>(false)) << n;
+    EXPECT_EQ(doc.excluded, std::optional<bool>(false)) << n;
+  }
+
+  add_monitor_analyses(7);
+  add_monitor_analyses(8);
+  const LevelFit second = fitted();  // no edits: nobody left 7 and 8 out
+  ASSERT_EQ(second.positions.size(), 12u);
+  for (const FittedPosition& p : second.positions) {
+    EXPECT_EQ(p.used_in_fit, p.monitor) << p.hole;
+    EXPECT_EQ(p.n, p.monitor ? 3 : 0) << p.hole;
+    EXPECT_FALSE(p.excluded) << p.hole;
+  }
+  EXPECT_EQ(second.dof, 5);  // as for 8
+}
+
+// A revision saved before `excluded` existed carries no such key: a monitor
+// it left unused for want of analyses is used once it has them.
+TEST_F(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
+  ps::FluxValue older;
+  older.j = 1.0e-3;
+  older.j_err = 2.0e-7;
+  older.options_json = R"j({"model_kind":"Plane","predicted_j_error_type":"sem","error_kind":"sem",
+                            "monitor_reference":"FC-2 (Kuiper 2008)","monitor_sample":"FC-2","used_in_fit":false})j";
+  save_flux(7, older);
+  older.mean_j = 1.0e-3;  // it had its mean and still was not used: the user left it out
+  older.mean_j_err = 2.0e-7;
+  save_flux(6, older);
+  add_monitor_analyses(7);
+  const LevelFit fit = fitted();
+  ASSERT_EQ(fit.positions.size(), 12u);
+  EXPECT_TRUE(fit.positions[6].used_in_fit);
+  EXPECT_FALSE(fit.positions[6].excluded);
+  EXPECT_FALSE(fit.positions[5].used_in_fit);
+  EXPECT_TRUE(fit.positions[5].excluded);
+  EXPECT_FALSE(fit.positions[7].used_in_fit);  // still no analyses
+  EXPECT_FALSE(fit.positions[7].excluded);
 }
 
 }  // namespace

@@ -131,19 +131,27 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
         bool omitted = tag_omits(a.tag) || edits.omit.contains(a.record_id) ||
                        (saved_applies && p.saved->omitted.contains(a.record_id));
         if (edits.include.contains(a.record_id)) omitted = false;
+        // Omitted is by rule only: an analysis that did not reduce takes no
+        // part, but a save must not carry it forward as an omission.
+        fp.analyses.push_back({a.uuid, a.record_id, omitted});
         if (!a.f) {
           any_unreduced = true;
-          fp.analyses.push_back({a.uuid, a.record_id, true});
           continue;
         }
-        fp.analyses.push_back({a.uuid, a.record_id, omitted});
         analyses.push_back({a.record_id, *a.f, omitted});
         if (!omitted) any_usable = true;
       }
       if (any_unreduced) fp.notes.push_back(PositionNote::AnalysisNotReduced);
 
-      bool left_out = edits.exclude_positions.contains(p.hole) ||
-                      (saved_applies && p.saved->used_in_fit.has_value() && !*p.saved->used_in_fit);
+      // The user's exclusion, now or carried from the saved fit. A revision
+      // saved before `excluded` existed says it by having a mean J and still
+      // not being used; `used_in_fit` false alone is also what a monitor with
+      // no analyses yet was saved with.
+      const bool carried =
+          saved_applies && (p.saved->excluded ? *p.saved->excluded
+                                              : p.saved->used_in_fit == std::optional<bool>(false) && p.saved->mean_j.has_value());
+      fp.excluded = edits.exclude_positions.contains(p.hole) || carried;
+      bool left_out = fp.excluded;
       std::optional<reduction::PositionMean> mean;
       if (any_usable) {
         auto m = reduction::mean_j(analyses, constants, options.mean, options.mean_error);

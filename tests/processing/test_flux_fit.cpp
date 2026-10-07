@@ -200,12 +200,15 @@ TEST(FluxFitLevel, SavedOmissionsAndExclusionsApplyUnlessReset) {
   at_hole(in, 1).saved->omitted = {"M1-01"};
   at_hole(in, 2).saved = SavedFlux{};
   at_hole(in, 2).saved->used_in_fit = false;
+  at_hole(in, 2).saved->excluded = true;
 
   auto fit = fit_level(in, plane(false), {});
   ASSERT_TRUE(fit) << fit.error().what;
   EXPECT_EQ(at_hole(*fit, 1).n, 2);
   EXPECT_TRUE(at_hole(*fit, 1).analyses[0].omitted);
+  EXPECT_FALSE(at_hole(*fit, 1).excluded);
   EXPECT_FALSE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_TRUE(at_hole(*fit, 2).excluded);  // carried, so the next save says so again
   EXPECT_TRUE(has(at_hole(*fit, 2), PositionNote::LeftOutOfFit));
 
   Edits reset;
@@ -214,7 +217,64 @@ TEST(FluxFitLevel, SavedOmissionsAndExclusionsApplyUnlessReset) {
   ASSERT_TRUE(fit) << fit.error().what;
   EXPECT_EQ(at_hole(*fit, 1).n, 3);
   EXPECT_TRUE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_FALSE(at_hole(*fit, 2).excluded);
   EXPECT_FALSE(has(at_hole(*fit, 2), PositionNote::LeftOutOfFit));
+}
+
+// R15: `used_in_fit: false` is what a save says of every position that took
+// no part, whoever decided it. Only `excluded` is the user's word.
+TEST(FluxFitLevel, AMonitorSavedUnusedForWantOfAnalysesIsUsedOnceItHasThem) {
+  auto in = level();
+  // Saved when it had no analyses: not used, no mean, and (an older save) no `excluded`.
+  at_hole(in, 2).saved = SavedFlux{};
+  at_hole(in, 2).saved->used_in_fit = false;
+  auto fit = fit_level(in, plane(false), {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_TRUE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_FALSE(at_hole(*fit, 2).excluded);
+  EXPECT_FALSE(has(at_hole(*fit, 2), PositionNote::LeftOutOfFit));
+  EXPECT_EQ(fit->dof, 5);  // all 8 monitors, 3 parameters
+
+  // A save that knows the key and says the position was not excluded: used,
+  // even though it had a mean then and was not used.
+  at_hole(in, 2).saved->mean_j = 1.0e-3;
+  at_hole(in, 2).saved->excluded = false;
+  fit = fit_level(in, plane(false), {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_TRUE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_FALSE(at_hole(*fit, 2).excluded);
+}
+
+// A revision saved before `excluded` existed: a monitor that had its mean and
+// still was not used was left out by the user.
+TEST(FluxFitLevel, AnOlderSavedExclusionIsReadFromUsedInFitAndTheMean) {
+  auto in = level();
+  at_hole(in, 2).saved = SavedFlux{};
+  at_hole(in, 2).saved->used_in_fit = false;
+  at_hole(in, 2).saved->mean_j = 1.0e-3;
+  auto fit = fit_level(in, plane(false), {});
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_FALSE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_TRUE(at_hole(*fit, 2).excluded);
+  EXPECT_EQ(fit->dof, 4);
+
+  Edits reset;
+  reset.reset_omits = true;
+  fit = fit_level(in, plane(false), reset);
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_TRUE(at_hole(*fit, 2).used_in_fit);
+  EXPECT_FALSE(at_hole(*fit, 2).excluded);
+}
+
+TEST(FluxFitLevel, ExcludedIsOnlyTheUsersWord) {
+  auto in = level();
+  for (auto& a : at_hole(in, 4).analyses) a.tag = "omit";  // no usable analysis: left out, not excluded
+  Edits e;
+  e.exclude_positions = {3, 101};  // 101 is an unknown: nothing to exclude
+  auto fit = fit_level(in, plane(false), e);
+  ASSERT_TRUE(fit) << fit.error().what;
+  for (const auto& p : fit->positions) EXPECT_EQ(p.excluded, p.hole == 3) << p.hole;
+  EXPECT_FALSE(at_hole(*fit, 4).used_in_fit);
 }
 
 TEST(FluxFitLevel, AnExcludedMonitorStillGetsAPredictedJ) {
@@ -263,7 +323,9 @@ TEST(FluxFitLevel, AFailedReductionTakesNoPartAndIsNoted) {
   const auto& p = at_hole(*fit, 5);
   EXPECT_EQ(p.n, 2);
   EXPECT_TRUE(has(p, PositionNote::AnalysisNotReduced));
-  EXPECT_TRUE(p.analyses[1].omitted);
+  // Not usable is not omitted (R15): a save must not carry it as an omission.
+  ASSERT_EQ(p.analyses.size(), 3u);
+  EXPECT_FALSE(p.analyses[1].omitted);
   EXPECT_TRUE(p.used_in_fit);
   EXPECT_FALSE(has(at_hole(*fit, 6), PositionNote::AnalysisNotReduced));
 }
