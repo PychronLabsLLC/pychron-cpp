@@ -126,6 +126,28 @@ TEST_F(AdcBankVirtual, StopWakesANextWaitingForItsSample) {
   EXPECT_EQ(returned, began + 4ms);
 }
 
+// start() moves the time the next sample is due: a next() asleep until the
+// old time hears of it, and samples at the time of the start.
+TEST_F(AdcBankVirtual, AStartWakesANextWaitingForItsSample) {
+  const TimePoint began = clock.now();
+  ASSERT_TRUE(adc.start());
+  ASSERT_TRUE(*adc.next(1s));
+  Result<std::optional<Frame>> got = std::optional<Frame>{};
+  TimePoint returned{};
+  pychron::testing::Crew crew(clock);
+  crew.start("next", [&] {
+    got = adc.next(1s);  // the sample is due in 10 ms
+    returned = clock.now();
+  });
+  clock.sleep_for(4ms);  // ends with the crew's thread asleep in its wait
+  ASSERT_TRUE(adc.start());
+  crew.join();
+  ASSERT_TRUE(got) << to_string(got.error());
+  ASSERT_TRUE(got->has_value());
+  EXPECT_EQ((*got)->ts, began + 4ms);
+  EXPECT_EQ(returned, began + 4ms);
+}
+
 // On hardware the clock is a SteadyClock: the period and the timeout are real.
 TEST(AdcBankSteady, ATimeoutAndThePeriodAreRealTime) {
   SteadyClock clock;

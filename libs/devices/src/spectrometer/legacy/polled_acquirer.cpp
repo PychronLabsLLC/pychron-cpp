@@ -37,9 +37,12 @@ Duration PolledAcquirer::integration() const {
 
 Result<void> PolledAcquirer::start() {
   if (auto primed = prime(); !primed) return observe(std::move(primed));
-  std::lock_guard lock(mutex_);
-  running_ = true;
-  due_ = clock_.now();
+  {
+    std::lock_guard lock(mutex_);
+    running_ = true;
+    due_ = clock_.now();
+  }
+  clock_.notify_all(cv_);  // a next() asleep until the old due time
   return {};
 }
 

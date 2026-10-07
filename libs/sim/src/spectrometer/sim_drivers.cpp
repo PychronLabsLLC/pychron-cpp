@@ -65,11 +65,14 @@ const ConfigKey kBeam{"beam", KeyType::String, false, "name of the shared BeamMo
 namespace detail {
 
 void FramePacer::start(Duration period) {
-  std::scoped_lock lock(mutex_);
-  running_ = true;
-  period_ = period;
-  due_ = clock_.now() + period;
-  seq_ = 0;
+  {
+    std::scoped_lock lock(mutex_);
+    running_ = true;
+    period_ = period;
+    due_ = clock_.now() + period;
+    seq_ = 0;
+  }
+  clock_.notify_all(cv_);  // a waiter asleep until the old due time
 }
 
 void FramePacer::stop() {

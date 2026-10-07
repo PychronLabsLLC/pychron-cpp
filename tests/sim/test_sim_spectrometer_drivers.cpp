@@ -382,4 +382,25 @@ TEST_F(FramePacerVirtual, StopWakesAWaiter) {
   EXPECT_EQ(returned, kStart + 1s);
 }
 
+// start() moves the time the next frame is due: a waiter asleep until the
+// old time hears of it, and its frame comes on the new period.
+TEST_F(FramePacerVirtual, AStartWakesAWaiter) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  sim::detail::FramePacer pacer(clock);
+  pacer.start(1h);
+  std::optional<TimePoint> frame;
+  pychron::testing::Crew crew(clock);
+  crew.start("waiter", [&] {
+    std::uint64_t seq = 0;
+    frame = pacer.wait(10s, seq);
+  });
+  clock.sleep_for(1s);  // ends with the crew's thread asleep in its wait
+  pacer.start(1s);
+  crew.join();
+  ASSERT_TRUE(frame.has_value());
+  EXPECT_EQ(*frame, kStart + 2s);
+}
+
 }  // namespace
