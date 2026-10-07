@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -594,18 +595,73 @@ Result<ps::Actor> flux_actor(ps::IStore& store, const std::string& user_name) {
 
 namespace {
 
+// The --csv destination (R19). It is written only by commit(), when the run
+// has something to write: until then it is as it was, so a run that fits
+// nothing leaves an earlier file alone. open() only finds out, before
+// anything is saved, that the directory can be written, by making the
+// sibling temporary file that commit() fills and renames over the
+// destination. The temporary is removed on every other way out.
+class CsvFile {
+ public:
+  CsvFile() = default;
+  CsvFile(const CsvFile&) = delete;
+  CsvFile& operator=(const CsvFile&) = delete;
+  ~CsvFile() { discard(); }
+
+  Result<void> open(const std::string& destination) {
+    destination_ = fs::path(destination);
+    std::error_code code;
+    fs::path directory = destination_.parent_path();
+    if (directory.empty()) directory = ".";
+    if (destination_.filename().empty() || fs::is_directory(destination_, code) || !fs::is_directory(directory, code))
+      return could_not_write();
+    char suffix[32];
+    std::snprintf(suffix, sizeof suffix, ".%08x.tmp", static_cast<unsigned>(std::random_device{}()));
+    temporary_ = directory / ("." + destination_.filename().string() + suffix);
+    std::ofstream probe(temporary_, std::ios::binary | std::ios::trunc);
+    if (!probe) {
+      temporary_.clear();
+      return could_not_write();
+    }
+    return {};
+  }
+
+  Result<void> commit(const std::string& text) {
+    std::ofstream out(temporary_, std::ios::binary | std::ios::trunc);
+    out << text;
+    out.close();
+    std::error_code code;
+    if (out) fs::rename(temporary_, destination_, code);
+    if (!out || code) {
+      discard();
+      return could_not_write();
+    }
+    temporary_.clear();
+    return {};
+  }
+
+ private:
+  pychron::Unexpected<Error> could_not_write() const { return fail(ErrorKind::Io, "could not write " + destination_.string()); }
+  void discard() {
+    if (temporary_.empty()) return;
+    std::error_code code;
+    fs::remove(temporary_, code);
+    temporary_.clear();
+  }
+
+  fs::path destination_, temporary_;
+};
+
 int run(const Args& a, Io io) {
   auto store = open_flux_store(a.db);
   if (!store) return fatal(io, store.error().what);
   auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
   if (!source) return fatal(io, source.error().what);
 
-  // The CSV's destination is opened before anything is saved: an unwritable path writes nothing.
-  std::ofstream csv;
-  if (!a.csv.empty()) {
-    csv.open(a.csv, std::ios::binary | std::ios::trunc);
-    if (!csv) return fatal(io, "could not write " + a.csv);
-  }
+  // Before anything is saved: a CSV that cannot be written saves nothing.
+  CsvFile csv;
+  if (!a.csv.empty())
+    if (auto opened = csv.open(a.csv); !opened) return fatal(io, opened.error().what);
 
   Session s{io, a, **store, **source, std::nullopt, {}, kOk, false};
   if (a.save) {
@@ -637,10 +693,9 @@ int run(const Args& a, Io io) {
     s.level(name);
   }
 
-  if (!a.csv.empty()) {
-    csv << flux_csv_header() << s.csv_rows;
-    csv.close();
-    if (!csv) return fatal(io, "could not write " + a.csv);
+  // Only what was fitted is written: no level, no file (and an earlier one stays).
+  if (!a.csv.empty() && s.any_fitted) {
+    if (auto written = csv.commit(flux_csv_header() + s.csv_rows); !written) return fatal(io, written.error().what);
     pychron::mark_as_user_file(a.csv);
     io.out << "wrote " << a.csv << '\n';
   }

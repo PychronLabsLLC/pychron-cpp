@@ -24,6 +24,7 @@ TEST(FluxCmd, StubWithoutPersistence) {
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -333,6 +334,67 @@ TEST_F(FluxCmd, AnUnwritableCsvSavesNothing) {
   EXPECT_TRUE(contains(o.err, "could not write")) << o.err;
   EXPECT_EQ(o.out, "");
   EXPECT_EQ(seq(), before);
+  EXPECT_FALSE(fs::exists(path("no-such-dir")));
+}
+
+// R19: the destination is written only when a level was fitted, and never
+// before that is known. No temporary is left either way.
+TEST_F(FluxCmd, AnExistingCsvSurvivesARunThatFitsNothing) {
+  ASSERT_TRUE(pt::seed_level_without_monitors(*store_, seeded_, "B"));
+  const fs::path dir = path("out");
+  fs::create_directories(dir);
+  const std::string csv = (dir / "flux.csv").string();
+  const std::string kept = "kind,irradiation\r\nmonitor,\"an earlier, good run\"\r\n";
+  const auto write_kept = [&] { std::ofstream(csv, std::ios::binary) << kept; };
+  const auto read = [&] {
+    std::ifstream in(csv, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+  };
+  const auto files = [&] {
+    std::set<std::string> names;
+    for (const auto& entry : fs::directory_iterator(dir)) names.insert(entry.path().filename().string());
+    return names;
+  };
+  write_kept();
+
+  // An irradiation that does not exist (fatal), a level of one (the level fails),
+  // a level that cannot be fitted, and a bad edit.
+  const std::vector<std::vector<std::string>> runs = {{"flux", "fit", "NM-999", "--db", db_, "--csv", csv},
+                                                      {"flux", "fit", "NM-999", "A", "--db", db_, "--csv", csv},
+                                                      {"flux", "fit", "NM-300", "B", "--db", db_, "--csv", csv},
+                                                      {"flux", "fit", "NM-300", "A", "--db", db_, "--csv", csv, "--omit", "nope"}};
+  for (const auto& args : runs) {
+    const Outcome o = run_raw(args);
+    EXPECT_NE(o.code, elctl::kOk) << args[2] << ' ' << args[3];
+    EXPECT_FALSE(contains(o.out, "wrote")) << o.out;
+    EXPECT_EQ(read(), kept) << args[2] << ' ' << args[3];
+    EXPECT_EQ(files(), std::set<std::string>{"flux.csv"}) << args[2] << ' ' << args[3];
+  }
+
+  // A run that fits replaces it, and leaves only it.
+  const Outcome o = fit({"--csv", csv});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "wrote " + csv)) << o.out;
+  EXPECT_EQ(parse_csv(read()).size(), 13u);
+  EXPECT_EQ(files(), std::set<std::string>{"flux.csv"});
+
+  // With no file there before, a run that fits nothing makes none.
+  fs::remove(csv);
+  EXPECT_EQ(run_raw(runs[2]).code, elctl::kFailed);
+  EXPECT_TRUE(files().empty());
+}
+
+TEST_F(FluxCmd, ACsvDestinationThatIsADirectoryIsRefusedUpFront) {
+  const auto before = seq();
+  fs::create_directories(path("adir"));
+  const Outcome o = fit({"--csv", path("adir").string(), "--save"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "could not write")) << o.err;
+  EXPECT_EQ(o.out, "");
+  EXPECT_EQ(seq(), before);
+  EXPECT_TRUE(fs::is_empty(path("adir")));
 }
 
 TEST_F(FluxCmd, OmitAndExcludeChangeTheFit) {
