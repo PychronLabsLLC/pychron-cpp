@@ -1,7 +1,7 @@
 # Flux window
 
 Date: 2026-10-07
-Status: Draft for owner review
+Status: Approved 2026-10-07 (owner decisions in section 3)
 Owner: Jake Ross
 Depends on: `2026-10-06-flux-fitting-design.md` (the math of section 5, the
 orchestration of section 6, `elctl flux` of section 7, the rulings of
@@ -13,8 +13,8 @@ options schemas, `OptionsEditor`, `PresetBar`, `PresetStore`),
 Scope: a window in `apps/pychron-ui` that fits and saves the J of one
 irradiation level: a level tree, a J plot with the individual monitor
 analyses, a monitor table and an unknown table, an options dock with
-presets, Save. A new `Fit` menu. Four Qt-free additions the window draws from: three in
-`libs/processing`, one in its store adapter.
+presets, Save. A new `Fit` menu. Qt-free additions the window draws from, in
+`libs/processing` and its store adapter (section 4).
 Out of scope: a 2-D map of J over the tray, vertical flux (J against level
 height), a history pane with restore, an editor for monitor sets, Monte
 Carlo and position error, moving the other fit windows under the `Fit`
@@ -184,6 +184,22 @@ monitor sample; `Fitted` when every monitor position has a J; else
 `NotFitted`. The sample is that of the monitor document's default set.
 It lives in the store adapter because it names a persistence type.
 
+### 4.5 Shared text (`flux_view.hpp`)
+
+The window shows the lines `elctl flux fit` prints and writes its CSV, and
+cannot link `apps/elctl`. The functions that build them move from
+`apps/elctl/src/flux.cpp` into `libs/processing` unchanged in output:
+`flux_model_line`, `flux_summary`, `flux_warnings`, `flux_j_text`,
+`csv_field`, `flux_csv_header`, `flux_csv_rows`. `elctl` calls them.
+
+### 4.6 Ticking a monitor back in (`flux_fit.hpp`)
+
+`Edits` gains `std::set<int> include_positions`: a monitor in it is fitted
+even when the saved fit excluded it, as `Edits::include` does for an
+omitted analysis. Without it the window could untick a monitor's `Fit` box
+but never tick back one the saved fit had left out, short of forgetting
+every saved omission.
+
 ## 5. UI design (`apps/pychron-ui`)
 
 All of it in the store-gated block of `apps/pychron-ui/CMakeLists.txt`, under
@@ -349,11 +365,11 @@ action is absent when the application gave no recall callback.
 
 | Path | Change |
 |---|---|
-| `libs/processing/include/pychron/processing/flux_fit.hpp`, `src/flux_fit.cpp` | `AnalysisState`; `UsedAnalysis` gains `tag`, `state`, `j`, `j_err` (4.1) |
-| `libs/processing/include/pychron/processing/flux_view.hpp`, `src/flux_view.cpp` | new: schema and conversions (4.2), `flux_abscissa`, `flux_scene` (4.3) |
+| `libs/processing/include/pychron/processing/flux_fit.hpp`, `src/flux_fit.cpp` | `AnalysisState`; `UsedAnalysis` gains `tag`, `state`, `j`, `j_err` (4.1); `Edits::include_positions` (4.6) |
+| `libs/processing/include/pychron/processing/flux_view.hpp`, `src/flux_view.cpp` | new: schema and conversions (4.2), `flux_abscissa`, `flux_scene` (4.3), the shared text (4.5) |
 | `libs/processing/include/pychron/processing/options.hpp`, `src/options.cpp` | `enabled_when` accepts `<key> in a\|b` |
 | `libs/processing/adapters/store/include/pychron/processing/flux_store.hpp`, `src/flux_store.cpp` | `level_flux_status` (4.4) |
-| `apps/elctl/src/flux.cpp` | one warning line per monitor with analyses out, with the reason |
+| `apps/elctl/src/flux.cpp`, `flux.hpp` | one warning line per analysis out, with the reason; the text functions of 4.5 move out |
 | `apps/pychron-ui/src/flux_window.{hpp,cpp}` | new |
 | `apps/pychron-ui/src/flux_monitor_model.{hpp,cpp}`, `flux_analysis_model.{hpp,cpp}`, `flux_unknown_model.{hpp,cpp}` | new |
 | `apps/pychron-ui/src/fit_actions.{hpp,cpp}` | new |
