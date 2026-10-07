@@ -64,6 +64,10 @@ class Clock {
   virtual void notify_one(std::condition_variable& cv) const = 0;
   virtual void notify_all(std::condition_variable& cv) const = 0;
 
+  // Blocks the calling thread for `d` of this clock's time. In a test whose
+  // main thread is a participant, this is how time is moved on.
+  void sleep_for(Duration d) const;
+
   // RAII. The calling thread lives in this clock's time from construction
   // to destruction. `name` appears in the stall report.
   class Participant;
@@ -138,10 +142,22 @@ participating can also be the last runnable one.
 
 ### 3.3 Notification
 
-`notify_one`/`notify_all` mark the affected waiters runnable under the clock
-mutex and only then notify the condition variable. A woken thread therefore
-counts as runnable from the instant it is notified, not from the instant the
-kernel schedules it, and the clock cannot jump past work it is about to do.
+A `VirtualClock` waiter does not sleep on the caller's condition variable.
+`wait*` registers a record keyed by the condition variable's address, releases
+the caller's lock, and sleeps on a condition variable the record owns, under
+the clock mutex; it re-takes the caller's lock after the clock mutex is
+released. The caller's condition variable is only a name. This keeps one lock
+order (caller's mutex, then the clock's), lets the jumping thread wake any
+waiter without touching that waiter's mutex, and means a condition variable
+on some thread's stack can go away without the clock holding a pointer to it.
+
+`notify_one`/`notify_all` mark the records keyed by that condition variable
+runnable under the clock mutex and wake them. A woken thread therefore counts
+as runnable from the instant it is notified, not from the instant the kernel
+schedules it, and the clock cannot jump past work it is about to do.
+`notify_one` wakes every waiter on the key (a spurious return is allowed, and
+the clock cannot know which one the caller meant). Both also call the real
+`notify_all`, for a waiter that blocked on the condition variable directly.
 
 A waiter that wakes, finds its predicate false and waits again becomes blocked
 again in the usual way.
@@ -172,6 +188,12 @@ At infinite speed there is no sleep and no real-time dependence at all.
 A participant blocked some other way (a raw `cv.wait`, `future.get()`,
 `thread.join()`, a socket read) looks runnable, so time stops. It never jumps
 wrongly: the failure is a stall, not a wrong result.
+
+The converse mistake is a raw `cv.notify_*` on a condition variable that is
+waited on through the clock: a `VirtualClock` waiter does not hear it. A timed
+waiter then wakes at its deadline and an untimed one never does. Section 4.2
+lists every such condition variable; the last step of the work greps for raw
+notifies on them.
 
 `Detached` is the escape for waits that really are on the outside world. It
 is not for waiting on another participant: when that participant finishes and
