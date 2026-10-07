@@ -6,27 +6,41 @@
 // intensities read through the acquirer.
 //
 // Physics, deliberately simple:
-//   - Gas: isotope -> mass and abundance (signal at the peak top, fA), with
-//     optional exponential decay/growth. Nothing sits at mass 34.2, so the
-//     baseline there is zero plus noise.
+//   - Gas: isotope -> mass and abundance (signal at the peak top, fA). It is
+//     either a fixed list, each isotope with an optional exponential
+//     decay/growth, or, when a provider is set (`BeamSettings::gas_at`,
+//     `set_gas_provider`), whatever the provider answers for the instant of
+//     the reading: the gas in the source volume of a simulated extraction
+//     line (lab simulator spec section 5.2). A provider's `rate_per_s` is
+//     ignored. Nothing sits at mass 34.2, so a detector reads its baseline
+//     there.
 //   - Peak: per detector and isotope a flat-top trapezoid centered at
 //       table_value(mass, det) * sqrt(HV / nominal_hv) + shift
 //     where shift = deflection polynomial + geometry offset + symmetry shift.
 //   - Sensitivity scales with trap current, extraction focus (Gaussian around
 //     an optimum), detector gain and, for counters, the CDD voltage plateau.
+//   - Baseline: per detector a constant (fA, or cps of dark counts for a
+//     counter) plus a linear drift per hour since the model was built, added
+//     to the reading wherever the magnet is. Zero by default.
 //   - Noise: Gaussian for Faraday, Poisson with non-paralyzable dead time for
 //     counters (returned as cps). Values clamp at `saturation`.
 //   - An unprotected counter seeing more than its overload threshold latches
-//     `overloaded`; a protected detector or a blanked beam sees nothing.
-// Time comes from the injected Clock, randomness from a seeded generator, so
-// tests are deterministic. All methods are thread-safe.
+//     `overloaded`; a protected detector or a blanked beam sees no gas and
+//     reads baseline plus noise. A baseline never overloads a counter.
+// Time comes from the injected Clock. Randomness is keyed (keyed_noise.hpp,
+// lab simulator spec section 5.3): the noise on a reading is a function of
+// the seed, the detector and the instant of the reading (nanoseconds since
+// the model was built), not the next draw of a generator the detectors
+// share. A reading then does not depend on which other detectors were read,
+// how often, or by which thread first, so a simulated run gives the same
+// numbers every time; and two readings of one detector at one instant are
+// one reading, equal. All methods are thread-safe.
 
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,6 +74,8 @@ struct BeamDetector {
   double noise_rel = 0.001;               // Faraday Gaussian sigma per unit signal
   double saturation = 4.9e6;
   double overload_threshold = 5e5;        // cps an unprotected counter tolerates
+  double baseline = 0.0;                  // fA (Faraday) or cps (counter), wherever the magnet is
+  double baseline_drift_per_h = 0.0;      // added to `baseline` per hour since the model was built
   bool protect = false;
   bool overloaded = false;                // latched
 };
@@ -77,6 +93,11 @@ struct BeamSettings {
   double flat_half_width = 0.02;          // table units
   double edge_width = 0.01;               // table units, linear ramp to zero
   std::vector<BeamGas> gas;               // empty: argon defaults
+  // The gas at an instant, instead of `gas` (whose masses still locate a
+  // peak the provider's list lacks). Empty: `gas`. It is called with the
+  // model's mutex held, from whichever thread reads the beam: it must not
+  // call back into the model, and it must be safe to call from any thread.
+  std::function<std::vector<BeamGas>(TimePoint)> gas_at;
   // (mass, detector) -> peak-center magnet value before HV/deflection.
   std::function<double(double mass, const std::string& detector)> table_value;
   double nominal_trap_current = 100.0;
@@ -109,6 +130,9 @@ class BeamModel {
   Result<BeamDetector> detector(std::string_view name) const;
 
   void set_gas(std::vector<BeamGas> gas);
+  // Replaces `BeamSettings::gas_at` (see there for what a provider may not
+  // do); an empty function goes back to the fixed list.
+  void set_gas_provider(std::function<std::vector<BeamGas>(TimePoint)> provider);
 
   // Magnet position in table units.
   void set_magnet(double value);
@@ -122,13 +146,17 @@ class BeamModel {
   Result<void> set_deflection(std::string_view det, double value);
   Result<void> set_gain(std::string_view det, double value);
   Result<void> set_cdd_voltage(std::string_view det, double volts);
+  // Baseline and its drift per hour; both finite.
+  Result<void> set_baseline(std::string_view det, double baseline, double drift_per_h);
   Result<void> protect(std::string_view det, bool on);
   void blank(bool on);
   bool blanked() const;
   bool overloaded(std::string_view det) const;
   Result<void> clear_overload(std::string_view det);
 
-  // Peak-center magnet value of `isotope` on `det` under current state.
+  // Peak-center magnet value of `isotope` on `det` under current state. With
+  // a gas provider the isotope is looked up in its list for now, then in the
+  // fixed one: where a peak is does not depend on how much gas there is.
   Result<double> peak_center(std::string_view det, std::string_view isotope) const;
 
   // Intensity at instant `t`; counters return cps averaged over `gate`.
@@ -144,6 +172,7 @@ class BeamModel {
   double sensitivity_locked(const BeamDetector& d) const;
   double shape_locked(double magnet, double center) const;
   double true_signal_locked(const BeamDetector& d, TimePoint t) const;
+  double baseline_locked(const BeamDetector& d, TimePoint t) const;
 
   const Clock& clock_;
   BeamSettings settings_;
@@ -154,7 +183,6 @@ class BeamModel {
   double magnet_ = 0.0;
   double hv_ = 0.0;
   bool blank_ = false;
-  std::mt19937_64 rng_;
 };
 
 // Process-wide named models so drivers built by DriverRegistry from separate
