@@ -24,7 +24,9 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
                      std::shared_ptr<LogHub> log_hub)
     : clock_(clock), bus_(bus), options_(options), log_hub_(std::move(log_hub)) {
   if (log_hub_) logger_.emplace(log_hub_->logger("scheduler"));
+  if (options_.threads == 0) return;
   workers_.reserve(options_.threads);
+  live_workers_ = options_.threads;
   // Time does not jump until every worker has entered the clock.
   auto hold = std::make_shared<Clock::Hold>(clock_);
   for (std::size_t i = 0; i < options_.threads; ++i) {
@@ -35,16 +37,14 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
 Scheduler::~Scheduler() {
   stop();
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
     shutting_down_ = true;
+    clock_.notify_all(work_ready_);
+    // A worker finishes what is queued first, which may take clock time, so
+    // the wait for them is in the clock: a join is not, and would stop time.
+    while (live_workers_ != 0) clock_.wait(exited_, lock);
   }
-  clock_.notify_all(work_ready_);
-  for (auto& w : workers_) {
-    // A worker finishes what is queued first, which may take clock time: it
-    // must not wait for this thread.
-    Clock::Detached detached(clock_);
-    w.join();
-  }
+  for (auto& w : workers_) w.join();
 }
 
 Result<JobId> Scheduler::every(std::string name, Duration interval, Task task) {
@@ -212,7 +212,14 @@ void Scheduler::worker_loop(std::shared_ptr<Clock::Hold> started) {
     {
       std::unique_lock lock(mutex_);
       while (!shutting_down_ && queue_.empty()) clock_.wait(work_ready_, lock);
-      if (queue_.empty()) return;  // shutting down with nothing left to drain
+      if (queue_.empty()) {  // shutting down with nothing left to drain
+        // Said while this thread is still a participant: the destructor is
+        // runnable again before the clock stops counting the worker.
+        --live_workers_;
+        lock.unlock();
+        clock_.notify_all(exited_);
+        return;
+      }
       job = std::move(queue_.front());
       queue_.pop_front();
     }
@@ -224,6 +231,7 @@ void Scheduler::start() {
   std::lock_guard lock(mutex_);
   if (dispatching_) return;
   dispatching_ = true;
+  dispatcher_done_ = false;
   // Time does not jump until the dispatcher has entered the clock.
   auto hold = std::make_shared<Clock::Hold>(clock_);
   dispatcher_ = std::thread([this, hold]() mutable { dispatcher_loop(std::move(hold)); });
@@ -231,16 +239,16 @@ void Scheduler::start() {
 
 void Scheduler::stop() {
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
     if (!dispatching_) return;
     dispatching_ = false;
+    clock_.notify_all(wake_);
+    // Waited for in the clock, where the dispatcher says it has finished; the
+    // join below is then of a thread that is on its way out. A join alone
+    // would stop time under a job the dispatcher is running inline.
+    while (!dispatcher_done_) clock_.wait(exited_, lock);
   }
-  clock_.notify_all(wake_);
-  if (dispatcher_.joinable()) {
-    // The dispatcher has been told and woken; it needs no time to pass.
-    Clock::Detached detached(clock_);
-    dispatcher_.join();
-  }
+  if (dispatcher_.joinable()) dispatcher_.join();
 }
 
 bool Scheduler::started() const {
@@ -270,6 +278,11 @@ void Scheduler::dispatcher_loop(std::shared_ptr<Clock::Hold> started) {
     run_pending();
     lock.lock();
   }
+  // Said while this thread is still a participant: stop() is runnable again
+  // before the clock stops counting the dispatcher.
+  dispatcher_done_ = true;
+  lock.unlock();
+  clock_.notify_all(exited_);
 }
 
 void Scheduler::wait_idle() {

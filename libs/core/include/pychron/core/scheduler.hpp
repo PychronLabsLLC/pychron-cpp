@@ -52,8 +52,9 @@ struct JobStats {
 // due time when the dispatcher, the workers and every other participant are
 // waiting. A thread that calls run_pending() with no worker pool runs the jobs
 // itself and is a participant only if its caller made it one. stop() and the
-// destructor join their threads detached from the clock, so a job still
-// running may use up clock time while they wait.
+// destructor wait in the clock for their threads to say they have finished
+// and only then join them: a job still running may use up clock time
+// meanwhile, and time does not move on account of the wait itself.
 class Scheduler {
  public:
   struct Options {
@@ -126,11 +127,14 @@ class Scheduler {
   std::condition_variable wake_;       // dispatcher: jobs changed or stop requested
   std::condition_variable work_ready_;  // workers: queue non-empty or shutdown
   std::condition_variable idle_;       // wait_idle(): in_flight_ reached zero
+  std::condition_variable exited_;     // stop(), destructor: a thread has finished
   std::map<JobId, std::shared_ptr<Job>> jobs_;
   std::deque<std::shared_ptr<Job>> queue_;
   std::size_t in_flight_ = 0;
   JobId next_id_ = 1;
   bool dispatching_ = false;
+  bool dispatcher_done_ = true;   // the dispatcher thread has left its loop
+  std::size_t live_workers_ = 0;  // worker threads that have not left theirs
   bool shutting_down_ = false;
   std::vector<std::thread> workers_;
   std::thread dispatcher_;

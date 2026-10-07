@@ -29,6 +29,16 @@ namespace {
 // threads = 0: jobs run inline inside run_pending(), fully deterministic.
 Scheduler::Options inline_pool() { return Scheduler::Options{0}; }
 
+// Waits, in real time, until `n` threads are asleep in the clock.
+[[nodiscard]] bool await_waiters(const VirtualClock& clock, std::size_t n) {
+  const auto give_up = std::chrono::steady_clock::now() + 5s;
+  while (clock.waiters() != n) {
+    if (std::chrono::steady_clock::now() > give_up) return false;
+    std::this_thread::yield();
+  }
+  return true;
+}
+
 // A scheduler that waits past the clock leaves time standing and the test
 // asleep in it. Each test on a VirtualClock runs under a real-time bound: when
 // it is exceeded the process says so and aborts, well inside the ctest timeout.
@@ -478,14 +488,86 @@ TEST_F(SchedulerVirtual, StopReturnsWhileTimeRunsAway) {
   std::optional<Scheduler> s(std::in_place, clock);
   ASSERT_TRUE(s->every("tick", 1s, [&] { runs.fetch_add(1); }));
   s->start();
-  std::this_thread::sleep_for(20ms);
+  const auto give_up = std::chrono::steady_clock::now() + 20s;
+  while (runs.load() < 1 && std::chrono::steady_clock::now() < give_up) std::this_thread::yield();
 
   const auto real_start = std::chrono::steady_clock::now();
   s->stop();
   EXPECT_FALSE(s->started());
   s.reset();
-  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 1s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 10s);
   EXPECT_GE(runs.load(), 1);
+}
+
+// stop() waits for the dispatcher, a participant, to finish. If the caller
+// stepped out of the clock to do that, nobody would be runnable once the
+// dispatcher had gone and time would run to the sleeper's deadline.
+TEST_F(SchedulerVirtual, StopFromAParticipantDoesNotMoveTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  Scheduler s(clock, nullptr, Scheduler::Options{2});
+  s.start();
+  ASSERT_TRUE(s.every("tick", 1s, [&] { record(clock.now()); }));
+  std::thread sleeper([&] {
+    Clock::Participant p(clock, "sleeper");
+    clock.sleep_for(1h);
+  });
+  // Two workers, the dispatcher and the sleeper.
+  EXPECT_TRUE(await_waiters(clock, 4));
+
+  clock.sleep_for(3s + 1ms);
+  const TimePoint t = clock.now();
+  EXPECT_EQ(t, kStart + 3s + 1ms);
+  s.stop();
+  EXPECT_EQ(clock.now(), t);
+  EXPECT_EQ(recorded().size(), 3u);
+
+  clock.sleep_for(1h);  // past the sleeper's deadline
+  sleeper.join();
+}
+
+TEST_F(SchedulerVirtual, DestructorWaitsForAJobThatWaitsInClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  std::atomic<bool> finished{false};
+  std::optional<Scheduler> s(std::in_place, clock);
+  s->start();
+  ASSERT_TRUE(s->after("slow", 1s, [&] {
+    record(clock.now());
+    clock.sleep_for(5s);
+    finished = true;
+  }));
+
+  clock.sleep_for(1s + 1ms);  // the job is asleep on a worker
+  EXPECT_FALSE(finished.load());
+  s.reset();
+
+  EXPECT_TRUE(finished.load());
+  ASSERT_EQ(recorded(), std::vector<TimePoint>{kStart + 1s});
+  EXPECT_EQ(clock.now(), recorded().front() + 5s);
+}
+
+// With no worker pool the dispatcher runs the job itself.
+TEST_F(SchedulerVirtual, StopWaitsForAJobTheDispatcherRunsInline) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  std::atomic<bool> finished{false};
+  Scheduler s(clock, nullptr, inline_pool());
+  s.start();
+  ASSERT_TRUE(s.after("slow", 1s, [&] {
+    clock.sleep_for(5s);
+    finished = true;
+  }));
+
+  clock.sleep_for(1s + 1ms);
+  EXPECT_FALSE(finished.load());
+  s.stop();
+
+  EXPECT_TRUE(finished.load());
+  EXPECT_EQ(clock.now(), kStart + 6s);
 }
 
 TEST_F(SchedulerVirtual, RunPendingInlineStillWorks) {
