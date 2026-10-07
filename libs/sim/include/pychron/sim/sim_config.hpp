@@ -58,7 +58,9 @@
 //     passes its canvas, and with it the gauges it has off the canvas (each
 //     is a volume of its own once its controller is simulated), so a pump or
 //     a volume may be named after one of those. Detector names are the
-//     spectrometer's and are not checked here;
+//     spectrometer's and are not checked here: the settings carry the
+//     file's name (`SimSettings::file`) for whoever joins the line to a
+//     spectrometer and can check them;
 //   - a number that is not finite or is outside what a line can be:
 //     pressures and partial pressures 0 to 1e4 mbar; sizes 1e-6 to 1e9 cc;
 //     conductances and pump speeds 0 to 1e9 L/s; outgassing and leaks 0 to

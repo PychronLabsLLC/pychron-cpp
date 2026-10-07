@@ -120,6 +120,7 @@ class Reader {
       read_detector(path, name, t);
     });
     if (!problems_.empty()) return fail(config::to_error(problems_));
+    settings_.file = file_;
     return std::move(settings_);
   }
 

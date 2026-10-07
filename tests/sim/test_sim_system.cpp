@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -1166,6 +1168,116 @@ TEST(SimSystem, TheSpectrometerStageConsumesAndRemembers) {
   SimSystem large(clock, a_lab(), settings);
   clock.advance(100s);
   EXPECT_NEAR((*large.partial_pressures("source"))[kAr40], 0.5 * 100 / 1e11, 0.5 * 100 / 1e11 * 1e-9);
+}
+
+// The abundance of `isotope` in what a beam_gas() function answered.
+double abundance(const std::vector<sim::BeamGas>& gas, std::string_view isotope) {
+  for (const auto& g : gas) {
+    if (g.isotope == isotope) return g.abundance;
+  }
+  ADD_FAILURE() << "no " << isotope;
+  return 0.0;
+}
+
+TEST(SimSystem, BeamGasIsPartialPressureTimesSensitivity) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.source = {2e11, 0.0, 0.0};  // no consumption, no memory: the source keeps what it has
+  Composition held{};
+  held[kAr36] = 1e-10;
+  held[sim::index(Species::Ar37)] = 2e-10;
+  held[sim::index(Species::Ar38)] = 3e-10;
+  held[sim::index(Species::Ar39)] = 4e-10;
+  held[kAr40] = 5e-8;
+  held[kActive] = 1e-6;  // which no detector sees
+  settings.compositions = {{"source", held}};
+  SimSystem sim(clock, a_lab(), settings);
+  EXPECT_EQ(sim.settings().source.sensitivity, 2e11);
+
+  const auto gas_at = sim.beam_gas();
+  ASSERT_TRUE(gas_at);
+  const std::vector<sim::BeamGas> gas = gas_at(clock.now());
+  // The five argon isotopes, with the beam's own masses and no rate.
+  const std::vector<sim::BeamGas> argon = sim::default_argon_gas();
+  ASSERT_EQ(gas.size(), argon.size());
+  for (std::size_t i = 0; i < gas.size(); ++i) {
+    EXPECT_EQ(gas[i].isotope, argon[i].isotope);
+    EXPECT_EQ(gas[i].mass, argon[i].mass);
+    EXPECT_EQ(gas[i].rate_per_s, 0.0);
+  }
+  EXPECT_DOUBLE_EQ(abundance(gas, "Ar36"), 1e-10 * 2e11);
+  EXPECT_DOUBLE_EQ(abundance(gas, "Ar37"), 2e-10 * 2e11);
+  EXPECT_DOUBLE_EQ(abundance(gas, "Ar38"), 3e-10 * 2e11);
+  EXPECT_DOUBLE_EQ(abundance(gas, "Ar39"), 4e-10 * 2e11);
+  EXPECT_DOUBLE_EQ(abundance(gas, "Ar40"), 5e-8 * 2e11);
+
+  // It follows the volume.
+  Composition less = held;
+  less[kAr40] = 1e-9;
+  ASSERT_TRUE(sim.set_composition("source", less));
+  EXPECT_DOUBLE_EQ(abundance(gas_at(clock.now()), "Ar40"), 1e-9 * 2e11);
+}
+
+TEST(SimSystem, BeamGasIsEmptyWithoutASpectrometerStage) {
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  EXPECT_FALSE(sim.beam_gas());
+  // Nor of a line the network refused.
+  auto settings = quiet();
+  settings.initial_pressures = {{"source", -1.0}};
+  SimSystem refused(clock, a_lab(), settings);
+  ASSERT_TRUE(refused.build_error());
+  EXPECT_FALSE(refused.beam_gas());
+}
+
+// A reading's instant is not the clock's: the model goes to it, but not past
+// the clock and not back.
+TEST(SimSystem, BeamGasReadsTheInstantItIsAskedFor) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.source = {1e12, 1e-3, 0.0};  // the source uses a thousandth of its argon a second
+  settings.compositions = {{"source", sim::with_ar40(sim::air_ratios(), 1e-8)}};
+  SimSystem sim(clock, a_lab(), settings);
+  const auto gas_at = sim.beam_gas();
+  ASSERT_TRUE(gas_at);
+  const TimePoint start = clock.now();
+  const auto expected = [](double seconds) { return 1e-8 * 1e12 * std::exp(-1e-3 * seconds); };
+
+  clock.advance(100s);
+  // Stamped before now, and after where the model is: the gas of that instant.
+  EXPECT_NEAR(abundance(gas_at(start + 40s), "Ar40"), expected(40), expected(40) * 1e-9);
+  // Stamped before where the model now is: what is there, since it cannot go back.
+  EXPECT_NEAR(abundance(gas_at(start + 10s), "Ar40"), expected(40), expected(40) * 1e-9);
+  // Stamped after now: the line is not taken past its own clock.
+  EXPECT_NEAR(abundance(gas_at(start + 1h), "Ar40"), expected(100), expected(100) * 1e-9);
+  EXPECT_NEAR((*sim.partial_pressures("source"))[kAr40] * 1e12, expected(100), expected(100) * 1e-9);
+  // Which then goes on from there as the clock does.
+  clock.advance(100s);
+  EXPECT_NEAR(abundance(gas_at(clock.now()), "Ar40"), expected(200), expected(200) * 1e-9);
+}
+
+// A beam may be read after its line is gone (a registry not yet cleared): it
+// then has no gas, and its baseline.
+TEST(SimSystem, ABeamFedByALineThatIsGoneReadsNoGas) {
+  ManualClock clock;
+  sim::BeamModel beam(clock);
+  beam.ensure_detector("H1");
+  ASSERT_TRUE(beam.set_baseline("H1", 50.0, 0.0));
+  const double peak = *beam.peak_center("H1", "Ar40");
+  beam.set_magnet(peak);
+  {
+    auto settings = quiet();
+    settings.compositions = {{"source", sim::with_ar40(sim::air_ratios(), 1e-8)}};
+    SimSystem sim(clock, a_lab(), settings);
+    beam.set_gas_provider(sim.beam_gas());
+    EXPECT_NEAR(beam.intensity("H1")->value, 1e4 + 50.0, 5.0 * (1.0 + 0.001 * 1e4));
+  }
+  clock.advance(1s);
+  const auto late = beam.intensity("H1");
+  ASSERT_TRUE(late);
+  EXPECT_NEAR(late->value, 50.0, 5.0);
+  // Where the peak is does not need the line.
+  EXPECT_DOUBLE_EQ(*beam.peak_center("H1", "Ar40"), peak);
 }
 
 TEST(SimSystem, EveryVolumeOfARoleStillHasItsWalls) {

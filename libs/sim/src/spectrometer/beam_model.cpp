@@ -90,6 +90,13 @@ bool BeamModel::has_detector(std::string_view name) const {
   return find_locked(name) != nullptr;
 }
 
+std::vector<std::string> BeamModel::detector_names() const {
+  std::scoped_lock lock(mutex_);
+  std::vector<std::string> names;
+  for (const auto& d : detectors_) names.push_back(d.name);
+  return names;
+}
+
 Result<BeamDetector> BeamModel::detector(std::string_view name) const {
   std::scoped_lock lock(mutex_);
   const auto* d = find_locked(name);

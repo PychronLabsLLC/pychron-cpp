@@ -34,6 +34,11 @@
 // The network is solved exactly between valve events, so advancing lazily to
 // clock.now() on every query is exact, however often anything polls.
 //
+// The spectrometer's source is one of the volumes, and what it holds is what
+// a simulated beam measures: `beam_gas()` is the gas provider a `BeamModel`
+// is given (lab simulator spec section 5.2). The beam calls into this class
+// and never the other way round.
+//
 // Sizes are given in cc, as on the canvas, and are litres in the network;
 // pressures are mbar, amounts mbar L, conductances L/s.
 //
@@ -65,6 +70,7 @@
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/gas_network.hpp"
+#include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
 namespace pychron::sim {
@@ -158,6 +164,9 @@ struct SimSettings {
   // Compositions by name, as ratios to Ar36 (`[compositions.<name>]` of
   // sim.toml); `air` and `cocktail` are there without being listed.
   std::map<std::string, Composition> named;
+  // The sim.toml these were read from, if one was: for whoever reports on a
+  // name the file gives and only they can check (a detector's).
+  std::string file;
 };
 
 class SimSystem {
@@ -200,6 +209,20 @@ class SimSystem {
   // The spectrometer's source: the first volume of that role by name order;
   // nothing when the line has none.
   std::optional<std::string> spectrometer_volume() const;
+  // What a simulated beam reads of the source: the peak-top signal (fA) of
+  // each argon isotope there at `t`, its partial pressure times
+  // `settings().source.sensitivity`, with no rate. An empty function when
+  // the line has no spectrometer volume.
+  //
+  // `t` is the instant of a reading, on this system's clock: the model is
+  // advanced to it, but never past the clock's now, and never back (a `t`
+  // before where the model is reads what is there now). The function may
+  // outlive this system: it then answers with no gas at all. It takes this
+  // system's lock, so it may be called from any thread that holds none of
+  // this system's.
+  std::function<std::vector<BeamGas>(TimePoint)> beam_gas();
+  // As given, with a sim.toml's numbers over them where the line read one.
+  const Settings& settings() const noexcept { return settings_; }
   // The valves that have a state and no physics, each with why (a dangling
   // valve, one joined to nothing, a tee on a valve): what the line says of
   // them when it builds this.
@@ -264,13 +287,24 @@ class SimSystem {
 
   // Moves the network to clock.now(), and says when that is.
   TimePoint advance_locked() const;
+  // What beam_gas()'s function answers while this system is there.
+  std::vector<BeamGas> beam_gas_at(TimePoint t) const;
   // An isolated volume for a gauge the topology does not have, with what
   // the settings say of that name (size, gas, leak, pump, getter) and a
   // gauge's size if they give none; nothing if a volume has the name already.
   void add_gauge_volume_locked(const std::string& name);
 
+  // What a beam_gas() function holds of this system, weakly: the way back
+  // to it, taken away (under `mutex`) when the system is destroyed, so that
+  // a beam still registered then reads no gas instead of freed memory.
+  struct BeamLink {
+    std::mutex mutex;
+    const SimSystem* system = nullptr;
+  };
+
   const Clock& clock_;
-  Settings settings_;
+  const Settings settings_;
+  const std::shared_ptr<BeamLink> beam_link_ = std::make_shared<BeamLink>();
   mutable std::mutex mutex_;
   std::optional<Error> build_error_;         // the first refusal; under mutex_
   std::optional<std::string> spectrometer_;  // see spectrometer_volume()

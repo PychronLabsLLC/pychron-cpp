@@ -26,6 +26,7 @@
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
+#include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 
 namespace elctl {
@@ -188,10 +189,12 @@ class Exp {
       return kFailed;
     }
 
-    // Spectrometer. With --sim its beam follows the config's field table.
+    // Spectrometer. With --sim its beam follows the config's field table and
+    // measures what the simulated line's source volume holds.
     std::unique_ptr<spectrometer::Spectrometer> spec;
     if (lab_.spectrometer) {
       auto data = *lab_.spectrometer;
+      std::shared_ptr<sim::BeamModel> sim_beam;
       if (g_.sim) {
         sim::BeamSettings beam;
         if (data.config.source.nominal_hv) beam.nominal_hv = *data.config.source.nominal_hv;
@@ -202,7 +205,8 @@ class Exp {
             return v ? *v : mass / 8.0;
           };
         }
-        sim::BeamModelRegistry::global().set("default", std::make_shared<sim::BeamModel>(clock, beam));
+        sim_beam = std::make_shared<sim::BeamModel>(clock, beam);
+        sim::BeamModelRegistry::global().set("default", sim_beam);
       }
       auto assembled = spectrometer::SpectrometerAssembler::assemble(
           std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()});
@@ -211,6 +215,14 @@ class Exp {
         return kFailed;
       }
       spec = std::move(*assembled);
+      // Now that the beam has its detectors: the line's gas, and sim.toml's
+      // baselines.
+      if (sim_beam && (*line)->sim() != nullptr) {
+        if (auto fed = spectrometer::feed_beam_from_line(*sim_beam, *(*line)->sim()); !fed) {
+          complain("error: " + fed.error().what);
+          return kFailed;
+        }
+      }
     }
 
     executor::ExecutorOptions options;

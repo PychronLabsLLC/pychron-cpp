@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -252,6 +253,36 @@ TEST_F(ElctlExpTest, DryRunTouchesNothing) {
   EXPECT_TRUE(contains(o.out, "ok: ")) << o.out;
   EXPECT_FALSE(contains(o.out, "started")) << o.out;
   EXPECT_FALSE(fs::exists(dir_ / "lab" / "data"));
+}
+
+// The simulated spectrometer is joined to the simulated line: the lab's
+// sim.toml names a detector, which only the two together can check.
+TEST_F(ElctlExpTest, ASimTomlDetectorTheSpectrometerLacksStopsTheRun) {
+  std::ofstream(dir_ / "lab" / "sim.toml") << "[detectors.H9]\nbaseline = 50\n";
+  auto o = run_example_queue();
+  EXPECT_EQ(o.code, 1) << o.out;
+  EXPECT_TRUE(contains(o.err, "sim.toml")) << o.err;
+  EXPECT_TRUE(contains(o.err, "detectors.H9")) << o.err;
+  EXPECT_TRUE(contains(o.err, "known: ")) << o.err;
+  EXPECT_FALSE(fs::exists(dir_ / "out" / "records")) << "nothing was run";
+
+  // One it has is that detector's baseline: 50 fA, where the fixed beam the
+  // spectrometer has on its own reads nothing off the peaks. (The example
+  // queue names scripts, which only the CPython host runs.)
+  if (!pychron::scripting::scripting_enabled()) return;
+  std::ofstream(dir_ / "lab" / "sim.toml") << "[detectors.H1]\nbaseline = 50\n";
+  auto ok = run_example_queue();
+  ASSERT_EQ(ok.code, 0) << ok.out << ok.err;
+  std::ifstream in(dir_ / "out" / "records" / "bu" / "bu-1.json");
+  const std::string record((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  // results.baselines.H1.value, the last key of its table.
+  const auto baselines = record.find("\"baselines\"");
+  ASSERT_NE(baselines, std::string::npos);
+  const auto h1 = record.find("\"H1\"", baselines);
+  ASSERT_NE(h1, std::string::npos);
+  const auto value = record.find("\"value\"", h1);
+  ASSERT_NE(value, std::string::npos);
+  EXPECT_NEAR(std::strtod(record.c_str() + record.find(':', value) + 1, nullptr), 50.0, 2.0) << record.substr(h1, 400);
 }
 
 TEST_F(ElctlExpTest, InvalidQueueIsNotRun) {

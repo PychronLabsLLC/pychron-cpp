@@ -178,9 +178,15 @@ SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
       start_(clock.now()),
       last_(start_) {
   for (const auto& v : topology.valves) valve_open_[v] = false;
+  beam_link_->system = this;
 }
 
-SimSystem::~SimSystem() = default;
+SimSystem::~SimSystem() {
+  // After this no beam_gas() function is inside this system, and none
+  // comes in again.
+  std::lock_guard held(beam_link_->mutex);
+  beam_link_->system = nullptr;
+}
 
 std::optional<Error> SimSystem::build_error() const {
   std::lock_guard lock(mutex_);
@@ -190,6 +196,39 @@ std::optional<Error> SimSystem::build_error() const {
 std::optional<std::string> SimSystem::spectrometer_volume() const {
   std::lock_guard lock(mutex_);
   return spectrometer_ && network_.has_volume(*spectrometer_) ? spectrometer_ : std::nullopt;
+}
+
+std::function<std::vector<BeamGas>(TimePoint)> SimSystem::beam_gas() {
+  if (!spectrometer_volume()) return {};
+  return [link = std::weak_ptr<BeamLink>(beam_link_)](TimePoint t) -> std::vector<BeamGas> {
+    const auto held = link.lock();
+    if (!held) return {};
+    std::lock_guard lock(held->mutex);
+    return held->system != nullptr ? held->system->beam_gas_at(t) : std::vector<BeamGas>{};
+  };
+}
+
+std::vector<BeamGas> SimSystem::beam_gas_at(TimePoint t) const {
+  std::lock_guard lock(mutex_);
+  // To the instant of the reading: not past the clock, which is as far as
+  // anything else has moved this line, and not back.
+  const TimePoint to = std::min(t, clock_.now());
+  if (to > last_) {
+    network_.advance(seconds(to - last_));
+    last_ = to;
+  }
+  const auto held = network_.partial_pressures(*spectrometer_);
+  if (!held) return {};
+  // The beam's own argon, for its masses: a peak is where it was.
+  std::vector<BeamGas> gas = default_argon_gas();
+  for (auto& g : gas) {
+    g.abundance = 0.0;
+    g.rate_per_s = 0.0;
+    for (std::size_t s = 0; s < kSpeciesCount; ++s) {
+      if (kSpeciesName[s] == g.isotope) g.abundance = (*held)[s] * settings_.source.sensitivity;
+    }
+  }
+  return gas;
 }
 
 std::vector<std::pair<std::string, std::string>> SimSystem::valves_without_physics() const {

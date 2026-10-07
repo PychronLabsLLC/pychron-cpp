@@ -393,7 +393,9 @@ int main(int argc, char** argv) {
       return pychron::spectrometer::load_spectrometer_for_app(
           std::move(*data),
           pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
-          pychron::spectrometer::SpectrometerBringup{.sim_beam_from_table = simulation, .require_sim = sim});
+          // A simulated spectrometer measures the simulated line's gas.
+          pychron::spectrometer::SpectrometerBringup{
+              .sim_beam_from_table = simulation, .require_sim = sim, .line_sim = (*line)->sim()});
     }();
     if (loaded) {
       spectrometer = std::move(*loaded);
@@ -538,7 +540,8 @@ int main(int argc, char** argv) {
   //   4. the line: stop() halts the shared scheduler and waits for a poll
   //      already on a worker, so nothing is still using the spectrometer;
   //   5. the spectrometer;
-  //   6. the beam registry, whose models refer to the line's clock, before
+  //   6. the beam registry, whose models refer to the line's clock (and read
+  //      the line's simulated gas, through a handle that outlives it), before
   //      the line itself is destroyed on return.
   // When the line never started, step 4 does nothing: the scheduler never ran
   // and the spectrometer was never offered, so no poll or command has touched

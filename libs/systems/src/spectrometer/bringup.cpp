@@ -1,9 +1,13 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 
+#include <algorithm>
+#include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "pychron/systems/spectrometer/assembler.hpp"
 
@@ -42,6 +46,27 @@ std::optional<std::string> first_non_simulated(const cfg::SpectrometerConfig& co
 
 }  // namespace
 
+Result<void> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
+  const sim::SimSettings& settings = line.settings();
+  const std::vector<std::string> known = beam.detector_names();
+  for (const auto& [name, detector] : settings.detectors) {
+    if (std::ranges::find(known, name) != known.end()) continue;
+    std::string what = (settings.file.empty() ? std::string("sim settings") : settings.file) + ": detectors." + name +
+                       ": unknown detector '" + name + "'; known: ";
+    for (std::size_t i = 0; i < known.size(); ++i) what += (i == 0 ? "" : ", ") + known[i];
+    if (known.empty()) what += "none";
+    return fail(ErrorKind::Config, std::move(what));
+  }
+  for (const auto& [name, detector] : settings.detectors) {
+    if (auto set = beam.set_baseline(name, detector.baseline, detector.drift_per_h); !set) {
+      return fail(ErrorKind::Config, (settings.file.empty() ? std::string("sim settings") : settings.file) +
+                                         ": detectors." + name + ": " + set.error().what);
+    }
+  }
+  if (auto gas = line.beam_gas()) beam.set_gas_provider(std::move(gas));
+  return {};
+}
+
 bool is_simulated(const cfg::SpectrometerData& data) { return !first_non_simulated(data.config).has_value(); }
 
 Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(const std::filesystem::path& config,
@@ -60,11 +85,18 @@ Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(cfg::Spectromete
                   "simulation requested but " + data.config.source_file + " is not a simulated spectrometer: " + *real);
     }
   }
+  std::shared_ptr<sim::BeamModel> beam;
   if (options.sim_beam_from_table) {
-    sim::BeamModelRegistry::global().set(
-        "default", std::make_shared<sim::BeamModel>(ctx.clock, beam_settings_from_config(data)));
+    beam = std::make_shared<sim::BeamModel>(ctx.clock, beam_settings_from_config(data));
+    sim::BeamModelRegistry::global().set("default", beam);
   }
-  return SpectrometerAssembler::assemble(std::move(data), ctx);
+  auto spec = SpectrometerAssembler::assemble(std::move(data), ctx);
+  // The line's gas and baselines, now that the drivers have given the beam
+  // its detectors.
+  if (spec && beam && options.line_sim != nullptr) {
+    if (auto fed = feed_beam_from_line(*beam, *options.line_sim); !fed) return fail(fed.error());
+  }
+  return spec;
 }
 
 }  // namespace pychron::spectrometer

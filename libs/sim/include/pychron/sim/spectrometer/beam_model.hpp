@@ -122,11 +122,14 @@ class BeamModel {
   const Clock& clock() const noexcept { return clock_; }
   double nominal_hv() const noexcept { return settings_.nominal_hv; }
 
-  // Adds a detector (or replaces it, keeping runtime state) and returns it.
+  // Adds a detector, or replaces the one of its name with what is given:
+  // its baseline too, so a baseline set before (`set_baseline`) is gone.
   void add_detector(BeamDetector detector);
   // Adds a default detector of inferred kind if absent.
   void ensure_detector(std::string_view name);
   bool has_detector(std::string_view name) const;
+  // In the order they were added.
+  std::vector<std::string> detector_names() const;
   Result<BeamDetector> detector(std::string_view name) const;
 
   // The fixed list; its rates count from now. The noise and the baseline

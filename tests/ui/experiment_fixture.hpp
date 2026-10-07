@@ -81,7 +81,8 @@ struct SimLab {
     if (!line->start()) qFatal("the example line did not start");
     auto loaded = spectrometer::load_spectrometer_for_app(
         dir / "spectrometer.sim-integrated.toml", spectrometer::SpectrometerContext{clock, line->scheduler(), line->bus()},
-        spectrometer::SpectrometerBringup{.sim_beam_from_table = true});
+        // As the application does: the beam measures the line's gas.
+        spectrometer::SpectrometerBringup{.sim_beam_from_table = true, .line_sim = line->sim()});
     if (!loaded) qFatal("cannot load the sim spectrometer: %s", loaded.error().what.c_str());
     spec = std::move(*loaded);
     scan = std::make_unique<spectrometer::ScanService>(*spec, line->bus(), clock);

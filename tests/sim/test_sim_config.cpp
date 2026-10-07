@@ -170,6 +170,9 @@ TEST_F(SimConfig, AnEmptyFileGivesTheDefaults) {
   EXPECT_TRUE(s.sizes.empty());
   EXPECT_TRUE(s.detectors.empty());
   EXPECT_TRUE(s.named.empty());
+  // And say which file they are, for whoever checks its detectors' names.
+  EXPECT_EQ(s.file, (dir_ / "sim.toml").generic_string());
+  EXPECT_TRUE(SimSettings{}.file.empty());
 }
 
 TEST_F(SimConfig, ReadsEveryKeyOfTheSpecExample) {

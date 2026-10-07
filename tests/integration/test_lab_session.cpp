@@ -87,7 +87,8 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
     auto spec = spectrometer::load_spectrometer_for_app(
         dir_ / "spectrometer.sim-integrated.toml",
         spectrometer::SpectrometerContext{clock_, line_->scheduler(), line_->bus()},
-        spectrometer::SpectrometerBringup{.sim_beam_from_table = true});
+        // As the applications do: the beam measures the line's gas.
+        spectrometer::SpectrometerBringup{.sim_beam_from_table = true, .line_sim = line_->sim()});
     ASSERT_TRUE(spec) << spec.error().what;
     spec_ = std::move(*spec);
     scan_ = std::make_unique<spectrometer::ScanService>(*spec_, line_->bus(), clock_);
