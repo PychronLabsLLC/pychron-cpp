@@ -44,7 +44,7 @@ constexpr const char* kShortUsage =
     "                      [--weighted | --unweighted] [--mean arithmetic|weighted]\n"
     "                      [--mean-error sem|msem|sd] [--fit-error sem|msem|sd]\n"
     "                      [--neighbors N] [--interpolation weighted|average|linear] [--axis x|y] [--degree 1..4]\n"
-    "                      [--monitors NAME] [--sample NAME] [--all-positions]\n"
+    "                      [--monitors NAME] [--sample NAME] [--all-positions | --monitor-positions]\n"
     "                      [--omit RECORD_ID]... [--include RECORD_ID]... [--reset-omits]\n"
     "                      [--exclude-position HOLE]... [--no-save-position HOLE]...\n"
     "                      [--csv FILE] [--save] [--user NAME]\n"
@@ -71,8 +71,10 @@ constexpr const char* kUsageText =
     "  --degree 1..4              ls1d\n"
     "Monitors:\n"
     "  --monitors NAME            the monitor set (default: the saved fit's, else the store's)\n"
-    "  --sample NAME              the monitor sample, when it is not the set's\n"
+    "  --sample NAME              the monitor sample (default: the saved fit's, else the set's)\n"
     "  --all-positions            every position that has analyses is a monitor\n"
+    "  --monitor-positions        the monitor sample's positions (the default, unless the\n"
+    "                             saved fit used --all-positions)\n"
     "Edits (a level only):\n"
     "  --omit RECORD_ID  --include RECORD_ID   leave an analysis out of, or back in, its mean\n"
     "  --exclude-position HOLE    a monitor position stays out of the fit\n"
@@ -173,8 +175,10 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.weighted = flag == "--weighted";
       continue;
     }
-    if (flag == "--all-positions") {
-      a.selection.all_positions = true;
+    if (flag == "--all-positions" || flag == "--monitor-positions") {
+      if (a.selection.all_positions && *a.selection.all_positions != (flag == "--all-positions"))
+        return fail(ErrorKind::Config, "--all-positions and --monitor-positions exclude each other");
+      a.selection.all_positions = flag == "--all-positions";
       continue;
     }
     if (flag == "--reset-omits") {

@@ -62,6 +62,7 @@ struct FluxOptionsDoc {
   std::string monitor_set, monitor_sample;  // monitor_reference, monitor_sample
   std::optional<bool> used_in_fit;
   std::optional<bool> excluded;  // nullopt: a revision saved before the key existed, or imported
+  std::optional<bool> all_positions;  // the fit's monitors were every position with analyses; nullopt likewise
   bool sd_replaced = false;  // F13: a least-squares model saved with SD reads as Msem
 };
 
@@ -72,8 +73,11 @@ struct FluxOptionsDoc {
 FluxOptionsDoc parse_flux_options(std::string_view options_json);
 // `used_in_fit` is information; `excluded` is true only for a monitor the
 // user left out (FittedPosition::excluded), and is what a refit carries.
+// `monitor_set.sample` and `all_positions` are how the fit's monitors were
+// chosen, which the next load of the level repeats.
 std::string flux_options_json(const FluxOptions& options, const MonitorSet& monitor_set, bool used_in_fit,
-                              bool excluded, double fit_mswd, int fit_dof, std::string_view software);
+                              bool excluded, bool all_positions, double fit_mswd, int fit_dof,
+                              std::string_view software);
 
 // Whether two saved values are the same fit, so that saving one over the
 // other would change nothing: every field equal, and the options equal as
@@ -84,15 +88,23 @@ bool same_flux_value(const persistence::FluxValue& a, const persistence::FluxVal
 
 // ---- Loading a level (design section 6.1) -----------------------------------
 
+// How the monitors of a level are chosen. What is not given is as the
+// level's newest saved fit had it, so a saved fit is repeated (F9).
 struct MonitorSelection {
   std::string monitor_set;            // empty: the saved fit's, else the document's default
-  std::optional<std::string> sample;  // overrides the set's sample name
-  bool all_positions = false;         // every position that has analyses is a monitor
+  std::optional<std::string> sample;  // the monitor sample; nullopt: the saved fit's, else the set's
+  // true: every position that has analyses is a monitor; false: the
+  // positions of the monitor sample; nullopt: as saved, else false.
+  std::optional<bool> all_positions;
 };
 
 // The positions of a level that take part in a fit: the monitors (with their
 // analyses, reduced, and F) and the unknowns (the other positions that have
 // an identifier), each with its hole's x, y and its head flux revision.
+// The monitors are chosen as `selection` says and, where it does not say,
+// as the level's newest saved fit chose them (its `monitor_sample` and
+// `all_positions`); `LevelInputs::monitor_set.sample` and `all_positions`
+// are what was used, and what a save of the fit writes.
 // A position's hole is the holder hole whose ordinal is the position - 1 (a
 // hole's id is only its label). Error (Config, "flux: ...") for an
 // irradiation, level or monitor set that does not exist, an empty monitor

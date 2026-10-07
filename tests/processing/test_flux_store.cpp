@@ -179,12 +179,13 @@ TEST(FluxOptionsJson, RoundTrip) {
   o.mean = pr::MeanKind::Weighted;
   o.mean_error = pr::MeanErrorKind::Sem;
   const MonitorSet renne = default_monitor_sets().sets[1];
-  const std::string json = flux_options_json(o, renne, false, true, 1.12, 5, "pychron-cpp 0.4.0");
+  const std::string json = flux_options_json(o, renne, false, true, true, 1.12, 5, "pychron-cpp 0.4.0");
   for (const char* member :
        {R"j("model_kind":"Nearest Neighbors")j", R"j("use_weighted_fit":true)j", R"j("predicted_j_error_type":"sd")j",
         R"j("error_kind":"sem")j", R"j("mean_kind":"weighted")j", R"j("n_neighbors":3)j", R"j("interpolation_style":"Linear")j",
         R"j("one_d_axis":"Y")j", R"j("degree":3)j", R"j("monitor_reference":"FC-2 (Renne 1998)")j",
-        R"j("monitor_sample":"FC-2")j", R"j("used_in_fit":false)j", R"j("excluded":true)j", R"j("fit_mswd":1.12)j", R"j("fit_dof":5)j",
+        R"j("monitor_sample":"FC-2")j", R"j("used_in_fit":false)j", R"j("excluded":true)j", R"j("all_positions":true)j",
+        R"j("fit_mswd":1.12)j", R"j("fit_dof":5)j",
         R"j("software":"pychron-cpp 0.4.0")j"})
     EXPECT_TRUE(has(json, member)) << member << " in " << json;
 
@@ -196,6 +197,7 @@ TEST(FluxOptionsJson, RoundTrip) {
   ASSERT_TRUE(doc.used_in_fit.has_value());
   EXPECT_FALSE(*doc.used_in_fit);
   EXPECT_EQ(doc.excluded, std::optional<bool>(true));
+  EXPECT_EQ(doc.all_positions, std::optional<bool>(true));
   EXPECT_FALSE(doc.sd_replaced);
 
   // Every model, interpolation, axis and error kind comes back as written.
@@ -211,11 +213,12 @@ TEST(FluxOptionsJson, RoundTrip) {
           each.fit.axis = axis;
           each.fit.error = error;
           each.mean_error = pr::MeanErrorKind::Sd;
-          const FluxOptionsDoc back = parse_flux_options(flux_options_json(each, renne, true, false, 0.5, 2, "t"));
+          const FluxOptionsDoc back = parse_flux_options(flux_options_json(each, renne, true, false, false, 0.5, 2, "t"));
           ASSERT_TRUE(back.options) << legacy_model_name(kind);
           EXPECT_EQ(*back.options, each) << legacy_model_name(kind);
           EXPECT_EQ(back.used_in_fit, std::optional<bool>(true));
           EXPECT_EQ(back.excluded, std::optional<bool>(false));
+          EXPECT_EQ(back.all_positions, std::optional<bool>(false));
           EXPECT_FALSE(back.sd_replaced);
         }
 }
@@ -234,7 +237,8 @@ TEST(FluxOptionsJson, ReadsALegacyDict) {
   EXPECT_EQ(doc.monitor_set, "FC Min");
   EXPECT_EQ(doc.monitor_sample, "");
   EXPECT_FALSE(doc.used_in_fit.has_value());
-  EXPECT_FALSE(doc.excluded.has_value());  // a key of this version only
+  EXPECT_FALSE(doc.excluded.has_value());  // keys of this version only
+  EXPECT_FALSE(doc.all_positions.has_value());
   EXPECT_FALSE(doc.sd_replaced);
 }
 
@@ -271,12 +275,13 @@ TEST(FluxOptionsJson, UnknownModelOrGarbageMeansNoOptions) {
   // A mistyped member takes its default.
   const FluxOptionsDoc odd = parse_flux_options(
       R"({"model_kind":"plane","use_weighted_fit":"yes","n_neighbors":"3","degree":2.5,"one_d_axis":4,
-          "predicted_j_error_type":"nonsense","monitor_reference":12,"used_in_fit":"no","excluded":1})");
+          "predicted_j_error_type":"nonsense","monitor_reference":12,"used_in_fit":"no","excluded":1,"all_positions":"yes"})");
   ASSERT_TRUE(odd.options);
   EXPECT_EQ(*odd.options, FluxOptions{});
   EXPECT_EQ(odd.monitor_set, "");
   EXPECT_FALSE(odd.used_in_fit.has_value());
   EXPECT_FALSE(odd.excluded.has_value());
+  EXPECT_FALSE(odd.all_positions.has_value());
 }
 
 TEST(FluxOptionsJson, SdOnASurfaceReadsAsMsem) {
@@ -326,7 +331,7 @@ TEST(FluxSameValue, OptionsCompareAsJsonWithoutTheSoftware) {
   a.j = 1.0e-3;
   a.j_err = 2.0e-7;
   a.monitor_name = kuiper.name;
-  a.options_json = flux_options_json(o, kuiper, true, false, 1.12, 5, "pychron-cpp 0.4.0");
+  a.options_json = flux_options_json(o, kuiper, true, false, false, 1.12, 5, "pychron-cpp 0.4.0");
   EXPECT_TRUE(same_flux_value(a, a));
 
   // As PostgreSQL returns a jsonb: its own key order, a space after each colon and comma.
@@ -339,20 +344,20 @@ TEST(FluxSameValue, OptionsCompareAsJsonWithoutTheSoftware) {
   EXPECT_TRUE(same_flux_value(stored, a));
 
   ps::FluxValue newer = a;  // a version bump and nothing else
-  newer.options_json = flux_options_json(o, kuiper, true, false, 1.12, 5, "pychron-cpp 0.5.0");
+  newer.options_json = flux_options_json(o, kuiper, true, false, false, 1.12, 5, "pychron-cpp 0.5.0");
   EXPECT_TRUE(same_flux_value(a, newer));
   EXPECT_TRUE(same_flux_value(stored, newer));
 
   ps::FluxValue plane = a;
   FluxOptions p = o;
   p.fit.kind = pr::ModelKind::Plane;
-  plane.options_json = flux_options_json(p, kuiper, true, false, 1.12, 5, "pychron-cpp 0.4.0");
+  plane.options_json = flux_options_json(p, kuiper, true, false, false, 1.12, 5, "pychron-cpp 0.4.0");
   EXPECT_FALSE(same_flux_value(a, plane));
   EXPECT_FALSE(same_flux_value(stored, plane));
 
   // Every other key of the options counts, and every other field.
   ps::FluxValue excluded = a;
-  excluded.options_json = flux_options_json(o, kuiper, true, true, 1.12, 5, "pychron-cpp 0.4.0");
+  excluded.options_json = flux_options_json(o, kuiper, true, true, false, 1.12, 5, "pychron-cpp 0.4.0");
   EXPECT_FALSE(same_flux_value(a, excluded));
   ps::FluxValue other_j = stored;
   other_j.j = 1.1e-3;
@@ -423,7 +428,7 @@ class FluxLoadLevel : public testing::FluxStoreTest {
     ps::FluxValue v;
     v.j = 1.0e-3;
     v.j_err = 2.0e-7;
-    v.options_json = flux_options_json(options, set, used_in_fit, excluded, 1.12, 5, "test");
+    v.options_json = flux_options_json(options, set, used_in_fit, excluded, false, 1.12, 5, "test");
     return v;
   }
 };
@@ -599,6 +604,7 @@ TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
   ASSERT_TRUE(in) << to_string(in.error());
   EXPECT_EQ(in->monitor_set.name, "FC-2 (Kuiper 2008)");
   EXPECT_EQ(in->monitor_set.sample, "unk");
+  EXPECT_FALSE(in->all_positions);
   ASSERT_EQ(in->positions.size(), 12u);
   for (const auto& p : in->positions) {
     EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
@@ -609,6 +615,7 @@ TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
   all.all_positions = true;
   auto every = load(all);
   ASSERT_TRUE(every) << to_string(every.error());
+  EXPECT_TRUE(every->all_positions);
   ASSERT_EQ(every->positions.size(), 8u);  // 9-12 have no analyses: neither monitors nor unknowns
   int h = 1;
   for (const auto& p : every->positions) {
@@ -1044,7 +1051,7 @@ TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
     EXPECT_EQ(v.extra_json, std::nullopt);
     ASSERT_TRUE(v.options_json);
     EXPECT_EQ(*v.options_json,
-              flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, false, fit.mswd, fit.dof, "test"));
+              flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, false, false, fit.mswd, fit.dof, "test"));
     const FluxOptionsDoc doc = parse_flux_options(*v.options_json);
     EXPECT_EQ(doc.options, std::optional<FluxOptions>(plane_sem()));
     EXPECT_EQ(doc.used_in_fit, std::optional<bool>(p.monitor));
@@ -1330,6 +1337,98 @@ TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
   ASSERT_TRUE(pinned_after);
   EXPECT_NE(*free_after, *free_before);
   EXPECT_EQ(*pinned_after, *pinned_before);
+}
+
+// ---- A saved fit's monitors are the next fit's (R18, spec F9) ----------------
+
+TEST_F(FluxSaveLevel, ASampleOverrideIsSavedAndUsedAgain) {
+  // The store's sets name a sample this level does not hold.
+  auto sets = load_monitor_sets(store());
+  ASSERT_TRUE(sets) << to_string(sets.error());
+  MonitorSets edited = sets->sets;
+  for (auto& set : edited.sets) set.sample = "FCT";
+  auto committed = save_monitor_sets(store(), actor(), edited, *sets);
+  ASSERT_TRUE(committed) << to_string(committed.error());
+  auto plain = load();
+  ASSERT_TRUE(plain) << to_string(plain.error());
+  EXPECT_EQ(plain->monitor_set.sample, "FCT");
+  for (const auto& p : plain->positions) EXPECT_FALSE(p.monitor) << p.hole;
+
+  MonitorSelection fc2;
+  fc2.sample = "FC-2";
+  auto in = load(fc2);
+  ASSERT_TRUE(in) << to_string(in.error());
+  auto fit = fit_level(*in, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  EXPECT_EQ(fit->dof, 5);
+  ASSERT_EQ(save(*fit).written, 12);
+  EXPECT_EQ(parse_flux_options(head_value(1).options_json.value_or("")).monitor_sample, "FC-2");
+
+  // No selection: the saved fit's sample, so the same monitors.
+  auto again = load();
+  ASSERT_TRUE(again) << to_string(again.error());
+  EXPECT_EQ(again->monitor_set.name, "FC-2 (Kuiper 2008)");
+  EXPECT_EQ(again->monitor_set.sample, "FC-2");
+  ASSERT_EQ(again->positions.size(), 12u);
+  for (const auto& p : again->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
+  auto refit = fit_level(*again, plane_sem(), {});
+  ASSERT_TRUE(refit) << to_string(refit.error());
+  EXPECT_EQ(refit->parameters, fit->parameters);
+  EXPECT_EQ(save(*refit).unchanged, 12);
+
+  // A sample named wins over the saved one.
+  MonitorSelection fct;
+  fct.sample = "FCT";
+  auto named = load(fct);
+  ASSERT_TRUE(named) << to_string(named.error());
+  EXPECT_EQ(named->monitor_set.sample, "FCT");
+  for (const auto& p : named->positions) EXPECT_FALSE(p.monitor) << p.hole;
+}
+
+TEST_F(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");  // hole 9 has an analysis: a monitor with every position
+  MonitorSelection all;
+  all.all_positions = true;
+  auto in = load(all);
+  ASSERT_TRUE(in) << to_string(in.error());
+  ASSERT_EQ(in->positions.size(), 9u);
+  auto fit = fit_level(*in, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  EXPECT_TRUE(fit->all_positions);
+  EXPECT_EQ(fit->dof, 6);  // 9 monitors, 3 parameters
+  ASSERT_EQ(save(*fit).written, 9);
+  for (int n = 1; n <= 9; ++n)
+    EXPECT_EQ(parse_flux_options(head_value(n).options_json.value_or("")).all_positions, std::optional<bool>(true)) << n;
+
+  // No selection: as saved.
+  auto again = load();
+  ASSERT_TRUE(again) << to_string(again.error());
+  EXPECT_TRUE(again->all_positions);
+  ASSERT_EQ(again->positions.size(), 9u);
+  for (const auto& p : again->positions) EXPECT_TRUE(p.monitor) << p.hole;
+  auto refit = fit_level(*again, plane_sem(), {});
+  ASSERT_TRUE(refit) << to_string(refit.error());
+  EXPECT_EQ(refit->parameters, fit->parameters);
+  EXPECT_EQ(save(*refit).unchanged, 9);
+
+  // The caller can ask for the monitor sample's positions again.
+  MonitorSelection sample_based;
+  sample_based.all_positions = false;
+  auto restored = load(sample_based);
+  ASSERT_TRUE(restored) << to_string(restored.error());
+  EXPECT_FALSE(restored->all_positions);
+  ASSERT_EQ(restored->positions.size(), 12u);
+  for (const auto& p : restored->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
+  auto by_sample = fit_level(*restored, plane_sem(), {});
+  ASSERT_TRUE(by_sample) << to_string(by_sample.error());
+  EXPECT_FALSE(by_sample->all_positions);
+  EXPECT_EQ(by_sample->dof, 5);
+  // Saved so, the newest fit decides: sample based again.
+  ASSERT_EQ(save(*by_sample).written, 12);
+  auto last = load();
+  ASSERT_TRUE(last) << to_string(last.error());
+  EXPECT_FALSE(last->all_positions);
+  EXPECT_EQ(last->positions.size(), 12u);
 }
 
 // ---- A level saved before all its monitors were measured (R15) ---------------

@@ -250,6 +250,47 @@ TEST_F(FluxCmd, ASavedLeastSquaresFitWithSdWarnsAndUsesMsem) {
   EXPECT_TRUE(contains(o.out, "fit error sem")) << o.out;
 }
 
+// R18 (spec F9): a fit saved with --all-positions or --sample is the next fit's.
+TEST_F(FluxCmd, ASavedAllPositionsFitIsRepeatedUntilMonitorPositions) {
+  Outcome o = fit({"--all-positions", "--save"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "saved 8 positions")) << o.out;
+  const Outcome asked = fit({"--all-positions"});
+  const Outcome plain = fit({});
+  EXPECT_EQ(plain.code, elctl::kOk) << plain.err;
+  EXPECT_EQ(plain.out, asked.out);
+  EXPECT_FALSE(contains(plain.out, "66101")) << plain.out;  // no unknowns: every position is a monitor
+  // show still lists every position of the level.
+  const Outcome shown = run_raw({"flux", "show", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(shown.code, elctl::kOk) << shown.err;
+  EXPECT_TRUE(contains(shown.out, "66101")) << shown.out;
+  // The opposite flag: the monitor sample's positions, and the unknowns are back.
+  const Outcome restored = fit({"--monitor-positions"});
+  EXPECT_EQ(restored.code, elctl::kOk) << restored.err;
+  EXPECT_TRUE(contains(restored.out, "66101")) << restored.out;
+  ASSERT_EQ(table_row(restored.out, "Unknowns", 9).size(), 9u) << restored.out;
+  // Saved so, it holds.
+  ASSERT_EQ(fit({"--monitor-positions", "--save"}).code, elctl::kOk);
+  EXPECT_TRUE(contains(fit({}).out, "66101"));
+
+  o = fit({"--all-positions", "--monitor-positions"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--all-positions and --monitor-positions exclude each other")) << o.err;
+  EXPECT_EQ(o.out, "");
+}
+
+TEST_F(FluxCmd, ASavedSampleOverrideIsRepeated) {
+  const std::string db = make_store("other.db", "FCT");  // the monitors' sample is not the set's
+  Outcome o = fit({}, db);
+  EXPECT_EQ(o.code, elctl::kFailed);
+  EXPECT_TRUE(contains(o.err, "no monitor positions")) << o.err;
+  ASSERT_EQ(fit({"--sample", "FCT", "--save"}, db).code, elctl::kOk);
+  o = fit({}, db);
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(o.out, fit({"--sample", "FCT"}, db).out);
+  ASSERT_EQ(table_row(o.out, "Monitors", 1).size(), 15u) << o.out;
+}
+
 // R17: the monitor standard does not change without a word.
 TEST_F(FluxCmd, ASavedMonitorSetTheStoreLacksWarns) {
   ps::FluxValue v;

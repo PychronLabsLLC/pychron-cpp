@@ -101,6 +101,7 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
   out.level = in.level;
   out.holder = in.holder;
   out.monitor_set = in.monitor_set;
+  out.all_positions = in.all_positions;
   out.options = options;
 
   std::vector<reduction::Monitor> used;

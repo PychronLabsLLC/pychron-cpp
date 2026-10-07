@@ -79,7 +79,8 @@ struct LevelPosition {
 
 struct LevelInputs {
   std::string irradiation, level, holder;
-  MonitorSet monitor_set;
+  MonitorSet monitor_set;     // `sample` is the one the monitors were chosen by
+  bool all_positions = false;  // the monitors are every position that has analyses, not the sample's
   std::vector<LevelPosition> positions;      // by hole
   std::optional<FluxOptions> saved_options;  // of the level's last fit (any monitor position's)
   std::string saved_monitor_set;             // the set that fit named; may be empty
@@ -131,6 +132,7 @@ struct FittedPosition {
 struct LevelFit {
   std::string irradiation, level, holder;
   MonitorSet monitor_set;
+  bool all_positions = false;  // LevelInputs::all_positions, saved with the fit
   FluxOptions options;
   std::vector<FittedPosition> positions;  // by hole
   std::vector<double> parameters;

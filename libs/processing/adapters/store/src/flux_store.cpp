@@ -192,8 +192,9 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   std::map<std::string, const ps::RefObjectRow*> flux_by_key;
   for (const auto& object : *flux_objects) flux_by_key.emplace(object.key, &object);
   std::map<int, SavedFlux> saved;
-  std::string saved_set;
-  ps::ChangeSeq options_seq = 0, set_seq = 0;
+  std::string saved_set, saved_sample;
+  std::optional<bool> saved_all_positions;
+  ps::ChangeSeq options_seq = 0, set_seq = 0, sample_seq = 0, all_seq = 0;
   for (const auto& p : (*sheet)->positions) {
     const auto object = flux_by_key.find(flux_key(out.irradiation, out.level, p.position));
     if (object == flux_by_key.end()) continue;
@@ -208,6 +209,16 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     if (!(*read)->doc.monitor_set.empty() && (saved_set.empty() || (*read)->change_seq > set_seq)) {
       saved_set = (*read)->doc.monitor_set;
       set_seq = (*read)->change_seq;
+    }
+    // How the last fit chose its monitors (F9): its sample and whether
+    // every position was one.
+    if (!(*read)->doc.monitor_sample.empty() && (saved_sample.empty() || (*read)->change_seq > sample_seq)) {
+      saved_sample = (*read)->doc.monitor_sample;
+      sample_seq = (*read)->change_seq;
+    }
+    if ((*read)->doc.all_positions && (!saved_all_positions || (*read)->change_seq > all_seq)) {
+      saved_all_positions = (*read)->doc.all_positions;
+      all_seq = (*read)->change_seq;
     }
     saved.emplace(p.position, std::move((*read)->saved));
   }
@@ -224,13 +235,17 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     // An empty name would make a monitor of every position with no sample.
     if (selection.sample->empty()) return bad("the monitor sample name is empty");
     out.monitor_set.sample = *selection.sample;
+  } else if (!saved_sample.empty()) {
+    // The saved fit's monitors were another sample's than the set's: again.
+    out.monitor_set.sample = saved_sample;
   }
+  out.all_positions = selection.all_positions ? *selection.all_positions : saved_all_positions.value_or(false);
 
   // 3. Monitors and unknowns. With all_positions the analyses decide.
   std::vector<std::string> identifiers;
   for (const auto& p : (*sheet)->positions) {
     if (!p.identifier) continue;
-    if (selection.all_positions || p.sample_name == out.monitor_set.sample) identifiers.push_back(*p.identifier);
+    if (out.all_positions || p.sample_name == out.monitor_set.sample) identifiers.push_back(*p.identifier);
   }
   // 4. The monitor analyses.
   auto rows = browse_all(source, out.irradiation, out.level, std::move(identifiers));
@@ -250,7 +265,7 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     position.sample = p.sample_name;
     if (p.identifier)
       if (auto found = analyses.find(*p.identifier); found != analyses.end()) position.analyses = std::move(found->second);
-    if (selection.all_positions) {
+    if (out.all_positions) {
       // Every position that has analyses is a monitor; there are no unknowns.
       if (position.analyses.empty()) continue;
       position.monitor = true;
@@ -291,8 +306,8 @@ ps::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position,
   v.monitor_material = fit.monitor_set.material;
   v.monitor_age = fit.monitor_set.age_ma;  // Ma, as the legacy level file has it
   v.monitor_age_err = fit.monitor_set.age_err_ma;
-  v.options_json = flux_options_json(fit.options, fit.monitor_set, position.used_in_fit, position.excluded, fit.mswd,
-                                     fit.dof, software);
+  v.options_json = flux_options_json(fit.options, fit.monitor_set, position.used_in_fit, position.excluded,
+                                     fit.all_positions, fit.mswd, fit.dof, software);
   return v;
 }
 

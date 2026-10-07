@@ -95,7 +95,10 @@ int show(const Args& a, Io io) {
   if (!store) return fatal(io, store.error().what);
   auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
   if (!source) return fatal(io, source.error().what);
-  auto level = pp::load_level(**source, **store, a.positional[0], a.positional[1], pp::MonitorSelection{});
+  // Every position of the level, whichever of them the saved fit made its monitors.
+  pp::MonitorSelection selection;
+  selection.all_positions = false;
+  auto level = pp::load_level(**source, **store, a.positional[0], a.positional[1], selection);
   if (!level) return failed(io, a.positional[0] + " " + a.positional[1] + ": " + level.error().what);
 
   std::vector<Row> rows;

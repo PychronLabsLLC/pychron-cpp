@@ -17,8 +17,10 @@
 //   --fit-error sem|msem|sd                error of the mean models' prediction
 //   --neighbors N  --interpolation weighted|average|linear  --axis x|y  --degree 1..4
 //   --monitors NAME   the monitor set (default: the saved fit's, else the store's)
-//   --sample NAME     the monitor sample's name, when it is not the set's
+//   --sample NAME     the monitor sample's name (default: the saved fit's, else the set's)
 //   --all-positions   every position that has analyses is a monitor
+//   --monitor-positions  the monitor sample's positions (the default, unless
+//                        the saved fit used --all-positions)
 // A level only (they name analyses and holes of one level):
 //   --omit RECORD_ID  --include RECORD_ID  --exclude-position HOLE
 //   --no-save-position HOLE
