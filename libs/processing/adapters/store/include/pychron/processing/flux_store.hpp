@@ -80,9 +80,10 @@ struct MonitorSelection {
 // The positions of a level that take part in a fit: the monitors (with their
 // analyses, reduced, and F) and the unknowns (the other positions that have
 // an identifier), each with its hole's x, y and its head flux revision.
-// Error (Config, "flux: ...") for an irradiation, level or monitor set that
-// does not exist, a level with no holder and a position whose hole the holder
-// lacks.
+// A position's hole is the holder hole whose ordinal is the position - 1 (a
+// hole's id is only its label). Error (Config, "flux: ...") for an
+// irradiation, level or monitor set that does not exist, an empty monitor
+// sample name, a level with no holder and a position beyond the holder.
 Result<LevelInputs> load_level(IAnalysisSource& source, persistence::IStore& store, std::string_view irradiation,
                                std::string_view level, const MonitorSelection& selection);
 

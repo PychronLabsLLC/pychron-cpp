@@ -300,13 +300,18 @@ class FluxLoadLevel : public testing::FluxStoreTest {
 
   Result<LevelInputs> load(const MonitorSelection& selection = {}, const std::string& level = "A",
                            const std::string& irradiation = "NM-300") {
-    return load_level(source(), store(), irradiation, level, selection);
+    StoreSource* opened = source();
+    if (!opened) return fail(ErrorKind::Config, "test: the source did not open");
+    return load_level(*opened, store(), irradiation, level, selection);
   }
 
-  static const LevelPosition* hole(const LevelInputs& in, int n) {
+  // The position at hole `n`; a failure and an empty position when there is none.
+  static const LevelPosition& hole(const LevelInputs& in, int n) {
     for (const auto& p : in.positions)
-      if (p.hole == n) return &p;
-    return nullptr;
+      if (p.hole == n) return p;
+    ADD_FAILURE() << "no position at hole " << n;
+    static const LevelPosition none;
+    return none;
   }
 
   static FluxOptions plane_sem() {
@@ -379,12 +384,15 @@ TEST_F(FluxLoadLevel, PositionsMonitorsAndGeometry) {
     EXPECT_NEAR(fit->positions[static_cast<std::size_t>(8 + i)].j, golden.j[i], golden.j[i] * 1e-5) << i;
 }
 
-TEST_F(FluxLoadLevel, GeometryIsByHoleIdNotByIndex) {
-  // The same holes listed last first: ordinal 1 is hole "12".
+TEST_F(FluxLoadLevel, GeometryIsByOrdinalNotByHoleId) {
+  // Position N is the hole with ordinal N - 1 (as on the entry sheet). The
+  // labels run the other way ("12" is the first hole) and the holes are
+  // stored last first: neither the label nor the place in the list decides.
   auto holes = testing::seed_holes();
+  for (auto& h : holes) h.hole_id = std::to_string(12 - h.ordinal);
   std::reverse(holes.begin(), holes.end());
-  for (std::size_t i = 0; i < holes.size(); ++i) holes[i].ordinal = static_cast<int>(i + 1);
-  ASSERT_EQ(holes.front().hole_id, "12");
+  ASSERT_EQ(holes.front().ordinal, 11);
+  ASSERT_EQ(holes.front().hole_id, "1");
   publish_holder(holes);
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
@@ -395,6 +403,16 @@ TEST_F(FluxLoadLevel, GeometryIsByHoleIdNotByIndex) {
     EXPECT_DOUBLE_EQ(p.x, h <= 8 ? flux_golden::kRing[h - 1].x : flux_golden::kPoints[h - 9].x) << h;
     EXPECT_DOUBLE_EQ(p.y, h <= 8 ? flux_golden::kRing[h - 1].y : flux_golden::kPoints[h - 9].y) << h;
   }
+
+  // Labels that are no numbers at all.
+  holes = testing::seed_holes();
+  for (auto& h : holes) h.hole_id = "A" + std::to_string(h.ordinal + 1);
+  publish_holder(holes);
+  auto lettered = load();
+  ASSERT_TRUE(lettered) << to_string(lettered.error());
+  ASSERT_EQ(lettered->positions.size(), 12u);
+  EXPECT_DOUBLE_EQ(lettered->positions[2].x, flux_golden::kRing[2].x);
+  EXPECT_DOUBLE_EQ(lettered->positions[11].y, flux_golden::kPoints[3].y);
 }
 
 TEST_F(FluxLoadLevel, MonitorSetResolution) {
@@ -405,7 +423,7 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   EXPECT_EQ(fresh->monitor_set.name, "FC-2 (Kuiper 2008)");
 
   // A saved fit names the set it used.
-  save_flux(1, saved_with(plane_sem(), defaults.sets[1]));
+  save_flux(5, saved_with(plane_sem(), defaults.sets[1]));
   auto saved = load();
   ASSERT_TRUE(saved) << to_string(saved.error());
   EXPECT_EQ(saved->monitor_set, defaults.sets[1]);
@@ -433,10 +451,32 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   legacy.j = 1.0e-3;
   legacy.j_err = 2.0e-7;
   legacy.options_json = R"({"model_kind":"Plane","monitor_reference":"FC Min"})";
-  save_flux(2, legacy);
+  save_flux(7, legacy);
   auto fallen = load();
   ASSERT_TRUE(fallen) << to_string(fallen.error());
   EXPECT_EQ(fallen->monitor_set.name, "FC-2 (Kuiper 2008)");
+
+  // The newest saved fit decides, wherever it is: a later save on a lower
+  // hole than the ones above, then one on a hole between them.
+  save_flux(2, saved_with(plane_sem(), defaults.sets[1]));
+  auto newest = load();
+  ASSERT_TRUE(newest) << to_string(newest.error());
+  EXPECT_EQ(newest->monitor_set.name, "FC-2 (Renne 1998)");
+  FluxOptions bowl;
+  bowl.fit.kind = pr::ModelKind::Bowl;
+  save_flux(6, saved_with(bowl, defaults.sets[0]));
+  save_flux(1, saved_with(plane_sem(), defaults.sets[1]));
+  auto lowest_last = load();
+  ASSERT_TRUE(lowest_last) << to_string(lowest_last.error());
+  EXPECT_EQ(lowest_last->monitor_set.name, "FC-2 (Renne 1998)");
+  ASSERT_TRUE(lowest_last->saved_options);
+  EXPECT_EQ(*lowest_last->saved_options, plane_sem());
+  save_flux(4, saved_with(bowl, defaults.sets[0]));
+  auto middle_last = load();
+  ASSERT_TRUE(middle_last) << to_string(middle_last.error());
+  EXPECT_EQ(middle_last->monitor_set.name, "FC-2 (Kuiper 2008)");
+  ASSERT_TRUE(middle_last->saved_options);
+  EXPECT_EQ(*middle_last->saved_options, bowl);
 }
 
 TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
@@ -471,6 +511,23 @@ TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
   EXPECT_EQ(both->positions.size(), 8u);
 }
 
+TEST_F(FluxLoadLevel, AnEmptySampleOverrideIsRefused) {
+  // A hole with no sample and no identifier: an empty name would match it.
+  ASSERT_TRUE(store().add_irradiation_position(seeded().acquisition_client, {seeded().level, 13}));
+  auto holes = testing::seed_holes();
+  holes.push_back({12, "13", 1.0, 1.0, 1.0});
+  publish_holder(holes);
+  MonitorSelection empty;
+  empty.sample = "";
+  auto refused = load(empty);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_EQ(refused.error().what, "flux: the monitor sample name is empty");
+  auto fine = load();
+  ASSERT_TRUE(fine) << to_string(fine.error());
+  EXPECT_EQ(fine->positions.size(), 12u);  // the empty hole is neither a monitor nor an unknown
+}
+
 TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   FluxOptions options;
   options.fit.kind = pr::ModelKind::Plane;
@@ -496,7 +553,7 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
   ASSERT_EQ(in->positions.size(), 12u);
-  const LevelPosition& p = *hole(*in, 3);
+  const LevelPosition& p = hole(*in, 3);
   ASSERT_TRUE(p.saved);
   const SavedFlux& s = *p.saved;
   EXPECT_EQ(s.revision, revision.str());
@@ -513,12 +570,12 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   EXPECT_EQ(s.saved_by, "jsmith");
   EXPECT_NE(ps::UtcTime::parse(s.saved_utc), std::nullopt) << s.saved_utc;
 
-  const LevelPosition& u = *hole(*in, 10);
+  const LevelPosition& u = hole(*in, 10);
   ASSERT_TRUE(u.saved);
   EXPECT_EQ(u.saved->revision, unknown_revision.str());
   EXPECT_EQ(u.saved->j, std::optional<double>(1.0e-3));
   EXPECT_FALSE(u.saved->options);
-  for (int h : {1, 2, 4, 9, 12}) EXPECT_FALSE(hole(*in, h)->saved) << h;
+  for (int h : {1, 2, 4, 9, 12}) EXPECT_FALSE(hole(*in, h).saved) << h;
 
   ASSERT_TRUE(in->saved_options);
   EXPECT_EQ(*in->saved_options, options);
@@ -537,8 +594,9 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   const ps::Uuid newer = save_flux(3, saved_with(plane_sem(), default_monitor_sets().sets[0]));
   auto again = load();
   ASSERT_TRUE(again) << to_string(again.error());
-  EXPECT_EQ(hole(*again, 3)->saved->revision, newer.str());
-  EXPECT_TRUE(hole(*again, 3)->saved->omitted.empty());
+  ASSERT_TRUE(hole(*again, 3).saved);
+  EXPECT_EQ(hole(*again, 3).saved->revision, newer.str());
+  EXPECT_TRUE(hole(*again, 3).saved->omitted.empty());
   ASSERT_TRUE(again->saved_options);
   EXPECT_EQ(*again->saved_options, plane_sem());
   EXPECT_EQ(again->monitor_set.name, "FC-2 (Kuiper 2008)");
@@ -585,13 +643,13 @@ TEST_F(FluxLoadLevel, TagsAreCarried) {
   tag("66002-01", "invalid");  // loaded all the same: a tag omits, it does not hide
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
-  const LevelPosition& one = *hole(*in, 1);
+  const LevelPosition& one = hole(*in, 1);
   ASSERT_EQ(one.analyses.size(), 3u);
   EXPECT_EQ(one.analyses[0].tag, "ok");
   EXPECT_EQ(one.analyses[1].record_id, "66001-02");
   EXPECT_EQ(one.analyses[1].tag, "omit");
   EXPECT_TRUE(one.analyses[1].f);
-  const LevelPosition& two = *hole(*in, 2);
+  const LevelPosition& two = hole(*in, 2);
   ASSERT_EQ(two.analyses.size(), 3u);
   EXPECT_EQ(two.analyses[0].record_id, "66002-01");
   EXPECT_EQ(two.analyses[0].tag, "invalid");
@@ -623,13 +681,15 @@ TEST_F(FluxLoadLevel, ErrorsNameTheCause) {
   EXPECT_TRUE(has(no_holder.error().what, "level B of NM-300 has no holder")) << no_holder.error().what;
 
   // The holder loses its last hole; the level still has a position there.
+  // The label "12" on another hole does not stand in for it.
   auto holes = testing::seed_holes();
   holes.pop_back();
+  holes.front().hole_id = "12";
   publish_holder(holes);
   auto no_hole = load();
   ASSERT_FALSE(no_hole);
   EXPECT_EQ(no_hole.error().kind, ErrorKind::Config);
-  EXPECT_TRUE(has(no_hole.error().what, "hole 12 is not on holder 12-hole")) << no_hole.error().what;
+  EXPECT_EQ(no_hole.error().what, "flux: position 12 of level A of NM-300 is beyond holder 12-hole (11 holes)");
 }
 
 TEST_F(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {

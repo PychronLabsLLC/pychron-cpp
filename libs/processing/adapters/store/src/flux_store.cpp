@@ -148,19 +148,22 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   if (!sheet) return fail(sheet.error());
   if (!*sheet) return bad("no " + of_level);
 
-  // 5. The holder's geometry, by hole id.
+  // 5. The holder's geometry. Position N is the hole with ordinal N - 1, as
+  // on the entry sheet; a hole's id is only its label.
   if (!level_row->holder) return bad(of_level + " has no holder");
   out.holder = level_row->holder_name.value_or("");
   auto holder_head = store.head(*level_row->holder, ps::Kind::RefValue);
   if (!holder_head) return fail(holder_head.error());
-  if (!*holder_head) return bad("holder " + out.holder + " of " + of_level + " has no geometry");
+  if (!*holder_head)
+    return bad(out.holder.empty() ? of_level + " has no holder"
+                                  : "holder " + out.holder + " of " + of_level + " has no geometry");
   auto holder_payload = store.load_payload(**holder_head);
   if (!holder_payload) return fail(holder_payload.error());
   const auto* holder_ref = *holder_payload ? std::get_if<ps::RefPayload>(&**holder_payload) : nullptr;
   const auto* holder = holder_ref ? std::get_if<ps::HolderValue>(holder_ref) : nullptr;
-  if (!holder) return fail(ErrorKind::Protocol, "flux: holder " + out.holder + " is not a holder");
-  std::map<std::string, const ps::HolderHole*> holes;
-  for (const auto& h : holder->holes) holes.emplace(h.hole_id, &h);
+  if (!holder) return fail(ErrorKind::Protocol, "flux: the holder of " + of_level + " is not a holder");
+  std::map<int, const ps::HolderHole*> holes;  // by ordinal
+  for (const auto& h : holder->holes) holes.emplace(h.ordinal, &h);
 
   // 6. Each position's head flux revision; the most recent one with options
   // is the level's last fit.
@@ -195,7 +198,11 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   auto set = resolve_monitor_set(sets->sets, selection, saved_set);
   if (!set) return fail(set.error());
   out.monitor_set = std::move(*set);
-  if (selection.sample) out.monitor_set.sample = *selection.sample;
+  if (selection.sample) {
+    // An empty name would make a monitor of every position with no sample.
+    if (selection.sample->empty()) return bad("the monitor sample name is empty");
+    out.monitor_set.sample = *selection.sample;
+  }
 
   // 3. Monitors and unknowns. With all_positions the analyses decide.
   std::vector<std::string> identifiers;
@@ -229,9 +236,11 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
       position.monitor = p.sample_name == out.monitor_set.sample;
       if (!position.monitor && !p.identifier) continue;  // an empty hole
     }
-    const auto hole = holes.find(std::to_string(p.position));
+    const auto hole = holes.find(p.position - 1);
     if (hole == holes.end())
-      return bad("hole " + std::to_string(p.position) + " is not on holder " + out.holder + " (" + of_level + ")");
+      return bad("position " + std::to_string(p.position) + " of " + of_level + " is beyond " +
+                 (out.holder.empty() ? "its holder" : "holder " + out.holder) + " (" +
+                 std::to_string(holder->holes.size()) + " holes)");
     position.x = hole->second->x;
     position.y = hole->second->y;
     if (auto s = saved.find(p.position); s != saved.end()) position.saved = std::move(s->second);

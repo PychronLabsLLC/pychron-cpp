@@ -75,13 +75,14 @@ class FluxStoreTest : public ::testing::Test {
   }
 
   // Opened on first use, over the same file: it sees what was written before.
-  StoreSource& source() {
+  // nullptr (and a failure) when it cannot be opened.
+  StoreSource* source() {
     if (!source_) {
       auto s = StoreSource::open(persistence::StoreConfig{url_, false}, StoreSourceOptions{2, "tester", "test-host"});
       EXPECT_TRUE(s) << (s ? "" : to_string(s.error()));
       if (s) source_ = std::move(*s);
     }
-    return *source_;
+    return source_.get();
   }
 
  private:

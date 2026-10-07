@@ -50,16 +50,17 @@ inline double seed_j(int hole, int aliquot) {
   return aliquot == 2 ? j * (1 + kSeedSpread) : aliquot == 3 ? j * (1 - kSeedSpread) : j;
 }
 
-// The 12 holes: the golden ring, then the golden prediction points.
+// The 12 holes: the golden ring, then the golden prediction points. Position
+// N of the level is the hole with ordinal N - 1; the id is its label.
 inline std::vector<persistence::HolderHole> seed_holes() {
   std::vector<persistence::HolderHole> holes;
   int n = 1;
   for (const auto& m : flux_golden::kRing) {
-    holes.push_back({n, std::to_string(n), m.x, m.y, 1.0});
+    holes.push_back({n - 1, std::to_string(n), m.x, m.y, 1.0});
     ++n;
   }
   for (const auto& p : flux_golden::kPoints) {
-    holes.push_back({n, std::to_string(n), p.x, p.y, 1.0});
+    holes.push_back({n - 1, std::to_string(n), p.x, p.y, 1.0});
     ++n;
   }
   return holes;
