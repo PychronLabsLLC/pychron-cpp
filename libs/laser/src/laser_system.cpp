@@ -34,6 +34,21 @@ namespace {
 
 using Gate = std::lock_guard<std::recursive_mutex>;
 
+// Calendar time for a stamp that is written down: the clock's, so a simulated
+// session is stamped in simulated time. A system with no camera has been
+// given no clock, and gets the computer's.
+std::tm utc_parts(const Clock* clock) {
+  const std::time_t now =
+      std::chrono::system_clock::to_time_t(clock != nullptr ? clock->wall_now() : std::chrono::system_clock::now());
+  std::tm parts{};
+#ifdef _WIN32
+  gmtime_s(&parts, &now);
+#else
+  gmtime_r(&now, &parts);
+#endif
+  return parts;
+}
+
 }  // namespace
 
 std::string_view to_string(LaserActivity activity) noexcept {
@@ -240,13 +255,12 @@ Result<std::string> LaserSystem::snapshot(std::string_view name) {
   std::string stem(name);
   if (stem.ends_with(".png")) stem.erase(stem.size() - 4);
   if (stem.empty()) {
-    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm parts{};
-#ifdef _WIN32
-    gmtime_s(&parts, &now);
-#else
-    gmtime_r(&now, &parts);
-#endif
+    const Clock* clock = nullptr;
+    {
+      Gate gate(gate_);  // attach_camera() sets it
+      clock = clock_;
+    }
+    const std::tm parts = utc_parts(clock);
     char text[32];
     std::strftime(text, sizeof text, "%Y%m%d-%H%M%S", &parts);
     stem = text;
@@ -439,14 +453,8 @@ constexpr int kStaleTries = 5;
 
 double apart(StageXY a, StageXY b) { return std::hypot(a.x - b.x, a.y - b.y); }
 
-std::string utc_now() {
-  const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  std::tm parts{};
-#ifdef _WIN32
-  gmtime_s(&parts, &now);
-#else
-  gmtime_r(&now, &parts);
-#endif
+std::string utc_now(const Clock* clock) {
+  const std::tm parts = utc_parts(clock);
   char text[32];
   std::strftime(text, sizeof text, "%Y-%m-%dT%H:%M:%SZ", &parts);
   return text;
@@ -822,7 +830,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
     outcome.found = here;
     outcome.moved_mm = {here.x - c.start.x, here.y - c.start.y};
     outcome.residual_mm = c.residual;
-    const HoleCorrection correction{here.x, here.y, c.residual, utc_now()};
+    const HoleCorrection correction{here.x, here.y, c.residual, utc_now(clock_)};
     const std::string hole = c.hole;
     centering_.reset();
 

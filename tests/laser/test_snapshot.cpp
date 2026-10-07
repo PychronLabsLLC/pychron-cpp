@@ -54,6 +54,15 @@ TEST_F(Snapshots, WithNoNameItIsTheTime) {
   EXPECT_TRUE(is_png(*saved));
 }
 
+// The time is the clock's calendar time (here a ManualClock whose epoch is
+// 1970), so a simulated session names its pictures in simulated time.
+TEST_F(Snapshots, TheTimeIsTheClocks) {
+  clock.advance(1h + 2min + 3s);
+  const auto saved = imaging().snapshot("");
+  ASSERT_TRUE(saved) << saved.error().what;
+  EXPECT_EQ(fs::path(*saved).stem().string(), "19700101-010203");
+}
+
 TEST_F(Snapshots, ANameMayNotLeaveTheDirectory) {
   for (const char* name : {"../out", "a/b", "..", ".hidden", "c:\\x"}) {
     const auto saved = imaging().snapshot(name);
