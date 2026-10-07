@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1337,6 +1338,65 @@ TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
   ASSERT_TRUE(pinned_after);
   EXPECT_NE(*free_after, *free_before);
   EXPECT_EQ(*pinned_after, *pinned_before);
+}
+
+// R19: a neighbour model can extrapolate to a J that is no J. None is saved.
+TEST_F(FluxSaveLevel, AJThatIsNotPositiveAndFiniteRefusesTheWholeSave) {
+  const LevelFit good = fitted();
+  ASSERT_EQ(good.positions.size(), 12u);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  struct Case {
+    const char* what;
+    int hole;
+    void (*spoil)(FittedPosition&, double);
+    double value;
+    const char* names;
+  };
+  const Case cases[] = {
+      {"negative J", 10, [](FittedPosition& p, double v) { p.j = v; }, -1.0e-4, "J"},
+      {"zero J", 10, [](FittedPosition& p, double v) { p.j = v; }, 0.0, "J"},
+      {"NaN J", 2, [](FittedPosition& p, double v) { p.j = v; }, nan, "J"},
+      {"infinite J", 12, [](FittedPosition& p, double v) { p.j = v; }, inf, "J"},
+      {"negative J error", 9, [](FittedPosition& p, double v) { p.j_err = v; }, -1.0e-7, "J error"},
+      {"NaN J error", 9, [](FittedPosition& p, double v) { p.j_err = v; }, nan, "J error"},
+      {"zero mean J", 3, [](FittedPosition& p, double v) { p.mean_j = v; }, 0.0, "mean J"},
+      {"NaN mean J error", 3, [](FittedPosition& p, double v) { p.mean_j_err = v; }, nan, "mean J error"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.what);
+    LevelFit fit = good;
+    c.spoil(fit.positions[static_cast<std::size_t>(c.hole - 1)], c.value);
+    const ps::ChangeSeq before = change_seq();
+    auto outcome = save_level(store(), actor(), fit, {}, "test");
+    ASSERT_FALSE(outcome);
+    EXPECT_EQ(outcome.error().kind, ErrorKind::Config);
+    EXPECT_TRUE(outcome.error().what.starts_with("flux: hole " + std::to_string(c.hole) + " of NM-300A has ")) << outcome.error().what;
+    EXPECT_TRUE(has(outcome.error().what, std::string(" ") + c.names + " ")) << outcome.error().what;
+    EXPECT_TRUE(has(outcome.error().what, "nothing was saved")) << outcome.error().what;
+    EXPECT_EQ(change_seq(), before);  // not even a reference object for a position
+    for (int n = 1; n <= 12; ++n) EXPECT_FALSE(object(n)) << n;
+  }
+
+  // The lowest such hole is the one named.
+  LevelFit two = good;
+  two.positions[10].j = -1.0;
+  two.positions[4].j = 0.0;
+  auto outcome = save_level(store(), actor(), two, {}, "test");
+  ASSERT_FALSE(outcome);
+  EXPECT_TRUE(outcome.error().what.starts_with("flux: hole 5 of NM-300A has J 0")) << outcome.error().what;
+
+  // A position that is not saved is not looked at; a J with no error is a J.
+  LevelFit skipped = good;
+  skipped.positions[9].j = -1.0e-4;
+  skipped.positions[8].j_err = 0.0;
+  const ps::ChangeSeq before = change_seq();
+  auto saved = save_level(store(), actor(), skipped, SaveSelection{{10}}, "test");
+  ASSERT_TRUE(saved) << to_string(saved.error());
+  EXPECT_EQ(saved->written, 11);
+  EXPECT_EQ(saved->skipped, 1);
+  EXPECT_GT(change_seq(), before);
+  EXPECT_FALSE(object(10));
 }
 
 // ---- A saved fit's monitors are the next fit's (R18, spec F9) ----------------

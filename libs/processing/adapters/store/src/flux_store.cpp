@@ -5,6 +5,8 @@
 // changeset of flux_position revisions.
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <tuple>
@@ -311,8 +313,38 @@ ps::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position,
   return v;
 }
 
+namespace {
+
+// What of a value is no J to save: a J (or a monitor's mean J) that is not
+// finite and above zero, or an error of one that is not finite and at least
+// zero. A neighbour model can extrapolate to such a J.
+std::optional<std::string> not_a_j(const ps::FluxValue& v) {
+  const auto say = [](const char* name, double value) {
+    char text[64];
+    std::snprintf(text, sizeof text, "%s %g", name, value);
+    return std::string(text);
+  };
+  const auto value_ok = [](double x) { return std::isfinite(x) && x > 0.0; };
+  const auto error_ok = [](double x) { return std::isfinite(x) && x >= 0.0; };
+  if (!v.j || !value_ok(*v.j)) return say("J", v.j.value_or(std::nan("")));
+  if (!v.j_err || !error_ok(*v.j_err)) return say("J error", v.j_err.value_or(std::nan("")));
+  if (v.mean_j && !value_ok(*v.mean_j)) return say("mean J", *v.mean_j);
+  if (v.mean_j_err && !error_ok(*v.mean_j_err)) return say("mean J error", *v.mean_j_err);
+  return std::nullopt;
+}
+
+}  // namespace
+
 Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, const LevelFit& fit,
                                    const SaveSelection& selection, std::string_view software) {
+  // Before anything is written, a reference object included: every J to save is one.
+  for (const FittedPosition& p : fit.positions) {
+    if (selection.skip_positions.contains(p.hole)) continue;
+    if (const auto what = not_a_j(flux_value_of(fit, p, software)))
+      return bad("hole " + std::to_string(p.hole) + " of " + fit.irradiation + fit.level + " has " + *what +
+                 ": nothing was saved (a J is finite and above zero, its error finite and not negative)");
+  }
+
   auto level = find_level(store, fit.irradiation, fit.level);
   if (!level) return fail(level.error());
   auto objects = store.ref_objects(ps::RefType::FluxPosition, level->irradiation);

@@ -141,7 +141,9 @@ persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& 
 // the save a conflict, of the lowest such hole, and nothing is written. A
 // position that has no reference object yet gets one, scoped as the importer
 // scopes it. Error (Config, "flux: ...") for an irradiation or level that
-// does not exist.
+// does not exist, and, naming the lowest such hole and with nothing written,
+// when a position to save has a J (or a mean J) that is not finite and above
+// zero or an error of one that is not finite and at least zero.
 Result<FluxSaveOutcome> save_level(persistence::IStore& store, const persistence::Actor& actor, const LevelFit& fit,
                                    const SaveSelection& selection, std::string_view software);
 
