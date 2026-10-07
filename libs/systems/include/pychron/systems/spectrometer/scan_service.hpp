@@ -16,6 +16,7 @@
 #include <string>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -68,7 +69,9 @@ class ScanService {
   SignalBus& bus_;
   const Clock& clock_;
 
-  std::mutex op_mutex_;  // serialises the engine start/stop sequences
+  // Serialises the engine start/stop sequences, which wait in clock time (a
+  // stop waits for a poll in flight): a ClockMutex.
+  ClockMutex op_mutex_;
   std::shared_ptr<State> state_;
 
   SignalBus::Subscription readings_;

@@ -4,9 +4,11 @@
 #include <chrono>
 #include <filesystem>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 #include "spectrometer_fakes.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -472,4 +474,73 @@ TEST(Spectrometer, SnapshotIsContentHashed) {
   EXPECT_NE(c.hash, a.hash);
   ASSERT_TRUE(r.spec->set_deflection("H1", 0.0).has_value());
   EXPECT_EQ(r.spec->snapshot().hash, a.hash);
+}
+
+// ---- On a VirtualClock: the test's thread takes part in the clock's time ----
+
+namespace {
+
+struct SpectrometerVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// A move holds the spectrometer for its settle, which is clock time. Whoever
+// polls the instrument meanwhile (the scan's status poll reads the magnet and
+// takes a snapshot) has to wait for it through the clock: blocked any other
+// way it looks runnable, time stands, and the settle never ends.
+TEST_F(SpectrometerVirtual, AScanPollAndAMoveContendWithoutStallingTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  Scheduler scheduler{clock, &bus, Scheduler::Options{0}};
+  CallLog log;
+  FakePositioner positioner{log};
+  FakeSource source;
+  FakeAcquirer acquirer{{"H2", "H1", "AX", "L1", "L2", "CDD"}};
+  auto d = cfg::load_spectrometer(kIntegrated);
+  ASSERT_TRUE(d.has_value()) << d.error().what;
+  std::map<std::string, FieldTable> tables;
+  for (const auto& [name, tf] : d->tables) tables.emplace(name, to_field_table(tf));
+  SpectrometerRoles roles;
+  roles.positioner = &positioner;
+  roles.source = &source;
+  roles.acquirers = {{"sim", &acquirer}};
+  // No sleep is injected: the settle is the context clock's.
+  auto made = Spectrometer::create(d->config, MolecularWeights(d->weights), std::move(tables), std::move(roles),
+                                   SpectrometerContext{clock, scheduler, bus});
+  ASSERT_TRUE(made.has_value()) << made.error().what;
+  Spectrometer& spec = **made;
+  const TimePoint start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  TimePoint moved{}, polled{};
+  bool move_ok = false;
+  std::optional<double> seen;       // the magnet, as the poll read it
+  SpectrometerState snapshot;
+  pychron::testing::Crew crew(clock);
+  crew.start("move", [&] {
+    PositionOptions options;
+    options.settle = 5s;
+    options.protect = ProtectPolicy::Never;
+    move_ok = spec.move_native(5.0, options).has_value();
+    moved = clock.now();
+  });
+  ASSERT_TRUE(pychron::testing::await_waiters(clock, 1));  // the move, settling with the spectrometer
+  crew.start("poll", [&] {
+    if (auto native = spec.magnet_native()) seen = *native;
+    snapshot = spec.snapshot();
+    polled = clock.now();
+  });
+  crew.join();
+
+  EXPECT_TRUE(move_ok);
+  EXPECT_EQ(moved, start + 5s);
+  // The poll got in when the move let go, and not before: it read the magnet
+  // where the move left it, at the instant the settle ended.
+  EXPECT_EQ(polled, start + 5s);
+  EXPECT_EQ(seen, 5.0);
+  EXPECT_EQ(snapshot.magnet, 5.0);
+  EXPECT_EQ(snapshot.ts, start + 5s);
+  EXPECT_EQ(clock.now(), start + 5s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }

@@ -303,6 +303,49 @@ TEST_F(SwitchManagerVirtual, ActuationDelayIsClockTime) {
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
 
+// An actuation holds the manager through its settle, which is clock time. A
+// refresh that arrives meanwhile waits for it through the clock: blocked any
+// other way it looks runnable, time stands, and the settle never ends.
+TEST_F(SwitchManagerVirtual, ARefreshWaitsForAnActuationWithoutStallingTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  FakeActuator act{&clock};
+  auto a = valve("A", "1");
+  a.settle = 3000ms;
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({a}, [&](const std::string&) -> IValveActuator* { return &act; }, options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  const auto start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  TimePoint actuated{}, refreshed{};
+  bool actuate_ok = false, refresh_ok = false;
+  pychron::testing::Crew crew(clock);
+  crew.start("actuate", [&] {
+    actuate_ok = (*mgr)->actuate("A", SwitchOp::Open, "op").has_value();
+    actuated = clock.now();
+  });
+  ASSERT_TRUE(pychron::testing::await_waiters(clock, 1));  // the actuation, settling
+  ASSERT_EQ(act.commands(), 1u);
+  crew.start("refresh", [&] {
+    refresh_ok = (*mgr)->refresh().has_value();
+    refreshed = clock.now();
+  });
+  crew.join();
+
+  EXPECT_TRUE(actuate_ok);
+  EXPECT_TRUE(refresh_ok);
+  EXPECT_EQ(actuated, start + 3000ms);
+  EXPECT_EQ(refreshed, start + 3000ms);
+  // The read-back after the settle, then the refresh's: none in between.
+  EXPECT_EQ(act.read_times(), (std::vector<TimePoint>{start + 3000ms, start + 3000ms}));
+  EXPECT_EQ(clock.now(), start + 3000ms);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
 // With no wall function given, the times a switch's history is kept in (when
 // it was last actuated, since when it has been in its state) are the clock's
 // calendar time, to the second: under a simulated clock, simulated time.
@@ -319,11 +362,11 @@ TEST(SwitchManager, LockTimeIsTheClocksWallTime) {
   ASSERT_TRUE(mgr) << mgr.error().what;
   ASSERT_TRUE((*mgr)->refresh());
 
-  clock.advance(90s + 900ms);
+  clock.advance(90s + 400ms);
   ASSERT_TRUE((*mgr)->actuate("A", SwitchOp::Open, "op"));
 
-  // epoch + elapsed is 1 700 000 091.15 s.
-  const systems::WallTime expected{1'700'000'091s};
+  // epoch + elapsed is 1 700 000 090.65 s: floored, not rounded.
+  const systems::WallTime expected{1'700'000'090s};
   const SwitchStats stats = (*mgr)->info("A")->stats;
   EXPECT_EQ(stats.last_actuation, expected);
   EXPECT_EQ(stats.since, expected);

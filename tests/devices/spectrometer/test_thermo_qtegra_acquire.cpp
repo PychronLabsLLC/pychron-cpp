@@ -514,7 +514,7 @@ TEST_F(QtegraAcquireVirtual, StopWakesANextWaitingForItsFrame) {
 
 TEST_F(QtegraAcquireSteady, ATimeoutIsRealTime) {
   ASSERT_TRUE(q.connect());
-  ASSERT_TRUE(q.configure(1s));
+  ASSERT_TRUE(q.configure(8s));  // snapped to 8.4 s: nothing is due for nearly 17 s
   ASSERT_TRUE(q.start());
   const auto began = std::chrono::steady_clock::now();
   auto r = q.next(20ms);
@@ -522,7 +522,7 @@ TEST_F(QtegraAcquireSteady, ATimeoutIsRealTime) {
   EXPECT_FALSE(r->has_value());
   const auto took = std::chrono::steady_clock::now() - began;
   EXPECT_GE(took, 20ms);
-  EXPECT_LT(took, 2s);  // well short of the two periods a frame is held back for
+  EXPECT_LT(took, 5s);  // well short of the two periods a frame is held back for
 }
 
 TEST_F(QtegraAcquireSteady, AFrameArrivesAndStopEndsAWait) {
@@ -533,20 +533,35 @@ TEST_F(QtegraAcquireSteady, AFrameArrivesAndStopEndsAWait) {
   ASSERT_TRUE(first->has_value());
   EXPECT_EQ((*first)->span, kHalf);
 
-  ASSERT_TRUE(q.configure(1s));  // the next frame is two seconds off
-  std::promise<void> about_to_wait;
-  auto pending = std::async(std::launch::async, [&] {
-    about_to_wait.set_value();
-    return q.next(30s);
-  });
-  about_to_wait.get_future().wait();
-  std::this_thread::sleep_for(50ms);  // lets it get into its wait; either way no frame comes
+  ASSERT_TRUE(q.configure(8s));  // snapped to 8.4 s: the next frame is nearly 17 s off
+  // A stop that comes while a second next() waits for that frame ends the
+  // wait with nothing. Nothing says when the other thread has got as far as
+  // its wait, so the stop is tried until it has found it there: one that came
+  // before the call was refused ("not started"), which is told apart and
+  // tried again.
   const auto began = std::chrono::steady_clock::now();
-  ASSERT_TRUE(q.stop());
-  ASSERT_EQ(pending.wait_for(5s), std::future_status::ready);
-  EXPECT_LT(std::chrono::steady_clock::now() - began, 1500ms);  // not the two seconds, nor the thirty
-  auto r = pending.get();
-  EXPECT_TRUE(!r || !r->has_value());  // woken with nothing, or (not yet waiting) refused as not started
+  bool woken = false;
+  for (int attempt = 0; attempt < 200 && !woken; ++attempt) {
+    ASSERT_TRUE(q.start());
+    std::promise<void> calling;
+    auto pending = std::async(std::launch::async, [&] {
+      calling.set_value();
+      return q.next(30s);
+    });
+    calling.get_future().wait();
+    std::this_thread::yield();
+    ASSERT_TRUE(q.stop());
+    ASSERT_EQ(pending.wait_for(10s), std::future_status::ready);  // not the frame's 17 s, nor the call's 30
+    auto r = pending.get();
+    if (r) {
+      EXPECT_FALSE(r->has_value());  // woken from its wait, with nothing
+      woken = true;
+    } else {
+      EXPECT_EQ(r.error().kind, ErrorKind::Config) << to_string(r.error());  // refused: stopped before it called
+    }
+  }
+  EXPECT_TRUE(woken) << "no stop found next() in its wait";
+  EXPECT_LT(std::chrono::steady_clock::now() - began, 5s);
 }
 
 // --- stop() against a next() blocked in the wire read -----------------------------

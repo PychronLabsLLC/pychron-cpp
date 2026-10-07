@@ -171,7 +171,7 @@ class Laser {
     // And a simulated camera only over a simulated stage.
     const bool simulated = line_->sim() != nullptr && line_->sim()->chromium(device_) != nullptr;
     if (auto ok = laser::usable_for_autocenter(*config, simulated); !ok) return failed(ok.error().what);
-    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, nullptr, &line_->clock());
     system.set_corrections(*lab_.corrections);
     auto frames = laser::make_frame_source(*config, a_.lab, system.sight(), line_->clock());
     if (!frames) return failed(frames.error().what);
@@ -316,7 +316,7 @@ class Laser {
     if (map_->find(hole) == nullptr) return failed("no hole " + hole + " on tray " + map_->name());
     auto opened = open();
     if (!opened) return failed(opened.error().what);
-    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, nullptr, &line_->clock());
     system.set_corrections(*lab_.corrections);
     // Measured afresh: whatever was measured before, of whatever setup, is not looked at.
     const laser::CameraConfig* raw = lab_.cameras.find(device_);
@@ -347,7 +347,7 @@ class Laser {
     if (int rc = check_device(); rc != kOk) return rc;
     auto opened = open();
     if (!opened) return failed(opened.error().what);
-    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, nullptr, &line_->clock());
     if (!look_through(system)) return kFailed;
     system.set_snapshot_dir(a_.lab / "snapshots" / device_);
     // A live camera has only just been opened: its first picture is waited for.
@@ -385,7 +385,8 @@ class Laser {
     } else {
       auto opened = open();
       if (!opened) return failed(opened.error().what);
-      system = std::make_unique<laser::LaserSystem>(device_, **opened, lab_.trays, *lab_.calibrations);
+      system = std::make_unique<laser::LaserSystem>(device_, **opened, lab_.trays, *lab_.calibrations, nullptr,
+                                                    &line_->clock());
       if (tray != nullptr) {
         if (auto r = system->set_tray(tray->name()); !r) return failed(r.error().what);
       }
@@ -498,7 +499,7 @@ class Laser {
 
     auto opened = open();
     if (!opened) return failed(opened.error().what);
-    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, &lab_.patterns);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, &lab_.patterns, &line_->clock());
     auto* runner = system.pattern_runner();
     if (runner == nullptr) return failed(device_ + " has no stage to run a pattern on");
     if (auto r = runner->execute_pattern(name); !r) return failed(r.error().what);
@@ -651,7 +652,7 @@ class Laser {
     const std::string& hole = a_.words[3];
     auto opened = open();
     if (!opened) return failed(opened.error().what);
-    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations);
+    laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, nullptr, &line_->clock());
     if (auto r = system.set_tray(map_->name()); !r) return failed(r.error().what);
     const auto status = system.calibration();
     const laser::Hole* h = map_->find(hole);

@@ -194,6 +194,7 @@ Spectrometer::Spectrometer(cfg::SpectrometerConfig config, MolecularWeights weig
       roles_(std::move(roles)),
       context_(context),
       options_(std::move(options)),
+      mutex_(context_.clock),
       tables_(std::move(tables)) {}
 
 Spectrometer::~Spectrometer() {

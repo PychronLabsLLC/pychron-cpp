@@ -11,7 +11,9 @@
 // uncorrect()/mass_at() run it backwards exactly.
 //
 // Every hardware operation is serialized by one mutex; events (MagnetMoved,
-// DetectorState) are published on the SignalBus after the operation.
+// DetectorState) are published on the SignalBus after the operation. A caller
+// that finds it taken (a move settling, say) waits for it in the context
+// clock's time.
 
 #include <chrono>
 #include <cstdint>
@@ -26,6 +28,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -286,7 +289,9 @@ class Spectrometer {
   Options options_;
   IMassPositioner::Axis axis_ = IMassPositioner::Axis::Dac;
 
-  mutable std::recursive_mutex mutex_;
+  // Held across device calls and a move's settle, which wait in clock time:
+  // a clock mutex. Recursive: the locked operations call one another.
+  mutable RecursiveClockMutex mutex_;
   std::map<std::string, FieldTable> tables_;
   std::string active_table_;
   std::optional<DetectorSet> detectors_;

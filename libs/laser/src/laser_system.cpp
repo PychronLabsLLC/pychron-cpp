@@ -22,9 +22,22 @@ namespace pychron::laser {
 using extraction::IStage;
 using extraction::StagePosition;
 
+namespace {
+
+const Clock& default_clock() {
+  static const SteadyClock clock;
+  return clock;
+}
+
+}  // namespace
+
 LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
-                         const CalibrationStore& calibrations, const PatternLibrary* patterns)
-    : name_(std::move(name)), driver_(driver), trays_(trays), calibrations_(calibrations) {
+                         const CalibrationStore& calibrations, const PatternLibrary* patterns, const Clock* clock)
+    : name_(std::move(name)),
+      driver_(driver),
+      trays_(trays),
+      calibrations_(calibrations),
+      gate_(clock != nullptr ? *clock : default_clock()) {
   // The runner moves this system's stage, not the driver's directly, so
   // whatever the system adds to a move applies to a pattern's too.
   if (patterns != nullptr) runner_ = std::make_unique<PatternRunner>(name_, *this, *patterns);
@@ -32,7 +45,7 @@ LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver
 
 namespace {
 
-using Gate = std::lock_guard<std::recursive_mutex>;
+using Gate = std::lock_guard<RecursiveClockMutex>;
 
 // Calendar time for a stamp that is written down: the clock's, so a simulated
 // session is stamped in simulated time. A system with no camera has been

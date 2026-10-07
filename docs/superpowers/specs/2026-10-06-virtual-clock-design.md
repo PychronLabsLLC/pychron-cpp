@@ -260,6 +260,11 @@ time goes on for the holder. It is Lockable (`std::lock_guard`,
 `std::unique_lock`, `std::scoped_lock`), not recursive, and promises no order
 among contenders. On `SteadyClock` it is a plain mutex.
 
+`pychron::RecursiveClockMutex` (same header) is the same for a mutex its
+owner takes again: an owner and a depth under the inner mutex, free once the
+owner has unlocked as often as it locked. On `SteadyClock` it is a plain
+recursive mutex.
+
 Use it for a mutex that is held across a wait in clock time, a transport
 call, or a call into something that does either: "one command in flight",
 "one actuation at a time". Do not use it for a mutex that only guards a few
@@ -306,6 +311,9 @@ participants.
 | `SimTransport::do_read` with an unsolicited source | `sleep_for(1 ms)` against a real deadline | `clock.wait_until` on the transport's condition variable, 1 ms of clock time per poll |
 | `NgxLink` (`ngx_link.cpp`): command timeout, read timeout, backoff, late-reply window | `steady_clock` and `cv.wait_for` | `clock_.now()` and clock waits; its reader reads a transport that, simulated, waits in clock time |
 | NGX mutexes held across a command: `NgxLink` `command_mutex_`, `connect_mutex_`, the valve mutex (`valve_mutex()`); `NgxSpectrometer` `wire_order_` | `std::mutex` | `ClockMutex` (section 3.8). `NgxLink::mutex_` and `NgxSpectrometer::acq_mutex_` guard short sections and have condition variables: they stay `std::mutex` |
+| `Spectrometer::mutex_` (every hardware operation, a move's settle included) | `std::recursive_mutex` | `RecursiveClockMutex`, on the context clock |
+| `LaserSystem::gate_` (every driver, camera and centering call) | `std::recursive_mutex` | `RecursiveClockMutex`, on the clock given at construction (the line's; `SteadyClock` when none is given). `LaserSystem::mutex_` guards fields and stays `std::mutex` |
+| `ScanService::op_mutex_` (the engine start and stop sequences) | `std::mutex` | `ClockMutex`. The service's state mutex stays `std::mutex` |
 | thread joins of participants (`Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | wait for the thread's done flag through the clock, then `join()` |
 
 ### 4.3 Real-time fallbacks removed

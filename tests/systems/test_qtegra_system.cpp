@@ -389,14 +389,19 @@ TEST_F(QtegraSystem, SetIntegrationWaitsForAReadInFlight) {
   ASSERT_TRUE(readings_.wait([](const auto& rs) { return !rs.empty(); }));
 
   link_->hold_get_data();
-  ASSERT_TRUE(link_->wait_held());  // a scheduler thread is inside next(), at the gate
+  if (!link_->wait_held()) {  // a scheduler thread is inside next(), at the gate
+    link_->release();  // or a later poll stops there, and the service cannot stop
+    FAIL() << "no poll reached the gate";
+  }
   clear_commands();
   // Time stands while the read is held (see Link), so set_integration cannot
   // get past it by waiting: it can only overlap it, or wait for it. Everyone
   // who takes part in the clock is now asleep in it but two: this thread and
   // the poll at the gate.
+  // (Only EXPECTs from here until the gate is open: the service cannot stop,
+  // nor the crew be joined, while the read is held.)
   const std::size_t crowd = clock_.participants();
-  ASSERT_TRUE(pychron::testing::eventually_real([&] { return clock_.waiters() == crowd - 2; }));
+  EXPECT_TRUE(pychron::testing::eventually_real([&] { return clock_.waiters() == crowd - 2; }));
   std::mutex m;
   std::optional<Result<void>> result;
   pychron::testing::Crew crew(clock_);
@@ -405,7 +410,6 @@ TEST_F(QtegraSystem, SetIntegrationWaitsForAReadInFlight) {
     std::lock_guard lock(m);
     result = std::move(r);
   });
-  // Only EXPECTs until the gate is open: the crew cannot be joined before then.
   // One more takes part, and it is asleep too.
   EXPECT_TRUE(pychron::testing::eventually_real(
       [&] { return clock_.participants() == crowd + 1 && clock_.waiters() == crowd - 1; }))

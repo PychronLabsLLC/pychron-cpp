@@ -34,6 +34,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/camera.hpp"
 #include "pychron/laser/camera_scale.hpp"
@@ -115,8 +116,12 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // the device's name in queues and in calibration files.
   // With `patterns` (which must outlive the system too) and a driver that has
   // a stage, the system runs the lab's patterns over it.
+  // `clock` (which must outlive the system as well) is the one a caller waits
+  // on for the gate while another's call is with the device: the clock the
+  // driver's transport waits on. SteadyClock if null.
   LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
-              const CalibrationStore& calibrations, const PatternLibrary* patterns = nullptr);
+              const CalibrationStore& calibrations, const PatternLibrary* patterns = nullptr,
+              const Clock* clock = nullptr);
   ~LaserSystem() override;
 
   std::string tray() const;               // empty: none
@@ -283,7 +288,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
 
   // Taken by every call that reaches the driver, the camera or a centering,
   // and before mutex_. Recursive: a pattern's step moves this system's stage.
-  mutable std::recursive_mutex gate_;
+  // Held across the device's replies, which wait in clock time: a clock mutex.
+  mutable RecursiveClockMutex gate_;
   std::atomic<bool> stopped_{false};  // the emergency stop's latch
   std::atomic<bool> moving_{false};   // a move was started, and moving() has not yet said it is over
 

@@ -5,9 +5,11 @@
 #include <mutex>
 #include <thread>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "spectrometer_fakes.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -323,4 +325,67 @@ TEST(ScanService, DestroyWhileReadingsFlowOnThreadedScheduler) {
     EXPECT_FALSE(r.spec->acquisition().running());
   }
   r.scheduler.stop();
+}
+
+// ---- On a VirtualClock: the test's thread takes part in the clock's time ----
+
+namespace {
+
+struct ScanServiceVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// A start holds the service while the instrument takes its integration time,
+// which is clock time. A stop that arrives meanwhile waits for it through the
+// clock: blocked any other way it looks runnable and time stands.
+TEST_F(ScanServiceVirtual, AStopWaitsForAStartWithoutStallingTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  Scheduler scheduler{clock, &bus, Scheduler::Options{0}};
+  CallLog log;
+  FakePositioner positioner{log};
+  FakeSource source;
+  FakeAcquirer acquirer{kChannels};
+  acquirer.on_configure = [&] { clock.sleep_for(3s); };  // the instrument is slow to answer
+  auto d = cfg::load_spectrometer(kIntegrated);
+  ASSERT_TRUE(d.has_value()) << d.error().what;
+  std::map<std::string, FieldTable> tables;
+  for (const auto& [name, tf] : d->tables) tables.emplace(name, to_field_table(tf));
+  SpectrometerRoles roles;
+  roles.positioner = &positioner;
+  roles.source = &source;
+  roles.acquirers = {{"sim", &acquirer}};
+  auto spec = Spectrometer::create(d->config, MolecularWeights(d->weights), std::move(tables), std::move(roles),
+                                   SpectrometerContext{clock, scheduler, bus});
+  ASSERT_TRUE(spec.has_value()) << spec.error().what;
+  ScanService service(**spec, bus, clock);
+  const TimePoint start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  TimePoint started{}, stopped{};
+  bool start_ok = false;
+  pychron::testing::Crew crew(clock);
+  crew.start("start", [&] {
+    start_ok = service.start(1s).has_value();
+    started = clock.now();
+  });
+  ASSERT_TRUE(pychron::testing::await_waiters(clock, 1));  // the start, inside configure()
+  ASSERT_EQ(acquirer.configures.load(), 1);
+  crew.start("stop", [&] {
+    service.stop();
+    stopped = clock.now();
+  });
+  crew.join();
+
+  EXPECT_TRUE(start_ok);
+  EXPECT_EQ(started, start + 3s);
+  // The stop came after the whole start, and stopped what it started.
+  EXPECT_EQ(stopped, start + 3s);
+  EXPECT_EQ(acquirer.starts, 1);
+  EXPECT_EQ(acquirer.stops, 1);
+  EXPECT_FALSE(service.running());
+  EXPECT_FALSE((*spec)->acquisition().running());
+  EXPECT_EQ(clock.now(), start + 3s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
