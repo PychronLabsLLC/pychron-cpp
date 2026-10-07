@@ -45,6 +45,15 @@ struct JobStats {
 // Time comes from the injected Clock. Due jobs are dispatched either by the
 // background dispatcher (start()) or explicitly via run_pending(), which is
 // what deterministic tests with a ManualClock use.
+//
+// Every wait and every notify of the scheduler goes through that clock, and
+// its threads are participants in it ("scheduler.dispatch", "scheduler.worker"):
+// on a VirtualClock time stands still while a job runs and jumps to the next
+// due time when the dispatcher, the workers and every other participant are
+// waiting. A thread that calls run_pending() with no worker pool runs the jobs
+// itself and is a participant only if its caller made it one. stop() and the
+// destructor join their threads detached from the clock, so a job still
+// running may use up clock time while they wait.
 class Scheduler {
  public:
   struct Options {
@@ -102,8 +111,10 @@ class Scheduler {
   std::vector<std::shared_ptr<Job>> collect_due_locked(TimePoint now);
   void execute(const std::shared_ptr<Job>& job);
   void publish_log(LogLevel level, std::string message) const;
-  void worker_loop();
-  void dispatcher_loop();
+  // `started` is the starter's Clock::Hold, dropped once the thread has
+  // entered the clock.
+  void worker_loop(std::shared_ptr<Clock::Hold> started);
+  void dispatcher_loop(std::shared_ptr<Clock::Hold> started);
 
   const Clock& clock_;
   SignalBus* bus_;

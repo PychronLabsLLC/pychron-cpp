@@ -1,19 +1,26 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "pychron/core/config/logging_config.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/core/virtual_clock.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -21,6 +28,44 @@ using namespace std::chrono_literals;
 namespace {
 // threads = 0: jobs run inline inside run_pending(), fully deterministic.
 Scheduler::Options inline_pool() { return Scheduler::Options{0}; }
+
+// A scheduler that waits past the clock leaves time standing and the test
+// asleep in it. Each test on a VirtualClock runs under a real-time bound: when
+// it is exceeded the process says so and aborts, well inside the ctest timeout.
+class SchedulerVirtual : public ::testing::Test {
+ protected:
+  ~SchedulerVirtual() override {
+    {
+      std::lock_guard lock(mutex_);
+      finished_ = true;
+    }
+    finished_cv_.notify_all();
+    deadman_.join();
+  }
+
+  // Appended to by jobs on worker threads.
+  void record(TimePoint t) {
+    std::lock_guard lock(mutex_);
+    times_.push_back(t);
+  }
+  std::vector<TimePoint> recorded() {
+    std::lock_guard lock(mutex_);
+    return times_;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable finished_cv_;
+  bool finished_ = false;
+  std::vector<TimePoint> times_;
+  std::thread deadman_{[this] {
+    std::unique_lock lock(mutex_);
+    if (finished_cv_.wait_for(lock, 30s, [this] { return finished_; })) return;
+    std::fputs("Scheduler test did not finish within 30 s of real time: a thread is stuck\n",
+               stderr);
+    std::abort();
+  }};
+};
 }  // namespace
 
 TEST(Scheduler, PeriodicRunsOncePerInterval) {
@@ -376,4 +421,82 @@ TEST(Scheduler, BackgroundDispatcherWithSteadyClock) {
   EXPECT_EQ(done.get_future().wait_for(5s), std::future_status::ready);
   s.stop();
   s.wait_idle();
+}
+
+TEST_F(SchedulerVirtual, PeriodicJobRunsAtExactTimes) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  Scheduler s(clock);
+  s.start();
+  ASSERT_TRUE(s.every("tick", 1s, [&] { record(clock.now()); }));
+
+  clock.sleep_for(10s + 1ms);
+  s.wait_idle();
+
+  std::vector<TimePoint> expected;
+  for (int i = 1; i <= 10; ++i) expected.push_back(kStart + i * 1s);
+  EXPECT_EQ(recorded(), expected);
+  EXPECT_EQ(clock.now(), kStart + 10s + 1ms);
+}
+
+TEST_F(SchedulerVirtual, AfterRunsOnceAtItsDelay) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  Scheduler s(clock);
+  s.start();
+  ASSERT_TRUE(s.after("once", 90s, [&] { record(clock.now()); }));
+
+  clock.sleep_for(200s);
+  s.wait_idle();
+
+  EXPECT_EQ(recorded(), std::vector<TimePoint>{kStart + 90s});
+  EXPECT_EQ(s.job_count(), 0u);
+}
+
+TEST_F(SchedulerVirtual, WatchdogFiresWithoutHeartbeat) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  Scheduler s(clock);
+  s.start();
+  ASSERT_TRUE(s.watchdog("w", 5s, [&] { record(clock.now()); }));
+
+  clock.sleep_for(6s);
+  s.wait_idle();
+
+  EXPECT_EQ(recorded(), std::vector<TimePoint>{kStart + 5s});
+}
+
+// Nobody holds time back here: the scheduler's threads are the only
+// participants and the job costs nothing, so time runs as fast as they can
+// take it. stop() and the destructor must get in all the same.
+TEST_F(SchedulerVirtual, StopReturnsWhileTimeRunsAway) {
+  VirtualClock clock;
+  std::atomic<int> runs{0};
+  std::optional<Scheduler> s(std::in_place, clock);
+  ASSERT_TRUE(s->every("tick", 1s, [&] { runs.fetch_add(1); }));
+  s->start();
+  std::this_thread::sleep_for(20ms);
+
+  const auto real_start = std::chrono::steady_clock::now();
+  s->stop();
+  EXPECT_FALSE(s->started());
+  s.reset();
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 1s);
+  EXPECT_GE(runs.load(), 1);
+}
+
+TEST_F(SchedulerVirtual, RunPendingInlineStillWorks) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  Scheduler s(clock, nullptr, inline_pool());
+  int runs = 0;
+  ASSERT_TRUE(s.every("tick", 1s, [&] { ++runs; }));
+  for (int i = 0; i < 5; ++i) {
+    clock.sleep_for(1s);
+    EXPECT_EQ(s.run_pending(), 1u);
+  }
+  EXPECT_EQ(runs, 5);
 }

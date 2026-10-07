@@ -25,7 +25,11 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
     : clock_(clock), bus_(bus), options_(options), log_hub_(std::move(log_hub)) {
   if (log_hub_) logger_.emplace(log_hub_->logger("scheduler"));
   workers_.reserve(options_.threads);
-  for (std::size_t i = 0; i < options_.threads; ++i) workers_.emplace_back([this] { worker_loop(); });
+  // Time does not jump until every worker has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  for (std::size_t i = 0; i < options_.threads; ++i) {
+    workers_.emplace_back([this, hold]() mutable { worker_loop(std::move(hold)); });
+  }
 }
 
 Scheduler::~Scheduler() {
@@ -34,8 +38,13 @@ Scheduler::~Scheduler() {
     std::lock_guard lock(mutex_);
     shutting_down_ = true;
   }
-  work_ready_.notify_all();
-  for (auto& w : workers_) w.join();
+  clock_.notify_all(work_ready_);
+  for (auto& w : workers_) {
+    // A worker finishes what is queued first, which may take clock time: it
+    // must not wait for this thread.
+    Clock::Detached detached(clock_);
+    w.join();
+  }
 }
 
 Result<JobId> Scheduler::every(std::string name, Duration interval, Task task) {
@@ -91,7 +100,7 @@ Result<JobId> Scheduler::add(std::string name, Kind kind, Duration period, std::
     job->due = clock_.now() + period;
     jobs_.emplace(id, std::move(job));
   }
-  wake_.notify_all();
+  clock_.notify_all(wake_);
   return id;
 }
 
@@ -111,7 +120,7 @@ bool Scheduler::cancel(JobId id) {
     std::lock_guard lock(mutex_);
     removed = jobs_.erase(id) > 0;
   }
-  wake_.notify_all();
+  clock_.notify_all(wake_);
   return removed;
 }
 
@@ -162,7 +171,7 @@ std::size_t Scheduler::run_pending() {
   if (workers_.empty()) {
     for (const auto& job : due) execute(job);
   } else if (!due.empty()) {
-    work_ready_.notify_all();
+    clock_.notify_all(work_ready_);
   }
   return due.size();
 }
@@ -181,8 +190,8 @@ void Scheduler::execute(const std::shared_ptr<Job>& job) {
     if (!ok) ++job->stats.failures;
     --in_flight_;
   }
-  idle_.notify_all();
-  wake_.notify_all();
+  clock_.notify_all(idle_);
+  clock_.notify_all(wake_);
 }
 
 void Scheduler::publish_log(LogLevel level, std::string message) const {
@@ -195,12 +204,14 @@ void Scheduler::publish_log(LogLevel level, std::string message) const {
   bus_->publish(Log{level, "scheduler", std::move(message), clock_.now()});
 }
 
-void Scheduler::worker_loop() {
+void Scheduler::worker_loop(std::shared_ptr<Clock::Hold> started) {
+  Clock::Participant participant(clock_, "scheduler.worker");
+  started.reset();
   for (;;) {
     std::shared_ptr<Job> job;
     {
       std::unique_lock lock(mutex_);
-      work_ready_.wait(lock, [this] { return shutting_down_ || !queue_.empty(); });
+      while (!shutting_down_ && queue_.empty()) clock_.wait(work_ready_, lock);
       if (queue_.empty()) return;  // shutting down with nothing left to drain
       job = std::move(queue_.front());
       queue_.pop_front();
@@ -213,7 +224,9 @@ void Scheduler::start() {
   std::lock_guard lock(mutex_);
   if (dispatching_) return;
   dispatching_ = true;
-  dispatcher_ = std::thread([this] { dispatcher_loop(); });
+  // Time does not jump until the dispatcher has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  dispatcher_ = std::thread([this, hold]() mutable { dispatcher_loop(std::move(hold)); });
 }
 
 void Scheduler::stop() {
@@ -222,8 +235,12 @@ void Scheduler::stop() {
     if (!dispatching_) return;
     dispatching_ = false;
   }
-  wake_.notify_all();
-  if (dispatcher_.joinable()) dispatcher_.join();
+  clock_.notify_all(wake_);
+  if (dispatcher_.joinable()) {
+    // The dispatcher has been told and woken; it needs no time to pass.
+    Clock::Detached detached(clock_);
+    dispatcher_.join();
+  }
 }
 
 bool Scheduler::started() const {
@@ -231,7 +248,9 @@ bool Scheduler::started() const {
   return dispatching_;
 }
 
-void Scheduler::dispatcher_loop() {
+void Scheduler::dispatcher_loop(std::shared_ptr<Clock::Hold> started) {
+  Clock::Participant participant(clock_, "scheduler.dispatch");
+  started.reset();
   std::unique_lock lock(mutex_);
   while (dispatching_) {
     std::optional<TimePoint> next;
@@ -240,7 +259,7 @@ void Scheduler::dispatcher_loop() {
       if (!next || job->due < *next) next = job->due;
     }
     if (!next) {
-      wake_.wait(lock);
+      clock_.wait(wake_, lock);
       continue;
     }
     if (clock_.now() < *next) {
@@ -255,7 +274,7 @@ void Scheduler::dispatcher_loop() {
 
 void Scheduler::wait_idle() {
   std::unique_lock lock(mutex_);
-  idle_.wait(lock, [this] { return in_flight_ == 0; });
+  while (in_flight_ != 0) clock_.wait(idle_, lock);
 }
 
 std::optional<JobStats> Scheduler::stats(JobId id) const {
