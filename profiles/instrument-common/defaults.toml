@@ -22,3 +22,7 @@ duration = 2
 [air."*"]
 template = "multicollect"
 post_measurement = "sim_pump"
+
+[detector_ic."*"]
+template = "detector_ic"
+post_measurement = "sim_pump"

@@ -1,7 +1,7 @@
 name = "instrument-common"
 title = "Instrument lab files"
 kind = "fragment"
-summary = "A starter measurement plan, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
+summary = "Starter measurement plans, peak-center config, run defaults, a blank block and an example queue, built from the instrument's detectors"
 version = 1
 includes = ["lab-common", "extraction-line-starter"]
 groups = ["Simulation", "Instrument connection", "Detectors", "Extraction line"]
@@ -38,6 +38,14 @@ group = "Detectors"
 [[files]]
 template = "plans/multicollect.toml"
 to = "plans/multicollect.toml"
+
+[[files]]
+template = "plans/detector_ic.toml"
+to = "plans/detector_ic.toml"
+
+[[files]]
+template = "plans/multicollect_hop_ar39.toml"
+to = "plans/multicollect_hop_ar39.toml"
 
 [[files]]
 template = "peak_center.toml"

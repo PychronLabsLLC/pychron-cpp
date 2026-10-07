@@ -17,6 +17,14 @@ type = "string"
 default = "H1"
 group = "Detectors"
 
+[[questions]]
+id = "hop_detector"
+prompt = "Ion counter for peak hopping"
+type = "string"
+default = "CDD"
+group = "Detectors"
+help = "The detector Ar39 is hopped onto in the multicollect_hop_ar39 plan."
+
 # CONFIRM: a Helix MC Plus has five collector positions, each a Faraday or a
 # CDD depending on the instrument's build. These defaults mirror the Argus
 # layout so the starter tables apply; change kinds to match your instrument.

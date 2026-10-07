@@ -1,0 +1,68 @@
+# Detector intercalibration for {{ instrument }} (written by pychron setup).
+# {{ reference_isotope }} is hopped onto each Faraday that collects an isotope,
+# cycle after cycle, so every detector sees the same gas as it decays; the
+# ratios of the intercepts are the intercalibration factors.
+#
+# Faradays only: the {{ reference_isotope }} beam of an air shot would overload
+# an ion counter. To leave a Faraday out of one run, name it in
+# detectors.exclude. Edit freely.
+
+[plan]
+name = "detector_ic"
+instrument_family = "{{ family }}"
+description = "Detector intercalibration: {{ reference_isotope }} hopped onto each Faraday"
+analysis_types = ["detector_ic", "air"]
+
+[detectors]
+reference = {{ reference_detector | toml }}
+exclude = []
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+
+[sniff]
+enabled = true
+counts = 10
+integration_s = 1
+
+[peak_center]
+after = true
+detector = {{ reference_detector | toml }}
+isotope = {{ reference_isotope | toml }}
+config = "default"
+
+[baseline]
+after = true
+counts = 10
+mass = {{ baseline_mass }}
+settle_s = 5
+integration_s = 1
+
+[main]
+cycles = 10
+integration_s = 1
+{% for d in detectors %}
+{% if d.isotope != "" %}
+{% if d.kind != "cdd" %}
+
+[[main.hops]]
+counts = 5
+settle_s = 3
+positions = { {{ reference_isotope }} = {{ d.name | toml }} }
+position = { isotope = {{ reference_isotope | toml }}, detector = {{ d.name | toml }} }
+{% endif %}
+{% endif %}
+{% endfor %}
+
+[fits]
+signal = { default = "linear" }
+baseline = { default = "average" }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+
+[parameters]
+expose = ["main.cycles", "detectors.exclude", "baseline.counts"]

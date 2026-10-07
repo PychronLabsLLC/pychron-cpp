@@ -50,6 +50,14 @@ default = "H4"
 group = "Detectors"
 
 [[questions]]
+id = "hop_detector"
+prompt = "Ion counter for peak hopping"
+type = "string"
+default = "L4"
+group = "Detectors"
+help = "The detector Ar39 is hopped onto in the multicollect_hop_ar39 plan."
+
+[[questions]]
 id = "detectors"
 prompt = "Detectors in pychron order (name, kind faraday or cdd, isotope)"
 type = "table"

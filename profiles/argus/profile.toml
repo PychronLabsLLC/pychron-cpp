@@ -18,6 +18,14 @@ default = "H1"
 group = "Detectors"
 
 [[questions]]
+id = "hop_detector"
+prompt = "Ion counter for peak hopping"
+type = "string"
+default = "CDD"
+group = "Detectors"
+help = "The detector Ar39 is hopped onto in the multicollect_hop_ar39 plan."
+
+[[questions]]
 id = "detectors"
 prompt = "Detectors (name, kind faraday or cdd, isotope)"
 type = "table"

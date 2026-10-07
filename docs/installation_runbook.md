@@ -257,8 +257,15 @@ elctl init argus --root ~/Pychron/argus
 ```
 
 Press Enter to accept each default. The install starts in simulation. It
-writes the extraction line and canvas, `spectrometer.toml`, field tables, a
-measurement plan, scripts, conditionals, an example queue and `CALIBRATE.md`.
+writes the extraction line and canvas, `spectrometer.toml`, field tables,
+three measurement plans, scripts, conditionals, an example queue and
+`CALIBRATE.md`.
+
+| Plan | What it measures |
+|---|---|
+| `multicollect` | every detector collects its isotope, one hop |
+| `detector_ic` | the reference isotope (Ar40) hopped onto each Faraday in turn, for the detector intercalibration factors |
+| `multicollect_hop_ar39` | every isotope but Ar39 together, then Ar39 hopped onto the ion counter (the `hop_detector` answer) |
 
 Choose the extraction line with the `line_source` question:
 

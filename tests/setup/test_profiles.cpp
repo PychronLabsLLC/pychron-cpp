@@ -7,6 +7,7 @@
 #include <random>
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
@@ -91,7 +92,7 @@ TEST_P(InstrumentProfile, InstallsLoadsAndPassesDoctor) {
   EXPECT_EQ(site.kind, "instrument");
   EXPECT_EQ(site.simulation, simulation);
   for (const char* f : {"extraction_line.toml", "canvas.toml", "spectrometer.toml", "plans/multicollect.toml",
-                        "peak_center.toml", "experiment.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py"})
+                        "plans/detector_ic.toml", "plans/multicollect_hop_ar39.toml", "peak_center.toml", "experiment.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py"})
     EXPECT_TRUE(fs::exists(root / f)) << name << ": " << f;
   expect_no_failures(site);
   expect_queue_checks(site);
@@ -105,6 +106,63 @@ INSTANTIATE_TEST_SUITE_P(Shipped, InstrumentProfile,
                                            (std::get<1>(param_info.param) ? "_sim" : "_hardware");
                            return n;
                          });
+
+using Positions = std::map<std::string, std::string>;
+
+// The hops of an installed plan, as the lab resolves it against the
+// installed line and spectrometer.
+std::vector<Positions> installed_hops(const fs::path& root, const SiteInstall& site, const std::string& plan) {
+  auto lab = experiment::lab::load_lab({site.root, site.path(site.line), site.path(site.spectrometer)});
+  EXPECT_TRUE(lab.problems.empty()) << lab.problems.front();
+  auto loaded = lab.plans->load(plan, {});
+  EXPECT_TRUE(loaded) << root << ": " << (loaded ? "" : loaded.error().what);
+  std::vector<Positions> out;
+  if (loaded)
+    for (const auto& hop : loaded->plan.main.hops) out.push_back(hop.positions);
+  return out;
+}
+
+TEST(Profiles, ArgusShipsTheThreeStarterPlans) {
+  const auto lib = library();
+  const fs::path root = scratch("argus-plans");
+  const auto site = install(lib, "argus", {}, root);
+  EXPECT_EQ(installed_hops(root, site, "multicollect"),
+            (std::vector<Positions>{{{"Ar40", "H1"}, {"Ar39", "AX"}, {"Ar38", "L1"}, {"Ar37", "L2"}, {"Ar36", "CDD"}}}));
+  // The reference isotope on each Faraday in turn; never on the ion counter.
+  EXPECT_EQ(installed_hops(root, site, "detector_ic"),
+            (std::vector<Positions>{{{"Ar40", "H1"}}, {{"Ar40", "AX"}}, {{"Ar40", "L1"}}, {{"Ar40", "L2"}}}));
+  EXPECT_EQ(installed_hops(root, site, "multicollect_hop_ar39"),
+            (std::vector<Positions>{{{"Ar40", "H1"}, {"Ar38", "L1"}, {"Ar37", "L2"}, {"Ar36", "CDD"}},
+                                    {{"Ar39", "CDD"}}}));
+  fs::remove_all(root);
+}
+
+TEST(Profiles, NgxShipsTheThreeStarterPlans) {
+  const auto lib = library();
+  const fs::path root = scratch("ngx-plans");
+  const auto site = install(lib, "ngx", {}, root);
+  EXPECT_EQ(installed_hops(root, site, "detector_ic"),
+            (std::vector<Positions>{{{"Ar40", "H4"}}, {{"Ar40", "H3"}}, {{"Ar40", "AX"}}, {{"Ar40", "L1"}},
+                                    {{"Ar40", "L2"}}}));
+  EXPECT_EQ(installed_hops(root, site, "multicollect_hop_ar39"),
+            (std::vector<Positions>{{{"Ar40", "H4"}, {"Ar38", "AX"}, {"Ar37", "L1"}, {"Ar36", "L2"}},
+                                    {{"Ar39", "L4"}}}));
+  fs::remove_all(root);
+}
+
+// A new detector_ic run in the run factory starts on the intercalibration plan.
+TEST(Profiles, ADetectorIcRunDefaultsToTheIntercalibrationPlan) {
+  const auto lib = library();
+  const fs::path root = scratch("argus-ic");
+  const auto site = install(lib, "argus", {}, root);
+  std::ifstream in(root / "defaults.toml");
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();
+  EXPECT_NE(text.find("[detector_ic.\"*\"]\ntemplate = \"detector_ic\""), std::string::npos);
+  auto lab = experiment::lab::load_lab({site.root, site.path(site.line), site.path(site.spectrometer)});
+  EXPECT_TRUE(lab.problems.empty()) << lab.problems.front();
+  fs::remove_all(root);
+}
 
 TEST(Profiles, NgxWithALoginKeepsThePasswordInAnOwnerOnlyFile) {
   const auto lib = library();

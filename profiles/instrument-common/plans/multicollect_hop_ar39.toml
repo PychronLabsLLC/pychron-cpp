@@ -1,0 +1,70 @@
+# Multicollection with Ar39 on the ion counter, for {{ instrument }}
+# (written by pychron setup). Two hops a cycle: every detector collects its
+# isotope except Ar39, then the magnet moves Ar39 onto {{ hop_detector }}.
+# Edit freely.
+
+[plan]
+name = "multicollect_hop_ar39"
+instrument_family = "{{ family }}"
+description = "Multicollection without Ar39, then Ar39 hopped onto {{ hop_detector }}"
+analysis_types = ["unknown", "blank_unknown", "air"]
+
+[detectors]
+reference = {{ reference_detector | toml }}
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+
+[sniff]
+enabled = true
+counts = 10
+integration_s = 1
+
+[peak_center]
+after = true
+detector = {{ reference_detector | toml }}
+isotope = {{ reference_isotope | toml }}
+config = "default"
+
+[baseline]
+after = true
+counts = 10
+mass = {{ baseline_mass }}
+settle_s = 5
+integration_s = 1
+
+[main]
+cycles = 10
+integration_s = 1
+
+[[main.hops]]
+counts = 5
+settle_s = 3
+
+[main.hops.positions]
+{% for d in detectors %}
+{% if d.isotope != "" %}
+{% if d.isotope != "Ar39" %}
+{{ d.isotope }} = {{ d.name | toml }}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+[[main.hops]]
+counts = 5
+settle_s = 3
+positions = { Ar39 = {{ hop_detector | toml }} }
+position = { isotope = "Ar39", detector = {{ hop_detector | toml }} }
+
+[fits]
+signal = { default = "linear" }
+baseline = { default = "average" }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+
+[parameters]
+expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts"]
