@@ -488,7 +488,7 @@ bool SceneView::save_pdf(const QString& path) {
   return true;
 }
 
-const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where) const {
+const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where, bool analyses_only) const {
   const HitPoint* best = nullptr;
   double best_d = kHitPixels * kHitPixels;
   for (const auto& info : rects_) {
@@ -496,6 +496,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
     QCPAxis* x = info.rect->axis(QCPAxis::atBottom);
     QCPAxis* y = info.rect->axis(QCPAxis::atLeft);
     for (const auto& p : info.points) {
+      if (analyses_only && p.uuid.empty()) continue;
       const double dx = x->coordToPixel(p.x) - pos.x(), dy = y->coordToPixel(p.y) - pos.y();
       const double d = dx * dx + dy * dy;
       if (d <= best_d) {
@@ -508,6 +509,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
     // Steps: inside the box (at least a few pixels tall, so a tiny error still hits).
     const double px = x->pixelToCoord(pos.x());
     for (const auto& b : info.boxes) {
+      if (analyses_only && b.point.uuid.empty()) continue;
       if (px < b.x0 || px > b.x1) continue;
       const double top = std::min(y->coordToPixel(b.y1), y->coordToPixel(b.point.y) - 3);
       const double bottom = std::max(y->coordToPixel(b.y0), y->coordToPixel(b.point.y) + 3);
@@ -620,7 +622,7 @@ bool SceneView::eventFilter(QObject* watched, QEvent* event) {
         return true;
       }
       if ((e->pos() - press_pos_).manhattanLength() <= 3) {
-        if (const HitPoint* p = hit(e->pos()); p && !p->uuid.empty()) emit point_clicked(QString::fromStdString(p->uuid));
+        if (const HitPoint* p = hit(e->pos(), nullptr, true)) emit point_clicked(QString::fromStdString(p->uuid));
       }
       break;
     }
@@ -638,8 +640,7 @@ bool SceneView::eventFilter(QObject* watched, QEvent* event) {
 
 void SceneView::show_context_menu(const QPoint& pos) {
   QMenu menu(this);
-  const HitPoint* p = hit(pos);
-  if (p && !p->uuid.empty()) {
+  if (const HitPoint* p = hit(pos, nullptr, true)) {
     const QString id = QString::fromStdString(p->uuid);
     menu.addAction(tr("Include / exclude"), this, [this, id] { emit point_clicked(id); });
     menu.addAction(tr("Recall"), this, [this, id] { emit recall_requested(id); });

@@ -36,6 +36,7 @@ class FluxWindowTest : public QObject {
 #include <QLineEdit>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QStatusBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QToolBar>
@@ -572,6 +573,19 @@ class FluxWindowTest : public QObject {
     w.set_in_fit(99, false);
     QVERIFY(!w.edited());
     QVERIFY(!w.busy());
+
+    // Reset omissions with no saved fit to forget: nothing is pending for it,
+    // and the edits made here are dropped as ever.
+    w.reset_omissions();
+    QVERIFY(!w.edits().reset_omits);
+    QVERIFY(!w.edited());
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    w.reset_omissions();
+    QVERIFY(w.edits().exclude_positions.empty());
+    QVERIFY(!w.edits().reset_omits);
+    QVERIFY(!w.edited());
+    QCOMPARE(w.fit()->dof, 5);
   }
 
   void a_plot_click_omits_an_analysis_everywhere() {
@@ -582,10 +596,12 @@ class FluxWindowTest : public QObject {
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
     QVERIFY2(w.fit(), qPrintable(w.status()));
-    // The first of the hole's three: the second sits exactly where the mean of
-    // the other two is drawn, and a click there finds the mean.
-    const std::string uuid = seeded_.analyses.at("66003-01").str();
+    // The second of the hole's three is the golden J itself: it is drawn where
+    // the hole's mean is, with it and without it. The click reaches it under
+    // the mean (ruling R8), and omitting it changes the mean's error, not the mean.
+    const std::string uuid = seeded_.analyses.at("66003-02").str();
     const double mean_before = *fitted_at(*w.fit(), 3).mean_j;
+    const double error_before = *fitted_at(*w.fit(), 3).mean_j_err;
     QCOMPARE(fitted_at(*w.fit(), 3).n, 3);
     w.select_monitor(3);
     QCOMPARE(drawn_excluded(*w.view()->scene(), uuid), std::optional<bool>(false));
@@ -600,16 +616,16 @@ class FluxWindowTest : public QObject {
     QVERIFY(w.busy());
     QVERIFY(settle(w));
     QVERIFY2(w.fit(), qPrintable(w.status()));
-    QCOMPARE(w.edits().omit, std::set<std::string>{"66003-01"});
+    QCOMPARE(w.edits().omit, std::set<std::string>{"66003-02"});
     const int row = w.monitors()->row_of(3);
     QCOMPARE(w.monitors()->index(row, FluxMonitorModel::N).data().toInt(), 2);
     QCOMPARE(fitted_at(*w.fit(), 3).n, 2);
-    QVERIFY(*fitted_at(*w.fit(), 3).mean_j != mean_before);
+    QVERIFY(*fitted_at(*w.fit(), 3).mean_j_err != error_before);
     // The selection survived the refit: the analyses table shows the same monitor.
     QCOMPARE(w.analyses()->rowCount(), 3);
-    QCOMPARE(w.analyses()->index(0, FluxAnalysisModel::Record).data().toString(), QStringLiteral("66003-01"));
-    QCOMPARE(check(w.analyses(), 0, FluxAnalysisModel::Use), Qt::Unchecked);
-    QCOMPARE(w.analyses()->index(0, FluxAnalysisModel::State).data().toString(), QStringLiteral("omitted (here)"));
+    QCOMPARE(w.analyses()->index(1, FluxAnalysisModel::Record).data().toString(), QStringLiteral("66003-02"));
+    QCOMPARE(check(w.analyses(), 1, FluxAnalysisModel::Use), Qt::Unchecked);
+    QCOMPARE(w.analyses()->index(1, FluxAnalysisModel::State).data().toString(), QStringLiteral("omitted (here)"));
     QCOMPARE(drawn_excluded(*w.view()->scene(), uuid), std::optional<bool>(true));
     QVERIFY(w.edited());
     QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
@@ -618,7 +634,8 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     QCOMPARE(w.monitors()->index(row, FluxMonitorModel::N).data().toInt(), 3);
     QCOMPARE(*fitted_at(*w.fit(), 3).mean_j, mean_before);
-    QCOMPARE(check(w.analyses(), 0, FluxAnalysisModel::Use), Qt::Checked);
+    QCOMPARE(*fitted_at(*w.fit(), 3).mean_j_err, error_before);
+    QCOMPARE(check(w.analyses(), 1, FluxAnalysisModel::Use), Qt::Checked);
     QCOMPARE(drawn_excluded(*w.view()->scene(), uuid), std::optional<bool>(false));
     QVERIFY(w.edits().omit.empty());
     QVERIFY(w.edits().include.empty());
@@ -628,9 +645,17 @@ class FluxWindowTest : public QObject {
   void the_use_box_and_the_plot_click_are_the_same_edit() {
     auto r = rig();
     const std::string uuid = seeded_.analyses.at("66003-02").str();
-    // By the plot (toggle_analyses is what a click and a rubber band call).
+    // By the plot: a click on the analysis, which lies under its hole's mean.
     auto clicked = opened(r);
-    clicked->toggle_analyses({QString::fromStdString(uuid)});
+    clicked->resize(1400, 820);
+    clicked->show();
+    QVERIFY(QTest::qWaitForWindowExposed(clicked.get()));
+    clicked->view()->plot()->replot();
+    const auto pos = clicked->view()->point_position(uuid);
+    QVERIFY(pos);
+    QTest::mouseClick(clicked->view()->plot(), Qt::LeftButton, Qt::NoModifier,
+                      clicked->view()->plot()->mapFrom(clicked->view(), *pos));
+    QVERIFY(clicked->busy());
     QVERIFY(settle(*clicked));
     QVERIFY2(clicked->fit(), qPrintable(clicked->status()));
     // By the Use box.
@@ -658,6 +683,44 @@ class FluxWindowTest : public QObject {
     }
     QCOMPARE(fitted_at(*ticked->fit(), 3).n, 2);
     QCOMPARE(fitted_at(*ticked->fit(), 3).analyses.at(1).state, pp::AnalysisState::OmittedByEdit);
+
+    // The box asks for a state: asked again for the one it has, nothing changes
+    // (two quick clicks answered by one refit do not net to something else).
+    QVERIFY(ticked->analyses()->setData(ticked->analyses()->index(1, FluxAnalysisModel::Use), Qt::Unchecked,
+                                        Qt::CheckStateRole));
+    QVERIFY(!ticked->busy());
+    QCOMPARE(ticked->edits().omit, std::set<std::string>{"66003-02"});
+    Q_EMIT ticked->analyses()->use_toggled(QString::fromStdString(seeded_.analyses.at("66003-01").str()), true);
+    QVERIFY(!ticked->busy());
+    QCOMPARE(ticked->edits().omit, std::set<std::string>{"66003-02"});
+    QVERIFY(ticked->edits().include.empty());
+    // Ticked back: nothing pending.
+    QVERIFY(ticked->analyses()->setData(ticked->analyses()->index(1, FluxAnalysisModel::Use), Qt::Checked,
+                                        Qt::CheckStateRole));
+    QVERIFY(settle(*ticked));
+    QVERIFY(!ticked->edited());
+
+    // A rubber band over two analyses is one edit, answered by one refit.
+    int fits = 0;  // the unknowns' model is given the fit once per refit
+    const auto counting = connect(ticked->unknowns(), &QAbstractItemModel::modelReset, ticked.get(), [&] {
+      if (ticked->fit()) ++fits;
+    });
+    ticked->set_in_fit(7, false);
+    QVERIFY(settle(*ticked));
+    const int one_fit = fits;
+    QVERIFY(one_fit > 0);
+    fits = 0;
+    Q_EMIT ticked->view()->points_toggled({QString::fromStdString(seeded_.analyses.at("66001-01").str()),
+                                           QString::fromStdString(seeded_.analyses.at("66002-03").str())});
+    QCOMPARE(ticked->edits().omit, (std::set<std::string>{"66001-01", "66002-03"}));
+    QVERIFY(ticked->busy());
+    QVERIFY(settle(*ticked));
+    QCOMPARE(fits, one_fit);
+    disconnect(counting);  // the window outlives the counter
+    QCOMPARE(fitted_at(*ticked->fit(), 1).n, 2);
+    QCOMPARE(fitted_at(*ticked->fit(), 2).n, 2);
+    QCOMPARE(fitted_at(*ticked->fit(), 1).analyses.at(0).state, pp::AnalysisState::OmittedByEdit);
+    QCOMPARE(fitted_at(*ticked->fit(), 2).analyses.at(2).state, pp::AnalysisState::OmittedByEdit);
 
     // Several at once, one of them unknown to the level: the others are toggled.
     clicked->toggle_analyses({QString::fromStdString(seeded_.analyses.at("66004-01").str()), QStringLiteral("nothing"),
@@ -887,6 +950,59 @@ class FluxWindowTest : public QObject {
     QVERIFY(w.fit());
   }
 
+  // Ruling R10: what the preset bar says follows the status; it does not cover it.
+  void a_preset_message_follows_the_status() {
+    auto r = rig();
+    auto wp = opened(r);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    const QString fitted = w.status();
+    QVERIFY(!w.preset_bar()->select(QStringLiteral("No such preset")));
+    QVERIFY2(w.status().startsWith(fitted + QStringLiteral(" · Preset: ")), qPrintable(w.status()));
+    QVERIFY(!w.status_is_error());
+
+    auto bowl = pp::to_options(pp::FluxOptions{});
+    QVERIFY(bowl.set("model.kind", std::string("bowl")).has_value());
+    w.set_options(bowl);  // the user's next change: the message has been read
+    QVERIFY(!w.status().contains(QStringLiteral("Preset:")));
+    QVERIFY(!w.status().isEmpty());
+    QVERIFY(settle(w));
+    QVERIFY(w.status_is_error());
+    const QString failed = w.status();
+    QVERIFY2(failed.contains(QStringLiteral("do not determine a bowl")), qPrintable(failed));
+    QVERIFY2(failed.endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(failed));
+
+    // With a fit error on show: the error stays, the message after it, "edited" last.
+    QVERIFY(!w.preset_bar()->select(QStringLiteral("No such preset")));
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().contains(QStringLiteral("do not determine a bowl")), qPrintable(w.status()));
+    QVERIFY2(w.status().contains(QStringLiteral(" · Preset: ")), qPrintable(w.status()));
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
+    QVERIFY(w.statusBar()->currentMessage().isEmpty());  // nothing hides the label
+    QVERIFY(!w.findChild<QWidget*>(QStringLiteral("flux_status"))->isHidden());
+
+    // The next status update: the error is still what is reported.
+    w.set_in_fit(3, false);
+    QVERIFY(!w.status().isEmpty());
+    QVERIFY(settle(w));
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().contains(QStringLiteral("bowl")), qPrintable(w.status()));
+    QVERIFY(!w.status().contains(QStringLiteral("Preset:")));
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
+
+    // A message that comes with the preset it loaded outlives the refit that follows.
+    QVERIFY(w.preset_bar()->select(QStringLiteral("Default")));
+    Q_EMIT w.preset_bar()->message(QStringLiteral("Preset \"Default\" loaded with warnings"), QStringLiteral("one\ntwo"));
+    QVERIFY(settle(w));
+    QVERIFY2(!w.status_is_error(), qPrintable(w.status()));
+    QVERIFY2(w.status().contains(QStringLiteral(" · Preset \"Default\" loaded with warnings")), qPrintable(w.status()));
+    QVERIFY(w.findChild<QWidget*>(QStringLiteral("flux_status"))->toolTip().contains(QStringLiteral("one\ntwo")));
+    w.revert();
+    QVERIFY(!w.status().contains(QStringLiteral("Preset")));
+    QVERIFY(!w.findChild<QWidget*>(QStringLiteral("flux_status"))->toolTip().contains(QStringLiteral("one")));
+    QVERIFY(!w.status().isEmpty());
+  }
+
   void a_saved_fit_the_monitors_cannot_fit() {
     // Saved as a bowl (by another program, or before a monitor lost its analyses).
     pp::FluxOptions bowl;
@@ -992,47 +1108,82 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.monitor_set_combo()->currentText(), QStringLiteral("Alt"));
     QVERIFY2(w.fit(), qPrintable(w.status()));
     QVERIFY(w.fit()->max_j != j_standard);  // another age, another J
-    QVERIFY(!w.edited());
-    // Reload keeps the choice.
+    // Ruling R9: the level read with the choice is still not the level as saved.
+    QVERIFY(w.edited());
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
+    // Reload asks for it, and keeps the choice.
+    answer = FluxWindow::Unsaved::Discard;
     w.reload();
+    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
     QVERIFY(settle(w));
     QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));
+    QVERIFY(w.edited());
 
-    // With an edit pending it asks; Cancel puts the group back and keeps everything.
+    // Revert is the discard: the level as its saved fit chooses, read again, nothing asked.
+    const int loads = w.loads_started();
+    w.revert();
+    QVERIFY(w.busy());
+    QVERIFY(settle(w));
+    QCOMPARE(w.loads_started(), loads + 1);
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    QCOMPARE(w.monitor_set_combo()->currentText(), QString::fromStdString(standard));
+    QVERIFY(!w.edited());
+    QVERIFY(!w.status().contains(QStringLiteral("edited")));
+    QCOMPARE(w.fit()->max_j, j_standard);
+
+    // With an edit pending a change of the group asks; Cancel puts back
+    // whichever of the three was changed and keeps everything.
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QVERIFY(settle(w));
     w.set_in_fit(3, false);
     QVERIFY(settle(w));
+    answer = FluxWindow::Unsaved::Cancel;
+    const auto untouched = [&] {
+      return !w.busy() && w.monitor_set_combo()->currentText() == QStringLiteral("Alt") &&
+             w.sample_edit()->text().isEmpty() && !w.all_positions_box()->isChecked() &&
+             w.inputs()->monitor_set.name == "Alt" && w.inputs()->monitor_set.sample == alt.sample &&
+             !w.inputs()->all_positions && w.edits().exclude_positions == std::set<int>{3};
+    };
     w.monitor_set_combo()->setCurrentText(QString::fromStdString(standard));
-    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
-    QVERIFY(!w.busy());
-    QCOMPARE(w.monitor_set_combo()->currentText(), QStringLiteral("Alt"));
-    QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));
-    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
-    // Discard reads it with the other set.
+    QCOMPARE(asked.size(), 2);
+    QVERIFY(untouched());
+    w.all_positions_box()->setChecked(true);
+    QCOMPARE(asked.size(), 3);
+    QVERIFY(untouched());
+    w.sample_edit()->setText(QStringLiteral("unk"));
+    Q_EMIT w.sample_edit()->editingFinished();
+    QCOMPARE(asked.size(), 4);
+    QVERIFY(untouched());
+
+    // Discard reads it with the other group.
     answer = FluxWindow::Unsaved::Discard;
     w.all_positions_box()->setChecked(true);
-    QCOMPARE(asked.size(), 2);
+    QCOMPARE(asked.size(), 5);
     QVERIFY(w.busy());
     QVERIFY(settle(w));
     QVERIFY(w.inputs()->all_positions);
     QVERIFY(w.all_positions_box()->isChecked());
     QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));
     QVERIFY(w.edits().exclude_positions.empty());
-    QVERIFY(!w.edited());
+    QVERIFY(w.edited());  // the group
+    // From one choice to another nothing is asked: the choice is what is being changed.
     w.all_positions_box()->setChecked(false);
     QVERIFY(settle(w));
     QVERIFY(!w.inputs()->all_positions);
+    QCOMPARE(asked.size(), 5);
 
     // Another sample: the unknowns' holes become the monitors (they have no analyses).
     w.sample_edit()->setText(QStringLiteral("unk"));
-    QVERIFY(w.edited());  // typed, not yet asked for
+    QVERIFY(w.edited());
     Q_EMIT w.sample_edit()->editingFinished();
     QVERIFY(w.busy());
     QVERIFY(settle(w));
-    QCOMPARE(asked.size(), 2);  // typing a sample is what is being done, not an edit to lose
+    QCOMPARE(asked.size(), 5);
     QCOMPARE(w.inputs()->monitor_set.sample, std::string("unk"));
     QCOMPARE(w.sample_edit()->text(), QStringLiteral("unk"));
     QCOMPARE(w.monitors()->rowCount(), 4);
-    QVERIFY(!w.edited());
+    QVERIFY(w.edited());
     // Cleared: the set's own sample again.
     w.sample_edit()->clear();
     Q_EMIT w.sample_edit()->editingFinished();
@@ -1041,6 +1192,99 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.monitors()->rowCount(), 8);
     QVERIFY(w.sample_edit()->text().isEmpty());
     QVERIFY(w.fit());
+    QVERIFY(w.edited());  // still the other set
+
+    // Chosen back to what the level gives by itself: nothing is pending.
+    w.monitor_set_combo()->setCurrentText(QString::fromStdString(standard));
+    QVERIFY(settle(w));
+    QCOMPARE(asked.size(), 5);
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    QVERIFY(!w.edited());
+    QCOMPARE(w.fit()->max_j, j_standard);
+  }
+
+  void a_chosen_monitor_set_is_an_edit() {
+    auto second = pt::seed_second_flux_level(*store_, actor_, seeded_, "C");
+    QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
+    auto sets = pp::load_monitor_sets(*store_);
+    QVERIFY2(sets.has_value(), sets ? "" : to_string(sets.error()).c_str());
+    pp::MonitorSets with_alt = sets->sets;
+    pp::MonitorSet alt = *with_alt.find("");
+    const QString standard = QString::fromStdString(alt.name);
+    alt.name = "Alt";
+    alt.age_ma *= 1.01;
+    with_alt.sets.push_back(alt);
+    QVERIFY(pp::save_monitor_sets(*store_, actor_, with_alt, *sets).has_value());
+
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Cancel;
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    auto* a_item = level_item(w, QStringLiteral("NM-300"), QStringLiteral("A"));
+    auto* c_item = level_item(w, QStringLiteral("NM-300"), QStringLiteral("C"));
+    QVERIFY(a_item && c_item);
+
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
+    QVERIFY(w.edited());
+
+    // Another level: asked once; Cancel stays, with the set chosen.
+    w.tree()->setCurrentItem(c_item);
+    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
+    QVERIFY(!w.busy());
+    QCOMPARE(w.tree()->currentItem(), a_item);
+    QCOMPARE(w.inputs()->level, std::string("A"));
+    QCOMPARE(w.monitor_set_combo()->currentText(), QStringLiteral("Alt"));
+    QVERIFY(w.edited());
+    // Discard moves, and the other level's monitors are its own.
+    answer = FluxWindow::Unsaved::Discard;
+    w.tree()->setCurrentItem(c_item);
+    QCOMPARE(asked.size(), 2);
+    QVERIFY(settle(w));
+    QCOMPARE(asked.size(), 2);
+    QCOMPARE(w.inputs()->level, std::string("C"));
+    QCOMPARE(w.monitor_set_combo()->currentText(), standard);
+    QVERIFY(!w.edited());
+    // And back: the choice was discarded with the level.
+    w.tree()->setCurrentItem(a_item);
+    QVERIFY(settle(w));
+    QCOMPARE(asked.size(), 2);
+    QCOMPARE(w.inputs()->monitor_set.name, standard.toStdString());
+    QVERIFY(!w.edited());
+
+    // Ruling R10: closed with Discard, the window is not still edited when shown again.
+    w.set_in_fit(3, false);
+    QVERIFY(w.preset_bar()->select(QStringLiteral("Weighted plane")));
+    QVERIFY(settle(w));
+    w.show();
+    QVERIFY(w.close());
+    QCOMPARE(asked.size(), 3);
+    w.show();
+    QVERIFY(!w.edited());
+    QVERIFY(w.edits().exclude_positions.empty());
+    QVERIFY(!w.options().fit.weighted);
+    QCOMPARE(w.fit()->dof, 5);
+    QVERIFY(!w.status().contains(QStringLiteral("edited")));
+    QVERIFY(w.close());  // nothing pending, nothing asked
+    QCOMPARE(asked.size(), 3);
+    // The same with another monitor set chosen: the level is read again as saved.
+    w.show();
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QVERIFY(settle(w));
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    QVERIFY(w.close());
+    QCOMPARE(asked.size(), 4);
+    w.show();
+    QVERIFY(!w.edited());
+    QVERIFY(settle(w));
+    QVERIFY(!w.edited());
+    QCOMPARE(w.inputs()->monitor_set.name, standard.toStdString());
+    QCOMPARE(w.monitor_set_combo()->currentText(), standard);
+    QVERIFY(w.edits().exclude_positions.empty());
   }
 
   // ---- Leaving edits behind -----------------------------------------------------

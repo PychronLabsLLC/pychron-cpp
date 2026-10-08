@@ -90,8 +90,9 @@ class FluxWindow : public QMainWindow {
   const processing::FluxOptions& options() const noexcept { return options_; }
   void select_monitor(int hole);  // as clicking its row
 
-  // Section 5.6: the edits, the options, the monitor group or a Save box
-  // differ from what the load produced.
+  // Section 5.6: the edits, the options or a Save box differ from what the load
+  // produced, or the monitor group from what the level gives when nothing is
+  // chosen for it (also once the level was read with the choice).
   bool edited() const noexcept;
   const processing::Edits& edits() const noexcept { return edits_; }
   // As a plot click or a rubber band: each analysis that takes part is left
@@ -106,9 +107,14 @@ class FluxWindow : public QMainWindow {
   QLineEdit* sample_edit() const noexcept { return sample_edit_; }
   QCheckBox* all_positions_box() const noexcept { return all_box_; }
 
-  void revert();           // the loaded options, no edits, every Save box ticked; the store is not read
+  // The loaded options, no edits, every Save box ticked. The store is not read,
+  // but when another monitor group was chosen: the level is then read again as
+  // its saved fit chose its monitors (asynchronous, and nothing is asked).
+  void revert();
   void reload();           // asks, then reads the level again with the monitor group in force
-  void reset_omissions();  // Edits::reset_omits, and nothing else of the edits made here
+  // Nothing of the edits made here, and Edits::reset_omits when the saved fit
+  // left something out (else there is nothing to forget, and nothing pending).
+  void reset_omissions();
   QAction* revert_action() const noexcept { return revert_action_; }
   QAction* reload_action() const noexcept { return reload_action_; }
   QAction* reset_omissions_action() const noexcept { return reset_action_; }
@@ -152,6 +158,7 @@ class FluxWindow : public QMainWindow {
   void update_title();
   void set_status(const QString& text, bool error, const QStringList& warnings = {});
   void say(const QString& text, bool error);      // in place of the status line, the warnings kept
+  void forget_message();                          // the preset bar's, at the user's next change
   void update_tooltip();
   void refresh_status();                          // the status with what follows it: changed elsewhere, edited
   void update_enabled();                          // what waits for a load or a save
@@ -159,6 +166,10 @@ class FluxWindow : public QMainWindow {
   void restore_selection();                       // the row of selected_hole_, after a model was reset
 
   bool pending(bool with_group) const;            // edited(), with or without the monitor group
+  bool group_edited() const;                      // a monitor group was chosen that is not the level's own
+  // The analysis used or left out as asked (nullopt: the other way round);
+  // false when nothing changed.
+  bool set_used(const std::string& uuid, std::optional<bool> use);
   Unsaved ask();
   // Runs `next` when nothing is pending or the user discards it; otherwise
   // `stay` (when given) puts back what the user had changed to get here.
@@ -235,6 +246,9 @@ class FluxWindow : public QMainWindow {
   // or the one being loaded.
   std::optional<MonitorGroup> chosen_;
   MonitorGroup shown_;
+  // The group the level shows read with nothing chosen (nullopt: not read so
+  // yet): what a chosen group is an edit against.
+  std::optional<MonitorGroup> baseline_;
   // The preset in use, which a level without a saved fit opens on; and the one
   // this level opened on (empty: its saved fit).
   QString preset_name_, loaded_preset_;
@@ -257,6 +271,7 @@ class FluxWindow : public QMainWindow {
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept
   bool status_error_ = false;
   QString status_text_;     // the status without what refresh_status() adds
+  QString message_, message_details_;  // what the preset bar said, after the status until the next change
   QStringList warnings_;
 };
 

@@ -89,7 +89,10 @@ class SceneView : public QWidget {
   };
 
   void rebuild();
-  const HitPoint* hit(const QPoint& pos, const RectInfo** where = nullptr) const;
+  // The point drawn nearest `pos`, the topmost of several at one place. With
+  // `analyses_only`, of the points that name an analysis: what a click or the
+  // context menu acts on, so a mean drawn over an analysis does not hide it.
+  const HitPoint* hit(const QPoint& pos, const RectInfo** where = nullptr, bool analyses_only = false) const;
   void show_context_menu(const QPoint& pos);
 
   processing::ScenePtr scene_;

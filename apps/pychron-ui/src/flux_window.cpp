@@ -56,7 +56,7 @@ namespace pp = pychron::processing;
 namespace ps = pychron::persistence;
 
 constexpr int kFitDelayMs = 150;  // W5: a refit follows the last change by this much
-constexpr int kMessageMs = 6000;  // how long a preset bar message covers the status
+constexpr int kMessageMs = 6000;  // how long what a save said in passing is shown
 
 // The tree as the store has it: read in one job, drawn on the GUI thread.
 struct TreeLevel {
@@ -224,7 +224,12 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
   // W9: a plot click, a rubber band and a check box are one edit.
   connect(view_, &SceneView::point_clicked, this, [this](const QString& uuid) { toggle_analyses({uuid}); });
   connect(view_, &SceneView::points_toggled, this, [this](const QStringList& uuids) { toggle_analyses(uuids); });
-  connect(analyses_, &FluxAnalysisModel::use_toggled, this, [this](const QString& uuid, bool) { toggle_analyses({uuid}); });
+  connect(analyses_, &FluxAnalysisModel::use_toggled, this, [this](const QString& uuid, bool use) {
+    if (!set_used(uuid.toStdString(), use)) return;
+    forget_message();
+    request_fit();
+    refresh_status();
+  });
   connect(monitors_, &FluxMonitorModel::fit_toggled, this, [this](int hole, bool in_fit) { set_in_fit(hole, in_fit); });
   connect(monitors_, &FluxMonitorModel::save_toggled, this, [this](int hole, bool save) { set_save(hole, save); });
   connect(unknowns_, &FluxUnknownModel::save_toggled, this, [this](int hole, bool save) { set_save(hole, save); });
@@ -295,8 +300,12 @@ void FluxWindow::build_dock() {
     set_options(options);
   });
   connect(preset_bar_, &PresetBar::pinned_chosen, this, [this] { set_options(loaded_values_); });
+  // After the status, not over it: a fit error and "edited" stay in sight.
   connect(preset_bar_, &PresetBar::message, this, [this](const QString& text, const QString& details) {
-    statusBar()->showMessage(details.isEmpty() ? text : tr("%1: %2").arg(text, details), kMessageMs);
+    message_ = text;
+    message_details_ = details;
+    update_tooltip();
+    refresh_status();
   });
   connect(editor_, &OptionsEditor::changed, this, [this] {
     values_ = editor_->options();
@@ -329,14 +338,24 @@ void FluxWindow::say(const QString& text, bool error) {
 void FluxWindow::update_tooltip() {
   QStringList lines = warnings_;
   if (!tree_error_.isEmpty()) lines << tree_error_;
+  if (!message_details_.isEmpty()) lines << message_details_;
   status_->setToolTip(lines.join(QLatin1Char('\n')));
 }
 
 void FluxWindow::refresh_status() {
   QString text = status_text_;
+  if (!message_.isEmpty()) text = text.isEmpty() ? message_ : tr("%1 · %2").arg(text, message_);
   if (inputs_ && changed_elsewhere_) text = tr("%1 · level changed elsewhere, Reload to see it").arg(text);
   if (edited()) text = tr("%1 · edited (not saved)").arg(text);
   status_->setText(text);
+}
+
+void FluxWindow::forget_message() {
+  if (message_.isEmpty() && message_details_.isEmpty()) return;
+  message_.clear();
+  message_details_.clear();
+  update_tooltip();
+  refresh_status();
 }
 
 void FluxWindow::update_actions() {
@@ -451,6 +470,7 @@ void FluxWindow::open_level(const QString& irradiation, const QString& level) {
         irradiation_ = irradiation;
         level_ = level;
         chosen_.reset();  // another level: its monitors are as its saved fit chose them
+        baseline_.reset();
         selected_hole_.reset();
         select_tree_item();
         if (tree_->topLevelItemCount() == 0 && tree_jobs_ == 0) reload_tree();
@@ -496,6 +516,7 @@ void FluxWindow::start_load() {
   const quint64 generation = ++load_generation_;
   ++loads_started_;
   reselect_ = selected_hole_;  // read again, the level keeps its selected monitor
+  forget_message();
   clear_level();
   loading_ = true;
   changed_elsewhere_ = false;
@@ -556,6 +577,7 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
 
   set_monitor_sets(std::move(sets), std::move(default_set));
   show_group({inputs_->monitor_set.name, inputs_->monitor_set.sample, inputs_->all_positions});
+  if (!chosen_) baseline_ = shown_;
 
   selected_hole_ = reselect_;
   resetting_ = true;
@@ -679,6 +701,7 @@ void FluxWindow::resolve_options() {
 }
 
 void FluxWindow::options_changed() {
+  forget_message();
   resolve_options();
   if (!inputs_) return;
   if (options_error_.empty())
@@ -693,7 +716,12 @@ void FluxWindow::options_changed() {
 bool FluxWindow::pending(bool with_group) const {
   if (!inputs_) return false;
   return !no_edits(edits_) || !skip_.empty() || !same_values(values_, loaded_values_) ||
-         (with_group && !(group_shown() == shown_));
+         (with_group && (group_edited() || !(group_shown() == shown_)));
+}
+
+bool FluxWindow::group_edited() const {
+  // A choice made when the level could not be read without one is one too.
+  return chosen_ && (!baseline_ || !(shown_ == *baseline_));
 }
 
 bool FluxWindow::edited() const noexcept { return pending(true); }
@@ -701,47 +729,54 @@ bool FluxWindow::edited() const noexcept { return pending(true); }
 void FluxWindow::toggle_analyses(const QStringList& uuids) {
   if (!inputs_) return;
   bool changed = false;
-  QSet<QString> seen;  // a rubber band over a highlighted monitor names its analyses twice
+  QSet<QString> seen;  // named twice, an analysis would be toggled back
   for (const QString& id : uuids) {
     if (seen.contains(id)) continue;
     seen.insert(id);
-    const std::string uuid = id.toStdString();
-    const pp::LevelPosition* position = nullptr;
-    const pp::LevelAnalysis* analysis = nullptr;
-    for (const auto& p : inputs_->positions) {
-      if (!p.monitor) continue;
-      for (const auto& a : p.analyses)
-        if (a.uuid == uuid) {
-          position = &p;
-          analysis = &a;
-        }
-    }
-    if (!analysis) continue;
-    // The state as fit_level decides it, with a fit or without one.
-    const auto state_under = [&](const pp::Edits& edits) {
-      const auto evaluated = pp::evaluate_position(*position, inputs_->monitor_set, options_, edits);
-      for (const auto& a : evaluated.analyses)
-        if (a.uuid == uuid) return a.state;
-      return pp::AnalysisState::NotReduced;
-    };
-    const auto unusable = [](pp::AnalysisState s) {
-      return s == pp::AnalysisState::NotReduced || s == pp::AnalysisState::NoJ;
-    };
-    const pp::AnalysisState now = state_under(edits_);
-    if (unusable(now)) continue;
-    const bool use = now != pp::AnalysisState::Used;
-    // Without a word of ours about it, then the word only if it is needed: an
-    // edit undone leaves nothing behind.
-    edits_.omit.erase(analysis->record_id);
-    edits_.include.erase(analysis->record_id);
-    const pp::AnalysisState bare = state_under(edits_);
-    if (!unusable(bare) && (bare == pp::AnalysisState::Used) != use)
-      (use ? edits_.include : edits_.omit).insert(analysis->record_id);
-    changed = true;
+    if (set_used(id.toStdString(), std::nullopt)) changed = true;
   }
   if (!changed) return;
+  forget_message();
   request_fit();
   refresh_status();
+}
+
+bool FluxWindow::set_used(const std::string& uuid, std::optional<bool> use) {
+  if (!inputs_) return false;
+  const pp::LevelPosition* position = nullptr;
+  const pp::LevelAnalysis* analysis = nullptr;
+  for (const auto& p : inputs_->positions) {
+    if (!p.monitor) continue;
+    for (const auto& a : p.analyses)
+      if (a.uuid == uuid) {
+        position = &p;
+        analysis = &a;
+      }
+  }
+  if (!analysis) return false;
+  // The state as fit_level decides it, with a fit or without one.
+  const auto state_under = [&](const pp::Edits& edits) {
+    const auto evaluated = pp::evaluate_position(*position, inputs_->monitor_set, options_, edits);
+    for (const auto& a : evaluated.analyses)
+      if (a.uuid == uuid) return a.state;
+    return pp::AnalysisState::NotReduced;
+  };
+  const auto unusable = [](pp::AnalysisState s) {
+    return s == pp::AnalysisState::NotReduced || s == pp::AnalysisState::NoJ;
+  };
+  const pp::AnalysisState now = state_under(edits_);
+  if (unusable(now)) return false;
+  const bool used = now == pp::AnalysisState::Used;
+  const bool want = use.value_or(!used);
+  if (want == used) return false;  // as it is: a box clicked twice does not net to something else
+  // Without a word of ours about it, then the word only if it is needed: an
+  // edit undone leaves nothing behind.
+  edits_.omit.erase(analysis->record_id);
+  edits_.include.erase(analysis->record_id);
+  const pp::AnalysisState bare = state_under(edits_);
+  if (!unusable(bare) && (bare == pp::AnalysisState::Used) != want)
+    (want ? edits_.include : edits_.omit).insert(analysis->record_id);
+  return true;
 }
 
 void FluxWindow::set_in_fit(int hole, bool in_fit) {
@@ -755,12 +790,14 @@ void FluxWindow::set_in_fit(int hole, bool in_fit) {
   if (excluded == in_fit) (in_fit ? next.include_positions : next.exclude_positions).insert(hole);
   if (next.exclude_positions == edits_.exclude_positions && next.include_positions == edits_.include_positions) return;
   edits_ = std::move(next);
+  forget_message();
   request_fit();
   refresh_status();
 }
 
 void FluxWindow::set_save(int hole, bool save) {
   if (!inputs_) return;
+  forget_message();
   if (save)
     skip_.erase(hole);
   else
@@ -779,6 +816,13 @@ void FluxWindow::apply_skip() {
 
 void FluxWindow::revert() {
   if (!inputs_) return;
+  forget_message();
+  if (group_edited()) {
+    // The other monitors are an edit that only the store undoes: the level as
+    // its saved fit chose them, and with that everything else as loaded.
+    chosen_.reset();
+    return start_load();
+  }
   edits_ = {};
   skip_.clear();
   apply_skip();
@@ -793,8 +837,20 @@ void FluxWindow::revert() {
 
 void FluxWindow::reset_omissions() {
   if (!inputs_) return;
+  forget_message();
   edits_ = {};
-  edits_.reset_omits = true;
+  // Only when the saved fit left something out: else there is nothing to
+  // forget, and the flag would be an edit that changes nothing.
+  pp::Edits reset;
+  reset.reset_omits = true;
+  for (const auto& p : inputs_->positions) {
+    if (!p.monitor || !p.saved || edits_.reset_omits) continue;
+    const auto carried = pp::evaluate_position(p, inputs_->monitor_set, options_, edits_);
+    const auto bare = pp::evaluate_position(p, inputs_->monitor_set, options_, reset);
+    if (carried.excluded != bare.excluded) edits_.reset_omits = true;
+    for (std::size_t i = 0; i < carried.analyses.size() && i < bare.analyses.size(); ++i)
+      if (carried.analyses[i].state != bare.analyses[i].state) edits_.reset_omits = true;
+  }
   fit_now();
 }
 
@@ -897,6 +953,10 @@ void FluxWindow::save_then(std::function<void()> next) {
           w.reload_tree();
           Q_EMIT w.saved(irradiation, level);
           if (!self) return;
+          // The monitors chosen here are the saved fit's now: nothing chosen
+          // gives them, and the reload says what that is.
+          w.chosen_.reset();
+          w.baseline_.reset();
         }
         if (next) {
           // What was asked for takes the window elsewhere: said in passing.
@@ -937,6 +997,9 @@ void FluxWindow::closeEvent(QCloseEvent* event) {
   if (!edited()) return event->accept();
   switch (ask()) {
     case Unsaved::Discard:
+      // Dropped for good: shown again, the window is not still edited (a
+      // chosen monitor group is undone by reading the level again).
+      revert();
       return event->accept();
     case Unsaved::Save:
       event->ignore();
@@ -1023,7 +1086,8 @@ void FluxWindow::group_changed() {
   leave(
       false,
       [this, group] {
-        chosen_ = group;
+        // Chosen back to the level's own: nothing is chosen.
+        chosen_ = baseline_ && group == *baseline_ ? std::nullopt : std::optional<MonitorGroup>(group);
         show_group(group);
         start_load();
       },
