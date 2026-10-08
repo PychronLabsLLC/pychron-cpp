@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
@@ -379,6 +380,26 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   expect_match(match("FC-2 or ACs 28.201 Ma"), Kind::None, "", "two monitors named");
   expect_match(match("Bishop Tuff sanidine 0.7666 Ma"), Kind::None, "", "not listed at all");
   expect_match(match("GA-1550 MD-2 99.44 Ma"), Kind::None, "", "two monitors of one age");
+  // A mineral named that is not the entry's: the monitor is another one,
+  // whatever else of the name fits. FCT-3 is the biotite of the Fish Canyon
+  // Tuff, and the list has only its sanidine.
+  expect_match(match("FCT-3 biotite 28.201 Ma"), Kind::None, "", "a biotite, by a name of the sanidine's");
+  expect_match(match("Fish Canyon biotite 28.201 Ma"), Kind::None, "", "likewise, by the tuff's name");
+  expect_match(match("FC-2 Biotite 28.201 Ma"), Kind::None, "", "whatever the case");
+  expect_match(match("FCT-3 28.201 Ma"), Kind::None, "", "the biotite's designation, no mineral said");
+  expect_match(match("FCT3 28.201 Ma"), Kind::None, "", "likewise, run together");
+  expect_match(match("biotite 28.201 Ma"), Kind::None, "", "a mineral no entry of that age has");
+  expect_match(match("sanidine 99.44 Ma"), Kind::None, "", "likewise: the entries of that age are biotites");
+  expect_match(match("GA-1550 sanidine 99.738 Ma"), Kind::None, "", "a sanidine, by a biotite's name");
+  expect_match(match("Hb3gr biotite 1081 Ma"), Kind::None, "", "a biotite, by a hornblende's name");
+  expect_match(match("WA1ms sanidine 2613 Ma"), Kind::None, "", "a sanidine, by a muscovite's name");
+  expect_match(match("FC-2 sanidine and biotite 28.201 Ma"), Kind::None, "", "two minerals");
+  // The same mineral is no obstacle, in the list's misspelling either.
+  expect_match(match("FC-2 sanidine 28.201 Ma"), Kind::Respelled, kuiper, "the entry's mineral");
+  expect_match(match("TCs sanidine 28.447 Ma"), Kind::Respelled,
+               "Taylor Creek Rhyolite Saniditine (TCs) from Fleck et al. 2019 (28.447 Ma)", "Saniditine is sanidine");
+  expect_match(match("GA-1550 biotite 99.44 Ma"), Kind::Respelled,
+               "Mt Domedary Biotite (GA-1550) from Jourdan and Renne 2007 (99.44 Ma)", "the entry's mineral");
   // Ambiguous, and so not rewritten: the age is two entries' and the name
   // says no more.
   expect_match(match("Mt Domedary Biotite 99.44 Ma"), Kind::Ambiguous, "", "GA-1550 or MD-2");
@@ -390,6 +411,44 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   const std::vector<std::string> same = {std::string(kuiper), std::string(kuiper) + " "};
   expect_match(match_flux_monitor("FC-2 28.201 Ma", same), Kind::Respelled, kuiper, "listed twice");
   expect_match(match_flux_monitor("FC-2 28.201 Ma", {}), Kind::None, "", "an empty list");
+}
+
+// The minerals the rule knows are the list's: every entry names exactly one
+// of them, and each of them is some entry's.
+TEST(Vocab, TheMonitorMineralsAreOfTheTemplatesList) {
+  const std::vector<std::string> list = template_monitors();
+  const auto minerals = flux_monitor_minerals();
+  ASSERT_FALSE(minerals.empty());
+  const auto words_of = [](const std::string& text) {
+    std::vector<std::string> out(1);
+    for (const char c : text) {
+      if (std::isalnum(static_cast<unsigned char>(c)) != 0) {
+        out.back() += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      } else if (!out.back().empty()) {
+        out.emplace_back();
+      }
+    }
+    return out;
+  };
+  std::set<std::string> used, named;
+  for (const std::string& entry : list) {
+    std::set<std::string> of_entry;
+    for (const std::string& word : words_of(entry)) {
+      for (const MonitorMineral& mineral : minerals) {
+        if (word != mineral.word) continue;
+        of_entry.insert(std::string(mineral.mineral));
+        used.insert(std::string(mineral.word));
+      }
+    }
+    EXPECT_EQ(of_entry.size(), 1u) << entry;
+    named.insert(of_entry.begin(), of_entry.end());
+  }
+  EXPECT_EQ(used.size(), minerals.size()) << "a word of the table is in no entry";
+  EXPECT_EQ(named, (std::set<std::string>{"biotite", "hornblende", "muscovite", "sanidine"}));
+  // The list's misspelling is the mineral it means.
+  EXPECT_TRUE(std::any_of(minerals.begin(), minerals.end(), [](const MonitorMineral& m) {
+    return m.word == "saniditine" && m.mineral == "sanidine";
+  }));
 }
 
 // The table of pychron's names for monitors is of this list: each name it
@@ -419,6 +478,11 @@ TEST(Vocab, TheMonitorAliasesAreOfTheTemplatesList) {
     EXPECT_GT(marked, 0) << alias.alias << " -> " << alias.listed << " marks no entry of the list";
   }
   EXPECT_EQ(reached.size(), list.size());
+  // No name of the table is a designation of another mineral's split.
+  for (const MonitorAlias& alias : aliases) {
+    EXPECT_NE(alias.alias, "FCT-3");
+    EXPECT_NE(alias.alias, "FCT3");
+  }
   for (const char* name : {"FC-2", "FCs", "FCT", "Fish Canyon", "ACs", "Alder Creek", "GA-1550", "Hb3gr", "TCs",
                            "Taylor Creek"}) {
     EXPECT_TRUE(std::any_of(aliases.begin(), aliases.end(), [&](const MonitorAlias& a) { return a.alias == name; }))

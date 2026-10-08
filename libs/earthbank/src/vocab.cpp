@@ -271,6 +271,20 @@ constexpr MonitorAlias kMonitorAliases[] = {
     {"WA1ms", "WA1ms"},
 };
 
+// Designations that hold one of the names above and are another monitor, one
+// the list has not: FCT-3 is the biotite of the Fish Canyon Tuff, and `FCT`
+// would make it the sanidine. A name that holds one matches nothing.
+constexpr std::string_view kNotListed[] = {"FCT-3", "FCT3"};
+
+// The words of the list's entries that are minerals, and the mineral each
+// is. `Saniditine` is the list's spelling in its Taylor Creek entry. A name
+// that says one of these is of an entry that says the same one, and of no
+// other: the same tuff has a sanidine and a biotite, and the list only one.
+constexpr MonitorMineral kMonitorMinerals[] = {
+    {"sanidine", "sanidine"},     {"saniditine", "sanidine"}, {"biotite", "biotite"},
+    {"hornblende", "hornblende"}, {"muscovite", "muscovite"},
+};
+
 // The words of `text`: runs of ASCII letters and digits (and of other bytes
 // that are not ASCII), lower case. `FC-2` is `fc`, `2`.
 std::vector<std::string> words_of(std::string_view text) {
@@ -296,6 +310,17 @@ bool has_run(const std::vector<std::string>& all, const std::vector<std::string>
     if (std::equal(part.begin(), part.end(), all.begin() + static_cast<std::ptrdiff_t>(i))) return true;
   }
   return false;
+}
+
+// The minerals `words` say, each once, sorted.
+std::vector<std::string_view> minerals_of(const std::vector<std::string>& words) {
+  std::vector<std::string_view> out;
+  for (const MonitorMineral& mineral : kMonitorMinerals) {
+    if (std::find(words.begin(), words.end(), mineral.word) == words.end()) continue;
+    if (std::find(out.begin(), out.end(), mineral.mineral) == out.end()) out.push_back(mineral.mineral);
+  }
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
 // A number as people write an age (`28.201`, `1081`), so that two are
@@ -410,6 +435,8 @@ std::vector<std::vector<std::string>> abbreviations_of(std::string_view entry) {
 
 std::span<const MonitorAlias> flux_monitor_aliases() { return kMonitorAliases; }
 
+std::span<const MonitorMineral> flux_monitor_minerals() { return kMonitorMinerals; }
+
 ListMatch match_list_entry(std::string_view value, std::span<const std::string> entries) {
   const std::string_view wanted = trimmed(value);
   if (wanted.empty()) return {};
@@ -447,11 +474,17 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
     if (std::find(marks.begin(), marks.end(), mark) == marks.end()) marks.push_back(std::move(mark));
   }
   if (marks.size() > 1) return {};
+  for (const std::string_view other : kNotListed) {
+    if (has_run(query.name, words_of(other))) return {};
+  }
+  const std::vector<std::string_view> said = minerals_of(query.name);
 
   std::vector<std::string_view> found;
   for (const std::string& entry : entries) {
     if (listed_age(entry) != query.age) continue;
     const std::vector<std::string> words = words_of(entry);
+    // Another mineral is another monitor, whatever else of the name fits.
+    if (const auto listed = minerals_of(words); !said.empty() && !listed.empty() && said != listed) continue;
     bool named = false;
     if (!marks.empty()) {
       named = has_run(words, marks.front());
