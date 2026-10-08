@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "text_detail.hpp"
+
 namespace pychron::earthbank {
 namespace {
 
@@ -230,26 +232,13 @@ std::string flux_monitor_query(std::string_view name, std::optional<double> age_
 
 namespace {
 
-bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+using detail::ascii_lower;
+using detail::is_blank;
+using detail::same_but_case;
+using detail::trimmed;
 
-std::string_view trimmed(std::string_view text) {
-  while (!text.empty() && is_blank(text.front())) text.remove_prefix(1);
-  while (!text.empty() && is_blank(text.back())) text.remove_suffix(1);
-  return text;
-}
-
-char ascii_lower(char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; }
 bool ascii_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 bool ascii_digit(char c) { return c >= '0' && c <= '9'; }
-
-// The same text but for the case of ASCII letters.
-bool same_but_case(std::string_view a, std::string_view b) {
-  if (a.size() != b.size()) return false;
-  for (std::size_t i = 0; i < a.size(); ++i) {
-    if (ascii_lower(a[i]) != ascii_lower(b[i])) return false;
-  }
-  return true;
-}
 
 // The names pychron labs use for the monitors of the template's `Flux
 // Monitor` list, each with the mark of that monitor's entries there:

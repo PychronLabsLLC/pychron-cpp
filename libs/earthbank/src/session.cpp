@@ -17,6 +17,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/earthbank/http.hpp"
 #include "pychron/earthbank/vocab.hpp"
+#include "text_detail.hpp"
 
 namespace pychron::earthbank {
 namespace {
@@ -33,13 +34,7 @@ constexpr std::size_t kMostPackagePages = 200;
 // The most of the service's own words that go into a sentence or a log line.
 constexpr std::size_t kMostReason = 300;
 
-bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-
-std::string_view trimmed(std::string_view text) {
-  while (!text.empty() && is_blank(text.front())) text.remove_prefix(1);
-  while (!text.empty() && is_blank(text.back())) text.remove_suffix(1);
-  return text;
-}
+using detail::trimmed;
 
 std::string lowered(std::string_view text) {
   std::string out(text);

@@ -16,6 +16,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/earthbank/http.hpp"
 #include "pychron/earthbank/vocab.hpp"
+#include "text_detail.hpp"
 
 namespace pychron::earthbank {
 namespace {
@@ -31,13 +32,7 @@ constexpr int kContainingRows = 200;
 
 constexpr std::string_view kFluxMonitorField = "fluxMonitorName";
 
-bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-
-std::string_view trimmed(std::string_view text) {
-  while (!text.empty() && is_blank(text.front())) text.remove_prefix(1);
-  while (!text.empty() && is_blank(text.back())) text.remove_suffix(1);
-  return text;
-}
+using detail::trimmed;
 
 // The first letter in capitals and the rest in lower case, of ASCII letters:
 // how the service spells most of its entries (legacy's second try).
