@@ -889,7 +889,9 @@ TEST_P(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {
     EXPECT_EQ(p.used_in_fit, p.monitor) << p.hole;
     EXPECT_EQ(p.n, !p.monitor ? 0 : p.hole == 4 ? 2 : 3) << p.hole;
     ASSERT_TRUE(p.dev_percent.has_value()) << p.hole;
-    if (p.monitor) EXPECT_LT(std::abs(*p.dev_percent), 0.5) << p.hole;  // the plane is close to the saved ring J
+    if (p.monitor) {
+      EXPECT_LT(std::abs(*p.dev_percent), 0.5) << p.hole;  // the plane is close to the saved ring J
+    }
   }
 }
 

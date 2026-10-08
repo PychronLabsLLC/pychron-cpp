@@ -306,7 +306,9 @@ TEST(GasNetwork, AGetterRemovesActiveGasOnly) {
   EXPECT_GE(after[kActive], 0.0);
   EXPECT_LT(after[kActive], 1e-30);
   for (std::size_t i = 0; i < kSpeciesCount; ++i) {
-    if (i != kActive) EXPECT_TRUE(near_rel(after[i], before[i], 1e-12)) << kSpeciesName[i];
+    if (i != kActive) {
+      EXPECT_TRUE(near_rel(after[i], before[i], 1e-12)) << kSpeciesName[i];
+    }
   }
 
   // The other way about: a pump of nobles only leaves the active gas, and
