@@ -1767,28 +1767,161 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     QVERIFY(w.fit());
 
-    // A sample typed and not asked for is other monitors than the fit's: Save
-    // says so and saves nothing, and the text stays.
-    w.sample_edit()->setText(QStringLiteral("unk"));
-    QVERIFY(w.edited());
-    w.save();
-    QVERIFY(!w.busy());
-    QVERIFY(w.status_is_error());
-    QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: the monitor selection changed, fit again")),
-             qPrintable(w.status()));
-    QCOMPARE(w.sample_edit()->text(), QStringLiteral("unk"));
-    QVERIFY(w.sample_edit()->isEnabled());
     drain(*r.bridge);
     QCOMPARE(change_seq(), before);
     QCOMPARE(saved.count(), 0);
-    // Taken back, the fit on show is saved.
-    w.sample_edit()->clear();
-    QVERIFY(!w.edited());
-    w.save();
+  }
+
+  // Level A's document with a second monitor set, "Alt"; the name of the standard one.
+  std::string add_alt_monitor_set() {
+    auto sets = pp::load_monitor_sets(*store_);
+    if (!sets) qFatal("%s", to_string(sets.error()).c_str());
+    pp::MonitorSets edited = sets->sets;
+    pp::MonitorSet alt = *edited.find("");
+    const std::string standard = alt.name;
+    alt.name = "Alt";
+    alt.age_ma *= 1.01;
+    edited.sets.push_back(alt);
+    auto committed = pp::save_monitor_sets(*store_, actor_, edited, *sets);
+    if (!committed) qFatal("%s", to_string(committed.error()).c_str());
+    return standard;
+  }
+
+ private Q_SLOTS:
+  void the_question_of_a_monitor_set_change_can_save() {
+    const std::string standard = add_alt_monitor_set();
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Save;
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    const double j1 = fitted_at(*w.fit(), 1).j;  // under the standard set, without hole 3
+    QSignalSpy saved(&w, &FluxWindow::saved);
+
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
+    QVERIFY(w.busy());
+    QCOMPARE(w.status(), QStringLiteral("Saving…"));
+    QCOMPARE(w.inputs()->monitor_set.name, standard);  // until it is saved
+    QVERIFY(settle(w));
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(saved.count(), 1);
+    // The store holds the fit that was on show: the old set's, with the exclusion.
+    for (int hole : {1, 3, 9}) {
+      const auto value = head_value(hole);
+      QVERIFY2(value.has_value(), qPrintable(QString::number(hole)));
+      QCOMPARE(value->monitor_name, std::optional<std::string>(standard));
+      QVERIFY(value->options_json.has_value());
+      QCOMPARE(pp::parse_flux_options(*value->options_json).monitor_set, standard);
+    }
+    QCOMPARE(saved_excluded(3), std::optional<bool>(true));
+    QCOMPARE(saved_excluded(4), std::optional<bool>(false));
+    QCOMPARE(*head_value(1)->j, j1);
+    // And the window shows the level under the new set, the edits made before gone.
+    QVERIFY(w.inputs());
+    QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));
+    QCOMPARE(w.monitor_set_combo()->currentText(), QStringLiteral("Alt"));
+    QVERIFY(w.edits().exclude_positions.empty());
+    QVERIFY(w.edits().omit.empty());
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(fitted_at(*w.fit(), 1).j != j1);  // another age, another J
+    QVERIFY(!w.status_is_error());
+    QVERIFY2(!w.status().contains(QStringLiteral("monitor selection")), qPrintable(w.status()));
+    QVERIFY2(w.status().contains(QStringLiteral(" · Saved 12 positions (0 unchanged)")), qPrintable(w.status()));
+  }
+
+  void the_question_of_a_monitor_set_change_keeps_everything_on_a_conflict() {
+    const std::string standard = add_alt_monitor_set();
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Save;
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    save_fit(7, pp::FluxOptions{}, false, 2.0e-3);  // someone else, meanwhile
+    const auto before_heads = heads();
+    const int loads = w.loads_started();
+    QSignalSpy saved(&w, &FluxWindow::saved);
+
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(w.monitor_set_combo()->currentText(), QString::fromStdString(standard));  // put back at once
     QVERIFY(w.busy());
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    drain(*r.bridge);
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: hole 7 was saved by jsmith at ")), qPrintable(w.status()));
+    QCOMPARE(heads(), before_heads);
+    QCOMPARE(saved.count(), 0);
+    QCOMPARE(w.loads_started(), loads);
+    QVERIFY(w.inputs());
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    QCOMPARE(w.monitor_set_combo()->currentText(), QString::fromStdString(standard));
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
+    QVERIFY(!fitted_at(*w.fit(), 3).used_in_fit);
+    QCOMPARE(asked.size(), 1);
+  }
+
+  void saving_with_a_typed_sample_takes_the_group_change_path() {
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Save;
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    const ps::ChangeSeq before = change_seq();
+    QSignalSpy saved(&w, &FluxWindow::saved);
+    QStringList said;  // every status on the way
+    const int loads = w.loads_started();
+
+    // No other edit: Save commits the sample, and the level is read with it. Nothing is saved.
+    w.sample_edit()->setText(QStringLiteral("unk"));
+    w.save();
+    said << w.status();
+    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 A…"));
+    QVERIFY(w.busy());
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    said << w.status();
+    QVERIFY(asked.isEmpty());
+    QCOMPARE(w.loads_started(), loads + 1);
+    QVERIFY(w.inputs());
+    QCOMPARE(w.inputs()->monitor_set.sample, std::string("unk"));
+    QCOMPARE(w.monitors()->rowCount(), 4);
+    QCOMPARE(w.sample_edit()->text(), QStringLiteral("unk"));
+    QCOMPARE(change_seq(), before);
+    for (int hole = 1; hole <= 12; ++hole) QVERIFY(!head(hole).has_value());
+    QCOMPARE(saved.count(), 0);
+
+    // With edits pending it asks, and Save saves the fit on show (the level's
+    // own monitors) before the level is read with the sample.
+    w.sample_edit()->clear();
+    Q_EMIT w.sample_edit()->editingFinished();
+    QVERIFY(settle(w));
+    QCOMPARE(w.monitors()->rowCount(), 8);
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    w.sample_edit()->setText(QStringLiteral("unk"));
+    w.save();
+    said << w.status();
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(w.status(), QStringLiteral("Saving…"));
+    QVERIFY(settle(w));
+    said << w.status();
+    QCOMPARE(asked.size(), 1);
     QCOMPARE(saved.count(), 1);
+    QCOMPARE(saved_excluded(3), std::optional<bool>(true));
+    QCOMPARE(pp::parse_flux_options(*head_value(1)->options_json).monitor_sample, std::string("FC-2"));
+    QCOMPARE(w.inputs()->monitor_set.sample, std::string("unk"));
+    QCOMPARE(w.monitors()->rowCount(), 4);
+    for (const QString& text : said) QVERIFY2(!text.contains(QStringLiteral("monitor selection")), qPrintable(text));
   }
 
   void a_change_or_a_reload_during_a_save_still_says_saved() {

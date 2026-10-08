@@ -561,7 +561,13 @@ void FluxWindow::start_load() {
         loading_ = false;
         update_enabled();
         update_actions();
-        if (!loaded) return set_status(QString::fromStdString(loaded.error().what), true);
+        if (!loaded) {
+          // What the save that asked for this read said is not lost with it.
+          QString error = QString::fromStdString(loaded.error().what);
+          if (!note_.isEmpty() && note_generation_ == load_generation_) error = tr("%1 · %2").arg(note_, error);
+          note_.clear();
+          return set_status(error, true);
+        }
         apply_loaded(std::move(loaded->inputs), std::move(loaded->sets.sets), std::move(loaded->sets.default_name));
       });
 }
@@ -927,8 +933,11 @@ QString FluxWindow::save_error_text(const std::string& what) {
 void FluxWindow::commit_typed() {
   // A spin box takes what was typed into it; a field that commits when it is
   // left is left. Both say "changed" now, before the fit that is saved.
+  // The sample field is not left: what is typed there is other monitors, not
+  // this fit's (save_then decides what becomes of it).
   for (QAbstractSpinBox* spin : dock_host_->findChildren<QAbstractSpinBox*>()) spin->interpretText();
-  if (QWidget* focus = QApplication::focusWidget(); focus && dock_host_->isAncestorOf(focus)) focus->clearFocus();
+  if (QWidget* focus = QApplication::focusWidget(); focus && focus != sample_edit_ && dock_host_->isAncestorOf(focus))
+    focus->clearFocus();
 }
 
 void FluxWindow::tell(const QString& text, bool error) {
@@ -948,11 +957,15 @@ void FluxWindow::save_then(std::function<void()> next) {
   // In this order: what was typed is committed, then fitted, then copied, and
   // only then do the widgets wait (disabling one that holds the focus commits
   // it, which would be after the fit was taken).
-  // A sample typed and not asked for is other monitors: it is not this fit's,
-  // and asking for it reads the level again.
-  if (!(group_shown() == shown_)) return say(tr("Not saved: the monitor selection changed, fit again"), true);
+  // What is saved is fit_, which carries its own monitors: the group's
+  // widgets are never read into it.
   commit_typed();
-  if (loading_ || !inputs_) return;
+  // R13: a sample typed and not yet asked for is committed by a direct Save,
+  // and that is a change of the monitor group like any other: the question
+  // when edits are pending (whose Save answer comes back here with `next`,
+  // the group put back), then the level read with it. This call is done.
+  if (!next && !(group_shown() == shown_)) return group_changed();
+  if (loading_ || saving_ || !inputs_) return;
   if (fit_timer_->isActive()) fit_now();  // what is saved is what is on show
   if (!fit_) return;                      // the status says why
   after_save_ = std::move(next);
