@@ -1,5 +1,9 @@
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <initializer_list>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -1011,6 +1015,220 @@ TEST(FakeEarthBank, RefuseNextNeverArrives) {
   EXPECT_EQ(client.post("/api/core/sample-with-locations", body).status, 201);
 }
 
+// The other half of an answer that never came: the request was not carried
+// out either. The client cannot tell this from drop_next, and that is the
+// point: both are "in doubt", and only one of them left a record.
+TEST(FakeEarthBank, LoseNextWritesNothingAndGivesNoAnswer) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const json body = sample_body(bank.writable_package(), "S1");
+
+  bank.lose_next("POST", "/api/core/sample-with-locations");
+  const auto timed_out = bank.send(client.request("POST", "/api/core/sample-with-locations", &body));
+  ASSERT_FALSE(timed_out.has_value());
+  EXPECT_EQ(timed_out.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(timed_out.error().code.empty());
+  EXPECT_TRUE(request_may_have_arrived(timed_out.error()));
+  EXPECT_TRUE(bank.store().samples.empty());
+  EXPECT_EQ(bank.requests().back().outcome, LoggedRequest::Outcome::Lost);
+  EXPECT_EQ(bank.requests().back().status, 0);
+
+  bank.lose_next("POST", "/api/core/sample-with-locations", ErrorKind::Io);
+  const auto reset = bank.send(client.request("POST", "/api/core/sample-with-locations", &body));
+  ASSERT_FALSE(reset.has_value());
+  EXPECT_EQ(reset.error().kind, ErrorKind::Io);
+  EXPECT_NE(reset.error().code, kHttpNotSent);
+  EXPECT_TRUE(request_may_have_arrived(reset.error()));
+  EXPECT_TRUE(bank.store().samples.empty());
+
+  // Once each.
+  EXPECT_EQ(client.post("/api/core/sample-with-locations", body).status, 201);
+  // Only the two ways an answer is lost: anything else is a mistake in the test.
+  EXPECT_THROW(bank.lose_next("POST", "/api/", ErrorKind::Config), std::invalid_argument);
+  EXPECT_THROW(bank.drop_next("POST", "/api/", ErrorKind::Cancelled), std::invalid_argument);
+  EXPECT_TRUE(bank.pending().empty());
+}
+
+// The record is made and the connection goes before the answer: an I/O
+// error, and not one that says the request never left.
+TEST(FakeEarthBank, DropNextCanLoseTheConnection) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const json body = sample_body(bank.writable_package(), "S1");
+  bank.drop_next("POST", "/api/core/", ErrorKind::Io);
+  const auto lost = bank.send(client.request("POST", "/api/core/sample-with-locations", &body));
+  ASSERT_FALSE(lost.has_value());
+  EXPECT_EQ(lost.error().kind, ErrorKind::Io);
+  EXPECT_NE(lost.error().code, kHttpNotSent);
+  EXPECT_TRUE(request_may_have_arrived(lost.error()));
+  EXPECT_EQ(bank.store().samples.size(), 1u);
+  EXPECT_EQ(bank.requests().back().outcome, LoggedRequest::Outcome::Dropped);
+  EXPECT_EQ(bank.requests().back().status, 201);
+}
+
+// A script can wait: `skip` requests that fit go by untouched first. And
+// what has not fired can be asked for, so a test can say its script was used.
+TEST(FakeEarthBank, AScriptCanWaitForALaterRequest) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const std::int64_t point = new_data_point(client, bank, bank.writable_package(), "S1");
+  auto aliquot = [&](const char* name) {
+    const json body = {{"aliquotName", name}, {"arArDataPointId", point}};
+    return bank.send(client.request("POST", "/api/arar/ArArAliquot", &body));
+  };
+
+  bank.fail_next("POST", "/api/arar/ArArAliquot", 503, "busy", 2);
+  bank.drop_next("POST", "/api/arar/ArArAliquot", ErrorKind::Timeout, 3);
+  bank.lose_next("POST", "/api/arar/ArArAliquot", ErrorKind::Io, 4);
+  bank.refuse_next("POST", "/api/arar/ArArAliquot", 5);
+  using Pending = testing::PendingScript;
+  EXPECT_EQ(bank.pending(), (std::vector<Pending>{{"fail", "POST", "/api/arar/ArArAliquot", 2},
+                                                  {"drop", "POST", "/api/arar/ArArAliquot", 3},
+                                                  {"lose", "POST", "/api/arar/ArArAliquot", 4},
+                                                  {"refuse", "POST", "/api/arar/ArArAliquot", 5}}));
+
+  // A request that does not fit is not counted.
+  EXPECT_EQ(client.get("/api/arar/AirRatio").status, 200);
+  EXPECT_EQ(aliquot("a")->status, 201);
+  EXPECT_EQ(aliquot("b")->status, 201);
+  EXPECT_EQ(bank.pending().front().skip, 0u);
+  EXPECT_EQ(aliquot("c")->status, 503);            // the third
+  ASSERT_EQ(bank.pending().size(), 3u);
+  // Every script counts the requests that fit it, whichever of them fires:
+  // the fourth is the drop's, the fifth the lose's, the sixth the refuse's.
+  const auto fourth = aliquot("d");
+  ASSERT_FALSE(fourth.has_value());
+  EXPECT_EQ(fourth.error().kind, ErrorKind::Timeout);
+  const auto fifth = aliquot("e");
+  ASSERT_FALSE(fifth.has_value());
+  EXPECT_EQ(fifth.error().kind, ErrorKind::Io);
+  EXPECT_TRUE(request_may_have_arrived(fifth.error()));
+  const auto sixth = aliquot("f");
+  ASSERT_FALSE(sixth.has_value());
+  EXPECT_FALSE(request_may_have_arrived(sixth.error()));
+  EXPECT_TRUE(bank.pending().empty());
+  EXPECT_EQ(aliquot("g")->status, 201);
+
+  std::vector<std::string> made;
+  for (const Store::Record& record : bank.store().aliquots) made.push_back(record.body.at("aliquotName"));
+  EXPECT_EQ(made, (std::vector<std::string>{"a", "b", "d", "g"}));
+
+  // A script nothing fitted is still there at the end.
+  bank.fail_next("DELETE", "/api/management/", 500, "");
+  ASSERT_EQ(bank.pending().size(), 1u);
+  EXPECT_EQ(bank.pending()[0].kind, "fail");
+  EXPECT_EQ(bank.pending()[0].method, "DELETE");
+}
+
+// ---- Behaviour that is not known, to be had either way ---------------------
+
+// Legacy does not trust the service to keep to `dataPackageId.equals`: it
+// looks at each row's package itself (find_sample_by_name). A client that
+// does not is shown the sample of another package here.
+TEST(FakeEarthBank, TheSampleSearchCanIgnoreThePackage) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const std::int64_t here = bank.writable_package();
+  const std::int64_t there = bank.add_package("Another writable package", true);
+  const std::int64_t theirs = new_sample(client, there, "S1");
+  const std::string url = with_query("/api/core/sample-with-locations",
+                                     {{"name.equals", "S1"}, {"dataPackageId.equals", std::to_string(here)}});
+  ASSERT_TRUE(parsed(client.get(url)).empty());
+
+  bank.ignore_sample_package_filter(true);
+  const json rows = parsed(client.get(url));
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].at("sampleDTO").at("id"), theirs);
+  EXPECT_EQ(rows[0].at("sampleDTO").at("dataPackageId"), there) << "the row still says where it is";
+  // The name is still minded.
+  EXPECT_TRUE(parsed(client.get(with_query("/api/core/sample-with-locations",
+                                           {{"name.equals", "S2"}, {"dataPackageId.equals", std::to_string(here)}})))
+                  .empty());
+
+  bank.ignore_sample_package_filter(false);
+  EXPECT_TRUE(parsed(client.get(url)).empty());
+}
+
+// Legacy looks for the word "constraint" in the body before it looks at the
+// status, so what status the service gives is not known.
+TEST(FakeEarthBank, AConstraintFailureCanBeA500) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const std::int64_t point = new_data_point(client, bank, bank.writable_package(), "S1");
+  const json body = {{"arArDataPointId", point}, {"fluxMonitorId", 424242}};
+  EXPECT_EQ(client.post("/api/arar/ArArAgeCalc", body).status, 400);
+
+  bank.constraint_status(500);
+  const HttpResponse refused = client.post("/api/arar/ArArAgeCalc", body);
+  EXPECT_EQ(refused.status, 500);
+  EXPECT_EQ(parsed(refused).at("status"), 500);
+  EXPECT_NE(refused.body.find("Key (flux_monitor_id)=(424242)"), std::string::npos) << refused.body;
+  EXPECT_EQ(refused.body.find("not writable"), std::string::npos);
+  // The other refusals keep their status.
+  EXPECT_EQ(client.post("/api/arar/ArArAgeCalc", {{"arArDataPointId", point}, {"decayConstantName", "x"}}).status, 400);
+  EXPECT_THROW(bank.constraint_status(200), std::invalid_argument);
+}
+
+// Legacy takes any 2xx for a record made.
+TEST(FakeEarthBank, WhatIsCreatedCanAnswer200) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  bank.created_status(200);
+  const std::int64_t package = bank.writable_package();
+  const HttpResponse sample = client.post("/api/core/sample-with-locations", sample_body(package, "S1"));
+  ASSERT_EQ(sample.status, 200);
+  const auto sample_id = parsed(sample).at("sampleDTO").at("id").get<std::int64_t>();
+  const HttpResponse point = client.post("/api/arar/ArArDataPoint", data_point_body(bank, package, sample_id, "S1"));
+  ASSERT_EQ(point.status, 200);
+  const json aliquot = {{"arArDataPointId", parsed(point).at("id")}};
+  EXPECT_EQ(client.post("/api/arar/ArArAliquot", aliquot).status, 200);
+  const json fields = {{"name", "P"}};
+  EXPECT_EQ(client.post("/api/management/data-packages", {{"dataPackageDTO", fields}}).status, 200);
+  EXPECT_EQ(bank.store().aliquots.size(), 1u);
+
+  bank.created_status(201);
+  EXPECT_EQ(client.post("/api/arar/ArArAliquot", aliquot).status, 201);
+  for (const int status : {199, 204, 300, 404}) EXPECT_THROW(bank.created_status(status), std::invalid_argument);
+}
+
+// Where the id of a new sample is in the answer: legacy reads `sampleDTO.id`,
+// then `sample.id` (_extract_sample_id), and other records' ids on top.
+TEST(FakeEarthBank, ANewSamplesIdCanBeElsewhereInTheAnswer) {
+  using Place = testing::SampleIdPlace;
+  FakeEarthBank bank;
+  const Client client(bank);
+  const std::int64_t package = bank.writable_package();
+  const char* const path = "/api/core/sample-with-locations";
+
+  bank.sample_id_place(Place::Sample);
+  const json under_sample = parsed(client.post(path, sample_body(package, "S1")));
+  EXPECT_FALSE(under_sample.contains("sampleDTO"));
+  EXPECT_FALSE(under_sample.contains("id"));
+  const auto first = under_sample.at("sample").at("id").get<std::int64_t>();
+  EXPECT_EQ(under_sample.at("sample").at("name"), "S1");
+
+  bank.sample_id_place(Place::Top);
+  const json on_top = parsed(client.post(path, sample_body(package, "S2")));
+  const auto second = on_top.at("id").get<std::int64_t>();
+  EXPECT_FALSE(on_top.at("sampleDTO").contains("id"));
+  EXPECT_EQ(on_top.at("sampleDTO").at("name"), "S2");
+
+  bank.sample_id_place(Place::SampleDto);
+  const json usual = parsed(client.post(path, sample_body(package, "S3")));
+  EXPECT_FALSE(usual.contains("id"));
+  EXPECT_EQ(usual.at("sampleDTO").at("id").get<std::int64_t>(), second + 1);
+  EXPECT_EQ(second, first + 1);
+
+  // Only the answer to the POST differs: what is kept, and what a search
+  // gives, is the same sample either way.
+  const Store store = bank.store();
+  ASSERT_EQ(store.samples.size(), 3u);
+  EXPECT_EQ(store.samples[0].id, first);
+  EXPECT_EQ(store.samples[1].body.at("sampleDTO").at("id"), second);
+  EXPECT_EQ(parsed(client.get(with_query(path, {{"name.equals", "S1"}})))[0].at("sampleDTO").at("id"), first);
+  ASSERT_EQ(client.post("/api/arar/ArArDataPoint", data_point_body(bank, package, second, "S2")).status, 201);
+}
+
 // ---- The log ---------------------------------------------------------------
 
 TEST(FakeEarthBank, TheLogSaysWhatWasAsked) {
@@ -1093,6 +1311,92 @@ TEST(FakeEarthBank, TheLogHoldsNoSecret) {
   ASSERT_FALSE(lost.has_value());
   EXPECT_EQ(to_string(lost.error()).find("s3cret"), std::string::npos);
   EXPECT_EQ(to_string(lost.error()).find(token), std::string::npos);
+}
+
+// A credential in a query is no more to be kept than one in a header.
+TEST(FakeEarthBank, TheLogHoldsNoSecretOfAQuery) {
+  FakeEarthBank bank;
+  const Client client(bank);
+  const std::string url = with_query("/api/core/materials", {{"name.equals", "Sanidine"},
+                                                             {"access_token", "QUERY-s3cret-1"},
+                                                             {"id_token", "QUERY-s3cret-2"},
+                                                             {"Password", "QUERY-s3cret-3"},
+                                                             {"token", "QUERY-s3cret-4"},
+                                                             {"api_key", "QUERY-s3cret-5"},
+                                                             {"client_secret", "QUERY-s3cret-6"}});
+  ASSERT_EQ(names(client.get(url)), std::vector<std::string>{"Sanidine"});
+  const std::vector<LoggedRequest> log = bank.requests();
+  ASSERT_EQ(log.size(), 1u);
+  EXPECT_EQ(printed(log).find("s3cret"), std::string::npos) << printed(log);
+  EXPECT_EQ(log[0].param("name.equals"), "Sanidine");
+  for (const char* key : {"access_token", "id_token", "Password", "token", "api_key", "client_secret"}) {
+    EXPECT_EQ(log[0].param(key), "<redacted>") << key;
+  }
+}
+
+// ---- The assumptions -------------------------------------------------------
+
+std::string file_text(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) throw std::runtime_error("cannot read " + path.string());
+  std::ostringstream out;
+  out << in.rdbuf();
+  return out.str();
+}
+
+// The whole numbers in `text`, e.g. of "(2, 18)".
+std::vector<int> numbers_in(std::string_view text) {
+  std::vector<int> out;
+  for (std::size_t i = 0; i < text.size();) {
+    if (text[i] < '0' || text[i] > '9') {
+      ++i;
+      continue;
+    }
+    int value = 0;
+    for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; ++i) value = value * 10 + (text[i] - '0');
+    out.push_back(value);
+  }
+  return out;
+}
+
+// What the fake does without legacy's word for it is marked in its source,
+// `// assumed (n):`, and listed for the owner in the fixtures' README, item
+// n. The two are one list: no mark without its item, no item without a mark.
+TEST(FakeEarthBank, EveryAssumptionIsMarkedAndListed) {
+  const std::filesystem::path fixtures = PYCHRON_EARTHBANK_FIXTURE_DIR;
+  const std::string source = file_text(fixtures.parent_path() / "fake_earthbank.cpp");
+  const std::string readme = file_text(fixtures / "README.md");
+
+  std::set<int> marked;
+  std::size_t marks = 0;
+  for (std::size_t at = source.find("// assumed"); at != std::string::npos; at = source.find("// assumed", at + 1)) {
+    const std::size_t open = at + std::string_view("// assumed").size();
+    const std::size_t close = source.find("):", open);
+    ASSERT_EQ(source.compare(open, 2, " ("), 0) << "a mark with no number: " << source.substr(at, 60);
+    ASSERT_NE(close, std::string::npos);
+    const std::vector<int> items = numbers_in(std::string_view(source).substr(open, close - open));
+    ASSERT_FALSE(items.empty()) << source.substr(at, 60);
+    marked.insert(items.begin(), items.end());
+    ++marks;
+  }
+  EXPECT_GT(marks, 0u);
+  EXPECT_EQ(source.find("assumed:"), std::string::npos) << "an assumption marked without its number";
+
+  // The README's items: lines `<n>. ` after the heading, numbered from 1 on.
+  const std::size_t heading = readme.find("## Assumptions to check against the real service");
+  ASSERT_NE(heading, std::string::npos);
+  std::set<int> listed;
+  std::istringstream lines(readme.substr(heading));
+  for (std::string line; std::getline(lines, line);) {
+    const std::size_t dot = line.find(". ");
+    if (dot == std::string::npos || dot == 0 || dot > 3) continue;
+    if (line.find_first_not_of("0123456789") != dot) continue;
+    const int item = numbers_in(line.substr(0, dot)).front();
+    EXPECT_TRUE(listed.insert(item).second) << "item " << item << " is there twice";
+    EXPECT_EQ(item, static_cast<int>(listed.size())) << "the items are numbered in order";
+  }
+  EXPECT_GE(listed.size(), 29u);
+  EXPECT_EQ(marked, listed);
 }
 
 // ---- Determinism -----------------------------------------------------------

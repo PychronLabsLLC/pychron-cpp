@@ -12,8 +12,10 @@
 // wants a login and an Ar-Ar one does not. Each such behaviour carries a
 // comment in fake_earthbank.cpp saying where it was learned. Where legacy
 // does not say what the service does, the plainest thing was chosen and
-// marked `// assumed:` there; all of those are listed in fixtures/README.md
-// for someone with a login to check.
+// marked `// assumed (n):` there; all of those are listed in
+// fixtures/README.md, by that number, for someone with a login to check.
+// Where the plainest thing is only one of two a client must live with, a
+// control gives the other (the last group of them below).
 //
 // It starts from the files in fixtures/ (the lookups, one account, a few
 // packages), all hand-written with invented people and ids. The ids it gives
@@ -52,15 +54,19 @@ namespace pychron::earthbank::testing {
 struct LoggedRequest {
   enum class Outcome {
     Answered,  // the client got `status`
-    Dropped,   // carried out, and the answer lost: the client got a timeout (drop_next)
-    NotSent,   // never arrived: the client got an I/O error (refuse_next)
+    Dropped,   // carried out, and the answer lost: the client got an error (drop_next)
+    Lost,      // not carried out, and no answer either: the same error (lose_next)
+    NotSent,   // never arrived: the client got an error that says so (refuse_next)
   };
   std::string method;
   std::string path;
-  std::vector<std::pair<std::string, std::string>> query;  // decoded, in the order sent
+  // Decoded, in the order sent; the value of a key that looks like a
+  // credential's (`access_token`, `password`, ...) is `<redacted>`.
+  std::vector<std::pair<std::string, std::string>> query;
   std::vector<std::pair<std::string, std::string>> headers;
   std::string body;
-  // What the service answered; for Dropped what it would have; 0 for NotSent.
+  // What the service answered; for Dropped what it would have; 0 for Lost
+  // and NotSent.
   int status = 0;
   Outcome outcome = Outcome::Answered;
   // It carried a bearer token the service took.
@@ -89,6 +95,22 @@ struct Store {
   std::vector<Record> samples;      // body: the wrapper, {sampleDTO, locationDTO, ...}
   std::vector<Record> data_points;  // id: the arArDataPointId; body: the wrapper
   std::vector<Record> aliquots, measurements, age_calcs, age_summaries;
+};
+
+// A script that has not fired yet (FakeEarthBank::pending): `kind` is `fail`,
+// `drop`, `lose` or `refuse`, `skip` the requests it will still let by.
+struct PendingScript {
+  std::string kind, method, path_prefix;
+  std::size_t skip = 0;
+  bool operator==(const PendingScript&) const = default;
+};
+std::ostream& operator<<(std::ostream& out, const PendingScript& script);
+
+// Where the answer to a new sample carries the sample's id.
+enum class SampleIdPlace {
+  SampleDto,  // `sampleDTO.id`: what legacy reads first
+  Sample,     // `sample.id`, the sample under that key: what legacy reads second
+  Top,        // `id` on the wrapper, and none in `sampleDTO`: as other records answer
 };
 
 class FakeEarthBank final : public IHttpClient {
@@ -136,16 +158,48 @@ class FakeEarthBank final : public IHttpClient {
   // Every token given so far is void: a request with one is 401 until the
   // client logs in again.
   void expire_tokens();
-  // The next request of `method` whose path begins with `path_prefix` is
-  // answered with this and nothing is done. Several may wait; each is used
-  // once, the oldest that fits first.
-  void fail_next(std::string_view method, std::string_view path_prefix, int status, std::string body);
-  // The next such request is carried out and its answer lost: the client gets
-  // an `ErrorKind::Timeout`, and the record is there.
-  void drop_next(std::string_view method, std::string_view path_prefix);
-  // The next such request never arrives: the client gets an `ErrorKind::Io`
-  // with the code kHttpNotSent, and nothing is done.
-  void refuse_next(std::string_view method, std::string_view path_prefix);
+  // The four scripts. Each is for one request of `method` whose path begins
+  // with `path_prefix`: the first such, or with `skip` the one after that
+  // many (`skip` 2: the third). Several may wait. Every waiting script counts
+  // every request that fits it; when more than one is due, the oldest fires
+  // and the others fire on the requests after.
+  //
+  // The request is answered with this and nothing is done.
+  void fail_next(std::string_view method, std::string_view path_prefix, int status, std::string body,
+                 std::size_t skip = 0);
+  // The request is carried out and its answer lost: the record is there and
+  // the client gets `error`, an `ErrorKind::Timeout` or a plain
+  // `ErrorKind::Io` (no kHttpNotSent). Another kind: std::invalid_argument.
+  void drop_next(std::string_view method, std::string_view path_prefix, ErrorKind error = ErrorKind::Timeout,
+                 std::size_t skip = 0);
+  // The request is not carried out and gets no answer either: nothing is
+  // done, and the client gets the same `error` drop_next would give. It
+  // cannot tell the two apart.
+  void lose_next(std::string_view method, std::string_view path_prefix, ErrorKind error = ErrorKind::Timeout,
+                 std::size_t skip = 0);
+  // The request never arrives: nothing is done, and the client gets an
+  // `ErrorKind::Io` with the code kHttpNotSent.
+  void refuse_next(std::string_view method, std::string_view path_prefix, std::size_t skip = 0);
+  // The scripts that have not fired, oldest first. Empty at the end of a
+  // test whose scripts were all used.
+  std::vector<PendingScript> pending() const;
+
+  // ---- What is not known of the service, either way -------------------------
+  // Each default is an assumption (fixtures/README.md); a client has to be
+  // right under both.
+  //
+  // The sample search stops minding `dataPackageId.equals` and gives the
+  // samples of every package (default: it minds it). Legacy checks each row's
+  // package itself for this case.
+  void ignore_sample_package_filter(bool ignore);
+  // The status of a constraint failure (an id that is no row of its list):
+  // 400 (default) or 500. The body is the same.
+  void constraint_status(int status);
+  // The status of everything created: 201 (default) or 200.
+  void created_status(int status);
+  // Where the answer to a new sample has its id (default: SampleDto). What
+  // is kept, and what a search gives, does not change.
+  void sample_id_place(SampleIdPlace place);
 
   // ---- Looking at what happened ---------------------------------------------
   // Every request, in order, secrets removed.
@@ -156,12 +210,15 @@ class FakeEarthBank final : public IHttpClient {
 
  private:
   struct Scripted {
-    enum class Kind { Fail, Drop, Refuse };
+    enum class Kind { Fail, Drop, Lose, Refuse };
     Kind kind;
     std::string method, path_prefix;
+    std::size_t skip = 0;
     int status = 0;
     std::string body;
+    ErrorKind error = ErrorKind::Timeout;  // Drop and Lose: what the client gets
   };
+  void script(Scripted scripted);
   struct Call;  // one parsed request (fake_earthbank.cpp)
 
   HttpResponse handle(const Call& call);
@@ -197,6 +254,10 @@ class FakeEarthBank final : public IHttpClient {
   std::set<std::int64_t> writable_;
   Store store_;
   std::vector<Scripted> scripted_;
+  bool ignore_sample_package_filter_ = false;
+  int constraint_status_ = 400;
+  int created_status_ = 201;
+  SampleIdPlace sample_id_place_ = SampleIdPlace::SampleDto;
   std::vector<LoggedRequest> log_;
 
   std::int64_t next_package_ = 620001;

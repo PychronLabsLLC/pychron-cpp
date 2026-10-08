@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <mutex>
 #include <optional>
 #include <ostream>
@@ -27,8 +28,9 @@
 // Where each behaviour was learned. "legacy" is the University of Melbourne
 // fork's `pychron/ausgeochem`: `earthbank_service.py` (the client), its
 // `README.md` and `UPLOAD_GUIDE.md`, and the probe scripts under `tests/`.
-// A comment `// assumed:` marks what legacy does not say; each is listed in
-// fixtures/README.md.
+// What legacy does not say is marked by a comment that begins `assumed (n)`,
+// n being its item in the list of fixtures/README.md. A test holds the marks
+// and the list to each other (FakeEarthBank.EveryAssumptionIsMarkedAndListed).
 
 namespace pychron::earthbank::testing {
 namespace {
@@ -45,9 +47,10 @@ constexpr std::string_view kDataPoint = "/api/arar/ArArDataPoint";
 // Legacy's comment on LOOKUP_ENDPOINTS: this list has a `1 sigma`, and its id
 // is not one a record takes. It is served so that a client that asks it gets
 // what the real one would: an id the data point then refuses.
+// assumed (15): what else the list holds (the fixture's rows).
 constexpr std::string_view kErrorTypes = "/api/core/l-error-types";
 
-// assumed: a page is 20 rows unless `size` says otherwise and never more than
+// assumed (1): a page is 20 rows unless `size` says otherwise and never more than
 // 2000 (Spring Data's defaults; legacy asks for 2000 and gets a whole list).
 constexpr std::size_t kDefaultPageSize = 20;
 constexpr std::size_t kMaxPageSize = 2000;
@@ -74,7 +77,7 @@ int hex_value(char c) {
 }
 
 // A component of a query: `%XX` is a byte.
-// assumed: `+` is a space, as a servlet container reads a query, so a client
+// assumed (6): `+` is a space, as a servlet container reads a query, so a client
 // that does not encode a plus loses it.
 std::string url_decode(std::string_view text) {
   std::string out;
@@ -122,7 +125,7 @@ std::optional<std::int64_t> parse_int(std::string_view text) {
 }
 
 // An id: a whole number. Null and absent are no id.
-// assumed: the same in a string is taken too, as Jackson reads a number.
+// assumed (7): the same in a string is taken too, as Jackson reads a number.
 std::optional<std::int64_t> as_id(const json& value) {
   if (value.is_number_integer()) return value.get<std::int64_t>();
   if (value.is_string()) return parse_int(value.get_ref<const std::string&>());
@@ -164,7 +167,7 @@ std::string_view last_segment(std::string_view path) { return path.substr(path.r
 
 HttpResponse answer(int status, const json& body) { return HttpResponse{status, body.dump()}; }
 
-// assumed: an error that legacy does not quote has the body JHipster gives
+// assumed (3): an error that legacy does not quote has the body JHipster gives
 // every error, an RFC 7807 problem. Legacy reads `detail`, then `message`,
 // then `title` out of whatever comes (_humanize_error).
 HttpResponse problem(int status, std::string_view title, std::string_view path, std::string_view detail = {}) {
@@ -180,7 +183,7 @@ HttpResponse problem(int status, std::string_view title, std::string_view path, 
 // Legacy, wherever a write has no package the account may write to (README:
 // "500 'Package is not writable by user.'"): no package given, a package that
 // is somebody else's, a data point without the wrapper that carries it.
-// assumed: the sentence is the `title` and nothing else is in the body.
+// assumed (20): the sentence is the `title` and nothing else is in the body.
 HttpResponse not_writable() { return HttpResponse{500, R"({"title":"Package is not writable by user."})"}; }
 
 HttpResponse unauthorized(std::string_view path, std::string_view detail) {
@@ -191,9 +194,11 @@ HttpResponse unauthorized(std::string_view path, std::string_view detail) {
 // column out of `Key (<column>)=` or out of `constraint "fk_..._<column>"`,
 // and _humanize_error cuts the text at `;` and at `nested exception`: so the
 // service passes on Spring's sentence with PostgreSQL's inside it.
-// assumed: the status (400), and every word of the text beyond those marks.
-HttpResponse constraint(std::string_view path, std::string_view table, std::string_view field, std::int64_t id,
-                        std::string_view referenced) {
+// assumed (21): the status, 400 unless constraint_status says 500 (legacy
+// looks for the word "constraint" before it looks at the status), and every
+// word of the text beyond those marks.
+HttpResponse constraint(int status, std::string_view path, std::string_view table, std::string_view field,
+                        std::int64_t id, std::string_view referenced) {
   const std::string column = snake(field);
   const std::string key = "fk_" + std::string(table) + "_" + column;
   std::string detail = "could not execute statement; SQL [n/a]; constraint [" + key +
@@ -202,7 +207,7 @@ HttpResponse constraint(std::string_view path, std::string_view table, std::stri
                        std::string(table) + "\" violates foreign key constraint \"" + key + "\"\n  Detail: Key (" +
                        column + ")=(" + std::to_string(id) + ") is not present in table \"" + std::string(referenced) +
                        "\".";
-  return problem(400, "Bad Request", path, detail);
+  return problem(status, status == 400 ? "Bad Request" : "Internal Server Error", path, detail);
 }
 
 // ---- Rows ------------------------------------------------------------------
@@ -215,6 +220,8 @@ std::string text_of(const json& value) {
 
 // `sort=name,ASC` over the field of each row that `field_of` finds. A stable
 // sort: rows that compare equal keep the order they are stored in.
+// assumed (33): `sort` works on a lookup as on the package list, the one
+// place legacy sends it.
 template <class FieldOf>
 void sort_rows(std::vector<json>& rows, const std::optional<std::string>& sort, FieldOf field_of) {
   if (!sort || sort->empty()) return;
@@ -229,12 +236,19 @@ void sort_rows(std::vector<json>& rows, const std::optional<std::string>& sort, 
   });
 }
 
+// A key of a JSON body or of a query whose value is a credential.
+bool is_credential_key(std::string_view key) {
+  const std::string name = lowered(key);
+  for (const std::string_view mark : {"password"sv, "token"sv, "secret"sv, "api_key"sv, "apikey"sv}) {
+    if (name.find(mark) != std::string::npos) return true;
+  }
+  return false;
+}
+
 void redact(json& value) {
   if (value.is_object()) {
     for (auto& [key, inner] : value.items()) {
-      const std::string name = lowered(key);
-      if (name.find("password") != std::string::npos || name.find("token") != std::string::npos ||
-          name.find("secret") != std::string::npos) {
+      if (is_credential_key(key)) {
         inner = kRedacted;
       } else {
         redact(inner);
@@ -290,6 +304,7 @@ std::ostream& operator<<(std::ostream& out, const LoggedRequest& request) {
   switch (request.outcome) {
     case LoggedRequest::Outcome::Answered: out << " -> " << request.status; break;
     case LoggedRequest::Outcome::Dropped: out << " -> no answer (carried out: " << request.status << ")"; break;
+    case LoggedRequest::Outcome::Lost: out << " -> no answer (not carried out)"; break;
     case LoggedRequest::Outcome::NotSent: out << " -> never arrived"; break;
   }
   for (const auto& [name, value] : request.headers) out << "\n    " << name << ": " << value;
@@ -298,6 +313,12 @@ std::ostream& operator<<(std::ostream& out, const LoggedRequest& request) {
     out << "\n    " << request.body.substr(0, kShown);
     if (request.body.size() > kShown) out << "... (" << request.body.size() << " bytes)";
   }
+  return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const PendingScript& script) {
+  out << script.kind << ' ' << script.method << ' ' << script.path_prefix << '*';
+  if (script.skip > 0) out << " after " << script.skip << " more";
   return out;
 }
 
@@ -334,7 +355,7 @@ struct FakeEarthBank::Call {
 
   // The body as the JSON object every POST of the service takes; or what the
   // service says of one that is not.
-  // assumed: a body with no JSON content type is 415 and one that is not a
+  // assumed (4): a body with no JSON content type is 415 and one that is not a
   // JSON object is 400, as Spring answers a @RequestBody. Legacy sets the
   // content type on every POST and never saw either.
   std::optional<HttpResponse> read(json& into) const {
@@ -392,6 +413,8 @@ FakeEarthBank::FakeEarthBank(Options options) : options_(std::move(options)) {
     const std::filesystem::path file = dir / "lookups" / (std::string(last_segment(endpoint)) + ".json");
     const json list = read_json_file(file);
     require(list.is_array(), file, "is to be the list the service gives");
+    // assumed (12): a row is `id` and `name`, and a fixture's rows have no more.
+    // assumed (13): the names are the vendor template's lists, to the letter.
     std::vector<json>& into = lookups_[std::string(endpoint)];
     for (const json& row : list) {
       require(row.is_object() && row.contains("id") && row["id"].is_number_integer() && row.contains("name") &&
@@ -416,8 +439,9 @@ std::string FakeEarthBank::issue_token() {
   return new_token();
 }
 
-// The real token is a JWT. Nothing may read into it: this one has the three
-// parts and no meaning. Numbered, so that a run gives the same ones again.
+// The real token is a JWT (legacy's packages_probe decodes one).
+// assumed (10): nothing a client needs is read out of it: this one has the
+// three parts and no meaning. Numbered, so that a run gives the same again.
 std::string FakeEarthBank::new_token() {
   std::string number = std::to_string(++tokens_issued_);
   number.insert(0, 4 - std::min<std::size_t>(4, number.size()), '0');
@@ -528,19 +552,67 @@ void FakeEarthBank::expire_tokens() {
   tokens_.clear();
 }
 
-void FakeEarthBank::fail_next(std::string_view method, std::string_view path_prefix, int status, std::string body) {
+void FakeEarthBank::ignore_sample_package_filter(bool ignore) {
   const std::scoped_lock lock(mutex_);
-  scripted_.push_back({Scripted::Kind::Fail, std::string(method), std::string(path_prefix), status, std::move(body)});
+  ignore_sample_package_filter_ = ignore;
 }
 
-void FakeEarthBank::drop_next(std::string_view method, std::string_view path_prefix) {
+void FakeEarthBank::constraint_status(int status) {
+  if (status != 400 && status != 500) throw std::invalid_argument("a constraint failure is 400 or 500");
   const std::scoped_lock lock(mutex_);
-  scripted_.push_back({Scripted::Kind::Drop, std::string(method), std::string(path_prefix), 0, {}});
+  constraint_status_ = status;
 }
 
-void FakeEarthBank::refuse_next(std::string_view method, std::string_view path_prefix) {
+void FakeEarthBank::created_status(int status) {
+  if (status != 200 && status != 201) throw std::invalid_argument("a record made is 200 or 201");
   const std::scoped_lock lock(mutex_);
-  scripted_.push_back({Scripted::Kind::Refuse, std::string(method), std::string(path_prefix), 0, {}});
+  created_status_ = status;
+}
+
+void FakeEarthBank::sample_id_place(SampleIdPlace place) {
+  const std::scoped_lock lock(mutex_);
+  sample_id_place_ = place;
+}
+
+void FakeEarthBank::script(Scripted scripted) {
+  if (scripted.error != ErrorKind::Timeout && scripted.error != ErrorKind::Io) {
+    throw std::invalid_argument("an answer is lost as a Timeout or as an Io");
+  }
+  const std::scoped_lock lock(mutex_);
+  scripted_.push_back(std::move(scripted));
+}
+
+void FakeEarthBank::fail_next(std::string_view method, std::string_view path_prefix, int status, std::string body,
+                              std::size_t skip) {
+  script({Scripted::Kind::Fail, std::string(method), std::string(path_prefix), skip, status, std::move(body),
+          ErrorKind::Io});
+}
+
+void FakeEarthBank::drop_next(std::string_view method, std::string_view path_prefix, ErrorKind error,
+                              std::size_t skip) {
+  script({Scripted::Kind::Drop, std::string(method), std::string(path_prefix), skip, 0, {}, error});
+}
+
+void FakeEarthBank::lose_next(std::string_view method, std::string_view path_prefix, ErrorKind error,
+                              std::size_t skip) {
+  script({Scripted::Kind::Lose, std::string(method), std::string(path_prefix), skip, 0, {}, error});
+}
+
+void FakeEarthBank::refuse_next(std::string_view method, std::string_view path_prefix, std::size_t skip) {
+  script({Scripted::Kind::Refuse, std::string(method), std::string(path_prefix), skip, 0, {}, ErrorKind::Io});
+}
+
+std::vector<PendingScript> FakeEarthBank::pending() const {
+  const std::scoped_lock lock(mutex_);
+  std::vector<PendingScript> out;
+  for (const Scripted& one : scripted_) {
+    const char* kind = one.kind == Scripted::Kind::Fail   ? "fail"
+                       : one.kind == Scripted::Kind::Drop ? "drop"
+                       : one.kind == Scripted::Kind::Lose ? "lose"
+                                                          : "refuse";
+    out.push_back({kind, one.method, one.path_prefix, one.skip});
+  }
+  return out;
 }
 
 std::vector<LoggedRequest> FakeEarthBank::requests() const {
@@ -562,15 +634,26 @@ Store FakeEarthBank::store() const {
   return out;
 }
 
+// The script this request sets off, if any. Every script the request fits
+// counts it: one that still has requests to let by lets this one by, and the
+// oldest that has none left fires. So `skip` is "after that many requests
+// that fit", whatever other scripts did with them.
 std::optional<FakeEarthBank::Scripted> FakeEarthBank::take_scripted(std::string_view method, std::string_view path) {
-  for (auto it = scripted_.begin(); it != scripted_.end(); ++it) {
-    if (it->method == method && starts_with(path, it->path_prefix)) {
-      Scripted out = std::move(*it);
-      scripted_.erase(it);
-      return out;
+  std::optional<Scripted> fired;
+  for (auto it = scripted_.begin(); it != scripted_.end();) {
+    if (it->method != method || !starts_with(path, it->path_prefix)) {
+      ++it;
+    } else if (it->skip > 0) {
+      --it->skip;
+      ++it;
+    } else if (!fired) {
+      fired = std::move(*it);
+      it = scripted_.erase(it);
+    } else {
+      ++it;
     }
   }
-  return std::nullopt;
+  return fired;
 }
 
 // ---- send ------------------------------------------------------------------
@@ -605,7 +688,9 @@ Result<HttpResponse> FakeEarthBank::send(const HttpRequest& request) {
   LoggedRequest logged;
   logged.method = call.method;
   logged.path = call.path;
-  logged.query = call.query;
+  for (const auto& [name, value] : call.query) {
+    logged.query.emplace_back(name, is_credential_key(name) ? std::string(kRedacted) : value);
+  }
   logged.authenticated = call.authenticated;
   for (const auto& [name, value] : request.headers) {
     logged.headers.emplace_back(name, is_credential_header(name) ? std::string(kRedacted) : value);
@@ -627,21 +712,33 @@ Result<HttpResponse> FakeEarthBank::send(const HttpRequest& request) {
     error.code = std::string(kHttpNotSent);
     return fail(std::move(error));
   }
+  // What a client makes of an answer that does not come: the time ran out,
+  // or the connection went. Neither says the request never left.
+  auto no_answer = [&](ErrorKind kind) {
+    return kind == ErrorKind::Timeout
+               ? fail(ErrorKind::Timeout, "no answer to " + request_line(request) + " within " +
+                                              std::to_string(request.timeout.count()) + " ms")
+               : fail(ErrorKind::Io, "connection closed before the answer to " + request_line(request));
+  };
+  if (scripted && scripted->kind == Scripted::Kind::Lose) {
+    logged.outcome = LoggedRequest::Outcome::Lost;
+    log_.push_back(std::move(logged));
+    return no_answer(scripted->error);
+  }
   if (scripted && scripted->kind == Scripted::Kind::Fail) {
     logged.status = scripted->status;
     log_.push_back(std::move(logged));
     return HttpResponse{scripted->status, scripted->body};
   }
 
-  // assumed: a request target with a character that had to be encoded is
+  // assumed (6): a request target with a character that had to be encoded is
   // 400 before anything looks at it (Tomcat's rule).
   HttpResponse response = is_url_text(rest) ? handle(call) : problem(400, "Bad Request", call.path);
   logged.status = response.status;
   if (scripted) {  // Drop: done, and the client never hears.
     logged.outcome = LoggedRequest::Outcome::Dropped;
     log_.push_back(std::move(logged));
-    return fail(ErrorKind::Timeout, "no answer to " + request_line(request) + " within " +
-                                        std::to_string(request.timeout.count()) + " ms");
+    return no_answer(scripted->error);
   }
   log_.push_back(std::move(logged));
   return response;
@@ -650,16 +747,16 @@ Result<HttpResponse> FakeEarthBank::send(const HttpRequest& request) {
 HttpResponse FakeEarthBank::handle(const Call& call) {
   const std::string_view path = call.path;
   const bool get = call.method == "GET", post = call.method == "POST", del = call.method == "DELETE";
-  // assumed: a path the service has, asked with a method it has not, is 405.
+  // assumed (5): a path the service has, asked with a method it has not, is 405.
   auto not_allowed = [&] { return problem(405, "Method Not Allowed", path); };
-  // assumed: the sentence of a 401. Legacy acts on the status alone (one new
+  // assumed (8): the sentence of a 401. Legacy acts on the status alone (one new
   // login, then the request again).
   auto login_needed = [&] { return unauthorized(path, "Full authentication is required to access this resource"); };
 
   if (path == kAuthenticate) return post ? authenticate(call) : not_allowed();
 
   // Legacy's test_connection and get_account: the account of the token.
-  // assumed: its fields (fixtures/account.json), beyond the `id` legacy reads.
+  // assumed (9): its fields (fixtures/account.json), beyond the `id` legacy reads.
   if (path == kAccount) {
     if (!get) return not_allowed();
     return call.authenticated ? answer(200, account_) : login_needed();
@@ -668,9 +765,10 @@ HttpResponse FakeEarthBank::handle(const Call& call) {
   if (const auto list = lookups_.find(path); list != lookups_.end()) {
     if (!get) return not_allowed();
     // Legacy (_load_lookup): "ArAr lookups are public, but /api/core/L*
-    // lookups need auth". assumed: that is the `l-` lists under /api/core and
-    // not its other lists (materials, archives, stratigraphic units, fundings,
-    // literature), and that a token that is no good is as no token.
+    // lookups need auth".
+    // assumed (11): that is the `l-` lists under /api/core and not its other
+    // lists (materials, archives, stratigraphic units, fundings, literature),
+    // and a token that is no good is as no token.
     if (starts_with(path, "/api/core/l-") && !call.authenticated) return login_needed();
     return lookup(call, list->second);
   }
@@ -705,7 +803,7 @@ HttpResponse FakeEarthBank::handle(const Call& call) {
     std::vector<Store::Record>* into;
     std::int64_t* next_id;
   };
-  // assumed: the tables' names, after the one legacy names (ar_ar_data_point).
+  // assumed (21): the tables' names, after the one legacy names (ar_ar_data_point).
   for (const SubRecord& kind :
        {SubRecord{"/api/arar/ArArAliquot", "ar_ar_aliquot", &store_.aliquots, &next_aliquot_},
         SubRecord{"/api/arar/ArArMeasurement", "ar_ar_measurement", &store_.measurements, &next_measurement_},
@@ -725,8 +823,9 @@ HttpResponse FakeEarthBank::handle(const Call& call) {
 
 // Legacy (_ensure_token): POST {username, password, rememberMe} gives
 // {"id_token": ...}; anything but 2xx is a failed login.
-// assumed: 200 for a login and 201 for everything created (legacy takes any
-// 2xx); 401 for wrong credentials, and its sentence.
+// assumed (2): 200 for a login, and 201 for everything created unless
+// created_status says 200 (legacy takes any 2xx).
+// assumed (8): 401 for wrong credentials, and its sentence.
 HttpResponse FakeEarthBank::authenticate(const Call& call) {
   json body;
   if (auto fault = call.read(body)) return *fault;
@@ -745,7 +844,7 @@ HttpResponse FakeEarthBank::authenticate(const Call& call) {
 // `id` and `name`; `name.equals` is exact and minds the case ("server is
 // case-sensitive but exact"); `name.contains` finds a part; `size` and `page`
 // cut the answer.
-// assumed: `contains` does not mind the case (JHipster's criteria upper-case
+// assumed (14): `contains` does not mind the case (JHipster's criteria upper-case
 // both sides; legacy filters the answer without case, which fits), and a
 // parameter the list does not know is ignored.
 HttpResponse FakeEarthBank::lookup(const Call& call, const std::vector<json>& rows) const {
@@ -772,6 +871,8 @@ HttpResponse FakeEarthBank::lookup(const Call& call, const std::vector<json>& ro
 // counts it reads are countSamples and countArArDataPoints (live_upload_test)
 // and it knows of countEditors and countSupervisors. Nothing in a row says
 // whether the account may write (README, known limitations).
+// assumed (17): a row is that and no more: no copy of `id` or `name` beside
+// `dataPackageDTO`, and a field that is not set is null.
 json FakeEarthBank::package_row(const json& row) const {
   json out = row;
   const auto id = id_of(row["dataPackageDTO"], "id");
@@ -785,7 +886,7 @@ json FakeEarthBank::package_row(const json& row) const {
 
 // Legacy (list_data_packages): page, size, `sort=name,ASC`,
 // `institutionId.equals`, `name.contains`.
-// assumed: every package is listed to every account, and `name.equals` works
+// assumed (16): every package is listed to every account, and `name.equals` works
 // here as on a lookup.
 HttpResponse FakeEarthBank::list_packages(const Call& call) const {
   std::vector<json> out;
@@ -812,8 +913,8 @@ HttpResponse FakeEarthBank::list_packages(const Call& call) const {
 // body is accepted but SILENTLY IGNORES the name and creates a default-named
 // package." The maker becomes the package's supervisor, so it is writable;
 // and `createdById` is not the `id` of /api/account (README).
-// assumed: a flat body loses every field, not the name alone; the default
-// name; the answer is 201 with the row as it is listed; two packages may have
+// assumed (18): a flat body loses every field, not the name alone; the
+// default name; the answer is the row as it is listed; two packages may have
 // one name.
 HttpResponse FakeEarthBank::create_package(const Call& call) {
   json body;
@@ -841,14 +942,16 @@ HttpResponse FakeEarthBank::create_package(const Call& call) {
   }
   writable_.insert(dto["id"].get<std::int64_t>());
   store_.packages.push_back({{"dataPackageDTO", std::move(dto)}, {"countEditors", 0}, {"countSupervisors", 1}});
-  return answer(201, package_row(store_.packages.back()));
+  return answer(created_status_, package_row(store_.packages.back()));
 }
 
 // Legacy reads one package at `<list>/<id>` (packages_probe, live_upload_test)
 // and its README lists DELETE.
-// assumed: 404 for an id that is not there; DELETE answers 204, takes what is
-// in the package with it, and is refused as any write to a package of
+// assumed (19): 404 for an id that is not there; DELETE answers 204, takes
+// what is in the package with it, and is refused as any write to a package of
 // somebody else's.
+// assumed (35): DELETE is of `<list>/<id>`, as the GET of one package is
+// (legacy's README gives the verb for the list's path and no more).
 HttpResponse FakeEarthBank::one_package(const Call& call, std::int64_t id) {
   const json* row = find_package(id);
   if (row == nullptr) return problem(404, "Not Found", call.path);
@@ -874,12 +977,13 @@ HttpResponse FakeEarthBank::one_package(const Call& call, std::int64_t id) {
 //     are the fixtures', so a pre-flight and an upload agree on what is known.
 //   - A sigma level (`*UncertaintyTypeId`) is 1 or 2: legacy's
 //     UNCERTAINTY_TYPE_VOCAB, "stable small ids" of a table with no endpoint.
-//     assumed: no other id is good (the table has more rows than legacy knew).
 //   - A term's name with no id beside it is refused: legacy drops a name it
 //     could not resolve "so the server doesn't 400 on the row" (README).
-//     assumed: the body of that 400; that a name beside its id is ignored;
-//     and that the names with no list (the yes/no steps, the sigma levels,
-//     `lithologyName`) are taken as they come.
+// assumed (22): no other id of a sigma level is good (the table has more
+// rows than legacy knew).
+// assumed (23): the body of that 400; that a name beside its id is ignored;
+// and that the names with no list (the yes/no steps, the sigma levels,
+// `lithologyName`) are taken as they come.
 std::optional<HttpResponse> FakeEarthBank::vocabulary_fault(std::string_view path, const json& dto,
                                                             std::string_view table) const {
   for (const LookupSpec& spec : lookup_specs()) {
@@ -889,7 +993,10 @@ std::optional<HttpResponse> FakeEarthBank::vocabulary_fault(std::string_view pat
       if (!id) return problem(400, "Bad Request", path, "JSON parse error: " + std::string(spec.id_field));
       const std::vector<json>& rows = lookups_.find(spec.endpoint)->second;
       const bool known = std::any_of(rows.begin(), rows.end(), [&](const json& row) { return row["id"] == *id; });
-      if (!known) return constraint(path, table, spec.id_field, *id, snake(last_segment(spec.endpoint)));
+      if (!known) {
+        return constraint(constraint_status_, path, table, spec.id_field, *id,
+                          snake(last_segment(spec.endpoint)));
+      }
     } else if (is_set(dto, spec.name_field) && !text_of(dto[std::string(spec.name_field)]).empty()) {
       return problem(400, "Bad Request", path,
                      std::string(spec.name_field) + " has no " + std::string(spec.id_field));
@@ -899,7 +1006,7 @@ std::optional<HttpResponse> FakeEarthBank::vocabulary_fault(std::string_view pat
     if (!is_set(dto, spec.id_field)) continue;
     const auto id = as_id(dto[std::string(spec.id_field)]);
     if (!id) return problem(400, "Bad Request", path, "JSON parse error: " + std::string(spec.id_field));
-    if (*id != 1 && *id != 2) return constraint(path, table, spec.id_field, *id, "l_uncertainty");
+    if (*id != 1 && *id != 2) return constraint(constraint_status_, path, table, spec.id_field, *id, "l_uncertainty");
   }
   return std::nullopt;
 }
@@ -909,7 +1016,10 @@ std::optional<HttpResponse> FakeEarthBank::vocabulary_fault(std::string_view pat
 // Legacy (find_sample_by_name): `name.equals`, `size`, and
 // `dataPackageId.equals`; rows are `{"sampleDTO": {id, name, dataPackageId,
 // ...}}`. Without the package filter the search is of every package, which is
-// how a sample of another package came to be reused.
+// how a sample of another package came to be reused. Legacy does not trust
+// the filter: it checks each row's `sampleDTO.dataPackageId` itself.
+// assumed (30): the service does keep to the filter; with
+// ignore_sample_package_filter it does not, and rows of every package come.
 HttpResponse FakeEarthBank::find_samples(const Call& call) const {
   std::vector<json> out;
   const auto name = call.param("name.equals");
@@ -917,7 +1027,7 @@ HttpResponse FakeEarthBank::find_samples(const Call& call) const {
   for (const Store::Record& record : store_.samples) {
     const json& dto = record.body["sampleDTO"];
     if (name && text_of(dto.value("name", json())) != *name) continue;
-    if (package && std::to_string(record.package_id) != *package) continue;
+    if (package && !ignore_sample_package_filter_ && std::to_string(record.package_id) != *package) continue;
     out.push_back(record.body);
   }
   return answer(200, call.page(out));
@@ -928,11 +1038,14 @@ HttpResponse FakeEarthBank::find_samples(const Call& call) const {
 // The package "is stamped on both the wrapper and the inner sampleDTO since
 // the accepting field is not documented", and the new id is read from
 // `sampleDTO.id` of the answer (_extract_sample_id).
-// assumed: which of the two the service reads is not known, so only what
-// legacy sent is taken: both, and the same. The answer is 201 with the body
-// as it was sent and the ids in `sampleDTO` (`id`, `locationId`) and
-// `locationDTO` (`id`), none on the wrapper; an empty `locationDTO` makes no
-// location; a second sample of a name in a package is a second sample.
+// assumed (24): which of the two the service reads is not known, so only
+// what legacy sent is taken: both, and the same.
+// assumed (25): the answer is the body as it was sent with the ids in
+// `sampleDTO` (`id`, `locationId`) and `locationDTO` (`id`), none on the
+// wrapper, unless sample_id_place puts the sample's elsewhere; an empty
+// `locationDTO` makes no location; a second sample of a name in a package is
+// a second sample.
+// assumed (34): nothing in `locationDTO` is checked against a list.
 HttpResponse FakeEarthBank::create_sample(const Call& call) {
   json body;
   if (auto fault = call.read(body)) return *fault;
@@ -950,7 +1063,15 @@ HttpResponse FakeEarthBank::create_sample(const Call& call) {
     body["sampleDTO"]["locationId"] = (*location)["id"];
   }
   store_.samples.push_back({id, *outer, body});
-  return answer(201, body);
+  // Legacy's _extract_sample_id looks under `sampleDTO`, then under `sample`.
+  if (sample_id_place_ == SampleIdPlace::Sample) {
+    body["sample"] = body["sampleDTO"];
+    body.erase("sampleDTO");
+  } else if (sample_id_place_ == SampleIdPlace::Top) {
+    body["sampleDTO"].erase("id");
+    body["id"] = id;
+  }
+  return answer(created_status_, body);
 }
 
 // ---- The data point --------------------------------------------------------
@@ -962,11 +1083,14 @@ HttpResponse FakeEarthBank::create_sample(const Call& call) {
 // writable" wherever the package is put among them or in the query: the
 // package is read from the umbrella. The `id` on top of the answer is the
 // arArDataPointId. A sample of another package is linked without complaint.
-// assumed: the rest of the answer (201; the body as sent, the umbrella with
-// its own `id` and `arArDataPointId`, the Ar-Ar record with the id on top); a
-// `sampleId` that is no sample is a constraint error and none at all is
-// accepted; the two names beside the records are kept and not checked (legacy
-// could send them and its upload never did); another `dataStructure` is 400.
+// assumed (26): the rest of the answer (the body as sent, the umbrella with
+// its own `id` and `arArDataPointId`, the Ar-Ar record with the id on top).
+// assumed (27): a `sampleId` that is no sample is a constraint error and
+// none at all is accepted; another `dataStructure` is 400.
+// assumed (28): the two names beside the records are kept and not checked
+// (legacy could send them and its upload never did).
+// assumed (31): a second data point of the same name for the same sample is
+// a second data point.
 HttpResponse FakeEarthBank::create_data_point(const Call& call) {
   json body;
   if (auto fault = call.read(body)) return *fault;
@@ -981,7 +1105,7 @@ HttpResponse FakeEarthBank::create_data_point(const Call& call) {
     const auto sample = id_of(*core, "sampleId");
     const bool known = sample && std::any_of(store_.samples.begin(), store_.samples.end(),
                                              [&](const Store::Record& r) { return r.id == *sample; });
-    if (!known) return constraint(call.path, "data_point", "sampleId", sample.value_or(0), "sample");
+    if (!known) return constraint(constraint_status_, call.path, "data_point", "sampleId", sample.value_or(0), "sample");
   }
   const auto extending = body.find("extendingDataPointDTO");
   if (extending == body.end() || !extending->is_object()) {
@@ -995,17 +1119,18 @@ HttpResponse FakeEarthBank::create_data_point(const Call& call) {
   body["dataPointDTO"]["arArDataPointId"] = id;
   body["extendingDataPointDTO"]["id"] = id;
   store_.data_points.push_back({id, *package, body});
-  return answer(201, body);
+  return answer(created_status_, body);
 }
 
 // Legacy (create_aliquot and the like, _post_json): a flat record with the
 // `arArDataPointId` it hangs from; the answer's `id` is the new record's.
 // There is no update, and a re-run of legacy's upload posts every one again.
-// assumed: 201 with the record as sent and its `id`; a record posted twice
-// is there twice; one whose data point is missing or unknown has no package
-// and is "not writable", as a data point without its umbrella is; a
-// measurement's `aliquotName` need not be an aliquot's; a field the record
-// does not have is kept and does no harm.
+// assumed (29): the answer is the record as sent with its `id`; a record
+// posted twice is there twice; one whose data point is missing or unknown has
+// no package and is "not writable", as a data point without its umbrella is;
+// a measurement's `aliquotName` need not be an aliquot's.
+// assumed (32): no field of any record is required and none but an id is
+// held to a type; a field the record does not have is kept and does no harm.
 HttpResponse FakeEarthBank::create_sub_record(const Call& call, std::string_view table,
                                               std::vector<Store::Record>& into, std::int64_t& next_id) {
   json body;
@@ -1019,7 +1144,7 @@ HttpResponse FakeEarthBank::create_sub_record(const Call& call, std::string_view
   const std::int64_t id = next_id++;
   body["id"] = id;
   into.push_back({id, parent->package_id, body});
-  return answer(201, body);
+  return answer(created_status_, body);
 }
 
 }  // namespace pychron::earthbank::testing

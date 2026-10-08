@@ -93,9 +93,12 @@ assumption below, and let the tests that then fail say what relied on it.
 
 What legacy records, the fake reproduces, and a comment in
 `fake_earthbank.cpp` says where it was learned. What legacy does not record
-was chosen as plainly as could be and is marked `// assumed:` there. All of
-it is listed here. Until someone has checked an item it is a guess, and code
-that passes against the fake may still meet something else.
+was chosen as plainly as could be and is marked `// assumed (n):` there, `n`
+being its number here; a test (`FakeEarthBank.EveryAssumptionIsMarkedAndListed`)
+holds the marks and this list to each other. Until someone has checked an item
+it is a guess, and code that passes against the fake may still meet something
+else. Where a client has to be right whichever way the service turns out, the
+fake has a control for the other way, named with the item.
 
 ### Every answer
 
@@ -103,7 +106,7 @@ that passes against the fake may still meet something else.
    2000; `page` counts from 0. (Legacy asks for `size=2000` and takes what
    comes as the whole list.)
 2. A login answers 200 and everything created answers 201. (Legacy takes any
-   2xx.)
+   2xx. `created_status(200)` gives the other.)
 3. An error legacy does not quote has JHipster's body: `type`, `title`,
    `status`, `path`, `message`, and `detail` when there is one.
 4. A body sent without `Content-Type: application/json` is 415; a body that
@@ -175,7 +178,9 @@ that passes against the fake may still meet something else.
     in table "<list>".` (Legacy reads the column out of `Key (...)` or out of
     `constraint "fk_..."` and cuts the text at `;` and `nested exception`;
     the status, the tables' names and the rest of the wording are guessed.
-    Only `ar_ar_data_point` and `l_uncertainty` are names legacy gives.)
+    Only `ar_ar_data_point` and `l_uncertainty` are names legacy gives.
+    Legacy looks for the word "constraint" before it looks at the status, so
+    the status may as well be 500: `constraint_status(500)`.)
 22. The only ids of an uncertainty type are 1 and 2. (Legacy knows these two;
     the table has more rows.)
 23. A term's `*Name` with no `*Id` beside it is 400. (Legacy drops such a
@@ -189,7 +194,8 @@ that passes against the fake may still meet something else.
     sent.)
 25. The answer to a new sample is the body as sent with the ids filled in:
     `sampleDTO.id`, `sampleDTO.locationId`, `locationDTO.id`, and no `id` on
-    the wrapper. (Legacy reads `sampleDTO.id`.) An empty `locationDTO` makes
+    the wrapper. (Legacy reads `sampleDTO.id`, then `sample.id`;
+    `sample_id_place` puts the id there, or on the wrapper.) An empty `locationDTO` makes
     no location. A second sample of the same name in a package is a second
     sample. The search needs a login.
 26. The answer to a new data point is the body as sent with `id` on top (the
@@ -206,3 +212,19 @@ that passes against the fake may still meet something else.
     `arArDataPointId` is missing or is no data point is "not writable", as a
     data point without its umbrella is. A measurement's `aliquotName` need
     not be the name of an aliquot. Posting the same record twice makes two.
+
+### Further
+
+30. The sample search keeps to `dataPackageId.equals`. (Legacy does not
+    trust it to and checks each row's `sampleDTO.dataPackageId` itself;
+    `ignore_sample_package_filter(true)` is the service that does not.)
+31. A second data point of the same name for the same sample is a second
+    data point: nothing is refused as a copy.
+32. No field of any record is required and none but an id is held to a type:
+    a data point with no date, a measurement with text for an age, are taken
+    and kept as sent.
+33. `sort=<field>,ASC|DESC` works on a lookup as on the package list. (Legacy
+    sends it for packages only.)
+34. Nothing in a sample's `locationDTO` is checked against a list.
+35. A package is deleted at `/api/management/data-packages/<id>`. (Legacy's
+    README gives DELETE for the list's path and says no more.)
