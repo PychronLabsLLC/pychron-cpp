@@ -140,6 +140,9 @@ QTableView* make_table(QAbstractItemModel* model, const QString& name, QWidget* 
   table->setSelectionBehavior(QAbstractItemView::SelectRows);
   table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->verticalHeader()->setVisible(false);
+  // Every column as wide as its head and its widest cell: at 1400 pixels the
+  // monitor table's sixteen columns scroll rather than clip.
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
   table->horizontalHeader()->setStretchLastSection(true);
   return table;
 }
@@ -185,6 +188,13 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
   center->setStretchFactor(0, 3);
   center->setStretchFactor(1, 2);
   split->setStretchFactor(1, 1);
+  // The size hints of the tables would take the plot's height and the centre's
+  // width at first show: say how the first 1400 x 820 is shared (the dock takes
+  // its own width off the right).
+  split->setSizes({200, 840});
+  center->setSizes({380, 360});
+  tables->setSizes({500, 340});
+  monitor_side->setSizes({250, 110});
   setCentralWidget(split);
 
   auto* bar = addToolBar(tr("Flux"));
