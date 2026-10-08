@@ -15,26 +15,36 @@
 //   DataPoint          the earliest analysis's UTC date, the method (vocab.hpp
 //                      ar_method), the material as mineral, the lithology.
 //   Aliquot            `<identifier>-<aliquot, two digits>`, in the order the
-//                      aliquots first appear.
-//   Measurement        one per analysis that has an age, in time order.
-//     ar{36..40}Corr       Stage::InterferenceCorrected: 40Ar less 40ArK,
-//                          39ArK, 38Ar, 37Ar decay corrected, 36Ar atmospheric.
-//     ar{36..40}ExcInt     corrected for blank, discrimination and detector
-//                          factors and, 39Ar only, for decay, as the service
-//                          defines each: Stage::DecayCorrected, but
-//                          Stage::IcCorrected for 37Ar.
+//                      aliquots first appear, with the weight of the piece in
+//                      mg as its size where the analyses know one.
+//   Measurement        one per analysis that has an age and measured 40Ar,
+//                      39Ar and 36Ar, in time order.
+//     ar{36..40}Corr       corrected for discrimination, decay and
+//                          interferences: 40Ar less 40ArK, 39ArK, 38Ar less
+//                          the K- and Ca-derived 38Ar, 37Ar decay corrected,
+//                          36Ar less the Ca- and Cl-derived 36Ar.
+//     ar{36..40}ExcInt     corrected for blank, discrimination, detector
+//                          factors and abundance sensitivity and, 39Ar only,
+//                          for decay, as the service defines each.
 //     ar{36..40}blank      Stage::Blank.
 //     ratioNNArx39ArCorr   the Corr values over 39ArK, errors correlated.
 //     ratio40Arx39ArK      F, 40Ar*/39ArK.
-//     radiogenicArgon      40Ar* in percent of the 40Ar.
+//     radiogenicArgon      40Ar* in percent of ar40Corr (40Ar* and trapped
+//                          40Ar; not of all the 40Ar).
 //     ar39KReleased, cumulative39ArK
 //                          percent of the 39ArK of the step's own aliquot,
 //                          alone and summed in step order; absent on a
-//                          fusion, and when a step of the aliquot did not
-//                          reduce (the total is then not known).
-//     caK, kCa, clK        reduction::ArArResult.
+//                          fusion, and for an aliquot one of whose steps is
+//                          not among the published analyses.
+//     caK, kCa, clK        reduction::ArArResult; absent without 37Ar (the
+//                          first two) or 38Ar (the third).
 //     jValue               J and its uncertainty.
 //     apparentAge          the analytical age (no J uncertainty), in Ma.
+//     plateauStepName, weightedMeanStepName, inverseIsoStepName
+//                          the one of the three that is of the kind of age
+//                          reported says `Yes` or `No`: the reported age used
+//                          this analysis or did not. The other two are empty,
+//                          and all three under a total gas age.
 //   AgeCalc            the names of the decay constant and atmospheric ratio
 //                      the reduction used, found from their values, and the
 //                      flux monitor as a query.
@@ -44,13 +54,22 @@
 // sigma and absolute; intensities are in fA.
 //
 // What is missing stays missing. A number that is not finite is left unset
-// and named in the submission's notes, an analysis without an age is left out
-// and counted there, and a sample none of whose analyses has an age is an
-// error. Nothing is taken from the first analysis on trust: analyses of one
-// sample that disagree about what the sample is (material, lithology, place,
-// constants, monitor) are refused with both values. The fields nothing in
-// pychron-cpp can fill (grain size, aliquot weight, beam size, K content,
-// funding, literature, the sample's kind and collection) are left unset.
+// and named in the submission's notes. An analysis without an age is left out
+// and counted there, and so is one that did not measure 40Ar, 39Ar or 36Ar
+// (the reduction works with a zero in the place of a missing isotope, and
+// nothing made from that zero is sent: without 38Ar or 37Ar the analysis is
+// published without the fields that are of that isotope); a sample with no
+// analysis left is an error. Nothing is taken from the first analysis on
+// trust: analyses of one sample that disagree about what the sample is
+// (material, lithology, place, constants, monitor, the weight of an aliquot)
+// are refused with both values.
+//
+// Left unset, for want of anything in pychron-cpp to fill them from: grain
+// size, K content, funding, literature, the sample's kind and collection, the
+// analysis scale, the comments, the trapped 40Ar/36Ar of a single measurement.
+// And `beamSize` with its unit: ExtractionInfo::beam_diameter is recorded
+// without a unit (legacy pychron labelled it microns; a queue may give mm),
+// so it is not sent until the unit is settled.
 #pragma once
 
 #include <map>

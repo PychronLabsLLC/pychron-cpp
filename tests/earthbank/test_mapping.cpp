@@ -134,14 +134,40 @@ pp::Report report_of(const AnalysisList& analyses, const PublishOptions& options
   return pp::make_report(dataset_of(analyses, options.reduction), o);
 }
 
+// One letter per measurement, in order, for a "step included" column: Y for
+// `Yes`, N for `No`, - for not set.
+std::string flags(const Submission& s, Text Measurement::*column) {
+  std::string out;
+  for (const Measurement& m : s.measurements) {
+    const Text& flag = m.*column;
+    if (flag) EXPECT_TRUE(*flag == "Yes" || *flag == "No") << *flag;
+    out += !flag ? '-' : *flag == "Yes" ? 'Y' : 'N';
+  }
+  return out;
+}
+
+// The steps flagged as steps of the reported plateau.
 std::vector<std::string> plateau_flags(const Submission& s) {
   std::vector<std::string> steps;
   for (const Measurement& m : s.measurements) {
-    if (!m.plateauStepName) continue;
-    EXPECT_EQ(*m.plateauStepName, "Yes");
+    if (m.plateauStepName != "Yes") continue;
     steps.push_back(pp::step_letters(static_cast<int>(*m.stepNumber) - 1));
   }
   return steps;
+}
+
+// `analysis` without the isotope `name`.
+template <typename AnalysisT>
+void drop_isotope(AnalysisT& a, std::string_view name) {
+  a.isotopes.erase(std::remove_if(a.isotopes.begin(), a.isotopes.end(),
+                                  [name](const pp::IsotopeData& iso) { return iso.isotope == name; }),
+                   a.isotopes.end());
+}
+
+std::set<std::string> keys_of(const nlohmann::json& record) {
+  std::set<std::string> keys;
+  for (const auto& item : record.items()) keys.insert(item.key());
+  return keys;
 }
 
 // ---------------------------------------------------------------- samples
@@ -292,14 +318,25 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
     return v.value_or(r::UFloat{});
   };
 
-  // Stage::InterferenceCorrected: 40Ar less 40ArK, 39ArK, 38Ar, 37Ar decay
-  // corrected, atmospheric 36Ar.
+  // Stage::InterferenceCorrected: 40Ar less 40ArK, 39ArK, 37Ar decay
+  // corrected, atmospheric 36Ar. 38Ar is not that stage (which removes
+  // nothing from it): it is the corrected 38Ar less the K- and Ca-derived 38Ar.
+  const r::UFloat c38 =
+      arar.corrected[r::index(r::ArgonIsotope::Ar38)] - arar.f.interference.k38 - arar.f.interference.ca38;
   EXPECT_REL(m.ar40Corr, stage("Ar40", pp::Stage::InterferenceCorrected).nominal());
   EXPECT_REL(m.ar40CorrUncertainty, stage("Ar40", pp::Stage::InterferenceCorrected).std_dev());
   EXPECT_REL(m.ar39Corr, stage("Ar39", pp::Stage::InterferenceCorrected).nominal());
   EXPECT_REL(m.ar39CorrUncertainty, stage("Ar39", pp::Stage::InterferenceCorrected).std_dev());
-  EXPECT_REL(m.ar38Corr, stage("Ar38", pp::Stage::InterferenceCorrected).nominal());
-  EXPECT_REL(m.ar38CorrUncertainty, stage("Ar38", pp::Stage::InterferenceCorrected).std_dev());
+  EXPECT_REL(m.ar38Corr, c38.nominal());
+  EXPECT_REL(m.ar38CorrUncertainty, c38.std_dev());
+  EXPECT_GT(arar.f.interference.k38.nominal(), 0.0);
+  EXPECT_GT(arar.f.interference.ca38.nominal(), 0.0);
+  EXPECT_LT(*m.ar38Corr, *m.ar38ExcInt);
+  EXPECT_NE(*m.ar38CorrUncertainty, *m.ar38ExcIntUncertainty);
+  // The atmospheric and the chlorine-derived 38Ar are still in it: they are
+  // what is left of the 38Ar once the two interferences are gone.
+  const r::UFloat left38 = arar.f.atmospheric.atm38 + arar.f.atmospheric.cl38;
+  EXPECT_NEAR(*m.ar38Corr, left38.nominal(), std::abs(left38.nominal()) * 1e-9);
   EXPECT_REL(m.ar37Corr, stage("Ar37", pp::Stage::InterferenceCorrected).nominal());
   EXPECT_REL(m.ar37CorrUncertainty, stage("Ar37", pp::Stage::InterferenceCorrected).std_dev());
   EXPECT_REL(m.ar36Corr, stage("Ar36", pp::Stage::InterferenceCorrected).nominal());
@@ -312,7 +349,12 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
 
   // Excluding the interference correction: Stage::DecayCorrected, which for
   // 40Ar, 38Ar and 36Ar is the discrimination stage and for 39Ar has the decay
-  // too; 37Ar is Stage::IcCorrected, "mass discrimination only".
+  // too; 37Ar is the same stage with its decay taken out again ("mass
+  // discrimination only"), which with no abundance sensitivity, as here, is
+  // Stage::IcCorrected.
+  const r::UFloat exc37 = arar.corrected[r::index(r::ArgonIsotope::Ar37)] / arar.decay.df37;
+  EXPECT_REL(m.ar37ExcInt, exc37.nominal());
+  EXPECT_REL(m.ar37ExcIntUncertainty, exc37.std_dev());
   EXPECT_REL(m.ar40ExcInt, stage("Ar40", pp::Stage::DecayCorrected).nominal());
   EXPECT_REL(m.ar40ExcIntUncertainty, stage("Ar40", pp::Stage::DecayCorrected).std_dev());
   EXPECT_REL(m.ar39ExcInt, stage("Ar39", pp::Stage::DecayCorrected).nominal());
@@ -354,7 +396,7 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
   const r::UFloat k39 = ic[r::index(r::ArgonIsotope::Ar39)];
   const r::UFloat r36 = ic[r::index(r::ArgonIsotope::Ar36)] / k39;
   const r::UFloat r37 = ic[r::index(r::ArgonIsotope::Ar37)] / k39;
-  const r::UFloat r38 = ic[r::index(r::ArgonIsotope::Ar38)] / k39;
+  const r::UFloat r38 = c38 / k39;
   const r::UFloat r40 = ic[r::index(r::ArgonIsotope::Ar40)] / k39;
   EXPECT_REL(m.ratio36Arx39ArCorr, r36.nominal());
   EXPECT_REL(m.ratio36Arx39ArCorrUncertainty, r36.std_dev());
@@ -370,10 +412,14 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
   ASSERT_TRUE(arar.f.f.has_value());
   EXPECT_REL(m.ratio40Arx39ArK, arar.f.f->nominal());
   EXPECT_REL(m.ratio40Arx39ArKUncertainty, arar.f.f->std_dev());
-  // ArArResult::f.radiogenic_yield: a percentage, not a fraction.
+  // 40Ar* in percent of the interference-corrected 40Ar (40Ar* + trapped
+  // 40Ar), which is not the reduction's yield (40Ar* over all the 40Ar, the
+  // K-derived 40Ar included).
+  const r::UFloat star = arar.f.rad40 / ic[r::index(r::ArgonIsotope::Ar40)] * 100.0;
+  EXPECT_REL(m.radiogenicArgon, star.nominal());
+  EXPECT_REL(m.radiogenicArgon, 100.0 * arar.f.rad40.nominal() / (arar.f.rad40 + arar.f.atm40).nominal());
   ASSERT_TRUE(arar.f.radiogenic_yield.has_value());
-  EXPECT_REL(m.radiogenicArgon, arar.f.radiogenic_yield->nominal());
-  EXPECT_REL(m.radiogenicArgon, 100.0 * (arar.f.rad40 / arar.corrected[r::index(r::ArgonIsotope::Ar40)]).nominal());
+  EXPECT_GT(*m.radiogenicArgon, arar.f.radiogenic_yield->nominal() * (1.0 + 1e-6));
   EXPECT_GT(*m.radiogenicArgon, 10.0);
   EXPECT_LT(*m.radiogenicArgon, 100.0);
 
@@ -445,10 +491,41 @@ TEST(Mapping, MeasurementValues) {
   EXPECT_FALSE(third.stepNumber.has_value());
   EXPECT_FALSE(third.ar39KReleased.has_value());
   EXPECT_FALSE(third.cumulative39ArK.has_value());
+  // The reported age is the weighted mean of the six: each is in it, and
+  // there is no plateau or isochron to be in.
   EXPECT_FALSE(third.plateauStepName.has_value());
+  EXPECT_FALSE(third.inverseIsoStepName.has_value());
+  EXPECT_EQ(third.weightedMeanStepName, "Yes");
   EXPECT_EQ(third.analysisTime, "2023-11-15T00:13:20Z");
   EXPECT_EQ(third.laserPower, 4.0);
   EXPECT_EQ(third.laserPowerUnits, "W");
+}
+
+// 37Ar "corrected for mass discrimination only" has what the other four have
+// at that stage, the abundance sensitivity among it, and no decay.
+TEST(Mapping, Ar37ExcIntIsTheOtherFoursStageWithoutDecay) {
+  const AnalysisList steps = with_edit_all(step_sample(), [](pp::Analysis& a) {
+    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
+    a.context.constants->abundance_sensitivity = 2e-3;
+  });
+  const Submission s = build_one(steps);
+  const Measurement& m = s.measurements[3];
+  const pp::ReducedPtr reduced = pp::reduce_analysis(steps[3], {});
+  const r::ArArResult& arar = *reduced->arar;
+  ASSERT_GT(arar.decay.df37, 2.0);
+  const r::UFloat exc37 = arar.corrected[r::index(r::ArgonIsotope::Ar37)] / arar.decay.df37;
+  EXPECT_REL(m.ar37ExcInt, exc37.nominal());
+  EXPECT_REL(m.ar37ExcIntUncertainty, exc37.std_dev());
+  // Not the stage before the abundance sensitivity, and not the decayed one.
+  const double before = reduced->stage("Ar37", pp::Stage::IcCorrected)->nominal();
+  EXPECT_GT(std::abs(*m.ar37ExcInt - before), 1e-4 * before);
+  EXPECT_REL(m.ar37Corr, *m.ar37ExcInt * arar.decay.df37);
+  // The other four are the stage as it is.
+  EXPECT_REL(m.ar40ExcInt, arar.corrected[r::index(r::ArgonIsotope::Ar40)].nominal());
+  EXPECT_REL(m.ar39ExcInt, arar.corrected[r::index(r::ArgonIsotope::Ar39)].nominal());
+  EXPECT_REL(m.ar38ExcInt, arar.corrected[r::index(r::ArgonIsotope::Ar38)].nominal());
+  EXPECT_REL(m.ar36ExcInt, arar.corrected[r::index(r::ArgonIsotope::Ar36)].nominal());
+  EXPECT_NE(*m.ar36ExcInt, reduced->stage("Ar36", pp::Stage::IcCorrected)->nominal());
 }
 
 // Ages are in Ma whatever unit the reduction counts in.
@@ -498,18 +575,39 @@ TEST(Mapping, PlateauStepsAreFlagged) {
   EXPECT_EQ(s.age_summary.ageCalcTypeName, age_type_name(AgeKind::Plateau));
   EXPECT_EQ(plateau_flags(s), expected);
   EXPECT_EQ(s.age_summary.nAnalysisGrouped, 6);
+  // Every step says whether it is in the reported plateau, and nothing of the
+  // ages that are not reported.
+  EXPECT_EQ(flags(s, &Measurement::plateauStepName), "NNYYYYYYNN");
+  EXPECT_EQ(flags(s, &Measurement::weightedMeanStepName), "----------");
+  EXPECT_EQ(flags(s, &Measurement::inverseIsoStepName), "----------");
 
-  // Another age reported: no step is a step of the reported plateau.
-  PublishOptions integrated;
-  integrated.samples["S-STEP"].preferred_age = PreferredAge::Integrated;
-  const Submission total = build_one(steps, integrated);
+  // Another age reported: the column of that age, and no step is a step of a
+  // plateau that is not reported.
+  PublishOptions other;
+  other.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
+  const Submission mean = build_one(steps, other);
+  EXPECT_EQ(flags(mean, &Measurement::plateauStepName), "----------");
+  EXPECT_EQ(flags(mean, &Measurement::weightedMeanStepName), "YYYYYYYYYY");
+  EXPECT_EQ(flags(mean, &Measurement::inverseIsoStepName), "----------");
+  other.samples["S-STEP"].preferred_age = PreferredAge::Isochron;
+  const Submission isochron = build_one(steps, other);
+  EXPECT_EQ(flags(isochron, &Measurement::plateauStepName), "----------");
+  EXPECT_EQ(flags(isochron, &Measurement::weightedMeanStepName), "----------");
+  EXPECT_EQ(flags(isochron, &Measurement::inverseIsoStepName), "YYYYYYYYYY");
+  EXPECT_EQ(isochron.age_summary.nAnalysisGrouped, 10);
+  // The total gas age has no column.
+  other.samples["S-STEP"].preferred_age = PreferredAge::Integrated;
+  const Submission total = build_one(steps, other);
   EXPECT_EQ(total.age_summary.ageCalcTypeName, age_type_name(AgeKind::Integrated));
-  EXPECT_TRUE(plateau_flags(total).empty());
+  for (const auto column :
+       {&Measurement::plateauStepName, &Measurement::weightedMeanStepName, &Measurement::inverseIsoStepName}) {
+    EXPECT_EQ(flags(total, column), "----------");
+  }
 
   // No plateau under the criteria: none either.
   PublishOptions strict;
   strict.ages.plateau.gas_fraction = 99.5;
-  EXPECT_TRUE(plateau_flags(build_one(steps, strict)).empty());
+  EXPECT_EQ(flags(build_one(steps, strict), &Measurement::plateauStepName), "----------");
 
   // A step without an age is not a step of the plateau that is left.
   const AnalysisList holed = with_edit(steps, 4, [](pp::Analysis& a) { a.context.flux.reset(); });
@@ -528,6 +626,7 @@ TEST(Mapping, PlateauStepsAreFlagged) {
   }
   EXPECT_EQ(plateau_flags(without), left_steps);
   EXPECT_EQ(std::count(left_steps.begin(), left_steps.end(), "E"), 0);
+  if (left) EXPECT_EQ(flags(without, &Measurement::plateauStepName).find('-'), std::string::npos);
 }
 
 TEST(Mapping, PreferredAgeRule) {
@@ -737,7 +836,7 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   EXPECT_EQ(s.measurements[0].aliquotName, "20001-02");
   EXPECT_FALSE(s.measurements[0].stepNumber.has_value());
   EXPECT_FALSE(s.measurements[0].cumulative39ArK.has_value());
-  EXPECT_FALSE(s.measurements[0].plateauStepName.has_value());
+  EXPECT_EQ(s.measurements[0].plateauStepName, "No");  // a fusion is no step of the plateau reported
   EXPECT_REL(s.measurements[10].cumulative39ArK, 100.0);
   EXPECT_EQ(s.data_point.arMethodName, "Step-heating - laser");
   EXPECT_EQ(s.data_point.analysisDate, "2023-11-14");
@@ -956,31 +1055,63 @@ TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
               contains(note, "Ar39 intercept value"))
       << note;
 
-  // H did not reduce, so how much 39ArK the schedule released is not known:
-  // no step is given a share of it.
-  for (const Measurement& m : s.measurements) {
-    EXPECT_FALSE(m.ar39KReleased.has_value());
-    EXPECT_FALSE(m.cumulative39ArK.has_value());
-  }
-  const std::string gas = note_with(s, "39ArK of");
-  EXPECT_TRUE(contains(gas, "20001-01: the 39ArK of 20001-01H is not known") && contains(gas, "cumulative39ArK")) << gas;
+  // The shares of the 39ArK are of the steps given. With F and H not among
+  // them a share would be of a schedule nobody is shown: no step is given one.
+  const auto expect_no_shares = [](const Submission& of) {
+    for (const Measurement& m : of.measurements) {
+      EXPECT_FALSE(m.ar39KReleased.has_value());
+      EXPECT_FALSE(m.cumulative39ArK.has_value());
+    }
+  };
+  expect_no_shares(s);
+  EXPECT_EQ(note_with(s, "ar39KReleased"),
+            "20001-01: steps F, H are not among the analyses published, so ar39KReleased and cumulative39ArK were "
+            "left out for the aliquot");
   // And the reported age counts only the steps with an age.
   EXPECT_LE(*s.age_summary.nAnalysisGrouped, 8);
 
-  // F alone, which reduced but has no J: its gas was released all the same,
-  // so the others' shares are of the whole schedule, and the sum steps over it.
+  // F alone, which reduced but has no J: the same, though its 39ArK is known.
   const AnalysisList no_j = with_edit(step_sample(), 5, [](pp::Analysis& a) { a.context.flux.reset(); });
   const Submission t = build_one(no_j);
   ASSERT_EQ(t.measurements.size(), 9u);
-  const Submission whole = build_one(step_sample());
-  for (std::size_t i = 0; i < 9; ++i) {
-    const std::size_t j = i < 5 ? i : i + 1;
-    EXPECT_REL(t.measurements[i].ar39KReleased, *whole.measurements[j].ar39KReleased);
-    EXPECT_REL(t.measurements[i].cumulative39ArK, *whole.measurements[j].cumulative39ArK);
-  }
-  EXPECT_REL(t.measurements[8].cumulative39ArK, 100.0);
-  EXPECT_EQ(note_with(t, "39ArK of"), "");
+  expect_no_shares(t);
+  EXPECT_TRUE(contains(note_with(t, "ar39KReleased"), "20001-01: step F is not among the analyses published"))
+      << note_with(t, "ar39KReleased");
   EXPECT_TRUE(contains(note_with(t, "without an age"), "1 analysis of 10"));
+
+  // A step that was never given: the gap in the letters says so.
+  AnalysisList gap = step_sample();
+  gap.erase(gap.begin() + 2);
+  const Submission g = build_one(gap);
+  ASSERT_EQ(g.measurements.size(), 9u);
+  expect_no_shares(g);
+  EXPECT_TRUE(contains(note_with(g, "ar39KReleased"), "20001-01: step C is not among the analyses published"))
+      << note_with(g, "ar39KReleased");
+
+  // A complete aliquot beside an incomplete one keeps its shares.
+  AnalysisList two = step_sample();
+  for (const int i : {0, 1, 3}) {  // a second aliquot heated in steps A, B and D
+    auto step = std::make_shared<pp::Analysis>(*step_analysis(i + 2));
+    step->aliquot = 2;
+    step->increment = i;
+    step->runid = pp::make_runid("20001", 2, i);
+    step->uuid += "-second";
+    step->timestamp += 86'400.0;
+    irradiate_for_real(*step);
+    two.push_back(step);
+  }
+  PublishOptions pooled;
+  pooled.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
+  const Submission both = build_one(two, pooled);
+  const Submission whole = build_one(step_sample());
+  ASSERT_EQ(both.measurements.size(), 13u);
+  for (std::size_t i = 0; i < 10; ++i) {
+    EXPECT_REL(both.measurements[i].ar39KReleased, *whole.measurements[i].ar39KReleased);
+    EXPECT_REL(both.measurements[i].cumulative39ArK, *whole.measurements[i].cumulative39ArK);
+  }
+  for (std::size_t i = 10; i < 13; ++i) EXPECT_FALSE(both.measurements[i].ar39KReleased.has_value());
+  EXPECT_TRUE(contains(note_with(both, "ar39KReleased"), "20001-02: step C is not among the analyses published"));
+  EXPECT_EQ(note_with(whole, "ar39KReleased"), "");
 
   // Nothing left out: no such note.
   EXPECT_EQ(note_with(build_one(step_sample()), "without an age"), "");
@@ -1004,21 +1135,74 @@ TEST(Mapping, ASampleWithNoAgeIsRefused) {
   EXPECT_TRUE(contains(refused(all), "\"S-STEP\""));
 }
 
+// An aliquot's size is its weight in mg, where the analyses know one.
+TEST(Mapping, AliquotSize) {
+  const auto weighing = [](double weight) { return [weight](pp::Analysis& a) { a.extraction.weight = weight; }; };
+
+  const Submission step = build_one(with_edit_all(step_sample(), weighing(12.5)));
+  ASSERT_EQ(step.aliquots.size(), 1u);
+  EXPECT_EQ(step.aliquots[0].aliquotSize, 12.5);
+  EXPECT_EQ(step.aliquots[0].aliquotUnits, "mg");
+  EXPECT_EQ(step.aliquots[0].aliquotUnits, kMilligrams);
+
+  // A weight only some of its analyses carry is the aliquot's.
+  const Submission from_one = build_one(with_edit(step_sample(), 6, weighing(3.25)));
+  EXPECT_EQ(from_one.aliquots[0].aliquotSize, 3.25);
+  EXPECT_EQ(from_one.aliquots[0].aliquotUnits, "mg");
+
+  // Each fusion is its own aliquot with its own weight; one without has neither field.
+  AnalysisList fusions = fusion_sample();
+  for (std::size_t i = 0; i < fusions.size(); ++i) {
+    if (i != 4) fusions = with_edit(fusions, i, weighing(1.0 + 0.5 * static_cast<double>(i)));
+  }
+  const Submission fusion = build_one(fusions);
+  ASSERT_EQ(fusion.aliquots.size(), 6u);
+  EXPECT_EQ(fusion.aliquots[0].aliquotSize, 1.0);
+  EXPECT_EQ(fusion.aliquots[3].aliquotSize, 2.5);
+  EXPECT_EQ(fusion.aliquots[3].aliquotUnits, "mg");
+  EXPECT_FALSE(fusion.aliquots[4].aliquotSize.has_value());
+  EXPECT_FALSE(fusion.aliquots[4].aliquotUnits.has_value());
+
+  // No weight, or one that is none (zero, negative): no size and no unit.
+  for (const double none : {0.0, -2.0}) {
+    const Submission s = build_one(with_edit_all(step_sample(), weighing(none)));
+    EXPECT_FALSE(s.aliquots[0].aliquotSize.has_value()) << none;
+    EXPECT_FALSE(s.aliquots[0].aliquotUnits.has_value()) << none;
+  }
+  // Not a number: left out, and the notes say so.
+  const Submission nan = build_one(with_edit_all(step_sample(), weighing(kNaN)));
+  EXPECT_FALSE(nan.aliquots[0].aliquotSize.has_value());
+  EXPECT_FALSE(nan.aliquots[0].aliquotUnits.has_value());
+  EXPECT_EQ(note_with(nan, "aliquotSize"), "20001-01: aliquotSize is not a finite number and was left out");
+
+  // One piece has one weight.
+  const std::string what = refused(with_edit(with_edit_all(step_sample(), weighing(12.5)), 3, weighing(13.0)));
+  EXPECT_TRUE(contains(what, "earthbank: sample \"S-STEP\"") && contains(what, "aliquot size of 20001-01") &&
+              contains(what, "12.5 (20001-01A)") && contains(what, "13 (20001-01D)"))
+      << what;
+
+  // The beam's diameter is recorded without its unit: no beam size is sent.
+  const Submission beam =
+      build_one(with_edit_all(step_sample(), [](pp::Analysis& a) { a.extraction.beam_diameter = 2.0; }));
+  EXPECT_FALSE(beam.measurements[0].beamSize.has_value());
+  EXPECT_FALSE(beam.measurements[0].beamSizeUnits.has_value());
+}
+
 // The fields of spec 4.5, and every id: none is the mapping's to fill.
 TEST(Mapping, LeftEmptyFieldsAreAbsent) {
-  // Even when the analyses carry a weight and a beam diameter.
+  // Even when the analyses carry a beam diameter (its unit is not known).
   AnalysisList all = with_edit_all(both_samples(), [](pp::Analysis& a) {
     a.extraction.weight = 12.5;
     a.extraction.beam_diameter = 2.0;
     a.comment = "a comment";
   });
   const std::set<std::string> empty = {
-      "grainDiameterMin", "grainDiameterMax", "aliquotSize", "aliquotUnits", "aliquotComment", "beamSize",
+      "grainDiameterMin", "grainDiameterMax", "aliquotComment", "beamSize",
       "beamSizeUnits", "kContent", "kContentUncertainty", "fundingName", "literatureName", "archiveName",
       "sampleKindName", "sampleMethodName", "collectDateMin", "collectDateMax", "rockUnitAgeMin", "rockUnitAgeMax",
       "rockUnitAgeDescription", "relativeElevationMin", "relativeElevationMax", "locationKindName", "locationName",
       "analysisScaleName", "commentAnalyte", "measurementComment", "ratio40Arx36ArTrapped",
-      "ratio40Arx36ArTrappedUncertainty", "inverseIsoStepName", "weightedMeanStepName", "latLonPrecision"};
+      "ratio40Arx36ArTrappedUncertainty", "latLonPrecision"};
   std::size_t records = 0;
   const auto check = [&](const nlohmann::json& record) {
     ++records;
@@ -1047,9 +1231,7 @@ TEST(Mapping, LeftEmptyFieldsAreAbsent) {
   // What a step's measurement does carry, by name: nothing has gone missing
   // or been added unnoticed.
   const Submission step = build_one(step_sample());
-  std::set<std::string> keys;
-  const nlohmann::json measurement = to_json(step.measurements[3]);
-  for (const auto& item : measurement.items()) keys.insert(item.key());
+  const std::set<std::string> keys = keys_of(to_json(step.measurements[3]));
   std::set<std::string> expected = {
       "aliquotName", "analysisTime", "analysisUnits", "apparentAge", "apparentAgeUncertainityTypeName",
       "apparentAgeUncertainty", "ar39KReleased", "caK", "caKUncertainty", "clK", "clKUncertainty", "cumulative39ArK",
@@ -1065,6 +1247,18 @@ TEST(Mapping, LeftEmptyFieldsAreAbsent) {
     }
   }
   EXPECT_EQ(keys, expected);
+  // A fusion's: no step number and no share of a schedule, and the column of
+  // the weighted mean in place of the plateau's.
+  expected.erase("stepNumber");
+  expected.erase("ar39KReleased");
+  expected.erase("cumulative39ArK");
+  expected.erase("plateauStepName");
+  expected.insert("weightedMeanStepName");
+  EXPECT_EQ(keys_of(to_json(build_one(fusion_sample()).measurements[3])), expected);
+  // An aliquot with a weight, and one without.
+  ASSERT_FALSE(build(all).empty());
+  EXPECT_EQ(keys_of(to_json(build(all)[1].aliquots[0])), (std::set<std::string>{"aliquotName", "aliquotSize", "aliquotUnits"}));
+  EXPECT_EQ(keys_of(to_json(step.aliquots[0])), (std::set<std::string>{"aliquotName"}));
   std::set<std::string> summary;
   const nlohmann::json age_summary = to_json(step.age_summary);
   for (const auto& item : age_summary.items()) summary.insert(item.key());
@@ -1128,24 +1322,76 @@ TEST(Mapping, NonFiniteValuesAreLeftOutAndNoted) {
   }
 }
 
-// An isotope the analysis did not measure has no fields, not zeros.
+// An isotope the analysis did not measure has no fields, not zeros, and
+// neither has anything that would be worked out from the zero the reduction
+// puts in its place.
 TEST(Mapping, AMissingIsotopeIsAbsent) {
-  const AnalysisList fusions = with_edit_all(fusion_sample(), [](pp::Analysis& a) {
-    a.isotopes.erase(std::remove_if(a.isotopes.begin(), a.isotopes.end(),
-                                    [](const pp::IsotopeData& iso) { return iso.isotope == "Ar38"; }),
-                     a.isotopes.end());
-  });
-  const Submission s = build_one(fusions);
-  const Measurement& m = s.measurements[0];
-  EXPECT_TRUE(m.apparentAge.has_value());
-  EXPECT_FALSE(m.ar38Corr.has_value());
-  EXPECT_FALSE(m.ar38CorrUncertainty.has_value());
-  EXPECT_FALSE(m.ar38ExcInt.has_value());
-  EXPECT_FALSE(m.ar38blank.has_value());
-  EXPECT_FALSE(m.ratio38Arx39ArCorr.has_value());
-  EXPECT_TRUE(m.ratio36Arx39ArCorr.has_value());
-  EXPECT_TRUE(number(m, "ar40Corr").has_value());
-  EXPECT_FALSE(number(m, "ar38Corr").has_value());
+  const std::set<std::string> whole = keys_of(to_json(build_one(fusion_sample()).measurements[0]));
+  const auto without = [&](std::initializer_list<const char*> fields) {
+    std::set<std::string> keys = whole;
+    for (const char* field : fields) {
+      EXPECT_EQ(keys.erase(field), 1u) << field;
+    }
+    return keys;
+  };
+
+  // No 38Ar: nothing of 38Ar, and no Cl/K.
+  const Submission no38 = build_one(with_edit_all(fusion_sample(), [](pp::Analysis& a) { drop_isotope(a, "Ar38"); }));
+  ASSERT_EQ(no38.measurements.size(), 6u);
+  EXPECT_TRUE(no38.measurements[0].apparentAge.has_value());
+  EXPECT_EQ(keys_of(to_json(no38.measurements[0])),
+            without({"ar38Corr", "ar38CorrUncertainty", "ar38ExcInt", "ar38ExcIntUncertainty", "ar38blank",
+                     "ar38blankUncertainty", "ratio38Arx39ArCorr", "ratio38Arx39ArCorrUncertainty", "clK",
+                     "clKUncertainty"}));
+  EXPECT_FALSE(number(no38.measurements[0], "ar38Corr").has_value());
+  EXPECT_TRUE(number(no38.measurements[0], "ar40Corr").has_value());
+  EXPECT_TRUE(contains(note_with(no38, "20002-01: Ar38 was not measured"), "clK")) << note_with(no38, "Ar38 was not");
+
+  // No 37Ar: nothing of 37Ar, and neither Ca/K nor K/Ca. (An abundance
+  // sensitivity makes the 37Ar the reduction works with something other than
+  // an exact zero, so that a Ca/K could be formed from it.)
+  const Submission no37 = build_one(with_edit_all(fusion_sample(), [](pp::Analysis& a) {
+    drop_isotope(a, "Ar37");
+    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
+    a.context.constants->abundance_sensitivity = 2e-3;
+    a.context.constants->allow_negative_ca_correction = true;
+  }));
+  ASSERT_EQ(no37.measurements.size(), 6u);
+  EXPECT_EQ(keys_of(to_json(no37.measurements[0])),
+            without({"ar37Corr", "ar37CorrUncertainty", "ar37ExcInt", "ar37ExcIntUncertainty", "ar37blank",
+                     "ar37blankUncertainty", "ratio37Arx39ArCorr", "ratio37Arx39ArCorrUncertainty", "caK",
+                     "caKUncertainty", "kCa", "kCaUncertainty"}));
+  EXPECT_TRUE(contains(note_with(no37, "20002-01: Ar37 was not measured"), "caK")) << note_with(no37, "Ar37 was not");
+  // Measured, there is no such note.
+  EXPECT_EQ(note_with(build_one(fusion_sample()), "was not measured"), "");
+
+  // No 40Ar, 39Ar or 36Ar: the analysis is not published at all, whatever
+  // the reduction made of the zero (without 36Ar it has an age all the same).
+  for (const char* isotope : {"Ar40", "Ar39", "Ar36"}) {
+    const AnalysisList one =
+        with_edit(fusion_sample(), 2, [isotope](pp::Analysis& a) { drop_isotope(a, isotope); });
+    const Submission s = build_one(one);
+    ASSERT_EQ(s.measurements.size(), 5u) << isotope;
+    for (const Measurement& m : s.measurements) EXPECT_NE(m.aliquotName, "20002-03") << isotope;
+    EXPECT_EQ(s.aliquots.size(), 5u) << isotope;
+    EXPECT_EQ(s.age_summary.nAnalysisGrouped, 5) << isotope;
+    const std::string note = note_with(s, "left out");
+    EXPECT_TRUE(contains(note, "1 analysis of 6") && contains(note, "20002-03") &&
+                contains(note, std::string(isotope) + " not measured"))
+        << note;
+    // The age reported is that of the five others.
+    AnalysisList five = fusion_sample();
+    five.erase(five.begin() + 2);
+    EXPECT_EQ(s.age_summary.age, build_one(five).age_summary.age) << isotope;
+  }
+  ASSERT_TRUE(pp::reduce_analysis(with_edit(fusion_sample(), 2, [](pp::Analysis& a) { drop_isotope(a, "Ar36"); })[2], {})
+                  ->arar->ages.has_value());
+
+  // None left: refused, saying why.
+  const std::string what = refused(with_edit_all(fusion_sample(), [](pp::Analysis& a) { drop_isotope(a, "Ar36"); }));
+  EXPECT_TRUE(contains(what, "earthbank: sample \"S-FUS\"") && contains(what, "none of its 6 analyses can be published") &&
+              contains(what, "20002-01 (Ar36 not measured)"))
+      << what;
 }
 
 // Analyses of one sample from two irradiation positions: the group ages take

@@ -146,6 +146,12 @@ struct Member {
   const pr::Analysis& a() const { return *analysis; }
   bool has_age() const { return reduced->arar && reduced->arar->ages; }
   bool is_step() const { return analysis->increment >= 0; }
+  // The analysis measured the isotope. The reduction puts a zero in the place
+  // of one it did not (reduce_analysis), and nothing made from that zero is
+  // sent.
+  bool measured(r::ArgonIsotope isotope) const {
+    return reduced->stage(r::to_string(isotope), pr::Stage::Intercept).has_value();
+  }
   // The loaded piece it was measured on.
   std::pair<std::string, int> aliquot() const { return {analysis->identifier, analysis->aliquot}; }
   std::string aliquot_name() const { return pr::make_runid(analysis->identifier, analysis->aliquot, -1); }
@@ -358,7 +364,7 @@ struct SummaryAge {
   std::optional<double> mswd, probability;
   std::size_t n = 0;       // the analyses the age used
   bool error_kind = true;  // the uncertainty is PublishOptions::ages.mean_error's; false: propagated
-  pr::GroupItems plateau;  // the steps of the plateau, when it is one
+  pr::GroupItems used;     // the analyses the age is of
   std::string detail;      // for the note
 };
 
@@ -393,7 +399,7 @@ Candidate plateau_age(const Group& g, const PublishOptions& o, double j_relative
     out.mswd = mean.mswd;
     out.probability = r::mswd_probability(mean.mswd, static_cast<int>(out.n) - 1);
   }
-  out.plateau = found->used;
+  out.used = found->used;
   out.detail = "steps " + found->steps[found->range.first]->analysis->analysis->step() + "-" +
                found->steps[found->range.last]->analysis->analysis->step() + ", " +
                plural(out.n, "step", "steps") + " of " + std::to_string(found->steps.size()) + ", " +
@@ -414,6 +420,11 @@ Candidate weighted_mean_age(const Group& g, const PublishOptions& o, double j_re
     out.mswd = mean->mswd;
     out.probability = r::mswd_probability(mean->mswd, static_cast<int>(out.n) - 1);
   }
+  // The mean passes over an age without a usable error (reduction::weighted_mean).
+  for (const pr::DatasetItem* item : g.all) {
+    const r::UFloat& age = item->analysis->arar->ages->age;
+    if (std::isfinite(age.nominal()) && std::isfinite(age.std_dev()) && age.std_dev() != 0.0) out.used.push_back(item);
+  }
   out.detail = "of " + plural(out.n, "analysis", "analyses");
   return out;
 }
@@ -433,6 +444,7 @@ Candidate isochron_age(const Group& g, const PublishOptions& o) {
   out.probability = plain->fit.probability;
   out.n = plain->fit.n;
   out.error_kind = false;
+  for (const pr::IsochronPoint& point : points) out.used.push_back(point.item);
   out.detail = "of " + plural(out.n, "analysis", "analyses");
   return out;
 }
@@ -451,6 +463,7 @@ Candidate integrated_age(const Group& g) {
   // that reduced with something missing has no age (reduce_analysis).
   out.n = g.all.size();
   out.error_kind = false;
+  out.used = g.all;
   out.detail = "the gas of " + plural(out.n, "analysis", "analyses");
   return out;
 }
@@ -522,36 +535,56 @@ struct Released {
 
 // Each step's share of the 39ArK its aliquot released, alone and summed in
 // step order, as the report's "% of group" and "cumulative" columns: a step
-// without gas (39ArK not above zero) takes no part. The schedule is all of
-// the aliquot's steps, published or not, so a step left out for want of an
-// age still counts as gas released; when the 39ArK of a step is not known at
-// all (it did not reduce) the shares of that aliquot are not known either,
-// and they are left out with a note. A fusion has none.
-std::map<const pr::ReducedAnalysis*, Released> released_39(const Members& members, Notes& notes) {
-  std::map<std::pair<std::string, int>, std::vector<const Member*>> schedules;
-  for (const Member& m : members) {
-    if (m.is_step()) schedules[m.aliquot()].push_back(&m);
+// without gas (39ArK not above zero) takes no part. The shares are of the
+// steps published, so they are given only for an aliquot whose schedule is
+// whole: when a step of it is not among the published analyses (a letter is
+// missing from the run A, B, C, ..., or an analysis given was left out), the
+// total is of a schedule the reader is not shown, and the two fields are left
+// out for that aliquot with a note naming the steps. `given` is every
+// analysis of the sample, `published` those that are sent. A fusion has no
+// share.
+std::map<const pr::ReducedAnalysis*, Released> released_39(const Members& given, const Members& published,
+                                                           Notes& notes) {
+  struct Schedule {
+    int last = -1;                     // the last increment among the steps given
+    std::vector<const Member*> steps;  // the steps published
+  };
+  std::map<std::pair<std::string, int>, Schedule> schedules;
+  for (const Member& m : given) {
+    if (m.is_step()) schedules[m.aliquot()].last = std::max(schedules[m.aliquot()].last, m.a().increment);
+  }
+  for (const Member& m : published) {
+    if (m.is_step()) schedules[m.aliquot()].steps.push_back(&m);
   }
   std::map<const pr::ReducedAnalysis*, Released> out;
-  for (auto& [aliquot, steps] : schedules) {
+  for (auto& [aliquot, schedule] : schedules) {
+    std::vector<const Member*>& steps = schedule.steps;
+    if (steps.empty()) continue;  // nothing of the aliquot is published
+    std::string missing;
+    std::size_t count = 0;
+    for (int increment = 0; increment <= schedule.last; ++increment) {
+      const bool there = std::any_of(steps.begin(), steps.end(),
+                                     [increment](const Member* m) { return m->a().increment == increment; });
+      if (there) continue;
+      missing += (missing.empty() ? "" : ", ") + pr::step_letters(increment);
+      ++count;
+    }
+    if (count > 0) {
+      notes.push_back(steps.front()->aliquot_name() + ": " + (count == 1 ? "step " : "steps ") + missing +
+                      (count == 1 ? " is" : " are") +
+                      " not among the analyses published, so ar39KReleased and cumulative39ArK were left out for "
+                      "the aliquot");
+      continue;
+    }
     std::stable_sort(steps.begin(), steps.end(), [](const Member* x, const Member* y) {
       if (x->a().increment != y->a().increment) return x->a().increment < y->a().increment;
       return x->a().timestamp < y->a().timestamp;
     });
-    const auto k39 = [](const Member* m) {
-      return m->reduced->arar ? m->reduced->arar->f.interference.k39.nominal() : std::nan("");
-    };
-    std::string unknown;
+    // A published analysis has an age, and so a reduction.
+    const auto k39 = [](const Member* m) { return m->reduced->arar->f.interference.k39.nominal(); };
     double total = 0.0;
     for (const Member* m : steps) {
-      const double k = k39(m);
-      if (!std::isfinite(k)) unknown += (unknown.empty() ? "" : ", ") + m->a().runid;
-      if (k > 0) total += k;
-    }
-    if (!unknown.empty()) {
-      notes.push_back(steps.front()->aliquot_name() + ": the 39ArK of " + unknown +
-                      " is not known, so ar39KReleased and cumulative39ArK were left out for the aliquot");
-      continue;
+      if (k39(m) > 0) total += k39(m);
     }
     if (!(total > 0)) continue;
     double sum = 0.0;
@@ -611,13 +644,34 @@ constexpr std::array kRatioFields = {PYCHRON_EARTHBANK_RATIO(36), PYCHRON_EARTHB
 
 #undef PYCHRON_EARTHBANK_RATIO
 
+// What the service calls an isotope "corrected": for mass discrimination, for
+// decay (39Ar and 37Ar) and for interferences. For four of them that is the
+// reduction's interference-corrected stage: 40Ar less the K-derived 40Ar
+// (40Ar* and trapped 40Ar), 39ArK, 37Ar decay corrected, and 36Ar less the
+// Ca- and Cl-derived 36Ar. That stage takes nothing from 38Ar, so 38Ar is
+// formed here from the reduction's own terms: the K- and Ca-derived 38Ar are
+// removed; the atmospheric and the chlorine-derived 38Ar are no interference
+// and stay. Nothing for an isotope the analysis did not measure.
+std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
+  if (!m.measured(isotope)) return std::nullopt;
+  if (isotope != r::ArgonIsotope::Ar38) return m.reduced->stage(r::to_string(isotope), pr::Stage::InterferenceCorrected);
+  const r::ArArResult& arar = *m.reduced->arar;
+  return arar.corrected[r::index(isotope)] - arar.f.interference.k38 - arar.f.interference.ca38;
+}
+
 // The intensity the service calls "excluding interference correction": blank,
-// discrimination and detector factors applied, and, for 39Ar only, the decay
-// since irradiation (its definitions say "mass discrimination only" of 40Ar,
-// 38Ar, 37Ar and 36Ar, "and decay only" of 39Ar). The decay stage is the
-// discrimination stage for 40Ar, 38Ar and 36Ar.
-pr::Stage exc_int_stage(r::ArgonIsotope isotope) {
-  return isotope == r::ArgonIsotope::Ar37 ? pr::Stage::IcCorrected : pr::Stage::DecayCorrected;
+// discrimination, detector factors and abundance sensitivity applied, and, for
+// 39Ar only, the decay since irradiation (its definitions say "mass
+// discrimination only" of 40Ar, 38Ar, 37Ar and 36Ar, "and decay only" of
+// 39Ar). For 40Ar, 39Ar, 38Ar and 36Ar that is the reduction's decay stage
+// (ArArResult::corrected), which only 39Ar and 37Ar decay in; for 37Ar it is
+// the same stage with the decay factor, an exact number, divided out again,
+// so that the five have had the same done to them but for 39Ar's decay.
+std::optional<r::UFloat> excluding_interferences(const Member& m, r::ArgonIsotope isotope) {
+  if (!m.measured(isotope)) return std::nullopt;
+  const auto stage = m.reduced->stage(r::to_string(isotope), pr::Stage::DecayCorrected);
+  if (!stage || isotope != r::ArgonIsotope::Ar37) return stage;
+  return *stage / m.reduced->arar->decay.df37;
 }
 
 // Laser power with its units, or the furnace's temperature: units with a `C`
@@ -631,9 +685,22 @@ void extraction(Measurement& out, Numbers& numbers, const pr::ExtractionInfo& in
   }
 }
 
-// One analysis. `to_ma` scales its age to Ma.
-Measurement measurement_of(const Member& m, const Released* released, bool on_reported_plateau, double to_ma,
-                           Notes& notes) {
+// The "step included" column of the kind of age the sample reports; the
+// total gas age has none.
+Text Measurement::* step_column(AgeKind kind) {
+  switch (kind) {
+    case AgeKind::Plateau: return &Measurement::plateauStepName;
+    case AgeKind::WeightedMean: return &Measurement::weightedMeanStepName;
+    case AgeKind::Isochron: return &Measurement::inverseIsoStepName;
+    case AgeKind::Integrated: break;
+  }
+  return nullptr;
+}
+
+// One analysis. `in_reported_age`: the age the sample reports used it.
+// `to_ma` scales its age to Ma.
+Measurement measurement_of(const Member& m, const Released* released, const SummaryAge& reported, bool in_reported_age,
+                           double to_ma, Notes& notes) {
   const pr::Analysis& a = m.a();
   const pr::ReducedAnalysis& reduced = *m.reduced;
   const r::ArArResult& arar = *reduced.arar;
@@ -649,26 +716,45 @@ Measurement measurement_of(const Member& m, const Released* released, bool on_re
   }
   if (m.is_step()) PYCHRON_EARTHBANK_SET(numbers, out, stepNumber, static_cast<double>(a.increment + 1));
   extraction(out, numbers, a.extraction);
+  // beamSize is not sent: ExtractionInfo::beam_diameter is recorded without
+  // its unit (legacy pychron called it microns; a queue may give mm), and a
+  // size a thousand times off is worse than none.
 
   // An isotope the analysis did not measure has no stage, and its fields stay empty.
   for (const IsotopeFields& f : kIsotopeFields) {
-    const std::string_view isotope = r::to_string(f.isotope);
-    numbers.set(out.*f.corrected, out.*f.corrected_error, f.corrected_name,
-                reduced.stage(isotope, pr::Stage::InterferenceCorrected));
-    numbers.set(out.*f.exc_int, out.*f.exc_int_error, f.exc_int_name, reduced.stage(isotope, exc_int_stage(f.isotope)));
-    numbers.set(out.*f.blank, out.*f.blank_error, f.blank_name, reduced.stage(isotope, pr::Stage::Blank));
+    numbers.set(out.*f.corrected, out.*f.corrected_error, f.corrected_name, corrected(m, f.isotope));
+    numbers.set(out.*f.exc_int, out.*f.exc_int_error, f.exc_int_name, excluding_interferences(m, f.isotope));
+    numbers.set(out.*f.blank, out.*f.blank_error, f.blank_name,
+                reduced.stage(r::to_string(f.isotope), pr::Stage::Blank));
   }
-  const auto k39 = reduced.stage(r::to_string(r::ArgonIsotope::Ar39), pr::Stage::InterferenceCorrected);
+  const auto k39 = corrected(m, r::ArgonIsotope::Ar39);
   for (const RatioFields& f : kRatioFields) {
-    const auto top = reduced.stage(r::to_string(f.isotope), pr::Stage::InterferenceCorrected);
+    const auto top = corrected(m, f.isotope);
     if (top && k39) numbers.set(out.*f.ratio, out.*f.ratio_error, f.name, *top / *k39);
   }
 
   PYCHRON_EARTHBANK_SET_PM(numbers, out, ratio40Arx39ArK, arar.f.f);
-  if (arar.f.radiogenic_yield) PYCHRON_EARTHBANK_SET(numbers, out, radiogenicArgon, arar.f.radiogenic_yield->nominal());
-  PYCHRON_EARTHBANK_SET_PM(numbers, out, caK, arar.cak);
-  PYCHRON_EARTHBANK_SET_PM(numbers, out, kCa, arar.kca);
-  PYCHRON_EARTHBANK_SET_PM(numbers, out, clK, arar.clk);
+  // 40Ar* in percent of the corrected 40Ar (40Ar* and trapped 40Ar), as the
+  // service defines it; the reduction's own yield is of all the 40Ar, the
+  // K-derived 40Ar included.
+  if (const auto ar40 = corrected(m, r::ArgonIsotope::Ar40); ar40 && ar40->nominal() != 0.0) {
+    PYCHRON_EARTHBANK_SET(numbers, out, radiogenicArgon, (arar.f.rad40 / *ar40 * 100.0).nominal());
+  }
+  // Ca/K and K/Ca are of 37Ar and Cl/K is of 38Ar: without the isotope they
+  // would be of the zero put in its place.
+  if (m.measured(r::ArgonIsotope::Ar37)) {
+    PYCHRON_EARTHBANK_SET_PM(numbers, out, caK, arar.cak);
+    PYCHRON_EARTHBANK_SET_PM(numbers, out, kCa, arar.kca);
+  } else {
+    notes.push_back(a.runid + ": Ar37 was not measured; its own fields, ratio37Arx39ArCorr, caK and kCa were left out "
+                              "(the reduction made its Ca corrections with a 37Ar of zero)");
+  }
+  if (m.measured(r::ArgonIsotope::Ar38)) {
+    PYCHRON_EARTHBANK_SET_PM(numbers, out, clK, arar.clk);
+  } else {
+    notes.push_back(a.runid + ": Ar38 was not measured; its own fields, ratio38Arx39ArCorr and clK were left out "
+                              "(the reduction made its chlorine correction of 36Ar with a 38Ar of zero)");
+  }
   if (released != nullptr) {
     PYCHRON_EARTHBANK_SET(numbers, out, ar39KReleased, released->percent);
     PYCHRON_EARTHBANK_SET(numbers, out, cumulative39ArK, released->cumulative);
@@ -679,7 +765,9 @@ Measurement measurement_of(const Member& m, const Released* released, bool on_re
   PYCHRON_EARTHBANK_SET_PM(numbers, out, apparentAge, arar.ages->age, to_ma);
   out.apparentAgeUncertainityTypeName = std::string(kOneSigma);
 
-  if (on_reported_plateau) out.plateauStepName = std::string(kYes);
+  // Whether the reported age used this analysis, in the column of that kind
+  // of age; the columns of the kinds not reported stay empty.
+  if (const auto column = step_column(reported.kind)) out.*column = std::string(in_reported_age ? kYes : kNo);
   return out;
 }
 
@@ -738,15 +826,41 @@ DataPoint data_point_of(const std::string& name, const Members& dated, const Gro
   return out;
 }
 
-// One per loaded piece, in the order they first appear.
-std::vector<Aliquot> aliquots_of(const Members& dated) {
+// One per loaded piece, in the order they first appear among the published
+// analyses, with its weight in mg as its size when the analyses of the piece
+// (published or not) carry one: a weight that is not above zero is no weight,
+// and two analyses of one piece that give two weights are refused.
+Result<std::vector<Aliquot>> aliquots_of(std::string_view sample, const Members& given, const Members& published,
+                                         Notes& notes) {
   std::vector<Aliquot> out;
   std::vector<std::string> seen;
-  for (const Member& m : dated) {
-    std::string name = m.aliquot_name();
+  for (const Member& m : published) {
+    const std::string name = m.aliquot_name();
     if (std::find(seen.begin(), seen.end(), name) != seen.end()) continue;
     seen.push_back(name);
-    out.emplace_back().aliquotName = std::move(name);
+    Aliquot& aliquot = out.emplace_back();
+    aliquot.aliquotName = name;
+
+    Members piece;
+    for (const Member& other : given) {
+      if (other.aliquot() == m.aliquot()) piece.push_back(other);
+    }
+    bool not_finite = false;
+    const auto weight = agreed(
+        sample, piece, "aliquot size of " + name,
+        [&not_finite](const Member& of) -> std::optional<double> {
+          const std::optional<double>& w = of.a().extraction.weight;
+          if (w && !std::isfinite(*w)) not_finite = true;
+          return w && std::isfinite(*w) && *w > 0.0 ? w : std::nullopt;
+        },
+        [](double w) { return shown(w); });
+    if (!weight) return fail(weight.error());
+    if (*weight) {
+      aliquot.aliquotSize = **weight;
+      aliquot.aliquotUnits = std::string(kMilligrams);
+    } else if (not_finite) {
+      notes.push_back(name + ": aliquotSize is not a finite number and was left out");
+    }
   }
   return out;
 }
@@ -845,21 +959,43 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   Notes& notes = out.notes;
   sort_by_time(members);
 
-  // Only an analysis with an age is published.
+  // Only an analysis with an age is published, and only one that measured
+  // the three isotopes an age is made of: where one is missing the reduction
+  // worked with a zero in its place (without 36Ar it gives an age all the
+  // same, as if there were no atmospheric argon), and that is not a result.
   Members dated;
-  std::string undated;
+  std::string undated, unmeasured;
+  std::size_t undated_count = 0, unmeasured_count = 0;
   for (const Member& m : members) {
-    if (m.has_age()) {
-      dated.push_back(m);
-      continue;
+    std::string lacking;
+    for (const r::ArgonIsotope isotope : {r::ArgonIsotope::Ar40, r::ArgonIsotope::Ar39, r::ArgonIsotope::Ar36}) {
+      if (!m.measured(isotope)) lacking += (lacking.empty() ? "" : ", ") + std::string(r::to_string(isotope));
     }
-    const std::string& why = m.reduced->reduction_error;
-    undated += (undated.empty() ? "" : ", ") + m.a().runid + (why.empty() ? "" : " (" + why + ")");
+    if (!lacking.empty()) {
+      unmeasured += (unmeasured.empty() ? "" : ", ") + m.a().runid + " (" + lacking + " not measured)";
+      ++unmeasured_count;
+    } else if (!m.has_age()) {
+      const std::string& why = m.reduced->reduction_error;
+      undated += (undated.empty() ? "" : ", ") + m.a().runid + (why.empty() ? "" : " (" + why + ")");
+      ++undated_count;
+    } else {
+      dated.push_back(m);
+    }
   }
-  if (dated.empty()) return refuse(name, "none of its " + plural(members.size(), "analysis", "analyses") + " has an age: " + undated);
-  if (dated.size() < members.size()) {
-    notes.push_back(plural(members.size() - dated.size(), "analysis", "analyses") + " of " +
-                    std::to_string(members.size()) + " without an age left out: " + undated);
+  const std::string of_all = plural(members.size(), "analysis", "analyses");
+  if (dated.empty() && unmeasured_count == 0) return refuse(name, "none of its " + of_all + " has an age: " + undated);
+  if (dated.empty()) {
+    return refuse(name, "none of its " + of_all + " can be published: " + unmeasured +
+                            (undated.empty() ? "" : ", " + undated) +
+                            "; an analysis needs Ar40, Ar39 and Ar36 measured, and an age");
+  }
+  if (undated_count > 0) {
+    notes.push_back(plural(undated_count, "analysis", "analyses") + " of " + std::to_string(members.size()) +
+                    " without an age left out: " + undated);
+  }
+  if (unmeasured_count > 0) {
+    notes.push_back(plural(unmeasured_count, "analysis", "analyses") + " of " + std::to_string(members.size()) +
+                    " left out for want of an isotope the age is made of: " + unmeasured);
   }
 
   const auto facts = facts_of(name, members, notes);
@@ -878,16 +1014,18 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   out.sample = sample_of(name, *facts, options, notes);
   out.location = location_of(name, *facts, notes);
   out.data_point = data_point_of(name, dated, group, *facts, options, notes);
-  out.aliquots = aliquots_of(dated);
+  auto aliquots = aliquots_of(name, members, dated, notes);
+  if (!aliquots) return fail(aliquots.error());
+  out.aliquots = std::move(*aliquots);
 
-  const auto released = released_39(members, notes);
+  const auto released = released_39(members, dated, notes);
   for (const Member& m : dated) {
     const auto share = released.find(m.reduced.get());
-    const bool on_plateau = std::any_of(age->plateau.begin(), age->plateau.end(), [&](const pr::DatasetItem* step) {
-      return step->analysis.get() == m.reduced.get();
+    const bool used = std::any_of(age->used.begin(), age->used.end(), [&](const pr::DatasetItem* item) {
+      return item->analysis.get() == m.reduced.get();
     });
     out.measurements.push_back(
-        measurement_of(m, share == released.end() ? nullptr : &share->second, on_plateau, constants->to_ma, notes));
+        measurement_of(m, share == released.end() ? nullptr : &share->second, *age, used, constants->to_ma, notes));
   }
 
   auto age_calc = age_calc_of(name, dated, *constants, options, so, notes);

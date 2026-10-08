@@ -178,6 +178,8 @@ TEST(Vocab, FixedTerms) {
   EXPECT_EQ(kOneSigma, "1 sigma");
   EXPECT_EQ(uncertainty_type_id(kOneSigma), 1);
   EXPECT_EQ(kYes, "Yes");
+  EXPECT_EQ(kNo, "No");
+  EXPECT_EQ(kMilligrams, "mg");
   EXPECT_EQ(kInterpretationTool, "Pychron");
   EXPECT_EQ(kUnknownInterpretation, "Unknown");
 }

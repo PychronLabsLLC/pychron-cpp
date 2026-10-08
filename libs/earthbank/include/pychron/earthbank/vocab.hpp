@@ -74,13 +74,18 @@ std::string flux_monitor_query(std::string_view name, std::optional<double> age_
 
 // Terms the mapping writes that never vary, spelled as the template's lists
 // have them: the unit of every intensity, the unit of every uncertainty
-// (absolute, never percent), the sigma level of a single analysis's
-// uncertainties, the answer in a "step included" column, the tool that made
-// the interpretation, and the interpretation when the lab gives none.
+// (absolute, never percent), the sigma level every uncertainty is quoted at,
+// the two answers in a "step included" column (the list's third, `N/A`, is
+// never written: a column that does not apply is left empty), the unit of an
+// aliquot's weight (free text in the template: "mg, g or grain/s"), the tool
+// that made the interpretation, and the interpretation when the lab gives
+// none.
 inline constexpr std::string_view kIntensityUnits = "fA";
 inline constexpr std::string_view kAbsoluteUncertainty = "abs.";
 inline constexpr std::string_view kOneSigma = "1 sigma";
 inline constexpr std::string_view kYes = "Yes";
+inline constexpr std::string_view kNo = "No";
+inline constexpr std::string_view kMilligrams = "mg";
 inline constexpr std::string_view kInterpretationTool = "Pychron";
 inline constexpr std::string_view kUnknownInterpretation = "Unknown";
 
