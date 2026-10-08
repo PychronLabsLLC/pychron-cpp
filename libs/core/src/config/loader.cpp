@@ -295,6 +295,16 @@ class ConfigBuilder {
     }
 
     const toml::table* local_transports = local ? check_local(*local, root) : nullptr;
+    // This computer's logging and its metrics endpoint (File > Preferences
+    // writes them): a key given in the local file wins, the rest stand.
+    if (local != nullptr) {
+      if (const auto* l = local->get("logging")) {
+        if (const auto* t = p_.as_table(*l, "logging")) parse_logging(*t, c.logging);
+      }
+      if (const auto* m = local->get("metrics")) {
+        if (const auto* t = p_.as_table(*m, "metrics")) parse_metrics(*t, c.metrics);
+      }
+    }
     for_each_named(root, "transports", [&](const std::string& name, const toml::table& t) {
       const toml::table* ovr = nullptr;
       if (local_transports != nullptr) {
@@ -368,8 +378,10 @@ class ConfigBuilder {
     const toml::table* transports = nullptr;
     const auto* main_transports = root.get_as<toml::table>("transports");
     for (auto&& [k, v] : local) {
+      if (k.str() == "logging" || k.str() == "metrics") continue;  // read by build(), as in the main file
       if (k.str() != "transports") {
-        p_.error(p_.loc(v), std::string(k.str()), "local override may only set [transports.<name>] keys");
+        p_.error(p_.loc(v), std::string(k.str()),
+                 "local override may only set [transports.<name>] keys, [logging] and [metrics]");
         continue;
       }
       transports = p_.as_table(v, "transports");
@@ -459,7 +471,9 @@ class ConfigBuilder {
     const auto get = lookup_in(t);
     p_.reject_unknown(t, l, Keys{"dir", "max_size_mb", "max_files", "default_level", "levels", "echo_stderr"});
     std::string dir;
-    if (p_.read(get, l, "dir", dir, false)) l.dir = expand_home(dir);
+    // Only when the key is there: read over a table the local file gave, a
+    // missing `dir` must leave the shared file's alone.
+    if (get("dir") != nullptr && p_.read(get, l, "dir", dir, false)) l.dir = expand_home(dir);
     p_.read(get, l, "max_size_mb", l.max_size_mb, false, 1);
     p_.read(get, l, "max_files", l.max_files, false, 1);
     p_.read_enum(get, l, "default_level", l.default_level, false, kLevels);
@@ -469,6 +483,9 @@ class ConfigBuilder {
     if (n == nullptr) return;
     const auto* lv = p_.as_table(*n, "logging.levels");
     if (lv == nullptr) return;
+    // A levels table is the whole list. In the local file that lets one of
+    // the shared file's levels be dropped, which adding to them could not.
+    l.levels.clear();
     for (auto&& [glob, node] : *lv) {
       const auto key = std::string(glob.str());
       const auto field = "logging.levels." + key;

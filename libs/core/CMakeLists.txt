@@ -18,6 +18,7 @@ add_library(pychron_core
   src/user_file.cpp
   src/config/diagnostic.cpp
   src/config/loader.cpp
+  src/config/local_file.cpp
   src/config/validate.cpp
 )
 add_library(pychron::core ALIAS pychron_core)
