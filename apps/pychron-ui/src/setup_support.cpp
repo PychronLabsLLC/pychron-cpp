@@ -40,18 +40,19 @@ SetupWizard::OpenDatabase database_opener() {
 SetupWizard::SeedDatabase database_seeder() {
 #ifdef PYCHRON_UI_HAS_STORE
   return [](const std::string& url, const std::filesystem::path& seed_file, bool migrate) -> Result<std::string> {
-    std::ifstream in(seed_file, std::ios::binary);
-    if (!in) return fail(ErrorKind::Io, "cannot open " + seed_file.string());
-    std::ostringstream text;
-    text << in.rdbuf();
-    auto seed = entry::parse_seed(text.str(), seed_file.string());
-    if (!seed) return fail(std::move(seed).error());
+    // The store first: with `migrate` the database is made whatever the file says.
     auto store = persistence::open_store(persistence::StoreConfig{url, migrate});
     if (!store) {
       Error e = std::move(store).error();
       e.what = "the database could not be opened: " + e.what;
       return fail(std::move(e));
     }
+    std::ifstream in(seed_file, std::ios::binary);
+    if (!in) return fail(ErrorKind::Io, "cannot open " + seed_file.string());
+    std::ostringstream text;
+    text << in.rdbuf();
+    auto seed = entry::parse_seed(text.str(), seed_file.string());
+    if (!seed) return fail(std::move(seed).error());
     auto client = (*store)->register_client(
         {env_var("HOSTNAME").value_or("localhost"), "reduction", std::nullopt, "pychron-ui"});
     if (!client) return fail(std::move(client).error());

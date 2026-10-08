@@ -170,6 +170,12 @@ TEST_F(EntryCmd, SeedAppliesAFileAndDryRunWritesNothing) {
   EXPECT_EQ(o.code, 0) << o.err;
   EXPECT_TRUE(contains(o.out, "seed: nothing to add (5 already there)")) << o.out;
 
+  // entry seed never makes or migrates a schema: a database without one is refused.
+  const std::string bare = "sqlite:" + path("bare.db").string();
+  auto refused = run_raw({"entry", "seed", file.string(), "--db", bare, "--user", "tester"});
+  EXPECT_EQ(refused.code, 2);
+  EXPECT_TRUE(contains(refused.err, "the database could not be opened")) << refused.err;
+
   EXPECT_EQ(entry({"seed", path("missing.toml").string()}).code, 2);
   EXPECT_EQ(entry({"seed"}).code, 2);
   EXPECT_EQ(entry({"seed", file.string(), "extra"}).code, 2);

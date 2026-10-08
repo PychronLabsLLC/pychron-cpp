@@ -221,6 +221,45 @@ class TestSetupWizard : public QObject {
     QVERIFY(warned);
   }
 
+  // The lab's server is seeded as it is: setup never migrates it.
+  void anInstrumentOnTheLabsServerIsSeededWithoutMigrating() {
+    std::vector<std::string> calls;
+    bool succeed = true;
+    SetupWizard::SeedDatabase seed = [&](const std::string& url, const fs::path&, bool migrate) -> Result<std::string> {
+      calls.push_back(std::string(migrate ? "seed+migrate " : "seed ") + url);
+      if (!succeed) return fail(ErrorKind::NotConnected, "the database could not be opened: refused\nmore");
+      return std::string("seeded 1 project");
+    };
+    SetupWizard::OpenDatabase open = [](const std::string&, bool) -> Result<std::string> { return std::string("schema version 7"); };
+    for (const char* site : {"site-u.toml", "site-u2.toml"}) {
+      calls.clear();
+      SetupWizard w(library_, {dir(site), open, QStringLiteral("argus"), {}, seed});
+      w.restart();
+      w.next();
+      w.name_edit()->setText(QString::fromLatin1(succeed ? "served" : "served2"));
+      w.root_edit()->setText(QString::fromStdString(dir(succeed ? "argus-server" : "argus-server2").string()));
+      int guard = 0;
+      while (!w.is_shown(QStringLiteral("data_source")) && guard++ < 20) w.next();
+      QVERIFY(w.is_shown(QStringLiteral("data_source")));
+      radio(w.editor(QStringLiteral("data_source")), "data_source-server")->click();
+      qobject_cast<QLineEdit*>(w.editor(QStringLiteral("db_host")))->setText(QStringLiteral("db.lab.edu"));
+      qobject_cast<QLineEdit*>(w.editor(QStringLiteral("db_password")))->setText(QStringLiteral("s3cret-Zq9"));
+      QVERIFY(walk_to(w, SetupWizard::kDone));
+      QCOMPARE(calls, (std::vector<std::string>{"seed postgresql://pychron:s3cret-Zq9@db.lab.edu:5432/pychron"}));
+      for (const auto& c : w.checks()) {
+        if (c.name != "seed") continue;
+        QVERIFY(c.detail.find("s3cret") == std::string::npos && c.hint.find("s3cret") == std::string::npos);
+        if (!succeed) {
+          QCOMPARE(c.status, setup::Check::Status::Warn);
+          QCOMPARE(QString::fromStdString(c.detail), QStringLiteral("skipped: the database could not be opened: refused"));
+          // The command that has the password.
+          QCOMPARE(QString::fromStdString(c.hint), QStringLiteral("elctl init --reconfigure --install served2"));
+        }
+      }
+      succeed = false;
+    }
+  }
+
   void aDataReductionInstallIsNotSeededAndNoSeederIsNoSeed() {
     int seeded = 0;
     SetupWizard::SeedDatabase seed = [&](const std::string&, const fs::path&, bool) -> Result<std::string> {

@@ -572,16 +572,17 @@ int settings_command(Context& ctx, const Args& a) {
 
 Result<std::string> seed_database(const std::string& url, const std::filesystem::path& seed_file, bool migrate,
                                   bool dry_run, const std::string& user) {
-  auto text = read_file(seed_file.string());
-  if (!text) return pychron::fail(text.error());
-  auto seed = en::parse_seed(*text, seed_file.string());
-  if (!seed) return pychron::fail(seed.error());
+  // The store first: with `migrate` the database is made whatever the file says.
   auto store = ps::open_store(ps::StoreConfig{url, migrate});
   if (!store) {
     Error e = store.error();
     e.what = "the database could not be opened: " + e.what;
     return pychron::fail(std::move(e));
   }
+  auto text = read_file(seed_file.string());
+  if (!text) return pychron::fail(text.error());
+  auto seed = en::parse_seed(*text, seed_file.string());
+  if (!seed) return pychron::fail(seed.error());
   ps::Actor actor;
   if (!dry_run) {
     const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");

@@ -311,8 +311,15 @@ is recorded with its sample and the `references` project.
   would add).
 
 If the seed cannot run, setup prints `seed skipped: <reason>` and the command
-to run later, and the install is otherwise complete: the instrument measures
-without it.
+to run once that is put right, and the install is otherwise complete (a local
+database is made all the same): the instrument measures without it. For a
+local database the command is `elctl entry seed "<file>" --db "<url>"`; for
+the lab's server it is `elctl init --reconfigure --install <name>`, since the
+install has the password and a url does not.
+
+An instrument install made before pychron had this is told by `doctor` that
+its profile is newer; `elctl init --reconfigure --install <name>` brings the
+new files, the database and the seed.
 
 Check, then run the example queue in simulation:
 
@@ -571,7 +578,7 @@ repository or database, so falling back is a matter of continuing to use it.
 | `several installs and no default` | Pass `--install NAME`, or set the default in File > Installations |
 | `doctor`: `database ... not checked: built without the database library` | Built without Qt Sql. Use a release package, or rebuild with Qt 6 found |
 | `doctor` fails a PostgreSQL database | Server, user or password wrong, the QPSQL plugin is missing (`libqt6sql6-psql`), or the schema was never created (part 2.2) |
-| `seed skipped: the database could not be opened` | An instrument install's database was not reachable or its schema is not current. Fix that (part 2.2), then run the printed `elctl entry seed ...` command |
+| `seed skipped: the database could not be opened` | An instrument install's database was not reachable or its schema is not current. Fix that (part 2.2), then run the command printed under it |
 | `seed skipped: ...seed.toml: ...` | The install's `seed.toml` was edited into something that does not parse. Fix the line named, then run the printed command |
 | `doctor` warns about an instrument's `database` | The catalog database does not open. Runs are not affected; `elctl init --reconfigure` makes a missing local one |
 | `doctor` warns `every transport is simulated` | Simulation is off but the line is still the starter. Describe the real controllers in `extraction_line.toml` |

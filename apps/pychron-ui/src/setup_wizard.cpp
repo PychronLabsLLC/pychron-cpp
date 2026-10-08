@@ -792,8 +792,12 @@ bool SetupWizard::install() {
       done = options_.seed_database(*done, seed_file, local);
     }
     seeded = done ? Check{Check::Status::Ok, "seed", *done, {}}
-                  : Check{Check::Status::Warn, "seed", "skipped: " + done.error().what,
-                          "elctl entry seed " + seed_file.string() + " --db " + entry.database};
+                  // A server's password is in the install, not in its url:
+                  // there the install is the one to run again.
+                  : Check{Check::Status::Warn, "seed",
+                          "skipped: " + done.error().what.substr(0, done.error().what.find('\n')),
+                          local ? "elctl entry seed \"" + seed_file.string() + "\" --db \"" + entry.database + "\""
+                                : "elctl init --reconfigure --install " + entry.name};
   }
   if (auto saved = register_install(entry, options_.site_path); !saved) return show_error(saved.error().what);
   installed_ = entry;

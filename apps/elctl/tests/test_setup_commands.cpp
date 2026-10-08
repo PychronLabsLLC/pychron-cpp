@@ -140,16 +140,34 @@ TEST_F(ElctlSetupTest, ASeedFileThatDoesNotParseDoesNotStopTheInstall) {
   EXPECT_FALSE(site().find("helix")->simulation) << "the reconfigure went through";
 }
 
+// A seed file that was there before the install and does not parse: the
+// database is made all the same (doctor finds it), and the command that is
+// printed can be pasted even though the folder's name has a space in it.
+TEST_F(ElctlSetupTest, ABadSeedFileStillLeavesADatabaseAndACommandThatCanBePasted) {
+  const auto root = path("my argus");
+  fs::create_directories(root);
+  { std::ofstream(root / "seed.toml") << "project = \n"; }
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "seed skipped: ")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl entry seed \"" + (root / "seed.toml").string() + "\" --db \"sqlite:")) << o.err;
+}
+
 // Review focus 5: a server that is not there.
 TEST_F(ElctlSetupTest, ADatabaseServerThatCannotBeReachedSkipsTheSeed) {
   const auto root = path("argus-server");
   auto o = run_raw({"init", "argus", "--root", root.string(), "--yes", "--set", "data_source=server", "--set",
-                    "db_host=127.0.0.1", "--set", "db_port=1", "--set", "db_password=x"});
+                    "db_host=127.0.0.1", "--set", "db_port=1", "--set", "db_password=s3cret-Zq9"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(fs::exists(root / "seed.toml"));
   EXPECT_TRUE(contains(o.err, "seed skipped: the database could not be opened")) << o.err;
-  EXPECT_TRUE(contains(o.err, "elctl entry seed ")) << o.err;
-  EXPECT_FALSE(contains(o.err, "x@")) << "the password is not printed";
+  // The command that has the password: entry seed would need it in its url.
+  EXPECT_TRUE(contains(o.err, "elctl init --reconfigure --install argus")) << o.err;
+  EXPECT_FALSE(contains(o.err, "entry seed")) << o.err;
+  EXPECT_FALSE(contains(o.err, "s3cret-Zq9")) << "the password is not printed";
+  EXPECT_FALSE(contains(o.out, "s3cret-Zq9")) << "the password is not printed";
   EXPECT_EQ(site().find("argus")->database, "postgresql://pychron@127.0.0.1:1/pychron");
 }
 

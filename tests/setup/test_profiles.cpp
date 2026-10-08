@@ -354,6 +354,32 @@ TEST(Profiles, NgxWithALoginKeepsThePasswordInAnOwnerOnlyFile) {
   fs::remove_all(root);
 }
 
+// doctor tells an install made before the seed, the identifiers and the
+// database that its profile has new files: only a higher version says so.
+TEST(Profiles, AnInstallFromBeforeTheSeedIsToldItsProfileIsNewer) {
+  const auto lib = library();
+  const fs::path root = scratch("old-argus");
+  auto site = install(lib, "argus", {}, root);
+  // As an install of the profiles before this work recorded them.
+  const fs::path record = record_path(root);
+  std::string text;
+  {
+    std::ifstream in(record);
+    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  const std::string now = "instrument-common = " + std::to_string(lib.find("instrument-common")->version);
+  const auto at = text.find(now);
+  ASSERT_NE(at, std::string::npos) << text;
+  text.replace(at, now.size(), "instrument-common = 1");
+  { std::ofstream(record) << text; }
+  DoctorOptions options;
+  options.library = &lib;
+  bool told = false;
+  for (const auto& c : doctor(site, options)) told |= c.name == "profile instrument-common" && c.status == Check::Status::Warn;
+  EXPECT_TRUE(told);
+  fs::remove_all(root);
+}
+
 TEST(Profiles, DataReductionLocalAndServer) {
   const auto lib = library();
   const fs::path local = scratch("dr-local");

@@ -2,7 +2,7 @@ name = "instrument-common"
 title = "Instrument lab files"
 kind = "fragment"
 summary = "Starter measurement plans, peak-center config, run defaults, special identifiers, reference samples, a blank block and an example queue, built from the instrument's detectors"
-version = 1
+version = 2
 includes = ["lab-common", "extraction-line-starter", "store-common"]
 groups = ["Simulation", "Instrument connection", "Detectors", "Extraction line", "Data"]
 

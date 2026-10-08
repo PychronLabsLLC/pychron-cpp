@@ -147,13 +147,16 @@ void seed_instrument_database(const SiteInstall& entry, Io io) {
   std::error_code ec;
   if (!fs::exists(seed, ec)) return;
 #ifdef PYCHRON_ELCTL_HAS_STORE
-  auto skipped = [&](const std::string& why) {
-    io.err << "seed skipped: " << why << "\n  Run: elctl entry seed " << seed.string() << " --db " << entry.database
-           << "\n";
-  };
   // Only a database on this computer is made or migrated from here: the
   // lab's server is brought up to date by whoever looks after it.
   const bool local = entry.database.starts_with("sqlite:");
+  // What to run once it is put right. A server's password is in the
+  // install, not in its url: there the install is the one to run again.
+  auto skipped = [&](const std::string& why) {
+    io.err << "seed skipped: " << why.substr(0, why.find('\n')) << "\n  Run: ";
+    if (local) io.err << "elctl entry seed \"" << seed.string() << "\" --db \"" << entry.database << "\"\n";
+    else io.err << "elctl init --reconfigure --install " << entry.name << "\n";
+  };
   auto url = database_url(entry);
   if (!url) return skipped(url.error().what);
   // SQLite makes the file, not the folder it is in.
