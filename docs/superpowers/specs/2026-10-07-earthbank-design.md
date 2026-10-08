@@ -100,21 +100,24 @@ small and header-or-single-source, fetched like the other dependencies.
 ```cpp
 namespace pychron::earthbank {
 
-enum class PreferredAge { Plateau, WeightedMean, Isochron, Integrated };
+enum class AgeKind { Plateau, WeightedMean, Isochron, Integrated };   // vocab.hpp
+using PreferredAge = AgeKind;
 
 struct SampleOptions {              // per sample; all optional
   std::string interpretation;       // EarthBank LArArInterpretation name; empty: "Unknown"
   std::optional<PreferredAge> preferred_age;   // empty: section 4.4's rule
   std::string flux_monitor;         // overrides the monitor found on the analyses
-  std::string datapoint_name;       // empty: "<sample> <material>"
+  std::string datapoint_name;       // empty: "<sample> <material>", or "<sample>"
 };
 
 struct PublishOptions {
   processing::ReductionSettings reduction;      // as the report
   processing::ReportOptions ages;               // plateau criteria, error kind, York method
-  std::string decay_constant;       // EarthBank name; empty: from the constants preset (4.3)
+  bool age_includes_j_error = true; // the reported age's uncertainty with J (4.4)
+  std::string decay_constant;       // EarthBank name or a citation; empty: from the value used (4.3)
   std::string air_ratio;            // likewise
   std::map<std::string, SampleOptions> samples; // by sample name
+  std::string software = "pychron-cpp";         // name and version, for the two descriptions
 };
 
 Result<std::vector<Submission>> build_submissions(const std::vector<processing::AnalysisPtr>& analyses,
@@ -123,16 +126,37 @@ Result<std::vector<Submission>> build_submissions(const std::vector<processing::
 ```
 
 Analyses are grouped by `Analysis::sample`; one `Submission` per sample, as
-**[legacy]** ("mixed-sample selections produce one ArArDataPoint per sample").
-Analyses tagged invalid are left out unless the caller included them, as in
-`elctl export`. A sample with no analysis that reduces to an age is refused
-with the reason.
+**[legacy]** ("mixed-sample selections produce one ArArDataPoint per sample"),
+in order of sample name. Analyses tagged invalid are left out by the caller,
+as in `elctl export`: every analysis given is used.
+
+An analysis is published when it has an age and measured 40Ar, 39Ar and
+36Ar. `reduce_analysis` puts a zero in the place of an argon isotope that
+was not measured, and nothing made from that zero is sent: without one of
+those three the analysis is left out (without 36Ar the reduction still gives
+an age, as if there were no atmospheric argon); without 38Ar or 37Ar it is
+published without the fields that are of that isotope (4.2). What is left
+out is counted in `Submission::notes` with the reason, and a sample with
+nothing left is refused with it.
+
+`age_includes_j_error` is a decision for the owner of the published data:
+the service has one uncertainty per age and no field that says what is in
+it. It defaults to `true` (the report's "with J" column); either way the age
+summary's description says which (4.4).
+
+`software` is filled by the apps with the name and version; it goes into
+`Sample.description` (`Uploaded from <software>`) and into the age summary's
+description (`reduced with <software>`).
 
 ### 4.2 Records and where each value comes from
 
-`Submission { Sample sample; Location location; DataPoint data_point;
-std::vector<Aliquot> aliquots; std::vector<Measurement> measurements;
-AgeCalc age_calc; AgeSummary age_summary; std::vector<std::string> notes; }`.
+`Submission { std::string datapoint_name; Sample sample; std::optional<Location>
+location; DataPoint data_point; std::vector<Aliquot> aliquots;
+std::vector<Measurement> measurements; AgeCalc age_calc; AgeSummary
+age_summary; std::vector<std::string> notes; }`. `datapoint_name` is the key
+that ties a workbook's rows together and the name of the umbrella record:
+`SampleOptions::datapoint_name`, else `<sample> <material>`, else `<sample>`;
+two samples with the same one are refused.
 
 Each record is a struct of optional fields named as the service names them
 (`ar40Corr`, `apparentAgeUncertainty`, ...); the full lists are legacy's
@@ -141,42 +165,72 @@ Each record is a struct of optional fields named as the service names them
 **[legacy]** and are copied into `model.hpp` verbatim. A controlled term is
 kept as its name (`mineralName`); its id is resolved later (section 5).
 
+What a field means is taken from the service's own definitions: the `Field
+Definitions` sheet of its Ar-Ar template
+(`ArArDataPoint_Template2026.xlsx`). Where legacy's value and that definition
+disagree the definition wins; every such case is in 4.6.
+
+Below, "corrected" is `reduction::ArArResult::corrected` (blank,
+discrimination, detector factor, abundance sensitivity, and the decay of
+39Ar and 37Ar: `Stage::DecayCorrected`), and `f` is `ArArResult::f`.
+
 | Record | Field(s) | From |
 |---|---|---|
 | Sample | `name`, `sampleID` | `Analysis::sample` |
 | | `materialName` | `Analysis::material` |
 | | `referenceElevation`, `igsn` | `SampleInfo` |
 | | `stratographicUnitName` | `SampleInfo::unit` |
-| | `description` | `"Uploaded from pychron-cpp <version>"` unless the sample has a note |
-| Location | `lat`, `lon` | `SampleInfo`; both or neither |
-| DataPoint | `analysisDate` | earliest analysis, UTC `YYYY-MM-DD` |
+| | `description` | `"Uploaded from <PublishOptions::software>"` |
+| Location | `lat`, `lon` | `SampleInfo`: the latitude and longitude one analysis carries together. The analyses with such a pair must carry the same one; a lone coordinate that is not the pair's is refused; halves on different analyses are no location, with a note |
+| DataPoint | `analysisDate` | earliest published analysis, UTC `YYYY-MM-DD`; the timestamp is cut to its second, not rounded |
 | | `analysisUnits` | `"fA"` |
 | | `arMethodName` | section 4.3 |
 | | `mineralName` | `Analysis::material` |
 | | `lithologyName` | `SampleInfo::lithology` |
-| | uncertainty type and unit names | the error kind of the ages (`ReportOptions::mean_error`), `"abs."` |
-| Aliquot | `aliquotName` | `<identifier>-<aliquot, two digits>` |
-| Measurement | `ar{36..40}Corr` and uncertainty | `Stage::InterferenceCorrected` |
-| | `ar{36..40}ExcInt` and uncertainty | `Stage::DecayCorrected` |
+| | `analyticalUncertaintyTypeName`, `apparentAgeUncertaintyTypeName` | `"1 sigma"`: they describe the measurements' own values |
+| | the three uncertainty unit names | `"abs."` |
+| Aliquot | `aliquotName` | `<identifier>-<aliquot, two digits>`, one per loaded piece |
+| | `aliquotSize`, `aliquotUnits` | `ExtractionInfo::weight` where known and above zero, `"mg"`; two weights for one aliquot are refused |
+| Measurement | `ar40Corr`, `ar39Corr`, `ar37Corr`, `ar36Corr` and uncertainty | `Stage::InterferenceCorrected`: 40Ar less the K-derived 40Ar (= 40Ar* + trapped 40Ar), 39ArK, 37Ar decay corrected, 36Ar less the Ca- and Cl-derived 36Ar |
+| | `ar38Corr` and uncertainty | corrected 38Ar less `f.interference.k38` and `f.interference.ca38`, as `UFloat`s of the one reduction. The atmospheric and chlorine-derived 38Ar stay |
+| | `ar40ExcInt`, `ar39ExcInt`, `ar38ExcInt`, `ar36ExcInt` and uncertainty | `Stage::DecayCorrected` (only 39Ar has a decay in it) |
+| | `ar37ExcInt` and uncertainty | `Stage::DecayCorrected` with the decay factor (`ArArResult::decay.df37`, an exact number) divided out: what the other four have, without decay |
 | | `ar{36..40}blank` and uncertainty | `Stage::Blank` |
-| | `ratio{36,37,38,40}Arx39ArCorr`, `ratio40Arx39ArK`, `caK`, `kCa`, `clK`, `radiogenicArgon`, `ar39KReleased`, `cumulative39ArK` | `reduction::ArArResult` |
-| | `jValue`, `apparentAge` and uncertainties | `ReducedAnalysis::j`, `ArArResult` |
+| | `ratio{36,37,38,40}Arx39ArCorr` and uncertainty | the `Corr` value above over `ar39Corr`, divided as `UFloat`s so the uncertainty is the correlated one |
+| | `ratio40Arx39ArK` and uncertainty | `f.f` |
+| | `radiogenicArgon` | `100 * f.rad40 / ar40Corr`, percent (the column is headed `%40Ar*`); no uncertainty field exists |
+| | `ar39KReleased`, `cumulative39ArK` | percent: the step's `f.interference.k39` over the sum over its aliquot's published steps, alone and summed in step order. Absent on a fusion, and for an aliquot one of whose steps is not published (a letter missing from A, B, C, ..., or an analysis left out), with a note naming the steps |
+| | `caK`, `kCa` and uncertainty | `ArArResult::cak`, `kca`; absent without 37Ar |
+| | `clK` and uncertainty | `ArArResult::clk`; absent without 38Ar |
+| | `jValue` and uncertainty | `ReducedAnalysis::j` |
+| | `apparentAge` and uncertainty | `ArArResult::ages->age` (analytical, no J), scaled to Ma |
+| | `jvalueUncertaintyTypeName`, `apparentAgeUncertainityTypeName` | `"1 sigma"` |
 | | `stepNumber` | `Analysis::increment + 1`; absent with no step |
-| | `analysisTime` | `Analysis::timestamp`, `YYYY-MM-DDTHH:MM:SSZ` |
+| | `analysisTime` | `Analysis::timestamp`, UTC `YYYY-MM-DDTHH:MM:SSZ`, cut to the second |
 | | `laserPower` + units, or `furnaceTemperature` | `ExtractionInfo` value and units: units containing `C` are a temperature **[legacy]** |
-| | `plateauStepName` = `"Yes"` | the step is in the plateau the age summary reports |
+| | `plateauStepName`, `weightedMeanStepName`, `inverseIsoStepName` | the one of the kind of age reported is `"Yes"` on the analyses that age used and `"No"` on the sample's others; the other two are empty, and all three under a total gas age |
 | AgeCalc | `decayConstantName`, `airRatioName`, `fluxMonitorName` | section 4.3 |
 | AgeSummary | `age`, `ageUncertainty`, `mswd`, `agepvalue`, `nAnalysisGrouped`, `ageCalcTypeName` | section 4.4 |
+| | `ageUncertaintyTypeName`, `calculatedAgeUncertaintyTypeName` | `"1 sigma"` |
+| | `calculatedAgeUncertaintyTypeUnitsName` | `"abs."` |
+| | `description` | always set: the sentence of section 4.4 |
 | | `dataInterpretationToolName` | `"Pychron"` **[legacy]** |
 | | `interpretationName` | `SampleOptions::interpretation`, else `"Unknown"` |
 | | `preferredAge` | `true` |
 
 Ages are in Ma whatever the lab's display unit. Uncertainties are 1 sigma,
-absolute.
+absolute. A number that is not finite is not sent and is named in the notes.
+
+Analyses of one sample that disagree about a fact of the sample (material,
+lithology, stratigraphic unit, IGSN, location, elevation, flux monitor,
+decay constant, atmospheric 40Ar/36Ar, age unit, the weight of an aliquot)
+are refused with both values and both run ids; an analysis that says nothing
+about a fact is passed over.
 
 ### 4.3 Vocabulary mapping
 
-In `vocab.hpp`, as data, each with a test:
+In `vocab.hpp`, as data, each with a test. The names are the service's own,
+read from the `Lookup Tables` sheet of the Ar-Ar template.
 
 - **Method [legacy].** No analysis with a step: `Total fusion - laser`. With
   steps: the largest extraction value at most 50 gives `Step-heating - laser`,
@@ -185,53 +239,153 @@ In `vocab.hpp`, as data, each with a test:
 - **Decay constant and air ratio.** pychron-cpp's constants carry values, not
   citations (`reduction::ReductionConstants`; an analysis's may come from a
   preset or from its reference record), so the name is found from the value
-  the reduction used: `atm4036` of 298.56 is `Lee et al. 2006`, 295.5 is
-  `Nier 1950`; the total 40K decay constant (`lambda_b + lambda_e`) of
-  5.543e-10 /a is `Steiger and Jager, 1977`, 5.463e-10 is `Min et al. 2000`,
-  5.531e-10 is `Renne et al. 2011`; each matched to one part in 10^4. A
-  value that matches none leaves the name empty, which pre-flight reports,
-  and `PublishOptions` supplies it. Analyses of one sample that disagree are
-  refused with the two values. Legacy's citation normaliser (`Min (2008)` to
-  `Min et al. 2000`, and so on) is kept for the override strings
-  **[legacy]**.
+  the reduction used, each matched to one part in 10^4.
+  - The total 40K decay constant is the flux's `lambda_k_total` when it is
+    set and not exactly 0 +- 0, else `lambda_b + lambda_e`: 5.543e-10 /a is
+    `Steiger and Jager, 1977`, 5.463e-10 is `Min et al. 2000`, 5.531e-10 is
+    `Renne et al. 2011`. All three of `constants_preset()`'s presets
+    (`Default`, `Legacy`, `LegacyPreferences`) carry 5.543e-10 and so map to
+    `Steiger and Jager, 1977`. The sheet lists a fourth, `Carter et al.
+    2025`, which no value here maps to; it can be given as an override.
+  - `atm4036` by value: 298.56 is `Lee et al. 2006` (the `Default` preset),
+    295.5 is `Nier 1950` (the two legacy presets).
+
+  A value that matches none leaves the name empty, with a note; pre-flight
+  reports it, and `PublishOptions` supplies it. Analyses of one sample that
+  disagree are refused with the two values. Legacy's citation normaliser
+  (`Min (2008)` to `Min et al. 2000`, and so on) is kept for the override
+  strings **[legacy]**.
 - **Uncertainty type [legacy].** `SE`, `SEM`, `SD`, `MSEM`, `1 sigma` are id 1;
   `2 sigma` is id 2. Resolved from this table and never from
   `/api/core/l-error-types`, whose ids violate the data point's foreign key.
+  The mapping itself only ever writes `1 sigma`.
 - **Flux monitor.** `"<MonitorInfo::name> <age> Ma"`, resolved by the fuzzy
   rule of section 5.1; `SampleOptions::flux_monitor` overrides.
+- **Fixed terms.** `fA`, `abs.`, `1 sigma`, `Yes`, `No` (the sheet's `Yes/No`
+  list also has `N/A`, which is never written: a column that does not apply
+  is left empty), `mg`, `Pychron`, `Unknown`.
 
-The table's numbers are checked against `constants_preset()` in the mapping
-task (the `Default` preset's `atm4036` is 298.56, the legacy presets' 295.5);
-the names are checked against the live vocabularies in stage 3.
+The names are checked against the live vocabularies in stage 3.
 
 ### 4.4 The summary age
 
 pychron-cpp stores no interpreted age; it computes the candidates on demand
-(`arar_groups.hpp`). The submission reports one, the preferred age:
+(`group_ages.hpp`, `arar_groups.hpp`), the same calls the publication report
+makes. The submission reports one, the preferred age:
 
-- `SampleOptions::preferred_age` when given;
+- `SampleOptions::preferred_age` when given. One that cannot be computed is
+  refused, never replaced by another;
 - otherwise, for a step-heating sample, the plateau if one exists under
   `PublishOptions::ages.plateau`, else the integrated age; for a fusion
   sample, the weighted mean.
 
-`ageCalcTypeName` is `Plateau`, `Weighted Mean`, `Inverse Isochron` or
-`Total Gas` (the names are checked by pre-flight like any other term). The
-choice and the reason are written to `Submission::notes` and shown to the
-user before anything is sent.
+`ageCalcTypeName` is `Plateau Age`, `Weighted Mean Age`, `Inverse Isochron
+Age` or `Total Gas Age` (the sheet's names, checked by pre-flight like any
+other term). `mswd` and `agepvalue` are left out when fewer than two analyses
+entered, and for a total gas age. The choice and the reason are written to
+`Submission::notes` and shown to the user before anything is sent.
+
+**Several step-heated aliquots.** A plateau and an isochron are of one
+heating experiment and are refused for a sample with more than one
+step-heated aliquot. Such a sample has no default: without a
+`preferred_age` it is refused, with a message that names the aliquots and
+says to choose `weighted_mean` or `integrated`, or to publish the aliquots
+as separate selections. With that choice made the age pools the aliquots,
+and the note and the description say so.
+
+**J.** A published age is made with one J or says how it is not.
+
+- An integrated or isochron age is one pass through the age equation. Over
+  analyses whose J differ (value or uncertainty, compared exactly) it is
+  refused, naming the sample, the kind and two of the J with their run ids;
+  it is never made with the first analysis's J. This holds for the rule's
+  own fall back to the integrated age.
+- A plateau and a weighted mean are means of ages each made with its own
+  analysis's J. With `age_includes_j_error` the relative J uncertainty is
+  added in quadrature (`with_external_error`), and it is that of the analyses
+  the mean is of, not of the sample's other analyses. When those analyses do
+  not share one J, the term is the largest relative J uncertainty among them
+  (the J uncertainty of their mean cannot exceed it, however the positions
+  are weighted or correlated), and the description and a note say so.
+
+**What the uncertainty is.** `ageUncertainty` is one sigma: with the J
+uncertainty when `age_includes_j_error` (the default), analytical otherwise.
+The record's uncertainty type is only a sigma level, so
+`AgeSummary.description` is always set and states the rest, in one sentence
+that is also in the notes:
+
+`<age type> of <n> of <N> analyses[, pooling <k> step-heated aliquots][ (<facts>)];
+uncertainty 1 sigma (<what>), <J>; reduced with <software>.`
+
+- `n` the analyses the age used, `N` the analyses published;
+- facts: for a plateau, `steps C to H, 87.3% of the 39ArK`; for an isochron,
+  `trapped 40Ar/36Ar 298.2 +/- 1.4` (one over the fit's 36Ar/40Ar intercept);
+- what: `the mean's msem` (or `sem`, `sd`: `ReportOptions::mean_error` as
+  pychron-cpp names it) for a plateau and a weighted mean; `propagated
+  through the age equation` for a total gas age; `propagated through the
+  regression and the age equation` for an isochron;
+- J: `J uncertainty included` (followed, for a mean over analyses of several
+  J, by `(the largest relative J uncertainty among its analyses, <p>% of
+  <run id>)`), or `analytical uncertainty only`.
 
 ### 4.5 What is left empty
 
 | Field | Why |
 |---|---|
 | `grainDiameterMin/Max` | `Analysis` has no grain size |
-| `aliquotSize`, `aliquotUnits` | no weight on the analysis |
-| `beamSize` | not recorded |
-| `kContent` | not computed |
-| `fundingName`, `literatureName`, `Datapoint Props`, `Sample Props` | as legacy |
-| `archiveName`, `sampleKindName`, `sampleMethodName`, collection dates, rock unit ages | not in the catalog |
+| `beamSize`, `beamSizeUnits` | **open question for the owner.** `ExtractionInfo::beam_diameter` is recorded without a unit: legacy labels it `microns`, a queue may give mm. A size a thousand times off is worse than none, so it is not sent until the unit is settled |
+| `kContent`, `kContentUncertainty` | not computed (the definition: "relevant for K-Ar age only") |
+| `ratio40Arx36ArTrapped` | a field of the measurement, and the only trapped ratio computed here is a group's isochron intercept, which goes into the age summary's description |
+| `analysisScaleName` | nothing records whether an aliquot is one grain or many |
+| `commentAnalyte`, `measurementComment`, `aliquotComment`, AgeCalc `comment`, `locationName` | no counterpart that is the thing the field asks for |
+| `fundingName`, `literatureName`, `Datapoint Props`, `Sample Props` | as legacy leaves them without the user's input |
+| `archiveName`, `sampleKindName`, `sampleMethodName`, collection dates, rock unit ages, relative elevations, `locationKindName`, `latLonPrecision` | not in the catalog |
+| every `id` and `*Id` | resolved later (section 5) |
 
 Each is a field of the record already; filling one later is a change to the
 mapping and its table row, nothing else.
+
+### 4.6 Departures from legacy, for the owner to confirm
+
+Each row is a field where this mapping sends something other than what the
+legacy integration sent. "Legacy" is `earthbank_service.py`'s
+`build_*_payload`; what its accessors (`get_interference_corrected_value`
+and the like) compute is not in the reference and is given as the mapping
+task's report found it in upstream pychron, marked *(report)*. The
+definition is quoted from the `Field Definitions` sheet of
+`ArArDataPoint_Template2026.xlsx`, column B, with its cell. Data other labs
+uploaded with legacy will not be comparable in these columns.
+
+| Field | Legacy sent | This mapping sends | The service's definition | Cell |
+|---|---|---|---|---|
+| `ar38Corr` and uncertainty | `iso.get_interference_corrected_value()` of 38Ar: the corrected 38Ar with no interference removed *(report)* | corrected 38Ar less the K- and Ca-derived 38Ar; atmospheric and chlorine-derived 38Ar stay | "38Ar corrected for mass discrimination and interferences" | B42 |
+| `ratio38Arx39ArCorr` and uncertainty | `get_ratio("Ar38/Ar39")`: detector-corrected intensities, neither decay nor interference corrected *(report)* | `ar38Corr` / `ar39Corr` | "38Ar/39Ar corrected for mass discrimination and interferences" | B90 |
+| `ratio36Arx39ArCorr`, `ratio37Arx39ArCorr`, `ratio40Arx39ArCorr` and uncertainties | `get_ratio("ArNN/Ar39")`, as above *(report)* | the `Corr` value over `ar39Corr` (39ArK), uncertainty correlated | "36Ar/39Ar corrected for mass discrimination and interferences" (and the same of 37Ar, 40Ar) | B86, B88, B92 |
+| `radiogenicArgon` | `analysis.radiogenic_yield`: `100 * 40Ar* / all the 40Ar` *(report)* | `100 * 40Ar* / ar40Corr`, where `ar40Corr` = 40Ar* + trapped 40Ar (the K-derived 40Ar is not in the denominator) | "Radiogenic 40Ar (40Ar*) expressed as a proportion of total 40Arxcorr (40Arxcorr – 40Artrapped). By convention calculated assuming trapped argon is of atmospheric composition."; B38: "40Ar corrected for mass discrimination and interferences (=40Ar* + 40Artrapped)."; the column is headed "Radiogenic argon proportion (%40Ar*)" | B74 (B38) |
+| `ar40ExcInt`, `ar38ExcInt`, `ar36ExcInt` and uncertainties | `iso.get_non_detector_corrected_value()`: baseline and blank corrected only, no discrimination, no detector factor *(report)* | blank, discrimination, detector factor and abundance sensitivity applied | "40Ar corrected for mass discrimination only" (and the same of 38Ar, 36Ar) | B64, B68, B72 |
+| `ar39ExcInt` and uncertainty | as above: no discrimination, no decay *(report)* | the same stage, which for 39Ar has the decay since irradiation | "39Ar corrected for mass discrimination and decay only" | B66 |
+| `ar37ExcInt` and uncertainty | as above *(report)* | the same stage with 37Ar's decay taken out again: no decay | "37Ar corrected for mass discrimination only" | B70 |
+| `ar39KReleased` | `k39`, the step's 39ArK in fA | percent of the 39ArK of the step's aliquot; absent on a fusion and for an aliquot with a step not published | "39Ar released in given heating step compared to total 39Ar released across entire step-heating experiment, expressed as a percentage of the total 39Ar" | B77 |
+| `cumulative39ArK` | not set | the running sum of the above, percent | "39Ar released up to and including a given heating step compared to total 39Ar released across entire step-heating experiment, expressed as a cumulative percentage of the total 39Ar" | B78 |
+| `plateauStepName` | `Yes` on a step with `is_plateau_step`, else not set | when the reported age is the plateau: `Yes` on its steps, `No` on the sample's other analyses; not set otherwise | "Is this step included in plateau age calculation (Y/N/NA)? N/A applies if no plateau could be generated" | B83 |
+| `inverseIsoStepName`, `weightedMeanStepName` | never set | `Yes` / `No` likewise when the reported age is the isochron or the weighted mean | "Is this step included in inverse isochron calculation (Y/N/NA)? N/A applies if no inverse isochron could be generated"; "Is this step included in Weighted Mean calculation (Y/N/NA)? N/A applies if no inverse isochron could be generated" (sic) | B84, B85 |
+| DataPoint `analyticalUncertaintyTypeName`, `apparentAgeUncertaintyTypeName` | the group's `age_error_kind` (`SD`, `SEM`, `MSEM`) | `1 sigma` | "Analytical uncertainty type quoted for measurements and associated ratios"; "Analytical uncertainty type quoted for ages" | B21, B23 |
+| AgeSummary `ageUncertaintyTypeName`, `calculatedAgeUncertaintyTypeName` | the preferred value's `error_kind` | `1 sigma`; the error kind is in the description | "Uncertainty type associated with the age of the group/population (e.g. 1s, 2s)." | B105 |
+| AgeSummary `ageUncertainty` | the uncertainty of the group's preferred age as legacy held it; whether J is in it is not determinable from the reference (the report: legacy quotes a mean with J by default and an integrated age without) | one sigma with the J uncertainty for all four kinds (`age_includes_j_error`, default `true`), stated in the description | "Uncertainty of age of group/population (Ma)" | B104 |
+| AgeSummary `description` | `Sample <sample>; Project <project>; <comments>` | the sentence of 4.4: what the age is of and what its uncertainty holds | "Additional information about age group/population and age calculation" | B111 |
+| AgeSummary: which age, and over what | the analysis group's preferred age, as set in legacy's interface | the rule of 4.4; refused for several step-heated aliquots without a choice, and for an integrated or isochron age over analyses of several J | "Type of method used to calculate age of group/population e.g., plateau age, inverse isochron, weighted mean, total fusion. Note that multiple ages can be submitted for one sample and then one can be selected as the 'preferred' age" | B102 |
+| `ageCalcTypeName` | the preferred value's `computed_kind` or `kind`, as pychron names it | the sheet's `Age Type` names: `Plateau Age`, `Weighted Mean Age`, `Inverse Isochron Age`, `Total Gas Age` | as above; `Lookup Tables` column H | B102 |
+| Measurements sent | one per analysis of the group | one per analysis that has an age and measured 40Ar, 39Ar and 36Ar; without 38Ar no `clK` and no 38Ar fields, without 37Ar no `caK`, `kCa` and no 37Ar fields | (the definitions of the fields concerned) | |
+| `aliquotName` (Aliquot and Measurement) | `<labnumber>-<aliquot><step>`: one aliquot per heating step | `<identifier>-<aliquot>`: one aliquot per loaded piece, its steps told apart by `stepNumber` | "Aliquot name (e.g. Grain1, Aliquot2). Must be unique. Can be left blank if only a single analysis has been performed per sample." | B30 |
+| `aliquotSize`, `aliquotUnits` | the analysis's `weight`, `mg` | the same where the weight is above zero; two weights for one aliquot are refused | "Either number of grains or sample weight"; "mg, g or grain/s" | B97, B98 |
+| `beamSize`, `beamSizeUnits` | `beam_diameter`, `microns` | not sent (4.5) | "Diameter of laser spot used (where applicable)"; "Beam size units (e.g., mm, microns)" | B33, B34 |
+| `kContent`, `kContentUncertainty` | the analysis's `k2o` | not sent (4.5) | "K content (relevant for K-Ar age only)" | B94 |
+| `analysisDate`, `analysisTime` | the first analysis's `rundate` / the analysis's timestamp, formatted from a naive local time (`analysisTime` with a `Z` appended) | UTC; the date is the earliest published analysis's; cut to the second | "Date of data acquisition YYYY-MM-DD"; "e.g. 2023-07-02 14:30 AEST for Sydney time" | B14, B31 |
+| `decayConstantName`, `airRatioName` | from the citations on legacy's constants, normalised | from the value the reduction used (4.3); the normaliser serves the overrides | "Reference associated with selected decay constant, selectable from list"; "Reference associated with selected atmospheric 40Ar/36Ar ratio, selectable from list" | B112, B113 |
+| Location `lat`, `lon` | each from the first analysis, independently | the pair the analyses agree on (4.2) | (Sample template) | |
+| `Sample.description` | the analysis's `sample_note`, else `<sample> (<project>)` | `Uploaded from <software>` | (Sample template) | |
+| `analysisScaleName` | `Single Grain` for one analysis, `Multi-Grain Aliquot` for more | not sent (4.5) | "Scale at which analysis was conducted" | B15 |
+| `commentAnalyte`, `grainDiameterMin/Max`, AgeCalc `comment` | the sample's notes, its parsed grain size, `<sample> (<project>)` | not sent (4.5) | "Comments relating to analyte (e.g. mineral separation or clearning comments)" (sic); "Minimum grain diameter of analyte (in microns)", "Maximum grain diameter of analyte (in microns)" | B20, B18, B19 |
 
 ## 5. Talking to the service
 
