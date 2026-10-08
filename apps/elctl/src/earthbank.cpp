@@ -100,10 +100,17 @@ constexpr const char* kUsageText =
     "Exit codes: 0 wrote the files (--check: there was something to write);\n"
     "1 no analysis matched; 2 usage or fatal error.\n";
 
-struct Args {
-  std::string db, out, templates, overrides;
+// What is published: the store, the analyses, how their ages are made and
+// what the lab adds. Every subcommand that builds submissions has these.
+struct Source {
+  std::string db, overrides;
   Selection selection;
   AgeFlags ages;
+};
+
+struct Args {
+  Source source;
+  std::string out, templates;
   bool per_sample = false;
   bool samples = true;
   bool check = false;
@@ -129,8 +136,8 @@ Result<Args> parse(const std::vector<std::string>& args) {
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     // The flags shared with `export` (selection.hpp) first.
-    auto shared = take_selection_flag(a.selection, args, i);
-    if (shared && !*shared) shared = take_age_flag(a.ages, args, i);
+    auto shared = take_selection_flag(a.source.selection, args, i);
+    if (shared && !*shared) shared = take_age_flag(a.source.ages, args, i);
     if (!shared) return fail(shared.error());
     if (*shared) continue;
     if (flag == "--per-sample") {
@@ -149,20 +156,20 @@ Result<Args> parse(const std::vector<std::string>& args) {
     if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
     const std::string& value = args[++i];
     if (flag == "--db") {
-      a.db = value;
+      a.source.db = value;
     } else if (flag == "--out") {
       a.out = value;
     } else if (flag == "--templates") {
       a.templates = value;
     } else if (flag == "--overrides") {
-      a.overrides = value;
+      a.source.overrides = value;
     } else {
       return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
     }
   }
-  if (a.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
+  if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
   if (a.out.empty() && !a.check) return fail(ErrorKind::Config, "--out <dir> is required");
-  if (auto ok = check_selection(a.selection); !ok) return fail(ok.error());
+  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
   return a;
 }
 
@@ -302,30 +309,46 @@ void print_sample(std::ostream& out, const eb::Submission& s) {
   for (const auto& note : s.notes) out << "  " << note << '\n';
 }
 
-int export_xlsx(const Args& a, Io io) {
+// The submissions of what `source` selects, one per sample; or, when there
+// are none to have, the exit code, the reason having been said on io.err:
+// kFailed when no analysis matched, kUsage for anything wrong (the overrides
+// file, the store, a sample the mapping refuses). One sample that cannot be
+// published stops them all. The start of every subcommand that publishes.
+struct Built {
+  int code = kOk;
+  std::vector<eb::Submission> submissions;
+};
+
+Built build(const Source& source, Io io) {
   eb::PublishOptions options;
-  options.reduction = a.ages.reduction();
-  options.ages.plateau = a.ages.criteria();
+  options.reduction = source.ages.reduction();
+  options.ages.plateau = source.ages.criteria();
 #ifdef PYCHRON_ELCTL_VERSION
   options.software = std::string("pychron-cpp ") + PYCHRON_ELCTL_VERSION;
 #endif
-  if (!a.overrides.empty()) {
-    if (auto read = read_overrides(a.overrides, options); !read) return fatal(io, read.error());
+  if (!source.overrides.empty()) {
+    if (auto read = read_overrides(source.overrides, options); !read) return {fatal(io, read.error()), {}};
   }
 
   std::vector<std::string> warnings;
-  const auto analyses = load_selection(a.selection, a.db, warnings);
-  if (!analyses) return fatal(io, analyses.error());
+  const auto analyses = load_selection(source.selection, source.db, warnings);
+  if (!analyses) return {fatal(io, analyses.error()), {}};
   for (const auto& w : warnings) io.err << "warning: " << w << '\n';
   if (analyses->empty()) {
     io.err << "elctl earthbank: no analysis matched\n";
-    return kFailed;
+    return {kFailed, {}};
   }
-  if (auto named = check_override_samples(a.overrides, options, *analyses); !named) return fatal(io, named.error());
+  if (auto named = check_override_samples(source.overrides, options, *analyses); !named)
+    return {fatal(io, named.error()), {}};
 
-  // One sample that cannot be published stops them all.
-  const auto submissions = eb::build_submissions(*analyses, options);
-  if (!submissions) return fatal(io, submissions.error());
+  auto submissions = eb::build_submissions(*analyses, options);
+  if (!submissions) return {fatal(io, submissions.error()), {}};
+  return {kOk, std::move(*submissions)};
+}
+
+int export_xlsx(const Args& a, Io io) {
+  const Built built = build(a.source, io);
+  if (built.code != kOk) return built.code;
 
   eb::XlsxOptions xlsx;
   xlsx.template_dir = a.templates;
@@ -333,16 +356,16 @@ int export_xlsx(const Args& a, Io io) {
   xlsx.samples = a.samples;
   eb::XlsxResult written;
   if (a.check) {
-    auto notes = eb::check_against_template(*submissions, xlsx);
+    auto notes = eb::check_against_template(built.submissions, xlsx);
     if (!notes) return fatal(io, notes.error());
     written.notes = std::move(*notes);
   } else {
-    auto result = eb::export_xlsx(*submissions, fs::path(a.out), xlsx);
+    auto result = eb::export_xlsx(built.submissions, fs::path(a.out), xlsx);
     if (!result) return fatal(io, result.error());
     written = std::move(*result);
   }
 
-  for (const auto& s : *submissions) print_sample(io.out, s);
+  for (const auto& s : built.submissions) print_sample(io.out, s);
   for (const auto& file : written.files) io.out << "wrote " << file.string() << '\n';
   if (a.check) io.out << "nothing written (--check)\n";
   for (const auto& note : written.notes) io.out << "note: " << note << '\n';
