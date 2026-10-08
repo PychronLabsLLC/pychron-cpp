@@ -1,0 +1,66 @@
+# A lab's monitoring box on your own computer: the same Prometheus and
+# Grafana, loaded with the files that go on a real box (the scrape job's
+# shape, the dashboards, the alert rules). For trying a dashboard or an alert
+# against a simulated line before it reaches a lab. docs/observability.md,
+# "Try it without a box", has the steps.
+#
+#   docker compose up -d          (or: docker-compose up -d)
+#   Grafana      http://localhost:3000   no sign-in; dashboards under Pychron
+#   Prometheus   http://localhost:9090   Status > Targets shows the scrape
+#
+# Both listen on this computer only. Grafana lets anyone who reaches it
+# administer it, which is why: do not publish these ports.
+#
+# What it scrapes is in targets.yml: by default a pychron on this computer.
+
+name: pychron-obs-box
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./targets.yml:/etc/prometheus/targets.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    # On Linux without Docker Desktop, host.docker.internal is not defined
+    # unless this is uncommented (Docker Desktop and Colima define it
+    # themselves, and this would point it at the wrong place there):
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    depends_on:
+      - prometheus
+    environment:
+      # The alert rules name their data source by this (pychron-deadman.yml);
+      # datasource.yml gives the Prometheus above the same uid.
+      PYCHRON_PROM_UID: pychron-prometheus
+      # A box of your own, on this computer only: no sign-in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    volumes:
+      - ./datasource.yml:/etc/grafana/provisioning/datasources/pychron.yml:ro
+      # The files a real box gets, as they are.
+      - ../grafana/provisioning/dashboards/pychron.yml:/etc/grafana/provisioning/dashboards/pychron.yml:ro
+      - ../grafana/provisioning/alerting/pychron-deadman.yml:/etc/grafana/provisioning/alerting/pychron-deadman.yml:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards/pychron:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

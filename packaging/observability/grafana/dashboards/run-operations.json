@@ -133,7 +133,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "pychron_queue_runs{instrument=\"$instrument\",status=\"done\"} / clamp_min(pychron_queue_runs{instrument=\"$instrument\",status=\"total\"}, 1)",
+          "expr": "pychron_queue_runs{instrument=\"$instrument\",status=\"done\"} / ignoring(status) clamp_min(pychron_queue_runs{instrument=\"$instrument\",status=\"total\"}, 1)",
           "legendFormat": "done",
           "instant": true
         }

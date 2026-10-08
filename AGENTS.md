@@ -192,8 +192,11 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   for the box to subtract from its own clock; a
   metric added to an exporter needs a panel in
   `packaging/observability/grafana/dashboards`, and a renamed one its panel
-  renamed (`MetricsPackaging` in `tests/integration` fails otherwise). User
-  guide: `docs/observability.md`.
+  renamed (`MetricsPackaging` in `tests/integration` fails otherwise). The
+  tests check names, not that a query returns anything or that Grafana
+  accepts a file: after changing a dashboard or the alert, load it in the
+  virtual box (`packaging/observability/box`, `docker compose up -d`) and
+  look. User guide: `docs/observability.md`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

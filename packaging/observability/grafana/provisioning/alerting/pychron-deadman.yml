@@ -15,9 +15,9 @@
 # Neither rule compares the box's clock with the instrument computer's: the
 # age PychronStuck reads is measured on the instrument computer.
 #
-# A dollar that belongs to a template is written twice ($$labels): Grafana
-# expands $NAME in this file from its environment, which is how
-# PYCHRON_PROM_UID gets in.
+# Grafana fills ${PYCHRON_PROM_UID} in from its environment and leaves the
+# templates' own {{ $labels... }} alone (seen on Grafana 12.1: written with
+# two dollars, the two dollars are kept and the message is broken).
 #
 # PYCHRON_PROM_UID is the uid of the box's Prometheus data source; Grafana
 # reads it from its environment (docs/observability.md says where to set it).
@@ -39,7 +39,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Pychron on {{ $$labels.instrument }} stopped answering while a queue was running."
+          summary: "Pychron on {{ $labels.instrument }} stopped answering while a queue was running."
         data:
           - refId: A
             relativeTimeRange:
@@ -81,7 +81,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Pychron on {{ $$labels.instrument }} is running a queue and its scheduler has stopped."
+          summary: "Pychron on {{ $labels.instrument }} is running a queue and its scheduler has stopped."
         data:
           - refId: A
             relativeTimeRange:

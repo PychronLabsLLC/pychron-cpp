@@ -1,0 +1,14 @@
+# The virtual box's one data source: its own Prometheus, with the uid the
+# alert rules are given in PYCHRON_PROM_UID (docker-compose.yml).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: pychron-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

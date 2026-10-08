@@ -460,9 +460,10 @@ provisioned from YAML. It fires on either condition, after two minutes:
      and pychron_scheduler_heartbeat_age_seconds > 60
    ```
 
-In the provisioning file a template's dollar is doubled
-(`{{ $$labels.instrument }}`): Grafana expands `$NAME` there from its
-environment, which is how `PYCHRON_PROM_UID` gets in.
+In the provisioning file Grafana fills `${PYCHRON_PROM_UID}` in from its
+environment and leaves a template's `{{ $labels.instrument }}` as it is. A
+doubled dollar is not an escape there: tried on Grafana 12.1, `$$labels` was
+stored with both dollars and the message did not render.
 
 Known limits, stated in the guide: quitting within one scrape of a queue's
 end leaves the last reading at "running", and the first rule fires. And a
@@ -505,9 +506,31 @@ collects the names it registers and compares them with the names found by a
 regular expression in the files under `packaging/observability/`. Histogram
 suffixes (`_bucket`, `_sum`, `_count`) are stripped before the comparison.
 
-Not verified here: the dashboards and the alert rules were not loaded into a
-Grafana, nor the queries run by a Prometheus (neither is installed where
-this was built). The guide's alert test (section 5.4) is the check on a box.
+### 6.1 The virtual box
+
+`packaging/observability/box/docker-compose.yml` runs Prometheus and Grafana
+in two containers with the real box's files mounted as they are; only the
+data source, the scrape configuration's wrapper and the list of targets are
+its own. It listens on the loopback interface only, since its Grafana has no
+sign-in. `MetricsPackaging.TheVirtualBoxAgreesWithTheRealOnesFiles` keeps its
+own files in step with the ones it mounts.
+
+Checked with it, on Grafana 12.1.1 and Prometheus 3.5.0, against
+`pychron-ui` on the simulated example line:
+
+- the data source, the three dashboards and both alert rules provision
+  without error;
+- all 39 dashboard queries are valid PromQL. One returned nothing: queue
+  progress divided two series that differ in `status` without
+  `ignoring(status)`. Fixed, and pinned by a test;
+- both rules fire and clear. A stand-in exporter reporting a running queue
+  and a heartbeat 120 s old fired `PychronStuck` for its instrument only;
+  stopping it fired `PychronGone` and cleared `PychronStuck`; each message
+  named the instrument.
+
+Not checked: a queue started in the application itself with the box
+watching (it cannot be started without the window), how the panels look,
+and delivery to a contact point.
 
 Rules that apply:
 

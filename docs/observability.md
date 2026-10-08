@@ -174,7 +174,50 @@ To install:
    contact point receives it. Read the message: it should name the
    instrument. Start pychron again and it clears.
 
-Menu names are those of Grafana 11, as of October 2026.
+Menu names are those of Grafana 12, as of October 2026. The dashboards and
+both rules were loaded and the rules seen to fire on Grafana 12.1 with
+Prometheus 3.5.
+
+## Try it without a box
+
+`packaging/observability/box` is a monitoring box for your own computer: the
+same Prometheus and Grafana in two containers, loaded with the very files a
+real box gets. Use it to see the dashboards against a simulated line, or to
+check a changed dashboard or alert before it goes to a lab. It needs Docker
+(Docker Desktop, or Colima on a Mac).
+
+1. Turn metrics on for the line you will run (step 1 above). On a Mac,
+   `bind = "127.0.0.1"` is enough.
+2. Start the box:
+
+   ```bash
+   cd packaging/observability/box
+   docker compose up -d
+   ```
+
+   (`docker-compose up -d` with the older, separate program.)
+3. Start pychron on that line, simulated: `--sim`.
+4. Open <http://localhost:3000>: no sign-in, dashboards under **Pychron**,
+   **Instrument** set to `sim`. <http://localhost:9090/targets> shows the
+   scrape; **UP** within half a minute.
+5. When done: `docker compose down`. Add `-v` to throw its history away too.
+
+What it scrapes is in `box/targets.yml`, by default a pychron on this
+computer at port 9464. Change the address there to point it at another
+computer; Prometheus reads the file again within half a minute.
+
+On Linux without Docker Desktop, two things differ: uncomment the
+`extra_hosts` lines in `docker-compose.yml`, and set `bind = "0.0.0.0"`,
+since the container reaches your computer over a network address, not
+`127.0.0.1`.
+
+Grafana here lets anyone who can reach it change anything, so both programs
+listen on this computer only. It is for trying things, not for a lab.
+
+To try the alert: start a queue, wait for the Run operations dashboard to
+say it is running, quit pychron. `PychronGone` fires within about three
+minutes (**Alerting > Alert rules**). No contact point is set up here, so
+nothing is sent; the rule's state is what to look at.
 
 ## Who can read this
 

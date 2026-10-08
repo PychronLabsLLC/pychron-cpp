@@ -139,9 +139,10 @@ TEST(MetricsPackaging, TheAlertNamesBothConditions) {
   EXPECT_NE(alert.find("pychron_scheduler_heartbeat_age_seconds > 60"), std::string::npos);
   // The box's clock and the instrument computer's need not agree: nothing here compares them.
   EXPECT_EQ(alert.find("time()"), std::string::npos);
-  // Grafana expands $NAME in a provisioning file; a template's own dollar is written twice.
-  EXPECT_NE(alert.find("{{ $$labels.instrument }}"), std::string::npos);
-  EXPECT_EQ(alert.find("{{ $labels"), std::string::npos);
+  // Grafana leaves a template's dollar alone and keeps a doubled one as it is
+  // (tried on 12.1 with packaging/observability/box): one dollar.
+  EXPECT_NE(alert.find("{{ $labels.instrument }}"), std::string::npos);
+  EXPECT_EQ(alert.find("$$"), std::string::npos);
   EXPECT_NE(alert.find("for: 2m"), std::string::npos);
 }
 
@@ -149,6 +150,44 @@ TEST(MetricsPackaging, NoDashboardComparesTheBoxsClockWithTheInstruments) {
   for (const fs::path& p : dashboards()) {
     EXPECT_EQ(slurp(p).find("time()"), std::string::npos) << p.filename();
   }
+}
+
+// Two series that differ in a label only divide when the query says to
+// ignore it; without that the panel is silently empty.
+TEST(MetricsPackaging, QueueProgressDividesDoneByTotal) {
+  const std::string board = slurp(kRoot / "grafana" / "dashboards" / "run-operations.json");
+  EXPECT_NE(board.find("status=\\\"done\\\"} / ignoring(status) clamp_min(pychron_queue_runs{"), std::string::npos);
+}
+
+// The virtual box (box/docker-compose.yml) loads the real box's files; what
+// it adds of its own must agree with them.
+TEST(MetricsPackaging, TheVirtualBoxAgreesWithTheRealOnesFiles) {
+  const fs::path box = kRoot / "box";
+  const std::string compose = slurp(box / "docker-compose.yml");
+  const std::string prometheus = slurp(box / "prometheus.yml");
+  const std::string datasource = slurp(box / "datasource.yml");
+  const std::string targets = slurp(box / "targets.yml");
+  // The alert finds the job by name, and the dashboards the instrument by label.
+  EXPECT_NE(prometheus.find("job_name: pychron"), std::string::npos);
+  EXPECT_NE(prometheus.find("scrape_interval: 15s"), std::string::npos);
+  EXPECT_NE(targets.find("instrument:"), std::string::npos);
+  EXPECT_NE(targets.find(":9464"), std::string::npos);
+  // The alert rules' data source is the one the box provisions.
+  EXPECT_NE(compose.find("PYCHRON_PROM_UID: pychron-prometheus"), std::string::npos);
+  EXPECT_NE(datasource.find("uid: pychron-prometheus"), std::string::npos);
+  // Every file it mounts from the real box's set exists.
+  for (const char* rel : {"grafana/provisioning/dashboards/pychron.yml", "grafana/provisioning/alerting/pychron-deadman.yml",
+                          "grafana/dashboards"}) {
+    EXPECT_NE(compose.find(std::string("../") + rel + ":"), std::string::npos) << rel;
+    EXPECT_TRUE(fs::exists(kRoot / rel)) << rel;
+  }
+  // No sign-in, so this computer only.
+  EXPECT_NE(compose.find("\"127.0.0.1:3000:3000\""), std::string::npos);
+  EXPECT_NE(compose.find("\"127.0.0.1:9090:9090\""), std::string::npos);
+  // The dashboards folder the provider reads is the one the compose file fills.
+  const std::string provider = slurp(kRoot / "grafana" / "provisioning" / "dashboards" / "pychron.yml");
+  EXPECT_NE(provider.find("path: /var/lib/grafana/dashboards/pychron"), std::string::npos);
+  EXPECT_NE(compose.find(":/var/lib/grafana/dashboards/pychron:ro"), std::string::npos);
 }
 
 TEST(MetricsPackaging, TheScrapeJobIsNamedAsTheAlertExpects) {
