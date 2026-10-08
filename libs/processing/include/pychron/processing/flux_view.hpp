@@ -49,7 +49,8 @@ struct FluxWarningContext {
 std::vector<std::string> flux_warnings(const LevelInputs& inputs, const LevelFit& fit,
                                        const FluxWarningContext& context = {});
 
-// RFC 4180: the field quoted when it holds a comma, a quote or a line break.
+// RFC 4180, by the report's rule (`csv_quote`, report.hpp): one quoting rule
+// for every CSV.
 std::string csv_field(std::string_view text);
 // The head line, and a row for every position of the fit; lines end in CRLF.
 std::string flux_csv_header();

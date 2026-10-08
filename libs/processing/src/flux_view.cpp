@@ -6,6 +6,7 @@
 #include <memory>
 #include <sstream>
 
+#include "pychron/processing/report.hpp"
 #include "schema_builder.hpp"
 
 namespace pychron::processing {
@@ -168,15 +169,7 @@ std::vector<std::string> flux_warnings(const LevelInputs& inputs, const LevelFit
   return out;
 }
 
-std::string csv_field(std::string_view text) {
-  if (text.find_first_of(",\"\r\n") == std::string_view::npos) return std::string(text);
-  std::string out = "\"";
-  for (const char c : text) {
-    if (c == '"') out += '"';
-    out += c;
-  }
-  return out + '"';
-}
+std::string csv_field(std::string_view text) { return csv_quote(text); }
 
 std::string flux_csv_header() {
   return "kind,irradiation,level,hole,identifier,sample,x,y,n,saved_j,saved_j_err,mean_j,mean_j_err,mean_j_mswd,j,j_err,"
