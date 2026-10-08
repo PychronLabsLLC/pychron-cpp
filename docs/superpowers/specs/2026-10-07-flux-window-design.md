@@ -194,7 +194,10 @@ The window shows the lines `elctl flux fit` prints and writes its CSV, and
 cannot link `apps/elctl`. The functions that build them move from
 `apps/elctl/src/flux.cpp` into `libs/processing` unchanged in output:
 `flux_model_line`, `flux_summary`, `flux_warnings`, `flux_j_text`,
-`csv_field`, `flux_csv_header`, `flux_csv_rows`. `elctl` calls them.
+`csv_field`, `flux_csv_header`, `flux_csv_rows`. `elctl` calls them. (As
+built, one part of the output did change: the warnings name each analysis that
+is out on a line of its own with the reason, `hole 3: 66003-02 omitted (tag
+outlier)`, where `elctl` printed `rejected <id>` and `analysis not reduced`.)
 
 ### 4.6 Ticking a monitor back in (`flux_fit.hpp`)
 
