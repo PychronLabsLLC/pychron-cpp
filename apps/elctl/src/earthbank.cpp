@@ -63,7 +63,9 @@ constexpr const char* kUsageText =
     "  --include-invalid          keep analyses tagged invalid\n"
     "  --limit <n>                at most n analyses (default 5000)\n"
     "\n"
-    "Ages, as export (the ages written are those export reports):\n"
+    "Ages, as export: a sample's age and its uncertainty are those of\n"
+    "`elctl export --group-by sample --sigma 1` with the same selection and flags\n"
+    "(a workbook is of samples and at one sigma, whatever export's defaults):\n"
     "  --constants default|legacy|legacy_preferences\n"
     "  --decay-error              propagate the decay-constant uncertainty into the ages\n"
     "  --plateau fleck|mahon      plateau criterion (default fleck)\n"
@@ -76,7 +78,8 @@ constexpr const char* kUsageText =
     "  --check                    say what the export would say and write nothing\n"
     "                             (--out is then not needed)\n"
     "  --templates <dir>          the service's two template workbooks (default: the\n"
-    "                             installed ones, or $PYCHRON_EARTHBANK_TEMPLATES)\n"
+    "                             directory $PYCHRON_EARTHBANK_TEMPLATES names, and\n"
+    "                             when it names none the installed ones)\n"
     "  --overrides <file.toml>    what the analyses cannot say. Every key is optional;\n"
     "                             an unknown key, or a sample the selection does not\n"
     "                             hold, is an error:\n"
@@ -92,6 +95,9 @@ constexpr const char* kUsageText =
     "      flux_monitor = \"...\"          # replaces the monitor the analyses name\n"
     "      datapoint_name = \"...\"        # default: \"<sample> <material>\"\n"
     "      irradiation = \"...\"           # the irradiation batch, by its name on EarthBank\n"
+    "\n"
+    "The files are ArArDataPoint_<yyyymmdd-hhmmss>.xlsx (the time is UTC), or with\n"
+    "--per-sample ArArDataPoint_<sample>.xlsx, and Samples_<yyyymmdd-hhmmss>.xlsx.\n"
     "\n"
     "Prints one line per sample (its analyses and the age reported) with its notes\n"
     "under it, then the files written, then the notes of the export. A sample that\n"
@@ -160,8 +166,10 @@ Result<Args> parse(const std::vector<std::string>& args) {
     } else if (flag == "--out") {
       a.out = value;
     } else if (flag == "--templates") {
+      if (value.empty()) return fail(ErrorKind::Config, "--templates needs a directory");
       a.templates = value;
     } else if (flag == "--overrides") {
+      if (value.empty()) return fail(ErrorKind::Config, "--overrides needs a file");
       a.source.overrides = value;
     } else {
       return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
@@ -187,11 +195,18 @@ std::optional<eb::PreferredAge> parse_preferred_age(std::string_view word) {
 // other. The first thing wrong is the error, with the file and the key's
 // whole path.
 Result<void> read_overrides(const std::string& file, eb::PublishOptions& options) {
+  // A directory opens as a stream that gives nothing, and a read that stops
+  // short gives the start of the file: neither is the lab's overrides.
+  std::error_code code;
+  if (!fs::exists(file, code)) return fail(ErrorKind::Io, file + ": no such file");
+  if (!fs::is_regular_file(file, code)) return fail(ErrorKind::Io, file + ": not a file");
   std::ifstream in(file, std::ios::binary);
   if (!in) return fail(ErrorKind::Io, file + ": cannot be read");
-  std::ostringstream content;
-  content << in.rdbuf();
-  auto parsed = toml::parse(content.str(), file);
+  std::string content;
+  char block[4096];
+  while (in.read(block, sizeof block) || in.gcount() > 0) content.append(block, static_cast<std::size_t>(in.gcount()));
+  if (in.bad() || !in.eof()) return fail(ErrorKind::Io, file + ": could not be read to the end");
+  auto parsed = toml::parse(content, file);
   if (!parsed) {
     std::ostringstream where;
     where << parsed.error().source().begin;
@@ -276,8 +291,15 @@ Result<void> check_override_samples(const std::string& file, const eb::PublishOp
   for (const auto& a : analyses) selected.insert(a->sample);
   for (const auto& [sample, unused] : options.samples) {
     if (selected.contains(sample)) continue;
+    // Enough of them to see a mistyped name by; a selection can hold hundreds.
+    constexpr std::size_t kNamed = 10;
     std::string names;
-    for (const auto& s : selected) names += (names.empty() ? "" : ", ") + s;
+    std::size_t n = 0;
+    for (const auto& s : selected) {
+      if (n++ == kNamed) break;
+      names += (names.empty() ? "" : ", ") + s;
+    }
+    if (selected.size() > kNamed) names += " and " + std::to_string(selected.size() - kNamed) + " more";
     return fail(ErrorKind::Config,
                 file + ": sample \"" + sample + "\" is not among the selected analyses (" + names + ")");
   }
@@ -293,7 +315,7 @@ std::string number(double value, int digits) {
 }
 
 // "<sample>: 2 analyses, Plateau Age 28.1234 ± 0.0412 Ma (1 sigma)", and the
-// submission's notes under it.
+// submission's notes under it, the age's description among them.
 void print_sample(std::ostream& out, const eb::Submission& s) {
   const std::size_t n = s.measurements.size();
   out << s.sample.name.value_or(s.datapoint_name) << ": " << n << (n == 1 ? " analysis, " : " analyses, ");
@@ -306,7 +328,10 @@ void print_sample(std::ostream& out, const eb::Submission& s) {
     out << "no age";
   }
   out << '\n';
-  for (const auto& note : s.notes) out << "  " << note << '\n';
+  // The mapping notes the sentence it wrote as the age's description: said
+  // to be that, it does not read as the age told a third time.
+  for (const auto& note : s.notes)
+    out << "  " << (age.description && note == *age.description ? "description: " : "") << note << '\n';
 }
 
 // The submissions of what `source` selects, one per sample; or, when there
@@ -378,11 +403,12 @@ bool is_help(const std::string& word) { return word == "help" || word == "--help
 
 int earthbank_command(const std::vector<std::string>& args, Io io) {
   if (args.empty()) return usage(io, "a subcommand is required");
-  if (is_help(args[0]) || (args.size() > 1 && is_help(args[1]))) {
+  const bool known = args[0] == "export-xlsx";
+  if (is_help(args[0]) || (known && args.size() > 1 && is_help(args[1]))) {
     io.out << kUsageText;
     return kOk;
   }
-  if (args[0] != "export-xlsx") return usage(io, "unknown subcommand '" + args[0] + "'");
+  if (!known) return usage(io, "unknown subcommand '" + args[0] + "'");
   auto parsed = parse({args.begin() + 1, args.end()});
   if (!parsed) return usage(io, parsed.error().what);
   // No exception leaves a library, but std::filesystem can throw: a fatal

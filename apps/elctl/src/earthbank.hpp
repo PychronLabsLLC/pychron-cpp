@@ -9,15 +9,16 @@
 //   elctl earthbank export-xlsx --db <url> [selection] --out <dir> [options]
 //
 // Selection and ages: the flags of `elctl export` (selection.hpp), parsed by
-// the same code, so a workbook holds the ages `export` reports for the same
-// words.
+// the same code. A submission is of a sample and at one sigma, so a workbook
+// holds the ages of `export --group-by sample --sigma 1` for the same words.
 //
 // Options:
 //   --per-sample         one Ar-Ar workbook per sample, not one for all
 //   --no-samples         no Sample workbook
 //   --check              say what the export would say and write nothing
 //                        (--out is then not needed)
-//   --templates <dir>    the service's two templates (default: the installed ones)
+//   --templates <dir>    the service's two templates (default: the directory
+//                        $PYCHRON_EARTHBANK_TEMPLATES names, else the installed ones)
 //   --overrides <file>   what the analyses cannot say, in TOML:
 //
 //       setup = "..."                 # the lab's analytical set-up, by its name on EarthBank
@@ -36,7 +37,7 @@
 //     selection does not hold, is an error naming it.
 //
 // Prints one line per sample (its analyses and the age reported) with the
-// submission's notes under it, then the files written, then the notes of the
+// submission's notes under it (the age's description as `description: ...`), then the files written, then the notes of the
 // export. A sample the mapping refuses stops the export: nothing is written
 // for any sample.
 //

@@ -28,6 +28,7 @@ TEST(ElctlEarthbank, StubWithoutPersistence) {
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -101,17 +102,32 @@ class ElctlEarthbank : public elctl::testing::StoreTest {
  protected:
   void SetUp() override {
     StoreTest::SetUp();
-    // The templates the source tree holds, whatever the environment says.
-#ifdef _WIN32
-    _putenv_s("PYCHRON_EARTHBANK_TEMPLATES", "");
-#else
-    unsetenv("PYCHRON_EARTHBANK_TEMPLATES");
-#endif
+    // The templates the source tree holds, whatever the environment says;
+    // what it said is put back afterwards.
+    if (const char* was = std::getenv(kTemplatesVariable)) templates_were_ = was;
+    set_templates_variable(std::nullopt);
     fused_ = *store_->add_sample(acq_, {.name = "S-FUS", .project = project_, .material = material_});
     unknown_at(4, fused_, "77001");
     ingest("77001", 1, -1, "unknown", "2026-10-03T09:00:00Z", 1200.0);
     ingest("77001", 2, -1, "unknown", "2026-10-03T09:30:00Z", 1210.0);
     out_ = path("out");
+  }
+
+  void TearDown() override {
+    set_templates_variable(templates_were_);
+    StoreTest::TearDown();
+  }
+
+  static void set_templates_variable(const std::optional<std::string>& value) {
+#ifdef _WIN32
+    _putenv_s(kTemplatesVariable, value ? value->c_str() : "");
+#else
+    if (value) {
+      setenv(kTemplatesVariable, value->c_str(), 1);
+    } else {
+      unsetenv(kTemplatesVariable);
+    }
+#endif
   }
 
   Outcome earthbank(std::vector<std::string> args) const {
@@ -129,6 +145,8 @@ class ElctlEarthbank : public elctl::testing::StoreTest {
     return path("overrides.toml").string();
   }
 
+  static constexpr const char* kTemplatesVariable = "PYCHRON_EARTHBANK_TEMPLATES";
+  std::optional<std::string> templates_were_;
   ps::Uuid fused_;
   fs::path out_;
 };
@@ -144,6 +162,17 @@ TEST_F(ElctlEarthbank, HelpNamesTheCommandAndTheOverrides) {
     EXPECT_EQ(help.err, "");
   }
   EXPECT_TRUE(contains(run_raw({"help"}).out, "earthbank export-xlsx"));
+  // Help is of a subcommand there is.
+  const Outcome frob = run_raw({"earthbank", "frob", "--help"});
+  EXPECT_EQ(frob.code, elctl::kUsage);
+  EXPECT_EQ(frob.out, "");
+  EXPECT_TRUE(contains(frob.err, "elctl earthbank: unknown subcommand 'frob'\n")) << frob.err;
+  // The ages are export's when export is asked the same thing, and the
+  // environment's templates come before the installed ones.
+  const std::string text = run_raw({"earthbank", "help"}).out;
+  EXPECT_TRUE(contains(text, "--group-by sample --sigma 1")) << text;
+  EXPECT_LT(text.find("$PYCHRON_EARTHBANK_TEMPLATES"), text.find("installed ones")) << text;
+  EXPECT_TRUE(contains(text, "UTC")) << text;
 }
 
 TEST_F(ElctlEarthbank, ExportXlsxWritesBothWorkbooks) {
@@ -182,6 +211,15 @@ TEST_F(ElctlEarthbank, ExportXlsxWritesBothWorkbooks) {
   EXPECT_TRUE(contains(o.out, " Ma (1 sigma)\n")) << o.out;
   EXPECT_TRUE(contains(o.out, "\n  preferred age: Total Gas Age")) << o.out;
   EXPECT_TRUE(contains(o.out, "\n  preferred age: Weighted Mean Age")) << o.out;
+  // The sentence that goes into the workbook as the age's description is
+  // said to be that, once per sample.
+  EXPECT_TRUE(contains(o.out, "\n  description: Total Gas Age of 2 of 2 analyses; ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "\n  description: Weighted Mean Age of 2 of 2 analyses; ")) << o.out;
+  EXPECT_FALSE(contains(o.out, "\n  Total Gas Age of 2 of 2 analyses")) << o.out;
+  const auto described = rows_of(arar[0], "ArArAgeSummary");
+  ASSERT_EQ(described.size(), 2u);
+  for (const auto& row : described)
+    EXPECT_TRUE(contains(o.out, "\n  description: " + at(row, "description") + "\n")) << at(row, "description");
   // A submission's notes come under its sample, before the files; the
   // export's notes once, after them.
   const auto wrote = o.out.find("wrote ");
@@ -224,7 +262,7 @@ TEST_F(ElctlEarthbank, PerSampleAndNoSamples) {
   EXPECT_EQ(missing.code, elctl::kUsage);
   EXPECT_TRUE(contains(missing.err, "elctl earthbank: ")) << missing.err;
   EXPECT_TRUE(contains(missing.err, "no-templates")) << missing.err;
-  EXPECT_TRUE(files_in(nowhere).empty());
+  EXPECT_FALSE(fs::exists(nowhere));
 }
 
 TEST_F(ElctlEarthbank, OverridesFileIsApplied) {
@@ -330,9 +368,45 @@ TEST_F(ElctlEarthbank, AnUnknownKeyOrSampleInOverridesIsRefused) {
   EXPECT_EQ(narrowed.code, elctl::kUsage);
   EXPECT_TRUE(contains(narrowed.err, "sample \"S-FUS\" is not among the selected analyses (FC-2)")) << narrowed.err;
 
+  // A file that is not there, and a path that is no file: neither is an
+  // empty set of overrides.
   const Outcome no_file = to_out({"--overrides", path("none.toml").string()});
   EXPECT_EQ(no_file.code, elctl::kUsage);
-  EXPECT_TRUE(contains(no_file.err, "none.toml")) << no_file.err;
+  EXPECT_EQ(no_file.err, "elctl earthbank: " + path("none.toml").string() + ": no such file\n");
+  fs::create_directories(path("overrides.d"));
+  for (const bool check : {false, true}) {
+    std::vector<std::string> args = {"--overrides", path("overrides.d").string()};
+    if (check) args.push_back("--check");
+    const Outcome directory = to_out(args);
+    EXPECT_EQ(directory.code, elctl::kUsage);
+    EXPECT_EQ(directory.err, "elctl earthbank: " + path("overrides.d").string() + ": not a file\n");
+    EXPECT_EQ(directory.out, "");
+    EXPECT_FALSE(fs::exists(out_));
+  }
+  // An empty file is a file: no overrides.
+  EXPECT_EQ(earthbank({"--check", "--overrides", overrides("")}).code, elctl::kOk);
+}
+
+// Twelve more samples: the message about a sample the selection has not
+// names ten of those it has and counts the rest.
+TEST_F(ElctlEarthbank, AnAbsentOverridesSampleListsAtMostTenOfThoseSelected) {
+  for (int i = 0; i < 12; ++i) {
+    const std::string n = std::to_string(10 + i);
+    const auto sample = *store_->add_sample(acq_, {.name = "M-" + n, .project = project_, .material = material_});
+    unknown_at(10 + i, sample, "780" + n);
+    ingest("780" + n, 1, -1, "unknown", "2026-10-05T09:" + n + ":00Z", 1200.0);
+  }
+  const std::string file = overrides("[samples.\"S-STEP\"]\ninterpretation = \"Eruption age\"\n");
+  const Outcome o = earthbank({"--check", "--overrides", file});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_EQ(o.err, "elctl earthbank: " + file +
+                       ": sample \"S-STEP\" is not among the selected analyses (FC-2, M-10, M-11, M-12, M-13, M-14, "
+                       "M-15, M-16, M-17, M-18 and 4 more)\n");
+  // Ten are ten: nothing more to count.
+  std::vector<std::string> args = {"--check", "--overrides", file};
+  for (int i = 10; i < 20; ++i) args.insert(args.end(), {"--sample", "M-" + std::to_string(i)});
+  const Outcome ten = earthbank(args);
+  EXPECT_TRUE(contains(ten.err, "(M-10, M-11, M-12, M-13, M-14, M-15, M-16, M-17, M-18, M-19)\n")) << ten.err;
 }
 
 // The mapping and the export name a setting where one would resolve what
@@ -348,16 +422,21 @@ TEST_F(ElctlEarthbank, EverySettingANoteNamesIsAKeyOfTheOverridesFile) {
     for (std::sregex_iterator it(text.begin(), text.end(), named_setting), end; it != end; ++it)
       settings.insert((*it)[1].str());
   }
-  // Those known when this was written; more may come, and are held to the same.
   for (const char* known : {"setup", "decay_constant", "air_ratio", "irradiation"})
     EXPECT_TRUE(settings.contains(known)) << known << " is no longer named in a note";
+  // The four known when this was written, and the one a refusal names;
+  // more may come, and are held to the same.
+  EXPECT_TRUE(settings.contains("preferred_age"));
   for (const auto& setting : settings) {
-    const Outcome top = earthbank({"--check", "--overrides", overrides(setting + " = \"x\"\n")});
-    const Outcome sample = earthbank({"--check", "--overrides", overrides("[samples.\"FC-2\"]\n" + setting + " = \"x\"\n")});
-    EXPECT_TRUE(top.code == elctl::kOk || sample.code == elctl::kOk)
-        << "`" << setting << "` is named in a note and is not a key of the overrides file:\n"
-        << top.err << sample.err;
-    EXPECT_NE(top.code == elctl::kOk, sample.code == elctl::kOk) << setting << " is a key in both places";
+    // A key that is known is not said to be unknown, whatever is made of the
+    // value `x`.
+    const auto known = [&](const std::string& text) {
+      return !contains(earthbank({"--check", "--overrides", overrides(text)}).err, "unknown key '");
+    };
+    const bool top = known(setting + " = \"x\"\n");
+    const bool sample = known("[samples.\"FC-2\"]\n" + setting + " = \"x\"\n");
+    EXPECT_TRUE(top || sample) << "`" << setting << "` is named in a note and is not a key of the overrides file";
+    EXPECT_NE(top, sample) << setting << " is a key in both places";
   }
   // And the notes of this store say those names.
   const Outcome o = earthbank({"--check"});
@@ -393,6 +472,9 @@ TEST_F(ElctlEarthbank, UsageErrorsExitTwo) {
   usage({"export-xlsx", "--db", db_, "--out", out_.string(), "--frob", "1"}, "unknown flag '--frob'");
   usage({"export-xlsx", "--db", db_, "--out", out_.string(), "stray"}, "unexpected argument 'stray'");
   usage({"export-xlsx", "--db", db_, "--out"}, "--out needs a value");
+  // An empty word is not a file or a directory left to the default.
+  usage({"export-xlsx", "--db", db_, "--out", out_.string(), "--overrides", ""}, "--overrides needs a file");
+  usage({"export-xlsx", "--db", db_, "--out", out_.string(), "--templates", ""}, "--templates needs a directory");
   // `export`'s own flags that are not about selection or ages are not this command's.
   usage({"export-xlsx", "--db", db_, "--out", out_.string(), "--sigma", "1"}, "unknown flag '--sigma'");
   // The shared flags say what they say for `export`.
@@ -468,8 +550,7 @@ TEST_F(ElctlEarthbank, ARefusalNamesTheSampleAndWhatResolvesIt) {
   const Outcome o = to_out();
   EXPECT_EQ(o.code, elctl::kUsage);
   EXPECT_TRUE(contains(o.err, "elctl earthbank: sample \"FC-2\": ")) << o.err;
-  EXPECT_TRUE(contains(o.err, "preferred age")) << o.err;
-  EXPECT_TRUE(contains(o.err, "weighted_mean, integrated or isochron")) << o.err;
+  EXPECT_TRUE(contains(o.err, "`preferred_age` setting to weighted_mean, integrated or isochron")) << o.err;
   EXPECT_FALSE(fs::exists(out_));
 
   const Outcome chosen = to_out({"--overrides", overrides("[samples.\"FC-2\"]\npreferred_age = \"weighted_mean\"\n")});
@@ -494,7 +575,9 @@ TEST_F(ElctlEarthbank, TheAgesAreThoseExportReports) {
     Both b;
     flags.insert(flags.begin(), {"--sample", "FC-2"});
     const fs::path json = path("report" + std::to_string(++run) + ".json");
-    std::vector<std::string> report_args = {"export", "--db", db_, "--out", json.string(), "--sigma", "1"};
+    // A submission is of a sample and at one sigma: export is asked the same.
+    std::vector<std::string> report_args = {"export", "--db", db_,      "--out", json.string(),
+                                            "--group-by", "sample", "--sigma", "1"};
     report_args.insert(report_args.end(), flags.begin(), flags.end());
     const Outcome reported = run_raw(report_args);
     EXPECT_EQ(reported.code, elctl::kOk) << reported.err;

@@ -807,7 +807,7 @@ workbooks, and **you import the workbooks by hand on the service's website**.
 Each sample becomes one data point with the one age reported for it.
 
 Files written into `--out` (made if it is not there; nothing is ever
-overwritten):
+overwritten). The time in a file name is UTC:
 
 | File | Holds |
 |---|---|
@@ -819,9 +819,11 @@ overwritten):
 `--to`, `--include-invalid`, `--limit`.
 
 **Ages** are made as `export` makes them, by the same flags: `--constants`,
-`--decay-error`, `--plateau`, `--plateau-steps`, `--plateau-gas`. The ages in a
-workbook are the ages `elctl export` reports for the same selection and flags.
-A workbook is always at one sigma.
+`--decay-error`, `--plateau`, `--plateau-steps`, `--plateau-gas`. A workbook is
+of samples and always at one sigma, so a sample's age and uncertainty in it are
+those of `elctl export --group-by sample --sigma 1` with the same selection and
+flags. `export`'s own defaults differ: it groups step-heated analyses by
+aliquot and reports at two sigma.
 
 **Options:**
 
@@ -831,7 +833,7 @@ A workbook is always at one sigma.
 | `--per-sample` | One Ar-Ar workbook per sample, not one for all. |
 | `--no-samples` | No Sample workbook. |
 | `--check` | Print what the export would print and write nothing. |
-| `--templates DIR` | The directory holding the service's two templates. Default: the ones installed with Pychron, or the directory the environment variable `PYCHRON_EARTHBANK_TEMPLATES` names. |
+| `--templates DIR` | The directory holding the service's two templates. Default: the directory the environment variable `PYCHRON_EARTHBANK_TEMPLATES` names; when it is not set, the ones installed with Pychron. |
 | `--overrides FILE.toml` | What the analyses cannot say; see below. |
 
 **The age reported for a sample.** A sample with heating steps reports its
@@ -842,7 +844,7 @@ left to the rule: the command stops and asks for a `preferred_age`.
 
 **The overrides file** is TOML. Every key may be left out. A key that is not in
 this table, or a sample that is not among the selected analyses, is an error
-naming it.
+naming it. So is a path that is not a file.
 
 ```toml
 setup = "Example Lab ARGUS VI"
@@ -872,7 +874,8 @@ irradiation = "NM-300"
 | `irradiation` | The irradiation batch, by its name on EarthBank. | The irradiation the analyses name. |
 
 **What is printed.** One line per sample (its analyses and the age reported)
-with the notes about it under it, then `wrote <file>` for each workbook, then
+with the notes about it under it (the sentence written as the age's
+description is shown as `description: ...`), then `wrote <file>` for each workbook, then
 `note:` lines about the workbooks: a value that is not in a list of the
 template, a column the template marks Required that a row leaves empty. Read
 the notes before importing; several name the key of the overrides file that

@@ -59,7 +59,7 @@ class StoreTest : public ElctlTest {
     ms_ = *store_->add_mass_spectrometer(acq_, {"jan", "argus", "j", std::nullopt});
     irr_ = *store_->add_irradiation(acq_, "NM-300");
     level_ = *store_->add_level(acq_, {irr_, "A", std::nullopt, 0.5, std::nullopt, std::nullopt});
-    const auto pi = *store_->add_principal_investigator(acq_, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt});
+    const auto pi = *store_->add_principal_investigator(acq_, {"Doe", "A", std::nullopt, std::nullopt, std::nullopt});
     project_ = *store_->add_project(acq_, {"Fish Canyon", pi, std::nullopt});
     material_ = *store_->add_material(acq_, {"sanidine", "60-80", std::nullopt});
     sample_ = *store_->add_sample(acq_, {.name = "FC-2",
@@ -130,7 +130,7 @@ class StoreTest : public ElctlTest {
     a.extract_device = "co2";
     a.extraction.extract_value = 4.5;
     a.extraction.extract_units = "W";
-    a.analyst = "jross";
+    a.analyst = "adoe";
     for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"})
       a.isotopes.push_back({iso, std::string(iso) == "Ar40" ? "H1" : "AX", "fA", std::nullopt, std::nullopt, std::nullopt});
     a.detectors = {{"H1", 12.0, 1.02}, {"AX", 0.0, std::nullopt}};

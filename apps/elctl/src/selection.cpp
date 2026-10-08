@@ -39,6 +39,13 @@ std::optional<double> parse_date(const std::string& text) {
   return static_cast<double>(sys_days{ymd}.time_since_epoch().count()) * 86400.0;
 }
 
+std::optional<double> parse_double(const std::string& text) {
+  double value = 0;
+  char rest = 0;
+  if (std::sscanf(text.c_str(), "%lf%c", &value, &rest) != 1) return std::nullopt;
+  return value;
+}
+
 // The value of the flag at `args[i]`, which every flag but a switch has.
 Result<const std::string*> value_of(const std::vector<std::string>& args, std::size_t& i) {
   if (i + 1 >= args.size()) return fail(ErrorKind::Config, args[i] + " needs a value");
@@ -51,13 +58,6 @@ std::optional<int> parse_int(const std::string& text) {
   int value = 0;
   char rest = 0;
   if (std::sscanf(text.c_str(), "%d%c", &value, &rest) != 1) return std::nullopt;
-  return value;
-}
-
-std::optional<double> parse_double(const std::string& text) {
-  double value = 0;
-  char rest = 0;
-  if (std::sscanf(text.c_str(), "%lf%c", &value, &rest) != 1) return std::nullopt;
   return value;
 }
 
