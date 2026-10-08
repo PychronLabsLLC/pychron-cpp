@@ -58,9 +58,30 @@ HttpRequest get(const Session& session, std::string_view path) {
 // The sentence for an answer, as a caller gets it: there is no way to it but
 // through a session, which keeps its secrets out of it.
 std::string said(const Session& session, int status, std::string_view body, std::string_view path,
-                 std::string_view record) {
-  return session.failure(HttpResponse{status, std::string(body)}, path, record).what;
+                 std::string_view record, std::string_view method = "GET") {
+  return session.failure(HttpResponse{status, std::string(body)}, method, path, record).what;
 }
+
+// Passes every request on, with a change to its URL: a service that does not
+// do with `page` and `size` what the fake does.
+class Rewriting final : public IHttpClient {
+ public:
+  Rewriting(IHttpClient& next, std::string from, std::string to)
+      : next_(next), from_(std::move(from)), to_(std::move(to)) {}
+  Result<HttpResponse> send(const HttpRequest& request) override {
+    HttpRequest changed = request;
+    if (const std::size_t at = changed.url.find(from_); at != std::string::npos) {
+      // Up to the next parameter.
+      const std::size_t end = changed.url.find('&', at);
+      changed.url.replace(at, end == std::string::npos ? std::string::npos : end - at, to_);
+    }
+    return next_.send(changed);
+  }
+
+ private:
+  IHttpClient& next_;
+  std::string from_, to_;
+};
 
 // The sample wrapper as the service takes it (the fake's own tests).
 json sample_body(std::int64_t package, const std::string& name) {
@@ -238,9 +259,56 @@ TEST(Session, ALoginThatCouldNotBeRenewedLeavesThe401) {
   ASSERT_TRUE(answer) << to_string(answer.error());
   EXPECT_EQ(answer->status, 401);
   EXPECT_EQ(s.bank.count("GET", "/api/account"), 1u);
+  // What is said of it is not that the password is wrong: nobody refused it.
+  const Error stale = s.session.failure(*answer, "GET", "/api/account", "");
+  EXPECT_EQ(stale.code, kLoginRejected);
+  EXPECT_EQ(stale.what, "EarthBank no longer takes this session's login, and it could not be renewed: the service did "
+                        "not answer the new sign-in. Nothing was done (account); try again when EarthBank answers.");
+  EXPECT_FALSE(has(stale.what, "password")) << stale.what;
   // The password was not refused, so the next call tries once more.
   EXPECT_TRUE(s.session.signed_in());
   EXPECT_TRUE(s.session.account());
+
+  // The same through a call of the session's own, and when the new sign-in
+  // was answered with a fault.
+  s.bank.expire_tokens();
+  s.bank.refuse_next("POST", "/api/authenticate");
+  const auto unreached = s.session.packages(std::nullopt);
+  ASSERT_FALSE(unreached);
+  EXPECT_EQ(unreached.error().what,
+            "EarthBank no longer takes this session's login, and it could not be renewed: the service did not answer "
+            "the new sign-in. Nothing was done (data package); try again when EarthBank answers.");
+  s.bank.fail_next("POST", "/api/authenticate", 503, "");
+  const auto faulty = s.session.account();
+  ASSERT_FALSE(faulty);
+  EXPECT_EQ(faulty.error().what,
+            "EarthBank no longer takes this session's login, and it could not be renewed: the service failed at the "
+            "new sign-in. Nothing was done (account); try again when EarthBank answers.");
+  EXPECT_TRUE(s.session.signed_in());
+  // It is said of that call only: a 401 after a good renewal is the login's.
+  s.bank.fail_next("GET", "/api/account", 401, std::string(kUnauthorized));
+  s.bank.fail_next("GET", "/api/account", 401, std::string(kUnauthorized));
+  const auto twice = s.session.account();
+  ASSERT_FALSE(twice);
+  EXPECT_TRUE(has(twice.error().what, "Check the user name and the password")) << twice.error().what;
+  EXPECT_TRUE(s.bank.pending().empty());
+}
+
+// A renewal the service forbids ends the session as one it refuses does.
+TEST(Session, ARenewalThatIsForbiddenEndsTheSession) {
+  SignedIn s;
+  s.bank.expire_tokens();
+  s.bank.fail_next("POST", "/api/authenticate", 403, "");
+  const auto account = s.session.account();
+  ASSERT_FALSE(account);
+  EXPECT_EQ(account.error().code, kLoginRejected);
+  EXPECT_FALSE(s.session.signed_in());
+  // At the login itself a 403 has its code and the login's words.
+  s.bank.fail_next("POST", "/api/authenticate", 403, "");
+  const auto in = s.session.sign_in(s.bank.login(), s.bank.password());
+  ASSERT_FALSE(in);
+  EXPECT_EQ(in.error().code, kForbidden);
+  EXPECT_EQ(in.error().what, "EarthBank did not accept the user name and password.");
 }
 
 TEST(Session, SendPassesAnswersAndErrorsThrough) {
@@ -315,7 +383,7 @@ TEST(Session, PackagesByInstitution) {
   EXPECT_EQ((*mine)[1].name, "Example Lab archive");
   EXPECT_EQ((*mine)[2].name, "Example Lab shared");
 
-  const LoggedRequest asked = s.bank.requests().back();
+  const LoggedRequest asked = s.bank.requests()[1];
   EXPECT_EQ(asked.path, "/api/management/data-packages");
   EXPECT_EQ(asked.param("institutionId.equals"), "9301");
   EXPECT_EQ(asked.param("sort"), "name,ASC");
@@ -335,9 +403,39 @@ TEST(Session, EveryPackageIsListedHoweverMany) {
   ASSERT_EQ(many->size(), 1203u);
   EXPECT_EQ(many->front().name, "Bulk 10000");
   EXPECT_EQ(many->back().name, "Bulk 11202");
-  // Page after page, until one comes short.
-  EXPECT_EQ(s.bank.count("GET", "/api/management/data-packages"), 3u);
-  EXPECT_EQ(s.bank.requests().back().param("page"), "2");
+  // Page after page, until one comes empty.
+  EXPECT_EQ(s.bank.count("GET", "/api/management/data-packages"), 4u);
+  EXPECT_EQ(s.bank.requests().back().param("page"), "3");
+}
+
+// A short page is not the last: a service may give fewer rows a page than it
+// was asked for. Only an empty one ends the list.
+TEST(Session, AShortPageOfPackagesIsNotTheLast) {
+  FakeEarthBank bank;
+  Rewriting capped(bank, "size=500", "size=3");
+  Session session(capped, bank.base_url());
+  ASSERT_TRUE(session.sign_in(bank.login(), bank.password()));
+  for (int i = 0; i < 7; ++i) bank.add_package("Bulk " + std::to_string(i), false, 9400);
+  const auto all = session.packages(9400);
+  ASSERT_TRUE(all) << to_string(all.error());
+  ASSERT_EQ(all->size(), 7u);
+  EXPECT_EQ(all->back().name, "Bulk 6");
+  // 3, 3, 1, 0.
+  EXPECT_EQ(bank.count("GET", "/api/management/data-packages"), 4u);
+}
+
+// A service that gives the same page whatever page is asked for is not read
+// for ever, and what it gave is not taken for the list.
+TEST(Session, APackageListThatDoesNotEndIsAnError) {
+  FakeEarthBank bank;
+  Rewriting stuck(bank, "page=", "page=0");
+  Session session(stuck, bank.base_url());
+  ASSERT_TRUE(session.sign_in(bank.login(), bank.password()));
+  const auto all = session.packages(std::nullopt);
+  ASSERT_FALSE(all);
+  EXPECT_EQ(all.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(all.error().what, "EarthBank's list of data packages did not end after 200 pages; it was not read.");
+  EXPECT_EQ(bank.count("GET", "/api/management/data-packages"), 200u);
 }
 
 TEST(Session, APackageRowIsReadWhereverItsFieldsAre) {
@@ -428,6 +526,29 @@ TEST(Session, ANewPackagesIdIsReadWhereverItIs) {
   ASSERT_TRUE(flat) << to_string(flat.error());
   EXPECT_EQ(flat->id, 77);
   EXPECT_EQ(flat->name, "Flat answer");
+
+  // The trap of the flat body, should the service ever spring it on a nested
+  // one: a package was made, and under a name that was not asked for. That is
+  // no success, and the message says where the package is.
+  s.bank.fail_next("POST", "/api/management/data-packages", 201, R"({"dataPackageDTO":{"id":88,"name":"Data Package 88"}})");
+  const auto renamed = s.session.create_package("Asked for", std::nullopt);
+  ASSERT_FALSE(renamed);
+  EXPECT_EQ(renamed.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(renamed.error().code, kPackageMisnamed);
+  EXPECT_EQ(renamed.error().what,
+            "EarthBank made a data package, but named it 'Data Package 88' and not 'Asked for' (its id is 88). Rename "
+            "it on EarthBank or use it as it is; do not make another.");
+  // The spaces around a name are not a difference, and the case of it is.
+  s.bank.fail_next("POST", "/api/management/data-packages", 201, R"({"id":89,"name":" Asked for "})");
+  EXPECT_TRUE(s.session.create_package("  Asked for", std::nullopt));
+  s.bank.fail_next("POST", "/api/management/data-packages", 201, R"({"id":90,"name":"asked for"})");
+  EXPECT_EQ(s.session.create_package("Asked for", std::nullopt).error().code, kPackageMisnamed);
+  // An answer that names the package by its id alone does not say.
+  s.bank.fail_next("POST", "/api/management/data-packages", 201, R"({"id":91})");
+  const auto unnamed = s.session.create_package("Asked for", std::nullopt);
+  ASSERT_TRUE(unnamed) << to_string(unnamed.error());
+  EXPECT_EQ(unnamed->id, 91);
+  EXPECT_EQ(unnamed->name, "");
 
   // A 2xx that names no id: something may have been made, and the message
   // must not send the user off to make another.
@@ -541,9 +662,9 @@ TEST(Session, NoTokenInAnyErrorOrLog) {
         // What a caller of send() makes of a failure, as the lookup does.
         if (!r) {
           note(r.error());
-          note(session.failure(r.error(), "/api/core/l-sample-kinds", "", false));
+          note(session.failure(r.error(), "GET", "/api/core/l-sample-kinds", ""));
         } else if (r->status != 200) {
-          note(session.failure(*r, "/api/core/l-sample-kinds", ""));
+          note(session.failure(*r, "GET", "/api/core/l-sample-kinds", ""));
         }
         break;
       }
@@ -552,9 +673,9 @@ TEST(Session, NoTokenInAnyErrorOrLog) {
         // And as the upload will.
         if (!r) {
           note(r.error());
-          note(session.failure(r.error(), "/api/arar/ArArMeasurement", "measurement 20001-01A", true));
+          note(session.failure(r.error(), "POST", "/api/arar/ArArMeasurement", "measurement 20001-01A"));
         } else if (r->status != 200) {
-          note(session.failure(*r, "/api/arar/ArArMeasurement", "measurement 20001-01A"));
+          note(session.failure(*r, "POST", "/api/arar/ArArMeasurement", "measurement 20001-01A"));
         }
       }
     }
@@ -679,13 +800,13 @@ TEST(Session, ASecretIsTakenOutBeforeTheReasonIsCut) {
     FakeEarthBank bank(with_password("login"));
     Session session(bank, bank.base_url());
     ASSERT_TRUE(session.sign_in(bank.login(), "login"));
-    const Error quiet = session.failure(HttpResponse{401, ""}, "/api/arar/ArArAliquot", "");
+    const Error quiet = session.failure(HttpResponse{401, ""}, "POST", "/api/arar/ArArAliquot", "");
     EXPECT_TRUE(has(quiet.what, "login")) << quiet.what;
     EXPECT_FALSE(has(quiet.what, "<redacted>")) << quiet.what;
     // Nor does the caller's word for the record show it.
-    const Error named = session.failure(HttpResponse{418, ""}, "/api/x", "the login sheet");
+    const Error named = session.failure(HttpResponse{418, ""}, "GET", "/api/x", "the login sheet");
     EXPECT_EQ(named.what, "EarthBank refused the the login sheet (HTTP 418).");
-    const Error echoed = session.failure(HttpResponse{400, R"({"detail":"bad login given"})"}, "/api/authenticate", "");
+    const Error echoed = session.failure(HttpResponse{400, R"({"detail":"bad login given"})"}, "POST", "/api/authenticate", "");
     EXPECT_EQ(echoed.what, "EarthBank refused the login: bad <redacted> given");
   }
   {
@@ -695,7 +816,7 @@ TEST(Session, ASecretIsTakenOutBeforeTheReasonIsCut) {
     Session session(spy, bank.base_url());
     ASSERT_TRUE(session.sign_in(bank.login(), "red"));
     const std::string body = json{{"detail", "red and " + spy.token() + " and red"}}.dump();
-    EXPECT_EQ(session.failure(HttpResponse{400, body}, "/api/x", "").what,
+    EXPECT_EQ(session.failure(HttpResponse{400, body}, "GET", "/api/x", "").what,
               "EarthBank refused the request: <redacted> and <redacted> and <redacted>");
   }
 }
@@ -709,28 +830,183 @@ TEST(Session, AFailedSendAsAnError) {
   ASSERT_TRUE(session.sign_in(s.bank.login(), s.bank.password()));
   const std::string body = R"({"detail":"no room for )" + spy.token() + R"("})";
 
-  const Error refused = session.failure(HttpResponse{400, body}, "/api/arar/ArArAliquot", "aliquot 20001-01");
+  const Error refused = session.failure(HttpResponse{400, body}, "POST", "/api/arar/ArArAliquot", "aliquot 20001-01");
   EXPECT_EQ(refused.kind, ErrorKind::Protocol);
   EXPECT_EQ(refused.code, kRefused);
   EXPECT_EQ(refused.what, "EarthBank refused the aliquot 20001-01: no room for <redacted>");
-  const Error login = session.failure(HttpResponse{403, ""}, "/api/arar/ArArAliquot", "");
+  const Error login = session.failure(HttpResponse{401, ""}, "POST", "/api/arar/ArArAliquot", "");
   EXPECT_EQ(login.kind, ErrorKind::NotConnected);
   EXPECT_EQ(login.code, kLoginRejected);
+  // A 403 is not the login's fault: the account may not do this.
+  const Error forbidden = session.failure(HttpResponse{403, ""}, "POST", "/api/arar/ArArAliquot", "aliquot 20001-01");
+  EXPECT_EQ(forbidden.kind, ErrorKind::Protocol);
+  EXPECT_EQ(forbidden.code, kForbidden);
+  EXPECT_EQ(forbidden.what, "EarthBank does not let this account do this (aliquot 20001-01). The login was taken; "
+                            "what the account lacks is the right to it.");
 
   Error timeout{ErrorKind::Timeout, "no answer to POST /api/arar/ArArAliquot within 30000 ms", ""};
-  const Error doubt = session.failure(timeout, "/api/arar/ArArAliquot", "aliquot 20001-01", true);
+  const Error doubt = session.failure(timeout, "POST", "/api/arar/ArArAliquot", "aliquot 20001-01");
   EXPECT_EQ(doubt.kind, ErrorKind::Timeout);
   EXPECT_TRUE(doubt.code.empty());
   EXPECT_TRUE(request_may_have_arrived(doubt));
   EXPECT_EQ(doubt.what, Session::sentence(timeout, "/api/arar/ArArAliquot", "aliquot 20001-01", true));
+  EXPECT_EQ(session.failure(timeout, "GET", "/api/arar/ArArAliquot", "aliquot 20001-01").what,
+            Session::sentence(timeout, "/api/arar/ArArAliquot", "aliquot 20001-01", false));
   Error unsent{ErrorKind::Io, "connection refused", ""};
   unsent.code = std::string(kHttpNotSent);
-  const Error never = session.failure(unsent, "/api/arar/ArArAliquot", "", true);
+  const Error never = session.failure(unsent, "POST", "/api/arar/ArArAliquot", "");
   EXPECT_EQ(never.code, kHttpNotSent);
   EXPECT_FALSE(request_may_have_arrived(never));
   // An Error that is already an answer's keeps its sentence.
-  EXPECT_EQ(session.failure(refused, "/api/x", "", true).what, refused.what);
-  EXPECT_EQ(session.failure(refused, "/api/x", "", true).code, kRefused);
+  for (const Error& answered : {refused, login, forbidden}) {
+    EXPECT_EQ(session.failure(answered, "POST", "/api/x", "").what, answered.what);
+    EXPECT_EQ(session.failure(answered, "POST", "/api/x", "").code, answered.code);
+  }
+
+  // What is a write: anything that is not a question.
+  for (const char* method : {"POST", "PUT", "DELETE", "PATCH", "post"}) EXPECT_TRUE(is_write(method)) << method;
+  for (const char* method : {"GET", "HEAD", "OPTIONS", "get"}) EXPECT_FALSE(is_write(method)) << method;
+}
+
+// A 5xx to a write that is neither of the two the service is known to mean
+// something by (a package that cannot be written to, a value it does not
+// know) says nothing of whether the record was saved: a gateway may answer
+// 502 or 504 for a service that went on and saved it. It is in doubt, with a
+// code of its own, and no word sends the user to try again blind.
+TEST(Session, AGatewayAnswerToAWriteIsInDoubt) {
+  SignedIn s;
+  const json record = {{"arArDataPointId", 1}};
+  const auto after = [&](const char* method, int status, const std::string& body) {
+    s.bank.fail_next(method, "/api/arar/ArArMeasurement", status, body);
+    HttpRequest request = post(s.session, "/api/arar/ArArMeasurement", record);
+    request.method = method;
+    const auto answer = s.session.send(request, true);
+    if (!answer) throw std::runtime_error(to_string(answer.error()));
+    EXPECT_EQ(answer->status, status);
+    return s.session.failure(*answer, method, "/api/arar/ArArMeasurement", "measurement 20001-01A");
+  };
+  for (const auto& [status, body] :
+       {std::pair<int, std::string>{502, "<html>Bad Gateway</html>"},
+        {503, ""},
+        {504, R"({"title":"Gateway Timeout"})"},
+        {500, R"({"title":"Internal Server Error","detail":"something went wrong"})"},
+        {500, ""}}) {
+    for (const char* method : {"POST", "PUT", "DELETE"}) {
+      const Error doubt = after(method, status, body);
+      EXPECT_EQ(doubt.code, kInDoubt) << method << " " << status;
+      EXPECT_EQ(doubt.kind, ErrorKind::Protocol);
+      EXPECT_TRUE(request_may_have_arrived(doubt));
+      EXPECT_EQ(doubt.what, "EarthBank failed on its own side at the measurement 20001-01A (HTTP " + std::to_string(status) +
+                                "); the measurement 20001-01A may or may not have been saved. Look for it on EarthBank "
+                                "before it is sent again.");
+      for (const char* blind : {"try again", "Try again", "retry", "Retry", "re-run", "again later"}) {
+        EXPECT_FALSE(has(doubt.what, blind)) << doubt.what;
+      }
+      // Its sentence is kept, as any answer's.
+      EXPECT_EQ(s.session.failure(doubt, method, "/api/x", "").what, doubt.what);
+    }
+    // To a question the same answer is a refusal: nothing was at stake, and
+    // it may be asked again.
+    const Error asked = after("GET", status, body);
+    EXPECT_EQ(asked.code, kRefused) << status;
+    EXPECT_EQ(asked.what, "EarthBank failed on its own side at the measurement 20001-01A (HTTP " + std::to_string(status) +
+                              "). Try again later; if it goes on, tell EarthBank's support.");
+  }
+  // The two 5xx that are answers: nothing was saved.
+  for (const char* body : {R"({"title":"Package is not writable by user."})",
+                           R"({"detail":"violates foreign key constraint \"fk_measurement_plateau_step_id\""})"}) {
+    for (const int status : {500, 502}) {
+      const Error refused = after("POST", status, body);
+      EXPECT_EQ(refused.code, kRefused) << status << " " << body;
+      EXPECT_FALSE(has(refused.what, "may or may not")) << refused.what;
+    }
+  }
+  // A status below 500 is an answer whatever the method.
+  EXPECT_EQ(after("POST", 400, "").code, kRefused);
+  EXPECT_EQ(after("POST", 404, "").code, kRefused);
+  EXPECT_TRUE(s.bank.pending().empty());
+
+  // A package whose making was answered so may be there.
+  s.bank.fail_next("POST", "/api/management/data-packages", 502, "");
+  const auto made = s.session.create_package("Behind a gateway", std::nullopt);
+  ASSERT_FALSE(made);
+  EXPECT_EQ(made.error().code, kInDoubt);
+  EXPECT_EQ(made.error().what, "EarthBank failed on its own side at the data package 'Behind a gateway' (HTTP 502); the "
+                               "data package 'Behind a gateway' may or may not have been saved. Look for it on "
+                               "EarthBank before it is sent again.");
+  // A login is a POST and writes nothing.
+  s.bank.fail_next("POST", "/api/authenticate", 502, "");
+  const auto in = s.session.sign_in(s.bank.login(), s.bank.password());
+  ASSERT_FALSE(in);
+  EXPECT_EQ(in.error().code, kRefused);
+  EXPECT_FALSE(has(in.error().what, "may or may not")) << in.error().what;
+}
+
+// The bearer goes to the profile's service and to no other: a request that
+// is not under the base URL is not sent, with a login or without.
+TEST(Session, ARequestToAnotherHostIsNotSent) {
+  SignedIn s;
+  const std::size_t sent = s.bank.requests().size();
+  for (const char* url : {"https://earthbank.test.evil.example/api/account",  // the base URL is its beginning
+                          "https://earthbank.testing/api/account",
+                          "https://evil.example/api/account",
+                          "https://earthbank.test@evil.example/api/account",
+                          "https://user:pw@earthbank.test/api/account",
+                          "https://earthbank.test:8443/api/account",
+                          "http://earthbank.test/api/account",
+                          "https://earthbank.test\\@evil.example/api/account",
+                          "https://evil.example/https://earthbank.test/api/account",
+                          "//earthbank.test/api/account",
+                          "/api/account",
+                          "earthbank.test/api/account",
+                          ""}) {
+    for (const bool needs_login : {true, false}) {
+      HttpRequest request = get(s.session, "/api/account");
+      request.url = url;
+      const auto answer = s.session.send(request, needs_login);
+      ASSERT_FALSE(answer) << url;
+      EXPECT_EQ(answer.error().kind, ErrorKind::Config) << url;
+      EXPECT_FALSE(request_may_have_arrived(answer.error()));
+      EXPECT_FALSE(has(answer.error().what, "evil")) << answer.error().what;
+    }
+  }
+  EXPECT_EQ(s.bank.requests().size(), sent);
+  for (const char* url : {"https://earthbank.test/api/account", "https://earthbank.test/api/account?x=1#y"}) {
+    HttpRequest request = get(s.session, "/api/account");
+    request.url = url;
+    EXPECT_TRUE(s.session.send(request, true)) << url;
+  }
+  // The same service written another way is the same: the case of the scheme
+  // and the host, and the port that is the scheme's own.
+  for (const char* base : {"HTTPS://EarthBank.Test", "https://earthbank.test:443", "https://EARTHBANK.test:0443/"}) {
+    Session other(s.bank, base);
+    HttpRequest request = get(other, "/api/arar/AirRatio");
+    request.url = "https://earthbank.test/api/arar/AirRatio";
+    const auto answer = other.send(request, false);
+    ASSERT_TRUE(answer) << base << ": " << to_string(answer.error());
+    EXPECT_EQ(answer->status, 200) << base;
+  }
+
+  // A service kept under a path of its own: what is beside that path is not it.
+  Session under(s.bank, "https://earthbank.test/geochem/");
+  for (const char* url : {"https://earthbank.test/api/account", "https://earthbank.test/geochemistry/api/account",
+                          "https://earthbank.test/"}) {
+    HttpRequest request = get(under, "/api/account");
+    request.url = url;
+    const auto answer = under.send(request, false);
+    ASSERT_FALSE(answer) << url;
+    EXPECT_EQ(answer.error().kind, ErrorKind::Config) << url;
+  }
+  EXPECT_EQ(under.url("/api/account"), "https://earthbank.test/geochem/api/account");
+  // A base URL that is no address sends nothing at all.
+  for (const char* base : {"earthbank.test", "", "https://", "ftp:earthbank.test"}) {
+    Session lost(s.bank, base);
+    const auto answer = lost.send(get(lost, "/api/account"), false);
+    ASSERT_FALSE(answer) << base;
+    EXPECT_EQ(answer.error().kind, ErrorKind::Config) << base;
+    EXPECT_FALSE(lost.sign_in(s.bank.login(), s.bank.password())) << base;
+  }
+  EXPECT_EQ(s.bank.count("POST", "/api/authenticate"), 1u);
 }
 
 TEST(Session, TheLogSaysMethodPathAndStatus) {
@@ -743,17 +1019,24 @@ TEST(Session, TheLogSaysMethodPathAndStatus) {
   bank.fail_next("GET", "/api/account", 500, R"({"title":"Internal Server Error","detail":"the database is away"})");
   EXPECT_FALSE(session.account());
   bank.lose_next("GET", "/api/account");
-  EXPECT_FALSE(session.account());
+  const auto silent = session.account();
+  ASSERT_FALSE(silent);
+  EXPECT_FALSE(has(silent.error().what, "30000")) << silent.error().what;
   bank.refuse_next("GET", "/api/account");
-  EXPECT_FALSE(session.account());
+  const auto unreached = session.account();
+  ASSERT_FALSE(unreached);
+  EXPECT_FALSE(has(unreached.error().what, "connection refused")) << unreached.error().what;
   EXPECT_EQ(said, (std::vector<std::string>{
                       "POST /api/authenticate -> 200",
                       // Never the query: it holds names.
                       "GET /api/management/data-packages -> 200",
+                      "GET /api/management/data-packages -> 200",
                       // What the service said of a failure is for the log.
                       "GET /api/account -> 500: the database is away",
-                      "GET /api/account: no answer (timeout)",
-                      "GET /api/account: not sent (io)",
+                      // And what the client said of no answer: it is the log's
+                      // alone, and no part of the sentence the user reads.
+                      "GET /api/account: no answer (timeout): no answer to GET /api/account within 30000 ms",
+                      "GET /api/account: not sent (io): connection refused: GET /api/account",
                   }));
 }
 
@@ -793,9 +1076,10 @@ TEST(Session, Sentences) {
   EXPECT_EQ(said(s.session, 401, kUnauthorized, "/api/arar/ArArAliquot", "aliquot 20001-01"),
             "EarthBank refused the login (aliquot 20001-01). Check the user name and the password, and that the "
             "account has the right to do this.");
+  // A 403 is not a login refused: the account may not do the thing.
   EXPECT_EQ(said(s.session, 403, "", "/api/account", ""),
-            "EarthBank refused the login (account). Check the user name and the password, and that the account has "
-            "the right to do this.");
+            "EarthBank does not let this account do this (account). The login was taken; what the account lacks is "
+            "the right to it.");
 
   // "...could not find the upload service... check the Base URL...".
   const HttpResponse nowhere = answer_to(post(s.session, "/api/arar/NoSuchRecord", json::object()));
@@ -853,6 +1137,21 @@ TEST(Session, Sentences) {
   EXPECT_EQ(Session::partial_sentence("S-2", std::vector<std::string>{"age summary"}),
             "S-2 is only partly on EarthBank: its data point was saved and 1 record under it was not (age summary). "
             "Send it again to add what is missing.");
+
+  // A record that may or may not be there is not one to send again blind.
+  const std::vector<std::string> doubtful = {"measurement 20001-02B"};
+  EXPECT_EQ(Session::partial_sentence("S-2", missing, doubtful),
+            "S-2 is only partly on EarthBank: its data point was saved and 3 records under it were not (aliquot "
+            "20001-02, measurement 20001-02A, age summary); 1 more may or may not have been saved (measurement "
+            "20001-02B). Look for it on EarthBank before anything of S-2 is sent again.");
+  EXPECT_EQ(Session::partial_sentence("S-2", {}, std::vector<std::string>{"aliquot 20001-02", "age summary"}),
+            "S-2 may be only partly on EarthBank: its data point was saved and 2 records under it may or may not have "
+            "been saved (aliquot 20001-02, age summary). Look for them on EarthBank before anything of S-2 is sent "
+            "again.");
+  for (const std::string& sentence : {Session::partial_sentence("S-2", missing, doubtful),
+                                      Session::partial_sentence("S-2", {}, doubtful)}) {
+    EXPECT_FALSE(has(sentence, "Send it again")) << sentence;
+  }
 
   // "Could not reach EarthBank...": the request never left.
   s.bank.refuse_next("GET", "/api/account");

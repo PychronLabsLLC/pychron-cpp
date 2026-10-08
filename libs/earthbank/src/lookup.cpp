@@ -108,13 +108,13 @@ LookupResolver::Rows LookupResolver::ask(std::string_view endpoint, std::string_
   const Result<HttpResponse> answer = session_.send(std::move(request), false);
   Rows out;
   if (!answer) {
-    out.why = session_.failure(answer.error(), endpoint, "", false).what;
+    out.why = session_.failure(answer.error(), "GET", endpoint, "").what;
     return out;
   }
   if (answer->status < 200 || answer->status >= 300) {
     const bool wants_login = (answer->status == 401 || answer->status == 403) && !session_.signed_in();
     out.why = wants_login ? "EarthBank wants a login for this list."
-                          : session_.failure(*answer, endpoint, "").what;
+                          : session_.failure(*answer, "GET", endpoint, "").what;
     return out;
   }
   const json rows = json::parse(answer->body, nullptr, false);
