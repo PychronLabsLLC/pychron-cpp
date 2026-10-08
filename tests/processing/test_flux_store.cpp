@@ -1878,6 +1878,57 @@ TEST_P(FluxLevelStatus, NoMonitorsWhenNoPositionCarriesTheSample) {
   EXPECT_EQ(level_flux_status(sheet("B"), "unk"), LevelFluxStatus::NotFitted);
 }
 
+// (The fixture hides the struct of the same name in here: the results are `auto`.)
+class FluxHeadInfo : public FluxSaveLevel {};
+
+TEST_P(FluxHeadInfo, SaysWhoSavedAHoleAndWhen) {
+  // Nothing saved yet: there is no head to tell of.
+  auto none = flux_head_info(store(), "NM-300", "A", 7);
+  ASSERT_FALSE(none);
+  EXPECT_EQ(none.error().kind, ErrorKind::Config);
+  EXPECT_EQ(none.error().what, "flux: hole 7 of NM-300A has no saved flux");
+
+  const ps::Uuid first = save_flux(7, only_j(1.0e-3));
+  auto info = flux_head_info(store(), "NM-300", "A", 7);
+  ASSERT_TRUE(info) << to_string(info.error());
+  EXPECT_EQ(info->saved_by, "jsmith");
+  // The time of the head's changeset, to the second, without the T and the Z.
+  auto history = store().history(*object(7), ps::Kind::RefValue);
+  ASSERT_TRUE(history) << to_string(history.error());
+  ASSERT_EQ(history->size(), 1u);
+  EXPECT_EQ(history->front().uuid, first);
+  const std::string iso = history->front().changeset.created.iso();  // YYYY-MM-DDTHH:MM:SS.ffffffZ
+  EXPECT_EQ(info->saved_utc, iso.substr(0, 10) + " " + iso.substr(11, 8));
+  ASSERT_EQ(info->saved_utc.size(), 19u);
+  EXPECT_EQ(info->saved_utc[4], '-');
+  EXPECT_EQ(info->saved_utc[10], ' ');
+  EXPECT_EQ(info->saved_utc[13], ':');
+
+  // It is the head's author, not the first's: another user saves the hole.
+  auto other = store().ensure_user(actor().client, "mlee");
+  ASSERT_TRUE(other) << to_string(other.error());
+  auto moved = testing::seed_save_flux(store(), ps::Actor{*other, actor().client}, seeded(), 7, only_j(2.0e-3));
+  ASSERT_TRUE(moved) << to_string(moved.error());
+  info = flux_head_info(store(), "NM-300", "A", 7);
+  ASSERT_TRUE(info) << to_string(info.error());
+  EXPECT_EQ(info->saved_by, "mlee");
+  // Another hole, level and irradiation have their own, or none.
+  EXPECT_FALSE(flux_head_info(store(), "NM-300", "A", 8));
+  EXPECT_FALSE(flux_head_info(store(), "NM-300", "B", 7));
+  EXPECT_FALSE(flux_head_info(store(), "NM-999", "A", 7));
+
+  // The hole a save conflicted on is the one to ask about.
+  const LevelFit fit = fitted();  // loaded with mlee's head of hole 7
+  save_flux(7, only_j(3.0e-3));
+  const FluxSaveOutcome outcome = save(fit);
+  ASSERT_TRUE(outcome.conflict);
+  EXPECT_EQ(outcome.conflict_hole, 7);
+  info = flux_head_info(store(), fit.irradiation, fit.level, outcome.conflict_hole);
+  ASSERT_TRUE(info) << to_string(info.error());
+  EXPECT_EQ(info->saved_by, "jsmith");
+  EXPECT_EQ(FluxSaveOutcome{}.conflict_hole, 0);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, FluxMonitors, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxLoadLevel, ::testing::ValuesIn(testing::engines()),
@@ -1887,6 +1938,8 @@ INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveLevel, ::testing::ValuesIn(testing::en
 INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveSparseLevel, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxLevelStatus, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& p) { return p.param; });
+INSTANTIATE_TEST_SUITE_P(Engines, FluxHeadInfo, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 
 }  // namespace

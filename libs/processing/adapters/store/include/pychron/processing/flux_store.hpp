@@ -157,6 +157,7 @@ struct FluxSaveOutcome {
   int written = 0, unchanged = 0, skipped = 0;
   std::optional<persistence::Conflict> conflict;  // set: nothing was written
   std::string conflict_position;                  // "hole 7"
+  int conflict_hole = 0;                          // 7; 0 without a conflict
 };
 
 // What a position of a fit is saved as: the model's J, a monitor's own mean
@@ -181,5 +182,16 @@ persistence::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& 
 // zero or an error of one that is not finite and at least zero.
 Result<FluxSaveOutcome> save_level(persistence::IStore& store, const persistence::Actor& actor, const LevelFit& fit,
                                    const SaveSelection& selection, std::string_view software);
+
+// Who saved a position's flux last, for the line a save conflict is told with.
+struct FluxHeadInfo {
+  std::string saved_by;   // the user of the head revision's changeset
+  std::string saved_utc;  // "YYYY-MM-DD hh:mm:ss", UTC
+};
+
+// Of the head flux_position revision of a hole. Error (Config, "flux: ...")
+// for a hole that has no saved flux.
+Result<FluxHeadInfo> flux_head_info(persistence::IStore& store, std::string_view irradiation, std::string_view level,
+                                    int hole);
 
 }  // namespace pychron::processing

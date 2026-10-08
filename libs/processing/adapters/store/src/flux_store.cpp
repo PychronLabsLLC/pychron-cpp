@@ -465,10 +465,33 @@ Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, co
     }
     if (!out.conflict) return fail(ErrorKind::Protocol, "flux: the save conflicted on no position of the level");
     out.conflict_position = "hole " + std::to_string(first);
+    out.conflict_hole = first;
     return out;
   }
   out.written = static_cast<int>(staged.size());
   return out;
+}
+
+Result<FluxHeadInfo> flux_head_info(ps::IStore& store, std::string_view irradiation, std::string_view level, int hole) {
+  const std::string where = "hole " + std::to_string(hole) + " of " + std::string(irradiation) + std::string(level);
+  auto object = store.find_catalog_row(
+      ps::CatalogTable::RefObject,
+      {std::string("flux_position"), flux_key(std::string(irradiation), std::string(level), hole)});
+  if (!object) return fail(object.error());
+  if (!*object) return bad(where + " has no saved flux");
+  auto head = store.head(**object, ps::Kind::RefValue);
+  if (!head) return fail(head.error());
+  if (!*head) return bad(where + " has no saved flux");
+  auto history = store.history(**object, ps::Kind::RefValue);
+  if (!history) return fail(history.error());
+  for (const auto& revision : *history) {
+    if (revision.uuid != **head) continue;
+    // "YYYY-MM-DDTHH:MM:SS.ffffffZ" without the fraction.
+    std::string when = revision.changeset.created.iso().substr(0, 19);
+    if (when.size() > 10) when[10] = ' ';
+    return FluxHeadInfo{revision.author_name, std::move(when)};
+  }
+  return bad("the saved flux of " + where + " is not in its history");
 }
 
 }  // namespace pychron::processing

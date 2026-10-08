@@ -341,14 +341,10 @@ pp::FluxOptions resolve(const Args& a, const pp::LevelInputs& in) {
   return o;
 }
 
-// The author of the revision that moved a head, from its history.
-std::string author_of(ps::IStore& store, const ps::Conflict& conflict) {
-  if (!conflict.actual) return {};
-  auto history = store.history(conflict.subject, conflict.kind);
-  if (!history) return {};
-  for (const auto& revision : *history)
-    if (revision.uuid == *conflict.actual) return revision.author_name;
-  return {};
+// Who moved the head a save conflicted on; empty when that cannot be read.
+std::string author_of(ps::IStore& store, const pp::LevelFit& fit, const pp::FluxSaveOutcome& outcome) {
+  auto info = pp::flux_head_info(store, fit.irradiation, fit.level, outcome.conflict_hole);
+  return info ? info->saved_by : std::string();
 }
 
 struct Session {
@@ -397,7 +393,7 @@ struct Session {
     if (!a.save) return;
     auto saved = pp::save_level(store, *actor, *fitted, pp::SaveSelection{a.no_save}, software());
     if (!saved) return fail_level(saved.error());
-    io.out << format_flux_save(*saved, saved->conflict ? author_of(store, *saved->conflict) : std::string());
+    io.out << format_flux_save(*saved, saved->conflict ? author_of(store, *fitted, *saved) : std::string());
     if (saved->conflict) code = kFailed;
   }
 };

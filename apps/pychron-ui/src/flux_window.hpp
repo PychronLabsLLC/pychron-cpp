@@ -12,6 +12,9 @@
 // monitor group, which belongs to the level and reloads it, the presets, and
 // the options editor. Edits pending are asked about before they are left
 // behind (section 5.6).
+//
+// Save (section 5.5) writes the fit on show as one changeset, on the bridge's
+// worker like every store call (W10), and by save_level's rules alone (W11).
 
 #include <functional>
 #include <optional>
@@ -24,6 +27,7 @@
 #include <QStringList>
 
 #include "entry_bridge.hpp"
+#include "pychron/core/error.hpp"
 #include "pychron/processing/flux_fit.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -57,6 +61,7 @@ class FluxWindow : public QMainWindow {
   // destroy the bridge (which finishes them) before the source.
   FluxWindow(EntryBridge& bridge, processing::IAnalysisSource& source, processing::PresetStore& presets,
              QWidget* parent = nullptr);
+  ~FluxWindow() override;
 
   // How the window asks what to do with edits pending (tests answer without a
   // dialog); a message box with the three buttons by default.
@@ -108,6 +113,22 @@ class FluxWindow : public QMainWindow {
   QAction* reload_action() const noexcept { return reload_action_; }
   QAction* reset_omissions_action() const noexcept { return reset_action_; }
 
+  // Section 5.5. Asynchronous: the fit on show (a refit still pending is made
+  // first) is saved as one changeset, but for the positions whose Save box is
+  // unticked. Nothing happens without a fit, or while a level is read or saved.
+  void save();
+  void set_save(int hole, bool save);  // as a Save box
+  QAction* save_action() const noexcept { return save_action_; }
+  // The fit on show as flux_csv_rows writes it, under its header; an error
+  // without a fit and for a file that cannot be written.
+  Result<void> export_csv(const QString& path);
+  QAction* export_action() const noexcept { return export_action_; }
+  int loads_started() const noexcept { return loads_started_; }  // level reads asked of the store
+
+ Q_SIGNALS:
+  // The level's J was written (not: there was nothing to write).
+  void saved(const QString& irradiation, const QString& level);
+
  protected:
   void closeEvent(QCloseEvent* event) override;
 
@@ -130,8 +151,10 @@ class FluxWindow : public QMainWindow {
   void update_scene();
   void update_title();
   void set_status(const QString& text, bool error, const QStringList& warnings = {});
+  void say(const QString& text, bool error);      // in place of the status line, the warnings kept
+  void update_tooltip();
   void refresh_status();                          // the status with what follows it: changed elsewhere, edited
-  void set_tables_enabled(bool enabled);
+  void update_enabled();                          // what waits for a load or a save
   void update_actions();
   void restore_selection();                       // the row of selected_hole_, after a model was reset
 
@@ -140,12 +163,14 @@ class FluxWindow : public QMainWindow {
   // Runs `next` when nothing is pending or the user discards it; otherwise
   // `stay` (when given) puts back what the user had changed to get here.
   void leave(bool with_group, std::function<void()> next, const std::function<void()>& stay);
+  // Saves; `next` (when given) runs in place of the reload once the level was
+  // saved or had nothing to save, and not at all otherwise.
   void save_then(std::function<void()> next);
+  void export_asked();
 
   void options_changed();                         // values_ changed: resolve and refit
   void resolve_options();                         // values_ -> options_ or options_error_
   void show_preset();                             // the preset bar as the level was loaded
-  void set_save(int hole, bool save);
   void apply_skip();
 
   void set_monitor_sets(std::vector<processing::MonitorSet> sets, std::string default_set);
@@ -176,6 +201,9 @@ class FluxWindow : public QMainWindow {
   QComboBox* set_combo_ = nullptr;
   QLineEdit* sample_edit_ = nullptr;
   QCheckBox* all_box_ = nullptr;
+  QWidget* dock_host_ = nullptr;
+  QAction* save_action_ = nullptr;
+  QAction* export_action_ = nullptr;
   QAction* revert_action_ = nullptr;
   QAction* reload_action_ = nullptr;
   QAction* reset_action_ = nullptr;
@@ -219,6 +247,13 @@ class FluxWindow : public QMainWindow {
   bool syncing_ = false;    // the monitor group is being set: its signals are not the user's
   bool asking_ = false;     // the unsaved question is up (a line edit losing focus to it says "finished" again)
   bool loading_ = false;    // a level is being read
+  bool saving_ = false;     // a save is running
+  bool notifying_ = false;  // the bridge's changed() is this window's own, after its save
+  int loads_started_ = 0;
+  // What a save said, shown once the level it reloaded (load `note_generation_`) is fitted.
+  QString note_;
+  quint64 note_generation_ = 0;
+  QString tree_error_;      // the last tree read failed with this
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept
   bool status_error_ = false;
   QString status_text_;     // the status without what refresh_status() adds
