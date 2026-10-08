@@ -11,6 +11,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCompleter>
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -42,6 +43,17 @@ QString swatch_style(const QString& color) {
   if (color.isEmpty()) return QStringLiteral("QPushButton { text-align: left; }");
   return QStringLiteral("QPushButton { background: %1; color: %2; text-align: left; }")
       .arg(color, QColor(color).lightness() < 128 ? QStringLiteral("white") : QStringLiteral("black"));
+}
+
+// The families a figure can be drawn in, without the system's private ones.
+const QStringList& font_families() {
+  static const QStringList families = [] {
+    QStringList out;
+    for (const QString& family : QFontDatabase::families())
+      if (!QFontDatabase::isPrivateFamily(family)) out << family;
+    return out;
+  }();
+  return families;
 }
 
 // "key == value", "key != value" or "key" (a bool).
@@ -277,6 +289,30 @@ QWidget* OptionsEditor::make_editor(const pp::FieldSpec& f, const pp::Options& v
         report(edit, set(out));
       });
       w = edit;
+      break;
+    }
+    case pp::FieldType::Font: {
+      // The item data is the stored family; each installed family is shown in
+      // its own face. A family that is not installed here (a preset from
+      // another machine) keeps its entry, and is never handed to Qt as a font.
+      auto* combo = new QComboBox;
+      combo->addItem(tr("Default"), QString());
+      for (const QString& family : font_families()) {
+        combo->addItem(family, family);
+        combo->setItemData(combo->count() - 1, QFont(family), Qt::FontRole);
+      }
+      const QString family = qs(values.get_string(f.key));
+      int at = combo->findData(family);
+      if (at < 0) at = combo->findData(family, Qt::UserRole, Qt::MatchFixedString);
+      if (at < 0) {
+        combo->insertItem(1, tr("%1 (not installed)").arg(family), family);
+        at = 1;
+      }
+      combo->setCurrentIndex(at);
+      connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this, [=, this](int index) {
+        if (!building_) report(combo, set(combo->itemData(index).toString().toStdString()));
+      });
+      w = combo;
       break;
     }
     case pp::FieldType::String: {

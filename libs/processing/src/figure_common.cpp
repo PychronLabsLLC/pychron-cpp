@@ -43,7 +43,7 @@ std::vector<FieldSpec> common_figure_fields() {
       text("title", "Title", "Layout", "", "Placeholders: {graph}"),
       integer("graph_columns", "Graphs per row", "Layout", 1, 1, 6),
       integer("panel_spacing", "Panel spacing (px)", "Layout", 4, 0, 40),
-      text("font.family", "Font", "Appearance", ""),
+      font("font.family", "Font", "Appearance", ""),
       number("font.title", "Title size", "Appearance", 12, 4, 72, 1),
       number("font.axis", "Axis title size", "Appearance", 10, 4, 72, 1),
       number("font.tick", "Tick label size", "Appearance", 9, 4, 72, 1),

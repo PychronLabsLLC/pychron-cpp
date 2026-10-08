@@ -34,6 +34,7 @@ enum class FieldType {
   Color,       // "#rrggbb" or "#rrggbbaa"
   Quantity,    // a quantity expression (quantity.hpp)
   StringList,  // array of strings
+  Font,        // a font family name; empty is the default font
 };
 
 std::string_view to_string(FieldType type) noexcept;

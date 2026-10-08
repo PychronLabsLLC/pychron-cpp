@@ -70,6 +70,8 @@ std::string_view to_string(FieldType type) noexcept {
       return "quantity";
     case FieldType::StringList:
       return "string_list";
+    case FieldType::Font:
+      return "font";
   }
   return "string";
 }
@@ -132,6 +134,10 @@ Result<OptionValue> validate(const FieldSpec& f, const OptionValue& v) {
     case FieldType::String:
       if (std::holds_alternative<std::string>(v)) return v;
       return opt_fail(where + "expected text");
+    case FieldType::Font:
+      // Any name: which families are installed is the display's business.
+      if (std::holds_alternative<std::string>(v)) return v;
+      return opt_fail(where + "expected a font family");
     case FieldType::Enum: {
       const auto* s = std::get_if<std::string>(&v);
       if (!s) return opt_fail(where + "expected one of the choices");

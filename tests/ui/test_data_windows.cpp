@@ -1276,6 +1276,45 @@ class TestDataWindows : public QObject {
     QVERIFY(e.row_editor(QStringLiteral("panels"), QStringLiteral("fit_error"))->isEnabled());
   }
 
+  void options_editor_picks_a_font_family() {
+    OptionsEditor e;
+    pp::Options o(pp::time_series_schema());
+    QVERIFY(o.set("font.family", std::string("No Such Family 12")));
+    e.set_options(o);
+    auto* font = qobject_cast<QComboBox*>(e.editor(QStringLiteral("font.family")));
+    QVERIFY(font);
+    // A family that is not installed here is kept, and said to be missing.
+    QCOMPARE(font->currentData().toString(), QStringLiteral("No Such Family 12"));
+    QVERIFY(font->currentText().contains(QStringLiteral("not installed")));
+    QCOMPARE(e.options().get_string("font.family"), std::string("No Such Family 12"));
+    QCOMPARE(font->itemData(0).toString(), QString());
+    QCOMPARE(font->itemText(0), QStringLiteral("Default"));
+
+    QSignalSpy changed(&e, &OptionsEditor::changed);
+    font->setCurrentIndex(0);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(e.options().get_string("font.family"), std::string());
+
+    // Every installed family is offered once, under its own name.
+    // (Default and the missing family come first.)
+    const int at = 2;
+    if (font->count() <= at) QSKIP("no font family is installed");
+    const QString installed = font->itemData(at).toString();
+    QVERIFY(!installed.isEmpty());
+    QCOMPARE(font->itemText(at), installed);
+    QCOMPARE(font->findData(installed), at);
+    font->setCurrentIndex(at);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(e.options().get_string("font.family"), installed.toStdString());
+
+    // Rebuilt from the options: the installed family is selected, with no entry for a missing one.
+    e.set_options(e.options());
+    font = qobject_cast<QComboBox*>(e.editor(QStringLiteral("font.family")));
+    QVERIFY(font);
+    QCOMPARE(font->currentData().toString(), installed);
+    QCOMPARE(font->findText(QStringLiteral("not installed"), Qt::MatchContains), -1);
+  }
+
   void main_window_opens_and_tears_down_data_windows() {
     auto line = ui::test::make_example_line();
     QTemporaryDir dir;

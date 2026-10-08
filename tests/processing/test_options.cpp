@@ -117,6 +117,32 @@ a = 1
   EXPECT_EQ(again->options, o);
 }
 
+TEST(Options, AFontIsAnyFamilyNameAndReadsAsTheTextItWas) {
+  const pp::FieldSpec* f = ts()->field("font.family");
+  ASSERT_TRUE(f);
+  EXPECT_EQ(f->type, pp::FieldType::Font);
+  EXPECT_EQ(pp::to_string(f->type), "font");
+
+  pp::Options o(ts());
+  EXPECT_EQ(o.get_string("font.family"), "");  // the default font
+  ASSERT_TRUE(o.set("font.family", std::string("No Such Family 12")));  // installed or not is not known here
+  EXPECT_FALSE(o.set("font.family", std::int64_t{12}));
+  EXPECT_EQ(o.get_string("font.family"), "No Such Family 12");
+
+  auto back = pp::options_from_toml(ts(), pp::options_to_toml(o));
+  ASSERT_TRUE(back);
+  EXPECT_TRUE(back->warnings.empty());
+  EXPECT_EQ(back->options.get_string("font.family"), "No Such Family 12");
+
+  // A file written when the field was plain text.
+  auto old = pp::options_from_toml(ts(), "[font]\nfamily = \"Helvetica\"\n");
+  ASSERT_TRUE(old);
+  EXPECT_TRUE(old->warnings.empty());
+  EXPECT_EQ(old->options.get_string("font.family"), "Helvetica");
+  ASSERT_TRUE(o.set("font.family", std::string()));
+  EXPECT_EQ(o.get_string("font.family"), "");
+}
+
 TEST(Options, WrongSchemaAndSyntaxFail) {
   EXPECT_FALSE(pp::options_from_toml(ts(), "schema = \"figure.ideogram\"\n"));
   EXPECT_FALSE(pp::options_from_toml(ts(), "x = [\n"));

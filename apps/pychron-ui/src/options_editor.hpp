@@ -12,6 +12,7 @@
 //   Bool -> check box        Int -> spin box          Double -> line edit
 //   Enum -> combo box        Color -> swatch button   Quantity -> editable combo
 //   String -> line edit      StringList -> comma-separated line edit
+//   Font -> combo box of the installed families ("Default" is unset)
 // Optional fields accept an empty entry (unset).
 
 #include <functional>
