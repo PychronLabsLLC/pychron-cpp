@@ -155,6 +155,7 @@ class FluxWindowTest : public QObject {
  private:
   QTemporaryDir dir_;
   std::string url_;
+  QString presets_dir_;  // this slot's own: a preset one slot saves is not another's
   std::unique_ptr<ps::IStore> store_;  // the seeder's own connection
   ps::Actor actor_;
   pt::SeededLevel seeded_;
@@ -165,7 +166,7 @@ class FluxWindowTest : public QObject {
     if (!source) qFatal("source: %s", to_string(source.error()).c_str());
     auto bridge = EntryBridge::open({url_, "tester", "test-host"});
     if (!bridge) qFatal("bridge: %s", to_string(bridge.error()).c_str());
-    return Rig{std::move(*source), pp::PresetStore(dir_.filePath(QStringLiteral("presets")).toStdString()),
+    return Rig{std::move(*source), pp::PresetStore(presets_dir_.toStdString()),
                std::move(*bridge)};
   }
 
@@ -279,6 +280,7 @@ class FluxWindowTest : public QObject {
     QVERIFY(dir_.isValid());
     static int n = 0;
     url_ = "sqlite:" + dir_.filePath(QStringLiteral("flux-%1.db").arg(++n)).toStdString();
+    presets_dir_ = dir_.filePath(QStringLiteral("presets-%1").arg(n));
     auto s = ps::open_store(ps::StoreConfig{url_, true});
     QVERIFY2(s.has_value(), s ? "" : to_string(s.error()).c_str());
     store_ = std::move(*s);
@@ -939,6 +941,12 @@ class FluxWindowTest : public QObject {
     const auto scene = w.view()->scene();
     QVERIFY(scene);
     QCOMPARE(points_labelled(*scene, "Analyses")->x.size(), std::size_t{24});
+    // The selected monitor is still drawn on top: its analyses and its mean, after the two layers of the data.
+    QCOMPARE(layers_of(*scene).size(), std::size_t{4});
+    const auto* on_top = std::get_if<pp::PointLayer>(&layers_of(*scene).at(2));
+    QVERIFY(on_top && on_top->label.empty());
+    QCOMPARE(on_top->refs.size(), std::size_t{3});
+    QCOMPARE(on_top->refs.at(0).analysis, seeded_.analyses.at("66003-01").str());
 
     // An edit while there is no fit is decided as fit_level would have.
     const std::string uuid = seeded_.analyses.at("66003-02").str();
@@ -2522,7 +2530,7 @@ class FluxWindowTest : public QObject {
 
   void the_menu_action_opens_the_window() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
-    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    Owners o(url_, presets_dir_);
     o.main.show();
     QCOMPARE(o.fit->flux_action()->text(), QStringLiteral("Flux…"));
     QStringList commands;
@@ -2557,7 +2565,7 @@ class FluxWindowTest : public QObject {
 
   void packages_opens_the_flux_window_on_its_level() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
-    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    Owners o(url_, presets_dir_);
     PackagesWindow* p = o.entry->packages();
     QVERIFY(p != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(!p->busy(), kWaitMs);
@@ -2579,7 +2587,7 @@ class FluxWindowTest : public QObject {
 
   void packages_sees_the_new_j_after_a_save() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
-    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    Owners o(url_, presets_dir_);
     PackagesWindow* p = o.entry->packages();
     QVERIFY(p != nullptr);
     p->show_level(QStringLiteral("NM-300"), QStringLiteral("A"));
@@ -2709,7 +2717,7 @@ class FluxWindowTest : public QObject {
 
   void open_in_packages_shows_the_level() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
-    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    Owners o(url_, presets_dir_);
     o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
     FluxWindow* w = o.fit->flux();
     QVERIFY(w != nullptr);
@@ -2739,7 +2747,7 @@ class FluxWindowTest : public QObject {
   void recall_reaches_the_callback() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
     {
-      Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+      Owners o(url_, presets_dir_);
       FluxWindow* w = o.fit->flux();
       QVERIFY(w != nullptr);
       Q_EMIT w->view()->recall_requested(QStringLiteral("an-analysis"));
@@ -2759,7 +2767,7 @@ class FluxWindowTest : public QObject {
   void a_store_that_cannot_open_gives_no_window() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
     const std::string missing = "sqlite:" + dir_.filePath(QStringLiteral("nowhere/missing.db")).toStdString();
-    Owners o(missing, dir_.filePath(QStringLiteral("presets")));
+    Owners o(missing, presets_dir_);
     QVERIFY(o.fit->flux() == nullptr);
     QCOMPARE(o.errors.size(), 1);
     QVERIFY2(o.errors.front().startsWith(QStringLiteral("The store could not be opened:\n")), qPrintable(o.errors.front()));
@@ -2776,7 +2784,7 @@ class FluxWindowTest : public QObject {
   void owners_torn_down_in_either_order_with_a_load_in_flight() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
     for (const bool entry_first : {true, false}) {
-      pp::PresetStore presets(dir_.filePath(QStringLiteral("presets")).toStdString());
+      pp::PresetStore presets(presets_dir_.toStdString());
       QMainWindow main;
       auto* entry = new EntryActions(&main, url_);
       auto* fit = new FitActions(&main, url_, *entry, presets);
@@ -2801,7 +2809,7 @@ class FluxWindowTest : public QObject {
     }
     // The same with the main window deleting both.
     {
-      Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+      Owners o(url_, presets_dir_);
       o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
       QVERIFY(o.fit->flux()->busy());
     }

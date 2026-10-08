@@ -754,8 +754,9 @@ void FluxWindow::show_selected() {
 
 void FluxWindow::update_scene() {
   if (!inputs_) return view_->set_scene(nullptr);
-  if (fit_) return view_->set_scene(pp::flux_scene(*inputs_, *fit_, pp::FluxSceneOptions{selected_hole_}));
-  view_->set_scene(pp::flux_scene(*inputs_, options_, edits_));
+  const pp::FluxSceneOptions scene{selected_hole_};
+  if (fit_) return view_->set_scene(pp::flux_scene(*inputs_, *fit_, scene));
+  view_->set_scene(pp::flux_scene(*inputs_, options_, edits_, scene));
 }
 
 // ---- Options ----------------------------------------------------------------
