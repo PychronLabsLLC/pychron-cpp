@@ -12,6 +12,7 @@
 #include <optional>
 
 #include <QAction>
+#include <QString>
 #include <QList>
 #include <QIcon>
 #include <QMainWindow>
@@ -33,6 +34,7 @@
 #include "pattern_maker_window.hpp"
 #include "log_dock.hpp"
 #include "preferences_dialog.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "processing_bridge.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
@@ -113,6 +115,12 @@ class MainWindow : public QMainWindow {
   // Over `over` (default: this window). File > Preferences… opens it over the
   // window in front, whichever one's bar it was chosen from.
   PreferencesDialog* open_preferences(QWidget* over = nullptr);
+  // The line's config file. With it, Preferences has Logging and Metrics
+  // pages, kept in that file's local override (line_settings.hpp); without
+  // it (the default) it has neither.
+  void set_line_config_file(std::filesystem::path main_file);
+  // What the metrics endpoint is doing, for the Metrics page.
+  void set_metrics_status(QString status);
   // Fonts (application wide) and the data browser's page size.
   void apply_preferences(const Preferences& preferences);
   // Opens a recall window / a time-series figure window (null without data).
@@ -170,6 +178,9 @@ class MainWindow : public QMainWindow {
   QAction* preferences_;
   PreferencesDialog::SettingsFactory preferences_settings_;
   QPointer<PreferencesDialog> preferences_dialog_;
+  std::filesystem::path line_config_file_;
+  QString metrics_status_;
+  std::weak_ptr<LogHub> log_hub_;  // the line's, for levels that change at once
 };
 
 }  // namespace pychron::ui

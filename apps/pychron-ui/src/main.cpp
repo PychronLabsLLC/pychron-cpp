@@ -472,6 +472,10 @@ int main(int argc, char** argv) {
     pychron::ui::MainWindow window(**line);
     window.resize(1200, 850);
     window.apply_preferences(pychron::ui::load_preferences(QSettings()));
+    // Preferences keeps the line's logging and metrics beside this file. Not
+    // for the examples that come with the application: they are part of it
+    // (inside the bundle on macOS), and nothing is written there.
+    if (install || !files.empty()) window.set_line_config_file(system_file);
     window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
 
     // Runtime level changes go to the line's LogHub; without one (creation
@@ -504,7 +508,21 @@ int main(int argc, char** argv) {
     metrics = pychron::experiment::metrics::MetricsService::start(
         (*line)->config().metrics, (*line)->bus(), (*line)->scheduler(), (*line)->clock(), (*line)->log_hub(),
         PYCHRON_VERSION);
+    // For the Metrics page of File > Preferences.
+    if (!metrics) {
+      window.set_metrics_status(QStringLiteral("Off"));
+    } else if (metrics->listening()) {
+      window.set_metrics_status(QStringLiteral("Listening on %1:%2")
+                                    .arg(QString::fromStdString((*line)->config().metrics.bind))
+                                    .arg(metrics->port()));
+    } else {
+      // The error names its subject for the log ("metrics: cannot bind..."); here the page already does.
+      QString why = QString::fromStdString(metrics->error());
+      if (why.startsWith(QStringLiteral("metrics: "))) why.remove(0, 9);
+      window.set_metrics_status(QStringLiteral("Not listening: %1").arg(why));
+    }
 #else
+    window.set_metrics_status(QStringLiteral("This build has no metrics"));
     if ((*line)->config().metrics.enabled) {
       window.log_dock()->append_line(
           QStringLiteral("WARN [ui] metrics: this build has no metrics (PYCHRON_METRICS=OFF)"));

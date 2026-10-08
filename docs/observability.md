@@ -42,6 +42,11 @@ port = 9464
 | `bind` | `"0.0.0.0"` | which of the computer's network addresses to listen on. `"0.0.0.0"` is all of them; give one address to listen there only; `"127.0.0.1"` is this computer only. An address, not a name |
 | `port` | `9464` | 1 to 65535 |
 
+Or, without a text editor: **File > Preferences… > Metrics**, tick **Publish
+metrics for the lab's monitoring box**, choose **Every address of this
+computer**, press OK. That writes the same three settings into the line's
+local file (`extraction_line.local.toml`), for this computer only.
+
 Restart pychron. The log says:
 
 ```

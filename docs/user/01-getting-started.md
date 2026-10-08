@@ -411,7 +411,8 @@ work in every window."
 File > Preferences… opens a dialog with a page list on the left. The buttons
 are **OK** (apply and close), **Cancel**, **Apply** (apply and stay open) and
 **Restore Defaults** (reset the fields in the dialog; press OK or Apply to keep
-them). Values are saved per user.
+them). Values are saved per user, except those of the Logging and Metrics
+pages (below).
 
 | Page | Setting | Range / default | Effect |
 |---|---|---|---|
@@ -419,6 +420,31 @@ them). Values are saved per user.
 | Appearance | **Script editor font size** | 6 to 32 pt; "Default" follows the interface size | Font of the script editors. |
 | Data | **Browser page size** | 20 to 5000 analyses; default 200 (steps of 50) | How many analyses the data browser loads at a time; **Load more** fetches the next page. |
 | Spectrometer | **Ask before moving the magnet more than** | 0 to 300 amu, steps of 0.5; 0 shows "Never ask" | A magnet move bigger than this change of mass on the reference detector asks for confirmation. A move from an unknown position always asks. Kept separately for each spectrometer. The page appears only when a spectrometer is loaded. |
+
+**Logging** and **Metrics** are different in two ways. They belong to the
+extraction line, not to you: they are kept beside the line's config, in its
+local file (`extraction_line.local.toml`, see the configuration reference),
+so `elctl` on this computer follows them too, and another computer sharing
+the same config does not. And their default is whatever the shared
+`extraction_line.toml` says: **Restore Defaults** goes back to that, and the
+local file then holds nothing about them.
+
+| Page | Setting | Effect |
+|---|---|---|
+| Logging | **Everything else** | The level for any logger not listed below: `trace`, `debug`, `info`, `warn` or `error`. At once. |
+| Logging | **Logger / Level** table | A level for one logger or a family of them. A logger is named like `scheduler` or `transport.serial`; `*` stands for any part, so `*.wire` at `trace` shows every byte sent and received. **Add** and **Remove** change the list. At once. |
+| Logging | **Folder** | Where log files go; empty for no log file. Next start. |
+| Logging | **Start a new file at**, **Files kept** | The size at which a log file rolls over, and how many old ones are kept. Next start. |
+| Logging | **Also print to the terminal** | Next start. |
+| Metrics | **Now** | What the endpoint is doing: listening and where, off, or why it could not start. |
+| Metrics | **Publish metrics for the lab's monitoring box** | Turns the endpoint on. Next start. See [observability](../observability.md). |
+| Metrics | **Reachable from** | This computer only; every address of this computer; or one address, given in numbers. The monitoring box needs more than "this computer only". Next start. |
+| Metrics | **Port** | 1 to 65535. Next start. |
+
+A level set from the log panel's "Set logger level…" lasts until pychron
+closes; one set here is kept. If the local file cannot be written (the
+config is in a read-only folder), the dialog says so and changes nothing.
+The two pages appear only when a line is loaded.
 
 A saved value that is missing, unreadable or out of range silently reads as its
 default. The interface is always shown in the light theme; there is no dark

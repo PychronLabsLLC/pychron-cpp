@@ -221,6 +221,11 @@ Result<void> replace_local_table(const fs::path& local_file, std::string_view ta
       return failed(ErrorKind::Io, local_file, "could not be written in full");
     }
   }
+  // The new file is as private as the one it replaces; one made here is its
+  // owner's alone, as the setup wizard makes them.
+  const fs::perms perms = exists ? fs::status(local_file, ec).permissions() & fs::perms::mask
+                                 : fs::perms::owner_read | fs::perms::owner_write;
+  fs::permissions(temp, perms, ec);
   fs::rename(temp, local_file, ec);
   if (ec) {
     const std::string message = ec.message();

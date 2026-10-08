@@ -73,8 +73,15 @@ it exists and wins for the keys it is allowed to set:
 
 | Which config | May override, on an existing `[transports.<name>]` | May also override |
 |---|---|---|
-| extraction line | `port`, `host`, `baud`, `data_bits`, `stop_bits`, `parity` | nothing else |
+| extraction line | `port`, `host`, `baud`, `data_bits`, `stop_bits`, `parity` | `[logging]` and `[metrics]`, any of their keys |
 | spectrometer | `host`, `port`, `baud`, `timeout_ms` | on an existing `[drivers.<name>]`: `user`, `password`, `password_env` |
+
+`[logging]` and `[metrics]` in the extraction line's local file are this
+computer's logging and metrics endpoint. A key given there wins and the rest
+come from the main file; `[logging.levels]` there is the whole list of
+levels, not an addition to the main file's. File > Preferences writes these
+two tables (its Logging and Metrics pages) and leaves the rest of the file,
+comments included, as it is.
 
 Anything else in a local file, a name that is not in the main file, or a key
 that is not allowed, is an error naming the line. A local file must not hold

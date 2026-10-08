@@ -63,6 +63,9 @@ add_library(pychron_ui_lib STATIC
   src/menu_hub.cpp
   src/shortcuts.cpp
   src/command_palette.cpp
+  src/line_settings.cpp
+  src/logging_page.cpp
+  src/metrics_page.cpp
   src/preferences.cpp
   src/preferences_dialog.cpp
   src/laser_bridge.cpp
@@ -123,6 +126,9 @@ add_library(pychron_ui_lib STATIC
   src/menu_hub.hpp
   src/shortcuts.hpp
   src/command_palette.hpp
+  src/line_settings.hpp
+  src/logging_page.hpp
+  src/metrics_page.hpp
   src/preferences.hpp
   src/preferences_dialog.hpp
   src/laser_bridge.hpp

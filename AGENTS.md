@@ -197,6 +197,14 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   accepts a file: after changing a dashboard or the alert, load it in the
   virtual box (`packaging/observability/box`, `docker compose up -d`) and
   look. User guide: `docs/observability.md`.
+- File > Preferences keeps the line's `[logging]` and `[metrics]` in the
+  line's local override file, not in QSettings: `elctl` must follow them.
+  `config::replace_local_table` (`libs/core` `local_file.hpp`) is the only
+  thing that writes that file after the setup wizard; it replaces one table
+  and leaves the rest byte for byte. A table read over another (the local
+  file's over the main one's) must leave alone every key it does not name:
+  a new key in `parse_logging` or `parse_metrics` gets a case in
+  `ConfigOverride.Local...KeysWinAndTheRestStay`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

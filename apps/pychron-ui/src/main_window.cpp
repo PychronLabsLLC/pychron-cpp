@@ -162,7 +162,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       laser_action_(new QAction(QStringLiteral("Laser"), this)),
       data_(new DataWorkspace(this, [this](const QString& text) { log_->append_line(text); })),
       installations_(new QAction(QStringLiteral("Installations…"), this)),
-      preferences_(new QAction(QStringLiteral("Preferences…"), this)) {
+      preferences_(new QAction(QStringLiteral("Preferences…"), this)),
+      log_hub_(line.log_hub()) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   setCentralWidget(canvas_);
   addDockWidget(Qt::BottomDockWidgetArea, log_);
@@ -417,6 +418,10 @@ void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory set
   preferences_settings_ = std::move(settings);
 }
 
+void MainWindow::set_line_config_file(std::filesystem::path main_file) { line_config_file_ = std::move(main_file); }
+
+void MainWindow::set_metrics_status(QString status) { metrics_status_ = std::move(status); }
+
 // The spectrometer's move threshold goes through its window when one is open
 // (it keeps the value in use), else straight to its saved settings, which the
 // window reads when it opens.
@@ -433,8 +438,16 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   } else if (spectrometer_ != nullptr) {
     confirm_move = SpectrometerWindow::saved_confirm_move_amu(*spectrometer_settings(), spectrometer_->name());
   }
+  // The line's logging and metrics are read from its files each time: what
+  // was applied a moment ago is in them, not in the config the line loaded.
+  std::optional<LineSettings> line;
+  if (!line_config_file_.empty()) {
+    line = load_line_settings(line_config_file_);
+    if (line) line->metrics_status = metrics_status_;
+  }
   return PreferencesDialog::show_for(
-      over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move, [this](const PreferencesDialog::Values& values) {
+      over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move,
+      [this](const PreferencesDialog::Values& values) {
         apply_preferences(values.preferences);
         if (!values.confirm_move_amu) return;
         if (spectrometer_window_ != nullptr) {
@@ -443,6 +456,25 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
           SpectrometerWindow::save_confirm_move_amu(*spectrometer_settings(), spectrometer_->name(),
                                                     *values.confirm_move_amu);
         }
+      },
+      std::move(line),
+      [this](const LineSettings& wanted) {
+        const std::optional<LineSettings> before = load_line_settings(line_config_file_);
+        const QString failed = save_line_settings(line_config_file_, wanted);
+        if (!failed.isEmpty()) return failed;
+        // Saved. Where the log file goes and the metrics endpoint are read
+        // at the next start; the levels are in force from now, when they
+        // are what changed. An Apply about something else leaves the hub
+        // alone, and with it a level set for the session from the log panel.
+        const auto levels = [](const config::LoggingConfig& l) {
+          return std::map<std::string, LogLevel>(l.levels.begin(), l.levels.end());
+        };
+        const bool changed = !before || before->logging.default_level != wanted.logging.default_level ||
+                             levels(before->logging) != levels(wanted.logging);
+        if (changed) {
+          if (const auto hub = log_hub_.lock()) hub->set_levels(wanted.logging.default_level, wanted.logging.levels);
+        }
+        return QString();
       });
 }
 

@@ -25,7 +25,9 @@ std::string metrics_override_toml(const MetricsConfig& wanted, const MetricsConf
 
 // Replaces `[table]` and every `[table.*]` in `local_file` with `toml` (the
 // tables' text, headers included; "" to remove them). The file is made when
-// it is not there and removed when nothing is left in it.
+// it is not there (readable by its owner only, as the setup wizard makes
+// them), keeps its permissions when it is, and is removed when nothing is
+// left in it.
 //
 // All or nothing: the result is checked to be TOML and written beside the
 // file, then moved over it. A file that is not TOML to begin with, or a

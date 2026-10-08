@@ -215,6 +215,28 @@ TEST_F(LocalFile, AFolderThatCannotBeWrittenIsAnErrorNamingTheFile) {
   EXPECT_NE(r.error().what.find(local.filename().string()), std::string::npos) << r.error().what;
   EXPECT_EQ(read(local), before);
 }
+
+// The setup wizard writes a local file for its owner's eyes only (the
+// spectrometer's holds a password); replacing the file must not open it up.
+TEST_F(LocalFile, TheFileStaysItsOwnersOnly) {
+  write(local, "[transports.valve_bus]\nport = \"COM4\"\n");
+  fs::permissions(local, fs::perms::owner_read | fs::perms::owner_write);
+  ASSERT_TRUE(replace_local_table(local, "metrics", "[metrics]\nenabled = true\n"));
+  EXPECT_EQ(fs::status(local).permissions() & fs::perms::mask, fs::perms::owner_read | fs::perms::owner_write);
+}
+
+TEST_F(LocalFile, ANewFileIsItsOwnersOnly) {
+  ASSERT_TRUE(replace_local_table(local, "metrics", "[metrics]\nenabled = true\n"));
+  EXPECT_EQ(fs::status(local).permissions() & (fs::perms::group_all | fs::perms::others_all), fs::perms::none);
+}
+
+TEST_F(LocalFile, AFileOthersCouldReadStaysReadable) {
+  write(local, "[transports.valve_bus]\nport = \"COM4\"\n");
+  const fs::perms shared = fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read;
+  fs::permissions(local, shared);
+  ASSERT_TRUE(replace_local_table(local, "metrics", "[metrics]\nenabled = true\n"));
+  EXPECT_EQ(fs::status(local).permissions() & fs::perms::mask, shared);
+}
 #endif
 
 TEST_F(LocalFile, NoTemporaryFileIsLeftBehind) {

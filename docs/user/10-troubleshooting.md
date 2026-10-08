@@ -169,7 +169,7 @@ See [data analysis](06-data-analysis.md) and the
 | Figure exclusions vanish | Not stored; lost when the window closes. Selected `invalid` analyses are still used unless "Hide invalid". | |
 | Export differs from `elctl export` | Figure windows and browser Export use constants preset `default`, no decay error. | Use `elctl export --constants` / `--decay-error`. |
 | Preset warning on the status line | A bad value is dropped; a wrong `schema` key is an error. Saving under a factory name shadows it; Delete restores it. | |
-| Config file fails to load | Loads are all or nothing and unknown keys are errors. A `*.local.toml` may override only transport host, port, baud and timeout (line file also data_bits, stop_bits, parity; spectrometer file also driver credentials). | Remove other keys. |
+| Config file fails to load | Loads are all or nothing and unknown keys are errors. A `*.local.toml` may override only transport host, port, baud and timeout (line file also data_bits, stop_bits, parity, and the `[logging]` and `[metrics]` tables; spectrometer file also driver credentials). | Remove other keys. |
 | `table 'x' not found (expected tables/x/current)` and other spectrometer validation errors | Field table, axis, detector column, acquirer channel or HV settings do not match. Details in the [configuration reference](07-configuration-reference.md). | Fix the config. |
 | Run override of a plan parameter refused | Parameter not in `parameters.expose`. | Mark the run `advanced` or expose it. |
 | Calibration invalid after editing a tray map | Stage calibration is tied to the tray map by SHA-256. | Recalibrate. |
