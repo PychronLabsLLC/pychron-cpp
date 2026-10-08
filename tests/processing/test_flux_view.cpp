@@ -365,6 +365,7 @@ TEST(FluxScene, HoleAbscissa) {
   EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 0, 10), 0, 1e-12);
   EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 10, 0), 90, 1e-12);
   EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 0, -10), 180, 1e-12);
+  EXPECT_EQ(pp::flux_hole_abscissa(A::Angle, -0.0, -10), 180);  // (-180, 180]: never -180
   EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, -10, 0), -90, 1e-12);
   EXPECT_EQ(pp::flux_hole_abscissa(A::X, 3, 4), 3);
   EXPECT_EQ(pp::flux_hole_abscissa(A::Y, 3, 4), 4);
@@ -417,6 +418,7 @@ TEST(FluxScene, OneAnalysisPointPerAnalysisWithAJ) {
   EXPECT_FALSE(a->excluded_marker.filled);
   EXPECT_EQ(a->marker.shape, pp::MarkerShape::Circle);
   EXPECT_EQ(a->marker.size, 4);
+  EXPECT_TRUE(a->y_err.empty());  // no error bars on the analyses
 
   in.positions[0].analyses[1].f.reset();  // not reduced: no J, not drawn
   pp::Edits e;
@@ -482,17 +484,14 @@ TEST(FluxScene, TheCurvePassesThroughThePredictions) {
   const auto* band = first_of<pp::BandLayer>(*scene);
   ASSERT_NE(line, nullptr);
   ASSERT_NE(band, nullptr);
-  ASSERT_EQ(line->x.size(), 181u);
-  ASSERT_EQ(band->x.size(), 181u);
+  ASSERT_EQ(line->x.size(), 361u);
+  ASSERT_EQ(band->x.size(), 361u);
   EXPECT_EQ(line->x.front(), -180);
   EXPECT_EQ(line->x.back(), 180);
   for (int hole = 1; hole <= 8; ++hole) {
     const auto& p = hole_of(fit, hole);
     const double angle = pp::flux_hole_abscissa(pp::FluxAbscissa::Angle, p.x, p.y);
-    // The curve has a point every 2 degrees: exact on those, within the
-    // chord's sag between them.
-    const bool on_grid = std::fabs(angle / 2 - std::round(angle / 2)) < 1e-9;
-    const double tol = on_grid ? 1e-9 : 1e-5;
+    const double tol = 1e-9;  // the monitors lie at whole degrees, on the curve's points
     EXPECT_NEAR(along(line->x, line->y, angle), p.j, p.j * tol) << hole;
     EXPECT_NEAR(along(band->x, band->low, angle), p.j - p.j_err, p.j * tol) << hole;
     EXPECT_NEAR(along(band->x, band->high, angle), p.j + p.j_err, p.j * tol) << hole;
@@ -518,7 +517,7 @@ TEST(FluxScene, WhichModelsHaveACurve) {
   o.fit.axis = r::Axis::X;
   const auto scene = pp::flux_scene(ring, fit_or_die(ring, o));
   const auto* line = first_of<pp::LineLayer>(*scene);
-  ASSERT_EQ(line->x.size(), 181u);
+  ASSERT_EQ(line->x.size(), 361u);
   EXPECT_NEAR(line->x.front(), -10, 1e-9);
   EXPECT_NEAR(line->x.back(), 10, 1e-9);
 }
@@ -560,7 +559,7 @@ TEST(FluxScene, WithoutAFitTheDataIsStillThere) {
     EXPECT_EQ(a->y_err, b->y_err) << label;
     EXPECT_EQ(a->excluded, b->excluded) << label;
     EXPECT_EQ(a->tooltips, b->tooltips) << label;
-    ASSERT_EQ(a->refs.size(), b->refs.size());
+    EXPECT_EQ(a->refs, b->refs) << label;
   }
   EXPECT_EQ(without->graphs[0].x.title, "Hole angle (degrees)");
 }
@@ -611,4 +610,75 @@ TEST(FluxScene, UnknownTooltipShowsTheDeviationFromASavedJ) {
   EXPECT_NE(u->tooltips.back().find("\ndev " + pp::flux_pct_text(*p.dev_percent) + " %"), std::string::npos)
       << u->tooltips.back();
   EXPECT_EQ(u->tooltips.front().find("dev"), std::string::npos);
+}
+
+TEST(FluxScene, AnAnalysisTheMeanRefusedIsDrawnExcludedAndSaysWhy) {
+  auto in = level();
+  auto& an = in.positions[0].analyses[0];  // M1-01: F without an error, so J without one
+  an.f = r::UFloat::variable(an.f->nominal(), 0.0);
+  auto o = options_of(r::ModelKind::Plane);
+  o.mean = r::MeanKind::Weighted;
+  const auto fit = fit_or_die(in, o);
+  ASSERT_EQ(hole_of(fit, 1).analyses[0].state, pp::AnalysisState::NoJ);
+  ASSERT_TRUE(hole_of(fit, 1).analyses[0].j);
+  const auto scene = pp::flux_scene(in, fit);
+  const auto* a = points_labelled(*scene, "Analyses");
+  ASSERT_EQ(a->x.size(), 24u);
+  for (std::size_t i = 0; i < a->refs.size(); ++i)
+    if (a->refs[i].analysis == "u-1-1") {
+      EXPECT_TRUE(a->excluded[i]);
+      EXPECT_NE(a->tooltips[i].find("\nnot used: J has no error"), std::string::npos) << a->tooltips[i];
+      EXPECT_EQ(a->tooltips[i].find("no J"), std::string::npos);
+    }
+  // F that gives no J at all is not drawn.
+  in.positions[0].analyses[1].f = r::UFloat::variable(0.0, 0.0);
+  const auto s2 = pp::flux_scene(in, fit_or_die(in, o));
+  EXPECT_EQ(points_labelled(*s2, "Analyses")->x.size(), 23u);
+}
+
+namespace {
+// A fit made by hand: monitors used with a mean J, at the given places.
+pp::LevelFit hand_monitors(r::ModelKind kind, const std::vector<std::pair<double, double>>& at) {
+  pp::LevelFit fit;
+  fit.options = options_of(kind);
+  fit.options.fit.axis = r::Axis::X;
+  int hole = 1;
+  for (const auto& [x, y] : at) {
+    pp::FittedPosition p;
+    p.hole = hole++;
+    p.identifier = "id";
+    p.x = x;
+    p.y = y;
+    p.monitor = true;
+    p.used_in_fit = true;
+    p.n = 3;
+    p.mean_j = 1.0e-3 + 1e-6 * p.hole;
+    p.mean_j_err = 1e-7;
+    p.j = *p.mean_j;
+    p.j_err = 1e-7;
+    p.analyses = {};
+    fit.positions.push_back(p);
+  }
+  return fit;
+}
+}  // namespace
+
+TEST(FluxScene, NoCurveWhenTheModelCannotBeEvaluatedAlongIt) {
+  // A plane needs four monitors; three used: the data is there, the curve is not.
+  const auto fit = hand_monitors(r::ModelKind::Plane, {{10, 0}, {0, 10}, {-10, 0}});
+  const auto scene = pp::flux_scene(pp::LevelInputs{}, fit);
+  EXPECT_EQ(first_of<pp::LineLayer>(*scene), nullptr);
+  EXPECT_EQ(first_of<pp::BandLayer>(*scene), nullptr);
+  EXPECT_EQ(points_labelled(*scene, "Monitor means")->x.size(), 3u);
+  EXPECT_NE(points_labelled(*scene, "Analyses"), nullptr);
+  EXPECT_NE(points_labelled(*scene, "Unknowns"), nullptr);
+}
+
+TEST(FluxScene, NoCurveWhenEveryPositionIsAtOneCoordinate) {
+  auto fit = hand_monitors(r::ModelKind::LeastSquares1D, {{5, 0}, {5, 3}, {5, 6}, {5, 9}});
+  fit.options.fit.axis = r::Axis::X;
+  const auto scene = pp::flux_scene(pp::LevelInputs{}, fit);
+  EXPECT_EQ(first_of<pp::LineLayer>(*scene), nullptr);
+  EXPECT_EQ(first_of<pp::BandLayer>(*scene), nullptr);
+  EXPECT_EQ(points_labelled(*scene, "Monitor means")->x.size(), 4u);
 }

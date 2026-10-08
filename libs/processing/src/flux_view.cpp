@@ -14,6 +14,8 @@ namespace r = pychron::reduction;
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 std::string fixed(double v, const char* format) {
   if (!std::isfinite(v)) return "-";
   char buf[64];
@@ -310,28 +312,31 @@ FluxAbscissa flux_abscissa(const FluxOptions& options) {
 }
 
 double flux_hole_abscissa(FluxAbscissa kind, double x, double y) {
-  constexpr double kPi = 3.14159265358979323846;
   switch (kind) {
     case FluxAbscissa::X: return x;
     case FluxAbscissa::Y: return y;
-    case FluxAbscissa::Angle: return std::atan2(x, y) * 180.0 / kPi;
+    case FluxAbscissa::Angle: {
+      const double a = std::atan2(x, y) * 180.0 / kPi;
+      return a <= -180.0 ? 180.0 : a;  // (-180, 180]: atan2(-0, y < 0) is -180
+    }
   }
   return x;
 }
 
 namespace {
 
-constexpr int kCurvePoints = 181;
+constexpr int kCurvePoints = 361;
 
 std::string analysis_tooltip(const FittedPosition::UsedAnalysis& a) {
   std::string t = a.record_id + "\nJ " + flux_j_text(*a.j) + " \xC2\xB1 " + flux_j_text(a.j_err.value_or(0.0));
+  // A J is drawn only for a state with one; NoJ with a J is the weighted mean refusing it.
   switch (a.state) {
     case AnalysisState::Used: break;
     case AnalysisState::OmittedByTag: t += "\nomitted (tag " + a.tag + ")"; break;
     case AnalysisState::OmittedBySavedFit: t += "\nomitted (saved fit)"; break;
     case AnalysisState::OmittedByEdit: t += "\nomitted (here)"; break;
     case AnalysisState::NotReduced: t += "\nnot reduced"; break;
-    case AnalysisState::NoJ: t += "\nno J"; break;
+    case AnalysisState::NoJ: t += "\nnot used: J has no error"; break;
   }
   return t;
 }
@@ -378,6 +383,7 @@ void add_curve(Panel& panel, const LevelFit& fit, FluxAbscissa kind, double lo, 
     radius += std::hypot(p.x, p.y);
   }
   if (monitors.empty()) return;
+  if (kind != FluxAbscissa::Angle && !(hi > lo)) return;  // every position at one coordinate: no curve
   radius /= static_cast<double>(monitors.size());
 
   std::vector<double> xs;
@@ -386,7 +392,7 @@ void add_curve(Panel& panel, const LevelFit& fit, FluxAbscissa kind, double lo, 
     const double t = static_cast<double>(i) / (kCurvePoints - 1);
     if (kind == FluxAbscissa::Angle) {
       const double a = -180.0 + 360.0 * t;
-      const double rad = a * 3.14159265358979323846 / 180.0;
+      const double rad = a * kPi / 180.0;
       xs.push_back(a);
       at.push_back({radius * std::sin(rad), radius * std::cos(rad)});
     } else {
@@ -427,7 +433,6 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
     hi = first ? c : std::max(hi, c);
     first = false;
   }
-  const double spread_range = kind == FluxAbscissa::Angle ? 100.0 : (hi - lo);  // 4 % of this
 
   Scene scene;
   scene.kind = "flux";
@@ -448,16 +453,13 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
   PointLayer h_analyses = layer_of("", marker(MarkerShape::Circle, 9, c_highlight));
   PointLayer h_mean = layer_of("", marker(MarkerShape::Diamond, 13, c_highlight));
   PointLayer h_unknown = layer_of("", marker(MarkerShape::Square, 11, c_highlight));
-  for (auto* l : {&h_analyses, &h_mean, &h_unknown}) {
-    l->marker.filled = false;
-    l->excluded_marker.filled = false;
-  }
 
-  const auto push_point = [](PointLayer& l, double x, double y, double y_err, PointRef ref, bool excluded,
-                             std::string tip) {
+  // `y_err` absent: the layer has no error bars (the analyses').
+  const auto push_point = [](PointLayer& l, double x, double y, std::optional<double> y_err, PointRef ref,
+                             bool excluded, std::string tip) {
     l.x.push_back(x);
     l.y.push_back(y);
-    l.y_err.push_back(y_err);
+    if (y_err) l.y_err.push_back(*y_err);
     l.refs.push_back(std::move(ref));
     l.excluded.push_back(excluded);
     l.tooltips.push_back(std::move(tip));
@@ -481,14 +483,14 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
       if (a.j) drawn.push_back(&a);
     std::sort(drawn.begin(), drawn.end(), [](auto* a, auto* b) { return a->record_id < b->record_id; });
     const double n = static_cast<double>(drawn.size());
-    const double step = (kind == FluxAbscissa::Angle ? 4.0 : spread_range * 0.04) / std::max(n - 1.0, 1.0);
+    const double step = (kind == FluxAbscissa::Angle ? 4.0 : (hi - lo) * 0.04) / std::max(n - 1.0, 1.0);
     for (std::size_t i = 0; i < drawn.size(); ++i) {
       const auto& a = *drawn[i];
       const double x = at + (static_cast<double>(i) - (n - 1.0) / 2.0) * step;
       const std::string tip = analysis_tooltip(a);
       const bool out = a.state != AnalysisState::Used;
-      push_point(analyses, x, *a.j, a.j_err.value_or(0.0), PointRef{a.uuid}, out, tip);
-      if (highlighted) push_point(h_analyses, x, *a.j, a.j_err.value_or(0.0), PointRef{a.uuid}, out, tip);
+      push_point(analyses, x, *a.j, std::nullopt, PointRef{a.uuid}, out, tip);
+      if (highlighted) push_point(h_analyses, x, *a.j, std::nullopt, PointRef{a.uuid}, out, tip);
     }
 
     if (!p.mean_j) continue;

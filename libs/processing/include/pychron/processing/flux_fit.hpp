@@ -156,12 +156,6 @@ struct LevelFit {
   double min_j = 0, max_j = 0, delta_j_percent = 0;  // (max - min) / max * 100 over predicted J
 };
 
-// Why a rule leaves an analysis out, by the precedence above: Used when none
-// applies (or the analysis is in `edits.include`), else OmittedByEdit,
-// OmittedBySavedFit or OmittedByTag. The one place the rules live; fit_level
-// and the flux scene both read it.
-AnalysisState analysis_omission(const LevelPosition& position, const LevelAnalysis& analysis, const Edits& edits);
-
 // One position as fit_level reports it before the model: its analyses with J
 // and state, the mean, the notes, `excluded` and `used_in_fit`; `j`, `j_err`
 // and `dev_percent` (the prediction) are left unset. Shared by fit_level and
