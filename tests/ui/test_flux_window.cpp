@@ -1611,6 +1611,7 @@ class FluxWindowTest : public QObject {
     auto wp = opened(r, &asked, &answer);
     FluxWindow& w = *wp;
     QVERIFY2(w.fit(), qPrintable(w.status()));
+    w.show();  // on screen: a hidden window waits to be shown (R17)
     const int row1 = w.monitors()->row_of(1), row2 = w.monitors()->row_of(2);
     QVERIFY(w.monitors()->index(row1, FluxMonitorModel::SavedJ).data().toString().isEmpty());
 
@@ -1654,6 +1655,97 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.monitors()->index(row2, FluxMonitorModel::SavedJ).data().toString().isEmpty());
     QVERIFY(!w.status().contains(QStringLiteral("changed elsewhere")));
     QVERIFY(!w.edited());
+  }
+
+  // Ruling R17: a window that is not on screen reads nothing for a change
+  // elsewhere; it reads once when it is shown.
+  void a_hidden_window_waits_to_be_shown() {
+    auto r = rig();
+    QStringList asked;
+    auto wp = opened(r, &asked);  // never shown
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(!w.isVisible());
+    const int row1 = w.monitors()->row_of(1), row2 = w.monitors()->row_of(2);
+    const auto saved_j = [&w](int row) { return w.monitors()->index(row, FluxMonitorModel::SavedJ).data().toString(); };
+    int loads = w.loads_started();
+
+    save_fit(1, nearest3());
+    r.bridge->notify_changed();
+    r.bridge->notify_changed();
+    QVERIFY(!w.busy());  // neither the tree nor the level
+    QCOMPARE(w.loads_started(), loads);
+    drain(*r.bridge);
+    QVERIFY(saved_j(row1).isEmpty());
+    QCOMPARE(level_item(w, QStringLiteral("NM-300"), QStringLiteral("A"))->text(1), QStringLiteral("not fitted"));
+
+    // Shown: the tree and the level, once for however many changes there were.
+    w.show();
+    QVERIFY(w.busy());
+    QCOMPARE(w.loads_started(), loads + 1);
+    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 A…"));
+    QVERIFY(settle(w));
+    QVERIFY(!saved_j(row1).isEmpty());
+    QCOMPARE(w.options(), nearest3());
+    // On screen it answers a change at once, as before.
+    for (int hole = 2; hole <= 8; ++hole) save_fit(hole, nearest3());
+    r.bridge->notify_changed();
+    QVERIFY(w.busy());
+    QCOMPARE(w.loads_started(), loads + 2);
+    QVERIFY(settle(w));
+    QVERIFY(!saved_j(row2).isEmpty());
+    QCOMPARE(level_item(w, QStringLiteral("NM-300"), QStringLiteral("A"))->text(1), QStringLiteral("fitted"));
+
+    // Shown, then closed: the same.
+    QVERIFY(w.close());
+    QVERIFY(!w.isVisible());
+    loads = w.loads_started();
+    save_fit(2, nearest3(), false, 2.0e-3);
+    r.bridge->notify_changed();
+    QVERIFY(!w.busy());
+    QCOMPARE(w.loads_started(), loads);
+    drain(*r.bridge);
+    QCOMPARE(saved_j(row2), QStringLiteral("1.0000e-03"));
+    w.show();
+    QVERIFY(w.busy());
+    QCOMPARE(w.loads_started(), loads + 1);
+    QVERIFY(settle(w));
+    QCOMPARE(saved_j(row2), QStringLiteral("2.0000e-03"));
+    // Nothing changed meanwhile: showing it reads nothing.
+    w.hide();
+    w.show();
+    QVERIFY(!w.busy());
+    QCOMPARE(w.loads_started(), loads + 1);
+
+    // Hidden with edits pending: they are kept, and the status says so when it is shown.
+    w.hide();
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    QVERIFY(w.edited());
+    save_fit(1, nearest3(), false, 3.0e-3);
+    r.bridge->notify_changed();
+    QVERIFY(!w.busy());
+    QVERIFY2(!w.status().contains(QStringLiteral("changed elsewhere")), qPrintable(w.status()));
+    w.show();
+    QVERIFY(w.busy());  // the tree
+    QCOMPARE(w.loads_started(), loads + 1);
+    QVERIFY2(w.status().contains(QStringLiteral(" · level changed elsewhere, Reload to see it")), qPrintable(w.status()));
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
+    QVERIFY(w.edited());
+    QVERIFY(asked.isEmpty());
+
+    // With no level open there is only the tree to read.
+    FluxWindow plain(*r.bridge, *r.source, r.presets);
+    QTRY_VERIFY_WITH_TIMEOUT(!plain.busy(), kWaitMs);
+    r.bridge->notify_changed();
+    QVERIFY(!plain.busy());
+    QCOMPARE(plain.loads_started(), 0);
+    plain.show();
+    QVERIFY(plain.busy());
+    QCOMPARE(plain.loads_started(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!plain.busy() && !w.busy(), kWaitMs);
   }
 
   // ---- Saving -------------------------------------------------------------------
@@ -2063,6 +2155,7 @@ class FluxWindowTest : public QObject {
     FluxWindow& w = *wp;
     QVERIFY2(w.fit(), qPrintable(w.status()));
     QSignalSpy saved(&w, &FluxWindow::saved);
+    w.show();  // on screen: a hidden window waits to be shown (R17)
     int loads = w.loads_started();
 
     // Another window's change while the save runs: the save reads the level again, once.

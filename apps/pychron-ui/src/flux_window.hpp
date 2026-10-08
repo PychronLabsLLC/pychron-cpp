@@ -38,6 +38,7 @@ class QCloseEvent;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QShowEvent;
 class QTableView;
 class QTimer;
 class QTreeWidget;
@@ -153,6 +154,7 @@ class FluxWindow : public QMainWindow {
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  void showEvent(QShowEvent* event) override;
 
  private:
   // The monitor group: the set, the sample the monitors are chosen by (the
@@ -164,6 +166,7 @@ class FluxWindow : public QMainWindow {
   };
 
   void build_dock();
+  void store_changed();                           // someone else changed the store: the tree, and the level when nothing is edited
   void start_load();                              // of irradiation_ / level_, with chosen_
   void apply_loaded(processing::LevelInputs inputs, std::vector<processing::MonitorSet> sets, std::string default_set);
   void clear_level();                             // nothing on show; the models let go of inputs_ and fit_
@@ -299,6 +302,7 @@ class FluxWindow : public QMainWindow {
   std::function<void()> after_save_;  // what follows the save in flight when it succeeds
   QString tree_error_;      // the last tree read failed with this
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept
+  bool stale_ = false;      // the store changed while the window was not on screen: read when it is shown
   bool status_error_ = false;
   QString status_text_;     // the status without what refresh_status() adds
   QString message_, message_details_;  // what the preset bar said, after the status until the next change

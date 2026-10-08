@@ -24,6 +24,7 @@
 #include <QPointer>
 #include <QSaveFile>
 #include <QSet>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
@@ -279,17 +280,17 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
   connect(monitors_, &FluxMonitorModel::save_toggled, this, [this](int hole, bool save) { set_save(hole, save); });
   connect(unknowns_, &FluxUnknownModel::save_toggled, this, [this](int hole, bool save) { set_save(hole, save); });
   // Someone else's change (after its own save the window reads the level
-  // again itself): the tree always; the level only when no edit would be lost
-  // with it.
+  // again itself). A window that is not on screen reads nothing for it (ruling
+  // R17: FitActions keeps the window once closed, and every save in the
+  // session would queue a tree read and a level's reduction on the shared
+  // worker); it reads once, when it is shown.
   connect(&bridge_, &EntryBridge::changed, this, [this] {
     if (notifying_) return;
-    reload_tree();
-    if (irradiation_.isEmpty()) return;
-    // While a save runs the level is not read again under it: the save reads
-    // it when it wrote, and else the status says there is something to see.
-    if (!saving_ && !edited()) return start_load();
-    changed_elsewhere_ = true;
-    refresh_status();
+    if (!isVisible()) {
+      stale_ = true;
+      return;
+    }
+    store_changed();
   });
 
   update_title();
@@ -359,6 +360,22 @@ void FluxWindow::build_dock() {
     values_ = editor_->options();
     options_changed();
   });
+}
+
+void FluxWindow::store_changed() {
+  // The tree always; the level only when no edit would be lost with it.
+  reload_tree();
+  if (irradiation_.isEmpty()) return;
+  // While a save runs the level is not read again under it: the save reads
+  // it when it wrote, and else the status says there is something to see.
+  if (!saving_ && !edited()) return start_load();
+  changed_elsewhere_ = true;
+  refresh_status();
+}
+
+void FluxWindow::showEvent(QShowEvent* event) {
+  QMainWindow::showEvent(event);
+  if (std::exchange(stale_, false)) store_changed();
 }
 
 bool FluxWindow::busy() const noexcept { return busy_ > 0 || fit_timer_->isActive(); }
