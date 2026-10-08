@@ -153,7 +153,22 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
     if (auto r = save_pdf(path); !r) show_message(QString::fromStdString(r.error().what), true);
   });
 
-  connect(&bridge_, &EntryBridge::changed, this, [this] { reload(); });
+  bar->addSeparator();
+  fit_flux_ = bar->addAction(tr("Fit flux…"), this, [this] {
+    const auto pkg = current_package();
+    if (pkg && level_) Q_EMIT flux_requested(QString::fromStdString(pkg->name), level_name_);
+  });
+  fit_flux_->setToolTip(tr("Fit the flux of this level's monitors"));
+  fit_flux_->setEnabled(false);  // until a level is open
+
+  connect(&bridge_, &EntryBridge::changed, this, [this] {
+    reload();
+    // Someone else's change (a flux saved, a sample renamed): the level is
+    // read again when no edit would be lost with it. After this window's own
+    // change it reads the level itself.
+    // Nor while a level is being read: that read is later than the change.
+    if (!notifying_ && level_jobs_ == 0 && level_ && grid_->has_edit() && !grid_->edit().dirty()) open_level(*level_);
+  });
   resize(1400, 800);
   reload();
 }
@@ -232,7 +247,7 @@ void PackagesWindow::build_docks() {
     if (!pkg) return;
     ProductionDialog dialog(bridge_, *pkg, productions_, production_->currentData().toString(), this);
     if (dialog.exec() == QDialog::Accepted) {
-      bridge_.notify_changed();
+      notify_changed();
       if (level_) open_level(*level_);
     }
   });
@@ -298,7 +313,7 @@ void PackagesWindow::build_docks() {
           --busy_;
           if (!r) return show_message(QString::fromStdString(r.error().what), true);
           show_message(tr("Chronology saved"));
-          bridge_.notify_changed();
+          notify_changed();
         });
   });
 
@@ -341,8 +356,45 @@ std::optional<ps::HolderValue> PackagesWindow::holder_value(std::optional<ps::Uu
   return it->second;
 }
 
+void PackagesWindow::notify_changed() {
+  notifying_ = true;
+  bridge_.notify_changed();
+  notifying_ = false;
+}
+
+void PackagesWindow::show_level(const QString& irradiation, const QString& level) {
+  wanted_ = std::make_pair(irradiation, level);
+  if (tree_jobs_ > 0) return;  // looked for in the tree being read
+  if (!show_wanted()) show_message(tr("There is no level %1 %2").arg(irradiation, level), true);
+  wanted_.reset();
+}
+
+bool PackagesWindow::show_wanted() {
+  if (!wanted_) return true;
+  for (const auto& p : packages_) {
+    if (QString::fromStdString(p.name) != wanted_->first) continue;
+    const QString package = QString::fromStdString(p.uuid.str());
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+      auto* top = tree_->topLevelItem(i);
+      if (top->data(0, kUuidRole).toString() != package) continue;
+      for (int c = 0; c < top->childCount(); ++c) {
+        auto* child = top->child(c);
+        if (child->text(0) != wanted_->second) continue;
+        const auto id = ps::Uuid::parse(child->data(0, kUuidRole).toString().toStdString());
+        if (!id) return false;
+        top->setExpanded(true);
+        tree_->setCurrentItem(child);
+        if (!level_ || *level_ != *id) open_level(*id);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void PackagesWindow::reload() {
   ++busy_;
+  ++tree_jobs_;
   bridge_.run<std::pair<std::vector<ps::IrradiationRow>, std::map<ps::Uuid, std::vector<ps::LevelRow>>>>(
       this,
       [](ps::IStore& s, const ps::Actor&)
@@ -359,7 +411,11 @@ void PackagesWindow::reload() {
       },
       [this](auto r) {
         --busy_;
-        if (!r) return show_message(QString::fromStdString(to_string(r.error())), true);
+        --tree_jobs_;
+        if (!r) {
+          if (tree_jobs_ == 0) wanted_.reset();
+          return show_message(QString::fromStdString(to_string(r.error())), true);
+        }
         packages_ = std::move(r->first);
         tree_->clear();
         QTreeWidgetItem* current = nullptr;
@@ -383,6 +439,10 @@ void PackagesWindow::reload() {
           current->parent()->setExpanded(true);
         }
         show_message(tr("%1 packages").arg(packages_.size()));
+        if (tree_jobs_ > 0 || !wanted_) return;  // a newer tree is on its way
+        const auto wanted = *wanted_;
+        if (!show_wanted()) show_message(tr("There is no level %1 %2").arg(wanted.first, wanted.second), true);
+        wanted_.reset();
       });
 }
 
@@ -396,6 +456,7 @@ bool PackagesWindow::settle_edits() {
 void PackagesWindow::open_level(ps::Uuid level) {
   if (!settle_edits()) return;
   ++busy_;
+  ++level_jobs_;
   bridge_.run<LevelData>(
       this,
       [level](ps::IStore& s, const ps::Actor&) -> Result<LevelData> {
@@ -432,6 +493,7 @@ void PackagesWindow::open_level(ps::Uuid level) {
       },
       [this](Result<LevelData> r) {
         --busy_;
+        --level_jobs_;
         if (!r) return show_message(QString::fromStdString(to_string(r.error())), true);
         apply_level(std::move(*r));
       });
@@ -440,6 +502,8 @@ void PackagesWindow::open_level(ps::Uuid level) {
 void PackagesWindow::apply_level(LevelData d) {
   package_ = d.package.uuid;
   level_ = d.sheet->level.uuid;
+  level_name_ = QString::fromStdString(d.sheet->level.name);
+  fit_flux_->setEnabled(true);
   for (auto& p : packages_)
     if (p.uuid == d.package.uuid) p = d.package;
   holders_ = std::move(d.holders);
@@ -613,7 +677,7 @@ void PackagesWindow::save() {
         if (std::holds_alternative<ps::CatalogApplied>(*r)) {
           show_message(tr("Saved"));
           grid_->set_edit(std::nullopt);
-          bridge_.notify_changed();
+          notify_changed();
           if (level_) open_level(*level_);
           return;
         }
@@ -712,7 +776,7 @@ void PackagesWindow::set_kind(const QString& kind) {
         for (auto& p : packages_)
           if (package_ && p.uuid == *package_) p.kind = kind.toStdString();
         fill_level_dock();
-        bridge_.notify_changed();
+        notify_changed();
       });
 }
 
@@ -723,7 +787,7 @@ void PackagesWindow::open_identifiers() {
   auto* dialog = new IdentifierDialog(bridge_, *pkg, this);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &IdentifierDialog::allocated, this, [this] {
-    bridge_.notify_changed();
+    notify_changed();
     if (level_) open_level(*level_);
   });
   dialog->show();
@@ -732,7 +796,7 @@ void PackagesWindow::open_identifiers() {
 void PackagesWindow::new_package() {
   NewPackageDialog dialog(bridge_, this);
   if (dialog.exec() == QDialog::Accepted) {
-    bridge_.notify_changed();
+    notify_changed();
     if (dialog.first_level()) open_level(*dialog.first_level());
   }
 }
@@ -756,7 +820,7 @@ void PackagesWindow::new_level() {
   }
   NewLevelDialog dialog(bridge_, *pkg, defaults, production, holders_, productions_, this);
   if (dialog.exec() == QDialog::Accepted) {
-    bridge_.notify_changed();
+    notify_changed();
     if (dialog.level()) open_level(*dialog.level());
   }
 }

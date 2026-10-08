@@ -7,6 +7,9 @@
 // Reset omissions, the unsaved question, and a change made in another window.
 // Then saving (one changeset, a conflict, the Save answer of the unsaved
 // question, a save that outlives its level or its window) and the CSV export.
+// Then the way in (FitActions): Fit > Flux, the Packages window's "Fit flux…",
+// Open in Packages, Recall, a store that cannot be opened, and the two owners
+// destroyed in either order while a level is read.
 
 #include <QtTest/QtTest>
 
@@ -34,6 +37,8 @@ class FluxWindowTest : public QObject {
 #include <QDockWidget>
 #include <QFile>
 #include <QLineEdit>
+#include <QMainWindow>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -43,12 +48,18 @@ class FluxWindowTest : public QObject {
 #include <QToolBar>
 #include <QTreeWidget>
 
+#include "command_palette.hpp"
+#include "entry_actions.hpp"
 #include "entry_bridge.hpp"
+#include "fit_actions.hpp"
 #include "flux_analysis_model.hpp"
 #include "flux_monitor_model.hpp"
 #include "flux_unknown_model.hpp"
 #include "flux_window.hpp"
+#include "level_grid_model.hpp"
+#include "menu_hub.hpp"
 #include "options_editor.hpp"
+#include "packages_window.hpp"
 #include "preset_bar.hpp"
 #include "pychron/processing/flux_view.hpp"
 #include "pychron/processing/options.hpp"
@@ -66,7 +77,11 @@ using namespace pychron;
 namespace ps = pychron::persistence;
 namespace pp = pychron::processing;
 namespace pt = pychron::processing::testing;
+using pychron::ui::EntryActions;
 using pychron::ui::EntryBridge;
+using pychron::ui::FitActions;
+using pychron::ui::MenuHub;
+using pychron::ui::PackagesWindow;
 using pychron::ui::FluxAnalysisModel;
 using pychron::ui::FluxMonitorModel;
 using pychron::ui::FluxWindow;
@@ -111,6 +126,22 @@ struct Rig {
   std::unique_ptr<pp::StoreSource> source;
   pp::PresetStore presets;
   std::unique_ptr<EntryBridge> bridge;
+};
+
+// The two owners under a main window, as main.cpp makes them: Entry first.
+struct Owners {
+  pp::PresetStore presets;  // outlives the window
+  QMainWindow main;
+  EntryActions* entry;
+  FitActions* fit;
+  QStringList recalled, errors;
+
+  Owners(const std::string& url, const QString& presets_dir)
+      : presets(presets_dir.toStdString()),
+        entry(new EntryActions(&main, url)),
+        fit(new FitActions(&main, url, *entry, presets, [this](const QString& uuid) { recalled.append(uuid); })) {
+    fit->set_report_error([this](const QString& text) { errors.append(text); });
+  }
 };
 
 }  // namespace
@@ -519,7 +550,8 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.edited());
     QVERIFY(!w.status().contains(QStringLiteral("edited")));
     const auto actions = w.findChild<QToolBar*>(QStringLiteral("flux_toolbar"))->actions();
-    QCOMPARE(actions.size(), 5);
+    QCOMPARE(actions.size(), 6);
+    QCOMPARE(actions[5], w.packages_action());
     QCOMPARE(actions[0], w.save_action());
     QCOMPARE(actions[1], w.revert_action());
     QCOMPARE(actions[2], w.reload_action());
@@ -2252,6 +2284,197 @@ class FluxWindowTest : public QObject {
     QVERIFY2(!w.status().contains(QStringLiteral("Not saved")), qPrintable(w.status()));
     QCOMPARE(w.inputs()->level, std::string("C"));
     QCOMPARE(changed.count(), 2);
+  }
+
+  void the_menu_action_opens_the_window() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    o.main.show();
+    QCOMPARE(o.fit->flux_action()->text(), QStringLiteral("Flux…"));
+    QStringList commands;
+    for (const MenuHub::Command& c : MenuHub::instance().commands())
+      commands << pychron::ui::CommandPalette::label(c.action, MenuHub::title(c.menu));
+    QVERIFY2(commands.contains(QStringLiteral("Fit › Flux")), qPrintable(commands.join(QStringLiteral(", "))));
+    // The bar shows Fit, after Entry.
+    QStringList titles;
+    for (const QAction* a : MenuHub::instance().bar_for(&o.main)->actions())
+      if (a->isVisible()) titles << a->text().remove(QLatin1Char('&'));
+    QVERIFY2(titles.indexOf(QStringLiteral("Fit")) == titles.indexOf(QStringLiteral("Entry")) + 1,
+             qPrintable(titles.join(QStringLiteral(", "))));
+    QVERIFY(titles.contains(QStringLiteral("Entry")));
+
+    QVERIFY(o.entry->bridge() == nullptr);  // nothing is opened until asked
+    o.fit->flux_action()->trigger();
+    FluxWindow* w = o.fit->flux();
+    QVERIFY(w != nullptr);
+    QVERIFY(w->isVisible());
+    QVERIFY(w->isWindow());
+    QCOMPARE(w->parentWidget(), &o.main);
+    QVERIFY(o.entry->bridge() != nullptr);  // the bridge is Entry's
+    QVERIFY(o.errors.isEmpty());
+    QVERIFY(settle(*w));
+    QVERIFY(level_item(*w, QStringLiteral("NM-300"), QStringLiteral("A")) != nullptr);
+    // Made once and kept.
+    o.fit->flux_action()->trigger();
+    QCOMPARE(o.fit->flux(), w);
+    // Before a level is open there is nothing to show in Packages.
+    QVERIFY(!w->packages_action()->isEnabled());
+  }
+
+  void packages_opens_the_flux_window_on_its_level() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    PackagesWindow* p = o.entry->packages();
+    QVERIFY(p != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(!p->busy(), kWaitMs);
+    QVERIFY(!p->fit_flux_action()->isEnabled());
+    p->show_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QTRY_VERIFY_WITH_TIMEOUT(!p->busy() && p->grid()->has_edit(), kWaitMs);
+    QVERIFY(p->fit_flux_action()->isEnabled());
+
+    p->fit_flux_action()->trigger();
+    FluxWindow* w = o.fit->flux();
+    QVERIFY(w != nullptr);
+    QVERIFY(w->isVisible());
+    QVERIFY(settle(*w));
+    QCOMPARE(w->windowTitle(), QStringLiteral("Flux — NM-300 A"));
+    QVERIFY2(w->fit(), qPrintable(w->status()));
+    QCOMPARE(w->loads_started(), 1);
+    QCOMPARE(w->tree()->currentItem(), level_item(*w, QStringLiteral("NM-300"), QStringLiteral("A")));
+  }
+
+  void packages_sees_the_new_j_after_a_save() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    PackagesWindow* p = o.entry->packages();
+    QVERIFY(p != nullptr);
+    p->show_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QTRY_VERIFY_WITH_TIMEOUT(!p->busy() && p->grid()->has_edit(), kWaitMs);
+    using Grid = pychron::ui::LevelGridModel;
+    const auto j_of = [p](int hole) -> std::optional<QString> {
+      for (int row = 0; row < p->grid()->rowCount(); ++row)
+        if (p->grid()->index(row, Grid::Position).data().toInt() == hole)
+          return p->grid()->index(row, Grid::J).data().toString();
+      return std::nullopt;
+    };
+    QCOMPARE(j_of(9), std::optional<QString>(QString()));  // nothing saved yet
+
+    p->fit_flux_action()->trigger();
+    FluxWindow* w = o.fit->flux();
+    QVERIFY(w != nullptr);
+    QVERIFY(settle(*w));
+    QVERIFY2(w->fit(), qPrintable(w->status()));
+    const double predicted = fitted_at(*w->fit(), 9).j;
+    QVERIFY(predicted > 0.0);
+    w->save();
+    QVERIFY(settle(*w));
+    QCOMPARE(w->status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+
+    // The Packages window was told through the bridge, and read the level again.
+    QTRY_VERIFY_WITH_TIMEOUT(!p->busy() && p->grid()->has_edit(), kWaitMs);
+    QCOMPARE(j_of(9), std::optional<QString>(QString::number(predicted, 'E', 6)));
+    QCOMPARE(p->windowTitle(), QStringLiteral("Packages — NM-300 A"));
+  }
+
+  void open_in_packages_shows_the_level() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+    o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+    FluxWindow* w = o.fit->flux();
+    QVERIFY(w != nullptr);
+    QVERIFY(w->isVisible());
+    QVERIFY(settle(*w));
+    QAction* open = w->packages_action();
+    QCOMPARE(open->text(), QStringLiteral("Open in Packages"));
+    QCOMPARE(w->findChild<QToolBar*>(QStringLiteral("flux_toolbar"))->actions().constLast(), open);  // the last one
+    QVERIFY(open->isEnabled());
+    QSignalSpy asked(w, &FluxWindow::packages_requested);
+
+    open->trigger();
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.at(0).at(0).toString(), QStringLiteral("NM-300"));
+    QCOMPARE(asked.at(0).at(1).toString(), QStringLiteral("A"));
+    PackagesWindow* p = o.entry->packages();
+    QVERIFY(p != nullptr);
+    QVERIFY(p->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!p->busy() && p->grid()->has_edit(), kWaitMs);
+    QCOMPARE(p->windowTitle(), QStringLiteral("Packages — NM-300 A"));
+    QVERIFY(p->tree()->currentItem() != nullptr);
+    QCOMPARE(p->tree()->currentItem()->text(0), QStringLiteral("A"));
+    QCOMPARE(p->tree()->currentItem()->parent()->text(0), QStringLiteral("NM-300"));
+    QVERIFY(p->fit_flux_action()->isEnabled());
+  }
+
+  void recall_reaches_the_callback() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    {
+      Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+      FluxWindow* w = o.fit->flux();
+      QVERIFY(w != nullptr);
+      Q_EMIT w->view()->recall_requested(QStringLiteral("an-analysis"));
+      QCOMPARE(o.recalled, QStringList{QStringLiteral("an-analysis")});
+      QVERIFY(settle(*w));
+    }
+    // Without one, Recall does nothing.
+    auto r = rig();
+    {
+      FluxWindow w(*r.bridge, *r.source, r.presets);
+      Q_EMIT w.view()->recall_requested(QStringLiteral("an-analysis"));
+      QVERIFY(settle(w));
+    }
+    drain(*r.bridge);
+  }
+
+  void a_store_that_cannot_open_gives_no_window() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    const std::string missing = "sqlite:" + dir_.filePath(QStringLiteral("nowhere/missing.db")).toStdString();
+    Owners o(missing, dir_.filePath(QStringLiteral("presets")));
+    QVERIFY(o.fit->flux() == nullptr);
+    QCOMPARE(o.errors.size(), 1);
+    QVERIFY2(o.errors.front().startsWith(QStringLiteral("The store could not be opened:\n")), qPrintable(o.errors.front()));
+    QVERIFY(o.errors.front().size() > QStringLiteral("The store could not be opened:\n").size());
+    QVERIFY(o.entry->bridge() == nullptr);  // Entry was not asked: one message, not two
+    // Asked again, said again; and the action shows nothing.
+    o.fit->flux_action()->trigger();
+    QCOMPARE(o.errors.size(), 2);
+    o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QCOMPARE(o.errors.size(), 3);
+    QVERIFY(o.fit->flux() == nullptr);
+  }
+
+  void owners_torn_down_in_either_order_with_a_load_in_flight() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    for (const bool entry_first : {true, false}) {
+      pp::PresetStore presets(dir_.filePath(QStringLiteral("presets")).toStdString());
+      QMainWindow main;
+      auto* entry = new EntryActions(&main, url_);
+      auto* fit = new FitActions(&main, url_, *entry, presets);
+      fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+      const QPointer<FluxWindow> w = fit->flux();
+      QVERIFY(w != nullptr);
+      QVERIFY(w->busy());  // the tree and the level are being read through the source
+      if (entry_first) {
+        // As the main window deletes them: the window goes before the bridge.
+        delete entry;
+        QVERIFY(w == nullptr);
+        QVERIFY(fit->flux() == nullptr);  // and none is made without Entry
+        fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+        delete fit;
+      } else {
+        delete fit;  // waits for the worker before its source goes
+        QVERIFY(w == nullptr);
+        QVERIFY(entry->bridge() != nullptr);
+        delete entry;
+      }
+      QCoreApplication::processEvents();  // results of jobs whose window is gone
+    }
+    // The same with the main window deleting both.
+    {
+      Owners o(url_, dir_.filePath(QStringLiteral("presets")));
+      o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+      QVERIFY(o.fit->flux()->busy());
+    }
+    QCoreApplication::processEvents();
   }
 
   void closing_while_loading_does_not_crash() {

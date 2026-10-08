@@ -91,6 +91,7 @@
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 #include "entry_actions.hpp"
+#include "fit_actions.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -197,8 +198,13 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
 #ifdef PYCHRON_UI_HAS_STORE
-  // Entry: samples and packages in the install's database (parented to the window).
-  if (!url.empty()) new pychron::ui::EntryActions(&window, url);
+  // Entry: samples and packages in the install's database; Fit: the flux of a
+  // level. Both parented to the window, Entry made first (fit_actions.hpp).
+  if (!url.empty()) {
+    auto* entry = new pychron::ui::EntryActions(&window, url);
+    new pychron::ui::FitActions(&window, url, *entry, presets,
+                                [&window](const QString& uuid) { window.workspace()->open_recall(uuid); });
+  }
 #endif
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
   window.resize(1200, 800);
@@ -473,7 +479,12 @@ int main(int argc, char** argv) {
     }
     window.set_data(&data_source, &presets);
 #ifdef PYCHRON_UI_HAS_STORE
-    if (cli->db) new pychron::ui::EntryActions(&window, *cli->db);  // the Entry menu, parented to the window
+    // The Entry and Fit menus, parented to the window, Entry made first (fit_actions.hpp).
+    if (cli->db) {
+      auto* entry = new pychron::ui::EntryActions(&window, *cli->db);
+      new pychron::ui::FitActions(&window, *cli->db, *entry, presets,
+                                  [&window](const QString& uuid) { window.open_recall(uuid); });
+    }
 #endif
     window.show();
     if (spectrometer_error) {

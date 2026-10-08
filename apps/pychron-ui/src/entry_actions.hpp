@@ -34,9 +34,18 @@ class EntryActions : public QObject {
   PackagesWindow* packages();
   QAction* samples_action() const noexcept { return samples_action_; }
   QAction* packages_action() const noexcept { return packages_action_; }
+  // Opens the bridge on first use; a message box, and false, when the store
+  // cannot be opened.
+  bool ensure_bridge();
+
+ Q_SIGNALS:
+  // The Packages window's "Fit flux…", on the level it has open.
+  void flux_requested(const QString& irradiation, const QString& level);
+  // The first thing the destructor does: whoever else has a window on the
+  // bridge (FitActions) deletes it now, while the bridge is still there.
+  void closing();
 
  private:
-  bool ensure_bridge();
 
   QWidget* owner_;
   std::string url_;

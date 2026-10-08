@@ -129,6 +129,51 @@ class TestMenuHub : public QObject {
     QCOMPARE(glyphs.size(), 5);  // extraction line, spectrometer, experiment, data, laser
   }
 
+  void fit_menu_sits_between_entry_and_window() {
+    QMainWindow main;
+    main.show();
+    // The titles as the bar shows them, left to right.
+    const auto titles = [&main] {
+      QStringList out;
+      for (const QAction* a : bar_of(main)->actions())
+        if (a->isVisible()) out << a->text().remove(QLatin1Char('&'));
+      return out;
+    };
+    // Nothing contributed: neither menu is shown.
+    QVERIFY(!titles().contains(QStringLiteral("Fit")));
+    QVERIFY(!titles().contains(QStringLiteral("Entry")));
+    QVERIFY(!menu_of(main, Menu::Fit)->menuAction()->isVisible());
+    QVERIFY(MenuHub::instance().placeholder(Menu::Fit) == nullptr);
+    QCOMPARE(MenuHub::title(Menu::Fit), QStringLiteral("Fit"));
+
+    QAction samples(QStringLiteral("Samples…"));
+    QAction flux(QStringLiteral("Flux…"));
+    MenuHub::instance().contribute(&main, Menu::Fit, {&flux}, Scope::App);
+    QStringList shown_now = titles();
+    QVERIFY(!shown_now.contains(QStringLiteral("Entry")));  // Fit alone
+    QCOMPARE(shown_now.indexOf(QStringLiteral("Window")), shown_now.indexOf(QStringLiteral("Fit")) + 1);
+    QVERIFY(shown_now.indexOf(QStringLiteral("Fit")) > shown_now.indexOf(QStringLiteral("Scripts")));
+
+    MenuHub::instance().contribute(&main, Menu::Entry, {&samples}, Scope::App);
+    shown_now = titles();
+    const qsizetype entry = shown_now.indexOf(QStringLiteral("Entry"));
+    QVERIFY(entry >= 0);
+    QCOMPARE(shown_now.indexOf(QStringLiteral("Scripts")), entry - 1);  // View has nothing without a main window
+    QCOMPARE(shown_now.indexOf(QStringLiteral("Fit")), entry + 1);
+    QCOMPARE(shown_now.indexOf(QStringLiteral("Window")), entry + 2);
+    QCOMPARE(shown_now.size(), entry + 3);  // nor Help
+    // Among all ten, hidden ones included: ..., View, Entry, Fit, Window, Help.
+    QStringList all;
+    for (const QAction* a : bar_of(main)->actions()) all << a->text().remove(QLatin1Char('&'));
+    QCOMPARE(all.mid(5), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
+                                      QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
+    // The existing slots keep their values.
+    QCOMPARE(static_cast<int>(Menu::Entry), 8);
+    QCOMPARE(static_cast<int>(Menu::Fit), 9);
+    QCOMPARE(MenuHub::kMenus, std::size_t{10});
+  }
+
   void shared_one_bar_serves_every_window() {
     MenuHub& hub = MenuHub::reset(MenuHub::Bars::Shared);
     auto line = pychron::ui::test::make_example_line();

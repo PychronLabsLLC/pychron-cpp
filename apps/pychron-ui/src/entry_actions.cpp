@@ -55,6 +55,7 @@ EntryActions::EntryActions(QWidget* owner, std::string store_url)
 }
 
 EntryActions::~EntryActions() {
+  Q_EMIT closing();
   // The windows use the bridge: they go first.
   delete samples_.data();
   delete packages_.data();
@@ -79,7 +80,10 @@ SamplesWindow* EntryActions::samples() {
 }
 
 PackagesWindow* EntryActions::packages() {
-  if (!packages_ && ensure_bridge()) packages_ = new PackagesWindow(*bridge_, owner_);
+  if (!packages_ && ensure_bridge()) {
+    packages_ = new PackagesWindow(*bridge_, owner_);
+    connect(packages_, &PackagesWindow::flux_requested, this, &EntryActions::flux_requested);
+  }
   if (packages_) packages_->setWindowFlag(Qt::Window);
   return packages_;
 }

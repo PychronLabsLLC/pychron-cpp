@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <set>
+#include <utility>
 
 #include <QMainWindow>
 #include <QPointer>
@@ -16,6 +17,7 @@
 #include "entry_bridge.hpp"
 #include "level_grid_model.hpp"
 
+class QAction;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -49,6 +51,12 @@ class PackagesWindow : public QMainWindow {
 
   void reload();                                 // the package tree (asynchronous)
   void open_level(persistence::Uuid level);      // asynchronous; asks to save unsaved edits first
+  // Selects the level of that name in the tree and opens it, as a click on it
+  // does; once the tree is read, when it is being read. A level already open
+  // is only selected.
+  void show_level(const QString& irradiation, const QString& level);
+  // "Fit flux…": enabled while a level is open; asks with flux_requested.
+  QAction* fit_flux_action() const noexcept { return fit_flux_; }
   void save();                                   // asynchronous
   void revert();
   void select_positions(const std::set<int>& positions);
@@ -65,11 +73,17 @@ class PackagesWindow : public QMainWindow {
   void new_package();
   void new_level();
 
+ Q_SIGNALS:
+  // "Fit flux…" was chosen on the open level.
+  void flux_requested(const QString& irradiation, const QString& level);
+
  protected:
   void closeEvent(QCloseEvent* event) override;
 
  private:
   struct LevelData;
+  void notify_changed();                         // bridge_.notify_changed(), as this window's own
+  bool show_wanted();                            // false when the tree has no such level
   void build_docks();
   void apply_level(LevelData data);
   void fill_level_dock();
@@ -108,8 +122,14 @@ class PackagesWindow : public QMainWindow {
   entry::PackageChronology chronology_;
   entry::CatalogSnapshot catalog_;
   entry::EntrySettings settings_;
+  QAction* fit_flux_ = nullptr;
+  QString level_name_;                           // of level_
+  std::optional<std::pair<QString, QString>> wanted_;  // show_level()'s, until the tree is read
+  int tree_jobs_ = 0;                            // tree reads outstanding
+  int level_jobs_ = 0;                           // level reads outstanding
   int busy_ = 0;
   bool syncing_ = false;
+  bool notifying_ = false;                       // the bridge's changed() is this window's own
 };
 
 }  // namespace pychron::ui

@@ -198,6 +198,10 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
   reset_action_->setToolTip(tr("Forget what the saved fit omitted and excluded; tags still apply"));
   export_action_ = bar->addAction(tr("Export CSV…"), this, [this] { export_asked(); });
   export_action_->setToolTip(tr("Write the fitted positions to a CSV file"));
+  packages_action_ = bar->addAction(tr("Open in Packages"), this, [this] {
+    if (inputs_) Q_EMIT packages_requested(irradiation_, level_);
+  });
+  packages_action_->setToolTip(tr("Show this level in the Packages window"));
 
   build_dock();
 
@@ -225,6 +229,9 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
   // W9: a plot click, a rubber band and a check box are one edit.
   connect(view_, &SceneView::point_clicked, this, [this](const QString& uuid) { toggle_analyses({uuid}); });
   connect(view_, &SceneView::points_toggled, this, [this](const QStringList& uuids) { toggle_analyses(uuids); });
+  connect(view_, &SceneView::recall_requested, this, [this](const QString& uuid) {
+    if (open_recall_) open_recall_(uuid);
+  });
   connect(analyses_, &FluxAnalysisModel::use_toggled, this, [this](const QString& uuid, bool use) {
     if (!set_used(uuid.toStdString(), use)) return;
     forget_message();
@@ -367,6 +374,7 @@ void FluxWindow::update_actions() {
   revert_action_->setEnabled(idle && inputs_.has_value());
   reset_action_->setEnabled(idle && inputs_.has_value());
   export_action_->setEnabled(idle && fit_.has_value());
+  packages_action_->setEnabled(idle && inputs_.has_value());
   // Section 5.5: when it cannot save, Save says why.
   save_action_->setEnabled(idle && fit_.has_value());
   save_action_->setToolTip(saving_    ? tr("Saving…")

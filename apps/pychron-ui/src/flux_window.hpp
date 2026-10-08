@@ -133,6 +133,10 @@ class FluxWindow : public QMainWindow {
   // without a fit and for a file that cannot be written.
   Result<void> export_csv(const QString& path);
   QAction* export_action() const noexcept { return export_action_; }
+  // "Open in Packages": asks for the level on show, with packages_requested.
+  QAction* packages_action() const noexcept { return packages_action_; }
+  // What the plot's Recall does with an analysis; nothing until one is set.
+  void set_open_recall(std::function<void(const QString& uuid)> open_recall) { open_recall_ = std::move(open_recall); }
   int loads_started() const noexcept { return loads_started_; }  // level reads asked of the store
   // What the status says of a save (section 5.5): written, nothing to write,
   // or a conflict with who moved the head and when (either may be unknown);
@@ -144,6 +148,8 @@ class FluxWindow : public QMainWindow {
  Q_SIGNALS:
   // The level's J was written (not: there was nothing to write).
   void saved(const QString& irradiation, const QString& level);
+  // "Open in Packages" was chosen on this level.
+  void packages_requested(const QString& irradiation, const QString& level);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -231,6 +237,8 @@ class FluxWindow : public QMainWindow {
   QAction* revert_action_ = nullptr;
   QAction* reload_action_ = nullptr;
   QAction* reset_action_ = nullptr;
+  QAction* packages_action_ = nullptr;
+  std::function<void(const QString&)> open_recall_;
   std::function<Unsaved(const QString&)> ask_unsaved_;
 
   // The level asked for (empty: none yet), and what was read and made of it.

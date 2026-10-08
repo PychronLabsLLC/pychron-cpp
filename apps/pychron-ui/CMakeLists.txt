@@ -146,6 +146,7 @@ if(TARGET pychron_processing_store)
   target_sources(pychron_ui_lib PRIVATE
     src/entry_actions.cpp
     src/entry_bridge.cpp
+    src/fit_actions.cpp
     src/flux_analysis_model.cpp
     src/flux_model_support.cpp
     src/flux_monitor_model.cpp
@@ -162,6 +163,7 @@ if(TARGET pychron_processing_store)
     src/entry_actions.hpp
     src/entry_bridge.hpp
     src/entry_headers.hpp
+    src/fit_actions.hpp
     src/flux_analysis_model.hpp
     src/flux_model_support.hpp
     src/flux_monitor_model.hpp

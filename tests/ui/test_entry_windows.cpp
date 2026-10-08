@@ -22,7 +22,9 @@ class EntryWindowsTest : public QObject {
 #include <QMainWindow>
 #include <QTableView>
 #include <QTableWidget>
+#include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QToolBar>
 #include <QTreeWidget>
 
 #include "entry_actions.hpp"
@@ -289,6 +291,104 @@ class EntryWindowsTest : public QObject {
     QVERIFY2(pages.has_value(), pages ? "" : pages.error().what.c_str());
     QCOMPARE(*pages, 3);  // a summary and two levels
     QVERIFY(QFileInfo(path).size() > 1000);
+  }
+
+  void packages_fit_flux_asks_for_the_level() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    QSignalSpy asked(&w, &pychron::ui::PackagesWindow::flux_requested);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QAction* fit = w.fit_flux_action();
+    QVERIFY(fit != nullptr);
+    QCOMPARE(fit->text(), QStringLiteral("Fit flux…"));
+    QVERIFY(w.findChild<QToolBar*>(QStringLiteral("packages_toolbar"))->actions().contains(fit));
+    // No level open: disabled, and nothing is asked.
+    QVERIFY(!fit->isEnabled());
+    fit->trigger();
+    QCOMPARE(asked.count(), 0);
+
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QVERIFY(fit->isEnabled());
+    fit->trigger();
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.at(0).at(0).toString(), QStringLiteral("P-1"));
+    QCOMPARE(asked.at(0).at(1).toString(), QStringLiteral("A"));
+  }
+
+  void show_level_selects_and_opens_it() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    int asked = 0;
+    w.set_confirm([&](const QString&) {
+      ++asked;
+      return false;
+    });
+    // Asked for while the tree is still being read: opened once it is.
+    QVERIFY(w.busy());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QCOMPARE(w.grid()->edit().loaded().level.uuid, seeded_.level_b);
+    QVERIFY(w.tree()->currentItem() != nullptr);
+    QCOMPARE(w.tree()->currentItem()->text(0), QStringLiteral("B"));
+    QCOMPARE(w.windowTitle(), QStringLiteral("Packages — P-1 B"));
+
+    // With edits pending it asks, as a click on the level does.
+    ps::SampleRow bt1 = (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front();
+    w.select_positions({1});
+    w.assign(bt1);
+    QVERIFY(w.grid()->edit().dirty());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("A"));
+    QCOMPARE(asked, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->edit().loaded().level.uuid == seeded_.level_a, kWaitMs);
+    QCOMPARE(w.tree()->currentItem()->text(0), QStringLiteral("A"));
+
+    // The level already open is only selected; one that is not there is said.
+    w.select_positions({1});
+    w.assign(bt1);
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("A"));
+    QCOMPARE(asked, 1);
+    QVERIFY(!w.busy());
+    QVERIFY(w.grid()->edit().dirty());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("Z"));
+    QCOMPARE(w.message(), QStringLiteral("There is no level P-1 Z"));
+    QCOMPARE(asked, 1);
+    QVERIFY(!w.busy());
+  }
+
+  void a_change_elsewhere_reloads_the_open_level() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    const auto sample_at = [&](int row) {
+      return w.grid()->index(row, pychron::ui::LevelGridModel::Sample).data().toString();
+    };
+    QCOMPARE(sample_at(0), QString());
+
+    // Another client fills position 1; the window is told and shows it.
+    {
+      auto sheet = store_->level_sheet(seeded_.level_a)->value();
+      en::LevelSheetEdit e(sheet, std::nullopt);
+      e.add_row(1);
+      ps::SampleRow bt1 = (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front();
+      e.assign_sample({1}, bt1);
+      QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+    }
+    b->notify_changed();
+    QVERIFY(w.busy());
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QCOMPARE(sample_at(0), QStringLiteral("bt-1"));
+
+    // With edits pending the level is left as it is.
+    QVERIFY(w.grid()->setData(w.grid()->index(1, pychron::ui::LevelGridModel::Note), QStringLiteral("mine")));
+    QVERIFY(w.grid()->edit().dirty());
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QVERIFY(w.grid()->edit().dirty());
+    QCOMPARE(w.grid()->index(1, pychron::ui::LevelGridModel::Note).data().toString(), QStringLiteral("mine"));
   }
 
   void entry_menu_opens_the_windows() {
