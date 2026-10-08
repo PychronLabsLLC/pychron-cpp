@@ -42,10 +42,10 @@ QVariant FluxUnknownModel::data(const QModelIndex& index, int role) const {
     case Sample: return QString::fromStdString(f ? f->sample : in->sample);
     case SavedJ: return flux_j_cell(f ? f->saved_j : (in->saved ? in->saved->j : std::nullopt));
     case SavedJErr: return flux_j_cell(f ? f->saved_j_err : (in->saved ? in->saved->j_err : std::nullopt));
-    case PredJ: return f ? flux_j_cell(f->j) : QString();
-    case PredJErr: return f ? flux_j_cell(f->j_err) : QString();
-    case PredPercent: return f ? flux_percent_cell(f->j_err, f->j) : QString();
-    case Dev: return f ? flux_fixed2_cell(f->dev_percent) : QString();
+    case PredJ: return f && predicted() ? flux_j_cell(f->j) : QString();
+    case PredJErr: return f && predicted() ? flux_j_cell(f->j_err) : QString();
+    case PredPercent: return f && predicted() ? flux_percent_cell(f->j_err, f->j) : QString();
+    case Dev: return f && predicted() ? flux_fixed2_cell(f->dev_percent) : QString();
     default: return {};
   }
 }

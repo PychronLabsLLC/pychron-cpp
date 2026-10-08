@@ -30,11 +30,15 @@ inline QString flux_percent_cell(const std::optional<double>& err, const std::op
 }
 
 // The rows of a level's monitors or of its unknowns: from the fit when there is
-// one, else from the inputs (the fit's cells are then blank). The pointers stay
-// the window's; each set_* resets the model.
+// one; else from the positions as fit_level would have counted them
+// (processing::evaluate_position, the window's doing: the models compute
+// nothing), which have everything but what the fit predicts; else from the
+// inputs. The pointers stay the window's; each set_* resets the model.
 class FluxPositionModel : public QAbstractTableModel {
  public:
   void set_fit(const processing::LevelFit* fit);
+  // The level's positions evaluated without a fit, for when there is none.
+  void set_unfitted(const std::vector<processing::FittedPosition>* positions);
   void set_inputs(const processing::LevelInputs* inputs);
   void set_skip(const std::set<int>& skip_positions);
 
@@ -46,16 +50,23 @@ class FluxPositionModel : public QAbstractTableModel {
  protected:
   FluxPositionModel(bool monitors, QObject* parent) : QAbstractTableModel(parent), monitors_(monitors) {}
 
-  // Exactly one is non-null for a valid row: the fitted position, or the input one when there is no fit.
+  // Exactly one is non-null for a valid row: the position of the fit or, with
+  // no fit, as evaluated; or the input one when there is neither.
   const processing::FittedPosition* fitted(int row) const;
+  // What fitted() gives carries the fit's prediction (j, j_err, dev_percent).
+  bool predicted() const noexcept { return fit_ != nullptr; }
   const processing::LevelPosition* input(int row) const;
   bool saved(int hole) const { return skip_.count(hole) == 0; }
 
  private:
   void rebuild();
+  const std::vector<processing::FittedPosition>* evaluated() const noexcept {
+    return fit_ ? &fit_->positions : unfitted_;
+  }
 
   bool monitors_;
   const processing::LevelFit* fit_ = nullptr;
+  const std::vector<processing::FittedPosition>* unfitted_ = nullptr;
   const processing::LevelInputs* inputs_ = nullptr;
   std::set<int> skip_;
   std::vector<std::size_t> rows_;

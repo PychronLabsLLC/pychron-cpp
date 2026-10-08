@@ -259,6 +259,9 @@ class FluxWindow : public QMainWindow {
   std::optional<int> selected_hole_;
   // The selected monitor when there is no fit: its analyses as fit_level would have counted them.
   std::optional<processing::FittedPosition> unfitted_;
+  // Every position so, when there is no fit: the position tables show which
+  // monitors the edits leave in, and a Fit box can be ticked back.
+  std::vector<processing::FittedPosition> evaluated_;
 
   // The monitor sets of the store's document, for the combo.
   std::vector<processing::MonitorSet> sets_;

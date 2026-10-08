@@ -74,10 +74,10 @@ QVariant FluxMonitorModel::data(const QModelIndex& index, int role) const {
     case MeanJErr: return f ? flux_j_cell(f->mean_j_err) : QString();
     case MeanPercent: return f ? flux_percent_cell(f->mean_j_err, f->mean_j) : QString();
     case Mswd: return f ? flux_fixed2_cell(f->mean_j_mswd) : QString();
-    case PredJ: return f ? flux_j_cell(f->j) : QString();
-    case PredJErr: return f ? flux_j_cell(f->j_err) : QString();
-    case PredPercent: return f ? flux_percent_cell(f->j_err, f->j) : QString();
-    case Dev: return f ? flux_fixed2_cell(f->dev_percent) : QString();
+    case PredJ: return f && predicted() ? flux_j_cell(f->j) : QString();
+    case PredJErr: return f && predicted() ? flux_j_cell(f->j_err) : QString();
+    case PredPercent: return f && predicted() ? flux_percent_cell(f->j_err, f->j) : QString();
+    case Dev: return f && predicted() ? flux_fixed2_cell(f->dev_percent) : QString();
     default: return {};
   }
 }

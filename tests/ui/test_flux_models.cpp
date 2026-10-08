@@ -227,6 +227,87 @@ class FluxModelsTest : public QObject {
     QCOMPARE(um.hole_at(1), 0);
   }
 
+  // Ruling R15: no fit, and the positions as fit_level would have counted them
+  // (processing::evaluate_position): the Fit boxes say what the edits say and
+  // can be changed, the means are shown, the predictions are not.
+  void monitor_rows_from_evaluated_positions() {
+    std::vector<pp::FittedPosition> evaluated = {monitor(3), unknown(4), monitor(5), monitor(6)};
+    evaluated[2].used_in_fit = false;  // excluded by the edits
+    evaluated[2].excluded = true;
+    evaluated[2].notes = {pp::PositionNote::LeftOutOfFit};
+    evaluated[3].used_in_fit = false;  // nothing to fit with
+    evaluated[3].n = 0;
+    evaluated[3].mean_j.reset();
+    evaluated[3].mean_j_err.reset();
+    evaluated[3].mean_j_mswd.reset();
+    evaluated[3].notes = {pp::PositionNote::NoUsableAnalysis};
+
+    FluxMonitorModel m;
+    QSignalSpy resets(&m, &QAbstractItemModel::modelReset);
+    m.set_unfitted(&evaluated);
+    QCOMPARE(resets.count(), 1);
+    QCOMPARE(m.rowCount(), 3);
+    QCOMPARE(m.hole_at(0), 3);
+    QCOMPARE(m.row_of(5), 1);
+    QCOMPARE(m.row_of(4), -1);
+    const auto fit_box = [&](int row) { return m.data(m.index(row, FluxMonitorModel::Fit), Qt::CheckStateRole).toInt(); };
+    const auto checkable = [&](int row) {
+      return bool(m.flags(m.index(row, FluxMonitorModel::Fit)) & Qt::ItemIsUserCheckable);
+    };
+    QCOMPARE(fit_box(0), int(Qt::Checked));
+    QCOMPARE(fit_box(1), int(Qt::Unchecked));
+    QCOMPARE(fit_box(2), int(Qt::Unchecked));
+    QVERIFY(checkable(0));
+    QVERIFY(checkable(1));
+    QVERIFY(!checkable(2));
+    QCOMPARE(cell(m, 2, FluxMonitorModel::Fit, Qt::ToolTipRole), QString("No usable analysis"));
+    // What does not depend on the fit is there...
+    for (int row : {0, 1}) {
+      QCOMPARE(cell(m, row, FluxMonitorModel::Identifier), QString("NM-%1").arg(row == 0 ? 3 : 5));
+      QCOMPARE(cell(m, row, FluxMonitorModel::N), QString("4"));
+      QCOMPARE(cell(m, row, FluxMonitorModel::SavedJ), QString("1.0000e-03"));
+      QCOMPARE(cell(m, row, FluxMonitorModel::MeanJ), QString("1.0100e-03"));
+      QCOMPARE(cell(m, row, FluxMonitorModel::MeanJErr), QString("2.0200e-05"));
+      QCOMPARE(cell(m, row, FluxMonitorModel::MeanPercent), QString("2.00"));
+      QCOMPARE(cell(m, row, FluxMonitorModel::Mswd), QString("1.23"));
+    }
+    QCOMPARE(cell(m, 2, FluxMonitorModel::MeanJ), QString());
+    // ... and what the fit predicts is not, whatever the positions hold there.
+    for (int row = 0; row < 3; ++row)
+      for (int c : {int(FluxMonitorModel::PredJ), int(FluxMonitorModel::PredJErr), int(FluxMonitorModel::PredPercent),
+                    int(FluxMonitorModel::Dev)})
+        QCOMPARE(cell(m, row, c), QString());
+
+    // A click is reported as ever; the model changes nothing by itself.
+    QSignalSpy toggled(&m, &FluxMonitorModel::fit_toggled);
+    QVERIFY(m.setData(m.index(1, FluxMonitorModel::Fit), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(toggled.count(), 1);
+    QCOMPARE(toggled.at(0).at(0).toInt(), 5);
+    QCOMPARE(toggled.at(0).at(1).toBool(), true);
+    QCOMPARE(fit_box(1), int(Qt::Unchecked));
+    QVERIFY(!m.setData(m.index(2, FluxMonitorModel::Fit), Qt::Checked, Qt::CheckStateRole));
+
+    FluxUnknownModel um;
+    um.set_unfitted(&evaluated);
+    QCOMPARE(um.rowCount(), 1);
+    QCOMPARE(cell(um, 0, FluxUnknownModel::Identifier), QString("26-4"));
+    QCOMPARE(cell(um, 0, FluxUnknownModel::SavedJ), QString("2.0000e-03"));
+    for (int c : {int(FluxUnknownModel::PredJ), int(FluxUnknownModel::PredJErr), int(FluxUnknownModel::PredPercent),
+                  int(FluxUnknownModel::Dev)})
+      QCOMPARE(cell(um, 0, c), QString());
+
+    // A fit takes over, and gives way again.
+    pp::LevelFit fit = sample_fit();
+    m.set_fit(&fit);
+    QCOMPARE(m.rowCount(), 2);
+    QCOMPARE(cell(m, 0, FluxMonitorModel::PredJ), QString("1.0200e-03"));
+    m.set_fit(nullptr);
+    QCOMPARE(m.rowCount(), 3);
+    QCOMPARE(cell(m, 0, FluxMonitorModel::PredJ), QString());
+    m.set_unfitted(nullptr);
+    QCOMPARE(m.rowCount(), 0);
+  }
+
   void unknown_cells_and_save_box() {
     pp::LevelFit fit = sample_fit();
     FluxUnknownModel m;

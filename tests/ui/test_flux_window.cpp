@@ -36,6 +36,7 @@ class FluxWindowTest : public QObject {
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPointer>
@@ -1036,6 +1037,104 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.status().contains(QStringLiteral("Preset")));
     QVERIFY(!w.findChild<QWidget*>(QStringLiteral("flux_status"))->toolTip().contains(QStringLiteral("one")));
     QVERIFY(!w.status().isEmpty());
+  }
+
+  // Ruling R15: a fit that fails still shows which monitors are in it, and
+  // lets one be ticked back.
+  void a_failing_fit_lets_a_monitor_back_in() {
+    auto r = rig();
+    auto wp = opened(r);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    for (int hole = 1; hole <= 5; ++hole) w.set_in_fit(hole, false);  // one too many for a plane
+    QVERIFY(settle(w));
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().contains(QStringLiteral("needs 4 monitor positions, 3 used")), qPrintable(w.status()));
+    QCOMPARE(w.fit(), nullptr);
+    QCOMPARE(w.monitors()->rowCount(), 8);
+    for (int hole = 1; hole <= 8; ++hole) {
+      const int row = w.monitors()->row_of(hole);
+      QCOMPARE(check(w.monitors(), row, FluxMonitorModel::Fit), hole <= 5 ? Qt::Unchecked : Qt::Checked);
+      QVERIFY(w.monitors()->flags(w.monitors()->index(row, FluxMonitorModel::Fit)) & Qt::ItemIsUserCheckable);
+      QCOMPARE(w.monitors()->index(row, FluxMonitorModel::N).data().toInt(), 3);
+      QVERIFY(!w.monitors()->index(row, FluxMonitorModel::MeanJ).data().toString().isEmpty());
+      QVERIFY(w.monitors()->index(row, FluxMonitorModel::PredJ).data().toString().isEmpty());
+      QVERIFY(w.monitors()->index(row, FluxMonitorModel::Dev).data().toString().isEmpty());
+    }
+    QVERIFY(w.unknowns()->index(0, pychron::ui::FluxUnknownModel::PredJ).data().toString().isEmpty());
+    // An analysis omitted meanwhile shows in its monitor's N.
+    w.toggle_analyses({QString::fromStdString(seeded_.analyses.at("66007-01").str())});
+    QVERIFY(settle(w));
+    QCOMPARE(w.fit(), nullptr);
+    QCOMPARE(w.monitors()->index(w.monitors()->row_of(7), FluxMonitorModel::N).data().toInt(), 2);
+    w.toggle_analyses({QString::fromStdString(seeded_.analyses.at("66007-01").str())});
+
+    // One ticked back, as the window is asked.
+    w.set_in_fit(5, true);
+    QVERIFY(settle(w));
+    QVERIFY2(!w.status_is_error(), qPrintable(w.status()));
+    QVERIFY(w.fit());
+    QCOMPARE(w.edits().exclude_positions, (std::set<int>{1, 2, 3, 4}));
+    QCOMPARE(check(w.monitors(), w.monitors()->row_of(5), FluxMonitorModel::Fit), Qt::Checked);
+    QVERIFY(!w.monitors()->index(0, FluxMonitorModel::PredJ).data().toString().isEmpty());
+
+    // And through the box itself: out, which fails again, and back in.
+    const QModelIndex box = w.monitors()->index(w.monitors()->row_of(5), FluxMonitorModel::Fit);
+    QVERIFY(w.monitors()->setData(box, Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(settle(w));
+    QCOMPARE(w.fit(), nullptr);
+    QVERIFY2(w.status().contains(QStringLiteral("needs 4 monitor positions, 3 used")), qPrintable(w.status()));
+    const QModelIndex again = w.monitors()->index(w.monitors()->row_of(5), FluxMonitorModel::Fit);
+    QCOMPARE(again.data(Qt::CheckStateRole).value<Qt::CheckState>(), Qt::Unchecked);
+    QVERIFY(w.monitors()->setData(again, Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(settle(w));
+    QVERIFY2(!w.status_is_error(), qPrintable(w.status()));
+    QVERIFY(w.fit());
+    QCOMPARE(w.fit()->dof, 1);
+    QVERIFY(w.edited());  // no Revert was needed, and none happened
+  }
+
+  // The columns are sized to their contents once and are the user's from then on.
+  void a_dragged_column_keeps_its_width() {
+    auto r = rig();
+    auto wp = opened(r);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    for (const char* name : {"flux_monitors", "flux_analyses", "flux_unknowns"}) {
+      auto* header = w.findChild<QTableView*>(QString::fromLatin1(name))->horizontalHeader();
+      QVERIFY(!header->stretchLastSection());
+      for (int c = 0; c < header->count(); ++c) QCOMPARE(header->sectionResizeMode(c), QHeaderView::Interactive);
+    }
+    auto* header = w.monitor_table()->horizontalHeader();
+    // Sized to the contents when the rows arrived: a J is wider than "N".
+    QVERIFY(header->sectionSize(FluxMonitorModel::PredJ) > header->sectionSize(FluxMonitorModel::N));
+    QVERIFY(header->sectionSize(FluxMonitorModel::PredJ) >= static_cast<QAbstractItemView*>(w.monitor_table())->sizeHintForColumn(FluxMonitorModel::PredJ));
+    const int wide = header->sectionSize(FluxMonitorModel::Identifier) + 57;
+    header->resizeSection(FluxMonitorModel::Identifier, wide);
+    const int other = header->sectionSize(FluxMonitorModel::MeanJ);
+
+    w.set_in_fit(3, false);  // a refit
+    QVERIFY(settle(w));
+    QCOMPARE(header->sectionSize(FluxMonitorModel::Identifier), wide);
+    QCOMPARE(header->sectionSize(FluxMonitorModel::MeanJ), other);
+    auto bowl = pp::to_options(pp::FluxOptions{});
+    QVERIFY(bowl.set("model.kind", std::string("bowl")).has_value());
+    w.set_options(bowl);  // a fit that fails, and one that fits again
+    QVERIFY(settle(w));
+    QCOMPARE(w.fit(), nullptr);
+    w.revert();
+    QVERIFY(w.fit());
+    QCOMPARE(header->sectionSize(FluxMonitorModel::Identifier), wide);
+    // The analyses table is sized when a monitor first fills it.
+    w.select_monitor(3);
+    auto* analyses = w.findChild<QTableView*>(QStringLiteral("flux_analyses"));
+    QVERIFY(analyses->horizontalHeader()->sectionSize(FluxAnalysisModel::Record) >=
+            static_cast<QAbstractItemView*>(analyses)->sizeHintForColumn(FluxAnalysisModel::Record));
+    analyses->horizontalHeader()->resizeSection(FluxAnalysisModel::Record, 231);
+    w.select_monitor(5);
+    w.set_in_fit(4, false);
+    QVERIFY(settle(w));
+    QCOMPARE(analyses->horizontalHeader()->sectionSize(FluxAnalysisModel::Record), 231);
   }
 
   void a_saved_fit_the_monitors_cannot_fit() {

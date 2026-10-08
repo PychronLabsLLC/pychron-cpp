@@ -133,6 +133,11 @@ const pp::LevelPosition* monitor_at(const pp::LevelInputs& inputs, int hole) {
   return nullptr;
 }
 
+// A table's own notes on its column widths (size_columns).
+constexpr const char* kSized = "flux_columns_sized";
+constexpr const char* kSizing = "flux_columns_sizing";
+constexpr const char* kDragged = "flux_columns_dragged";
+
 QTableView* make_table(QAbstractItemModel* model, const QString& name, QWidget* parent) {
   auto* table = new QTableView(parent);
   table->setObjectName(name);
@@ -140,11 +145,33 @@ QTableView* make_table(QAbstractItemModel* model, const QString& name, QWidget* 
   table->setSelectionBehavior(QAbstractItemView::SelectRows);
   table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->verticalHeader()->setVisible(false);
-  // Every column as wide as its head and its widest cell: at 1400 pixels the
-  // monitor table's sixteen columns scroll rather than clip.
-  table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-  table->horizontalHeader()->setStretchLastSection(true);
+  // The columns are the user's to drag; size_columns() gives them their first
+  // widths. At 1400 pixels the monitor table's sixteen columns scroll rather
+  // than clip.
+  QHeaderView* header = table->horizontalHeader();
+  header->setSectionResizeMode(QHeaderView::Interactive);
+  header->setStretchLastSection(false);
+  QObject::connect(header, &QHeaderView::sectionResized, table, [table] {
+    if (!table->property(kSizing).toBool()) table->setProperty(kDragged, true);
+  });
   return table;
+}
+
+// Every column as wide as its head and its widest cell, once: when the table
+// first has rows, and again when it first has all it shows (`complete`: a fit's
+// predictions) or another number of columns. Never over a width the user
+// dragged, so a refit leaves the columns alone.
+void size_columns(QTableView* table, bool complete) {
+  const int columns = table->model()->columnCount();
+  if (table->model()->rowCount() == 0) return;
+  const int want = columns * 2 + (complete ? 1 : 0);
+  const int have = table->property(kSized).toInt();
+  if (have / 2 == columns && (have >= want || table->property(kDragged).toBool())) return;
+  table->setProperty(kSizing, true);
+  table->resizeColumnsToContents();
+  table->setProperty(kSizing, false);
+  table->setProperty(kSized, want);
+  if (have / 2 != columns) table->setProperty(kDragged, false);
 }
 
 }  // namespace
@@ -274,10 +301,11 @@ FluxWindow::~FluxWindow() {
   // The models are children, destroyed after the members they point into.
   resetting_ = true;
   analyses_->set_position(nullptr);
-  monitors_->set_fit(nullptr);
-  monitors_->set_inputs(nullptr);
-  unknowns_->set_fit(nullptr);
-  unknowns_->set_inputs(nullptr);
+  for (FluxPositionModel* model : {static_cast<FluxPositionModel*>(monitors_), static_cast<FluxPositionModel*>(unknowns_)}) {
+    model->set_fit(nullptr);
+    model->set_unfitted(nullptr);
+    model->set_inputs(nullptr);
+  }
 }
 
 void FluxWindow::build_dock() {
@@ -514,10 +542,12 @@ void FluxWindow::clear_level() {
   fit_timer_->stop();
   resetting_ = true;
   analyses_->set_position(nullptr);
-  monitors_->set_fit(nullptr);
-  monitors_->set_inputs(nullptr);
-  unknowns_->set_fit(nullptr);
-  unknowns_->set_inputs(nullptr);
+  for (FluxPositionModel* model : {static_cast<FluxPositionModel*>(monitors_), static_cast<FluxPositionModel*>(unknowns_)}) {
+    model->set_fit(nullptr);
+    model->set_unfitted(nullptr);
+    model->set_inputs(nullptr);
+  }
+  evaluated_.clear();
   skip_.clear();
   loaded_skip_.clear();
   monitors_->set_skip(skip_);
@@ -641,10 +671,13 @@ void FluxWindow::fit_now() {
   if (!inputs_) return;
   resetting_ = true;
   analyses_->set_position(nullptr);
-  monitors_->set_fit(nullptr);
-  unknowns_->set_fit(nullptr);
+  for (FluxPositionModel* model : {static_cast<FluxPositionModel*>(monitors_), static_cast<FluxPositionModel*>(unknowns_)}) {
+    model->set_fit(nullptr);
+    model->set_unfitted(nullptr);
+  }
   fit_.reset();
   unfitted_.reset();
+  evaluated_.clear();
   fit_error_.clear();
 
   if (!options_error_.empty()) {
@@ -656,10 +689,21 @@ void FluxWindow::fit_now() {
   } else {
     fit_error_ = fitted.error().what;
   }
+  if (!fit_) {
+    // No fit: the positions as fit_level counts them, so the tables say which
+    // monitors the edits leave in and one can be ticked back (ruling R15).
+    evaluated_.reserve(inputs_->positions.size());
+    for (const auto& position : inputs_->positions)
+      evaluated_.push_back(pp::evaluate_position(position, inputs_->monitor_set, options_, edits_));
+    monitors_->set_unfitted(&evaluated_);
+    unknowns_->set_unfitted(&evaluated_);
+  }
 
   // The selection is by hole: it survives the reset of the model.
   restore_selection();
   resetting_ = false;
+  size_columns(monitor_table_, fit_.has_value());
+  size_columns(unknown_table_, fit_.has_value());
 
   show_selected();
   update_scene();
@@ -696,6 +740,7 @@ void FluxWindow::show_selected() {
     const auto found = std::find_if(fit_->positions.begin(), fit_->positions.end(),
                                     [&](const pp::FittedPosition& p) { return p.hole == *selected_hole_; });
     if (found != fit_->positions.end() && found->monitor) analyses_->set_position(&*found);
+    size_columns(analysis_table_, true);
     return;
   }
   // No fit: the analyses as fit_level counts them, so what is wrong can be seen.
@@ -704,6 +749,7 @@ void FluxWindow::show_selected() {
   if (found == inputs_->positions.end() || !found->monitor) return;
   unfitted_ = pp::evaluate_position(*found, inputs_->monitor_set, options_, edits_);
   analyses_->set_position(&*unfitted_);
+  size_columns(analysis_table_, true);
 }
 
 void FluxWindow::update_scene() {
