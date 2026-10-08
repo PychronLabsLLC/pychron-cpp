@@ -219,6 +219,11 @@ TEST(Mapping, SampleAndLocation) {
   EXPECT_EQ(s.sample.stratographicUnitName, "Fish Canyon Tuff");
   EXPECT_EQ(s.sample.description, "Uploaded from pychron-cpp 9.9.9");
   EXPECT_EQ(build_one(step_sample()).sample.description, "Uploaded from pychron-cpp");
+  // No name given: the fallback the age summary uses, not a sentence without its end.
+  options.software.clear();
+  const Submission unnamed = build_one(step_sample(), options);
+  EXPECT_EQ(unnamed.sample.description, "Uploaded from pychron-cpp");
+  EXPECT_TRUE(contains(unnamed.age_summary.description.value_or(""), "; reduced with pychron-cpp."));
   ASSERT_TRUE(s.location.has_value());
   EXPECT_EQ(s.location->lat, 37.75);
   EXPECT_EQ(s.location->lon, -106.9);
@@ -906,12 +911,10 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   }
   // Two heating experiments have no one summary age that goes without
   // saying: the lab chooses, and is told between what.
-  const std::string undecided = refused(two);
-  EXPECT_TRUE(contains(undecided, "earthbank: sample \"S-STEP\"") &&
-              contains(undecided, "2 step-heated aliquots (20001-01, 20001-02)") &&
-              contains(undecided, "weighted_mean") && contains(undecided, "integrated") &&
-              contains(undecided, "separate selections"))
-      << undecided;
+  EXPECT_EQ(refused(two),
+            "earthbank: sample \"S-STEP\": it has 2 step-heated aliquots (20001-01, 20001-02), and which summary "
+            "age to report for them has to be chosen: set its preferred age to weighted_mean, integrated or "
+            "isochron (each pools the aliquots), or publish the aliquots as separate selections");
 
   PublishOptions pooled;
   pooled.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
@@ -943,15 +946,34 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   EXPECT_REL(gas.age_summary.age, pp::integrated_age(items_of(td), false)->nominal());
   EXPECT_TRUE(contains(note_with(gas, "preferred age"), "the age pools 2 step-heated aliquots"));
 
-  // A plateau is one heating experiment, and so is the isochron of a sample.
-  for (const PreferredAge kind : {PreferredAge::Plateau, PreferredAge::Isochron}) {
-    pooled.samples["S-STEP"].preferred_age = kind;
-    const std::string what = refused(two, pooled);
-    EXPECT_TRUE(contains(what, "\"S-STEP\"") && contains(what, age_type_name(kind)) &&
-                contains(what, "2 aliquots were step heated (20001-01, 20001-02)") &&
-                contains(what, "weighted_mean") && contains(what, "integrated"))
-        << what;
-  }
+  // An isochron over the aliquots, when the lab asks for it: the fit of all
+  // their steps, and the record says it pools them.
+  pooled.samples["S-STEP"].preferred_age = PreferredAge::Isochron;
+  const auto points = pp::isochron_points(items_of(td));
+  const auto fit = pp::isochron_age(points, pooled.ages.york, false, false);
+  const auto fit_with_j = pp::isochron_age(points, pooled.ages.york, false, true);
+  ASSERT_TRUE(fit && fit_with_j && fit->age && fit_with_j->age);
+  const Submission iso = build_one(two, pooled);
+  EXPECT_EQ(iso.age_summary.ageCalcTypeName, "Inverse Isochron Age");
+  EXPECT_EQ(iso.age_summary.nAnalysisGrouped, 14);
+  EXPECT_REL(iso.age_summary.age, fit->age->nominal());
+  EXPECT_REL(iso.age_summary.ageUncertainty, fit_with_j->age->std_dev());
+  EXPECT_REL(iso.age_summary.mswd, fit->fit.mswd);
+  EXPECT_EQ(flags(iso, &Measurement::inverseIsoStepName), std::string(14, 'Y'));
+  EXPECT_TRUE(contains(note_with(iso, "preferred age"), "chosen in the options") &&
+              contains(note_with(iso, "preferred age"), "the age pools 2 step-heated aliquots (20001-01, 20001-02)"))
+      << note_with(iso, "preferred age");
+  EXPECT_TRUE(contains(iso.age_summary.description.value_or(""),
+                       "Inverse Isochron Age of 14 of 14 analyses, pooling 2 step-heated aliquots (trapped 40Ar/36Ar "))
+      << iso.age_summary.description.value_or("");
+
+  // A plateau is of one heating experiment: refused, with the three that are not.
+  pooled.samples["S-STEP"].preferred_age = PreferredAge::Plateau;
+  EXPECT_EQ(refused(two, pooled),
+            "earthbank: sample \"S-STEP\": the Plateau Age asked for cannot be computed: 2 aliquots were step "
+            "heated (20001-01, 20001-02), and a plateau is of one heating experiment: set its preferred age to "
+            "weighted_mean, integrated or isochron (each pools the aliquots), or publish the aliquots as separate "
+            "selections");
 }
 
 // ---------------------------------------------------------------- vocabulary
@@ -1402,75 +1424,81 @@ TEST(Mapping, NonFiniteValuesAreLeftOutAndNoted) {
   }
 }
 
-// An isotope the analysis did not measure has no fields, not zeros, and
-// neither has anything that would be worked out from the zero the reduction
-// puts in its place.
+// An analysis is published only with all five argon isotopes measured. The
+// reduction puts a zero in the place of one that was not, and goes on: without
+// 37Ar it makes no Ca correction, without 38Ar no chlorine correction, without
+// 36Ar no atmospheric one, and gives an age all the same. None of that is sent.
 TEST(Mapping, AMissingIsotopeIsAbsent) {
-  const std::set<std::string> whole = keys_of(to_json(build_one(fusion_sample()).measurements[0]));
-  const auto without = [&](std::initializer_list<const char*> fields) {
-    std::set<std::string> keys = whole;
-    for (const char* field : fields) {
-      EXPECT_EQ(keys.erase(field), 1u) << field;
-    }
-    return keys;
+  AnalysisList five = fusion_sample();
+  five.erase(five.begin() + 2);
+  const Submission others = build_one(five);
+  const auto dropping = [](std::initializer_list<const char*> isotopes) {
+    return [isotopes](pp::Analysis& a) {
+      for (const char* isotope : isotopes) drop_isotope(a, isotope);
+    };
   };
 
-  // No 38Ar: nothing of 38Ar, and no Cl/K.
-  const Submission no38 = build_one(with_edit_all(fusion_sample(), [](pp::Analysis& a) { drop_isotope(a, "Ar38"); }));
-  ASSERT_EQ(no38.measurements.size(), 6u);
-  EXPECT_TRUE(no38.measurements[0].apparentAge.has_value());
-  EXPECT_EQ(keys_of(to_json(no38.measurements[0])),
-            without({"ar38Corr", "ar38CorrUncertainty", "ar38ExcInt", "ar38ExcIntUncertainty", "ar38blank",
-                     "ar38blankUncertainty", "ratio38Arx39ArCorr", "ratio38Arx39ArCorrUncertainty", "clK",
-                     "clKUncertainty"}));
-  EXPECT_FALSE(number(no38.measurements[0], "ar38Corr").has_value());
-  EXPECT_TRUE(number(no38.measurements[0], "ar40Corr").has_value());
-  EXPECT_TRUE(contains(note_with(no38, "20002-01: Ar38 was not measured"), "clK")) << note_with(no38, "Ar38 was not");
-
-  // No 37Ar: nothing of 37Ar, and neither Ca/K nor K/Ca. (An abundance
-  // sensitivity makes the 37Ar the reduction works with something other than
-  // an exact zero, so that a Ca/K could be formed from it.)
-  const Submission no37 = build_one(with_edit_all(fusion_sample(), [](pp::Analysis& a) {
-    drop_isotope(a, "Ar37");
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->abundance_sensitivity = 2e-3;
-    a.context.constants->allow_negative_ca_correction = true;
-  }));
-  ASSERT_EQ(no37.measurements.size(), 6u);
-  EXPECT_EQ(keys_of(to_json(no37.measurements[0])),
-            without({"ar37Corr", "ar37CorrUncertainty", "ar37ExcInt", "ar37ExcIntUncertainty", "ar37blank",
-                     "ar37blankUncertainty", "ratio37Arx39ArCorr", "ratio37Arx39ArCorrUncertainty", "caK",
-                     "caKUncertainty", "kCa", "kCaUncertainty"}));
-  EXPECT_TRUE(contains(note_with(no37, "20002-01: Ar37 was not measured"), "caK")) << note_with(no37, "Ar37 was not");
-  // Measured, there is no such note.
-  EXPECT_EQ(note_with(build_one(fusion_sample()), "was not measured"), "");
-
-  // No 40Ar, 39Ar or 36Ar: the analysis is not published at all, whatever
-  // the reduction made of the zero (without 36Ar it has an age all the same).
-  for (const char* isotope : {"Ar40", "Ar39", "Ar36"}) {
-    const AnalysisList one =
-        with_edit(fusion_sample(), 2, [isotope](pp::Analysis& a) { drop_isotope(a, isotope); });
-    const Submission s = build_one(one);
+  for (const char* isotope : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"}) {
+    const Submission s = build_one(with_edit(fusion_sample(), 2, dropping({isotope})));
     ASSERT_EQ(s.measurements.size(), 5u) << isotope;
     for (const Measurement& m : s.measurements) EXPECT_NE(m.aliquotName, "20002-03") << isotope;
     EXPECT_EQ(s.aliquots.size(), 5u) << isotope;
     EXPECT_EQ(s.age_summary.nAnalysisGrouped, 5) << isotope;
-    const std::string note = note_with(s, "left out");
-    EXPECT_TRUE(contains(note, "1 analysis of 6") && contains(note, "20002-03") &&
-                contains(note, std::string(isotope) + " not measured"))
-        << note;
-    // The age reported is that of the five others.
-    AnalysisList five = fusion_sample();
-    five.erase(five.begin() + 2);
-    EXPECT_EQ(s.age_summary.age, build_one(five).age_summary.age) << isotope;
+    EXPECT_EQ(note_with(s, "left out"),
+              "1 analysis of 6 left out, not having all five argon isotopes measured: 20002-03 (" +
+                  std::string(isotope) + " not measured)")
+        << isotope;
+    // What is sent is what the five others alone give: the age, and every field of every measurement.
+    EXPECT_EQ(s.age_summary, others.age_summary) << isotope;
+    EXPECT_EQ(s.measurements, others.measurements) << isotope;
+    for (const Measurement& m : s.measurements) {
+      EXPECT_EQ(keys_of(to_json(m)), keys_of(to_json(others.measurements[0]))) << isotope;
+    }
+    // Nothing is published with a part unset in its place.
+    EXPECT_EQ(note_with(s, "was not measured;"), "") << isotope;
   }
-  ASSERT_TRUE(pp::reduce_analysis(with_edit(fusion_sample(), 2, [](pp::Analysis& a) { drop_isotope(a, "Ar36"); })[2], {})
-                  ->arar->ages.has_value());
+  // The reduction gives the three of these an age, so it is not for want of
+  // one that they are left out.
+  for (const char* isotope : {"Ar38", "Ar37", "Ar36"}) {
+    const AnalysisList one = with_edit(fusion_sample(), 2, dropping({isotope}));
+    ASSERT_TRUE(pp::reduce_analysis(one[2], {})->arar->ages.has_value()) << isotope;
+  }
 
-  // None left: refused, saying why.
-  const std::string what = refused(with_edit_all(fusion_sample(), [](pp::Analysis& a) { drop_isotope(a, "Ar36"); }));
-  EXPECT_TRUE(contains(what, "earthbank: sample \"S-FUS\"") && contains(what, "none of its 6 analyses can be published") &&
-              contains(what, "20002-01 (Ar36 not measured)"))
+  // Two missing: both are named; and two analyses: both are counted.
+  AnalysisList several = with_edit(fusion_sample(), 2, dropping({"Ar37", "Ar38"}));
+  several = with_edit(several, 4, dropping({"Ar36"}));
+  const Submission four = build_one(several);
+  EXPECT_EQ(four.measurements.size(), 4u);
+  EXPECT_EQ(note_with(four, "left out"),
+            "2 analyses of 6 left out, not having all five argon isotopes measured: 20002-03 (Ar38, Ar37 not "
+            "measured), 20002-05 (Ar36 not measured)");
+  // All measured: no such note.
+  EXPECT_EQ(note_with(build_one(fusion_sample()), "argon isotopes"), "");
+
+  // A heating step left out leaves its aliquot's schedule with a gap, like any other.
+  const Submission steps = build_one(with_edit(step_sample(), 3, dropping({"Ar37"})));
+  ASSERT_EQ(steps.measurements.size(), 9u);
+  EXPECT_TRUE(contains(note_with(steps, "argon isotopes"), "1 analysis of 10") &&
+              contains(note_with(steps, "argon isotopes"), "20001-01D (Ar37 not measured)"))
+      << note_with(steps, "argon isotopes");
+  EXPECT_TRUE(contains(note_with(steps, "ar39KReleased"), "20001-01: step D is not among the analyses published"));
+  EXPECT_FALSE(steps.measurements[0].cumulative39ArK.has_value());
+
+  // None left: refused, saying which isotope each lacks and what the rule is.
+  for (const char* isotope : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"}) {
+    const std::string what = refused(with_edit_all(fusion_sample(), dropping({isotope})));
+    EXPECT_TRUE(contains(what, "earthbank: sample \"S-FUS\": none of its 6 analyses can be published: 20002-01 (" +
+                                   std::string(isotope) + " not measured), 20002-02 (") &&
+                contains(what, "an analysis is published only when Ar40, Ar39, Ar38, Ar37 and Ar36 were all "
+                               "measured and it has an age; take the sample out of the selection"))
+        << what;
+  }
+  // The same when some lack an isotope and the rest an age.
+  AnalysisList none = with_edit_all(fusion_sample(), [](pp::Analysis& a) { a.context.flux.reset(); });
+  none = with_edit(none, 0, dropping({"Ar38"}));
+  const std::string what = refused(none);
+  EXPECT_TRUE(contains(what, "none of its 6 analyses can be published: 20002-01 (Ar38 not measured), 20002-02") &&
+              contains(what, "take the sample out of the selection"))
       << what;
 }
 
@@ -1547,6 +1575,72 @@ TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
   EXPECT_EQ(described(build_one(steps, strict)),
             "Total Gas Age of 10 of 10 analyses; uncertainty 1 sigma (propagated through the age equation), "
             "analytical uncertainty only; reduced with pychron-cpp.");
+
+  // The decay constant's uncertainty, when the reduction carries it into the
+  // ages, is in every one of these uncertainties, and the sentence says so:
+  // none of them is then "analytical uncertainty only".
+  const std::string plateau_of = "Plateau Age of 6 of 10 analyses (steps C to H, " +
+                                 printed(found->mean.gas_fraction, 4) + "% of the 39ArK); uncertainty 1 sigma ";
+  PublishOptions decay;
+  decay.reduction.include_decay_error = true;
+  const Submission with_decay = build_one(steps, decay);
+  EXPECT_EQ(described(with_decay), plateau_of + "(the mean's msem), J uncertainty included, decay constant "
+                                                "uncertainty included; reduced with pychron-cpp.");
+  // It is the report's number under the same settings, and more than without.
+  EXPECT_REL(with_decay.age_summary.ageUncertainty, cell(report_of(steps, decay), "plateau age ±(1s) with J"));
+  EXPECT_GT(*with_decay.age_summary.ageUncertainty, *build_one(steps).age_summary.ageUncertainty);
+  EXPECT_GT(*with_decay.measurements[3].apparentAgeUncertainty,
+            *build_one(steps).measurements[3].apparentAgeUncertainty);
+  decay.age_includes_j_error = false;
+  const Submission decay_only = build_one(steps, decay);
+  EXPECT_EQ(described(decay_only), plateau_of + "(the mean's msem), J uncertainty not included, decay constant "
+                                                "uncertainty included; reduced with pychron-cpp.");
+  EXPECT_FALSE(contains(note_with(decay_only, "reported age's uncertainty"), "analytical"))
+      << note_with(decay_only, "reported age's uncertainty");
+  // The constants of the analyses can ask for it as well as the settings.
+  const AnalysisList by_constants = with_edit_all(steps, [](pp::Analysis& a) {
+    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
+    a.context.constants->include_decay_error = true;
+  });
+  EXPECT_EQ(described(build_one(by_constants)), described(with_decay));
+  EXPECT_EQ(build_one(by_constants).age_summary.ageUncertainty, with_decay.age_summary.ageUncertainty);
+  // The other kinds.
+  for (const PreferredAge kind : {PreferredAge::WeightedMean, PreferredAge::Isochron, PreferredAge::Integrated}) {
+    PublishOptions of_kind;
+    of_kind.samples["S-STEP"].preferred_age = kind;
+    of_kind.reduction.include_decay_error = true;
+    const Submission with = build_one(steps, of_kind);
+    EXPECT_TRUE(contains(described(with), "), J uncertainty included, decay constant uncertainty included; reduced"))
+        << described(with);
+    of_kind.age_includes_j_error = false;
+    const Submission without_j = build_one(steps, of_kind);
+    EXPECT_TRUE(contains(described(without_j),
+                         "), J uncertainty not included, decay constant uncertainty included; reduced"))
+        << described(without_j);
+    of_kind.reduction.include_decay_error = false;
+    const Submission analytical = build_one(steps, of_kind);
+    EXPECT_TRUE(contains(described(analytical), "), analytical uncertainty only; reduced")) << described(analytical);
+    // What the sentence says is in the number.
+    EXPECT_GT(*without_j.age_summary.ageUncertainty, *analytical.age_summary.ageUncertainty) << age_type_name(kind);
+  }
+  // A mean over several J says both.
+  const AnalysisList two_j =
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 6.04e-6}; });
+  PublishOptions fusion_decay;
+  fusion_decay.reduction.include_decay_error = true;
+  EXPECT_EQ(described(build_one(two_j, fusion_decay)),
+            "Weighted Mean Age of 6 of 6 analyses; uncertainty 1 sigma (the mean's msem), J uncertainty included "
+            "(the largest relative J uncertainty among its analyses, 0.4% of 20002-05), decay constant uncertainty "
+            "included; reduced with pychron-cpp.");
+  // Analyses that do not agree on it have no one sentence that is true of them.
+  const std::string mixed = refused(with_edit(steps, 4, [](pp::Analysis& a) {
+    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
+    a.context.constants->include_decay_error = true;
+  }));
+  EXPECT_TRUE(contains(mixed, "earthbank: sample \"S-STEP\"") &&
+              contains(mixed, "decay constant uncertainty in the ages differs between analyses") &&
+              contains(mixed, "not included (20001-01A)") && contains(mixed, "included (20001-01E)"))
+      << mixed;
 
   // An analysis left out is in neither number.
   const AnalysisList nine = with_edit(steps, 9, [](pp::Analysis& a) { a.context.flux.reset(); });

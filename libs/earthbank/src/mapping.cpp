@@ -152,8 +152,8 @@ struct Member {
   bool has_age() const { return reduced->arar && reduced->arar->ages; }
   bool is_step() const { return analysis->increment >= 0; }
   // The analysis measured the isotope. The reduction puts a zero in the place
-  // of one it did not (reduce_analysis), and nothing made from that zero is
-  // sent.
+  // of one it did not (reduce_analysis) and goes on, so an analysis is
+  // published only when it measured all five (submission_of).
   bool measured(r::ArgonIsotope isotope) const {
     return reduced->stage(r::to_string(isotope), pr::Stage::Intercept).has_value();
   }
@@ -360,6 +360,9 @@ struct Constants {
   double atm4036 = 0.0;
   r::AgeUnits units = r::AgeUnits::Ma;
   double to_ma = 1.0;  // an age in `units`, times this, is in Ma
+  // The decay constant's uncertainty is carried into every age (the reduction
+  // settings or the analyses' own constants ask for it).
+  bool decay_error = false;
 };
 
 Result<Constants> constants_of(std::string_view sample, const Members& dated) {
@@ -376,7 +379,13 @@ Result<Constants> constants_of(std::string_view sample, const Members& dated) {
       sample, dated, "age unit", [](const Member& m) { return std::optional(m.reduced->constants->age_units); },
       [](r::AgeUnits u) { return std::string(units_name(u)); });
   if (!units) return fail(units.error());
+  auto decay_error = agreed(
+      sample, dated, "decay constant uncertainty in the ages",
+      [](const Member& m) { return std::optional(m.reduced->constants->include_decay_error); },
+      [](bool included) { return std::string(included ? "included" : "not included"); });
+  if (!decay_error) return fail(decay_error.error());
   Constants out;
+  out.decay_error = **decay_error;
   out.decay_constant = **decay;
   out.atm4036 = **air;
   out.units = **units;
@@ -636,20 +645,20 @@ Result<SummaryAge> preferred_age(std::string_view sample, const Group& g, const 
     return age;
   };
 
-  // Several heating experiments on one sample: a plateau and an isochron are
-  // of one experiment, and of the two ages that can pool them neither is the
-  // one a reader would take for granted. The lab says which.
+  // Several heating experiments on one sample: a plateau is of one
+  // experiment, and of the three ages that can pool them none is the one a
+  // reader would take for granted. The lab says which.
   const bool pooled = g.heated.size() > 1;
-  const std::string pooling = "choose weighted_mean or integrated as its preferred age (either pools the "
+  const std::string pooling = "set its preferred age to weighted_mean, integrated or isochron (each pools the "
                               "aliquots), or publish the aliquots as separate selections";
   if (pooled && !so.preferred_age) {
-    return refuse(sample, "it has " + g.heated_aliquots() + " and no summary age is reported for that unasked: " +
-                              pooling);
+    return refuse(sample, "it has " + g.heated_aliquots() +
+                              ", and which summary age to report for them has to be chosen: " + pooling);
   }
-  if (pooled && (*so.preferred_age == AgeKind::Plateau || *so.preferred_age == AgeKind::Isochron)) {
-    return refuse(sample, "the " + name(*so.preferred_age) + " asked for cannot be computed: " +
+  if (pooled && *so.preferred_age == AgeKind::Plateau) {
+    return refuse(sample, "the " + name(AgeKind::Plateau) + " asked for cannot be computed: " +
                               std::to_string(g.heated.size()) + " aliquots were step heated (" + joined(g.heated) +
-                              "), and a plateau or an isochron is of one heating experiment: " + pooling);
+                              "), and a plateau is of one heating experiment: " + pooling);
   }
 
   if (so.preferred_age) {
@@ -670,12 +679,18 @@ Result<SummaryAge> preferred_age(std::string_view sample, const Group& g, const 
   return chosen(*mean, "the sample's analyses are fusions");
 }
 
+// The name and version the two descriptions give.
+std::string software_of(const PublishOptions& o) { return o.software.empty() ? std::string("pychron-cpp") : o.software; }
+
 // What the reported age is and what its uncertainty holds, in one sentence of
 // facts: it is the age summary's description, the only place the record can
-// say which error a mean carries and whether J is in it (the uncertainty type
-// is the sigma level and nothing more). `published` is the number of
-// analyses sent.
-std::string description_of(const SummaryAge& age, const Group& g, std::size_t published, const PublishOptions& o) {
+// say which error a mean carries and whether J and the decay constant are in
+// it (the uncertainty type is the sigma level and nothing more). `published`
+// is the number of analyses sent; `decay_error`: the reduction carried the
+// decay constant's uncertainty into the ages (Constants::decay_error), and
+// then no uncertainty of an age is analytical only.
+std::string description_of(const SummaryAge& age, const Group& g, std::size_t published, bool decay_error,
+                           const PublishOptions& o) {
   std::string out = std::string(age_type_name(age.kind)) + " of " + std::to_string(age.n) + " of " +
                     plural(published, "analysis", "analyses");
   if (g.heated.size() > 1) out += ", pooling " + std::to_string(g.heated.size()) + " step-heated aliquots";
@@ -689,7 +704,7 @@ std::string description_of(const SummaryAge& age, const Group& g, std::size_t pu
     out += " (propagated through the age equation)";
   }
   if (!o.age_includes_j_error) {
-    out += ", analytical uncertainty only";
+    out += decay_error ? ", J uncertainty not included" : ", analytical uncertainty only";
   } else {
     out += ", J uncertainty included";
     if (age.widest_j != nullptr) {
@@ -697,7 +712,8 @@ std::string description_of(const SummaryAge& age, const Group& g, std::size_t pu
              age.widest_j->analysis->runid + ")";
     }
   }
-  out += "; reduced with " + (o.software.empty() ? std::string("pychron-cpp") : o.software) + ".";
+  if (decay_error) out += ", decay constant uncertainty included";
+  out += "; reduced with " + software_of(o) + ".";
   return out;
 }
 
@@ -825,9 +841,8 @@ constexpr std::array kRatioFields = {PYCHRON_EARTHBANK_RATIO(36), PYCHRON_EARTHB
 // Ca- and Cl-derived 36Ar. That stage takes nothing from 38Ar, so 38Ar is
 // formed here from the reduction's own terms: the K- and Ca-derived 38Ar are
 // removed; the atmospheric and the chlorine-derived 38Ar are no interference
-// and stay. Nothing for an isotope the analysis did not measure.
+// and stay. (A published analysis measured every isotope.)
 std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
-  if (!m.measured(isotope)) return std::nullopt;
   if (isotope != r::ArgonIsotope::Ar38) return m.reduced->stage(r::to_string(isotope), pr::Stage::InterferenceCorrected);
   const r::ArArResult& arar = *m.reduced->arar;
   return arar.corrected[r::index(isotope)] - arar.f.interference.k38 - arar.f.interference.ca38;
@@ -842,7 +857,6 @@ std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
 // the same stage with the decay factor, an exact number, divided out again,
 // so that the five have had the same done to them but for 39Ar's decay.
 std::optional<r::UFloat> excluding_interferences(const Member& m, r::ArgonIsotope isotope) {
-  if (!m.measured(isotope)) return std::nullopt;
   const auto stage = m.reduced->stage(r::to_string(isotope), pr::Stage::DecayCorrected);
   if (!stage || isotope != r::ArgonIsotope::Ar37) return stage;
   return *stage / m.reduced->arar->decay.df37;
@@ -894,7 +908,6 @@ Measurement measurement_of(const Member& m, const Released* released, const Summ
   // its unit (legacy pychron called it microns; a queue may give mm), and a
   // size a thousand times off is worse than none.
 
-  // An isotope the analysis did not measure has no stage, and its fields stay empty.
   for (const IsotopeFields& f : kIsotopeFields) {
     numbers.set(out.*f.corrected, out.*f.corrected_error, f.corrected_name, corrected(m, f.isotope));
     numbers.set(out.*f.exc_int, out.*f.exc_int_error, f.exc_int_name, excluding_interferences(m, f.isotope));
@@ -914,21 +927,9 @@ Measurement measurement_of(const Member& m, const Released* released, const Summ
   if (const auto ar40 = corrected(m, r::ArgonIsotope::Ar40); ar40 && ar40->nominal() != 0.0) {
     PYCHRON_EARTHBANK_SET(numbers, out, radiogenicArgon, (arar.f.rad40 / *ar40 * 100.0).nominal());
   }
-  // Ca/K and K/Ca are of 37Ar and Cl/K is of 38Ar: without the isotope they
-  // would be of the zero put in its place.
-  if (m.measured(r::ArgonIsotope::Ar37)) {
-    PYCHRON_EARTHBANK_SET_PM(numbers, out, caK, arar.cak);
-    PYCHRON_EARTHBANK_SET_PM(numbers, out, kCa, arar.kca);
-  } else {
-    notes.push_back(a.runid + ": Ar37 was not measured; its own fields, ratio37Arx39ArCorr, caK and kCa were left out "
-                              "(the reduction made its Ca corrections with a 37Ar of zero)");
-  }
-  if (m.measured(r::ArgonIsotope::Ar38)) {
-    PYCHRON_EARTHBANK_SET_PM(numbers, out, clK, arar.clk);
-  } else {
-    notes.push_back(a.runid + ": Ar38 was not measured; its own fields, ratio38Arx39ArCorr and clK were left out "
-                              "(the reduction made its chlorine correction of 36Ar with a 38Ar of zero)");
-  }
+  PYCHRON_EARTHBANK_SET_PM(numbers, out, caK, arar.cak);
+  PYCHRON_EARTHBANK_SET_PM(numbers, out, kCa, arar.kca);
+  PYCHRON_EARTHBANK_SET_PM(numbers, out, clK, arar.clk);
   if (released != nullptr) {
     PYCHRON_EARTHBANK_SET(numbers, out, ar39KReleased, released->percent);
     PYCHRON_EARTHBANK_SET(numbers, out, cumulative39ArK, released->cumulative);
@@ -954,7 +955,7 @@ Sample sample_of(const std::string& name, const Facts& facts, const PublishOptio
   out.stratographicUnitName = facts.unit;
   // A value that reached here is finite (agreed_number).
   if (facts.elevation) Numbers(name, notes).set(out.referenceElevation, "referenceElevation", *facts.elevation);
-  out.description = "Uploaded from " + options.software;
+  out.description = "Uploaded from " + software_of(options);
   return out;
 }
 
@@ -1111,11 +1112,12 @@ AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const 
   out.preferredAge = true;
   out.dataInterpretationToolName = std::string(kInterpretationTool);
   out.interpretationName = so.interpretation.empty() ? std::string(kUnknownInterpretation) : so.interpretation;
-  out.description = description_of(age, g, published, options);
+  out.description = description_of(age, g, published, constants.decay_error, options);
 
   notes.push_back(std::string("the reported age's uncertainty is one sigma ") +
                   (options.age_includes_j_error ? "with the J uncertainty (" : "without the J uncertainty (") +
-                  rounded(age.analytical * constants.to_ma) + " Ma analytical, " +
+                  rounded(age.analytical * constants.to_ma) +
+                  (constants.decay_error ? " Ma without J, " : " Ma analytical, ") +
                   rounded(age.with_j * constants.to_ma) + " Ma with J)");
   if (options.age_includes_j_error && age.widest_j != nullptr) {
     notes.push_back("the analyses of the reported age do not share one J; the J uncertainty in the age's is the "
@@ -1138,15 +1140,18 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   sort_by_time(members);
 
   // Only an analysis with an age is published, and only one that measured
-  // the three isotopes an age is made of: where one is missing the reduction
-  // worked with a zero in its place (without 36Ar it gives an age all the
-  // same, as if there were no atmospheric argon), and that is not a result.
+  // all five argon isotopes: where one is missing the reduction worked with a
+  // zero in its place and gives an age all the same (without 36Ar as if there
+  // were no atmospheric argon, without 37Ar with no Ca correction of 36Ar and
+  // 39Ar, without 38Ar with no chlorine correction of 36Ar), and nothing on
+  // the published record would say so.
   Members dated;
   std::string undated, unmeasured;
   std::size_t undated_count = 0, unmeasured_count = 0;
   for (const Member& m : members) {
     std::string lacking;
-    for (const r::ArgonIsotope isotope : {r::ArgonIsotope::Ar40, r::ArgonIsotope::Ar39, r::ArgonIsotope::Ar36}) {
+    for (const IsotopeFields& f : kIsotopeFields) {
+      const r::ArgonIsotope isotope = f.isotope;
       if (!m.measured(isotope)) lacking += (lacking.empty() ? "" : ", ") + std::string(r::to_string(isotope));
     }
     if (!lacking.empty()) {
@@ -1165,7 +1170,8 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   if (dated.empty()) {
     return refuse(name, "none of its " + of_all + " can be published: " + unmeasured +
                             (undated.empty() ? "" : ", " + undated) +
-                            "; an analysis needs Ar40, Ar39 and Ar36 measured, and an age");
+                            "; an analysis is published only when Ar40, Ar39, Ar38, Ar37 and Ar36 were all "
+                            "measured and it has an age; take the sample out of the selection");
   }
   if (undated_count > 0) {
     notes.push_back(plural(undated_count, "analysis", "analyses") + " of " + std::to_string(members.size()) +
@@ -1173,7 +1179,7 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   }
   if (unmeasured_count > 0) {
     notes.push_back(plural(unmeasured_count, "analysis", "analyses") + " of " + std::to_string(members.size()) +
-                    " left out for want of an isotope the age is made of: " + unmeasured);
+                    " left out, not having all five argon isotopes measured: " + unmeasured);
   }
 
   const auto facts = facts_of(name, members, notes);
