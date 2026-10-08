@@ -34,6 +34,7 @@ struct MetricsService::Impl {
   std::unique_ptr<ExperimentMetrics> experiment;
   std::unique_ptr<pychron::metrics::SchedulerMetrics> scheduler;
   std::unique_ptr<pychron::metrics::MetricsServer> server;
+  std::string error;  // why there is no server
 };
 
 std::unique_ptr<MetricsService> MetricsService::start(const config::MetricsConfig& config, SignalBus& bus,
@@ -62,6 +63,7 @@ std::unique_ptr<MetricsService> MetricsService::start(const config::MetricsConfi
     impl->say(LogLevel::Info,
               "metrics: listening on " + config.bind + ":" + std::to_string(impl->server->port()));
   } else {
+    impl->error = server.error().what;
     const std::string message = "metrics endpoint is off: " + server.error().what;
     impl->say(LogLevel::Error, message);
     bus.publish(Alarm{"metrics", AlarmSeverity::Warning, message, clock.now()});
@@ -77,6 +79,8 @@ MetricsService::~MetricsService() {
 }
 
 bool MetricsService::listening() const noexcept { return impl_->server != nullptr; }
+
+const std::string& MetricsService::error() const noexcept { return impl_->error; }
 
 std::uint16_t MetricsService::port() const noexcept { return impl_->server ? impl_->server->port() : 0; }
 

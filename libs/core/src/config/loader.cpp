@@ -221,7 +221,7 @@ constexpr std::array kLevels{
 // Whether `s` is written as an IPv4 or IPv6 address. The loader links no
 // socket library, so this checks the spelling only; whether the address is
 // this machine's is found out when something binds it.
-bool is_ip_address(std::string_view s) {
+bool ip_address_spelled(std::string_view s) {
   if (s.find(':') == std::string_view::npos) {
     int parts = 0;
     std::size_t at = 0;
@@ -457,7 +457,7 @@ class ConfigBuilder {
     p_.read(get, m, "port", m.port, false, 1, 65535);
     std::string bind;
     if (const auto* n = get("bind"); n != nullptr && p_.read(get, m, "bind", bind, false)) {
-      if (is_ip_address(bind)) {
+      if (ip_address_spelled(bind)) {
         m.bind = std::move(bind);
       } else {
         p_.error(p_.loc(*n), "metrics.bind",
@@ -795,6 +795,8 @@ bool is_overridable_transport_key(std::string_view key) noexcept {
   }
   return false;
 }
+
+bool is_ip_address(std::string_view text) noexcept { return ip_address_spelled(text); }
 
 std::filesystem::path local_override_path(const std::filesystem::path& main_file) {
   auto out = main_file;

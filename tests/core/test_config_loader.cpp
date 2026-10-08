@@ -448,3 +448,8 @@ TEST(Metrics, NotATableIsADiagnostic) {
   ASSERT_FALSE(r);
   EXPECT_NE(r.error().what.find("metrics"), std::string::npos) << r.error().what;
 }
+
+TEST(Metrics, IsIpAddressIsWhatBindAccepts) {
+  for (const char* good : {"0.0.0.0", "127.0.0.1", "192.168.1.20", "::", "::1"}) EXPECT_TRUE(is_ip_address(good)) << good;
+  for (const char* bad : {"", "localhost", "1.2.3", "1.2.3.256", "0.0.0.0:9464"}) EXPECT_FALSE(is_ip_address(bad)) << bad;
+}

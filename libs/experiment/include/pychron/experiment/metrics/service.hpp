@@ -41,6 +41,8 @@ class MetricsService {
 
   bool listening() const noexcept;
   std::uint16_t port() const noexcept;  // 0 when not listening
+  // Why it is not listening; empty when it is.
+  const std::string& error() const noexcept;
   pychron::metrics::Registry& registry() noexcept;
 
  private:

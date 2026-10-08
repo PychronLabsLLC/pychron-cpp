@@ -80,6 +80,7 @@ TEST_F(MetricsServiceTest, EnabledServesWhatTheBusSays) {
   ASSERT_NE(service, nullptr);
   ASSERT_TRUE(service->listening());
   ASSERT_NE(service->port(), 0);
+  EXPECT_TRUE(service->error().empty());
   bus.publish(PressureSample{"IG1", 3e-9, "torr", {}});
 
   const std::string body = http_client::body(http_client::get(service->port(), "/metrics"));
@@ -113,6 +114,7 @@ TEST_F(MetricsServiceTest, APortInUseLeavesTheApplicationRunning) {
   ASSERT_NE(service, nullptr);
   EXPECT_FALSE(service->listening());
   EXPECT_EQ(service->port(), 0);
+  EXPECT_NE(service->error().find(std::to_string(c.port)), std::string::npos) << service->error();
   {
     std::lock_guard lock(m);
     ASSERT_EQ(alarms.size(), 1u);

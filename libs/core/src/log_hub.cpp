@@ -667,6 +667,14 @@ void LogHub::set_level(std::string_view pattern, LogLevel level) {
   impl_->epoch.fetch_add(1);
 }
 
+void LogHub::set_levels(LogLevel default_level, const std::vector<std::pair<std::string, LogLevel>>& levels) {
+  std::unique_lock lock(impl_->rules_mutex);
+  impl_->default_level = default_level;
+  impl_->rules.clear();
+  for (const auto& [pattern, level] : levels) impl_->put_rule(pattern, level);
+  impl_->epoch.fetch_add(1);
+}
+
 namespace detail {
 
 std::uint64_t hub_rule_epoch(const LogHub::Impl& hub) noexcept { return hub.epoch.load(); }

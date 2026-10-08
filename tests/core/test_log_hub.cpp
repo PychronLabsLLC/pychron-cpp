@@ -356,6 +356,27 @@ TEST(LogHub, SetLevelReresolvesLiveLoggers) {
   EXPECT_FALSE(hub->logger("other").enabled(LogLevel::Trace));
 }
 
+// What File > Preferences applies: the whole table at once, so a rule taken
+// out of it stops applying.
+TEST(LogHub, SetLevelsReplacesEveryRuleAndTheDefault) {
+  SteadyClock clock;
+  auto hub = make_hub(rules_config({{"core", LogLevel::Trace}, {"scheduler", LogLevel::Debug}}, LogLevel::Warn), clock);
+  ASSERT_TRUE(hub);
+  Logger core = hub->logger("core");
+  Logger scheduler = hub->logger("scheduler");
+  Logger other = hub->logger("other");
+  EXPECT_TRUE(core.enabled(LogLevel::Trace));
+  EXPECT_FALSE(other.enabled(LogLevel::Info));
+
+  hub->set_levels(LogLevel::Info, {{"scheduler", LogLevel::Error}});
+  EXPECT_FALSE(core.enabled(LogLevel::Trace)) << "the rule for core was taken out";
+  EXPECT_TRUE(core.enabled(LogLevel::Info));
+  EXPECT_TRUE(other.enabled(LogLevel::Info)) << "the default changed";
+  EXPECT_FALSE(scheduler.enabled(LogLevel::Warn));
+  EXPECT_TRUE(scheduler.enabled(LogLevel::Error));
+  EXPECT_TRUE(hub->logger("later").enabled(LogLevel::Info));
+}
+
 TEST(LogHub, ChildResolvesItsOwnLevel) {
   SteadyClock clock;
   auto hub = make_hub(rules_config({{"systems.gauges", LogLevel::Trace}}, LogLevel::Warn), clock);
