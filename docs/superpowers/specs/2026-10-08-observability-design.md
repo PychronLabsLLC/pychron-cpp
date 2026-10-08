@@ -1,7 +1,7 @@
 # Observability: Prometheus metrics and Grafana dashboards
 
 Date: 2026-10-08
-Status: Draft
+Status: Implemented
 Owner: Jake Ross
 Builds on: `2026-09-29-instrument-control-design.md` (Qt-free core,
 `SignalBus`, `Scheduler`), `2026-10-01-logging-design.md` (whose non-goals,
@@ -51,6 +51,12 @@ only. Built by default; `-DPYCHRON_METRICS=OFF` drops it and its wiring.
 | `CoreExporter` | Subscribes to the core bus events and updates metrics. | `Registry`, `SignalBus` |
 | `SchedulerMetrics` | A collector over `Scheduler::job_stats()` and the heartbeat job. | `Registry`, `Scheduler` |
 
+Metrics for the experiment system live in `libs/experiment`: `ExperimentMetrics`,
+and `MetricsService`, which builds and owns everything `[metrics]` turns on
+(the registry, the three exporters, the server). The service needs no Qt, so
+it is tested with GoogleTest on every platform and the application only
+calls it.
+
 Metrics for the experiment system live in `libs/experiment`
 (`ExperimentMetrics`), not in `libs/metrics`: the dependency runs
 `experiment -> metrics -> core`, and `libs/metrics` never learns an
@@ -83,12 +89,17 @@ class Registry {
   Histogram& histogram(std::string_view name, std::string_view help,
                        std::vector<double> buckets, const Labels& labels = {});
   void remove(std::string_view name, const Labels& labels);  // a series that no longer applies
+  // Names a family before its first series exists, so names() lists it.
+  void declare(MetricType type, std::string_view name, std::string_view help, std::vector<double> buckets = {});
 
   // Runs on the scraping thread at the start of every render().
   using Collector = std::function<void(Registry&)>;
   [[nodiscard]] CollectorHandle add_collector(Collector c);  // RAII, like SignalBus::Subscription
 
-  std::string render() const;
+  // Called once per family, outside the registry's lock, when it first refuses a series for being full.
+  void on_family_full(std::function<void(std::string_view family)> handler);
+
+  std::string render();  // runs the collectors, so it is not const
   std::vector<std::string> names() const;  // family names, for the packaging test
 };
 
@@ -106,8 +117,13 @@ class Registry {
   source started again from zero: the counter rises by the new total and
   never falls.
 - A family holds at most 1000 series. Beyond that a new label set gets the
-  unrendered series, one `warn` record per family, and a count in
-  `pychron_metrics_dropped_series_total`. This bounds a labelling bug.
+  unrendered series and a count in `pychron_metrics_dropped_series_total`,
+  and `on_family_full` is called once for the family; `MetricsService` logs
+  one `warn` from it. The registry itself logs nothing: it depends on
+  nothing, and a record logged under its lock would come back in through the
+  `Log` event. This bounds a labelling bug.
+- A label value known in advance (an enumeration) has its series created at
+  zero, so a rate over it is zero rather than no data.
 - `render()` sorts families by name and series by labels, so output is
   deterministic. `# HELP` and `# TYPE` appear once per family. Label values
   escape `\`, `"` and newline. Non-finite values are written `NaN`, `+Inf`,
@@ -144,8 +160,10 @@ them. On shutdown: subscriptions and collector handles are reset, the server
 is stopped and its thread joined, then the registry is destroyed. The server
 thread is not a participant in the line's clock and never waits through it.
 
-Wiring is in `apps/pychron-ui/src/main.cpp`, after the line is created, and
-only when `[metrics]` is enabled. Disabled, nothing is constructed.
+`apps/pychron-ui/src/main.cpp` calls `MetricsService::start` before the line
+starts (so the start-up `Snapshot` and each transport's first
+`TransportHealth` reach it) and resets it after the line stops. Disabled, it
+returns null and nothing is constructed.
 
 ### 2.4 One addition to `Scheduler`
 
@@ -188,19 +206,23 @@ on the canvas. For a temperature, `source` in the timestamp series is
 
 | Metric | Type | Labels | Source |
 |---|---|---|---|
-| `pychron_executor_state` | gauge, 0 or 1 | `state`, the seven `ExecutorState` names in lower snake case | `ExecutorStateChanged` |
+| `pychron_executor_state` | gauge, 0 or 1 | `state`: `idle`, `preparing`, `running`, `stopping`, `cancelling`, `aborting`, `finalizing` | `ExecutorStateChanged` |
 | `pychron_queue_active` | gauge, 0 or 1 | none | 1 from the first state that is not `Idle`; 0 on `QueueEnded` or a return to `Idle` |
 | `pychron_queue_runs` | gauge | `status` = `total`, `done` | `QueueStarted` and `QueueEdited` (size); `RunFinished` (done) |
 | `pychron_queues_ended_total` | counter | `end` = `completed`, `stopped`, `cancelled`, `aborted`, `failed` | `QueueEnded` |
 | `pychron_runs_started_total` | counter | none | `RunStarted` |
 | `pychron_runs_finished_total` | counter | `state` = `success`, `failed`, `cancelled`, `aborted`; `truncated` = `true`, `false` | `RunFinished` |
 | `pychron_run_save_errors_total` | counter | none | `RunSummary::save_error` |
-| `pychron_run_state_duration_seconds` | histogram | `state`, the non-terminal `RunState` names | time between a run's consecutive `RunStateChanged::ts` |
+| `pychron_run_state_duration_seconds` | histogram | `state`, the non-terminal `RunState` names but `pending` (the wait in the queue) | time between a run's consecutive `RunStateChanged::ts` |
 | `pychron_measurement_blocks_total` | counter | `block`, `ok` | `BlockFinished` |
 | `pychron_conditional_trips_total` | counter | `kind`, `level` | `ConditionalTripped` |
 | `pychron_executor_waits_total` | counter | `reason` = `delay`, `scheduled_start`, `extraction_device`, `pump_time`, `other` | `ExecutorWaiting` |
 | `pychron_last_run_finished_timestamp_seconds` | gauge | none | `RunFinished`; real time |
 | `pychron_notifications_total` | counter | `channel`, `event`, `ok` | `NotificationSent` |
+
+A label value that names an enumeration is the application's own name for
+it (`to_string`), with anything but `a-z`, `0-9` and `_` turned to `_`: the
+block `baseline.after` is `block="baseline_after"`.
 
 `pychron_run_state_duration_seconds{state="saving"}` is how long the record
 and the store took: no instrumentation of the persister is needed. Buckets,
@@ -431,18 +453,23 @@ GoogleTest, one file per component.
 | `tests/metrics/test_render.cpp` | Golden text: `# HELP` and `# TYPE` once per family; escaping; `NaN` and the infinities; ordering; a removed series is absent |
 | `tests/metrics/test_server.cpp` | A real socket on `127.0.0.1`, port 0: `/metrics` with its content type, `/healthz`, 404, 405, a query string, oversized headers, a slow client, the ninth connection, shutdown with a connection open, a bind failure returned as an error |
 | `tests/metrics/test_core_exporter.cpp` | Each core event published on a real `SignalBus`, then the rendered series; `Snapshot` seeds valves; nullopt heater fields remove their series; the logger name is cut at its first dot; timestamps come from the injected real-time source |
-| `tests/metrics/test_packaging.cpp` | Every `pychron_` name in a dashboard or alert query is a name the exporters register |
+| `tests/metrics/test_scheduler_metrics.cpp` | Job counters, two jobs with one name, a job replaced, the heartbeat |
+| `tests/integration/test_metrics_packaging.cpp` | Every `pychron_` name in a dashboard or alert query is a name the exporters register, and every exported metric is on a dashboard; where a JSON library is built, the dashboards' structure |
+| `tests/experiment/test_metrics_service.cpp` | Disabled builds nothing; enabled serves what the bus says; a port in use is one alarm and the application runs on; a full family is logged once |
 | `tests/experiment/test_experiment_metrics.cpp` | One scripted queue: runs that succeed, fail, truncate and fail to save, then `QueueEnded`. Counters, `queue_active` going 1 then 0, state durations from a `ManualClock`, the wait-reason mapping, the per-run map empty at the end |
 | `tests/core/test_config.cpp`, extended | `[metrics]`: defaults, each field, each diagnostic |
 | `tests/core/test_scheduler.cpp`, extended | `job_stats()` |
-| `tests/integration/`, extended | One simulated queue with both exporters attached: the run is counted, and the rendered text contains neither its run id nor its identifier |
+| `tests/integration/test_lab_session.cpp`, extended | One simulated queue with the service attached, scraped over the socket: the runs are counted, and no label value is a run id or an identifier; scraping throughout a queue does not disturb it; `QueueStarted` comes before the first run |
 
-`test_packaging.cpp` is the guard against drift: rename a metric without
-its dashboard and the test fails. It builds a registry, constructs both
-exporters against it (the experiment one only when `libs/experiment` is
-built), collects the names and compares them with the names found by a
+`test_metrics_packaging.cpp` is the guard against drift: rename a metric
+without its dashboard and the test fails. It starts a `MetricsService`,
+collects the names it registers and compares them with the names found by a
 regular expression in the files under `packaging/observability/`. Histogram
 suffixes (`_bucket`, `_sum`, `_count`) are stripped before the comparison.
+
+Not verified here: the dashboards and the alert rules were not loaded into a
+Grafana, nor the queries run by a Prometheus (neither is installed where
+this was built). The guide's alert test (section 5.4) is the check on a box.
 
 Rules that apply:
 
