@@ -323,8 +323,8 @@ entered, and for a total gas age. The choice and the reason are written to
 
 **Several step-heated aliquots.** Such a sample has no default: without a
 `preferred_age` it is refused, with a message that names the aliquots and
-says to set the preferred age to `weighted_mean`, `integrated` or
-`isochron`, or to publish the aliquots as separate selections. With one of
+says to set the sample's `preferred_age` setting to `weighted_mean`,
+`integrated` or `isochron`, or to publish the aliquots as separate selections. With one of
 those three chosen the age pools the aliquots (the mean of all their steps'
 ages, the gas of all their steps, or one inverse isochron fitted to all
 their steps), and the note of the choice (`chosen in the options; the age
@@ -724,16 +724,17 @@ Before a value is written under a column that has a list:
   compared without case as whole words; a name and an entry that each say
   one must say the same one, so `Fish Canyon biotite 28.201 Ma` and `GA-1550
   sanidine 99.738 Ma` match nothing, and a name that says none (`FC-2 28.201
-  Ma`) is held to none. A third table holds the words a lab writes that are
-not the list's: the short forms of its four minerals (`san`, `bt`, `bio`,
-`hbl`, `ms`, `musc`), which count as those minerals, and materials the list
-has no monitor of (`plagioclase`, `plag`, `feldspar`, `kfeldspar`, `kspar`,
-`kfs`, `orthoclase`, `anorthoclase`, `adularia`, `microcline`, `amphibole`,
-`phlogopite`, `sericite`, `glauconite`, `alunite`, `jarosite`, `glass`,
-`groundmass`, `whole rock`, `wholerock`), which are no entry's, so `FC-2
-plagioclase 28.201 Ma` matches nothing. A word of any of the tables counts
-with an `s` after it too (`biotites` is biotite, `sanidines` sanidine). A
-name that holds `FCT-3` or `FCT3`, the Fish Canyon
+  Ma`) is held to none. A second material table holds the words a lab writes
+  that are not the list's: the short forms of its four minerals (`san`, `bt`,
+  `bio`, `hbl`, `ms`, `musc`), which count as those minerals, and materials
+  the list has no monitor of (`plagioclase`, `plag`, `feldspar`, `kfeldspar`,
+  `kspar`, `spar`, `kfs`, `orthoclase`, `anorthoclase`, `adularia`,
+  `microcline`, `amphibole`, `phlogopite`, `sericite`, `glauconite`,
+  `alunite`, `jarosite`, `glass`, `groundmass`, `whole rock`, `wholerock`),
+  which are no entry's, so `FC-2 plagioclase 28.201 Ma` and `Fish Canyon
+  K-spar 28.201 Ma` match nothing. A word of either material table counts
+  with an `s` after it too (`biotites` is biotite, `sanidines` sanidine); an
+  alias has no plural. A name that holds `FCT-3` or `FCT3`, the Fish Canyon
   biotite's designation, matches nothing either, mineral said or not: `FCT`
   alone would make it the sanidine. One entry left: it is written, and the
   note says what became what (`ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma'
@@ -779,7 +780,7 @@ not wanted of is not reported for them (`kConditional` in `xlsx.cpp`):
 |---|---|---|
 | `laserPower`, `laserPowerUnits` | a row that has no `furnaceTemperature` | `... rows that have no furnace temperature` |
 | `furnaceTemperature` | a row that has no `laserPower` | `... rows that have no laser power` |
-| `stepNumber`, `Ar39KReleased`, `cumulative39ArK` | a row of a step-heating data point: one whose `arArMethod` (the data point's `arMethodName`) begins `Step-heating`, whatever its case | `... step-heating rows` |
+| `stepNumber`, `Ar39KReleased`, `cumulative39ArK` | a row of a step-heating data point: one whose `arArMethod` (the data point's `arMethodName`) begins `Step-heating`, whatever its case | `... rows of a step-heating data point` |
 
 So a row with neither a laser power nor a furnace temperature is missed all
 three columns, a fusion is missed no step number, and a data point without
@@ -792,9 +793,9 @@ importer may refuse a row that leaves one empty: arArSetUp (Analytical Key)
 empty in every row, irradiationBatchID (Irradiation Batch ID) empty in 1 of
 2 rows`. The count of a conditional column is of the rows it is wanted of
 and says their number and which they are (`stepNumber (Step number) empty
-in 2 of the 10 step-heating rows`, `furnaceTemperature (Furnace temperature)
-empty in 1 of the 2 rows that have no laser power`, `... empty in all 10
-step-heating rows`). The note says what the template marks and what may follow; it does
+in 2 of the 10 rows of a step-heating data point`, `furnaceTemperature
+(Furnace temperature) empty in 1 of the 2 rows that have no laser power`,
+`... empty in all 10 rows of a step-heating data point`). The note says what the template marks and what may follow; it does
 not order anything, since whether the importer holds a row to the colour is
 not known (4.6 has the question), and the row is written all the same. A
 template without the legend gets one note saying that empty columns are not
