@@ -134,11 +134,13 @@ Choice choose_install(const pychron::ui::CommandLine& cli, const setup::Resource
   auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
   if (cli.setup || site->installs.empty()) {
     if (!library) return {std::nullopt, fatal(library.error().what)};
-    pychron::ui::SetupWizard wizard(*library, {site_path, pychron::ui::database_opener(), {}, {}});
+    pychron::ui::SetupWizard wizard(*library,
+                                    {site_path, pychron::ui::database_opener(), {}, {}, pychron::ui::database_seeder()});
     if (wizard.exec() != QDialog::Accepted || !wizard.open_now()) return {std::nullopt, 0};
     return {wizard.installed(), 0};
   }
   pychron::ui::InstallationsDialog dialog(site_path, library ? &*library : nullptr, pychron::ui::database_opener(), {});
+  dialog.set_seed_database(pychron::ui::database_seeder());
   if (dialog.exec() != QDialog::Accepted || !dialog.to_open()) return {std::nullopt, 0};
   auto again = setup::load_site(site_path);
   const auto* i = again ? again->find(*dialog.to_open()) : nullptr;
@@ -153,6 +155,7 @@ std::function<void()> installations_handler(QWidget* window, const setup::Resour
     auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
     pychron::ui::InstallationsDialog dialog(setup::default_site_path(), library ? &*library : nullptr,
                                             pychron::ui::database_opener(), current, window);
+    dialog.set_seed_database(pychron::ui::database_seeder());
     if (dialog.exec() != QDialog::Accepted || !dialog.to_open() || *dialog.to_open() == current) return;
     if (!window->close()) return;  // e.g. unsaved queue edits, and the user chose Cancel
     if (!pychron::ui::start_install(*dialog.to_open())) {

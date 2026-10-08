@@ -1,6 +1,8 @@
 #include "setup_support.hpp"
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -10,11 +12,13 @@
 #ifdef PYCHRON_UI_HAS_STORE
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/entry/seed.hpp"
 #include "pychron/persistence/store.hpp"
 #pragma pop_macro("signals")
 #endif
 
 #include "brand.hpp"
+#include "pychron/core/env.hpp"
 #include "pychron/setup/installer.hpp"
 
 namespace pychron::ui {
@@ -27,6 +31,35 @@ SetupWizard::OpenDatabase database_opener() {
     auto status = (*store)->schema_status();
     if (!status) return fail(std::move(status).error());
     return status->empty() ? std::string("empty schema") : "schema version " + std::to_string(status->back().version);
+  };
+#else
+  return {};
+#endif
+}
+
+SetupWizard::SeedDatabase database_seeder() {
+#ifdef PYCHRON_UI_HAS_STORE
+  return [](const std::string& url, const std::filesystem::path& seed_file, bool migrate) -> Result<std::string> {
+    std::ifstream in(seed_file, std::ios::binary);
+    if (!in) return fail(ErrorKind::Io, "cannot open " + seed_file.string());
+    std::ostringstream text;
+    text << in.rdbuf();
+    auto seed = entry::parse_seed(text.str(), seed_file.string());
+    if (!seed) return fail(std::move(seed).error());
+    auto store = persistence::open_store(persistence::StoreConfig{url, migrate});
+    if (!store) {
+      Error e = std::move(store).error();
+      e.what = "the database could not be opened: " + e.what;
+      return fail(std::move(e));
+    }
+    auto client = (*store)->register_client(
+        {env_var("HOSTNAME").value_or("localhost"), "reduction", std::nullopt, "pychron-ui"});
+    if (!client) return fail(std::move(client).error());
+    auto user = (*store)->ensure_user(*client, env_var("USER").value_or("pychron"));
+    if (!user) return fail(std::move(user).error());
+    auto report = entry::apply_seed(**store, *seed, persistence::Actor{*user, *client});
+    if (!report) return fail(std::move(report).error());
+    return entry::describe(*report);
   };
 #else
   return {};
@@ -67,6 +100,13 @@ int self_test(std::ostream& out) {
     check(db.has_value(), "database (Qt SQLite plugin): " + (db ? *db : db.error().what));
   } else {
     out << "skip  database: built without the DVC store\n";
+  }
+  if (auto seed = database_seeder()) {
+    const auto file = r.profiles / "instrument-common" / "seed.toml";
+    auto done = seed("sqlite::memory:", file, true);
+    check(done.has_value(), "seed (" + file.string() + "): " + (done ? *done : done.error().what));
+  } else {
+    out << "skip  seed: built without the DVC store\n";
   }
   return failed == 0 ? 0 : 1;
 }

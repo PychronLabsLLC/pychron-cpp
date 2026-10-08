@@ -45,7 +45,7 @@ InstallationsDialog::InstallationsDialog(std::filesystem::path site_path, const 
   layout->addWidget(message_);
 
   run_wizard = [](InstallationsDialog& self) -> std::optional<setup::SiteInstall> {
-    SetupWizard wizard(*self.library_, SetupWizard::Options{self.site_path_, self.open_database_, {}, {}}, &self);
+    SetupWizard wizard(*self.library_, SetupWizard::Options{self.site_path_, self.open_database_, {}, {}, self.seed_database_}, &self);
     if (wizard.exec() != QDialog::Accepted || !wizard.installed()) return std::nullopt;
     if (wizard.open_now()) self.to_open_ = wizard.installed()->name;
     return wizard.installed();

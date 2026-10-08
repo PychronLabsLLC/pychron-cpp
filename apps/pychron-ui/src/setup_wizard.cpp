@@ -774,6 +774,27 @@ bool SetupWizard::install() {
       return show_error("creating " + entry.database + ": " + made.error().what);
     }
   }
+  // An instrument's database is made (a local one; the lab's server is never
+  // migrated from here) and given the install's seed file. The instrument
+  // measures without it: what goes wrong is a warning on the last page.
+  std::optional<Check> seeded;
+  const std::filesystem::path seed_file = entry.root / "seed.toml";
+  std::error_code ec;
+  if (entry.kind == "instrument" && !entry.database.empty() && options_.seed_database &&
+      std::filesystem::exists(seed_file, ec)) {
+    const bool local = entry.database.starts_with("sqlite:");
+    Result<std::string> done = database_url(entry);
+    if (done) {
+      // SQLite makes the file, not the folder it is in.
+      if (local)
+        std::filesystem::create_directories(
+            std::filesystem::path(done->substr(std::string_view("sqlite:").size())).parent_path(), ec);
+      done = options_.seed_database(*done, seed_file, local);
+    }
+    seeded = done ? Check{Check::Status::Ok, "seed", *done, {}}
+                  : Check{Check::Status::Warn, "seed", "skipped: " + done.error().what,
+                          "elctl entry seed " + seed_file.string() + " --db " + entry.database};
+  }
   if (auto saved = register_install(entry, options_.site_path); !saved) return show_error(saved.error().what);
   installed_ = entry;
   DoctorOptions doctor_options;
@@ -782,6 +803,7 @@ bool SetupWizard::install() {
     doctor_options.open_database = [open = options_.open_database](const std::string& url) { return open(url, false); };
   }
   checks_ = doctor(entry, doctor_options);
+  if (seeded) checks_.push_back(std::move(*seeded));
   return true;
 }
 
