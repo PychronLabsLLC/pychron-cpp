@@ -141,7 +141,8 @@ FluxAbscissa flux_abscissa(const FluxOptions& options);   // X or Y for the thre
 
 struct FluxSceneOptions { std::optional<int> highlight_hole; };
 ScenePtr flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
-ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);   // no fit: analyses and means
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits,
+                    const FluxSceneOptions& scene_options = {});   // no fit: analyses and means, the highlight too
 ```
 
 One graph, one panel. The abscissa of a hole is its angle in degrees,
@@ -220,7 +221,8 @@ A store that cannot be opened is a message box, as in `EntryActions`.
 It contributes `Flux…` to `MenuHub` under `Menu::Fit`, `Scope::App`. The
 window is made on first use, kept in a `QPointer`, and shown with `show();
 raise(); activateWindow()`. `open_flux(irradiation, level)` shows it on that
-level.
+level; when the window is on that level already, or is reading it, it is
+raised as it is, with its edits (R18).
 
 `main.cpp` creates `FitActions` beside `EntryActions` in both start-up paths
 and connects the Packages window's request to `open_flux`.
@@ -247,9 +249,10 @@ edits pending it asks first (5.6).
 
 **Centre, above: the plot.** A `SceneView` showing `flux_scene`. A click on
 an analysis, or a shift-drag over several, toggles them (W9). The context
-menu is the view's own: Include / exclude, Recall (always listed; a no-op when the application gave no recall
-callback), Reset view, Copy image, Save as PNG…, Save as PDF…. The view
-keeps its zoom across a refit.
+menu is the view's own: Include / exclude and Recall when the right-click is
+on an analysis point (Recall is listed there with or without a recall
+callback, and does nothing without one), then Reset view, Copy image, Save as
+PNG…, Save as PDF…. The view keeps its zoom across a refit.
 
 **Centre, below: the tables**, in a horizontal splitter.
 
@@ -281,7 +284,9 @@ J is printed `%.4e`, percentages and MSWD `%.2f`, an absent value blank.
   edit, placeholder the set's own sample), `All positions` (check). A change
   here reloads the level (asking first when edits are pending), since it
   changes which positions are monitors.
-- `PresetBar` for kind `flux`.
+- `PresetBar` for kind `flux`. A level with a saved fit has `(saved fit)` as
+  the first entry, for as long as it is on show: choosing a preset leaves it
+  in the list, and choosing it applies the saved options again (R20).
 - `OptionsEditor` on `flux_options_schema()`, sections `Model` and `Errors`.
 
 **Tool bar.** `Save`, `Revert`, `Reload`, `Reset omissions`, `Export CSV…`,
@@ -289,7 +294,14 @@ J is printed `%.4e`, percentages and MSWD `%.2f`, an absent value blank.
 
 - `Revert` drops the edits and returns to the options the level was loaded
   with, without touching the store.
-- `Reload` reads the level again (asking first when edits are pending).
+- `Reload` reads the level again and puts back what is pending (R19): the
+  `Edits`, the options when they were changed, the unticked `Save` boxes and
+  the chosen monitor group. It asks nothing. The edits are validated against
+  the level as read before it is fitted: one that names an analysis record
+  that is no longer a monitor's, or a hole that is no longer a monitor, is
+  dropped, and the status says `2 edits no longer apply` until the next
+  change. What `edited()` compares against is the level as read now, so the
+  window still reads edited. While a save runs, Reload does nothing.
 - `Reset omissions` sets `Edits::reset_omits` and clears the edits made
   here: what the saved fit omitted and excluded is forgotten, tags still
   apply (flux spec 6.2).
@@ -317,7 +329,16 @@ with the tables and plot empty.
 
 On arrival: the options are resolved (W6), the monitor group is set from
 `LevelInputs` (the set and sample in use, `all_positions`), `Edits` is
-empty, and the level is fitted at once (R7).
+empty (but after a Reload, which puts back what was pending: R19), and the
+level is fitted at once (R7).
+
+The window answers the bridge's `changed()` only while it is on screen (R17):
+it reads the tree, and the level too when nothing is edited (with edits, or
+while a save runs, the status ends `· level changed elsewhere, Reload to see
+it`). Hidden, it only notes that something changed, and does the same once
+when it is next shown. `FitActions` keeps the window after it is closed, so
+without this every save of the session would queue a tree read and a level's
+reduction on the shared worker.
 
 A fit after an edit or an option change runs `fit_level` on the GUI thread
 150 ms after the last change; the fit on arrival does not wait (R7). A
@@ -341,26 +362,34 @@ why. It runs `save_level(store, actor, fit, skip_positions, "pychron-ui
   UTC since this level was loaded. Reload and fit again.`, in the error tone
   (R12). The author and time come from the conflicting head
   (`flux_head_info`, R2).
-  Nothing was written; the edits are kept so they can be applied again after
-  a reload.
+  Nothing was written and the edits are kept. `Reload` is the way on: it
+  reads the level as it is now and puts the edits back on it (R19), and Save
+  then compares against the new heads.
 - A refused J, or any other error: `Not saved: <the error>`.
 
 Save boxes unticked stay unticked across the reload that follows a save of
-the same level, and are no edit (R11). The actor is the bridge's; it is never
-asked for.
+the same level, and are no edit (R11); they stay so over every later read of
+that level (a change elsewhere, also one that supersedes the reload after the
+save; a Reload), until another level is picked or `Revert` (R20). The actor is
+the bridge's; it is never asked for.
 
 ### 5.6 Edits pending
 
 The window has edits pending when `Edits`, the options, the monitor group or
 a `Save` box differ from what the load produced. A monitor-group choice that
 differs from the level's as-saved selection is an edit, also after its reload;
-`Revert` then reloads with no selection (R9). Selecting another level,
-Reload, a change of the monitor group and closing the window then ask
+`Revert` then reloads with no selection (R9). Selecting another level, a
+change of the monitor group and closing the window then ask
 `Save the flux of NM-300 A?` with Save, Discard and Cancel, through an
-injectable function as the entry windows do. Save that fails or conflicts
-cancels what was asked. Discard on closing drops the edits (R10). A change of
-the monitor group is not blocked by a message (R13): the Save answer of the
-question saves the fit on show, then loads the new group.
+injectable function as the entry windows do. Reload does not ask: it leaves
+nothing behind (R19). Nor does opening the level already on show (R18). Save
+that fails or conflicts cancels what was asked. Discard on closing drops the
+edits (R10). A change of the monitor group is not blocked by a message (R13):
+the Save answer of the question saves the fit on show, then loads the new
+group, which is then an edit against the selection that was saved, and no
+edit once it is chosen back. Another level selected while a save runs is not
+asked about either, since the edits are the ones being saved: the move
+follows the save, and is dropped when the save fails or conflicts.
 
 ### 5.7 `PackagesWindow`
 
@@ -377,8 +406,9 @@ three-way question of 5.6 and for a file that cannot be written. The core's
 error text is shown as it is. No holder, a holder without geometry, or a
 position beyond its holder is a load error and names the cause (the tables
 and plot are empty). A level with no monitors loads, and shows `fit_level`'s
-error with the level on screen (R6). The Recall item is always in the plot's
-menu and does nothing when the application gave no recall callback.
+error with the level on screen (R6). The Recall item is in the plot's menu
+when the right-click is on an analysis point, and does nothing when the
+application gave no recall callback.
 
 ## 7. Files
 
@@ -522,8 +552,33 @@ for the commit messages and the review.
 - **R15** While a fit fails, the monitor `Fit` boxes still show each
   monitor's state from the edits and stay changeable, so a monitor unticked
   one too many can be ticked back without `Revert`; `N` and the mean columns
-  stay filled and only the predicted columns are blank. The table columns are
-  sized to their contents once, when a level arrives, and can be dragged.
+  stay filled and only the predicted columns are blank.
+- **R16** The table columns are sized to their contents once per window:
+  when a table first has rows, and again when the first predictions arrive.
+  Never after the user dragged one, and not again for another level (one with
+  longer identifiers needs a drag).
+- **R17** A flux window that is not on screen reads nothing on the bridge's
+  `changed()`: it sets a stale flag, and when it is next shown it reads the
+  tree, and the level when one was open and nothing is edited. Hidden with
+  edits pending it keeps them, and shows `· level changed elsewhere, Reload
+  to see it` when shown.
+- **R18** `open_level` for the level already on show, or being read, does
+  nothing (the caller raises the window): no question, no read. A level that
+  could not be read is asked for again.
+- **R19** Reload reads the level again and puts back what is pending: the
+  `Edits`, the options when they were changed, the unticked `Save` boxes and
+  the chosen monitor group. It asks nothing. An edit that names an analysis
+  record or a hole the level as read has no place for is dropped before the
+  fit (`fit_level` is never asked about it), and the status says `<n> edits
+  no longer apply`. The state `edited()` compares against is the level's as
+  read now. `Revert` is the way to drop edits. The reload on a change
+  elsewhere when nothing is edited is as it was. While a save runs Reload does
+  nothing: what is pending is being saved, and the save reads the level again
+  when it wrote.
+- **R20** `(saved fit)` stays in the preset list while the level has a saved
+  fit, also once a preset was chosen; choosing it applies the saved options.
+  The `Save` boxes a save left unticked are kept, as no edit, over every read
+  of the same level, and are ticked again by another level and by `Revert`.
 
 ### As built
 
@@ -535,7 +590,22 @@ for the commit messages and the review.
   scene with no fit (the analyses as `fit_level` counts them).
 - `tests/processing/flux_level_inputs.hpp` builds `LevelInputs` without a
   store; `seed_second_flux_level` in `flux_seed.hpp` adds a second level.
-- `PresetBar::set_pinned_item` holds the `(saved fit)` entry.
+- `PresetBar::set_pinned_item` holds the `(saved fit)` entry; it stays over
+  `select()` and `reload()`, and deleting the preset selected beside it falls
+  back to it. `PresetBar::show_name` shows a preset as the one in use without
+  loading it (after a Reload that kept the options).
+- What a read of the level on show keeps is `FluxWindow::start_load`'s
+  argument: nothing (another level, Revert), the `Save` boxes that are no
+  edit (a change elsewhere, after a save, a monitor-group change), or
+  everything pending (Reload). The kept state stays in the window's own
+  members while the level is read, so a read that is superseded or fails
+  loses none of it.
+- After a save that wrote, the baseline a chosen monitor group is compared
+  with is the selection of the fit that was saved.
+- The no-fit `flux_scene` takes `FluxSceneOptions` too: the selected monitor
+  is drawn on top while the fit fails.
+- The Packages window asks its positions grid, as it asks its dose table,
+  whether a cell is being edited.
 - The `in` form of `enabled_when` is evaluated in `options_editor.cpp`, not in
   `options.cpp`.
 - `FitActions` teardown: it deletes the window on `EntryActions::closing()`
@@ -543,7 +613,8 @@ for the commit messages and the review.
   before the source it owns is destroyed.
 - Export uses `QSaveFile`, so a file is whole or as it was; then
   `mark_as_user_file`.
-- The Recall item of the plot's context menu is a no-op without a callback.
+- The Recall item of the plot's context menu (listed on an analysis point)
+  is a no-op without a callback.
 - The options-schema test of `enabled_when` lives in
   `tests/ui/test_data_windows.cpp`.
 
@@ -554,10 +625,13 @@ for the commit messages and the review.
 ### Known limits
 
 - A sample typed in the Monitors group and not yet entered is dropped when
-  Save is answered for another purpose.
+  Save is answered for another purpose, and by Reload.
 - The tree's status word uses the default monitor set's sample, not the
   level's own.
-- The whole tree is read again on every change notification.
+- The whole tree is read again on every change notification that reaches a
+  window on screen.
+- Closing the window while a save runs still asks about the edits being
+  saved; only a level switch is queued behind the save unasked.
 - Nothing was run on PostgreSQL or with gcc.
 - A Save click with a sample typed and not yet entered reloads the level
   under that sample and saves nothing, without saying so.

@@ -44,8 +44,10 @@ are the same code `elctl flux` prints from; the plot, the options schema and
 the status line are the window's own.
 
 Open it from the Fit menu, or from the Packages window: with a level open
-there, `Fit flux…` in its tool bar opens the flux window on that level. The
-title is `Flux`, and `Flux — NM-300 A` once a level is loaded.
+there, `Fit flux…` in its tool bar opens the flux window on that level. When
+the flux window is on that level already it is brought to the front as it is,
+with your edits: nothing is asked and nothing is read again. The title is
+`Flux`, and `Flux — NM-300 A` once a level is loaded.
 
 ### The level tree
 
@@ -62,7 +64,10 @@ The word is judged against the sample of the default monitor set, whatever
 set the level itself uses. Picking a level loads it (the status reads
 `Loading NM-300 A…` meanwhile) and fits it with the options it was last saved
 with, else the preset in use. The tree is read again whenever anyone saves
-something.
+something, while the window is on screen. A flux window that was closed reads
+nothing: when it is opened again it reads the tree once, and the level too if
+you left no edits on it (with edits, the status says the level changed
+elsewhere).
 
 ### The plot
 
@@ -104,8 +109,11 @@ place to reset the zoom; a refit keeps your zoom.
 
 Below the plot, three tables. A row is a hole; the columns are those of
 `elctl flux fit`, with the check boxes added. At the default window size the
-monitor and unknown tables scroll sideways; the columns are sized to their
-contents when a level arrives and can be dragged.
+monitor and unknown tables scroll sideways. The columns are sized to their
+contents once per window, not once per level: when a table first has rows, and
+again when the first predictions arrive. After that they are left alone, and
+a column you dragged is never sized again, so another level with longer
+identifiers may need a drag.
 
 **Monitors**: `Fit`, `Save`, `Hole`, `Identifier`, `Sample`, `N`, `Saved J`,
 `±`, `Mean J`, `±`, `%`, `MSWD`, `Pred. J`, `±`, `%`, `Dev %`. `Fit` takes the
@@ -152,8 +160,11 @@ On the right.
   if you have edits). A level opens with the monitors its saved fit chose.
   Changing the group back to what the level had counts as no change.
 - The preset bar, as in the other fit windows. A level with a saved fit opens
-  on the saved options and the bar shows `(saved fit)` as its first entry;
-  choosing it again returns to them. A level without one opens on the preset
+  on the saved options and the bar shows `(saved fit)` as its first entry.
+  The entry stays in the list when you choose a preset, for as long as the
+  level has a saved fit; choosing it again returns to the saved options. It
+  is not a preset: with it selected, Save asks for a name, and there is
+  nothing to delete. A level without one opens on the preset
   in use (`Default` to begin with; `Weighted plane` is the other factory
   preset). A preset replaces the model and error options with its own (fields
   it does not set go to their defaults); it does not merge. What a preset did (it
@@ -198,7 +209,9 @@ unchanged)`, `Nothing to save: …`, the conflict line) until the next refit;
 only when the save was the first half of a level switch or a close does its
 text follow the new status after a `·`. When the level was changed by someone
 else while you have edits, the line ends `· level changed elsewhere, Reload
-to see it`.
+to see it`; Reload reads it and keeps your edits. After a Reload that had to
+drop an edit, the line says `· 1 edit no longer applies` (or `· 3 edits no
+longer apply`) until your next change.
 
 ### Save
 
@@ -221,8 +234,11 @@ When who and when cannot be read, the conflict line reads `Not saved: hole 7
 was saved by someone else since this level was loaded. Reload and fit again.`
 
 with `, 2 not saved` added when `Save` boxes were unticked. The conflict
-line is red; nothing was written and your edits are kept, so they can be
-applied again after a Reload. `Not saved: <the error>` is any other refusal,
+line is red; nothing was written and your edits are kept. To go on, press
+`Reload`: it reads the level as it is now and puts your edits back on it (the
+analyses you omitted, the monitors you left out, the options you changed, the
+`Save` boxes you unticked, the monitor group you chose), fitted again at once.
+Look at what the other save changed, then Save. `Not saved: <the error>` is any other refusal,
 such as `hole 5 of NM-300A has J ...: nothing was saved` for a J that is not
 a J, and is red too. While it saves the status reads `Saving…` and the plot,
 tables and dock are disabled.
@@ -230,31 +246,42 @@ tables and dock are disabled.
 After a save that wrote something the window reads the level again, so the
 saved J and the revisions are those the next save compares against, and the
 tree, the other windows and the Packages window are told. The `Save` boxes
-you unticked stay unticked after the save, and are not an edit.
+you unticked stay unticked after the save, and are not an edit. They stay so
+however often the level is read again (a Reload, a change made elsewhere),
+until you pick another level or press `Revert`.
 
 ### Revert, Reload, Reset omissions
 
 - `Revert` drops the edits and returns to the options the level was loaded
   with, without touching the store. If you had chosen other monitors, it
   reads the level again with the monitors of its saved fit.
-- `Reload` reads the level from the store again (asking first if you have
-  edits). With a monitor group you chose, Discard does not drop the group: the
-  level is read again with it and the window stays edited. Only picking another
-  level, or `Revert`, returns to the level's own selection.
+- `Reload` reads the level from the store again and keeps what you have
+  pending: your edits are put back on the level as it is now, with the options
+  you changed, the `Save` boxes you unticked and the monitor group you chose,
+  and the window still reads edited. It asks nothing, because nothing is left
+  behind. An edit the level no longer has a place for (an analysis that is
+  gone, a hole that is no longer a monitor) is dropped, and the status says
+  how many were. Options you had not changed are the level's own again, as
+  the store has them now. To drop your edits use `Revert`; only it, or picking
+  another level, returns to the level's own monitor selection. While a save
+  runs, `Reload` does nothing: the save reads the level again itself.
 - `Reset omissions` forgets what the saved fit omitted and excluded (tags
   still apply), like `--reset-omits`; it also clears the edits made here. It
   is an edit only when the saved fit had left something out.
 
 ### Leaving with edits
 
-Picking another level, `Reload`, changing the monitor group and closing the
-window all ask `Save the flux of NM-300 A?` when there are edits, with Save,
-Discard and Cancel. Cancel stays where you are. Discard drops the edits and
-goes on (on closing, the edits are dropped for good). Save saves, and goes
-on only if the save wrote or found nothing to write; a save that conflicts or
-is refused keeps you on the level. A monitor group you typed (a sample not
-yet entered) is dropped if you answer Save for another purpose; `Save`
-itself with a sample typed takes it as a change of group.
+Picking another level, changing the monitor group and closing the window all
+ask `Save the flux of NM-300 A?` when there are edits, with Save, Discard and
+Cancel. (`Reload` does not ask: it keeps the edits.) Cancel stays where you
+are. Discard drops the edits and goes on (on closing, the edits are dropped
+for good). Save saves, and goes on only if the save wrote or found nothing to
+write; a save that conflicts or is refused keeps you on the level. Picking
+another level while a save is running asks nothing, since the edits are the
+ones being saved: the window goes to that level once the save has landed, and
+stays where it is if the save fails. A monitor group you typed (a sample not
+yet entered) is dropped if you answer Save for another purpose, and by
+`Reload`; `Save` itself with a sample typed takes it as a change of group.
 
 ### Export CSV and Open in Packages
 
