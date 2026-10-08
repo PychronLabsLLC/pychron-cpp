@@ -260,8 +260,12 @@ TEST(Session, ALoginThatCouldNotBeRenewedLeavesThe401) {
   EXPECT_EQ(answer->status, 401);
   EXPECT_EQ(s.bank.count("GET", "/api/account"), 1u);
   // What is said of it is not that the password is wrong: nobody refused it.
+  // Nor is its code the refused login's: a caller that asks for the password
+  // again on kLoginRejected does not ask because the network blinked.
   const Error stale = s.session.failure(*answer, "GET", "/api/account", "");
-  EXPECT_EQ(stale.code, kLoginRejected);
+  EXPECT_EQ(stale.code, kNotRenewed);
+  EXPECT_EQ(stale.kind, ErrorKind::NotConnected);
+  EXPECT_EQ(s.session.failure(stale, "GET", "/api/x", "").what, stale.what);
   EXPECT_EQ(stale.what, "EarthBank no longer takes this session's login, and it could not be renewed: the service did "
                         "not answer the new sign-in. Nothing was done (account); try again when EarthBank answers.");
   EXPECT_FALSE(has(stale.what, "password")) << stale.what;
@@ -275,12 +279,14 @@ TEST(Session, ALoginThatCouldNotBeRenewedLeavesThe401) {
   s.bank.refuse_next("POST", "/api/authenticate");
   const auto unreached = s.session.packages(std::nullopt);
   ASSERT_FALSE(unreached);
+  EXPECT_EQ(unreached.error().code, kNotRenewed);
   EXPECT_EQ(unreached.error().what,
             "EarthBank no longer takes this session's login, and it could not be renewed: the service did not answer "
             "the new sign-in. Nothing was done (data package); try again when EarthBank answers.");
   s.bank.fail_next("POST", "/api/authenticate", 503, "");
   const auto faulty = s.session.account();
   ASSERT_FALSE(faulty);
+  EXPECT_EQ(faulty.error().code, kNotRenewed);
   EXPECT_EQ(faulty.error().what,
             "EarthBank no longer takes this session's login, and it could not be renewed: the service failed at the "
             "new sign-in. Nothing was done (account); try again when EarthBank answers.");
@@ -290,6 +296,7 @@ TEST(Session, ALoginThatCouldNotBeRenewedLeavesThe401) {
   s.bank.fail_next("GET", "/api/account", 401, std::string(kUnauthorized));
   const auto twice = s.session.account();
   ASSERT_FALSE(twice);
+  EXPECT_EQ(twice.error().code, kLoginRejected);
   EXPECT_TRUE(has(twice.error().what, "Check the user name and the password")) << twice.error().what;
   EXPECT_TRUE(s.bank.pending().empty());
 }
@@ -920,6 +927,15 @@ TEST(Session, AGatewayAnswerToAWriteIsInDoubt) {
       EXPECT_EQ(refused.code, kRefused) << status << " " << body;
       EXPECT_FALSE(has(refused.what, "may or may not")) << refused.what;
     }
+  }
+  // A 500 that speaks of the package in other words than those is a fault
+  // like any other: the record may have been saved.
+  for (const char* body : {R"({"title":"Internal Server Error","detail":"could not load the data package of the record"})",
+                           R"({"message":"package service timed out"})", "PackageRepository: connection reset"}) {
+    const Error doubt = after("POST", 500, body);
+    EXPECT_EQ(doubt.code, kInDoubt) << body;
+    EXPECT_TRUE(has(doubt.what, "may or may not have been saved")) << doubt.what;
+    EXPECT_FALSE(has(doubt.what, "may not write to the data package")) << doubt.what;
   }
   // A status below 500 is an answer whatever the method.
   EXPECT_EQ(after("POST", 400, "").code, kRefused);

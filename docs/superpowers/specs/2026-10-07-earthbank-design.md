@@ -690,6 +690,7 @@ the sentences that are of this library's own words (`sentence(Error, ...)`,
   | `kNotSignedIn` | a login is needed and there is none | never left |
   | `kHttpNotSent`, any `Config` | the client's (5.5); a URL not of the service | never left |
   | `kLoginRejected` | 401 | answered: not done |
+  | `kNotRenewed` | 401, and the new sign-in it asked for got no answer or a fault: the password was not refused | answered: not done |
   | `kForbidden` | 403: the account may not do this | answered: not done |
   | `kRefused` | any other non-2xx, but for the next | answered: not done |
   | `kInDoubt` | a write (POST, PUT, DELETE) answered 5xx with neither "not writable" nor a constraint in the body | may or may not have been done |

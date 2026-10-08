@@ -71,6 +71,11 @@ struct DataPackage {
 //   The service answered, and what was asked for was not done:
 //     kLoginRejected    401: the user name and password were refused, or the
 //                       login the call was made with is no longer taken.
+//     kNotRenewed       401, and the new sign-in it asked for was not refused
+//                       but got no answer, or a fault: nobody said the
+//                       password is wrong, and the session keeps it. A blip of
+//                       the network and not a reason to ask for the password;
+//                       the same call may be made again.
 //     kForbidden        403: the login is good and the account may not do
 //                       this.
 //     kRefused          any other status that is not 2xx, but for the next.
@@ -79,7 +84,8 @@ struct DataPackage {
 //                       5xx that is neither of the two the service means
 //                       something by, a package that cannot be written to and
 //                       a value it does not know (both kRefused). So 502, 503,
-//                       504 and any 500 not recognised: a gateway says these
+//                       504 and any 500 not recognised (one that only speaks
+//                       of a package among them): a gateway says these
 //                       of a service that may have gone on and saved the
 //                       record. The record is in doubt, exactly as after no
 //                       answer, and is looked for before it is sent again. To
@@ -96,6 +102,7 @@ struct DataPackage {
 // code of an answer).
 inline constexpr std::string_view kNotSignedIn = "earthbank_not_signed_in";
 inline constexpr std::string_view kLoginRejected = "earthbank_login_rejected";
+inline constexpr std::string_view kNotRenewed = "earthbank_not_renewed";
 inline constexpr std::string_view kForbidden = "earthbank_forbidden";
 inline constexpr std::string_view kRefused = "earthbank_refused";
 inline constexpr std::string_view kInDoubt = "earthbank_in_doubt";
@@ -197,9 +204,10 @@ class Session {
   // kLoginRejected (`NotConnected`), 403 kForbidden, else kInDoubt or
   // kRefused (all three `Protocol`). A 2xx has no sentence.
   //
-  // A 401 that send() returned because the new sign-in got no answer is said
-  // to be that. This is known of the last send() only: make the Error of an
-  // answer before sending anything else.
+  // A 401 that send() returned because the new sign-in got no answer, or a
+  // fault, is said to be that, and its code is kNotRenewed (`NotConnected`)
+  // and not kLoginRejected. This is known of the last send() only: make the
+  // Error of an answer before sending anything else.
   //
   // For no answer: the client's error with sentence() for `what`, its kind
   // and code kept, so that request_may_have_arrived still tells a write in

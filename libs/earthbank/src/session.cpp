@@ -195,13 +195,14 @@ enum class Refusal { NotWritable, Constraint, Login, Forbidden, NoSuchAddress, F
 // `reason` is what the service said (reason_of), secrets out.
 Refusal refusal_of(int status, std::string_view reason) {
   const std::string low = lowered(reason);
+  // The service's sentence is "Package is not writable by user.". Legacy
+  // also took any 500 that speaks of a package for it; that is not done
+  // here: such a 500 may be a fault at a record that was saved all the same.
   if (has(low, "not writable")) return Refusal::NotWritable;
   if (has(low, "constraint") || has(low, "not present in table") || has(low, "foreign key")) return Refusal::Constraint;
   if (status == 401) return Refusal::Login;
   if (status == 403) return Refusal::Forbidden;
   if (status == 404) return Refusal::NoSuchAddress;
-  // Legacy: a 500 that speaks of the package is the package's.
-  if (status == 500 && has(low, "package")) return Refusal::NotWritable;
   if (status >= 500) return Refusal::Fault;
   if (status >= 300 && status < 400) return Refusal::Redirect;
   return Refusal::Other;
@@ -386,7 +387,7 @@ std::string answer_sentence(int status, const std::string& reason, std::string_v
 
 // The codes of an Error that is an answer's: it has its sentence.
 bool is_answered(const Error& error) {
-  for (const std::string_view code : {kLoginRejected, kForbidden, kRefused, kInDoubt, kPackageMisnamed}) {
+  for (const std::string_view code : {kLoginRejected, kNotRenewed, kForbidden, kRefused, kInDoubt, kPackageMisnamed}) {
     if (error.code == code) return true;
   }
   return false;
@@ -486,7 +487,10 @@ Error Session::answer_error(const HttpResponse& answer, bool write, std::string_
   const Renewal renewal = !renewal_failed_ ? Renewal::NotTried : renewal_unanswered_ ? Renewal::NoAnswer : Renewal::Fault;
   Error error{answer.status == 401 ? ErrorKind::NotConnected : ErrorKind::Protocol,
               answer_sentence(answer.status, reason, path, record, in_doubt, renewal), ""};
-  error.code = std::string(answer.status == 401 ? kLoginRejected
+  // A 401 that stands because the new sign-in failed unrefused is not the
+  // password's: by the same test as its sentence.
+  const bool unrenewed = renewal != Renewal::NotTried && !url_path(path).ends_with(kAuthenticate);
+  error.code = std::string(answer.status == 401 ? (unrenewed ? kNotRenewed : kLoginRejected)
                            : answer.status == 403 ? kForbidden
                            : in_doubt ? kInDoubt
                                       : kRefused);
