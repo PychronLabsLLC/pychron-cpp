@@ -913,8 +913,8 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   // saying: the lab chooses, and is told between what.
   EXPECT_EQ(refused(two),
             "earthbank: sample \"S-STEP\": it has 2 step-heated aliquots (20001-01, 20001-02), and which summary "
-            "age to report for them has to be chosen: set its preferred age to weighted_mean, integrated or "
-            "isochron (each pools the aliquots), or publish the aliquots as separate selections");
+            "age to report for them has to be chosen: set the sample's `preferred_age` setting to weighted_mean, "
+            "integrated or isochron (each pools the aliquots), or publish the aliquots as separate selections");
 
   PublishOptions pooled;
   pooled.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
@@ -971,9 +971,9 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   pooled.samples["S-STEP"].preferred_age = PreferredAge::Plateau;
   EXPECT_EQ(refused(two, pooled),
             "earthbank: sample \"S-STEP\": the Plateau Age asked for cannot be computed: 2 aliquots were step "
-            "heated (20001-01, 20001-02), and a plateau is of one heating experiment: set its preferred age to "
-            "weighted_mean, integrated or isochron (each pools the aliquots), or publish the aliquots as separate "
-            "selections");
+            "heated (20001-01, 20001-02), and a plateau is of one heating experiment: set the sample's "
+            "`preferred_age` setting to weighted_mean, integrated or isochron (each pools the aliquots), or publish "
+            "the aliquots as separate selections");
 }
 
 // ---------------------------------------------------------------- vocabulary

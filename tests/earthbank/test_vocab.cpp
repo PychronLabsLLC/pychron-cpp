@@ -399,6 +399,7 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   expect_match(match("FC-2 plagioclase 28.201 Ma"), Kind::None, "", "a plagioclase");
   expect_match(match("Fish Canyon K-feldspar 28.201 Ma"), Kind::None, "", "a feldspar");
   expect_match(match("Fish Canyon kspar 28.201 Ma"), Kind::None, "", "likewise");
+  expect_match(match("Fish Canyon K-spar 28.201 Ma"), Kind::None, "", "likewise, as two words");
   expect_match(match("FCT bt 28.201 Ma"), Kind::None, "", "a biotite, in short");
   expect_match(match("FC-2 bio 28.201 Ma"), Kind::None, "", "likewise");
   expect_match(match("Fish Canyon biotites 28.201 Ma"), Kind::None, "", "biotites are biotite");
@@ -525,7 +526,7 @@ TEST(Vocab, TheOtherMaterialWordsAreNoWordOfAnAliasOrAnEntry) {
   }
   // Every word the lab was said to write.
   for (const char* word :
-       {"plagioclase", "feldspar", "kfeldspar", "kspar", "orthoclase", "anorthoclase", "adularia", "microcline",
+       {"plagioclase", "feldspar", "kfeldspar", "kspar", "spar", "orthoclase", "anorthoclase", "adularia", "microcline",
         "amphibole", "phlogopite", "sericite", "glauconite", "alunite", "jarosite", "glass", "groundmass",
         "whole rock", "wholerock", "san", "bt", "bio", "hbl", "ms", "musc", "plag", "kfs"}) {
     EXPECT_TRUE(std::any_of(others.begin(), others.end(), [&](const MonitorMineral& m) { return m.word == word; }))

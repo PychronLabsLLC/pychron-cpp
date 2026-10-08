@@ -193,9 +193,10 @@ constexpr Restated kRestated[] = {
 //     (`arArMethod`, the data point's `arMethodName`) is one of the list's
 //     `Step-heating - ...`. A fusion has no step and no share of the gas.
 // `unless`: the column of the same sheet that, filled, excuses the row.
-// The rows the column is wanted in, as the note says them: `kind` before
-// `rows` (`step-heating rows`), `lacking` after (`rows that have no furnace
-// temperature`).
+// The rows the column is wanted in, as the note says them after `rows`:
+// `kind` (`rows of a step-heating data point`: its rows, the fusions of a
+// sample that mixes the two among them) or `lacking` (`rows that have no
+// furnace temperature`).
 struct Conditional {
   std::string_view sheet, key;
   bool steps_only;
@@ -207,9 +208,9 @@ constexpr Conditional kConditional[] = {
     {"ArArMeasurement", "laserPower", false, "furnaceTemperature", "", "furnace temperature"},
     {"ArArMeasurement", "laserPowerUnits", false, "furnaceTemperature", "", "furnace temperature"},
     {"ArArMeasurement", "furnaceTemperature", false, "laserPower", "", "laser power"},
-    {"ArArMeasurement", "stepNumber", true, "", "step-heating ", ""},
-    {"ArArMeasurement", "Ar39KReleased", true, "", "step-heating ", ""},
-    {"ArArMeasurement", "cumulative39ArK", true, "", "step-heating ", ""},
+    {"ArArMeasurement", "stepNumber", true, "", " of a step-heating data point", ""},
+    {"ArArMeasurement", "Ar39KReleased", true, "", " of a step-heating data point", ""},
+    {"ArArMeasurement", "cumulative39ArK", true, "", " of a step-heating data point", ""},
 };
 
 // How the list's methods of heating in steps begin (`Lookup Tables`, D2:D4).
@@ -399,14 +400,15 @@ class Notes {
     std::string name, kind, lacking;
     int wanted = 0, empty = 0;
     // `every row`, `3 of 16 rows`; for a column wanted of some rows only,
-    // with their number and which they are: `2 of the 10 step-heating rows`,
+    // with their number and which they are: `2 of the 10 rows of a
+    // step-heating data point`,
     // `all 15 rows that have no furnace temperature`.
     std::string where() const {
       const std::string of = std::to_string(wanted);
       if (kind.empty() && lacking.empty()) {
         return empty == wanted ? "every row" : std::to_string(empty) + " of " + of + " rows";
       }
-      const std::string rows = kind + (wanted == 1 ? "row" : "rows") +
+      const std::string rows = (wanted == 1 ? "row" : "rows") + kind +
                                (lacking.empty() ? "" : (wanted == 1 ? " that has no " : " that have no ") + lacking);
       if (empty < wanted) return std::to_string(empty) + " of the " + of + " " + rows;
       return (wanted == 1 ? "the one " : "all " + of + " ") + rows;

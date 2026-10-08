@@ -1365,9 +1365,9 @@ TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
     steps[1].measurements[7].ar39KReleased.reset();
     for (Measurement& m : steps[1].measurements) m.cumulative39ArK.reset();
     EXPECT_EQ(measurement_note(steps),
-              "stepNumber (Step number) empty in 2 of the 10 step-heating rows, " + beam +
-                  ", Ar39KReleased (39ArK released) empty in 1 of the 10 step-heating rows, cumulative39ArK "
-                  "(Cumulative 39ArK released) empty in all 10 step-heating rows");
+              "stepNumber (Step number) empty in 2 of the 10 rows of a step-heating data point, " + beam +
+                  ", Ar39KReleased (39ArK released) empty in 1 of the 10 rows of a step-heating data point, cumulative39ArK "
+                  "(Cumulative 39ArK released) empty in all 10 rows of a step-heating data point");
     // The method is what says so: the same rows under a fusion's are not missed,
     // nor under no method at all (the method is then the thing missing).
     steps[1].data_point.arMethodName = "Total fusion - laser";
@@ -1376,7 +1376,7 @@ TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
     EXPECT_EQ(measurement_note(steps), beam);
     // Whatever its case, and whatever heats the steps.
     steps[1].data_point.arMethodName = "step-heating - furnace";
-    EXPECT_NE(measurement_note(steps).find("stepNumber (Step number) empty in 2 of the 10 step-heating rows"),
+    EXPECT_NE(measurement_note(steps).find("stepNumber (Step number) empty in 2 of the 10 rows of a step-heating data point"),
               std::string::npos);
   }
 
@@ -1557,7 +1557,7 @@ TEST_F(Xlsx, TheRequiredColumnsAreTheOnesTheTemplateColours) {
   };
   const char* const no_furnace = "the one row that has no furnace temperature";
   const auto expected = [&](bool step_heated) {
-    const char* const of_steps = "the one step-heating row";
+    const char* const of_steps = "the one row of a step-heating data point";
     return std::vector<std::string>{
         std::string("ArArDataPoints") + kRequiredLead +
             every({"arArSetUp (Analytical Key)"}) + ", " +

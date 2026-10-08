@@ -288,14 +288,16 @@ constexpr MonitorMineral kMonitorMinerals[] = {
 // Words a lab writes for the material of a monitor that are not words of the
 // list: the short forms of the list's four minerals, which are those
 // minerals, and materials the list has no monitor of, which are no entry's.
-// `K-feldspar` is `k`, `feldspar` as words and is told by the second. A
-// term of two words is told by the two together (`whole rock`, `whole-rock`).
+// `K-feldspar` is `k`, `feldspar` as words and is told by the second, and
+// `K-spar` by `spar`. A term of two words is told by the two together
+// (`whole rock`, `whole-rock`).
 // None of these is a word of an alias or of an entry (a test holds that).
 constexpr MonitorMineral kOtherMaterials[] = {
     {"san", "sanidine"},          {"bt", "biotite"},         {"bio", "biotite"},
     {"hbl", "hornblende"},        {"ms", "muscovite"},       {"musc", "muscovite"},
     {"plagioclase", "plagioclase"}, {"plag", "plagioclase"},
     {"feldspar", "feldspar"},     {"kfeldspar", "feldspar"}, {"kspar", "feldspar"},   {"kfs", "feldspar"},
+    {"spar", "feldspar"},
     {"orthoclase", "orthoclase"}, {"anorthoclase", "anorthoclase"},
     {"adularia", "adularia"},     {"microcline", "microcline"},
     {"amphibole", "amphibole"},   {"phlogopite", "phlogopite"},

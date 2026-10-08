@@ -649,8 +649,8 @@ Result<SummaryAge> preferred_age(std::string_view sample, const Group& g, const 
   // experiment, and of the three ages that can pool them none is the one a
   // reader would take for granted. The lab says which.
   const bool pooled = g.heated.size() > 1;
-  const std::string pooling = "set its preferred age to weighted_mean, integrated or isochron (each pools the "
-                              "aliquots), or publish the aliquots as separate selections";
+  const std::string pooling = "set the sample's `preferred_age` setting to weighted_mean, integrated or isochron "
+                              "(each pools the aliquots), or publish the aliquots as separate selections";
   if (pooled && !so.preferred_age) {
     return refuse(sample, "it has " + g.heated_aliquots() +
                               ", and which summary age to report for them has to be chosen: " + pooling);
