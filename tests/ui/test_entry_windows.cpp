@@ -465,6 +465,36 @@ class EntryWindowsTest : public QObject {
     QCOMPARE(w.holder_view()->selected(), (std::set<int>{2, 3}));
   }
 
+  void a_change_elsewhere_keeps_a_grid_cell_being_typed() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    using Grid = pychron::ui::LevelGridModel;
+    const auto sample_at = [&](int position) {
+      return w.grid()->index(w.grid()->row_of(position), Grid::Sample).data().toString();
+    };
+
+    // A note being typed, not yet entered: the grid holds no edit, but the
+    // level is not read again under the cell, and what is typed stays.
+    const QModelIndex cell = w.grid()->index(w.grid()->row_of(3), Grid::Note);
+    QVERIFY(cell.isValid());
+    w.table()->edit(cell);
+    auto* editor = w.table()->viewport()->findChild<QLineEdit*>();
+    QVERIFY(editor != nullptr);
+    editor->setText(QStringLiteral("half typed"));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(1, "bt-1");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);  // the tree alone
+    QCoreApplication::processEvents();
+    QCOMPARE(sample_at(1), QString());
+    QCOMPARE(w.table()->viewport()->findChild<QLineEdit*>(), editor);
+    QCOMPARE(editor->text(), QStringLiteral("half typed"));
+  }
+
   void entry_menu_opens_the_windows() {
     pychron::ui::MenuHub::reset(pychron::ui::MenuHub::Bars::PerWindow);
     QMainWindow main;

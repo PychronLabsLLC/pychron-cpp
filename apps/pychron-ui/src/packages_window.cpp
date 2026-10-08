@@ -63,6 +63,13 @@ class DoseTable : public QTableWidget {
   bool editing() const { return state() == QAbstractItemView::EditingState; }
 };
 
+// The positions grid, likewise.
+class GridTable : public QTableView {
+ public:
+  using QTableView::QTableView;
+  bool editing() const { return state() == QAbstractItemView::EditingState; }
+};
+
 // A level's z as its field shows it.
 QString z_text(const std::optional<double>& z) { return z ? QString::number(*z, 'g', 10) : QString(); }
 
@@ -92,7 +99,7 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
   tree_->setMinimumWidth(180);
   auto* center = new QWidget(split);
   auto* layout = new QVBoxLayout(center);
-  table_ = new QTableView(center);
+  table_ = new GridTable(center);
   table_->setModel(grid_);
   table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -618,7 +625,9 @@ bool PackagesWindow::level_fields_edited() const {
 }
 
 bool PackagesWindow::unsaved() const {
-  return !grid_->has_edit() || grid_->edit().dirty() || level_fields_edited() || chronology_edited();
+  // A grid cell being typed in is an edit too, as a dose cell is.
+  return !grid_->has_edit() || grid_->edit().dirty() || static_cast<const GridTable*>(table_)->editing() ||
+         level_fields_edited() || chronology_edited();
 }
 
 void PackagesWindow::fill_chronology() {
