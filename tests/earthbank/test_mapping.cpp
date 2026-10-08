@@ -1089,10 +1089,24 @@ TEST(Mapping, OverridesAreNormalized) {
 TEST(Mapping, TheSetUpAndTheIrradiationAreNamed) {
   // The set-up is the lab's to name: nothing on an analysis says what
   // EarthBank calls it.
-  EXPECT_EQ(build_one(step_sample()).setup_name, "");
+  // Left unnamed, that is said, on each submission: it is the same for all.
+  const char* const no_setup = "no analytical set-up named: every data point refers to one EarthBank already has; "
+                               "give its name there as the `setup` setting";
+  for (const Submission& s : build(both_samples(), {})) {
+    EXPECT_EQ(s.setup_name, "");
+    EXPECT_EQ(note_with(s, "set-up"), no_setup) << s.datapoint_name;
+    EXPECT_EQ(std::count(s.notes.begin(), s.notes.end(), no_setup), 1) << s.datapoint_name;
+    // A note is no part of what is submitted.
+    Submission quiet = s;
+    quiet.notes.clear();
+    EXPECT_EQ(content_hash(quiet), content_hash(s));
+  }
   PublishOptions options;
   options.setup = "A Noble Gas Lab, Helix MC";
-  for (const Submission& s : build(both_samples(), options)) EXPECT_EQ(s.setup_name, "A Noble Gas Lab, Helix MC");
+  for (const Submission& s : build(both_samples(), options)) {
+    EXPECT_EQ(s.setup_name, "A Noble Gas Lab, Helix MC");
+    EXPECT_EQ(note_with(s, "set-up"), "");
+  }
 
   // The irradiation is the one the sample's analyses name.
   Submission step = build_one(step_sample(), options);
@@ -1102,15 +1116,26 @@ TEST(Mapping, TheSetUpAndTheIrradiationAreNamed) {
   // analyses names one has none.
   step = build_one(with_edit(step_sample(), 0, [](pp::Analysis& a) { a.irradiation.clear(); }));
   EXPECT_EQ(step.irradiation_name, "NM-900");
-  EXPECT_EQ(build_one(fusion_sample()).irradiation_name, "");
+  EXPECT_EQ(note_with(step, "irradiation"), "");
+  const Submission fusion = build_one(fusion_sample());
+  EXPECT_EQ(fusion.irradiation_name, "");
+  const char* const no_irradiation = "S-FUS: none of its analyses names an irradiation and the irradiation batch was "
+                                     "left out; name it for the sample (the per-sample `irradiation` setting)";
+  EXPECT_EQ(note_with(fusion, "irradiation"), no_irradiation);
+  EXPECT_EQ(std::count(fusion.notes.begin(), fusion.notes.end(), no_irradiation), 1);
 
   // A sample can span irradiations: it is published, the name is left out
   // and a note names two of them.
   step = build_one(with_edit(step_sample(), 3, [](pp::Analysis& a) { a.irradiation = "NM-901"; }));
   EXPECT_EQ(step.irradiation_name, "");
-  EXPECT_EQ(note_with(step, "irradiation"),
-            "S-STEP: its analyses are of more than one irradiation, \"NM-900\" (20001-01A) and \"NM-901\" "
-            "(20001-01D); the irradiation was left out, to be named in the options");
+  // One note says so, with what to do; not also that none is named.
+  const std::string two = "S-STEP: its analyses are of more than one irradiation, \"NM-900\" (20001-01A) and "
+                          "\"NM-901\" (20001-01D), and the irradiation batch was left out; name the one to publish "
+                          "under for the sample (the per-sample `irradiation` setting)";
+  EXPECT_EQ(note_with(step, "irradiation"), two);
+  EXPECT_EQ(std::count_if(step.notes.begin(), step.notes.end(),
+                          [](const std::string& note) { return note.find("irradiation") != std::string::npos; }),
+            1);
 
   // The lab's word replaces what the analyses say, and settles a
   // disagreement.
@@ -1121,7 +1146,11 @@ TEST(Mapping, TheSetUpAndTheIrradiationAreNamed) {
   const std::vector<Submission> both = build(both_samples(), options);
   ASSERT_EQ(both.size(), 2u);
   EXPECT_EQ(both[0].irradiation_name, "");  // S-FUS: the override is S-STEP's
+  EXPECT_EQ(note_with(both[0], "irradiation"), no_irradiation);
   EXPECT_EQ(both[1].irradiation_name, "NM-900 (TRIGA, 10 h)");
+  // Named for the sample, there is nothing to say.
+  options.samples["S-FUS"].irradiation = "NM-901";
+  EXPECT_EQ(note_with(build_one(fusion_sample(), options), "irradiation"), "");
 
   // An analysis left out for want of an age or an isotope has no say.
   auto undated = with_edit(step_sample(), 3, [](pp::Analysis& a) {

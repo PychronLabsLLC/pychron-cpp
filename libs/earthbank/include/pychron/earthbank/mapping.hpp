@@ -136,7 +136,9 @@ struct SampleOptions {
   std::optional<PreferredAge> preferred_age;  // empty: the rule above. One that cannot be computed is an error.
   std::string flux_monitor;                   // replaces the monitor found on the analyses
   std::string datapoint_name;                 // empty: "<sample> <material>", or "<sample>"
-  std::string irradiation;                    // the irradiation batch as EarthBank names it; empty: the analyses'
+  // The irradiation batch as EarthBank names it; empty: the one the analyses
+  // name, and when they name none, or more than one, none (with a note).
+  std::string irradiation;
 };
 
 struct PublishOptions {
@@ -163,7 +165,8 @@ struct PublishOptions {
   // The laboratory's analytical set-up (the instrument and how it is run) by
   // the name it has on EarthBank, where it must already exist: every data
   // point refers to one. Nothing on an analysis says it, and there is no
-  // default; left empty, Submission::setup_name is empty.
+  // default; left empty, Submission::setup_name is empty and a note on each
+  // submission says so.
   std::string setup;
   std::map<std::string, SampleOptions> samples;  // by sample name
   // Name and version, for the sample's description ("Uploaded from ...") and

@@ -1095,7 +1095,10 @@ Result<AgeCalc> age_calc_of(const std::string& name, const Members& dated, const
 // The irradiation batch the data point refers to: the lab's word for it, else
 // the one irradiation the published analyses name. A sample can span
 // irradiations, and the record has room for one: then none is named, and a
-// note says which two were found.
+// note says which two were found. A note says so too when no analysis names
+// one. Either way the data point is without its batch until the lab names it.
+constexpr const char* kIrradiationSetting = "(the per-sample `irradiation` setting)";
+
 std::string irradiation_of(const std::string& name, const Members& dated, const SampleOptions& so, Notes& notes) {
   if (!so.irradiation.empty()) return so.irradiation;
   const Member* from = nullptr;
@@ -1106,11 +1109,17 @@ std::string irradiation_of(const std::string& name, const Members& dated, const 
     } else if (m.a().irradiation != from->a().irradiation) {
       notes.push_back(name + ": its analyses are of more than one irradiation, " + in_quotes(from->a().irradiation) +
                       " (" + from->a().runid + ") and " + in_quotes(m.a().irradiation) + " (" + m.a().runid +
-                      "); the irradiation was left out, to be named in the options");
+                      "), and the irradiation batch was left out; name the one to publish under for the sample " +
+                      kIrradiationSetting);
       return {};
     }
   }
-  return from == nullptr ? std::string() : from->a().irradiation;
+  if (from == nullptr) {
+    notes.push_back(name + ": none of its analyses names an irradiation and the irradiation batch was left out; "
+                           "name it for the sample " + kIrradiationSetting);
+    return {};
+  }
+  return from->a().irradiation;
 }
 
 AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const Group& g, std::size_t published,
@@ -1238,6 +1247,11 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   out.age_summary = age_summary_of(name, *age, group, dated.size(), *constants, options, so, notes);
 
   out.setup_name = options.setup;
+  // Nothing on an analysis says it, so nothing can stand in for it.
+  if (out.setup_name.empty()) {
+    notes.push_back("no analytical set-up named: every data point refers to one EarthBank already has; give its "
+                    "name there as the `setup` setting");
+  }
   out.irradiation_name = irradiation_of(name, dated, so, notes);
 
   if (!so.datapoint_name.empty()) {
