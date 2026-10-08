@@ -63,9 +63,9 @@ LookupResult no_list(std::string detail) { return {LookupOutcome::NoList, 0, {},
 constexpr std::string_view kNotOnTheList = "EarthBank's list has no such entry.";
 constexpr std::string_view kTwoEntries = "More than one entry of EarthBank's list could be meant; none was chosen.";
 
-// How a value stands to some rows, each known by one or more labels (its
-// name; its reference, its description): the one row a label of which is the
-// value, none, or more than one.
+// How a value stands to some rows, each known by a label (its name, or its
+// reference): the one row a label of which is the value, none, or more than
+// one.
 struct Pick {
   enum class Kind { One, None, Several };
   Kind kind = Kind::None;
@@ -125,11 +125,12 @@ LookupResolver::Rows LookupResolver::ask(std::string_view endpoint, std::string_
   out.answered = true;
   for (const json& row : rows) {
     // A row is an id and a name; one without is passed over. Legacy also
-    // reads a reference and a description where a row has them.
+    // reads a reference where a row has one (and a description, which is not
+    // read here).
     if (!row.is_object()) continue;
     const auto id = row.find("id");
     if (id == row.end() || !id->is_number_integer()) continue;
-    Row one{id->get<std::int64_t>(), text_of(row, "name"), text_of(row, "reference"), text_of(row, "description")};
+    Row one{id->get<std::int64_t>(), text_of(row, "name"), text_of(row, "reference")};
     if (trimmed(one.name).empty()) continue;
     out.rows.push_back(std::move(one));
   }
@@ -178,23 +179,24 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
     list = &whole(endpoint);
     if (!list->answered) return could_not_ask(list->why);
     if (auto in_list = among(list->rows, exactly)) return *in_list;
-    // A reference or a description that is the value, and one row's.
-    std::vector<std::string> labels;
-    std::vector<std::size_t> owners;
-    std::vector<std::int64_t> ids;
-    for (std::size_t i = 0; i < list->rows.size(); ++i) {
-      ids.push_back(list->rows[i].id);
-      for (const std::string* more : {&list->rows[i].reference, &list->rows[i].description}) {
-        if (trimmed(*more).empty()) continue;
-        labels.push_back(*more);
+    // A reference that is the value, and one row's. Not for a flux monitor:
+    // its reference is a paper, and a paper names no monitor.
+    if (!monitor) {
+      std::vector<std::string> labels;
+      std::vector<std::size_t> owners;
+      std::vector<std::int64_t> ids;
+      for (std::size_t i = 0; i < list->rows.size(); ++i) {
+        ids.push_back(list->rows[i].id);
+        if (trimmed(list->rows[i].reference).empty()) continue;
+        labels.push_back(list->rows[i].reference);
         owners.push_back(i);
       }
-    }
-    const Pick picked = pick(value, labels, owners, ids, exactly);
-    if (picked.kind == Pick::Kind::Several) return unknown(std::string(kTwoEntries));
-    if (picked.kind == Pick::Kind::One) {
-      const Row& row = list->rows[picked.row];
-      return {LookupOutcome::Found, row.id, std::string(trimmed(row.name)), {}};
+      const Pick picked = pick(value, labels, owners, ids, exactly);
+      if (picked.kind == Pick::Kind::Several) return unknown(std::string(kTwoEntries));
+      if (picked.kind == Pick::Kind::One) {
+        const Row& row = list->rows[picked.row];
+        return {LookupOutcome::Found, row.id, std::string(trimmed(row.name)), {}};
+      }
     }
   }
 
@@ -213,30 +215,11 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
   if (!holding.answered) return could_not_ask(holding.why);
   if (auto held = among(holding.rows, exactly)) return *held;
 
-  // 3. The flux monitor, by its own rule, over the list that was read: its
-  // names, and then each name with what else its row says.
+  // 3. The flux monitor, by its own rule, over the names of the list that was
+  // read. What else a row says (a reference, a description) is not read for
+  // it: free text of no known shape must not find an id.
   if (monitor && list != nullptr) {
     if (auto by_rule = among(list->rows, as_monitor)) return *by_rule;
-    const bool any_more = std::any_of(list->rows.begin(), list->rows.end(), [](const Row& row) {
-      return !trimmed(row.reference).empty() || !trimmed(row.description).empty();
-    });
-    if (any_more) {
-      std::vector<Row> fuller = list->rows;
-      for (Row& row : fuller) {
-        for (const std::string* more : {&row.reference, &row.description}) {
-          if (!trimmed(*more).empty()) row.name += " " + *more;
-        }
-      }
-      if (auto by_rule = among(fuller, as_monitor)) {
-        // The entry's own name, not the text it was found in.
-        if (by_rule->outcome == LookupOutcome::Found) {
-          const auto row = std::find_if(list->rows.begin(), list->rows.end(),
-                                        [&](const Row& one) { return one.id == by_rule->id; });
-          if (row != list->rows.end()) by_rule->matched_name = std::string(trimmed(row->name));
-        }
-        return *by_rule;
-      }
-    }
   }
   return unknown(std::string(kNotOnTheList));
 }

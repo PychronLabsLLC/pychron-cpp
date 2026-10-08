@@ -442,7 +442,9 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
 
 // A lab that names its monitor by the paper its age is from, and gives no
 // age: the legacy integration found the entry by the first word and the year.
-// Here the monitor, the year and every other word said must be the entry's.
+// Here the monitor must be named (one of pychron's names for it, or the
+// entry's abbreviation), and the year and every other word said be the
+// entry's.
 TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
   const std::vector<std::string> list = template_monitors();
   const auto match = [&](std::string_view value) { return match_flux_monitor(value, list); };
@@ -465,15 +467,22 @@ TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
                "Mt Domedary Biotite (GA-1550) from Spell and McDougall 2003 (99.18 Ma)", "GA-1550");
   expect_match(match("MD-2 Jourdan and Renne 2007"), Kind::Respelled,
                "Mt Domedary Biotite (MD-2) from Jourdan and Renne 2007 (99.44 Ma)", "MD-2, not GA-1550 or Hb3gr");
-  expect_match(match("Hornblende Jourdan and Renne 2007"), Kind::Respelled,
-               "Hornblende (Hb3gr) from Jourdan and Renne 2007 (1081.5 Ma)", "by the entry's words");
+  expect_match(match("Hb3gr Jourdan and Renne 2007"), Kind::Respelled,
+               "Hornblende (Hb3gr) from Jourdan and Renne 2007 (1081.5 Ma)", "Hb3gr, not the biotites of that paper");
   expect_match(match("WA1ms Jourdan et al. 2014"), Kind::Respelled,
                "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "the entry's year in parentheses");
-  // With no monitor named, the paper alone, when it is one entry's.
-  expect_match(match("Kuiper et al. 2008"), Kind::Respelled, kuiper, "one entry is of that paper");
-  expect_match(match("Renne et al. 2011"), Kind::Ambiguous, "", "three are of that one");
-  expect_match(match("Phillips et al. 2022"), Kind::Ambiguous, "", "and of that");
-  expect_match(match("Jourdan and Renne 2007"), Kind::Ambiguous, "", "likewise");
+  // A value that names no monitor is no monitor's, though only one entry be
+  // of that paper today: an author and a year, or a mineral and a paper, say
+  // which paper and not which standard, and an id once written stays.
+  expect_match(match("Kuiper et al. 2008"), Kind::None, "", "a paper, though one entry's");
+  expect_match(match("Fleck et al. 2019"), Kind::None, "", "likewise");
+  expect_match(match("Renne et al. 2011"), Kind::None, "", "a paper of three monitors");
+  expect_match(match("Phillips et al. 2022"), Kind::None, "", "and of two");
+  expect_match(match("Jourdan and Renne 2007"), Kind::None, "", "likewise");
+  expect_match(match("biotite Renne et al. 2011"), Kind::None, "", "a mineral and a paper");
+  expect_match(match("sanidine Kuiper et al. 2008"), Kind::None, "", "likewise, though one entry's");
+  expect_match(match("Hornblende Jourdan and Renne 2007"), Kind::None, "", "the entry's words, and not its name");
+  expect_match(match("Tuff Kuiper et al. 2008"), Kind::None, "", "a word of the entry is not its name");
 
   // No match. The legacy rule took the first entry holding the first word
   // and the year, and so the wrong monitor for some of these.
@@ -490,8 +499,16 @@ TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
   expect_match(match("FC-2 Kuiper and Example 2008"), Kind::None, "", "a word the entry has not");
   // An age said is held to, whatever the paper: the citation is no way round it.
   expect_match(match("FC-2 Kuiper et al. 2008 28.2 Ma"), Kind::None, "", "an age cut short");
-  expect_match(match("FC-2 Kuiper et al. 2008, 28.294 Ma"), Kind::Respelled,
-               "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)", "the age decides, as before");
+  // A value that says two things is refused, not settled by one of them: the
+  // paper of one entry of the monitor and the age of another.
+  expect_match(match("FC-2 Kuiper et al. 2008, 28.294 Ma"), Kind::None, "", "Kuiper's paper, Renne's age");
+  expect_match(match("FC-2 Kuiper 28.294 Ma"), Kind::None, "", "likewise, the author alone");
+  expect_match(match("FC-2 2008 28.294 Ma"), Kind::None, "", "likewise, the year alone");
+  expect_match(match("FC-2 Jourdan and Renne 2007 28.201 Ma"), Kind::None, "", "a year no entry of the monitor has");
+  expect_match(match("GA-1550 Spell and McDougall 2003 99.44 Ma"), Kind::None, "", "another monitor, the same way");
+  expect_match(match("FC-2 Kuiper et al. 2008, 28.201 Ma"), Kind::Respelled, kuiper, "the paper and the age of one entry");
+  expect_match(match("FC-2 Renne et al. 2011 28.294 Ma"), Kind::Respelled,
+               "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)", "likewise");
   // The year is the paper's, not a number of the entry's age; and a number
   // that is some entry's age is that first, as before.
   const std::vector<std::string> old = {"Example Monitor Sanidine (EMs) from Alpha et al. 1999 (2008 Ma)",
@@ -501,6 +518,13 @@ TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
   expect_match(match_flux_monitor("EMs 2008", old), Kind::Respelled, old[0], "an age");
   expect_match(match_flux_monitor("EMs 1999 Ma", old), Kind::Respelled, old[1], "an age, said to be one");
   expect_match(match_flux_monitor("EMs Alpha et al. 1999 Ma", old), Kind::None, "", "said to be an age: not a year");
+  // An abbreviation the entry has in parentheses names it as one of pychron's
+  // names does, and no more: the author is still wanted.
+  const std::vector<std::string> other = {"Example Monitor Sanidine (EMs) from Alpha et al. 1999 (27.5 Ma)"};
+  expect_match(match_flux_monitor("EMs Alpha et al. 1999", other), Kind::Respelled, other[0], "abbreviation and paper");
+  expect_match(match_flux_monitor("EMs 1999", other), Kind::None, "", "a year and no author");
+  expect_match(match_flux_monitor("Example Monitor Alpha et al. 1999", other), Kind::None, "", "words, and no name");
+  expect_match(match_flux_monitor("Alpha et al. 1999", other), Kind::None, "", "the paper alone");
   expect_match(match_flux_monitor("FC-2 Kuiper et al. 2008", {}), Kind::None, "", "an empty list");
 }
 

@@ -567,6 +567,20 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
   const std::vector<std::string_view> said = minerals_of(query.name);
   std::erase_if(beside, [](const std::string& word) { return is_material_word(word); });
 
+  // What the papers of a monitor say: the words of each of its entries, less
+  // the entry's age. A word beside the monitor's name that is one of these
+  // tells its entries apart, and must be the found entry's.
+  std::vector<std::string> of_the_monitor;
+  if (!marks.empty()) {
+    for (const std::string& entry : entries) {
+      if (!has_run(words_of(entry), marks.front())) continue;
+      for (std::string& word : words_of(without_listed_age(entry))) of_the_monitor.push_back(std::move(word));
+    }
+  }
+  const auto telling = [](const std::string& word) {
+    return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter);
+  };
+
   // By the age, and when no entry is of it and the number was not said to be
   // an age, by the paper it is the year of.
   const bool may_be_a_year = !query.age_in_ma && is_year(query.age);
@@ -577,22 +591,42 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
       const std::vector<std::string> words = words_of(entry);
       // The words a name or a paper is found among: by the paper, not the
       // digits of the entry's age.
-      const std::vector<std::string> cited = by_paper ? words_of(without_listed_age(entry)) : words;
+      const std::vector<std::string> paper = words_of(without_listed_age(entry));
+      const std::vector<std::string>& cited = by_paper ? paper : words;
       if (by_paper ? !has_word(cited, query.age) : listed_age(entry) != query.age) continue;
       // Another mineral or material is another monitor, whatever else of the
       // name fits.
       if (const auto listed = minerals_of(words); !said.empty() && !listed.empty() && said != listed) continue;
-      const auto telling = [](const std::string& word) {
-        return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter);
-      };
       bool named = false;
       if (!marks.empty()) {
         named = has_run(words, marks.front());
-        // By the paper the monitor is not enough: the author must be there,
-        // and nothing said that the entry does not say.
         if (by_paper) {
+          // By the paper the monitor is not enough: the author must be there,
+          // and nothing said that the entry does not say.
           named = named && std::any_of(beside.begin(), beside.end(), telling) &&
                   std::all_of(beside.begin(), beside.end(), [&](const std::string& word) { return has_word(cited, word); });
+        } else {
+          // By the age, a paper said beside it must be this entry's: a year,
+          // or a word of another entry of the monitor (its author), that this
+          // entry has not makes the value say two things, and it is refused
+          // rather than settled by the age.
+          named = named && std::none_of(beside.begin(), beside.end(), [&](const std::string& word) {
+            return (is_year(word) || has_word(of_the_monitor, word)) && !has_word(paper, word);
+          });
+        }
+      } else if (by_paper) {
+        // No name this knows, and no age: the value must name the monitor by
+        // the abbreviation the entry has in parentheses. An author and a
+        // year, a mineral and a paper, or words of the entry say which paper
+        // and not which monitor, though one entry only be of it. Beside the
+        // abbreviation the author is wanted, and no word the entry has not.
+        for (const auto& abbreviation : abbreviations_of(entry)) {
+          if (!has_run(query.name, abbreviation)) continue;
+          std::vector<std::string> rest = without_run(query.name, abbreviation);
+          std::erase_if(rest, [](const std::string& word) { return is_material_word(word); });
+          named = named || (std::any_of(rest.begin(), rest.end(), telling) &&
+                            std::all_of(query.name.begin(), query.name.end(),
+                                        [&](const std::string& word) { return has_word(cited, word); }));
         }
       } else {
         // No name this knows: every word given must be the entry's, and one of

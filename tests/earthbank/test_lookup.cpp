@@ -273,9 +273,9 @@ TEST(Lookup, FluxMonitorFuzzyByAuthorAndYear) {
 }
 
 // Whether the service's rows carry more than a name is not known. Where one
-// does, the reference is part of what the monitor is found by, and names the
-// row by itself when it is one row's.
-TEST(Lookup, AFluxMonitorsReferenceIsUsedWhereThereIsOne) {
+// does, nothing of it finds a flux monitor: a reference is a paper, and a
+// paper names no monitor; a description is free text of no known shape.
+TEST(Lookup, AFluxMonitorIsNotFoundByWhatElseItsRowSays) {
   Desk desk;
   desk.bank.add_lookup_row(kMonitors, {{"id", 1950},
                                        {"name", "Example Tuff Sanidine (ETs)"},
@@ -285,25 +285,40 @@ TEST(Lookup, AFluxMonitorsReferenceIsUsedWhereThereIsOne) {
                                        {"name", "Example Tuff Biotite (ETb)"},
                                        {"reference", "Other and Sample 2032"},
                                        {"description", nullptr}});
-  desk.bank.add_lookup_row(kMonitors, {{"id", 1952}, {"name", "Placeholder Sanidine (PLs)"}, {"reference", "Shared 2033"}});
-  desk.bank.add_lookup_row(kMonitors, {{"id", 1953}, {"name", "Placeholder Biotite (PLb)"}, {"reference", "Shared 2033"}});
-
-  expect_found(desk.resolver.resolve("fluxMonitorName", "Example Tuff sanidine Sample et al. 2031"), 1950,
-               "Example Tuff Sanidine (ETs)", "name and reference");
-  expect_found(desk.resolver.resolve("fluxMonitorName", "ETb Other and Sample 2032"), 1951, "Example Tuff Biotite (ETb)",
-               "abbreviation and reference");
-  expect_found(desk.resolver.resolve("fluxMonitorName", "sample et al. 2031"), 1950, "Example Tuff Sanidine (ETs)",
-               "the reference alone, one row's");
-  expect_found(desk.resolver.resolve("fluxMonitorName", "Placeholder sanidine Shared 2033"), 1952,
-               "Placeholder Sanidine (PLs)", "the mineral tells two of one reference apart");
-  expect_not(desk.resolver.resolve("fluxMonitorName", "Shared 2033"), LookupOutcome::Unknown, "two rows' reference");
-  expect_not(desk.resolver.resolve("fluxMonitorName", "Example Tuff sanidine Sample et al. 2032"), LookupOutcome::Unknown,
-             "the year of the other");
-  // The entries without one are found as before.
+  for (const char* value : {"sample et al. 2031", "Sample et al. 2031", "Example Tuff sanidine Sample et al. 2031",
+                            "ETs Sample et al. 2031", "ETb Other and Sample 2032", "An invented monitor.",
+                            "Example Tuff Sanidine (ETs) Sample et al. 2031 An invented monitor."}) {
+    expect_not(desk.resolver.resolve("fluxMonitorName", value), LookupOutcome::Unknown, value);
+  }
+  // By its name it is found as any entry is, and the others as before.
+  expect_found(desk.resolver.resolve("fluxMonitorName", "example tuff sanidine (ets)"), 1950,
+               "Example Tuff Sanidine (ETs)", "its name");
   expect_found(desk.resolver.resolve("fluxMonitorName", "FC-2 28.201 Ma"), 1903,
                "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)", "no reference");
   const std::vector<std::string> asked = questions(desk, kMonitors);
   EXPECT_EQ(std::count(asked.begin(), asked.end(), "size=2000"), 1) << "the list is read once";
+}
+
+// On the other short lists a value that is exactly one row's `reference` is
+// that row (legacy read it so); a description is never read.
+TEST(Lookup, AReferenceThatIsOneRowsIsThatRow) {
+  Desk desk;
+  const char* const list = "/api/arar/DecayConstant";
+  desk.bank.add_lookup_row(list, {{"id", 1750}, {"name", "Example and Sample 2031"}, {"reference", "EX-31"},
+                                  {"description", "an invented constant"}});
+  desk.bank.add_lookup_row(list, {{"id", 1751}, {"name", "Example and Sample 2032"}, {"reference", "EX-32"}});
+  desk.bank.add_lookup_row(list, {{"id", 1752}, {"name", "Example and Sample 2033"}, {"reference", "Shared"}});
+  desk.bank.add_lookup_row(list, {{"id", 1753}, {"name", "Example and Sample 2034"}, {"reference", "Shared"},
+                                  {"description", "EX-31"}});
+  expect_found(desk.resolver.resolve("decayConstantName", "ex-31"), 1750, "Example and Sample 2031", "one row's");
+  expect_found(desk.resolver.resolve("decayConstantName", "EX-32"), 1751, "Example and Sample 2032", "the other's");
+  expect_not(desk.resolver.resolve("decayConstantName", "Shared"), LookupOutcome::Unknown, "two rows' reference");
+  expect_not(desk.resolver.resolve("decayConstantName", "EX-3"), LookupOutcome::Unknown, "a part of one");
+  expect_not(desk.resolver.resolve("decayConstantName", "an invented constant"), LookupOutcome::Unknown,
+             "a description");
+  // A name comes first.
+  expect_found(desk.resolver.resolve("decayConstantName", "Example and Sample 2033"), 1752, "Example and Sample 2033",
+               "by name");
 }
 
 // ---- What is not asked -----------------------------------------------------

@@ -127,13 +127,23 @@ ListMatch match_list_entry(std::string_view value, std::span<const std::string> 
 //     name that says no mineral is held to none. And a name that holds the designation
 //     of a split the list has not (`FCT-3`, the tuff's biotite) matches
 //     nothing, though part of it is another monitor's name.
+//   - a paper said beside the monitor's name and the age must be that
+//     entry's: `FC-2 Kuiper et al. 2008, 28.294 Ma` is the paper of one entry
+//     of the monitor and the age of another, and is neither (a year the entry
+//     has not, or a word that is another entry's of the monitor and not this
+//     one's). A value that says two things is refused, not settled by the age.
 // Then, when that found nothing and no number of the value is said to be in
 // Ma, by name and paper (`FC-2 Kuiper et al. 2008`, as a lab writes the
 // monitor with its reference and no age): the value's last number is then a
-// year (19xx, 20xx) and must be a word of the entry before its age; the name
-// is held as above; and with one of the aliases, every other word that is no
-// mineral must be the entry's too, one of them of three letters or more (the
-// author: `FC-2 2008` is not enough, and `FC-2 Phillips 2008` is no entry).
+// year (19xx, 20xx) and must be a word of the entry before its age. On this
+// pass the value must name the monitor: by one of the aliases, or by the
+// abbreviation the entry has in parentheses (`Hb3gr`). `Kuiper et al. 2008`,
+// `biotite Renne et al. 2011` and `Hornblende Jourdan and Renne 2007` name a
+// paper, a mineral, a word of an entry, and no monitor: they match nothing,
+// though one entry only be of that paper. Beside the name, every other word
+// that is no mineral must be the entry's too, one of them of three letters or
+// more (the author: `FC-2 2008` is not enough, and `FC-2 Phillips 2008` is no
+// entry).
 // One entry left: Respelled. Several: Ambiguous. None: None.
 ListMatch match_flux_monitor(std::string_view value, std::span<const std::string> entries);
 

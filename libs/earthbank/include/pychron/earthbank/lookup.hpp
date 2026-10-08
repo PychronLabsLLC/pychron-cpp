@@ -16,15 +16,18 @@
 // The strategies, in order (the legacy integration's, spec 5.1):
 //   1. the list as it was read, for a list short enough to read whole
 //      (LookupSpec::whole): one request, `?size=2000`. Where the rows carry a
-//      `reference` or a `description`, a value that is one row's is that row.
+//      `reference`, a value that is exactly one row's is that row; not for a
+//      flux monitor, whose reference is a paper and names no monitor. A
+//      `description` is never read: free text of no known shape finds no id.
 //   2. by name: `?name.equals=<value>`; the same with the first letter in
 //      capitals and the rest in lower case, as the service spells most
 //      entries (its `equals` minds the case); then `?name.contains=<value>
 //      &size=200`, among whose rows one must be the name. This is how the
 //      materials, some fifty thousand rows, are searched without reading
 //      them; a long list is never read whole.
-//   3. for the flux monitor only: match_flux_monitor over the list read in
-//      step 1, by the monitor's name and age, or its name and paper.
+//   3. for the flux monitor only: match_flux_monitor over the names of the
+//      list read in step 1, by the monitor's name and age, or its name and
+//      paper.
 // Step 2 follows a miss in step 1 because a list the service cut short must
 // not make a term unknown; it does not follow an ambiguous name.
 //
@@ -76,7 +79,7 @@ class LookupResolver {
  private:
   struct Row {
     std::int64_t id = 0;
-    std::string name, reference, description;
+    std::string name, reference;
   };
   // An answer of the service to one question: its rows, or why there are none.
   struct Rows {
