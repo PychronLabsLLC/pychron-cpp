@@ -18,7 +18,8 @@
 //   - where the template names a column otherwise, a table in xlsx.cpp says
 //     which field it takes (`arArMethod` takes `arMethodName`, the Samples
 //     sheet's `sampleName` the sample's `name`, its `latitude` the location's
-//     `lat`), or that nothing fills it (`Tag`);
+//     `lat`, its `locationComment` the location's `description`), or that
+//     nothing fills it (`Tag`);
 //   - `datapointName`, the first column of every Ar-Ar sheet, takes
 //     Submission::datapoint_name on every row: it is what ties a data point's
 //     measurements, aliquots, age summary and age calculation to it;
@@ -108,16 +109,21 @@ struct XlsxResult {
 //   ArArDataPoint_<sample>.xlsx            one per submission (per_sample),
 //   Samples_<yyyymmdd-hhmmss>.xlsx         the samples.
 // A sample's name is made safe for a file name: ASCII letters, digits, `-`
-// and `_` stay, anything else becomes `_`. A name already taken, by another
-// sample or by a file in the directory, gets `-2`, `-3`, ...: nothing is ever
-// overwritten. Each file is marked as the user's (core user_file.hpp).
+// and `_` stay, anything else becomes `_`. A name that keeps no letter or
+// digit (one wholly outside ASCII) gives way to the data point's, made safe
+// the same way, and that failing too to `sample-<n>`, n the submission's
+// place from 1. A name already taken, by another sample or by a file in the
+// directory, gets `-2`, `-3`, ...: nothing is ever overwritten. Each file is
+// marked as the user's (core user_file.hpp).
 //
-// All the files are written or none: on an error none is left behind. Errors,
-// each "earthbank: ...": Config for no submission, a submission without a
-// data point name, two with the same one, two different samples of one name,
-// text a workbook cannot hold; Io or Protocol, naming the file, for a
-// template that is missing or is not the workbook expected, and for a file
-// that cannot be written.
+// All the files are written or none: on an error those already written are
+// removed, and one that could not be is named in the error. Errors, each
+// "earthbank: ...": Config for no submission, a submission without a data
+// point name or whose sample has no name, two with the same data point name,
+// two different samples of one name, text a workbook cannot hold; Io or
+// Protocol, naming the file, for a template that is missing or is not the
+// workbook expected, and for a file that cannot be written; Io, naming every
+// place looked in, when no template directory is given and none is found.
 Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const std::filesystem::path& out_dir,
                                const XlsxOptions& options = {});
 
@@ -129,10 +135,13 @@ Result<std::vector<std::string>> check_against_template(const std::vector<Submis
                                                         const XlsxOptions& options = {});
 
 // Where the templates are, the first of: the directory the environment
-// variable PYCHRON_EARTHBANK_TEMPLATES names; the installed ones beside the
-// running program (`../share/pychron/earthbank/templates`, or in a macOS
-// bundle `../Resources/earthbank/templates`, from the program's directory);
-// the source tree's, which is what a program that is not installed finds.
+// variable PYCHRON_EARTHBANK_TEMPLATES names (taken at its word); the
+// installed ones beside the running program
+// (`../share/pychron/earthbank/templates`, or in a macOS bundle
+// `../Resources/earthbank/templates`, from the program's directory); the
+// source tree's, when that directory is on this machine, which is what a
+// program that is not installed finds. Empty when none of them is there: an
+// export then fails saying where it looked.
 std::filesystem::path default_template_dir();
 std::filesystem::path default_template_dir(const std::filesystem::path& program_dir);
 

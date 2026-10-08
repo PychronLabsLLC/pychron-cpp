@@ -41,6 +41,7 @@
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/xlsx.hpp"
 #include "records_support.hpp"
+#include "xlsx_detail.hpp"
 #include "zip_support.hpp"
 
 namespace pychron::earthbank {
@@ -122,6 +123,7 @@ const std::map<SheetKey, RecordField> kNamedOtherwise = {
     {{"Samples", "elevationDepthMin"}, {"Sample", "relativeElevationMin"}},
     {{"Samples", "elevationDepthMax"}, {"Sample", "relativeElevationMax"}},
     {{"Samples", "locationKind"}, {"Sample", "locationKindName"}},
+    {{"Samples", "locationComment"}, {"Location", "description"}},
     {{"Samples", "unitName"}, {"Sample", "stratographicUnitName"}},
     {{"Samples", "ageMin"}, {"Sample", "rockUnitAgeMin"}},
     {{"Samples", "ageMax"}, {"Sample", "rockUnitAgeMax"}},
@@ -136,7 +138,6 @@ const std::set<SheetKey> kNotFilled = {
     {"ArArDataPoints", "description"},
     {"Samples", "elevationDepthAccuracy"},
     {"Samples", "elevationNote"},
-    {"Samples", "locationComment"},
     {"Samples", "person"},
     {"Samples", "personRole"},
     {"Samples", "archiveComment"},
@@ -146,7 +147,6 @@ const std::set<SheetKey> kNotFilled = {
 // The fields no column takes. Beside these, no `id` and no `*Id` has one.
 const std::set<RecordField> kNoColumn = {
     {"Sample", "sampleID"},                             // the name again
-    {"Location", "description"},
     {"Location", "name"},
     {"Measurement", "analysisUnits"},                   // the data point's column says it
     {"Measurement", "apparentAgeUncertainityTypeName"},  // likewise
@@ -579,7 +579,7 @@ TEST_F(Xlsx, EveryColumnAndEveryFieldIsAccountedFor) {
                             {"ArArAliquot", {5, 0}},
                             {"ArArAgeSummary", {13, 0}},
                             {"ArArAgeCalc", {4, 0}},
-                            {"Samples", {23, 7}}}));
+                            {"Samples", {24, 6}}}));
 
   // Every field of every record has a column, or is an id, or is listed.
   for (const char* record : {"Sample", "Location", "DataPoint", "Aliquot", "Measurement", "AgeCalc", "AgeSummary"}) {
@@ -675,7 +675,6 @@ TEST_F(Xlsx, EveryFieldOfEveryRecordIsWrittenOrNoted) {
                 "ArArMeasurement: no column for ratio40Arx36ArTrapped",
                 "ArArMeasurement: no column for ratio40Arx36ArTrappedUncertainty",
                 "ArArAgeCalc: no column for comment",
-                "Samples: no column for the location's description",
                 "Samples: no column for the location's name",
             }));
   // Every Required column holds something; the made-up text in the columns
@@ -684,7 +683,7 @@ TEST_F(Xlsx, EveryFieldOfEveryRecordIsWrittenOrNoted) {
   EXPECT_EQ(notes_with(result.notes, "Required"), std::vector<std::string>{});
   const std::vector<std::string> misses = notes_with(result.notes, "is not in the template's list");
   EXPECT_EQ(misses.size(), 7u + 2u * 3u + 5u + 3u + 5u) << ::testing::PrintToString(misses);
-  EXPECT_EQ(result.notes.size(), 5u + misses.size()) << ::testing::PrintToString(result.notes);
+  EXPECT_EQ(result.notes.size(), 4u + misses.size()) << ::testing::PrintToString(result.notes);
 
   // Every named column of the three sheets that have no empty ones is full.
   for (const char* sheet : {"ArArMeasurement", "ArArAliquot", "ArArAgeSummary", "ArArAgeCalc"}) {
@@ -692,7 +691,7 @@ TEST_F(Xlsx, EveryFieldOfEveryRecordIsWrittenOrNoted) {
     for (const Row& row : rows_of(result.files[0], sheet)) EXPECT_EQ(row.size(), keys.size()) << sheet;
   }
   EXPECT_EQ(rows_of(result.files[0], "ArArDataPoints").at(0).size(), 21u);
-  EXPECT_EQ(rows_of(result.files[1], "Samples").at(0).size(), 23u);
+  EXPECT_EQ(rows_of(result.files[1], "Samples").at(0).size(), 24u);
 }
 
 TEST_F(Xlsx, AFieldSaidTwiceIsNotedOnlyWhenTheTwoDiffer) {
@@ -764,7 +763,7 @@ TEST_F(Xlsx, DatesTimesAndFlagsAreInTheSheetsOwnForm) {
   s.data_point.analysisDate = "2024-03-05T06:07:08Z";  // a date is cut out of a time
   s.age_summary.preferredAge = false;
   XlsxResult result = exported({s});
-  EXPECT_EQ(notes_with(result.notes, "no column for").size(), 5u);
+  EXPECT_EQ(notes_with(result.notes, "no column for").size(), 4u);
   EXPECT_EQ(notes_with(result.notes, "written as it is"), std::vector<std::string>{});
   const std::vector<Row> measurements = rows_of(result.files[0], "ArArMeasurement");
   EXPECT_EQ(measurements.at(0).at("analysisTime"), "2024-03-05 06:07 UTC");
@@ -1004,32 +1003,42 @@ TEST_F(Xlsx, SampleWorkbookIsOptional) {
 
 TEST_F(Xlsx, UnsafeSampleNamesMakeSafeDistinctFileNames) {
   std::vector<Submission> submissions;
-  for (const char* name : {"A/B", "A B", "A:B", "a_b", "../../up", "", "caf\xC3\xA9"}) {
+  // The last four keep no letter or digit of their own: wholly outside ASCII,
+  // or all punctuation.
+  for (const char* name : {"A/B", "A B", "A:B", "a_b", "../../up", "caf\xC3\xA9", "\xE6\xA8\x99\xE6\x9C\xAC",
+                           "\xC3\x85\xC3\x98", "///", "\xCE\xB1\xCE\xB2"}) {
     Submission s = fixtures().at(0);
     s.sample.name = name;
     s.sample.sampleID = name;
     s.datapoint_name = std::string("point ") + std::to_string(submissions.size());
     submissions.push_back(std::move(s));
   }
-  submissions[5].sample.name.reset();  // a sample without a name
-  submissions[5].sample.sampleID.reset();
+  // And two of them have a data point whose name is no better.
+  submissions[7].datapoint_name = "\xC3\x85\xC3\x98 \xCE\xB2";
+  submissions[9].datapoint_name = "\xCE\xB1 / \xCE\xB2";
   options_.per_sample = true;
   options_.samples = false;
   const XlsxResult result = exported(submissions);
-  // `a_b` is `A_B` to a file system that ignores case.
+  // `a_b` is `A_B` to a file system that ignores case. A name that would be
+  // underscores alone is the data point's, made safe; failing that too, the
+  // sample's place among those exported.
   EXPECT_EQ(file_names(result.files),
             (std::vector<std::string>{"ArArDataPoint_A_B.xlsx", "ArArDataPoint_A_B-2.xlsx", "ArArDataPoint_A_B-3.xlsx",
                                       "ArArDataPoint_a_b-4.xlsx", "ArArDataPoint_______up.xlsx",
-                                      "ArArDataPoint_point_5.xlsx", "ArArDataPoint_caf__.xlsx"}));
+                                      "ArArDataPoint_caf__.xlsx", "ArArDataPoint_point_6.xlsx",
+                                      "ArArDataPoint_sample-8.xlsx", "ArArDataPoint_point_8.xlsx",
+                                      "ArArDataPoint_sample-10.xlsx"}));
   std::set<fs::path> distinct;
   for (std::size_t i = 0; i < result.files.size(); ++i) {
     EXPECT_EQ(result.files[i].parent_path(), out_);
     EXPECT_TRUE(fs::is_regular_file(result.files[i]));
     distinct.insert(result.files[i]);
     EXPECT_EQ(rows_of(result.files[i], "ArArDataPoints").at(0).at("datapointName"), submissions[i].datapoint_name);
+    // The name itself is written whole.
+    EXPECT_EQ(rows_of(result.files[i], "ArArDataPoints").at(0).at("sampleName"), *submissions[i].sample.name);
   }
   EXPECT_EQ(distinct.size(), submissions.size());
-  EXPECT_EQ(std::distance(fs::directory_iterator(out_), fs::directory_iterator()), 7);
+  EXPECT_EQ(std::distance(fs::directory_iterator(out_), fs::directory_iterator()), 10);
   EXPECT_FALSE(fs::exists(dir_ / "up.xlsx"));
 }
 
@@ -1214,6 +1223,22 @@ TEST_F(Xlsx, WhatCannotBeLinkedIsRefused) {
   EXPECT_EQ(error.kind, ErrorKind::Config);
   EXPECT_NE(error.what.find("S-FUS"), std::string::npos) << error.what;
   expect_no_file();
+
+  // A sample without a name, or with an empty one: the data point's row
+  // would name no sample, and the Samples row nothing. With or without the
+  // Sample workbook.
+  for (const bool with_samples : {true, false}) {
+    options_.samples = with_samples;
+    submissions = fixtures();
+    submissions[1].sample.name.reset();
+    error = refused(submissions);
+    EXPECT_EQ(error.kind, ErrorKind::Config);
+    EXPECT_EQ(error.what, "earthbank: the sample of data point S-STEP sanidine has no name: the data point could not "
+                          "be tied to its sample");
+    submissions[1].sample.name = "";
+    EXPECT_EQ(refused(submissions).what, error.what);
+    expect_no_file();
+  }
 }
 
 TEST_F(Xlsx, ASampleIsWrittenOnce) {
@@ -1529,6 +1554,172 @@ TEST_F(Xlsx, ATemplateThatDoesNotSayIsSaidNotTo) {
   EXPECT_EQ(notes_with(*checked, "fluxMonitor"),
             std::vector<std::string>{"ArArAgeCalc.fluxMonitor: the template's list could not be read "
                                      "('Gone'!$C$2:$C$17); what was written there was not checked"});
+}
+
+// ---- Smaller things ------------------------------------------------------------
+
+// The XML of the cell at `reference` in a sheet's part.
+std::string cell_xml(const std::string& sheet_xml, const std::string& reference) {
+  const std::size_t from = sheet_xml.find("<c r=\"" + reference + "\"");
+  if (from == std::string::npos) return {};
+  const std::size_t self = sheet_xml.find("/>", from);
+  const std::size_t tag = sheet_xml.find('>', from);
+  if (self != std::string::npos && self + 1 == tag) return sheet_xml.substr(from, tag + 1 - from);
+  const std::size_t to = sheet_xml.find("</c>", from);
+  return to == std::string::npos ? std::string() : sheet_xml.substr(from, to + 4 - from);
+}
+
+TEST_F(Xlsx, ANumberIsWrittenAsANumber) {
+  const std::vector<Submission> submissions = fixtures();
+  const XlsxResult result = exported(submissions);
+  const auto part = [](const fs::path& file, const std::string& name) {
+    const auto entries = ooxml::read_zip(file);
+    if (!entries) throw std::runtime_error(to_string(entries.error()));
+    for (const ooxml::ZipEntry& entry : *entries) {
+      if (entry.name == name) return entry.data;
+    }
+    throw std::runtime_error("no part " + name);
+  };
+  // A number is a cell with a <v> and no type; text is an inline string.
+  const auto expect_number = [](const std::string& xml, const std::string& reference, double value) {
+    const std::string cell = cell_xml(xml, reference);
+    ASSERT_FALSE(cell.empty()) << reference;
+    EXPECT_EQ(cell.find(" t=\""), std::string::npos) << cell;
+    EXPECT_EQ(cell.find("<is>"), std::string::npos) << cell;
+    const std::size_t v = cell.find("<v>");
+    ASSERT_NE(v, std::string::npos) << cell;
+    EXPECT_EQ(std::stod(cell.substr(v + 3)), value) << cell;
+  };
+  const auto expect_text = [](const std::string& xml, const std::string& reference) {
+    const std::string cell = cell_xml(xml, reference);
+    ASSERT_FALSE(cell.empty()) << reference;
+    EXPECT_NE(cell.find(" t=\"inlineStr\""), std::string::npos) << cell;
+    EXPECT_EQ(cell.find("<v>"), std::string::npos) << cell;
+  };
+
+  // ArArAgeSummary, row 5 (S-FUS): the count, the age and its uncertainty,
+  // MSWD and p.
+  const AgeSummary& summary = submissions[0].age_summary;
+  const std::string ages = part(result.files[0], "xl/worksheets/sheet4.xml");
+  expect_number(ages, "C5", static_cast<double>(*summary.nAnalysisGrouped));
+  expect_number(ages, "E5", *summary.age);
+  expect_number(ages, "F5", *summary.ageUncertainty);
+  expect_number(ages, "I5", *summary.mswd);
+  expect_number(ages, "J5", *summary.agepvalue);
+  expect_text(ages, "A5");
+  expect_text(ages, "D5");
+  expect_text(ages, "K5");  // the flag, as Yes or No
+  // ArArMeasurement: every number of the first step of S-STEP (row 11).
+  const std::string measured = part(result.files[0], "xl/worksheets/sheet2.xml");
+  const Measurement& m = submissions[1].measurements[0];
+  expect_number(measured, "D11", *m.stepNumber);
+  expect_number(measured, "G11", *m.laserPower);
+  expect_number(measured, "J11", *m.ar40Corr);
+  expect_number(measured, "K11", *m.ar40CorrUncertainty);
+  expect_number(measured, "AY11", *m.jValue);
+  expect_number(measured, "BA11", *m.apparentAge);
+  expect_text(measured, "C11");
+  int numbers = 0;
+  const json fields = to_json(m);
+  for (const auto& [key, value] : fields.items()) numbers += value.is_number() ? 1 : 0;
+  const std::size_t row = measured.find("<row r=\"11\"");
+  const std::string eleventh = measured.substr(row, measured.find("</row>", row) - row);
+  int valued = 0;
+  for (std::size_t at = eleventh.find("<v>"); at != std::string::npos; at = eleventh.find("<v>", at + 1)) ++valued;
+  EXPECT_EQ(valued, numbers);
+  EXPECT_GT(numbers, 40);
+  // Samples, row 6 (S-STEP): the place and the elevation.
+  const std::string samples = part(result.files[1], "xl/worksheets/sheet1.xml");
+  expect_number(samples, "G6", 37.75);
+  expect_number(samples, "H6", -106.9);
+  expect_number(samples, "J6", 2850.0);
+  expect_text(samples, "A6");
+}
+
+TEST_F(Xlsx, AFailedSaveTakesBackWhatWasWritten) {
+  // The second workbook cannot be written: the name its bytes go to first is
+  // a directory.
+  fs::create_directories(out_ / (std::string("Samples_") + kStamp + ".xlsx.part"));
+  Error error = refused(fixtures());
+  EXPECT_EQ(error.kind, ErrorKind::Io);
+  EXPECT_NE(error.what.find("earthbank: "), std::string::npos) << error.what;
+  EXPECT_NE(error.what.find(std::string("Samples_") + kStamp + ".xlsx"), std::string::npos) << error.what;
+  EXPECT_EQ(error.what.find("could not be removed"), std::string::npos) << error.what;
+  // The first is gone again, and nothing else came or went.
+  EXPECT_FALSE(fs::exists(out_ / (std::string("ArArDataPoint_") + kStamp + ".xlsx")));
+  EXPECT_EQ(std::distance(fs::directory_iterator(out_), fs::directory_iterator()), 1);
+
+  // Per sample, the third of three: both written before it are taken back.
+  options_.per_sample = true;
+  error = refused(fixtures());
+  EXPECT_EQ(error.kind, ErrorKind::Io);
+  EXPECT_EQ(std::distance(fs::directory_iterator(out_), fs::directory_iterator()), 1);
+
+  // A directory this call made goes with them.
+  fs::remove_all(out_);
+  options_.per_sample = false;
+  options_.template_dir = dir_ / "nowhere";
+  refused(fixtures());
+  EXPECT_FALSE(fs::exists(out_));
+
+  // What cannot be taken back is named. (A directory that is not empty
+  // stands in for a file that will not go.)
+  const fs::path gone = dir_ / "written.xlsx";
+  const fs::path stuck = dir_ / "stuck.xlsx";
+  spit(gone, "a workbook");
+  fs::create_directories(stuck / "inside");
+  EXPECT_EQ(detail::take_back({gone, stuck, dir_ / "never-there.xlsx"}), std::vector<fs::path>{stuck});
+  EXPECT_FALSE(fs::exists(gone));
+  EXPECT_TRUE(fs::exists(stuck));
+  EXPECT_EQ(detail::take_back({}), std::vector<fs::path>{});
+}
+
+TEST_F(Xlsx, TemplatesThatAreNowhereAreSaidWithEveryPlaceLooked) {
+  const fs::path bin = dir_ / "prefix" / "bin";
+  fs::create_directories(bin);
+  const fs::path share = dir_ / "prefix" / "share" / "pychron" / "earthbank" / "templates";
+  const fs::path bundle = dir_ / "prefix" / "Resources" / "earthbank" / "templates";
+  const fs::path source = dir_ / "build-machine" / "src" / "libs" / "earthbank" / "templates";
+
+  // Nothing set, nothing installed, and the source tree is another
+  // machine's: no directory, and its path is not given out.
+  detail::TemplateSearch search = detail::find_templates(std::nullopt, bin, source);
+  EXPECT_TRUE(search.found.empty());
+  EXPECT_EQ(search.tried,
+            (std::vector<std::string>{"the directory PYCHRON_EARTHBANK_TEMPLATES names (it is not set)",
+                                      fs::weakly_canonical(share).string(), fs::weakly_canonical(bundle).string(),
+                                      "the source tree this program was built from (it is not on this machine)"}));
+  const std::string message = detail::templates_not_found(search);
+  EXPECT_EQ(message, "earthbank: the workbook templates were not found. Looked in: " + search.tried[0] + "; " +
+                         search.tried[1] + "; " + search.tried[2] + "; " + search.tried[3]);
+  EXPECT_EQ(message.find("build-machine"), std::string::npos) << message;
+  // An empty name is no name.
+  EXPECT_EQ(detail::find_templates(std::string(), bin, source).tried, search.tried);
+  // A program that does not know where it is.
+  search = detail::find_templates(std::nullopt, {}, source);
+  EXPECT_TRUE(search.found.empty());
+  EXPECT_EQ(search.tried,
+            (std::vector<std::string>{"the directory PYCHRON_EARTHBANK_TEMPLATES names (it is not set)",
+                                      "beside the program (where it runs from is not known)",
+                                      "the source tree this program was built from (it is not on this machine)"}));
+
+  // Each place in turn, the earlier one first.
+  fs::create_directories(source);
+  search = detail::find_templates(std::nullopt, bin, source);
+  EXPECT_EQ(search.found, source);
+  EXPECT_EQ(search.tried.size(), 4u);
+  EXPECT_EQ(search.tried.back(), source.string());
+  fs::create_directories(bundle);
+  EXPECT_EQ(detail::find_templates(std::nullopt, bin, source).found, fs::weakly_canonical(bundle));
+  fs::create_directories(share);
+  search = detail::find_templates(std::nullopt, bin, source);
+  EXPECT_EQ(search.found, fs::weakly_canonical(share));
+  EXPECT_EQ(search.tried.size(), 2u);
+  // A named directory is taken at the user's word, there or not.
+  search = detail::find_templates((dir_ / "named").string(), bin, source);
+  EXPECT_EQ(search.found, dir_ / "named");
+  EXPECT_EQ(search.tried, std::vector<std::string>{"the directory PYCHRON_EARTHBANK_TEMPLATES names (" +
+                                                   (dir_ / "named").string() + ")"});
 }
 
 }  // namespace

@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 
 #include "ooxml.hpp"
+#include "xlsx_detail.hpp"
 #include "pychron/core/env.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/process.hpp"
@@ -116,6 +117,8 @@ enum class Form { Plain, Date, MinuteUtc, DayFirst };
 //     The type is a field of the measurement only: the column takes what the
 //     data point's measurements all say.
 //   - `elevationDepthAccuracy` had an entry naming a field no record has.
+//   - `locationComment` ("Additional information about the sample location")
+//     takes the location's `description`, which legacy had nowhere to put.
 struct Exception {
   std::string_view sheet, key;
   Rec record;
@@ -151,6 +154,7 @@ constexpr Exception kExceptions[] = {
     {"Samples", "elevationGround", Rec::Sample, "referenceElevation"},
     {"Samples", "elevationDepthMin", Rec::Sample, "relativeElevationMin"},
     {"Samples", "elevationDepthMax", Rec::Sample, "relativeElevationMax"},
+    {"Samples", "locationComment", Rec::Location, "description"},
     {"Samples", "unitName", Rec::Sample, "stratographicUnitName"},
     {"Samples", "ageMin", Rec::Sample, "rockUnitAgeMin"},
     {"Samples", "ageMax", Rec::Sample, "rockUnitAgeMax"},
@@ -777,7 +781,21 @@ std::string safe_name(std::string_view name) {
     const bool keep = (u < 0x80 && std::isalnum(u) != 0) || c == '-' || c == '_';
     out.push_back(keep ? c : '_');
   }
-  return out.empty() ? std::string("sample") : out;
+  return out;
+}
+
+// The file of submission `number` (from 1) of a per-sample export is named
+// for its sample. A name that keeps no letter or digit (one wholly outside
+// ASCII) would be a row of underscores, the same for every such sample: the
+// data point's name is taken instead, and when that is no better, the
+// sample's place in the export.
+std::string per_sample_stem(const Submission& s, std::size_t number) {
+  for (const std::string& name : {s.sample.name.value_or(std::string()), s.datapoint_name}) {
+    const std::string safe = safe_name(name);
+    const bool telling = std::any_of(safe.begin(), safe.end(), [](char c) { return c != '_' && c != '-'; });
+    if (telling) return safe;
+  }
+  return "sample-" + std::to_string(number);
 }
 
 // File names in one directory that are not taken, by a file there or by a
@@ -821,7 +839,7 @@ Result<ooxml::Workbook> open_template(const fs::path& file) {
 }
 
 // A workbook cannot tie rows together by a name two data points share, or by
-// none.
+// none, nor a data point to a sample without a name.
 Result<void> check_names(const std::vector<Submission>& submissions) {
   if (submissions.empty()) return fail(ErrorKind::Config, "earthbank: no submission to write");
   std::set<std::string_view> names;
@@ -833,6 +851,12 @@ Result<void> check_names(const std::vector<Submission>& submissions) {
     if (!names.insert(s.datapoint_name).second) {
       return fail(ErrorKind::Config, "earthbank: two data points are named " + s.datapoint_name +
                                          ": their rows could not be told apart");
+    }
+    // The data point's row finds its sample by name, and the sample's own row
+    // is nothing without one.
+    if (s.sample.name.value_or(std::string()).empty()) {
+      return fail(ErrorKind::Config, "earthbank: the sample of data point " + s.datapoint_name +
+                                         " has no name: the data point could not be tied to its sample");
     }
   }
   return {};
@@ -861,8 +885,14 @@ Result<std::vector<const Records*>> samples_of(const std::vector<Records>& recor
   return out;
 }
 
-fs::path template_dir_of(const XlsxOptions& options) {
-  return options.template_dir.empty() ? default_template_dir() : options.template_dir;
+// The directory the templates are read from: the one given, else the first
+// place that has them; an error naming every place when none has.
+Result<fs::path> template_dir_of(const XlsxOptions& options) {
+  if (!options.template_dir.empty()) return options.template_dir;
+  const detail::TemplateSearch search = detail::find_templates(
+      env_var("PYCHRON_EARTHBANK_TEMPLATES"), executable_dir(), fs::path(PYCHRON_EARTHBANK_SOURCE_TEMPLATE_DIR));
+  if (search.found.empty()) return fail(ErrorKind::Io, detail::templates_not_found(search));
+  return search.found;
 }
 
 // The workbooks of an export, filled and not yet written, with what there is
@@ -875,7 +905,8 @@ struct Prepared {
 // Everything export_xlsx does short of touching the output directory.
 Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxOptions& options) {
   if (auto checked = check_names(submissions); !checked) return fail(checked.error());
-  const fs::path dir = template_dir_of(options);
+  const auto dir = template_dir_of(options);
+  if (!dir) return fail(dir.error());
   const std::string stamp = stamp_of(options.now);
 
   std::vector<Records> records;
@@ -884,18 +915,15 @@ Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxO
   Notes notes;
   Prepared out;
   {
-    const fs::path file = dir / kArAr.file;
+    const fs::path file = *dir / kArAr.file;
     const auto book = open_template(file);
     if (!book) return fail(book.error());
     const auto plan = plan_of(*book, kArAr, file);
     if (!plan) return fail(plan.error());
     if (options.per_sample) {
-      for (const Records& r : records) {
-        const Records* const one[] = {&r};
-        // Named for its sample; a sample without a name, for its data point.
-        const std::string& sample = r.submission->sample.name.value_or(std::string());
-        const std::string& named = sample.empty() ? r.submission->datapoint_name : sample;
-        out.pending.push_back({*book, "ArArDataPoint_" + safe_name(named)});
+      for (std::size_t i = 0; i < records.size(); ++i) {
+        const Records* const one[] = {&records[i]};
+        out.pending.push_back({*book, "ArArDataPoint_" + per_sample_stem(submissions[i], i + 1)});
         if (auto filled = fill(out.pending.back().book, *plan, one, true, notes); !filled) return fail(filled.error());
       }
     } else {
@@ -908,7 +936,7 @@ Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxO
   if (options.samples) {
     const auto samples = samples_of(records);
     if (!samples) return fail(samples.error());
-    const fs::path file = dir / kSamples.file;
+    const fs::path file = *dir / kSamples.file;
     auto book = open_template(file);
     if (!book) return fail(book.error());
     const auto plan = plan_of(*book, kSamples, file);
@@ -924,29 +952,80 @@ Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxO
 
 }  // namespace
 
-fs::path default_template_dir() { return default_template_dir(executable_dir()); }
+namespace detail {
 
-fs::path default_template_dir(const fs::path& program_dir) {
-  if (auto env = env_var("PYCHRON_EARTHBANK_TEMPLATES"); env && !env->empty()) return *env;
-  if (!program_dir.empty()) {
+TemplateSearch find_templates(const std::optional<std::string>& named, const fs::path& program_dir,
+                              const fs::path& source_dir) {
+  constexpr std::string_view kNamed = "the directory PYCHRON_EARTHBANK_TEMPLATES names";
+  TemplateSearch out;
+  if (named && !named->empty()) {
+    out.tried.push_back(std::string(kNamed) + " (" + *named + ")");
+    out.found = *named;
+    return out;
+  }
+  out.tried.push_back(std::string(kNamed) + " (it is not set)");
+
+  std::error_code ec;
+  if (program_dir.empty()) {
+    out.tried.emplace_back("beside the program (where it runs from is not known)");
+  } else {
     // As cmake/PychronInstall.cmake lays an install out: share/pychron beside
     // bin, or the Resources of a macOS bundle.
     for (const fs::path& base : {program_dir / ".." / "share" / "pychron", program_dir / ".." / "Resources"}) {
-      const fs::path dir = base / "earthbank" / "templates";
-      std::error_code ec;
+      fs::path dir = base / "earthbank" / "templates";
+      if (const fs::path canonical = fs::weakly_canonical(dir, ec); !ec) dir = canonical;
+      out.tried.push_back(dir.string());
       if (!fs::is_directory(dir, ec)) continue;
-      const fs::path canonical = fs::weakly_canonical(dir, ec);
-      return ec ? dir : canonical;
+      out.found = dir;
+      return out;
     }
   }
-  return fs::path(PYCHRON_EARTHBANK_SOURCE_TEMPLATE_DIR);
+  // The source tree is this machine's only where it is there: a release that
+  // was installed carries the path of the machine that built it.
+  if (!source_dir.empty() && fs::is_directory(source_dir, ec)) {
+    out.tried.push_back(source_dir.string());
+    out.found = source_dir;
+    return out;
+  }
+  out.tried.emplace_back("the source tree this program was built from (it is not on this machine)");
+  return out;
+}
+
+std::string templates_not_found(const TemplateSearch& search) {
+  std::string out = "earthbank: the workbook templates were not found. Looked in: ";
+  for (std::size_t i = 0; i < search.tried.size(); ++i) out += (i == 0 ? "" : "; ") + search.tried[i];
+  return out;
+}
+
+std::vector<fs::path> take_back(const std::vector<fs::path>& written) {
+  std::vector<fs::path> left;
+  for (const fs::path& file : written) {
+    std::error_code ec;
+    fs::remove(file, ec);
+    // Gone is what matters, however it went.
+    if (fs::exists(fs::symlink_status(file, ec))) left.push_back(file);
+  }
+  return left;
+}
+
+}  // namespace detail
+
+fs::path default_template_dir() { return default_template_dir(executable_dir()); }
+
+fs::path default_template_dir(const fs::path& program_dir) {
+  return detail::find_templates(env_var("PYCHRON_EARTHBANK_TEMPLATES"), program_dir,
+                                fs::path(PYCHRON_EARTHBANK_SOURCE_TEMPLATE_DIR))
+      .found;
 }
 
 Result<std::vector<XlsxColumn>> xlsx_columns(const fs::path& template_dir) {
-  const fs::path dir = template_dir.empty() ? default_template_dir() : template_dir;
+  XlsxOptions options;
+  options.template_dir = template_dir;
+  const auto dir = template_dir_of(options);
+  if (!dir) return fail(dir.error());
   std::vector<XlsxColumn> out;
   for (const TemplateSpec* spec : {&kArAr, &kSamples}) {
-    const fs::path file = dir / spec->file;
+    const fs::path file = *dir / spec->file;
     const auto book = open_template(file);
     if (!book) return fail(book.error());
     const auto plan = plan_of(*book, *spec, file);
@@ -982,15 +1061,20 @@ Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const
   }
 
   // Workbook::save writes beside the file and renames, and marks the file as
-  // the user's. A failure part of the way takes back what was written.
+  // the user's. A failure part of the way takes back what was written, and
+  // says which file it could not.
   XlsxResult result;
   FileNames names(out_dir);
   for (const Pending& one : prepared->pending) {
     const fs::path file = names.next(one.stem);
     if (auto saved = one.book.save(file); !saved) {
-      for (const fs::path& written : result.files) fs::remove(written, ec);
+      Error error = saved.error();
+      const std::vector<fs::path> left = detail::take_back(result.files);
       if (made) fs::remove(out_dir, ec);
-      return failed(saved.error());
+      for (std::size_t i = 0; i < left.size(); ++i) {
+        error.what += (i == 0 ? "; written before that and could not be removed: " : ", ") + left[i].string();
+      }
+      return failed(std::move(error));
     }
     result.files.push_back(file);
   }
