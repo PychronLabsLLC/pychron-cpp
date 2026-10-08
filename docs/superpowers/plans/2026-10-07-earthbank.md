@@ -279,7 +279,14 @@ gh api "repos/UMelbournePychron/pychron/contents/pychron/ausgeochem/<file>?ref=d
   - Test controls: `fail_next(method, path_prefix, status, body)`, `drop_next(method, path_prefix)` (the request is applied on the server and the client gets a timeout error: Review Focus 1), `requests()` (the log), `store()` (what exists).
 - Fixtures: `lookups/<endpoint>.json` (a few dozen entries each, including the verbose flux-monitor names legacy quotes), `account.json`, `packages.json`. They are written by hand from legacy's code, README and probe scripts, with invented people and ids, and `fixtures/README.md` says so and gives the commands to replace them with captures (owner step below).
 
-**Owner step (a person with an EarthBank login; not required for the task to pass):** run legacy's `tests/packages_probe.py`, `tests/arar_post_probe.py` and `tests/integration_test.py --smoke` on the fork, save the JSON each prints, replace every real name, login and id, and drop the files over the hand-written fixtures. If a shape differs from what the fake does, that is a finding to fix in the fake before Task 9.
+**Owner step (a person with an EarthBank login; not required for the task to pass).** Reads only, on the fork:
+- run legacy's `tests/packages_probe.py` with `EARTHBANK_KNOWN_PACKAGES=<own package id>` (without the variable it asks for two ids hard-coded in it): the account, one package, the first row of the list;
+- run `tests/integration_test.py --smoke` (anonymous; it prints how many entries each lookup gave, not JSON): which lists answer without a login;
+- save a plain `GET <endpoint>?size=2000` of each list;
+- **do not run** `tests/arar_post_probe.py`, `tests/integration_test.py` without `--smoke`, or `tests/live_upload_test.py`: each writes to the production database and leaves a record;
+- the bodies of errors are captured during the by-hand live run in a throwaway package (Task 14), not here.
+
+Replace every real name, login and id in what was saved and drop the files over the hand-written fixtures. If a shape differs from what the fake does, that is a finding to fix in the fake before Task 9.
 
 - [ ] **Step 1: Write the failing tests:** one per behaviour in the list above (`FakeEarthBank.Authenticate`, `.LookupEquals`, `.LookupContainsPaged`, `.LookupNeedsABearerOnCoreEndpoints`, `.PackageFlatBodyIgnoresTheName`, `.SampleSearchIsScopedToThePackage`, `.DataPointNeedsTheWrapper`, `.WrongVocabularyIdIsAConstraintError`, `.UnwritablePackageIsRefused`, `.DropNextAppliesAndTimesOut`), and `Http.UrlEncode` (space, `&`, `+`, `%`, `é`, `/`).
 - [ ] **Step 2: Run** `ctest --test-dir build/dev -R 'FakeEarthBank|Http\.'`. Expected: build fails.

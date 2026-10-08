@@ -53,29 +53,34 @@ one.
 
 ## Replacing these with captures
 
-For someone with an EarthBank login. It is the only step of this work that
-talks to the service, it is done by hand, and nothing of it runs in a test.
-On the legacy fork, with `EARTHBANK_USER`, `EARTHBANK_PASS` and
-`EARTHBANK_DATA_PACKAGE_ID` in its gitignored `pychron/ausgeochem/.env`:
+For someone with an EarthBank login, by hand; nothing of it runs in a test.
+**Every step here only reads.** On the legacy fork, with `EARTHBANK_USER` and
+`EARTHBANK_PASS` in its gitignored `pychron/ausgeochem/.env`:
 
 ```
-EARTHBANK_KNOWN_PACKAGES=<an id of yours> \
-python -m pychron.ausgeochem.tests.packages_probe             # reads only: /api/account, a package, the package list
-python -m pychron.ausgeochem.tests.integration_test --smoke   # reads only, no login: which lookups answer
-python -m pychron.ausgeochem.tests.arar_post_probe            # WRITES whatever is accepted: a data point, and at its end a core data-point
+EARTHBANK_KNOWN_PACKAGES=<an id of a package of yours> \
+python -m pychron.ausgeochem.tests.packages_probe             # /api/account, that package, the package list
+python -m pychron.ausgeochem.tests.integration_test --smoke   # no login: which lookups answer
 ```
 
 - `packages_probe` prints the account, one package in full and the first row
   of the list: these replace `account.json` and the rows of `packages.json`.
-  Without `EARTHBANK_KNOWN_PACKAGES` it asks for two package ids that are
-  built into it.
+  Set `EARTHBANK_KNOWN_PACKAGES`: without it the script asks for two package
+  ids that are hard-coded in it.
 - `integration_test --smoke` prints how many entries each lookup gave to a
-  caller with no login, not the entries. It settles which lists need one (the
-  first assumption under "Lookups" below). For the rows themselves, save
-  `GET <endpoint>?size=2000` of each list into `lookups/`.
-- `arar_post_probe` prints the status and the first 300 bytes of each
-  refusal: these are the bodies of the 500 and, with a wrong id put in, of the
-  constraint error.
+  caller with no login, not the entries. It settles which lists need one
+  (assumption 11 below).
+- For the rows themselves, save a plain `GET <endpoint>?size=2000` of each
+  list into `lookups/`, with a login for the lists that need one.
+
+**Do not run** `arar_post_probe`, `integration_test` without `--smoke`, or
+`live_upload_test`. Each of them writes to the production database, which has
+no sandbox and takes nothing back, and leaves a record there.
+
+The bodies of errors (the 500 of a package that is not writable, a constraint
+failure) are not captured here. They are written down during the by-hand
+live run, which works in a throwaway package (`docs/earthbank.md`, the plan's
+Task 14).
 
 Before a capture is committed, every real name, login, e-mail address,
 institution, package name and id in it is replaced by an invented one (the

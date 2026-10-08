@@ -880,9 +880,15 @@ Nothing in CI reaches EarthBank.
   is a constraint violation; a write to a package the user cannot write is
   refused. Its vocabularies and response shapes are fixtures written from
   legacy's code, README and probe scripts with invented people and ids; a
-  person with a login replaces them with captures made with legacy's probe
-  scripts (`tests/packages_probe.py`, `tests/arar_post_probe.py`), names and
-  ids of real people and packages replaced, before the first live upload.
+  person with a login replaces them, before the first live upload, with
+  captures that only read: legacy's `tests/packages_probe.py` (with
+  `EARTHBANK_KNOWN_PACKAGES` set to a package of their own),
+  `tests/integration_test.py --smoke`, and a plain `GET <endpoint>?size=2000`
+  of each list, names and ids of real people and packages replaced. Legacy's
+  `tests/arar_post_probe.py`, `tests/integration_test.py` without `--smoke`
+  and `tests/live_upload_test.py` write to the production database and are
+  not run for this; the bodies of errors are captured during the by-hand
+  live run in a throwaway package (section 10, stage 7).
 - **Mapping.** A fixture of two samples (one step-heating with a plateau, one
   fusion): every value of every record is compared with the reduction's own
   result for the same analysis, and the fields of section 4.5 are absent.
