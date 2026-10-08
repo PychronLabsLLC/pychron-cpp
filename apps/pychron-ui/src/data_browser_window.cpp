@@ -18,9 +18,10 @@
 #include <QShortcut>
 #include <QSplitter>
 #include <QTableView>
-#include <QToolButton>
+#include <QToolBar>
 #include <QVBoxLayout>
 
+#include "data_icons.hpp"
 #include "shortcuts.hpp"
 
 namespace pychron::ui {
@@ -107,41 +108,39 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   auto* bar = new QHBoxLayout;
   status_ = new QLabel;
   more_ = new QPushButton(tr("Load more"));
-  auto* recall = new QPushButton(tr("Recall"));
-  plot_ = new QToolButton;
-  plot_->setText(tr("Plot"));
-  plot_->setPopupMode(QToolButton::InstantPopup);
-  auto* plot_menu = new QMenu(plot_);
-  for (const auto& [kind, label] : {std::pair{"time_series", "Time series"}, {"ideogram", "Ideogram"},
-                                    {"spectrum", "Age spectrum"}, {"inverse_isochron", "Inverse isochron"}}) {
-    QAction* a = plot_menu->addAction(tr(label));
-    a->setData(QString::fromLatin1(kind));
-    connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
-  }
-  plot_menu->addSeparator();
-  for (const auto& [kind, label] : {std::pair{"isotope_evolution_fit", "Isotope evolutions..."},
-                                    {"blank_fit", "Blanks..."}, {"icfactor_fit", "IC factors..."}}) {
-    QAction* a = plot_menu->addAction(tr(label));
-    a->setData(QString::fromLatin1(kind));
-    a->setToolTip(QString::fromLatin1(kind) == QStringLiteral("isotope_evolution_fit")
-                      ? tr("Refit the selected analyses' isotope evolutions")
-                      : tr("Fit the selected unknowns' values from reference analyses"));
-    connect(a, &QAction::triggered, this, [this, k = QString::fromLatin1(kind)] { request_figure(k); });
-  }
-  plot_->setMenu(plot_menu);
-  export_ = new QPushButton(tr("Export"));
-  export_->setToolTip(tr("Write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
-                         "Schaen et al. (2021): CSV or JSON"));
+  bar->addWidget(status_, 1);
+  bar->addWidget(more_);
+  rl->addLayout(bar);
+
+  // What can be done with the selection (or with all that is shown).
+  toolbar_ = new QToolBar(tr("Data"));
+  toolbar_->setObjectName(QStringLiteral("data_toolbar"));
+  toolbar_->setIconSize(QSize(18, 18));
+  toolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  auto plot = [this](const char* kind, const QString& label, const QString& tip) {
+    const QString k = QString::fromLatin1(kind);
+    QAction* a = toolbar_->addAction(data_icon(k), label, this, [this, k] { request_figure(k); });
+    a->setData(k);
+    a->setToolTip(tip);
+  };
+  plot("time_series", tr("Time series"), tr("Time series of the selected analyses"));
+  plot("ideogram", tr("Ideogram"), tr("Ideogram of the selected analyses"));
+  plot("spectrum", tr("Age spectrum"), tr("Age spectrum of the selected analyses"));
+  plot("inverse_isochron", tr("Inverse isochron"), tr("Inverse isochron of the selected analyses"));
+  toolbar_->addSeparator();
+  plot("isotope_evolution_fit", tr("Isotope evolutions..."), tr("Refit the selected analyses' isotope evolutions"));
+  plot("blank_fit", tr("Blanks..."), tr("Blanks: fit the selected unknowns' values from reference analyses"));
+  plot("icfactor_fit", tr("IC factors..."), tr("IC factors: fit the selected unknowns' values from reference analyses"));
+  toolbar_->addSeparator();
+  recall_ = toolbar_->addAction(data_icon(QStringLiteral("recall")), tr("Recall"), this, &DataBrowserWindow::recall_current);
+  recall_->setToolTip(tr("Recall: open the current analysis"));
+  export_ = toolbar_->addAction(data_icon(QStringLiteral("export")), tr("Export"), this, &DataBrowserWindow::request_export);
+  export_->setToolTip(tr("Export: write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
+                         "Schaen et al. (2021), CSV or JSON"));
   ask_export_path = [this](const QString& suggested) {
     return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
                                         tr("CSV report (*.csv);;JSON report (*.json)"));
   };
-  bar->addWidget(status_, 1);
-  bar->addWidget(more_);
-  bar->addWidget(recall);
-  bar->addWidget(plot_);
-  bar->addWidget(export_);
-  rl->addLayout(bar);
 
   auto* split = new QSplitter;
   split->addWidget(filters);
@@ -149,6 +148,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   split->setStretchFactor(1, 1);
   split->setSizes({240, 860});
   auto* layout = new QVBoxLayout(this);
+  layout->setMenuBar(toolbar_);  // above the margins, the width of the window
   layout->addWidget(split);
 
   connect(search_, &QLineEdit::textChanged, this, [this] { reload(); });
@@ -156,8 +156,6 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(exclude_invalid_, &QCheckBox::toggled, this, [this] { reload(); });
   connect(refresh_button, &QPushButton::clicked, this, &DataBrowserWindow::refresh);
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
-  connect(recall, &QPushButton::clicked, this, &DataBrowserWindow::recall_current);
-  connect(export_, &QPushButton::clicked, this, &DataBrowserWindow::request_export);
   connect(table_, &QTableView::activated, this, [this](const QModelIndex&) { recall_current(); });
   auto* next = new QShortcut(key(Shortcut::RecallNext), this);
   auto* prev = new QShortcut(key(Shortcut::RecallPrevious), this);
@@ -288,6 +286,12 @@ void DataBrowserWindow::select_rows(const QList<int>& rows) {
     table_->selectionModel()->select(model_->index(r, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
   if (!rows.isEmpty())
     table_->selectionModel()->setCurrentIndex(model_->index(rows.front(), 0), QItemSelectionModel::NoUpdate);
+}
+
+QAction* DataBrowserWindow::plot_action(const QString& kind) const {
+  for (QAction* a : toolbar_->actions())
+    if (!kind.isEmpty() && a->data().toString() == kind) return a;
+  return nullptr;
 }
 
 void DataBrowserWindow::recall_current() {

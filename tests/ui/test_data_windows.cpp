@@ -20,6 +20,8 @@
 #include <QPushButton>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QToolBar>
+#include <QLayout>
 #include <QMenu>
 #include <QToolButton>
 #include <QTableView>
@@ -492,15 +494,54 @@ class TestDataWindows : public QObject {
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-8"));
     w.select_rows({0, 2});
     QCOMPARE(w.selected_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
-    const auto actions = w.plot_button()->menu()->actions();
-    QCOMPARE(actions.size(), 8);  // four figures, a separator, isotope evolutions, blanks, IC factors
-    QCOMPARE(actions[5]->data().toString(), QStringLiteral("isotope_evolution_fit"));
-    QCOMPARE(actions[7]->data().toString(), QStringLiteral("icfactor_fit"));
-    actions[2]->trigger();  // Age spectrum
+    QVERIFY(w.plot_action(QStringLiteral("spectrum")));
+    w.plot_action(QStringLiteral("spectrum"))->trigger();
     QCOMPARE(series.count(), 1);
     const auto args = series.takeFirst();
     QCOMPARE(args.at(0).toString(), QStringLiteral("spectrum"));
     QCOMPARE(args.at(1).toStringList().size(), 2);
+    // Recall, from the toolbar: the current row.
+    w.recall_action()->trigger();
+    QCOMPARE(recall.count(), 1);
+    QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-9"));
+  }
+
+  void browser_toolbar_offers_every_figure_recall_and_export() {
+    auto src = make_source(4);
+    DataBrowserWindow w(*src);
+    QVERIFY(w.toolbar());
+    // At the top: the layout's menu bar, above the filters and the table.
+    QCOMPARE(w.layout()->menuBar(), static_cast<QWidget*>(w.toolbar()));
+    // Four figures | three fit windows | recall, export; an icon and a tip each.
+    const QStringList expected{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
+                               QStringLiteral("inverse_isochron"), QString(), QStringLiteral("isotope_evolution_fit"),
+                               QStringLiteral("blank_fit"), QStringLiteral("icfactor_fit"), QString()};
+    const auto actions = w.toolbar()->actions();
+    QCOMPARE(actions.size(), expected.size() + 2);
+    QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
+    for (int i = 0; i < expected.size(); ++i) {
+      QCOMPARE(actions[i]->isSeparator(), expected[i].isEmpty());
+      if (expected[i].isEmpty()) continue;
+      QCOMPARE(actions[i]->data().toString(), expected[i]);
+      QCOMPARE(w.plot_action(expected[i]), actions[i]);
+      QVERIFY2(!actions[i]->icon().isNull(), qPrintable(expected[i]));
+      QVERIFY(!actions[i]->toolTip().isEmpty());
+      actions[i]->trigger();  // nothing selected: all that is shown
+      QCOMPARE(figure.count(), 1);
+      const auto args = figure.takeFirst();
+      QCOMPARE(args.at(0).toString(), expected[i]);
+      QCOMPARE(args.at(1).toStringList().size(), 4);
+    }
+    QCOMPARE(actions[expected.size()], w.recall_action());
+    QCOMPARE(actions[expected.size() + 1], w.export_action());
+    for (QAction* a : {w.recall_action(), w.export_action()}) {
+      QVERIFY(!a->icon().isNull());
+      QVERIFY(!a->toolTip().isEmpty());
+    }
+    QVERIFY(!w.plot_action(QStringLiteral("no_such_figure")));
+    QVERIFY(!w.plot_action(QString()));
+    // The buttons the toolbar replaced are gone from under the table.
+    for (const auto* b : w.findChildren<QPushButton*>()) QVERIFY(b->text() != QStringLiteral("Recall") && b->text() != QStringLiteral("Export"));
   }
 
   void recall_shows_every_tab() {
@@ -1164,7 +1205,7 @@ class TestDataWindows : public QObject {
       return QStringLiteral("/tmp/out.csv");
     };
     w.select_rows({0, 2});
-    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    w.export_action()->trigger();
     QCOMPARE(exported.count(), 1);
     auto args = exported.takeFirst();
     QCOMPARE(args.at(0).toString(), QStringLiteral("/tmp/out.csv"));
@@ -1172,11 +1213,11 @@ class TestDataWindows : public QObject {
     QVERIFY2(suggested.endsWith(QStringLiteral("-report.csv")), qPrintable(suggested));
     // Nothing selected: everything shown. A cancelled dialog exports nothing.
     w.table()->clearSelection();
-    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    w.export_action()->trigger();
     QCOMPARE(exported.count(), 1);
     QCOMPARE(exported.takeFirst().at(1).toStringList().size(), 10);
     w.ask_export_path = [](const QString&) { return QString(); };
-    QTest::mouseClick(w.export_button(), Qt::LeftButton);
+    w.export_action()->trigger();
     QCOMPARE(exported.count(), 0);
   }
 
@@ -1206,7 +1247,7 @@ class TestDataWindows : public QObject {
     QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
     // The browser's Export button goes the same way.
     browser->ask_export_path = [&dir](const QString&) { return dir.path() + QStringLiteral("/again.json"); };
-    QTest::mouseClick(browser->export_button(), Qt::LeftButton);
+    browser->export_action()->trigger();
     QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
     QFile json(dir.path() + QStringLiteral("/again.json"));
     QVERIFY(json.open(QIODevice::ReadOnly));

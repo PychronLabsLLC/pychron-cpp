@@ -281,7 +281,7 @@ ratio. In Pychron:
    run is measuring, conditionals see the corrected value (intercept minus
    baseline, times IC factor). A detector with no stored factor is 1.0.
 3. Fit and apply IC factors to unknowns in the Data window (**View >
-   Data**, then in the browser's **Plot** menu: **IC factors...**), as
+   Data**, then **IC factors...** in the browser's toolbar), as
    described in [data analysis](06-data-analysis.md).
 
 Write the plan so that the IC reference gas does not overload an ion counter:

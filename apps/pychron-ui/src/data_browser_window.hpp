@@ -1,14 +1,18 @@
 #pragma once
 
 // DataBrowserWindow (data browsing and visualization design, section 11.2):
-// filter lists fed by the source's facets, a search box, a date preset, and
-// the analyses table, newest first, paged with "Load more".
+// a toolbar of what can be done with the selection, filter lists fed by the
+// source's facets, a search box, a date preset, and the analyses table,
+// newest first, paged with "Load more".
 //
 //   double-click / Enter     recall_requested(uuid)
 //   Ctrl+N / Ctrl+B          select the next / previous row and recall it
-//   Plot > kind              figure_requested(kind, selected uuids or all shown);
-//                            kind: time_series, ideogram, spectrum, inverse_isochron
-//   Export                   export_requested(path, selected uuids or all shown): one
+//   toolbar, a figure        figure_requested(kind, selected uuids or all shown);
+//                            kind: time_series, ideogram, spectrum, inverse_isochron,
+//                            then the fit windows isotope_evolution_fit, blank_fit,
+//                            icfactor_fit
+//   toolbar, Recall          recall_requested(uuid of the current row)
+//   toolbar, Export          export_requested(path, selected uuids or all shown): one
 //                            click asks for a file name and the workspace writes the
 //                            Schaen et al. (2021) data report there (.csv or .json)
 
@@ -30,7 +34,8 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QTableView;
-class QToolButton;
+class QToolBar;
+class QAction;
 
 namespace pychron::ui {
 
@@ -56,8 +61,11 @@ class DataBrowserWindow : public QWidget {
   QComboBox* date_preset() const noexcept { return dates_; }
   QListWidget* facet_list(processing::Facet f) const;
   QPushButton* load_more_button() const noexcept { return more_; }
-  QToolButton* plot_button() const noexcept { return plot_; }
-  QPushButton* export_button() const noexcept { return export_; }
+  QToolBar* toolbar() const noexcept { return toolbar_; }
+  // The toolbar's action for a figure kind; null for a kind it does not offer.
+  QAction* plot_action(const QString& kind) const;
+  QAction* recall_action() const noexcept { return recall_; }
+  QAction* export_action() const noexcept { return export_; }
   QLabel* status() const noexcept { return status_; }
   // A line for the status label (the workspace reports an export here).
   void show_message(const QString& text);
@@ -88,8 +96,9 @@ class DataBrowserWindow : public QWidget {
   QCheckBox* exclude_invalid_;
   std::map<processing::Facet, QListWidget*> facets_;
   QPushButton* more_;
-  QToolButton* plot_;
-  QPushButton* export_;
+  QToolBar* toolbar_;
+  QAction* recall_;
+  QAction* export_;
   QLabel* status_;
   int page_size_ = Preferences::kDefaultPageSize;
   std::optional<processing::BrowseCursor> next_;

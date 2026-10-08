@@ -148,9 +148,9 @@ the UI never migrates it). Rescan picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
 Evolutions tab (signal and baseline fits) as new revisions, or restore an
-older revision from History, Plot > Isotope evolutions... refits many
+older revision from History, Isotope evolutions... in the toolbar refits many
 analyses at once (Good / Bad under its preview train the isotope
-classifier, kept in the app config directory), and Plot > Blanks... / IC factors... fits and
+classifier, kept in the app config directory), and Blanks... / IC factors... beside it fits and
 saves blanks and IC factors from reference analyses; saves are recorded under
 `$USER` on this host's client:
 

@@ -103,14 +103,17 @@ Every figure, fit and export acts on the rows you have **selected**; with
 nothing selected it acts on **all rows shown (loaded)**, so press Load more
 first if you want the whole set.
 
-### The buttons under the table
+### The toolbar
+
+The buttons along the top of the window are icons; hold the pointer over one
+for its name. From left to right, in three groups:
 
 | Button | Opens |
 |---|---|
+| **Time series**, **Ideogram**, **Age spectrum**, **Inverse isochron** | A figure window of the selected analyses. |
+| **Isotope evolutions...** | The isotope-evolution refit window. |
+| **Blanks...**, **IC factors...** | The reference-fit window. |
 | **Recall** (or double-click, or Enter on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
-| **Plot** > Time series, Ideogram, Age spectrum, Inverse isochron | A figure window of the selected analyses. |
-| **Plot** > Isotope evolutions... | The isotope-evolution refit window. |
-| **Plot** > Blanks..., IC factors... | The reference-fit window. |
 | **Export** | A data report (CSV or JSON) of the selection. See [Exporting](#exporting). |
 
 ## Recall: one analysis in detail
@@ -156,7 +159,7 @@ the chosen revision is already current.
 
 ## Isotope evolutions: refitting many analyses
 
-**Plot > Isotope evolutions...** refits the intercepts and baselines of every
+**Isotope evolutions...** in the toolbar refits the intercepts and baselines of every
 selected analysis from its raw measurements, flags the ones that look wrong,
 and can save the new fits for all of them in one change.
 
@@ -213,7 +216,7 @@ was loaded (`Not saved: ...`).
 
 Blanks and detector intercalibration (IC) factors are not measured on the
 unknown: they are fitted from **reference** analyses run near it in time.
-**Plot > Blanks...** and **Plot > IC factors...** do that for the selected
+**Blanks...** and **IC factors...** in the toolbar do that for the selected
 unknowns.
 
 1. At the top, choose which reference types to look for, the window in
@@ -266,7 +269,7 @@ values**.
 
 ## Figures
 
-Choose **Plot** in the browser, then a figure. Each opens its own window with
+Press a figure's button in the browser's toolbar. Each opens its own window with
 the figure in the middle, an **Options** dock on the right (presets and every
 setting), and an **Analyses** dock below listing each analysis with its
 group and an **Included** tick.

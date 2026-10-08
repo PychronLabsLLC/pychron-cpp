@@ -538,7 +538,8 @@ simulated time run 50 times faster than the clock on the wall.
 
 10. When the queue ends, press **Ctrl+Shift+D** (or View > Data). Press
     **Rescan** if the list is empty. Double-click an analysis to recall it, or
-    select the two `66001` runs and choose **Plot** to try a time series.
+    select the two `66001` runs and press **Time series**, the first button of
+    the toolbar.
 11. Try the palette: **Ctrl+Shift+P**, type `shortcuts`, Enter.
 12. Open **File > Preferences…**, raise the interface font size, press Apply,
     then Restore Defaults and Apply.

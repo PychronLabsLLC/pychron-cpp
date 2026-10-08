@@ -47,6 +47,7 @@ add_library(pychron_ui_lib STATIC
   src/processing_bridge.cpp
   src/analysis_table_model.cpp
   src/data_browser_window.cpp
+  src/data_icons.cpp
   src/recall_window.cpp
   src/figure_window.cpp
   src/reference_fit_window.cpp
@@ -106,6 +107,7 @@ add_library(pychron_ui_lib STATIC
   src/processing_bridge.hpp
   src/analysis_table_model.hpp
   src/data_browser_window.hpp
+  src/data_icons.hpp
   src/recall_window.hpp
   src/figure_window.hpp
   src/reference_fit_window.hpp
