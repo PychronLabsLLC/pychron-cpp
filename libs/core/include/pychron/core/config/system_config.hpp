@@ -13,6 +13,7 @@
 
 #include "pychron/core/config/located.hpp"
 #include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/config/metrics_config.hpp"
 
 namespace pychron::config {
 
@@ -198,6 +199,7 @@ struct SystemConfig {
   std::optional<CryoConfig> cryo;
   std::vector<HeaterConfig> heaters;
   LoggingConfig logging;
+  MetricsConfig metrics;
   std::map<std::string, AliasConfig> aliases;  // by key
   SimSection sim;
 };

@@ -370,3 +370,81 @@ TEST(ConfigLoader, StateSourceMustNameADriverAndNeedsVerify) {
                   at(text, "verify", "valves[0].verify: verify = false reads nothing back; it cannot have a state_source")))
       << ::testing::PrintToString(test::formatted(rep.diagnostics));
 }
+
+// ---- [metrics] -------------------------------------------------------------
+
+TEST(Metrics, AbsentTableIsOff) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble), "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_FALSE(r->metrics.enabled);
+  EXPECT_EQ(r->metrics.bind, "0.0.0.0");
+  EXPECT_EQ(r->metrics.port, 9464);
+}
+
+TEST(Metrics, AnEmptyTableIsStillOff) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble) + "[metrics]\n", "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_FALSE(r->metrics.enabled);
+}
+
+TEST(Metrics, ParsesAllKeys) {
+  const std::string text =
+      std::string(test::kPreamble) + "[metrics]\nenabled = true\nbind = \"192.168.1.20\"\nport = 9500\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->metrics.enabled);
+  EXPECT_EQ(r->metrics.bind, "192.168.1.20");
+  EXPECT_EQ(r->metrics.port, 9500);
+}
+
+TEST(Metrics, AcceptsAnIPv6Bind) {
+  for (const char* address : {"::", "::1", "fe80::1"}) {
+    const std::string text = std::string(test::kPreamble) + "[metrics]\nbind = \"" + address + "\"\n";
+    auto r = load_system_config_from_string(text, "f.toml");
+    ASSERT_TRUE(r) << address << ": " << r.error().what;
+    EXPECT_EQ(r->metrics.bind, address);
+  }
+}
+
+TEST(Metrics, BindMustBeAnAddress) {
+  for (const char* bad : {"labpc.local", "localhost", "1.2.3", "1.2.3.256", "1.2.3.4.5", "", "0.0.0.0:9464", "1.2.3.x"}) {
+    const std::string text = std::string(test::kPreamble) + "[metrics]\nbind = \"" + bad + "\"\n";
+    auto r = load_system_config_from_string(text, "f.toml");
+    ASSERT_FALSE(r) << "accepted \"" << bad << "\"";
+    EXPECT_NE(r.error().what.find("metrics.bind"), std::string::npos) << r.error().what;
+    EXPECT_NE(r.error().what.find("f.toml:" + std::to_string(line_of(text, "bind"))), std::string::npos)
+        << r.error().what;
+  }
+}
+
+TEST(Metrics, PortMustBeInRange) {
+  for (const char* bad : {"0", "70000", "-1"}) {
+    const std::string text = std::string(test::kPreamble) + "[metrics]\nport = " + bad + "\n";
+    auto r = load_system_config_from_string(text, "f.toml");
+    ASSERT_FALSE(r) << "accepted port " << bad;
+    EXPECT_NE(r.error().what.find("metrics.port"), std::string::npos) << r.error().what;
+  }
+}
+
+TEST(Metrics, WrongTypesAreDiagnostics) {
+  const std::string text = std::string(test::kPreamble) + "[metrics]\nenabled = \"yes\"\nport = \"9464\"\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("metrics.enabled"), std::string::npos) << r.error().what;
+  EXPECT_NE(r.error().what.find("metrics.port"), std::string::npos) << r.error().what;
+}
+
+TEST(Metrics, UnknownKeyIsADiagnostic) {
+  const std::string text = std::string(test::kPreamble) + "[metrics]\ntls = true\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("tls"), std::string::npos) << r.error().what;
+}
+
+TEST(Metrics, NotATableIsADiagnostic) {
+  // A bare key must come before the first table header.
+  const std::string text = "metrics = 3\n" + std::string(test::kPreamble);
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("metrics"), std::string::npos) << r.error().what;
+}

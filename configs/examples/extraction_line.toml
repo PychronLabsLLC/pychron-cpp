@@ -21,6 +21,13 @@ default_level = "info"
 # "*.wire" = "trace"
 # "scheduler" = "debug"
 
+# Optional, and off unless enabled: an HTTP endpoint (GET /metrics) that the
+# lab's Prometheus scrapes. Read-only; see docs/observability.md.
+# [metrics]
+# enabled = true
+# bind = "0.0.0.0"   # an interface's IP address; "127.0.0.1" for this computer only
+# port = 9464
+
 # What the simulated lab behind the `kind = "sim"` transports is like (its
 # pressures, pump speeds, the gas in the tank) is in sim.toml beside this
 # file, if there is one. To name another:

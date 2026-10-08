@@ -218,6 +218,40 @@ constexpr std::array kLevels{
 };
 
 // Expands a leading "~/" (or a bare "~") using $HOME, or %USERPROFILE% on Windows.
+// Whether `s` is written as an IPv4 or IPv6 address. The loader links no
+// socket library, so this checks the spelling only; whether the address is
+// this machine's is found out when something binds it.
+bool is_ip_address(std::string_view s) {
+  if (s.find(':') == std::string_view::npos) {
+    int parts = 0;
+    std::size_t at = 0;
+    while (at <= s.size()) {
+      const std::size_t dot = std::min(s.find('.', at), s.size());
+      const std::string_view part = s.substr(at, dot - at);
+      if (part.empty() || part.size() > 3) return false;
+      int value = 0;
+      for (const char c : part) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+      }
+      if (value > 255) return false;
+      ++parts;
+      at = dot + 1;
+    }
+    return parts == 4;
+  }
+  std::size_t colons = 0;
+  for (const char c : s) {
+    const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (c == ':') {
+      ++colons;
+    } else if (!hex && c != '.') {  // a dot: an IPv4 tail, "::ffff:1.2.3.4"
+      return false;
+    }
+  }
+  return colons >= 2 && colons <= 7;
+}
+
 std::string expand_home(const std::string& s) {
   if (s != "~" && s.rfind("~/", 0) != 0) return s;
 #ifdef _WIN32
@@ -244,7 +278,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "cryo", "heaters", "logging", "aliases", "sim"});
+                           "pipettes", "cryo", "heaters", "logging", "metrics", "aliases", "sim"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -254,6 +288,10 @@ class ConfigBuilder {
 
     if (const auto* l = root.get("logging")) {
       if (const auto* t = p_.as_table(*l, "logging")) parse_logging(*t, c.logging);
+    }
+
+    if (const auto* m = root.get("metrics")) {
+      if (const auto* t = p_.as_table(*m, "metrics")) parse_metrics(*t, c.metrics);
     }
 
     const toml::table* local_transports = local ? check_local(*local, root) : nullptr;
@@ -397,6 +435,23 @@ class ConfigBuilder {
     const auto get = lookup_in(t);
     p_.reject_unknown(t, s, Keys{"file"});
     p_.read(get, s, "file", s.file, true);
+  }
+
+  void parse_metrics(const toml::table& t, MetricsConfig& m) {
+    p_.begin(m, t, "metrics");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, m, Keys{"enabled", "bind", "port"});
+    p_.read(get, m, "enabled", m.enabled);
+    p_.read(get, m, "port", m.port, false, 1, 65535);
+    std::string bind;
+    if (const auto* n = get("bind"); n != nullptr && p_.read(get, m, "bind", bind, false)) {
+      if (is_ip_address(bind)) {
+        m.bind = std::move(bind);
+      } else {
+        p_.error(p_.loc(*n), "metrics.bind",
+                 "\"" + bind + "\" is not an IP address (use an interface's address, e.g. \"0.0.0.0\" or \"127.0.0.1\")");
+      }
+    }
   }
 
   void parse_logging(const toml::table& t, LoggingConfig& l) {
