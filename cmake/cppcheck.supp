@@ -1,0 +1,17 @@
+// cppcheck suppressions, applied by tools/quality_check.py.
+// One id per line; say why.
+
+// Headers are found through -I for first-party code only; the system's and
+// the fetched dependencies' are left unread on purpose (speed).
+missingInclude
+missingIncludeSystem
+
+// Fires on every aggregate with a std::string or a span member. The members
+// that really are indeterminate are reported by clang-tidy
+// (cppcoreguidelines-pro-type-member-init).
+uninitMemberVarNoCtor
+
+// An unread dependency leaves a macro or a type unknown; that is not a
+// finding about this code.
+unknownMacro
+checkersReport

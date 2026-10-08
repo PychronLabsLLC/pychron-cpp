@@ -163,6 +163,48 @@ the UI (Qt 6.4). If qcustomplot.com is unreachable, point
 `FETCHCONTENT_SOURCE_DIR_QCUSTOMPLOT` at an unpacked QCustomPlot 2.1.1 source
 (Debian's `qcustomplot_2.1.1+dfsg1.orig.tar.xz` has the same two files).
 
+### Static analysis
+
+`tools/quality_check.py` runs cppcheck and then clang-tidy on the C++ a branch
+changes, and reports only findings on the lines that differ from
+`origin/develop` (a new file is checked whole). It is the check to run on
+generated or freshly written code before the tests: the compilers' warnings
+find what is wrong in one expression, these find what is wrong along a path
+(a leak, a use after a move, an index past the end, an unchecked optional).
+
+```bash
+brew install llvm cppcheck          # macOS; llvm is keg-only, the script finds it
+sudo apt install clang-tidy cppcheck    # Ubuntu
+```
+
+```bash
+cmake --preset dev-ui               # writes build/dev-ui/compile_commands.json
+python3 tools/quality_check.py
+```
+
+- Exit status 0 is clean, 1 is findings, 2 means the check could not run (a
+  tool or the compile database is missing, or a source did not parse).
+  `--json` prints one object (`ok`, `files`, `notes`, `findings`) for a
+  program or an agent to read.
+- clang-tidy reads the newest of `build/dev-ui`, `build/dev`, `build/mac-debug`
+  and `build/mac-release` (or `--build-dir`). A file added since the last
+  configure is not in it: configure again. The UI and its tests include moc
+  files, so they need a build as well.
+- A changed header is analysed through up to two sources that include it.
+- `python3 tools/quality_check.py <files>` checks those files on every line.
+  Old code has findings; that is a way to look at them, not a gate.
+- `--fix` applies clang-tidy's fix-its to the changed lines and reports what
+  is left. Read the diff: a fix-it is a suggestion that compiles, not a proof.
+- The checks are listed in `.clang-tidy`, each one that is off with its
+  reason, and cppcheck's suppressions in `cmake/cppcheck.supp`. One finding
+  that is wrong is silenced on its line, with the reason:
+  `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>`.
+- `CLANG_TIDY` and `CPPCHECK` name the programs when they are not on `PATH`.
+
+Static analysis does not replace the sanitizers. `dev` and `dev-ui` build
+without them; add `-DPYCHRON_SANITIZE=address,undefined` to the configure (CI
+does, on clang) and run the tests of what you changed under them.
+
 ### Importing legacy data
 
 `elctl import` brings legacy pychron repositories (and a converted database

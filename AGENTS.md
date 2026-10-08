@@ -360,6 +360,25 @@ Reading a query does not tell you its cost; the plan and a clock do.
   them on PostgreSQL as well before a release that changes a query or adds
   a migration: the two planners do not make the same choices.
 
+## Static analysis
+
+After changing C++ and before running the tests, run
+`python3 tools/quality_check.py` (cppcheck, then clang-tidy, on the lines that
+differ from `origin/develop`; `--json` for a machine-readable result). It
+needs a configured build directory; `docs/dev_setup.md`, "Static analysis",
+has the setup.
+
+- Exit status 1 means findings on lines you changed: fix the code. Status 2
+  means the check did not run (a missing tool, no compile database, a source
+  that does not parse): fix that, do not go on as if it had passed.
+- A finding that is wrong for this code is silenced on its line with
+  `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>`, never by taking
+  the check out of `.clang-tidy` or adding to `cmake/cppcheck.supp` to get one
+  change through.
+- `--fix` applies clang-tidy's fix-its; read the diff it makes and rebuild.
+- It is not in CI, and it does not replace building with
+  `-DPYCHRON_SANITIZE=address,undefined` and running the tests.
+
 ## Lifetime rules
 
 Systems components take non-owning references (`Scheduler&`, `SignalBus&`,
