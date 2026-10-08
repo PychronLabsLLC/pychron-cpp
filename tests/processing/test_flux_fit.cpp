@@ -530,7 +530,7 @@ TEST(FluxFitLevel, AnalysisStateSaysWhyItIsOut) {
   const auto& noj = by_record(at_hole(*fit, 4), "M4-02");
   EXPECT_EQ(noj.state, AnalysisState::NoJ);
   EXPECT_FALSE(noj.omitted);
-  EXPECT_FALSE(noj.j || noj.j_err);
+  EXPECT_FALSE(noj.j || noj.j_err);  // F gives no J: nothing to draw
 
   const auto& edited = by_record(at_hole(*fit, 5), "M5-03");
   EXPECT_EQ(edited.state, AnalysisState::OmittedByEdit);
@@ -600,6 +600,28 @@ TEST(FluxFitLevel, OmittedIsUnchangedByTheNewFields) {
       ++seen;
     }
   EXPECT_EQ(seen, 24);
+}
+
+TEST(FluxFitLevel, AWeightedMeanRefusesAJWithNoError) {
+  auto in = level();
+  auto& a = at_hole(in, 1).analyses[1];
+  const double f = a.f->nominal();
+  a.f = pr::UFloat(f);  // finite F, exact: J has no error
+  FluxOptions o = plane(false);
+  o.mean = pr::MeanKind::Weighted;
+  auto weighted = fit_level(in, o, {});
+  ASSERT_TRUE(weighted) << weighted.error().what;
+  const auto& p = at_hole(*weighted, 1);
+  EXPECT_EQ(p.rejected, std::vector<std::string>{"M1-02"});
+  EXPECT_EQ(p.n, 2);
+  const auto& r = by_record(p, "M1-02");
+  EXPECT_EQ(r.state, AnalysisState::NoJ);
+  EXPECT_FALSE(r.omitted);
+  const auto j = pr::j_of(*a.f, in.monitor_set.constants());
+  ASSERT_TRUE(j);
+  ASSERT_TRUE(r.j && r.j_err);
+  EXPECT_EQ(*r.j, j->nominal());
+  EXPECT_EQ(*r.j_err, 0.0);
 }
 
 }  // namespace

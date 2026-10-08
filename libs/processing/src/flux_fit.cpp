@@ -214,13 +214,12 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
         }
       }
       if (left_out && mean) fp.notes.push_back(PositionNote::LeftOutOfFit);
-      // A rejected analysis gives no usable J (a weighted mean also refuses
-      // one whose error is zero): the reason says so, whatever j_of gave.
+      // A rejected analysis gives no usable J: either its F gives none (j
+      // stays absent) or the weighted mean refuses a J with no error (j is
+      // kept, so a plot can still draw it).
       for (auto& ua : fp.analyses)
         if (!ua.omitted && std::find(fp.rejected.begin(), fp.rejected.end(), ua.record_id) != fp.rejected.end()) {
           ua.state = AnalysisState::NoJ;
-          ua.j.reset();
-          ua.j_err.reset();
         }
     }
     out.positions.push_back(std::move(fp));

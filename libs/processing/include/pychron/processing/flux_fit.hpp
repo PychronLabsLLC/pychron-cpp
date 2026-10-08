@@ -131,7 +131,10 @@ struct FittedPosition {
     std::string uuid, record_id, tag;  // tag as loaded
     bool omitted = false;  // by rule (tag, Edits::omit, the saved fit's); not "could not be used"
     AnalysisState state = AnalysisState::Used;
-    std::optional<double> j, j_err;  // absent for NotReduced and NoJ; present for an omitted analysis with an F
+    // Absent for NotReduced and for NoJ because F gives no J. NoJ: no usable J,
+    // either F gives none (j absent) or the weighted mean refuses a J with no
+    // error (j kept, j_err 0). Present for an omitted analysis with an F.
+    std::optional<double> j, j_err;
     std::string reduction_error;     // NotReduced only
   };
   std::vector<UsedAnalysis> analyses;

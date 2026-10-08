@@ -147,7 +147,7 @@ std::vector<std::string> flux_warnings(const LevelInputs& inputs, const LevelFit
         case AnalysisState::OmittedByTag: why = "omitted (tag " + a.tag + ")"; break;
         case AnalysisState::OmittedBySavedFit: why = "omitted (saved fit)"; break;
         case AnalysisState::OmittedByEdit: why = "omitted (here)"; break;
-        case AnalysisState::NotReduced: why = "not reduced: " + a.reduction_error; break;
+        case AnalysisState::NotReduced: why = a.reduction_error.empty() ? "not reduced" : "not reduced: " + a.reduction_error; break;
         case AnalysisState::NoJ: why = "no J"; break;
       }
       out.push_back(hole(p) + ": " + a.record_id + " " + why);

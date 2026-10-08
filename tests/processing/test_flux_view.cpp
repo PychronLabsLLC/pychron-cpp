@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -113,6 +114,17 @@ TEST(FluxText, WarningsCoverEveryKind) {
       "saved fit used monitor set 'FC Min', which the store does not have: using 'FC-2'",
   };
   EXPECT_EQ(pp::flux_warnings(inputs, fit), expected);
+}
+
+TEST(FluxText, NotReducedWithoutAnErrorHasNoTrailingColon) {
+  pp::LevelInputs inputs;
+  auto fit = hand_fit();
+  pp::FittedPosition p;
+  p.hole = 2;
+  p.analyses = {analysis("B-1", pp::AnalysisState::NotReduced)};
+  fit.positions = {p};
+  const auto w = pp::flux_warnings(inputs, fit);
+  EXPECT_NE(std::find(w.begin(), w.end(), "hole 2: B-1 not reduced"), w.end());
 }
 
 TEST(FluxText, WarningsHonourTheContext) {
