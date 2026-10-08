@@ -1,0 +1,12 @@
+[
+  {"id": 1501, "name": "Isoplot"},
+  {"id": 1502, "name": "IsoplotR"},
+  {"id": 1503, "name": "Excel"},
+  {"id": 1504, "name": "R"},
+  {"id": 1505, "name": "Python"},
+  {"id": 1506, "name": "ArArCalc"},
+  {"id": 1507, "name": "MassSpec"},
+  {"id": 1508, "name": "Pychron"},
+  {"id": 1509, "name": "Other"},
+  {"id": 1510, "name": "Unknown"}
+]

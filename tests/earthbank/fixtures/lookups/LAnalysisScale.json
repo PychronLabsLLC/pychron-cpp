@@ -1,0 +1,9 @@
+[
+  {"id": 1101, "name": "Whole Rock"},
+  {"id": 1102, "name": "Multi-Grain Aliquot"},
+  {"id": 1103, "name": "Single Grain"},
+  {"id": 1104, "name": "Spot"},
+  {"id": 1105, "name": "Transect"},
+  {"id": 1106, "name": "Groundmass"},
+  {"id": 1107, "name": "Unknown"}
+]

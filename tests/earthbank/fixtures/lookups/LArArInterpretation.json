@@ -1,0 +1,21 @@
+[
+  {"id": 1601, "name": "Unknown"},
+  {"id": 1602, "name": "I (age of igneous crystallization)"},
+  {"id": 1603, "name": "M (age of metamorphism)"},
+  {"id": 1604, "name": "Y (maximum depositional age)"},
+  {"id": 1605, "name": "S (age of main detrital component)"},
+  {"id": 1606, "name": "X (age of xenocrystic component)"},
+  {"id": 1607, "name": "D (discordant)"},
+  {"id": 1608, "name": "P (Pb loss)"},
+  {"id": 1609, "name": "M2 (age of second metamorphic event)"},
+  {"id": 1610, "name": "M3 (age of third metamorphic event)"},
+  {"id": 1611, "name": "S2 (age of secondary detrital component)        "},
+  {"id": 1612, "name": "S3 (age of third detrital component)        "},
+  {"id": 1613, "name": "S4 (age of fourth detrital component)        "},
+  {"id": 1614, "name": "N (minimum crystallization age)"},
+  {"id": 1615, "name": "C (maximum age for igneous crystallization)"},
+  {"id": 1616, "name": "T (cooling age)"},
+  {"id": 1617, "name": "Z (undefined age)"},
+  {"id": 1618, "name": "Mixed age (two components)"},
+  {"id": 1619, "name": "Ar (Argon loss)"}
+]

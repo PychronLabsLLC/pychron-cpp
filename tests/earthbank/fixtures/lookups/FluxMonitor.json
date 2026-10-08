@@ -1,0 +1,18 @@
+[
+  {"id": 1901, "name": "Alder Creek Rhyolite Sanidine (ACs) from Phillips et al. 2022 (1.1834 Ma)"},
+  {"id": 1902, "name": "Alder Creek Rhyolite Sanidine (ACs) from Schaen et al. 2020 (1.1851 Ma)"},
+  {"id": 1903, "name": "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)"},
+  {"id": 1904, "name": "Fish Canyon Tuff Sanidine (FCTs) from Phillips et al. 2022 (28.175 Ma)"},
+  {"id": 1905, "name": "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)"},
+  {"id": 1906, "name": "Fish Canyon Tuff Sanidine (FCTs) from Carter et al. 2025 (28.183 Ma)"},
+  {"id": 1907, "name": "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2026 (28.171 Ma)"},
+  {"id": 1908, "name": "Hornblende (Hb3gr) from Jourdan and Renne 2007 (1081.5 Ma)"},
+  {"id": 1909, "name": "Hornblende (Hb3gr) using Renne et al. 2011 (1081 Ma)"},
+  {"id": 1910, "name": "Mt Domedary Biotite (GA-1550) from Jourdan and Renne 2007 (99.44 Ma)"},
+  {"id": 1911, "name": "Mt Domedary Biotite (GA-1550) from Spell and McDougall 2003 (99.18 Ma)"},
+  {"id": 1912, "name": "Mt Domedary Biotite (GA-1550) using Renne et al. 2011 (99.738 Ma)"},
+  {"id": 1913, "name": "Mt Domedary Biotite (MD-2) from Jourdan and Renne 2007 (99.44 Ma)"},
+  {"id": 1914, "name": "Mt Domedary Biotite (MD-2) from Phillips et al. 2022 (99.323 Ma)"},
+  {"id": 1915, "name": "Taylor Creek Rhyolite Saniditine (TCs) from Fleck et al. 2019 (28.447 Ma)"},
+  {"id": 1916, "name": "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)"}
+]

@@ -1,0 +1,11 @@
+[
+  {"id": 2301, "name": "Unknown"},
+  {"id": 2302, "name": "Outcrop location"},
+  {"id": 2303, "name": "Section location"},
+  {"id": 2304, "name": "Other"},
+  {"id": 2305, "name": "Borehole/well"},
+  {"id": 2306, "name": "Mine (open-pit)"},
+  {"id": 2307, "name": "Mine (underground)"},
+  {"id": 2308, "name": "Boulder"},
+  {"id": 2309, "name": "Mine"}
+]
