@@ -56,6 +56,17 @@ Result<std::string> read_file(const std::filesystem::path& file) {
   return bytes;
 }
 
+// miniz reads bytes held in memory through this: an archive's, or those of
+// an entry to add. `opaque` is a std::string_view.
+std::size_t read_view(void* opaque, mz_uint64 offset, void* buffer, std::size_t count) {
+  const std::string_view bytes = *static_cast<const std::string_view*>(opaque);
+  if (offset >= bytes.size() || count == 0) return 0;
+  const auto from = static_cast<std::size_t>(offset);
+  count = std::min(count, bytes.size() - from);
+  std::memcpy(buffer, bytes.data() + from, count);
+  return count;
+}
+
 // A miniz reader over bytes held elsewhere. miniz is handed a pointer to
 // this, so it neither moves nor copies. The bytes are read through `read_at`
 // and not miniz's own in-memory reader: that one forms a pointer from an
@@ -122,12 +133,7 @@ class ZipReader {
   const char* last_error() { return mz_zip_get_error_string(mz_zip_get_last_error(&zip_)); }
 
   static std::size_t read_at(void* opaque, mz_uint64 offset, void* buffer, std::size_t count) {
-    const std::string_view bytes = static_cast<const ZipReader*>(opaque)->bytes_;
-    if (offset >= bytes.size() || count == 0) return 0;
-    const std::size_t from = static_cast<std::size_t>(offset);
-    count = std::min(count, bytes.size() - from);
-    std::memcpy(buffer, bytes.data() + from, count);
-    return count;
+    return read_view(&static_cast<ZipReader*>(opaque)->bytes_, offset, buffer, count);
   }
 
   std::string_view bytes_;
@@ -179,15 +185,24 @@ Result<std::string> rebuild_zip(std::string_view source, const std::map<std::siz
     }
     auto name = reader.name(i);
     if (!name) return fail(name.error());
+    mz_zip_archive_file_stat was;
+    if (!mz_zip_reader_file_stat(reader.raw(), static_cast<mz_uint>(i), &was)) {
+      return failed("cannot read entry " + std::to_string(i) + " of the template");
+    }
     const std::string& data = changed->second;
-    // A part's name is ASCII, and is then not flagged as UTF-8: the
-    // template's entries are not either.
-    const bool ascii = std::all_of(name->begin(), name->end(),
-                                   [](char c) { return static_cast<unsigned char>(c) < 0x80; });
+    // The entry is flagged as the template's was, so that an archive does
+    // not mix kinds: sizes in the local header unless the template's entry
+    // had a data descriptor after its data (general-purpose bit 3), and the
+    // name marked UTF-8 only if it was (bit 11). Bits 1 and 2, which only say
+    // how hard a writer compressed, are 0 (normal) from miniz.
+    constexpr unsigned kHasDescriptor = 1u << 3;
+    constexpr unsigned kUtf8Name = 1u << 11;
     mz_uint flags = static_cast<mz_uint>(MZ_DEFAULT_LEVEL);
-    if (ascii) flags |= static_cast<mz_uint>(MZ_ZIP_FLAG_ASCII_FILENAME);
-    if (!mz_zip_writer_add_mem_ex_v2(&writer, name->c_str(), data.data(), data.size(), nullptr, 0, flags, 0, 0, &stamp,
-                                     nullptr, 0, nullptr, 0)) {
+    if ((was.m_bit_flag & kHasDescriptor) == 0) flags |= static_cast<mz_uint>(MZ_ZIP_FLAG_WRITE_HEADER_SET_SIZE);
+    if ((was.m_bit_flag & kUtf8Name) == 0) flags |= static_cast<mz_uint>(MZ_ZIP_FLAG_ASCII_FILENAME);
+    std::string_view bytes = data;
+    if (!mz_zip_writer_add_read_buf_callback(&writer, name->c_str(), &read_view, &bytes, data.size(), &stamp, nullptr,
+                                             0, flags, nullptr, 0, nullptr, 0)) {
       return failed("cannot add " + *name);
     }
   }
@@ -243,16 +258,87 @@ std::string text_of(const pugi::xml_node& node) {
   return out;
 }
 
+int hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+
+// The UTF-16 code unit HHHH when `text` begins with _xHHHH_: the escape a
+// workbook's strings use for characters XML cannot hold, which its readers
+// decode wherever they meet it.
+std::optional<unsigned> string_escape(std::string_view text) {
+  if (text.size() < 7 || text[0] != '_' || text[1] != 'x' || text[6] != '_') return std::nullopt;
+  unsigned unit = 0;
+  for (std::size_t i = 2; i < 6; ++i) {
+    const int digit = hex_digit(text[i]);
+    if (digit < 0) return std::nullopt;
+    unit = unit * 16 + static_cast<unsigned>(digit);
+  }
+  return unit;
+}
+
+void append_utf8(std::string& out, char32_t code) {
+  if (code < 0x80) {
+    out += static_cast<char>(code);
+  } else if (code < 0x800) {
+    out += static_cast<char>(0xC0 | (code >> 6));
+    out += static_cast<char>(0x80 | (code & 0x3F));
+  } else if (code < 0x10000) {
+    out += static_cast<char>(0xE0 | (code >> 12));
+    out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (code & 0x3F));
+  } else {
+    out += static_cast<char>(0xF0 | (code >> 18));
+    out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (code & 0x3F));
+  }
+}
+
+// A stored string with its _xHHHH_ escapes decoded. Two escapes that are a
+// surrogate pair are one character; half a pair is left as it is written.
+std::string decode_escapes(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const auto unit = text[i] == '_' ? string_escape(text.substr(i)) : std::nullopt;
+    if (!unit) {
+      out += text[i++];
+      continue;
+    }
+    const bool high = *unit >= 0xD800 && *unit <= 0xDBFF;
+    const bool low = *unit >= 0xDC00 && *unit <= 0xDFFF;
+    if (high) {
+      const auto next = string_escape(text.substr(i + 7));
+      if (next && *next >= 0xDC00 && *next <= 0xDFFF) {
+        append_utf8(out, 0x10000 + ((static_cast<char32_t>(*unit) - 0xD800) << 10) + (*next - 0xDC00));
+        i += 14;
+        continue;
+      }
+    }
+    if (high || low) {
+      out += text[i++];
+      continue;
+    }
+    append_utf8(out, *unit);
+    i += 7;
+  }
+  return out;
+}
+
 // The text of a string item (<si> or <is>): its <t>, or the <t> of each run
 // of a rich text, in order. Phonetic runs (<rPh>) are not part of the text.
 std::string string_item(const pugi::xml_node& item) {
   std::string out;
   for (const pugi::xml_node& each : item.children()) {
     if (is_element(each, "t")) {
-      out += text_of(each);
+      out += decode_escapes(text_of(each));
     } else if (is_element(each, "r")) {
       for (const pugi::xml_node& part : each.children()) {
-        if (is_element(part, "t")) out += text_of(part);
+        if (is_element(part, "t")) out += decode_escapes(text_of(part));
       }
     }
   }
@@ -490,9 +576,15 @@ std::string forbidden_in_xml(std::string_view text) {
 }
 
 // Element content. A return is written as a reference: a parser turns a
-// literal one into a line feed.
+// literal one into a line feed. An underscore that begins what a reader
+// would take for an escape (_xHHHH_) is written as the escape of itself.
 void append_text(std::string& out, std::string_view text) {
-  for (const char c : text) {
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (c == '_' && string_escape(text.substr(i))) {
+      out += "_x005F_";
+      continue;
+    }
     switch (c) {
       case '&': out += "&amp;"; break;
       case '<': out += "&lt;"; break;
@@ -518,11 +610,30 @@ void append_attribute_value(std::string& out, std::string_view text) {
   }
 }
 
-// The shortest decimal that reads back as `value`; never the locale's.
+// A finite number as a cell's <v>: the shortest digits that read back as
+// `value`, never the locale's. Plain decimal notation while the decimal
+// exponent is between -5 and 15 (100000, 0.0001, 123456789012345), and
+// scientific outside, without a '+' (1e21, 1.5e-07). Zero of either sign
+// is 0.
 std::string number_text(double value) {
-  std::array<char, 40> buffer{};
-  const auto [end, ec] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-  return ec == std::errc{} ? std::string(buffer.data(), end) : std::string();
+  if (value == 0.0) return "0";
+  std::array<char, 64> buffer{};
+  char* const stop = buffer.data() + buffer.size();
+  const auto scientific = std::to_chars(buffer.data(), stop, value, std::chars_format::scientific);
+  if (scientific.ec != std::errc{}) return {};
+  std::string text(buffer.data(), scientific.ptr);
+  const std::size_t e = text.find('e');
+  if (e == std::string::npos) return {};
+  std::string_view digits = std::string_view(text).substr(e + 1);
+  if (!digits.empty() && digits.front() == '+') digits.remove_prefix(1);
+  const auto exponent = parse_int(digits);
+  if (!exponent) return {};
+  if (*exponent >= -5 && *exponent <= 15) {
+    const auto fixed = std::to_chars(buffer.data(), stop, value, std::chars_format::fixed);
+    return fixed.ec == std::errc{} ? std::string(buffer.data(), fixed.ptr) : std::string();
+  }
+  if (text[e + 1] == '+') text.erase(e + 1, 1);
+  return text;
 }
 
 std::string column_letters(int column) {
@@ -537,8 +648,9 @@ std::string column_letters(int column) {
 // A value to write, checked: its column and what goes inside its <c>.
 struct NewCell {
   int column = 0;
-  bool text = false;   // an inline string; else a number
-  std::string body;    // <is>..</is> or <v>..</v>, in the sheet's prefix
+  bool text = false;     // an inline string; else a number
+  std::string body;      // <is>..</is> or <v>..</v>, in the sheet's prefix
+  std::string expected;  // what the cell reads as once written
 };
 
 struct NewRow {
@@ -616,6 +728,69 @@ struct Edit {
   std::string text;
 };
 
+// ===========================================================================
+// XML: the values of a row
+// ===========================================================================
+
+// The number of the row `node`: its `r`, or one more than the row before it
+// when it has none. A number no sheet has is an error, not a number.
+Result<int> row_number(const pugi::xml_node& node, int before, const std::string& where) {
+  if (const pugi::xml_attribute r = node.attribute("r"); r) {
+    const auto number = parse_int(r.value());
+    if (!number || *number < 1 || *number > kMaxRow) {
+      return fail(ErrorKind::Protocol, where + " has a row numbered '" + std::string(r.value()) + "'");
+    }
+    return *number;
+  }
+  if (before < 0 || before >= kMaxRow) return fail(ErrorKind::Protocol, where + " has a row past the last of a sheet");
+  return before + 1;
+}
+
+// One string per column of the row `node` (numbered `row`), from A to its
+// last cell that holds something. A cell without a reference is the one
+// after the cell before it.
+Result<std::vector<std::string>> read_cells(const pugi::xml_node& node, int row,
+                                            const std::vector<std::string>& shared_strings, const std::string& where) {
+  std::vector<std::string> out;
+  int column = 0;
+  for (const pugi::xml_node& cell : node.children()) {
+    if (!is_element(cell, "c")) continue;
+    if (const pugi::xml_attribute r = cell.attribute("r"); r) {
+      const auto ref = parse_cell_ref(r.value());
+      if (!ref) {
+        return fail(ErrorKind::Protocol, where + " row " + std::to_string(row) + " has a cell placed at '" +
+                                             std::string(r.value()) + "'");
+      }
+      column = ref->column;
+    } else {
+      if (column >= kMaxColumn) {
+        return fail(ErrorKind::Protocol, where + " row " + std::to_string(row) + " has a cell past the last column");
+      }
+      ++column;
+    }
+
+    std::string value;
+    const std::string_view type = cell.attribute("t").value();
+    if (type == "inlineStr") {
+      value = string_item(child(cell, "is"));
+    } else if (const pugi::xml_node v = child(cell, "v"); v) {
+      value = text_of(v);
+      if (type == "s") {
+        const auto index = parse_int(value);
+        if (!index || *index < 0 || static_cast<std::size_t>(*index) >= shared_strings.size()) {
+          return fail(ErrorKind::Protocol, where + " cell " + cell_reference(column, row) +
+                                               " names a shared string the workbook has not");
+        }
+        value = shared_strings[static_cast<std::size_t>(*index)];
+      }
+    }
+    if (value.empty()) continue;
+    if (out.size() < static_cast<std::size_t>(column)) out.resize(static_cast<std::size_t>(column));
+    out[static_cast<std::size_t>(column) - 1] = std::move(value);
+  }
+  return out;
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -640,7 +815,7 @@ Result<std::vector<ZipEntry>> read_zip(const std::filesystem::path& file) {
       if (error != nullptr) return fail(ErrorKind::Protocol, file.string() + ": " + error->what);
     }
     total += data->size();
-    if (total > kMaxPartBytes) return fail(ErrorKind::Protocol, file.string() + ": the archive unpacks to too much");
+    if (total > kMaxArchiveBytes) return fail(ErrorKind::Protocol, file.string() + ": the archive unpacks to too much");
     out.push_back({std::move(*name), std::move(*data), std::move(*stored)});
   }
   return out;
@@ -665,6 +840,9 @@ Result<Workbook> Workbook::open(const std::filesystem::path& template_file) {
   for (std::size_t i = 0; i < reader.count(); ++i) {
     auto name = reader.name(i);
     if (!name) return not_a_workbook(name.error().what);
+    // Which of two entries of one name is the part depends on who reads the
+    // archive: such a file is not taken.
+    if (index.contains(*name)) return not_a_workbook("it has two entries named " + *name);
     index.emplace(std::move(*name), i);
   }
   const auto part = [&](std::string_view name) -> Result<std::string> {
@@ -770,47 +948,16 @@ Result<std::vector<std::string>> Workbook::row_values(std::string_view sheet_nam
     return fail(ErrorKind::Protocol, "sheet '" + sheet->name + "' is not a worksheet");
   }
 
-  std::vector<std::string> out;
+  const std::string where = "sheet '" + sheet->name + "'";
   int at_row = 0;
   for (const pugi::xml_node& each : data.children()) {
     if (!is_element(each, "row")) continue;
-    // A row without a number is the one after the row before it.
-    at_row = each.attribute("r") ? parse_int(each.attribute("r").value()).value_or(0) : at_row + 1;
-    if (at_row != row) continue;
-    int column = 0;
-    for (const pugi::xml_node& cell : each.children()) {
-      if (!is_element(cell, "c")) continue;
-      if (cell.attribute("r")) {
-        const auto ref = parse_cell_ref(cell.attribute("r").value());
-        if (!ref) return fail(ErrorKind::Protocol, "sheet '" + sheet->name + "' has a cell with no place");
-        column = ref->column;
-      } else {
-        ++column;
-      }
-      if (column > kMaxColumn) return fail(ErrorKind::Protocol, "sheet '" + sheet->name + "' has a cell with no place");
-
-      std::string value;
-      const std::string_view type = cell.attribute("t").value();
-      if (type == "inlineStr") {
-        value = string_item(child(cell, "is"));
-      } else if (const pugi::xml_node v = child(cell, "v"); v) {
-        value = text_of(v);
-        if (type == "s") {
-          const auto index = parse_int(value);
-          if (!index || *index < 0 || static_cast<std::size_t>(*index) >= shared_strings_.size()) {
-            return fail(ErrorKind::Protocol, "sheet '" + sheet->name + "' cell " + cell_reference(column, row) +
-                                                 " names a shared string the workbook has not");
-          }
-          value = shared_strings_[static_cast<std::size_t>(*index)];
-        }
-      }
-      if (value.empty()) continue;
-      if (out.size() < static_cast<std::size_t>(column)) out.resize(static_cast<std::size_t>(column));
-      out[static_cast<std::size_t>(column) - 1] = std::move(value);
-    }
-    break;
+    const auto number = row_number(each, at_row, where);
+    if (!number) return fail(number.error());
+    at_row = *number;
+    if (at_row == row) return read_cells(each, row, shared_strings_, where);
   }
-  return out;
+  return std::vector<std::string>{};
 }
 
 Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
@@ -856,11 +1003,11 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
       };
       if (const auto* number = std::get_if<double>(&cell.value)) {
         if (!std::isfinite(*number)) return refused("a number that is not finite cannot be written");
-        row.cells.push_back({column, false, cell_body(cell, names)});
+        row.cells.push_back({column, false, cell_body(cell, names), number_text(*number)});
       } else if (const auto* text = std::get_if<std::string>(&cell.value)) {
         if (text->empty()) continue;
         if (const std::string wrong = forbidden_in_xml(*text); !wrong.empty()) return refused("it holds " + wrong);
-        row.cells.push_back({column, true, cell_body(cell, names)});
+        row.cells.push_back({column, true, cell_body(cell, names), *text});
       }
     }
     if (row.cells.empty()) continue;
@@ -913,6 +1060,7 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
   }
 
   std::string appended;  // rows for an empty <sheetData/>
+  std::size_t added = 0;  // rows the sheet did not store
   std::size_t next = 0;  // the first stored row not yet passed
   for (const NewRow& row : wanted) {
     while (next < stored.size() && stored[next].row < row.row) ++next;
@@ -920,6 +1068,7 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
     // A row the sheet does not store: before the next row it does, or
     // before </sheetData>.
     if (next == stored.size() || stored[next].row != row.row) {
+      ++added;
       if (data_element->self_closing) {
         appended += new_row(row, names);
         continue;
@@ -1019,10 +1168,40 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
   }
   out.append(*xml, at, std::string::npos);
 
-  // The walkers trusted the text to be what pugixml said it was. Had it not
-  // been (a comment or CDATA that looks like a tag), this would show it.
+  // The walkers trusted the text to be what pugixml said it was. Where it is
+  // not (an end tag inside a comment or CDATA is the same bytes as a real
+  // one), rows have gone to the wrong place. So the edited text is parsed
+  // and read as any reader would: it must be well-formed, hold the rows it
+  // held and the ones added, each once and in order, and every cell written
+  // must read back as what was asked. Otherwise nothing is kept.
+  const auto hidden = [&](const std::string& what) {
+    return unreadable(what + "; it holds markup this writer cannot see past (a tag inside a comment or CDATA)");
+  };
   pugi::xml_document check;
-  if (auto parsed = parse(check, out, where); !parsed) return unreadable("it does not survive being written to");
+  if (auto parsed = parse(check, out, where); !parsed) return hidden("it does not survive being written to");
+  std::vector<Stored> now;
+  for (const pugi::xml_node& each : child(check.document_element(), "sheetData").children()) {
+    if (each.type() != pugi::node_element) continue;
+    const auto number = is_element(each, "row") ? parse_int(each.attribute("r").value()) : std::nullopt;
+    if (!number || (!now.empty() && *number <= now.back().row)) return hidden("its rows do not come out in order");
+    now.push_back({*number, each});
+  }
+  if (now.size() != stored.size() + added) return hidden("its rows do not come out as they went in");
+  for (const NewRow& row : wanted) {
+    const auto found = std::lower_bound(now.begin(), now.end(), row.row,
+                                        [](const Stored& each, int number) { return each.row < number; });
+    if (found == now.end() || found->row != row.row) {
+      return hidden("row " + std::to_string(row.row) + " is not there once written");
+    }
+    const auto values = read_cells(found->node, row.row, shared_strings_, where);
+    if (!values) return hidden("row " + std::to_string(row.row) + " does not read once written");
+    for (const NewCell& cell : row.cells) {
+      const auto at_column = static_cast<std::size_t>(cell.column) - 1;
+      if (at_column >= values->size() || (*values)[at_column] != cell.expected) {
+        return hidden("cell " + cell_reference(cell.column, row.row) + " does not read back as it was written");
+      }
+    }
+  }
 
   rewritten_[sheet->entry] = std::move(out);
   return {};
@@ -1031,11 +1210,25 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
 Result<void> Workbook::save(const std::filesystem::path& out) const {
   auto bytes = rebuild_zip(*archive_, rewritten_);
   if (!bytes) return fail(bytes.error());
-  std::ofstream file(out, std::ios::binary | std::ios::trunc);
-  if (!file) return fail(ErrorKind::Io, "cannot write " + out.string());
-  file.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
-  file.close();
-  if (file.fail()) return fail(ErrorKind::Io, "cannot write " + out.string());
+  // Written beside the destination and renamed over it, so that a write that
+  // fails leaves no half of a workbook, and an older one as it was.
+  std::filesystem::path partial = out;
+  partial += ".part";
+  const auto failed = [&](const std::string& why) {
+    std::error_code ignored;
+    std::filesystem::remove(partial, ignored);
+    return fail(ErrorKind::Io, "cannot write " + out.string() + why);
+  };
+  {
+    std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+    if (!file) return fail(ErrorKind::Io, "cannot write " + out.string());
+    file.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
+    file.close();
+    if (file.fail()) return failed("");
+  }
+  std::error_code ec;
+  std::filesystem::rename(partial, out, ec);
+  if (ec) return failed(": " + ec.message());
   // A workbook is for the user to upload: not to be quarantined (macOS).
   mark_as_user_file(out);
   return {};

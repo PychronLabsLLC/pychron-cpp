@@ -15,12 +15,20 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include "ooxml.hpp"
 #include "pychron/core/error.hpp"
@@ -43,6 +51,14 @@ std::string slurp(const fs::path& file) {
 void spit(const fs::path& file, std::string_view bytes) {
   std::ofstream out(file, std::ios::binary | std::ios::trunc);
   out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+long process_id() {
+#ifdef _WIN32
+  return static_cast<long>(_getpid());
+#else
+  return static_cast<long>(getpid());
+#endif
 }
 
 void set_time_zone(const char* zone) {
@@ -161,12 +177,15 @@ std::string make_zip(const std::vector<Part>& parts) {
   return out;
 }
 
-// The DOS time and date of each entry, read from the central directory of an
-// archive without a comment.
+// The DOS time and date of each entry and its general-purpose flags, read
+// from the central directory of an archive without a comment, and the flags
+// its local header states.
 struct Stamp {
   std::string name;
   unsigned time = 0;
   unsigned date = 0;
+  unsigned flags = 0;
+  unsigned local_flags = 0;
 };
 
 std::vector<Stamp> stamps(std::string_view zip) {
@@ -182,7 +201,9 @@ std::vector<Stamp> stamps(std::string_view zip) {
   std::size_t at = u32(end + 16);
   for (unsigned i = 0; i < count && at + 46 <= zip.size(); ++i) {
     const std::size_t name = u16(at + 28);
-    out.push_back({std::string(zip.substr(at + 46, name)), u16(at + 12), u16(at + 14)});
+    const std::size_t local = u32(at + 42);
+    const unsigned local_flags = local + 30 <= zip.size() ? u16(local + 6) : 0xFFFFu;
+    out.push_back({std::string(zip.substr(at + 46, name)), u16(at + 12), u16(at + 14), u16(at + 8), local_flags});
     at += 46 + name + u16(at + 30) + u16(at + 32);
   }
   return out;
@@ -193,8 +214,14 @@ const char* const kSheetHead =
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">";
 
-std::vector<Part> small_workbook(const std::string& sheet_body) {
-  return {
+std::vector<Part> small_workbook(const std::string& sheet_body, const std::string& shared_strings = {}) {
+  const std::string strings_relationship =
+      shared_strings.empty()
+          ? std::string()
+          : "<Relationship Id=\"rId9\" "
+            "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" "
+            "Target=\"sharedStrings.xml\"/>";
+  std::vector<Part> parts = {
       {"[Content_Types].xml", "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>"},
       {"xl/workbook.xml",
        "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
@@ -204,9 +231,12 @@ std::vector<Part> small_workbook(const std::string& sheet_body) {
        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
        "<Relationship Id=\"rId7\" "
        "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" "
-       "Target=\"worksheets/data.xml\"/></Relationships>"},
+       "Target=\"worksheets/data.xml\"/>" +
+           strings_relationship + "</Relationships>"},
       {"xl/worksheets/data.xml", std::string(kSheetHead) + sheet_body + "</worksheet>"},
   };
+  if (!shared_strings.empty()) parts.push_back({"xl/sharedStrings.xml", shared_strings});
+  return parts;
 }
 
 std::string text_cell(const std::string& ref, const std::string& text) {
@@ -217,7 +247,9 @@ class Ooxml : public ::testing::Test {
  protected:
   void SetUp() override {
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-    dir_ = fs::temp_directory_path() / (std::string("pychron_ooxml_") + info->name());
+    // Per process as well as per test: two build trees may run at once.
+    dir_ = fs::temp_directory_path() /
+           (std::string("pychron_ooxml_") + info->name() + "_" + std::to_string(process_id()));
     fs::remove_all(dir_);
     fs::create_directories(dir_);
   }
@@ -230,9 +262,10 @@ class Ooxml : public ::testing::Test {
     return file(name);
   }
 
+  // A workbook that must open: the test ends here when it does not.
   static Workbook open(const fs::path& path) {
     auto book = Workbook::open(path);
-    EXPECT_TRUE(book.has_value()) << (book ? "" : to_string(book.error()));
+    if (!book) throw std::runtime_error("cannot open " + path.string() + ": " + to_string(book.error()));
     return std::move(book.value());
   }
 
@@ -609,23 +642,74 @@ TEST_F(Ooxml, ColumnsPastZAndPastZZAreWrittenAndReadBack) {
   EXPECT_EQ((*values)[703], "7");
 }
 
-TEST_F(Ooxml, ANumberIsItsShortestDecimalThatReadsBack) {
-  const std::vector<double> numbers = {0.1,  5.0,   -1.5,       1.0 / 3.0, 1e22,  2.5e-7,
-                                       0.0,  1e-300, 123456789.0, 5.463e-10, 40.01, std::numeric_limits<double>::max()};
+TEST_F(Ooxml, ANumberIsWrittenPlainlyAndReadsBack) {
+  // Fixed notation while the decimal exponent is between -5 and 15, the
+  // shortest digits that read back as the same double; scientific outside,
+  // with no '+'. Never the locale's.
+  const std::vector<std::pair<double, std::string>> numbers = {
+      {100000.0, "100000"},
+      {2000000.0, "2000000"},
+      {0.0001, "0.0001"},
+      {-0.0, "0"},
+      {0.0, "0"},
+      {1e21, "1e21"},
+      {1.5e-7, "1.5e-07"},
+      {123456789012345.0, "123456789012345"},
+      {0.1, "0.1"},
+      {5.0, "5"},
+      {-1.5, "-1.5"},
+      {40.01, "40.01"},
+      {1e15, "1000000000000000"},
+      {1e16, "1e16"},
+      {0.00001, "0.00001"},
+      {0.000001, "1e-06"},
+      {-2.5e-7, "-2.5e-07"},
+      {5.463e-10, "5.463e-10"},
+      {1.0 / 3.0, "0.3333333333333333"},
+      {1234.5678, "1234.5678"},
+      {1e-300, "1e-300"},
+      {std::numeric_limits<double>::max(), "1.7976931348623157e308"},
+  };
   std::vector<Cell> row;
-  for (const double number : numbers) row.push_back(Cell{number});
-  const std::string body = written("<sheetData/>", 2, {row});
-  EXPECT_NE(body.find("<c r=\"A2\"><v>0.1</v></c><c r=\"B2\"><v>5</v></c><c r=\"C2\"><v>-1.5</v></c>"),
-            std::string::npos);
-  EXPECT_NE(body.find("<c r=\"K2\"><v>40.01</v></c>"), std::string::npos);
+  for (const auto& number : numbers) row.push_back(Cell{number.first});
+  written("<sheetData/>", 2, {row});
   const auto values = open(file("out.xlsx")).row_values("Data", 2);
   ASSERT_TRUE(values.has_value());
   ASSERT_EQ(values->size(), numbers.size());
   for (std::size_t i = 0; i < numbers.size(); ++i) {
-    SCOPED_TRACE((*values)[i]);
-    EXPECT_EQ((*values)[i].find(','), std::string::npos);
-    EXPECT_EQ(std::strtod((*values)[i].c_str(), nullptr), numbers[i]);
+    EXPECT_EQ((*values)[i], numbers[i].second);
+    EXPECT_EQ(std::strtod((*values)[i].c_str(), nullptr), numbers[i].first) << (*values)[i];
   }
+}
+
+TEST_F(Ooxml, TextThatLooksLikeAnEscapeIsNotTakenForOne) {
+  // Excel, openpyxl and POI read _xHHHH_ in a string as the character HHHH.
+  // Text that happens to hold such a sequence has its underscore escaped
+  // (as _x005F_), and what is read is decoded, so it comes back as it was.
+  const std::vector<std::string> texts = {"_x000D_", "a_x0041_b", "_x005F_", "__x00e9__x0041_",
+                                          "no _x here, nor _x12_ or _x12345",
+                                          "_xD83D__xDE00_", "tail_x004"};
+  std::vector<Cell> row;
+  for (const std::string& text : texts) row.push_back(Cell{text});
+  const std::string body = written("<sheetData/>", 2, {row});
+  EXPECT_EQ(body, "<sheetData><row r=\"2\">" + text_cell("A2", "_x005F_x000D_") + text_cell("B2", "a_x005F_x0041_b") +
+                      text_cell("C2", "_x005F_x005F_") + text_cell("D2", "__x005F_x00e9__x005F_x0041_") +
+                      text_cell("E2", "no _x here, nor _x12_ or _x12345") +
+                      text_cell("F2", "_x005F_xD83D__x005F_xDE00_") + text_cell("G2", "tail_x004") +
+                      "</row></sheetData>");
+  EXPECT_EQ(open(file("out.xlsx")).row_values("Data", 2).value(), texts);
+
+  // Read: an escape in a shared or an inline string is the character.
+  const std::string sheet = "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c>"
+                            "<c r=\"C1\" t=\"inlineStr\"><is><t>x_x0041_y_x005F_z</t></is></c>"
+                            "<c r=\"D1\" t=\"s\"><v>2</v></c><c r=\"E1\" t=\"s\"><v>3</v></c></row></sheetData>";
+  const std::string strings = "<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+                              "<si><t>line_x000D__x000A_two</t></si><si><t>caf_x00E9_</t></si>"
+                              "<si><t>_xD83D__xDE00_ and _xD83D_ alone</t></si><si><t>_x00zz_ _x41_</t></si></sst>";
+  const Workbook book = open(zip_file("escapes.xlsx", small_workbook(sheet, strings)));
+  EXPECT_EQ(book.row_values("Data", 1).value(),
+            (std::vector<std::string>{"line\r\ntwo", "caf\xC3\xA9", "xAy_z", "\xF0\x9F\x98\x80 and _xD83D_ alone",
+                                      "_x00zz_ _x41_"}));
 }
 
 TEST_F(Ooxml, TextIsEscapedAndItsSpacesKept) {
@@ -915,6 +999,261 @@ TEST_F(Ooxml, SaveSaysWhenItCannotWrite) {
   const auto saved = book.save(dir_ / "no-such-directory" / "out.xlsx");
   ASSERT_FALSE(saved.has_value());
   EXPECT_EQ(saved.error().kind, ErrorKind::Io);
+}
+
+// ---- Review round 1 --------------------------------------------------------
+
+TEST_F(Ooxml, ARewrittenEntryIsFlaggedAsTheTemplatesEntriesAre) {
+  // General-purpose flags. The Ar-Ar template's entries are 0x0006: no data
+  // descriptor (bit 3), names not flagged UTF-8 (bit 11); bits 1 and 2 only
+  // say how hard the writer compressed, which miniz states as 0 (normal) and
+  // offers no way to set. The Sample template's are 0x0808: a descriptor and
+  // UTF-8 names. A rewritten sheet's entry follows the template's in both
+  // bits, in its local header and in the directory.
+  const unsigned kHints = 0x0006;
+  const struct {
+    const char* file;
+    const char* sheet;
+    const char* part;
+    unsigned flags;
+  } cases[] = {{kArAr, "ArArMeasurement", "xl/worksheets/sheet2.xml", 0x0006},
+               {kSample, "Samples", "xl/worksheets/sheet1.xml", 0x0808}};
+  for (const auto& each : cases) {
+    SCOPED_TRACE(each.file);
+    Workbook book = open(template_file(each.file));
+    ASSERT_TRUE(book.write_rows(each.sheet, 5, {{Cell{"x"}, Cell{1.0}}}).has_value());
+    ASSERT_TRUE(book.save(file("out.xlsx")).has_value());
+    const auto before = stamps(slurp(template_file(each.file)));
+    const auto after = stamps(slurp(file("out.xlsx")));
+    ASSERT_EQ(after.size(), before.size());
+    bool seen = false;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+      SCOPED_TRACE(before[i].name);
+      EXPECT_EQ(before[i].flags, each.flags);
+      EXPECT_EQ(before[i].local_flags, each.flags);
+      if (before[i].name == each.part) {
+        seen = true;
+        EXPECT_EQ(after[i].flags, each.flags & ~kHints);
+        EXPECT_EQ(after[i].local_flags, each.flags & ~kHints);
+      } else {
+        EXPECT_EQ(after[i].flags, before[i].flags);
+        EXPECT_EQ(after[i].local_flags, before[i].local_flags);
+      }
+    }
+    EXPECT_TRUE(seen);
+    EXPECT_EQ(open(file("out.xlsx")).row_values(each.sheet, 5).value(), (std::vector<std::string>{"x", "1"}));
+  }
+}
+
+TEST_F(Ooxml, ARowOrCellNumberedPastTheSheetIsAnError) {
+  const auto read = [&](const std::string& body, int row) {
+    return open(zip_file("limits.xlsx", small_workbook(body))).row_values("Data", row);
+  };
+  const auto expect_protocol = [](const Result<std::vector<std::string>>& values) {
+    ASSERT_FALSE(values.has_value());
+    EXPECT_EQ(values.error().kind, ErrorKind::Protocol);
+  };
+  // The row after the last an int can number; after the last of a sheet.
+  expect_protocol(read("<sheetData><row r=\"2147483647\"/><row><c><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"1048576\"/><row><c><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"1048577\"/></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"0\"/></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"-4\"/></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"99999999999999999999\"/></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"five\"/></sheetData>", 5));
+  // The cell after XFD; a reference that is none.
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"XFD5\"/><c><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"XFE5\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"AAAA5\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"5A\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"a5\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A0\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A99999999999\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"\"><v>1</v></c></row></sheetData>", 5));
+
+  // Rows and cells that number themselves by position are read.
+  const auto counted = read("<sheetData><row r=\"3\"/><row/><row><c><v>1</v></c><c r=\"D5\"><v>4</v></c><c><v>5</v></c>"
+                            "</row></sheetData>", 5);
+  ASSERT_TRUE(counted.has_value()) << to_string(counted.error());
+  EXPECT_EQ(*counted, (std::vector<std::string>{"1", "", "", "4", "5"}));
+  const auto last = read("<sheetData><row r=\"1048576\"><c r=\"XFD1048576\"><v>9</v></c></row></sheetData>", kMaxRow);
+  ASSERT_TRUE(last.has_value()) << to_string(last.error());
+  ASSERT_EQ(last->size(), static_cast<std::size_t>(kMaxColumn));
+  EXPECT_EQ(last->back(), "9");
+}
+
+TEST_F(Ooxml, ASharedStringTheWorkbookHasNotIsAnError) {
+  const std::string strings = "<sst><si><t>only</t></si></sst>";
+  const auto read = [&](const std::string& index) {
+    const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>" + index + "</v></c></row></sheetData>";
+    return open(zip_file("strings.xlsx", small_workbook(body, strings))).row_values("Data", 1);
+  };
+  EXPECT_EQ(read("0").value(), (std::vector<std::string>{"only"}));
+  for (const char* index : {"1", "-1", "4294967296", "99999999999999999999", "zero", "", "0.5"}) {
+    const auto values = read(index);
+    ASSERT_FALSE(values.has_value()) << index;
+    EXPECT_EQ(values.error().kind, ErrorKind::Protocol);
+    EXPECT_NE(values.error().what.find("A1"), std::string::npos) << values.error().what;
+  }
+  // And with no shared strings at all.
+  const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row></sheetData>";
+  EXPECT_FALSE(open(zip_file("none.xlsx", small_workbook(body))).row_values("Data", 1).has_value());
+}
+
+TEST_F(Ooxml, ARelationshipTargetMayBeAbsoluteOrClimb) {
+  const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\"><v>7</v></c></row></sheetData>";
+  const auto with_target = [&](const std::string& target) {
+    std::vector<Part> parts = small_workbook(body);
+    parts[2].data = "<Relationships><Relationship Id=\"rId7\" Target=\"" + target + "\"/></Relationships>";
+    return Workbook::open(zip_file("target.xlsx", parts));
+  };
+  for (const char* target : {"/xl/worksheets/data.xml", "../xl/worksheets/data.xml", "./worksheets/data.xml",
+                             "worksheets/../worksheets/data.xml", "worksheets//data.xml"}) {
+    SCOPED_TRACE(target);
+    auto book = with_target(target);
+    ASSERT_TRUE(book.has_value()) << to_string(book.error());
+    EXPECT_EQ(book->row_values("Data", 1).value(), (std::vector<std::string>{"7"}));
+  }
+  // Out of the archive, or to nothing in it.
+  for (const char* target : {"../../xl/worksheets/data.xml", "/../xl/worksheets/data.xml", "/worksheets/data.xml",
+                             "../worksheets/data.xml", "", "/", "C:\\xl\\worksheets\\data.xml",
+                             "file:///etc/passwd"}) {
+    SCOPED_TRACE(target);
+    const auto book = with_target(target);
+    ASSERT_FALSE(book.has_value());
+    EXPECT_EQ(book.error().kind, ErrorKind::Protocol);
+  }
+}
+
+TEST_F(Ooxml, AnArchiveWithTooManyEntriesOrANameTwiceIsAnError) {
+  std::vector<Part> parts = small_workbook("<sheetData/>");
+  while (parts.size() <= kMaxEntries) parts.push_back({"filler/" + std::to_string(parts.size()) + ".xml", "<x/>"});
+  ASSERT_EQ(parts.size(), kMaxEntries + 1);
+  const auto crowded = Workbook::open(zip_file("crowded.xlsx", parts));
+  ASSERT_FALSE(crowded.has_value());
+  EXPECT_EQ(crowded.error().kind, ErrorKind::Protocol);
+  EXPECT_NE(crowded.error().what.find("entries"), std::string::npos) << crowded.error().what;
+  EXPECT_FALSE(read_zip(file("crowded.xlsx")).has_value());
+  parts.pop_back();
+  EXPECT_TRUE(Workbook::open(zip_file("full.xlsx", parts)).has_value());
+
+  // Two entries of one name: which is the sheet depends on who reads it.
+  parts = small_workbook("<sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData>");
+  parts.push_back({"xl/worksheets/data.xml", std::string(kSheetHead) + "<sheetData/></worksheet>"});
+  const auto twice = Workbook::open(zip_file("twice.xlsx", parts));
+  ASSERT_FALSE(twice.has_value());
+  EXPECT_EQ(twice.error().kind, ErrorKind::Protocol);
+  EXPECT_NE(twice.error().what.find("xl/worksheets/data.xml"), std::string::npos) << twice.error().what;
+}
+
+TEST_F(Ooxml, APartJustOverTheLimitIsRefused) {
+  EXPECT_EQ(kMaxPartBytes, std::size_t{32} << 20);
+  std::vector<Part> parts = small_workbook("<sheetData/>");
+  parts[3].claimed_size = static_cast<std::uint32_t>(kMaxPartBytes + 1);
+  auto over = Workbook::open(zip_file("over.xlsx", parts));
+  ASSERT_TRUE(over.has_value()) << to_string(over.error());
+  const auto read = over->row_values("Data", 1);
+  ASSERT_FALSE(read.has_value());
+  EXPECT_EQ(read.error().kind, ErrorKind::Protocol);
+  EXPECT_NE(read.error().what.find("more than a workbook part can have"), std::string::npos) << read.error().what;
+  // At the limit the claim is believed, and found false when unpacked.
+  parts[3].claimed_size = static_cast<std::uint32_t>(kMaxPartBytes);
+  auto at = Workbook::open(zip_file("at.xlsx", parts));
+  ASSERT_TRUE(at.has_value());
+  const auto unpacked = at->row_values("Data", 1);
+  ASSERT_FALSE(unpacked.has_value());
+  EXPECT_EQ(unpacked.error().what.find("more than a workbook part can have"), std::string::npos)
+      << unpacked.error().what;
+}
+
+TEST_F(Ooxml, MarkupHiddenInACommentIsNotWrittenInto) {
+  const std::string row1 = "<row r=\"1\"><c r=\"A1\"><v>1</v></c></row>";
+  // Before the sheet's data: no matter.
+  EXPECT_EQ(written("<!-- </sheetData> <row r=\"2\"/> --><sheetData>" + row1 + "</sheetData>", 2, {{Cell{"a"}}}),
+            "<!-- </sheetData> <row r=\"2\"/> --><sheetData>" + row1 + "<row r=\"2\">" + text_cell("A2", "a") +
+                "</row></sheetData>");
+
+  // Inside it, where the end of the data or of a row would be looked for:
+  // refused, never a file with the rows in the comment.
+  for (const std::string& body :
+       {"<sheetData>" + row1 + "<!-- </sheetData> --></sheetData>",
+        "<sheetData><!-- </sheetData> -->" + row1 + "</sheetData>",
+        "<sheetData>" + row1 + "<![CDATA[</sheetData>]]></sheetData>",
+        "<sheetData>" + row1 + "<row r=\"2\"><!-- </row> --><c r=\"A2\" s=\"1\"/></row></sheetData>",
+        "<sheetData>" + row1 + "<row r=\"2\"><c r=\"A2\" s=\"1\"><!-- </c> --></c><c r=\"B2\"/></row></sheetData>",
+        "<sheetData>" + row1 + "<row r=\"2\"><c r=\"A2\" s=\"1\"/><!-- </row><row r=\"2\"> --></row></sheetData>"}) {
+    SCOPED_TRACE(body);
+    Workbook book = open(zip_file("comment.xlsx", small_workbook(body)));
+    const auto wrote = book.write_rows("Data", 2, {{Cell{}, Cell{"b"}}});
+    if (wrote.has_value()) {
+      // Handled, then: the value is where it was asked to be, and row 1 too.
+      ASSERT_TRUE(book.save(file("out.xlsx")).has_value());
+      const Workbook again = open(file("out.xlsx"));
+      EXPECT_EQ(again.row_values("Data", 2).value(), (std::vector<std::string>{"", "b"}));
+      EXPECT_EQ(again.row_values("Data", 1).value(), (std::vector<std::string>{"1"}));
+    } else {
+      EXPECT_EQ(wrote.error().kind, ErrorKind::Protocol);
+      EXPECT_NE(wrote.error().what.find("Data"), std::string::npos) << wrote.error().what;
+      EXPECT_TRUE(book.row_values("Data", 2).value().empty());
+    }
+  }
+  // The plain case of the first of those is refused, to be exact about it.
+  const std::string hidden = "<sheetData>" + row1 + "<!-- </sheetData> --></sheetData>";
+  Workbook book = open(zip_file("comment.xlsx", small_workbook(hidden)));
+  EXPECT_FALSE(book.write_rows("Data", 2, {{Cell{"b"}}}).has_value());
+}
+
+TEST_F(Ooxml, AFailedSaveLeavesNoFile) {
+  Workbook book = open(template_file(kArAr));
+  ASSERT_TRUE(book.write_rows("ArArAliquot", 5, {{Cell{"x"}}}).has_value());
+
+  const fs::path missing = dir_ / "no-such-directory";
+  EXPECT_FALSE(book.save(missing / "out.xlsx").has_value());
+  EXPECT_FALSE(fs::exists(missing));
+
+  // A good save leaves the workbook and nothing else.
+  ASSERT_TRUE(book.save(file("out.xlsx")).has_value());
+  ASSERT_TRUE(book.save(file("out.xlsx")).has_value());  // and replaces it
+  std::size_t count = 0;
+  for (const auto& entry : fs::directory_iterator(dir_)) {
+    ++count;
+    EXPECT_EQ(entry.path().filename(), "out.xlsx");
+  }
+  EXPECT_EQ(count, 1u);
+
+  // The destination is a directory: refused, the directory untouched.
+  fs::create_directories(dir_ / "taken.xlsx" / "inside");
+  EXPECT_FALSE(book.save(dir_ / "taken.xlsx").has_value());
+  EXPECT_TRUE(fs::is_directory(dir_ / "taken.xlsx" / "inside"));
+  count = 0;
+  for (const auto& entry : fs::directory_iterator(dir_)) {
+    ++count;
+    EXPECT_TRUE(entry.path().filename() == "out.xlsx" || entry.path().filename() == "taken.xlsx") << entry.path();
+  }
+  EXPECT_EQ(count, 2u);
+
+#ifndef _WIN32
+  // A directory that cannot be written to: the workbook already there stays
+  // as it was, and nothing is left beside it. (Root writes anywhere.)
+  if (geteuid() != 0) {
+    const fs::path locked = dir_ / "locked";
+    fs::create_directories(locked);
+    spit(locked / "out.xlsx", "the old workbook");
+    ASSERT_EQ(chmod(locked.c_str(), 0555), 0);
+    const auto saved = book.save(locked / "out.xlsx");
+    count = 0;
+    for (const auto& entry : fs::directory_iterator(locked)) {
+      ++count;
+      EXPECT_EQ(entry.path().filename(), "out.xlsx");
+    }
+    ASSERT_EQ(chmod(locked.c_str(), 0755), 0);
+    ASSERT_FALSE(saved.has_value());
+    EXPECT_EQ(saved.error().kind, ErrorKind::Io);
+    EXPECT_EQ(count, 1u);
+    EXPECT_EQ(slurp(locked / "out.xlsx"), "the old workbook");
+  }
+#endif
 }
 
 }  // namespace

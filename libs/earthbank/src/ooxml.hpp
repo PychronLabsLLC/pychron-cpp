@@ -22,7 +22,9 @@
 //     the template's, except the value of `<dimension ref>` where the sheet
 //     has one and the written area extends it;
 //   - the same template and the same rows give the same file, byte for byte:
-//     nothing is taken from the wall clock.
+//     nothing is taken from the wall clock;
+//   - a rewritten sheet's zip entry is flagged as the template's was (with or
+//     without a data descriptor, its name UTF-8 or not).
 //
 // The templates keep placeholder rows below their header rows: rows of
 // empty, styled cells. A written row fills its placeholder: the row keeps its
@@ -30,8 +32,17 @@
 // template has keeps its style and gains the value, a cell it lacks is added
 // unstyled, and a column given no value is left as the template had it. A row
 // the sheet does not store is added as a bare `<row>` of the written cells.
-// Text is written as an inline string, a number as its shortest decimal that
-// reads back as the same double.
+// Text is written as an inline string, a number as the shortest digits that
+// read back as the same double, plainly (100000, 0.0001) while its decimal
+// exponent is between -5 and 15 and as 1.5e-07 or 1e21 outside. What was
+// written is read back from the edited sheet and compared before it is kept:
+// a sheet with markup this cannot see past (a tag inside a comment) is
+// refused, not written wrongly.
+//
+// In a workbook's strings _xHHHH_ stands for the character HHHH (Excel,
+// openpyxl and POI all read it so). Strings read are decoded; text written
+// that happens to hold such a sequence has its underscore escaped (_x005F_),
+// so it is read as it was given.
 //
 // Rows and columns are numbered from 1, as a spreadsheet numbers them.
 
@@ -59,9 +70,10 @@ struct ZipEntry {
 
 // Limits on what is read, so that a damaged or hostile file costs an error
 // and not the machine's memory. The larger template is 0.35 MB, and its
-// largest part 2.4 MB uncompressed.
+// largest part 2.4 MB uncompressed. A part's size is checked as the archive
+// claims it, before anything is allocated for it.
 inline constexpr std::size_t kMaxArchiveBytes = std::size_t{256} << 20;
-inline constexpr std::size_t kMaxPartBytes = std::size_t{256} << 20;
+inline constexpr std::size_t kMaxPartBytes = std::size_t{32} << 20;
 inline constexpr std::size_t kMaxEntries = 4096;
 
 // Every entry of the archive at `file`. For checking what was written; the
@@ -94,7 +106,7 @@ class Workbook {
   // One string per column from A to the last cell of `row` that holds
   // something, empty strings for empty cells in between; none for a row the
   // sheet does not store. A shared string is resolved (the runs of a rich
-  // text joined), a number is its stored text.
+  // text joined, _xHHHH_ decoded), a number is its stored text.
   Result<std::vector<std::string>> row_values(std::string_view sheet, int row) const;
 
   // Writes `rows` to consecutive rows from `first_row` (at least 2: row 1 is
@@ -106,7 +118,9 @@ class Workbook {
   // alone.
   Result<void> write_rows(std::string_view sheet, int first_row, const std::vector<std::vector<Cell>>& rows);
 
-  // The template with the rows written, as a new file at `out`.
+  // The template with the rows written, as a new file at `out` (replacing
+  // one that is there). Written beside `out` and renamed: a failed save
+  // leaves no file, and an existing one as it was.
   Result<void> save(const std::filesystem::path& out) const;
 
  private:
