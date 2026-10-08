@@ -118,7 +118,8 @@ using Seconds = std::chrono::sys_seconds;
 // An analysis's time, when it has one: zero is "not recorded".
 std::optional<Seconds> known_time(double utc_epoch_seconds) {
   if (!std::isfinite(utc_epoch_seconds) || utc_epoch_seconds <= 0.0 || utc_epoch_seconds >= 1e11) return std::nullopt;
-  return Seconds(std::chrono::seconds(std::llround(utc_epoch_seconds)));
+  // Cut to the second, not rounded: half a second before midnight is not the next day.
+  return Seconds(std::chrono::seconds(static_cast<std::int64_t>(std::floor(utc_epoch_seconds))));
 }
 
 // UTC, `YYYY-MM-DD`.
@@ -237,10 +238,75 @@ Result<std::optional<double>> agreed_number(std::string_view sample, const Membe
   return found;
 }
 
+// Where the sample was taken: a latitude and a longitude, degrees.
+struct Place {
+  double latitude = 0.0, longitude = 0.0;
+  bool operator==(const Place&) const = default;
+};
+
+// The place the analyses agree on. A place is one analysis's latitude with
+// the same analysis's longitude, both finite: the analyses that carry such a
+// pair must carry the same one, and half a pair is never joined to another
+// analysis's other half. A lone coordinate beside whole pairs is passed over
+// when it is the pair's and refused when it is not. No pair on any analysis:
+// no place, and a note when there was something of one.
+Result<std::optional<Place>> place_of(std::string_view sample, const Members& members, Notes& notes) {
+  const auto finite = [](const std::optional<double>& v) { return v && std::isfinite(*v) ? v : std::nullopt; };
+  const auto latitude = [&](const Member& m) { return finite(m.a().sample_info.latitude); };
+  const auto longitude = [&](const Member& m) { return finite(m.a().sample_info.longitude); };
+
+  const auto place = agreed(
+      sample, members, "location (latitude, longitude)",
+      [&](const Member& m) -> std::optional<Place> {
+        const auto lat = latitude(m), lon = longitude(m);
+        return lat && lon ? std::optional(Place{*lat, *lon}) : std::nullopt;
+      },
+      [](const Place& at) { return shown(at.latitude) + ", " + shown(at.longitude); });
+  if (!place) return fail(place.error());
+
+  if (*place) {
+    const auto whole = std::find_if(members.begin(), members.end(),
+                                    [&](const Member& m) { return latitude(m) && longitude(m); });
+    for (const Member& m : members) {
+      const auto lat = latitude(m), lon = longitude(m);
+      if (lat && lon) continue;
+      if (lat && *lat != (*place)->latitude) {
+        return refuse(sample, "latitude differs between analyses: " + shown((*place)->latitude) + " (" +
+                                  whole->a().runid + ") and " + shown(*lat) + " (" + m.a().runid + ")");
+      }
+      if (lon && *lon != (*place)->longitude) {
+        return refuse(sample, "longitude differs between analyses: " + shown((*place)->longitude) + " (" +
+                                  whole->a().runid + ") and " + shown(*lon) + " (" + m.a().runid + ")");
+      }
+    }
+    return place;
+  }
+
+  bool any_latitude = false, any_longitude = false, bad_latitude = false, bad_longitude = false;
+  for (const Member& m : members) {
+    const pr::SampleInfo& info = m.a().sample_info;
+    any_latitude = any_latitude || latitude(m).has_value();
+    any_longitude = any_longitude || longitude(m).has_value();
+    bad_latitude = bad_latitude || (info.latitude && !std::isfinite(*info.latitude));
+    bad_longitude = bad_longitude || (info.longitude && !std::isfinite(*info.longitude));
+  }
+  const std::string of(sample);
+  if (bad_latitude && !any_latitude) notes.push_back(of + ": lat is not a finite number and was left out");
+  if (bad_longitude && !any_longitude) notes.push_back(of + ": lon is not a finite number and was left out");
+  if (any_latitude && any_longitude) {
+    notes.push_back(of + ": no analysis has both a latitude and a longitude; no location is sent");
+  } else if (any_latitude || any_longitude) {
+    notes.push_back(of + ": the sample has a " + (any_latitude ? "latitude" : "longitude") + " and no " +
+                    (any_latitude ? "longitude" : "latitude") + "; no location is sent");
+  }
+  return std::optional<Place>();
+}
+
 // What the catalog says about the sample, as far as the analyses agree.
 struct Facts {
   std::optional<std::string> material, lithology, unit, igsn;
-  std::optional<double> latitude, longitude, elevation;
+  std::optional<Place> place;
+  std::optional<double> elevation;
 };
 
 Result<Facts> facts_of(std::string_view sample, const Members& members, Notes& notes) {
@@ -257,12 +323,9 @@ Result<Facts> facts_of(std::string_view sample, const Members& members, Notes& n
   auto igsn = agreed_text(sample, members, "IGSN", &pr::SampleInfo::igsn);
   if (!igsn) return fail(igsn.error());
   facts.igsn = *igsn;
-  auto latitude = agreed_number(sample, members, "latitude", &pr::SampleInfo::latitude, "lat", notes);
-  if (!latitude) return fail(latitude.error());
-  facts.latitude = *latitude;
-  auto longitude = agreed_number(sample, members, "longitude", &pr::SampleInfo::longitude, "lon", notes);
-  if (!longitude) return fail(longitude.error());
-  facts.longitude = *longitude;
+  auto place = place_of(sample, members, notes);
+  if (!place) return fail(place.error());
+  facts.place = *place;
   auto elevation =
       agreed_number(sample, members, "elevation", &pr::SampleInfo::elevation, "referenceElevation", notes);
   if (!elevation) return fail(elevation.error());
@@ -895,19 +958,13 @@ Sample sample_of(const std::string& name, const Facts& facts, const PublishOptio
   return out;
 }
 
-// Both coordinates or no location.
-std::optional<Location> location_of(const std::string& name, const Facts& facts, Notes& notes) {
-  if (facts.latitude && facts.longitude) {
-    Location out;
-    out.lat = facts.latitude;
-    out.lon = facts.longitude;
-    return out;
-  }
-  if (facts.latitude || facts.longitude) {
-    notes.push_back(name + ": the sample has a " + (facts.latitude ? "latitude" : "longitude") + " and no " +
-                    (facts.latitude ? "longitude" : "latitude") + "; no location is sent");
-  }
-  return std::nullopt;
+// The place the analyses agree on, or no location (place_of).
+std::optional<Location> location_of(const Facts& facts) {
+  if (!facts.place) return std::nullopt;
+  Location out;
+  out.lat = facts.place->latitude;
+  out.lon = facts.place->longitude;
+  return out;
 }
 
 DataPoint data_point_of(const std::string& name, const Members& dated, const Group& g, const Facts& facts,
@@ -1132,7 +1189,7 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   if (!age) return fail(age.error());
 
   out.sample = sample_of(name, *facts, options, notes);
-  out.location = location_of(name, *facts, notes);
+  out.location = location_of(*facts);
   out.data_point = data_point_of(name, dated, group, *facts, notes);
   auto aliquots = aliquots_of(name, members, dated, notes);
   if (!aliquots) return fail(aliquots.error());

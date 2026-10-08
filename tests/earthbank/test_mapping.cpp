@@ -253,6 +253,31 @@ TEST(Mapping, SampleAndLocation) {
   EXPECT_EQ(from_one.location->lat, -37.8);
   EXPECT_EQ(from_one.location->lon, 144.96);
   EXPECT_EQ(from_one.data_point.lithologyName, "tuff");
+
+  // A point is one analysis's latitude with the same analysis's longitude:
+  // a latitude from one and a longitude from another are not a place.
+  AnalysisList halves = with_edit_all(step_sample(), [](pp::Analysis& a) { a.sample_info = {}; });
+  halves = with_edit(halves, 2, [](pp::Analysis& a) { a.sample_info.latitude = -37.8; });
+  halves = with_edit(halves, 6, [](pp::Analysis& a) { a.sample_info.longitude = 144.96; });
+  const Submission composed = build_one(halves);
+  EXPECT_FALSE(composed.location.has_value());
+  EXPECT_EQ(note_with(composed, "no location"),
+            "S-STEP: no analysis has both a latitude and a longitude; no location is sent");
+
+  // Half a point beside whole ones adds nothing when it agrees with them...
+  const Submission beside =
+      build_one(with_edit(step_sample(), 3, [](pp::Analysis& a) { a.sample_info.longitude.reset(); }));
+  ASSERT_TRUE(beside.location.has_value());
+  EXPECT_EQ(beside.location->lat, 37.75);
+  EXPECT_EQ(beside.location->lon, -106.9);
+  // ...and is a disagreement when it does not.
+  const std::string what = refused(with_edit(step_sample(), 3, [](pp::Analysis& a) {
+    a.sample_info.latitude = 38.0;
+    a.sample_info.longitude.reset();
+  }));
+  EXPECT_TRUE(contains(what, "earthbank: sample \"S-STEP\"") && contains(what, "latitude differs between analyses") &&
+              contains(what, "37.75 (20001-01A)") && contains(what, "38 (20001-01D)"))
+      << what;
 }
 
 TEST(Mapping, DataPoint) {
@@ -291,6 +316,15 @@ TEST(Mapping, DataPoint) {
     EXPECT_TRUE(contains(s.age_summary.description.value_or(""), "(the mean's " + std::string(r::to_string(kind)) + ")"))
         << s.age_summary.description.value_or("");
   }
+
+  // A time is cut to its second, not rounded to the nearest: six tenths of
+  // a second before midnight is still that day.
+  auto late = std::make_shared<pp::Analysis>(*fusion_analysis(0));
+  late->timestamp = 1'700'006'399.6;  // 2023-11-14 23:59:59.6 UTC
+  irradiate_for_real(*late);
+  const Submission before_midnight = build_one({late});
+  EXPECT_EQ(before_midnight.measurements[0].analysisTime, "2023-11-14T23:59:59Z");
+  EXPECT_EQ(before_midnight.data_point.analysisDate, "2023-11-14");
 
   // A furnace: the hottest step decides, and degrees are a temperature.
   const Submission furnace = build_one(with_edit_all(step_sample(), [](pp::Analysis& a) {
@@ -1053,11 +1087,13 @@ TEST(Mapping, DisagreementIsRefusedNamingBothValues) {
                              a.context.constants = r::constants_preset(r::ConstantsPreset::Legacy);
                            }),
                  {"atmospheric 40Ar/36Ar", "298.56 (20001-01A)", "295.5 (20001-01B)"});
-  // A location that differs on some analyses.
+  // A location that differs on some analyses: the two points, each whole.
   expect_refused(with_edit(step_sample(), 2, [](pp::Analysis& a) { a.sample_info.latitude = 37.76; }),
-                 {"latitude", "37.75 (20001-01A)", "37.76 (20001-01C)"});
+                 {"location (latitude, longitude) differs between analyses", "37.75, -106.9 (20001-01A)",
+                  "37.76, -106.9 (20001-01C)"});
   expect_refused(with_edit(step_sample(), 8, [](pp::Analysis& a) { a.sample_info.longitude = 106.9; }),
-                 {"longitude", "-106.9 (20001-01A)", "106.9 (20001-01I)"});
+                 {"location (latitude, longitude) differs between analyses", "37.75, -106.9 (20001-01A)",
+                  "37.75, 106.9 (20001-01I)"});
   // And the rest of what is one fact of a sample.
   expect_refused(with_edit(step_sample(), 4, [](pp::Analysis& a) { a.sample_info.elevation = 2851.0; }),
                  {"elevation", "2850 (20001-01A)", "2851 (20001-01E)"});

@@ -22,6 +22,9 @@ namespace pychron::processing {
 // The analysis reduced to an age.
 bool has_ages(const DatasetItem& item);
 
+// The 39ArK of the analysis; NaN when it did not reduce.
+double k39_of(const DatasetItem& item);
+
 // Step order within a group: increment, then time (as the spectrum). Stable.
 GroupItems step_ordered(GroupItems items);
 

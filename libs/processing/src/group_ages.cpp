@@ -14,14 +14,10 @@ namespace pychron::processing {
 
 namespace r = reduction;
 
-namespace {
-
-double k39_of(const DatasetItem& it) {
-  if (!it.analysis->arar) return std::numeric_limits<double>::quiet_NaN();
-  return it.analysis->arar->f.interference.k39.nominal();
+double k39_of(const DatasetItem& item) {
+  if (!item.analysis->arar) return std::numeric_limits<double>::quiet_NaN();
+  return item.analysis->arar->f.interference.k39.nominal();
 }
-
-}  // namespace
 
 bool has_ages(const DatasetItem& item) { return item.analysis->arar && item.analysis->arar->ages; }
 

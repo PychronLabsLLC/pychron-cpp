@@ -6,11 +6,8 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
-#include <limits>
 #include <map>
-#include <memory>
 #include <set>
-#include <span>
 #include <utility>
 
 #include "figure_common.hpp"
@@ -114,11 +111,6 @@ std::string group_label(const Dataset& d, int graph, int group) {
   const std::string name = d.group_name(group);
   if (d.graphs().size() > 1) return d.graph_name(graph) + " / " + name;
   return name;
-}
-
-double k39_of(const DatasetItem& it) {
-  if (!it.analysis->arar) return std::numeric_limits<double>::quiet_NaN();
-  return it.analysis->arar->f.interference.k39.nominal();
 }
 
 // ---------------------------------------------------------------- metadata

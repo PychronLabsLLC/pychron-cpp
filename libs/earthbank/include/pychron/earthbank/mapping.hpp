@@ -10,10 +10,11 @@
 // `Field Definitions` sheet of its Ar-Ar template):
 //
 //   Sample, Location   the analyses' sample name, material and catalog entry
-//                      (processing::SampleInfo); a location needs both a
-//                      latitude and a longitude.
+//                      (processing::SampleInfo); a location is a latitude and
+//                      a longitude that one analysis carries together.
 //   DataPoint          the earliest analysis's UTC date, the method (vocab.hpp
 //                      ar_method), the material as mineral, the lithology.
+//                      Dates and times are cut to the second, never rounded.
 //   Aliquot            `<identifier>-<aliquot, two digits>`, in the order the
 //                      aliquots first appear, with the weight of the piece in
 //                      mg as its size where the analyses know one.
