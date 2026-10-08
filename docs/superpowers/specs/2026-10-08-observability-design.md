@@ -49,6 +49,7 @@ only. Built by default; `-DPYCHRON_METRICS=OFF` drops it and its wiring.
 | `Registry`, `Counter`, `Gauge`, `Histogram` | Holds metric families keyed by name and label set. `render()` returns the Prometheus text format, version 0.0.4. Accepts collect callbacks that run at scrape time. | nothing |
 | `MetricsServer` | An asio acceptor on its own thread. Serves `GET /metrics` from `Registry::render()`. | `Registry`, asio |
 | `CoreExporter` | Subscribes to the core bus events and updates metrics. | `Registry`, `SignalBus` |
+| `SchedulerMetrics` | A collector over `Scheduler::job_stats()` and the heartbeat job. | `Registry`, `Scheduler` |
 
 Metrics for the experiment system live in `libs/experiment`
 (`ExperimentMetrics`), not in `libs/metrics`: the dependency runs
@@ -100,8 +101,10 @@ class Registry {
 - References stay valid for the registry's life (series are never moved).
   `remove` hides a series from `render()`; it does not free it.
 - `Counter::set_total` exists for sources that already count
-  (`TransportHealth::error_count`, `JobStats`). It never lowers the value: a
-  smaller total is ignored.
+  (`TransportHealth::error_count`, `JobStats`). The counter rises by the
+  increase since the last total. A total smaller than the last one means the
+  source started again from zero: the counter rises by the new total and
+  never falls.
 - A family holds at most 1000 series. Beyond that a new label set gets the
   unrendered series, one `warn` record per family, and a count in
   `pychron_metrics_dropped_series_total`. This bounds a labelling bug.
@@ -187,7 +190,7 @@ on the canvas. For a temperature, `source` in the timestamp series is
 |---|---|---|---|
 | `pychron_executor_state` | gauge, 0 or 1 | `state`, the seven `ExecutorState` names in lower snake case | `ExecutorStateChanged` |
 | `pychron_queue_active` | gauge, 0 or 1 | none | 1 from the first state that is not `Idle`; 0 on `QueueEnded` or a return to `Idle` |
-| `pychron_queue_runs` | gauge | `status` = `total`, `done` | `QueueEdited` (queue size); `RunFinished` (done); done resets when a queue starts |
+| `pychron_queue_runs` | gauge | `status` = `total`, `done` | `QueueStarted` and `QueueEdited` (size); `RunFinished` (done) |
 | `pychron_queues_ended_total` | counter | `end` = `completed`, `stopped`, `cancelled`, `aborted`, `failed` | `QueueEnded` |
 | `pychron_runs_started_total` | counter | none | `RunStarted` |
 | `pychron_runs_finished_total` | counter | `state` = `success`, `failed`, `cancelled`, `aborted`; `truncated` = `true`, `false` | `RunFinished` |
@@ -208,9 +211,20 @@ entry is erased when the run reaches a terminal state, so the map is bounded
 by the runs in flight (two, with overlap). The run id is a key in that map
 and never a label.
 
-When the queue size is not known from a `QueueEdited` (a queue that nothing
-edits), `total` is taken from the executor at start: `ExperimentMetrics`
-has a `queue_started(std::size_t rows)` call for the session to make.
+A queue that nothing edits publishes no `QueueEdited`, so the size at the
+start comes from a new event, published by `LabSession` on the line's bus
+just before the executor runs and declared beside `QueueEnded` in
+`lab/session.hpp`:
+
+```cpp
+struct QueueStarted {
+  std::size_t rows = 0;      // QueueSpec::runs.size()
+  std::size_t from_row = 0;  // the row the queue starts at
+};
+```
+
+`total` is `rows - from_row` and `done` returns to 0. `QueueEnded` also
+empties the per-run map, so a run cut off by an abort leaves nothing behind.
 
 ### 3.3 Application health
 
@@ -413,7 +427,7 @@ GoogleTest, one file per component.
 
 | File | Covers |
 |---|---|
-| `tests/metrics/test_registry.cpp` | Counter, gauge and histogram semantics; a label set is a series; a name reused with another type; `set_total` never lowers; cumulative buckets with `+Inf` equal to `_count`; the series cap; updates from several threads sum exactly; a collector runs at each render and stops when its handle is reset |
+| `tests/metrics/test_registry.cpp` | Counter, gauge and histogram semantics; a label set is a series; a name reused with another type; `set_total` across a reset of its source; cumulative buckets with `+Inf` equal to `_count`; the series cap; updates from several threads sum exactly; a collector runs at each render and stops when its handle is reset |
 | `tests/metrics/test_render.cpp` | Golden text: `# HELP` and `# TYPE` once per family; escaping; `NaN` and the infinities; ordering; a removed series is absent |
 | `tests/metrics/test_server.cpp` | A real socket on `127.0.0.1`, port 0: `/metrics` with its content type, `/healthz`, 404, 405, a query string, oversized headers, a slow client, the ninth connection, shutdown with a connection open, a bind failure returned as an error |
 | `tests/metrics/test_core_exporter.cpp` | Each core event published on a real `SignalBus`, then the rendered series; `Snapshot` seeds valves; nullopt heater fields remove their series; the logger name is cut at its first dot; timestamps come from the injected real-time source |
