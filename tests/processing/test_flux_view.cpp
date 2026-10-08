@@ -564,6 +564,33 @@ TEST(FluxScene, WithoutAFitTheDataIsStillThere) {
   EXPECT_EQ(without->graphs[0].x.title, "Hole angle (degrees)");
 }
 
+TEST(FluxScene, WithoutAFitTheSelectedMonitorIsStillHighlighted) {
+  const auto in = level();
+  const auto o = options_of(r::ModelKind::Plane);
+  const pp::Edits e;
+  const auto plain = pp::flux_scene(in, o, e);
+  pp::FluxSceneOptions so;
+  so.highlight_hole = 3;
+  const auto scene = pp::flux_scene(in, o, e, so);
+  ASSERT_EQ(layers_of(*scene).size(), layers_of(*plain).size() + 2);
+  const auto& a = std::get<pp::PointLayer>(layers_of(*scene)[layers_of(*plain).size()]);
+  const auto& m = std::get<pp::PointLayer>(layers_of(*scene)[layers_of(*plain).size() + 1]);
+  EXPECT_TRUE(a.label.empty());
+  EXPECT_TRUE(m.label.empty());
+  ASSERT_EQ(a.refs.size(), 3u);
+  for (const auto& ref : a.refs) EXPECT_EQ(ref.analysis.rfind("u-3-", 0), 0u);
+  ASSERT_EQ(m.x.size(), 1u);
+  // The same marks as with a fit.
+  const auto fit = fit_or_die(in, o, e);
+  const auto fitted = pp::flux_scene(in, fit, so);
+  const auto& fm = std::get<pp::PointLayer>(layers_of(*fitted).back());
+  EXPECT_EQ(m.y, fm.y);
+  EXPECT_EQ(m.marker.color, pp::palette_color(4));
+  // A hole that is no monitor's highlights nothing.
+  so.highlight_hole = 9999;
+  EXPECT_EQ(layers_of(*pp::flux_scene(in, o, e, so)).size(), layers_of(*plain).size());
+}
+
 TEST(FluxScene, TooltipsSayWhy) {
   auto in = level();
   in.positions[1].analyses[1].tag = "outlier";  // M2-02

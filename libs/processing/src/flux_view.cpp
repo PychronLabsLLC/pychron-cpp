@@ -518,11 +518,12 @@ ScenePtr flux_scene(const LevelInputs& /*inputs*/, const LevelFit& fit, const Fl
   return build_flux_scene(fit.positions, &fit, fit.options, options);
 }
 
-ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits) {
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits,
+                    const FluxSceneOptions& scene_options) {
   std::vector<FittedPosition> positions;
   positions.reserve(inputs.positions.size());
   for (const auto& p : inputs.positions) positions.push_back(evaluate_position(p, inputs.monitor_set, options, edits));
-  return build_flux_scene(positions, nullptr, options, {});
+  return build_flux_scene(positions, nullptr, options, scene_options);
 }
 
 }  // namespace pychron::processing

@@ -1,8 +1,10 @@
 #pragma once
 
 // The text of a flux fit, shared by `elctl flux fit` and the flux window: the
-// model line, the summary, the warnings and the CSV. Qt-free; the output is
-// what elctl has always printed.
+// model line, the summary, the warnings and the CSV. Qt-free. The model line,
+// the summary and the CSV are what elctl has always printed; of the warnings,
+// the rejected and the unreduced analyses were reworded: each analysis out has
+// a line of its own that says why, where elctl once printed one line per kind.
 
 #include <optional>
 #include <string>
@@ -84,7 +86,9 @@ struct FluxSceneOptions {
 // bracketing and bracketing1d, or when the model cannot be evaluated along it.
 ScenePtr flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
 // When the level could not be fitted: the analyses and the monitor means only,
-// worked out under the same omission rules as fit_level.
-ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);
+// worked out under the same omission rules as fit_level; a monitor highlighted
+// is drawn on top as with a fit.
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits,
+                    const FluxSceneOptions& scene_options = {});
 
 }  // namespace pychron::processing
