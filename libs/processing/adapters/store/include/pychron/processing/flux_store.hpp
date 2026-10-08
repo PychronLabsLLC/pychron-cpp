@@ -137,6 +137,15 @@ struct SavedPosition {
 Result<std::vector<SavedPosition>> load_saved_flux(persistence::IStore& store, std::string_view irradiation,
                                                    std::string_view level);
 
+// ---- The status of a level (flux window design, section 4.4) ----------------
+
+enum class LevelFluxStatus { NoMonitors, NotFitted, Fitted };
+
+// From the level sheet alone: NoMonitors when no position carries the monitor
+// sample (the sample of the monitor document's default set); Fitted when every
+// position that does has a J; else NotFitted.
+LevelFluxStatus level_flux_status(const persistence::LevelSheet& sheet, std::string_view monitor_sample);
+
 // ---- Saving a level (design section 6.3) ------------------------------------
 
 struct SaveSelection {

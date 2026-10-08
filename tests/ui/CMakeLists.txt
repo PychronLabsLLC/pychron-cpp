@@ -11,7 +11,8 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   get_filename_component(name ${src} NAME_WE)
   set(target pychron_ui_${name})
   add_executable(${target} ${src} ui_fixture.hpp)
-  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  # tests/processing: flux_seed.hpp, the seeded level of the flux tests
+  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"

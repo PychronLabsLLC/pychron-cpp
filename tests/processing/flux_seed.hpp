@@ -33,6 +33,7 @@ inline constexpr double kSeedAr39 = 100.0;
 
 struct SeededLevel {
   persistence::Uuid acquisition_client, mass_spectrometer, irradiation, level, holder, unknown_sample;
+  persistence::Uuid monitor_sample, production;  // the sample of holes 1-8; the irradiation's production
   std::string irradiation_name = "NM-300", level_name = "A", holder_name = "12-hole";
   std::map<int, persistence::Uuid> positions;             // by hole
   std::map<std::string, persistence::Uuid> analyses;      // by record id ("66001-01")
@@ -193,6 +194,7 @@ inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const per
   PYCHRON_SEED_TRY(unknown, store.add_sample(*acq, {.name = "unk", .project = *project, .material = *material}));
 
   out.unknown_sample = *unknown;
+  out.monitor_sample = *monitor;
 
   for (int hole = 1; hole <= 12; ++hole) {
     const bool ring = hole <= 8;
@@ -209,6 +211,7 @@ inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const per
   production_spec.type = ps::RefType::Production;
   production_spec.key = out.irradiation_name + "/Triga";
   PYCHRON_SEED_TRY(production, store.add_ref_object(actor.client, production_spec));
+  out.production = *production;
   PYCHRON_SEED_TRY(production_revision,
                    seed_publish(store, actor, *production,
                                 ps::ProductionValue{"Triga", std::nullopt, {{"K4039", 0.0, 0.0}, {"Ca3937", 0.0007, 1e-5}}}));
@@ -248,6 +251,55 @@ inline Result<void> seed_level_without_monitors(persistence::IStore& store, cons
                                     {"66201", "unknown", std::nullopt, std::nullopt, *position, std::nullopt, std::nullopt});
   if (!added) return fail(added.error());
   return {};
+}
+
+// Another level of the seeded irradiation that can be fitted, on the same
+// holder: holes 1-8 hold the monitor sample (identifiers 67001..67008, three
+// analyses each with the J of seed_j, run a day after level A's), holes 9-12
+// the unknown (67101..67104). Returns the seeded level with `level`,
+// `level_name`, `positions` and `analyses` those of the new one.
+inline Result<SeededLevel> seed_second_flux_level(persistence::IStore& store, const persistence::Actor& actor,
+                                                  const SeededLevel& seeded, const std::string& name) {
+  namespace ps = persistence;
+  SeededLevel out = seeded;
+  out.level_name = name;
+  out.positions.clear();
+  out.analyses.clear();
+  auto level = store.add_level(seeded.acquisition_client, {seeded.irradiation, name, seeded.holder, 0.5, std::nullopt, std::nullopt});
+  if (!level) return fail(level.error());
+  out.level = *level;
+
+  ps::RefObjectSpec level_scope;
+  level_scope.type = ps::RefType::LevelProduction;
+  level_scope.key = seeded.irradiation_name + "/" + name;
+  level_scope.level = *level;
+  auto level_production = store.add_ref_object(actor.client, level_scope);
+  if (!level_production) return fail(level_production.error());
+  auto published =
+      seed_publish(store, actor, *level_production, ps::LevelProductionValue{seeded.production, std::nullopt});
+  if (!published) return fail(published.error());
+
+  for (int hole = 1; hole <= 12; ++hole) {
+    const bool ring = hole <= 8;
+    auto position = store.add_irradiation_position(
+        seeded.acquisition_client,
+        {*level, hole, ring ? seeded.monitor_sample : seeded.unknown_sample, std::nullopt, {}, {}, std::nullopt});
+    if (!position) return fail(position.error());
+    out.positions[hole] = *position;
+    const std::string identifier = std::to_string(ring ? 67000 + hole : 67100 + hole - 8);
+    auto added = store.add_identifier(seeded.acquisition_client, {identifier, "unknown", std::nullopt, std::nullopt,
+                                                                  *position, std::nullopt, std::nullopt});
+    if (!added) return fail(added.error());
+    if (!ring) continue;
+    for (int aliquot = 1; aliquot <= 3; ++aliquot) {
+      const std::string timestamp =
+          "2026-01-02T1" + std::to_string(hole) + ":0" + std::to_string(aliquot) + ":00Z";  // 11:01 .. 18:03
+      auto analysis = seed_ingest_monitor(store, out, identifier, aliquot, seed_f(seed_j(hole, aliquot)), timestamp);
+      if (!analysis) return fail(analysis.error());
+      out.analyses[identifier + "-0" + std::to_string(aliquot)] = *analysis;
+    }
+  }
+  return out;
 }
 
 // A flux_position revision of a hole, shaped as the importer and save_level

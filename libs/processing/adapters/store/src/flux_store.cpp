@@ -324,6 +324,18 @@ Result<std::vector<SavedPosition>> load_saved_flux(ps::IStore& store, std::strin
   return out;
 }
 
+LevelFluxStatus level_flux_status(const ps::LevelSheet& sheet, std::string_view monitor_sample) {
+  if (monitor_sample.empty()) return LevelFluxStatus::NoMonitors;  // a position with no sample has no name either
+  bool any = false, all_have_j = true;
+  for (const auto& position : sheet.positions) {
+    if (position.sample_name != monitor_sample) continue;
+    any = true;
+    if (!position.j) all_have_j = false;
+  }
+  if (!any) return LevelFluxStatus::NoMonitors;
+  return all_have_j ? LevelFluxStatus::Fitted : LevelFluxStatus::NotFitted;
+}
+
 ps::FluxValue flux_value_of(const LevelFit& fit, const FittedPosition& position, std::string_view software) {
   ps::FluxValue v;
   v.j = position.j;

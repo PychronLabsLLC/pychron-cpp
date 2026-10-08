@@ -150,6 +150,7 @@ if(TARGET pychron_processing_store)
     src/flux_model_support.cpp
     src/flux_monitor_model.cpp
     src/flux_unknown_model.cpp
+    src/flux_window.cpp
     src/holder_view.cpp
     src/level_grid_model.cpp
     src/level_sheet_pdf.cpp
@@ -165,6 +166,7 @@ if(TARGET pychron_processing_store)
     src/flux_model_support.hpp
     src/flux_monitor_model.hpp
     src/flux_unknown_model.hpp
+    src/flux_window.hpp
     src/holder_view.hpp
     src/level_grid_model.hpp
     src/level_sheet_pdf.hpp

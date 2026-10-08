@@ -1825,6 +1825,59 @@ TEST_P(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
   EXPECT_FALSE(fit.positions[7].excluded);
 }
 
+// ---- The status of a level (flux window design, section 4.4) -----------------
+
+class FluxLevelStatus : public FluxSaveLevel {
+ protected:
+  // The sheet of a level of NM-300; a failure and an empty sheet when there is none.
+  ps::LevelSheet sheet(const std::string& level = "A") {
+    auto levels = store().levels(seeded().irradiation);
+    if (!levels) {
+      ADD_FAILURE() << to_string(levels.error());
+      return {};
+    }
+    for (const auto& row : *levels) {
+      if (row.name != level) continue;
+      auto found = store().level_sheet(row.uuid);
+      if (!found || !*found) {
+        ADD_FAILURE() << "no sheet of level " << level;
+        return {};
+      }
+      return **found;
+    }
+    ADD_FAILURE() << "no level " << level;
+    return {};
+  }
+};
+
+TEST_P(FluxLevelStatus, NotFittedUntilEveryMonitorHasAJ) {
+  EXPECT_EQ(level_flux_status(sheet(), "FC-2"), LevelFluxStatus::NotFitted);
+
+  // A J at an unknown, and at some of the monitors, is not a fitted level.
+  save_flux(9, only_j(1.0e-3));
+  for (int hole = 1; hole <= 7; ++hole) save_flux(hole, only_j(1.0e-3));
+  EXPECT_EQ(level_flux_status(sheet(), "FC-2"), LevelFluxStatus::NotFitted);
+  save_flux(8, only_j(1.0e-3));
+  EXPECT_EQ(level_flux_status(sheet(), "FC-2"), LevelFluxStatus::Fitted);
+}
+
+TEST_P(FluxLevelStatus, FittedAfterASave) {
+  const FluxSaveOutcome outcome = save(fitted());
+  EXPECT_EQ(outcome.written, 12);
+  EXPECT_EQ(level_flux_status(sheet(), "FC-2"), LevelFluxStatus::Fitted);
+}
+
+TEST_P(FluxLevelStatus, NoMonitorsWhenNoPositionCarriesTheSample) {
+  ASSERT_TRUE(testing::seed_level_without_monitors(store(), seeded(), "B"));
+  EXPECT_EQ(level_flux_status(sheet("B"), "FC-2"), LevelFluxStatus::NoMonitors);
+  // By the sample asked for: level A has no FCT, and no sample is no monitor.
+  EXPECT_EQ(level_flux_status(sheet(), "FCT"), LevelFluxStatus::NoMonitors);
+  EXPECT_EQ(level_flux_status(sheet(), ""), LevelFluxStatus::NoMonitors);
+  EXPECT_EQ(level_flux_status(ps::LevelSheet{}, "FC-2"), LevelFluxStatus::NoMonitors);
+  // The sample decides: by `unk`, B has a monitor, and it has no J.
+  EXPECT_EQ(level_flux_status(sheet("B"), "unk"), LevelFluxStatus::NotFitted);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, FluxMonitors, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxLoadLevel, ::testing::ValuesIn(testing::engines()),
@@ -1832,6 +1885,8 @@ INSTANTIATE_TEST_SUITE_P(Engines, FluxLoadLevel, ::testing::ValuesIn(testing::en
 INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveLevel, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveSparseLevel, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& p) { return p.param; });
+INSTANTIATE_TEST_SUITE_P(Engines, FluxLevelStatus, ::testing::ValuesIn(testing::engines()),
                          [](const auto& p) { return p.param; });
 
 }  // namespace
