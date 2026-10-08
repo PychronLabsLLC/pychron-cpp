@@ -11,6 +11,8 @@ list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 # `elctl entry` (entry spec, section 10), `elctl export` (the Schaen et
 # al. 2021 report, read from the store), `elctl flux` and `elctl db` (the
 # store's schema) are split the same way.
+# src/selection.cpp (the analyses `export` selects, read from the store) has
+# no stub: nothing uses it without persistence.
 set(PYCHRON_ELCTL_IMPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/import_stub.cpp")
 set(PYCHRON_ELCTL_ENTRY_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/entry_stub.cpp")
 set(PYCHRON_ELCTL_EXPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/export_stub.cpp")
@@ -23,7 +25,7 @@ if(TARGET pychron_persistence)
     "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}"
     "${PYCHRON_ELCTL_EXP_STORE_STUB}")
 else()
-  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux|db|exp_store)[^/]*\\.cpp$")
+  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux|db|exp_store|selection)[^/]*\\.cpp$")
   list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
     "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}"
     "${PYCHRON_ELCTL_EXP_STORE_STUB}")

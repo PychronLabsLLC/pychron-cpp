@@ -257,6 +257,54 @@ TEST_F(ExportCmd, JsonByExtensionAndFiltersThatMatchNothing) {
   EXPECT_EQ(in_range.code, elctl::kOk) << in_range.err;
 }
 
+// The selection, reduction and plateau flags are parsed by selection.cpp, for
+// `earthbank` as well: what each says when it is wrong, and that the first
+// wrong word from the left is the one reported, whoever parses it.
+TEST_F(ExportCmd, TheSharedFlagsSayWhatTheySaid) {
+  const std::string head = "elctl export: ";
+  const auto first_line = [](const std::string& text) { return text.substr(0, text.find('\n')); };
+  const auto says = [&](std::vector<std::string> args) {
+    args.insert(args.begin(), {"--out", "x.csv"});
+    const Outcome o = export_(std::move(args));
+    EXPECT_EQ(o.code, elctl::kUsage);
+    EXPECT_TRUE(contains(o.err, "usage: elctl export")) << o.err;
+    return first_line(o.err);
+  };
+  EXPECT_EQ(says({"--from", "yesterday"}), head + "--from takes a UTC date YYYY-MM-DD; got 'yesterday'");
+  EXPECT_EQ(says({"--to", "2026-02-30"}), head + "--to takes a UTC date YYYY-MM-DD; got '2026-02-30'");
+  EXPECT_EQ(says({"--from", "2026-10-03", "--to", "2026-10-02"}), head + "--to is before --from");
+  EXPECT_EQ(says({"--limit", "0"}), head + "--limit takes a whole positive number");
+  EXPECT_EQ(says({"--constants", "mine"}), head + "--constants is default, legacy or legacy_preferences; got 'mine'");
+  EXPECT_EQ(says({"--plateau", "york"}), head + "--plateau is fleck or mahon");
+  EXPECT_EQ(says({"--plateau-steps", "1"}), head + "--plateau-steps takes a whole number of 2 or more");
+  EXPECT_EQ(says({"--plateau-gas", "101"}), head + "--plateau-gas takes a percent, 0 to 100");
+  EXPECT_EQ(says({"--uuid"}), head + "--uuid needs a value");
+  EXPECT_EQ(says({"--frob"}), head + "--frob needs a value");
+  EXPECT_EQ(says({"--frob", "1"}), head + "unknown flag '--frob'");
+  EXPECT_EQ(says({"stray"}), head + "unexpected argument 'stray'");
+  // Left to right, across the flags that moved and those that stayed.
+  EXPECT_EQ(says({"--sigma", "3", "--from", "yesterday"}), head + "--sigma is 1 or 2; got '3'");
+  EXPECT_EQ(says({"--from", "yesterday", "--sigma", "3"}), head + "--from takes a UTC date YYYY-MM-DD; got 'yesterday'");
+  EXPECT_EQ(says({"--frob", "1", "--limit", "0"}), head + "unknown flag '--frob'");
+  // A value is a value, whatever it looks like.
+  EXPECT_EQ(says({"--sample", "--include-invalid", "--plateau", "york"}), head + "--plateau is fleck or mahon");
+
+  const Outcome db_first = run_raw({"export", "--from", "2026-10-03", "--to", "2026-10-02"});
+  EXPECT_EQ(first_line(db_first.err), head + "--db <url> is required");
+
+  // A value that looks like a flag is taken as the value: no sample of that
+  // name, not a usage error. And the flags still narrow.
+  const Outcome odd = export_({"--out", path("odd.csv").string(), "--sample", "--decay-error"});
+  EXPECT_EQ(odd.code, elctl::kFailed) << odd.err;
+  EXPECT_EQ(odd.err, "elctl export: no analysis matched\n");
+  const Outcome narrowed = export_({"--out", path("narrowed.csv").string(), "--sample", "FC-2", "--identifier", "77000",
+                                    "--project", "Fish Canyon", "--irradiation", "NM-300", "--limit", "1", "--decay-error",
+                                    "--constants", "legacy", "--plateau", "mahon", "--plateau-steps", "2", "--plateau-gas",
+                                    "40"});
+  EXPECT_EQ(narrowed.code, elctl::kOk) << narrowed.err;
+  EXPECT_TRUE(contains(narrowed.out, "1 analyses, 1 group")) << narrowed.out;
+}
+
 }  // namespace
 
 #endif
