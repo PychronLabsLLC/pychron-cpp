@@ -1826,13 +1826,13 @@ TEST_P(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, FluxMonitors, ::testing::ValuesIn(testing::engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxLoadLevel, ::testing::ValuesIn(testing::engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveLevel, ::testing::ValuesIn(testing::engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });
 INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveSparseLevel, ::testing::ValuesIn(testing::engines()),
-                         [](const auto& info) { return info.param; });
+                         [](const auto& p) { return p.param; });
 
 }  // namespace
 }  // namespace pychron::processing
