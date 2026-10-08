@@ -3,7 +3,10 @@
 # (tests/processing/fixtures.hpp), included as "processing/fixtures.hpp".
 # test_ooxml.cpp tests an internal unit, and test_xlsx.cpp reads workbooks back
 # with it: they include "ooxml.hpp" from the library's src/ and read the
-# vendor templates where the library keeps them.
+# vendor templates where the library keeps them. test_secret_store.cpp includes
+# "secret_store_detail.hpp" from there too. test_profiles.cpp reads the tree
+# (PYCHRON_EARTHBANK_REPO_DIR) to see that the service's host is named in one
+# file only.
 file(GLOB PYCHRON_EARTHBANK_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
 # pychron::earthbank_fake: EarthBank in memory (fake_earthbank.hpp), the only
@@ -24,7 +27,8 @@ add_executable(pychron_earthbank_tests ${PYCHRON_EARTHBANK_TESTS})
 target_include_directories(pychron_earthbank_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_include_directories(pychron_earthbank_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/earthbank/src)
 target_compile_definitions(pychron_earthbank_tests PRIVATE
-  PYCHRON_EARTHBANK_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/templates")
+  PYCHRON_EARTHBANK_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/templates"
+  PYCHRON_EARTHBANK_REPO_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(pychron_earthbank_tests PRIVATE pychron::earthbank_fake pychron::earthbank pychron::processing
                                                       pychron::reduction GTest::gtest_main)
 pychron_set_warnings(pychron_earthbank_tests)
