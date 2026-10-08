@@ -10,13 +10,18 @@ target_compile_definitions(pychron_elctl_tests PRIVATE
 # the dvc tests do; without persistence it holds one test, of the stub.
 if(TARGET pychron_persistence)
   # TinyORM by its headers only: its library is already linked through persistence.
+  # test_earthbank_commands.cpp reads the workbooks back with the library's
+  # own reader, "ooxml.hpp" in its src/, as the earthbank tests do.
   target_include_directories(pychron_elctl_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/dvc"
     "${PROJECT_SOURCE_DIR}/tests/processing"
     "${PROJECT_SOURCE_DIR}/libs/persistence/src"
+    "${PROJECT_SOURCE_DIR}/libs/earthbank/src"
     $<TARGET_PROPERTY:TinyOrm::TinyOrm,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(pychron_elctl_tests PRIVATE
     PYCHRON_DVC_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/dvc/fixtures" QT_NO_KEYWORDS
+    PYCHRON_EARTHBANK_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/templates"
+    PYCHRON_EARTHBANK_SOURCE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/src"
     $<TARGET_PROPERTY:TinyOrm::TinyOrm,INTERFACE_COMPILE_DEFINITIONS>)
   # dvc, ingest and persistence come with pychron_elctl_lib.
   target_link_libraries(pychron_elctl_tests PRIVATE nlohmann_json::nlohmann_json Qt6::Core Qt6::Sql)

@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "duration.hpp"
+#include "earthbank.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
 #include "db.hpp"
@@ -106,6 +107,9 @@ constexpr const char* kUsageText =
     "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
     "                              write a 40Ar/39Ar data report after Schaen et al. (2021): metadata,\n"
     "                              constants, one row per analysis, and plateau, mean and isochron ages\n"
+    "  earthbank export-xlsx --db <url> --out <dir> [selection as export] [--overrides <file.toml>]\n"
+    "                              fill EarthBank's (AusGeochem) import workbooks, one data point per\n"
+    "                              sample, to import by hand on its website (elctl earthbank help)\n"
     "\n"
     "Flux (J) of an irradiation level:\n"
     "  flux fit <irradiation> [<level>] --db <url> [--model M] [--save] [--csv FILE] ...\n"
@@ -243,6 +247,7 @@ class Session {
     if (cmd == "export") return export_command(args, io_);
     if (cmd == "db") return db_command(args, io_);
     if (cmd == "flux") return flux_command(args, io_);
+    if (cmd == "earthbank") return earthbank_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();

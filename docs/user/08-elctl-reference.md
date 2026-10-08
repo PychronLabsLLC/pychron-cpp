@@ -3,7 +3,8 @@
 `elctl` is Pychron's command-line tool. Use it to check configuration files,
 set up and check an installation, drive the extraction line from a terminal,
 run an experiment queue without a screen, work with lasers and trays, and do
-bulk database work (legacy import, sample entry, publication export).
+bulk database work (legacy import, sample entry, publication export, the
+EarthBank workbooks).
 
 This page is a reference. For a first look at Pychron, start with
 [01 Getting started](01-getting-started.md). Related pages:
@@ -15,7 +16,7 @@ This page is a reference. For a first look at Pychron, start with
 [10 Troubleshooting](10-troubleshooting.md).
 
 `elctl help` (or `elctl --help`, `elctl -h`) prints a command summary. Each of
-`import`, `export` and `entry` also has its own `help`.
+`import`, `export`, `earthbank` and `entry` also has its own `help`.
 
 ## Contents
 
@@ -31,6 +32,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Legacy data](#legacy-data): `import ...`
 - [The store's schema](#the-stores-schema): `db status`, `db migrate`
 - [Publication data](#publication-data): `export`
+- [EarthBank workbooks](#earthbank-workbooks): `earthbank export-xlsx`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
 - [Not yet implemented / unverified](#not-yet-implemented--unverified)
 
@@ -85,7 +87,7 @@ by `-c` / `--install`.
 |---|---|
 | 0 | Success. |
 | 1 | The command ran but failed: a config error, a hardware error, a check that did not pass, a queue that did not complete. |
-| 2 | Usage error (a bad or missing argument, an unknown command), **and also** the fatal errors of `import`, `export` and `entry` (a database that cannot be opened, a bad file), and `elctl was built without persistence`. |
+| 2 | Usage error (a bad or missing argument, an unknown command), **and also** the fatal errors of `import`, `export`, `earthbank` and `entry` (a database that cannot be opened, a bad file), and `elctl was built without persistence`. |
 
 Command-specific details are given under each command. Errors are written to
 standard error as `error: ...`; usage errors as `elctl: ...` followed by the
@@ -100,7 +102,7 @@ without it answers `elctl was built without persistence` and exits 2.
 
 | Needs persistence | Works without |
 |---|---|
-| `import` (all subcommands), `db`, `export`, `entry` (all subcommands) | `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`, `init`, `doctor`, `import-line`, `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`, `exp`, `laser` |
+| `import` (all subcommands), `db`, `export`, `earthbank` (all subcommands), `entry` (all subcommands) | `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`, `init`, `doctor`, `import-line`, `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`, `exp`, `laser` |
 
 Two softer dependencies:
 
@@ -788,6 +790,113 @@ elctl export --db postgresql://user:pw@host/pychron --out report.json \
 
 The file is marked as a user file after it is written so macOS Gatekeeper lets
 you open it.
+
+## EarthBank workbooks
+
+`elctl earthbank export-xlsx` writes the 40Ar/39Ar results of the selected
+analyses into EarthBank's own import workbooks (EarthBank is AuScope's
+AusGeochem data platform). **Needs persistence.** `elctl earthbank help` prints
+every option.
+
+```bash
+elctl earthbank export-xlsx --db <url> --out <dir> [selection] [options]
+```
+
+The command contacts nothing: it fills copies of the service's two template
+workbooks, and **you import the workbooks by hand on the service's website**.
+Each sample becomes one data point with the one age reported for it.
+
+Files written into `--out` (made if it is not there; nothing is ever
+overwritten):
+
+| File | Holds |
+|---|---|
+| `ArArDataPoint_<yyyymmdd-hhmmss>.xlsx` | Every sample: its data point, one measurement row per analysis, its aliquots, the age reported and how it was calculated. With `--per-sample`, one `ArArDataPoint_<sample>.xlsx` per sample instead. |
+| `Samples_<yyyymmdd-hhmmss>.xlsx` | One row per sample. Left out with `--no-samples`. |
+
+**Selection** is that of [`export`](#publication-data): `--sample`,
+`--identifier`, `--project`, `--irradiation`, `--type`, `--uuid`, `--from`,
+`--to`, `--include-invalid`, `--limit`.
+
+**Ages** are made as `export` makes them, by the same flags: `--constants`,
+`--decay-error`, `--plateau`, `--plateau-steps`, `--plateau-gas`. The ages in a
+workbook are the ages `elctl export` reports for the same selection and flags.
+A workbook is always at one sigma.
+
+**Options:**
+
+| Flag | Meaning |
+|---|---|
+| `--out DIR` | Where the workbooks go. Required, except with `--check`. |
+| `--per-sample` | One Ar-Ar workbook per sample, not one for all. |
+| `--no-samples` | No Sample workbook. |
+| `--check` | Print what the export would print and write nothing. |
+| `--templates DIR` | The directory holding the service's two templates. Default: the ones installed with Pychron, or the directory the environment variable `PYCHRON_EARTHBANK_TEMPLATES` names. |
+| `--overrides FILE.toml` | What the analyses cannot say; see below. |
+
+**The age reported for a sample.** A sample with heating steps reports its
+plateau when it has one and its total gas (integrated) age when it has not; a
+sample of fusions reports the weighted mean. `preferred_age` in the overrides
+file chooses another. A sample with more than one step-heated aliquot is not
+left to the rule: the command stops and asks for a `preferred_age`.
+
+**The overrides file** is TOML. Every key may be left out. A key that is not in
+this table, or a sample that is not among the selected analyses, is an error
+naming it.
+
+```toml
+setup = "Example Lab ARGUS VI"
+decay_constant = "Min et al. 2000"
+air_ratio = "Lee et al. 2006"
+age_includes_j_error = true
+
+[samples."S-STEP"]
+interpretation = "Eruption age"
+preferred_age = "plateau"
+flux_monitor = "Fish Canyon Tuff sanidine Kuiper et al. 2008"
+datapoint_name = "S-STEP sanidine"
+irradiation = "NM-300"
+```
+
+| Key | Meaning | Left out |
+|---|---|---|
+| `setup` | Your laboratory's analytical set-up, by the name it has on EarthBank, where it must already exist. | The column is left empty and a note says so. |
+| `decay_constant` | The service's name for the decay constant, or a citation. | Named from the value the reduction used. |
+| `air_ratio` | The same, for the atmospheric 40Ar/36Ar. | Named from the value the reduction used. |
+| `age_includes_j_error` | `true`: the reported age's uncertainty includes the J uncertainty. `false`: analytical only. The age's description says which. | `true`. |
+| `[samples."<name>"]` | A table per sample, by the sample's name in the store. | |
+| `interpretation` | The service's name for what the age dates. | `Unknown`. |
+| `preferred_age` | `plateau`, `weighted_mean`, `isochron` or `integrated`. One that cannot be computed is an error. | The rule above. |
+| `flux_monitor` | Replaces the monitor the analyses name. | The analyses' monitor. |
+| `datapoint_name` | The data point's name, which ties its rows together. | `<sample> <material>`. |
+| `irradiation` | The irradiation batch, by its name on EarthBank. | The irradiation the analyses name. |
+
+**What is printed.** One line per sample (its analyses and the age reported)
+with the notes about it under it, then `wrote <file>` for each workbook, then
+`note:` lines about the workbooks: a value that is not in a list of the
+template, a column the template marks Required that a row leaves empty. Read
+the notes before importing; several name the key of the overrides file that
+resolves them. Errors go to standard error.
+
+A sample that cannot be published stops the whole export, and nothing is
+written for any sample: analyses of one sample that disagree about what the
+sample is (material, location, constants, flux monitor), a sample with no
+analysis that can be published, a preferred age that cannot be computed. The
+message names the sample and, where there is one, the setting that resolves
+it. An analysis without an age, or without all five argon isotopes measured, is
+left out of its sample and counted in the sample's notes.
+
+Exit codes: 0 wrote the files (with `--check`: there was something to write);
+1 no analysis matched; 2 usage or fatal error.
+
+```bash
+elctl earthbank export-xlsx --db sqlite:$HOME/pychron/data.db --check --project examples
+elctl earthbank export-xlsx --db sqlite:$HOME/pychron/data.db --out earthbank/ \
+    --project examples --overrides earthbank.toml --per-sample
+```
+
+The workbooks are marked as user files after they are written so macOS
+Gatekeeper lets you open them.
 
 ## Sample and package entry
 
