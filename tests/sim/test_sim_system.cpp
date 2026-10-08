@@ -1003,10 +1003,10 @@ TEST(SimSystem, UnknownDriverKindGetsSilentWire) {
 
 // A line as the canvas gives it: stages with their kinds, sizes mostly unset.
 //   tank --T-- pipette --L-- line --I-- source --Q-- ion
-//                             |\
-//                             G P
-//                             |  \
-//                           getter turbo
+//                             |\--P-- turbo
+//                             G
+//                             |
+//                           getter
 SimSystem::Topology a_lab() {
   using sim::SimRole;
   SimSystem::Topology t;
