@@ -227,3 +227,49 @@ FetchContent_Declare(nlohmann_json
   SYSTEM
   FIND_PACKAGE_ARGS CONFIG)
 FetchContent_MakeAvailable(nlohmann_json)
+
+# Zip and XML for libs/earthbank's workbook writer (ooxml.cpp): an .xlsx is a
+# zip of XML parts. Both are PRIVATE to pychron_earthbank.
+#
+# miniz's own CMake project asks for CMake 3.0 (refused by CMake 4), forces
+# verbose makefiles and names no miniz::miniz target in a build tree, so, as
+# for QCustomPlot, only its sources are fetched and the static library is
+# defined here. An installed package (vcpkg) is used when there is one.
+FetchContent_Declare(miniz
+  URL https://github.com/richgel999/miniz/archive/refs/tags/3.0.2.tar.gz
+  URL_HASH SHA256=c4b4c25a4eb81883448ff8924e6dba95c800094a198dc9ce66a292ac2ef8e018
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR pychron-defines-the-target
+  FIND_PACKAGE_ARGS CONFIG)
+FetchContent_MakeAvailable(miniz)
+if(NOT TARGET miniz::miniz)
+  enable_language(C)
+  include(GenerateExportHeader)
+  add_library(miniz STATIC
+    "${miniz_SOURCE_DIR}/miniz.c"
+    "${miniz_SOURCE_DIR}/miniz_zip.c"
+    "${miniz_SOURCE_DIR}/miniz_tinfl.c"
+    "${miniz_SOURCE_DIR}/miniz_tdef.c")
+  generate_export_header(miniz EXPORT_FILE_NAME "${miniz_BINARY_DIR}/miniz_export.h")
+  target_compile_definitions(miniz PUBLIC MINIZ_STATIC_DEFINE)
+  target_include_directories(miniz SYSTEM PUBLIC "${miniz_SOURCE_DIR}" "${miniz_BINARY_DIR}")
+  set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # Third-party code: not ours to keep warning-clean.
+  if(MSVC)
+    target_compile_options(miniz PRIVATE /w)
+  else()
+    target_compile_options(miniz PRIVATE -w)
+  endif()
+  add_library(miniz::miniz ALIAS miniz)
+endif()
+
+# XPath is not used; leaving it out halves the library.
+set(PUGIXML_NO_XPATH ON CACHE BOOL "" FORCE)
+set(PUGIXML_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(pugixml
+  URL https://github.com/zeux/pugixml/archive/refs/tags/v1.15.tar.gz
+  URL_HASH SHA256=b39647064d9e28297a34278bfb897092bf33b7c487906ddfc094c9e8868bddcb
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SYSTEM
+  FIND_PACKAGE_ARGS CONFIG)
+FetchContent_MakeAvailable(pugixml)
