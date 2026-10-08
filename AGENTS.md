@@ -86,6 +86,12 @@ caveman plugin keeps conversation and subagents cheap while this runs:
   meet rules under Workflow: Conventional Commits with component as scope,
   since release notes are computed from it.
 
+## Delegated reviews
+
+A review handed to a subagent (of a task's diff, of a fix round, of a whole
+branch) runs on Sonnet: pass `model: sonnet` when dispatching it. The work
+under review is written on whatever model the session uses.
+
 ## Build and test
 
 Setup: `docs/dev_setup.md`. Presets: `CMakePresets.json` (CI uses `dev`, and
