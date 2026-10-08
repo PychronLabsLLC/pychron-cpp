@@ -1365,9 +1365,9 @@ TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
     steps[1].measurements[7].ar39KReleased.reset();
     for (Measurement& m : steps[1].measurements) m.cumulative39ArK.reset();
     EXPECT_EQ(measurement_note(steps),
-              "stepNumber (Step number) empty in 2 of 10 rows of a step-heating data point, " + beam +
-                  ", Ar39KReleased (39ArK released) empty in 1 of 10 rows of a step-heating data point, "
-                  "cumulative39ArK (Cumulative 39ArK released) empty in every row of a step-heating data point");
+              "stepNumber (Step number) empty in 2 of the 10 step-heating rows, " + beam +
+                  ", Ar39KReleased (39ArK released) empty in 1 of the 10 step-heating rows, cumulative39ArK "
+                  "(Cumulative 39ArK released) empty in all 10 step-heating rows");
     // The method is what says so: the same rows under a fusion's are not missed,
     // nor under no method at all (the method is then the thing missing).
     steps[1].data_point.arMethodName = "Total fusion - laser";
@@ -1376,7 +1376,8 @@ TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
     EXPECT_EQ(measurement_note(steps), beam);
     // Whatever its case, and whatever heats the steps.
     steps[1].data_point.arMethodName = "step-heating - furnace";
-    EXPECT_NE(measurement_note(steps).find("stepNumber (Step number) empty in 2 of 10 rows"), std::string::npos);
+    EXPECT_NE(measurement_note(steps).find("stepNumber (Step number) empty in 2 of the 10 step-heating rows"),
+              std::string::npos);
   }
 
   // A furnace's row has no laser power, and is not missed one.
@@ -1394,9 +1395,10 @@ TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
     heated[1].measurements[1].laserPowerUnits.reset();
     heated[1].measurements[2].laserPowerUnits.reset();
     EXPECT_EQ(measurement_note(heated),
-              beam + ", laserPower (Laser power) empty in 1 of 15 rows without a furnace temperature, laserPowerUnits "
-                     "(Laser power units) empty in 2 of 15 rows without a furnace temperature, furnaceTemperature "
-                     "(Furnace temperature) empty in 1 of 2 rows without a laser power");
+              beam + ", laserPower (Laser power) empty in 1 of the 15 rows that have no furnace temperature, "
+                     "laserPowerUnits (Laser power units) empty in 2 of the 15 rows that have no furnace "
+                     "temperature, furnaceTemperature (Furnace temperature) empty in 1 of the 2 rows that have no "
+                     "laser power");
   }
 }
 
@@ -1546,16 +1548,16 @@ TEST_F(Xlsx, TheRequiredColumnsAreTheOnesTheTemplateColours) {
   const auto checked = check_against_template({bare}, options_);
   ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
   // `key (title)` for each, as the note has them: all in the one row there is.
-  const auto every = [](std::initializer_list<const char*> columns, const char* rows = "") {
+  const auto every = [](std::initializer_list<const char*> columns, const char* rows = "every row") {
     std::string out;
     for (const char* column : columns) {
-      out += (out.empty() ? "" : ", ") + std::string(column) + " empty in every row" + rows;
+      out += (out.empty() ? "" : ", ") + std::string(column) + " empty in " + rows;
     }
     return out;
   };
-  const char* const no_furnace = " without a furnace temperature";
+  const char* const no_furnace = "the one row that has no furnace temperature";
   const auto expected = [&](bool step_heated) {
-    const char* const of_steps = " of a step-heating data point";
+    const char* const of_steps = "the one step-heating row";
     return std::vector<std::string>{
         std::string("ArArDataPoints") + kRequiredLead +
             every({"arArSetUp (Analytical Key)"}) + ", " +
@@ -1571,7 +1573,7 @@ TEST_F(Xlsx, TheRequiredColumnsAreTheOnesTheTemplateColours) {
             (step_heated ? every({"stepNumber (Step number)"}, of_steps) + ", " : std::string()) +
             every({"beamSize (Beam size)", "beamSizeUnits (Beam size units)"}) + ", " +
             every({"laserPower (Laser power)", "laserPowerUnits (Laser power units)"}, no_furnace) + ", " +
-            every({"furnaceTemperature (Furnace temperature)"}, " without a laser power") + ", " +
+            every({"furnaceTemperature (Furnace temperature)"}, "the one row that has no laser power") + ", " +
             every({"ar40Corr (40Ar (corrected))", "ar40CorrUncertainty (Uncertainty)", "ar39Corr (39Ar (corrected))",
                    "ar39CorrUncertainty (Uncertainty)", "ar38Corr (38Ar (corrected))",
                    "ar38CorrUncertainty (Uncertainty)", "ar37Corr (37Ar (corrected))",

@@ -75,7 +75,8 @@
 // with a laser power its furnace temperature, and the step number and the
 // two shares of the 39Ar are wanted only of a data point whose method is a
 // step heating. Their counts are of the rows they are wanted in, and say so
-// (`empty in 2 of 10 rows of a step-heating data point`).
+// (`empty in 2 of the 10 step-heating rows`, `empty in 1 of the 2 rows that
+// have no laser power`).
 //
 // Nothing is dropped without a word. A field that is set and has no column
 // (the template lacks one, or a newer template dropped it) is named in

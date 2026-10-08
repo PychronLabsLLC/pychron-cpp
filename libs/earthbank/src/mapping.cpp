@@ -1055,7 +1055,8 @@ Result<AgeCalc> age_calc_of(const std::string& name, const Members& dated, const
     out.decayConstantName = std::move(found);
   } else {
     notes.push_back(name + ": the decay constant the ages used (" + shown(constants.decay_constant) +
-                    " /a) is not one EarthBank names; decayConstantName was left out, to be named in the options");
+                    " /a) is not one EarthBank names; decayConstantName was left out. Give EarthBank's name for "
+                    "it, or a citation, as the `decay_constant` setting");
   }
   if (!options.air_ratio.empty()) {
     out.airRatioName = normalize_citation(options.air_ratio, false);
@@ -1063,7 +1064,8 @@ Result<AgeCalc> age_calc_of(const std::string& name, const Members& dated, const
     out.airRatioName = std::move(found);
   } else {
     notes.push_back(name + ": the atmospheric 40Ar/36Ar the ages used (" + shown(constants.atm4036) +
-                    ") is not one EarthBank names; airRatioName was left out, to be named in the options");
+                    ") is not one EarthBank names; airRatioName was left out. Give EarthBank's name for it, or a "
+                    "citation, as the `air_ratio` setting");
   }
 
   if (!so.flux_monitor.empty()) {

@@ -193,22 +193,23 @@ constexpr Restated kRestated[] = {
 //     (`arArMethod`, the data point's `arMethodName`) is one of the list's
 //     `Step-heating - ...`. A fusion has no step and no share of the gas.
 // `unless`: the column of the same sheet that, filled, excuses the row.
-// `rows`: which rows the column is wanted in, as the note says it.
+// The rows the column is wanted in, as the note says them: `kind` before
+// `rows` (`step-heating rows`), `lacking` after (`rows that have no furnace
+// temperature`).
 struct Conditional {
   std::string_view sheet, key;
   bool steps_only;
   std::string_view unless;
-  std::string_view rows;
+  std::string_view kind, lacking;
 };
 
-constexpr std::string_view kStepRows = " of a step-heating data point";
 constexpr Conditional kConditional[] = {
-    {"ArArMeasurement", "laserPower", false, "furnaceTemperature", " without a furnace temperature"},
-    {"ArArMeasurement", "laserPowerUnits", false, "furnaceTemperature", " without a furnace temperature"},
-    {"ArArMeasurement", "furnaceTemperature", false, "laserPower", " without a laser power"},
-    {"ArArMeasurement", "stepNumber", true, "", kStepRows},
-    {"ArArMeasurement", "Ar39KReleased", true, "", kStepRows},
-    {"ArArMeasurement", "cumulative39ArK", true, "", kStepRows},
+    {"ArArMeasurement", "laserPower", false, "furnaceTemperature", "", "furnace temperature"},
+    {"ArArMeasurement", "laserPowerUnits", false, "furnaceTemperature", "", "furnace temperature"},
+    {"ArArMeasurement", "furnaceTemperature", false, "laserPower", "", "laser power"},
+    {"ArArMeasurement", "stepNumber", true, "", "step-heating ", ""},
+    {"ArArMeasurement", "Ar39KReleased", true, "", "step-heating ", ""},
+    {"ArArMeasurement", "cumulative39ArK", true, "", "step-heating ", ""},
 };
 
 // How the list's methods of heating in steps begin (`Lookup Tables`, D2:D4).
@@ -359,17 +360,18 @@ class Notes {
     add(std::string(sheet_of(record)) + ": no column for " + whose + std::string(field));
   }
   // A row of `sheet` in which the Required column at `index` is wanted
-  // (`rows`: of which rows that is, when not of all), and whether it was left
-  // empty there.
+  // (`kind`, `lacking`: of which rows that is, when not of all; kConditional),
+  // and whether it was left empty there.
   void required(std::string_view sheet, std::size_t index, std::string_view key, std::string_view title,
-                std::string_view rows, bool empty) {
+                std::string_view kind, std::string_view lacking, bool empty) {
     auto found = std::find_if(required_.begin(), required_.end(), [&](const auto& one) { return one.first == sheet; });
     if (found == required_.end()) found = required_.insert(required_.end(), {std::string(sheet), {}});
     Wanted& column = found->second[index];
     if (column.name.empty()) {
       column.name = std::string(key);
       if (!title.empty()) column.name += " (" + std::string(title) + ")";
-      column.rows = std::string(rows);
+      column.kind = std::string(kind);
+      column.lacking = std::string(lacking);
     }
     ++column.wanted;
     if (empty) ++column.empty;
@@ -379,11 +381,7 @@ class Notes {
       std::string names;
       for (const auto& [index, column] : columns) {
         if (column.empty == 0) continue;
-        names += (names.empty() ? "" : ", ") + column.name + " empty in " +
-                 (column.empty == column.wanted
-                      ? std::string("every row")
-                      : std::to_string(column.empty) + " of " + std::to_string(column.wanted) + " rows") +
-                 column.rows;
+        names += (names.empty() ? "" : ", ") + column.name + " empty in " + column.where();
       }
       // The colour is all the template says: whether the importer holds a row
       // to it is the importer's to say.
@@ -398,8 +396,21 @@ class Notes {
 
  private:
   struct Wanted {
-    std::string name, rows;
+    std::string name, kind, lacking;
     int wanted = 0, empty = 0;
+    // `every row`, `3 of 16 rows`; for a column wanted of some rows only,
+    // with their number and which they are: `2 of the 10 step-heating rows`,
+    // `all 15 rows that have no furnace temperature`.
+    std::string where() const {
+      const std::string of = std::to_string(wanted);
+      if (kind.empty() && lacking.empty()) {
+        return empty == wanted ? "every row" : std::to_string(empty) + " of " + of + " rows";
+      }
+      const std::string rows = kind + (wanted == 1 ? "row" : "rows") +
+                               (lacking.empty() ? "" : (wanted == 1 ? " that has no " : " that have no ") + lacking);
+      if (empty < wanted) return std::to_string(empty) + " of the " + of + " " + rows;
+      return (wanted == 1 ? "the one " : "all " + of + " ") + rows;
+    }
   };
   std::vector<std::string> list_;
   std::set<std::string> seen_;
@@ -747,7 +758,7 @@ std::string in_list(std::string_view sheet, const Column& column, const std::str
 // `sheet` (kConditional), and of which rows it is wanted at all.
 struct Wanted {
   bool here = true;
-  std::string_view rows;
+  std::string_view kind, lacking;
 };
 
 bool is_empty(const ooxml::Cell& cell) {
@@ -760,11 +771,11 @@ Wanted wanted(const SheetPlan& sheet, const Column& column, const std::vector<oo
     if (c.sheet != sheet.spec.name || c.key != column.key) continue;
     if (c.steps_only) {
       const std::string method = folded(r.data_point.value("arMethodName", std::string()));
-      return {method.starts_with(kStepHeating), c.rows};
+      return {method.starts_with(kStepHeating), c.kind, c.lacking};
     }
     const auto other = std::find_if(sheet.columns.begin(), sheet.columns.end(),
                                     [&](const Column& one) { return one.key == c.unless; });
-    return {other == sheet.columns.end() || is_empty(cells[other->index]), c.rows};
+    return {other == sheet.columns.end() || is_empty(cells[other->index]), c.kind, c.lacking};
   }
   return {};
 }
@@ -795,7 +806,8 @@ std::vector<ooxml::Cell> row_of(const SheetPlan& sheet, const json& own, const R
     if (!column.required) continue;
     const Wanted of = wanted(sheet, column, cells, r);
     if (!of.here) continue;
-    notes.required(sheet.spec.name, column.index, column.key, column.title, of.rows, is_empty(cells[column.index]));
+    notes.required(sheet.spec.name, column.index, column.key, column.title, of.kind, of.lacking,
+                   is_empty(cells[column.index]));
   }
   return cells;
 }

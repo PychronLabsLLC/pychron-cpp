@@ -1021,6 +1021,16 @@ TEST(Mapping, AgeCalcNamesComeFromTheConstantsUsed) {
   EXPECT_FALSE(unnamed.age_calc.decayConstantName.has_value());
   EXPECT_TRUE(contains(note_with(unnamed, "airRatioName"), "300")) << note_with(unnamed, "airRatioName");
   EXPECT_TRUE(contains(note_with(unnamed, "decayConstantName"), "5.562e-10 /a")) << note_with(unnamed, "decayConstantName");
+  // Each says which setting names it.
+  EXPECT_TRUE(note_with(unnamed, "airRatioName")
+                  .ends_with("is not one EarthBank names; airRatioName was left out. Give EarthBank's name for it, "
+                             "or a citation, as the `air_ratio` setting"))
+      << note_with(unnamed, "airRatioName");
+  EXPECT_TRUE(note_with(unnamed, "decayConstantName")
+                  .ends_with("is not one EarthBank names; decayConstantName was left out. Give EarthBank's name for "
+                             "it, or a citation, as the `decay_constant` setting"))
+      << note_with(unnamed, "decayConstantName");
+  for (const std::string& note : unnamed.notes) EXPECT_FALSE(contains(note, "in the options")) << note;
   // The options name it.
   PublishOptions named;
   named.air_ratio = "Lee et al. 2006";
@@ -1029,6 +1039,7 @@ TEST(Mapping, AgeCalcNamesComeFromTheConstantsUsed) {
   EXPECT_EQ(with_names.age_calc.airRatioName, "Lee et al. 2006");
   EXPECT_EQ(with_names.age_calc.decayConstantName, "Carter et al. 2025");
   EXPECT_EQ(note_with(with_names, "airRatioName"), "");
+  EXPECT_EQ(note_with(with_names, "decayConstantName"), "");
 
   // No monitor on the analyses: no name, and a note.
   const Submission no_monitor = build_one(with_edit_all(step_sample(), [](pp::Analysis& a) { a.monitor = {}; }));
