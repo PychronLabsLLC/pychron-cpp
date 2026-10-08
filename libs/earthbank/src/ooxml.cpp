@@ -791,6 +791,153 @@ Result<std::vector<std::string>> read_cells(const pugi::xml_node& node, int row,
   return out;
 }
 
+// ===========================================================================
+// XML: what a sheet says about its columns
+// ===========================================================================
+
+std::string_view trimmed(std::string_view text) {
+  while (!text.empty() && is_space(text.front())) text.remove_prefix(1);
+  while (!text.empty() && is_space(text.back())) text.remove_suffix(1);
+  return text;
+}
+
+// "$C$2:$C$17", "C2" or "A2:B9" as an area; the `$` only say how a reference
+// behaves when it is copied.
+std::optional<Area> parse_reference(std::string_view text) {
+  std::string plain;
+  for (const char c : text) {
+    if (c != '$') plain += c;
+  }
+  return parse_area(plain);
+}
+
+// The columns of a validation's `sqref` ("N5 P5 R5", "BC5:BE5", "C5:C883"),
+// each once and in order. What is not an area of cells counts for nothing.
+std::vector<int> columns_of(std::string_view sqref) {
+  std::vector<int> out;
+  while (!sqref.empty()) {
+    const std::size_t space = sqref.find_first_of(" \t\r\n");
+    const auto area = parse_reference(sqref.substr(0, space));
+    sqref.remove_prefix(space == std::string_view::npos ? sqref.size() : space + 1);
+    if (!area) continue;
+    for (int column = std::min(area->left, area->right); column <= std::max(area->left, area->right); ++column) {
+      out.push_back(column);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+// `"Yes,No,N/A"`: the entries between the quotes, a doubled quote being one.
+std::vector<std::string> inline_entries(std::string_view quoted) {
+  std::string text;
+  for (std::size_t i = 1; i + 1 < quoted.size(); ++i) {
+    text += quoted[i];
+    if (quoted[i] == '"' && i + 2 < quoted.size() && quoted[i + 1] == '"') ++i;
+  }
+  std::vector<std::string> out;
+  std::string_view rest = text;
+  while (true) {
+    const std::size_t comma = rest.find(',');
+    const std::string_view entry = trimmed(rest.substr(0, comma));
+    if (!entry.empty()) out.emplace_back(entry);
+    if (comma == std::string_view::npos) break;
+    rest.remove_prefix(comma + 1);
+  }
+  return out;
+}
+
+// Fills in where the list of `formula` is: cells of one column, on the sheet
+// it names or on `own_sheet`; entries in quotes; or a name the workbook
+// defines as either (followed a few names deep, so that a name defined as
+// itself ends). Anything else leaves the validation unresolved.
+void resolve_list(ListValidation& out, std::string_view formula, std::string_view own_sheet,
+                  const std::map<std::string, std::string, std::less<>>& defined_names, int depth = 0) {
+  formula = trimmed(formula);
+  if (!formula.empty() && formula.front() == '=') formula = trimmed(formula.substr(1));
+  if (formula.size() >= 2 && formula.front() == '"' && formula.back() == '"') {
+    out.source = ListValidation::Source::Inline;
+    out.entries = inline_entries(formula);
+    return;
+  }
+
+  // 'Lookup Tables'!$C$2:$C$17, Lists!A1:A9, $K$2:$K$7.
+  std::string sheet(own_sheet);
+  std::string_view cells = formula;
+  if (const std::size_t bang = formula.rfind('!'); bang != std::string_view::npos) {
+    std::string_view name = formula.substr(0, bang);
+    cells = formula.substr(bang + 1);
+    sheet.clear();
+    if (name.size() >= 2 && name.front() == '\'' && name.back() == '\'') {
+      name = name.substr(1, name.size() - 2);
+      for (std::size_t i = 0; i < name.size(); ++i) {
+        sheet += name[i];
+        if (name[i] == '\'' && i + 1 < name.size() && name[i + 1] == '\'') ++i;
+      }
+    } else {
+      sheet = std::string(name);
+    }
+  }
+  if (const auto area = parse_reference(cells); area && area->left == area->right && !sheet.empty()) {
+    out.source = ListValidation::Source::Range;
+    out.sheet = std::move(sheet);
+    out.column = area->left;
+    out.first_row = std::min(area->top, area->bottom);
+    out.last_row = std::max(area->top, area->bottom);
+    return;
+  }
+  if (const auto named = defined_names.find(formula); named != defined_names.end() && depth < 4) {
+    resolve_list(out, named->second, own_sheet, defined_names, depth + 1);
+  }
+}
+
+// One <dataValidation> of either kind: `sqref` is an attribute or a child
+// (xm:sqref), the formula the text of <formula1> or of the <xm:f> in it.
+ListValidation list_validation(const pugi::xml_node& node, std::string_view own_sheet,
+                               const std::map<std::string, std::string, std::less<>>& defined_names) {
+  ListValidation out;
+  std::string sqref = node.attribute("sqref").value();
+  if (const pugi::xml_node element = child(node, "sqref"); element) sqref = text_of(element);
+  out.columns = columns_of(sqref);
+  const pugi::xml_node formula = child(node, "formula1");
+  const pugi::xml_node inner = child(formula, "f");
+  out.formula = std::string(trimmed(text_of(inner ? inner : formula)));
+  resolve_list(out, out.formula, own_sheet, defined_names);
+  return out;
+}
+
+// The fill colour of each cell style (cellXfs, by index), for cell_fill.
+std::vector<std::string> fills_of(const pugi::xml_node& style_sheet) {
+  std::vector<std::string> fills;
+  for (const pugi::xml_node& fill : child(style_sheet, "fills").children()) {
+    if (!is_element(fill, "fill")) continue;
+    std::string colour;
+    const pugi::xml_node pattern = child(fill, "patternFill");
+    const pugi::xml_node fg = child(pattern, "fgColor");
+    if (std::string_view(pattern.attribute("patternType").value()) == "solid" && fg) {
+      if (const pugi::xml_attribute rgb = fg.attribute("rgb"); rgb) {
+        colour = rgb.value();
+      } else if (const pugi::xml_attribute theme = fg.attribute("theme"); theme) {
+        colour = std::string("theme ") + theme.value();
+        if (const pugi::xml_attribute tint = fg.attribute("tint"); tint) colour += std::string(" tint ") + tint.value();
+      } else if (const pugi::xml_attribute indexed = fg.attribute("indexed"); indexed) {
+        colour = std::string("indexed ") + indexed.value();
+      }
+    }
+    fills.push_back(std::move(colour));
+  }
+  std::vector<std::string> out;
+  for (const pugi::xml_node& xf : child(style_sheet, "cellXfs").children()) {
+    if (!is_element(xf, "xf")) continue;
+    const auto fill = parse_int(xf.attribute("fillId").value());
+    out.push_back(fill && *fill >= 0 && static_cast<std::size_t>(*fill) < fills.size()
+                      ? fills[static_cast<std::size_t>(*fill)]
+                      : std::string());
+  }
+  return out;
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -867,7 +1014,7 @@ Result<Workbook> Workbook::open(const std::filesystem::path& template_file) {
   }
 
   std::map<std::string, std::string, std::less<>> targets;  // relationship id -> part
-  std::string shared_strings_part;
+  std::string shared_strings_part, styles_part;
   for (const pugi::xml_node& relationship : rels.document_element().children()) {
     if (!is_element(relationship, "Relationship")) continue;
     const auto name = part_name(relationship.attribute("Target").value());
@@ -875,6 +1022,7 @@ Result<Workbook> Workbook::open(const std::filesystem::path& template_file) {
     targets.emplace(relationship.attribute("Id").value(), *name);
     const std::string_view type = relationship.attribute("Type").value();
     if (type.ends_with("/sharedStrings")) shared_strings_part = *name;
+    if (type.ends_with("/styles")) styles_part = *name;
   }
 
   Workbook book;
@@ -895,6 +1043,12 @@ Result<Workbook> Workbook::open(const std::filesystem::path& template_file) {
     book.sheets_.push_back({name, entry->second});
   }
   if (book.sheets_.empty()) return not_a_workbook("it names no sheets");
+  for (const pugi::xml_node& name : child(root, "definedNames").children()) {
+    if (is_element(name, "definedName")) book.defined_names_.emplace(name.attribute("name").value(), text_of(name));
+  }
+  // The styles are read when a fill is asked for, not here: a workbook is
+  // written to without them.
+  if (const auto entry = index.find(styles_part); entry != index.end()) book.styles_entry_ = entry->second;
 
   if (!shared_strings_part.empty()) {
     const auto xml = part(shared_strings_part);
@@ -958,6 +1112,140 @@ Result<std::vector<std::string>> Workbook::row_values(std::string_view sheet_nam
     if (at_row == row) return read_cells(each, row, shared_strings_, where);
   }
   return std::vector<std::string>{};
+}
+
+Result<std::vector<ListValidation>> Workbook::list_validations(std::string_view sheet_name) const {
+  const Sheet* sheet = find_sheet(sheet_name);
+  if (sheet == nullptr) return fail(ErrorKind::Config, "the workbook has no sheet '" + std::string(sheet_name) + "'");
+  const auto xml = sheet_xml(*sheet);
+  if (!xml) return fail(xml.error());
+  pugi::xml_document doc;
+  if (auto parsed = parse(doc, *xml, "sheet '" + sheet->name + "'"); !parsed) return fail(parsed.error());
+
+  std::vector<ListValidation> out;
+  const auto take = [&](const pugi::xml_node& validations) {
+    for (const pugi::xml_node& each : validations.children()) {
+      if (!is_element(each, "dataValidation")) continue;
+      if (std::string_view(each.attribute("type").value()) != "list") continue;
+      out.push_back(list_validation(each, sheet->name, defined_names_));
+    }
+  };
+  for (const pugi::xml_node& each : doc.document_element().children()) {
+    if (is_element(each, "dataValidations")) take(each);
+    if (!is_element(each, "extLst")) continue;
+    for (const pugi::xml_node& ext : each.children()) {
+      if (!is_element(ext, "ext")) continue;
+      for (const pugi::xml_node& inner : ext.children()) {
+        if (is_element(inner, "dataValidations")) take(inner);
+      }
+    }
+  }
+  return out;
+}
+
+Result<std::vector<std::string>> Workbook::column_values(std::string_view sheet_name, int column, int first_row,
+                                                         int last_row) const {
+  const Sheet* sheet = find_sheet(sheet_name);
+  if (sheet == nullptr) return fail(ErrorKind::Config, "the workbook has no sheet '" + std::string(sheet_name) + "'");
+  const std::string where = "sheet '" + sheet->name + "'";
+  if (column < 1 || column > kMaxColumn) {
+    return fail(ErrorKind::Config, where + " has no column " + std::to_string(column));
+  }
+  if (first_row < 1 || last_row > kMaxRow || first_row > last_row) {
+    return fail(ErrorKind::Config,
+                where + " has no rows " + std::to_string(first_row) + " to " + std::to_string(last_row));
+  }
+  const auto xml = sheet_xml(*sheet);
+  if (!xml) return fail(xml.error());
+  pugi::xml_document doc;
+  if (auto parsed = parse(doc, *xml, where); !parsed) return fail(parsed.error());
+  const pugi::xml_node data = child(doc.document_element(), "sheetData");
+  if (!is_element(doc.document_element(), "worksheet") || !data) {
+    return fail(ErrorKind::Protocol, where + " is not a worksheet");
+  }
+
+  std::vector<std::string> out(static_cast<std::size_t>(last_row - first_row) + 1);
+  int at_row = 0;
+  for (const pugi::xml_node& each : data.children()) {
+    if (!is_element(each, "row")) continue;
+    const auto number = row_number(each, at_row, where);
+    if (!number) return fail(number.error());
+    at_row = *number;
+    if (at_row < first_row || at_row > last_row) continue;
+    auto cells = read_cells(each, at_row, shared_strings_, where);
+    if (!cells) return fail(cells.error());
+    if (cells->size() >= static_cast<std::size_t>(column)) {
+      out[static_cast<std::size_t>(at_row - first_row)] = std::move((*cells)[static_cast<std::size_t>(column) - 1]);
+    }
+  }
+  return out;
+}
+
+Result<std::vector<std::string>> Workbook::style_fills() const {
+  if (!styles_entry_) return std::vector<std::string>{};
+  ZipReader reader;
+  if (auto opened = reader.open(*archive_); !opened) return fail(opened.error());
+  const auto xml = reader.extract(*styles_entry_);
+  if (!xml) return fail(ErrorKind::Protocol, "the workbook's styles: " + xml.error().what);
+  pugi::xml_document doc;
+  if (auto parsed = parse(doc, *xml, "the workbook's styles"); !parsed) return fail(parsed.error());
+  return fills_of(doc.document_element());
+}
+
+Result<std::vector<std::string>> Workbook::row_fills(std::string_view sheet_name, int row) const {
+  const Sheet* sheet = find_sheet(sheet_name);
+  if (sheet == nullptr) return fail(ErrorKind::Config, "the workbook has no sheet '" + std::string(sheet_name) + "'");
+  const std::string where = "sheet '" + sheet->name + "'";
+  if (row < 1 || row > kMaxRow) return fail(ErrorKind::Config, where + " has no row " + std::to_string(row));
+  const auto fills = style_fills();
+  if (!fills) return fail(fills.error());
+  const auto xml = sheet_xml(*sheet);
+  if (!xml) return fail(xml.error());
+  pugi::xml_document doc;
+  if (auto parsed = parse(doc, *xml, where); !parsed) return fail(parsed.error());
+  const pugi::xml_node data = child(doc.document_element(), "sheetData");
+  if (!is_element(doc.document_element(), "worksheet") || !data) {
+    return fail(ErrorKind::Protocol, where + " is not a worksheet");
+  }
+
+  std::vector<std::string> out;
+  int at_row = 0;
+  for (const pugi::xml_node& each : data.children()) {
+    if (!is_element(each, "row")) continue;
+    const auto number = row_number(each, at_row, where);
+    if (!number) return fail(number.error());
+    at_row = *number;
+    if (at_row != row) continue;
+    int column = 0;
+    for (const pugi::xml_node& cell : each.children()) {
+      if (!is_element(cell, "c")) continue;
+      // Placed as read_cells places it: by its reference, else after the
+      // cell before it.
+      const pugi::xml_attribute r = cell.attribute("r");
+      const auto ref = r ? parse_cell_ref(r.value()) : std::nullopt;
+      if ((r && !ref) || (!r && column >= kMaxColumn)) {
+        return fail(ErrorKind::Protocol, where + " row " + std::to_string(row) + " has a cell that has no place");
+      }
+      column = ref ? ref->column : column + 1;
+      if (out.size() < static_cast<std::size_t>(column)) out.resize(static_cast<std::size_t>(column));
+      const auto style = parse_int(cell.attribute("s").value());
+      if (style && *style >= 0 && static_cast<std::size_t>(*style) < fills->size()) {
+        out[static_cast<std::size_t>(column) - 1] = (*fills)[static_cast<std::size_t>(*style)];
+      }
+    }
+    break;
+  }
+  return out;
+}
+
+Result<std::string> Workbook::cell_fill(std::string_view sheet_name, int row, int column) const {
+  if (column < 1 || column > kMaxColumn) {
+    return fail(ErrorKind::Config, "sheet '" + std::string(sheet_name) + "' has no column " + std::to_string(column));
+  }
+  auto fills = row_fills(sheet_name, row);
+  if (!fills) return fail(fills.error());
+  if (fills->size() < static_cast<std::size_t>(column)) return std::string();
+  return std::move((*fills)[static_cast<std::size_t>(column) - 1]);
 }
 
 Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,

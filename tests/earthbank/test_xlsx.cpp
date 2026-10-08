@@ -250,12 +250,28 @@ void set_env(const char* name, const char* value) {
 
 // ---- What a cell should hold --------------------------------------------------
 
+// Every value of the two fixture samples that is written otherwise than the
+// mapping gives it: the entry of the template's list it is.
+struct Rewrite {
+  std::string_view sheet, key, given, written;
+};
+constexpr Rewrite kRewrites[] = {
+    {"ArArAgeCalc", "fluxMonitor", "FC-2 28.201 Ma",
+     "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)"},
+    {"Samples", "material", "biotite", "Biotite"},
+    {"Samples", "material", "sanidine", "Sanidine"},
+};
+
 // The value as the workbook shows it: a time to the minute in the
-// measurement sheet, a collection date day first, a flag as Yes or No.
+// measurement sheet, a collection date day first, a flag as Yes or No, a
+// term as its list spells it.
 json shown(const std::string& sheet, const std::string& key, const json& value) {
   if (value.is_boolean()) return value.get<bool>() ? "Yes" : "No";
   if (!value.is_string()) return value;
   const std::string text = value.get<std::string>();
+  for (const Rewrite& rewrite : kRewrites) {
+    if (rewrite.sheet == sheet && rewrite.key == key && rewrite.given == text) return std::string(rewrite.written);
+  }
   if (sheet == "ArArMeasurement" && key == "analysisTime") {
     return text.substr(0, 10) + " " + text.substr(11, 5) + " UTC";
   }
@@ -361,6 +377,15 @@ void expect_sample_workbook(const fs::path& file, const std::vector<Submission>&
 std::vector<std::string> file_names(const std::vector<fs::path>& files) {
   std::vector<std::string> out;
   for (const fs::path& file : files) out.push_back(file.filename().string());
+  return out;
+}
+
+// The notes that have `part` in them, in their order.
+std::vector<std::string> notes_with(const std::vector<std::string>& notes, std::string_view part) {
+  std::vector<std::string> out;
+  for (const std::string& note : notes) {
+    if (note.find(part) != std::string::npos) out.push_back(note);
+  }
   return out;
 }
 
@@ -586,7 +611,7 @@ TEST_F(Xlsx, EveryRecordLandsInItsSheetUnderItsColumn) {
   expect_arar_workbook(result.files[0], submissions);
   expect_sample_workbook(result.files[1], submissions);
   // What the mapping fills all has a place.
-  EXPECT_EQ(result.notes, std::vector<std::string>{});
+  EXPECT_EQ(notes_with(result.notes, "no column for"), std::vector<std::string>{});
 
   // A few by hand, so that the check above is not only the census against
   // itself.
@@ -625,7 +650,7 @@ TEST_F(Xlsx, EveryRecordLandsInItsSheetUnderItsColumn) {
 
   const std::vector<Row> samples = rows_of(result.files[1], "Samples");
   EXPECT_EQ(samples[1].at("sampleName"), "S-STEP");
-  EXPECT_EQ(samples[1].at("material"), "sanidine");
+  EXPECT_EQ(samples[1].at("material"), "Sanidine");  // as the template's list spells it
   EXPECT_EQ(samples[1].at("igsn"), "IEXXX0001");
   EXPECT_EQ(std::stod(samples[1].at("latitude")), 37.75);
   EXPECT_EQ(std::stod(samples[1].at("longitude")), -106.9);
@@ -645,13 +670,21 @@ TEST_F(Xlsx, EveryFieldOfEveryRecordIsWrittenOrNoted) {
 
   // Each field the census lists without a column is noted, except the three
   // that say again what a column holds (here they agree with it), and no id.
-  EXPECT_EQ(sorted(result.notes), sorted({
-                                      "ArArMeasurement: no column for ratio40Arx36ArTrapped",
-                                      "ArArMeasurement: no column for ratio40Arx36ArTrappedUncertainty",
-                                      "ArArAgeCalc: no column for comment",
-                                      "Samples: no column for the location's description",
-                                      "Samples: no column for the location's name",
-                                  }));
+  EXPECT_EQ(sorted(notes_with(result.notes, "no column for")),
+            sorted({
+                "ArArMeasurement: no column for ratio40Arx36ArTrapped",
+                "ArArMeasurement: no column for ratio40Arx36ArTrappedUncertainty",
+                "ArArAgeCalc: no column for comment",
+                "Samples: no column for the location's description",
+                "Samples: no column for the location's name",
+            }));
+  // Every Required column holds something; the made-up text in the columns
+  // that have a list is in no list, and each is said (the J uncertainty type
+  // is the one real term among them).
+  EXPECT_EQ(notes_with(result.notes, "Required"), std::vector<std::string>{});
+  const std::vector<std::string> misses = notes_with(result.notes, "is not in the template's list");
+  EXPECT_EQ(misses.size(), 7u + 2u * 3u + 5u + 3u + 5u) << ::testing::PrintToString(misses);
+  EXPECT_EQ(result.notes.size(), 5u + misses.size()) << ::testing::PrintToString(result.notes);
 
   // Every named column of the three sheets that have no empty ones is full.
   for (const char* sheet : {"ArArMeasurement", "ArArAliquot", "ArArAgeSummary", "ArArAgeCalc"}) {
@@ -731,7 +764,8 @@ TEST_F(Xlsx, DatesTimesAndFlagsAreInTheSheetsOwnForm) {
   s.data_point.analysisDate = "2024-03-05T06:07:08Z";  // a date is cut out of a time
   s.age_summary.preferredAge = false;
   XlsxResult result = exported({s});
-  EXPECT_EQ(result.notes.size(), 5u);  // those of the fields without a column
+  EXPECT_EQ(notes_with(result.notes, "no column for").size(), 5u);
+  EXPECT_EQ(notes_with(result.notes, "written as it is"), std::vector<std::string>{});
   const std::vector<Row> measurements = rows_of(result.files[0], "ArArMeasurement");
   EXPECT_EQ(measurements.at(0).at("analysisTime"), "2024-03-05 06:07 UTC");
   EXPECT_EQ(measurements.at(1).at("analysisTime"), "2024-03-05 23:59 UTC");  // cut, not rounded
@@ -906,7 +940,7 @@ TEST_F(Xlsx, RowsPastTheFormattedOnesAreSaidOnce) {
   }
   options_.per_sample = false;
   const XlsxResult result = exported(four);
-  EXPECT_EQ(result.notes,
+  EXPECT_EQ(notes_with(result.notes, "formatted rows"),
             std::vector<std::string>{"ArArAgeSummary: the rows after row 7 are past the template's formatted rows "
                                      "and are plain"});
   EXPECT_EQ(rows_of(result.files[0], "ArArAgeSummary").size(), 4u);
@@ -1035,7 +1069,8 @@ TEST_F(Xlsx, AFieldTheTemplateLacksIsNoted) {
   const std::vector<Submission> submissions = fixtures();
   ASSERT_TRUE(submissions[0].age_summary.mswd.has_value());
   XlsxResult result = exported(submissions);
-  EXPECT_EQ(result.notes, std::vector<std::string>{"ArArAgeSummary: no column for mswd"});  // once, for two samples
+  EXPECT_EQ(notes_with(result.notes, "no column for"),
+            std::vector<std::string>{"ArArAgeSummary: no column for mswd"});  // once, for two samples
   const std::vector<Row> summaries = rows_of(result.files[0], "ArArAgeSummary");
   ASSERT_EQ(summaries.size(), 2u);
   EXPECT_FALSE(summaries[0].contains("mswd"));
@@ -1051,7 +1086,8 @@ TEST_F(Xlsx, AFieldTheTemplateLacksIsNoted) {
       edited_templates("xl/worksheets/sheet2.xml", [](std::string& xml) { remove_cell(xml, "A4"); });
   out_ = dir_ / "unlinked";
   result = exported(submissions);
-  EXPECT_EQ(result.notes, std::vector<std::string>{"ArArMeasurement: no column for datapointName"});
+  EXPECT_EQ(notes_with(result.notes, "no column for"),
+            std::vector<std::string>{"ArArMeasurement: no column for datapointName"});
   EXPECT_FALSE(rows_of(result.files[0], "ArArMeasurement").at(0).contains("datapointName"));
 }
 
@@ -1203,6 +1239,296 @@ TEST_F(Xlsx, ASampleIsWrittenOnce) {
   // Without the Sample workbook the question does not arise.
   options_.samples = false;
   EXPECT_EQ(exported(submissions).files.size(), 1u);
+}
+
+// ---- What the template says a column may hold ------------------------------------
+
+const char* const kKuiper = "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)";
+
+TEST_F(Xlsx, WhatAnExportOfTheFixturesSays) {
+  const std::vector<Submission> submissions = fixtures();
+  const XlsxResult result = exported(submissions);
+  // Everything a user is told about the two samples, in order: what was
+  // rewritten, then what the template wants and was not given.
+  EXPECT_EQ(result.notes,
+            (std::vector<std::string>{
+                std::string("ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma' written as the list's '") + kKuiper + "'",
+                "Samples.material: 2 value(s) written in the list's spelling",
+                "ArArDataPoints: Required by the template and empty in at least one row, to be filled in before "
+                "importing: arArSetUp (Analytical Key), irradiationBatchID (Irradiation Batch ID), analysisScale "
+                "(Analysis Scale)",
+                "ArArMeasurement: Required by the template and empty in at least one row, to be filled in before "
+                "importing: stepNumber (Step number), beamSize (Beam size), beamSizeUnits (Beam size units), "
+                "furnaceTemperature (Furnace temperature), Ar39KReleased (39ArK released), cumulative39ArK "
+                "(Cumulative 39ArK released)",
+                "ArArAliquot: Required by the template and empty in at least one row, to be filled in before "
+                "importing: aliquotSize (Aliquot size), aliquotUnits (Aliquot size unit)",
+                "Samples: Required by the template and empty in at least one row, to be filled in before importing: "
+                "latitude (Latitude (WGS84)), longitude (Longitude (WGS84))",
+            }));
+
+  // The rewrites, in the cells.
+  for (const Row& row : rows_of(result.files[0], "ArArAgeCalc")) EXPECT_EQ(row.at("fluxMonitor"), kKuiper);
+  const std::vector<Row> samples = rows_of(result.files[1], "Samples");
+  EXPECT_EQ(samples.at(0).at("material"), "Biotite");
+  EXPECT_EQ(samples.at(1).at("material"), "Sanidine");
+  // A column without a list is written as it was given: the data point's
+  // mineral and rock are search terms.
+  const std::vector<Row> points = rows_of(result.files[0], "ArArDataPoints");
+  EXPECT_EQ(points.at(0).at("mineral"), "biotite");
+  EXPECT_EQ(points.at(1).at("mineral"), "sanidine");
+  EXPECT_EQ(points.at(1).at("lithology"), "ash-flow tuff");
+  // What the mapping writes into a listed column is otherwise an entry of
+  // its list already.
+  EXPECT_EQ(points.at(0).at("arArMethod"), "Total fusion - laser");
+  EXPECT_EQ(rows_of(result.files[0], "ArArAgeSummary").at(1).at("ageCalcType"), "Plateau Age");
+
+  // The same, one workbook per sample: each thing still said once.
+  out_ = dir_ / "each";
+  options_.per_sample = true;
+  EXPECT_EQ(exported(submissions).notes, result.notes);
+
+  // With the set-up and the irradiation named the data point's sheet wants
+  // only the scale.
+  PublishOptions publish;
+  publish.setup = "A Noble Gas Lab, Helix MC";
+  publish.samples["S-FUS"].irradiation = "NM-901";
+  auto named = build_submissions(testing::both_samples(), publish);
+  ASSERT_TRUE(named.has_value());
+  out_ = dir_ / "named";
+  EXPECT_EQ(notes_with(exported(*named).notes, "ArArDataPoints"),
+            std::vector<std::string>{"ArArDataPoints: Required by the template and empty in at least one row, to be "
+                                     "filled in before importing: analysisScale (Analysis Scale)"});
+}
+
+TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
+  std::vector<Submission> submissions = fixtures();
+  Submission& fusion = submissions[0];
+  Submission& step = submissions[1];
+  // Another case, spaces around: the list's entry is meant.
+  fusion.age_calc.decayConstantName = "steiger and jager, 1977";
+  step.age_calc.decayConstantName = "  Min et al. 2000 ";
+  for (Measurement& m : step.measurements) m.plateauStepName = *m.plateauStepName == "Yes" ? "YES" : "no";
+  fusion.data_point.analysisScaleName = "single grain";
+  // The list has `Renne et al. 2011 `, with a space after it: without the
+  // space it is the entry and nothing was respelled.
+  fusion.age_calc.airRatioName = "Nier 1950";
+  step.data_point.arMethodName = "Step-heating - laser";
+  // In no list.
+  fusion.age_calc.airRatioName = "Mark et al. 2011";
+  fusion.age_summary.interpretationName = "eruption age";
+  step.age_summary.interpretationName = "eruption age";
+  fusion.sample.sampleKindName = "Tephra";
+  fusion.sample.materialName = "biotite separate";
+  // The Sample template's lists of sample kinds and archives go on below the
+  // rows their validations name (`Mine Waste` in A17 of A2:A16, nine archives
+  // after F28): what the sheet lists under the same heading is of the list.
+  step.sample.sampleKindName = "mine waste";
+  step.sample.archiveName = "University of Bergen";
+  // Monitors: one of the list as it stands, one found by name and age, one
+  // the list has not, one that could be two entries.
+  fusion.age_calc.fluxMonitorName = kKuiper;
+  step.age_calc.fluxMonitorName = "ACs 1.1851 Ma";
+  Submission third = step;
+  third.datapoint_name = "S-STEP again";
+  third.age_calc.fluxMonitorName = "Bishop Tuff sanidine 0.7666 Ma";
+  Submission fourth = step;
+  fourth.datapoint_name = "S-STEP once more";
+  fourth.age_calc.fluxMonitorName = "Mt Domedary Biotite 99.44 Ma";
+  submissions.push_back(third);
+  submissions.push_back(fourth);
+
+  const XlsxResult result = exported(submissions);
+  const std::vector<Row> calc = rows_of(result.files[0], "ArArAgeCalc");
+  ASSERT_EQ(calc.size(), 4u);
+  EXPECT_EQ(calc[0].at("decayConstant"), "Steiger and Jager, 1977");
+  EXPECT_EQ(calc[1].at("decayConstant"), "Min et al. 2000");
+  EXPECT_EQ(calc[0].at("airRatio"), "Mark et al. 2011");  // as given
+  EXPECT_EQ(calc[1].at("airRatio"), "Lee et al. 2006");
+  EXPECT_EQ(calc[0].at("fluxMonitor"), kKuiper);
+  EXPECT_EQ(calc[1].at("fluxMonitor"), "Alder Creek Rhyolite Sanidine (ACs) from Schaen et al. 2020 (1.1851 Ma)");
+  EXPECT_EQ(calc[2].at("fluxMonitor"), "Bishop Tuff sanidine 0.7666 Ma");  // as given
+  EXPECT_EQ(calc[3].at("fluxMonitor"), "Mt Domedary Biotite 99.44 Ma");    // as given
+  const std::vector<Row> measurements = rows_of(result.files[0], "ArArMeasurement");
+  EXPECT_EQ(measurements.at(6).at("plateauStep"), "No");
+  EXPECT_EQ(measurements.at(6 + 2).at("plateauStep"), "Yes");
+  EXPECT_EQ(rows_of(result.files[0], "ArArDataPoints").at(0).at("analysisScale"), "Single Grain");
+  EXPECT_EQ(rows_of(result.files[0], "ArArAgeSummary").at(0).at("interpretation"), "eruption age");
+  const std::vector<Row> samples = rows_of(result.files[1], "Samples");
+  EXPECT_EQ(samples.at(0).at("sampleKind"), "Tephra");
+  EXPECT_EQ(samples.at(0).at("material"), "biotite separate");
+  EXPECT_EQ(samples.at(1).at("material"), "Sanidine");
+  EXPECT_EQ(samples.at(1).at("sampleKind"), "Mine Waste");
+  EXPECT_EQ(samples.at(1).at("lastKnownArchive"), "University of Bergen");
+
+  std::vector<std::string> said;
+  for (const std::string& note : result.notes) {
+    if (note.find("Required") == std::string::npos) said.push_back(note);
+  }
+  EXPECT_EQ(said, (std::vector<std::string>{
+                      // As they came up: sheet by sheet, row by row; a value twice is said once.
+                      "ArArAgeSummary.interpretation: 'eruption age' is not in the template's list",
+                      "ArArAgeSummary: the rows after row 7 are past the template's formatted rows and are plain",
+                      "ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's list",
+                      "ArArAgeCalc.fluxMonitor: 'ACs 1.1851 Ma' written as the list's 'Alder Creek Rhyolite Sanidine "
+                      "(ACs) from Schaen et al. 2020 (1.1851 Ma)'",
+                      "ArArAgeCalc.fluxMonitor: 'Bishop Tuff sanidine 0.7666 Ma' is not in the template's list",
+                      "ArArAgeCalc.fluxMonitor: 'Mt Domedary Biotite 99.44 Ma' could be more than one entry of the "
+                      "template's list and was written as given",
+                      "Samples.sampleKind: 'Tephra' is not in the template's list",
+                      "Samples.material: 'biotite separate' is not in the template's list",
+                      // Then how many cells were put in the list's spelling, column by column. The three
+                      // step-heated data points have ten measurements each.
+                      "ArArDataPoints.analysisScale: 1 value(s) written in the list's spelling",
+                      "ArArMeasurement.plateauStep: 30 value(s) written in the list's spelling",
+                      "ArArAgeCalc.decayConstant: 4 value(s) written in the list's spelling",
+                      "Samples.sampleKind: 1 value(s) written in the list's spelling",
+                      "Samples.material: 1 value(s) written in the list's spelling",
+                  }));
+}
+
+TEST_F(Xlsx, TheCheckSaysWhatTheExportWould) {
+  std::vector<Submission> submissions = fixtures();
+  submissions[0].age_calc.fluxMonitorName = "Bishop Tuff sanidine 0.7666 Ma";
+  submissions[1].measurements[0].ratio40Arx36ArTrapped = 300.0;  // a field without a column
+  for (const bool per_sample : {false, true}) {
+    for (const bool with_samples : {true, false}) {
+      options_.per_sample = per_sample;
+      options_.samples = with_samples;
+      const auto checked = check_against_template(submissions, options_);
+      ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
+      EXPECT_FALSE(fs::exists(out_)) << "the check wrote something";
+      EXPECT_EQ(*checked, exported(submissions).notes);
+      EXPECT_EQ(notes_with(*checked, "Bishop").size(), 1u);
+      EXPECT_EQ(notes_with(*checked, "no column for").size(), 1u);
+      EXPECT_EQ(notes_with(*checked, "Samples").empty(), !with_samples);
+      fs::remove_all(out_);
+    }
+  }
+  // And refuses what the export refuses, with its words.
+  options_ = XlsxOptions{};
+  options_.template_dir = template_dir();
+  submissions[1].datapoint_name = submissions[0].datapoint_name;
+  const auto same = check_against_template(submissions, options_);
+  ASSERT_FALSE(same.has_value());
+  EXPECT_EQ(same.error().kind, ErrorKind::Config);
+  EXPECT_EQ(same.error().what, refused(submissions).what);
+  EXPECT_FALSE(check_against_template({}, options_).has_value());
+  options_.template_dir = dir_ / "nowhere";
+  const auto missing = check_against_template(fixtures(), options_);
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().kind, ErrorKind::Io);
+  EXPECT_NE(missing.error().what.find((dir_ / "nowhere" / kArAr).string()), std::string::npos);
+  // The default templates, when none are named.
+  EXPECT_TRUE(check_against_template(fixtures()).has_value());
+}
+
+// The columns each template marks as Required, as this reads the mark: the
+// title in row 3 filled with the colour of the legend's `Required` cell
+// (`Field Definitions`!A5, `Column Descriptions`!A1; FFFAD9D6 in both). A
+// submission that holds a name and nothing else leaves every one of them
+// empty but the two names.
+TEST_F(Xlsx, TheRequiredColumnsAreTheOnesTheTemplateColours) {
+  Submission bare;
+  bare.datapoint_name = "bare";
+  bare.sample.name = "S-BARE";
+  bare.aliquots.emplace_back();
+  bare.measurements.emplace_back();
+  const auto checked = check_against_template({bare}, options_);
+  ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
+  const std::string lead = ": Required by the template and empty in at least one row, to be filled in before "
+                           "importing: ";
+  EXPECT_EQ(
+      *checked,
+      (std::vector<std::string>{
+          "ArArDataPoints" + lead +
+              "arArSetUp (Analytical Key), arArMethod (Analytical Method), irradiationBatchID (Irradiation Batch "
+              "ID), analysisScale (Analysis Scale), analyticalUncertaintyType (Analytical Uncertainty Type), "
+              "analyticalUncertaintyUnit (Analytical Uncertainty Units), apparentAgeUncertaintyType (Apparent Age "
+              "Uncertainty Type), apparentAgeUncertaintyUnit (Apparent Age Uncertainty Units), jValueUncertaintyType "
+              "(J Value Uncertainty Type), jValueUncertaintyUnit (J Value Uncertainty Units), analysisUnits (Units "
+              "for analyses)",
+          "ArArMeasurement" + lead +
+              "stepNumber (Step number), beamSize (Beam size), beamSizeUnits (Beam size units), laserPower (Laser "
+              "power), laserPowerUnits (Laser power units), furnaceTemperature (Furnace temperature), ar40Corr (40Ar "
+              "(corrected)), ar40CorrUncertainty (Uncertainty), ar39Corr (39Ar (corrected)), ar39CorrUncertainty "
+              "(Uncertainty), ar38Corr (38Ar (corrected)), ar38CorrUncertainty (Uncertainty), ar37Corr (37Ar "
+              "(corrected)), ar37CorrUncertainty (Uncertainty), ar36Corr (36Ar (corrected)), ar36CorrUncertainty "
+              "(Uncertainty), radiogenicArgon (Radiogenic argon proportion (%40Ar*)), ratio40Arx39ArK "
+              "(40Ar*/39ArK), ratio40Arx39ArKUncertainty (Uncertainty), Ar39KReleased (39ArK released), "
+              "cumulative39ArK (Cumulative 39ArK released), jValue (J Value), jValueUncertainty (J Value "
+              "Uncertainty), apparentAge (Apparent age), apparentAgeUncertainty (Uncertainty)",
+          "ArArAliquot" + lead + "aliquotSize (Aliquot size), aliquotUnits (Aliquot size unit)",
+          "ArArAgeSummary" + lead +
+              "age (Age (Ma)), ageUncertainty (Uncertainty of Age (Ma)), calculatedAgeUncertaintyType (Calculated "
+              "Age Uncertainty Type), calculatedAgeUncertaintyTypeUnits (Calculated Age Uncertainty Units)",
+          "ArArAgeCalc" + lead +
+              "decayConstant (Decay Constant Reference), airRatio (Trapped 40Ar/36Ar (Air) Ratio Reference), "
+              "fluxMonitor (Flux Monitor Name and Reference)",
+          "Samples" + lead +
+              "material (Rock/Mineral (search term)), latitude (Latitude (WGS84)), longitude (Longitude (WGS84))",
+      }));
+
+  // A sheet that gets no row has nothing left empty.
+  bare.aliquots.clear();
+  bare.measurements.clear();
+  const auto fewer = check_against_template({bare}, options_);
+  ASSERT_TRUE(fewer.has_value());
+  EXPECT_EQ(fewer->size(), 4u);
+  EXPECT_TRUE(notes_with(*fewer, "ArArAliquot").empty() && notes_with(*fewer, "ArArMeasurement").empty());
+
+  // With everything set nothing is.
+  const auto full = check_against_template({everything()}, options_);
+  ASSERT_TRUE(full.has_value());
+  EXPECT_EQ(notes_with(*full, "Required"), std::vector<std::string>{});
+}
+
+TEST_F(Xlsx, ATemplateThatDoesNotSayIsSaidNotTo) {
+  // A legend without its `Required` cell (shared string in the Ar-Ar
+  // workbook): which columns are required cannot be known, and that is said,
+  // once; the lists still are.
+  options_.template_dir = edited_templates("xl/sharedStrings.xml", [](std::string& xml) {
+    const std::string was = "<si><t>Required</t></si>";
+    const std::size_t at = xml.find(was);
+    ASSERT_NE(at, std::string::npos);
+    xml.replace(at, was.size(), "<si><t>Compulsory</t></si>");
+  });
+  auto checked = check_against_template(fixtures(), options_);
+  ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
+  EXPECT_EQ(notes_with(*checked, kArAr),
+            std::vector<std::string>{std::string(kArAr) + ": sheet 'Field Definitions' has no cell that says which "
+                                                         "colour marks a Required column; columns left empty are "
+                                                         "not reported for this workbook"});
+  EXPECT_EQ(notes_with(*checked, "Required by the template").size(), 1u);  // the Sample workbook's
+  EXPECT_EQ(notes_with(*checked, "fluxMonitor").size(), 1u);
+
+  // A list that cannot be followed (here a name the workbook does not
+  // define): the column is written as given, and that it was not checked is
+  // said once.
+  fs::remove_all(dir_ / "templates");
+  options_.template_dir = edited_templates("xl/worksheets/sheet5.xml", [](std::string& xml) {
+    const std::string was = "'Lookup Tables'!$C$2:$C$17";
+    const std::size_t at = xml.find(was);
+    ASSERT_NE(at, std::string::npos);
+    xml.replace(at, was.size(), "FluxMonitors");
+  });
+  const XlsxResult result = exported(fixtures());
+  EXPECT_EQ(notes_with(result.notes, "fluxMonitor"),
+            std::vector<std::string>{"ArArAgeCalc.fluxMonitor: the template's list could not be read "
+                                     "(FluxMonitors); what was written there was not checked"});
+  EXPECT_EQ(rows_of(result.files[0], "ArArAgeCalc").at(0).at("fluxMonitor"), "FC-2 28.201 Ma");
+
+  // A list on a sheet the workbook has not is the same case.
+  fs::remove_all(dir_ / "templates");
+  options_.template_dir = edited_templates("xl/worksheets/sheet5.xml", [](std::string& xml) {
+    const std::string was = "'Lookup Tables'!$C$2:$C$17";
+    xml.replace(xml.find(was), was.size(), "'Gone'!$C$2:$C$17");
+  });
+  checked = check_against_template(fixtures(), options_);
+  ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
+  EXPECT_EQ(notes_with(*checked, "fluxMonitor"),
+            std::vector<std::string>{"ArArAgeCalc.fluxMonitor: the template's list could not be read "
+                                     "('Gone'!$C$2:$C$17); what was written there was not checked"});
 }
 
 }  // namespace

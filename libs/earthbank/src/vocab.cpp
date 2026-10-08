@@ -1,5 +1,6 @@
 #include "pychron/earthbank/vocab.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <charconv>
@@ -11,6 +12,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace pychron::earthbank {
 namespace {
@@ -220,6 +223,258 @@ std::string flux_monitor_query(std::string_view name, std::optional<double> age_
     query += " Ma";
   }
   return query;
+}
+
+// ---------------------------------------------------------------- lists
+
+namespace {
+
+bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+std::string_view trimmed(std::string_view text) {
+  while (!text.empty() && is_blank(text.front())) text.remove_prefix(1);
+  while (!text.empty() && is_blank(text.back())) text.remove_suffix(1);
+  return text;
+}
+
+char ascii_lower(char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; }
+bool ascii_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool ascii_digit(char c) { return c >= '0' && c <= '9'; }
+
+// The same text but for the case of ASCII letters.
+bool same_but_case(std::string_view a, std::string_view b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (ascii_lower(a[i]) != ascii_lower(b[i])) return false;
+  }
+  return true;
+}
+
+// The names pychron labs use for the monitors of the template's `Flux
+// Monitor` list, each with the mark of that monitor's entries there:
+//   (ACs)      Alder Creek Rhyolite Sanidine
+//   (FCTs)     Fish Canyon Tuff Sanidine
+//   (Hb3gr)    Hornblende
+//   (GA-1550)  Mt Domedary Biotite (sic)
+//   (MD-2)     Mt Domedary Biotite (sic), another split
+//   (TCs)      Taylor Creek Rhyolite Saniditine (sic)
+//   WA1ms      (Western Australia Muscovite)
+// `Mt Dromedary` alone is not here: it is two monitors of the list.
+constexpr MonitorAlias kMonitorAliases[] = {
+    {"FC-2", "FCTs"},    {"FC2", "FCTs"},         {"FCs", "FCTs"},      {"FCT", "FCTs"},  {"FCTs", "FCTs"},
+    {"Fish Canyon", "FCTs"},
+    {"ACs", "ACs"},      {"Alder Creek", "ACs"},
+    {"GA-1550", "GA-1550"}, {"GA1550", "GA-1550"},
+    {"MD-2", "MD-2"},    {"MD2", "MD-2"},
+    {"Hb3gr", "Hb3gr"},
+    {"TCs", "TCs"},      {"TCR", "TCs"},          {"Taylor Creek", "TCs"},
+    {"WA1ms", "WA1ms"},
+};
+
+// The words of `text`: runs of ASCII letters and digits (and of other bytes
+// that are not ASCII), lower case. `FC-2` is `fc`, `2`.
+std::vector<std::string> words_of(std::string_view text) {
+  std::vector<std::string> out;
+  std::string word;
+  for (const char c : text) {
+    const bool part = ascii_letter(c) || ascii_digit(c) || static_cast<unsigned char>(c) >= 0x80;
+    if (part) {
+      word += ascii_lower(c);
+    } else if (!word.empty()) {
+      out.push_back(std::move(word));
+      word.clear();
+    }
+  }
+  if (!word.empty()) out.push_back(std::move(word));
+  return out;
+}
+
+// `part` is in `all` as a run of consecutive words.
+bool has_run(const std::vector<std::string>& all, const std::vector<std::string>& part) {
+  if (part.empty() || part.size() > all.size()) return false;
+  for (std::size_t i = 0; i + part.size() <= all.size(); ++i) {
+    if (std::equal(part.begin(), part.end(), all.begin() + static_cast<std::ptrdiff_t>(i))) return true;
+  }
+  return false;
+}
+
+// A number as people write an age (`28.201`, `1081`), so that two are
+// compared as numbers without a rounding: no zeros before it or after its
+// fraction. Empty when `text` is not one.
+std::string plain_number(std::string_view text) {
+  const std::size_t dot = text.find('.');
+  std::string_view whole = text.substr(0, dot);
+  std::string_view fraction = dot == std::string_view::npos ? std::string_view() : text.substr(dot + 1);
+  if (whole.empty() || !std::all_of(whole.begin(), whole.end(), ascii_digit)) return {};
+  if (!std::all_of(fraction.begin(), fraction.end(), ascii_digit)) return {};
+  if (dot != std::string_view::npos && fraction.empty()) return {};
+  while (whole.size() > 1 && whole.front() == '0') whole.remove_prefix(1);
+  while (!fraction.empty() && fraction.back() == '0') fraction.remove_suffix(1);
+  std::string out(whole);
+  if (!fraction.empty()) out += "." + std::string(fraction);
+  return out;
+}
+
+// A monitor as a lab writes it, taken apart: its age and the words of the
+// rest.
+struct MonitorQuery {
+  std::string age;  // plain_number; empty: none given
+  std::vector<std::string> name;
+};
+
+MonitorQuery monitor_query(std::string_view value) {
+  // Split at spaces; each piece less the punctuation around it.
+  struct Piece {
+    std::string_view text;  // as written, for the name
+    std::string number;     // when it is a number, or a number run on with `Ma`
+    bool is_ma = false;
+    bool has_ma = false;
+  };
+  std::vector<Piece> pieces;
+  std::string_view rest = value;
+  while (true) {
+    rest = trimmed(rest);
+    if (rest.empty()) break;
+    std::size_t end = 0;
+    while (end < rest.size() && !is_blank(rest[end])) ++end;
+    Piece piece{rest.substr(0, end), {}, false, false};
+    rest.remove_prefix(end);
+    std::string_view core = piece.text;
+    const auto edge = [](char c) { return !ascii_letter(c) && !ascii_digit(c) && static_cast<unsigned char>(c) < 0x80; };
+    while (!core.empty() && edge(core.front())) core.remove_prefix(1);
+    while (!core.empty() && edge(core.back())) core.remove_suffix(1);
+    piece.is_ma = same_but_case(core, "ma");
+    piece.number = plain_number(core);
+    if (piece.number.empty() && core.size() > 2 && same_but_case(core.substr(core.size() - 2), "ma")) {
+      piece.number = plain_number(core.substr(0, core.size() - 2));
+      piece.has_ma = !piece.number.empty();
+    }
+    pieces.push_back(std::move(piece));
+  }
+
+  // The number said to be in Ma, else the last number.
+  std::optional<std::size_t> at;
+  for (std::size_t i = 0; i < pieces.size(); ++i) {
+    if (pieces[i].number.empty()) continue;
+    if (pieces[i].has_ma || (i + 1 < pieces.size() && pieces[i + 1].is_ma)) {
+      at = i;
+      break;
+    }
+  }
+  if (!at) {
+    for (std::size_t i = pieces.size(); i-- > 0;) {
+      if (pieces[i].number.empty()) continue;
+      at = i;
+      break;
+    }
+  }
+  MonitorQuery out;
+  for (std::size_t i = 0; i < pieces.size(); ++i) {
+    if (at && i == *at) {
+      out.age = pieces[i].number;
+      continue;
+    }
+    if (at && i == *at + 1 && pieces[i].is_ma) continue;
+    for (std::string& word : words_of(pieces[i].text)) out.name.push_back(std::move(word));
+  }
+  return out;
+}
+
+// The age an entry of the list ends with, `(28.201 Ma)`; empty when it has
+// none.
+std::string listed_age(std::string_view entry) {
+  entry = trimmed(entry);
+  constexpr std::string_view kTail = " Ma)";
+  if (!entry.ends_with(kTail)) return {};
+  entry.remove_suffix(kTail.size());
+  const std::size_t open = entry.rfind('(');
+  return open == std::string_view::npos ? std::string() : plain_number(trimmed(entry.substr(open + 1)));
+}
+
+// The abbreviations an entry has in parentheses, as words: `(GA-1550)` is
+// `ga`, `1550`. A year in parentheses is not one.
+std::vector<std::vector<std::string>> abbreviations_of(std::string_view entry) {
+  std::vector<std::vector<std::string>> out;
+  for (std::size_t open = entry.find('('); open != std::string_view::npos; open = entry.find('(', open + 1)) {
+    const std::size_t close = entry.find(')', open);
+    if (close == std::string_view::npos) break;
+    const std::string_view inside = entry.substr(open + 1, close - open - 1);
+    if (inside.empty() || std::any_of(inside.begin(), inside.end(), is_blank)) continue;
+    if (!std::any_of(inside.begin(), inside.end(), ascii_letter)) continue;
+    out.push_back(words_of(inside));
+  }
+  return out;
+}
+
+}  // namespace
+
+std::span<const MonitorAlias> flux_monitor_aliases() { return kMonitorAliases; }
+
+ListMatch match_list_entry(std::string_view value, std::span<const std::string> entries) {
+  const std::string_view wanted = trimmed(value);
+  if (wanted.empty()) return {};
+  // The entries that are the value but for case and the spaces around, each
+  // spelling once.
+  std::vector<std::string_view> spellings;
+  for (const std::string& entry : entries) {
+    if (entry == value) return {ListMatch::Kind::Exact, std::string(value)};
+    const std::string_view listed = trimmed(entry);
+    if (!same_but_case(listed, wanted)) continue;
+    if (std::find(spellings.begin(), spellings.end(), listed) == spellings.end()) spellings.push_back(listed);
+  }
+  if (spellings.empty()) return {};
+  // Among several, the one that is the value's own case is the one meant.
+  std::string_view chosen = spellings.front();
+  if (spellings.size() > 1) {
+    const auto own = std::find(spellings.begin(), spellings.end(), wanted);
+    if (own == spellings.end()) return {ListMatch::Kind::Ambiguous, {}};
+    chosen = *own;
+  }
+  return {chosen == value ? ListMatch::Kind::Exact : ListMatch::Kind::Respelled, std::string(chosen)};
+}
+
+ListMatch match_flux_monitor(std::string_view value, std::span<const std::string> entries) {
+  if (ListMatch plain = match_list_entry(value, entries); plain.kind != ListMatch::Kind::None) return plain;
+
+  const MonitorQuery query = monitor_query(value);
+  if (query.age.empty() || query.name.empty()) return {};
+
+  // The monitors the name names, by the mark of their entries.
+  std::vector<std::vector<std::string>> marks;
+  for (const MonitorAlias& alias : kMonitorAliases) {
+    if (!has_run(query.name, words_of(alias.alias))) continue;
+    std::vector<std::string> mark = words_of(alias.listed);
+    if (std::find(marks.begin(), marks.end(), mark) == marks.end()) marks.push_back(std::move(mark));
+  }
+  if (marks.size() > 1) return {};
+
+  std::vector<std::string_view> found;
+  for (const std::string& entry : entries) {
+    if (listed_age(entry) != query.age) continue;
+    const std::vector<std::string> words = words_of(entry);
+    bool named = false;
+    if (!marks.empty()) {
+      named = has_run(words, marks.front());
+    } else {
+      // No name this knows: every word given must be the entry's, and one of
+      // them must be a name and not a year or a conjunction's worth of
+      // letters.
+      const bool all = std::all_of(query.name.begin(), query.name.end(), [&](const std::string& word) {
+        return std::find(words.begin(), words.end(), word) != words.end();
+      });
+      bool telling = std::any_of(query.name.begin(), query.name.end(), [](const std::string& word) {
+        return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter);
+      });
+      for (const auto& abbreviation : abbreviations_of(entry)) telling = telling || has_run(query.name, abbreviation);
+      named = all && telling;
+    }
+    if (!named) continue;
+    const std::string_view listed = trimmed(entry);
+    if (std::find(found.begin(), found.end(), listed) == found.end()) found.push_back(listed);
+  }
+  if (found.empty()) return {};
+  if (found.size() > 1) return {ListMatch::Kind::Ambiguous, {}};
+  return {ListMatch::Kind::Respelled, std::string(found.front())};
 }
 
 std::string_view age_type_name(AgeKind kind) {

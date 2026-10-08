@@ -5,11 +5,17 @@
 // save a copy. Internal to pychron::earthbank; neither library it is built on
 // (miniz for the zip, pugixml for the XML) shows in this header.
 //
-// This is not a spreadsheet library. It knows nothing of styles, formulas,
-// number formats, column widths, data validations, tables or drawings, and
-// never rewrites the shared string table. A workbook is a zip of XML parts;
-// the only part ever altered is the XML of a sheet that rows were written to,
-// and that is edited as text, not parsed and written out again.
+// This is not a spreadsheet library. It knows nothing of formulas, number
+// formats, column widths, tables or drawings, and never rewrites the shared
+// string table. A workbook is a zip of XML parts; the only part ever altered
+// is the XML of a sheet that rows were written to, and that is edited as
+// text, not parsed and written out again.
+//
+// Three things are read beside the rows, because the template says with them
+// what a column may hold and the exporter has nobody else to ask: the list a
+// column's cells are validated against (list_validations, column_values) and
+// the fill colour of a cell (cell_fill), by which the templates mark a column
+// as required. They are read only; nothing of them is ever written.
 //
 // The fidelity guarantee, which is why it exists (the website's importer is a
 // black box that has only been shown the vendor's own files):
@@ -48,8 +54,10 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -94,6 +102,31 @@ struct Cell {
   std::variant<std::monostate, double, std::string> value;
 };
 
+// A drop-down list: a data validation of type `list` and where its entries
+// are. Excel keeps one in the sheet's `dataValidations`, or, when the list is
+// on another sheet, in the sheet's extension list (`x14:dataValidation`);
+// both are read. `columns` are the columns its cells are in (every column of
+// every area of `sqref`, each once, ascending; the rows are not kept: the
+// Ar-Ar template validates only its first data row, and means the column).
+// The source is one of:
+//   Range       cells `first_row` to `last_row` of column `column` of `sheet`,
+//               given as such or through a name the workbook defines;
+//   Inline      the `entries` themselves (`"Yes,No"`), each trimmed;
+//   Unresolved  anything else: a name the workbook does not define, a block
+//               of several columns, a formula. Not an error: `formula` says
+//               what was written.
+struct ListValidation {
+  enum class Source { Range, Inline, Unresolved };
+  std::vector<int> columns;
+  Source source = Source::Unresolved;
+  std::string sheet;
+  int column = 0;
+  int first_row = 0;
+  int last_row = 0;
+  std::vector<std::string> entries;
+  std::string formula;  // as the validation has it
+};
+
 class Workbook {
  public:
   // Reads the whole file; the template is not needed again afterwards.
@@ -108,6 +141,26 @@ class Workbook {
   // sheet does not store. A shared string is resolved (the runs of a rich
   // text joined, _xHHHH_ decoded), a number is its stored text.
   Result<std::vector<std::string>> row_values(std::string_view sheet, int row) const;
+
+  // The list validations of a sheet, in the sheet's order. Config for a
+  // sheet the workbook has not.
+  Result<std::vector<ListValidation>> list_validations(std::string_view sheet) const;
+
+  // The cells of one column from `first_row` to `last_row`, read as
+  // row_values reads them: one string per row, empty for a cell that holds
+  // nothing and for a row the sheet does not store.
+  Result<std::vector<std::string>> column_values(std::string_view sheet, int column, int first_row,
+                                                 int last_row) const;
+
+  // The colour a cell is filled with: that of its style's fill when the fill
+  // is a solid one, as xl/styles.xml writes it (`FFFAD9D6`: alpha, red,
+  // green, blue; a theme or indexed colour as `theme 4 tint 0.5`,
+  // `indexed 13`: enough to tell whether two cells are filled alike). Empty
+  // for no fill, a pattern, a cell without a style and a cell the sheet does
+  // not store. row_fills gives a whole row, one per column from A to the
+  // row's last cell. Protocol when the workbook's styles cannot be read.
+  Result<std::string> cell_fill(std::string_view sheet, int row, int column) const;
+  Result<std::vector<std::string>> row_fills(std::string_view sheet, int row) const;
 
   // Writes `rows` to consecutive rows from `first_row` (at least 2: row 1 is
   // a header in every sheet), `rows[i][j]` to column j + 1. Refused (Config),
@@ -132,10 +185,13 @@ class Workbook {
   Workbook() = default;
   const Sheet* find_sheet(std::string_view name) const;
   Result<std::string> sheet_xml(const Sheet& sheet) const;
+  Result<std::vector<std::string>> style_fills() const;
 
   std::shared_ptr<const std::string> archive_;     // the template file's bytes
   std::vector<Sheet> sheets_;
   std::vector<std::string> shared_strings_;
+  std::map<std::string, std::string, std::less<>> defined_names_;  // name -> what it refers to
+  std::optional<std::size_t> styles_entry_;                        // xl/styles.xml, when there is one
   std::map<std::size_t, std::string> rewritten_;   // entry index -> new XML
 };
 

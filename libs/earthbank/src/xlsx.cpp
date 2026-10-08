@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -14,6 +16,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -56,14 +59,29 @@ constexpr SheetSpec kArArSheets[] = {
 };
 constexpr SheetSpec kSampleSheets[] = {{"Samples", Rec::Sample, 883}};
 
-constexpr std::string_view kArArTemplate = "ArArDataPoint_Template2026.xlsx";
-constexpr std::string_view kSampleTemplate = "Sample_Template_v2025-04-16.xlsx";
+// A template: its file, its data sheets, and the sheet that describes its
+// columns, whose legend shows the colour of a Required one.
+struct TemplateSpec {
+  std::string_view file;
+  std::span<const SheetSpec> sheets;
+  std::string_view definitions;
+};
+
+constexpr TemplateSpec kArAr{"ArArDataPoint_Template2026.xlsx", kArArSheets, "Field Definitions"};
+constexpr TemplateSpec kSamples{"Sample_Template_v2025-04-16.xlsx", kSampleSheets, "Column Descriptions"};
 
 // Row 4 of a data sheet names the field of each column; data starts below.
-// (`Datapoint Props` and `Sample Props` name theirs in row 1. Nothing is
-// written to them: a submission has no such rows.)
+// Row 3 has the column's title as a person reads it, filled with the colour
+// of its obligation: the colour of the legend's cell that says `Required`
+// (`Field Definitions`!A5, `Column Descriptions`!A1) marks a column the
+// service will not do without. The legend is in column A, near the top.
+// (`Datapoint Props` and `Sample Props` name their fields in row 1. Nothing
+// is written to them: a submission has no such rows.)
+constexpr int kTitleRow = 3;
 constexpr int kFieldRow = 4;
 constexpr int kFirstDataRow = 5;
+constexpr int kLegendRows = 20;
+constexpr std::string_view kLegendWords[] = {"required", "required field"};
 
 // The column every Ar-Ar sheet has for the data point's name, and the three
 // things of a submission a column can take.
@@ -224,6 +242,12 @@ std::string_view sheet_of(Rec record) {
 // things, and the website finds them.
 bool is_id(std::string_view field) { return field == "id" || field.ends_with("Id"); }
 
+// The one column whose list is searched by name and age (vocab.hpp
+// match_flux_monitor): the list's entries are whole citations.
+bool is_flux_monitor(Rec record, std::string_view field) {
+  return record == Rec::AgeCalc && field == "fluxMonitorName";
+}
+
 // A submission's records as to_json gives them: only what is set, by service
 // name.
 struct Records {
@@ -263,7 +287,31 @@ std::span<const json> all_of(const Records& r, Rec record) {
 
 // ---------------------------------------------------------------- notes
 
-// What the user is told, each thing once, in the order it came up.
+std::string folded(std::string_view text) {
+  std::string out(text);
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return out;
+}
+
+// `text` with every run of spaces and line breaks as one space, and none at
+// its ends: a title of several lines as one.
+std::string on_one_line(std::string_view text) {
+  std::string out;
+  for (const char c : text) {
+    const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    if (!space) {
+      out += c;
+    } else if (!out.empty() && out.back() != ' ') {
+      out += ' ';
+    }
+  }
+  while (!out.empty() && out.back() == ' ') out.pop_back();
+  return out;
+}
+
+// What the user is told, each thing once, in the order it came up; then,
+// once for the whole export, how many values of a column were put in its
+// list's spelling and which Required columns of a sheet a row left empty.
 class Notes {
  public:
   void add(std::string note) {
@@ -273,11 +321,42 @@ class Notes {
     const std::string whose = record == Rec::Location ? "the location's " : "";
     add(std::string(sheet_of(record)) + ": no column for " + whose + std::string(field));
   }
-  std::vector<std::string> take() { return std::move(list_); }
+  void respelled(std::string_view sheet, std::string_view key) {
+    const std::string column = std::string(sheet) + "." + std::string(key);
+    const auto found = std::find_if(respelled_.begin(), respelled_.end(), [&](const auto& one) { return one.first == column; });
+    if (found == respelled_.end()) {
+      respelled_.emplace_back(column, 1);
+    } else {
+      ++found->second;
+    }
+  }
+  void left_empty(std::string_view sheet, std::size_t index, std::string_view key, std::string_view title) {
+    auto found = std::find_if(empty_.begin(), empty_.end(), [&](const auto& one) { return one.first == sheet; });
+    if (found == empty_.end()) found = empty_.insert(empty_.end(), {std::string(sheet), {}});
+    std::string name(key);
+    if (!title.empty()) name += " (" + std::string(title) + ")";
+    found->second.emplace(index, std::move(name));
+  }
+  std::vector<std::string> take() {
+    for (const auto& [column, count] : respelled_) {
+      add(column + ": " + std::to_string(count) + " value(s) written in the list's spelling");
+    }
+    for (const auto& [sheet, columns] : empty_) {
+      std::string names;
+      for (const auto& [index, name] : columns) names += (names.empty() ? "" : ", ") + name;
+      add(sheet + ": Required by the template and empty in at least one row, to be filled in before importing: " +
+          names);
+    }
+    respelled_.clear();
+    empty_.clear();
+    return std::move(list_);
+  }
 
  private:
   std::vector<std::string> list_;
   std::set<std::string> seen_;
+  std::vector<std::pair<std::string, int>> respelled_;                             // sheet.key, in the order met
+  std::vector<std::pair<std::string, std::map<std::size_t, std::string>>> empty_;  // sheet -> columns, in theirs
 };
 
 // ---------------------------------------------------------------- what goes where
@@ -288,6 +367,15 @@ struct Column {
   Rec record = Rec::None;
   std::string field;
   Form form = Form::Plain;
+  // What the template says of the column: its title, whether it is marked
+  // Required, and the list its cells are validated against (`listed`), read
+  // into `list`, or `unread` saying what the validation names when that
+  // could not be followed.
+  std::string title;
+  bool required = false;
+  bool listed = false;
+  std::vector<std::string> list;
+  std::string unread;
 };
 
 struct SheetPlan {
@@ -298,14 +386,17 @@ struct SheetPlan {
 };
 
 // A template's data sheets, read from its row 4, and every field some column
-// of them takes.
+// of them takes. `remarks`: what the template could not be read for.
 struct Plan {
   std::vector<SheetPlan> sheets;
   std::set<std::pair<Rec, std::string>> held;
+  std::vector<std::string> remarks;
 };
 
 Column column_of(const SheetSpec& sheet, std::size_t index, const std::string& key) {
-  Column out{index, key, Rec::None, {}, Form::Plain};
+  Column out;
+  out.index = index;
+  out.key = key;
   for (const Exception& e : kExceptions) {
     if (e.sheet != sheet.name || e.key != key) continue;
     out.record = e.record;
@@ -327,10 +418,98 @@ Unexpected<Error> failed(Error error, const std::string& context = {}) {
   return fail(std::move(error));
 }
 
-Result<Plan> plan_of(const ooxml::Workbook& book, std::span<const SheetSpec> sheets, const fs::path& file) {
+// The colour a Required column's title is filled with: that of the legend's
+// cell saying so. Empty when the definitions sheet has no such cell, or it
+// is not filled.
+std::string required_fill(const ooxml::Workbook& book, std::string_view definitions) {
+  const auto legend = book.column_values(definitions, 1, 1, kLegendRows);
+  if (!legend) return {};
+  for (std::size_t i = 0; i < legend->size(); ++i) {
+    const std::string said = folded(on_one_line((*legend)[i]));
+    if (std::find(std::begin(kLegendWords), std::end(kLegendWords), said) == std::end(kLegendWords)) continue;
+    const auto fill = book.cell_fill(definitions, static_cast<int>(i) + 1, 1);
+    return fill ? *fill : std::string();
+  }
+  return {};
+}
+
+// The entries of a list kept in a column of a sheet: the cells the validation
+// names, and those that follow them without a gap. The Sample template's
+// lists of sample kinds and archives have grown past the rows their
+// validations name (`Mine Waste` is A17 where the validation says A2:A16); an
+// entry the sheet lists under the same heading is the service's all the same.
+Result<std::vector<std::string>> listed_values(const ooxml::Workbook& book, const ooxml::ListValidation& list) {
+  constexpr int kStride = 256;  // read with the named cells, so that a list that ends there costs one reading
+  std::vector<std::string> out;
+  for (int from = list.first_row, to = list.last_row; from <= ooxml::kMaxRow; from = to + 1) {
+    to = static_cast<int>(std::min<long>(static_cast<long>(to) + kStride, ooxml::kMaxRow));
+    auto more = book.column_values(list.sheet, list.column, from, to);
+    if (!more) return fail(more.error());
+    for (std::size_t i = 0; i < more->size(); ++i) {
+      const bool named = from + static_cast<int>(i) <= list.last_row;
+      if (!named && on_one_line((*more)[i]).empty()) return out;
+      out.push_back(std::move((*more)[i]));
+    }
+  }
+  return out;
+}
+
+// Gives the columns of `out` what the sheet says of them: title, obligation
+// (`required`: the legend's colour; empty when the template has none) and
+// list.
+Result<void> describe(SheetPlan& out, const ooxml::Workbook& book, const std::string& required) {
+  const std::string_view sheet = out.spec.name;
+  const auto titles = book.row_values(sheet, kTitleRow);
+  if (!titles) return fail(titles.error());
+  std::vector<std::string> fills;
+  if (!required.empty()) {
+    auto read = book.row_fills(sheet, kTitleRow);
+    if (!read) return fail(read.error());
+    fills = std::move(*read);
+  }
+  const auto validations = book.list_validations(sheet);
+  if (!validations) return fail(validations.error());
+
+  for (Column& column : out.columns) {
+    if (column.index < titles->size()) column.title = on_one_line((*titles)[column.index]);
+    column.required = column.index < fills.size() && fills[column.index] == required;
+    for (const ooxml::ListValidation& validation : *validations) {
+      const int number = static_cast<int>(column.index) + 1;
+      if (std::find(validation.columns.begin(), validation.columns.end(), number) == validation.columns.end()) {
+        continue;
+      }
+      column.listed = true;
+      std::vector<std::string> entries = validation.entries;
+      bool read = validation.source == ooxml::ListValidation::Source::Inline;
+      if (validation.source == ooxml::ListValidation::Source::Range) {
+        // A list on a sheet the workbook has not cannot be read either.
+        auto values = listed_values(book, validation);
+        read = values.has_value();
+        if (read) entries = std::move(*values);
+      }
+      if (!read) {
+        column.unread = validation.formula;
+        break;
+      }
+      for (std::string& entry : entries) {
+        if (!on_one_line(entry).empty()) column.list.push_back(std::move(entry));
+      }
+      break;  // the first validation of a column is the column's
+    }
+  }
+  return {};
+}
+
+Result<Plan> plan_of(const ooxml::Workbook& book, const TemplateSpec& spec, const fs::path& file) {
   const std::vector<std::string> present = book.sheet_names();
   Plan plan;
-  for (const SheetSpec& sheet : sheets) {
+  const std::string required = required_fill(book, spec.definitions);
+  if (required.empty()) {
+    plan.remarks.push_back(std::string(spec.file) + ": sheet '" + std::string(spec.definitions) +
+                           "' has no cell that says which colour marks a Required column; columns left empty are "
+                           "not reported for this workbook");
+  }
+  for (const SheetSpec& sheet : spec.sheets) {
     if (std::find(present.begin(), present.end(), sheet.name) == present.end()) {
       return fail(ErrorKind::Protocol,
                   "earthbank: " + file.string() + " is not the template expected: it has no sheet " +
@@ -345,6 +524,9 @@ Result<Plan> plan_of(const ooxml::Workbook& book, std::span<const SheetSpec> she
       const Column& column = out.columns.back();
       if (column.record == Rec::Submission && column.field == kDatapointName) out.linked = true;
       if (column.record != Rec::None) plan.held.emplace(column.record, column.field);
+    }
+    if (auto described = describe(out, book, required); !described) {
+      return failed(described.error(), file.string() + ": ");
     }
     plan.sheets.push_back(std::move(out));
   }
@@ -459,23 +641,62 @@ const json* value_of(Rec record, const std::string& field, Rec own_record, const
   return shared(all_of(r, record), field, disagree);
 }
 
+// `text`, about to be written under a column that has a list, as the list
+// spells it: as given when the list has it so, the list's entry when it is
+// the same but for case and the spaces around it (for the flux monitor, also
+// when its name and age find one entry). Anything else is written as given
+// and said: nothing is rewritten on a guess.
+std::string in_list(std::string_view sheet, const Column& column, const std::string& text, Notes& notes) {
+  const std::string where = std::string(sheet) + "." + column.key + ": ";
+  if (!column.unread.empty()) {
+    notes.add(where + "the template's list could not be read (" + column.unread +
+              "); what was written there was not checked");
+    return text;
+  }
+  const bool monitor = is_flux_monitor(column.record, column.field);
+  const ListMatch plain = match_list_entry(text, column.list);
+  const ListMatch match = monitor && plain.kind == ListMatch::Kind::None ? match_flux_monitor(text, column.list) : plain;
+  switch (match.kind) {
+    case ListMatch::Kind::Exact: return match.entry;
+    case ListMatch::Kind::Respelled:
+      if (plain.kind == ListMatch::Kind::Respelled) {
+        notes.respelled(sheet, column.key);
+      } else {
+        // Found by name and age: more than a spelling, so each is shown.
+        notes.add(where + "'" + text + "' written as the list's '" + match.entry + "'");
+      }
+      return match.entry;
+    case ListMatch::Kind::Ambiguous:
+      notes.add(where + "'" + text + "' could be more than one entry of the template's list and was written as given");
+      return text;
+    case ListMatch::Kind::None: break;
+  }
+  notes.add(where + "'" + text + "' is not in the template's list");
+  return text;
+}
+
 std::vector<ooxml::Cell> row_of(const SheetPlan& sheet, const json& own, const Records& r, Notes& notes) {
   std::vector<ooxml::Cell> cells(sheet.width);
   for (const Column& column : sheet.columns) {
-    if (column.record == Rec::None) continue;
+    ooxml::Cell& cell = cells[column.index];
     if (column.record == Rec::Submission) {
       const Submission& s = *r.submission;
-      cells[column.index] = {column.field == kDatapointName ? s.datapoint_name
-                             : column.field == kSetupName   ? s.setup_name
-                                                            : s.irradiation_name};
-      continue;
+      cell = {column.field == kDatapointName ? s.datapoint_name
+              : column.field == kSetupName   ? s.setup_name
+                                             : s.irradiation_name};
+    } else if (column.record != Rec::None) {
+      bool disagree = false;
+      const json* value = value_of(column.record, column.field, sheet.spec.record, own, r, disagree);
+      // One column and two values: it holds neither, and the field is without
+      // a column after all.
+      if (disagree) notes.no_column(column.record, column.field);
+      if (value != nullptr) cell = cell_of(column, *value, notes);
     }
-    bool disagree = false;
-    const json* value = value_of(column.record, column.field, sheet.spec.record, own, r, disagree);
-    // One column and two values: it holds neither, and the field is without
-    // a column after all.
-    if (disagree) notes.no_column(column.record, column.field);
-    if (value != nullptr) cells[column.index] = cell_of(column, *value, notes);
+
+    auto* text = std::get_if<std::string>(&cell.value);
+    if (text != nullptr && !text->empty() && column.listed) *text = in_list(sheet.spec.name, column, *text, notes);
+    const bool empty = std::holds_alternative<std::monostate>(cell.value) || (text != nullptr && text->empty());
+    if (empty && column.required) notes.left_empty(sheet.spec.name, column.index, column.key, column.title);
   }
   return cells;
 }
@@ -511,6 +732,7 @@ void add_rows(const SheetPlan& sheet, const Records& r, const Plan& plan, std::v
 // the sheets are tied together by the data point's name.
 Result<void> fill(ooxml::Workbook& book, const Plan& plan, std::span<const Records* const> records, bool linked,
                   Notes& notes) {
+  for (const std::string& remark : plan.remarks) notes.add(remark);
   for (const SheetPlan& sheet : plan.sheets) {
     std::vector<std::vector<ooxml::Cell>> rows;
     for (const Records* r : records) add_rows(sheet, *r, plan, rows, notes);
@@ -639,6 +861,67 @@ Result<std::vector<const Records*>> samples_of(const std::vector<Records>& recor
   return out;
 }
 
+fs::path template_dir_of(const XlsxOptions& options) {
+  return options.template_dir.empty() ? default_template_dir() : options.template_dir;
+}
+
+// The workbooks of an export, filled and not yet written, with what there is
+// to say about them.
+struct Prepared {
+  std::vector<Pending> pending;
+  std::vector<std::string> notes;
+};
+
+// Everything export_xlsx does short of touching the output directory.
+Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxOptions& options) {
+  if (auto checked = check_names(submissions); !checked) return fail(checked.error());
+  const fs::path dir = template_dir_of(options);
+  const std::string stamp = stamp_of(options.now);
+
+  std::vector<Records> records;
+  for (const Submission& s : submissions) records.push_back(records_of(s));
+
+  Notes notes;
+  Prepared out;
+  {
+    const fs::path file = dir / kArAr.file;
+    const auto book = open_template(file);
+    if (!book) return fail(book.error());
+    const auto plan = plan_of(*book, kArAr, file);
+    if (!plan) return fail(plan.error());
+    if (options.per_sample) {
+      for (const Records& r : records) {
+        const Records* const one[] = {&r};
+        // Named for its sample; a sample without a name, for its data point.
+        const std::string& sample = r.submission->sample.name.value_or(std::string());
+        const std::string& named = sample.empty() ? r.submission->datapoint_name : sample;
+        out.pending.push_back({*book, "ArArDataPoint_" + safe_name(named)});
+        if (auto filled = fill(out.pending.back().book, *plan, one, true, notes); !filled) return fail(filled.error());
+      }
+    } else {
+      std::vector<const Records*> all;
+      for (const Records& r : records) all.push_back(&r);
+      out.pending.push_back({*book, "ArArDataPoint_" + stamp});
+      if (auto filled = fill(out.pending.back().book, *plan, all, true, notes); !filled) return fail(filled.error());
+    }
+  }
+  if (options.samples) {
+    const auto samples = samples_of(records);
+    if (!samples) return fail(samples.error());
+    const fs::path file = dir / kSamples.file;
+    auto book = open_template(file);
+    if (!book) return fail(book.error());
+    const auto plan = plan_of(*book, kSamples, file);
+    if (!plan) return fail(plan.error());
+    out.pending.push_back({std::move(*book), "Samples_" + stamp});
+    if (auto filled = fill(out.pending.back().book, *plan, *samples, false, notes); !filled) {
+      return fail(filled.error());
+    }
+  }
+  out.notes = notes.take();
+  return out;
+}
+
 }  // namespace
 
 fs::path default_template_dir() { return default_template_dir(executable_dir()); }
@@ -661,14 +944,12 @@ fs::path default_template_dir(const fs::path& program_dir) {
 
 Result<std::vector<XlsxColumn>> xlsx_columns(const fs::path& template_dir) {
   const fs::path dir = template_dir.empty() ? default_template_dir() : template_dir;
-  const std::pair<std::string_view, std::span<const SheetSpec>> templates[] = {{kArArTemplate, kArArSheets},
-                                                                              {kSampleTemplate, kSampleSheets}};
   std::vector<XlsxColumn> out;
-  for (const auto& [name, sheets] : templates) {
-    const fs::path file = dir / name;
+  for (const TemplateSpec* spec : {&kArAr, &kSamples}) {
+    const fs::path file = dir / spec->file;
     const auto book = open_template(file);
     if (!book) return fail(book.error());
-    const auto plan = plan_of(*book, sheets, file);
+    const auto plan = plan_of(*book, *spec, file);
     if (!plan) return fail(plan.error());
     for (const SheetPlan& sheet : plan->sheets) {
       for (const Column& column : sheet.columns) {
@@ -679,52 +960,19 @@ Result<std::vector<XlsxColumn>> xlsx_columns(const fs::path& template_dir) {
   return out;
 }
 
+Result<std::vector<std::string>> check_against_template(const std::vector<Submission>& submissions,
+                                                        const XlsxOptions& options) {
+  auto prepared = prepare(submissions, options);
+  if (!prepared) return fail(prepared.error());
+  return std::move(prepared->notes);
+}
+
 Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const fs::path& out_dir,
                                const XlsxOptions& options) {
-  if (auto checked = check_names(submissions); !checked) return fail(checked.error());
-  const fs::path dir = options.template_dir.empty() ? default_template_dir() : options.template_dir;
-  const std::string stamp = stamp_of(options.now);
-
-  std::vector<Records> records;
-  for (const Submission& s : submissions) records.push_back(records_of(s));
-
   // Every workbook is made in memory before any is written: an error so far
   // leaves nothing on disk.
-  Notes notes;
-  std::vector<Pending> pending;
-  {
-    const fs::path file = dir / kArArTemplate;
-    const auto book = open_template(file);
-    if (!book) return fail(book.error());
-    const auto plan = plan_of(*book, kArArSheets, file);
-    if (!plan) return fail(plan.error());
-    if (options.per_sample) {
-      for (const Records& r : records) {
-        const Records* const one[] = {&r};
-        // Named for its sample; a sample without a name, for its data point.
-        const std::string& sample = r.submission->sample.name.value_or(std::string());
-        const std::string& named = sample.empty() ? r.submission->datapoint_name : sample;
-        pending.push_back({*book, "ArArDataPoint_" + safe_name(named)});
-        if (auto filled = fill(pending.back().book, *plan, one, true, notes); !filled) return fail(filled.error());
-      }
-    } else {
-      std::vector<const Records*> all;
-      for (const Records& r : records) all.push_back(&r);
-      pending.push_back({*book, "ArArDataPoint_" + stamp});
-      if (auto filled = fill(pending.back().book, *plan, all, true, notes); !filled) return fail(filled.error());
-    }
-  }
-  if (options.samples) {
-    const auto samples = samples_of(records);
-    if (!samples) return fail(samples.error());
-    const fs::path file = dir / kSampleTemplate;
-    auto book = open_template(file);
-    if (!book) return fail(book.error());
-    const auto plan = plan_of(*book, kSampleSheets, file);
-    if (!plan) return fail(plan.error());
-    pending.push_back({std::move(*book), "Samples_" + stamp});
-    if (auto filled = fill(pending.back().book, *plan, *samples, false, notes); !filled) return fail(filled.error());
-  }
+  auto prepared = prepare(submissions, options);
+  if (!prepared) return fail(prepared.error());
 
   std::error_code ec;
   const bool made = fs::create_directories(out_dir, ec);
@@ -737,7 +985,7 @@ Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const
   // the user's. A failure part of the way takes back what was written.
   XlsxResult result;
   FileNames names(out_dir);
-  for (const Pending& one : pending) {
+  for (const Pending& one : prepared->pending) {
     const fs::path file = names.next(one.stem);
     if (auto saved = one.book.save(file); !saved) {
       for (const fs::path& written : result.files) fs::remove(written, ec);
@@ -746,7 +994,7 @@ Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const
     }
     result.files.push_back(file);
   }
-  result.notes = notes.take();
+  result.notes = std::move(prepared->notes);
   return result;
 }
 

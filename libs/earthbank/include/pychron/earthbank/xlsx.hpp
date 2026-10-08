@@ -38,6 +38,32 @@
 // minute; the record's seconds are cut), a collection date as `dd.mm.yyyy`,
 // and a flag as `Yes` or `No`. Numbers are numbers, the rest text.
 //
+// Lists. A workbook is imported as it is written: no service resolves a name
+// on the way. The template carries the service's lists (`Lookup Tables`,
+// `Lookup tables`) and ties a column to its list by a data validation, so a
+// value going into such a column is checked against that list first:
+//   - one the list has is written as it is;
+//   - one that is an entry but for the case of its letters or the spaces
+//     around it is written as the list spells it, and counted
+//     (`Samples.material: 2 value(s) written in the list's spelling`);
+//   - a flux monitor, whose entries are whole citations, is also found by
+//     its name and age (vocab.hpp match_flux_monitor), and what it was
+//     written as is said;
+//   - anything else is written as it was given and said
+//     (`ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's
+//     list`), each value once. Nothing is rewritten on a guess: a value that
+//     could be two entries is left alone and said too.
+// A column without a list (the data point's `mineral` and `lithology`, which
+// the template calls search terms) is written as given. The list is the
+// cells the validation names and those that follow them in the lookup sheet
+// without a gap.
+//
+// Required columns. The templates colour the title of a column (row 3) by
+// its obligation, with a legend in the sheet of definitions. A column in the
+// colour of the legend's `Required` that a written row leaves empty is named
+// in the notes, once per sheet for the whole export, with its title: what
+// to fill in before importing.
+//
 // Nothing is dropped without a word. A field that is set and has no column
 // (the template lacks one, or a newer template dropped it) is named in
 // XlsxResult::notes, once. Three kinds of field are passed over in silence:
@@ -69,7 +95,12 @@ struct XlsxOptions {
 
 struct XlsxResult {
   std::vector<std::filesystem::path> files;  // the Ar-Ar workbooks in the submissions' order, then the Sample one
-  std::vector<std::string> notes;            // each once: fields without a column, rows past the formatted ones
+  // For the user, each once and in the order it came up: fields without a
+  // column, rows past the formatted ones, values that are not in a column's
+  // list or were found in it by name; then how many values of a column were
+  // put in its list's spelling; then, sheet by sheet, the Required columns a
+  // row left empty.
+  std::vector<std::string> notes;
 };
 
 // Writes the workbooks into `out_dir` (made if it is not there):
@@ -89,6 +120,13 @@ struct XlsxResult {
 // that cannot be written.
 Result<XlsxResult> export_xlsx(const std::vector<Submission>& submissions, const std::filesystem::path& out_dir,
                                const XlsxOptions& options = {});
+
+// What an export of `submissions` with `options` would say, without writing
+// anything: the notes export_xlsx would return (values that are not in the
+// template's lists, Required columns left empty, fields without a column) or
+// the error it would refuse with. For showing before the export.
+Result<std::vector<std::string>> check_against_template(const std::vector<Submission>& submissions,
+                                                        const XlsxOptions& options = {});
 
 // Where the templates are, the first of: the directory the environment
 // variable PYCHRON_EARTHBANK_TEMPLATES names; the installed ones beside the

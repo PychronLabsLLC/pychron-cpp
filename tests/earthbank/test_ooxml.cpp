@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1154,6 +1155,282 @@ TEST_F(Ooxml, AFailedSaveLeavesNoFile) {
     EXPECT_EQ(slurp(locked / "out.xlsx"), "the old workbook");
   }
 #endif
+}
+
+// ---- What the templates say about their columns ---------------------------------
+
+// A list validation as the tests write one: the columns, then the source.
+struct Listed {
+  std::vector<int> columns;
+  std::string sheet;
+  int column = 0;
+  int first_row = 0;
+  int last_row = 0;
+  bool operator==(const Listed&) const = default;
+};
+
+std::vector<Listed> ranges_of(const Workbook& book, const std::string& sheet) {
+  const auto found = book.list_validations(sheet);
+  EXPECT_TRUE(found.has_value()) << (found ? "" : to_string(found.error()));
+  std::vector<Listed> out;
+  if (!found) return out;
+  for (const ListValidation& one : *found) {
+    EXPECT_EQ(one.source, ListValidation::Source::Range) << sheet << ": " << one.formula;
+    out.push_back({one.columns, one.sheet, one.column, one.first_row, one.last_row});
+  }
+  std::sort(out.begin(), out.end(), [](const Listed& a, const Listed& b) { return a.columns < b.columns; });
+  return out;
+}
+
+TEST_F(Ooxml, TheTemplatesListValidations) {
+  // The Ar-Ar template keeps them in the sheet's extension list
+  // (x14:dataValidation, with xm:f and xm:sqref) and for row 5 only; the
+  // Sample template in the sheet's own dataValidations, for rows 5 to 883.
+  // Either way: these columns, those lists.
+  const Workbook arar = open(template_file(kArAr));
+  const char* const lists = "Lookup Tables";
+  EXPECT_EQ(ranges_of(arar, "ArArDataPoints"),
+            (std::vector<Listed>{{{4}, lists, 4, 2, 13},             // arArMethod: Analytical Method
+                                 {{8}, lists, 5, 2, 8},              // analysisScale: Analysis Scale
+                                 {{14, 16, 18}, lists, 6, 2, 21},    // the three uncertainty types
+                                 {{15, 17, 19}, lists, 7, 2, 3}}));  // the three uncertainty units
+  EXPECT_EQ(ranges_of(arar, "ArArMeasurement"), (std::vector<Listed>{{{55, 56, 57}, lists, 9, 2, 4}}));  // Yes/No
+  EXPECT_EQ(ranges_of(arar, "ArArAliquot"), std::vector<Listed>{});
+  EXPECT_EQ(ranges_of(arar, "ArArAgeSummary"),
+            (std::vector<Listed>{{{2}, lists, 10, 2, 11},     // dataInterpretationTool: Data Interpretation
+                                 {{4}, lists, 8, 2, 9},       // ageCalcType: Age Type
+                                 {{7}, lists, 6, 2, 21},      // calculatedAgeUncertaintyType
+                                 {{8}, lists, 7, 2, 3},       // calculatedAgeUncertaintyTypeUnits
+                                 {{12}, lists, 11, 2, 20}}));  // interpretation: Age Interpretation
+  EXPECT_EQ(ranges_of(arar, "ArArAgeCalc"), (std::vector<Listed>{{{2}, lists, 1, 2, 5},      // decayConstant
+                                                                 {{3}, lists, 2, 2, 3},      // airRatio
+                                                                 {{4}, lists, 3, 2, 17}}));  // fluxMonitor
+  EXPECT_EQ(ranges_of(arar, "Field Definitions"), std::vector<Listed>{});
+  EXPECT_EQ(ranges_of(arar, "Datapoint Props"), std::vector<Listed>{});
+
+  const Workbook sample = open(template_file(kSample));
+  const char* const tables = "Lookup tables";
+  EXPECT_EQ(ranges_of(sample, "Samples"),
+            (std::vector<Listed>{{{3}, tables, 1, 2, 16},       // sampleKind: Sample Kind
+                                 {{4}, tables, 2, 2, 12},       // sampleMethod: Sampling Method
+                                 {{5}, tables, 3, 2, 10185},    // material: Lithology
+                                 {{15}, tables, 4, 2, 10},      // locationKind: Location Kind
+                                 {{25}, tables, 5, 2, 12},      // personRole: Person Role
+                                 {{26}, tables, 6, 2, 28}}));   // lastKnownArchive: Last Known Sample Archive
+  EXPECT_EQ(ranges_of(sample, "Sample Props"), std::vector<Listed>{});
+
+  const auto none = arar.list_validations("No Such Sheet");
+  ASSERT_FALSE(none.has_value());
+  EXPECT_EQ(none.error().kind, ErrorKind::Config);
+}
+
+// A one-sheet workbook whose sheet has `validations` after its (empty) data
+// and whose workbook part has `defined_names`.
+std::vector<Part> validated_workbook(const std::string& validations, const std::string& defined_names = {}) {
+  std::vector<Part> parts = small_workbook("<sheetData/>" + validations);
+  const std::string close = "</workbook>";
+  parts[1].data.insert(parts[1].data.size() - close.size(), defined_names);
+  return parts;
+}
+
+TEST_F(Ooxml, AListValidationInAnyOfItsForms) {
+  const std::string validations =
+      "<dataValidations count=\"9\">"
+      // Several areas, one of them of two columns; the list is on this sheet.
+      "<dataValidation type=\"list\" sqref=\"C5 A2:A9 E5:F6\"><formula1>$K$2:$K$7</formula1></dataValidation>"
+      // A sheet whose name needs quotes, an apostrophe in it, and no `$`.
+      "<dataValidation type=\"list\" sqref=\"B5\"><formula1>'Bob''s lists'!C3:C4</formula1></dataValidation>"
+      // A bare sheet name and one cell.
+      "<dataValidation type=\"list\" sqref=\"G5:G10\"><formula1>Lists!$D$9</formula1></dataValidation>"
+      // The entries themselves.
+      "<dataValidation type=\"list\" sqref=\"H5\"><formula1>\"Yes, No ,N/A,,say \"\"so\"\"\"</formula1></dataValidation>"
+      // A name the workbook defines, and one it does not.
+      "<dataValidation type=\"list\" sqref=\"I5\"><formula1>Monitors</formula1></dataValidation>"
+      "<dataValidation type=\"list\" sqref=\"J5\"><formula1>Nobody</formula1></dataValidation>"
+      // A list this does not follow: a block of two columns, a formula.
+      "<dataValidation type=\"list\" sqref=\"L5\"><formula1>Lists!$A$1:$B$4</formula1></dataValidation>"
+      "<dataValidation type=\"list\" sqref=\"M5\"><formula1>INDIRECT(\"x\")</formula1></dataValidation>"
+      // Not a list at all.
+      "<dataValidation type=\"whole\" sqref=\"N5\"><formula1>1</formula1><formula2>9</formula2></dataValidation>"
+      "</dataValidations>"
+      // And one in the extension list, as Excel 2010 and later write those
+      // whose list is on another sheet.
+      "<extLst><ext xmlns:x14=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/main\">"
+      "<x14:dataValidations xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">"
+      "<x14:dataValidation type=\"list\"><x14:formula1><xm:f>Lists!$E$2:$E$3</xm:f></x14:formula1>"
+      "<xm:sqref>AA5 AC5:AD9</xm:sqref></x14:dataValidation>"
+      "</x14:dataValidations></ext></extLst>";
+  const std::string names = "<definedNames><definedName name=\"Monitors\">'Lookup Tables'!$C$2:$C$17</definedName>"
+                            "</definedNames>";
+  const Workbook book = open(zip_file("validated.xlsx", validated_workbook(validations, names)));
+  const auto found = book.list_validations("Data");
+  ASSERT_TRUE(found.has_value()) << to_string(found.error());
+  ASSERT_EQ(found->size(), 9u);
+  using Source = ListValidation::Source;
+  const auto expect_range = [&](std::size_t i, std::vector<int> columns, const std::string& sheet, int column,
+                                int first_row, int last_row) {
+    const ListValidation& one = (*found)[i];
+    EXPECT_EQ(one.source, Source::Range) << i;
+    EXPECT_EQ(one.columns, columns) << i;
+    EXPECT_EQ(one.sheet, sheet) << i;
+    EXPECT_EQ(one.column, column) << i;
+    EXPECT_EQ(one.first_row, first_row) << i;
+    EXPECT_EQ(one.last_row, last_row) << i;
+  };
+  expect_range(0, {1, 3, 5, 6}, "Data", 11, 2, 7);
+  expect_range(1, {2}, "Bob's lists", 3, 3, 4);
+  expect_range(2, {7}, "Lists", 4, 9, 9);
+  EXPECT_EQ((*found)[3].source, Source::Inline);
+  EXPECT_EQ((*found)[3].columns, std::vector<int>{8});
+  EXPECT_EQ((*found)[3].entries, (std::vector<std::string>{"Yes", "No", "N/A", "say \"so\""}));
+  expect_range(4, {9}, "Lookup Tables", 3, 2, 17);
+  EXPECT_EQ((*found)[4].formula, "Monitors");
+  // What cannot be followed is said to be so, with what was written; it is
+  // not an error.
+  for (const auto& [i, formula, column] :
+       {std::tuple{5, "Nobody", 10}, std::tuple{6, "Lists!$A$1:$B$4", 12}, std::tuple{7, "INDIRECT(\"x\")", 13}}) {
+    const ListValidation& one = (*found)[static_cast<std::size_t>(i)];
+    EXPECT_EQ(one.source, Source::Unresolved) << formula;
+    EXPECT_EQ(one.formula, formula);
+    EXPECT_EQ(one.columns, std::vector<int>{column}) << formula;
+    EXPECT_TRUE(one.sheet.empty() && one.entries.empty()) << formula;
+  }
+  expect_range(8, {27, 29, 30}, "Lists", 5, 2, 3);
+
+  // A sheet with none, and one whose validation says nothing usable.
+  EXPECT_EQ(open(zip_file("plain.xlsx", small_workbook("<sheetData/>"))).list_validations("Data")->size(), 0u);
+  const Workbook odd = open(zip_file(
+      "odd.xlsx", validated_workbook("<dataValidations><dataValidation type=\"list\" sqref=\"not cells\"/>"
+                                     "<dataValidation type=\"list\"><formula1>Lists!$A$1:$A$2</formula1>"
+                                     "</dataValidation></dataValidations>")));
+  const auto empty = odd.list_validations("Data");
+  ASSERT_TRUE(empty.has_value());
+  ASSERT_EQ(empty->size(), 2u);
+  EXPECT_TRUE((*empty)[0].columns.empty());
+  EXPECT_EQ((*empty)[0].source, Source::Unresolved);
+  EXPECT_TRUE((*empty)[1].columns.empty());
+}
+
+TEST_F(Ooxml, TheValuesOfAColumn) {
+  const Workbook arar = open(template_file(kArAr));
+  // The flux monitors: the range the ArArAgeCalc sheet's validation names.
+  const auto monitors = arar.column_values("Lookup Tables", 3, 2, 17);
+  ASSERT_TRUE(monitors.has_value()) << to_string(monitors.error());
+  ASSERT_EQ(monitors->size(), 16u);
+  EXPECT_EQ(monitors->front(), "Alder Creek Rhyolite Sanidine (ACs) from Phillips et al. 2022 (1.1834 Ma)");
+  EXPECT_EQ((*monitors)[2], "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)");
+  EXPECT_EQ(monitors->back(), "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)");
+  // One string per row asked for: empty where the column holds nothing, and
+  // for rows the sheet does not store. Text is as the cell has it, spaces
+  // too.
+  EXPECT_EQ(*arar.column_values("Lookup Tables", 2, 1, 5),
+            (std::vector<std::string>{"Air Ratio", "Lee et al. 2006", "Nier 1950", "", ""}));
+  EXPECT_EQ(*arar.column_values("Lookup Tables", 1, 4, 4), std::vector<std::string>{"Renne et al. 2011 "});
+  EXPECT_EQ(*arar.column_values("Lookup Tables", 1, 5000, 5002), (std::vector<std::string>{"", "", ""}));
+  EXPECT_EQ(*arar.column_values("Lookup Tables", 300, 2, 3), (std::vector<std::string>{"", ""}));
+
+  // The long one: every rock and mineral the service knows.
+  const Workbook sample = open(template_file(kSample));
+  const auto materials = sample.column_values("Lookup tables", 3, 2, 10185);
+  ASSERT_TRUE(materials.has_value());
+  ASSERT_EQ(materials->size(), 10184u);
+  EXPECT_EQ(materials->front(), "Unknown");
+  EXPECT_EQ((*materials)[1243 - 2], "Biotite");
+  EXPECT_EQ((*materials)[8433 - 2], "Sanidine");
+  EXPECT_EQ(materials->back(), "Zygadite");
+
+  for (const auto& bad : {arar.column_values("No Such Sheet", 1, 1, 2), arar.column_values("Lookup Tables", 0, 1, 2),
+                          arar.column_values("Lookup Tables", kMaxColumn + 1, 1, 2),
+                          arar.column_values("Lookup Tables", 1, 0, 2), arar.column_values("Lookup Tables", 1, 3, 2),
+                          arar.column_values("Lookup Tables", 1, 1, kMaxRow + 1)}) {
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_EQ(bad.error().kind, ErrorKind::Config);
+  }
+}
+
+TEST_F(Ooxml, TheFillOfACell) {
+  // The legend of each template's definitions, and a header under it.
+  const Workbook arar = open(template_file(kArAr));
+  EXPECT_EQ(*arar.row_values("Field Definitions", 5), std::vector<std::string>{"Required"});
+  EXPECT_EQ(*arar.cell_fill("Field Definitions", 5, 1), "FFFAD9D6");
+  EXPECT_EQ(*arar.cell_fill("Field Definitions", 4, 1), "FFFEF1CC");  // Recommended
+  EXPECT_EQ(*arar.cell_fill("Field Definitions", 3, 1), "FFDAF1F3");  // Optional
+  EXPECT_EQ(*arar.cell_fill("Field Definitions", 2, 1), "");          // styled, not filled
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 3, 3), "FFFAD9D6");     // Analytical Key
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 3, 6), "FFDAF1F3");     // Comment
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 3, 9), "FFFEF1CC");     // Rock Type
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 4, 3), "");
+  // A cell the row has not, a row the sheet has not.
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 3, 500), "");
+  EXPECT_EQ(*arar.cell_fill("ArArDataPoints", 100000, 1), "");
+
+  const auto fills = arar.row_fills("ArArDataPoints", 3);
+  ASSERT_TRUE(fills.has_value());
+  ASSERT_EQ(fills->size(), 22u);
+  for (std::size_t i = 0; i < fills->size(); ++i) {
+    EXPECT_EQ((*fills)[i], *arar.cell_fill("ArArDataPoints", 3, static_cast<int>(i) + 1)) << i;
+  }
+  EXPECT_TRUE(arar.row_fills("ArArDataPoints", 100000)->empty());
+
+  const Workbook sample = open(template_file(kSample));
+  EXPECT_EQ(*sample.row_values("Column Descriptions", 1), std::vector<std::string>{"Required field"});
+  EXPECT_EQ(*sample.cell_fill("Column Descriptions", 1, 1), "FFFAD9D6");
+  EXPECT_EQ(*sample.cell_fill("Samples", 3, 1), "FFFAD9D6");  // Sample Name
+  EXPECT_EQ(*sample.cell_fill("Samples", 3, 2), "FFD9EAD3");  // IGSN
+  EXPECT_EQ(*sample.cell_fill("Samples", 4, 1), "");
+
+  for (const auto& bad : {arar.cell_fill("No Such Sheet", 1, 1), arar.cell_fill("ArArDataPoints", 0, 1),
+                          arar.cell_fill("ArArDataPoints", 1, 0), arar.cell_fill("ArArDataPoints", 1, kMaxColumn + 1)}) {
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_EQ(bad.error().kind, ErrorKind::Config);
+  }
+}
+
+// A one-sheet workbook with a styles part: row 1 has a cell of each style.
+std::vector<Part> styled_workbook(const std::string& styles, int style_count) {
+  std::string row = "<sheetData><row r=\"1\">";
+  for (int i = 0; i < style_count; ++i) row += "<c r=\"" + cell_reference(i + 1, 1) + "\" s=\"" + std::to_string(i) + "\"/>";
+  row += "<c r=\"" + cell_reference(style_count + 1, 1) + "\"/></row></sheetData>";
+  std::vector<Part> parts = small_workbook(row);
+  const std::string close = "</Relationships>";
+  parts[2].data.insert(parts[2].data.size() - close.size(),
+                       "<Relationship Id=\"rId8\" "
+                       "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" "
+                       "Target=\"styles.xml\"/>");
+  if (!styles.empty()) parts.push_back({"xl/styles.xml", styles});
+  return parts;
+}
+
+TEST_F(Ooxml, AFillIsASolidOneAndItsColourAsWritten) {
+  const std::string styles =
+      "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fills>"
+      "<fill><patternFill patternType=\"none\"/></fill>"
+      "<fill><patternFill patternType=\"gray125\"><fgColor rgb=\"FF111111\"/></patternFill></fill>"
+      "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFABCDEF\"/><bgColor indexed=\"64\"/></patternFill></fill>"
+      "<fill><patternFill patternType=\"solid\"><fgColor theme=\"4\" tint=\"0.5\"/></patternFill></fill>"
+      "<fill><patternFill patternType=\"solid\"><fgColor indexed=\"13\"/></patternFill></fill>"
+      "<fill><gradientFill/></fill>"
+      "<fill><patternFill patternType=\"solid\"/></fill>"
+      "</fills><cellXfs>"
+      "<xf fillId=\"0\"/><xf fillId=\"1\"/><xf fillId=\"2\"/><xf fillId=\"3\"/><xf fillId=\"4\"/><xf fillId=\"5\"/>"
+      "<xf fillId=\"6\"/><xf fillId=\"99\"/><xf/></cellXfs></styleSheet>";
+  const Workbook book = open(zip_file("styled.xlsx", styled_workbook(styles, 10)));
+  // A pattern is not a fill of one colour; a theme or indexed colour is
+  // given as it is written, which is all two cells need to be compared.
+  EXPECT_EQ(*book.row_fills("Data", 1),
+            (std::vector<std::string>{"", "", "FFABCDEF", "theme 4 tint 0.5", "indexed 13", "", "", "", "", "", ""}));
+  EXPECT_EQ(*book.cell_fill("Data", 1, 3), "FFABCDEF");
+
+  // A workbook without a styles part has no fills; one whose styles do not
+  // parse says so when asked, and still opens.
+  EXPECT_EQ(*open(zip_file("unstyled.xlsx", small_workbook("<sheetData><row r=\"1\"><c r=\"A1\" s=\"2\"/></row></sheetData>")))
+                 .cell_fill("Data", 1, 1),
+            "");
+  const Workbook broken = open(zip_file("broken.xlsx", styled_workbook("<styleSheet><fills>", 2)));
+  const auto fill = broken.cell_fill("Data", 1, 1);
+  ASSERT_FALSE(fill.has_value());
+  EXPECT_EQ(fill.error().kind, ErrorKind::Protocol);
+  EXPECT_TRUE(broken.row_values("Data", 1).has_value());
 }
 
 }  // namespace

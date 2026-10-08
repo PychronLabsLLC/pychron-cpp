@@ -72,6 +72,59 @@ std::string normalize_citation(std::string_view override_text, bool decay);
 // from Kuiper et al. 2008 (28.201 Ma)`), so this is a query, not a name.
 std::string flux_monitor_query(std::string_view name, std::optional<double> age_ma);
 
+// ---- A value against a list -----------------------------------------------
+//
+// The workbook route has no service to resolve a name: what is written is
+// what the website's importer gets. The template carries the service's lists
+// (its `Lookup Tables` sheet), and these say how a value stands to one, with
+// no I/O: the exporter (xlsx.hpp) reads the list and asks.
+
+// `entry` is what to write: for Exact the value as it was given, for
+// Respelled the list's entry (less the spaces around it); empty otherwise.
+struct ListMatch {
+  enum class Kind {
+    Exact,      // the list has it as given, or as given but for spaces around its entry
+    Respelled,  // one entry is the value in another spelling
+    Ambiguous,  // more than one entry could be meant: nothing is rewritten
+    None,       // no entry is the value
+  };
+  Kind kind = Kind::None;
+  std::string entry;
+};
+
+// `value` among `entries`. Another spelling is the same text but for the case
+// of ASCII letters and the spaces around it, nothing else: not a part of an
+// entry, not other spaces inside one. Two entries that differ only so are
+// one when they are the same once trimmed; when they differ in case, a value
+// that is neither exactly is Ambiguous.
+ListMatch match_list_entry(std::string_view value, std::span<const std::string> entries);
+
+// A flux monitor among the list's entries, which are long (`Fish Canyon Tuff
+// Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)`) where a lab says
+// `FC-2 28.201 Ma` (flux_monitor_query). First as match_list_entry. Then by
+// name and age:
+//   - the value's age is its number followed by `Ma`, else its last number;
+//     an entry's is the `(28.201 Ma)` it ends with. They must be the same
+//     number (28.2010 is 28.201; 28.2 and 28.20 are not): among a monitor's
+//     entries the age decides, and a value without one matches nothing;
+//   - the name is the rest. If it holds one of flux_monitor_aliases() it
+//     means that monitor, and only that monitor's entries are looked at
+//     (names of two monitors match nothing). If it holds none, every word of
+//     it must be a word of the entry, one of them of three letters or more or
+//     the entry's abbreviation in parentheses.
+// One entry left: Respelled. Several: Ambiguous. None: None.
+ListMatch match_flux_monitor(std::string_view value, std::span<const std::string> entries);
+
+// A name pychron labs give a monitor, and the mark by which the list's
+// entries for that monitor are known (the abbreviation each has in
+// parentheses, or begins with). Built from the list in the Ar-Ar template:
+// only monitors that are in it, and a test holds the two together. Compared
+// without case or punctuation (`FC-2`, `fc2`), as whole words.
+struct MonitorAlias {
+  std::string_view alias, listed;
+};
+std::span<const MonitorAlias> flux_monitor_aliases();
+
 // Terms the mapping writes that never vary, spelled as the template's lists
 // have them: the unit of every intensity, the unit of every uncertainty
 // (absolute, never percent), the sigma level every uncertainty is quoted at,

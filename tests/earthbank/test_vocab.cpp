@@ -1,15 +1,19 @@
 #include <algorithm>
+#include <filesystem>
 #include <initializer_list>
 #include <limits>
 #include <optional>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "ooxml.hpp"
+#include "pychron/core/error.hpp"
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/reduction/arar_types.hpp"
@@ -252,6 +256,174 @@ TEST(Vocab, LookupEndpoints) {
   // Not a term that is looked up at all.
   EXPECT_EQ(endpoint_of("lithologyName"), "<none>");
   EXPECT_EQ(endpoint_of("aliquotName"), "<none>");
+}
+
+// ---- A value against one of the service's lists ------------------------------
+
+using Kind = ListMatch::Kind;
+
+// The flux monitors as the Ar-Ar template lists them (sheet `Lookup Tables`,
+// C2:C17, the range its ArArAgeCalc sheet validates `fluxMonitor` against).
+std::vector<std::string> template_monitors() {
+  auto book = ooxml::Workbook::open(std::filesystem::path(PYCHRON_EARTHBANK_TEMPLATE_DIR) /
+                                    "ArArDataPoint_Template2026.xlsx");
+  if (!book) throw std::runtime_error(to_string(book.error()));
+  auto values = book->column_values("Lookup Tables", 3, 2, 17);
+  if (!values) throw std::runtime_error(to_string(values.error()));
+  return *values;
+}
+
+void expect_match(const ListMatch& match, Kind kind, std::string_view entry, const std::string& what) {
+  EXPECT_EQ(static_cast<int>(match.kind), static_cast<int>(kind)) << what;
+  EXPECT_EQ(match.entry, entry) << what;
+}
+
+TEST(Vocab, AValueIsFoundInAListWhateverItsCaseAndSpaces) {
+  const std::vector<std::string> list = {"Unknown", "Biotite", "Renne et al. 2011 ", "Total fusion - laser",
+                                         "Total Fusion - undefined", "vial", "Vial", "", "  Padded  entry "};
+  const auto match = [&](std::string_view value) { return match_list_entry(value, list); };
+
+  // As the list has it: written as it is.
+  expect_match(match("Biotite"), Kind::Exact, "Biotite", "exact");
+  expect_match(match("Renne et al. 2011 "), Kind::Exact, "Renne et al. 2011 ", "exact, the list's space and all");
+  // The list's entry less the spaces around it is no other spelling.
+  expect_match(match("Renne et al. 2011"), Kind::Exact, "Renne et al. 2011", "the list has a space after it");
+  // Case and the spaces around: the list's spelling, trimmed.
+  expect_match(match("biotite"), Kind::Respelled, "Biotite", "case");
+  expect_match(match("BIOTITE"), Kind::Respelled, "Biotite", "case");
+  expect_match(match("  Biotite\t"), Kind::Respelled, "Biotite", "spaces");
+  expect_match(match("renne ET AL. 2011"), Kind::Respelled, "Renne et al. 2011", "case, trimmed");
+  expect_match(match("total fusion - LASER"), Kind::Respelled, "Total fusion - laser", "case");
+  expect_match(match("padded  entry"), Kind::Respelled, "Padded  entry", "the spaces inside are the entry's");
+  // Nothing else is the same entry: not a part, not other spaces inside.
+  expect_match(match("Biotit"), Kind::None, "", "a part");
+  expect_match(match("Biotite mica"), Kind::None, "", "more");
+  expect_match(match("Total fusion-laser"), Kind::None, "", "spaces inside");
+  expect_match(match("Total fusion - undefined"), Kind::Respelled, "Total Fusion - undefined", "case inside");
+  expect_match(match("Bi\xC3\xB6tite"), Kind::None, "", "another letter");
+  expect_match(match(""), Kind::None, "", "nothing");
+  expect_match(match("   "), Kind::None, "", "spaces");
+  // Two entries that differ only in case: the one written exactly is meant;
+  // another case could be either, and is rewritten to neither.
+  expect_match(match("vial"), Kind::Exact, "vial", "one of two");
+  expect_match(match("Vial"), Kind::Exact, "Vial", "the other");
+  expect_match(match(" Vial "), Kind::Respelled, "Vial", "the other, trimmed");
+  expect_match(match("VIAL"), Kind::Ambiguous, "", "either");
+
+  expect_match(match_list_entry("Biotite", {}), Kind::None, "", "an empty list");
+  // An entry twice in a list is one entry.
+  const std::vector<std::string> twice = {"Other", "Other ", "other (add comment)"};
+  expect_match(match_list_entry("other", twice), Kind::Respelled, "Other", "listed twice");
+}
+
+TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
+  const std::vector<std::string> list = template_monitors();
+  ASSERT_EQ(list.size(), 16u);
+  const auto match = [&](std::string_view value) { return match_flux_monitor(value, list); };
+  const char* const kuiper = "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)";
+  const char* const renne = "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)";
+
+  // What the mapping writes: the monitor as pychron names it and its age.
+  expect_match(match("FC-2 28.201 Ma"), Kind::Respelled, kuiper, "FC-2");
+  expect_match(match(flux_monitor_query("FC-2", 28.201)), Kind::Respelled, kuiper, "the mapping's query");
+  expect_match(match("FC-2 28.294 Ma"), Kind::Respelled, renne, "the age decides");
+  expect_match(match("FCs 28.201"), Kind::Respelled, kuiper, "FCs, no unit");
+  expect_match(match("fct 28.2010 Ma"), Kind::Respelled, kuiper, "FCT, a zero after the age");
+  expect_match(match("FCT-2 28.201Ma"), Kind::Respelled, kuiper, "a split's number, the unit run on");
+  expect_match(match("Fish Canyon sanidine (28.201 Ma)"), Kind::Respelled, kuiper, "by name");
+  expect_match(match("Fish Canyon Tuff sanidine, Kuiper et al. 2008, 28.201 Ma"), Kind::Respelled, kuiper, "a citation");
+  expect_match(match("FC-2 28.175 Ma"), Kind::Respelled,
+               "Fish Canyon Tuff Sanidine (FCTs) from Phillips et al. 2022 (28.175 Ma)", "Phillips");
+  expect_match(match("ACs 1.1851 Ma"), Kind::Respelled,
+               "Alder Creek Rhyolite Sanidine (ACs) from Schaen et al. 2020 (1.1851 Ma)", "ACs");
+  expect_match(match("Alder Creek 1.1834"), Kind::Respelled,
+               "Alder Creek Rhyolite Sanidine (ACs) from Phillips et al. 2022 (1.1834 Ma)", "Alder Creek");
+  expect_match(match("GA-1550 99.738 Ma"), Kind::Respelled,
+               "Mt Domedary Biotite (GA-1550) using Renne et al. 2011 (99.738 Ma)", "GA-1550");
+  expect_match(match("GA1550 99.44 Ma"), Kind::Respelled,
+               "Mt Domedary Biotite (GA-1550) from Jourdan and Renne 2007 (99.44 Ma)", "GA1550, not MD-2 of that age");
+  expect_match(match("MD-2 99.44 Ma"), Kind::Respelled,
+               "Mt Domedary Biotite (MD-2) from Jourdan and Renne 2007 (99.44 Ma)", "MD-2, not GA-1550 of that age");
+  expect_match(match("Hb3gr 1081 Ma"), Kind::Respelled, "Hornblende (Hb3gr) using Renne et al. 2011 (1081 Ma)", "Hb3gr");
+  expect_match(match("HB3GR 1081.5"), Kind::Respelled, "Hornblende (Hb3gr) from Jourdan and Renne 2007 (1081.5 Ma)",
+               "Hb3gr, the other age");
+  expect_match(match("TCs 28.447 Ma"), Kind::Respelled,
+               "Taylor Creek Rhyolite Saniditine (TCs) from Fleck et al. 2019 (28.447 Ma)", "TCs");
+  expect_match(match("Taylor Creek Rhyolite sanidine 28.447 Ma"), Kind::Respelled,
+               "Taylor Creek Rhyolite Saniditine (TCs) from Fleck et al. 2019 (28.447 Ma)", "Taylor Creek");
+  expect_match(match("WA1ms 2613 Ma"), Kind::Respelled,
+               "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "WA1ms");
+  // Without one of pychron's names for it: every word of the name must be the
+  // entry's, and one of them a word of three letters or more.
+  expect_match(match("Kuiper 2008 28.201 Ma"), Kind::Respelled, kuiper, "the citation alone");
+  expect_match(match("Western Australia muscovite 2613 Ma"), Kind::Respelled,
+               "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "by words");
+
+  // An entry as the list has it needs no age to be found.
+  expect_match(match(kuiper), Kind::Exact, kuiper, "the entry itself");
+  expect_match(match(std::string(" ") + renne), Kind::Respelled, renne, "the entry, a space before it");
+
+  // No match, and so nothing rewritten:
+  expect_match(match("FC-2 28.02 Ma"), Kind::None, "", "an age the list has not for it");
+  expect_match(match("FC-2 28.2 Ma"), Kind::None, "", "an age cut short is another age");
+  expect_match(match("FC-2 28.20 Ma"), Kind::None, "", "likewise");
+  expect_match(match("FC-2 28.2014 Ma"), Kind::None, "", "and one with more digits");
+  expect_match(match("FC-2"), Kind::None, "", "no age");
+  expect_match(match("28.201 Ma"), Kind::None, "", "no name");
+  expect_match(match("28.201"), Kind::None, "", "a number");
+  expect_match(match(""), Kind::None, "", "nothing");
+  expect_match(match("ACs 28.201 Ma"), Kind::None, "", "another monitor's age");
+  expect_match(match("FC-2 1.1851 Ma"), Kind::None, "", "likewise");
+  expect_match(match("BT-1 sanidine 28.201 Ma"), Kind::None, "", "a monitor the list has not, of a listed age");
+  expect_match(match("sanidine 28.201 Ma"), Kind::Respelled, kuiper, "a mineral and an age only one entry has");
+  expect_match(match("FC-2 or ACs 28.201 Ma"), Kind::None, "", "two monitors named");
+  expect_match(match("Bishop Tuff sanidine 0.7666 Ma"), Kind::None, "", "not listed at all");
+  expect_match(match("GA-1550 MD-2 99.44 Ma"), Kind::None, "", "two monitors of one age");
+  // Ambiguous, and so not rewritten: the age is two entries' and the name
+  // says no more.
+  expect_match(match("Mt Domedary Biotite 99.44 Ma"), Kind::Ambiguous, "", "GA-1550 or MD-2");
+  expect_match(match("Jourdan and Renne 2007 99.44"), Kind::Ambiguous, "", "likewise");
+  const std::vector<std::string> twins = {"Fish Canyon Tuff Sanidine (FCTs) from A (28.201 Ma)",
+                                          "Fish Canyon Tuff Sanidine (FCTs) from B (28.201 Ma)"};
+  expect_match(match_flux_monitor("FC-2 28.201 Ma", twins), Kind::Ambiguous, "", "two entries of one age");
+  // The same entry twice is one entry.
+  const std::vector<std::string> same = {std::string(kuiper), std::string(kuiper) + " "};
+  expect_match(match_flux_monitor("FC-2 28.201 Ma", same), Kind::Respelled, kuiper, "listed twice");
+  expect_match(match_flux_monitor("FC-2 28.201 Ma", {}), Kind::None, "", "an empty list");
+}
+
+// The table of pychron's names for monitors is of this list: each name it
+// maps to marks at least one entry, and every entry is reached by some name.
+TEST(Vocab, TheMonitorAliasesAreOfTheTemplatesList) {
+  const std::vector<std::string> list = template_monitors();
+  const auto aliases = flux_monitor_aliases();
+  ASSERT_FALSE(aliases.empty());
+  std::set<std::string> reached;
+  for (const MonitorAlias& alias : aliases) {
+    int marked = 0;
+    for (const std::string& entry : list) {
+      // The mark is in the entry as a word of its own: in parentheses, or
+      // first.
+      const std::string mark(alias.listed);
+      if (entry.find("(" + mark + ")") == std::string::npos && entry.rfind(mark + " ", 0) != 0) continue;
+      ++marked;
+      // With the entry's own age the alias finds exactly that entry, unless
+      // the monitor has two entries of that age.
+      const std::size_t open = entry.rfind('(');
+      const std::string age = entry.substr(open + 1, entry.rfind(" Ma)") - open - 1);
+      const ListMatch found = match_flux_monitor(std::string(alias.alias) + " " + age + " Ma", list);
+      EXPECT_EQ(static_cast<int>(found.kind), static_cast<int>(Kind::Respelled)) << alias.alias << " " << age;
+      EXPECT_EQ(found.entry, entry) << alias.alias << " " << age;
+      reached.insert(entry);
+    }
+    EXPECT_GT(marked, 0) << alias.alias << " -> " << alias.listed << " marks no entry of the list";
+  }
+  EXPECT_EQ(reached.size(), list.size());
+  for (const char* name : {"FC-2", "FCs", "FCT", "Fish Canyon", "ACs", "Alder Creek", "GA-1550", "Hb3gr", "TCs",
+                           "Taylor Creek"}) {
+    EXPECT_TRUE(std::any_of(aliases.begin(), aliases.end(), [&](const MonitorAlias& a) { return a.alias == name; }))
+        << name;
+  }
 }
 
 }  // namespace
