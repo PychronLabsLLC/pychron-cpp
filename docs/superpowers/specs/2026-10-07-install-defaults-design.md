@@ -1,6 +1,7 @@
 # Install defaults: reference samples, special identifiers and reactor productions
 
-Status: design, awaiting review. 2026-10-07.
+Status: implemented 2026-10-07 (plan: `../plans/2026-10-07-install-defaults.md`).
+Where the code differs from this text, section 8 says how.
 
 ## 1. Goal
 
@@ -196,3 +197,20 @@ is tested).
 - Editing an existing identifier's sample.
 - More reactors than Triga.
 - Seeding a data-reduction install.
+
+## 8. As built
+
+- `apply_seed(IStore&, const Seed&, const persistence::Actor&, bool dry_run)`:
+  an actor as every other entry write takes, and a dry run.
+- The project: a store keys a project by name and principal investigator, so
+  the seed uses any project of that name (the one without a principal
+  investigator first) and makes one only when there is none.
+- The store has no read of an identifier's sample: an identifier that exists
+  is reported as kept, with whatever sample it has or has not.
+- `identifiers.toml` takes a list for a type (`blank_unknown = ["bu", "b"]`),
+  so the shipped file is exactly the built-in rules.
+- The command is `elctl entry seed <seed.toml> --db <url> [--dry-run]`: entry
+  commands take a database url, not an install.
+- "The schema is not current" is the store's own refusal to open without
+  migrating, reported under "the database could not be opened".
+- doctor warns, never fails, when an instrument's database does not open.

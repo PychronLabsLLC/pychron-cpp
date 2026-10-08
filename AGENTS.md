@@ -132,6 +132,15 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `PYCHRON_TEST_PG_URL` is set; `elctl`'s flux tests run on SQLite only. A
   level's saved fit (monitor set, sample, all positions) is one revision's,
   and is repeated only under its own monitor set. User guide: `docs/flux.md`.
+- An instrument install has a database and setup seeds it from the install's
+  `seed.toml` (`libs/entry` `seed.hpp`; `elctl entry seed` by hand): the
+  `references` project, a sample and special identifier for each kind of
+  reference run, the Triga production ratios (those of the NM-293 fixture).
+  The seed only ensures: it never edits or removes a row or a reactor that
+  exists, and a failed seed never fails an install. `seed.toml`,
+  `defaults.toml` and the example queue name the same samples;
+  `tests/setup/test_profiles.cpp` holds them together. `libs/setup` only
+  computes the database url; the apps open the store.
 - A file the application writes for the user to open elsewhere (a report, a
   figure, a template, a sheet) goes through `pychron::mark_as_user_file`
   (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned

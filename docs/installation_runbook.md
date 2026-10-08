@@ -258,8 +258,10 @@ elctl init argus --root ~/Pychron/argus
 
 Press Enter to accept each default. The install starts in simulation. It
 writes the extraction line and canvas, `spectrometer.toml`, field tables,
-three measurement plans, scripts, conditionals, an example queue and
-`CALIBRATE.md`.
+three measurement plans, scripts, conditionals, the special identifiers
+(`identifiers.toml`), run defaults, an example queue and `CALIBRATE.md`. It
+also makes the install's database and puts the reference samples in it (see
+"The database and what setup puts in it" below).
 
 | Plan | What it measures |
 |---|---|
@@ -274,6 +276,43 @@ Choose the extraction line with the `line_source` question:
 | `starter` (default) | The five-valve example line on simulated controllers |
 | `import` | Your own `extraction_line.toml` and `canvas.toml` (`line_file`, `canvas_file`), checked before anything is written |
 | `legacy` | A legacy Pychron `setupfiles` folder (`legacy_folder`) converted; see part 3.6 |
+
+#### The database and what setup puts in it
+
+The last question is where the database is: a file on this computer
+(`data/pychron.db`, the default) or the lab's PostgreSQL server
+(`--set data_source=server` and the `db_*` answers, as in part 2.2). It holds
+the catalog: samples, projects, packages. Records of runs are still files
+under `<root>/data`.
+
+Setup then seeds it from `<root>/seed.toml`:
+
+| What | Seeded |
+|---|---|
+| Project | `references` |
+| Samples (and their special identifiers) | `blank_unknown` (`bu`), `blank_air` (`ba`), `blank_cocktail` (`bc`), `blank_extractionline` (`be`), `background` (`bg`), `air` (`a`), `cocktail` (`c`), `detector_ic` (`ic`) |
+| Materials | `blank`, `air`, `cocktail` |
+| Reactor | `Triga`, with nine production ratios, for `elctl entry package add --reactor Triga` |
+
+`defaults.toml` names the same samples, so a new blank, air or cocktail run
+is recorded with its sample and the `references` project.
+
+- The seed only adds. A project, sample, identifier or reactor that is
+  already there is kept exactly as it is, so running setup again, or on a
+  server other instruments share, changes nothing of theirs.
+- A project named `references` that the lab already has is used, whoever its
+  principal investigator is.
+- A special identifier that exists (for example from a legacy import) keeps
+  whatever sample it has or has not.
+- Setup makes and migrates a local database. It never migrates the lab's
+  server: there the seed runs only when the schema is current (part 2.2).
+- To change what is seeded, edit `seed.toml` and run
+  `elctl entry seed <root>/seed.toml --db <url>` (`--dry-run` says what it
+  would add).
+
+If the seed cannot run, setup prints `seed skipped: <reason>` and the command
+to run later, and the install is otherwise complete: the instrument measures
+without it.
 
 Check, then run the example queue in simulation:
 
@@ -532,6 +571,9 @@ repository or database, so falling back is a matter of continuing to use it.
 | `several installs and no default` | Pass `--install NAME`, or set the default in File > Installations |
 | `doctor`: `database ... not checked: built without the database library` | Built without Qt Sql. Use a release package, or rebuild with Qt 6 found |
 | `doctor` fails a PostgreSQL database | Server, user or password wrong, the QPSQL plugin is missing (`libqt6sql6-psql`), or the schema was never created (part 2.2) |
+| `seed skipped: the database could not be opened` | An instrument install's database was not reachable or its schema is not current. Fix that (part 2.2), then run the printed `elctl entry seed ...` command |
+| `seed skipped: ...seed.toml: ...` | The install's `seed.toml` was edited into something that does not parse. Fix the line named, then run the printed command |
+| `doctor` warns about an instrument's `database` | The catalog database does not open. Runs are not affected; `elctl init --reconfigure` makes a missing local one |
 | `doctor` warns `every transport is simulated` | Simulation is off but the line is still the starter. Describe the real controllers in `extraction_line.toml` |
 | `import add` refuses a time zone or flag | The source is already registered with another `--tz` or `--catalog-from-repos`; these cannot change |
 | `import run` or `verify`: `history was rewritten` | The legacy repository's history changed (for example a force-push) after it was imported. `run` and `verify` refuse it; see [legacy_import.md](legacy_import.md) section 3 |
