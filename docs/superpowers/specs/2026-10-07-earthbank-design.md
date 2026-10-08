@@ -110,6 +110,7 @@ struct SampleOptions {              // per sample; all optional
   std::optional<PreferredAge> preferred_age;   // empty: section 4.4's rule
   std::string flux_monitor;         // overrides the monitor found on the analyses
   std::string datapoint_name;       // empty: "<sample> <material>", or "<sample>"
+  std::string irradiation;          // the irradiation batch as EarthBank names it; empty: the analyses'
 };
 
 struct PublishOptions {
@@ -118,6 +119,7 @@ struct PublishOptions {
   bool age_includes_j_error = true; // the reported age's uncertainty with J (4.4)
   std::string decay_constant;       // EarthBank name or a citation; empty: from the value used (4.3)
   std::string air_ratio;            // likewise
+  std::string setup;                // the lab's analytical set-up as EarthBank names it; no default
   std::map<std::string, SampleOptions> samples; // by sample name
   std::string software = "pychron-cpp";         // name and version, for the two descriptions
 };
@@ -151,6 +153,20 @@ the service has one uncertainty per age and no field that says what is in
 it. It defaults to `true` (the report's "with J" column); either way the age
 summary's description says which (4.4).
 
+`setup` and `irradiation` name two things that must already exist on the
+service: the laboratory's analytical set-up and the irradiation batch. Every
+data point refers to one of each, and the workbook's columns for them
+(`arArSetUp`, `irradiationBatchID`) are marked Required. Nothing on an
+analysis says what EarthBank calls the set-up, so `setup` has no default and
+is the same for every sample of a build. The irradiation is
+`SampleOptions::irradiation` when given, else the one irradiation the
+sample's published analyses name (`Analysis::irradiation`; an analysis that
+names none is passed over). A sample can span irradiations and the record
+has room for one: analyses that name different ones are not refused; the
+name is left empty and a note gives two of them with their run ids. Both
+names are taken as given: whether the service knows them is for pre-flight
+(section 5) or, in a workbook, for the importer.
+
 `software` is filled by the apps with the name and version; it goes into
 `Sample.description` (`Uploaded from <software>`) and into the age summary's
 description (`reduced with <software>`). Left empty it reads `pychron-cpp`
@@ -158,10 +174,15 @@ in both.
 
 ### 4.2 Records and where each value comes from
 
-`Submission { std::string datapoint_name; Sample sample; std::optional<Location>
-location; DataPoint data_point; std::vector<Aliquot> aliquots;
-std::vector<Measurement> measurements; AgeCalc age_calc; AgeSummary
-age_summary; std::vector<std::string> notes; }`. `datapoint_name` is the key
+`Submission { std::string datapoint_name; std::string setup_name; std::string
+irradiation_name; Sample sample; std::optional<Location> location; DataPoint
+data_point; std::vector<Aliquot> aliquots; std::vector<Measurement>
+measurements; AgeCalc age_calc; AgeSummary age_summary;
+std::vector<std::string> notes; }`. `setup_name` and `irradiation_name` (4.1)
+are not fields of the Ar-Ar record, which has only their ids: an upload
+sends them beside the record (`arArSetUpName`, `arArIrradiationName`
+**[legacy]**), the workbook has a column for each. They are part of the
+submission's content hash; the notes are not. `datapoint_name` is the key
 that ties a workbook's rows together and the name of the umbrella record:
 `SampleOptions::datapoint_name`, else `<sample> <material>`, else `<sample>`;
 two samples with the same one are refused.
@@ -218,6 +239,8 @@ discrimination, detector factor, abundance sensitivity, and the decay of
 | | `analysisTime` | `Analysis::timestamp`, UTC `YYYY-MM-DDTHH:MM:SSZ`, cut to the second |
 | | `laserPower` + units, or `furnaceTemperature` | `ExtractionInfo` value and units: units containing `C` are a temperature **[legacy]** |
 | | `plateauStepName`, `weightedMeanStepName`, `inverseIsoStepName` | the one of the kind of age reported is `"Yes"` on the analyses that age used and `"No"` on the sample's others; the other two are empty, and all three under a total gas age |
+| Submission | `setup_name` | `PublishOptions::setup` |
+| | `irradiation_name` | `SampleOptions::irradiation`, else the irradiation the published analyses name (4.1) |
 | AgeCalc | `decayConstantName`, `airRatioName`, `fluxMonitorName` | section 4.3 |
 | AgeSummary | `age`, `ageUncertainty`, `mswd`, `agepvalue`, `nAnalysisGrouped`, `ageCalcTypeName` | section 4.4 |
 | | `ageUncertaintyTypeName`, `calculatedAgeUncertaintyTypeName` | `"1 sigma"` |
@@ -270,7 +293,8 @@ read from the `Lookup Tables` sheet of the Ar-Ar template.
   `/api/core/l-error-types`, whose ids violate the data point's foreign key.
   The mapping itself only ever writes `1 sigma`.
 - **Flux monitor.** `"<MonitorInfo::name> <age> Ma"`, resolved by the fuzzy
-  rule of section 5.1; `SampleOptions::flux_monitor` overrides.
+  rule of section 5.1 on upload and by the rule of section 6 in a workbook;
+  `SampleOptions::flux_monitor` overrides.
 - **Fixed terms.** `fA`, `abs.`, `1 sigma`, `Yes`, `No` (the sheet's `Yes/No`
   list also has `N/A`, which is never written: a column that does not apply
   is left empty), `mg`, `Pychron`, `Unknown`.
@@ -361,7 +385,7 @@ reduced with <software>.`
 | `kContent`, `kContentUncertainty` | not computed (the definition: "relevant for K-Ar age only") |
 | `ratio40Arx36ArTrapped` | a field of the measurement, and the only trapped ratio computed here is a group's isochron intercept, which goes into the age summary's description |
 | `analysisScaleName` | nothing records whether an aliquot is one grain or many |
-| `commentAnalyte`, `measurementComment`, `aliquotComment`, AgeCalc `comment`, `locationName` | no counterpart that is the thing the field asks for |
+| `commentAnalyte`, `measurementComment`, `aliquotComment`, AgeCalc `comment`, `locationName`, Location `description` | no counterpart that is the thing the field asks for |
 | `fundingName`, `literatureName` | as legacy leaves them without the user's input |
 | the sheets `Datapoint Props` and `Sample Props` | free name-and-value rows. Legacy filled both automatically with `pychron.*` metadata (`build_datapoint_props`, `build_sample_props`, `earthbank_service.py:1164-1242`): on the data point the first analysis's experiment and analysis type, irradiation, level and position, extract device, monitor name, material and age, the three citations of the constants, the number of analyses, the preferred age's kind and error kind, MSWD and p-value; on the sample the project, principal investigator, repository, material, lithology, grain size and identifier. This mapping writes neither sheet: nothing in a `Submission` holds such rows. What of it has a field of its own is sent there (4.2); the rest is not sent (4.6) |
 | `archiveName`, `sampleKindName`, `sampleMethodName`, collection dates, rock unit ages, relative elevations, `locationKindName`, `latLonPrecision` | not in the catalog |
@@ -420,6 +444,13 @@ uploaded with legacy will not be comparable in these columns.
 | AgeSummary `ageUncertainty`: the J term of a plateau or weighted mean whose analyses do not share one J | not determinable from the reference | the largest relative J uncertainty among the analyses the mean is of (4.4), named in the description. The publication report's "with J" column (`processing::j_relative_error`) instead takes the J of the first analysis of the group that has one, so for such a sample the two numbers differ; with one J they are the same number | "Uncertainty of age of group/population (Ma)" | B104 |
 | `analysisScaleName` | `Single Grain` for one analysis, `Multi-Grain Aliquot` for more | not sent (4.5) | "Scale at which analysis was conducted" | B15 |
 | `commentAnalyte`, `grainDiameterMin/Max`, AgeCalc `comment` | the sample's notes, its parsed grain size, `<sample> (<project>)` | not sent (4.5) | "Comments relating to analyte (e.g. mineral separation or clearning comments)" (sic); "Minimum grain diameter of analyte (in microns)", "Maximum grain diameter of analyte (in microns)" | B20, B18, B19 |
+| The set-up and the irradiation batch | upload: `arArSetUpName` and `arArIrradiationName` beside the record, when the caller gave them (`create_data_point`, `:660-699`; the upload itself never did, `:1429-1434`). Workbook: the record's ids `arArAnalyticalSetUpId` and `irradiationBatchIDId` under `arArSetUp` and `irradiationBatchID` (`SHEET_OVERRIDES`, `xlsx_exporter.py:57-59`) | names in both: `Submission::setup_name` and `irradiation_name` (4.1). An id is never written into a workbook: the columns ask for a term that finds the thing, and a row number read as a term could find another | "Search term to find ArAr SetUp. Must already exist in the system"; "Search term to find Irradiation Batch. Must already exist in the system"; both columns are marked Required | B10, B12 |
+| Workbook, `ArArDataPoints.sampleName` | left empty (the data point's payload had no such key) | the sample's name, the same string as `Samples.sampleName` | "Search term to find sample. Usually the sample name assigned by sample collector or IGSN"; marked Required | B9 |
+| Workbook, `jValueUncertaintyType` and `jValueUncertaintyUnit` | looked for on the measurement sheet (`SHEET_OVERRIDES` of `ArArMeasurement`: `jvalueUncertaintyType`, `jvalueUncertaintyUnit`), where the 2026 template has no such columns; its columns `jValueUncertaintyType` and `jValueUncertaintyUnit` of the data point sheet matched no field and stayed empty | columns R and S of `ArArDataPoints`, as the 2026 template has them: the unit is the data point's `jvalueUncertaintyUnitName`; the type, which only the measurement record has, is the value the data point's measurements share (left empty, with a note, when they do not share one) | "Analytical uncertainty type quoted for J Values"; "Analytical uncertainty units (i.e., % or absolute)"; both marked Required | B25, B26 |
+| Workbook, dates and times | the records' strings as they stood | re-formed as each sheet asks: `analysisDate` `YYYY-MM-DD`; `analysisTime` `YYYY-MM-DD hh:mm UTC`, the seconds cut (the REST route keeps the full `YYYY-MM-DDTHH:MM:SSZ`); `collectDateMin/Max` `dd.mm.yyyy`. `UTC` as the zone word is an assumption (below) | "Date of data acquisition YYYY-MM-DD"; row 2 of `ArArMeasurement`: "YYYY-MM-DD hh:mm z", "e.g. 2023-07-02 14:30 AEST for Sydney time"; row 2 of `Samples`: "Date dd.mm.yyyy" | B14, B31 |
+| Workbook, two different samples of one name | each written as its own row | refused: the name is the sample's key on the service, and two rows of one name cannot both be imported. Two data points of one sample (the same record) give one row | "ID of sample, usually assigned by sample collector (Must be unique within whole AusGeochem)" | A1 (Sample template, `Samples`) |
+| Workbook, a value in a column that has a list | written as the record holds it | checked against the template's own list (section 6): written in the list's spelling when it is an entry but for case or the spaces around it; a flux monitor found by name and age is written as the list's entry; anything else is written as given and reported. The REST route resolves names on the service instead (5.1) | the lists of `Lookup Tables` and `Lookup tables`, tied to their columns by the sheets' data validations | |
+| Workbook, `Samples.locationComment` | not filled | Location `description` (which the mapping does not set today) | "Additional information about the sample location, such as outcrop description or physiographic feature" | C22 (Sample template, `Column Descriptions`) |
 
 **Questions for the EarthBank maintainers.** None blocks the work; each
 changes one row above.
@@ -435,6 +466,15 @@ changes one row above.
   the J uncertainty (or the decay constant's)? The list has sigma levels and
   error kinds and nothing for what is in the uncertainty; `1 sigma` is sent
   and the description says the rest.
+- Which zone word does the importer take in `analysisTime`? The sheet's
+  form is `YYYY-MM-DD hh:mm z` with the example `2023-07-02 14:30 AEST`.
+  `UTC` is written (`2023-11-14 08:15 UTC`); if only offsets or a fixed set
+  of abbreviations are read, the form changes in one place.
+- Are the columns the Ar-Ar template colours as Required all required of
+  every row? The colour marks both `laserPower` and `furnaceTemperature`,
+  and `stepNumber`, `Ar39KReleased` and `cumulative39ArK`, which a fusion
+  has not. The exporter reports each such column a row leaves empty and
+  writes the row all the same.
 - Must `stepNumber` be an integer? "Heating step number (if step-heating)"
   (B32). A whole number is sent as a number (1, 2, ...), as legacy sent a
   float (`_step_to_num`, `:1952-1962`).
@@ -570,22 +610,147 @@ The two vendor templates, `ArArDataPoint_Template2026.xlsx` and
 the fork; their licence to redistribute is confirmed with AuScope before the
 first release, section 11). The exporter never builds a workbook from
 nothing: it copies the template, and for each sheet reads row 4 (the
-`apiField` row), appends data rows from row 5 **[legacy]**, and writes the
+`apiField` row), fills data rows from row 5 **[legacy]**, and writes the
 copy.
 
+```cpp
+struct XlsxOptions { std::filesystem::path template_dir; bool per_sample = false; bool samples = true;
+                     std::chrono::system_clock::time_point now; };
+struct XlsxResult  { std::vector<std::filesystem::path> files; std::vector<std::string> notes; };
+Result<XlsxResult> export_xlsx(const std::vector<Submission>&, const std::filesystem::path& out_dir, const XlsxOptions& = {});
+Result<std::vector<std::string>> check_against_template(const std::vector<Submission>&, const XlsxOptions& = {});
+```
+
 - A column's value is the record's field of the same name, or that name plus
-  `Name`, with legacy's per-sheet exceptions (`SHEET_OVERRIDES`) **[legacy]**.
+  `Name`, with legacy's per-sheet exceptions (`SHEET_OVERRIDES`) **[legacy]**
+  as far as they hold for the 2026 template; where they do not, 4.6 has the
+  row. `arArSetUp` and `irradiationBatchID` take the submission's
+  `setup_name` and `irradiation_name`. An `id` is never written.
 - Rows are linked by `datapointName`, not by id; the website resolves them on
-  import **[legacy]**.
+  import **[legacy]**. A submission without a data point name, two with the
+  same one, and one whose sample has no name are refused.
 - Cells are written as inline strings or numbers, so the workbook's shared
-  string table is not rewritten.
+  string table is not rewritten. A number is always a number cell.
 - The four header rows of every sheet, and every part of the file the
   exporter does not touch, are byte-for-byte the template's.
 - One Ar-Ar workbook for all samples or one per sample; the Sample workbook
-  optionally.
+  optionally. All the files are written or none: a failure part of the way
+  removes those already written and names any it could not remove.
 - A newer vendor template is a file swap, provided row 4 still names the
   fields. A field the template has and the records do not is left empty; a
   field the records have and the template lacks is listed in the result.
+- The templates are found in the directory `PYCHRON_EARTHBANK_TEMPLATES`
+  names, else beside the installed program, else in the source tree when it
+  is on this machine. Found nowhere, the error names each place looked in.
+
+**Lists.** The REST route resolves a name on the service (5.1). A workbook
+has nobody to ask: the importer gets the text as it was written. But the
+template carries the service's lists, in its `Lookup Tables` sheet (`Lookup
+tables` in the Sample workbook), and ties a column to its list by a data
+validation of the data sheet: in the Sample workbook
+`<dataValidation type="list" sqref="E5:E883"><formula1>'Lookup tables'!$C$2:$C$10185</formula1>`,
+in the Ar-Ar workbook the same thing in the sheet's extension list
+(`x14:dataValidation`, with `xm:f` and `xm:sqref`), and there for row 5
+alone, which is taken to mean the column. Neither template defines a name;
+a list given by a defined name or as entries in quotes is read as well, and
+one that cannot be followed is reported and its column not checked.
+
+| Sheet | Columns with a list | The list (heading in the lookup sheet) |
+|---|---|---|
+| `ArArDataPoints` | `arArMethod` | `Analytical Method`, D2:D13 |
+| | `analysisScale` | `Analysis Scale`, E2:E8 |
+| | `analyticalUncertaintyType`, `apparentAgeUncertaintyType`, `jValueUncertaintyType` | `Uncertainty Type`, F2:F21 |
+| | `analyticalUncertaintyUnit`, `apparentAgeUncertaintyUnit`, `jValueUncertaintyUnit` | `Uncertainty Unit`, G2:G3 |
+| `ArArMeasurement` | `plateauStep`, `inverseIsoStep`, `weightedMeanStep` | `Yes/No`, I2:I4 |
+| `ArArAliquot` | none | |
+| `ArArAgeSummary` | `dataInterpretationTool` | `Data Interpretation`, J2:J11 |
+| | `ageCalcType` | `Age Type`, H2:H9 |
+| | `calculatedAgeUncertaintyType` | `Uncertainty Type`, F2:F21 |
+| | `calculatedAgeUncertaintyTypeUnits` | `Uncertainty Unit`, G2:G3 |
+| | `interpretation` | `Age Interpretation`, K2:K20 |
+| `ArArAgeCalc` | `decayConstant` | `Decay Constant`, A2:A5 |
+| | `airRatio` | `Air Ratio`, B2:B3 |
+| | `fluxMonitor` | `Flux Monitor`, C2:C17 |
+| `Samples` | `sampleKind` | `Sample Kind`, A2:A16 |
+| | `sampleMethod` | `Sampling Method`, B2:B12 |
+| | `material` | `Lithology`, C2:C10185 |
+| | `locationKind` | `Location Kind`, D2:D10 |
+| | `personRole` (not filled) | `Person Role`, E2:E12 |
+| | `lastKnownArchive` | `Last Known Sample Archive`, F2:F28 |
+
+A list is the cells its validation names and those that follow them without
+a gap: two lists of the Sample template have grown past their validations
+(`Mine Waste` in A17; nine archives in F29:F37).
+
+Before a value is written under a column that has a list:
+
+- a value the list has is written as it is (the list's `Renne et al. 2011 `
+  ends in a space: without it the value is still that entry);
+- a value that is an entry but for the case of its ASCII letters and the
+  spaces around it is written as the list spells it, trimmed, and counted:
+  one note per column, `Samples.material: 2 value(s) written in the list's
+  spelling`. A part of an entry, or other spaces inside one, is not the
+  entry. Where two entries differ only in case and the value is neither, it
+  is not rewritten;
+- the flux monitor only, whose entries are whole citations (`Fish Canyon
+  Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)`), is also found
+  by name and age. The age is the value's number followed by `Ma`, else its
+  last number, and must be the number the entry prints (`28.2010` is
+  `28.201`; `28.2` is not): among a monitor's entries the age decides, and a
+  value without an age matches nothing. The name is the rest. A small table
+  in `vocab.cpp`, built from the list, maps the names pychron labs use to the
+  mark of that monitor's entries (`FC-2`, `FC2`, `FCs`, `FCT`, `FCTs`, `Fish
+  Canyon` to `FCTs`; `ACs`, `Alder Creek` to `ACs`; `GA-1550`, `GA1550`;
+  `MD-2`, `MD2`; `Hb3gr`; `TCs`, `TCR`, `Taylor Creek` to `TCs`; `WA1ms`); a
+  name with one of them is looked for among that monitor's entries only, and
+  a name with two monitors' matches nothing. A name with none must have
+  every one of its words in the entry, one of them of three letters or more
+  or the entry's abbreviation in parentheses. One entry left: it is written,
+  and the note says what became what (`ArArAgeCalc.fluxMonitor: 'FC-2 28.201
+  Ma' written as the list's 'Fish Canyon ... (28.201 Ma)'`). Several (`Mt
+  Domedary Biotite 99.44 Ma` is both `GA-1550` and `MD-2`): not rewritten,
+  and said;
+- anything else is written as it was given and reported, each distinct value
+  once: `ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's
+  list`.
+
+A column without a list is written as given, with no note: the data point's
+`mineral` and `lithology`, the sample's `unitName`, and the names of the
+set-up, the irradiation batch and the sample, which the template calls
+search terms. So the data point's `mineral` stays `sanidine` where the
+sample's `material` becomes `Sanidine`.
+
+**Required columns.** Both templates colour the title of each column (row 3
+of a data sheet) by its obligation and give the legend in the sheet that
+describes the columns: `Field Definitions` A3:A5 (`Optional`,
+`Recommended`, `Required`) and `Column Descriptions` A1:A3 (`Required
+field`, `Highly recomended field`, `Optional`). The exporter finds the
+legend's `Required` cell, takes its fill (`FFFAD9D6` in both; read through
+the cell's style in `xl/styles.xml`, not written into the code) and treats a
+column whose title has that fill as Required. Neither template says
+"required" of a column in words, so the colour is the only statement there
+is. The columns so marked:
+
+| Sheet | Required |
+|---|---|
+| `ArArDataPoints` | `datapointName`, `sampleName`, `arArSetUp`, `arArMethod`, `irradiationBatchID`, `analysisScale`, the six uncertainty types and units, `analysisUnits` |
+| `ArArMeasurement` | `stepNumber`, `beamSize`, `beamSizeUnits`, `laserPower`, `laserPowerUnits`, `furnaceTemperature`, `ar{40..36}Corr` and uncertainties, `radiogenicArgon`, `ratio40Arx39ArK` and uncertainty, `Ar39KReleased`, `cumulative39ArK`, `jValue`, `jValueUncertainty`, `apparentAge`, `apparentAgeUncertainty` |
+| `ArArAliquot` | `aliquotSize`, `aliquotUnits` |
+| `ArArAgeSummary` | `age`, `ageUncertainty`, `calculatedAgeUncertaintyType`, `calculatedAgeUncertaintyTypeUnits` |
+| `ArArAgeCalc` | `decayConstant`, `airRatio`, `fluxMonitor` |
+| `Samples` | `sampleName`, `material`, `latitude`, `longitude` |
+
+A Required column that a written row leaves empty is named in the notes,
+once per sheet for the whole export, with its title: `ArArDataPoints:
+Required by the template and empty in at least one row, to be filled in
+before importing: arArSetUp (Analytical Key), ...`. The row is written all
+the same: the user fills the cell in, or finds out from the importer that
+it was not needed (4.6 has the question). A template without the legend
+gets one note saying that empty columns are not reported for it.
+
+`check_against_template` builds the same workbooks in memory and returns the
+notes an export would (or the error it would refuse with), writing nothing:
+for `elctl` and the UI to show before the export.
 
 ## 7. Profiles and passwords
 
