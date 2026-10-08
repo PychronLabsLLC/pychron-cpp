@@ -143,18 +143,24 @@ QString arrow_dir(const Theme& t) {
   static bool drawn = false;
   if (drawn || !dir.isValid()) return dir.path();
   drawn = true;
-  const auto draw = [&](const QString& name, bool up, const QColor& color) {
+  const auto stroke = [&](const QString& name, const QPolygonF& line, const QColor& color) {
     QImage image(20, 20, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
     QPainter p(&image);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QPen(color, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    const double a = up ? 13 : 7;
-    const double b = up ? 7 : 13;
-    p.drawPolyline(QPolygonF({QPointF(4, a), QPointF(10, b), QPointF(16, a)}));
+    p.drawPolyline(line);
     p.end();
     image.save(dir.filePath(name));
   };
+  const auto draw = [&](const QString& name, bool up, const QColor& color) {
+    const double a = up ? 13 : 7;
+    const double b = up ? 7 : 13;
+    stroke(name, QPolygonF({QPointF(4, a), QPointF(10, b), QPointF(16, a)}), color);
+  };
+  // What a ticked box and a partly ticked one show, in the page's white on the accent.
+  stroke(QStringLiteral("check.png"), QPolygonF({QPointF(4.5, 10.5), QPointF(8.5, 14.5), QPointF(15.5, 6)}), t.base);
+  stroke(QStringLiteral("dash.png"), QPolygonF({QPointF(5, 10), QPointF(15, 10)}), t.base);
   draw(QStringLiteral("down.png"), false, t.muted_text);
   draw(QStringLiteral("up.png"), true, t.muted_text);
   draw(QStringLiteral("down-off.png"), false, t.strong_border);
@@ -203,21 +209,25 @@ QToolButton:pressed, QToolButton:checked { background: @accent_soft; border-colo
 QToolButton:disabled { color: @faint_text; }
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-  background: @base; color: @text; border: 1px solid @strong_border; border-radius: 6px;
+  background: @base; color: @text; border: 1px solid @border; border-radius: 6px;
   padding: 4px 6px; selection-background-color: @accent; selection-color: @base; }
-QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @outline; }
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: @accent; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @strong_border; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+  border: 2px solid @accent; padding: 3px 5px; }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
   background: @alt_base; border-color: @border; color: @faint_text; }
 QLineEdit:read-only { background: @alt_base; }
 QComboBox { padding-right: 22px; }
-QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 20px; border: none; }
+QComboBox:focus { padding-right: 21px; }
+QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: center right; width: 20px; margin-right: 1px;
+  border: none; }
 QComboBox::down-arrow { image: url(@arrows/down.png); width: 10px; height: 10px; }
 QComboBox::down-arrow:disabled { image: url(@arrows/down-off.png); }
 QComboBox::down-arrow:on { image: url(@arrows/up.png); }
 QComboBox QAbstractItemView { background: @base; border: 1px solid @strong_border; outline: 0;
   selection-background-color: @accent_soft; selection-color: @accent_strong; }
 QSpinBox, QDoubleSpinBox { padding-right: 18px; }
+QSpinBox:focus, QDoubleSpinBox:focus { padding-right: 17px; }
 QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
   subcontrol-origin: border; width: 16px; border: none; background: transparent; }
 QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-position: top right; margin: 2px 2px 0 0; }
@@ -230,6 +240,25 @@ QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled, QSpinBox::do
 QDoubleSpinBox::down-arrow:off { image: url(@arrows/down-off.png); }
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: @accent_wash; border-radius: 3px; }
+
+QCheckBox::indicator, QGroupBox::indicator, QAbstractItemView::indicator {
+  width: 14px; height: 14px; background: @base; border: 1px solid @strong_border; border-radius: 4px; }
+QCheckBox::indicator:hover, QGroupBox::indicator:hover { border-color: @accent; }
+QCheckBox::indicator:checked, QGroupBox::indicator:checked, QAbstractItemView::indicator:checked {
+  background: @accent; border-color: @accent; image: url(@arrows/check.png); }
+QCheckBox::indicator:indeterminate, QGroupBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+  background: @accent; border-color: @accent; image: url(@arrows/dash.png); }
+QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QAbstractItemView::indicator:disabled {
+  background: @alt_base; border-color: @border; }
+QCheckBox::indicator:checked:disabled, QGroupBox::indicator:checked:disabled,
+QAbstractItemView::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled,
+QGroupBox::indicator:indeterminate:disabled, QAbstractItemView::indicator:indeterminate:disabled {
+  background: @accent_soft; border-color: @accent_soft; }
+
+QListWidget#PreferencesPages { outline: 0; }
+QListWidget#PreferencesPages::item { padding: 0 10px; }
+QListWidget#PreferencesPages::item:hover { background: @accent_wash; }
+QListWidget#PreferencesPages::item:selected { background: @accent; color: @base; }
 
 QPlainTextEdit, QTextEdit, QAbstractItemView {
   background: @base; border: 1px solid @border; selection-background-color: @accent; selection-color: @base; }
@@ -339,8 +368,9 @@ QString style_sheet() {
   tone(Tone::Error, t.error_text);
 
   // After the chrome, and with :focus spelled out, so it beats the focus ring.
-  s += QStringLiteral("*[invalid=\"true\"], *[invalid=\"true\"]:focus, *[invalid=\"true\"]:hover "
-                      "{ border: 1px solid %1; background: %2; }\n")
+  // With the focus it is a ring of the same two pixels: the field keeps its size.
+  s += QStringLiteral("*[invalid=\"true\"], *[invalid=\"true\"]:hover { border: 1px solid %1; background: %2; }\n"
+                      "*[invalid=\"true\"]:focus { border: 2px solid %1; background: %2; }\n")
            .arg(t.error.name(), t.error_bg.name());
 
   s += QStringLiteral("*[banner=\"true\"] { background: %1; color: %2; }\n"

@@ -2,6 +2,13 @@
 // palette is light whatever the desktop says, and no widget source names a
 // colour by value.
 
+#include <QVBoxLayout>
+#include <QStyleOptionButton>
+#include <QStyle>
+#include <QSpinBox>
+#include <QListWidget>
+#include <QComboBox>
+#include <QCheckBox>
 #include <QtTest/QtTest>
 
 #include <QApplication>
@@ -94,6 +101,116 @@ class TestTheme : public QObject {
     style::set_invalid(&edit, false);
     image = render(edit);
     QVERIFY(image.pixelColor(0, image.height() / 2) != theme().error);
+  }
+
+  // A ticked box is a filled square of the accent with a light tick, so a
+  // column of them reads at a glance; an empty one is the page's white.
+  void a_ticked_box_is_filled_with_the_accent() {
+    QCheckBox box(QStringLiteral("Autoscroll"));
+    render(box);
+    QStyleOptionButton opt;
+    opt.initFrom(&box);
+    const QRect mark = box.style()->subElementRect(QStyle::SE_CheckBoxIndicator, &opt, &box);
+    QVERIFY(mark.width() >= 14 && mark.height() >= 14);
+    const QPoint fill(mark.center().x(), mark.top() + 2);  // inside the square, clear of the tick
+
+    QCOMPARE(render(box).pixelColor(fill), theme().base);
+    box.setChecked(true);
+    const QImage ticked = render(box);
+    QCOMPARE(ticked.pixelColor(fill), theme().accent);
+    bool tick = false;
+    for (int y = mark.top() + 2; y < mark.bottom() - 1 && !tick; ++y) {
+      // Scaled and smoothed onto the fill, the tick is never the pure white it is drawn in.
+      for (int x = mark.left() + 2; x < mark.right() - 1 && !tick; ++x) {
+        tick = ticked.pixelColor(x, y).lightness() > theme().accent.lightness() + 80;
+      }
+    }
+    QVERIFY2(tick, "no tick drawn on the fill");
+
+    box.setEnabled(false);
+    QVERIFY(render(box).pixelColor(fill) != theme().accent);  // a box that cannot be changed does not shout
+  }
+
+  // The same mark in a list or a table: a column of Save boxes is boxes of this look too.
+  void a_ticked_item_has_the_same_mark() {
+    QListWidget list;
+    auto* item = new QListWidgetItem(QStringLiteral("Ar40"), &list);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Unchecked);
+    list.resize(160, 60);
+    const auto has_accent = [&] {
+      const QImage image = render(list);
+      const QRect row = list.visualItemRect(item).translated(list.viewport()->pos());
+      for (int y = row.top(); y <= row.bottom(); ++y) {
+        for (int x = row.left(); x < row.left() + 24; ++x) {
+          if (image.pixelColor(x, y) == theme().accent) return true;
+        }
+      }
+      return false;
+    };
+    QVERIFY(!has_accent());
+    item->setCheckState(Qt::Checked);
+    QVERIFY(has_accent());
+  }
+
+  // A field is a hairline until it is the one being typed in; then a ring of
+  // the accent, two pixels, which is seen across the room. Its size does not
+  // change, so nothing beside it moves.
+  void an_input_is_a_hairline_at_rest_and_an_accent_ring_with_the_focus() {
+    QWidget host;
+    auto* layout = new QVBoxLayout(&host);
+    auto* edit = new QLineEdit(QStringLiteral("66001"));
+    auto* other = new QLineEdit;
+    layout->addWidget(edit);
+    layout->addWidget(other);
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+    other->setFocus();
+    host.activateWindow();
+    QTRY_VERIFY(other->hasFocus());
+
+    const QSize at_rest = edit->size();
+    QImage image = edit->grab().toImage();
+    const int mid = image.height() / 2;
+    QCOMPARE(image.pixelColor(0, mid), theme().border);
+    QCOMPARE(image.pixelColor(1, mid), theme().base);
+
+    edit->setFocus();
+    QTRY_VERIFY(edit->hasFocus());
+    image = edit->grab().toImage();
+    QCOMPARE(image.pixelColor(0, mid), theme().accent);
+    QCOMPARE(image.pixelColor(1, mid), theme().accent);
+    QCOMPARE(image.pixelColor(2, mid), theme().base);
+    QCOMPARE(edit->size(), at_rest);
+    QCOMPARE(edit->sizeHint(), other->sizeHint());
+  }
+
+  // The other fields are fields too.
+  void spin_and_combo_boxes_take_the_same_ring() {
+    QWidget host;
+    auto* layout = new QVBoxLayout(&host);
+    auto* spin = new QSpinBox;
+    auto* combo = new QComboBox;
+    combo->addItem(QStringLiteral("unknown"));
+    auto* other = new QLineEdit;
+    for (QWidget* w : {static_cast<QWidget*>(spin), static_cast<QWidget*>(combo), static_cast<QWidget*>(other)}) {
+      layout->addWidget(w);
+    }
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+    host.activateWindow();
+    for (QWidget* w : {static_cast<QWidget*>(spin), static_cast<QWidget*>(combo)}) {
+      other->setFocus();
+      QTRY_VERIFY(other->hasFocus());
+      const QSize at_rest = w->size();
+      QCOMPARE(w->grab().toImage().pixelColor(0, w->height() / 2), theme().border);
+      w->setFocus();
+      QTRY_VERIFY(w->hasFocus());
+      const QImage image = w->grab().toImage();
+      QCOMPARE(image.pixelColor(0, w->height() / 2), theme().accent);
+      QCOMPARE(image.pixelColor(1, w->height() / 2), theme().accent);
+      QCOMPARE(w->size(), at_rest);
+    }
   }
 
   void chip_background_follows_the_level() {

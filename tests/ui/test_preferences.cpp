@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include <QApplication>
+#include <QFontMetrics>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
@@ -351,6 +352,36 @@ class TestPreferences : public QObject {
 
   // ---- Logging and Metrics: the line's local override file ----------------------
 
+  // The page list is a list of places to go: rows with room around the
+  // words, the one in view a bar of the accent from edge to edge.
+  void the_page_list_has_roomy_rows_and_a_full_width_selection() {
+    PreferencesDialog d({Preferences{}, std::nullopt, line_settings()}, {});
+    d.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&d));
+    QListWidget* pages = d.pages();
+    const int text = QFontMetrics(pages->font()).height();
+    // Every row, whichever is selected, and one below the other.
+    for (const int selected : {0, 3}) {
+      pages->setCurrentRow(selected);
+      int below = 0;
+      for (int i = 0; i < pages->count(); ++i) {
+        const QRect row = pages->visualItemRect(pages->item(i));
+        QVERIFY2(row.height() >= text + 10,
+                 qPrintable(QStringLiteral("row %1 is %2 high, its text %3").arg(i).arg(row.height()).arg(text)));
+        QVERIFY2(row.top() >= below, qPrintable(QStringLiteral("row %1 starts inside the one above").arg(i)));
+        below = row.bottom();
+      }
+    }
+
+    pages->setCurrentRow(1);
+    const QRect row = pages->visualItemRect(pages->item(1));
+    const QImage image = pages->viewport()->grab().toImage();
+    const QColor accent = pychron::ui::theme().accent;
+    QCOMPARE(image.pixelColor(row.left() + 1, row.center().y()), accent);
+    QCOMPARE(image.pixelColor(row.right() - 1, row.center().y()), accent);
+    QCOMPARE(image.pixelColor(row.left() + 1, row.top() + 1), accent);  // the bar is the whole row
+  }
+
   void line_pages_are_there_only_with_a_line() {
     PreferencesDialog without({Preferences{}, std::nullopt, std::nullopt}, {});
     QCOMPARE(without.pages()->count(), 2);
@@ -671,6 +702,7 @@ class TestPreferences : public QObject {
     click(d->buttons(), QDialogButtonBox::Ok);
     QVERIFY(!transport.enabled(LogLevel::Trace));
   }
+
 };
 
 QTEST_MAIN(TestPreferences)

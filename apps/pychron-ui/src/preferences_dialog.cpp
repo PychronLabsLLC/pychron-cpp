@@ -55,6 +55,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
                                     QDialogButtonBox::RestoreDefaults)) {
   setWindowTitle(tr("Preferences"));
+  pages_->setObjectName(QStringLiteral("PreferencesPages"));  // the style sheet's selection bar and inset
   resize(560, 340);
 
   auto* appearance = new QWidget;
@@ -176,7 +177,11 @@ PreferencesDialog* PreferencesDialog::show_for(QWidget* window, QPointer<Prefere
 }
 
 void PreferencesDialog::add_page(const QString& name, QWidget* page) {
-  pages_->addItem(name);
+  // Room above and below the words, set here: a row height left to the
+  // style sheet's padding is measured before the sheet is applied, and the
+  // rows then sit on one another.
+  auto* item = new QListWidgetItem(name, pages_);
+  item->setSizeHint(QSize(0, pages_->fontMetrics().height() + 14));
   stack_->addWidget(page);
 }
 
