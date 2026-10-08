@@ -99,7 +99,8 @@ struct MonitorSelection {
   std::optional<std::string> sample;
   // true: every position that has analyses is a monitor; false: the
   // positions of the monitor sample; nullopt: by the sample when `sample`
-  // is given, else as saved, else false.
+  // is given, else as saved when the set in use is the saved fit's own,
+  // else false.
   std::optional<bool> all_positions;
 };
 
@@ -107,8 +108,11 @@ struct MonitorSelection {
 // analyses, reduced, and F) and the unknowns (the other positions that have
 // an identifier), each with its hole's x, y and its head flux revision.
 // The monitors are chosen as `selection` says and, where it does not say,
-// as the level's newest saved fit chose them (its `monitor_sample`, under
-// its own monitor set only, and its `all_positions`);
+// as the level's saved fit chose them: the newest head revision that names
+// a monitor set gives that set, its `monitor_sample` and its
+// `all_positions`, the last two only while that set is the one in use (a
+// set named here, or the default standing in for a saved set the document
+// lacks, selects by its own sample);
 // `LevelInputs::monitor_set.sample` and `all_positions` are what was used,
 // and what a save of the fit writes.
 // A position's hole is the holder hole whose ordinal is the position - 1 (a
@@ -117,6 +121,21 @@ struct MonitorSelection {
 // sample name, a level with no holder and a position beyond the holder.
 Result<LevelInputs> load_level(IAnalysisSource& source, persistence::IStore& store, std::string_view irradiation,
                                std::string_view level, const MonitorSelection& selection);
+
+// A position of a level with its head flux revision, as `elctl flux show`
+// lists it.
+struct SavedPosition {
+  int hole = 0;
+  std::string identifier, sample;
+  std::optional<SavedFlux> saved;  // nullopt: never saved
+};
+
+// What a level holds now: every position that has an identifier, a sample
+// or a saved flux, by hole, each with its head flux revision. Read from the
+// store alone, so it needs no holder and reduces no analysis. Error (Config,
+// "flux: ...") for an irradiation or level that does not exist.
+Result<std::vector<SavedPosition>> load_saved_flux(persistence::IStore& store, std::string_view irradiation,
+                                                   std::string_view level);
 
 // ---- Saving a level (design section 6.3) ------------------------------------
 

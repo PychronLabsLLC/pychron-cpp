@@ -89,6 +89,25 @@ std::string flux_key(const std::string& irradiation, const std::string& level, i
   return irradiation + "/" + level + "/" + std::to_string(hole);
 }
 
+// The head flux revision of each position of a level that has one, by hole.
+Result<std::map<int, ReadFlux>> read_heads(ps::IStore& store, const ps::Uuid& irradiation_uuid,
+                                           const std::string& irradiation, const std::string& level,
+                                           const std::vector<ps::PositionRow>& positions) {
+  auto flux_objects = store.ref_objects(ps::RefType::FluxPosition, irradiation_uuid);
+  if (!flux_objects) return fail(flux_objects.error());
+  std::map<std::string, const ps::RefObjectRow*> flux_by_key;
+  for (const auto& object : *flux_objects) flux_by_key.emplace(object.key, &object);
+  std::map<int, ReadFlux> out;
+  for (const auto& p : positions) {
+    const auto object = flux_by_key.find(flux_key(irradiation, level, p.position));
+    if (object == flux_by_key.end()) continue;
+    auto read = read_flux(store, *object->second);
+    if (!read) return fail(read.error());
+    if (*read) out.emplace(p.position, std::move(**read));
+  }
+  return out;
+}
+
 // Section 6.1 step 2: the set named; else the one the level's saved fit
 // names, if the document has it; else the document's default (the caller
 // is told: LevelInputs::saved_monitor_set_missing).
@@ -187,43 +206,27 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   std::map<int, const ps::HolderHole*> holes;  // by ordinal
   for (const auto& h : holder->holes) holes.emplace(h.ordinal, &h);
 
-  // 6. Each position's head flux revision; the most recent one with options
-  // is the level's last fit.
-  auto flux_objects = store.ref_objects(ps::RefType::FluxPosition, irradiation_uuid);
-  if (!flux_objects) return fail(flux_objects.error());
-  std::map<std::string, const ps::RefObjectRow*> flux_by_key;
-  for (const auto& object : *flux_objects) flux_by_key.emplace(object.key, &object);
+  // 6. Each position's head flux revision. The newest one with options
+  // gives the default options; the newest one that names a monitor set is
+  // the level's saved fit, whose set, sample and all_positions go together
+  // (R21): another revision's could be another standard's.
+  auto heads = read_heads(store, irradiation_uuid, out.irradiation, out.level, (*sheet)->positions);
+  if (!heads) return fail(heads.error());
   std::map<int, SavedFlux> saved;
-  std::string saved_set, saved_sample;
-  std::optional<bool> saved_all_positions;
-  ps::ChangeSeq options_seq = 0, set_seq = 0, sample_seq = 0, all_seq = 0;
-  for (const auto& p : (*sheet)->positions) {
-    const auto object = flux_by_key.find(flux_key(out.irradiation, out.level, p.position));
-    if (object == flux_by_key.end()) continue;
-    auto read = read_flux(store, *object->second);
-    if (!read) return fail(read.error());
-    if (!*read) continue;
-    if ((*read)->doc.options && (!out.saved_options || (*read)->change_seq > options_seq)) {
-      out.saved_options = (*read)->doc.options;
-      out.saved_sd_replaced = (*read)->doc.sd_replaced;
-      options_seq = (*read)->change_seq;
-    }
-    if (!(*read)->doc.monitor_set.empty() && (saved_set.empty() || (*read)->change_seq > set_seq)) {
-      saved_set = (*read)->doc.monitor_set;
-      set_seq = (*read)->change_seq;
-    }
-    // How the last fit chose its monitors (F9): its sample and whether
-    // every position was one.
-    if (!(*read)->doc.monitor_sample.empty() && (saved_sample.empty() || (*read)->change_seq > sample_seq)) {
-      saved_sample = (*read)->doc.monitor_sample;
-      sample_seq = (*read)->change_seq;
-    }
-    if ((*read)->doc.all_positions && (!saved_all_positions || (*read)->change_seq > all_seq)) {
-      saved_all_positions = (*read)->doc.all_positions;
-      all_seq = (*read)->change_seq;
-    }
-    saved.emplace(p.position, std::move((*read)->saved));
+  const ReadFlux* saved_fit = nullptr;
+  const ReadFlux* newest_options = nullptr;
+  for (auto& [hole, read] : *heads) {
+    if (read.doc.options && (!newest_options || read.change_seq > newest_options->change_seq)) newest_options = &read;
+    if (!read.doc.monitor_set.empty() && (!saved_fit || read.change_seq > saved_fit->change_seq)) saved_fit = &read;
   }
+  if (newest_options) {
+    out.saved_options = newest_options->doc.options;
+    out.saved_sd_replaced = newest_options->doc.sd_replaced;
+  }
+  const std::string saved_set = saved_fit ? saved_fit->doc.monitor_set : std::string();
+  const std::string saved_sample = saved_fit ? saved_fit->doc.monitor_sample : std::string();
+  const bool saved_all_positions = saved_fit && saved_fit->doc.all_positions.value_or(false);
+  for (auto& [hole, read] : *heads) saved.emplace(hole, std::move(read.saved));
 
   // 2. The monitor set.
   auto sets = load_monitor_sets(store);
@@ -233,22 +236,24 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
   out.monitor_set = std::move(*set);
   out.saved_monitor_set = saved_set;
   out.saved_monitor_set_missing = !saved_set.empty() && !sets->sets.find(saved_set);
+  // How the saved fit chose its monitors is repeated only under its own set
+  // (R20, R22): every save writes the sample, and another set (one named, or
+  // the default standing in for a set the document lacks) is another
+  // standard, whose age must not be given to the saved fit's monitors.
+  const bool under_saved_set = !saved_set.empty() && out.monitor_set.name == saved_set;
   if (selection.sample) {
     // An empty name would make a monitor of every position with no sample.
     if (selection.sample->empty()) return bad("the monitor sample name is empty");
     out.monitor_set.sample = *selection.sample;
-  } else if (!saved_sample.empty() && out.monitor_set.name == saved_set) {
+  } else if (!saved_sample.empty() && under_saved_set) {
     // The saved fit's monitors were another sample's than its set's: again.
-    // Only under that set (R20): every save writes the sample, and another
-    // set (one named, or the default standing in for a set the document
-    // lacks) is another standard, whose age must not be given to the saved
-    // fit's monitors.
     out.monitor_set.sample = saved_sample;
   }
   // As asked; else by the sample when one is named (a named sample undoes a
-  // saved all-positions fit); else as saved.
+  // saved all-positions fit); else as saved, under the saved fit's set only
+  // (R22).
   out.all_positions = selection.all_positions ? *selection.all_positions
-                                              : !selection.sample && saved_all_positions.value_or(false);
+                                              : !selection.sample && under_saved_set && saved_all_positions;
 
   // 3. Monitors and unknowns. With all_positions the analyses decide.
   std::vector<std::string> identifiers;
@@ -292,6 +297,30 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     if (auto s = saved.find(p.position); s != saved.end()) position.saved = std::move(s->second);
     out.positions.push_back(std::move(position));
   }
+  return out;
+}
+
+Result<std::vector<SavedPosition>> load_saved_flux(ps::IStore& store, std::string_view irradiation,
+                                                   std::string_view level) {
+  const std::string irradiation_name(irradiation), level_name(level);
+  auto found = find_level(store, irradiation_name, level_name);
+  if (!found) return fail(found.error());
+  auto sheet = store.level_sheet(found->level.uuid);
+  if (!sheet) return fail(sheet.error());
+  if (!*sheet) return bad("no level " + level_name + " of " + irradiation_name);
+  auto heads = read_heads(store, found->irradiation, irradiation_name, level_name, (*sheet)->positions);
+  if (!heads) return fail(heads.error());
+  std::vector<SavedPosition> out;
+  for (const auto& p : (*sheet)->positions) {
+    SavedPosition position;
+    position.hole = p.position;
+    position.identifier = p.identifier.value_or("");
+    position.sample = p.sample_name;
+    if (auto head = heads->find(p.position); head != heads->end()) position.saved = std::move(head->second.saved);
+    if (position.identifier.empty() && position.sample.empty() && !position.saved) continue;  // an empty hole
+    out.push_back(std::move(position));
+  }
+  std::sort(out.begin(), out.end(), [](const SavedPosition& a, const SavedPosition& b) { return a.hole < b.hole; });
   return out;
 }
 

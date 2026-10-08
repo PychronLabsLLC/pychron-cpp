@@ -15,6 +15,8 @@
 #include <variant>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "../reduction/flux_golden.hpp"
 #include "flux_store_fixture.hpp"
 #include "pychron/processing/flux_store.hpp"
@@ -27,7 +29,7 @@ namespace ps = pychron::persistence;
 
 class FluxMonitors : public testing::FluxStoreTest {};
 
-TEST_F(FluxMonitors, AStoreWithNoDocumentHasTheTwoDefaults) {
+TEST_P(FluxMonitors, AStoreWithNoDocumentHasTheTwoDefaults) {
   auto loaded = load_monitor_sets(store());
   ASSERT_TRUE(loaded) << to_string(loaded.error());
   EXPECT_FALSE(loaded->ref_object);
@@ -60,7 +62,7 @@ TEST_F(FluxMonitors, AStoreWithNoDocumentHasTheTwoDefaults) {
   EXPECT_EQ(sets.find("nope"), nullptr);
 }
 
-TEST_F(FluxMonitors, LambdaKIsTheSumWithErrorsInQuadrature) {
+TEST_P(FluxMonitors, LambdaKIsTheSumWithErrorsInQuadrature) {
   const MonitorSets defaults = default_monitor_sets();
   const MonitorSet& k = defaults.sets[0];
   const auto lk = k.lambda_k();
@@ -70,7 +72,7 @@ TEST_F(FluxMonitors, LambdaKIsTheSumWithErrorsInQuadrature) {
   EXPECT_DOUBLE_EQ(k.constants().lambda_k, lk.value);
 }
 
-TEST_F(FluxMonitors, SaveThenLoadRoundTripsAndKeepsUnknownKeys) {
+TEST_P(FluxMonitors, SaveThenLoadRoundTripsAndKeepsUnknownKeys) {
   auto parsed = parse_monitor_sets(R"({"default":"B","lab":"NMGRL","monitors":[
     {"name":"A","sample":"FC-2","material":"sanidine","age_ma":28.2,"age_err_ma":0.1,
      "lambda_ec":[5.8e-11,1e-12],"lambda_b":[4.9e-10,2e-12]},
@@ -92,7 +94,7 @@ TEST_F(FluxMonitors, SaveThenLoadRoundTripsAndKeepsUnknownKeys) {
   EXPECT_NE(to_json(after->sets).find("\"lab\""), std::string::npos);
 }
 
-TEST_F(FluxMonitors, ASaveOnAStaleHeadIsAConflict) {
+TEST_P(FluxMonitors, ASaveOnAStaleHeadIsAConflict) {
   auto first = load_monitor_sets(store());
   ASSERT_TRUE(first);
   ASSERT_TRUE(save_monitor_sets(store(), actor(), first->sets, *first));
@@ -167,6 +169,12 @@ TEST(FluxMonitorsParse, ADocumentWithNoDefaultTakesTheFirstSet) {
 namespace pr = pychron::reduction;
 
 bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+// Options as stored: PostgreSQL's jsonb gives them back with its own key
+// order and spacing, so they are compared as JSON.
+nlohmann::json json_of(const std::optional<std::string>& text) {
+  return nlohmann::json::parse(text.value_or("null"), nullptr, false);
+}
 
 TEST(FluxOptionsJson, RoundTrip) {
   FluxOptions o;
@@ -434,7 +442,7 @@ class FluxLoadLevel : public testing::FluxStoreTest {
   }
 };
 
-TEST_F(FluxLoadLevel, PositionsMonitorsAndGeometry) {
+TEST_P(FluxLoadLevel, PositionsMonitorsAndGeometry) {
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
   EXPECT_EQ(in->irradiation, "NM-300");
@@ -486,7 +494,7 @@ TEST_F(FluxLoadLevel, PositionsMonitorsAndGeometry) {
     EXPECT_NEAR(fit->positions[static_cast<std::size_t>(8 + i)].j, golden.j[i], golden.j[i] * 1e-5) << i;
 }
 
-TEST_F(FluxLoadLevel, GeometryIsByOrdinalNotByHoleId) {
+TEST_P(FluxLoadLevel, GeometryIsByOrdinalNotByHoleId) {
   // Position N is the hole with ordinal N - 1 (as on the entry sheet). The
   // labels run the other way ("12" is the first hole) and the holes are
   // stored last first: neither the label nor the place in the list decides.
@@ -517,7 +525,7 @@ TEST_F(FluxLoadLevel, GeometryIsByOrdinalNotByHoleId) {
   EXPECT_DOUBLE_EQ(lettered->positions[11].y, flux_golden::kPoints[3].y);
 }
 
-TEST_F(FluxLoadLevel, MonitorSetResolution) {
+TEST_P(FluxLoadLevel, MonitorSetResolution) {
   const MonitorSets defaults = default_monitor_sets();
   // None named, nothing saved: the document's default.
   auto fresh = load();
@@ -598,7 +606,7 @@ TEST_F(FluxLoadLevel, MonitorSetResolution) {
   EXPECT_EQ(*middle_last->saved_options, bowl);
 }
 
-TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
+TEST_P(FluxLoadLevel, SampleOverrideAndAllPositions) {
   MonitorSelection unk;
   unk.sample = "unk";
   auto in = load(unk);
@@ -632,7 +640,7 @@ TEST_F(FluxLoadLevel, SampleOverrideAndAllPositions) {
   EXPECT_EQ(both->positions.size(), 8u);
 }
 
-TEST_F(FluxLoadLevel, AnEmptySampleOverrideIsRefused) {
+TEST_P(FluxLoadLevel, AnEmptySampleOverrideIsRefused) {
   // A hole with no sample and no identifier: an empty name would match it.
   ASSERT_TRUE(store().add_irradiation_position(seeded().acquisition_client, {seeded().level, 13}));
   auto holes = testing::seed_holes();
@@ -649,7 +657,7 @@ TEST_F(FluxLoadLevel, AnEmptySampleOverrideIsRefused) {
   EXPECT_EQ(fine->positions.size(), 12u);  // the empty hole is neither a monitor nor an unknown
 }
 
-TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
+TEST_P(FluxLoadLevel, ReadsTheSavedFit) {
   FluxOptions options;
   options.fit.kind = pr::ModelKind::Plane;
   options.fit.weighted = true;
@@ -725,7 +733,7 @@ TEST_F(FluxLoadLevel, ReadsTheSavedFit) {
   EXPECT_EQ(again->monitor_set.name, "FC-2 (Kuiper 2008)");
 }
 
-TEST_F(FluxLoadLevel, ASavedRevisionThatIsOnlyAJ) {
+TEST_P(FluxLoadLevel, ASavedRevisionThatIsOnlyAJ) {
   for (int h = 1; h <= 12; ++h) {
     ps::FluxValue v;
     v.j = 1.0e-3 + h * 1e-6;
@@ -761,7 +769,7 @@ TEST_F(FluxLoadLevel, ASavedRevisionThatIsOnlyAJ) {
   }
 }
 
-TEST_F(FluxLoadLevel, TagsAreCarried) {
+TEST_P(FluxLoadLevel, TagsAreCarried) {
   tag("66001-02", "omit");
   tag("66002-01", "invalid");  // loaded all the same: a tag omits, it does not hide
   auto in = load();
@@ -785,7 +793,7 @@ TEST_F(FluxLoadLevel, TagsAreCarried) {
   EXPECT_EQ(fit->positions[2].n, 3);
 }
 
-TEST_F(FluxLoadLevel, ErrorsNameTheCause) {
+TEST_P(FluxLoadLevel, ErrorsNameTheCause) {
   auto no_irradiation = load({}, "A", "NM-999");
   ASSERT_FALSE(no_irradiation);
   EXPECT_EQ(no_irradiation.error().kind, ErrorKind::Config);
@@ -815,7 +823,7 @@ TEST_F(FluxLoadLevel, ErrorsNameTheCause) {
   EXPECT_EQ(no_hole.error().what, "flux: position 12 of level A of NM-300 is beyond holder 12-hole (11 holes)");
 }
 
-TEST_F(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {
+TEST_P(FluxLoadLevel, AnImportedLegacyLevelLoadsAndRefits) {
   // As the importer writes a level file's positions (meta_adapter.cpp,
   // meta_layout.cpp flux_value): the legacy options dict verbatim, the
   // analyses with is_omitted, the decay constant the fit used.
@@ -979,6 +987,22 @@ class FluxSaveLevel : public FluxLoadLevel {
     return reduced->arar->ages->age.nominal();
   }
 
+  // The store's sets with a third, "Second": the second default set renamed,
+  // with age 99 Ma and sample "unk" (what holes 9-12 carry).
+  void add_second_set() {
+    auto sets = load_monitor_sets(store());
+    ASSERT_TRUE(sets) << to_string(sets.error());
+    MonitorSets edited = sets->sets;
+    MonitorSet second = edited.sets[1];
+    second.name = "Second";
+    second.sample = "unk";
+    second.age_ma = 99.0;
+    edited.sets.push_back(second);
+    auto committed = save_monitor_sets(store(), actor(), edited, *sets);
+    ASSERT_TRUE(committed) << to_string(committed.error());
+    ASSERT_TRUE(std::holds_alternative<ps::Committed>(*committed));
+  }
+
   static ps::FluxValue only_j(double j) {
     ps::FluxValue v;
     v.j = j;
@@ -987,7 +1011,7 @@ class FluxSaveLevel : public FluxLoadLevel {
   }
 };
 
-TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
+TEST_P(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
   Edits edits;
   edits.omit = {"66003-02"};
   const LevelFit fit = fitted(edits);
@@ -1016,7 +1040,12 @@ TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
   for (const FittedPosition& p : fit.positions) {
     SCOPED_TRACE("hole " + std::to_string(p.hole));
     const ps::FluxValue v = head_value(p.hole);
-    EXPECT_EQ(v, flux_value_of(fit, p, "test"));
+    const ps::FluxValue expected = flux_value_of(fit, p, "test");
+    EXPECT_EQ(json_of(v.options_json), json_of(expected.options_json));
+    ps::FluxValue rest = v, expected_rest = expected;  // every other field exactly
+    rest.options_json.reset();
+    expected_rest.options_json.reset();
+    EXPECT_EQ(rest, expected_rest);
     EXPECT_EQ(v.j, std::optional<double>(p.j));
     EXPECT_EQ(v.j_err, std::optional<double>(p.j_err));
     if (p.monitor) {
@@ -1051,8 +1080,8 @@ TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
     EXPECT_EQ(v.position_jerr, std::nullopt);  // F5
     EXPECT_EQ(v.extra_json, std::nullopt);
     ASSERT_TRUE(v.options_json);
-    EXPECT_EQ(*v.options_json,
-              flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, false, false, fit.mswd, fit.dof, "test"));
+    EXPECT_EQ(json_of(v.options_json),
+              json_of(flux_options_json(plane_sem(), fit.monitor_set, p.used_in_fit, false, false, fit.mswd, fit.dof, "test")));
     const FluxOptionsDoc doc = parse_flux_options(*v.options_json);
     EXPECT_EQ(doc.options, std::optional<FluxOptions>(plane_sem()));
     EXPECT_EQ(doc.used_in_fit, std::optional<bool>(p.monitor));
@@ -1072,7 +1101,7 @@ TEST_F(FluxSaveLevel, WritesOneRevisionPerPositionInOneChangeset) {
   EXPECT_EQ(changesets.size(), 1u);
 }
 
-TEST_F(FluxSaveLevel, ThenLoadShowsTheSavedJ) {
+TEST_P(FluxSaveLevel, ThenLoadShowsTheSavedJ) {
   const LevelFit fit = fitted();
   ASSERT_EQ(save(fit).written, 12);
 
@@ -1099,7 +1128,7 @@ TEST_F(FluxSaveLevel, ThenLoadShowsTheSavedJ) {
   EXPECT_EQ(in->monitor_set.name, "FC-2 (Kuiper 2008)");
 }
 
-TEST_F(FluxSaveLevel, ASecondSaveWritesNothing) {
+TEST_P(FluxSaveLevel, ASecondSaveWritesNothing) {
   const LevelFit fit = fitted();
   ASSERT_EQ(save(fit).written, 12);
   const ps::ChangeSeq saved = change_seq();
@@ -1132,7 +1161,7 @@ TEST_F(FluxSaveLevel, ASecondSaveWritesNothing) {
 
 // R16 (revises R3): the software that saved is no part of the fit, so a new
 // version saving the same fit writes nothing.
-TEST_F(FluxSaveLevel, ASaveByAnotherVersionWritesNothing) {
+TEST_P(FluxSaveLevel, ASaveByAnotherVersionWritesNothing) {
   const LevelFit fit = fitted();
   ASSERT_EQ(save(fit).written, 12);
   const ps::ChangeSeq saved = change_seq();
@@ -1142,10 +1171,10 @@ TEST_F(FluxSaveLevel, ASaveByAnotherVersionWritesNothing) {
   EXPECT_EQ(outcome->unchanged, 12);
   EXPECT_FALSE(outcome->conflict);
   EXPECT_EQ(change_seq(), saved);
-  EXPECT_TRUE(has(head_value(1).options_json.value_or(""), R"("software":"test")"));
+  EXPECT_EQ(json_of(head_value(1).options_json).value("software", ""), "test");
 }
 
-TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
+TEST_P(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
   Edits edits;
   edits.omit = {"66002-03"};
   edits.exclude_positions = {5};
@@ -1199,7 +1228,7 @@ TEST_F(FluxSaveLevel, OmissionsAndExclusionsSurviveSaveAndRefit) {
 
 // R15: what a save says of an analysis that could not be used is not an
 // omission, so the analysis is back once it reduces.
-TEST_F(FluxSaveLevel, AnAnalysisNotReducedAtSaveIsNotOmittedAfterwards) {
+TEST_P(FluxSaveLevel, AnAnalysisNotReducedAtSaveIsNotOmittedAfterwards) {
   auto in = load();
   ASSERT_TRUE(in) << to_string(in.error());
   LevelInputs broken = *in;
@@ -1220,7 +1249,7 @@ TEST_F(FluxSaveLevel, AnAnalysisNotReducedAtSaveIsNotOmittedAfterwards) {
   for (const auto& a : again.positions[2].analyses) EXPECT_FALSE(a.omitted) << a.record_id;
 }
 
-TEST_F(FluxSaveLevel, SkippedPositionsKeepTheirHead) {
+TEST_P(FluxSaveLevel, SkippedPositionsKeepTheirHead) {
   const ps::Uuid kept = save_flux(9, only_j(1.0e-3));
   const LevelFit fit = fitted();
   const FluxSaveOutcome outcome = save(fit, SaveSelection{{9}});
@@ -1236,7 +1265,7 @@ TEST_F(FluxSaveLevel, SkippedPositionsKeepTheirHead) {
   EXPECT_EQ(save(fit, SaveSelection{{9, 40}}).skipped, 1);
 }
 
-TEST_F(FluxSaveLevel, APositionWithNoReferenceObjectGetsOne) {
+TEST_P(FluxSaveLevel, APositionWithNoReferenceObjectGetsOne) {
   const auto keys = [&] {
     std::set<std::string> out;
     auto objects = store().ref_objects(ps::RefType::FluxPosition, seeded().irradiation);
@@ -1270,7 +1299,7 @@ TEST_F(FluxSaveLevel, APositionWithNoReferenceObjectGetsOne) {
   EXPECT_EQ(std::optional<ps::Uuid>(flux->revision), head(9));
 }
 
-TEST_F(FluxSaveLevel, AMovedHeadIsAConflictAndNothingIsWritten) {
+TEST_P(FluxSaveLevel, AMovedHeadIsAConflictAndNothingIsWritten) {
   ASSERT_EQ(save(fitted()).written, 12);
   Edits edits;
   edits.omit = {"66001-02"};
@@ -1303,7 +1332,7 @@ TEST_F(FluxSaveLevel, AMovedHeadIsAConflictAndNothingIsWritten) {
   EXPECT_EQ(retried.written, 12);
 }
 
-TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
+TEST_P(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
   const ps::Uuid free = ingest_unknown("66101", "2026-01-01T19:01:00Z");
   const ps::Uuid pinned = ingest_unknown("66102", "2026-01-01T19:02:00Z");
   save_flux(9, only_j(1.0e-3));
@@ -1341,7 +1370,7 @@ TEST_F(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
 }
 
 // R19: a neighbour model can extrapolate to a J that is no J. None is saved.
-TEST_F(FluxSaveLevel, AJThatIsNotPositiveAndFiniteRefusesTheWholeSave) {
+TEST_P(FluxSaveLevel, AJThatIsNotPositiveAndFiniteRefusesTheWholeSave) {
   const LevelFit good = fitted();
   ASSERT_EQ(good.positions.size(), 12u);
   const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -1401,7 +1430,7 @@ TEST_F(FluxSaveLevel, AJThatIsNotPositiveAndFiniteRefusesTheWholeSave) {
 
 // ---- A saved fit's monitors are the next fit's (R18, spec F9) ----------------
 
-TEST_F(FluxSaveLevel, ASampleOverrideIsSavedAndUsedAgain) {
+TEST_P(FluxSaveLevel, ASampleOverrideIsSavedAndUsedAgain) {
   // The store's sets name a sample this level does not hold.
   auto sets = load_monitor_sets(store());
   ASSERT_TRUE(sets) << to_string(sets.error());
@@ -1469,7 +1498,7 @@ TEST_F(FluxSaveLevel, ASampleOverrideIsSavedAndUsedAgain) {
 // R20 (narrows R18): every save writes the monitor sample, so it must not
 // follow the level to another standard: FC-2 positions fitted with another
 // set's age would be a wrong J with no word said.
-TEST_F(FluxSaveLevel, AnotherMonitorSetUsesItsOwnSample) {
+TEST_P(FluxSaveLevel, AnotherMonitorSetUsesItsOwnSample) {
   ASSERT_EQ(save(fitted()).written, 12);  // a plain save, the default set: monitor_sample "FC-2"
   ASSERT_EQ(parse_flux_options(head_value(1).options_json.value_or("")).monitor_sample, "FC-2");
 
@@ -1504,7 +1533,7 @@ TEST_F(FluxSaveLevel, AnotherMonitorSetUsesItsOwnSample) {
 
 // R20: the default that stands in for a set the store lacks (R17) is another
 // standard too, and uses its own sample.
-TEST_F(FluxSaveLevel, TheFallbackDefaultSetUsesItsOwnSample) {
+TEST_P(FluxSaveLevel, TheFallbackDefaultSetUsesItsOwnSample) {
   ps::FluxValue gone;
   gone.j = 1.0e-3;
   gone.j_err = 2.0e-7;
@@ -1519,7 +1548,7 @@ TEST_F(FluxSaveLevel, TheFallbackDefaultSetUsesItsOwnSample) {
   for (const auto& p : in->positions) EXPECT_EQ(p.monitor, p.hole <= 8) << p.hole;
 }
 
-TEST_F(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
+TEST_P(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
   ingest_unknown("66101", "2026-01-01T19:01:00Z");  // hole 9 has an analysis: a monitor with every position
   MonitorSelection all;
   all.all_positions = true;
@@ -1580,6 +1609,160 @@ TEST_F(FluxSaveLevel, AllPositionsIsSavedAndUsedAgain) {
   EXPECT_EQ(last->positions.size(), 12u);
 }
 
+
+// R21: a saved fit's set, sample and all_positions are one revision's. A
+// level saved here whose heads on some positions were later replaced by
+// imported revisions naming another set, with no monitor_sample and no
+// all_positions, is the newer fit's: that set with its own sample, not the
+// older native fit's sample (or all_positions) under the newer set.
+TEST_P(FluxSaveLevel, MixedHeadsTakeSetSampleAndAllPositionsFromOneRevision) {
+  ASSERT_NO_FATAL_FAILURE(add_second_set());
+  MonitorSelection fc2;
+  fc2.sample = "FC-2";
+  auto in = load(fc2);
+  ASSERT_TRUE(in) << to_string(in.error());
+  auto fit = fit_level(*in, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  ASSERT_EQ(save(*fit).written, 12);
+  ASSERT_EQ(parse_flux_options(head_value(1).options_json.value_or("")).monitor_sample, "FC-2");
+
+  ps::FluxValue imported;
+  imported.j = 1.0e-3;
+  imported.j_err = 2.0e-7;
+  imported.options_json = R"({"model_kind":"Plane","monitor_reference":"Second"})";
+  save_flux(10, imported);
+  save_flux(11, imported);
+
+  auto mixed = load();
+  ASSERT_TRUE(mixed) << to_string(mixed.error());
+  EXPECT_EQ(mixed->saved_monitor_set, "Second");
+  EXPECT_EQ(mixed->monitor_set.name, "Second");
+  EXPECT_EQ(mixed->monitor_set.sample, "unk");
+  EXPECT_FALSE(mixed->all_positions);
+  ASSERT_EQ(mixed->positions.size(), 12u);
+  for (const auto& p : mixed->positions) EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
+}
+
+TEST_P(FluxSaveLevel, MixedHeadsDoNotCarryAnOlderAllPositions) {
+  ASSERT_NO_FATAL_FAILURE(add_second_set());
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  MonitorSelection all;
+  all.all_positions = true;
+  auto in = load(all);
+  ASSERT_TRUE(in) << to_string(in.error());
+  auto fit = fit_level(*in, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  ASSERT_EQ(save(*fit).written, 9);
+
+  ps::FluxValue imported;
+  imported.j = 1.0e-3;
+  imported.j_err = 2.0e-7;
+  imported.options_json = R"({"model_kind":"Plane","monitor_reference":"Second","monitor_sample":"unk"})";
+  save_flux(12, imported);
+
+  auto mixed = load();
+  ASSERT_TRUE(mixed) << to_string(mixed.error());
+  EXPECT_EQ(mixed->monitor_set.name, "Second");
+  EXPECT_EQ(mixed->monitor_set.sample, "unk");
+  EXPECT_FALSE(mixed->all_positions);
+  ASSERT_EQ(mixed->positions.size(), 12u);
+  for (const auto& p : mixed->positions) EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
+}
+
+// R22 (as R20 for the sample): a saved all-positions fit is a choice made
+// under its own standard. Another set, named or the default standing in for
+// a set the store lacks, selects by its own sample unless --all-positions
+// is given again.
+TEST_P(FluxSaveLevel, AnotherMonitorSetDoesNotCarryAllPositions) {
+  ASSERT_NO_FATAL_FAILURE(add_second_set());
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  MonitorSelection all;
+  all.all_positions = true;
+  auto in = load(all);
+  ASSERT_TRUE(in) << to_string(in.error());
+  auto fit = fit_level(*in, plane_sem(), {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  ASSERT_EQ(save(*fit).written, 9);
+
+  MonitorSelection other;
+  other.monitor_set = "Second";
+  auto second = load(other);
+  ASSERT_TRUE(second) << to_string(second.error());
+  EXPECT_EQ(second->monitor_set.name, "Second");
+  EXPECT_FALSE(second->all_positions);
+  ASSERT_EQ(second->positions.size(), 12u);
+  for (const auto& p : second->positions) EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
+
+  // Asked for again, every position.
+  other.all_positions = true;
+  auto again = load(other);
+  ASSERT_TRUE(again) << to_string(again.error());
+  EXPECT_TRUE(again->all_positions);
+  EXPECT_EQ(again->positions.size(), 9u);
+
+  // The saved set named explicitly is no other set: as saved.
+  MonitorSelection same;
+  same.monitor_set = "FC-2 (Kuiper 2008)";
+  auto kuiper = load(same);
+  ASSERT_TRUE(kuiper) << to_string(kuiper.error());
+  EXPECT_TRUE(kuiper->all_positions);
+  EXPECT_EQ(kuiper->positions.size(), 9u);
+}
+
+TEST_P(FluxSaveLevel, TheFallbackDefaultSetDoesNotCarryAllPositions) {
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  ps::FluxValue gone;
+  gone.j = 1.0e-3;
+  gone.j_err = 2.0e-7;
+  gone.options_json = R"({"model_kind":"Plane","monitor_reference":"FC Min","monitor_sample":"FC-2","all_positions":true})";
+  save_flux(3, gone);
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  EXPECT_TRUE(in->saved_monitor_set_missing);
+  EXPECT_FALSE(in->all_positions);
+  EXPECT_EQ(in->positions.size(), 12u);
+}
+
+// Under another set, then saved: the level's saved fit is now that set's,
+// and a plain reload repeats it (with that set's sample).
+TEST_P(FluxSaveLevel, AFitUnderAnotherSetSavedThenReloadedKeepsThatSet) {
+  ASSERT_EQ(save(fitted()).written, 12);
+  ASSERT_NO_FATAL_FAILURE(add_second_set());
+  MonitorSelection other;
+  other.monitor_set = "Second";
+  FluxOptions mean;
+  mean.fit.kind = pr::ModelKind::WeightedMean;
+  mean.fit.error = pr::MeanErrorKind::Sem;
+  // Holes 9-12 are monitors under "Second"; hole 9 gets an analysis.
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  auto in = load(other);
+  ASSERT_TRUE(in) << to_string(in.error());
+  auto fit = fit_level(*in, mean, {});
+  ASSERT_TRUE(fit) << to_string(fit.error());
+  const FluxSaveOutcome saved = save(*fit);
+  EXPECT_EQ(saved.written, 12);
+  EXPECT_FALSE(saved.conflict);
+  const FluxOptionsDoc doc = parse_flux_options(head_value(1).options_json.value_or(""));
+  EXPECT_EQ(doc.monitor_set, "Second");
+  EXPECT_EQ(doc.monitor_sample, "unk");
+
+  auto plain = load();
+  ASSERT_TRUE(plain) << to_string(plain.error());
+  EXPECT_EQ(plain->monitor_set.name, "Second");
+  EXPECT_EQ(plain->monitor_set.age_ma, 99.0);
+  EXPECT_EQ(plain->monitor_set.sample, "unk");
+  EXPECT_EQ(plain->saved_monitor_set, "Second");
+  EXPECT_FALSE(plain->saved_monitor_set_missing);
+  ASSERT_TRUE(plain->saved_options);
+  EXPECT_EQ(plain->saved_options->fit.kind, pr::ModelKind::WeightedMean);
+  for (const auto& p : plain->positions) EXPECT_EQ(p.monitor, p.hole >= 9) << p.hole;
+  auto refit = fit_level(*plain, *plain->saved_options, {});
+  ASSERT_TRUE(refit) << to_string(refit.error());
+  const FluxSaveOutcome again = save(*refit);
+  EXPECT_EQ(again.written, 0);
+  EXPECT_EQ(again.unchanged, 12);
+}
+
 // ---- A level saved before all its monitors were measured (R15) ---------------
 
 class FluxSaveSparseLevel : public FluxSaveLevel {
@@ -1587,7 +1770,7 @@ class FluxSaveSparseLevel : public FluxSaveLevel {
   int analysed() const override { return 6; }  // holes 7 and 8 have no analyses yet
 };
 
-TEST_F(FluxSaveSparseLevel, MonitorsMeasuredAfterASaveJoinTheFit) {
+TEST_P(FluxSaveSparseLevel, MonitorsMeasuredAfterASaveJoinTheFit) {
   const LevelFit first = fitted();
   ASSERT_EQ(first.positions.size(), 12u);
   EXPECT_EQ(first.dof, 3);  // 6 monitors, 3 parameters
@@ -1619,7 +1802,7 @@ TEST_F(FluxSaveSparseLevel, MonitorsMeasuredAfterASaveJoinTheFit) {
 
 // A revision saved before `excluded` existed carries no such key: a monitor
 // it left unused for want of analyses is used once it has them.
-TEST_F(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
+TEST_P(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
   ps::FluxValue older;
   older.j = 1.0e-3;
   older.j_err = 2.0e-7;
@@ -1639,6 +1822,15 @@ TEST_F(FluxSaveSparseLevel, AnOlderSaveWithoutTheKeyDoesNotExcludeEither) {
   EXPECT_FALSE(fit.positions[7].used_in_fit);  // still no analyses
   EXPECT_FALSE(fit.positions[7].excluded);
 }
+
+INSTANTIATE_TEST_SUITE_P(Engines, FluxMonitors, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& info) { return info.param; });
+INSTANTIATE_TEST_SUITE_P(Engines, FluxLoadLevel, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& info) { return info.param; });
+INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveLevel, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& info) { return info.param; });
+INSTANTIATE_TEST_SUITE_P(Engines, FluxSaveSparseLevel, ::testing::ValuesIn(testing::engines()),
+                         [](const auto& info) { return info.param; });
 
 }  // namespace
 }  // namespace pychron::processing

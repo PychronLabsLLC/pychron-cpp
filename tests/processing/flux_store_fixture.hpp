@@ -1,33 +1,31 @@
 #pragma once
 
-// A temp-file SQLite store with a reduction client and user, for the flux
-// store tests, and (seed_level) the seeded level of flux_seed.hpp with a
-// StoreSource over the same file. SQLite only: the persistence tests' engine
-// fixture needs Qt, which the processing tests do not link.
+// A store with a reduction client and user, for the flux store tests, and
+// (seed_level) the seeded level of flux_seed.hpp with a StoreSource over the
+// same database. Parameterised by engine as the persistence tests are: a
+// temp-file SQLite database always, and a throwaway PostgreSQL schema when
+// PYCHRON_TEST_PG_URL is set (persistence's TestDatabase, which needs Qt:
+// only this test binary links it).
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <filesystem>
 #include <memory>
-#include <random>
 #include <string>
 
 #include "flux_seed.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "store_fixture.hpp"
 
 namespace pychron::processing::testing {
 
-class FluxStoreTest : public ::testing::Test {
+using persistence::testing::engines;
+
+class FluxStoreTest : public ::testing::TestWithParam<std::string> {
  protected:
   void SetUp() override {
-    static std::atomic<int> counter{0};
-    path_ = std::filesystem::temp_directory_path() /
-            ("pychron_flux_store_" + std::to_string(std::random_device{}() % 1000000) + "_" +
-             std::to_string(counter.fetch_add(1)) + ".sqlite");
-    std::filesystem::remove(path_);
-    url_ = "sqlite:" + path_.string();
+    db_ = std::make_unique<persistence::testing::TestDatabase>(GetParam(), true);
+    url_ = db_->url();
     auto store = persistence::open_store(persistence::StoreConfig{url_, true});
     ASSERT_TRUE(store) << to_string(store.error());
     store_ = std::move(*store);
@@ -41,8 +39,7 @@ class FluxStoreTest : public ::testing::Test {
   void TearDown() override {
     source_.reset();
     store_.reset();
-    std::error_code ec;
-    for (const char* suffix : {"", "-wal", "-shm"}) std::filesystem::remove(path_.string() + suffix, ec);
+    db_.reset();
   }
 
   persistence::IStore& store() { return *store_; }
@@ -86,7 +83,7 @@ class FluxStoreTest : public ::testing::Test {
     EXPECT_TRUE(revision) << (revision ? "" : to_string(revision.error()));
   }
 
-  // Opened on first use, over the same file: it sees what was written before.
+  // Opened on first use, over the same database: it sees what was written before.
   // nullptr (and a failure) when it cannot be opened.
   StoreSource* source() {
     if (!source_) {
@@ -98,7 +95,8 @@ class FluxStoreTest : public ::testing::Test {
   }
 
  private:
-  std::filesystem::path path_;
+  // Declared first so it is destroyed last: the store and the source hold connections to it.
+  std::unique_ptr<persistence::testing::TestDatabase> db_;
   std::string url_;
   std::unique_ptr<persistence::IStore> store_;
   persistence::Actor actor_;
