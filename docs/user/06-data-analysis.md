@@ -111,7 +111,7 @@ three groups:
 
 | Button | Opens |
 |---|---|
-| **Time series**, **Ideogram**, **Age spectrum**, **Inverse isochron** | A figure window of the selected analyses. |
+| **Time series**, **Ideogram**, **Age spectrum**, **Inverse isochron**, **Spectrum + isochron** | A figure window of the selected analyses. |
 | **Isotope evolutions...** | The isotope-evolution refit window. |
 | **Blanks...**, **IC factors...** | The reference-fit window. |
 | **Recall** (or double-click, or Enter on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
@@ -391,6 +391,29 @@ grouping: aliquot.
 At least three analyses are needed. The result is an age, the trapped
 40Ar/36Ar, the MSWD and the line's probability.
 
+### Spectrum and isochron
+
+The age spectrum and the inverse isochron of the same analyses in one
+window: the spectrum on the left, the isochron on the right, one such pair
+per graph when the grouping makes several. Default grouping: aliquot. An
+analysis excluded in one is excluded in the other, and the groups table
+(colours, labels, fixed plateau steps) is shared.
+
+The settings are those of the two figures above. The spectrum's are under
+**Spectrum: ...** sections (`spectrum.plateau.method`, the
+`[[spectrum.panels]]` rows, ...), the isochron's under **Isochron: ...**
+(`isochron.method`, `isochron.ellipse`, ...), and the title, fonts, colours,
+legend and statistics settings are set once for both.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `layout` | `side_by_side` or `stacked` (spectrum on top) | side_by_side |
+| `isochron.exclude_non_plateau` | fit the isochron to the steps of the plateau **the spectrum shows**: the same criterion, the same minimum steps and gas, and the fixed steps of the groups table when they are set. (In the inverse isochron figure alone this setting always uses a Fleck plateau of 3 steps, 50% gas, 2 sigma.) With no plateau there are no steps to fit. | off |
+
+Factory presets: **Default**, **Plateau steps** (the isochron of the plateau
+steps, the others dimmed on the spectrum), **With K/Ca**. **Export table...**
+writes the same report as the age spectrum's, with these plateau settings.
+
 Factory presets: **Default**, **Filled 95%**, **Plateau steps**.
 
 ### Settings every figure shares
@@ -472,7 +495,8 @@ height = 2.0
 ```
 
 `schema` must match the figure (`figure.time_series`, `figure.ideogram`,
-`figure.spectrum`, `figure.inverse_isochron`, `figure.isotope_evolution_fit`,
+`figure.spectrum`, `figure.inverse_isochron`, `figure.spectrum_isochron`,
+`figure.isotope_evolution_fit`,
 `figure.blank_fit`, `figure.icfactor_fit`). Dotted keys such as `x.limits`
 are written as a table `[x]`. An unknown key is kept and written back
 unchanged; a bad value is dropped with a warning shown on the status line

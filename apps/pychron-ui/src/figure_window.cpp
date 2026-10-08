@@ -44,7 +44,7 @@ constexpr const char* kEdits = "edits";
 
 QString FigureWindow::default_group_key(const std::string& kind) {
   if (kind == "ideogram") return QStringLiteral("identifier");
-  if (kind == "spectrum" || kind == "inverse_isochron") return QStringLiteral("aliquot");
+  if (kind == "spectrum" || kind == "inverse_isochron" || kind == "spectrum_isochron") return QStringLiteral("aliquot");
   return QStringLiteral("none");
 }
 
@@ -284,17 +284,20 @@ bool FigureWindow::export_figure(const QString& path) {
 bool FigureWindow::export_report(const QString& path) {
   if (!dataset_) return false;
   pp::ReportOptions options;
-  if (kind_ == "spectrum") {
+  if (kind_ == "spectrum" || kind_ == "spectrum_isochron") {
     namespace r = pychron::reduction;
     const pp::Options& o = pipeline_.find(kFigure)->options;
-    options.plateau.method = o.get_string("plateau.method") == "mahon" ? r::PlateauMethod::Mahon : r::PlateauMethod::Fleck;
-    options.plateau.nsteps = static_cast<int>(o.get_int("plateau.nsteps"));
-    options.plateau.gas_fraction = o.get_double("plateau.gas_fraction");
-    options.plateau.overlap_sigma = o.get_double("plateau.overlap_sigma");
-    options.plateau_weighting = o.get_string("plateau.weighting") == "volume_fraction" ? r::PlateauWeighting::VolumeFraction
-                                                                                         : r::PlateauWeighting::InverseVariance;
-    options.mean_error = r::parse_mean_error_kind(o.get_string("plateau.error_kind")).value_or(r::MeanErrorKind::Msem);
-    options.integrated_includes_excluded = o.get_bool("integrated.include_excluded");
+    // The pair keeps the spectrum's settings under "spectrum.".
+    const std::string in = kind_ == "spectrum" ? "" : "spectrum.";
+    options.plateau.method = o.get_string(in + "plateau.method") == "mahon" ? r::PlateauMethod::Mahon : r::PlateauMethod::Fleck;
+    options.plateau.nsteps = static_cast<int>(o.get_int(in + "plateau.nsteps"));
+    options.plateau.gas_fraction = o.get_double(in + "plateau.gas_fraction");
+    options.plateau.overlap_sigma = o.get_double(in + "plateau.overlap_sigma");
+    options.plateau_weighting = o.get_string(in + "plateau.weighting") == "volume_fraction"
+                                    ? r::PlateauWeighting::VolumeFraction
+                                    : r::PlateauWeighting::InverseVariance;
+    options.mean_error = r::parse_mean_error_kind(o.get_string(in + "plateau.error_kind")).value_or(r::MeanErrorKind::Msem);
+    options.integrated_includes_excluded = o.get_bool(in + "integrated.include_excluded");
   }
   const auto report = pp::make_report(*dataset_, options);
   auto saved = pp::save_report(report, std::filesystem::path(path.toStdString()));

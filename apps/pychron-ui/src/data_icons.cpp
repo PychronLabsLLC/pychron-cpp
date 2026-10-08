@@ -68,6 +68,17 @@ QIcon data_icon(const QString& name) {
     p.setPen(thin);
     p.drawLine(QPointF(2.5, 4), QPointF(15.5, 15.5));
     dots(p, {QPointF(5.4, 6.6), QPointF(8.6, 9.4), QPointF(12, 12.4)});
+  } else if (name == QLatin1String("spectrum_isochron")) {
+    // the two side by side: steps on the left, the falling line on the right
+    p.setPen(thin);
+    for (const QRectF& step : {QRectF(1.5, 9, 2, 3), QRectF(3.5, 6, 2.5, 2.4), QRectF(6, 5, 2, 2.4)}) p.drawRect(step);
+    p.drawLine(QPointF(1.5, 15.5), QPointF(8, 15.5));
+    p.setPen(line);
+    p.drawLine(QPointF(10.5, 3), QPointF(10.5, 15.5));
+    p.drawLine(QPointF(10.5, 15.5), QPointF(16.5, 15.5));
+    p.setPen(thin);
+    p.drawLine(QPointF(10.5, 5), QPointF(16, 14.5));
+    dots(p, {QPointF(12.2, 8), QPointF(14.2, 11.4)}, 1.0);
   } else if (name == QLatin1String("isotope_evolution_fit")) {
     // a signal decaying through its points, fitted back to time zero
     axes(p);

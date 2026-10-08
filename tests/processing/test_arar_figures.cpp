@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <set>
 
 #include "fixtures.hpp"
 #include "pychron/processing/arar_groups.hpp"
@@ -439,9 +440,184 @@ TEST(Isochron, ExcludeNonPlateau) {
   EXPECT_FALSE(el[0]->excluded[2]);
 }
 
+// Two young low-temperature steps, then six concordant ones.
+pp::Dataset discordant_steps() {
+  pp::Dataset d;
+  const double ar39[] = {5, 10, 40, 60, 50, 30, 15, 5};
+  for (int i = 0; i < 8; ++i) {
+    pp::DatasetItem item;
+    item.analysis = pp::reduce_analysis(make_step(i, ar39[i], 0.1 + 0.02 * i, i < 2 ? 7.0 : 10.0), {});
+    d.mutable_items().push_back(item);
+  }
+  return d;
+}
+
+TEST(SpectrumIsochron, IsTheTwoFiguresOfTheSameAnalyses) {
+  auto d = steps();
+  pp::Options o(pp::spectrum_isochron_schema());
+  auto pair = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(pair) << pair.error().what;
+  EXPECT_EQ(pair->kind, "spectrum_isochron");
+  EXPECT_EQ(pair->columns, 2);  // side by side
+  EXPECT_TRUE(pair->warnings.empty());
+  ASSERT_EQ(pair->graphs.size(), 2u);
+  const auto& sg = pair->graphs[0];
+  const auto& ig = pair->graphs[1];
+  EXPECT_EQ(sg.x.title, "Cumulative % 39ArK");
+  EXPECT_EQ(ig.x.title, "39Ar/40Ar");
+
+  // Each is what its own figure draws with its default options.
+  auto spectrum = pp::build_spectrum(d, pp::Options(pp::spectrum_schema()));
+  auto isochron = pp::build_isochron(d, pp::Options(pp::isochron_schema()));
+  ASSERT_TRUE(spectrum && isochron);
+  ASSERT_EQ(sg.panels.size(), spectrum->graphs[0].panels.size());
+  const auto st = layers<pp::StepLayer>(sg.panels[0]), st0 = layers<pp::StepLayer>(spectrum->graphs[0].panels[0]);
+  ASSERT_EQ(st.size(), 1u);
+  EXPECT_EQ(st[0]->x1, st0[0]->x1);
+  EXPECT_EQ(st[0]->y, st0[0]->y);
+  EXPECT_EQ(st[0]->highlighted, st0[0]->highlighted);
+  EXPECT_EQ(all_text(sg.panels[0]), all_text(spectrum->graphs[0].panels[0]));
+  const auto el = layers<pp::EllipseLayer>(ig.panels[0]), el0 = layers<pp::EllipseLayer>(isochron->graphs[0].panels[0]);
+  ASSERT_EQ(el.size(), 1u);
+  EXPECT_EQ(el[0]->x, el0[0]->x);
+  EXPECT_EQ(el[0]->y, el0[0]->y);
+  EXPECT_EQ(all_text(ig.panels[0]), all_text(isochron->graphs[0].panels[0]));
+  EXPECT_EQ(ig.x.max, isochron->graphs[0].x.max);
+
+  ASSERT_TRUE(o.set("layout", std::string("stacked")));
+  auto stacked = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(stacked);
+  EXPECT_EQ(stacked->columns, 1);
+  EXPECT_EQ(stacked->graphs[0].x.title, "Cumulative % 39ArK");  // the spectrum on top
+
+  auto none = pp::build_spectrum_isochron(pp::Dataset{}, o);
+  ASSERT_TRUE(none);
+  EXPECT_EQ(none->warnings, std::vector<std::string>{"no analyses"});  // said once
+}
+
+TEST(SpectrumIsochron, OptionsAreBothFiguresOwnAndTheSharedOnesOnce) {
+  const auto& schema = pp::spectrum_isochron_schema();
+  // Every field of either figure is here, under its prefix or shared.
+  for (const auto& [part, prefix] : {std::pair{pp::spectrum_schema(), std::string("spectrum.")},
+                                     std::pair{pp::isochron_schema(), std::string("isochron.")}}) {
+    for (const auto& f : part->fields) {
+      if (f.key == "graph_columns") continue;  // the pair lays itself out
+      const auto* shared = schema->field(f.key);
+      const auto* own = schema->field(prefix + f.key);
+      EXPECT_TRUE((shared != nullptr) != (own != nullptr)) << prefix << f.key;
+      if (own) EXPECT_EQ(own->section.substr(0, prefix.size() + 1), prefix == "spectrum." ? "Spectrum: " : "Isochron: ");
+    }
+  }
+  EXPECT_EQ(schema->field("graph_columns"), nullptr);
+  ASSERT_NE(schema->field("title"), nullptr);
+  ASSERT_NE(schema->field("spectrum.plateau.overlap_sigma"), nullptr);
+  EXPECT_EQ(schema->field("spectrum.plateau.overlap_sigma")->enabled_when, "spectrum.plateau.method == fleck");
+  ASSERT_NE(schema->list("spectrum.panels"), nullptr);
+  ASSERT_NE(schema->list("groups"), nullptr);
+  EXPECT_NE(schema->list("groups")->row->field("fixed_start"), nullptr);
+  std::set<std::string> keys;
+  for (const auto& f : schema->fields) EXPECT_TRUE(keys.insert(f.key).second) << f.key;
+
+  // A setting reaches the figure it belongs to; a shared one reaches both.
+  auto d = steps();
+  pp::Options o(schema);
+  ASSERT_TRUE(o.set("spectrum.show_step_labels", true));
+  ASSERT_TRUE(o.set("isochron.ellipse", std::string("95%")));
+  ASSERT_TRUE(o.set("title", std::string("Sample {graph}!")));
+  ASSERT_TRUE(o.set("font.title", 21.0));
+  auto row = o.new_row("spectrum.panels");
+  ASSERT_TRUE(row.set("kind", std::string("value")));
+  auto age = o.new_row("spectrum.panels");
+  ASSERT_TRUE(o.set_rows("spectrum.panels", {row, age}));
+  auto pair = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(pair) << pair.error().what;
+  ASSERT_EQ(pair->graphs.size(), 2u);
+  ASSERT_EQ(pair->graphs[0].panels.size(), 2u);
+  EXPECT_EQ(layers<pp::StepLayer>(pair->graphs[0].panels[1])[0]->labels[0], "A");
+  EXPECT_NEAR(layers<pp::EllipseLayer>(pair->graphs[1].panels[0])[0]->scale, 2.4477, 1e-9);
+  EXPECT_EQ(pair->graphs[0].title, pair->graphs[1].title);
+  EXPECT_EQ(pair->graphs[0].title.back(), '!');
+  EXPECT_DOUBLE_EQ(pair->style.fonts.title, 21.0);
+
+  // ... and comes back from a file as it was written.
+  const std::string text = pp::options_to_toml(o, "mine");
+  EXPECT_NE(text.find("[[spectrum.panels]]"), std::string::npos) << text;
+  auto back = pp::options_from_toml(schema, text);
+  ASSERT_TRUE(back) << back.error().what;
+  EXPECT_TRUE(back->warnings.empty());
+  EXPECT_EQ(back->options, o);
+  EXPECT_TRUE(back->options.extra.empty());
+
+  // What a part cannot draw is said to be that part's.
+  pp::Options bad(schema);
+  bad.raw_values()["spectrum.quantity"] = std::string("no such (quantity");
+  auto failed = pp::build_spectrum_isochron(d, bad);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error().what.rfind("spectrum: ", 0), 0u) << failed.error().what;
+}
+
+TEST(SpectrumIsochron, TheIsochronOfThePlateauStepsFollowsThePlateauShown) {
+  auto d = discordant_steps();
+  pp::Options o(pp::spectrum_isochron_schema());
+  auto excluded_of = [](const pp::Scene& s) { return layers<pp::EllipseLayer>(s.graphs[1].panels[0])[0]->excluded; };
+  auto highlighted_of = [](const pp::Scene& s) { return layers<pp::StepLayer>(s.graphs[0].panels[0])[0]->highlighted; };
+  auto text_of = [](const pp::Scene& s) { return all_text(s.graphs[1].panels[0]); };
+
+  // Off: every step is on the isochron, whatever the plateau.
+  auto all_steps = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(all_steps);
+  EXPECT_NE(text_of(*all_steps).find("n 8/8"), std::string::npos) << text_of(*all_steps);
+
+  // On: the steps the spectrum highlights, C-H here.
+  ASSERT_TRUE(o.set("isochron.exclude_non_plateau", true));
+  auto found = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(found);
+  EXPECT_NE(text_of(*found).find("n 6/8"), std::string::npos) << text_of(*found);
+  for (std::size_t i = 0; i < 8; ++i) EXPECT_EQ(excluded_of(*found)[i], !highlighted_of(*found)[i]) << i;
+
+  // A plateau fixed on the group row: the isochron takes those steps, which
+  // the isochron's own search (always C-H) would not.
+  auto row = o.new_row("groups");
+  ASSERT_TRUE(row.set("fixed_start", std::string("D")));
+  ASSERT_TRUE(row.set("fixed_end", std::string("F")));
+  ASSERT_TRUE(o.set_rows("groups", {row}));
+  auto fixed = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(fixed);
+  EXPECT_NE(all_text(fixed->graphs[0].panels[0]).find("plateau D-F"), std::string::npos);
+  EXPECT_NE(text_of(*fixed).find("n 3/8"), std::string::npos) << text_of(*fixed);
+  EXPECT_EQ(excluded_of(*fixed), (std::vector<bool>{true, true, true, false, false, false, true, true}));
+  ASSERT_TRUE(o.set_rows("groups", {}));
+
+  // Stricter criteria than any plateau here meets: no plateau, so no steps.
+  ASSERT_TRUE(o.set("spectrum.plateau.gas_fraction", 99.0));
+  auto strict = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(strict);
+  EXPECT_NE(text_of(*strict).find("fewer than 3 points"), std::string::npos) << text_of(*strict);
+  o.unset("spectrum.plateau.gas_fraction");
+
+  // An excluded step leaves both.
+  d.mutable_items()[4].exclusion.user = true;
+  auto without = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(without);
+  EXPECT_TRUE(excluded_of(*without)[4]);
+  EXPECT_NE(text_of(*without).find("n 5/8"), std::string::npos) << text_of(*without);
+  d.mutable_items()[4].exclusion.user = false;
+
+  // Without an age panel there is no plateau to follow: said, and the
+  // isochron looks for its own.
+  auto value = o.new_row("spectrum.panels");
+  ASSERT_TRUE(value.set("kind", std::string("value")));
+  ASSERT_TRUE(o.set_rows("spectrum.panels", {value}));
+  auto own = pp::build_spectrum_isochron(d, o);
+  ASSERT_TRUE(own);
+  ASSERT_EQ(own->warnings.size(), 1u);
+  EXPECT_NE(own->warnings[0].find("no age panel"), std::string::npos);
+  EXPECT_NE(text_of(*own).find("n 6/8"), std::string::npos) << text_of(*own);
+}
+
 TEST(ArArFigures, UnitsRegisteredAndFactoryPresetsClean) {
   pp::PresetStore store("/nonexistent");
-  for (const char* kind : {"ideogram", "spectrum", "inverse_isochron"}) {
+  for (const char* kind : {"ideogram", "spectrum", "inverse_isochron", "spectrum_isochron"}) {
     const auto* u = pp::UnitRegistry::builtin().find(kind);
     ASSERT_NE(u, nullptr) << kind;
     for (const auto& [name, _] : u->schema()->factory_presets) {
@@ -456,7 +632,7 @@ TEST(ArArFigures, PipelineRunsEachFigure) {
   pp::MemorySource src;
   for (int i = 0; i < 6; ++i) src.add(make_step(i, 10.0 + 5 * i, 0.1));
   pp::Runner runner(pp::UnitRegistry::builtin(), &src);
-  for (const char* kind : {"ideogram", "spectrum", "inverse_isochron"}) {
+  for (const char* kind : {"ideogram", "spectrum", "inverse_isochron", "spectrum_isochron"}) {
     pp::Pipeline p;
     p.add(pp::UnitRegistry::builtin(), "select", "select");
     p.add(pp::UnitRegistry::builtin(), "reduce", "reduce", {"select"});
@@ -466,7 +642,7 @@ TEST(ArArFigures, PipelineRunsEachFigure) {
     auto out = runner.run(p, "figure");
     ASSERT_TRUE(out) << kind << ": " << out.error().what;
     const auto& scene = *std::get<pp::ScenePtr>(out->at(0));
-    EXPECT_EQ(scene.graphs.size(), 1u) << kind;
+    EXPECT_EQ(scene.graphs.size(), std::string_view(kind) == "spectrum_isochron" ? 2u : 1u) << kind;
     EXPECT_TRUE(scene.warnings.empty()) << kind << ": " << scene.warnings.front();
   }
 }

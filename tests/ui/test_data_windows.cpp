@@ -515,9 +515,10 @@ class TestDataWindows : public QObject {
     // Each button names itself under its icon.
     QCOMPARE(w.toolbar()->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
     for (const QAction* a : w.toolbar()->actions()) QVERIFY(a->isSeparator() || !a->text().isEmpty());
-    // Four figures | three fit windows | recall, export; an icon and a tip each.
+    // Five figures | three fit windows | recall, export; an icon and a tip each.
     const QStringList expected{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
-                               QStringLiteral("inverse_isochron"), QString(), QStringLiteral("isotope_evolution_fit"),
+                               QStringLiteral("inverse_isochron"), QStringLiteral("spectrum_isochron"), QString(),
+                               QStringLiteral("isotope_evolution_fit"),
                                QStringLiteral("blank_fit"), QStringLiteral("icfactor_fit"), QString()};
     const auto actions = w.toolbar()->actions();
     QCOMPARE(actions.size(), expected.size() + 2);
@@ -1124,6 +1125,45 @@ class TestDataWindows : public QObject {
     QVERIFY(w.export_figure(pdf));
     QVERIFY(QFileInfo(png).size() > 0);
     QVERIFY(QFileInfo(pdf).size() > 0);
+  }
+
+  void spectrum_and_isochron_open_as_one_figure() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
+    FigureWindow w(bridge, presets, "spectrum_isochron", ids);
+    w.resize(1200, 600);
+    w.show();
+    QVERIFY(wait_runs(w, bridge, 1));
+    QVERIFY2(w.view()->scene(), qPrintable(w.status_label()->text()));
+    const auto& scene = *w.view()->scene();
+    QCOMPARE(QString::fromStdString(scene.kind), QStringLiteral("spectrum_isochron"));
+    QVERIFY(scene.warnings.empty());
+    QCOMPARE(scene.graphs.size(), 2u);  // one aliquot: its spectrum and its isochron
+    QCOMPARE(scene.columns, 2);
+    QCOMPARE(w.group_combo()->currentText(), QStringLiteral("aliquot"));
+    QVERIFY(w.preset_combo()->findText(QStringLiteral("Plateau steps")) >= 0);
+    QVERIFY(w.view()->texts(0).join(QLatin1Char('\n')).contains(QStringLiteral("plateau A-H")));
+    QVERIFY(w.view()->texts(1).join(QLatin1Char('\n')).contains(QStringLiteral("trapped")));
+
+    // The table export is the spectrum's: it reads the plateau settings kept under "spectrum.".
+    const QString path = dir.path() + QStringLiteral("/pair.csv");
+    QVERIFY(w.export_report(path));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(QString::fromUtf8(file.readAll()).contains(QStringLiteral(",A-H,8,")));
+    file.close();
+    auto opts = w.pipeline().find("figure")->options;
+    QVERIFY(opts.set("spectrum.plateau.gas_fraction", 99.9).has_value());
+    QVERIFY(opts.set("spectrum.plateau.nsteps", std::int64_t{9}).has_value());
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, 2));
+    QVERIFY(w.export_report(path));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(!QString::fromUtf8(file.readAll()).contains(QStringLiteral(",A-H,8,")));  // eight steps cannot make nine
   }
 
   void arar_figures_open_and_steps_are_clickable() {

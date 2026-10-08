@@ -66,7 +66,9 @@ const SchemaPtr& isochron_schema() {
   return s;
 }
 
-Result<Scene> build_isochron(const Dataset& d, const Options& o) {
+Result<Scene> build_isochron(const Dataset& d, const Options& o) { return detail::build_isochron_scene(d, o, nullptr); }
+
+Result<Scene> detail::build_isochron_scene(const Dataset& d, const Options& o, const std::set<std::string>* plateau_steps) {
   Scene scene;
   scene.kind = "inverse_isochron";
   apply_common_style(o, scene);
@@ -106,7 +108,10 @@ Result<Scene> build_isochron(const Dataset& d, const Options& o) {
 
       // Steps outside the plateau (by age) are left out of the fit.
       std::vector<bool> outside(points.size(), false);
-      if (o.get_bool("exclude_non_plateau") && points.size() >= 3) {
+      if (o.get_bool("exclude_non_plateau") && plateau_steps) {
+        for (std::size_t i = 0; i < points.size(); ++i)
+          outside[i] = !plateau_steps->contains(points[i].item->analysis->analysis->uuid);
+      } else if (o.get_bool("exclude_non_plateau") && points.size() >= 3) {
         std::vector<double> ages, errs, gas;
         std::unique_ptr<bool[]> ex(new bool[points.size()]);
         bool ok = true;

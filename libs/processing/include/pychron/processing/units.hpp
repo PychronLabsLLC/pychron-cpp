@@ -66,8 +66,8 @@ class UnitRegistry {
   const Unit* find(std::string_view kind) const;
   std::vector<std::string> kinds() const;
   // Every built-in unit (select, reduce, filter, group, edits, group_stats,
-  // time_series, ideogram, spectrum, inverse_isochron, blank_fit,
-  // icfactor_fit, isotope_evolution_fit).
+  // time_series, ideogram, spectrum, inverse_isochron, spectrum_isochron,
+  // blank_fit, icfactor_fit, isotope_evolution_fit).
   static const UnitRegistry& builtin();
 
  private:

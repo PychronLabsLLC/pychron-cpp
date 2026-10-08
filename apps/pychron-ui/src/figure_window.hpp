@@ -38,7 +38,7 @@ class FigureWindow : public QMainWindow {
 
  public:
   // `bridge` and `presets` must outlive the window. `kind` is a figure unit
-  // kind: time_series, ideogram, spectrum or inverse_isochron.
+  // kind: time_series, ideogram, spectrum, inverse_isochron or spectrum_isochron.
   FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, std::string kind, QStringList uuids,
                QWidget* parent = nullptr);
   // A time series.

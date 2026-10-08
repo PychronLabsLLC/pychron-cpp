@@ -449,6 +449,7 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(make_ideogram_unit());
     r.add(make_spectrum_unit());
     r.add(make_isochron_unit());
+    r.add(make_spectrum_isochron_unit());
     r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
     r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
     r.add(make_isotope_evolution_fit_unit());

@@ -127,6 +127,8 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   plot("ideogram", tr("Ideogram"), tr("Ideogram of the selected analyses"));
   plot("spectrum", tr("Age spectrum"), tr("Age spectrum of the selected analyses"));
   plot("inverse_isochron", tr("Inverse isochron"), tr("Inverse isochron of the selected analyses"));
+  plot("spectrum_isochron", tr("Spectrum + isochron"),
+       tr("Age spectrum and inverse isochron of the selected analyses, side by side"));
   toolbar_->addSeparator();
   plot("isotope_evolution_fit", tr("Isotope evolutions..."), tr("Refit the selected analyses' isotope evolutions"));
   plot("blank_fit", tr("Blanks..."), tr("Blanks: fit the selected unknowns' values from reference analyses"));

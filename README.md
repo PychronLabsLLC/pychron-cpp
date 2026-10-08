@@ -86,7 +86,7 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 
 Browse and plot the records a queue wrote (View > Data): filter, double-click
 to recall an analysis, or select runs and choose a figure from the toolbar (time
-series, ideogram, age spectrum, inverse isochron). Figure
+series, ideogram, age spectrum, inverse isochron, or the last two as a pair). Figure
 options are edited in the dock and saved as named presets. "Export" in the
 browser (or "Export table..." in a figure, or `elctl export`) writes the
 analyses as a 40Ar/39Ar data report after Schaen et al. (2021), CSV or JSON;

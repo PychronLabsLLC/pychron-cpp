@@ -5,6 +5,7 @@
 // rows table and per-group styling, and number formatting.
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,12 @@ struct MeanTextOptions {
   bool probability = false;
   bool n = true;
 };
+// The inverse isochron (arar_figures.hpp). With `plateau_steps` (analysis
+// uuids), "exclude_non_plateau" leaves out every step not among them, in
+// place of the plateau the isochron would look for itself.
+Result<Scene> build_isochron_scene(const Dataset& dataset, const Options& options,
+                                   const std::set<std::string>* plateau_steps);
+
 std::string mean_text(const std::string& prefix, double value, double error, const reduction::Mean* stats,
                       std::size_t n_total, const MeanTextOptions& t, const std::string& units = {});
 

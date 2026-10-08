@@ -9,7 +9,7 @@
 //   Ctrl+N / Ctrl+B          select the next / previous row and recall it
 //   toolbar, a figure        figure_requested(kind, selected uuids or all shown);
 //                            kind: time_series, ideogram, spectrum, inverse_isochron,
-//                            then the fit windows isotope_evolution_fit, blank_fit,
+//                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
 //                            icfactor_fit
 //   toolbar, Recall          recall_requested(uuid of the current row)
 //   toolbar, Export          export_requested(path, selected uuids or all shown): one
