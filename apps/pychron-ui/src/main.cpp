@@ -82,6 +82,9 @@
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+#include "pychron/experiment/metrics/service.hpp"
+#endif
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/processing/record_source.hpp"
 #ifdef PYCHRON_UI_HAS_STORE
@@ -456,6 +459,12 @@ int main(int argc, char** argv) {
       std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
       lab_dir / "figures");
 
+  // `[metrics]`: the endpoint the lab's Prometheus scrapes (docs/observability.md).
+  // Built before the line starts, so the start-up Snapshot reaches it too.
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+  std::unique_ptr<pychron::experiment::metrics::MetricsService> metrics;
+#endif
+
   int rc = 0;
   {
     // The window (and its CoreBridge) subscribes before start() so the
@@ -491,6 +500,16 @@ int main(int argc, char** argv) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
                                      QString::fromStdString(*spectrometer_error));
     }
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+    metrics = pychron::experiment::metrics::MetricsService::start(
+        (*line)->config().metrics, (*line)->bus(), (*line)->scheduler(), (*line)->clock(), (*line)->log_hub(),
+        PYCHRON_VERSION);
+#else
+    if ((*line)->config().metrics.enabled) {
+      window.log_dock()->append_line(
+          QStringLiteral("WARN [ui] metrics: this build has no metrics (PYCHRON_METRICS=OFF)"));
+    }
+#endif
     splash.status(QStringLiteral("Starting the extraction line"));
     const auto started = (*line)->start();
     if (!started) {
@@ -574,6 +593,9 @@ int main(int argc, char** argv) {
   spectrometer_bridge.reset();
   scan.reset();
   (*line)->stop();
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+  metrics.reset();  // its heartbeat is a job of the line's scheduler: before the line goes
+#endif
   spectrometer.reset();
   pychron::sim::BeamModelRegistry::global().clear();
   return rc;

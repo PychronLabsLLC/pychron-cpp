@@ -2,7 +2,7 @@
 file(GLOB PYCHRON_EXPERIMENT_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
 if(NOT TARGET pychron_metrics)
-  list(FILTER PYCHRON_EXPERIMENT_TESTS EXCLUDE REGEX "test_experiment_metrics\\.cpp$")
+  list(FILTER PYCHRON_EXPERIMENT_TESTS EXCLUDE REGEX "test_(experiment_metrics|metrics_service)\\.cpp$")
 endif()
 
 if(PYCHRON_EXPERIMENT_TESTS)
@@ -13,6 +13,13 @@ if(PYCHRON_EXPERIMENT_TESTS)
     PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
   # virtual_time.hpp
   target_include_directories(pychron_experiment_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
+  if(TARGET pychron_metrics)
+    # test_metrics_service.cpp scrapes over a socket (http_client.hpp)
+    target_link_libraries(pychron_experiment_tests PRIVATE asio::asio)
+    if(WIN32)
+      target_compile_definitions(pychron_experiment_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+  endif()
   pychron_set_warnings(pychron_experiment_tests)
   gtest_discover_tests(pychron_experiment_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()

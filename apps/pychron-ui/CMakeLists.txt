@@ -182,6 +182,8 @@ endif()
 
 add_executable(pychron-ui src/main.cpp)
 target_link_libraries(pychron-ui PRIVATE pychron_ui_lib)
+# main.cpp reports the version in pychron_build_info (the metrics endpoint)
+target_compile_definitions(pychron-ui PRIVATE PYCHRON_VERSION="${PROJECT_VERSION}")
 # spectrometer sim drivers register from static initializers nothing references
 pychron_link_drivers(pychron-ui pychron_sim)
 pychron_set_warnings(pychron-ui)
