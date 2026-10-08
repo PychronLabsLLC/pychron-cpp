@@ -549,7 +549,7 @@ legacy:
 - ties and co-located monitors in the neighbour kinds; `x1 == x0` in
   Bracketing1D.
 
-`tests/processing/test_flux_fit.cpp` (SQLite only, R9):
+`tests/processing/test_flux_fit.cpp` (SQLite, and PostgreSQL when `PYCHRON_TEST_PG_URL` is set; R9):
 - a built level: tables equal the math layer's on the same numbers.
 - monitors found by sample name; `--sample`; all positions.
 - tags start an analysis omitted; `include` brings it back.
@@ -597,7 +597,7 @@ settled by the owner on 2026-10-07 as F12 and F13.
 
 What ended up different from, or more precise than, the text above (sections
 2, 5.3, 6, 6.1-6.4, 7 and 8 are amended to match; R15-R19 are the rulings of
-the final review). Rulings are numbered as
+the final review, R21-R24 those of its follow-ups). Rulings are numbered as
 decided during implementation.
 
 - **R12, hole lookup (a correction to this spec).** A position's hole is the
@@ -682,8 +682,14 @@ decided during implementation.
   end and only when a level was fitted (temporary file and rename).
   `save_level` refuses the whole save when a J to save is not finite and
   above zero, or its error not finite and at least zero, naming the hole.
-- **R9.** The flux store tests run on SQLite only; `PYCHRON_TEST_PG_URL` is
-  not exercised by them.
+- **R9 (revised).** The flux store tests run on every engine the persistence
+  tests do: SQLite always, and PostgreSQL in a throwaway schema when
+  `PYCHRON_TEST_PG_URL` is set. Their fixture reuses persistence's
+  `TestDatabase`, so that one test binary links TinyORM and Qt. On
+  PostgreSQL 16 with PostGIS 3.4 `ASecondSaveWritesNothing` passed as it
+  was: the jsonb options and the double columns come back equal as
+  `same_flux_value` compares them. Two tests failed there only because
+  they compared `options_json` as text; they now compare it as JSON.
 - **R2.** Level seeding for tests lives in `tests/processing/flux_seed.hpp`
   (free functions, shared with `apps/elctl/tests`).
 - **Monitor sets.** A set needs a non-empty `sample`; a document with no
@@ -693,10 +699,47 @@ decided during implementation.
 - **Reduction of monitors.** Monitors are reduced with the position's saved
   flux removed, so F never depends on a previously saved J; an analysis whose
   reduction reports an error takes no part.
-- **The saved fit of a level** (for default options, monitor set, monitor
-  sample and `all_positions`) is the newest saved revision over all its
-  positions that says the thing in question; a saved monitor-set name the
-  document lacks falls back to the default set, with a warning (R17).
+- **The saved fit of a level.** Its default options are the newest saved
+  revision over all its positions that has options. Its monitor set, monitor
+  sample and `all_positions` are one revision's (R21). A saved monitor-set
+  name the document lacks falls back to the default set, with a warning
+  (R17).
+- **R21, one revision's monitors (narrows the item above).** The monitor
+  set, the monitor sample and `all_positions` were each taken from the
+  newest head that carried that field, independently. A level saved here
+  whose heads on some positions were later replaced by imported revisions
+  naming another set (with no `monitor_sample`, no `all_positions`) then
+  combined the newer set with the older fit's sample or all-positions
+  choice. All three now come from the newest head revision that names a
+  monitor set; a field that revision lacks is absent, never filled from
+  another revision. Ties in change sequence go to the lowest hole, as
+  before.
+- **R22, a saved all-positions fit stays with its set (as R20 for the
+  sample).** `all_positions` makes every position with analyses a monitor
+  of the set's age. Under another set, named with `--monitors` or the
+  default standing in for a set the document lacks, it would date the
+  saved fit's positions with another standard's age without a word. So the
+  saved `all_positions` applies only when the resolved set's name equals
+  the saved fit's `monitor_reference`; otherwise selection is by that set's
+  own sample unless `--all-positions` is given again. The saved set named
+  explicitly with `--monitors` is the same set and keeps it.
+- **R23, weights.** A model that weights by `1 / err^2` refuses a monitor
+  whose weight is not finite and above zero, naming it: zero (as before),
+  and also an error so small that its square underflows or so large that
+  it overflows. A weighted mean of a position's analyses rejects and names
+  such an analysis, as it does one with a zero error.
+- **R24, `flux show` reads the store only.** It no longer goes through
+  `load_level`: `load_saved_flux` reads the level sheet and each position's
+  head flux revision, so a level with no holder (or monitors that do not
+  reduce) shows its saved J, and no analysis is loaded. It lists every
+  position that has an identifier, a sample or a saved flux.
+- **Shared CLI and CSV pieces.** `flux.cpp` and `flux_admin.cpp` share
+  `flux_usage`, `flux_error` and the `--db`/`--user` parsing
+  (`FluxStoreArgs`, `flux_store_flag`); `monitors set` and `default` save
+  through `flux_save_monitor_sets`, which a test drives into a conflict.
+  The CSV quoter is `processing::csv_quote` (`report.hpp`), shared by the
+  publication report and `elctl flux fit --csv`. It now also quotes a
+  field that starts or ends with a space, as the report always did.
 - **`elctl flux`.** The store is named with `--db <url>`; exit codes 0 / 1 /
   2 as in section 7 (`flux.hpp` is the authority); a value-taking flag refuses
   a value starting with `--`. Orchestration is split in two headers

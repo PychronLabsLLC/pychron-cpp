@@ -21,6 +21,11 @@ reading and writing the store). There is no flux window yet: the review step
   that has an identifier is an unknown. A fit saved with `--sample` or
   `--all-positions` chose its monitors another way, and the next fit of the
   level with the same monitor set chooses them the same way (see Options).
+  The level's saved fit is its newest saved revision that names a monitor
+  set; that revision alone gives the set, the sample and whether every
+  position was a monitor, so a level whose positions were saved by
+  different fits (some imported later, say) never mixes the set of one
+  with the sample of another.
 - `F` of a monitor (the 40Ar*/39ArK ratio) comes from the reduction with the
   position's saved flux taken away, so a fit never depends on a J saved
   earlier. An analysis whose reduction reports an error takes no part (it
@@ -84,7 +89,7 @@ Other commands:
 elctl flux fit NM-300 --db ...                 # every level of NM-300, each fitted on its own
 elctl flux fit NM-300 A --db ... --save        # no model: repeat the saved fit on the data as it is now
 elctl flux fit NM-300 A --db ... --csv fit.csv # both tables, one row per position
-elctl flux show NM-300 A --db ...              # what is saved: J, model, who, when
+elctl flux show NM-300 A --db ...              # what is saved: J, model, who, when; needs no holder, reduces nothing
 elctl flux history NM-300 A --db ...           # the saves, newest first, one line per changeset
 elctl flux history NM-300 A 5 --db ...         # the revisions of hole 5, with their J
 elctl flux monitors list --db ...
@@ -135,7 +140,7 @@ fit; with no saved fit the defaults are `plane`, unweighted, arithmetic mean,
 | `--neighbors N`, `--interpolation`, `--axis`, `--degree` | As the table above. |
 | `--monitors NAME` | The monitor set (below). Default: the one the saved fit used, else the store's default. |
 | `--sample NAME` | Find monitors by this sample name instead of the set's. Saved with the fit: the next fit of the level under the same monitor set uses it until another `--sample` is given. It does not follow the level to another set: with `--monitors OTHER`, or when the saved set is missing from the store and the default stands in, the monitors are found by that set's own sample (give `--sample` again if you mean otherwise). Given without `--all-positions`, it also undoes a saved `--all-positions`. |
-| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. Saved with the fit: the next fit of the level does the same, unless `--sample` or `--monitor-positions` is given. |
+| `--all-positions` | Every position that has analyses is a monitor and appears in the monitor table only. Saved with the fit: the next fit of the level under the same monitor set does the same, unless `--sample` or `--monitor-positions` is given. Like `--sample`, it does not follow the level to another set: with `--monitors OTHER`, or when the default stands in for a saved set the store lacks, the monitors are that set's sample's positions (give `--all-positions` again if you mean otherwise). |
 | `--monitor-positions` | The opposite: the monitors are the positions of the monitor sample. This is the default, so it is only needed to undo a saved `--all-positions`. Giving both is a usage error. |
 | `--omit RECORD_ID`, `--include RECORD_ID` | Leave one analysis out of its mean, or bring it back (over a tag or a saved omission). A level only. |
 | `--exclude-position HOLE` | A monitor position stays out of the fit but still gets a predicted J. Any position of the level; excluding a hole that is not a monitor does nothing and warns `hole <N> is not a monitor position: excluding it changes nothing`; a hole that is not a position is an error listing the level's holes. |
@@ -192,7 +197,11 @@ new J is computed with.
   `sqrt(((1-f) e0)^2 + (f e1)^2)`.
 - A weighted fit or mean, `nearest`, `bracketing` other than `average`, and
   `bracketing1d` (which always weights by the errors), given a monitor with a
-  zero error is an error naming the monitor (its weight would be infinite).
+  zero error is an error naming the monitor (its weight would be infinite);
+  so is an error so small or so large that its weight `1 / err^2` is not a
+  finite number above zero (below about 1e-154 or above about 1e154). A
+  weighted mean of a position's analyses leaves such an analysis out and
+  names it.
 - **The J error is analytical** (F4): it comes from the monitors' F only. The
   age and lambda_k uncertainties are systematic, common to every position of
   the irradiation, and are saved beside the J (`monitor_age_err`,
@@ -305,6 +314,10 @@ elctl flux monitors set sets.json --db ...   # --user NAME names the author
 ```
 
 `set FILE` replaces the whole document: the file must list every set to keep.
+`set` and `default` save over the document as they read it: if someone saved
+it in between, nothing is saved, the command says
+`not saved: someone else saved the monitor sets since they were read; run the command again`
+and exits 1.
 A document is checked on load and on save: a non-empty `monitors` list, unique names, each with a
 non-empty `sample`, a `default` that names one of them (a document with no
 `default` takes the first set), positive ages and decay constants,

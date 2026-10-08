@@ -127,8 +127,11 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `tools/flux_reference.py`, never edited by hand. The legacy model strings
   and the changeset message `fit flux for <irrad><level>` are a file format.
   A position's hole is `ordinal + 1`, never `hole_id`. `elctl flux` is split
-  into `flux.cpp` / `flux_admin.cpp` / `flux_stub.cpp`; its store tests run on
-  SQLite only. User guide: `docs/flux.md`.
+  into `flux.cpp` / `flux_admin.cpp` / `flux_stub.cpp`. The flux store tests
+  (`tests/processing/test_flux_store.cpp`) run on PostgreSQL too when
+  `PYCHRON_TEST_PG_URL` is set; `elctl`'s flux tests run on SQLite only. A
+  level's saved fit (monitor set, sample, all positions) is one revision's,
+  and is repeated only under its own monitor set. User guide: `docs/flux.md`.
 - A file the application writes for the user to open elsewhere (a report, a
   figure, a template, a sheet) goes through `pychron::mark_as_user_file`
   (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned
