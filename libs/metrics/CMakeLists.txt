@@ -8,6 +8,7 @@ add_library(pychron_metrics
   src/render.cpp
   src/server.cpp
   src/scheduler_metrics.cpp
+  src/core_exporter.cpp
 )
 add_library(pychron::metrics ALIAS pychron_metrics)
 
