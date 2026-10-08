@@ -146,6 +146,9 @@ if(TARGET pychron_processing_store)
   target_sources(pychron_ui_lib PRIVATE
     src/entry_actions.cpp
     src/entry_bridge.cpp
+    src/flux_analysis_model.cpp
+    src/flux_monitor_model.cpp
+    src/flux_unknown_model.cpp
     src/holder_view.cpp
     src/level_grid_model.cpp
     src/level_sheet_pdf.cpp
@@ -157,6 +160,9 @@ if(TARGET pychron_processing_store)
     src/entry_actions.hpp
     src/entry_bridge.hpp
     src/entry_headers.hpp
+    src/flux_analysis_model.hpp
+    src/flux_monitor_model.hpp
+    src/flux_unknown_model.hpp
     src/holder_view.hpp
     src/level_grid_model.hpp
     src/level_sheet_pdf.hpp
