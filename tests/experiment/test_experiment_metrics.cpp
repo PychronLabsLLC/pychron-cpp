@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -33,7 +34,7 @@ TimePoint at(int seconds) { return TimePoint(std::chrono::seconds(seconds)); }
 struct ExperimentMetricsTest : ::testing::Test {
   pychron::metrics::Registry registry;
   SignalBus bus;
-  double now = 1700000000.0;
+  double now = 5000.0;  // seconds on a clock that only moves forward
   std::unique_ptr<experiment::metrics::ExperimentMetrics> metrics =
       std::make_unique<experiment::metrics::ExperimentMetrics>(registry, bus, [this] { return now; });
 
@@ -137,6 +138,22 @@ TEST_F(ExperimentMetricsTest, CountersReadZeroBeforeTheFirstRun) {
   EXPECT_DOUBLE_EQ(value(t, "pychron_run_save_errors_total"), 0.0);
   EXPECT_DOUBLE_EQ(value(t, "pychron_runs_finished_total{state=\"failed\",truncated=\"false\"}"), 0.0);
   EXPECT_DOUBLE_EQ(value(t, "pychron_queues_ended_total{end=\"failed\"}"), 0.0);
+  // The rare ones above all: the first trip, the first failed block, the
+  // first wait must each show as an increase.
+  EXPECT_DOUBLE_EQ(value(t, "pychron_conditional_trips_total{kind=\"termination\",level=\"system\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_conditional_trips_total{kind=\"pre_run\",level=\"hook\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_measurement_blocks_total{block=\"peak_center_before\",ok=\"false\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_measurement_blocks_total{block=\"main\",ok=\"true\"}"), 0.0);
+  for (const char* reason : {"scheduled_start", "delay", "extraction_device", "pump_time", "other"}) {
+    EXPECT_DOUBLE_EQ(value(t, std::string("pychron_executor_waits_total{reason=\"") + reason + "\"}"), 0.0) << reason;
+  }
+}
+
+// A channel is known only once it has been used; from then every event and outcome counts from zero.
+TEST_F(ExperimentMetricsTest, AChannelsOtherOutcomesReadZero) {
+  bus.publish(lab::NotificationSent{"email", lab::NotifyEvent::RunFailed, "s", true, ""});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_notifications_total{channel=\"email\",event=\"run_failed\",ok=\"false\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_notifications_total{channel=\"email\",event=\"queue_ended\",ok=\"false\"}"), 0.0);
 }
 
 TEST_F(ExperimentMetricsTest, StateDurations) {
@@ -254,11 +271,14 @@ TEST_F(ExperimentMetricsTest, ANotificationWithNoChannelIsChannelNone) {
   EXPECT_DOUBLE_EQ(value(text(), "pychron_notifications_total{channel=\"none\",event=\"run_failed\",ok=\"false\"}"), 1.0);
 }
 
-TEST_F(ExperimentMetricsTest, LastRunFinishedIsRealTime) {
-  EXPECT_FALSE(has(text(), "pychron_last_run_finished_timestamp_seconds")) << "no run has finished yet";
-  now = 1700000123.0;
+TEST_F(ExperimentMetricsTest, TheAgeOfTheLastRunIsRealTimeSinceItFinished) {
+  EXPECT_FALSE(has(text(), "pychron_last_run_finished_age_seconds")) << "no run has finished yet";
   finished(RunState::Success);
-  EXPECT_DOUBLE_EQ(value(text(), "pychron_last_run_finished_timestamp_seconds"), 1700000123.0);
+  now += 90.0;
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_last_run_finished_age_seconds"), 90.0);
+  finished(RunState::Failed);
+  now += 5.0;
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_last_run_finished_age_seconds"), 5.0);
 }
 
 TEST_F(ExperimentMetricsTest, RunIdsAndIdentifiersAreNeverRendered) {
@@ -279,7 +299,7 @@ TEST_F(ExperimentMetricsTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
        {"pychron_executor_state", "pychron_queue_active", "pychron_queue_runs", "pychron_queues_ended_total",
         "pychron_runs_started_total", "pychron_runs_finished_total", "pychron_run_save_errors_total",
         "pychron_run_state_duration_seconds", "pychron_measurement_blocks_total", "pychron_conditional_trips_total",
-        "pychron_executor_waits_total", "pychron_last_run_finished_timestamp_seconds",
+        "pychron_executor_waits_total", "pychron_last_run_finished_age_seconds",
         "pychron_notifications_total"}) {
     EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
   }

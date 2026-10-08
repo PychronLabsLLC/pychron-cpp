@@ -88,7 +88,7 @@ TEST_F(MetricsServiceTest, EnabledServesWhatTheBusSays) {
   EXPECT_NE(body.find("version=\"9.9.9\""), std::string::npos);
   // Each of the exporters is there: the experiment's, the scheduler's, the server's own.
   EXPECT_DOUBLE_EQ(value(body, "pychron_executor_state{state=\"idle\"}"), 1.0);
-  EXPECT_TRUE(has(body, "pychron_scheduler_heartbeat_timestamp_seconds"));
+  EXPECT_TRUE(has(body, "pychron_scheduler_heartbeat_age_seconds"));
   EXPECT_TRUE(has(body, "pychron_metrics_bad_requests_total"));
   EXPECT_TRUE(alarms.empty());
 }
@@ -151,19 +151,20 @@ TEST_F(MetricsServiceTest, AFullFamilyIsLoggedOnce) {
   EXPECT_EQ(said, 1);
 }
 
-TEST_F(MetricsServiceTest, DestructionRemovesTheHeartbeatJobAndStopsListening) {
+TEST_F(MetricsServiceTest, DestructionRemovesTheHeartbeatJobAndFreesThePort) {
   const std::size_t jobs = scheduler.job_count();
-  std::uint16_t port = 0;
+  config::MetricsConfig c = enabled();
   {
-    auto service = start(enabled());
+    auto service = start(c);
     ASSERT_NE(service, nullptr);
-    port = service->port();
+    c.port = service->port();
     EXPECT_EQ(scheduler.job_count(), jobs + 1);
   }
   EXPECT_EQ(scheduler.job_count(), jobs);
-  asio::io_context io;
-  asio::ip::tcp::socket socket(io);
-  asio::error_code ec;
-  socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
-  EXPECT_TRUE(ec) << "something still listens on the port";
+  // The same port can be had again at once, as after a restart of the application.
+  auto again = start(c);
+  ASSERT_NE(again, nullptr);
+  EXPECT_TRUE(again->listening());
+  std::lock_guard lock(m);
+  EXPECT_TRUE(alarms.empty());
 }

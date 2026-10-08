@@ -124,7 +124,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - pychron_last_sample_timestamp_seconds{instrument=\"$instrument\"}",
+          "expr": "pychron_last_sample_age_seconds{instrument=\"$instrument\"}",
           "legendFormat": "{{kind}} {{source}}",
           "instant": true
         }

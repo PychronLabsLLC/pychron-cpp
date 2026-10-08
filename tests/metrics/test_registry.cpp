@@ -1,7 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
-#include <ctime>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -223,7 +224,11 @@ TEST(Registry, NamesListsFamilies) {
   EXPECT_EQ(names, (std::vector<std::string>{"pychron_a_total", "pychron_b", kDropped}));
 }
 
-TEST(Registry, SystemUnixClockIsNow) {
-  const double now = system_unix_clock()();
-  EXPECT_NEAR(now, static_cast<double>(std::time(nullptr)), 5.0);
+TEST(Registry, TheDefaultClockMovesForwardInRealTime) {
+  const RealClock clock = steady_real_clock();
+  const double a = clock();
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const double b = clock();
+  EXPECT_GE(b - a, 0.015);
+  EXPECT_LT(b - a, 5.0);
 }

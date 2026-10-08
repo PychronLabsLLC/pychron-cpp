@@ -31,7 +31,7 @@ struct SchedulerMetricsTest : ::testing::Test {
   }
 };
 
-const char* const kHeartbeat = "pychron_scheduler_heartbeat_timestamp_seconds";
+const char* const kHeartbeat = "pychron_scheduler_heartbeat_age_seconds";
 
 }  // namespace
 
@@ -75,20 +75,21 @@ TEST_F(SchedulerMetricsTest, AJobThatIsReplacedKeepsCounting) {
   EXPECT_DOUBLE_EQ(value(registry.render(), "pychron_scheduler_job_runs_total{job=\"scan\"}"), 3.0);
 }
 
-TEST_F(SchedulerMetricsTest, HeartbeatFollowsTheScheduler) {
+TEST_F(SchedulerMetricsTest, TheHeartbeatsAgeGrowsUntilTheSchedulerBeatsAgain) {
   SchedulerMetrics metrics(registry, scheduler, [this] { return now; });
-  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 1000.0);
-  now = 1005.0;
+  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 0.0);
+  now += 4.0;
   tick(4s);
-  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 1000.0) << "the heartbeat is every 5 s";
+  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 4.0) << "the heartbeat is every 5 s";
+  now += 1.0;
   tick(1s);
-  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 1005.0);
+  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 0.0);
 }
 
-TEST_F(SchedulerMetricsTest, AStoppedSchedulerLeavesTheHeartbeatBehind) {
+TEST_F(SchedulerMetricsTest, AStoppedSchedulerShowsInTheAge) {
   SchedulerMetrics metrics(registry, scheduler, [this] { return now; });
-  now = 1300.0;  // real time passes, the scheduler dispatches nothing
-  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 1000.0);
+  now += 300.0;  // real time passes, the scheduler dispatches nothing
+  EXPECT_DOUBLE_EQ(value(registry.render(), kHeartbeat), 300.0);
 }
 
 TEST_F(SchedulerMetricsTest, TheHeartbeatJobIsCountedOnce) {

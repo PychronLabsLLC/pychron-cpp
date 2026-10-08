@@ -10,12 +10,15 @@
 // a label: each would be a new series for every run.
 //
 // Durations are differences of the events' own times, on the line's clock:
-// in a simulation they are simulated seconds. The one timestamp
-// (pychron_last_run_finished_timestamp_seconds) is real time.
+// in a simulation they are simulated seconds. The one age
+// (pychron_last_run_finished_age_seconds) is real time, worked out at the
+// scrape.
 
 #include <cstddef>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,7 +33,7 @@ class ExperimentMetrics {
  public:
   // `registry` and `bus` must outlive this object.
   ExperimentMetrics(pychron::metrics::Registry& registry, SignalBus& bus,
-                    pychron::metrics::UnixClock now = pychron::metrics::system_unix_clock());
+                    pychron::metrics::RealClock now = pychron::metrics::steady_real_clock());
   ~ExperimentMetrics();  // unsubscribes
   ExperimentMetrics(const ExperimentMetrics&) = delete;
   ExperimentMetrics& operator=(const ExperimentMetrics&) = delete;
@@ -48,11 +51,14 @@ class ExperimentMetrics {
   void set_active(bool active);
 
   pychron::metrics::Registry& registry_;
-  pychron::metrics::UnixClock now_;
+  pychron::metrics::RealClock now_;
   mutable std::mutex mutex_;
   std::map<std::string, Tracked> runs_;  // by run id; a run leaves when it ends
   std::size_t from_row_ = 0;             // of the queue now running
   std::size_t done_ = 0;                 // runs it has finished
+  std::optional<double> last_finished_;  // real time; none until a run finishes
+  std::set<std::string> channels_;       // notification channels whose counters exist
+  pychron::metrics::CollectorHandle collector_;
   std::vector<SignalBus::Subscription> subscriptions_;
 };
 

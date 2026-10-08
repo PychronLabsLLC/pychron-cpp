@@ -37,8 +37,10 @@ inline std::string read_all(asio::ip::tcp::socket& socket) {
 inline std::optional<std::string> read_all_within(asio::ip::tcp::socket& socket, std::chrono::milliseconds limit) {
   auto done = std::async(std::launch::async, [&socket] { return read_all(socket); });
   if (done.wait_for(limit) == std::future_status::ready) return done.get();
+  // shutdown() wakes a reader blocked in the kernel on every platform and
+  // leaves the socket object alone, which the reader is still using.
   asio::error_code ec;
-  socket.close(ec);  // unblocks the reader
+  socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
   done.wait();
   return std::nullopt;
 }

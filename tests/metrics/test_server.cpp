@@ -5,7 +5,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <functional>
 #include <string>
+#include <thread>
 
 #include "http_client.hpp"
 #include "metrics_text.hpp"
@@ -135,6 +137,27 @@ TEST(MetricsServer, ASilentClientIsDropped) {
   const auto got = http_client::read_all_within(socket, 2000ms);
   ASSERT_TRUE(got.has_value()) << "the server kept a silent connection open";
   EXPECT_EQ(*got, "");
+  EXPECT_TRUE(eventually([&] { return bad_requests(registry) == 1.0; }));
+}
+
+// The deadline is for the request to arrive; one that arrived just in time is answered whole.
+TEST(MetricsServer, ARequestThatArrivesAtTheDeadlineIsAnsweredWhole) {
+  Registry registry;
+  for (int i = 0; i < 200; ++i) registry.gauge("pychron_g", "h", {{"n", std::to_string(i)}}).set(i);
+  MetricsServer::Options o = loopback();
+  o.read_timeout = 60ms;
+  auto server = MetricsServer::start(registry, o);
+  ASSERT_TRUE(server.has_value());
+  for (int i = 0; i < 40; ++i) {
+    // Halves 55 to 65 ms apart: around the deadline, on either side of it.
+    const std::string response =
+        http((*server)->port(), "GET /metrics HTTP/1.1\r\nHost: x\r\n\r\n", std::chrono::milliseconds(55 + i % 11));
+    if (response.empty()) continue;  // too late: dropped, and nothing was sent
+    ASSERT_EQ(response.rfind("HTTP/1.1 200", 0), 0u);
+    const std::string b = body(response);
+    ASSERT_NE(response.find("Content-Length: " + std::to_string(b.size()) + "\r\n"), std::string::npos)
+        << "a response was cut short at " << b.size() << " bytes";
+  }
 }
 
 TEST(MetricsServer, GarbageIsABadRequest) {
@@ -154,6 +177,9 @@ TEST(MetricsServer, AClientThatConnectsAndLeavesIsNotABadRequest) {
     asio::io_context io;
     asio::ip::tcp::socket socket = http_client::connect(io, (*server)->port());
   }
+  // The server is one thread taking events in order: two requests answered
+  // means it has long since seen the first client go.
+  EXPECT_EQ(get((*server)->port(), "/healthz").rfind("HTTP/1.1 200", 0), 0u);
   EXPECT_EQ(get((*server)->port(), "/healthz").rfind("HTTP/1.1 200", 0), 0u);
   EXPECT_DOUBLE_EQ(bad_requests(registry), 0.0);
 }

@@ -247,7 +247,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - pychron_last_run_finished_timestamp_seconds{instrument=\"$instrument\"}",
+          "expr": "pychron_last_run_finished_age_seconds{instrument=\"$instrument\"}",
           "legendFormat": "",
           "instant": true
         }

@@ -136,8 +136,19 @@ TEST(MetricsPackaging, TheAlertNamesBothConditions) {
   const std::string alert = slurp(kRoot / "grafana" / "provisioning" / "alerting" / "pychron-deadman.yml");
   EXPECT_NE(alert.find("last_over_time(pychron_queue_active[24h])"), std::string::npos);
   EXPECT_NE(alert.find("up{job=\\\"pychron\\\"} == 0"), std::string::npos);
-  EXPECT_NE(alert.find("pychron_scheduler_heartbeat_timestamp_seconds"), std::string::npos);
+  EXPECT_NE(alert.find("pychron_scheduler_heartbeat_age_seconds > 60"), std::string::npos);
+  // The box's clock and the instrument computer's need not agree: nothing here compares them.
+  EXPECT_EQ(alert.find("time()"), std::string::npos);
+  // Grafana expands $NAME in a provisioning file; a template's own dollar is written twice.
+  EXPECT_NE(alert.find("{{ $$labels.instrument }}"), std::string::npos);
+  EXPECT_EQ(alert.find("{{ $labels"), std::string::npos);
   EXPECT_NE(alert.find("for: 2m"), std::string::npos);
+}
+
+TEST(MetricsPackaging, NoDashboardComparesTheBoxsClockWithTheInstruments) {
+  for (const fs::path& p : dashboards()) {
+    EXPECT_EQ(slurp(p).find("time()"), std::string::npos) << p.filename();
+  }
 }
 
 TEST(MetricsPackaging, TheScrapeJobIsNamedAsTheAlertExpects) {

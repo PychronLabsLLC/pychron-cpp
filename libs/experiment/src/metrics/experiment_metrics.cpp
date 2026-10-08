@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -43,8 +44,8 @@ constexpr const char* kTrips = "pychron_conditional_trips_total";
 constexpr const char* kTripsHelp = "Conditionals that tripped, by kind and by where they were defined.";
 constexpr const char* kWaits = "pychron_executor_waits_total";
 constexpr const char* kWaitsHelp = "Times the executor waited, by what for.";
-constexpr const char* kLastFinished = "pychron_last_run_finished_timestamp_seconds";
-constexpr const char* kLastFinishedHelp = "When the last run finished, in real time.";
+constexpr const char* kLastFinished = "pychron_last_run_finished_age_seconds";
+constexpr const char* kLastFinishedHelp = "Real seconds since a run last finished. Absent until one has.";
 constexpr const char* kNotifications = "pychron_notifications_total";
 constexpr const char* kNotificationsHelp = "Notifications handed to a channel, by event and whether it took them.";
 
@@ -74,6 +75,18 @@ const char* wait_reason(std::string_view reason) {
 
 const char* bool_name(bool b) { return b ? "true" : "false"; }
 
+constexpr measurement::Block kBlocks_[] = {
+    measurement::Block::PeakCenterBefore, measurement::Block::BaselineBefore, measurement::Block::PositionFirstHop,
+    measurement::Block::Equilibrate,      measurement::Block::Main,           measurement::Block::BaselineAfter,
+    measurement::Block::PeakCenterAfter};
+constexpr ConditionalKind kKinds[] = {
+    ConditionalKind::Truncation,   ConditionalKind::Termination,   ConditionalKind::Cancelation, ConditionalKind::Action,
+    ConditionalKind::Modification, ConditionalKind::Equilibration, ConditionalKind::PreRun,      ConditionalKind::PostRun};
+constexpr ConditionalLevel kLevels[] = {ConditionalLevel::System, ConditionalLevel::Queue, ConditionalLevel::Plan,
+                                        ConditionalLevel::Run, ConditionalLevel::Hook};
+constexpr lab::NotifyEvent kNotifyEvents[] = {lab::NotifyEvent::RunFailed, lab::NotifyEvent::QueueEnded,
+                                              lab::NotifyEvent::Test};
+
 constexpr ExecutorState kExecutorStates[] = {
     ExecutorState::Idle,       ExecutorState::Preparing, ExecutorState::Running,   ExecutorState::StoppingAtBoundary,
     ExecutorState::Cancelling, ExecutorState::Aborting,  ExecutorState::Finalizing};
@@ -81,17 +94,29 @@ constexpr ExecutorState kExecutorStates[] = {
 }  // namespace
 
 ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, SignalBus& bus,
-                                     pychron::metrics::UnixClock now)
+                                     pychron::metrics::RealClock now)
     : registry_(registry), now_(std::move(now)) {
   registry.declare(MetricType::Histogram, kStateDuration, kStateDurationHelp, duration_buckets());
-  registry.declare(MetricType::Counter, kBlocks, kBlocksHelp);
-  registry.declare(MetricType::Counter, kTrips, kTripsHelp);
-  registry.declare(MetricType::Counter, kWaits, kWaitsHelp);
   registry.declare(MetricType::Gauge, kLastFinished, kLastFinishedHelp);
   registry.declare(MetricType::Counter, kNotifications, kNotificationsHelp);
 
-  // What can be named in advance reads zero from the start: a rate over a
-  // series that does not exist yet is no data, not zero.
+  // What can be named in advance reads zero from the start. A counter that
+  // first appears already at 1 shows no increase: the box has nothing
+  // earlier to compare it with, and the first trip or the first failed
+  // block, often the only one, would not be drawn.
+  for (const measurement::Block b : kBlocks_) {
+    for (const bool ok : {false, true}) {
+      registry.counter(kBlocks, kBlocksHelp, {{"block", label_of(to_string(b))}, {"ok", bool_name(ok)}});
+    }
+  }
+  for (const ConditionalKind k : kKinds) {
+    for (const ConditionalLevel l : kLevels) {
+      registry.counter(kTrips, kTripsHelp, {{"kind", label_of(to_string(k))}, {"level", label_of(to_string(l))}});
+    }
+  }
+  for (const char* reason : {"scheduled_start", "delay", "extraction_device", "pump_time", "other"}) {
+    registry.counter(kWaits, kWaitsHelp, {{"reason", reason}});
+  }
   for (const ExecutorState s : kExecutorStates) {
     registry.gauge(kExecutorState, kExecutorStateHelp, {{"state", label_of(to_string(s))}})
         .set(s == ExecutorState::Idle ? 1.0 : 0.0);
@@ -150,10 +175,11 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
                  {{"state", label_of(to_string(s.state))}, {"truncated", bool_name(s.truncated)}})
         .inc();
     if (s.save_error) registry_.counter(kSaveErrors, kSaveErrorsHelp).inc();
-    registry_.gauge(kLastFinished, kLastFinishedHelp).set(now_());
+    const double now = now_();
     std::size_t done = 0;
     {
       const std::lock_guard lock(mutex_);
+      last_finished_ = now;
       done = ++done_;
     }
     registry_.gauge(kQueueRuns, kQueueRunsHelp, {{"status", "done"}}).set(static_cast<double>(done));
@@ -189,16 +215,41 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
     registry_.counter(kWaits, kWaitsHelp, {{"reason", wait_reason(e.reason)}}).inc();
   }));
   subscriptions_.push_back(bus.subscribe<lab::NotificationSent>([this](const lab::NotificationSent& e) {
+    const std::string channel = e.channel.empty() ? std::string("none") : e.channel;
+    bool first = false;
+    {
+      const std::lock_guard lock(mutex_);
+      first = channels_.insert(channel).second;
+    }
+    if (first) {
+      // A channel is known once it has been used; its first failure must
+      // then be an increase.
+      for (const lab::NotifyEvent event : kNotifyEvents) {
+        for (const bool ok : {false, true}) {
+          registry_.counter(kNotifications, kNotificationsHelp,
+                            {{"channel", channel}, {"event", label_of(to_string(event))}, {"ok", bool_name(ok)}});
+        }
+      }
+    }
     registry_
         .counter(kNotifications, kNotificationsHelp,
-                 {{"channel", e.channel.empty() ? std::string("none") : e.channel},
-                  {"event", label_of(to_string(e.event))},
-                  {"ok", bool_name(e.ok)}})
+                 {{"channel", channel}, {"event", label_of(to_string(e.event))}, {"ok", bool_name(e.ok)}})
         .inc();
   }));
+
+  // At each scrape: how long ago, by this computer's clock.
+  collector_ = registry.add_collector([this](pychron::metrics::Registry& r) {
+    std::optional<double> at;
+    {
+      const std::lock_guard lock(mutex_);
+      at = last_finished_;
+    }
+    if (at) r.gauge(kLastFinished, kLastFinishedHelp).set(now_() - *at);
+  });
 }
 
 ExperimentMetrics::~ExperimentMetrics() {
+  collector_.reset();
   for (SignalBus::Subscription& s : subscriptions_) s.reset();
 }
 

@@ -27,11 +27,14 @@ namespace pychron::metrics {
 // Label name -> value. The order given does not matter.
 using Labels = std::vector<std::pair<std::string, std::string>>;
 
-// Seconds since the epoch, in real time. What a timestamp gauge holds: a
-// dashboard compares it with the time of the scrape, so it never comes from
-// the line's Clock, which may be simulated.
-using UnixClock = std::function<double()>;
-UnixClock system_unix_clock();
+// Seconds of real time on a clock that only moves forward; where it starts
+// does not matter. It measures the ages a scrape reports (of a reading, of
+// the scheduler's heartbeat): how long ago, by this computer's own clock.
+// Not the line's Clock, which may be simulated, and not the wall clock:
+// an age is worked out here so that nothing depends on this computer and
+// the box that scrapes it agreeing what time it is.
+using RealClock = std::function<double()>;
+RealClock steady_real_clock();  // std::chrono::steady_clock
 
 enum class MetricType { Counter, Gauge, Histogram };
 

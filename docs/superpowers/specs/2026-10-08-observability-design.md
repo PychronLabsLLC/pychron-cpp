@@ -139,25 +139,45 @@ class Registry {
   error message or any other free text is never a label value.
 - Free text that must be classified (`ExecutorWaiting::reason`) maps to a
   fixed set, with `other` for anything unrecognised.
-- **Two clocks.** The line's `Clock` may be a `VirtualClock`, so:
-  - a timestamp that a PromQL expression compares with `time()` is real
-    time, from `std::chrono::system_clock`, taken when the event is handled;
-  - a duration between two events is the difference of their `ts`, on the
-    line's clock. In a simulation it is simulated seconds, which is what a
+- **Three clocks, none compared with another.**
+  - A duration between two events is the difference of their `ts`, on the
+    line's `Clock`. In a simulation it is simulated seconds, which is what a
     dashboard of a simulated queue should show.
-  Exporters take the real-time source as a `std::function<double()>`
-  (seconds since the epoch) so tests can fix it.
+  - An age (of a reading, of the scheduler's heartbeat, of the last run,
+    of the process) is real time, measured on this computer's steady clock
+    and worked out at the scrape by a collector. Exporters take that clock
+    as a `RealClock` (`std::function<double()>`, seconds) so tests can move
+    it.
+  - The box's clock is never involved. The first design exported
+    timestamps for PromQL to subtract from `time()`; that makes the alert
+    depend on the box and the instrument computer agreeing what time it is,
+    and a lab network cut off from the internet has no time server. An
+    instrument computer 90 s slow would have fired the dead-man alert two
+    minutes into every queue.
 - The exposition carries no timestamps: Prometheus stamps each sample at the
   scrape.
 - A reading whose device has stopped answering keeps its last value, which
   would mislead on a dashboard. Every sampled source therefore also has a
-  `pychron_last_sample_timestamp_seconds` series; panels show its age.
+  `pychron_last_sample_age_seconds` series.
+- A counter is created at zero as soon as what it counts is known: at
+  construction for enumerations, and on first sight of a configured name (a
+  valve's failures when the valve is first reported, a source's alarms when
+  it is first read, a component's five levels at its first record, a
+  channel's outcomes at its first notification). A counter that first
+  appears at 1 has no earlier sample, so `increase()` over it is zero and
+  the first event, often the only one, would not be drawn. What cannot be
+  named in advance (an alarm from a source that is never read) keeps that
+  gap, and the guide says so.
 
 ### 2.3 Lifetime
 
 `Registry` is declared before the exporters and the server and outlives
 them. On shutdown: subscriptions and collector handles are reset, the server
-is stopped and its thread joined, then the registry is destroyed. The server
+is stopped and its thread joined, then the registry is destroyed. The bus
+does not wait for a handler that is mid-call when its subscription goes, so
+the service is destroyed only once nothing publishes: after the line has
+stopped. The heartbeat job, which `Scheduler::cancel` does not wait for
+either, shares ownership of the one value it writes. The server
 thread is not a participant in the line's clock and never waits through it.
 
 `apps/pychron-ui/src/main.cpp` calls `MetricsService::start` before the line
@@ -193,14 +213,18 @@ Prefix `pychron_`. Counters end in `_total`. Prometheus adds `job` and
 | `pychron_heater_enabled` | gauge, 0 or 1 | `heater` | `HeaterSample`; removed when nullopt |
 | `pychron_valve_state` | gauge, 0 or 1 | `valve`, `state` = `open`, `closed`, `unknown` | `ValveChanged`; seeded from `Snapshot` |
 | `pychron_valve_transitions_total` | counter | `valve` | `ValveChanged` whose state differs from the last seen |
-| `pychron_actuation_failures_total` | counter | `valve` | `ActuationFailed` |
-| `pychron_last_sample_timestamp_seconds` | gauge | `kind` = `pressure`, `temperature`, `heater`; `source` | each sample event; real time |
+| `pychron_actuation_failures_total` | counter | `valve`; `unknown` for a name the line never reported | `ActuationFailed` |
+| `pychron_last_sample_age_seconds` | gauge | `kind` = `pressure`, `temperature`, `heater`; `source` | each sample event; real seconds since, at the scrape |
 | `pychron_alarms_total` | counter | `source`, `severity` | `Alarm` |
 
 A pressure keeps the unit its gauge is configured with, named in the `unit`
 label. Converting in the exporter would disagree with what the operator sees
-on the canvas. For a temperature, `source` in the timestamp series is
+on the canvas. For a temperature, `source` in the age series is
 `<source>/<input>`.
+
+`ActuationFailed` is also published for a switch that does not exist, under
+whatever name a script gave: only a name seen in a `Snapshot` or a
+`ValveChanged` becomes a label.
 
 ### 3.2 Run and queue operations (`ExperimentMetrics`)
 
@@ -217,7 +241,7 @@ on the canvas. For a temperature, `source` in the timestamp series is
 | `pychron_measurement_blocks_total` | counter | `block`, `ok` | `BlockFinished` |
 | `pychron_conditional_trips_total` | counter | `kind`, `level` | `ConditionalTripped` |
 | `pychron_executor_waits_total` | counter | `reason` = `delay`, `scheduled_start`, `extraction_device`, `pump_time`, `other` | `ExecutorWaiting` |
-| `pychron_last_run_finished_timestamp_seconds` | gauge | none | `RunFinished`; real time |
+| `pychron_last_run_finished_age_seconds` | gauge | none | `RunFinished`; real seconds since, at the scrape; absent until a run finishes |
 | `pychron_notifications_total` | counter | `channel`, `event`, `ok` | `NotificationSent` |
 
 A label value that names an enumeration is the application's own name for
@@ -253,17 +277,23 @@ empties the per-run map, so a run cut off by an abort leaves nothing behind.
 | Metric | Type | Labels | Source |
 |---|---|---|---|
 | `pychron_build_info` | gauge, always 1 | `version`, `os`, `compiler` | constants |
-| `pychron_process_start_time_seconds` | gauge | none | real time at start |
+| `pychron_process_uptime_seconds` | gauge | none | real seconds since start, at the scrape |
 | `pychron_log_records_total` | counter | `level`, `component` | `Log`; `component` is the logger name up to its first dot |
 | `pychron_transport_connected` | gauge, 0 or 1 | `transport` | `TransportHealth` |
-| `pychron_transport_errors_total` | counter | `transport` | `TransportHealth::error_count` (`set_total`) |
+| `pychron_transport_outages_total` | counter | `transport` | `TransportHealth` going from up to down |
 | `pychron_scheduler_job_runs_total` | counter | `job` | `Scheduler::job_stats()` |
 | `pychron_scheduler_job_failures_total` | counter | `job` | the same |
 | `pychron_scheduler_job_skipped_overlaps_total` | counter | `job` | the same |
-| `pychron_scheduler_heartbeat_timestamp_seconds` | gauge | none | a scheduler job every 5 s; real time |
+| `pychron_scheduler_heartbeat_age_seconds` | gauge | none | real seconds since a scheduler job (every 5 s) last ran, at the scrape |
 | `pychron_metrics_scrape_duration_seconds` | gauge | none | `MetricsServer`, the last `render()` |
 | `pychron_metrics_bad_requests_total` | counter | none | `MetricsServer` |
 | `pychron_metrics_dropped_series_total` | counter | none | `Registry` |
+
+`TransportHealth` is published when a transport's state changes, and its
+`error_count` is the failures in a row at that moment, not a running total.
+So the events say when a transport is down and how often it went down; a
+count of errors needs the transport to keep and publish one, which is
+deferred (section 3.4).
 
 A record is counted only if it reaches the bus, so the `trace` and `debug`
 counts follow the configured levels. `warn` and `error` are the ones the
@@ -274,6 +304,8 @@ dashboard shows.
 - **Blank and air intensities as gauges.** `RunFinished` carries neither the
   analysis type nor the fitted intercepts, so this needs a new event or a
   wider `RunSummary`. A follow-up of its own.
+- **A count of transport errors.** The transport would have to keep a running
+  total and publish it on every failure.
 - True scheduler lag (due time against start time). `JobStats` does not have
   it; `skipped_overlaps` stands in.
 - Process CPU, memory and file descriptors. Three platform-specific
@@ -347,7 +379,8 @@ nothing else.
 | Bind or listen fails | One `error` log record and one `Alarm` (Warning, source `metrics`); the application runs without the endpoint |
 | Invalid `[metrics]` | A configuration diagnostic; metrics off |
 | A handler throws | `SignalBus` already swallows it |
-| A client is slow, oversized or sends garbage | The connection is closed and counted; logged at `debug` only, so a port scanner cannot fill the log |
+| A client is slow, oversized or sends garbage | The connection is closed and counted; nothing is logged, so a port scanner cannot fill the log |
+| An exception on the endpoint's thread | That request is lost; the thread goes on serving |
 | Too many series in a family | Section 2.1 |
 | Shutdown during a scrape | The connection is aborted; the thread is joined |
 
@@ -424,11 +457,16 @@ provisioned from YAML. It fires on either condition, after two minutes:
 
    ```
    pychron_queue_active == 1
-     and time() - pychron_scheduler_heartbeat_timestamp_seconds > 60
+     and pychron_scheduler_heartbeat_age_seconds > 60
    ```
 
-Known limit, stated in the guide: a queue stuck inside one run while the
-scheduler keeps ticking is not caught. Catching it needs a per-lab bound on
+In the provisioning file a template's dollar is doubled
+(`{{ $$labels.instrument }}`): Grafana expands `$NAME` there from its
+environment, which is how `PYCHRON_PROM_UID` gets in.
+
+Known limits, stated in the guide: quitting within one scrape of a queue's
+end leaves the last reading at "running", and the first rule fires. And a
+queue stuck inside one run while the scheduler keeps ticking is not caught. Catching it needs a per-lab bound on
 the longest sane run, which belongs to later alert rules.
 
 The rule goes to Grafana's default contact point. Who receives it is the

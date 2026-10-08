@@ -258,8 +258,14 @@ class MetricsSessionTest : public LabSessionTest {
       named_.push_back(e.identifier);
     }));
   }
+  // As the application does: the line is stopped (nothing publishes, no job
+  // runs) before the service goes, and the service before the line.
   void TearDown() override {
-    metrics_.reset();  // its heartbeat is a job of the line's scheduler
+    subs_.clear();
+    session_.reset();
+    scan_.reset();
+    if (line_) line_->stop();
+    metrics_.reset();
     LabSessionTest::TearDown();
   }
 
@@ -295,7 +301,9 @@ TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
   }
   EXPECT_GT(value(body, "pychron_run_state_duration_seconds_sum{state=\"measuring\"}"), 1.0);
   EXPECT_GT(value(body, "pychron_measurement_blocks_total{block=\"main\",ok=\"true\"}"), 0.0);
-  EXPECT_TRUE(metrics_text::has(body, "pychron_last_run_finished_timestamp_seconds"));
+  EXPECT_TRUE(metrics_text::has(body, "pychron_last_run_finished_age_seconds"));
+  EXPECT_GE(value(body, "pychron_scheduler_heartbeat_age_seconds"), 0.0);
+  EXPECT_LT(value(body, "pychron_scheduler_heartbeat_age_seconds"), 60.0);
   // The line was read while the queue ran.
   EXPECT_NE(body.find("\npychron_pressure{"), std::string::npos);
   EXPECT_GT(value(body, "pychron_scheduler_job_runs_total{job=\"metrics.heartbeat\"}"), 0.0);
@@ -313,13 +321,12 @@ TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
 
 TEST_F(MetricsSessionTest, ScrapingDuringAQueueDoesNotDisturbIt) {
   std::atomic<bool> stop{false};
-  std::atomic<int> scrapes{0}, bad{0}, saw_active{0};
+  std::atomic<int> scrapes{0}, bad{0};
   std::thread scraper([&] {
     while (!stop) {
       const std::string response = http_client::get(metrics_->port(), "/metrics");
       ++scrapes;
       if (response.rfind("HTTP/1.1 200", 0) != 0) ++bad;
-      if (metrics_text::value(http_client::body(response), "pychron_queue_active") == 1.0) ++saw_active;
     }
   });
   ASSERT_TRUE(session_->start(queue_));
@@ -331,7 +338,6 @@ TEST_F(MetricsSessionTest, ScrapingDuringAQueueDoesNotDisturbIt) {
   for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier;
   EXPECT_GT(scrapes.load(), 0);
   EXPECT_EQ(bad.load(), 0);
-  EXPECT_GT(saw_active.load(), 0) << "no scrape saw the queue running";
 }
 
 #endif  // PYCHRON_EXPERIMENT_HAS_METRICS

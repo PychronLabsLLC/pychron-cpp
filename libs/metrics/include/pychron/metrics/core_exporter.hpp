@@ -13,7 +13,9 @@
 
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/events.hpp"
@@ -34,21 +36,29 @@ BuildInfo build_info(std::string version);
 class CoreExporter {
  public:
   // `registry` and `bus` must outlive the exporter. `now` is real time: it
-  // stamps the last-sample gauges, which a dashboard compares with the time
-  // of the scrape.
-  CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, UnixClock now = system_unix_clock());
+  // measures how long ago each source was read and how long the application
+  // has been up, both worked out at the scrape.
+  CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, RealClock now = steady_real_clock());
   ~CoreExporter();  // unsubscribes
   CoreExporter(const CoreExporter&) = delete;
   CoreExporter& operator=(const CoreExporter&) = delete;
 
  private:
   void on_valve(const std::string& valve, ValveState state, bool count_transition);
-  void stamp(const char* kind, const std::string& source);
+  // `source` of `kind` was read now, and is from now on a source that may alarm.
+  void read(const char* kind, const std::string& source, const std::string& alarm_source);
+  void collect(Registry& registry);
 
   Registry& registry_;
-  UnixClock now_;
-  std::mutex valves_mutex_;
-  std::map<std::string, ValveState> valves_;  // the last state seen, to tell a change from a repeat
+  RealClock now_;
+  double started_ = 0.0;
+  std::mutex mutex_;
+  std::map<std::string, ValveState> valves_;   // the last state seen, to tell a change from a repeat
+  std::map<std::string, bool> transports_;     // connected, as last said
+  std::map<std::pair<std::string, std::string>, double> read_at_;  // (kind, source) -> when last read
+  std::set<std::string> alarm_sources_;        // whose alarm counters exist
+  std::set<std::string> components_;           // whose log counters exist
+  CollectorHandle collector_;
   std::vector<SignalBus::Subscription> subscriptions_;
 };
 

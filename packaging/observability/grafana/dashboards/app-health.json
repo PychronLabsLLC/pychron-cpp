@@ -116,7 +116,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - pychron_process_start_time_seconds{instrument=\"$instrument\"}",
+          "expr": "pychron_process_uptime_seconds{instrument=\"$instrument\"}",
           "legendFormat": "",
           "instant": true
         }
@@ -162,7 +162,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - pychron_scheduler_heartbeat_timestamp_seconds{instrument=\"$instrument\"}",
+          "expr": "pychron_scheduler_heartbeat_age_seconds{instrument=\"$instrument\"}",
           "legendFormat": "",
           "instant": true
         }
@@ -352,7 +352,7 @@
                   "index": 0
                 },
                 "1": {
-                  "text": "connected",
+                  "text": "up",
                   "color": "green",
                   "index": 1
                 }
@@ -376,7 +376,7 @@
     },
     {
       "id": 7,
-      "title": "Transport errors",
+      "title": "Transport outages",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -395,14 +395,20 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (transport) (rate(pychron_transport_errors_total{instrument=\"$instrument\"}[5m]))",
+          "expr": "sum by (transport) (increase(pychron_transport_outages_total{instrument=\"$instrument\"}[$__rate_interval]))",
           "legendFormat": "{{transport}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {},
-          "unit": "ops",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "decimals": 0,
           "min": 0
         },
         "overrides": []
@@ -418,7 +424,7 @@
           "sort": "desc"
         }
       },
-      "description": "Errors per second, averaged over five minutes."
+      "description": "Times a transport went down. How many errors it met is not counted; the log has them."
     },
     {
       "id": 8,

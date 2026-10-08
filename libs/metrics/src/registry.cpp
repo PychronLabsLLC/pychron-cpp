@@ -51,9 +51,9 @@ std::vector<double> clean_bounds(std::vector<double> b) {
 
 }  // namespace
 
-UnixClock system_unix_clock() {
+RealClock steady_real_clock() {
   return [] {
-    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
   };
 }
 

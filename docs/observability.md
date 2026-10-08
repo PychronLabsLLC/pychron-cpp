@@ -136,6 +136,14 @@ Quitting pychron with no queue running fires nothing.
 of pychron keeps working. The *Since the last run finished* panel on the Run
 operations dashboard is where to look for that.
 
+**One false alarm to know:** if pychron is quit within a few seconds of a
+queue ending, the box's last reading still says a queue was running, and
+`PychronGone` fires until pychron is started again (or for a day).
+
+The clocks of the box and the instrument computer do not have to agree. Every
+"how long ago" on the dashboards and in the alert is measured on the
+instrument computer.
+
 To install:
 
 1. Find the data source's identifier. In Grafana, **Connections > Data
@@ -163,7 +171,8 @@ To install:
 5. Test it. Start a simulated queue (`--sim`), wait until the Run operations
    dashboard says the queue is running, then quit pychron. Within about three
    minutes **Alerting > Alert rules** shows `PychronGone` firing and the
-   contact point receives it. Start pychron again and it clears.
+   contact point receives it. Read the message: it should name the
+   instrument. Start pychron again and it clears.
 
 Menu names are those of Grafana 11, as of October 2026.
 
@@ -195,8 +204,8 @@ each.
 | `pychron_heater_enabled` | `heater` | 1 while the output is on |
 | `pychron_valve_state` | `valve`, `state` (`open`, `closed`, `unknown`) | 1 for the state the valve is in |
 | `pychron_valve_transitions_total` | `valve` | times the valve changed state |
-| `pychron_actuation_failures_total` | `valve` | actuations that failed |
-| `pychron_last_sample_timestamp_seconds` | `kind`, `source` | when the source was last read; its age says whether a reading is stale |
+| `pychron_actuation_failures_total` | `valve` | actuations that failed; `unknown` for a switch the line does not have |
+| `pychron_last_sample_age_seconds` | `kind`, `source` | seconds since the source was last read; a reading is only as fresh as this |
 | `pychron_alarms_total` | `source`, `severity` | alarms raised |
 
 ### Runs and queues
@@ -214,7 +223,7 @@ each.
 | `pychron_measurement_blocks_total` | `block`, `ok` | measurement blocks finished |
 | `pychron_conditional_trips_total` | `kind`, `level` | conditionals that tripped |
 | `pychron_executor_waits_total` | `reason` | times the executor waited, by what for |
-| `pychron_last_run_finished_timestamp_seconds` | | when the last run finished |
+| `pychron_last_run_finished_age_seconds` | | seconds since a run last finished; absent until one has |
 | `pychron_notifications_total` | `channel`, `event`, `ok` | notifications handed to a channel |
 
 Durations are measured on the line's clock: in a simulation run faster than
@@ -225,15 +234,20 @@ real time they are simulated seconds.
 | Metric | Labels | Meaning |
 |---|---|---|
 | `pychron_build_info` | `version`, `os`, `compiler` | always 1; the labels say what is running |
-| `pychron_process_start_time_seconds` | | when pychron started |
+| `pychron_process_uptime_seconds` | | seconds since pychron started |
 | `pychron_log_records_total` | `level`, `component` | log records; `component` is the first part of the logger's name |
-| `pychron_transport_connected` | `transport` | 1 while connected |
-| `pychron_transport_errors_total` | `transport` | errors the transport reported |
+| `pychron_transport_connected` | `transport` | 1 while the transport is up, 0 while it is down |
+| `pychron_transport_outages_total` | `transport` | times the transport went down. Single errors are not counted: the log has them |
 | `pychron_scheduler_job_runs_total`, `_failures_total`, `_skipped_overlaps_total` | `job` | each periodic job's counts |
-| `pychron_scheduler_heartbeat_timestamp_seconds` | | when the scheduler last ran its heartbeat job |
+| `pychron_scheduler_heartbeat_age_seconds` | | seconds since the scheduler last ran its heartbeat job |
 | `pychron_metrics_scrape_duration_seconds` | | how long the last scrape took to answer |
 | `pychron_metrics_bad_requests_total` | | connections to the endpoint that were dropped |
 | `pychron_metrics_dropped_series_total` | | series refused (more than 1000 in one metric: a configuration with a great many devices, or a bug) |
 
 Counters start again from zero when pychron restarts. The dashboards show
 increases over a time range, which is unaffected.
+
+A counter appears when pychron first hears of what it counts: a valve, a
+gauge, a transport, a notification channel. The first alarm from a source
+that has never been read (the line itself, say) is therefore not drawn as an
+increase; every later one is.

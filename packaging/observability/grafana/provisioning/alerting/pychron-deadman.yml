@@ -12,6 +12,13 @@
 #
 # Not caught: a queue stuck inside one run while the scheduler keeps going.
 #
+# Neither rule compares the box's clock with the instrument computer's: the
+# age PychronStuck reads is measured on the instrument computer.
+#
+# A dollar that belongs to a template is written twice ($$labels): Grafana
+# expands $NAME in this file from its environment, which is how
+# PYCHRON_PROM_UID gets in.
+#
 # PYCHRON_PROM_UID is the uid of the box's Prometheus data source; Grafana
 # reads it from its environment (docs/observability.md says where to set it).
 # Both rules go to Grafana's default contact point.
@@ -32,7 +39,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Pychron on {{ $labels.instrument }} stopped answering while a queue was running."
+          summary: "Pychron on {{ $$labels.instrument }} stopped answering while a queue was running."
         data:
           - refId: A
             relativeTimeRange:
@@ -74,7 +81,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Pychron on {{ $labels.instrument }} is running a queue and its scheduler has stopped."
+          summary: "Pychron on {{ $$labels.instrument }} is running a queue and its scheduler has stopped."
         data:
           - refId: A
             relativeTimeRange:
@@ -84,7 +91,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: "pychron_queue_active == 1 and (time() - pychron_scheduler_heartbeat_timestamp_seconds) > 60"
+              expr: "pychron_queue_active == 1 and pychron_scheduler_heartbeat_age_seconds > 60"
           - refId: B
             datasourceUid: __expr__
             model:

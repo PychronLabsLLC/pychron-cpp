@@ -78,7 +78,9 @@ struct MetricsServer::Impl {
     void run() {
       timer.expires_after(server.options.read_timeout);
       timer.async_wait([self = shared_from_this()](const asio::error_code& ec) {
-        if (ec) return;  // cancelled: the request arrived
+        // Cancelled, or the request arrived while this was already on its
+        // way: it is being answered and must not be cut short.
+        if (ec || self->arrived) return;
         self->timed_out = true;
         asio::error_code ignored;
         self->socket.close(ignored);
@@ -88,6 +90,7 @@ struct MetricsServer::Impl {
     }
 
     void on_headers(const asio::error_code& ec) {
+      arrived = true;
       timer.cancel();
       if (server.stopping) return;
       if (ec) {
@@ -116,6 +119,7 @@ struct MetricsServer::Impl {
     asio::streambuf in;
     std::string out;
     bool timed_out = false;
+    bool arrived = false;  // the request is in: the deadline no longer applies
   };
 
   std::string answer(const Request& request) {
@@ -145,14 +149,30 @@ struct MetricsServer::Impl {
     });
   }
 
+  // The thread's whole life. Whatever goes wrong here costs the endpoint
+  // and nothing else: an exception from a handler (no memory to render
+  // with, an error asio throws) must not end the process.
+  void serve() {
+    for (;;) {
+      try {
+        io.run();
+        return;  // out of work: the server is shutting down
+      } catch (...) {
+        // That request is lost; the rest go on.
+      }
+    }
+  }
+
   Registry& registry;
   Options options;
+  // Before `io`: the handlers `io` holds own the connections, and a
+  // connection takes itself out of `live` when it goes.
+  std::unordered_set<Connection*> live;  // the io thread only
+  bool stopping = false;                 // the io thread only
   asio::io_context io;
   tcp::acceptor acceptor;
   Gauge& scrape_seconds;
   Counter& bad_requests;
-  std::unordered_set<Connection*> live;  // the io thread only
-  bool stopping = false;                 // the io thread only
   std::uint16_t port = 0;
   std::thread thread;
 };
@@ -184,7 +204,7 @@ Result<std::unique_ptr<MetricsServer>> MetricsServer::start(Registry& registry, 
 
   impl->accept();
   Impl* raw = impl.get();
-  impl->thread = std::thread([raw] { raw->io.run(); });
+  impl->thread = std::thread([raw] { raw->serve(); });
   return std::unique_ptr<MetricsServer>(new MetricsServer(std::move(impl)));
 }
 

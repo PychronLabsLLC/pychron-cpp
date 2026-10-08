@@ -31,6 +31,10 @@ class MetricsService {
   static std::unique_ptr<MetricsService> start(const config::MetricsConfig& config, SignalBus& bus,
                                                Scheduler& scheduler, const Clock& clock,
                                                std::shared_ptr<LogHub> log_hub, std::string version);
+  // Destroy it when nothing is publishing on the bus any more: after the
+  // line has stopped, as the application does. The bus does not wait for a
+  // handler that is mid-call when its subscription is dropped (signal_bus.hpp),
+  // and such a handler would find the registry gone.
   ~MetricsService();
   MetricsService(const MetricsService&) = delete;
   MetricsService& operator=(const MetricsService&) = delete;

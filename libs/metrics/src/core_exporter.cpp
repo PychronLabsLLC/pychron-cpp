@@ -23,16 +23,21 @@ constexpr const char* kValveTransitions = "pychron_valve_transitions_total";
 constexpr const char* kValveTransitionsHelp = "Times a valve changed state.";
 constexpr const char* kActuationFailures = "pychron_actuation_failures_total";
 constexpr const char* kActuationFailuresHelp = "Valve actuations that failed.";
-constexpr const char* kLastSample = "pychron_last_sample_timestamp_seconds";
-constexpr const char* kLastSampleHelp = "When a source was last read, in real time. Its age says whether the reading is stale.";
+constexpr const char* kLastSampleAge = "pychron_last_sample_age_seconds";
+constexpr const char* kLastSampleAgeHelp = "Real seconds since a source was last read. A reading is only as fresh as this.";
+constexpr const char* kUptime = "pychron_process_uptime_seconds";
+constexpr const char* kUptimeHelp = "Real seconds since the application started.";
 constexpr const char* kAlarms = "pychron_alarms_total";
 constexpr const char* kAlarmsHelp = "Alarms raised.";
 constexpr const char* kLogRecords = "pychron_log_records_total";
 constexpr const char* kLogRecordsHelp = "Log records, by level and by the first part of the logger's name.";
 constexpr const char* kTransportConnected = "pychron_transport_connected";
-constexpr const char* kTransportConnectedHelp = "1 while a transport is connected.";
-constexpr const char* kTransportErrors = "pychron_transport_errors_total";
-constexpr const char* kTransportErrorsHelp = "Errors a transport has reported.";
+constexpr const char* kTransportConnectedHelp = "1 while a transport is up (working or degraded), 0 while it is down.";
+constexpr const char* kTransportOutages = "pychron_transport_outages_total";
+constexpr const char* kTransportOutagesHelp = "Times a transport went down.";
+
+constexpr AlarmSeverity kSeverities[] = {AlarmSeverity::Info, AlarmSeverity::Warning, AlarmSeverity::Critical};
+constexpr LogLevel kLevels[] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
 
 const char* state_name(ValveState s) {
   switch (s) {
@@ -103,7 +108,7 @@ BuildInfo build_info(std::string version) {
   return b;
 }
 
-CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, UnixClock now)
+CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, RealClock now)
     : registry_(registry), now_(std::move(now)) {
   // Families whose series wait for a first event are named now, so the list
   // of what this build exports does not depend on what has happened yet.
@@ -115,25 +120,27 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
   registry.declare(MetricType::Gauge, kValveState, kValveStateHelp);
   registry.declare(MetricType::Counter, kValveTransitions, kValveTransitionsHelp);
   registry.declare(MetricType::Counter, kActuationFailures, kActuationFailuresHelp);
-  registry.declare(MetricType::Gauge, kLastSample, kLastSampleHelp);
+  registry.declare(MetricType::Gauge, kLastSampleAge, kLastSampleAgeHelp);
   registry.declare(MetricType::Counter, kAlarms, kAlarmsHelp);
   registry.declare(MetricType::Counter, kLogRecords, kLogRecordsHelp);
   registry.declare(MetricType::Gauge, kTransportConnected, kTransportConnectedHelp);
-  registry.declare(MetricType::Counter, kTransportErrors, kTransportErrorsHelp);
+  registry.declare(MetricType::Counter, kTransportOutages, kTransportOutagesHelp);
 
   registry
       .gauge("pychron_build_info", "Always 1; the labels say which build is running.",
              {{"version", build.version}, {"os", build.os}, {"compiler", build.compiler}})
       .set(1);
-  registry.gauge("pychron_process_start_time_seconds", "When the application started, in real time.").set(now_());
+  started_ = now_();
+  registry.gauge(kUptime, kUptimeHelp).set(0);
+  collector_ = registry.add_collector([this](Registry& r) { collect(r); });
 
   subscriptions_.push_back(bus.subscribe<PressureSample>([this](const PressureSample& e) {
     registry_.gauge(kPressure, kPressureHelp, {{"gauge", e.gauge}, {"unit", e.units}}).set(e.value);
-    stamp("pressure", e.gauge);
+    read("pressure", e.gauge, e.gauge);
   }));
   subscriptions_.push_back(bus.subscribe<TemperatureSample>([this](const TemperatureSample& e) {
     registry_.gauge(kTemperature, kTemperatureHelp, {{"source", e.source}, {"input", e.input}}).set(e.kelvin);
-    stamp("temperature", e.source + "/" + e.input);
+    read("temperature", e.source + "/" + e.input, e.source);
   }));
   subscriptions_.push_back(bus.subscribe<HeaterSample>([this](const HeaterSample& e) {
     const Labels labels{{"heater", e.heater}};
@@ -141,7 +148,7 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
     set_or_remove(registry_, kHeaterSetpoint, kHeaterSetpointHelp, labels, e.setpoint);
     set_or_remove(registry_, kHeaterEnabled, kHeaterEnabledHelp, labels,
                   e.enabled ? std::optional<double>(*e.enabled ? 1.0 : 0.0) : std::nullopt);
-    stamp("heater", e.heater);
+    read("heater", e.heater, e.heater);
   }));
   subscriptions_.push_back(
       bus.subscribe<ValveChanged>([this](const ValveChanged& e) { on_valve(e.valve, e.state, true); }));
@@ -150,31 +157,62 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
     for (const auto& [valve, state] : e.valves) on_valve(valve, state, false);
   }));
   subscriptions_.push_back(bus.subscribe<ActuationFailed>([this](const ActuationFailed& e) {
-    registry_.counter(kActuationFailures, kActuationFailuresHelp, {{"valve", e.valve}}).inc();
+    // A failure may be of a switch that does not exist, named by whatever a
+    // script said: only a name the line has reported is a label.
+    bool known = false;
+    {
+      const std::lock_guard lock(mutex_);
+      known = valves_.count(e.valve) != 0;
+    }
+    registry_.counter(kActuationFailures, kActuationFailuresHelp, {{"valve", known ? e.valve : std::string("unknown")}})
+        .inc();
   }));
   subscriptions_.push_back(bus.subscribe<Alarm>([this](const Alarm& e) {
     registry_.counter(kAlarms, kAlarmsHelp, {{"source", e.source}, {"severity", severity_name(e.severity)}}).inc();
   }));
   subscriptions_.push_back(bus.subscribe<Log>([this](const Log& e) {
-    registry_
-        .counter(kLogRecords, kLogRecordsHelp, {{"level", level_name(e.level)}, {"component", component_of(e.logger)}})
-        .inc();
+    const std::string component = component_of(e.logger);
+    bool first = false;
+    {
+      const std::lock_guard lock(mutex_);
+      first = components_.insert(component).second;
+    }
+    if (first) {
+      // A component that has only said `info` so far has its `error` counter
+      // too, at zero: its first error is then an increase, not a new series.
+      for (const LogLevel l : kLevels) {
+        registry_.counter(kLogRecords, kLogRecordsHelp, {{"level", level_name(l)}, {"component", component}});
+      }
+    }
+    registry_.counter(kLogRecords, kLogRecordsHelp, {{"level", level_name(e.level)}, {"component", component}}).inc();
   }));
   subscriptions_.push_back(bus.subscribe<TransportHealth>([this](const TransportHealth& e) {
+    // The event comes when the transport's state changes and carries its
+    // failures in a row at that moment: when it is down and how often it
+    // went down can be told from that, a count of errors cannot.
+    bool went_down = false;
+    {
+      const std::lock_guard lock(mutex_);
+      const auto [it, first] = transports_.try_emplace(e.transport, e.connected);
+      went_down = !e.connected && (first || it->second);
+      it->second = e.connected;
+    }
     const Labels labels{{"transport", e.transport}};
     registry_.gauge(kTransportConnected, kTransportConnectedHelp, labels).set(e.connected ? 1.0 : 0.0);
-    registry_.counter(kTransportErrors, kTransportErrorsHelp, labels).set_total(static_cast<double>(e.error_count));
+    Counter& outages = registry_.counter(kTransportOutages, kTransportOutagesHelp, labels);
+    if (went_down) outages.inc();
   }));
 }
 
 CoreExporter::~CoreExporter() {
+  collector_.reset();
   for (SignalBus::Subscription& s : subscriptions_) s.reset();
 }
 
 void CoreExporter::on_valve(const std::string& valve, ValveState state, bool count_transition) {
   bool changed = false;
   {
-    const std::lock_guard lock(valves_mutex_);
+    const std::lock_guard lock(mutex_);
     const auto [it, inserted] = valves_.try_emplace(valve, state);
     changed = inserted || it->second != state;
     it->second = state;
@@ -182,12 +220,40 @@ void CoreExporter::on_valve(const std::string& valve, ValveState state, bool cou
   for (const ValveState s : {ValveState::Open, ValveState::Closed, ValveState::Unknown}) {
     registry_.gauge(kValveState, kValveStateHelp, {{"valve", valve}, {"state", state_name(s)}}).set(s == state ? 1.0 : 0.0);
   }
+  // Both counters exist from when the valve is first heard of, so that its
+  // first transition and its first failure are increases.
   Counter& transitions = registry_.counter(kValveTransitions, kValveTransitionsHelp, {{"valve", valve}});
+  registry_.counter(kActuationFailures, kActuationFailuresHelp, {{"valve", valve}});
   if (changed && count_transition) transitions.inc();
 }
 
-void CoreExporter::stamp(const char* kind, const std::string& source) {
-  registry_.gauge(kLastSample, kLastSampleHelp, {{"kind", kind}, {"source", source}}).set(now_());
+void CoreExporter::read(const char* kind, const std::string& source, const std::string& alarm_source) {
+  const double now = now_();
+  bool first = false;
+  {
+    const std::lock_guard lock(mutex_);
+    read_at_[{kind, source}] = now;
+    first = alarm_sources_.insert(alarm_source).second;
+  }
+  if (first) {
+    for (const AlarmSeverity s : kSeverities) {
+      registry_.counter(kAlarms, kAlarmsHelp, {{"source", alarm_source}, {"severity", severity_name(s)}});
+    }
+  }
+}
+
+// At each scrape: how long ago, by this computer's clock.
+void CoreExporter::collect(Registry& registry) {
+  const double now = now_();
+  std::map<std::pair<std::string, std::string>, double> read_at;
+  {
+    const std::lock_guard lock(mutex_);
+    read_at = read_at_;
+  }
+  registry.gauge(kUptime, kUptimeHelp).set(now - started_);
+  for (const auto& [key, at] : read_at) {
+    registry.gauge(kLastSampleAge, kLastSampleAgeHelp, {{"kind", key.first}, {"source", key.second}}).set(now - at);
+  }
 }
 
 }  // namespace pychron::metrics

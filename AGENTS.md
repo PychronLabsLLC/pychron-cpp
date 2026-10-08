@@ -185,8 +185,11 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   from bus events (`CoreExporter`, `ExperimentMetrics` in `libs/experiment`),
   not from instrumenting the control path. Three rules: a label value is a
   configured name or an enumeration, never a run id, an identifier or a
-  message; a timestamp gauge is real time (`UnixClock`) and a duration is a
-  difference of event `ts`, because the line's clock may be simulated; a
+  message, and a counter is created at zero as soon as what it counts is
+  known (one that first appears at 1 shows no increase); a duration is a
+  difference of event `ts` (the line's clock may be simulated) and an age is
+  measured here on `RealClock` and exported as seconds, never as a timestamp
+  for the box to subtract from its own clock; a
   metric added to an exporter needs a panel in
   `packaging/observability/grafana/dashboards`, and a renamed one its panel
   renamed (`MetricsPackaging` in `tests/integration` fails otherwise). User
