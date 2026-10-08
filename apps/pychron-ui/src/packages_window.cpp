@@ -4,7 +4,6 @@
 
 #include "pychron/core/user_file.hpp"
 
-#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
@@ -55,6 +54,17 @@ std::optional<ps::UtcTime> utc_of(const QString& local) {
   dt.setTimeZone(QTimeZone::systemTimeZone());
   return ps::UtcTime::parse(dt.toUTC().toString(Qt::ISODate).toStdString());
 }
+
+// The dose table, which can say whether one of its cells is being typed in
+// (whether or not the window has the focus).
+class DoseTable : public QTableWidget {
+ public:
+  using QTableWidget::QTableWidget;
+  bool editing() const { return state() == QAbstractItemView::EditingState; }
+};
+
+// A level's z as its field shows it.
+QString z_text(const std::optional<double>& z) { return z ? QString::number(*z, 'g', 10) : QString(); }
 
 }  // namespace
 
@@ -263,7 +273,7 @@ void PackagesWindow::build_docks() {
   // Chronology.
   chronology_page_ = new QWidget(this);
   auto* cl = new QVBoxLayout(chronology_page_);
-  doses_ = new QTableWidget(0, 3, chronology_page_);
+  doses_ = new DoseTable(0, 3, chronology_page_);
   doses_->setObjectName(QStringLiteral("packages_doses"));
   doses_->setHorizontalHeaderLabels({tr("Power"), tr("Start (local)"), tr("End (local)")});
   doses_->horizontalHeader()->setStretchLastSection(true);
@@ -312,15 +322,20 @@ void PackagesWindow::build_docks() {
     if (auto problems = entry::validate(check, {}); !problems.empty())
       return show_message(QString::fromStdString(problems.front()), true);
     ++busy_;
-    bridge_.run<bool>(
+    bridge_.run<entry::PackageChronology>(
         this,
-        [pkg = *pkg, doses, loaded = chronology_](ps::IStore& s, const ps::Actor& a) -> Result<bool> {
+        [pkg = *pkg, doses, loaded = chronology_](ps::IStore& s, const ps::Actor& a) -> Result<entry::PackageChronology> {
           if (auto r = entry::save_chronology(s, a, pkg, doses, loaded); !r) return fail(r.error());
-          return true;
+          // What the table is compared with from now on, and the head the next save starts from.
+          return entry::package_chronology(s, pkg.uuid, pkg.name);
         },
-        [this](Result<bool> r) {
+        [this, package = pkg->uuid](Result<entry::PackageChronology> r) {
           --busy_;
           if (!r) return show_message(QString::fromStdString(r.error().what), true);
+          if (package_ && *package_ == package) {  // still the package on show
+            chronology_ = std::move(*r);
+            fill_chronology();
+          }
           show_message(tr("Chronology saved"));
           notify_changed();
         });
@@ -553,7 +568,7 @@ void PackagesWindow::fill_level_dock() {
   };
   holder_->setCurrentIndex(index_of(holder_, e.holder()));
   production_->setCurrentIndex(index_of(production_, e.production()));
-  z_->setText(e.z() ? QString::number(*e.z(), 'g', 10) : QString());
+  z_->setText(z_text(e.z()));
   level_note_->setText(e.level_note() ? QString::fromStdString(*e.level_note()) : QString());
   const bool irradiation = !pkg || pkg->kind == "irradiation";
   production_->setEnabled(irradiation);
@@ -566,16 +581,22 @@ QStringList PackagesWindow::dose_texts(const ps::Dose& d) {
 
 bool PackagesWindow::chronology_edited() const {
   // A cell being typed in is an edit too.
-  if (const QWidget* focus = QApplication::focusWidget(); focus && focus != doses_ && doses_->isAncestorOf(focus))
-    return true;
+  if (static_cast<const DoseTable*>(doses_)->editing()) return true;
   const auto& doses = chronology_.value.doses;
   if (doses_->rowCount() != static_cast<int>(doses.size())) return true;
+  // By value, as far as the table shows one (a time to the minute): "1.0" is
+  // the power the store gives back as "1". A cell that is no value is an edit.
+  const auto cell = [this](int row, int column) {
+    const auto* item = doses_->item(row, column);
+    return item ? item->text().trimmed() : QString();
+  };
   for (int row = 0; row < doses_->rowCount(); ++row) {
-    const QStringList stored = dose_texts(doses[static_cast<std::size_t>(row)]);
-    for (int column = 0; column < 3; ++column) {
-      const auto* item = doses_->item(row, column);
-      if ((item ? item->text() : QString()) != stored.at(column)) return true;
-    }
+    const ps::Dose& stored = doses[static_cast<std::size_t>(row)];
+    bool ok = false;
+    if (cell(row, 0).toDouble(&ok) != stored.power || !ok) return true;
+    const auto start = utc_of(cell(row, 1)), end = utc_of(cell(row, 2));
+    if (!start || !end) return true;
+    if (local_text(*start) != local_text(stored.start) || local_text(*end) != local_text(stored.end)) return true;
   }
   return false;
 }
@@ -585,11 +606,14 @@ bool PackagesWindow::level_fields_edited() const {
   const auto& e = grid_->edit();
   // The holder and the production go to the grid's edit when picked; z and
   // the note only when their field is left.
-  const QString z = z_->text().trimmed();
-  bool ok = true;
-  const double value = z.toDouble(&ok);
-  if (!z.isEmpty() && !ok) return true;
-  if ((z.isEmpty() ? std::nullopt : std::optional<double>(value)) != e.z()) return true;
+  // A field showing what the edit's z renders to is untouched, whatever the
+  // digits beyond those shown; otherwise it is an edit unless it is the same
+  // number written another way.
+  if (const QString z = z_->text().trimmed(); z != z_text(e.z())) {
+    bool ok = false;
+    const double value = z.toDouble(&ok);
+    if (z.isEmpty() || !ok || !e.z() || value != *e.z()) return true;
+  }
   return level_note_->text().trimmed() != (e.level_note() ? QString::fromStdString(*e.level_note()) : QString());
 }
 

@@ -39,6 +39,8 @@ class FluxWindowTest : public QObject {
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPointer>
+#include <QPushButton>
+#include <QTableWidget>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -2527,6 +2529,81 @@ class FluxWindowTest : public QObject {
       QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && !j_of(9).isEmpty(), kWaitMs);
       QCOMPARE(j_of(9), QString::number(2.0e-3, 'E', 6));
       QCOMPARE(p.selected_positions(), (std::vector<int>{2, 3}));
+    }
+    drain(*r.bridge);
+  }
+
+  void packages_is_clean_again_after_its_chronology_is_saved() {
+    auto r = rig();
+    {
+      PackagesWindow p(*r.bridge);
+      p.show_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && p.grid()->has_edit(), kWaitMs);
+      using Grid = pychron::ui::LevelGridModel;
+      const auto j_of = [&p](int hole) { return p.grid()->index(p.grid()->row_of(hole), Grid::J).data().toString(); };
+      auto* doses = p.findChild<QTableWidget*>(QStringLiteral("packages_doses"));
+      auto* z = p.findChild<QLineEdit*>(QStringLiteral("packages_z"));
+      QVERIFY(doses && z);
+      QVERIFY(doses->isEnabled());
+      const auto button = [&p](const QString& text) -> QPushButton* {
+        for (auto* b : p.findChildren<QPushButton*>())
+          if (b->text() == text) return b;
+        return nullptr;
+      };
+      QVERIFY(button(QStringLiteral("Add Dose")) && button(QStringLiteral("Save Chronology")));
+
+      // A dose added, its power typed as 1.0, and saved.
+      const int row = doses->rowCount();
+      button(QStringLiteral("Add Dose"))->click();
+      QCOMPARE(doses->rowCount(), row + 1);
+      doses->item(row, 0)->setText(QStringLiteral("1.0"));
+      doses->item(row, 1)->setText(QStringLiteral("2031-03-04 08:00"));
+      doses->item(row, 2)->setText(QStringLiteral("2031-03-04 17:00"));
+      button(QStringLiteral("Save Chronology"))->click();
+      // (The tree read that follows a save takes the message line.)
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && doses->item(row, 0)->text() == QStringLiteral("1"), kWaitMs);
+      // The table is what was saved, as the store gives it back.
+      QCOMPARE(doses->rowCount(), row + 1);
+      QCOMPARE(doses->item(row, 0)->text(), QStringLiteral("1"));
+      QCOMPARE(doses->item(row, 1)->text(), QStringLiteral("2031-03-04 08:00"));
+
+      // Nothing is unsaved: another client's J shows.
+      QCOMPARE(j_of(9), QString());
+      save_fit(9, nearest3(), false, 2.0e-3);
+      r.bridge->notify_changed();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && !j_of(9).isEmpty(), kWaitMs);
+      QCOMPARE(j_of(9), QString::number(2.0e-3, 'E', 6));
+
+      // The same power written another way is no edit; nor is the same z.
+      doses->item(row, 0)->setText(QStringLiteral("1.00"));
+      z->setText(z->text() + QStringLiteral(" "));
+      save_fit(10, nearest3(), false, 3.0e-3);
+      r.bridge->notify_changed();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && !j_of(10).isEmpty(), kWaitMs);
+      QCOMPARE(doses->item(row, 0)->text(), QStringLiteral("1"));
+      // A saved chronology can be saved again (its head is the new one).
+      doses->item(row, 0)->setText(QStringLiteral("2"));
+      button(QStringLiteral("Save Chronology"))->click();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy(), kWaitMs);
+      QCOMPARE(doses->item(row, 0)->text(), QStringLiteral("2"));
+      save_fit(12, nearest3(), false, 5.0e-3);
+      r.bridge->notify_changed();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && !j_of(12).isEmpty(), kWaitMs);  // saved, so clean again
+
+      // A cell being typed in, in a window that does not have the focus: the
+      // level is left alone, and what is typed stays.
+      QVERIFY(QApplication::focusWidget() == nullptr || !doses->isAncestorOf(QApplication::focusWidget()));
+      doses->editItem(doses->item(row, 0));
+      auto* editor = doses->viewport()->findChild<QLineEdit*>();
+      QVERIFY(editor != nullptr);
+      editor->setText(QStringLiteral("7"));
+      save_fit(11, nearest3(), false, 4.0e-3);
+      r.bridge->notify_changed();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy(), kWaitMs);
+      QCoreApplication::processEvents();
+      QCOMPARE(j_of(11), QString());
+      QCOMPARE(doses->viewport()->findChild<QLineEdit*>(), editor);
+      QCOMPARE(editor->text(), QStringLiteral("7"));
     }
     drain(*r.bridge);
   }
