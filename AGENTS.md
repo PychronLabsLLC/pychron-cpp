@@ -133,8 +133,9 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   level's saved fit (monitor set, sample, all positions) is one revision's,
   and is repeated only under its own monitor set. User guide: `docs/flux.md`.
   The flux window (`apps/pychron-ui` `flux_window.cpp`) computes nothing: its
-  scene, options schema, status text and CSV are in `libs/processing`
-  `flux_view.hpp`, shared with `elctl flux`.
+  scene, options schema and status line are in `libs/processing`
+  `flux_view.hpp` and are the window's own; the warnings and the CSV text
+  there are shared with `elctl flux`.
 - An instrument install has a database and setup seeds it from the install's
   `seed.toml` (`libs/entry` `seed.hpp`; `elctl entry seed` by hand): the
   `references` project, a sample and special identifier for each kind of

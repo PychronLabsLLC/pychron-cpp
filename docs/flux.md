@@ -38,9 +38,10 @@ leave a position out) is done in the flux window (below) or with flags.
 does, with the review done by eye: the plot shows the monitors and the fit,
 and every change refits at once. It needs a store, like entry. The design is
 `superpowers/specs/2026-10-07-flux-window-design.md`. The window computes
-nothing itself: the fit is `fit_level`, and the plot, the status line, the
-warnings and the CSV come from `libs/processing` (`flux_view.hpp`), the same
-code `elctl flux` prints from.
+nothing itself: the fit is `fit_level`, and what it shows comes from
+`libs/processing` (`flux_view.hpp`). The warnings, the model line and the CSV
+are the same code `elctl flux` prints from; the plot, the options schema and
+the status line are the window's own.
 
 Open it from the Fit menu, or from the Packages window: with a level open
 there, `Fit flux…` in its tool bar opens the flux window on that level. The
@@ -67,45 +68,49 @@ something.
 
 Above the tables, J against the position round the tray (the hole angle in
 degrees, `Hole angle (degrees)`), or against `X` or `Y` for the three
-one-dimensional models (`ls1d`, `mean1d`, `bracketing1d`). The legend names
-the layers:
+one-dimensional models (`ls1d`, `mean1d`, `bracketing1d`). The legend lists
+`Analyses`, `Monitor means` and `Unknowns`; the curve, its band and the
+hollow points have no entry of their own:
 
 - `Analyses`: a small circle for each analysis of a monitor that has a J,
-  spread a little about its hole. They have no error bars. A hollow circle,
-  named `Analyses (excluded)`, is an analysis that takes no part: omitted by
+  spread a little about its hole. They have no error bars. A hollow circle
+  is an analysis that takes no part: omitted by
   its tag, by the saved fit or by you here, or one whose J the weighted mean
   refuses because it has no error (its tooltip says `not used: J has no
   error`). Hover for the record, the J and the reason.
 - `Monitor means`: a diamond with error bars for each monitor position, at
   the mean J of its analyses. Hollow when the position is left out of the fit.
 - `Unknowns`: a square with error bars at the predicted J of each unknown.
-- `Fit`: the curve of the model, with a band of one sigma. The models with a
+- The curve of the model, with a band of one sigma. The models with a
   curve are `plane`, `bowl`, `weighted-mean`, `ls1d` and `mean1d`; `matching`,
   `nearest`, `bracketing` and `bracketing1d` have none, because each position
   takes its J from its neighbours. Round the tray the curve is drawn at the
   mean radius of the monitors used. With no fit (the fit failed) the analyses
   and means are still drawn, without a curve or the unknowns.
-- The monitor selected in the table is drawn again, larger, in the accent
-  colour.
+- The monitor selected in the table is drawn again, larger, in a
+  distinct colour.
 
 To leave an analysis out, click its point; click again to bring it back. A
 click reaches the analysis even when a monitor's mean lies over it. To
 change several at once, hold Shift and drag a rectangle: every analysis in it
 is toggled. An analysis whose reduction failed (`not reduced`) or that gave
 no J cannot be toggled. The right-click menu has `Include / exclude`,
-`Recall` (only when the application can open a recall window), `Reset view`,
+`Recall` (these two when you right-click a point; Recall does nothing where the
+application has no recall window), `Reset view`,
 `Copy image`, `Save as PNG...` and `Save as PDF...`. Double-click an empty
 place to reset the zoom; a refit keeps your zoom.
 
 ### The tables
 
 Below the plot, three tables. A row is a hole; the columns are those of
-`elctl flux fit`, with the check boxes added.
+`elctl flux fit`, with the check boxes added. At the default window size the
+monitor and unknown tables scroll sideways; the columns are sized to their
+contents when a level arrives and can be dragged.
 
 **Monitors**: `Fit`, `Save`, `Hole`, `Identifier`, `Sample`, `N`, `Saved J`,
 `±`, `Mean J`, `±`, `%`, `MSWD`, `Pred. J`, `±`, `%`, `Dev %`. `Fit` takes the
 position into the fit, or leaves it out (it still gets a predicted J, and is
-saved). It is unticked and cannot be ticked for a position with no usable
+saved); a monitor the saved fit left out is ticked back in the same way. It is unticked and cannot be ticked for a position with no usable
 analysis (the tooltip says `No usable analysis`). `Save` says whether the
 position is written by Save. A row whose mean MSWD is outside its limits is
 tinted; a row out of the fit is dimmed.
@@ -150,7 +155,8 @@ On the right.
   on the saved options and the bar shows `(saved fit)` as its first entry;
   choosing it again returns to them. A level without one opens on the preset
   in use (`Default` to begin with; `Weighted plane` is the other factory
-  preset). A preset applies over the current options. What a preset did (it
+  preset). A preset replaces the model and error options with its own (fields
+  it does not set go to their defaults); it does not merge. What a preset did (it
   loaded with warnings, it was saved) is said in the status line, after the
   fit.
 - The options, in the sections Model and Errors, with the names and choices
@@ -177,11 +183,22 @@ SD), one per line, in the tooltip of the status line.
 When the fit cannot be made, the line is red and shows the error as it is
 (`flux: bowl needs 6 monitor positions, 5 used`); the predicted columns are
 blank, the plot shows the data without a curve, and Save is disabled with
-the error as its tooltip. A level with no monitors, or whose holder is
-missing, is the same: it loads, and its error is shown. A message from
-another action (a preset, a save) follows the line after a `·`; when the
-level was changed by someone else while you have edits, it says
-`· level changed elsewhere, Reload to see it`.
+the error as its tooltip. While the fit fails the `Fit` boxes of the monitors
+still show each monitor's state under your edits and can be changed, so a
+monitor unticked one too many can be ticked back without Revert; `N` and the
+mean columns stay filled, and only the predicted columns are blank. A level
+with no monitors loads and shows the fit's error the same way, with the level
+on screen. A level with no holder, a holder without geometry, or a position
+beyond its holder cannot be loaded: the line is red with the cause, and the
+tables and the plot are empty.
+
+A preset's message (loaded with warnings, saved) follows the line after a `·`.
+A save's result does not: it replaces the line (`Saved 12 positions (0
+unchanged)`, `Nothing to save: …`, the conflict line) until the next refit;
+only when the save was the first half of a level switch or a close does its
+text follow the new status after a `·`. When the level was changed by someone
+else while you have edits, the line ends `· level changed elsewhere, Reload
+to see it`.
 
 ### Save
 
@@ -189,7 +206,8 @@ level was changed by someone else while you have edits, it says
 (below): one changeset, every position or none, the options and the omissions
 with it. It is the tool bar's first action, and it is disabled, with the
 reason as its tooltip, while the level loads, while a save runs, when no
-level is open and when the fit failed. Only the positions whose `Save` box is
+level is open and when there is no fit. `Export CSV…` is unavailable without
+a fit too. Only the positions whose `Save` box is
 ticked are written. The window says one of
 
 ```
@@ -198,6 +216,9 @@ Nothing to save: 12 positions unchanged
 Not saved: hole 7 was saved by jsmith at 2026-10-07 14:02:11 UTC since this level was loaded. Reload and fit again.
 Not saved: <the error>
 ```
+
+When who and when cannot be read, the conflict line reads `Not saved: hole 7
+was saved by someone else since this level was loaded. Reload and fit again.`
 
 with `, 2 not saved` added when `Save` boxes were unticked. The conflict
 line is red; nothing was written and your edits are kept, so they can be
@@ -217,7 +238,9 @@ you unticked stay unticked after the save, and are not an edit.
   with, without touching the store. If you had chosen other monitors, it
   reads the level again with the monitors of its saved fit.
 - `Reload` reads the level from the store again (asking first if you have
-  edits).
+  edits). With a monitor group you chose, Discard does not drop the group: the
+  level is read again with it and the window stays edited. Only picking another
+  level, or `Revert`, returns to the level's own selection.
 - `Reset omissions` forgets what the saved fit omitted and excluded (tags
   still apply), like `--reset-omits`; it also clears the edits made here. It
   is an edit only when the saved fit had left something out.

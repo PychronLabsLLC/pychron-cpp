@@ -36,7 +36,7 @@ holes), `Fit ▸ Flux…` opens the window, selecting `NM-300 ▸ A` fills both
 tables and the plot within a second or two; clicking an outlying analysis in
 the plot hollows its point, unticks it in the analyses table, and moves that
 monitor's mean and every predicted J; unticking a monitor's `Fit` box drops
-the fit's degrees of freedom by one; Save reports `saved 12 positions`, and
+the fit's degrees of freedom by one; Save reports `Saved 12 positions (0 unchanged)`, and
 the Packages window's J column shows the new values without being reopened.
 
 ## 2. What legacy does (summary of the survey)
@@ -71,7 +71,7 @@ Owner decisions of 2026-10-07 are marked (owner).
 | W3 | (owner) **Options are schema-driven with presets**: a flux options schema, the existing `OptionsEditor` and `PresetBar`, preset kind `flux`. |
 | W4 | (owner) **`Fit ▸ Flux…`**, a new top-level `Fit` menu, and a `Fit flux…` action in the Packages window that opens the flux window on the level being edited. |
 | W5 | **Live refit.** Every edit and every option change refits (debounced 150 ms). `fit_level` is pure and takes well under a millisecond for a level; the slow part, loading and reducing the monitor analyses, happens once per level. There is no Fit button. |
-| W6 | **Where the options of a level come from.** A level with a saved fit opens on the saved options and the preset bar shows `(saved fit)`. A level without one opens on the preset in use (`Default` to begin with). Choosing a preset applies it over the current options. |
+| W6 | **Where the options of a level come from.** A level with a saved fit opens on the saved options and the preset bar shows `(saved fit)`. A level without one opens on the preset in use (`Default` to begin with). Choosing a preset replaces the model and error options with the preset's (fields it does not set go to their defaults); it does not merge. |
 | W7 | **The monitor selection is not in a preset.** The monitor set, the sample override and "all positions" belong to the level, not to a style of fitting; they sit in their own group above the options and come from the level's saved fit (flux spec R18, R20). |
 | W8 | **The window computes nothing.** The scene, the options schema and the level status are Qt-free functions in `libs/processing`, tested there. The window holds `LevelInputs`, `FluxOptions`, `Edits` and the `LevelFit`, and draws. |
 | W9 | **One edit, three places.** A plot click, an analysis check box and a rubber band are the same change to `Edits`; a monitor's `Fit` box is `Edits::exclude_positions`. Each view is redrawn from the refit, never from the gesture. |
@@ -140,8 +140,8 @@ enum class FluxAbscissa { Angle, X, Y };
 FluxAbscissa flux_abscissa(const FluxOptions& options);   // X or Y for the three 1-D kinds, else Angle
 
 struct FluxSceneOptions { std::optional<int> highlight_hole; };
-Scene flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
-Scene flux_scene(const LevelInputs& inputs, const FluxOptions& options);   // no fit: analyses only
+ScenePtr flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);   // no fit: analyses and means
 ```
 
 One graph, one panel. The abscissa of a hole is its angle in degrees,
@@ -247,8 +247,8 @@ edits pending it asks first (5.6).
 
 **Centre, above: the plot.** A `SceneView` showing `flux_scene`. A click on
 an analysis, or a shift-drag over several, toggles them (W9). The context
-menu is the view's own: Include / exclude, Recall (when a recall callback
-was given), Reset view, Copy image, Save as PNG…, Save as PDF…. The view
+menu is the view's own: Include / exclude, Recall (always listed; a no-op when the application gave no recall
+callback), Reset view, Copy image, Save as PNG…, Save as PDF…. The view
 keeps its zoom across a refit.
 
 **Centre, below: the tables**, in a horizontal splitter.
@@ -264,8 +264,9 @@ keeps its zoom across a refit.
 - *Analyses of the selected monitor* (`FluxAnalysisModel`), under the
   monitors table. Columns: `Use` (check), `Record`, `Tag`, `J`, `±`, `State`.
   `State` is `used`, `omitted (tag outlier)`, `omitted (saved fit)`,
-  `omitted (here)`, `not reduced`, `no J`. `Use` is disabled for the last
-  two, with the reduction's error as the tooltip.
+  `omitted (here)`, `not reduced`, `no J`. `Use` is not checkable for the last
+  two; the tooltip of `not reduced` is the reduction's error (or `Not
+  reduced`), of `no J` it is `No J`.
 - *Unknowns* (`FluxUnknownModel`). Columns: `Save` (check), `Hole`,
   `Identifier`, `Sample`, `Saved J`, `±`, `Pred. J`, `±`, `%`, `Dev %`.
 
@@ -373,9 +374,11 @@ in it is unsaved, and keeps its selection.
 
 Every message is inline, in the status label; modal boxes only for the
 three-way question of 5.6 and for a file that cannot be written. The core's
-error text is shown as it is. A level with no monitors, no holder, or a
-position beyond its holder is a load error and names the cause. The Recall
-action is absent when the application gave no recall callback.
+error text is shown as it is. No holder, a holder without geometry, or a
+position beyond its holder is a load error and names the cause (the tables
+and plot are empty). A level with no monitors loads, and shows `fit_level`'s
+error with the level on screen (R6). The Recall item is always in the plot's
+menu and does nothing when the application gave no recall callback.
 
 ## 7. Files
 
@@ -383,19 +386,19 @@ action is absent when the application gave no recall callback.
 |---|---|
 | `libs/processing/include/pychron/processing/flux_fit.hpp`, `src/flux_fit.cpp` | `AnalysisState`; `UsedAnalysis` gains `tag`, `state`, `j`, `j_err` (4.1); `Edits::include_positions` (4.6) |
 | `libs/processing/include/pychron/processing/flux_view.hpp`, `src/flux_view.cpp` | new: schema and conversions (4.2), `flux_abscissa`, `flux_scene` (4.3), the shared text (4.5) |
-| `libs/processing/include/pychron/processing/options.hpp`, `src/options.cpp` | `enabled_when` accepts `<key> in a\|b` |
+| `libs/processing/include/pychron/processing/options.hpp` | only the comment on `enabled_when` |
 | `libs/processing/adapters/store/include/pychron/processing/flux_store.hpp`, `src/flux_store.cpp` | `level_flux_status` (4.4) |
 | `apps/elctl/src/flux.cpp`, `flux.hpp` | one warning line per analysis out, with the reason; the text functions of 4.5 move out |
 | `apps/pychron-ui/src/flux_window.{hpp,cpp}` | new |
 | `apps/pychron-ui/src/flux_monitor_model.{hpp,cpp}`, `flux_analysis_model.{hpp,cpp}`, `flux_unknown_model.{hpp,cpp}` | new |
 | `apps/pychron-ui/src/fit_actions.{hpp,cpp}` | new |
 | `apps/pychron-ui/src/menu_hub.{hpp,cpp}` | `Menu::Fit` |
-| `apps/pychron-ui/src/options_editor.cpp` | only if the `in` form is evaluated there rather than in `options.cpp` |
+| `apps/pychron-ui/src/options_editor.cpp` | evaluates the `in` form of `enabled_when` |
 | `apps/pychron-ui/src/packages_window.{hpp,cpp}` | `Fit flux…`, `flux_requested` |
 | `apps/pychron-ui/src/entry_actions.{hpp,cpp}` | `bridge()` accessor; forwards `flux_requested` |
 | `apps/pychron-ui/src/main.cpp` | `FitActions` in both start-up paths |
 | `apps/pychron-ui/CMakeLists.txt` | the new sources, in the store block |
-| `tests/processing/test_flux_view.cpp`, `test_flux_fit.cpp`, `test_flux_store.cpp`, `test_options.cpp` | new and extended |
+| `tests/processing/test_flux_view.cpp`, `test_flux_fit.cpp`, `test_flux_store.cpp` | new and extended |
 | `tests/ui/test_flux_window.cpp`, `tests/ui/CMakeLists.txt` | new; `tests/processing` on the include path for `flux_seed.hpp` |
 | `apps/elctl/tests/test_flux_cmd.cpp` | the reason line |
 | `docs/flux.md`, `AGENTS.md` | the window; one sentence in the flux bullet |
@@ -443,7 +446,7 @@ SQLite store seeded with `flux_seed.hpp`; one `QSKIP` without the store):
 - `Save` unticked on a position leaves its head alone.
 - Selecting another level with edits pending asks once; Cancel stays, Discard
   moves, Save saves then moves.
-- Changing the monitor set reloads and the header names the set's age.
+- Changing the monitor set reloads and the monitor-set combo's tooltip names the set's age.
 - `Reset omissions` forgets a saved exclusion.
 - `Export CSV…` writes the file of `elctl flux fit --csv` for the level.
 - `Fit ▸ Flux…` opens the window; the Packages window's `Fit flux…` opens it
@@ -516,6 +519,11 @@ for the commit messages and the review.
 - **R14** The Packages window re-reads its open level on another window's
   change only when nothing in it is unsaved (grid, dose table, level fields),
   and keeps its selection. Section 5.7 was wrong that it already did.
+- **R15** While a fit fails, the monitor `Fit` boxes still show each
+  monitor's state from the edits and stay changeable, so a monitor unticked
+  one too many can be ticked back without `Revert`; `N` and the mean columns
+  stay filled and only the predicted columns are blank. The table columns are
+  sized to their contents once, when a level arrives, and can be dragged.
 
 ### As built
 
@@ -539,6 +547,10 @@ for the commit messages and the review.
 - The options-schema test of `enabled_when` lives in
   `tests/ui/test_data_windows.cpp`.
 
+- The Packages window, after Save Chronology, reads its chronology back so
+  it is clean again; it compares doses by value; and it asks its dose table
+  (not application focus) whether a cell is being edited.
+
 ### Known limits
 
 - A sample typed in the Monitors group and not yet entered is dropped when
@@ -547,3 +559,5 @@ for the commit messages and the review.
   level's own.
 - The whole tree is read again on every change notification.
 - Nothing was run on PostgreSQL or with gcc.
+- A Save click with a sample typed and not yet entered reloads the level
+  under that sample and saves nothing, without saying so.
