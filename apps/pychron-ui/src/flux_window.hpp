@@ -44,6 +44,8 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 
+class FluxWindowTest;  // tests/ui/test_flux_window.cpp: plants an edit that no longer applies
+
 namespace pychron::processing {
 struct FluxSaveOutcome;
 }
@@ -117,7 +119,12 @@ class FluxWindow : public QMainWindow {
   // but when another monitor group was chosen: the level is then read again as
   // its saved fit chose its monitors (asynchronous, and nothing is asked).
   void revert();
-  void reload();           // asks, then reads the level again with the monitor group in force
+  // Reads the level again with the monitor group in force, and puts back what
+  // is pending: the edits, the options when they were changed, the unticked
+  // Save boxes (ruling R19). Nothing is asked. An edit the level no longer has
+  // a place for is dropped, and the status says how many were. Nothing while
+  // a save runs.
+  void reload();
   // Nothing of the edits made here, and Edits::reset_omits when the saved fit
   // left something out (else there is nothing to forget, and nothing pending).
   void reset_omissions();
@@ -158,6 +165,7 @@ class FluxWindow : public QMainWindow {
   void showEvent(QShowEvent* event) override;
 
  private:
+  friend class ::FluxWindowTest;
   // The monitor group: the set, the sample the monitors are chosen by (the
   // set's own when the field is empty) and "all positions".
   struct MonitorGroup {
@@ -166,9 +174,15 @@ class FluxWindow : public QMainWindow {
     friend bool operator==(const MonitorGroup&, const MonitorGroup&) = default;
   };
 
+  // What a read of the level on show keeps of it: nothing (another level,
+  // Revert); the Save boxes that are no edit (a change elsewhere, after a
+  // save); or everything pending (Reload).
+  enum class Keep { Nothing, Boxes, Edits };
+
   void build_dock();
   void store_changed();                           // someone else changed the store: the tree, and the level when nothing is edited
-  void start_load();                              // of irradiation_ / level_, with chosen_
+  void start_load(Keep keep);                     // of irradiation_ / level_, with chosen_
+  int drop_stale_edits();                         // of edits_ and skip_, what inputs_ has no place for; how many
   void apply_loaded(processing::LevelInputs inputs, std::vector<processing::MonitorSet> sets, std::string default_set);
   void clear_level();                             // nothing on show; the models let go of inputs_ and fit_
   void request_fit();                             // fit_now() 150 ms after the last request
@@ -255,9 +269,13 @@ class FluxWindow : public QMainWindow {
   processing::Options values_, loaded_values_;
   processing::FluxOptions options_;
   std::string options_error_;
+  // These three outlive a read of the same level, as start_load's Keep says.
   processing::Edits edits_;
   std::set<int> skip_;  // the holes whose Save box is unticked
-  std::set<int> loaded_skip_;  // of them, those kept over the reload after a save: no edit
+  std::set<int> loaded_skip_;  // of them, those a save left unticked: no edit (R11)
+  // The options and the preset shown, for the level a Reload is reading (R19).
+  std::optional<processing::Options> carried_values_;
+  QString carried_preset_;
   std::optional<processing::LevelFit> fit_;
   std::string fit_error_;
   std::optional<int> selected_hole_;
@@ -297,9 +315,6 @@ class FluxWindow : public QMainWindow {
   QString note_;
   bool note_error_ = false;
   quint64 note_generation_ = 0;
-  // The Save boxes unticked at a save, for the reload it starts (`kept_skip_generation_`).
-  std::set<int> kept_skip_;
-  quint64 kept_skip_generation_ = 0;
   std::function<void()> after_save_;  // what follows the save in flight when it succeeds
   QString tree_error_;      // the last tree read failed with this
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept

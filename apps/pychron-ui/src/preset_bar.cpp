@@ -57,6 +57,11 @@ bool PresetBar::pinned_selected() const { return !pinned_.isEmpty() && combo_->c
 
 QString PresetBar::current_name() const { return combo_->currentText(); }
 
+void PresetBar::show_name(const QString& name) {
+  for (int i = pinned_.isEmpty() ? 0 : 1; i < combo_->count(); ++i)
+    if (combo_->itemText(i) == name) return combo_->setCurrentIndex(i);
+}
+
 void PresetBar::reload(const QString& select_name) {
   combo_->clear();
   if (!pinned_.isEmpty()) combo_->addItem(pinned_);

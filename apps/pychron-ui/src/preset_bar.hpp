@@ -37,6 +37,8 @@ class PresetBar : public QWidget {
   // have nothing to act on. Choosing it emits pinned_chosen().
   void set_pinned_item(const QString& text);
   bool pinned_selected() const;
+  // Shows the preset `name` as the one in use without loading it; nothing when there is none.
+  void show_name(const QString& name);
 
   // Loads `name` and emits loaded(); false (and message()) when it cannot.
   bool select(const QString& name);

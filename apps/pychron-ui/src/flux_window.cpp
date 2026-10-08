@@ -368,7 +368,7 @@ void FluxWindow::store_changed() {
   if (irradiation_.isEmpty()) return;
   // While a save runs the level is not read again under it: the save reads
   // it when it wrote, and else the status says there is something to see.
-  if (!saving_ && !edited()) return start_load();
+  if (!saving_ && !edited()) return start_load(Keep::Boxes);
   changed_elsewhere_ = true;
   refresh_status();
 }
@@ -543,7 +543,7 @@ void FluxWindow::open_level(const QString& irradiation, const QString& level) {
         selected_hole_.reset();
         select_tree_item();
         if (tree_->topLevelItemCount() == 0 && tree_jobs_ == 0) reload_tree();
-        start_load();
+        start_load(Keep::Nothing);
       },
       [this] {
         // Back on the level that stays; again once the click that asked is
@@ -554,8 +554,12 @@ void FluxWindow::open_level(const QString& irradiation, const QString& level) {
 }
 
 void FluxWindow::reload() {
-  if (irradiation_.isEmpty()) return;
-  leave(true, [this] { start_load(); }, {});
+  // Ruling R19: nothing is asked, because nothing is left behind. While a save
+  // runs the level is not read under it: what is pending is being saved, and
+  // the save reads the level again when it wrote.
+  if (irradiation_.isEmpty() || saving_) return;
+  if (inputs_) commit_typed();  // what is typed in the dock is pending too
+  start_load(Keep::Edits);
 }
 
 void FluxWindow::clear_level() {
@@ -568,26 +572,49 @@ void FluxWindow::clear_level() {
     model->set_inputs(nullptr);
   }
   evaluated_.clear();
-  skip_.clear();
-  loaded_skip_.clear();
-  monitors_->set_skip(skip_);
-  unknowns_->set_skip(skip_);
+  // Of nothing on show. edits_, skip_ and loaded_skip_ are start_load's to
+  // keep or drop: they outlive the level's read (rulings R11 and R19).
+  monitors_->set_skip({});
+  unknowns_->set_skip({});
   resetting_ = false;
   fit_.reset();
   unfitted_.reset();
   inputs_.reset();
   fit_error_.clear();
   selected_hole_.reset();
-  edits_ = {};
   options_ = {};  // no level's: not the last one's
   view_->set_scene(nullptr);
   update_title();
 }
 
-void FluxWindow::start_load() {
+void FluxWindow::start_load(Keep keep) {
   const quint64 generation = ++load_generation_;
   ++loads_started_;
-  reselect_ = selected_hole_;  // read again, the level keeps its selected monitor
+  // What the level starts with when it arrives (apply_loaded). Held in the
+  // members themselves, so a read superseded by another, or one that fails,
+  // loses none of it.
+  if (keep == Keep::Nothing) {
+    edits_ = {};
+    skip_.clear();
+    loaded_skip_.clear();
+    carried_values_.reset();
+    carried_preset_.clear();
+    reselect_ = selected_hole_;
+  } else if (inputs_) {
+    if (keep == Keep::Boxes) {
+      edits_ = {};
+      skip_ = loaded_skip_;  // a box unticked since is an edit, and goes with them
+      carried_values_.reset();
+      carried_preset_.clear();
+    } else {
+      // The options only when they were changed: else the level's own, as read.
+      carried_values_ = same_values(values_, loaded_values_) ? std::nullopt : std::optional<pp::Options>(values_);
+      carried_preset_ = preset_bar_->pinned_selected() ? QString() : preset_bar_->current_name();
+    }
+    reselect_ = selected_hole_;  // read again, the level keeps its selected monitor
+  }
+  // Else no level is on show to decide from: this read brings back what the
+  // one in flight, or the one that failed, was to bring back.
   forget_message();
   clear_level();
   loading_ = true;
@@ -648,9 +675,16 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
     values_ = preset ? std::move(preset->options) : presets_.defaults(pp::flux_options_schema());
   }
   loaded_values_ = values_;
+  // R19: the options changed before a Reload are still the editor's, and an
+  // edit against the level as it was read now.
+  const bool carried = carried_values_.has_value();
+  if (carried) values_ = std::move(*carried_values_);
+  carried_values_.reset();
   options_ = {};
   editor_->set_options(values_);
   show_preset();
+  if (carried && !carried_preset_.isEmpty()) preset_bar_->show_name(carried_preset_);
+  carried_preset_.clear();
   resolve_options();
 
   set_monitor_sets(std::move(sets), std::move(default_set));
@@ -662,17 +696,42 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
   monitors_->set_inputs(&*inputs_);
   unknowns_->set_inputs(&*inputs_);
   resetting_ = false;
-  // R11: read again after its own save, the level keeps the Save boxes the
-  // user unticked, and they are no edit: nothing differs from what was saved.
-  if (kept_skip_generation_ == load_generation_ && !kept_skip_.empty()) {
-    skip_ = kept_skip_;
-    loaded_skip_ = skip_;
-    apply_skip();
-  }
-  kept_skip_.clear();
+  // What start_load kept, as far as this level has a place for it: fit_level
+  // refuses an edit that names what the level does not have.
+  const int dropped = drop_stale_edits();
+  // R11: the Save boxes the user unticked; those of loaded_skip_ are no edit.
+  if (!skip_.empty()) apply_skip();
   update_title();
   update_actions();
   fit_now();  // nothing to wait for: the debounce is for edits
+  if (dropped > 0) {
+    message_ = dropped == 1 ? tr("1 edit no longer applies") : tr("%1 edits no longer apply").arg(dropped);
+    message_details_.clear();
+    update_tooltip();
+    refresh_status();
+  }
+}
+
+int FluxWindow::drop_stale_edits() {
+  std::set<std::string> records;
+  std::set<int> holes, monitors;
+  for (const auto& p : inputs_->positions) {
+    holes.insert(p.hole);
+    if (!p.monitor) continue;
+    monitors.insert(p.hole);
+    for (const auto& a : p.analyses) records.insert(a.record_id);
+  }
+  std::size_t dropped = 0;
+  for (auto* ids : {&edits_.omit, &edits_.include})
+    dropped += std::erase_if(*ids, [&](const std::string& id) { return !records.contains(id); });
+  // A hole that is no monitor's any more has no Fit box to undo the edit with.
+  for (auto* chosen : {&edits_.exclude_positions, &edits_.include_positions})
+    dropped += std::erase_if(*chosen, [&](int hole) { return !monitors.contains(hole); });
+  // A Save box: an edit when it was unticked since the level was read.
+  dropped += std::erase_if(skip_, [&](int hole) { return !holes.contains(hole) && !loaded_skip_.contains(hole); });
+  std::erase_if(skip_, [&](int hole) { return !holes.contains(hole); });
+  std::erase_if(loaded_skip_, [&](int hole) { return !holes.contains(hole); });
+  return static_cast<int>(dropped);
 }
 
 void FluxWindow::show_preset() {
@@ -926,7 +985,7 @@ void FluxWindow::revert() {
     // The other monitors are an edit that only the store undoes: the level as
     // its saved fit chose them, and with that everything else as loaded.
     chosen_.reset();
-    return start_load();
+    return start_load(Keep::Nothing);
   }
   edits_ = {};
   skip_.clear();
@@ -1104,6 +1163,9 @@ void FluxWindow::save_then(std::function<void()> next) {
       // gives them, and the reload says what that is.
       w.chosen_.reset();
       w.baseline_.reset();
+      // R11: the boxes left unticked are what was saved, and no edit; they
+      // stay so over every read of this level.
+      w.loaded_skip_ = w.skip_;
     }
     if (next) {
       // What was asked for takes the window elsewhere: said after its status.
@@ -1115,11 +1177,7 @@ void FluxWindow::save_then(std::function<void()> next) {
       return w.refresh_status();
     }
     if (!written) return w.tell(text, false);
-    if (!reread) {
-      w.kept_skip_ = w.skip_;
-      w.start_load();  // the saved J and revisions, for the next save
-      w.kept_skip_generation_ = w.load_generation_;
-    }
+    if (!reread) w.start_load(Keep::Boxes);  // the saved J and revisions, for the next save
     w.tell(text, false);
   };
 
@@ -1169,7 +1227,7 @@ void FluxWindow::closeEvent(QCloseEvent* event) {
       event->ignore();
       // Read again first: closed, the window holds nothing that is pending.
       return save_then([this] {
-        start_load();
+        start_load(Keep::Boxes);
         close();
       });
     case Unsaved::Cancel:
@@ -1253,7 +1311,7 @@ void FluxWindow::group_changed() {
         // Chosen back to the level's own: nothing is chosen.
         chosen_ = baseline_ && group == *baseline_ ? std::nullopt : std::optional<MonitorGroup>(group);
         show_group(group);
-        start_load();
+        start_load(Keep::Boxes);  // the edits were saved, or given up
       },
       [this, back = shown_] { show_group(back); });
 }

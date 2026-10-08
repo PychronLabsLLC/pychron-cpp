@@ -1275,10 +1275,10 @@ class FluxWindowTest : public QObject {
     // Ruling R9: the level read with the choice is still not the level as saved.
     QVERIFY(w.edited());
     QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
-    // Reload asks for it, and keeps the choice.
+    // Reload asks nothing (R19), and keeps the choice.
     answer = FluxWindow::Unsaved::Discard;
     w.reload();
-    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
+    QVERIFY(asked.isEmpty());
     QVERIFY(settle(w));
     QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));
     QVERIFY(w.edited());
@@ -1289,7 +1289,7 @@ class FluxWindowTest : public QObject {
     QVERIFY(w.busy());
     QVERIFY(settle(w));
     QCOMPARE(w.loads_started(), loads + 1);
-    QCOMPARE(asked.size(), 1);
+    QVERIFY(asked.isEmpty());
     QCOMPARE(w.inputs()->monitor_set.name, standard);
     QCOMPARE(w.monitor_set_combo()->currentText(), QString::fromStdString(standard));
     QVERIFY(!w.edited());
@@ -1310,20 +1310,20 @@ class FluxWindowTest : public QObject {
              !w.inputs()->all_positions && w.edits().exclude_positions == std::set<int>{3};
     };
     w.monitor_set_combo()->setCurrentText(QString::fromStdString(standard));
-    QCOMPARE(asked.size(), 2);
+    QCOMPARE(asked, QStringList{QStringLiteral("Save the flux of NM-300 A?")});
     QVERIFY(untouched());
     w.all_positions_box()->setChecked(true);
-    QCOMPARE(asked.size(), 3);
+    QCOMPARE(asked.size(), 2);
     QVERIFY(untouched());
     w.sample_edit()->setText(QStringLiteral("unk"));
     Q_EMIT w.sample_edit()->editingFinished();
-    QCOMPARE(asked.size(), 4);
+    QCOMPARE(asked.size(), 3);
     QVERIFY(untouched());
 
     // Discard reads it with the other group.
     answer = FluxWindow::Unsaved::Discard;
     w.all_positions_box()->setChecked(true);
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
     QVERIFY(w.busy());
     QVERIFY(settle(w));
     QVERIFY(w.inputs()->all_positions);
@@ -1335,7 +1335,7 @@ class FluxWindowTest : public QObject {
     w.all_positions_box()->setChecked(false);
     QVERIFY(settle(w));
     QVERIFY(!w.inputs()->all_positions);
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
 
     // Another sample: the unknowns' holes become the monitors (they have no analyses).
     w.sample_edit()->setText(QStringLiteral("unk"));
@@ -1343,7 +1343,7 @@ class FluxWindowTest : public QObject {
     Q_EMIT w.sample_edit()->editingFinished();
     QVERIFY(w.busy());
     QVERIFY(settle(w));
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
     QCOMPARE(w.inputs()->monitor_set.sample, std::string("unk"));
     QCOMPARE(w.sample_edit()->text(), QStringLiteral("unk"));
     QCOMPARE(w.monitors()->rowCount(), 4);
@@ -1361,7 +1361,7 @@ class FluxWindowTest : public QObject {
     // Chosen back to what the level gives by itself: nothing is pending.
     w.monitor_set_combo()->setCurrentText(QString::fromStdString(standard));
     QVERIFY(settle(w));
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
     QCOMPARE(w.inputs()->monitor_set.name, standard);
     QVERIFY(!w.edited());
     QCOMPARE(w.fit()->max_j, j_standard);
@@ -1491,23 +1491,27 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.fit()->dof, 4);
     QCOMPARE(w.windowTitle(), QStringLiteral("Flux — NM-300 A"));
 
-    // Reload and closing ask the same.
+    // Reload leaves nothing behind, so it asks nothing (R19): the edits are there after it.
     w.reload();
-    QCOMPARE(asked.size(), 2);
-    QVERIFY(!w.busy());
+    QCOMPARE(asked.size(), 1);
+    QVERIFY(w.busy());
+    QVERIFY(settle(w));
     QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
+    QCOMPARE(w.fit()->dof, 4);
+    QVERIFY(w.edited());
+    // Closing asks the same as another level.
     w.show();
     QVERIFY(!w.close());
-    QCOMPARE(asked.size(), 3);
+    QCOMPARE(asked.size(), 2);
     QVERIFY(w.isVisible());
 
     // Discard: moves, once asked.
     answer = FluxWindow::Unsaved::Discard;
     w.tree()->setCurrentItem(c_item);
-    QCOMPARE(asked.size(), 4);
+    QCOMPARE(asked.size(), 3);
     QVERIFY(w.busy());
     QVERIFY(settle(w));
-    QCOMPARE(asked.size(), 4);
+    QCOMPARE(asked.size(), 3);
     QCOMPARE(w.inputs()->level, std::string("C"));
     QCOMPARE(w.tree()->currentItem(), c_item);
     QVERIFY(w.edits().exclude_positions.empty());
@@ -1518,7 +1522,7 @@ class FluxWindowTest : public QObject {
     w.set_in_fit(2, false);
     QVERIFY(settle(w));
     QVERIFY(w.close());
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
     QVERIFY(!w.isVisible());
     FluxWindow plain(*r.bridge, *r.source, r.presets);
     plain.set_ask_unsaved([&](const QString& q) {
@@ -1527,7 +1531,7 @@ class FluxWindowTest : public QObject {
     });
     plain.show();
     QVERIFY(plain.close());
-    QCOMPARE(asked.size(), 5);
+    QCOMPARE(asked.size(), 4);
   }
 
   void revert_and_reset_omissions() {
@@ -1591,7 +1595,12 @@ class FluxWindowTest : public QObject {
     w.reset_omissions_action()->trigger();
     QVERIFY(w.edits().reset_omits);
     QCOMPARE(w.monitors()->index(row1, FluxMonitorModel::SavedJ).data().toString(), QStringLiteral("1.0000e-03"));
-    w.set_ask_unsaved([](const QString&) { return FluxWindow::Unsaved::Discard; });
+    // Reload reads the store, and what is pending is put back (R19): nothing is asked.
+    int asked = 0;
+    w.set_ask_unsaved([&asked](const QString&) {
+      ++asked;
+      return FluxWindow::Unsaved::Discard;
+    });
     w.reload_action()->trigger();
     QVERIFY(w.busy());
     QVERIFY(!w.reload_action()->isEnabled());  // while the level is read
@@ -1599,6 +1608,13 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     QVERIFY(w.reload_action()->isEnabled());
     QVERIFY(w.revert_action()->isEnabled());
+    QCOMPARE(asked, 0);
+    QCOMPARE(w.monitors()->index(row1, FluxMonitorModel::SavedJ).data().toString(), QStringLiteral("2.0000e-03"));
+    QVERIFY(w.edits().reset_omits);
+    QVERIFY(w.edited());
+    QVERIFY(fitted_at(*w.fit(), 5).used_in_fit);
+    // Revert drops it, against the level as it was read now.
+    w.revert();
     QVERIFY(!w.edited());
     QVERIFY(!fitted_at(*w.fit(), 5).used_in_fit);
     QCOMPARE(w.monitors()->index(row1, FluxMonitorModel::SavedJ).data().toString(), QStringLiteral("2.0000e-03"));
@@ -1648,13 +1664,16 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     QVERIFY2(w.status().contains(QStringLiteral(" · level changed elsewhere, Reload to see it")), qPrintable(w.status()));
 
-    // Reload (the edits discarded) shows it.
+    // Reload shows it, with the edits put back (R19); nothing is asked.
     w.reload();
-    QCOMPARE(asked.size(), 1);
+    QVERIFY(asked.isEmpty());
     QVERIFY(settle(w));
     QVERIFY(!w.monitors()->index(row2, FluxMonitorModel::SavedJ).data().toString().isEmpty());
     QVERIFY(!w.status().contains(QStringLiteral("changed elsewhere")));
-    QVERIFY(!w.edited());
+    QCOMPARE(w.edits().exclude_positions, (std::set<int>{3, 4}));
+    QVERIFY(!fitted_at(*w.fit(), 3).used_in_fit);
+    QVERIFY(w.edited());
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
   }
 
   // Ruling R17: a window that is not on screen reads nothing for a change
@@ -1895,12 +1914,22 @@ class FluxWindowTest : public QObject {
     w.set_save(9, false);
     QVERIFY(!w.edited());
 
-    // A manual Reload, Revert and another level tick every box again.
+    // A manual Reload keeps the box as it is (R19, R20): unticked, and still no edit.
     w.reload();
     QVERIFY(settle(w));
-    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Checked);
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
     QVERIFY(!w.edited());
-    w.set_save(9, false);
+    // One unticked since the save is an edit before the Reload and after it.
+    w.set_save(10, false);
+    QVERIFY(w.edited());
+    w.reload();
+    QVERIFY(settle(w));
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
+    QCOMPARE(check(w.unknowns(), 1, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
+    QVERIFY(w.edited());
+    w.set_save(10, true);
+    QVERIFY(!w.edited());
+    // Revert ticks every box again (another level does too: kept_save_boxes_survive_a_change_during_the_reload).
     w.set_in_fit(3, false);
     w.save();
     QVERIFY(settle(w));
@@ -2148,6 +2177,7 @@ class FluxWindowTest : public QObject {
   }
 
   void a_change_or_a_reload_during_a_save_still_says_saved() {
+    add_alt_monitor_set();
     auto r = rig();
     QStringList asked;
     auto answer = FluxWindow::Unsaved::Discard;
@@ -2183,14 +2213,15 @@ class FluxWindowTest : public QObject {
     w.reload();
     QVERIFY(settle(w));
 
-    // The level asked for again while its save runs: that read shows what was
-    // saved, nothing is read a second time, and the outcome is said.
+    // Reload while the save runs does nothing (R19): what is pending is being
+    // saved, and the save reads the level again when it wrote, once.
     w.set_in_fit(3, false);
     loads = w.loads_started();
     w.save();
-    w.reload();  // the edits are being saved; Discard lets it through
-    QCOMPARE(asked.size(), 1);
-    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 A…"));
+    w.reload();
+    QVERIFY(asked.isEmpty());
+    QCOMPARE(w.loads_started(), loads);
+    QCOMPARE(w.status(), QStringLiteral("Saving…"));
     QVERIFY(settle(w));
     drain(*r.bridge);
     QVERIFY(settle(w));
@@ -2203,10 +2234,11 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.edited());
     QVERIFY(w.save_action()->isEnabled());
 
-    // And a conflict the same: said once the level is on show again, in the error tone.
+    // And with a conflict: said in the error tone, the level and the edits as they were.
     w.set_in_fit(3, true);
     QVERIFY(settle(w));
     save_fit(7, pp::FluxOptions{}, false, 2.0e-3);
+    loads = w.loads_started();
     w.save();
     w.reload();
     QVERIFY(settle(w));
@@ -2215,6 +2247,38 @@ class FluxWindowTest : public QObject {
     QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: hole 7 was saved by jsmith at ")), qPrintable(w.status()));
     QVERIFY(w.status_is_error());
     QCOMPARE(saved.count(), 2);
+    QCOMPARE(w.loads_started(), loads);
+    QCOMPARE(w.edits().include_positions, std::set<int>{3});
+    QVERIFY(w.edited());
+
+    // The level read again under its save all the same (Revert of a chosen
+    // monitor group does not wait for it): that read follows the save on the
+    // worker, so it shows what was saved; nothing is read a second time, and
+    // the outcome is still said.
+    w.reload();
+    QVERIFY(settle(w));
+    w.revert();
+    QVERIFY(!w.edited());
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QVERIFY(settle(w));
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(w.edited());
+    loads = w.loads_started();
+    w.save();
+    w.revert();
+    QCOMPARE(w.loads_started(), loads + 1);
+    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 A…"));
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QVERIFY(settle(w));
+    QVERIFY2(w.status().startsWith(QStringLiteral("Saved 12 positions")), qPrintable(w.status()));
+    QVERIFY(!w.status_is_error());
+    QCOMPARE(saved.count(), 3);
+    QCOMPARE(w.loads_started(), loads + 1);
+    QCOMPARE(w.inputs()->monitor_set.name, std::string("Alt"));  // the saved fit's now
+    QVERIFY(!w.edited());
+    QVERIFY(w.save_action()->isEnabled());
+    QVERIFY(asked.isEmpty());
   }
 
   void closing_during_a_save_waits_for_it() {
@@ -2366,17 +2430,210 @@ class FluxWindowTest : public QObject {
     QVERIFY(w.save_action()->isEnabled());
     QVERIFY(w.monitor_table()->isEnabled());
 
-    // Reload, fit again, and it saves.
+    // Reload, and it saves: the edits were put back (R19), nothing was asked.
     w.reload();
     QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
     QCOMPARE(w.monitors()->index(w.monitors()->row_of(7), FluxMonitorModel::SavedJ).data().toString(),
              QStringLiteral("2.0000e-03"));
-    w.set_in_fit(3, false);
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
     w.save();
     QVERIFY(settle(w));
     QVERIFY2(w.status().startsWith(QStringLiteral("Saved ")), qPrintable(w.status()));
     QVERIFY(!w.status_is_error());
     QCOMPARE(saved_excluded(3), std::optional<bool>(true));
+  }
+
+  // Ruling R19: Reload reads the level again and puts back what is pending; it asks nothing.
+  void reload_after_a_conflict_keeps_what_is_pending() {
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Discard;  // were it asked, the edits would go
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    const std::string uuid = seeded_.analyses.at("66001-01").str();
+    w.set_in_fit(3, false);
+    w.toggle_analyses({QString::fromStdString(uuid)});
+    w.set_save(9, false);
+    QVERIFY(w.options_editor()->apply(QStringLiteral("model.weighted"), true));
+    w.select_monitor(1);
+    QVERIFY(settle(w));
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    const double j1 = fitted_at(*w.fit(), 1).j;
+
+    save_fit(7, pp::FluxOptions{}, false, 2.0e-3);  // another client, after the level was loaded
+    const auto before_heads = heads();
+    w.save();
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: hole 7 was saved by jsmith at ")), qPrintable(w.status()));
+    QCOMPARE(heads(), before_heads);
+    const int loads = w.loads_started();
+
+    w.reload();
+    QVERIFY(asked.isEmpty());
+    QVERIFY(w.busy());
+    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 A…"));
+    QCOMPARE(w.loads_started(), loads + 1);
+    QVERIFY(!w.edited());  // nothing is on show
+    // A change elsewhere while it is read supersedes the read, not what it was to put back.
+    w.show();
+    r.bridge->notify_changed();
+    QCOMPARE(w.loads_started(), loads + 2);
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
+    // The level is the store's now.
+    QCOMPARE(w.monitors()->index(w.monitors()->row_of(7), FluxMonitorModel::SavedJ).data().toString(),
+             QStringLiteral("2.0000e-03"));
+    // And what was pending is in force: the edits, the option, the Save box, the selected monitor.
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
+    QCOMPARE(w.edits().omit, std::set<std::string>{"66001-01"});
+    QVERIFY(w.edits().include.empty());
+    QVERIFY(w.options().fit.weighted);
+    QVERIFY(w.options_editor()->options().get_bool("model.weighted"));
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
+    QCOMPARE(check(w.unknowns(), 1, pychron::ui::FluxUnknownModel::Save), Qt::Checked);
+    QCOMPARE(check(w.monitors(), w.monitors()->row_of(3), FluxMonitorModel::Fit), Qt::Unchecked);
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(w.fit()->options.fit.weighted);
+    QVERIFY(!fitted_at(*w.fit(), 3).used_in_fit);
+    QCOMPARE(fitted_at(*w.fit(), 1).n, 2);
+    QCOMPARE(fitted_at(*w.fit(), 1).j, j1);
+    QCOMPARE(w.analyses()->rowCount(), 3);
+    QCOMPARE(w.analyses()->index(0, FluxAnalysisModel::State).data().toString(), QStringLiteral("omitted (here)"));
+    QCOMPARE(drawn_excluded(*w.view()->scene(), uuid), std::optional<bool>(true));
+    // The window still reads edited, against the level as it was read now.
+    QVERIFY(w.edited());
+    QVERIFY2(w.status().startsWith(QStringLiteral("plane, weighted · fit MSWD")), qPrintable(w.status()));
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · edited (not saved)")), qPrintable(w.status()));
+    QVERIFY2(!w.status().contains(QStringLiteral("no longer appl")), qPrintable(w.status()));
+    QVERIFY2(!w.status().contains(QStringLiteral("changed elsewhere")), qPrintable(w.status()));
+    QVERIFY(!w.status_is_error());
+
+    // Save succeeds now, and writes them.
+    w.save();
+    QVERIFY(settle(w));
+    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"));
+    QVERIFY(!w.status_is_error());
+    QVERIFY(!head(9).has_value());
+    QCOMPARE(saved_excluded(3), std::optional<bool>(true));
+    QCOMPARE(saved_excluded(4), std::optional<bool>(false));
+    QCOMPARE(*head_value(1)->j, j1);
+    const auto doc = pp::parse_flux_options(*head_value(7)->options_json);
+    QVERIFY(doc.options.has_value());
+    QVERIFY(doc.options->fit.weighted);
+    // Read again, they are the saved fit's, and nothing is pending.
+    QVERIFY(!w.edited());
+    QVERIFY(w.edits().omit.empty());
+    QCOMPARE(fitted_at(*w.fit(), 1).n, 2);
+    QCOMPARE(w.analyses()->index(0, FluxAnalysisModel::State).data().toString(), QStringLiteral("omitted (saved fit)"));
+    QVERIFY(asked.isEmpty());
+
+    // Revert, not Reload, drops edits: to the level as it was last read.
+    w.set_in_fit(4, false);
+    QVERIFY(w.options_editor()->apply(QStringLiteral("model.weighted"), false));
+    QVERIFY(settle(w));
+    w.reload();
+    QVERIFY(settle(w));
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{4});
+    QVERIFY(!w.options().fit.weighted);
+    QVERIFY(w.edited());
+    w.revert();
+    QVERIFY(w.edits().exclude_positions.empty());
+    QVERIFY(w.options().fit.weighted);  // the saved fit's
+    QVERIFY(!w.edited());
+    QVERIFY(asked.isEmpty());
+  }
+
+  // R19: an edit the level read again has nothing for is dropped, and said.
+  void reload_drops_the_edits_that_no_longer_apply() {
+    auto r = rig();
+    QStringList asked;
+    auto wp = opened(r, &asked);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+    // As if the level had lost an analysis and two positions since it was read.
+    w.edits_.omit.insert("66099-01");
+    w.edits_.exclude_positions.insert(99);
+    w.edits_.include_positions.insert(98);
+
+    w.reload();
+    QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
+    QVERIFY2(w.fit(), qPrintable(w.status()));  // fit_level was not asked about them
+    QVERIFY(!w.status_is_error());
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{3});
+    QVERIFY(w.edits().omit.empty());
+    QVERIFY(w.edits().include_positions.empty());
+    QVERIFY(!fitted_at(*w.fit(), 3).used_in_fit);
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · 3 edits no longer apply · edited (not saved)")), qPrintable(w.status()));
+    // Said until the next change.
+    w.set_in_fit(4, false);
+    QVERIFY(settle(w));
+    QVERIFY2(!w.status().contains(QStringLiteral("no longer appl")), qPrintable(w.status()));
+
+    // One alone, and with it gone nothing is pending. A hole that is no monitor's cannot be left out.
+    w.revert();
+    QVERIFY(!w.edited());
+    w.edits_.exclude_positions.insert(9);
+    w.reload();
+    QVERIFY(settle(w));
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(w.edits().exclude_positions.empty());
+    QVERIFY(!w.edited());
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · 1 edit no longer applies")), qPrintable(w.status()));
+    // Nothing dropped: nothing said.
+    w.reload();
+    QVERIFY(settle(w));
+    QVERIFY2(!w.status().contains(QStringLiteral("no longer appl")), qPrintable(w.status()));
+  }
+
+  // R11 and R20: the Save boxes kept over the reload after a save are kept over any reload of the level.
+  void kept_save_boxes_survive_a_change_during_the_reload() {
+    auto r = rig();
+    auto wp = opened(r);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    w.show();
+    w.set_in_fit(3, false);
+    w.set_save(9, false);
+    QVERIFY(settle(w));
+    const int loads = w.loads_started();
+    w.save();
+    // The save landed and its reload is in flight: another window's change now.
+    QTRY_VERIFY_WITH_TIMEOUT(w.loads_started() == loads + 1, kWaitMs);
+    QVERIFY(w.busy());
+    r.bridge->notify_changed();
+    QCOMPARE(w.loads_started(), loads + 2);
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QVERIFY(settle(w));
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
+    QCOMPARE(check(w.unknowns(), 1, pychron::ui::FluxUnknownModel::Save), Qt::Checked);
+    QVERIFY(!w.edited());
+    // And over a change that comes later, with nothing edited.
+    save_fit(1, pp::FluxOptions{}, false, 2.0e-3);
+    r.bridge->notify_changed();
+    QVERIFY(settle(w));
+    QCOMPARE(w.monitors()->index(w.monitors()->row_of(1), FluxMonitorModel::SavedJ).data().toString(),
+             QStringLiteral("2.0000e-03"));
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Unchecked);
+    QVERIFY(!w.edited());
+    // Another level and back: every box is ticked.
+    auto second = pt::seed_second_flux_level(*store_, actor_, seeded_, "C");
+    QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
+    w.open_level(QStringLiteral("NM-300"), QStringLiteral("C"));
+    QVERIFY(settle(w));
+    w.open_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QVERIFY(settle(w));
+    QCOMPARE(check(w.unknowns(), 0, pychron::ui::FluxUnknownModel::Save), Qt::Checked);
+    QVERIFY(!w.edited());
   }
 
   void save_is_disabled_with_the_reason() {
@@ -2466,32 +2723,31 @@ class FluxWindowTest : public QObject {
     QVERIFY(w.statusBar()->currentMessage().isEmpty());
     QVERIFY(!head(1, "C").has_value());
 
-    // Reload with Save: saved, then read again.
+    // Reload asks nothing and saves nothing (R19): the edit is put back.
     w.set_in_fit(2, false);
     QVERIFY(settle(w));
     const int loads = w.loads_started();
     w.reload();
-    QCOMPARE(asked.size(), 2);
+    QCOMPARE(asked.size(), 1);
     QVERIFY(settle(w));
-    QCOMPARE(saved_excluded(2, "C"), std::optional<bool>(true));
+    QVERIFY(!head(2, "C").has_value());
     QCOMPARE(w.loads_started(), loads + 1);
-    QVERIFY(!w.edited());
+    QVERIFY(w.edited());
     QVERIFY(fitted_at(*w.fit(), 2).excluded);
+    QCOMPARE(saved.count(), 1);
 
     // Closing with Save: stays until it is saved, then closes.
-    w.set_in_fit(2, true);
-    QVERIFY(settle(w));
-    QVERIFY(w.edited());
     w.show();
     QVERIFY(!w.close());
-    QCOMPARE(asked.size(), 3);
+    QCOMPARE(asked.size(), 2);
     QVERIFY(w.isVisible());
     QVERIFY(w.busy());
     QTRY_VERIFY_WITH_TIMEOUT(!w.isVisible(), kWaitMs);
     QVERIFY(settle(w));
-    QCOMPARE(asked.size(), 3);
-    QCOMPARE(saved_excluded(2, "C"), std::optional<bool>(false));
-    QCOMPARE(saved.count(), 3);
+    QCOMPARE(asked.size(), 2);
+    QCOMPARE(saved_excluded(2, "C"), std::optional<bool>(true));
+    QCOMPARE(saved.count(), 2);
+    QVERIFY(!w.edited());
   }
 
   void a_failed_save_cancels_the_move() {
