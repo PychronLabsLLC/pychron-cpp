@@ -43,6 +43,10 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 
+namespace pychron::processing {
+struct FluxSaveOutcome;
+}
+
 namespace pychron::ui {
 
 class FluxAnalysisModel;
@@ -130,6 +134,12 @@ class FluxWindow : public QMainWindow {
   Result<void> export_csv(const QString& path);
   QAction* export_action() const noexcept { return export_action_; }
   int loads_started() const noexcept { return loads_started_; }  // level reads asked of the store
+  // What the status says of a save (section 5.5): written, nothing to write,
+  // or a conflict with who moved the head and when (either may be unknown);
+  // and of a save that failed.
+  static QString save_text(const processing::FluxSaveOutcome& outcome, const std::string& saved_by,
+                           const std::string& saved_utc);
+  static QString save_error_text(const std::string& what);
 
  Q_SIGNALS:
   // The level's J was written (not: there was nothing to write).
@@ -158,6 +168,8 @@ class FluxWindow : public QMainWindow {
   void update_title();
   void set_status(const QString& text, bool error, const QStringList& warnings = {});
   void say(const QString& text, bool error);      // in place of the status line, the warnings kept
+  void tell(const QString& text, bool error);     // say(), once the level being read is fitted
+  void commit_typed();                            // what is typed in the dock and not yet taken
   void forget_message();                          // the preset bar's, at the user's next change
   void update_tooltip();
   void refresh_status();                          // the status with what follows it: changed elsewhere, edited
@@ -175,7 +187,8 @@ class FluxWindow : public QMainWindow {
   // `stay` (when given) puts back what the user had changed to get here.
   void leave(bool with_group, std::function<void()> next, const std::function<void()>& stay);
   // Saves; `next` (when given) runs in place of the reload once the level was
-  // saved or had nothing to save, and not at all otherwise.
+  // saved or had nothing to save, and not at all otherwise. While a save runs,
+  // `next` follows that one.
   void save_then(std::function<void()> next);
   void export_asked();
 
@@ -232,6 +245,7 @@ class FluxWindow : public QMainWindow {
   std::string options_error_;
   processing::Edits edits_;
   std::set<int> skip_;  // the holes whose Save box is unticked
+  std::set<int> loaded_skip_;  // of them, those kept over the reload after a save: no edit
   std::optional<processing::LevelFit> fit_;
   std::string fit_error_;
   std::optional<int> selected_hole_;
@@ -264,9 +278,14 @@ class FluxWindow : public QMainWindow {
   bool saving_ = false;     // a save is running
   bool notifying_ = false;  // the bridge's changed() is this window's own, after its save
   int loads_started_ = 0;
-  // What a save said, shown once the level it reloaded (load `note_generation_`) is fitted.
+  // What a save said, shown once the level being read (load `note_generation_`) is fitted.
   QString note_;
+  bool note_error_ = false;
   quint64 note_generation_ = 0;
+  // The Save boxes unticked at a save, for the reload it starts (`kept_skip_generation_`).
+  std::set<int> kept_skip_;
+  quint64 kept_skip_generation_ = 0;
+  std::function<void()> after_save_;  // what follows the save in flight when it succeeds
   QString tree_error_;      // the last tree read failed with this
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept
   bool status_error_ = false;

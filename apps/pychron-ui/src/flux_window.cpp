@@ -6,7 +6,9 @@
 #include <vector>
 
 #include <QAbstractItemView>
+#include <QAbstractSpinBox>
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -56,7 +58,6 @@ namespace pp = pychron::processing;
 namespace ps = pychron::persistence;
 
 constexpr int kFitDelayMs = 150;  // W5: a refit follows the last change by this much
-constexpr int kMessageMs = 6000;  // how long what a save said in passing is shown
 
 // The tree as the store has it: read in one job, drawn on the GUI thread.
 struct TreeLevel {
@@ -240,7 +241,9 @@ FluxWindow::FluxWindow(EntryBridge& bridge, pp::IAnalysisSource& source, pp::Pre
     if (notifying_) return;
     reload_tree();
     if (irradiation_.isEmpty()) return;
-    if (!edited()) return start_load();
+    // While a save runs the level is not read again under it: the save reads
+    // it when it wrote, and else the status says there is something to see.
+    if (!saving_ && !edited()) return start_load();
     changed_elsewhere_ = true;
     refresh_status();
   });
@@ -369,7 +372,7 @@ void FluxWindow::update_actions() {
   save_action_->setToolTip(saving_    ? tr("Saving…")
                            : loading_ ? tr("Loading…")
                            : !inputs_ ? tr("No level open")
-                           : !fit_    ? QString::fromStdString(fit_error_)
+                           : !fit_    ? (fit_error_.empty() ? tr("Fitting…") : QString::fromStdString(fit_error_))
                                       : tr("Save the predicted J of every position whose Save box is ticked"));
 }
 
@@ -498,6 +501,7 @@ void FluxWindow::clear_level() {
   unknowns_->set_fit(nullptr);
   unknowns_->set_inputs(nullptr);
   skip_.clear();
+  loaded_skip_.clear();
   monitors_->set_skip(skip_);
   unknowns_->set_skip(skip_);
   resetting_ = false;
@@ -584,6 +588,14 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
   monitors_->set_inputs(&*inputs_);
   unknowns_->set_inputs(&*inputs_);
   resetting_ = false;
+  // R11: read again after its own save, the level keeps the Save boxes the
+  // user unticked, and they are no edit: nothing differs from what was saved.
+  if (kept_skip_generation_ == load_generation_ && !kept_skip_.empty()) {
+    skip_ = kept_skip_;
+    loaded_skip_ = skip_;
+    apply_skip();
+  }
+  kept_skip_.clear();
   update_title();
   update_actions();
   fit_now();  // nothing to wait for: the debounce is for edits
@@ -638,7 +650,7 @@ void FluxWindow::fit_now() {
   }
   // What the save that read this level again said, in place of the fit's line.
   if (!note_.isEmpty()) {
-    if (fit_ && note_generation_ == load_generation_) say(note_, false);
+    if ((fit_ || note_error_) && note_generation_ == load_generation_) say(note_, note_error_);
     note_.clear();
   }
   update_actions();
@@ -715,7 +727,7 @@ void FluxWindow::options_changed() {
 
 bool FluxWindow::pending(bool with_group) const {
   if (!inputs_) return false;
-  return !no_edits(edits_) || !skip_.empty() || !same_values(values_, loaded_values_) ||
+  return !no_edits(edits_) || skip_ != loaded_skip_ || !same_values(values_, loaded_values_) ||
          (with_group && (group_edited() || !(group_shown() == shown_)));
 }
 
@@ -825,6 +837,7 @@ void FluxWindow::revert() {
   }
   edits_ = {};
   skip_.clear();
+  loaded_skip_.clear();
   apply_skip();
   values_ = loaded_values_;
   editor_->set_options(values_);
@@ -882,10 +895,134 @@ void FluxWindow::leave(bool with_group, std::function<void()> next, const std::f
 
 void FluxWindow::save() { save_then({}); }
 
+QString FluxWindow::save_text(const pp::FluxSaveOutcome& outcome, const std::string& saved_by,
+                              const std::string& saved_utc) {
+  if (outcome.conflict) {
+    const QString position = QString::fromStdString(outcome.conflict_position);
+    const QString by = saved_by.empty() ? tr("someone else") : QString::fromStdString(saved_by);
+    return saved_utc.empty()
+               ? tr("Not saved: %1 was saved by %2 since this level was loaded. Reload and fit again.").arg(position, by)
+               : tr("Not saved: %1 was saved by %2 at %3 UTC since this level was loaded. Reload and fit again.")
+                     .arg(position, by, QString::fromStdString(saved_utc));
+  }
+  QString text = outcome.written > 0
+                     ? tr("Saved %1 positions (%2 unchanged)").arg(outcome.written).arg(outcome.unchanged)
+                     : tr("Nothing to save: %1 positions unchanged").arg(outcome.unchanged);
+  if (outcome.skipped > 0) text = tr("%1, %2 not saved").arg(text).arg(outcome.skipped);
+  return text;
+}
+
+QString FluxWindow::save_error_text(const std::string& what) {
+  return tr("Not saved: %1").arg(QString::fromStdString(what));
+}
+
+void FluxWindow::commit_typed() {
+  // A spin box takes what was typed into it; a field that commits when it is
+  // left is left. Both say "changed" now, before the fit that is saved.
+  for (QAbstractSpinBox* spin : dock_host_->findChildren<QAbstractSpinBox*>()) spin->interpretText();
+  if (QWidget* focus = QApplication::focusWidget(); focus && dock_host_->isAncestorOf(focus)) focus->clearFocus();
+}
+
+void FluxWindow::tell(const QString& text, bool error) {
+  if (!loading_) return say(text, error);
+  note_ = text;  // the level is being read: once it is fitted
+  note_error_ = error;
+  note_generation_ = load_generation_;
+}
+
 void FluxWindow::save_then(std::function<void()> next) {
-  if (loading_ || saving_ || !inputs_) return;
+  if (saving_) {
+    // The save in flight is the one asked for: what was asked follows it.
+    if (next) after_save_ = std::move(next);
+    return;
+  }
+  if (loading_ || !inputs_) return;
+  // In this order: what was typed is committed, then fitted, then copied, and
+  // only then do the widgets wait (disabling one that holds the focus commits
+  // it, which would be after the fit was taken).
+  // A sample typed and not asked for is other monitors: it is not this fit's,
+  // and asking for it reads the level again.
+  if (!(group_shown() == shown_)) return say(tr("Not saved: the monitor selection changed, fit again"), true);
+  commit_typed();
+  if (loading_ || !inputs_) return;
   if (fit_timer_->isActive()) fit_now();  // what is saved is what is on show
   if (!fit_) return;                      // the status says why
+  after_save_ = std::move(next);
+
+  const std::string software = QStringLiteral("pychron-ui %1").arg(app_version()).trimmed().toStdString();
+  // The job takes a copy of the fit and no `this`. Its result is delivered to
+  // the bridge, not to the window: a save that was written is told to the
+  // other windows also when this one is gone by then.
+  std::function<Result<SaveResult>(ps::IStore&, const ps::Actor&)> job =
+      [fit = *fit_, skip = skip_, software](ps::IStore& store, const ps::Actor& actor) -> Result<SaveResult> {
+    auto outcome = pp::save_level(store, actor, fit, pp::SaveSelection{skip}, software);
+    if (!outcome) return fail(outcome.error());
+    SaveResult result{std::move(*outcome), {}, {}};
+    if (result.outcome.conflict) {
+      if (auto head = pp::flux_head_info(store, fit.irradiation, fit.level, result.outcome.conflict_hole)) {
+        result.saved_by = std::move(head->saved_by);
+        result.saved_utc = std::move(head->saved_utc);
+      }
+    }
+    return result;
+  };
+  std::function<void(Result<SaveResult>)> done = [self = QPointer<FluxWindow>(this), bridge = &bridge_,
+                                                  generation = load_generation_, irradiation = irradiation_,
+                                                  level = level_](Result<SaveResult> result) {
+    const bool written = result && !result->outcome.conflict && result->outcome.written > 0;
+    if (written) {
+      // This window reads its level again itself, below.
+      if (self) self->notifying_ = true;
+      bridge->notify_changed();
+      if (self) self->notifying_ = false;
+    }
+    if (!self) return;
+    FluxWindow& w = *self;
+    --w.busy_;
+    w.saving_ = false;
+    std::function<void()> next = std::exchange(w.after_save_, {});
+    w.update_enabled();
+    w.update_actions();
+    // Another level is on show: the result is not its business, but for the tree.
+    if (w.irradiation_ != irradiation || w.level_ != level) {
+      if (written) w.reload_tree();
+      return;
+    }
+    // The level was asked for again meanwhile: that read follows the save on
+    // the worker, so it shows what was saved, and what was to follow is moot.
+    const bool reread = generation != w.load_generation_;
+    if (reread) next = {};
+    const QString text = result ? save_text(result->outcome, result->saved_by, result->saved_utc)
+                                : save_error_text(result.error().what);
+    const bool failed = !result || result->outcome.conflict.has_value();
+    if (failed) return w.tell(text, true);
+    if (written) {
+      w.reload_tree();
+      Q_EMIT w.saved(irradiation, level);
+      if (!self) return;
+      // The monitors chosen here are the saved fit's now: nothing chosen
+      // gives them, and the reload says what that is.
+      w.chosen_.reset();
+      w.baseline_.reset();
+    }
+    if (next) {
+      // What was asked for takes the window elsewhere: said after its status.
+      next();
+      if (!self) return;
+      w.message_ = text;
+      w.message_details_.clear();
+      w.update_tooltip();
+      return w.refresh_status();
+    }
+    if (!written) return w.tell(text, false);
+    if (!reread) {
+      w.kept_skip_ = w.skip_;
+      w.start_load();  // the saved J and revisions, for the next save
+      w.kept_skip_generation_ = w.load_generation_;
+    }
+    w.tell(text, false);
+  };
+
   saving_ = true;
   ++busy_;
   update_enabled();
@@ -894,80 +1031,7 @@ void FluxWindow::save_then(std::function<void()> next) {
   status_error_ = false;
   style::set_tone(status_, style::Tone::Normal);
   status_->setText(status_text_);
-
-  const std::string software = QStringLiteral("pychron-ui %1").arg(app_version()).trimmed().toStdString();
-  // The job takes a copy of the fit and no `this`. Its result is delivered to
-  // the bridge, not to the window: a save that was written is told to the
-  // other windows also when this one is gone by then.
-  bridge_.run<SaveResult>(
-      &bridge_,
-      [fit = *fit_, skip = skip_, software](ps::IStore& store, const ps::Actor& actor) -> Result<SaveResult> {
-        auto outcome = pp::save_level(store, actor, fit, pp::SaveSelection{skip}, software);
-        if (!outcome) return fail(outcome.error());
-        SaveResult result{std::move(*outcome), {}, {}};
-        if (result.outcome.conflict) {
-          if (auto head = pp::flux_head_info(store, fit.irradiation, fit.level, result.outcome.conflict_hole)) {
-            result.saved_by = std::move(head->saved_by);
-            result.saved_utc = std::move(head->saved_utc);
-          }
-        }
-        return result;
-      },
-      [self = QPointer<FluxWindow>(this), bridge = &bridge_, generation = load_generation_, irradiation = irradiation_,
-       level = level_, next = std::move(next)](Result<SaveResult> result) {
-        const bool written = result && !result->outcome.conflict && result->outcome.written > 0;
-        if (written) {
-          // This window reads its level again itself, below.
-          if (self) self->notifying_ = true;
-          bridge->notify_changed();
-          if (self) self->notifying_ = false;
-        }
-        if (!self) return;
-        FluxWindow& w = *self;
-        --w.busy_;
-        w.saving_ = false;
-        w.update_enabled();
-        w.update_actions();
-        // Another level is on show (or this one is being read again): the
-        // result is not its business, but for the tree.
-        if (generation != w.load_generation_) {
-          if (written) w.reload_tree();
-          return;
-        }
-        if (!result) return w.say(tr("Not saved: %1").arg(QString::fromStdString(result.error().what)), true);
-        const pp::FluxSaveOutcome& outcome = result->outcome;
-        if (outcome.conflict) {
-          const QString position = QString::fromStdString(outcome.conflict_position);
-          const QString by = result->saved_by.empty() ? tr("someone else") : QString::fromStdString(result->saved_by);
-          return w.say(result->saved_utc.empty()
-                           ? tr("Not saved: %1 was saved by %2 since this level was loaded. Reload and fit again.")
-                                 .arg(position, by)
-                           : tr("Not saved: %1 was saved by %2 at %3 since this level was loaded. Reload and fit again.")
-                                 .arg(position, by, QString::fromStdString(result->saved_utc)),
-                       true);
-        }
-        QString text = written ? tr("Saved %1 positions (%2 unchanged)").arg(outcome.written).arg(outcome.unchanged)
-                               : tr("Nothing to save: %1 positions unchanged").arg(outcome.unchanged);
-        if (outcome.skipped > 0) text = tr("%1, %2 not saved").arg(text).arg(outcome.skipped);
-        if (written) {
-          w.reload_tree();
-          Q_EMIT w.saved(irradiation, level);
-          if (!self) return;
-          // The monitors chosen here are the saved fit's now: nothing chosen
-          // gives them, and the reload says what that is.
-          w.chosen_.reset();
-          w.baseline_.reset();
-        }
-        if (next) {
-          // What was asked for takes the window elsewhere: said in passing.
-          w.statusBar()->showMessage(text, kMessageMs);
-          return next();
-        }
-        if (!written) return w.say(text, false);
-        w.start_load();  // the saved J and revisions, for the next save
-        w.note_ = text;
-        w.note_generation_ = w.load_generation_;
-      });
+  bridge_.run<SaveResult>(&bridge_, std::move(job), std::move(done));
 }
 
 // ---- Export -----------------------------------------------------------------
@@ -981,7 +1045,7 @@ Result<void> FluxWindow::export_csv(const QString& path) {
   const auto size = static_cast<qint64>(text.size());
   if (!file.open(QIODevice::WriteOnly) || file.write(text.data(), size) != size || !file.commit())
     return fail(ErrorKind::Io, tr("could not write %1: %2").arg(path, file.errorString()).toStdString());
-  pychron::mark_as_user_file(std::filesystem::path(path.toStdString()));
+  pychron::mark_as_user_file(std::filesystem::path(path.toStdU16String()));
   return {};
 }
 
