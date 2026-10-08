@@ -1,17 +1,12 @@
 #include "flux_analysis_model.hpp"
 
-#include "pychron/processing/flux_view.hpp"
+#include "flux_model_support.hpp"
 
 namespace pychron::ui {
 
 namespace {
 
 namespace pp = pychron::processing;
-
-QString j_text(const std::optional<double>& v) {
-  const std::string s = pp::flux_j_text(v);
-  return s == "-" ? QString() : QString::fromStdString(s);
-}
 
 bool checkable(pp::AnalysisState s) { return s != pp::AnalysisState::NotReduced && s != pp::AnalysisState::NoJ; }
 
@@ -38,7 +33,7 @@ int FluxAnalysisModel::columnCount(const QModelIndex& parent) const { return par
 
 QVariant FluxAnalysisModel::headerData(int section, Qt::Orientation orientation, int role) const {
   if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-  static const char* const names[] = {"Use", "Record", "Tag", "J", "±", "State"};
+  static const char* const names[] = {QT_TR_NOOP("Use"), QT_TR_NOOP("Record"), QT_TR_NOOP("Tag"), QT_TR_NOOP("J"), QT_TR_NOOP("±"), QT_TR_NOOP("State")};
   return section >= 0 && section < ColumnCount ? tr(names[section]) : QVariant();
 }
 
@@ -61,8 +56,8 @@ QVariant FluxAnalysisModel::data(const QModelIndex& index, int role) const {
   switch (col) {
     case Record: return QString::fromStdString(a->record_id);
     case Tag: return QString::fromStdString(a->tag);
-    case J: return j_text(a->j);
-    case JErr: return j_text(a->j_err);
+    case J: return flux_j_cell(a->j);
+    case JErr: return flux_j_cell(a->j_err);
     case State:
       switch (a->state) {
         case pp::AnalysisState::Used: return tr("used");

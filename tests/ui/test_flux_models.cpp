@@ -213,6 +213,9 @@ class FluxModelsTest : public QObject {
     QCOMPARE(m.data(m.index(0, FluxMonitorModel::Fit), Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
     QVERIFY(!(m.flags(m.index(0, FluxMonitorModel::Fit)) & Qt::ItemIsUserCheckable));
     QCOMPARE(m.hole_at(1), 7);
+    QCOMPARE(m.hole_at(2), 0);
+    QCOMPARE(m.row_of(7), 1);
+    QCOMPARE(m.row_of(3), -1);  // an unknown is no monitor row
 
     FluxUnknownModel um;
     um.set_inputs(&inputs);
@@ -220,6 +223,8 @@ class FluxModelsTest : public QObject {
     QCOMPARE(cell(um, 0, FluxUnknownModel::Hole), QString("3"));
     QCOMPARE(cell(um, 0, FluxUnknownModel::PredJ), QString());
     QCOMPARE(cell(um, 0, FluxUnknownModel::Dev), QString());
+    QCOMPARE(um.hole_at(0), 3);
+    QCOMPARE(um.hole_at(1), 0);
   }
 
   void unknown_cells_and_save_box() {
@@ -247,6 +252,9 @@ class FluxModelsTest : public QObject {
     QCOMPARE(spy.at(0).at(0).toInt(), 4);
     QCOMPARE(spy.at(0).at(1).toBool(), false);
     QCOMPARE(m.data(m.index(0, FluxUnknownModel::Save), Qt::CheckStateRole).toInt(), int(Qt::Checked));
+    QVERIFY(!m.setData(m.index(0, FluxUnknownModel::Save), Qt::Unchecked, Qt::EditRole));
+    QVERIFY(!m.setData(m.index(0, FluxUnknownModel::Hole), Qt::Unchecked, Qt::CheckStateRole));
+    QCOMPARE(spy.count(), 1);
   }
 
   void analysis_states_and_use_box() {
@@ -262,6 +270,9 @@ class FluxModelsTest : public QObject {
     QCOMPARE(m.rowCount(), 0);
     m.set_position(&p);
     QCOMPARE(m.rowCount(), 6);
+    QCOMPARE(cell(m, 5, FluxAnalysisModel::J), QString("1.0000e-03"));
+    QCOMPARE(cell(m, 5, FluxAnalysisModel::State), QString("no J"));
+    QCOMPARE(m.data(m.index(5, FluxAnalysisModel::Use), Qt::ToolTipRole).toString(), QString("No J"));
     const QStringList headers{"Use", "Record", "Tag", "J", "±", "State"};
     for (int c = 0; c < headers.size(); ++c)
       QCOMPARE(m.headerData(c, Qt::Horizontal).toString(), headers[c]);
@@ -293,6 +304,10 @@ class FluxModelsTest : public QObject {
     QCOMPARE(spy.at(1).at(0).toString(), QString("c"));
     QCOMPARE(spy.at(1).at(1).toBool(), true);
     QVERIFY(!m.setData(m.index(5, FluxAnalysisModel::Use), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(spy.count(), 2);
+    // neither another role nor another column is a check-box click
+    QVERIFY(!m.setData(m.index(0, FluxAnalysisModel::Use), Qt::Unchecked, Qt::EditRole));
+    QVERIFY(!m.setData(m.index(0, FluxAnalysisModel::Tag), Qt::Unchecked, Qt::CheckStateRole));
     QCOMPARE(spy.count(), 2);
     m.set_position(nullptr);
     QCOMPARE(m.rowCount(), 0);

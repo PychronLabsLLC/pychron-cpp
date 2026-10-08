@@ -147,6 +147,7 @@ if(TARGET pychron_processing_store)
     src/entry_actions.cpp
     src/entry_bridge.cpp
     src/flux_analysis_model.cpp
+    src/flux_model_support.cpp
     src/flux_monitor_model.cpp
     src/flux_unknown_model.cpp
     src/holder_view.cpp
@@ -161,6 +162,7 @@ if(TARGET pychron_processing_store)
     src/entry_bridge.hpp
     src/entry_headers.hpp
     src/flux_analysis_model.hpp
+    src/flux_model_support.hpp
     src/flux_monitor_model.hpp
     src/flux_unknown_model.hpp
     src/holder_view.hpp
