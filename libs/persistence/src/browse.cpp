@@ -128,6 +128,7 @@ BrowseRow row_from(const Row& r) {
   s.mass_spectrometer = to_std(r.value("mass_spectrometer"));
   s.signals_state = to_std(r.value("signals_state"));
   b.sample = to_std(r.value("sample"));
+  b.sample_uuid = opt_uuid(r.value("sample_uuid"));
   b.project = to_std(r.value("project"));
   b.material = to_std(r.value("material"));
   b.principal_investigator = to_std(r.value("principal_investigator"));

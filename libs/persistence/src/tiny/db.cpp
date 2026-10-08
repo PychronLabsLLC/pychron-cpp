@@ -85,6 +85,13 @@ Result<QVariantHash> parse_config(const StoreConfig& config, Dialect& dialect) {
     c["foreign_key_constraints"] = true;
     c["check_database_exists"] = false;
     c["options"] = "QSQLITE_BUSY_TIMEOUT=10000";
+    // TinyORM's default for SQLite is to try every text value it reads as a
+    // date and hand back a QDateTime when one parses. The store reads its
+    // times as text itself (sql::ts), so that bought nothing and cost twice:
+    // a name or a note that reads like a date came back reworded, and the
+    // attempt (a local-time conversion per value, uuids and all) was most of
+    // the time of loading an analysis.
+    c["return_qdatetime"] = false;
     return c;
   }
   if (url.rfind("postgresql://", 0) == 0 || url.rfind("postgres://", 0) == 0) {

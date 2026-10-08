@@ -506,6 +506,10 @@ struct BrowseRow {
   std::optional<int> position;
   std::optional<double> extract_value;
   std::string extract_units;
+  // The sample itself, where the analysis has one (`sample` is its name):
+  // the identifier's own, else its position's. Several samples may share a
+  // name, one per project; this says which.
+  std::optional<Uuid> sample_uuid = std::nullopt;
 };
 
 struct BrowseResult {

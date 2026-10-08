@@ -116,6 +116,13 @@ struct SampleQuery {
   std::string text;  // case-insensitive substring of the name; empty: any
   std::optional<Uuid> principal_investigator, project, material;
   int limit = 500;
+  // This one sample. For a caller that knows which it wants: `text` is a
+  // search, a monitor's name is inside hundreds of others, and the name
+  // alone is one sample per project that has it.
+  std::optional<Uuid> uuid = std::nullopt;
+  // n_positions and n_analyses. They take a pass over the analyses; off,
+  // both read 0.
+  bool counts = true;
 };
 
 // A package (table `irradiation`, E13).

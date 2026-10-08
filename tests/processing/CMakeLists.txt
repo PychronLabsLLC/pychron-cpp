@@ -2,7 +2,7 @@
 # and the store-source suite need the experiment and persistence libraries and
 # build only when their adapters exist.
 file(GLOB PYCHRON_PROCESSING_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
-list(FILTER PYCHRON_PROCESSING_TESTS EXCLUDE REGEX "test_(record_source|store_source|flux_store)\\.cpp$")
+list(FILTER PYCHRON_PROCESSING_TESTS EXCLUDE REGEX "test_(record_source|store_source|flux_store|store_load_timing)\\.cpp$")
 
 add_executable(pychron_processing_tests ${PYCHRON_PROCESSING_TESTS})
 target_include_directories(pychron_processing_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -18,7 +18,7 @@ if(TARGET pychron_processing_records)
 endif()
 
 if(TARGET pychron_processing_store)
-  add_executable(pychron_processing_store_tests test_store_source.cpp test_flux_store.cpp)
+  add_executable(pychron_processing_store_tests test_store_source.cpp test_flux_store.cpp test_store_load_timing.cpp)
   # The flux store tests run on every engine the persistence tests do; their
   # database fixture (tests/persistence/store_fixture.hpp) makes a PostgreSQL
   # schema through persistence's own connection, so sees TinyORM and Qt.

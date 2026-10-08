@@ -846,8 +846,15 @@ Result<std::vector<MaterialRow>> materials(Db& db) {
 
 Result<std::vector<SampleRow>> samples(Db& db, Dialect dialect, const SampleQuery& q) {
   QString sql = sql::kSamples.arg(sql::ts(dialect, QStringLiteral("s.updated_utc")),
-                                  geom_read(dialect, QStringLiteral("s.geom")));
+                                  geom_read(dialect, QStringLiteral("s.geom")),
+                                  q.counts ? sql::kSampleCounts : QString(),
+                                  q.counts ? sql::kSampleCountColumns : sql::kSampleNoCountColumns,
+                                  q.counts ? sql::kSampleCountJoins : QString());
   Bindings b;
+  if (q.uuid) {
+    sql += QStringLiteral(" AND s.uuid = ?");
+    b << qv(*q.uuid);
+  }
   if (!q.text.empty()) {
     QString pattern = qs(q.text).toLower();
     pattern.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
