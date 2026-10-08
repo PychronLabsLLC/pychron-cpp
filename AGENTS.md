@@ -180,6 +180,17 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   so retuning the example or editing that script means editing those tests.
   `[defaults] seed` is the one seed of the lab: `feed_beam_from_line` gives
   it to the beam when it is not `SimSettings`' default.
+- `libs/metrics` (the Prometheus endpoint, `[metrics]`) is Qt-free and builds
+  everywhere; `-DPYCHRON_METRICS=OFF` skips it and the exporters. Metrics come
+  from bus events (`CoreExporter`, `ExperimentMetrics` in `libs/experiment`),
+  not from instrumenting the control path. Three rules: a label value is a
+  configured name or an enumeration, never a run id, an identifier or a
+  message; a timestamp gauge is real time (`UnixClock`) and a duration is a
+  difference of event `ts`, because the line's clock may be simulated; a
+  metric added to an exporter needs a panel in
+  `packaging/observability/grafana/dashboards`, and a renamed one its panel
+  renamed (`MetricsPackaging` in `tests/integration` fails otherwise). User
+  guide: `docs/observability.md`.
 - Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
 
 Compilers disagree about undefined behaviour: a test that passes under clang

@@ -92,6 +92,12 @@ browser (or "Export table..." in a figure, or `elctl export`) writes the
 analyses as a 40Ar/39Ar data report after Schaen et al. (2021), CSV or JSON;
 see [docs/export.md](docs/export.md).
 
+A lab's monitoring box (Prometheus and Grafana) can follow an instrument:
+`[metrics]` in `extraction_line.toml` publishes pressures, valve states, run
+and queue progress and the application's own health, and
+`packaging/observability` holds the dashboards and the alert for the box;
+see [docs/observability.md](docs/observability.md).
+
 Run the example experiment queue from the command line:
 
 ```bash

@@ -141,7 +141,8 @@ The valves, switches, gauges, heaters, pumps and the controllers that drive
 them. Example: `configs/examples/extraction_line.toml`. Sections (anything
 else at top level is an error): `[system]`, `[logging]`, `[transports.*]`,
 `[drivers.*]`, `[[valves]]`, `[[manual_valves]]`, `[[switches]]`,
-`[[gauges]]`, `[[heaters]]`, `[[pipettes]]`, `[cryo]`, `[aliases]`, `[sim]`.
+`[[gauges]]`, `[[heaters]]`, `[[pipettes]]`, `[cryo]`, `[aliases]`, `[sim]`,
+`[metrics]`.
 
 ### [system] (required)
 
@@ -160,6 +161,17 @@ else at top level is an error): `[system]`, `[logging]`, `[transports.*]`,
 | `default_level` | `trace`, `debug`, `info`, `warn`, `error` | `info` | |
 | `echo_stderr` | true/false | false | also print to the terminal |
 | `[logging.levels]` | text = level | none | per-logger overrides by name pattern: `"*.wire" = "trace"` shows every transport's bytes; each transport logs to `<name>.wire`. `"scheduler"` and `"extraction_line"` are the line's own loggers |
+
+### [metrics] (optional)
+
+The numbers the lab's monitoring box collects. Off unless enabled; the guide
+is [observability](../observability.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | true/false | false | publish metrics at `http://<this computer>:<port>/metrics` |
+| `bind` | IP address | `"0.0.0.0"` | which of the computer's addresses to listen on; `"127.0.0.1"` is this computer only |
+| `port` | whole number 1 to 65535 | 9464 | |
 
 ### [transports.\<name\>]
 

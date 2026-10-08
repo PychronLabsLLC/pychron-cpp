@@ -1,0 +1,104 @@
+# Copy to /etc/grafana/provisioning/alerting/ on the box.
+#
+# The one thing the application cannot report is that it has gone. These two
+# rules fire when it goes while a queue is running:
+#
+#   PychronGone   the scrape fails, and a queue was running at the last
+#                 scrape that worked (the application crashed or froze, the
+#                 computer is off, the network is down)
+#   PychronStuck  the application answers, but its scheduler has not run for
+#                 a minute (the endpoint has a thread of its own, so a stuck
+#                 scheduler still answers scrapes)
+#
+# Not caught: a queue stuck inside one run while the scheduler keeps going.
+#
+# PYCHRON_PROM_UID is the uid of the box's Prometheus data source; Grafana
+# reads it from its environment (docs/observability.md says where to set it).
+# Both rules go to Grafana's default contact point.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: pychron
+    folder: Pychron
+    interval: 1m
+    rules:
+      - uid: pychron-gone
+        title: PychronGone
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pychron on {{ $labels.instrument }} stopped answering while a queue was running."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: ${PYCHRON_PROM_UID}
+            model:
+              refId: A
+              instant: true
+              # last_over_time, not max_over_time over a short window: that
+              # would resolve by itself once the old samples aged out, with
+              # the application still gone.
+              expr: "up{job=\"pychron\"} == 0 and on(instance) last_over_time(pychron_queue_active[24h]) == 1"
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              # A series from A carries the value of `up`, which is 0: any
+              # series at all is the alarm.
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [-1]
+      - uid: pychron-stuck
+        title: PychronStuck
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pychron on {{ $labels.instrument }} is running a queue and its scheduler has stopped."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: ${PYCHRON_PROM_UID}
+            model:
+              refId: A
+              instant: true
+              expr: "pychron_queue_active == 1 and (time() - pychron_scheduler_heartbeat_timestamp_seconds) > 60"
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
