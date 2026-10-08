@@ -56,7 +56,7 @@ const QStringList& font_families() {
   return families;
 }
 
-// "key == value", "key != value" or "key" (a bool).
+// "key == value", "key != value", "key in v1|v2|..." or "key" (a bool).
 bool condition_holds(const std::string& cond, const pp::Options& o) {
   if (cond.empty()) return true;
   auto trim = [](std::string s) {
@@ -71,6 +71,19 @@ bool condition_holds(const std::string& cond, const pp::Options& o) {
     if (!o.schema() || !o.schema()->field(key)) return true;
     const bool eq = o.get_string(key) == value;
     return op[0] == '=' ? eq : !eq;
+  }
+  if (const auto p = cond.find(" in "); p != std::string::npos) {
+    const std::string key = trim(cond.substr(0, p));
+    if (!o.schema() || !o.schema()->field(key)) return true;
+    const std::string have = o.get_string(key);
+    const std::string list = cond.substr(p + 4);
+    std::size_t start = 0;
+    for (;;) {
+      const auto bar = list.find('|', start);
+      if (trim(list.substr(start, bar == std::string::npos ? bar : bar - start)) == have) return true;
+      if (bar == std::string::npos) return false;
+      start = bar + 1;
+    }
   }
   const std::string key = trim(cond);
   if (!o.schema() || !o.schema()->field(key)) return true;

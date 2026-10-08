@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "pychron/processing/flux_fit.hpp"
+#include "pychron/processing/options.hpp"
 
 namespace pychron::processing {
 
@@ -50,5 +51,16 @@ std::string csv_field(std::string_view text);
 // The head line, and a row for every position of the fit; lines end in CRLF.
 std::string flux_csv_header();
 std::string flux_csv_rows(const LevelFit& fit);
+
+// ---- The options as a schema ------------------------------------------------
+// So the schema-driven OptionsEditor and PresetBar can edit a flux fit's options.
+// The keys are model.kind, model.weighted, model.neighbors, model.interpolation,
+// model.axis, model.degree, mean.kind, mean.error and fit.error, with the
+// spellings `elctl flux fit` accepts. One shared instance; kind "flux", version 1.
+SchemaPtr flux_options_schema();
+Options to_options(const FluxOptions& options);
+// A field the chosen model does not use keeps its value and is converted too.
+// Error (Config): sd as the error of a fitted surface, the math layer's text.
+Result<FluxOptions> flux_options_from(const Options& options);
 
 }  // namespace pychron::processing

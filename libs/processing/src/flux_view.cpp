@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <sstream>
 
+#include "schema_builder.hpp"
+
 namespace pychron::processing {
 
 namespace r = pychron::reduction;
@@ -203,6 +205,95 @@ std::string flux_csv_rows(const LevelFit& fit) {
     out += "\r\n";
   }
   return out;
+}
+
+namespace {
+
+std::string_view axis_name(r::Axis a) { return a == r::Axis::Y ? "y" : "x"; }
+
+}  // namespace
+
+SchemaPtr flux_options_schema() {
+  using namespace detail;
+  static const SchemaPtr schema = [] {
+    std::vector<std::string> models, interpolations, errors = {"sem", "msem", "sd"};
+    for (const auto k : {r::ModelKind::Plane, r::ModelKind::Bowl, r::ModelKind::WeightedMean, r::ModelKind::Matching,
+                         r::ModelKind::NearestNeighbors, r::ModelKind::Bracketing, r::ModelKind::LeastSquares1D,
+                         r::ModelKind::WeightedMean1D, r::ModelKind::Bracketing1D})
+      models.emplace_back(model_name(k));
+    for (const auto i : {r::Interpolation::WeightedMean, r::Interpolation::Average, r::Interpolation::Linear})
+      interpolations.emplace_back(interpolation_name(i));
+    const auto help = [](FieldSpec f, std::string text) {
+      f.help = std::move(text);
+      return f;
+    };
+    auto s = std::const_pointer_cast<Schema>(make_schema(
+        "flux", "Flux",
+        {help(choice("model.kind", "Model", "Model", models, "plane"),
+              "How the monitors' mean J becomes a J at every position."),
+         help(when(boolean("model.weighted", "Weighted fit", "Model", false), "model.kind in plane|bowl|ls1d"),
+              "Weight the fit by 1 / j_err^2."),
+         help(when(integer("model.neighbors", "Neighbours", "Model", 2, 1, 64), "model.kind == nearest"),
+              "How many of the nearest monitors each position takes the inverse-variance mean of."),
+         help(when(choice("model.interpolation", "Interpolation", "Model", interpolations, "weighted"),
+                   "model.kind == bracketing"),
+              "How a position between its two nearest monitors is formed: weighted, average or linear."),
+         help(when(choice("model.axis", "Axis", "Model", {"x", "y"}, "x"), "model.kind in ls1d|mean1d|bracketing1d"),
+              "The axis the one-dimensional models run along."),
+         help(when(integer("model.degree", "Degree", "Model", 1, 1, 4), "model.kind == ls1d"),
+              "The degree of the polynomial along the axis, 1 to 4."),
+         help(choice("mean.kind", "Mean", "Errors", {"arithmetic", "weighted"}, "arithmetic"),
+              "How the analyses of one monitor position are averaged (J, not F)."),
+         help(choice("mean.error", "Error of the mean", "Errors", errors, "msem"),
+              "The error of that mean; msem is the SEM scaled by sqrt(MSWD) when the MSWD is above 1."),
+         help(when(choice("fit.error", "Error of the fit", "Errors", errors, "msem"),
+                   "model.kind in plane|bowl|weighted-mean|ls1d|mean1d"),
+              "The error of the predicted J: sem or msem of a fitted surface, sem, msem or sd of a mean model.")}));
+    s->version = 1;
+    s->factory_presets = {{"Default", ""}, {"Weighted plane", "[model]\nweighted = true\n"}};
+    return SchemaPtr(s);
+  }();
+  return schema;
+}
+
+Options to_options(const FluxOptions& o) {
+  Options out(flux_options_schema());
+  // Every value is one of its field's own choices or in range, so set cannot refuse.
+  (void)out.set("model.kind", std::string(model_name(o.fit.kind)));
+  (void)out.set("model.weighted", o.fit.weighted);
+  (void)out.set("model.neighbors", std::int64_t{o.fit.n_neighbors});
+  (void)out.set("model.interpolation", std::string(interpolation_name(o.fit.interpolation)));
+  (void)out.set("model.axis", std::string(axis_name(o.fit.axis)));
+  (void)out.set("model.degree", std::int64_t{o.fit.degree});
+  (void)out.set("mean.kind", std::string(r::to_string(o.mean)));
+  (void)out.set("mean.error", std::string(r::to_string(o.mean_error)));
+  (void)out.set("fit.error", std::string(r::to_string(o.fit.error)));
+  return out;
+}
+
+Result<FluxOptions> flux_options_from(const Options& options) {
+  FluxOptions o;
+  const auto kind = parse_model_kind(options.get_string("model.kind"));
+  const auto mean = r::parse_mean_kind(options.get_string("mean.kind"));
+  const auto mean_error = r::parse_mean_error_kind(options.get_string("mean.error"));
+  const auto fit_error = r::parse_mean_error_kind(options.get_string("fit.error"));
+  if (!kind) return fail(ErrorKind::Config, "flux: unknown model '" + options.get_string("model.kind") + "'");
+  if (!mean) return fail(ErrorKind::Config, "flux: unknown mean '" + options.get_string("mean.kind") + "'");
+  if (!mean_error || !fit_error) return fail(ErrorKind::Config, "flux: unknown error kind");
+  o.fit.kind = *kind;
+  o.fit.weighted = options.get_bool("model.weighted");
+  o.fit.n_neighbors = static_cast<int>(options.get_int("model.neighbors"));
+  const std::string interpolation = options.get_string("model.interpolation");
+  for (const auto i : {r::Interpolation::WeightedMean, r::Interpolation::Average, r::Interpolation::Linear})
+    if (interpolation_name(i) == interpolation) o.fit.interpolation = i;
+  o.fit.axis = options.get_string("model.axis") == "y" ? r::Axis::Y : r::Axis::X;
+  o.fit.degree = static_cast<int>(options.get_int("model.degree"));
+  o.mean = *mean;
+  o.mean_error = *mean_error;
+  o.fit.error = *fit_error;
+  if (r::is_least_squares(o.fit.kind) && o.fit.error == r::MeanErrorKind::Sd)
+    return fail(ErrorKind::Config, "flux: sd is not an error kind of a fitted surface");
+  return o;
 }
 
 }  // namespace pychron::processing

@@ -1399,6 +1399,55 @@ class TestDataWindows : public QObject {
     QCOMPARE(font->findText(QStringLiteral("not installed"), Qt::MatchContains), -1);
   }
 
+  void enabled_when_in_a_list() {
+    auto schema = std::make_shared<pp::Schema>();
+    schema->kind = "test.in";
+    schema->title = "In";
+    pp::FieldSpec a;
+    a.key = "a";
+    a.label = "A";
+    a.section = "S";
+    a.type = pp::FieldType::Enum;
+    a.choices = {"x", "y", "z"};
+    a.default_value = std::string("x");
+    pp::FieldSpec flag = a;
+    flag.key = "f";
+    flag.type = pp::FieldType::Bool;
+    flag.choices.clear();
+    flag.default_value = true;
+    pp::FieldSpec in = flag;
+    in.key = "b";
+    in.type = pp::FieldType::Int;
+    in.default_value = std::int64_t{1};
+    in.enabled_when = "a in x|z";
+    pp::FieldSpec eq = in;
+    eq.key = "c";
+    eq.enabled_when = "a == y";
+    pp::FieldSpec ne = in;
+    ne.key = "d";
+    ne.enabled_when = "a != y";
+    pp::FieldSpec bare = in;
+    bare.key = "e";
+    bare.enabled_when = "f";
+    schema->fields = {a, flag, in, eq, ne, bare};
+    OptionsEditor e;
+    e.set_options(pp::Options(schema));
+    auto* combo = qobject_cast<QComboBox*>(e.editor(QStringLiteral("a")));
+    QVERIFY(combo);
+    auto enabled = [&](const char* key) { return e.editor(QString::fromLatin1(key))->isEnabled(); };
+    for (const char* v : {"x", "z"}) {
+      combo->setCurrentText(QString::fromLatin1(v));
+      QVERIFY2(enabled("b"), v);
+      QVERIFY(!enabled("c"));
+      QVERIFY(enabled("d"));
+    }
+    combo->setCurrentText(QStringLiteral("y"));
+    QVERIFY(!enabled("b"));
+    QVERIFY(enabled("c"));
+    QVERIFY(!enabled("d"));
+    QVERIFY(enabled("e"));
+  }
+
   void main_window_opens_and_tears_down_data_windows() {
     auto line = ui::test::make_example_line();
     QTemporaryDir dir;

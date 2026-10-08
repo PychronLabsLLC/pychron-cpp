@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -195,4 +196,111 @@ TEST(FluxText, CsvIsRfc4180) {
   ASSERT_EQ(lines.size(), 2u);
   for (const auto& line : lines) EXPECT_EQ(count_fields(line), 19u) << line;
   EXPECT_NE(lines[0].find("\"FC-2, \"\"new\"\"\""), std::string::npos) << lines[0];
+}
+
+// ---- the options schema ------------------------------------------------------
+
+namespace {
+
+const std::vector<r::ModelKind> kAllKinds = {
+    r::ModelKind::Plane,        r::ModelKind::Bowl,           r::ModelKind::WeightedMean,
+    r::ModelKind::Matching,     r::ModelKind::NearestNeighbors, r::ModelKind::Bracketing,
+    r::ModelKind::LeastSquares1D, r::ModelKind::WeightedMean1D, r::ModelKind::Bracketing1D};
+
+}  // namespace
+
+TEST(FluxSchema, SharedInstanceWithTheFixedIdentity) {
+  const auto s = pp::flux_options_schema();
+  ASSERT_TRUE(s);
+  EXPECT_EQ(s, pp::flux_options_schema());
+  EXPECT_EQ(s->kind, "flux");
+  EXPECT_EQ(s->title, "Flux");
+  EXPECT_EQ(s->version, 1);
+}
+
+TEST(FluxSchema, DefaultsAreFluxOptionsDefaults) {
+  const auto o = pp::flux_options_from(pp::Options(pp::flux_options_schema()));
+  ASSERT_TRUE(o.has_value());
+  EXPECT_EQ(*o, pp::FluxOptions{});
+}
+
+TEST(FluxSchema, RoundTripForEveryModel) {
+  for (const auto kind : kAllKinds) {
+    pp::FluxOptions o;
+    o.fit.kind = kind;
+    o.fit.weighted = true;
+    o.fit.error = r::MeanErrorKind::Sem;
+    o.fit.n_neighbors = 5;
+    o.fit.interpolation = r::Interpolation::Linear;
+    o.fit.axis = r::Axis::Y;
+    o.fit.degree = 3;
+    o.mean = r::MeanKind::Weighted;
+    o.mean_error = r::MeanErrorKind::Sd;
+    const auto back = pp::flux_options_from(pp::to_options(o));
+    ASSERT_TRUE(back.has_value()) << back.error().what;
+    EXPECT_EQ(*back, o) << static_cast<int>(kind);
+  }
+}
+
+TEST(FluxSchema, SdWithASurfaceIsTheMathLayersError) {
+  for (const auto kind : {r::ModelKind::Plane, r::ModelKind::Bowl, r::ModelKind::LeastSquares1D}) {
+    pp::FluxOptions o;
+    o.fit.kind = kind;
+    o.fit.error = r::MeanErrorKind::Sd;
+    const auto got = pp::flux_options_from(pp::to_options(o));
+    ASSERT_FALSE(got.has_value());
+    EXPECT_NE(got.error().what.find("sd is not an error kind of a fitted surface"), std::string::npos);
+  }
+  pp::FluxOptions m;
+  m.fit.kind = r::ModelKind::WeightedMean;
+  m.fit.error = r::MeanErrorKind::Sd;
+  EXPECT_TRUE(pp::flux_options_from(pp::to_options(m)).has_value());
+}
+
+TEST(FluxSchema, FactoryPresets) {
+  const auto schema = pp::flux_options_schema();
+  const auto dir = std::filesystem::temp_directory_path() / "pp_flux_schema_presets";
+  std::filesystem::remove_all(dir);
+  const pp::PresetStore store(dir);
+  const auto list = store.list(schema);
+  std::vector<std::string> names;
+  for (const auto& p : list) names.push_back(p.name);
+  EXPECT_NE(std::find(names.begin(), names.end(), "Default"), names.end());
+  EXPECT_NE(std::find(names.begin(), names.end(), "Weighted plane"), names.end());
+  const auto loaded = store.load(schema, "Weighted plane");
+  ASSERT_TRUE(loaded.has_value());
+  const auto o = pp::flux_options_from(loaded->options);
+  ASSERT_TRUE(o.has_value());
+  EXPECT_TRUE(o->fit.weighted);
+  EXPECT_EQ(o->fit.kind, r::ModelKind::Plane);
+  std::filesystem::remove_all(dir);
+}
+
+TEST(FluxSchema, EnabledWhenNamesOnlyKnownKeysAndValues) {
+  const auto schema = pp::flux_options_schema();
+  int checked = 0;
+  for (const auto& f : schema->fields) {
+    if (f.enabled_when.empty()) continue;
+    const auto in = f.enabled_when.find(" in ");
+    const auto eq = f.enabled_when.find(" == ");
+    ASSERT_TRUE(in != std::string::npos || eq != std::string::npos) << f.enabled_when;
+    const auto op = std::min(in, eq);
+    const std::string key = f.enabled_when.substr(0, op);
+    const std::string rest = f.enabled_when.substr(op + (op == in ? 4 : 4));
+    const auto* target = schema->field(key);
+    ASSERT_TRUE(target) << f.enabled_when;
+    std::vector<std::string> values;
+    std::size_t start = 0;
+    for (;;) {
+      const auto bar = rest.find('|', start);
+      values.push_back(rest.substr(start, bar == std::string::npos ? bar : bar - start));
+      if (bar == std::string::npos) break;
+      start = bar + 1;
+    }
+    for (const auto& v : values)
+      EXPECT_NE(std::find(target->choices.begin(), target->choices.end(), v), target->choices.end())
+          << f.enabled_when;
+    ++checked;
+  }
+  EXPECT_GE(checked, 6);
 }
