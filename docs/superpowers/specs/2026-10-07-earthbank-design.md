@@ -810,12 +810,12 @@ for `elctl` and the UI to show before the export.
 `<config>/earthbank/profiles.toml`:
 
 ```toml
-active = "umelb"
+active = "mylab"
 
-[profiles.umelb]
+[profiles.mylab]
 base_url = "https://ausgeochem.auscope.org.au"
 username = "a.user"
-institution_id = 193203        # University of Melbourne [legacy]
+institution_id = 1001          # your institution's id on EarthBank
 data_package_id = 12345
 ```
 
