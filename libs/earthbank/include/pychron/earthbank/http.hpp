@@ -43,31 +43,42 @@ struct HttpResponse {
 // Blocking: `send` returns when the answer is in, or when it is known that
 // none will be. It is called from one thread at a time.
 //
-// An answer of any status is a value. An error means no answer:
-//   - `ErrorKind::Timeout`: the request went out, or may have, and nothing
-//     came back within `timeout`;
+// One call is one request on the wire, at most. An implementation never
+// sends a request a second time on its own: not after a timeout, and not
+// when a connection it had kept open turns out to be closed (a client
+// library that retries then must have that turned off). The service has no
+// way to ask whether a record exists, so a POST sent twice may be a record
+// made twice, and whether to try again is the caller's to decide. Nor does
+// it follow a redirect: a 3xx is returned as the answer it is.
+//
+// An answer of any status is a value, 301, 401 and 500 included. An error
+// means no answer:
+//   - `ErrorKind::Timeout`: nothing came back within `timeout`;
 //   - `ErrorKind::Io`: the server was not reached or the connection was lost
-//     (no route, a name that does not resolve, TLS, a reset). When the client
-//     knows that nothing of the request left this machine, the error's `code`
-//     is kHttpNotSent;
-//   - anything else as its kind says (`Config` for a URL that is not one).
-// The difference matters for a write: the service has no way to ask whether a
-// record exists, so a POST whose answer never came is in doubt, not failed
-// (request_may_have_arrived). An implementation puts no header value and
-// nothing of a body into an error's `what`.
+//     (no route, a name that does not resolve, TLS, a reset);
+//   - `ErrorKind::Config`: the request was never formed (a URL that is not
+//     one, a scheme the client does not speak). Nothing was sent.
+// With a `Timeout` or an `Io`, the error's `code` is kHttpNotSent when the
+// client knows that nothing of the request left this machine: the connection
+// was refused, the name did not resolve, the handshake failed, or the time
+// ran out before there was a connection. When it is not sure, the code is
+// not set. The difference matters for a write: a POST whose answer never
+// came is in doubt, not failed (request_may_have_arrived). An implementation
+// puts no header value and nothing of a body into an error's `what`.
 class IHttpClient {
  public:
   virtual ~IHttpClient() = default;
   virtual Result<HttpResponse> send(const HttpRequest& request) = 0;
 };
 
-// The `code` of an error from `send` when the request never left: the
-// connection was refused, the name did not resolve, the handshake failed.
-// What such a request asked for was not done.
+// The `code` of a `Timeout` or `Io` error from `send` when the request never
+// left. What such a request asked for was not done.
 inline constexpr std::string_view kHttpNotSent = "http_not_sent";
 
 // Whether the server may have acted on a request that `send` failed with
-// `error`: true unless the client said it was never sent. A timeout is true.
+// `error`: false when the client said it was never sent (kHttpNotSent) or
+// never formed (`Config`), true for everything else. A plain timeout is
+// true, and so is a connection that was lost.
 bool request_may_have_arrived(const Error& error);
 
 // `text` as one component of a URL (RFC 3986): letters, digits and `-._~`
@@ -77,12 +88,14 @@ std::string url_encode(std::string_view text);
 
 // `url` with `params` as its query, each key and value encoded, in the order
 // given: `with_query(base + "/api/core/materials", {{"name.equals", name}})`.
-// A `url` that has a query already gets these after it. No params: `url`.
+// A `url` that has a query already gets these after it, and one with a
+// fragment gets them before it. No params: `url`.
 std::string with_query(std::string_view url,
                        std::initializer_list<std::pair<std::string_view, std::string>> params);
 
 // The path of a URL, without scheme, host, query or fragment:
-// `/api/core/materials`. A URL with no path has the path `/`.
+// `/api/core/materials`. A URL with no path has the path `/`. A `://` after
+// the first `/`, `?` or `#` is not a scheme's: `/x?u=http://h/y` is `/x`.
 std::string url_path(std::string_view url);
 
 // The value of a header, its name compared without case; the first if the

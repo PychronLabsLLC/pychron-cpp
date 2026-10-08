@@ -30,7 +30,9 @@ bool same_without_case(std::string_view a, std::string_view b) {
 
 }  // namespace
 
-bool request_may_have_arrived(const Error& error) { return error.code != kHttpNotSent; }
+bool request_may_have_arrived(const Error& error) {
+  return error.kind != ErrorKind::Config && error.code != kHttpNotSent;
+}
 
 std::string url_encode(std::string_view text) {
   static constexpr std::string_view kHex = "0123456789ABCDEF";
@@ -51,9 +53,12 @@ std::string url_encode(std::string_view text) {
 
 std::string with_query(std::string_view url,
                        std::initializer_list<std::pair<std::string_view, std::string>> params) {
-  std::string out(url);
+  // The fragment is last in a URL: the query is written before it.
+  const std::size_t hash = url.find('#');
+  const std::string_view fragment = hash == std::string_view::npos ? std::string_view{} : url.substr(hash);
+  std::string out(url.substr(0, hash));
   // '?' opens the query, '&' goes on with one; a url ending in either needs neither.
-  char separator = url.find('?') == std::string_view::npos ? '?' : '&';
+  char separator = out.find('?') == std::string::npos ? '?' : '&';
   for (const auto& [key, value] : params) {
     if (out.empty() || (out.back() != '?' && out.back() != '&')) out.push_back(separator);
     separator = '&';
@@ -61,13 +66,17 @@ std::string with_query(std::string_view url,
     out.push_back('=');
     out += url_encode(value);
   }
+  out += fragment;
   return out;
 }
 
 std::string url_path(std::string_view url) {
-  if (const std::size_t scheme = url.find("://"); scheme != std::string_view::npos) {
+  // A scheme is there when `://` comes before any `/`, `?` or `#`: the same
+  // three characters further on are part of a path or of a query's value.
+  const std::size_t first = url.find_first_of("/?#");
+  if (first != std::string_view::npos && first > 0 && url[first - 1] == ':' && url.substr(first, 2) == "//") {
     // Past the authority: it ends at the first of these.
-    const std::size_t end = url.find_first_of("/?#", scheme + 3);
+    const std::size_t end = url.find_first_of("/?#", first + 2);
     url = end == std::string_view::npos ? std::string_view{} : url.substr(end);
   }
   url = url.substr(0, url.find_first_of("?#"));

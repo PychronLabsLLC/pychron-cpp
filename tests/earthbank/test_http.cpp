@@ -1,4 +1,5 @@
 #include <chrono>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 
@@ -51,6 +52,11 @@ TEST(Http, WithQuery) {
   EXPECT_EQ(with_query("/x?page=0", {{"size", "20"}}), "/x?page=0&size=20");
   EXPECT_EQ(with_query("/x?", {{"size", "20"}}), "/x?size=20");
   EXPECT_EQ(with_query("/x?page=0", {}), "/x?page=0");
+  // A fragment stays last: the query goes in before it.
+  EXPECT_EQ(with_query("/x#top", {{"size", "20"}}), "/x?size=20#top");
+  EXPECT_EQ(with_query("/x?page=0#top", {{"size", "20"}, {"a", "b"}}), "/x?page=0&size=20&a=b#top");
+  EXPECT_EQ(with_query("https://earthbank.test/x#a?b", {{"size", "20"}}), "https://earthbank.test/x?size=20#a?b");
+  EXPECT_EQ(with_query("/x#top", {}), "/x#top");
 }
 
 TEST(Http, UrlPath) {
@@ -62,6 +68,12 @@ TEST(Http, UrlPath) {
   EXPECT_EQ(url_path("https://earthbank.test/"), "/");
   EXPECT_EQ(url_path("/api/account?x=1"), "/api/account");
   EXPECT_EQ(url_path(""), "/");
+  // `://` is a scheme's only before the path, the query and the fragment: a
+  // URL inside a query is not the URL.
+  EXPECT_EQ(url_path("/x?u=http://h/secret"), "/x");
+  EXPECT_EQ(url_path("/a/b://c/d"), "/a/b://c/d");
+  EXPECT_EQ(url_path("x#see://h/secret"), "x");
+  EXPECT_EQ(url_path("https://earthbank.test/x?u=http://h/secret"), "/x");
 }
 
 TEST(Http, FindHeaderIgnoresCase) {
@@ -103,6 +115,13 @@ TEST(Http, AnErrorSaysWhetherTheRequestMayHaveArrived) {
   Error refused{ErrorKind::Io, "connection refused", ""};
   refused.code = std::string(kHttpNotSent);
   EXPECT_FALSE(request_may_have_arrived(refused));
+  // The connection was never made within the time: a timeout, and not sent.
+  Error connect{ErrorKind::Timeout, "no connection in 30000 ms", ""};
+  connect.code = std::string(kHttpNotSent);
+  EXPECT_FALSE(request_may_have_arrived(connect));
+  // A request that could not be formed went nowhere.
+  EXPECT_FALSE(request_may_have_arrived(Error{ErrorKind::Config, "not a URL", ""}));
+  EXPECT_TRUE(request_may_have_arrived(Error{ErrorKind::Cancelled, "stopped while waiting", ""}));
 }
 
 }  // namespace
