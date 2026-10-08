@@ -74,7 +74,8 @@ class FluxWindow : public QMainWindow {
   void set_ask_unsaved(std::function<Unsaved(const QString&)> ask) { ask_unsaved_ = std::move(ask); }
 
   void reload_tree();                                                  // asynchronous
-  // Asynchronous; asks first when edits are pending.
+  // Asynchronous; asks first when edits are pending. The level already on
+  // show, or being read, is left as it is: nothing is asked or read.
   void open_level(const QString& irradiation, const QString& level);
   // A bridge job is running, or a refit is pending.
   bool busy() const noexcept;

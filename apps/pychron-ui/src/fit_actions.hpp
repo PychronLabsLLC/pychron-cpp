@@ -57,7 +57,7 @@ class FitActions : public QObject {
   // Made on first use; nullptr when the store cannot be opened (said through
   // report_error, or by EntryActions for its bridge) and once `entry` is gone.
   FluxWindow* flux();
-  // Shows the window on that level.
+  // Shows the window on that level; when it is on that level already, as it is.
   void open_flux(const QString& irradiation, const QString& level);
   QAction* flux_action() const noexcept { return flux_action_; }  // "Flux…"
 

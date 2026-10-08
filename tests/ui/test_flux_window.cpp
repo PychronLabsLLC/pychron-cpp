@@ -2700,6 +2700,59 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w->tree()->currentItem(), level_item(*w, QStringLiteral("NM-300"), QStringLiteral("A")));
   }
 
+  // Ruling R18: "Fit flux…" on the level the flux window already shows leaves it as it is.
+  void fit_flux_on_the_level_already_open_changes_nothing() {
+    MenuHub::reset(MenuHub::Bars::PerWindow);
+    Owners o(url_, presets_dir_);
+    o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+    FluxWindow* w = o.fit->flux();
+    QVERIFY(w != nullptr);
+    QStringList asked;
+    w->set_ask_unsaved([&asked](const QString& question) {
+      asked.append(question);
+      return FluxWindow::Unsaved::Discard;  // were it asked, the edits would go
+    });
+    // Asked for again while it is still being read: no second read.
+    QVERIFY(w->busy());
+    QCOMPARE(w->loads_started(), 1);
+    o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+    w->open_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QCOMPARE(w->loads_started(), 1);
+    QVERIFY(settle(*w));
+    QVERIFY2(w->fit(), qPrintable(w->status()));
+
+    // With edits pending: no question, the edits kept, nothing read.
+    w->set_in_fit(3, false);
+    QVERIFY(settle(*w));
+    QVERIFY(w->edited());
+    w->hide();
+    o.fit->open_flux(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QVERIFY(w->isVisible());  // raised all the same
+    QVERIFY(asked.isEmpty());
+    QVERIFY(!w->busy());
+    QCOMPARE(w->loads_started(), 1);
+    QCOMPARE(w->edits().exclude_positions, std::set<int>{3});
+    QVERIFY(w->edited());
+    QVERIFY(!fitted_at(*w->fit(), 3).used_in_fit);
+    w->open_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QVERIFY(asked.isEmpty());
+    QVERIFY(!w->busy());
+    QCOMPARE(w->loads_started(), 1);
+    QCOMPARE(w->edits().exclude_positions, std::set<int>{3});
+    QCOMPARE(w->tree()->currentItem(), level_item(*w, QStringLiteral("NM-300"), QStringLiteral("A")));
+
+    // A level that could not be read is asked for again when it is opened again.
+    w->revert();
+    w->open_level(QStringLiteral("NM-300"), QStringLiteral("Z"));
+    QVERIFY(settle(*w));
+    QVERIFY(w->status_is_error());
+    QCOMPARE(w->loads_started(), 2);
+    w->open_level(QStringLiteral("NM-300"), QStringLiteral("Z"));
+    QCOMPARE(w->loads_started(), 3);
+    QVERIFY(settle(*w));
+    QVERIFY(asked.isEmpty());
+  }
+
   void packages_sees_the_new_j_after_a_save() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
     Owners o(url_, presets_dir_);

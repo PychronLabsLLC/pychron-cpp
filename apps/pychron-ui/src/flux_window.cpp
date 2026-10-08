@@ -530,6 +530,9 @@ void FluxWindow::reload_tree() {
 // ---- Loading ----------------------------------------------------------------
 
 void FluxWindow::open_level(const QString& irradiation, const QString& level) {
+  // The level on show, or being read: it is left as it is (ruling R18), with
+  // its edits. One that could not be read is asked for again.
+  if (irradiation == irradiation_ && level == level_ && (inputs_ || loading_)) return select_tree_item();
   leave(
       true,
       [this, irradiation, level] {
