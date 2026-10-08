@@ -149,8 +149,6 @@ TEST_F(EntryCmd, PositionsImportErrorsWriteNothing) {
   EXPECT_TRUE(contains(o.out, "line 3: no level 'Z'")) << o.out;
 }
 
-#endif
-
 TEST_F(EntryCmd, SeedAppliesAFileAndDryRunWritesNothing) {
   const auto file = path("seed.toml");
   {
@@ -180,3 +178,5 @@ TEST_F(EntryCmd, SeedAppliesAFileAndDryRunWritesNothing) {
   EXPECT_EQ(o.code, 2);
   EXPECT_TRUE(contains(o.err, "seed.toml")) << o.err;
 }
+
+#endif

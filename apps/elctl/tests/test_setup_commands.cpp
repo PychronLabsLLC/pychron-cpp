@@ -113,7 +113,7 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallMakesAndSeedsItsDatabase) {
   auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
-  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor")) << "ERR:" << o.err;
+  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor")) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out;
   const std::string db = "sqlite:" + (root / "data" / "pychron.db").generic_string();
   auto listed = run_raw({"entry", "samples", "list", "--db", db, "--project", "references"});
@@ -159,6 +159,12 @@ TEST_F(ElctlSetupTest, ADataReductionInstallIsNotSeeded) {
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_FALSE(contains(o.out, "seed")) << o.out;
   EXPECT_FALSE(contains(o.err, "seed")) << o.err;
+}
+#else
+TEST_F(ElctlSetupTest, WithoutTheStoreTheSeedIsSkippedAndSaid) {
+  auto o = run_raw({"init", "argus", "--root", path("argus-no-store").string(), "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "skip  seed: built without the DVC store")) << o.out;
 }
 #endif
 
