@@ -879,11 +879,22 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.edited());
     QVERIFY(settle(w));
 
-    // A preset applies over it, and the entry goes.
+    // A preset applies over it. The entry stays in the list (ruling R20), and
+    // choosing it is the saved fit again.
     QVERIFY(w.preset_bar()->select(QStringLiteral("Default")));
     QCOMPARE(w.options(), pp::FluxOptions{});
-    QCOMPARE(w.preset_bar()->combo()->findText(QStringLiteral("(saved fit)")), -1);
+    QCOMPARE(w.preset_bar()->combo()->findText(QStringLiteral("(saved fit)")), 0);
     QCOMPARE(w.preset_bar()->current_name(), QStringLiteral("Default"));
+    QVERIFY(!w.preset_bar()->pinned_selected());
+    QVERIFY(w.edited());
+    QVERIFY(settle(w));
+    w.preset_bar()->combo()->setCurrentIndex(0);
+    Q_EMIT w.preset_bar()->combo()->activated(0);
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(w.preset_bar()->pinned_selected());
+    QVERIFY(!w.edited());
+    QVERIFY(settle(w));
+    QVERIFY(w.preset_bar()->select(QStringLiteral("Default")));
     QVERIFY(w.edited());
     QVERIFY(settle(w));
 
@@ -904,6 +915,17 @@ class FluxWindowTest : public QObject {
     QVERIFY(r.presets.load(pp::flux_options_schema(), "From A").has_value());
     QVERIFY(!r.presets.load(pp::flux_options_schema(), "(saved fit)").has_value());
     QVERIFY(!w.edited());  // the options are still the saved fit's
+    // The new preset is shown, and the saved fit is still there to choose.
+    QCOMPARE(w.preset_bar()->current_name(), QStringLiteral("From A"));
+    QCOMPARE(w.preset_bar()->combo()->findText(QStringLiteral("(saved fit)")), 0);
+    QCOMPARE(w.preset_bar()->combo()->count(), int(r.presets.list(pp::flux_options_schema()).size()) + 1);
+    // Deleted again, the bar is back on the saved fit, not on a preset it would have to load.
+    QVERIFY(w.preset_bar()->remove());
+    QVERIFY(!r.presets.load(pp::flux_options_schema(), "From A").has_value());
+    QVERIFY(w.preset_bar()->pinned_selected());
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(!w.status().contains(QStringLiteral("Preset:")));
+    QVERIFY(settle(w));
 
     // While the level is read again its options are nobody's: the defaults.
     w.reload();

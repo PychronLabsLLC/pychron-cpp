@@ -59,7 +59,7 @@ QString PresetBar::current_name() const { return combo_->currentText(); }
 
 void PresetBar::reload(const QString& select_name) {
   combo_->clear();
-  pinned_.clear();
+  if (!pinned_.isEmpty()) combo_->addItem(pinned_);
   for (const auto& p : store_.list(schema_)) {
     combo_->addItem(qs(p.name));
     combo_->setItemData(combo_->count() - 1,
@@ -78,7 +78,6 @@ bool PresetBar::select(const QString& name) {
     if (!pinned_.isEmpty()) combo_->setCurrentIndex(0);  // nothing was loaded over it
     return false;
   }
-  set_pinned_item({});
   combo_->setCurrentText(name);
   QStringList warnings;
   for (const auto& w : loaded_options->warnings) warnings << qs(w);
@@ -111,6 +110,10 @@ bool PresetBar::remove() {
     return false;
   }
   reload(name);  // a factory preset of the same name may remain
+  if (pinned_selected()) {  // none does: back on the entry that is no preset
+    emit pinned_chosen();
+    return true;
+  }
   return select(combo_->currentText().isEmpty() ? QStringLiteral("Default") : combo_->currentText());
 }
 

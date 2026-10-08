@@ -31,14 +31,16 @@ class PresetBar : public QWidget {
   QString current_name() const;
 
   // An entry before the presets that is not one of them (a flux level's
-  // "(saved fit)"), shown selected; an empty text takes it away, as do a preset
-  // that loads and reload(). While it is selected Save asks for a name, and
-  // Delete and Factory have nothing to act on. Choosing it emits pinned_chosen().
+  // "(saved fit)"), shown selected; only an empty text takes it away. It stays
+  // in the list when a preset is chosen and over reload(), so it can be chosen
+  // again. While it is selected Save asks for a name, and Delete and Factory
+  // have nothing to act on. Choosing it emits pinned_chosen().
   void set_pinned_item(const QString& text);
   bool pinned_selected() const;
 
   // Loads `name` and emits loaded(); false (and message()) when it cannot.
   bool select(const QString& name);
+  // The list read again, `select` shown when it is one of the presets.
   void reload(const QString& select);
   bool save(bool as);
   bool remove();

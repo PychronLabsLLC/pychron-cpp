@@ -656,6 +656,8 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
 }
 
 void FluxWindow::show_preset() {
+  // "(saved fit)" is in the list for as long as the level has one (ruling R20).
+  preset_bar_->set_pinned_item({});
   preset_bar_->reload(loaded_preset_.isEmpty() ? preset_name_ : loaded_preset_);
   if (inputs_ && inputs_->saved_options) preset_bar_->set_pinned_item(tr("(saved fit)"));
 }
