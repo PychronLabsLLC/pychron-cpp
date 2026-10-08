@@ -156,6 +156,45 @@ std::unique_ptr<pp::MemorySource> make_steps() {
   return src;
 }
 
+// Four samples (identifiers S1..S4), two aliquots of each, three analyses of
+// each aliquot, with ages; in time order by sample, then aliquot.
+std::unique_ptr<pp::MemorySource> make_aliquots() {
+  auto src = std::make_unique<pp::MemorySource>();
+  int n = 0;
+  for (int sample = 1; sample <= 4; ++sample) {
+    for (int aliquot = 1; aliquot <= 2; ++aliquot) {
+      for (int k = 0; k < 3; ++k, ++n) {
+        auto a = std::make_shared<pp::Analysis>();
+        a->uuid = "al-" + std::to_string(n);
+        a->identifier = "S" + std::to_string(sample);
+        a->sample = "Sample " + std::to_string(sample);
+        a->aliquot = aliquot;
+        a->runid = pp::make_runid(a->identifier, aliquot, -1);
+        a->analysis_type = "unknown";
+        a->timestamp = 1'700'000'000.0 + 1800.0 * n;
+        auto iso = [&](const char* name, double v, double e) {
+          pp::IsotopeData d;
+          d.key = name;
+          d.isotope = name;
+          d.intercept = {v, e};
+          a->isotopes.push_back(d);
+        };
+        const double ar39 = 20.0 + 3.0 * k, ar36 = 0.1 + 0.02 * k;
+        iso("Ar40", (10.0 + sample) * ar39 + 298.56 * ar36, 0.3);
+        iso("Ar39", ar39, 0.05);
+        iso("Ar38", 0.05, 0.005);
+        iso("Ar37", 0.1, 0.005);
+        iso("Ar36", ar36, 0.003);
+        a->context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
+        a->context.production = reduction::ProductionRatios{};
+        a->context.chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
+        src->add(a);
+      }
+    }
+  }
+  return src;
+}
+
 // Raw data with a baseline series per detector (0.01 + 0.001 k).
 pp::RawData raw_with_baselines(const pp::Analysis& a) {
   pp::RawData raw = raw_for(a);
@@ -1125,6 +1164,87 @@ class TestDataWindows : public QObject {
     QVERIFY(w.export_figure(pdf));
     QVERIFY(QFileInfo(png).size() > 0);
     QVERIFY(QFileInfo(pdf).size() > 0);
+  }
+
+  void graph_by_puts_groups_on_graphs() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, "ideogram", ids);
+    w.resize(1200, 900);
+    w.show();
+    int runs = 0;
+    // graph index -> the group indices drawn on it
+    auto groups_on = [&w] {
+      QList<QList<int>> out;
+      const auto& d = *w.dataset();
+      for (int graph : d.graphs()) {
+        QList<int> groups;
+        for (const auto& [group, items] : d.groups_of_graph(graph)) groups << group;
+        out << groups;
+      }
+      return out;
+    };
+    auto titles = [&w] {
+      QStringList out;
+      for (const auto& g : w.view()->scene()->graphs) out << QString::fromStdString(g.title);
+      return out;
+    };
+
+    // As before: grouped by identifier, every group on the one graph.
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(w.graph_combo());
+    QCOMPARE(w.graph_combo()->currentText(), QStringLiteral("none"));
+    QCOMPARE(w.graph_combo()->itemText(1), FigureWindow::same_as_group());
+    QCOMPARE(w.graph_combo()->count(), w.group_combo()->count() + 1);
+    QCOMPARE(w.graph_combo()->findText(QStringLiteral("none"), Qt::MatchExactly), 0);
+    QCOMPARE(w.view()->scene()->graphs.size(), 1u);
+    QCOMPARE(groups_on(), (QList<QList<int>>{{0, 1, 2, 3}}));
+
+    // Four ideograms, one group on each.
+    w.set_graph_key(FigureWindow::same_as_group());
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY2(w.view()->scene()->warnings.empty(), qPrintable(w.status_label()->text()));
+    QCOMPARE(groups_on(), (QList<QList<int>>{{0}, {1}, {2}, {3}}));
+    QCOMPARE(titles(), (QStringList{QStringLiteral("S1"), QStringLiteral("S2"), QStringLiteral("S3"), QStringLiteral("S4")}));
+
+    // ... which follows the grouping: eight aliquots, eight ideograms.
+    w.set_group_key(QStringLiteral("aliquot"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QCOMPARE(groups_on().size(), 8);
+    QCOMPARE(titles().first(), QStringLiteral("S1-1"));
+
+    // Eight groups on four ideograms: the aliquots of a sample together.
+    w.set_graph_key(QStringLiteral("sample"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QCOMPARE(groups_on(), (QList<QList<int>>{{0, 1}, {2, 3}, {4, 5}, {6, 7}}));
+    QCOMPARE(titles(), (QStringList{QStringLiteral("Sample 1"), QStringLiteral("Sample 2"), QStringLiteral("Sample 3"),
+                                    QStringLiteral("Sample 4")}));
+    // A group keeps its index, so its colour and its row of the groups table, whichever graph it is on.
+    const auto& third = w.view()->scene()->graphs[2];
+    QSet<int> drawn;
+    for (const auto& p : third.panels)
+      for (const auto& l : p.layers)
+        if (const auto* line = std::get_if<pp::LineLayer>(&l)) drawn << line->group;
+    QVERIFY(drawn.contains(4) && drawn.contains(5));
+    QVERIFY(!drawn.contains(0));
+
+    // A key finer than the grouping: a group is drawn on each graph it has analyses on.
+    w.set_group_key(QStringLiteral("identifier"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    w.set_graph_key(QStringLiteral("aliquot"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QCOMPARE(groups_on(), (QList<QList<int>>{{0}, {0}, {1}, {1}, {2}, {2}, {3}, {3}}));
+
+    // An unknown key is not taken; none is one graph again.
+    w.set_graph_key(QStringLiteral("no such key"));
+    QCOMPARE(w.graph_combo()->currentText(), QStringLiteral("aliquot"));
+    w.set_graph_key(QStringLiteral("none"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QCOMPARE(groups_on(), (QList<QList<int>>{{0, 1, 2, 3}}));
   }
 
   void spectrum_and_isochron_open_as_one_figure() {

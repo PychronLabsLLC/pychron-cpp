@@ -55,6 +55,12 @@ class FigureWindow : public QMainWindow {
   // Applies new figure options (as the dock does) and reruns.
   void set_figure_options(const processing::Options& options);
   void set_group_key(const QString& key);
+  // Which groups share a graph: "none" (all on one), "same as group" (a graph
+  // per group) or a key of the group unit, when the groups of one sample, say,
+  // are to be drawn together. The graphs are laid out by the figure's
+  // "Graphs per row".
+  void set_graph_key(const QString& key);
+  static QString same_as_group();
   void toggle_exclusion(const QStringList& uuids);
   void select_preset(const QString& name);
   bool export_figure(const QString& path);  // .pdf or .png by extension
@@ -72,6 +78,7 @@ class FigureWindow : public QMainWindow {
   OptionsEditor* options_editor() const noexcept { return editor_; }
   QComboBox* preset_combo() const noexcept;
   QComboBox* group_combo() const noexcept { return group_; }
+  QComboBox* graph_combo() const noexcept { return graph_; }
   QTableWidget* analyses_table() const noexcept { return analyses_; }
   QLabel* status_label() const noexcept { return status_; }
   int runs_completed() const noexcept { return runs_; }
@@ -86,6 +93,7 @@ class FigureWindow : public QMainWindow {
   void schedule();
   void on_result(const PipelineResult& r);
   void fill_analyses();
+  void apply_graph_key();  // the graph unit's key from the two combos
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
@@ -98,6 +106,7 @@ class FigureWindow : public QMainWindow {
   OptionsEditor* editor_;
   PresetBar* presets_;
   QComboBox* group_;
+  QComboBox* graph_;
   QTableWidget* analyses_;
   QLabel* status_;
   QTimer debounce_;

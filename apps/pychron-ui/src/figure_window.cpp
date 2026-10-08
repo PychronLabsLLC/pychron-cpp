@@ -39,6 +39,9 @@ std::vector<std::string> to_std(const QStringList& l) {
 
 constexpr const char* kFigure = "figure";
 constexpr const char* kEdits = "edits";
+constexpr const char* kGroup = "group";
+// A second group unit, at the graph level: it puts each analysis on a graph.
+constexpr const char* kGraph = "graph";
 
 }  // namespace
 
@@ -47,6 +50,8 @@ QString FigureWindow::default_group_key(const std::string& kind) {
   if (kind == "spectrum" || kind == "inverse_isochron" || kind == "spectrum_isochron") return QStringLiteral("aliquot");
   return QStringLiteral("none");
 }
+
+QString FigureWindow::same_as_group() { return QStringLiteral("same as group"); }
 
 FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, QStringList uuids, QWidget* parent)
     : FigureWindow(bridge, presets, "time_series", std::move(uuids), parent) {}
@@ -73,9 +78,11 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   (void)select.options.set("uuids", to_std(uuids));
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
   pipeline_.add(reg, "reduce", "reduce", {"select"});
-  pipeline_.add(reg, "group", "group", {"reduce"});
-  pipeline_.add(reg, kEdits, "edits", {"group"});
-  (void)pipeline_.find("group")->options.set("key", default_group_key(kind_).toStdString());
+  pipeline_.add(reg, kGroup, "group", {"reduce"});
+  auto& graph = pipeline_.add(reg, kGraph, "group", {kGroup});
+  (void)graph.options.set("level", std::string("graph"));
+  pipeline_.add(reg, kEdits, "edits", {kGraph});
+  (void)pipeline_.find(kGroup)->options.set("key", default_group_key(kind_).toStdString());
   auto& fig = pipeline_.add(reg, kFigure, kind_, {kEdits});
   fig.options = store_.defaults(schema_);
   fig.preset = "Default";
@@ -93,6 +100,16 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   group_->setCurrentText(default_group_key(kind_));
   tools->addWidget(group_);
   connect(group_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_group_key(k); });
+  tools->addWidget(new QLabel(tr("  Graph by ")));
+  graph_ = new QComboBox;
+  graph_->addItem(QStringLiteral("none"));
+  graph_->addItem(same_as_group());
+  for (const auto& c : reg.find("group")->schema()->field("key")->choices)
+    if (c != "none") graph_->addItem(qs(c));
+  graph_->setToolTip(tr("Which groups share a graph: none puts them all on one, \"same as group\" gives each its own, "
+                        "and a key such as sample draws the groups of one sample together"));
+  tools->addWidget(graph_);
+  connect(graph_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_graph_key(k); });
   tools->addSeparator();
   tools->addAction(tr("Reset view"), view_, &SceneView::reset_view);
   tools->addAction(tr("Export..."), this, [this] {
@@ -268,8 +285,24 @@ void FigureWindow::set_group_key(const QString& key) {
     group_->setCurrentText(key);  // re-enters through currentTextChanged
     return;
   }
-  (void)pipeline_.find("group")->options.set("key", key.toStdString());
+  (void)pipeline_.find(kGroup)->options.set("key", key.toStdString());
+  apply_graph_key();
   run();
+}
+
+void FigureWindow::set_graph_key(const QString& key) {
+  if (graph_->currentText() != key) {
+    if (graph_->findText(key) < 0) return;
+    graph_->setCurrentText(key);  // re-enters through currentTextChanged
+    return;
+  }
+  apply_graph_key();
+  run();
+}
+
+void FigureWindow::apply_graph_key() {
+  const QString key = graph_->currentText() == same_as_group() ? group_->currentText() : graph_->currentText();
+  (void)pipeline_.find(kGraph)->options.set("key", key.toStdString());
 }
 
 QComboBox* FigureWindow::preset_combo() const noexcept { return presets_->combo(); }

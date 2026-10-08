@@ -276,9 +276,25 @@ setting), and an **Analyses** dock below listing each analysis with its
 group and an **Included** tick.
 
 Toolbar: **Group by** (how analyses are split into groups, drawn in
-different colours), **Reset view**, **Export...** (the picture as PDF or
+different colours), **Graph by** (which groups share a graph, see below),
+**Reset view**, **Export...** (the picture as PDF or
 PNG), **Export table...** (the data report of exactly these analyses; see
 [export.md](../export.md)).
+
+**Graph by** splits the figure into several graphs, each titled with what
+it holds:
+
+| Graph by | Result |
+|---|---|
+| `none` | every group on one graph (the default) |
+| `same as group` | a graph for each group: with **Group by** `identifier` and four identifiers, four ideograms of one group each |
+| a key (`sample`, `identifier`, `irradiation`, ...) | the groups that share that value on one graph: **Group by** `aliquot` and **Graph by** `sample` draws eight aliquots of four samples as four ideograms of two groups each |
+
+A group keeps its colour and its row of the **Groups** table whichever graph
+it is on. If the graph key is finer than the grouping (group by sample,
+graph by aliquot) a group is drawn on each graph it has analyses on, with
+that part's own statistics. **Graphs per row** (Layout section of the
+options) arranges the graphs: 1 stacks them, 2 makes a grid two wide.
 
 Every figure window reduces the selected analyses with the default
 reduction settings: constants preset `default`, no decay-constant error.
