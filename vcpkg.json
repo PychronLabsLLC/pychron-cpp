@@ -7,7 +7,6 @@
     "tomlplusplus",
     "spdlog",
     "nlohmann-json",
-    "miniz",
     "pugixml",
     "gtest"
   ],
