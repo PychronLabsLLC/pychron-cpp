@@ -367,6 +367,18 @@ TEST(Report, CsvIsWellFormedAndQuotesSpecialText) {
   EXPECT_TRUE(csv.find("\"FC-2, \"\"split\"\" B\"") != std::string::npos);
 }
 
+TEST(Report, CsvQuoteQuotesOnlyWhatNeedsIt) {
+  EXPECT_EQ(pp::csv_quote("plain"), "plain");
+  EXPECT_EQ(pp::csv_quote("a,b"), "\"a,b\"");
+  EXPECT_EQ(pp::csv_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+  EXPECT_EQ(pp::csv_quote("two\nlines"), "\"two\nlines\"");
+  EXPECT_EQ(pp::csv_quote("cr\rlf"), "\"cr\rlf\"");
+  EXPECT_EQ(pp::csv_quote(" padded"), "\" padded\"");
+  EXPECT_EQ(pp::csv_quote("padded "), "\"padded \"");
+  EXPECT_EQ(pp::csv_quote("in side"), "in side");
+  EXPECT_EQ(pp::csv_quote(""), "");
+}
+
 TEST(Report, JsonCarriesEveryTableAndEscapes) {
   auto d = steps(2);
   {

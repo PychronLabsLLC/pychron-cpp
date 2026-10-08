@@ -24,6 +24,7 @@
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/flux_fit.hpp"
 #include "pychron/processing/flux_store.hpp"
+#include "pychron/processing/report.hpp"
 #include "pychron/processing/store_source.hpp"
 
 namespace elctl {
@@ -100,8 +101,8 @@ constexpr const char* kUsageText =
     "Exit codes: 0 done; 1 a level could not be fitted, a save conflicted, or the name\n"
     "asked for does not exist; 2 usage or a fatal error.\n";
 
-struct Args {
-  std::string db, irradiation, level, csv, user;
+struct Args : FluxStoreArgs {
+  std::string irradiation, level, csv;
   std::optional<r::ModelKind> model;
   std::optional<bool> weighted;
   std::optional<r::MeanKind> mean;
@@ -115,15 +116,8 @@ struct Args {
   bool save = false;
 };
 
-int usage(Io io, const std::string& message) {
-  io.err << "elctl flux: " << message << '\n' << kShortUsage;
-  return kUsage;
-}
-
-int fatal(Io io, const std::string& message) {
-  io.err << "elctl flux: " << message << '\n';
-  return kUsage;
-}
+int usage(Io io, const std::string& message) { return flux_usage(io, message, kShortUsage); }
+int fatal(Io io, const std::string& message) { return flux_error(io, message); }
 
 std::optional<int> parse_int(const std::string& text) {
   int value = 0;
@@ -193,13 +187,14 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.save = true;
       continue;
     }
+    auto store_flag = flux_store_flag(args, i, a);
+    if (!store_flag) return fail(store_flag.error());
+    if (*store_flag) continue;
     auto given = flux_flag_value(args, i);
     if (!given) return fail(given.error());
     const std::string& value = *given;
     auto bad = [&](const std::string& what) { return fail(ErrorKind::Config, flag + " is " + what + "; got '" + value + "'"); };
-    if (flag == "--db") {
-      a.db = value;
-    } else if (flag == "--model") {
+    if (flag == "--model") {
       a.model = pp::parse_model_kind(value);
       if (!a.model) return bad("plane, bowl, weighted-mean, matching, nearest, bracketing, ls1d, mean1d or bracketing1d");
     } else if (flag == "--mean") {
@@ -240,8 +235,6 @@ Result<Args> parse(const std::vector<std::string>& args) {
       (flag == "--exclude-position" ? a.edits.exclude_positions : a.no_save).insert(*hole);
     } else if (flag == "--csv") {
       a.csv = value;
-    } else if (flag == "--user") {
-      a.user = value;
     } else {
       return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
     }
@@ -442,16 +435,6 @@ std::string format_flux_save(const pp::FluxSaveOutcome& outcome, std::string_vie
   return out.str();
 }
 
-std::string csv_field(std::string_view text) {
-  if (text.find_first_of(",\"\r\n") == std::string_view::npos) return std::string(text);
-  std::string out = "\"";
-  for (const char c : text) {
-    if (c == '"') out += '"';
-    out += c;
-  }
-  return out + '"';
-}
-
 std::string flux_csv_header() {
   return "kind,irradiation,level,hole,identifier,sample,x,y,n,saved_j,saved_j_err,mean_j,mean_j_err,mean_j_mswd,j,j_err,"
          "dev_percent,used_in_fit,notes\r\n";
@@ -479,7 +462,7 @@ std::string flux_csv_rows(const pp::LevelFit& fit) {
                                             number17(p.dev_percent),
                                             p.monitor ? (p.used_in_fit ? "yes" : "no") : "",
                                             notes_text(p)};
-    for (std::size_t i = 0; i < cells.size(); ++i) out += (i ? "," : "") + csv_field(cells[i]);
+    for (std::size_t i = 0; i < cells.size(); ++i) out += (i ? "," : "") + pp::csv_quote(cells[i]);
     out += "\r\n";
   }
   return out;
@@ -583,6 +566,25 @@ Result<std::string> flux_flag_value(const std::vector<std::string>& args, std::s
   const std::string& value = args[++i];
   if (value.rfind("--", 0) == 0) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
   return value;
+}
+
+int flux_usage(Io io, const std::string& message, std::string_view short_usage) {
+  io.err << "elctl flux: " << message << '\n' << short_usage;
+  return kUsage;
+}
+
+int flux_error(Io io, const std::string& message, int code) {
+  io.err << "elctl flux: " << message << '\n';
+  return code;
+}
+
+Result<bool> flux_store_flag(const std::vector<std::string>& args, std::size_t& i, FluxStoreArgs& into) {
+  const std::string& flag = args[i];
+  if (flag != "--db" && flag != "--user") return false;
+  auto value = flux_flag_value(args, i);
+  if (!value) return fail(value.error());
+  (flag == "--db" ? into.db : into.user) = *value;
+  return true;
 }
 
 Result<std::unique_ptr<ps::IStore>> open_flux_store(const std::string& db) {

@@ -36,23 +36,11 @@ constexpr const char* kShortUsage =
     "       elctl flux history <irradiation> <level> [<hole>] --db <url>\n"
     "       elctl flux monitors [list | show NAME | set FILE | default NAME] --db <url> [--user NAME]\n";
 
-int usage(Io io, const std::string& message) {
-  io.err << "elctl flux: " << message << '\n' << kShortUsage;
-  return kUsage;
-}
+int usage(Io io, const std::string& message) { return flux_usage(io, message, kShortUsage); }
+int fatal(Io io, const std::string& message) { return flux_error(io, message); }
+int failed(Io io, const std::string& message) { return flux_error(io, message, kFailed); }
 
-int fatal(Io io, const std::string& message) {
-  io.err << "elctl flux: " << message << '\n';
-  return kUsage;
-}
-
-int failed(Io io, const std::string& message) {
-  io.err << "elctl flux: " << message << '\n';
-  return kFailed;
-}
-
-struct Args {
-  std::string db, user;
+struct Args : FluxStoreArgs {
   std::vector<std::string> positional;
 };
 
@@ -64,10 +52,9 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.positional.push_back(flag);
       continue;
     }
-    if (flag != "--db" && flag != "--user") return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
-    auto value = flux_flag_value(args, i);
-    if (!value) return fail(value.error());
-    (flag == "--db" ? a.db : a.user) = *value;
+    auto taken = flux_store_flag(args, i, a);
+    if (!taken) return fail(taken.error());
+    if (!*taken) return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
   }
   if (a.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
   return a;
@@ -94,17 +81,13 @@ int show(const Args& a, Io io) {
   if (a.positional.size() != 2) return usage(io, "show needs an irradiation and a level");
   auto store = open_flux_store(a.db);
   if (!store) return fatal(io, store.error().what);
-  auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
-  if (!source) return fatal(io, source.error().what);
-  // Every position of the level, whichever of them the saved fit made its monitors.
-  pp::MonitorSelection selection;
-  selection.all_positions = false;
-  auto level = pp::load_level(**source, **store, a.positional[0], a.positional[1], selection);
+  // What is saved, from the store alone: no holder needed, no analysis reduced.
+  auto level = pp::load_saved_flux(**store, a.positional[0], a.positional[1]);
   if (!level) return failed(io, a.positional[0] + " " + a.positional[1] + ": " + level.error().what);
 
   std::vector<Row> rows;
-  for (const auto& p : level->positions) {
-    Row row{std::to_string(p.hole), p.identifier, p.sample};
+  for (const auto& p : *level) {
+    Row row{std::to_string(p.hole), or_dash(p.identifier), or_dash(p.sample)};
     if (p.saved) {
       const auto& s = *p.saved;
       row.insert(row.end(), {flux_j_text(s.j), flux_j_text(s.j_err), flux_percent_of(s.j_err, s.j), model_of(s.options),
@@ -261,19 +244,6 @@ int show_set(const pp::MonitorSets& sets, const std::string& name, Io io) {
   return failed(io, "no monitor set '" + name + "'");
 }
 
-// A save of the sets: its outcome as an exit code.
-int save_sets(ps::IStore& store, const std::string& user, const pp::MonitorSets& sets,
-              const pp::LoadedMonitorSets& loaded, const std::string& done, Io io) {
-  auto actor = flux_actor(store, user);
-  if (!actor) return fatal(io, actor.error().what);
-  auto outcome = pp::save_monitor_sets(store, *actor, sets, loaded);
-  if (!outcome) return fatal(io, outcome.error().what);
-  if (std::holds_alternative<std::vector<ps::Conflict>>(*outcome))
-    return failed(io, "not saved: someone else saved the monitor sets since they were read; run the command again");
-  io.out << done << '\n';
-  return kOk;
-}
-
 int monitors(const Args& a, Io io) {
   const auto& p = a.positional;
   const std::string action = p.empty() ? "list" : p[0];
@@ -303,7 +273,7 @@ int monitors(const Args& a, Io io) {
   if (action == "list") return list_sets(loaded->sets, io);
   if (action == "show") return show_set(loaded->sets, p[1], io);
   if (action == "set")
-    return save_sets(**store, a.user, *given, *loaded, "saved " + std::to_string(given->sets.size()) + " monitor sets", io);
+    return flux_save_monitor_sets(**store, a.user, *given, *loaded, "saved " + std::to_string(given->sets.size()) + " monitor sets", io);
   // default
   pp::MonitorSets sets = loaded->sets;
   if (!sets.find(p[1]) || p[1].empty()) return failed(io, "no monitor set '" + p[1] + "' (available: " + names_of(sets) + ")");
@@ -312,10 +282,22 @@ int monitors(const Args& a, Io io) {
     return kOk;
   }
   sets.default_name = p[1];
-  return save_sets(**store, a.user, sets, *loaded, "the default monitor set is now " + p[1], io);
+  return flux_save_monitor_sets(**store, a.user, sets, *loaded, "the default monitor set is now " + p[1], io);
 }
 
 }  // namespace
+
+int flux_save_monitor_sets(ps::IStore& store, const std::string& user, const pp::MonitorSets& sets,
+                           const pp::LoadedMonitorSets& loaded, const std::string& done, Io io) {
+  auto actor = flux_actor(store, user);
+  if (!actor) return fatal(io, actor.error().what);
+  auto outcome = pp::save_monitor_sets(store, *actor, sets, loaded);
+  if (!outcome) return fatal(io, outcome.error().what);
+  if (std::holds_alternative<std::vector<ps::Conflict>>(*outcome))
+    return failed(io, "not saved: someone else saved the monitor sets since they were read; run the command again");
+  io.out << done << '\n';
+  return kOk;
+}
 
 int flux_admin_command(const std::string& subcommand, const std::vector<std::string>& rest, Io io) {
   auto parsed = parse(rest);

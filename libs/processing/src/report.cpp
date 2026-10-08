@@ -674,16 +674,7 @@ std::string format_number(double v) {
 std::string csv_field(const Cell& cell) {
   if (const auto* d = std::get_if<double>(&cell)) return format_number(*d);
   const auto* s = std::get_if<std::string>(&cell);
-  if (s == nullptr) return {};
-  const bool quote = s->find_first_of(",\"\r\n") != std::string::npos || (!s->empty() && (s->front() == ' ' || s->back() == ' '));
-  if (!quote) return *s;
-  std::string out = "\"";
-  for (const char ch : *s) {
-    if (ch == '"') out += '"';
-    out += ch;
-  }
-  out += '"';
-  return out;
+  return s ? csv_quote(*s) : std::string();
 }
 
 void csv_table(std::string& out, const ReportTable& t) {
@@ -796,6 +787,19 @@ Report make_report(const Dataset& dataset, const ReportOptions& options) {
   summary_table(groups, units, o, rep);
   if (dataset.empty()) rep.warnings.push_back("the dataset is empty");
   return rep;
+}
+
+std::string csv_quote(std::string_view text) {
+  const bool quote = text.find_first_of(",\"\r\n") != std::string_view::npos ||
+                     (!text.empty() && (text.front() == ' ' || text.back() == ' '));
+  if (!quote) return std::string(text);
+  std::string out = "\"";
+  for (const char ch : text) {
+    if (ch == '"') out += '"';
+    out += ch;
+  }
+  out += '"';
+  return out;
 }
 
 std::string report_csv(const Report& report) {

@@ -22,6 +22,7 @@ TEST(FluxCmd, StubWithoutPersistence) {
 
 #else
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -142,6 +143,26 @@ class FluxCmd : public elctl::testing::ElctlTest {
   }
 
   ps::ChangeSeq seq() const { return *store_->latest_change_seq(); }
+
+  // The value at a hole's head; an empty value and a failure when there is none.
+  ps::FluxValue head_value(int hole) const {
+    auto level = pychron::processing::load_saved_flux(*store_, "NM-300", "A");
+    if (!level) {
+      ADD_FAILURE() << to_string(level.error());
+      return {};
+    }
+    for (const auto& p : *level) {
+      if (p.hole != hole || !p.saved) continue;
+      auto payload = store_->load_payload(*ps::Uuid::parse(p.saved->revision));
+      const auto* ref = payload && *payload ? std::get_if<ps::RefPayload>(&**payload) : nullptr;
+      if (const auto* flux = ref ? std::get_if<ps::FluxValue>(ref) : nullptr) return *flux;
+    }
+    ADD_FAILURE() << "hole " << hole << " has no saved flux";
+    return {};
+  }
+  pychron::processing::FluxOptionsDoc head_options(int hole) const {
+    return pychron::processing::parse_flux_options(head_value(hole).options_json.value_or(""));
+  }
 
   std::string db_;
   std::unique_ptr<ps::IStore> store_;
@@ -320,6 +341,120 @@ TEST_F(FluxCmd, AnotherMonitorSetFitsItsOwnSample) {
   const Outcome plain = fit({});
   EXPECT_TRUE(contains(plain.out, "monitors FC-2 (Kuiper 2008):")) << plain.out;
   EXPECT_EQ(table_row(plain.out, "Monitors", 1).size(), 15u) << plain.out;
+}
+
+// R22: a saved all-positions fit is its own set's; another set selects by its sample.
+TEST_F(FluxCmd, AnotherMonitorSetDoesNotRepeatASavedAllPositions) {
+  ASSERT_EQ(fit({"--all-positions", "--save"}).code, elctl::kOk);
+  namespace pp = pychron::processing;
+  auto sets = pp::load_monitor_sets(*store_);
+  ASSERT_TRUE(sets) << to_string(sets.error());
+  pp::MonitorSets edited = sets->sets;
+  pp::MonitorSet second = edited.sets[1];
+  second.name = "Second";
+  second.sample = "unk";
+  second.age_ma = 99.0;
+  edited.sets.push_back(second);
+  ASSERT_TRUE(pp::save_monitor_sets(*store_, actor_, edited, *sets));
+  ASSERT_TRUE(pt::seed_ingest_monitor(*store_, seeded_, "66101", 1, 30.0, "2026-01-01T19:01:00Z"));
+
+  Outcome o = fit({"--monitors", "Second", "--model", "weighted-mean"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(table_row(o.out, "Monitors", 9).size(), 15u) << o.out;
+  EXPECT_TRUE(table_row(o.out, "Monitors", 1).empty()) << o.out;
+  EXPECT_EQ(table_row(o.out, "Unknowns", 1).size(), 9u) << o.out;
+  // Asked for, every position under that set too.
+  o = fit({"--monitors", "Second", "--model", "weighted-mean", "--all-positions"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(table_row(o.out, "Monitors", 1).size(), 15u) << o.out;
+  EXPECT_EQ(table_row(o.out, "Monitors", 9).size(), 15u) << o.out;
+  // With no set named the saved fit, every position, is repeated.
+  o = fit({});
+  EXPECT_EQ(table_row(o.out, "Monitors", 9).size(), 15u) << o.out;
+  EXPECT_TRUE(table_row(o.out, "Unknowns", 9).empty()) << o.out;
+}
+
+// What each flag chose is saved, and a plain fit repeats it.
+TEST_F(FluxCmd, ModelFlagsAreSavedAndRepeated) {
+  Outcome o = fit({"--model", "bracketing", "--interpolation", "linear", "--save"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "saved 12 positions")) << o.out;
+  auto doc = head_options(9);
+  ASSERT_TRUE(doc.options);
+  EXPECT_EQ(doc.options->fit.kind, pychron::reduction::ModelKind::Bracketing);
+  EXPECT_EQ(doc.options->fit.interpolation, pychron::reduction::Interpolation::Linear);
+  o = fit({"--save"});
+  EXPECT_TRUE(contains(o.out, "model bracketing, linear;")) << o.out;
+  EXPECT_TRUE(contains(o.out, "nothing to save: 12 positions unchanged")) << o.out;
+  // Another interpolation is another fit.
+  o = fit({"--interpolation", "average", "--save"});
+  EXPECT_TRUE(contains(o.out, "model bracketing, average;")) << o.out;
+  EXPECT_TRUE(contains(o.out, "saved ")) << o.out;
+  EXPECT_EQ(head_options(9).options->fit.interpolation, pychron::reduction::Interpolation::Average);
+
+  o = fit({"--model", "ls1d", "--degree", "1", "--axis", "y", "--save"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  doc = head_options(1);
+  ASSERT_TRUE(doc.options);
+  EXPECT_EQ(doc.options->fit.kind, pychron::reduction::ModelKind::LeastSquares1D);
+  EXPECT_EQ(doc.options->fit.axis, pychron::reduction::Axis::Y);
+  EXPECT_EQ(doc.options->fit.degree, 1);
+  o = fit({"--save"});
+  EXPECT_TRUE(contains(o.out, "degree 1, axis y;")) << o.out;
+  EXPECT_TRUE(contains(o.out, "nothing to save: 12 positions unchanged")) << o.out;
+  o = fit({"--axis", "x", "--save"});
+  EXPECT_TRUE(contains(o.out, "degree 1, axis x;")) << o.out;
+  EXPECT_EQ(head_options(1).options->fit.axis, pychron::reduction::Axis::X);
+
+  ASSERT_TRUE(pt::seed_ingest_monitor(*store_, seeded_, "66101", 1, 30.0, "2026-01-01T19:01:00Z"));
+  o = fit({"--model", "plane", "--all-positions", "--save"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "saved 9 positions")) << o.out;
+  for (int hole = 1; hole <= 9; ++hole) EXPECT_EQ(head_options(hole).all_positions, std::optional<bool>(true)) << hole;
+  o = fit({"--save"});
+  EXPECT_TRUE(contains(o.out, "nothing to save: 9 positions unchanged")) << o.out;
+  EXPECT_EQ(table_row(o.out, "Monitors", 9).size(), 15u) << o.out;
+}
+
+// --include brings back an analysis a saved fit omitted; saved so, it stays back.
+TEST_F(FluxCmd, IncludeUndoesASavedOmission) {
+  ASSERT_EQ(fit({"--omit", "66001-02", "--save"}).code, elctl::kOk);
+  const auto omitted = [&](const std::string& record_id) {
+    for (const auto& a : head_value(1).analyses)
+      if (a.record_id == record_id) return std::optional<bool>(a.is_omitted);
+    return std::optional<bool>();
+  };
+  EXPECT_EQ(omitted("66001-02"), std::optional<bool>(true));
+  Outcome o = fit({});
+  ASSERT_EQ(table_row(o.out, "Monitors", 1).size(), 15u) << o.out;
+  EXPECT_EQ(table_row(o.out, "Monitors", 1)[3], "2") << o.out;  // carried
+
+  o = fit({"--include", "66001-02", "--save"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "saved ")) << o.out;
+  EXPECT_EQ(table_row(o.out, "Monitors", 1)[3], "3") << o.out;
+  EXPECT_EQ(omitted("66001-02"), std::optional<bool>(false));
+  o = fit({"--save"});
+  EXPECT_EQ(table_row(o.out, "Monitors", 1)[3], "3") << o.out;
+  EXPECT_TRUE(contains(o.out, "nothing to save: 12 positions unchanged")) << o.out;
+}
+
+// show reads what is saved: no holder is needed and no analysis is reduced.
+TEST_F(FluxCmd, ShowNeedsNoHolder) {
+  auto level = store_->add_level(seeded_.acquisition_client,
+                                 {seeded_.irradiation, "B", std::nullopt, 0.5, std::nullopt, std::nullopt});
+  ASSERT_TRUE(level) << to_string(level.error());
+  ASSERT_TRUE(store_->add_irradiation_position(seeded_.acquisition_client,
+                                               {*level, 1, std::nullopt, std::nullopt, {}, {}, std::nullopt}));
+  Outcome o = run_raw({"flux", "fit", "NM-300", "B", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kFailed);
+  EXPECT_TRUE(contains(o.err, "has no holder")) << o.err;
+  o = run_raw({"flux", "show", "NM-300", "B", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(std::count(o.out.begin(), o.out.end(), '\n'), 1) << o.out;  // the head: no position has anything to show
+  o = run_raw({"flux", "show", "NM-300", "C", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kFailed);
+  EXPECT_TRUE(contains(o.err, "no level C of NM-300")) << o.err;
 }
 
 // R17: the monitor standard does not change without a word.
@@ -808,6 +943,38 @@ TEST_F(FluxCmd, MonitorsSetRejectsABadFile) {
   EXPECT_EQ(o.code, elctl::kUsage);
 }
 
+// set and default save over the document as they read it: one saved in
+// between is a conflict that saves nothing. First with no document stored
+// when it was read (the defaults), then with one.
+TEST_F(FluxCmd, MonitorsSaveOverAMovedDocumentIsAConflict) {
+  namespace pp = pychron::processing;
+  for (const bool stored : {false, true}) {
+    auto read = pp::load_monitor_sets(*store_);
+    ASSERT_TRUE(read) << to_string(read.error());
+    ASSERT_EQ(read->head.has_value(), stored);
+    // Someone else changes the default meanwhile.
+    const std::string other = read->sets.default_name == "FC-2 (Renne 1998)" ? "FC-2 (Kuiper 2008)" : "FC-2 (Renne 1998)";
+    Outcome o = run_raw({"flux", "monitors", "default", other, "--db", db_, "--user", "jsmith"});
+    ASSERT_EQ(o.code, elctl::kOk) << o.err;
+    const auto before = seq();
+
+    // What the command would save: the read document with a change of its own.
+    pp::MonitorSets mine = read->sets;
+    mine.sets.push_back(mine.sets.back());
+    mine.sets.back().name = "FC-2 (mine)";
+    std::istringstream in;
+    std::ostringstream out, err;
+    const int code = elctl::flux_save_monitor_sets(*store_, "jsmith", mine, *read, "saved", elctl::Io{in, out, err});
+    EXPECT_EQ(code, elctl::kFailed) << stored;
+    EXPECT_TRUE(contains(err.str(), "not saved: someone else saved the monitor sets since they were read")) << err.str();
+    EXPECT_EQ(out.str(), "");
+    EXPECT_EQ(seq(), before);
+    o = run_raw({"flux", "monitors", "list", "--db", db_});
+    EXPECT_EQ(lines_with(o.out, other)[0][0], '*') << o.out;
+    EXPECT_EQ(lines_of(o.out).size(), 3u) << o.out;
+  }
+}
+
 TEST_F(FluxCmd, MonitorsDefaultOfAnUnknownNameListsWhatExists) {
   const auto before = seq();
   const Outcome o = run_raw({"flux", "monitors", "default", "nope", "--db", db_});
@@ -831,14 +998,6 @@ TEST_F(FluxCmd, UnknownSubcommandIsUsage) {
   EXPECT_EQ(o.code, elctl::kUsage);
   o = run_raw({"flux", "monitors", "bogus", "--db", db_});
   EXPECT_EQ(o.code, elctl::kUsage);
-}
-
-TEST(FluxCmdFormat, CsvFieldQuotesOnlyWhatNeedsIt) {
-  EXPECT_EQ(elctl::csv_field("plain"), "plain");
-  EXPECT_EQ(elctl::csv_field("a,b"), "\"a,b\"");
-  EXPECT_EQ(elctl::csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
-  EXPECT_EQ(elctl::csv_field("two\nlines"), "\"two\nlines\"");
-  EXPECT_EQ(elctl::csv_field(""), "");
 }
 
 TEST(FluxCmdFormat, ASaveConflictExitsOne) {

@@ -74,13 +74,24 @@ std::string format_flux_fit(const pychron::processing::LevelFit& fit, const std:
 // author of the head that moved (empty: unknown).
 std::string format_flux_save(const pychron::processing::FluxSaveOutcome& outcome, std::string_view saved_by);
 
-// RFC 4180: the field quoted when it holds a comma, a quote or a line break.
-std::string csv_field(std::string_view text);
 // The head line, and a row for every position of the fit; rows end in CRLF.
 std::string flux_csv_header();
 std::string flux_csv_rows(const pychron::processing::LevelFit& fit);
 
 // ---- Shared by flux.cpp and flux_admin.cpp ----------------------------------
+
+// "elctl flux: <message>" on stderr, then `short_usage`; kUsage.
+int flux_usage(Io io, const std::string& message, std::string_view short_usage);
+// "elctl flux: <message>" on stderr; `code`, kUsage (a fatal error) unless given.
+int flux_error(Io io, const std::string& message, int code = kUsage);
+
+// The flags every flux subcommand takes.
+struct FluxStoreArgs {
+  std::string db, user;  // --db <url>, --user NAME
+};
+// Whether `args[i]` is --db or --user. If it is, its value goes into `into`
+// and `i` steps over it (flux_flag_value); an error when it has none.
+pychron::Result<bool> flux_store_flag(const std::vector<std::string>& args, std::size_t& i, FluxStoreArgs& into);
 
 // The value of the flag at `args[i]`, which it steps over (`i` is then at the
 // value). An error when there is none, or when what follows is itself a
@@ -98,6 +109,13 @@ std::string flux_j_text(const std::optional<double>& v);
 std::string flux_percent_of(const std::optional<double>& err, const std::optional<double>& value);
 // Left aligned columns two spaces apart; the head row first; every line ends in a line break.
 std::string flux_table(const std::vector<std::string>& head, const std::vector<std::vector<std::string>>& rows);
+
+// `monitors set` and `monitors default`: `sets` saved over `loaded`, the
+// document as the command read it; `done` is printed when it is saved.
+// kFailed, saving nothing, when someone saved the document since it was read.
+int flux_save_monitor_sets(pychron::persistence::IStore& store, const std::string& user,
+                           const pychron::processing::MonitorSets& sets,
+                           const pychron::processing::LoadedMonitorSets& loaded, const std::string& done, Io io);
 
 // show, history and monitors; `rest` is what follows the subcommand.
 int flux_admin_command(const std::string& subcommand, const std::vector<std::string>& rest, Io io);
