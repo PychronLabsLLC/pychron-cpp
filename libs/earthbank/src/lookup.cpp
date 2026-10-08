@@ -60,29 +60,48 @@ constexpr std::string_view kTwoEntries = "More than one entry of EarthBank's lis
 
 // How a value stands to some rows, each known by a label (its name, or its
 // reference): the one row a label of which is the value, none, or more than
-// one.
+// one. `ids`: of One, every id the entry found is listed under, lowest first
+// (`row` is the row of the first).
 struct Pick {
   enum class Kind { One, None, Several };
   Kind kind = Kind::None;
   std::size_t row = 0;
+  std::vector<std::int64_t> ids = {};
 };
 
 // `match` is match_list_entry or match_flux_monitor. `labels[i]` is a label
 // of the row `owners[i]`, and `ids` the rows' ids: two rows of one id are one.
+// One spelling under several ids is Several, unless `lowest`: then it is the
+// row of the lowest id.
 template <typename Match>
 Pick pick(std::string_view value, const std::vector<std::string>& labels, const std::vector<std::size_t>& owners,
-          const std::vector<std::int64_t>& ids, Match match) {
+          const std::vector<std::int64_t>& ids, Match match, bool lowest) {
   const ListMatch matched = match(value, std::span<const std::string>(labels));
   if (matched.kind == ListMatch::Kind::Ambiguous) return {Pick::Kind::Several, 0};
   if (matched.kind == ListMatch::Kind::None) return {};
   // The rows that carry the entry found: one label may be two rows'.
-  std::optional<std::size_t> row;
+  Pick out;
   for (std::size_t i = 0; i < labels.size(); ++i) {
     if (trimmed(labels[i]) != trimmed(matched.entry)) continue;
-    if (row && ids[*row] != ids[owners[i]]) return {Pick::Kind::Several, 0};
-    if (!row) row = owners[i];
+    const std::int64_t id = ids[owners[i]];
+    if (std::find(out.ids.begin(), out.ids.end(), id) != out.ids.end()) continue;
+    if (out.ids.empty() || id < out.ids.front()) out.row = owners[i];
+    out.ids.insert(std::upper_bound(out.ids.begin(), out.ids.end(), id), id);
   }
-  return row ? Pick{Pick::Kind::One, *row} : Pick{};
+  if (out.ids.empty()) return {};
+  if (out.ids.size() > 1 && !lowest) return {Pick::Kind::Several, 0};
+  out.kind = Pick::Kind::One;
+  return out;
+}
+
+// `EarthBank's list has 'Unknown' 2 times, under the ids 2401 and 2419; the
+// lowest was taken.`
+std::string listed_more_than_once(std::string_view name, const std::vector<std::int64_t>& ids) {
+  std::string out = "EarthBank's list has '" + std::string(name) + "' " + std::to_string(ids.size()) + " times, under the ids ";
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    out += (i == 0 ? "" : i + 1 == ids.size() ? " and " : ", ") + std::to_string(ids[i]);
+  }
+  return out + "; the lowest was taken.";
 }
 
 }  // namespace
@@ -118,6 +137,7 @@ LookupResolver::Rows LookupResolver::ask(std::string_view endpoint, std::string_
     return out;
   }
   out.answered = true;
+  out.full = size > 0 && rows.size() >= static_cast<std::size_t>(size);
   for (const json& row : rows) {
     // A row is an id and a name; one without is passed over. Legacy also
     // reads a reference where a row has one (and a description, which is not
@@ -152,7 +172,12 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
   };
   // The value among the names of `rows`: found, two that could be meant
   // (unknown, and the matter is settled), or nothing, for the next step.
-  const auto among = [&](const std::vector<Row>& rows, auto match) -> std::optional<LookupResult> {
+  // `all_rows`: the rows are a list read whole. Then one spelling under
+  // several ids is one entry listed more than once (the archives hold
+  // `Unknown` twice), and the lowest id is taken, as legacy took the first
+  // row; of the two rows a question by name brings back, which is the lowest
+  // of all cannot be known, and neither is taken.
+  const auto among = [&](const std::vector<Row>& rows, auto match, bool all_rows) -> std::optional<LookupResult> {
     std::vector<std::string> labels;
     std::vector<std::size_t> owners;
     std::vector<std::int64_t> ids;
@@ -161,11 +186,13 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
       owners.push_back(i);
       ids.push_back(rows[i].id);
     }
-    const Pick picked = pick(value, labels, owners, ids, match);
+    const Pick picked = pick(value, labels, owners, ids, match, all_rows);
     if (picked.kind == Pick::Kind::Several) return unknown(std::string(kTwoEntries));
     if (picked.kind == Pick::Kind::None) return std::nullopt;
     const Row& row = rows[picked.row];
-    return LookupResult{LookupOutcome::Found, row.id, std::string(trimmed(row.name)), {}};
+    LookupResult found{LookupOutcome::Found, row.id, std::string(trimmed(row.name)), {}};
+    if (picked.ids.size() > 1) found.detail = listed_more_than_once(found.matched_name, picked.ids);
+    return found;
   };
 
   // 1. The list as it was read.
@@ -173,7 +200,12 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
   if (whole_list) {
     list = &whole(endpoint);
     if (!list->answered) return could_not_ask(list->why);
-    if (auto in_list = among(list->rows, exactly)) return *in_list;
+    // As many rows as were asked for: the list may go on. It is not the
+    // whole list then, and its terms are asked for by name as a long list's.
+    if (list->full) list = nullptr;
+  }
+  if (list != nullptr) {
+    if (auto in_list = among(list->rows, exactly, true)) return *in_list;
     // A reference that is the value, and one row's. Not for a flux monitor:
     // its reference is a paper, and a paper names no monitor.
     if (!monitor) {
@@ -186,11 +218,12 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
         labels.push_back(list->rows[i].reference);
         owners.push_back(i);
       }
-      const Pick picked = pick(value, labels, owners, ids, exactly);
+      const Pick picked = pick(value, labels, owners, ids, exactly, false);
       if (picked.kind == Pick::Kind::Several) return unknown(std::string(kTwoEntries));
       if (picked.kind == Pick::Kind::One) {
         const Row& row = list->rows[picked.row];
-        return {LookupOutcome::Found, row.id, std::string(trimmed(row.name)), {}};
+        return {LookupOutcome::Found, row.id, std::string(trimmed(row.name)),
+                "Found by the reference of the entry, '" + std::string(trimmed(row.reference)) + "', not by its name."};
       }
     }
   }
@@ -204,17 +237,17 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
     if (form == &capital && capital == given) break;
     const Rows& rows = named(endpoint, *form);
     if (!rows.answered) return could_not_ask(rows.why);
-    if (auto exact = among(rows.rows, exactly)) return *exact;
+    if (auto exact = among(rows.rows, exactly, false)) return *exact;
   }
   const Rows holding = ask(endpoint, "name.contains", value, kContainingRows);
   if (!holding.answered) return could_not_ask(holding.why);
-  if (auto held = among(holding.rows, exactly)) return *held;
+  if (auto held = among(holding.rows, exactly, false)) return *held;
 
   // 3. The flux monitor, by its own rule, over the names of the list that was
   // read. What else a row says (a reference, a description) is not read for
   // it: free text of no known shape must not find an id.
   if (monitor && list != nullptr) {
-    if (auto by_rule = among(list->rows, as_monitor)) return *by_rule;
+    if (auto by_rule = among(list->rows, as_monitor, true)) return *by_rule;
   }
   return unknown(std::string(kNotOnTheList));
 }

@@ -200,6 +200,101 @@ TEST(Preflight, AMissOnManyRecordsOfASampleIsOneLine) {
   EXPECT_EQ(report.misses[1].count, 1u);
 }
 
+// ---- What it took a value for ----------------------------------------------
+
+// (sample, record, field, value, matched_name, count)
+using Taken = std::tuple<std::string, std::string, std::string, std::string, std::string, std::size_t>;
+
+std::vector<Taken> taken(const std::vector<Resolved>& resolved) {
+  std::vector<Taken> out;
+  for (const Resolved& one : resolved) {
+    out.emplace_back(one.sample, one.record, one.field, one.value, one.matched_name, one.count);
+  }
+  return out;
+}
+
+// An id that is written cannot be corrected: where the entry found is not
+// the value as it was written (but for its case), the report says which
+// entry it was, once for each value, so that the user sees it before the
+// upload and not after.
+TEST(Preflight, SaysWhatAValueWasTakenFor) {
+  Desk desk;
+  const char* const kuiper = "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)";
+  Submission first = good("S-1", 5);
+  first.sample.materialName = "sanidine";    // another case: the same name
+  first.data_point.arMethodName = " step-heating - LASER ";
+  first.sample.archiveName = "Unknown";      // on the list twice
+  for (Measurement& m : first.measurements) m.jvalueUncertaintyTypeName = "SEM";
+  Submission second = good("S-2", 2);
+  second.sample.archiveName = "unknown";
+  second.age_calc.fluxMonitorName = "FC-2 Renne et al. 2011";
+  second.data_point.mineralName = "Unobtainium";
+  for (Measurement& m : second.measurements) m.jvalueUncertaintyTypeName = "SEM";
+  second.age_summary.ageUncertaintyTypeName = "2s";
+
+  const PreflightReport report = preflight({first, second, good("S-3")}, desk.resolver);
+  // In the order first met; the sample is the first that has the value, and
+  // the count is of records, over every sample.
+  EXPECT_EQ(taken(report.resolved),
+            (std::vector<Taken>{
+                {"S-1", "Sample", "archiveName", "Unknown", "Unknown", 1},
+                {"S-1", "ArArMeasurement", "jvalueUncertaintyTypeName", "SEM", "1 sigma", 7},
+                {"S-1", "ArArAgeCalc", "fluxMonitorName", "FC-2 28.201 Ma", kuiper, 2},
+                {"S-2", "Sample", "archiveName", "unknown", "Unknown", 1},
+                {"S-2", "ArArAgeCalc", "fluxMonitorName", "FC-2 Renne et al. 2011",
+                 "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)", 1},
+                {"S-2", "ArArAgeSummary", "ageUncertaintyTypeName", "2s", "2 sigma", 1},
+            }));
+  // Why, where there is more to it than another spelling.
+  EXPECT_EQ(report.resolved[0].detail,
+            "EarthBank's list has 'Unknown' 2 times, under the ids 2401 and 2419; the lowest was taken.");
+  EXPECT_EQ(report.resolved[1].detail, "");
+  EXPECT_EQ(report.resolved[2].detail, "");
+  // It is no miss: the report is as clean as its misses.
+  EXPECT_EQ(report.misses.size(), 1u);
+  EXPECT_EQ(report.misses[0].field, "mineralName");
+  PreflightReport none = preflight({good("S-3")}, desk.resolver);
+  EXPECT_TRUE(none.clean());
+  EXPECT_EQ(none.resolved.size(), 1u);
+  none.resolved.clear();
+  EXPECT_TRUE(none.clean());
+}
+
+// What the check cannot check is said, where a submission has a value there,
+// so that a clean report is not read as more than it is.
+TEST(Preflight, SaysWhatItDidNotCheck) {
+  Desk desk;
+  Submission bare = good("S-1");
+  bare.data_point.lithologyName = std::nullopt;
+  const PreflightReport nothing = preflight({bare, bare}, desk.resolver);
+  EXPECT_TRUE(nothing.not_checked.empty());
+  EXPECT_TRUE(nothing.clean());
+
+  Submission with_setup = bare;
+  with_setup.setup_name = "Example Lab ARGUS VI";
+  Submission with_all = good("S-2");
+  with_all.setup_name = "Example Lab ARGUS VI";
+  with_all.irradiation_name = "NM-300 (example)";
+  const PreflightReport report = preflight({bare, with_setup, with_all, with_all}, desk.resolver);
+  ASSERT_EQ(report.not_checked.size(), 3u);
+  // One line a field, however many samples have it.
+  EXPECT_EQ(report.not_checked[0].field, "setup_name");
+  EXPECT_EQ(report.not_checked[0].reason,
+            "EarthBank's list of analytical set-ups cannot be asked: whether it has one of this name is not checked.");
+  EXPECT_EQ(report.not_checked[1].field, "irradiation_name");
+  EXPECT_EQ(report.not_checked[1].reason,
+            "EarthBank's list of irradiations cannot be asked: whether it has one of this name is not checked.");
+  EXPECT_EQ(report.not_checked[2].field, "lithologyName");
+  EXPECT_EQ(report.not_checked[2].reason,
+            "The lithology is sent by its name, and no list for it is known: whether EarthBank takes the name is not "
+            "checked.");
+  // Not a miss.
+  EXPECT_TRUE(report.clean());
+  const PreflightReport only_setup = preflight({with_setup}, desk.resolver);
+  ASSERT_EQ(only_setup.not_checked.size(), 1u);
+  EXPECT_EQ(only_setup.not_checked[0].field, "setup_name");
+}
+
 // ---- Every term of every record --------------------------------------------
 
 #define PYCHRON_TEST_NAME_ONLY(kind, name) name_only(record.name);

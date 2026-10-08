@@ -11,11 +11,22 @@
 // guesses: a name is an entry's only if it is that entry but for the case of
 // its letters and the spaces around it (match_list_entry), a flux monitor is
 // found by the rule the workbook route uses (match_flux_monitor), and a name
-// that could be either of two entries is neither.
+// that could be either of two entries is neither. One thing is decided, as
+// legacy decided it: an entry that a list read whole holds more than once,
+// in one spelling under several ids (the archives hold `Unknown` twice), is
+// found under the lowest of them, and the result says so. Two entries that
+// differ in the case of a letter are two, and neither.
 //
 // The strategies, in order (the legacy integration's, spec 5.1):
 //   1. the list as it was read, for a list short enough to read whole
-//      (LookupSpec::whole): one request, `?size=2000`. Where the rows carry a
+//      (LookupSpec::whole): one request, `?size=2000`. A list that comes back
+//      with as many rows as were asked for may go on beyond them: it is not
+//      taken for the whole list, nothing is looked for in it (not in step 3
+//      either), and its terms are asked for by name. A service that cuts a
+//      list at fewer rows than it was asked for cannot be seen to have cut
+//      it; step 2 is there for the names beyond such a cut, and what cannot
+//      be mended is a second row of a name, or a second monitor of an age,
+//      that lies beyond it. Where the rows carry a
 //      `reference`, a value that is exactly one row's is that row; not for a
 //      flux monitor, whose reference is a paper and names no monitor. A
 //      `description` is never read: free text of no known shape finds no id.
@@ -55,7 +66,11 @@ enum class LookupOutcome {
 
 // `matched_name` is the entry as the service spells it, less the spaces
 // around it (for an uncertainty type, `1 sigma` or `2 sigma`). `detail` says
-// why, for everything but Found, in a sentence for the user.
+// why, for everything but Found, in a sentence for the user. Of a Found it is
+// empty, but where the entry was not found by its one name: by its reference,
+// or under the lowest of several ids. (That the entry is not the value as it
+// was written, as with a flux monitor, is to be seen from `matched_name`;
+// the pre-flight report lists both kinds.)
 struct LookupResult {
   LookupOutcome outcome = LookupOutcome::Unknown;
   std::int64_t id = 0;
@@ -84,7 +99,8 @@ class LookupResolver {
   // An answer of the service to one question: its rows, or why there are none.
   struct Rows {
     bool answered = false;
-    std::string why;  // when not answered
+    bool full = false;  // as many rows came as were asked for: there may be more
+    std::string why;    // when not answered
     std::vector<Row> rows;
   };
 

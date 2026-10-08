@@ -10,6 +10,12 @@
 // one report. It writes nothing: every request is a GET of a list, no package
 // is needed, and the submissions are not changed.
 //
+// An id that is written cannot be corrected, so the report also says what it
+// took a value for wherever that is not the value as it was written (a flux
+// monitor found by its name and age, an entry under the lowest of two ids),
+// and what it did not check at all, so that a clean report is read for what
+// it is.
+//
 // Which fields are terms is read off the model's field lists, not kept by
 // hand: a `<term>Name` field of a record that also has `<term>Id` is checked
 // unless it is known to be free text (term_fields).
@@ -62,6 +68,27 @@ struct Miss {
   std::size_t count = 1;
 };
 
+// A term that was found, where the user should see what it was found as:
+// the entry (`matched_name`) is not `value` but for the case of its letters,
+// or the resolver has something to say of how it was found (`detail`: by a
+// reference, under the lowest of several ids; else empty). One line for each
+// value of a field of a kind of record, over all the submissions: `sample` is
+// the first sample that has it, and `count` of how many records it is, of
+// every sample.
+struct Resolved {
+  std::string sample, record, field, value, matched_name, detail;
+  std::size_t count = 1;
+};
+
+// Something an upload sends that this check cannot check. `field` is
+// `setup_name` or `irradiation_name` (Submission: the service has no list of
+// either that can be asked) or `lithologyName` (sent by its name, as legacy
+// sent it; whether the service wants an id there is not known). `reason` is
+// a sentence for the user.
+struct NotChecked {
+  std::string field, reason;
+};
+
 // What the mapping noted on one submission (Submission::notes), unchanged.
 struct SampleNotes {
   std::string sample;
@@ -71,8 +98,13 @@ struct SampleNotes {
 struct PreflightReport {
   std::vector<Miss> misses;        // in the order found: by sample, record, field
   std::vector<SampleNotes> notes;  // the samples that have any, in order
+  std::vector<Resolved> resolved;  // in the order first met
+  // One for each of the three fields that some submission has a value in:
+  // set-up, irradiation, lithology, in that order.
+  std::vector<NotChecked> not_checked;
 
-  // Nothing unknown and nothing that could not be asked. Notes do not count.
+  // Nothing unknown and nothing that could not be asked. Notes do not count,
+  // and nor does what was resolved or not checked: those are to be read.
   bool clean() const { return misses.empty(); }
   std::vector<Miss> unknown() const;
   std::vector<Miss> could_not_ask() const;

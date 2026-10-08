@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/earthbank/vocab.hpp"
+#include "text_detail.hpp"
 
 namespace pychron::earthbank {
 namespace {
@@ -47,6 +48,15 @@ constexpr std::array kFreeText = {"locationName"sv, "lithologyName"sv};
 
 constexpr std::string_view kNameEnd = "Name";
 
+// What is sent and cannot be checked (PreflightReport::not_checked).
+constexpr std::string_view kLithology = "lithologyName";
+constexpr std::string_view kNoSetUpList =
+    "EarthBank's list of analytical set-ups cannot be asked: whether it has one of this name is not checked.";
+constexpr std::string_view kNoIrradiationList =
+    "EarthBank's list of irradiations cannot be asked: whether it has one of this name is not checked.";
+constexpr std::string_view kLithologyByName =
+    "The lithology is sent by its name, and no list for it is known: whether EarthBank takes the name is not checked.";
+
 // The terms of one record: its `<term>Name` fields that have `<term>Id`.
 void add_terms(std::vector<TermField>& out, std::string_view record, std::span<const std::string_view> fields) {
   for (const std::string_view field : fields) {
@@ -73,8 +83,11 @@ void add_terms(std::vector<TermField>& out, std::string_view record, std::span<c
 // Checks the terms of one record, as it would be sent.
 class Walk {
  public:
-  Walk(LookupResolver& resolver, std::vector<Miss>& misses, const std::vector<TermField>& terms)
-      : resolver_(resolver), misses_(misses), terms_(terms) {}
+  Walk(LookupResolver& resolver, PreflightReport& report, const std::vector<TermField>& terms)
+      : resolver_(resolver), misses_(report.misses), resolved_(report.resolved), terms_(terms) {}
+
+  // Some record had a lithology.
+  bool lithology() const { return lithology_; }
 
   void start(std::string sample) {
     sample_ = std::move(sample);
@@ -84,6 +97,7 @@ class Walk {
   void check(std::string_view record, const nlohmann::json& sent) {
     for (const TermField& term : terms_) {
       if (term.record != record) continue;
+      if (term.name_field == kLithology && sent.contains(term.name_field)) lithology_ = true;
       if (term.kind == TermKind::ByName || term.kind == TermKind::FreeText) continue;
       // to_json holds what is set: a name that is empty is not there, and an
       // id beside the name means there is nothing left to look up.
@@ -105,6 +119,7 @@ class Walk {
         miss.detail = "pychron-cpp does not know which list of EarthBank's this field is of.";
       } else {
         const LookupResult result = resolver_.resolve(term.name_field, value);
+        if (result.outcome == LookupOutcome::Found) found(record, term.name_field, value, result);
         if (result.outcome == LookupOutcome::Found || result.outcome == LookupOutcome::NoList) continue;
         miss.outcome = result.outcome;
         miss.detail = result.detail;
@@ -125,9 +140,23 @@ class Walk {
     return false;
   }
 
+  // A term that was found: said in the report when the entry is not the value
+  // as written, or was not found by its one name. Once for each value.
+  void found(std::string_view record, std::string_view field, const std::string& value, const LookupResult& result) {
+    if (detail::same_but_case(detail::trimmed(value), result.matched_name) && result.detail.empty()) return;
+    for (Resolved& one : resolved_) {
+      if (one.record != record || one.field != field || one.value != value) continue;
+      ++one.count;
+      return;
+    }
+    resolved_.push_back({sample_, std::string(record), std::string(field), value, result.matched_name, result.detail, 1});
+  }
+
   LookupResolver& resolver_;
   std::vector<Miss>& misses_;
+  std::vector<Resolved>& resolved_;
   const std::vector<TermField>& terms_;
+  bool lithology_ = false;
   std::string sample_;
   std::size_t first_of_sample_ = 0;
 };
@@ -159,8 +188,11 @@ std::vector<Miss> PreflightReport::could_not_ask() const { return with_outcome(m
 PreflightReport preflight(const std::vector<Submission>& submissions, LookupResolver& resolver) {
   PreflightReport report;
   const std::vector<TermField> terms = term_fields();
-  Walk walk(resolver, report.misses, terms);
+  Walk walk(resolver, report, terms);
+  bool set_up = false, irradiation = false;
   for (const Submission& submission : submissions) {
+    set_up = set_up || !detail::trimmed(submission.setup_name).empty();
+    irradiation = irradiation || !detail::trimmed(submission.irradiation_name).empty();
     std::string sample = submission.sample.name.value_or(std::string());
     if (sample.empty()) sample = submission.datapoint_name;
     if (!submission.notes.empty()) report.notes.push_back({sample, submission.notes});
@@ -175,6 +207,9 @@ PreflightReport preflight(const std::vector<Submission>& submissions, LookupReso
     walk.check(kAgeCalc, to_json(submission.age_calc));
     walk.check(kAgeSummary, to_json(submission.age_summary));
   }
+  if (set_up) report.not_checked.push_back({"setup_name", std::string(kNoSetUpList)});
+  if (irradiation) report.not_checked.push_back({"irradiation_name", std::string(kNoIrradiationList)});
+  if (walk.lithology()) report.not_checked.push_back({std::string(kLithology), std::string(kLithologyByName)});
   return report;
 }
 

@@ -114,13 +114,80 @@ TEST(Lookup, AnAmbiguousNameIsUnknown) {
   expect_not(desk.resolver.resolve("sampleMethodName", "VIAL"), LookupOutcome::Unknown, "either");
   EXPECT_EQ(desk.asked(), 1u);
 
-  // The archives hold `Unknown` twice, under two ids (the template's list
-  // does): which is meant cannot be said.
-  expect_not(desk.resolver.resolve("archiveName", "Unknown"), LookupOutcome::Unknown, "listed twice");
+  // Two entries that differ in case stay two, though one of them be there
+  // twice.
+  desk.bank.add_lookup_row("/api/core/l-sample-methods", {{"id", 2291}, {"name", "Vial"}});
+  LookupResolver again(desk.session);
+  expect_not(again.resolve("sampleMethodName", "VIAL"), LookupOutcome::Unknown, "either, still");
   expect_found(desk.resolver.resolve("archiveName", "geological survey of victoria"), *desk.bank.lookup_id(
                    "/api/core/archives", "Geological Survey of Victoria"),
                "Geological Survey of Victoria", "another of that list");
   EXPECT_EQ(desk.bank.count("GET", "/api/core/archives"), 1u);
+}
+
+// The archives hold `Unknown` twice, under two ids (the template's list
+// does). One spelling under several ids is one entry listed more than once:
+// the lowest id is taken (legacy took the first row), and the result says so.
+TEST(Lookup, OneSpellingUnderSeveralIdsIsTheLowest) {
+  Desk desk;
+  const LookupResult twice = desk.resolver.resolve("archiveName", "unknown");
+  expect_found(twice, 2401, "Unknown", "listed twice");
+  EXPECT_EQ(twice.detail, "EarthBank's list has 'Unknown' 2 times, under the ids 2401 and 2419; the lowest was taken.");
+  // Whatever the order of the rows, and with the spaces a row may have.
+  desk.bank.add_lookup_row("/api/arar/AirRatio", {{"id", 1890}, {"name", "Example 2031"}});
+  desk.bank.add_lookup_row("/api/arar/AirRatio", {{"id", 1870}, {"name", " Example 2031 "}});
+  desk.bank.add_lookup_row("/api/arar/AirRatio", {{"id", 1880}, {"name", "Example 2031"}});
+  const LookupResult thrice = desk.resolver.resolve("airRatioName", "Example 2031");
+  expect_found(thrice, 1870, "Example 2031", "three rows");
+  EXPECT_EQ(thrice.detail,
+            "EarthBank's list has 'Example 2031' 3 times, under the ids 1870, 1880 and 1890; the lowest was taken.");
+  // An entry there once has nothing said of it.
+  EXPECT_EQ(desk.resolver.resolve("archiveName", "Geological Survey of Victoria").detail, "");
+  // A monitor found by its own rule, likewise.
+  desk.bank.add_lookup_row(kMonitors, {{"id", 1990}, {"name", "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)"}});
+  const LookupResult monitor = desk.resolver.resolve("fluxMonitorName", "FC-2 28.201 Ma");
+  expect_found(monitor, 1903, "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)", "a monitor twice");
+  EXPECT_NE(monitor.detail.find("under the ids 1903 and 1990"), std::string::npos) << monitor.detail;
+
+  // Only of a list read whole, where every row was seen: of two rows that
+  // came back to a question by name, which is the lowest of all is not known
+  // (ContainsNeedsAnExactMatchAmongTheResults).
+}
+
+// A list that comes back with as many rows as were asked for may have been
+// cut there: it is not taken for the whole list, and its terms are asked for
+// by name.
+TEST(Lookup, AListAsLongAsWasAskedForIsNotTakenAsWhole) {
+  Desk desk;
+  json rows = json::array();
+  // The first 2000 rows of a longer list, as far as can be told: the term
+  // wanted is not among them, another is there under two ids, and a monitor
+  // that would be the only one of its age.
+  rows.push_back({{"id", 5}, {"name", "Twice"}});
+  rows.push_back({{"id", 6}, {"name", "Twice"}});
+  while (rows.size() < 2000) rows.push_back({{"id", 10000 + rows.size()}, {"name", "Filler " + std::to_string(rows.size())}});
+  desk.bank.fail_next("GET", "/api/arar/LAgeType", 200, rows.dump());
+  expect_found(desk.resolver.resolve("ageCalcTypeName", "plateau age"), 1401, "Plateau Age", "by name");
+  expect_not(desk.resolver.resolve("ageCalcTypeName", "Twice"), LookupOutcome::Unknown, "not the lowest of what was seen");
+  EXPECT_EQ(questions(desk, "/api/arar/LAgeType"),
+            (std::vector<std::string>{"size=2000", "name.equals=plateau age size=2", "name.equals=Plateau age size=2",
+                                      "name.contains=plateau age size=200", "name.equals=Twice size=2",
+                                      "name.contains=Twice size=200"}));
+
+  json monitors = json::array();
+  monitors.push_back({{"id", 7}, {"name", "Fish Canyon Tuff Sanidine (FCTs) from Example et al. 2031 (28.201 Ma)"}});
+  while (monitors.size() < 2000) {
+    monitors.push_back({{"id", 20000 + monitors.size()}, {"name", "Filler " + std::to_string(monitors.size())}});
+  }
+  desk.bank.fail_next("GET", kMonitors, 200, monitors.dump());
+  expect_not(desk.resolver.resolve("fluxMonitorName", "FC-2 28.201 Ma"), LookupOutcome::Unknown,
+             "the only entry of that age among the rows seen");
+  // One row fewer, and it is the list.
+  Desk whole;
+  monitors.erase(monitors.size() - 1);
+  whole.bank.fail_next("GET", kMonitors, 200, monitors.dump());
+  expect_found(whole.resolver.resolve("fluxMonitorName", "FC-2 28.201 Ma"), 7,
+               "Fish Canyon Tuff Sanidine (FCTs) from Example et al. 2031 (28.201 Ma)", "a list that ended");
 }
 
 // A name the short list has not is still asked for by name, as legacy did: a
@@ -310,7 +377,9 @@ TEST(Lookup, AReferenceThatIsOneRowsIsThatRow) {
   desk.bank.add_lookup_row(list, {{"id", 1752}, {"name", "Example and Sample 2033"}, {"reference", "Shared"}});
   desk.bank.add_lookup_row(list, {{"id", 1753}, {"name", "Example and Sample 2034"}, {"reference", "Shared"},
                                   {"description", "EX-31"}});
-  expect_found(desk.resolver.resolve("decayConstantName", "ex-31"), 1750, "Example and Sample 2031", "one row's");
+  const LookupResult by_reference = desk.resolver.resolve("decayConstantName", "ex-31");
+  expect_found(by_reference, 1750, "Example and Sample 2031", "one row's");
+  EXPECT_EQ(by_reference.detail, "Found by the reference of the entry, 'EX-31', not by its name.");
   expect_found(desk.resolver.resolve("decayConstantName", "EX-32"), 1751, "Example and Sample 2032", "the other's");
   expect_not(desk.resolver.resolve("decayConstantName", "Shared"), LookupOutcome::Unknown, "two rows' reference");
   expect_not(desk.resolver.resolve("decayConstantName", "EX-3"), LookupOutcome::Unknown, "a part of one");
