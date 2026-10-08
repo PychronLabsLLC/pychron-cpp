@@ -114,6 +114,22 @@ TEST(Flux, AWeightedAnalysisWithNoErrorIsRejectedAndNamed) {  // X5
   EXPECT_TRUE(m->rejected.empty());
 }
 
+TEST(Flux, AWeightedAnalysisWithAnErrorTooSmallOrTooLargeToWeightIsRejected) {
+  for (const double rel : {1e-170, 1e170}) {
+    const std::vector<pr::MonitorAnalysis> a{
+        analysis_with_j("a", 1.0e-3, 0.01),
+        analysis_with_j("absurd", 1.05e-3, rel),
+        analysis_with_j("c", 1.1e-3, 0.01),
+    };
+    auto w = pr::mean_j(a, kMonitor, pr::MeanKind::Weighted, pr::MeanErrorKind::Sem);
+    ASSERT_TRUE(w) << rel;
+    EXPECT_EQ(w->n, 2) << rel;
+    ASSERT_EQ(w->rejected.size(), 1u) << rel;
+    EXPECT_EQ(w->rejected[0], "absurd");
+    EXPECT_TRUE(std::isfinite(w->j) && std::isfinite(w->j_err)) << rel;
+  }
+}
+
 TEST(Flux, NoAnalysisLeftIsAnError) {
   EXPECT_FALSE(pr::mean_j({}, kMonitor, pr::MeanKind::Weighted, pr::MeanErrorKind::Sem));
   const std::vector<pr::MonitorAnalysis> omitted{analysis_with_j("a", 1e-3, 0.01, true)};
@@ -264,6 +280,53 @@ TEST(FluxModels, BracketingAverageUsesTheSampleSd) {  // X8
   ASSERT_TRUE(f);
   EXPECT_DOUBLE_EQ(f->at[0].j, 2.0);
   EXPECT_NEAR(f->at[0].j_err, std::sqrt(2.0), 1e-12);
+}
+
+TEST(FluxModels, BracketingWeightedMeanIsTheInverseVarianceMeanOfTheTwoNearest) {
+  // Nearest to x = 12 are b (10) and c (20); a and d take no part, and
+  // where the point lies between them does not matter.
+  const double wb = 1 / (0.2 * 0.2), wc = 1 / (0.4 * 0.4);
+  const double j = (wb * 2.0 + wc * 4.0) / (wb + wc), err = 1.0 / std::sqrt(wb + wc);
+  auto f = pr::fit_flux(four_in_a_row(), std::vector<pr::Point>{{12, 0}, {18, 0}, {12, 5}},
+                        options(pr::ModelKind::Bracketing, pr::Interpolation::WeightedMean));
+  ASSERT_TRUE(f);
+  ASSERT_EQ(f->at.size(), 3u);
+  for (const auto& p : f->at) {
+    EXPECT_NEAR(p.j, j, 1e-12);
+    EXPECT_NEAR(p.j_err, err, 1e-12);
+  }
+  EXPECT_TRUE(f->notes.empty());  // a mean never extrapolates
+
+  // Past the end monitors it is still the mean of the two nearest.
+  auto past = pr::fit_flux(four_in_a_row(), std::vector<pr::Point>{{-5, 0}},
+                           options(pr::ModelKind::Bracketing, pr::Interpolation::WeightedMean));
+  ASSERT_TRUE(past);
+  const double wa = 1 / (0.1 * 0.1);
+  EXPECT_NEAR(past->at[0].j, (wa * 1.0 + wb * 2.0) / (wa + wb), 1e-12);
+  EXPECT_TRUE(past->notes.empty());
+}
+
+TEST(FluxModels, AnErrorTooSmallOrTooLargeToWeightNamesTheMonitor) {
+  // 1 / (e * e) is infinite below about 1e-154 and zero above about 1e154: no weight.
+  for (const double e : {1e-170, 1e170}) {
+    const std::vector<pr::Monitor> m{{"a", {0, 0}, 1.0, 0.1}, {"absurd", {10, 0}, 2.0, e}, {"c", {20, 0}, 3.0, 0.1},
+                                     {"d", {0, 10}, 4.0, 0.1}, {"e", {10, 10}, 5.0, 0.1}};
+    for (const auto& o : {options(pr::ModelKind::WeightedMean), options(pr::ModelKind::NearestNeighbors),
+                          options(pr::ModelKind::Bracketing), options(pr::ModelKind::Bracketing1D)}) {
+      auto f = pr::fit_flux(m, std::vector<pr::Point>{{12, 0}}, o);
+      ASSERT_FALSE(f) << e << " " << static_cast<int>(o.kind);
+      EXPECT_NE(f.error().what.find("monitor absurd"), std::string::npos) << f.error().what;
+    }
+    auto plane = options(pr::ModelKind::Plane);
+    plane.weighted = true;
+    auto f = pr::fit_flux(m, std::vector<pr::Point>{{12, 0}}, plane);
+    ASSERT_FALSE(f) << e;
+    EXPECT_NE(f.error().what.find("monitor absurd"), std::string::npos) << f.error().what;
+    // A model that does not weight has no use for it.
+    plane.weighted = false;
+    EXPECT_TRUE(pr::fit_flux(m, std::vector<pr::Point>{{12, 0}}, plane)) << e;
+    EXPECT_TRUE(pr::fit_flux(m, std::vector<pr::Point>{{12, 0}}, options(pr::ModelKind::Matching))) << e;
+  }
 }
 
 TEST(FluxModels, WeightedMeanGivesEveryPointTheSameJ) {

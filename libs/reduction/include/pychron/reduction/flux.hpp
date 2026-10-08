@@ -53,9 +53,10 @@ struct PositionMean {
 // Mean J of the non-omitted analyses, with the requested error kind. An
 // analysis with no J (see j_of) is rejected and named. Error (Config,
 // "flux: ...") when none is left.
-// Deviation: for MeanKind::Weighted an analysis whose J has a zero or
-// non-finite error is rejected and named; weighted_mean would drop it
-// silently.
+// Deviation: for MeanKind::Weighted an analysis whose J has an error that
+// gives no weight (zero, non-finite, or so small or large that 1 / err^2 is
+// not finite and above zero) is rejected and named; weighted_mean would drop
+// it silently.
 Result<PositionMean> mean_j(std::span<const MonitorAnalysis> analyses, const MonitorConstants& monitor,
                             MeanKind kind, MeanErrorKind error);
 
@@ -121,8 +122,9 @@ bool is_least_squares(ModelKind kind) noexcept;  // Plane, Bowl, LeastSquares1D
 std::size_t minimum_monitors(const FitOptions& options);
 
 // J and its error at each position of `predict_at`. Error (Config,
-// "flux: ...") on non-finite input (naming the monitor or the point), a zero
-// error in a weighted model (naming the monitor), bad options or too few
+// "flux: ...") on non-finite input (naming the monitor or the point), an
+// error that gives no weight in a weighted model (zero, or 1 / err^2 not
+// finite and above zero; naming the monitor), bad options or too few
 // monitors.
 Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Point> predict_at,
                          const FitOptions& options);

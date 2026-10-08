@@ -9,6 +9,17 @@
 
 namespace pychron::reduction {
 
+namespace {
+
+// Whether 1 / err^2 is a weight: finite and above zero. An error of zero, or
+// one so small or so large that its square underflows or overflows, is not.
+bool weighable(double err) {
+  const double w = 1.0 / (err * err);
+  return std::isfinite(w) && w > 0.0;
+}
+
+}  // namespace
+
 Result<UFloat> j_of(const UFloat& f, const MonitorConstants& monitor) {
   const double f0 = f.nominal();
   if (!std::isfinite(f0) || f0 <= 0.0) return fail(ErrorKind::Config, "flux: F must be positive and finite");
@@ -41,8 +52,7 @@ Result<PositionMean> mean_j(std::span<const MonitorAnalysis> analyses, const Mon
   for (const MonitorAnalysis& a : analyses) {
     if (a.omitted) continue;
     auto j = j_of(a.f, monitor);
-    const bool bad_error =
-        j && kind == MeanKind::Weighted && (!std::isfinite(j->std_dev()) || j->std_dev() == 0.0);
+    const bool bad_error = j && kind == MeanKind::Weighted && !weighable(j->std_dev());
     if (!j || bad_error) {
       out.rejected.push_back(a.record_id);
       continue;
@@ -259,6 +269,8 @@ Result<FluxFit> fit_flux(std::span<const Monitor> monitors, std::span<const Poin
     if (m.j_err < 0.0) return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a negative error");
     if (weighted && m.j_err == 0.0)
       return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a zero J error, which a weighted model cannot use");
+    if (weighted && !weighable(m.j_err))
+      return fail(ErrorKind::Config, "flux: monitor " + m.label + " has a J error too small or too large to weight");
   }
   for (std::size_t i = 0; i < predict_at.size(); ++i)
     if (!std::isfinite(predict_at[i].x) || !std::isfinite(predict_at[i].y))
