@@ -105,8 +105,9 @@ first if you want the whole set.
 
 ### The toolbar
 
-The buttons along the top of the window are icons; hold the pointer over one
-for its name. From left to right, in three groups:
+The buttons along the top of the window each have an icon with its name
+under it; hold the pointer over one for what it does. From left to right, in
+three groups:
 
 | Button | Opens |
 |---|---|

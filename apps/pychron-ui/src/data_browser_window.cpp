@@ -116,7 +116,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   toolbar_ = new QToolBar(tr("Data"));
   toolbar_->setObjectName(QStringLiteral("data_toolbar"));
   toolbar_->setIconSize(QSize(18, 18));
-  toolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  toolbar_->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
   auto plot = [this](const char* kind, const QString& label, const QString& tip) {
     const QString k = QString::fromLatin1(kind);
     QAction* a = toolbar_->addAction(data_icon(k), label, this, [this, k] { request_figure(k); });

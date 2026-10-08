@@ -512,6 +512,9 @@ class TestDataWindows : public QObject {
     QVERIFY(w.toolbar());
     // At the top: the layout's menu bar, above the filters and the table.
     QCOMPARE(w.layout()->menuBar(), static_cast<QWidget*>(w.toolbar()));
+    // Each button names itself under its icon.
+    QCOMPARE(w.toolbar()->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
+    for (const QAction* a : w.toolbar()->actions()) QVERIFY(a->isSeparator() || !a->text().isEmpty());
     // Four figures | three fit windows | recall, export; an icon and a tip each.
     const QStringList expected{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
                                QStringLiteral("inverse_isochron"), QString(), QStringLiteral("isotope_evolution_fit"),
