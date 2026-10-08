@@ -163,8 +163,10 @@ is the same for every sample of a build. The irradiation is
 sample's published analyses name (`Analysis::irradiation`; an analysis that
 names none is passed over). A sample can span irradiations and the record
 has room for one: analyses that name different ones are not refused; the
-name is left empty and a note gives two of them with their run ids. Both
-names are taken as given: whether the service knows them is for pre-flight
+name is left empty and a note gives two of them with their run ids. A
+sample none of whose analyses names an irradiation gets a note too, and
+every submission one when `setup` is empty; each says which setting names
+the thing. Both names are taken as given: whether the service knows them is for pre-flight
 (section 5) or, in a workbook, for the importer.
 
 `software` is filled by the apps with the name and version; it goes into
@@ -473,8 +475,15 @@ changes one row above.
 - Are the columns the Ar-Ar template colours as Required all required of
   every row? The colour marks both `laserPower` and `furnaceTemperature`,
   and `stepNumber`, `Ar39KReleased` and `cumulative39ArK`, which a fusion
-  has not. The exporter reports each such column a row leaves empty and
-  writes the row all the same.
+  has not. The exporter takes it that a row needs a laser power or a furnace
+  temperature and not both, and the three step columns only for a step
+  heating (section 6), reports every other Required column a row leaves
+  empty, and writes the row all the same.
+- Is `mineral` on the data point sheet matched case-sensitively against the
+  material list? The template gives that column no list (row 2 calls it a
+  search term), so pychron's spelling is written there (`sanidine`), while
+  `material` on the Sample sheet, which has the list, is written in the
+  list's spelling (`Sanidine`).
 - Must `stepNumber` be an integer? "Heating step number (if step-heating)"
   (B32). A whole number is sent as a number (1, 2, ...), as legacy sent a
   float (`_step_to_num`, `:1952-1962`).
@@ -680,18 +689,20 @@ one that cannot be followed is reported and its column not checked.
 
 A list is the cells its validation names and those that follow them without
 a gap: two lists of the Sample template have grown past their validations
-(`Mine Waste` in A17; nine archives in F29:F37).
+(`Mine Waste` in A17; ten archives in F29:F38, the last of them `New (add
+comment)`). Row 1 of a list's column on the lookup sheet is its heading
+(`Flux Monitor`, `Lithology`), and the notes name a list by it.
 
 Before a value is written under a column that has a list:
 
 - a value the list has is written as it is (the list's `Renne et al. 2011 `
   ends in a space: without it the value is still that entry);
 - a value that is an entry but for the case of its ASCII letters and the
-  spaces around it is written as the list spells it, trimmed, and counted:
-  one note per column, `Samples.material: 2 value(s) written in the list's
-  spelling`. A part of an entry, or other spaces inside one, is not the
-  entry. Where two entries differ only in case and the value is neither, it
-  is not rewritten;
+  spaces around it is written as the list spells it, trimmed, and the note
+  says what became what, each distinct value once: `Samples.material:
+  'sanidine' written as 'Sanidine' (list: Lithology)`. A part of an entry,
+  or other spaces inside one, is not the entry. Where two entries differ
+  only in case and the value is neither, it is not rewritten;
 - the flux monitor only, whose entries are whole citations (`Fish Canyon
   Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)`), is also found
   by name and age. The age is the value's number followed by `Ma`, else its
@@ -705,14 +716,25 @@ Before a value is written under a column that has a list:
   name with one of them is looked for among that monitor's entries only, and
   a name with two monitors' matches nothing. A name with none must have
   every one of its words in the entry, one of them of three letters or more
-  or the entry's abbreviation in parentheses. One entry left: it is written,
-  and the note says what became what (`ArArAgeCalc.fluxMonitor: 'FC-2 28.201
-  Ma' written as the list's 'Fish Canyon ... (28.201 Ma)'`). Several (`Mt
-  Domedary Biotite 99.44 Ma` is both `GA-1550` and `MD-2`): not rewritten,
-  and said;
+  or the entry's abbreviation in parentheses. Either way a mineral the name
+  says must be the entry's: the same tuff has a sanidine and a biotite, and
+  the list only one. The mineral words are the list's own, kept as a second
+  small table beside the first (`sanidine`, the Taylor Creek entry's
+  `Saniditine`, which is sanidine, `biotite`, `hornblende`, `muscovite`),
+  compared without case as whole words; a name and an entry that each say
+  one must say the same one, so `Fish Canyon biotite 28.201 Ma` and `GA-1550
+  sanidine 99.738 Ma` match nothing, and a name that says none (`FC-2 28.201
+  Ma`) is held to none. A name that holds `FCT-3` or `FCT3`, the Fish Canyon
+  biotite's designation, matches nothing either, mineral said or not: `FCT`
+  alone would make it the sanidine. One entry left: it is written, and the
+  note says what became what (`ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma'
+  written as 'Fish Canyon ... (28.201 Ma)' (list: Flux Monitor), found by
+  its name and age`). Several (`Mt Domedary Biotite 99.44 Ma` is both
+  `GA-1550` and `MD-2`): not rewritten, and said;
 - anything else is written as it was given and reported, each distinct value
-  once: `ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's
-  list`.
+  once, with the list's heading: `ArArAgeCalc.airRatio: 'Mark et al. 2011'
+  is not in the template's list 'Air Ratio'; the importer may refuse the
+  value`.
 
 A column without a list is written as given, with no note: the data point's
 `mineral` and `lithology`, the sample's `unitName`, and the names of the
@@ -740,13 +762,32 @@ is. The columns so marked:
 | `ArArAgeCalc` | `decayConstant`, `airRatio`, `fluxMonitor` |
 | `Samples` | `sampleName`, `material`, `latitude`, `longitude` |
 
-A Required column that a written row leaves empty is named in the notes,
-once per sheet for the whole export, with its title: `ArArDataPoints:
-Required by the template and empty in at least one row, to be filled in
-before importing: arArSetUp (Analytical Key), ...`. The row is written all
-the same: the user fills the cell in, or finds out from the importer that
-it was not needed (4.6 has the question). A template without the legend
-gets one note saying that empty columns are not reported for it.
+The colour is per column and says nothing of when. A few columns are wanted
+only of some rows, by what the columns themselves mean, and a row they are
+not wanted of is not reported for them (`kConditional` in `xlsx.cpp`):
+
+| Column of `ArArMeasurement` | Wanted of | In the note |
+|---|---|---|
+| `laserPower`, `laserPowerUnits` | a row that has no `furnaceTemperature` | `... rows without a furnace temperature` |
+| `furnaceTemperature` | a row that has no `laserPower` | `... rows without a laser power` |
+| `stepNumber`, `Ar39KReleased`, `cumulative39ArK` | a row of a step-heating data point: one whose `arArMethod` (the data point's `arMethodName`) begins `Step-heating`, whatever its case | `... rows of a step-heating data point` |
+
+So a row with neither a laser power nor a furnace temperature is missed all
+three columns, a fusion is missed no step number, and a data point without
+a method is missed the method and not the three columns of a step.
+
+A Required column that a row it is wanted of leaves empty is named in the
+notes, once per sheet for the whole export, with its title and the number of
+rows: `ArArDataPoints: marked Required by the template's colouring; the
+importer may refuse a row that leaves one empty: arArSetUp (Analytical Key)
+empty in every row, irradiationBatchID (Irradiation Batch ID) empty in 1 of
+2 rows`. The count of a conditional column is of the rows it is wanted of
+(`stepNumber (Step number) empty in 2 of 10 rows of a step-heating data
+point`). The note says what the template marks and what may follow; it does
+not order anything, since whether the importer holds a row to the colour is
+not known (4.6 has the question), and the row is written all the same. A
+template without the legend gets one note saying that empty columns are not
+reported for it.
 
 `check_against_template` builds the same workbooks in memory and returns the
 notes an export would (or the error it would refuse with), writing nothing:
