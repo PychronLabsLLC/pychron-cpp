@@ -1,7 +1,7 @@
 # Flux window
 
 Date: 2026-10-07
-Status: Approved 2026-10-07 (owner decisions in section 3)
+Status: Implemented (owner decisions in section 3; implementation notes in section 11)
 Owner: Jake Ross
 Depends on: `2026-10-06-flux-fitting-design.md` (the math of section 5, the
 orchestration of section 6, `elctl flux` of section 7, the rulings of
@@ -90,14 +90,16 @@ struct FittedPosition::UsedAnalysis {
   std::string uuid, record_id, tag;
   bool omitted = false;                 // as today: omitted by rule (tag, saved fit, edit)
   AnalysisState state = AnalysisState::Used;
-  std::optional<double> j, j_err;       // absent for NotReduced and NoJ
+  std::optional<double> j, j_err;       // absent for NotReduced and for a NoJ that has no J (see R3)
 };
 ```
 
 `fit_level` already computes each J to form the mean; it now keeps it. An
 analysis omitted by more than one rule reports the first of: edit, saved
 fit, tag. `omitted` keeps its meaning and is what a save writes
-(`is_omitted`, flux spec R15). `elctl flux fit` gains one warning line per
+(`is_omitted`, flux spec R15). An analysis whose J the weighted mean refuses
+(it has no error) keeps its J and has state `NoJ`; only an F that gives no J
+leaves `j` absent (section 11, R3). `elctl flux fit` gains one warning line per
 monitor with analyses out, `hole 3: 66003-02 omitted (tag outlier)`.
 
 ### 4.2 Options schema (`flux_view.hpp`)
@@ -149,7 +151,7 @@ One graph, one panel. The abscissa of a hole is its angle in degrees,
 Layers, in drawing order:
 
 1. **The fit band and line.** The model evaluated by `reduction::fit_flux`
-   on the used monitors at 181 points: round a circle whose radius is the
+   on the used monitors at 361 points: round a circle whose radius is the
    mean radius of the used monitors (Angle), or along the axis from the
    least to the greatest coordinate of any position (X, Y). A `BandLayer` at
    +/- 1 sigma and a `LineLayer`. Present for Plane, Bowl, LeastSquares1D and
@@ -158,8 +160,9 @@ Layers, in drawing order:
 2. **Analyses.** One `PointLayer`, a small marker per monitor analysis with a
    J, `refs[i].analysis` its uuid, spread within its hole over +/- 2 degrees
    (or 2 % of the axis range) in record-id order so they do not sit on each
-   other, `y_err` its error, `excluded[i]` when it takes no part. Tooltip:
-   the record id, `J +/- err`, and for one that is out, why.
+   other, `excluded[i]` when it takes no part. No error bars (R5). Tooltip:
+   the record id, `J +/- err`, and for one that is out, why (for an analysis
+   whose J the weighted mean refuses: `not used: J has no error`).
 3. **Monitor means.** A `PointLayer` of diamonds with error bars, one per
    monitor with a mean; a monitor left out of the fit is drawn excluded.
    Tooltip: hole, identifier, n, mean J, MSWD.
@@ -293,8 +296,9 @@ J is printed `%.4e`, percentages and MSWD `%.2f`, an absent value blank.
   passes it through `mark_as_user_file`.
 - `Open in Packages` shows the Packages window on this level.
 
-**Status bar.** One label, the summary of the fit:
-`plane, weighted · fit MSWD 1.12 (5 dof) · J 1.0012e-03 – 1.0241e-03 (2.24 %)`,
+**Status bar.** One label, `flux_status_line` of the fit (R1), which starts
+with the model as `plane, unweighted` or `plane, weighted` (R6):
+`plane, unweighted · fit MSWD 1.12 (5 dof) · J 1.0012e-03 – 1.0241e-03 (2.24 %)`,
 followed by `· 3 warnings` when there are any, the warnings one per line in
 the tooltip: the lines `elctl flux fit` prints (rejected and unreduced
 analyses, extrapolated holes, MSWD outside its limits, monitors left out,
@@ -312,10 +316,12 @@ with the tables and plot empty.
 
 On arrival: the options are resolved (W6), the monitor group is set from
 `LevelInputs` (the set and sample in use, `all_positions`), `Edits` is
-empty, and the level is fitted.
+empty, and the level is fitted at once (R7).
 
-A fit runs `fit_level` on the GUI thread 150 ms after the last change. When
-it fails, the status shows the error unreworded in the error tone
+A fit after an edit or an option change runs `fit_level` on the GUI thread
+150 ms after the last change; the fit on arrival does not wait (R7). A
+level with no monitors loads like any other and shows `fit_level`'s error
+with the level on screen (R6). When a fit fails, the status shows the error unreworded in the error tone
 (`flux: bowl needs 6 monitor positions, 5 used`), the predicted columns are
 blank, the plot shows the analyses and means without a curve, and Save is
 disabled with the error as its tooltip.
@@ -331,27 +337,37 @@ why. It runs `save_level(store, actor, fit, skip_positions, "pychron-ui
   columns.
 - Nothing to write: `Nothing to save: 12 positions unchanged`.
 - A conflict: `Not saved: hole 7 was saved by jsmith at 2026-10-07 14:02:11
-  since this level was loaded. Reload and fit again.`, in the error tone.
+  UTC since this level was loaded. Reload and fit again.`, in the error tone
+  (R12). The author and time come from the conflicting head
+  (`flux_head_info`, R2).
   Nothing was written; the edits are kept so they can be applied again after
   a reload.
 - A refused J, or any other error: `Not saved: <the error>`.
 
-The actor is the bridge's; it is never asked for.
+Save boxes unticked stay unticked across the reload that follows a save of
+the same level, and are no edit (R11). The actor is the bridge's; it is never
+asked for.
 
 ### 5.6 Edits pending
 
 The window has edits pending when `Edits`, the options, the monitor group or
-a `Save` box differ from what the load produced. Selecting another level,
+a `Save` box differ from what the load produced. A monitor-group choice that
+differs from the level's as-saved selection is an edit, also after its reload;
+`Revert` then reloads with no selection (R9). Selecting another level,
 Reload, a change of the monitor group and closing the window then ask
 `Save the flux of NM-300 A?` with Save, Discard and Cancel, through an
 injectable function as the entry windows do. Save that fails or conflicts
-cancels what was asked.
+cancels what was asked. Discard on closing drops the edits (R10). A change of
+the monitor group is not blocked by a message (R13): the Save answer of the
+question saves the fit on show, then loads the new group.
 
 ### 5.7 `PackagesWindow`
 
 One more tool bar action, `Fit flux…`, enabled when a level is open, and a
-signal `flux_requested(irradiation, level)`. Nothing else changes: its J
-columns already reload on the bridge's `changed()`.
+signal `flux_requested(irradiation, level)`. One more change (R14): it did
+not, as first written here, already reload its open level on the bridge's
+`changed()`; it now re-reads it on another window's change, only when nothing
+in it is unsaved, and keeps its selection.
 
 ## 6. Error handling
 
@@ -398,8 +414,8 @@ Core (GoogleTest):
   matching value.
 - `flux_scene`: the abscissa per model; one analysis point per analysis
   with a J, its uuid and its excluded flag; means and unknowns counted; the
-  curve present for the five kinds that have one and absent for the four
-  that do not; the curve at a monitor's abscissa equals that monitor's
+  curve (361 points) present for the five kinds that have one and absent for
+  the four that do not; analysis points without error bars; the curve at a monitor's abscissa equals that monitor's
   predicted J for Plane on the ring; the highlight layer; a scene without a
   fit has analyses and means only.
 - `level_flux_status` for the three cases (`tests/processing/test_flux_store.cpp`).
@@ -420,9 +436,10 @@ SQLite store seeded with `flux_seed.hpp`; one `QSKIP` without the store):
 - A model the monitors cannot support shows the error, blanks the predicted
   columns, and disables Save with the error as its tooltip.
 - Save writes (the store is read back), says `Saved 12 positions`, and a
-  second Save says nothing is to be saved.
-- A head moved by another client: `Not saved: hole 7 was saved by`, nothing
-  written, the edits kept.
+  second Save says nothing is to be saved. Teardown with a save or a load in
+  flight, and a close while busy, are run under the sanitizers.
+- A head moved by another client: `Not saved: hole 7 was saved by ... UTC`,
+  nothing written, the edits kept.
 - `Save` unticked on a position leaves its head alone.
 - Selecting another level with edits pending asks once; Cancel stays, Discard
   moves, Save saves then moves.
@@ -458,3 +475,75 @@ the flux bullet (the window computes nothing; scene and schema live in
   they act on a selection of analyses from the data browser, this window on
   a level.
 - Monte Carlo and position error (flux spec F5).
+
+## 11. Implementation notes (2026-10-07)
+
+What the built window does that the text above did not say, or said
+otherwise. The sections above were amended to agree; the rulings are numbered
+for the commit messages and the review.
+
+### Rulings
+
+- **R1** `flux_status_line(const LevelFit&)` in `flux_view.hpp` is the
+  window's status text (the model, then the MSWD and the J range). It is not
+  `flux_summary`, which is the command line's.
+- **R2** `flux_head_info` in the store adapter gives the author and time of
+  the head that conflicted; `FluxSaveOutcome::conflict_hole` names the hole.
+  The window reads both in the save's own job.
+- **R3** An analysis whose J the weighted mean refuses (it has no error) keeps
+  its J and has state `NoJ`; only an F that gives no J leaves it absent. Its
+  plot tooltip says `not used: J has no error`.
+- **R4** The curve has 361 points, not 181.
+- **R5** Analysis points have no error bars; the means and the unknowns do.
+- **R6** The status starts `plane, unweighted · ...`. A level with no
+  monitors loads, and shows `fit_level`'s error with the level on screen.
+- **R7** The fit on arrival is immediate; the 150 ms debounce is for edits
+  and option changes.
+- **R8** `SceneView` click and rubber-band hit-testing consider only points
+  that carry an analysis uuid, so a click reaches the analysis under a mean.
+  This is a change to the view shared by every figure window.
+- **R9** A monitor-group choice that differs from the level's as-saved
+  selection is an edit, also after its reload. `Revert` then reloads with no
+  selection.
+- **R10** Closing with Discard drops the edits. Preset messages show in the
+  status label, after the fit's line.
+- **R11** `Save` boxes unticked stay unticked across the reload after a save
+  of the same level, and are no edit.
+- **R12** The conflict line says `UTC` after the time.
+- **R13** There is no blocking message on a change of the monitor group: the
+  Save answer of that question saves the fit on show, then loads the new
+  group. A direct Save with a sample typed takes the group-change path.
+- **R14** The Packages window re-reads its open level on another window's
+  change only when nothing in it is unsaved (grid, dose table, level fields),
+  and keeps its selection. Section 5.7 was wrong that it already did.
+
+### As built
+
+- `Edits::include_positions` (4.6) is as specified. The window puts a hole in
+  `exclude_positions` or `include_positions` by what the saved fit would do
+  with it, so an edit undone leaves nothing behind.
+- The shared text functions of 4.5, plus `flux_status_line` (R1).
+- `evaluate_position()` in `flux_fit.hpp` is shared by `fit_level` and by the
+  scene with no fit (the analyses as `fit_level` counts them).
+- `tests/processing/flux_level_inputs.hpp` builds `LevelInputs` without a
+  store; `seed_second_flux_level` in `flux_seed.hpp` adds a second level.
+- `PresetBar::set_pinned_item` holds the `(saved fit)` entry.
+- The `in` form of `enabled_when` is evaluated in `options_editor.cpp`, not in
+  `options.cpp`.
+- `FitActions` teardown: it deletes the window on `EntryActions::closing()`
+  (before the bridge goes), and its destructor drains the bridge's worker
+  before the source it owns is destroyed.
+- Export uses `QSaveFile`, so a file is whole or as it was; then
+  `mark_as_user_file`.
+- The Recall item of the plot's context menu is a no-op without a callback.
+- The options-schema test of `enabled_when` lives in
+  `tests/ui/test_data_windows.cpp`.
+
+### Known limits
+
+- A sample typed in the Monitors group and not yet entered is dropped when
+  Save is answered for another purpose.
+- The tree's status word uses the default monitor set's sample, not the
+  level's own.
+- The whole tree is read again on every change notification.
+- Nothing was run on PostgreSQL or with gcc.
