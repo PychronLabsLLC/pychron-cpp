@@ -5,10 +5,12 @@
 #   <prefix>/bin/pychron-ui    Pychron.app/Contents/MacOS/elctl
 #   <prefix>/share/pychron/    Pychron.app/Contents/Resources/
 #     profiles/ examples/        profiles/ examples/
+#     earthbank/templates/       earthbank/templates/
 #     python/  (optional)        python/  (optional)
 #
-# setup::find_resources() and the scripting host look for these next to the
-# running program, so an install is relocatable. Everything pychron installs
+# setup::find_resources(), earthbank::default_template_dir() and the scripting
+# host look for these next to the running program, so an install is
+# relocatable. Everything pychron installs
 # is in the "pychron" component (the Qt runtime copy in "pychron_qt"); the
 # bundled dependencies' own install rules (headers, static libraries) are left
 # out of packages.
@@ -99,6 +101,13 @@ install(DIRECTORY "${PROJECT_SOURCE_DIR}/configs/examples/" DESTINATION "${PYCHR
   COMPONENT ${PYCHRON_COMPONENT})
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/README.md" DESTINATION "${PYCHRON_INSTALL_DOC}"
   COMPONENT ${PYCHRON_COMPONENT})
+# EarthBank's workbook templates, the vendor's files as they are (not the note
+# kept beside them in the source tree).
+if(TARGET pychron_earthbank)
+  install(DIRECTORY "${PROJECT_SOURCE_DIR}/libs/earthbank/templates/"
+    DESTINATION "${PYCHRON_INSTALL_RESOURCES}/earthbank/templates"
+    COMPONENT ${PYCHRON_COMPONENT} FILES_MATCHING PATTERN "*.xlsx")
+endif()
 
 if(UNIX AND NOT APPLE AND TARGET pychron-ui)
   install(FILES "${PROJECT_SOURCE_DIR}/packaging/linux/pychron.desktop"

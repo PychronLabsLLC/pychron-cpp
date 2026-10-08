@@ -1,8 +1,9 @@
 # One test_<component>.cpp per earthbank component. Globbed so parallel units
 # only add files. The mapping's fixtures are built on the processing tests'
 # (tests/processing/fixtures.hpp), included as "processing/fixtures.hpp".
-# test_ooxml.cpp tests an internal unit: it includes "ooxml.hpp" from the
-# library's src/ and reads the vendor templates where the library keeps them.
+# test_ooxml.cpp tests an internal unit, and test_xlsx.cpp reads workbooks back
+# with it: they include "ooxml.hpp" from the library's src/ and read the
+# vendor templates where the library keeps them.
 file(GLOB PYCHRON_EARTHBANK_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
 add_executable(pychron_earthbank_tests ${PYCHRON_EARTHBANK_TESTS})
