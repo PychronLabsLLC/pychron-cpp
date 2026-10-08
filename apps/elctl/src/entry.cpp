@@ -30,6 +30,7 @@
 #include "pychron/entry/package_edit.hpp"
 #include "pychron/entry/positions_import.hpp"
 #include "pychron/entry/sample_import.hpp"
+#include "pychron/entry/seed.hpp"
 #include "pychron/entry/settings.hpp"
 #include "pychron/persistence/store.hpp"
 
@@ -43,7 +44,7 @@ using pychron::Error;
 using pychron::Result;
 
 constexpr const char* kShortUsage =
-    "usage: elctl entry <samples|package|positions|identifiers|holders|settings> <action> [args] --db <url>\n"
+    "usage: elctl entry <samples|package|positions|identifiers|holders|settings|seed> <action> [args] --db <url>\n"
     "run 'elctl entry help' for the options\n";
 
 constexpr const char* kHelp =
@@ -76,6 +77,10 @@ constexpr const char* kHelp =
     "        store's sequence. --overwrite renumbers identifiers nothing has used.\n"
     "  holders import <file.txt> [--name <name>]  a legacy irradiation holder file\n"
     "  settings show | settings set <key> <value>\n"
+    "  seed <seed.toml> [--dry-run]\n"
+    "        Add what the seed file names and the store does not have: the references\n"
+    "        project, its samples and special identifiers, the reactors' production\n"
+    "        ratios. Nothing that is there is changed (pychron setup runs this).\n"
     "\n"
     "Exit codes: 0 ok; 1 nothing was written (a stale, refused or invalid row);\n"
     "            2 usage or fatal error.\n";
@@ -565,6 +570,32 @@ int settings_command(Context& ctx, const Args& a) {
 
 }  // namespace
 
+Result<std::string> seed_database(const std::string& url, const std::filesystem::path& seed_file, bool migrate,
+                                  bool dry_run, const std::string& user) {
+  auto text = read_file(seed_file.string());
+  if (!text) return pychron::fail(text.error());
+  auto seed = en::parse_seed(*text, seed_file.string());
+  if (!seed) return pychron::fail(seed.error());
+  auto store = ps::open_store(ps::StoreConfig{url, migrate});
+  if (!store) {
+    Error e = store.error();
+    e.what = "the database could not be opened: " + e.what;
+    return pychron::fail(std::move(e));
+  }
+  ps::Actor actor;
+  if (!dry_run) {
+    const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
+    auto client = (*store)->register_client({host, "reduction", std::nullopt, "elctl"});
+    if (!client) return pychron::fail(client.error());
+    auto u = (*store)->ensure_user(*client, user.empty() ? pychron::env_var("USER").value_or("pychron") : user);
+    if (!u) return pychron::fail(u.error());
+    actor = ps::Actor{*u, *client};
+  }
+  auto report = en::apply_seed(**store, *seed, actor, dry_run);
+  if (!report) return pychron::fail(report.error());
+  return (dry_run && report->changed() ? "would be " : "") + en::describe(*report);
+}
+
 int entry_command(const std::vector<std::string>& args, Io io) {
   const Args a = parse(args, {"--dry-run", "--update-existing", "--overwrite", "--csv"});
   if (!a.error.empty()) return usage(io, a.error);
@@ -577,6 +608,15 @@ int entry_command(const std::vector<std::string>& args, Io io) {
   if (what == "samples" && action == "template") {
     if (a.positional.size() != 3) return usage(io, "samples template takes an output file");
     if (auto r = write_file(a.positional[2], en::template_csv()); !r) return fatal(io, r.error());
+    return kOk;
+  }
+  if (what == "seed") {
+    if (a.positional.size() != 2) return usage(io, "seed takes the seed file");
+    const auto db = a.get("--db");
+    if (!db) return fatal(io, "--db <url> is required");
+    auto done = seed_database(*db, a.positional[1], false, a.has("--dry-run"), a.get("--user").value_or(""));
+    if (!done) return fatal(io, done.error());
+    io.out << *done << '\n';
     return kOk;
   }
   struct Command {

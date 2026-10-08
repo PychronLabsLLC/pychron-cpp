@@ -105,6 +105,63 @@ TEST_F(ElctlSetupTest, DataReductionIsTwoAnswersAndADatabase) {
 #endif
 }
 
+#ifdef PYCHRON_ELCTL_HAS_STORE
+// Install defaults: the instrument's database is made and given the
+// references project, its samples and the Triga production.
+TEST_F(ElctlSetupTest, AnInstrumentInstallMakesAndSeedsItsDatabase) {
+  const auto root = path("argus-seeded");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
+  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor")) << "ERR:" << o.err;
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out;
+  const std::string db = "sqlite:" + (root / "data" / "pychron.db").generic_string();
+  auto listed = run_raw({"entry", "samples", "list", "--db", db, "--project", "references"});
+  ASSERT_EQ(listed.code, 0) << listed.err;
+  for (const char* name : {"blank_unknown", "blank_air", "blank_cocktail", "blank_extractionline", "background", "air",
+                           "cocktail", "detector_ic"})
+    EXPECT_TRUE(contains(listed.out, std::string(name) + "\treferences")) << name << "\n" << listed.out;
+
+  o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "seed: nothing to add (21 already there)")) << o.out;
+}
+
+// Review focus 4: a seed file the lab edited into something unreadable.
+TEST_F(ElctlSetupTest, ASeedFileThatDoesNotParseDoesNotStopTheInstall) {
+  const auto root = path("helix-bad-seed");
+  ASSERT_EQ(run_raw({"init", "helix", "--root", root.string(), "--yes"}).code, 0);
+  { std::ofstream(root / "seed.toml") << "project = \n"; }
+  auto o = run_raw({"init", "--reconfigure", "--set", "simulation=no", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "seed skipped: ")) << o.err;
+  EXPECT_TRUE(contains(o.err, "seed.toml")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl entry seed ")) << o.err;
+  EXPECT_FALSE(site().find("helix")->simulation) << "the reconfigure went through";
+}
+
+// Review focus 5: a server that is not there.
+TEST_F(ElctlSetupTest, ADatabaseServerThatCannotBeReachedSkipsTheSeed) {
+  const auto root = path("argus-server");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--yes", "--set", "data_source=server", "--set",
+                    "db_host=127.0.0.1", "--set", "db_port=1", "--set", "db_password=x"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "seed.toml"));
+  EXPECT_TRUE(contains(o.err, "seed skipped: the database could not be opened")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl entry seed ")) << o.err;
+  EXPECT_FALSE(contains(o.err, "x@")) << "the password is not printed";
+  EXPECT_EQ(site().find("argus")->database, "postgresql://pychron@127.0.0.1:1/pychron");
+}
+
+TEST_F(ElctlSetupTest, ADataReductionInstallIsNotSeeded) {
+  const auto root = path("dr-plain");
+  auto o = run_raw({"init", "data-reduction", "--root", root.string(), "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_FALSE(contains(o.out, "seed")) << o.out;
+  EXPECT_FALSE(contains(o.err, "seed")) << o.err;
+}
+#endif
+
 TEST_F(ElctlSetupTest, MistakesAreReportedPlainly) {
   EXPECT_EQ(run_raw({"init"}).code, 2);
   auto o = run_raw({"init", "quadrupole", "--yes"});

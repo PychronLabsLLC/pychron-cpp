@@ -121,6 +121,8 @@ constexpr const char* kUsageText =
     "                              put samples in a package's positions\n"
     "  entry identifiers generate <package> --db <url> [--dry-run]\n"
     "                              number the positions with the next identifiers\n"
+    "  entry seed <seed.toml> --db <url> [--dry-run]\n"
+    "                              add the reference project, samples and reactors of a seed file\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"

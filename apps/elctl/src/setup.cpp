@@ -13,6 +13,7 @@
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
 #include "pychron/persistence/store.hpp"
+#include "entry.hpp"
 #endif
 
 namespace elctl {
@@ -134,6 +135,36 @@ Result<std::string> open_store(const std::string& url, bool migrate) {
   return "schema " + (status->empty() ? std::string("empty") : "version " + std::to_string(status->back().version));
 }
 #endif
+
+// An instrument install's database is made (a local one) and given what
+// <root>/seed.toml names: the references project, its samples and special
+// identifiers, the reactors. The instrument measures without any of it, so
+// whatever goes wrong here is said and the install goes on. An install from
+// before there was a seed file has none, and nothing is said.
+void seed_instrument_database(const SiteInstall& entry, Io io) {
+  if (entry.kind != "instrument" || entry.database.empty()) return;
+  const fs::path seed = entry.root / "seed.toml";
+  std::error_code ec;
+  if (!fs::exists(seed, ec)) return;
+#ifdef PYCHRON_ELCTL_HAS_STORE
+  auto skipped = [&](const std::string& why) {
+    io.err << "seed skipped: " << why << "\n  Run: elctl entry seed " << seed.string() << " --db " << entry.database
+           << "\n";
+  };
+  // Only a database on this computer is made or migrated from here: the
+  // lab's server is brought up to date by whoever looks after it.
+  const bool local = entry.database.starts_with("sqlite:");
+  auto url = database_url(entry);
+  if (!url) return skipped(url.error().what);
+  // SQLite makes the file, not the folder it is in.
+  if (local) fs::create_directories(fs::path(url->substr(std::string_view("sqlite:").size())).parent_path(), ec);
+  auto done = seed_database(*url, seed, local, false);
+  if (!done) return skipped(done.error().what);
+  io.out << "database " << entry.database << ": " << *done << "\n";
+#else
+  io.out << "skip  seed: built without the DVC store\n";
+#endif
+}
 
 int report_doctor(const SiteInstall& install, const ProfileLibrary* library, bool strict, bool probe, Io io) {
   DoctorOptions options;
@@ -309,6 +340,7 @@ int init_command(const std::vector<std::string>& args, Io io) {
     io.out << "database " << entry.database << " ready (" << *made << ")\n";
   }
 #endif
+  seed_instrument_database(entry, io);
   const auto site_path = default_site_path();
   if (auto saved = register_install(entry, site_path); !saved) {
     io.err << "error: " << saved.error().what << "\n";

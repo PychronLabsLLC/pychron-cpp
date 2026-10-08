@@ -14,18 +14,29 @@
 //   elctl entry identifiers generate <package> --db <url> [--overwrite] [--dry-run]
 //   elctl entry holders import <file.txt> --db <url> [--name <name>]
 //   elctl entry settings show|set <key> <value> --db <url>
+//   elctl entry seed <seed.toml> --db <url> [--dry-run]
 //
 // Writing commands take --user (default $USER). Exit codes: 0 ok; 1 nothing
 // was written because a row was stale, refused or invalid; 2 usage or fatal
 // error. Built without persistence, every subcommand says so and exits 2.
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "cli.hpp"
+#include "pychron/core/error.hpp"
 
 namespace elctl {
 
 int entry_command(const std::vector<std::string>& args, Io io);
+
+// Puts the seed file (install defaults design: the references project, its
+// samples and special identifiers, the reactors) into the store at `url`;
+// what is there is kept. Returns what was done, in one line. `migrate`
+// creates the schema or brings it up to date first; without it a store whose
+// schema is not current is an error. Not in a build without persistence.
+pychron::Result<std::string> seed_database(const std::string& url, const std::filesystem::path& seed_file, bool migrate,
+                                           bool dry_run, const std::string& user = {});
 
 }  // namespace elctl
