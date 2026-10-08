@@ -2084,6 +2084,25 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.status_is_error());
     QVERIFY2(!w.status().contains(QStringLiteral("monitor selection")), qPrintable(w.status()));
     QVERIFY2(w.status().contains(QStringLiteral(" · Saved 12 positions (0 unchanged)")), qPrintable(w.status()));
+
+    // The level reads edited exactly when the group in force is not the one it
+    // was just saved with: under Alt it does, chosen back it does not.
+    QVERIFY(w.edited());
+    w.monitor_set_combo()->setCurrentText(QString::fromStdString(standard));
+    QVERIFY(settle(w));
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    QVERIFY(!w.edited());
+    QVERIFY2(!w.status().contains(QStringLiteral("edited")), qPrintable(w.status()));
+    QVERIFY(fitted_at(*w.fit(), 3).excluded);  // as saved
+    // And Alt again is an edit again, which Revert undoes.
+    w.monitor_set_combo()->setCurrentText(QStringLiteral("Alt"));
+    QVERIFY(settle(w));
+    QVERIFY(w.edited());
+    w.revert();
+    QVERIFY(settle(w));
+    QCOMPARE(w.inputs()->monitor_set.name, standard);
+    QVERIFY(!w.edited());
   }
 
   void the_question_of_a_monitor_set_change_keeps_everything_on_a_conflict() {

@@ -1160,9 +1160,15 @@ void FluxWindow::save_then(std::function<void()> next) {
       Q_EMIT w.saved(irradiation, level);
       if (!self) return;
       // The monitors chosen here are the saved fit's now: nothing chosen
-      // gives them, and the reload says what that is.
+      // gives them. What a read with nothing chosen shows from here on is the
+      // selection of the fit that was saved, the one on show: a group chosen
+      // next (the question's Save answer) is an edit against that. A read
+      // already on its way says it itself.
       w.chosen_.reset();
-      w.baseline_.reset();
+      if (reread || !w.inputs_)
+        w.baseline_.reset();
+      else
+        w.baseline_ = w.shown_;
       // R11: the boxes left unticked are what was saved, and no edit; they
       // stay so over every read of this level.
       w.loaded_skip_ = w.skip_;
