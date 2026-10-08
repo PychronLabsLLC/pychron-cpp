@@ -139,8 +139,9 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
       continue;
     }
     if (!apply)
-      return fail(ErrorKind::Config,
-                  "database schema is out of date (migration " + std::to_string(m.version) + " not applied)");
+      return fail(ErrorKind::Config, "database schema is out of date (migration " + std::to_string(m.version) + " " +
+                                         m.description +
+                                         " not applied); bring it up to date with: elctl db migrate --db <url>");
     for (const auto& statement : split_sql(m.text))
       if (auto r = db.unprepared(qs(statement)); !r) return fail(r.error());
     Row row;

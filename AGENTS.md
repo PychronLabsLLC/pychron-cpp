@@ -100,6 +100,21 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   Never edit an applied migration; add `NNNN_<name>.sql`. A statement only
   PostgreSQL understands is preceded by `-- @sqlite skip`; its SQLite
   counterpart, when one is needed, is given as `-- @sqlite exec <statement>`.
+- A migration locks every existing store out of `pychron-ui` until
+  `elctl db migrate --db <url>` is run on it (the UI opens stores with
+  `migrate = false`): add one when it earns that, and say so in the release
+  notes (`feat!`/`fix` body).
+- Reading from the store: one analysis is loaded with a handful of small
+  statements, so what a statement costs is multiplied by every analysis in a
+  figure. A query that runs per analysis must find its rows by an index (see
+  `SchemaIndexes` in `tests/persistence/test_schema.cpp`, which reads the
+  plan), a count or other aggregate over a listing is computed once for the
+  listing, not in a subquery per row (`kSampleCounts`), and a row is fetched
+  by its uuid, never by searching for its name. TinyORM's `return_qdatetime`
+  stays off for SQLite: on, every text value is tried as a date.
+  `tests/processing/test_store_load_timing.cpp` times the figure pipeline
+  against a real store (`PYCHRON_BENCH_DB=sqlite:/path`); run it before and
+  after a change to loading.
 - A sample's location is one PostGIS `geometry(Point, 4326)` column, `geom`
   (migration 0004); SQLite keeps the same point as EWKT text. The catalog API
   still speaks `lat` and `lon` (`SampleFields`, the `lat`/`lon` edit fields):

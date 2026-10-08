@@ -29,6 +29,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Experiments](#experiments): `exp validate`, `exp run`, `exp notify`
 - [Lasers](#lasers): `laser ...`
 - [Legacy data](#legacy-data): `import ...`
+- [The store's schema](#the-stores-schema): `db status`, `db migrate`
 - [Publication data](#publication-data): `export`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
 - [Not yet implemented / unverified](#not-yet-implemented--unverified)
@@ -99,7 +100,7 @@ without it answers `elctl was built without persistence` and exits 2.
 
 | Needs persistence | Works without |
 |---|---|
-| `import` (all subcommands), `export`, `entry` (all subcommands) | `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`, `init`, `doctor`, `import-line`, `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`, `exp`, `laser` |
+| `import` (all subcommands), `db`, `export`, `entry` (all subcommands) | `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`, `init`, `doctor`, `import-line`, `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`, `exp`, `laser` |
 
 Two softer dependencies:
 
@@ -609,6 +610,38 @@ your lab changed them).
 | 0 | OK, including a paused run and a run that left only warnings. |
 | 1 | `verify` is not OK, or a run finished with blocking conflicts pending. |
 | 2 | Usage error or fatal error, or a source could not be opened (the others are still run or verified). |
+
+## The store's schema
+
+A store's tables and indexes are its schema, and a newer pychron may need a
+newer one. The application, `export`, `flux` and `entry` open a store as it
+is and refuse one that is behind: they never change a schema in passing.
+After an update, this is how an existing store is brought up to date.
+
+```bash
+elctl db status --db sqlite:/path/to/store.db
+elctl db migrate --db sqlite:/path/to/store.db
+```
+
+### db status
+
+Says whether the store's schema is the one this build needs, and lists the
+migrations it has. Exit code 0 when up to date, 1 when behind (the message
+names the first migration it lacks). It changes nothing.
+
+### db migrate
+
+Applies the migrations the store lacks, in order, and lists what it then
+has. Each migration is applied in one transaction: whole, or not at all.
+Run again it does nothing and says the store is up to date. Close pychron
+first if it has the store open.
+
+Neither command makes a database: a SQLite path that is not there, or an
+empty file, is an error (exit 2). To make a new store use `import add` or
+set up a data-reduction install.
+
+A copy of the file is a complete backup of a SQLite store; make one first if
+the store is the only copy of its data.
 
 ## Publication data
 

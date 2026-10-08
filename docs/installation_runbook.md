@@ -237,7 +237,9 @@ Setup asks for the password and keeps it in
 
 Setup and the application never create or migrate a **server** database. Its
 schema is made by the importer (part 3.3: `elctl import add` and
-`elctl import run` are the only commands that migrate). A server database that
+`elctl import run` make it). After an update of pychron that needs a newer
+schema, `elctl db migrate --db <url>` brings an existing database up to date;
+`elctl db status --db <url>` says whether it is. A server database that
 has had no import run against it has no schema, and `doctor` fails it with
 "ask your administrator about the schema".
 

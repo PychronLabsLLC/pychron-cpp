@@ -9,18 +9,20 @@ list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 # persistence its sources are src/import*.cpp; without, only import_stub.cpp,
 # which says so and exits 2. Never both.
 # `elctl entry` (entry spec, section 10), `elctl export` (the Schaen et
-# al. 2021 report, read from the store) and `elctl flux` are split the same way.
+# al. 2021 report, read from the store), `elctl flux` and `elctl db` (the
+# store's schema) are split the same way.
 set(PYCHRON_ELCTL_IMPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/import_stub.cpp")
 set(PYCHRON_ELCTL_ENTRY_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/entry_stub.cpp")
 set(PYCHRON_ELCTL_EXPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/export_stub.cpp")
 set(PYCHRON_ELCTL_FLUX_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/flux_stub.cpp")
+set(PYCHRON_ELCTL_DB_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/db_stub.cpp")
 if(TARGET pychron_persistence)
   list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
-    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}")
+    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}")
 else()
-  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux)[^/]*\\.cpp$")
+  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux|db)[^/]*\\.cpp$")
   list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
-    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}")
+    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}")
 endif()
 
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})

@@ -144,7 +144,7 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 View > Data browses the records under `<data>/records`. With
 `--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
 `postgresql://user:pw@host/db`; the schema must already be current, since
-the UI never migrates it). Rescan picks up new analyses and revisions from
+the UI never migrates it: `elctl db migrate --db <url>` does). Rescan picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
 Evolutions tab (signal and baseline fits) as new revisions, or restore an

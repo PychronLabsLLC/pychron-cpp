@@ -11,6 +11,7 @@
 // Open in Packages, Recall, a store that cannot be opened, and the two owners
 // destroyed in either order while a level is read.
 
+#include <future>
 #include <QtTest/QtTest>
 
 #include <qcustomplot.h>
@@ -2624,11 +2625,32 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     const int loads = w.loads_started();
     w.save();
+    // Held on the store's worker, behind the save: the reload the save starts
+    // queues behind it, and so is in flight for exactly as long as this test
+    // needs it to be, however quick a reload is.
+    std::promise<void> release;
+    struct Released {
+      std::promise<void>& p;
+      bool done = false;
+      void now() {
+        if (!done) p.set_value();
+        done = true;
+      }
+      ~Released() { now(); }  // a failed check must not leave the worker waiting
+    } released{release};
+    r.bridge->run<bool>(
+        &w,
+        [held = release.get_future().share()](ps::IStore&, const ps::Actor&) -> Result<bool> {
+          held.wait();
+          return true;
+        },
+        [](Result<bool>) {});
     // The save landed and its reload is in flight: another window's change now.
     QTRY_VERIFY_WITH_TIMEOUT(w.loads_started() == loads + 1, kWaitMs);
     QVERIFY(w.busy());
     r.bridge->notify_changed();
     QCOMPARE(w.loads_started(), loads + 2);
+    released.now();
     QVERIFY(settle(w));
     drain(*r.bridge);
     QVERIFY(settle(w));

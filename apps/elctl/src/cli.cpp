@@ -20,6 +20,7 @@
 #include "duration.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
+#include "db.hpp"
 #include "export.hpp"
 #include "flux.hpp"
 #include "laser.hpp"
@@ -95,6 +96,10 @@ constexpr const char* kUsageText =
     "                              import, resuming where the last run stopped\n"
     "  import status|conflicts|verify --db <url>\n"
     "                              progress, what could not be imported, and whether to trust it\n"
+    "\n"
+    "The store's schema:\n"
+    "  db status --db <url>        is the store's schema the one this build needs?\n"
+    "  db migrate --db <url>       bring an existing store up to date after an update of pychron\n"
     "\n"
     "Publication data (elctl export help lists every option):\n"
     "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
@@ -235,6 +240,7 @@ class Session {
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "export") return export_command(args, io_);
+    if (cmd == "db") return db_command(args, io_);
     if (cmd == "flux") return flux_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();

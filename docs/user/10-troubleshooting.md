@@ -29,7 +29,8 @@ differ slightly.
 | `nothing is installed yet` | No install exists | Run the setup wizard (`pychron-ui --setup` or `elctl init`). |
 | `installation 'X': ... elctl doctor --install X says more` | Install config fails to load | Run the command it names. |
 | `pychron-ui --setup can set it up again` | A data-reduction install cannot open its database | Re-run setup, check the database server is up and credentials are right. |
-| `--db` exits 2 | Schema not current (the UI never migrates), or build without persistence | Migrate with `elctl` (see [elctl reference](08-elctl-reference.md)); use a build with persistence. |
+| `--db` exits 2, "database schema is out of date" | The store was made by an older pychron (the UI never migrates). | `elctl db migrate --db <url>` (see [elctl reference](08-elctl-reference.md#the-stores-schema)), with pychron closed. |
+| `--db` exits 2, "built without persistence" | The build has no database support. | Use a build with persistence. |
 | `built without the DVC store` / `elctl was built without persistence` | The build skipped persistence. `import`, `export`, `entry` are unavailable. Exit 2. | Install a build with persistence (Windows CI builds have none). |
 | `elctl` with no `-c` uses a surprising config | With no install found it quietly falls back to `extraction_line.toml` in the current folder | Pass `-c`, or `cd` to the right folder. |
 
