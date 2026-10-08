@@ -275,7 +275,7 @@ age_includes_j_error = false
 [samples."S-FUS"]
 interpretation = "Eruption age"
 preferred_age = "integrated"
-flux_monitor = "Fish Canyon Tuff sanidine Kuiper et al. 2008"
+flux_monitor = "Fish Canyon Tuff sanidine Renne et al. 2011"
 datapoint_name = "S-FUS fusions"
 irradiation = "NM-300 (example)"
 )toml");
@@ -300,8 +300,11 @@ irradiation = "NM-300 (example)"
     EXPECT_EQ(at(calc, "decayConstant"), "Min et al. 2000");
     EXPECT_EQ(at(calc, "airRatio"), "Lee et al. 2006");
   }
-  EXPECT_NE(at(calcs[0], "fluxMonitor"), "Fish Canyon Tuff sanidine Kuiper et al. 2008");
-  EXPECT_EQ(at(calcs[1], "fluxMonitor"), "Fish Canyon Tuff sanidine Kuiper et al. 2008");
+  // The monitor said for the one sample, by its name and its paper: written as
+  // the entry of the template's list that it is (vocab.hpp match_flux_monitor).
+  const std::string renne = "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)";
+  EXPECT_NE(at(calcs[0], "fluxMonitor"), renne);
+  EXPECT_EQ(at(calcs[1], "fluxMonitor"), renne);
 
   const auto ages = rows_of(arar[0], "ArArAgeSummary");
   ASSERT_EQ(ages.size(), 2u);
