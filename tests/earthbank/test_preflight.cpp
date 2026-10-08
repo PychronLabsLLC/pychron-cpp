@@ -344,6 +344,31 @@ TEST(Preflight, CouldNotAskIsSeparateFromUnknown) {
                                LookupOutcome::Unknown}}));
 }
 
+// A miss carries the resolver's sentence, and with it whatever the service
+// said: no secret of the session is in one.
+TEST(Preflight, NoSecretInAMiss) {
+  FakeEarthBank::Options options;
+  options.password = "Zq7pre;Zq7post";
+  FakeEarthBank bank(options);
+  testing::Spy spy(bank);
+  Session session(spy, bank.base_url());
+  ASSERT_TRUE(session.sign_in(bank.login(), options.password));
+  LookupResolver resolver(session);
+  for (const char* list : {"/api/arar/AirRatio", "/api/core/materials", "/api/arar/FluxMonitor"}) {
+    bank.fail_next("GET", list, 400,
+                   json{{"title", "Bad Request"},
+                        {"detail", "token " + spy.token() + " and password " + options.password + "; more"}}
+                       .dump());
+  }
+  const PreflightReport report = preflight({good("S-1")}, resolver);
+  ASSERT_EQ(report.could_not_ask().size(), 4u) << ::testing::PrintToString(rows(report.misses));
+  for (const Miss& miss : report.misses) {
+    EXPECT_EQ(miss.detail, "EarthBank refused the list of terms: token <redacted> and password <redacted>");
+    EXPECT_EQ(miss.detail.find("Zq7"), std::string::npos) << miss.detail;
+    for (const std::string& secret : spy.secrets()) EXPECT_EQ(miss.detail.find(secret), std::string::npos) << miss.detail;
+  }
+}
+
 // ---- It only asks ----------------------------------------------------------
 
 TEST(Preflight, WritesNothing) {

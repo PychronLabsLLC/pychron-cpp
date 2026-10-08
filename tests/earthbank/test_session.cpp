@@ -55,6 +55,13 @@ HttpRequest get(const Session& session, std::string_view path) {
   return request;
 }
 
+// The sentence for an answer, as a caller gets it: there is no way to it but
+// through a session, which keeps its secrets out of it.
+std::string said(const Session& session, int status, std::string_view body, std::string_view path,
+                 std::string_view record) {
+  return session.failure(HttpResponse{status, std::string(body)}, path, record).what;
+}
+
 // The sample wrapper as the service takes it (the fake's own tests).
 json sample_body(std::int64_t package, const std::string& name) {
   return {{"sampleDTO", {{"name", name}, {"sampleID", name}, {"dataPackageId", package}}},
@@ -193,7 +200,7 @@ TEST(Session, ASecond401IsAnError) {
   const auto account = s.session.account();
   ASSERT_FALSE(account);
   EXPECT_EQ(account.error().code, kLoginRejected);
-  EXPECT_EQ(account.error().what, Session::sentence(401, kUnauthorized, "/api/account", ""));
+  EXPECT_EQ(account.error().what, said(s.session, 401, kUnauthorized, "/api/account", ""));
   EXPECT_TRUE(s.bank.pending().empty());
   // One new login, one repeat, and no more.
   EXPECT_EQ(s.bank.count("POST", "/api/authenticate"), 2u);
@@ -363,7 +370,7 @@ TEST(Session, APackageRowIsReadWhereverItsFieldsAre) {
   const auto down = s.session.packages(std::nullopt);
   ASSERT_FALSE(down);
   EXPECT_EQ(down.error().code, kRefused);
-  EXPECT_EQ(down.error().what, Session::sentence(503, "", "/api/management/data-packages", ""));
+  EXPECT_EQ(down.error().what, said(s.session, 503, "", "/api/management/data-packages", ""));
 }
 
 TEST(Session, CreatePackageKeepsItsName) {
@@ -615,6 +622,84 @@ TEST(Session, NoTokenInAnyErrorOrLog) {
   }
 }
 
+// The service's words are scrubbed before they are cut, and only they are:
+// a secret that holds the character a reason is cut at, or lies across the
+// place it is cut, leaves no part of itself, and one that is a word of the
+// sentence does not show where.
+TEST(Session, ASecretIsTakenOutBeforeTheReasonIsCut) {
+  const auto with_password = [](const std::string& password) {
+    FakeEarthBank::Options options;
+    options.password = password;
+    return options;
+  };
+  {
+    // `;` is where the machine's part of a reason is cut off.
+    FakeEarthBank bank(with_password("Zq7pre;Zq7post"));
+    Session session(bank, bank.base_url());
+    std::vector<std::string> lines;
+    session.set_log([&](std::string_view line) { lines.emplace_back(line); });
+    ASSERT_TRUE(session.sign_in(bank.login(), "Zq7pre;Zq7post"));
+    for (const char* key : {"detail", "message", "title"}) {
+      bank.fail_next("GET", "/api/account", 400, json{{key, "no Zq7pre;Zq7post here"}}.dump());
+      const auto account = session.account();
+      ASSERT_FALSE(account);
+      EXPECT_EQ(account.error().what, "EarthBank refused the account: no <redacted> here") << key;
+    }
+    // Not JSON: the text as it came.
+    bank.fail_next("GET", "/api/account", 400, "no Zq7pre;Zq7post here");
+    EXPECT_EQ(session.account().error().what, "EarthBank refused the account: no <redacted> here");
+    // At the login, a password that is being tried and is not yet the session's.
+    bank.fail_next("POST", "/api/authenticate", 400, R"({"detail":"Zq7pre;Zq7post is too short"})");
+    const auto in = session.sign_in(bank.login(), "Zq7pre;Zq7post");
+    ASSERT_FALSE(in);
+    EXPECT_EQ(in.error().what, "EarthBank refused the login: <redacted> is too short");
+    ASSERT_EQ(lines.size(), 6u);
+    for (const std::string& line : lines) EXPECT_FALSE(has(line, "Zq7")) << line;
+  }
+  {
+    // Across the place a long reason is cut: no first half of it is left.
+    const std::string password = "Zq7-straddles-the-cut-Zq7";
+    FakeEarthBank bank(with_password(password));
+    Session session(bank, bank.base_url());
+    std::vector<std::string> lines;
+    session.set_log([&](std::string_view line) { lines.emplace_back(line); });
+    ASSERT_TRUE(session.sign_in(bank.login(), password));
+    for (std::size_t before = 270; before <= 305; ++before) {
+      bank.fail_next("GET", "/api/account", 400, json{{"detail", std::string(before, 'x') + " " + password}}.dump());
+      const auto account = session.account();
+      ASSERT_FALSE(account);
+      EXPECT_FALSE(has(account.error().what, "Zq7")) << before << ": " << account.error().what;
+      EXPECT_LT(account.error().what.size(), 400u);
+    }
+    for (const std::string& line : lines) EXPECT_FALSE(has(line, "Zq7")) << line;
+  }
+  {
+    // A password that is a word of the sentence: our own words stand as they
+    // are, wherever the service did not say it.
+    FakeEarthBank bank(with_password("login"));
+    Session session(bank, bank.base_url());
+    ASSERT_TRUE(session.sign_in(bank.login(), "login"));
+    const Error quiet = session.failure(HttpResponse{401, ""}, "/api/arar/ArArAliquot", "");
+    EXPECT_TRUE(has(quiet.what, "login")) << quiet.what;
+    EXPECT_FALSE(has(quiet.what, "<redacted>")) << quiet.what;
+    // Nor does the caller's word for the record show it.
+    const Error named = session.failure(HttpResponse{418, ""}, "/api/x", "the login sheet");
+    EXPECT_EQ(named.what, "EarthBank refused the the login sheet (HTTP 418).");
+    const Error echoed = session.failure(HttpResponse{400, R"({"detail":"bad login given"})"}, "/api/authenticate", "");
+    EXPECT_EQ(echoed.what, "EarthBank refused the login: bad <redacted> given");
+  }
+  {
+    // One that is a part of the mark itself is not found inside a mark.
+    FakeEarthBank bank(with_password("red"));
+    Spy spy(bank);
+    Session session(spy, bank.base_url());
+    ASSERT_TRUE(session.sign_in(bank.login(), "red"));
+    const std::string body = json{{"detail", "red and " + spy.token() + " and red"}}.dump();
+    EXPECT_EQ(session.failure(HttpResponse{400, body}, "/api/x", "").what,
+              "EarthBank refused the request: <redacted> and <redacted> and <redacted>");
+  }
+}
+
 // What a caller of send() makes an Error of: the sentence, the code, and for
 // no answer the client's own kind, so that a write in doubt stays one.
 TEST(Session, AFailedSendAsAnError) {
@@ -628,9 +713,6 @@ TEST(Session, AFailedSendAsAnError) {
   EXPECT_EQ(refused.kind, ErrorKind::Protocol);
   EXPECT_EQ(refused.code, kRefused);
   EXPECT_EQ(refused.what, "EarthBank refused the aliquot 20001-01: no room for <redacted>");
-  // The words alone, for a caller with no session, are the service's as they came.
-  EXPECT_EQ(Session::sentence(400, body, "/api/arar/ArArAliquot", "aliquot 20001-01"),
-            "EarthBank refused the aliquot 20001-01: no room for " + spy.token());
   const Error login = session.failure(HttpResponse{403, ""}, "/api/arar/ArArAliquot", "");
   EXPECT_EQ(login.kind, ErrorKind::NotConnected);
   EXPECT_EQ(login.code, kLoginRejected);
@@ -690,11 +772,11 @@ TEST(Session, Sentences) {
   const HttpResponse unwritable =
       answer_to(post(s.session, "/api/core/sample-with-locations", sample_body(s.bank.read_only_package(), "S-1")));
   ASSERT_EQ(unwritable.status, 500);
-  EXPECT_EQ(Session::sentence(unwritable.status, unwritable.body, "/api/core/sample-with-locations", "sample S-1"),
+  EXPECT_EQ(said(s.session, unwritable.status, unwritable.body, "/api/core/sample-with-locations", "sample S-1"),
             "EarthBank did not take the sample S-1: this account may not write to the data package. Choose a package "
             "the account may write to, or make a new one, and send it again.");
   // Without a word for the record, the path says what it was.
-  EXPECT_EQ(Session::sentence(unwritable.status, unwritable.body, "/api/core/sample-with-locations", ""),
+  EXPECT_EQ(said(s.session, unwritable.status, unwritable.body, "/api/core/sample-with-locations", ""),
             "EarthBank did not take the sample: this account may not write to the data package. Choose a package "
             "the account may write to, or make a new one, and send it again.");
 
@@ -706,23 +788,23 @@ TEST(Session, Sentences) {
   // "...rejected your login...": at the login, and at anything after it.
   const HttpResponse bad_login = *s.bank.send(post(s.session, "/api/authenticate", {{"username", "x"}, {"password", "y"}}));
   ASSERT_EQ(bad_login.status, 401);
-  EXPECT_EQ(Session::sentence(bad_login.status, bad_login.body, "/api/authenticate", ""),
+  EXPECT_EQ(said(s.session, bad_login.status, bad_login.body, "/api/authenticate", ""),
             "EarthBank did not accept the user name and password.");
-  EXPECT_EQ(Session::sentence(401, kUnauthorized, "/api/arar/ArArAliquot", "aliquot 20001-01"),
+  EXPECT_EQ(said(s.session, 401, kUnauthorized, "/api/arar/ArArAliquot", "aliquot 20001-01"),
             "EarthBank refused the login (aliquot 20001-01). Check the user name and the password, and that the "
             "account has the right to do this.");
-  EXPECT_EQ(Session::sentence(403, "", "/api/account", ""),
+  EXPECT_EQ(said(s.session, 403, "", "/api/account", ""),
             "EarthBank refused the login (account). Check the user name and the password, and that the account has "
             "the right to do this.");
 
   // "...could not find the upload service... check the Base URL...".
   const HttpResponse nowhere = answer_to(post(s.session, "/api/arar/NoSuchRecord", json::object()));
   ASSERT_EQ(nowhere.status, 404);
-  EXPECT_EQ(Session::sentence(nowhere.status, nowhere.body, "/api/arar/NoSuchRecord", "measurement 1"),
+  EXPECT_EQ(said(s.session, nowhere.status, nowhere.body, "/api/arar/NoSuchRecord", "measurement 1"),
             "EarthBank has nothing at /api/arar/NoSuchRecord: the address is probably wrong. Check the base URL of "
             "the profile.");
   // A whole URL is cut to its path: a query holds names.
-  EXPECT_EQ(Session::sentence(404, "", "https://earthbank.test/wrong/api/account?name.equals=A%20Sample", ""),
+  EXPECT_EQ(said(s.session, 404, "", "https://earthbank.test/wrong/api/account?name.equals=A%20Sample", ""),
             "EarthBank has nothing at /wrong/api/account: the address is probably wrong. Check the base URL of the "
             "profile.");
 
@@ -742,24 +824,24 @@ TEST(Session, Sentences) {
     s.bank.constraint_status(status);
     const HttpResponse refused = answer_to(post(s.session, "/api/arar/ArArDataPoint", data_point));
     ASSERT_EQ(refused.status, status) << refused.body;
-    EXPECT_EQ(Session::sentence(refused.status, refused.body, "/api/arar/ArArDataPoint", ""),
+    EXPECT_EQ(said(s.session, refused.status, refused.body, "/api/arar/ArArDataPoint", ""),
               "EarthBank did not take the data point: it does not know the value sent for 'mineral'. The term is "
               "probably not on EarthBank's list; a pre-flight check names such terms before anything is sent.")
         << status;
   }
   // The field out of the constraint's name, where no key is given; and no
   // field, where neither is.
-  EXPECT_EQ(Session::sentence(400, R"({"detail":"violates foreign key constraint \"fk_measurement_plateau_step_id\""})",
+  EXPECT_EQ(said(s.session, 400, R"({"detail":"violates foreign key constraint \"fk_measurement_plateau_step_id\""})",
                               "/api/arar/ArArMeasurement", "measurement 20001-01A"),
             "EarthBank did not take the measurement 20001-01A: it does not know the value sent for 'plateau step'. "
             "The term is probably not on EarthBank's list; a pre-flight check names such terms before anything is "
             "sent.");
-  EXPECT_EQ(Session::sentence(500, "violates a foreign key", "/api/arar/ArArAgeCalc", ""),
+  EXPECT_EQ(said(s.session, 500, "violates a foreign key", "/api/arar/ArArAgeCalc", ""),
             "EarthBank did not take the age calculation: it does not know one of the values sent. The term is "
             "probably not on EarthBank's list; a pre-flight check names such terms before anything is sent.");
   // A constraint on the package's own column is still a value not known, not
   // a package that cannot be written to.
-  EXPECT_TRUE(has(Session::sentence(500, R"({"detail":"Key (data_package_id)=(9) is not present in table \"data_package\""})",
+  EXPECT_TRUE(has(said(s.session, 500, R"({"detail":"Key (data_package_id)=(9) is not present in table \"data_package\""})",
                                     "/api/core/sample-with-locations", ""),
                   "the value sent for 'data package'"));
 
@@ -810,45 +892,46 @@ TEST(Session, Sentences) {
 
   // A fault of the service's own; a redirect; and what else it may refuse,
   // with its reason cut where the machine's part begins.
-  EXPECT_EQ(Session::sentence(503, "<html>Service Unavailable</html>", "/api/arar/ArArAgeSummary", ""),
+  EXPECT_EQ(said(s.session, 503, "<html>Service Unavailable</html>", "/api/arar/ArArAgeSummary", ""),
             "EarthBank failed on its own side at the age summary (HTTP 503). Try again later; if it goes on, tell "
             "EarthBank's support.");
-  EXPECT_EQ(Session::sentence(302, "", "/api/account", ""),
+  EXPECT_EQ(said(s.session, 302, "", "/api/account", ""),
             "EarthBank answered the account with a redirect (HTTP 302): the base URL of the profile is probably not "
             "the service's own address.");
-  EXPECT_EQ(Session::sentence(400, R"({"title":"Bad Request","detail":"aliquotSize must be a number; nested exception is x"})",
+  EXPECT_EQ(said(s.session, 400, R"({"title":"Bad Request","detail":"aliquotSize must be a number; nested exception is x"})",
                               "/api/arar/ArArAliquot", ""),
             "EarthBank refused the aliquot: aliquotSize must be a number");
-  EXPECT_EQ(Session::sentence(418, "", "/api/arar/ArArAliquot", ""), "EarthBank refused the aliquot (HTTP 418).");
+  EXPECT_EQ(said(s.session, 418, "", "/api/arar/ArArAliquot", ""), "EarthBank refused the aliquot (HTTP 418).");
   // The reason is read from `detail`, then `message`, then `title`, then the
   // text as it came (legacy).
-  EXPECT_EQ(Session::sentence(400, R"({"title":"T","message":"M","detail":"D"})", "/api/x", ""),
+  EXPECT_EQ(said(s.session, 400, R"({"title":"T","message":"M","detail":"D"})", "/api/x", ""),
             "EarthBank refused the request: D");
-  EXPECT_EQ(Session::sentence(400, R"({"title":"T","message":"M","detail":""})", "/api/x", ""),
+  EXPECT_EQ(said(s.session, 400, R"({"title":"T","message":"M","detail":""})", "/api/x", ""),
             "EarthBank refused the request: M");
-  EXPECT_EQ(Session::sentence(400, R"({"title":"T","detail":null})", "/api/x", ""), "EarthBank refused the request: T");
-  EXPECT_EQ(Session::sentence(400, "plainly no", "/api/x", ""), "EarthBank refused the request: plainly no");
-  EXPECT_EQ(Session::sentence(400, R"(["a list"])", "/api/x", ""), "EarthBank refused the request (HTTP 400).");
+  EXPECT_EQ(said(s.session, 400, R"({"title":"T","detail":null})", "/api/x", ""), "EarthBank refused the request: T");
+  EXPECT_EQ(said(s.session, 400, "plainly no", "/api/x", ""), "EarthBank refused the request: plainly no");
+  EXPECT_EQ(said(s.session, 400, R"(["a list"])", "/api/x", ""), "EarthBank refused the request (HTTP 400).");
   // "Package is not writable" under any of the three keys, and as plain text.
   for (const char* body : {R"({"title":"Package is not writable by user."})", R"({"detail":"Package is not writable by user."})",
                            R"({"message":"package is NOT WRITABLE"})", "Package is not writable by user."}) {
-    EXPECT_TRUE(has(Session::sentence(500, body, "/api/arar/ArArAliquot", ""), "may not write to the data package")) << body;
+    EXPECT_TRUE(has(said(s.session, 500, body, "/api/arar/ArArAliquot", ""), "may not write to the data package")) << body;
   }
   // A reason of any length is cut, and holds no line break.
-  const std::string endless = Session::sentence(400, std::string(5000, 'x') + "\nmore", "/api/x", "");
+  const std::string endless = said(s.session, 400, std::string(5000, 'x') + "\nmore", "/api/x", "");
   EXPECT_LT(endless.size(), 400u);
   EXPECT_FALSE(has(endless, "\n"));
   // An answer that is no failure has no sentence.
-  EXPECT_EQ(Session::sentence(200, "", "/api/account", ""), "");
-  EXPECT_EQ(Session::sentence(201, "{}", "/api/account", ""), "");
+  EXPECT_EQ(said(s.session, 200, "", "/api/account", ""), "");
+  EXPECT_EQ(said(s.session, 201, "{}", "/api/account", ""), "");
 }
 
 // What the path says a record is, when the caller has no better word.
 TEST(Session, ARecordIsNamedByItsPath) {
-  const auto what = [](std::string_view path) {
-    const std::string said = Session::sentence(418, "", path, "");
+  SignedIn s;
+  const auto what = [&](std::string_view path) {
+    const std::string sentence = said(s.session, 418, "", path, "");
     const std::string_view head = "EarthBank refused the ", tail = " (HTTP 418).";
-    return said.substr(head.size(), said.size() - head.size() - tail.size());
+    return sentence.substr(head.size(), sentence.size() - head.size() - tail.size());
   };
   EXPECT_EQ(what("/api/core/sample-with-locations"), "sample");
   EXPECT_EQ(what("/api/arar/ArArDataPoint"), "data point");
@@ -867,7 +950,7 @@ TEST(Session, ARecordIsNamedByItsPath) {
   // A service kept under a path of its own.
   EXPECT_EQ(what("https://earthbank.test/geochem/api/account"), "account");
   EXPECT_EQ(what("/geochem/api/arar/AirRatio"), "list of terms");
-  EXPECT_EQ(Session::sentence(401, "", "https://earthbank.test/geochem/api/authenticate", ""),
+  EXPECT_EQ(said(s.session, 401, "", "https://earthbank.test/geochem/api/authenticate", ""),
             "EarthBank did not accept the user name and password.");
 }
 

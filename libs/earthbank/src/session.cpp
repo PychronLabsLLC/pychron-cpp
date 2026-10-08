@@ -59,11 +59,37 @@ void wipe(std::string& secret) {
   secret.clear();
 }
 
-void replace_all(std::string& text, std::string_view what, std::string_view with) {
-  if (what.empty()) return;
-  for (std::size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + with.size())) {
-    text.replace(at, what.size(), with);
+// `secret` as it may stand in what a service says back: as it is, as it is
+// written inside a JSON string, and as it is written in a URL.
+void add_forms(std::vector<std::string>& out, std::string_view secret) {
+  if (secret.empty()) return;
+  out.emplace_back(secret);
+  std::string quoted = json(secret).dump(-1, ' ', false, json::error_handler_t::replace);
+  if (quoted.size() >= 2) quoted = quoted.substr(1, quoted.size() - 2);
+  if (quoted != secret) out.push_back(std::move(quoted));
+  if (std::string encoded = url_encode(secret); encoded != secret) out.push_back(std::move(encoded));
+}
+
+// `text` with every occurrence of each of `secrets` replaced by the mark.
+// The places are found in the text as it came and then replaced together, so
+// that a secret which is a part of the mark, or of another secret, is not
+// found again in what was put in.
+std::string redacted(std::string_view text, const std::vector<std::string>& secrets) {
+  std::vector<bool> secret_at(text.size(), false);
+  for (const std::string& secret : secrets) {
+    for (std::size_t at = text.find(secret); at != std::string_view::npos; at = text.find(secret, at + 1)) {
+      std::fill_n(secret_at.begin() + static_cast<std::ptrdiff_t>(at), secret.size(), true);
+    }
   }
+  std::string out;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (!secret_at[i]) {
+      out.push_back(text[i]);
+    } else if (i == 0 || !secret_at[i - 1]) {
+      out += kRedacted;
+    }
+  }
+  return out;
 }
 
 // What the service said of a failure: the body's `detail`, else `message`,
@@ -219,6 +245,55 @@ HttpRequest plain_get(std::string url) {
   return request;
 }
 
+// The sentence for an answer that is not 2xx. `reason` is what the service
+// said (reason_of), the session's secrets already out of it: nothing else in
+// the sentence is the service's.
+std::string answer_sentence(int status, const std::string& reason, std::string_view path, std::string_view record) {
+  if (is_success(status)) return {};
+  const std::string where = url_path(path);
+  const std::string what = what_of(where, record);
+  const std::string low = lowered(reason);
+
+  if (has(low, "not writable")) {
+    return "EarthBank did not take the " + what +
+           ": this account may not write to the data package. Choose a package the account may write to, or make a "
+           "new one, and send it again.";
+  }
+  // Before the status: the service has been seen to send it as a 400 and may
+  // as well send a 500.
+  if (has(low, "constraint") || has(low, "not present in table") || has(low, "foreign key")) {
+    const std::string field = constraint_field(reason);
+    return "EarthBank did not take the " + what + ": it does not know " +
+           (field.empty() ? std::string("one of the values sent") : "the value sent for '" + field + "'") +
+           ". The term is probably not on EarthBank's list; a pre-flight check names such terms before anything is "
+           "sent.";
+  }
+  if (status == 401 || status == 403) {
+    if (where.ends_with(kAuthenticate)) return "EarthBank did not accept the user name and password.";
+    return "EarthBank refused the login (" + what +
+           "). Check the user name and the password, and that the account has the right to do this.";
+  }
+  if (status == 404) {
+    return "EarthBank has nothing at " + where + ": the address is probably wrong. Check the base URL of the profile.";
+  }
+  // Legacy: a 500 that speaks of the package is the package's.
+  if (status == 500 && has(low, "package")) {
+    return "EarthBank did not take the " + what +
+           ": this account may not write to the data package. Choose a package the account may write to, or make a "
+           "new one, and send it again.";
+  }
+  if (status >= 500) {
+    return "EarthBank failed on its own side at the " + what + " (HTTP " + std::to_string(status) +
+           "). Try again later; if it goes on, tell EarthBank's support.";
+  }
+  if (status >= 300 && status < 400) {
+    return "EarthBank answered the " + what + " with a redirect (HTTP " + std::to_string(status) +
+           "): the base URL of the profile is probably not the service's own address.";
+  }
+  if (const std::string said = short_reason(reason); !said.empty()) return "EarthBank refused the " + what + ": " + said;
+  return "EarthBank refused the " + what + " (HTTP " + std::to_string(status) + ").";
+}
+
 }  // namespace
 
 Session::Session(IHttpClient& http, std::string base_url) : http_(http), base_url_(std::move(base_url)) {
@@ -242,12 +317,19 @@ void Session::sign_out() {
   username_.clear();
 }
 
-std::string Session::without_secrets(std::string text, std::string_view trying) const {
-  replace_all(text, token_, kRedacted);
-  for (const std::string& token : spent_tokens_) replace_all(text, token, kRedacted);
-  replace_all(text, password_, kRedacted);
-  replace_all(text, trying, kRedacted);
-  return text;
+// What the service said of a failure, with nothing of this session's in it:
+// its tokens, its password, and `trying`, a password on its way in. Scrubbed
+// whole, before any of it is cut or read: a cut could leave the first part
+// of a secret standing.
+std::string Session::said_in(std::string_view body, std::string_view trying) const {
+  std::vector<std::string> secrets;
+  add_forms(secrets, token_);
+  for (const std::string& token : spent_tokens_) add_forms(secrets, token);
+  add_forms(secrets, password_);
+  add_forms(secrets, trying);
+  std::string out = redacted(reason_of(body), secrets);
+  for (std::string& secret : secrets) wipe(secret);
+  return out;
 }
 
 // One request on the wire, and its line in the log.
@@ -262,26 +344,30 @@ Result<HttpResponse> Session::exchange(const HttpRequest& request, std::string_v
   } else {
     line += " -> " + std::to_string(answer->status);
     if (!is_success(answer->status)) {
-      if (const std::string reason = short_reason(reason_of(answer->body)); !reason.empty()) {
-        line += ": " + without_secrets(reason, trying);
-      }
+      if (const std::string reason = short_reason(said_in(answer->body, trying)); !reason.empty()) line += ": " + reason;
     }
   }
   log_(line);
   return answer;
 }
 
-Error Session::failure(const HttpResponse& answer, std::string_view path, std::string_view record) const {
+Error Session::answer_error(const HttpResponse& answer, std::string_view path, std::string_view record,
+                            std::string_view trying) const {
   const bool login = answer.status == 401 || answer.status == 403;
   Error error{login ? ErrorKind::NotConnected : ErrorKind::Protocol,
-              without_secrets(sentence(answer.status, answer.body, path, record)), ""};
+              answer_sentence(answer.status, said_in(answer.body, trying), path, record), ""};
   error.code = std::string(login ? kLoginRejected : kRefused);
   return error;
 }
 
+Error Session::failure(const HttpResponse& answer, std::string_view path, std::string_view record) const {
+  return answer_error(answer, path, record, {});
+}
+
 // The client's error with the sentence for `what`: its kind and code stay.
+// The sentence is of our own words and the caller's, and is not scrubbed.
 Error Session::failure(Error error, std::string_view path, std::string_view record, bool write) const {
-  error.what = without_secrets(sentence(error, path, record, write));
+  error.what = sentence(error, path, record, write);
   return error;
 }
 
@@ -291,11 +377,7 @@ Result<void> Session::authenticate(std::string_view username, std::string_view p
   Result<HttpResponse> answer = exchange(request, password);
   wipe(request.body);
   if (!answer) return fail(failure(std::move(answer.error()), kAuthenticate, "", false));
-  if (!is_success(answer->status)) {
-    Error error = failure(*answer, kAuthenticate, "");
-    replace_all(error.what, password, kRedacted);
-    return fail(std::move(error));
-  }
+  if (!is_success(answer->status)) return fail(answer_error(*answer, kAuthenticate, "", password));
   const json body = json::parse(answer->body, nullptr, false);
   std::string token = text_of(body, "id_token");
   wipe(answer->body);
@@ -415,53 +497,6 @@ Result<DataPackage> Session::create_package(std::string_view name, std::optional
 }
 
 // ---- Sentences ---------------------------------------------------------------
-
-std::string Session::sentence(int status, std::string_view body, std::string_view path, std::string_view record) {
-  if (is_success(status)) return {};
-  const std::string where = url_path(path);
-  const std::string what = what_of(where, record);
-  const std::string reason = reason_of(body);
-  const std::string low = lowered(reason);
-
-  if (has(low, "not writable")) {
-    return "EarthBank did not take the " + what +
-           ": this account may not write to the data package. Choose a package the account may write to, or make a "
-           "new one, and send it again.";
-  }
-  // Before the status: the service has been seen to send it as a 400 and may
-  // as well send a 500.
-  if (has(low, "constraint") || has(low, "not present in table") || has(low, "foreign key")) {
-    const std::string field = constraint_field(reason);
-    return "EarthBank did not take the " + what + ": it does not know " +
-           (field.empty() ? std::string("one of the values sent") : "the value sent for '" + field + "'") +
-           ". The term is probably not on EarthBank's list; a pre-flight check names such terms before anything is "
-           "sent.";
-  }
-  if (status == 401 || status == 403) {
-    if (where.ends_with(kAuthenticate)) return "EarthBank did not accept the user name and password.";
-    return "EarthBank refused the login (" + what +
-           "). Check the user name and the password, and that the account has the right to do this.";
-  }
-  if (status == 404) {
-    return "EarthBank has nothing at " + where + ": the address is probably wrong. Check the base URL of the profile.";
-  }
-  // Legacy: a 500 that speaks of the package is the package's.
-  if (status == 500 && has(low, "package")) {
-    return "EarthBank did not take the " + what +
-           ": this account may not write to the data package. Choose a package the account may write to, or make a "
-           "new one, and send it again.";
-  }
-  if (status >= 500) {
-    return "EarthBank failed on its own side at the " + what + " (HTTP " + std::to_string(status) +
-           "). Try again later; if it goes on, tell EarthBank's support.";
-  }
-  if (status >= 300 && status < 400) {
-    return "EarthBank answered the " + what + " with a redirect (HTTP " + std::to_string(status) +
-           "): the base URL of the profile is probably not the service's own address.";
-  }
-  if (const std::string said = short_reason(reason); !said.empty()) return "EarthBank refused the " + what + ": " + said;
-  return "EarthBank refused the " + what + " (HTTP " + std::to_string(status) + ").";
-}
 
 std::string Session::sentence(const Error& error, std::string_view path, std::string_view record, bool write) {
   // An answer already has its sentence.

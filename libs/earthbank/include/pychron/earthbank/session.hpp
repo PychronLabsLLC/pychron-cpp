@@ -19,7 +19,12 @@
 // the client's). No token, password or Authorization value is ever put into
 // an Error, a sentence or a log line: what is said of a request is its
 // method, its path and the status (request_line), and what the service said
-// of a failure has both taken out of it first.
+// of a failure has both taken out of it first: out of the whole of it, before
+// it is cut to length or read for what went wrong, and out of nothing but it.
+// The words around it are this library's and the caller's and stand as they
+// are (a password that is a word of a sentence would otherwise show where it
+// was struck). There is no way to the service's words but through a session:
+// failure() is the only thing that turns an answer into a sentence.
 //
 // One thread at a time, as the client under it.
 #pragma once
@@ -123,12 +128,26 @@ class Session {
   // that a wrong password is not offered again and again.
   Result<HttpResponse> send(HttpRequest request, bool needs_login);
 
-  // A failed call as an Error, for a caller of send(): the sentence (below)
-  // as `what`, with this session's token and password taken out of it should
-  // the service have said either back. For an answer that is not 2xx: the
-  // code is kLoginRejected (401, 403) or kRefused. For no answer: the
-  // client's error, its kind and code kept, so that request_may_have_arrived
-  // still tells a write in doubt from one that never left.
+  // A failed call as an Error, for a caller of send().
+  //
+  // For an answer that is not 2xx, `what` is one plain sentence. `path` is
+  // the path (or the URL: the query is cut off) the call was made to;
+  // `record` is what was being asked for or written, in the caller's words
+  // (`measurement 20001-01A`), or empty for the word the path gives
+  // (`measurement`, `data package`, `list of terms`). The sentence is told by
+  // the body first, whatever the status: a package the account may not write
+  // to ("not writable"), then a value the service does not know (a
+  // constraint, with the field named when the body names it; it may come as a
+  // 400 or a 500). Then by the status: the login refused (401, 403), a wrong
+  // address (404), the service's own fault (5xx), a redirect, and anything
+  // else with the service's reason. The reason is read from the body's
+  // `detail`, then `message`, then `title`, then the text as it came, with
+  // this session's tokens and password taken out of it (above). The code is
+  // kLoginRejected (401, 403) or kRefused. A 2xx has no sentence.
+  //
+  // For no answer: the client's error with sentence() for `what`, its kind
+  // and code kept, so that request_may_have_arrived still tells a write in
+  // doubt from one that never left.
   Error failure(const HttpResponse& answer, std::string_view path, std::string_view record) const;
   Error failure(Error error, std::string_view path, std::string_view record, bool write) const;
 
@@ -140,25 +159,13 @@ class Session {
 
   // ---- Sentences ------------------------------------------------------------
   //
-  // One plain sentence for a failed call. `path` is the path (or the URL: the
-  // query is cut off) the call was made to; `record` is what was being asked
-  // for or written, in the caller's words (`measurement 20001-01A`), or empty
-  // for the word the path gives (`measurement`, `data package`, `list of
-  // terms`).
+  // Of this library's own words only: none of these is given anything the
+  // service said. `path` and `record` as for failure().
   //
-  // For an answer. Told by the body first, whatever the status: a package the
-  // account may not write to ("not writable"), then a value the service does
-  // not know (a constraint, with the field named when the body names it; it
-  // may come as a 400 or a 500). Then by the status: the login refused (401,
-  // 403), a wrong address (404), the service's own fault (5xx), a redirect,
-  // and anything else with the service's reason. The reason is read from the
-  // body's `detail`, then `message`, then `title`, then the text as it came.
-  // A 2xx has no sentence. The service's reason goes in as it came: a caller
-  // with a session uses failure(), which keeps the session's secrets out.
-  static std::string sentence(int status, std::string_view body, std::string_view path, std::string_view record);
   // For no answer: the request never left (kHttpNotSent, or `Config`); or it
   // may have arrived, and then for a `write` the sentence says the record may
-  // or may not have been saved and does not say to send it again.
+  // or may not have been saved and does not say to send it again. An Error
+  // that is already an answer's (from failure()) keeps the sentence it has.
   static std::string sentence(const Error& error, std::string_view path, std::string_view record, bool write);
   // An upload asked for with no package to put it in.
   static std::string no_package_sentence();
@@ -169,7 +176,9 @@ class Session {
  private:
   Result<void> authenticate(std::string_view username, std::string_view password);
   Result<HttpResponse> exchange(const HttpRequest& request, std::string_view trying = {});
-  std::string without_secrets(std::string text, std::string_view trying = {}) const;
+  std::string said_in(std::string_view body, std::string_view trying) const;
+  Error answer_error(const HttpResponse& answer, std::string_view path, std::string_view record,
+                     std::string_view trying) const;
 
   IHttpClient& http_;
   std::string base_url_;

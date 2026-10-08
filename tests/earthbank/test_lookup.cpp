@@ -398,7 +398,8 @@ TEST(Lookup, AListThatDoesNotAnswerCouldNotBeAsked) {
   desk.bank.fail_next("GET", "/api/arar/LArArInterpretation", 500, R"({"title":"Internal Server Error"})");
   const LookupResult fault = desk.resolver.resolve("interpretationName", "Unknown");
   expect_not(fault, LookupOutcome::CouldNotAsk, "a 500");
-  EXPECT_EQ(fault.detail, Session::sentence(500, "", "/api/arar/LArArInterpretation", ""));
+  EXPECT_EQ(fault.detail, "EarthBank failed on its own side at the list of terms (HTTP 500). Try again later; if it "
+                          "goes on, tell EarthBank's support.");
 
   desk.bank.refuse_next("GET", kMaterials);
   expect_not(desk.resolver.resolve("materialName", "Sanidine"), LookupOutcome::CouldNotAsk, "unreachable");
@@ -412,6 +413,38 @@ TEST(Lookup, AListThatDoesNotAnswerCouldNotBeAsked) {
   expect_found(desk.resolver.resolve("sampleKindName", "Ore"), 2101, "Ore", "after a new login");
   EXPECT_EQ(desk.bank.count("POST", "/api/authenticate"), 2u);
   EXPECT_TRUE(desk.bank.pending().empty());
+}
+
+// What the service says of a list it will not give goes into `detail`, and
+// may say a secret back: none is left, whole or in part.
+TEST(Lookup, NoSecretInADetail) {
+  FakeEarthBank::Options options;
+  options.password = "Zq7pre;Zq7post";
+  FakeEarthBank bank(options);
+  testing::Spy spy(bank);
+  Session session(spy, bank.base_url());
+  ASSERT_TRUE(session.sign_in(bank.login(), options.password));
+  LookupResolver resolver(session);
+  const auto echo = [&](std::string_view list, int status, const char* key) {
+    bank.fail_next("GET", list, status,
+                   json{{key, "token " + spy.token() + " and password " + options.password + "; more"}}.dump());
+  };
+  std::vector<std::string> details;
+  echo("/api/arar/AirRatio", 400, "detail");
+  details.push_back(resolver.resolve("airRatioName", "Nier 1950").detail);
+  echo("/api/arar/DecayConstant", 403, "message");
+  details.push_back(resolver.resolve("decayConstantName", "Min et al. 2000").detail);
+  echo(kMaterials, 409, "title");
+  details.push_back(resolver.resolve("materialName", "Sanidine").detail);
+  echo("/api/core/literature", 500, "detail");
+  details.push_back(resolver.resolve("literatureName", "A paper").detail);
+  EXPECT_TRUE(bank.pending().empty());
+  EXPECT_EQ(details[0], "EarthBank refused the list of terms: token <redacted> and password <redacted>");
+  for (const std::string& detail : details) {
+    EXPECT_FALSE(detail.empty());
+    EXPECT_EQ(detail.find("Zq7"), std::string::npos) << detail;
+    for (const std::string& secret : spy.secrets()) EXPECT_EQ(detail.find(secret), std::string::npos) << detail;
+  }
 }
 
 // ---- Once ------------------------------------------------------------------
