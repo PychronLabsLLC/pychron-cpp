@@ -23,33 +23,34 @@ using namespace std::string_view_literals;
 constexpr std::string_view kUncertaintyUnit = "/api/arar/LUncertaintyUnit";
 constexpr std::string_view kMaterials = "/api/core/materials";
 
-// Legacy LOOKUP_ENDPOINTS, entry for entry.
+// Legacy LOOKUP_ENDPOINTS, entry for entry. `true` marks a list short enough
+// to be read whole (LookupSpec::whole): those of the templates' columns.
 constexpr std::array kLookupSpecs = {
-    LookupSpec{"analysisScaleName", "analysisScaleId", "/api/arar/LAnalysisScale"},
-    LookupSpec{"analyticalUncertaintyUnitName", "analyticalUncertaintyUnitId", kUncertaintyUnit},
-    LookupSpec{"apparentAgeUncertaintyUnitName", "apparentAgeUncertaintyUnitId", kUncertaintyUnit},
-    LookupSpec{"jvalueUncertaintyUnitName", "jvalueUncertaintyUnitId", kUncertaintyUnit},
-    LookupSpec{"arMethodName", "arMethodId", "/api/arar/LArArMethod"},
-    LookupSpec{"ageCalcTypeName", "ageCalcTypeId", "/api/arar/LAgeType"},
+    LookupSpec{"analysisScaleName", "analysisScaleId", "/api/arar/LAnalysisScale", true},
+    LookupSpec{"analyticalUncertaintyUnitName", "analyticalUncertaintyUnitId", kUncertaintyUnit, true},
+    LookupSpec{"apparentAgeUncertaintyUnitName", "apparentAgeUncertaintyUnitId", kUncertaintyUnit, true},
+    LookupSpec{"jvalueUncertaintyUnitName", "jvalueUncertaintyUnitId", kUncertaintyUnit, true},
+    LookupSpec{"arMethodName", "arMethodId", "/api/arar/LArArMethod", true},
+    LookupSpec{"ageCalcTypeName", "ageCalcTypeId", "/api/arar/LAgeType", true},
     LookupSpec{"calculatedAgeUncertaintyTypeUnitsName", "calculatedAgeUncertaintyTypeUnitsId",
-               kUncertaintyUnit},
+               kUncertaintyUnit, true},
     LookupSpec{"dataInterpretationToolName", "dataInterpretationToolId",
-               "/api/arar/LArArDataInterpretationTool"},
-    LookupSpec{"interpretationName", "interpretationId", "/api/arar/LArArInterpretation"},
-    LookupSpec{"decayConstantName", "decayConstantId", "/api/arar/DecayConstant"},
-    LookupSpec{"airRatioName", "airRatioId", "/api/arar/AirRatio"},
-    LookupSpec{"fluxMonitorName", "fluxMonitorId", "/api/arar/FluxMonitor"},
+               "/api/arar/LArArDataInterpretationTool", true},
+    LookupSpec{"interpretationName", "interpretationId", "/api/arar/LArArInterpretation", true},
+    LookupSpec{"decayConstantName", "decayConstantId", "/api/arar/DecayConstant", true},
+    LookupSpec{"airRatioName", "airRatioId", "/api/arar/AirRatio", true},
+    LookupSpec{"fluxMonitorName", "fluxMonitorId", "/api/arar/FluxMonitor", true},
     LookupSpec{"mineralName", "mineralId", kMaterials},
     // Yes, No or N/A, kept by the server as an enumeration.
     LookupSpec{"plateauStepName", "plateauStepId", ""},
     LookupSpec{"inverseIsoStepName", "inverseIsoStepId", ""},
     LookupSpec{"weightedMeanStepName", "weightedMeanStepId", ""},
     // The sample.
-    LookupSpec{"sampleKindName", "sampleKindId", "/api/core/l-sample-kinds"},
-    LookupSpec{"sampleMethodName", "sampleMethodId", "/api/core/l-sample-methods"},
+    LookupSpec{"sampleKindName", "sampleKindId", "/api/core/l-sample-kinds", true},
+    LookupSpec{"sampleMethodName", "sampleMethodId", "/api/core/l-sample-methods", true},
     LookupSpec{"materialName", "materialId", kMaterials},
-    LookupSpec{"locationKindName", "locationKindId", "/api/core/l-location-kinds"},
-    LookupSpec{"archiveName", "archiveId", "/api/core/archives"},
+    LookupSpec{"locationKindName", "locationKindId", "/api/core/l-location-kinds", true},
+    LookupSpec{"archiveName", "archiveId", "/api/core/archives", true},
     LookupSpec{"stratographicUnitName", "stratographicUnitId", "/api/core/stratigraphic-units"},
     // Not fields of the data point's record: the ids go into link tables.
     LookupSpec{"fundingName", "fundingId", "/api/core/fundings"},
@@ -378,7 +379,8 @@ std::string plain_number(std::string_view text) {
 // A monitor as a lab writes it, taken apart: its age and the words of the
 // rest.
 struct MonitorQuery {
-  std::string age;  // plain_number; empty: none given
+  std::string age;       // plain_number; empty: none given
+  bool age_in_ma = false;  // the value says so (`28.201 Ma`); else it is the last number
   std::vector<std::string> name;
 };
 
@@ -421,6 +423,8 @@ MonitorQuery monitor_query(std::string_view value) {
       break;
     }
   }
+  MonitorQuery out;
+  out.age_in_ma = at.has_value();
   if (!at) {
     for (std::size_t i = pieces.size(); i-- > 0;) {
       if (pieces[i].number.empty()) continue;
@@ -428,7 +432,6 @@ MonitorQuery monitor_query(std::string_view value) {
       break;
     }
   }
-  MonitorQuery out;
   for (std::size_t i = 0; i < pieces.size(); ++i) {
     if (at && i == *at) {
       out.age = pieces[i].number;
@@ -449,6 +452,50 @@ std::string listed_age(std::string_view entry) {
   entry.remove_suffix(kTail.size());
   const std::size_t open = entry.rfind('(');
   return open == std::string_view::npos ? std::string() : plain_number(trimmed(entry.substr(open + 1)));
+}
+
+// An entry less the age it ends with: what is left names the monitor and
+// the paper.
+std::string_view without_listed_age(std::string_view entry) {
+  if (listed_age(entry).empty()) return entry;
+  return trimmed(entry.substr(0, entry.rfind('(')));
+}
+
+// A number that reads as the year of a paper.
+bool is_year(std::string_view number) {
+  return number.size() == 4 && (number.starts_with("19") || number.starts_with("20")) &&
+         std::all_of(number.begin(), number.end(), ascii_digit);
+}
+
+// `word` is one of the words for a mineral or another material, or its plural.
+bool is_material_word(std::string_view word) {
+  for (const std::span<const MonitorMineral> table :
+       {std::span<const MonitorMineral>(kMonitorMinerals), std::span<const MonitorMineral>(kOtherMaterials)}) {
+    for (const MonitorMineral& mineral : table) {
+      if (word == mineral.word) return true;
+      if (word.size() == mineral.word.size() + 1 && word.back() == 's' && word.starts_with(mineral.word)) return true;
+    }
+  }
+  return false;
+}
+
+// `words` less every run of them that is `part`.
+std::vector<std::string> without_run(const std::vector<std::string>& words, const std::vector<std::string>& part) {
+  if (part.empty()) return words;
+  std::vector<std::string> out;
+  for (std::size_t i = 0; i < words.size();) {
+    if (i + part.size() <= words.size() &&
+        std::equal(part.begin(), part.end(), words.begin() + static_cast<std::ptrdiff_t>(i))) {
+      i += part.size();
+    } else {
+      out.push_back(words[i++]);
+    }
+  }
+  return out;
+}
+
+bool has_word(const std::vector<std::string>& words, std::string_view word) {
+  return std::find(words.begin(), words.end(), word) != words.end();
 }
 
 // The abbreviations an entry has in parentheses, as words: `(GA-1550)` is
@@ -502,10 +549,14 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
   const MonitorQuery query = monitor_query(value);
   if (query.age.empty() || query.name.empty()) return {};
 
-  // The monitors the name names, by the mark of their entries.
+  // The monitors the name names, by the mark of their entries, and the words
+  // of the name that are not such a name.
   std::vector<std::vector<std::string>> marks;
+  std::vector<std::string> beside = query.name;
   for (const MonitorAlias& alias : kMonitorAliases) {
-    if (!has_run(query.name, words_of(alias.alias))) continue;
+    const std::vector<std::string> said = words_of(alias.alias);
+    if (!has_run(query.name, said)) continue;
+    beside = without_run(beside, said);
     std::vector<std::string> mark = words_of(alias.listed);
     if (std::find(marks.begin(), marks.end(), mark) == marks.end()) marks.push_back(std::move(mark));
   }
@@ -514,37 +565,53 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
     if (has_run(query.name, words_of(other))) return {};
   }
   const std::vector<std::string_view> said = minerals_of(query.name);
+  std::erase_if(beside, [](const std::string& word) { return is_material_word(word); });
 
-  std::vector<std::string_view> found;
-  for (const std::string& entry : entries) {
-    if (listed_age(entry) != query.age) continue;
-    const std::vector<std::string> words = words_of(entry);
-    // Another mineral or material is another monitor, whatever else of the
-    // name fits.
-    if (const auto listed = minerals_of(words); !said.empty() && !listed.empty() && said != listed) continue;
-    bool named = false;
-    if (!marks.empty()) {
-      named = has_run(words, marks.front());
-    } else {
-      // No name this knows: every word given must be the entry's, and one of
-      // them must be a name and not a year or a conjunction's worth of
-      // letters.
-      const bool all = std::all_of(query.name.begin(), query.name.end(), [&](const std::string& word) {
-        return std::find(words.begin(), words.end(), word) != words.end();
-      });
-      bool telling = std::any_of(query.name.begin(), query.name.end(), [](const std::string& word) {
+  // By the age, and when no entry is of it and the number was not said to be
+  // an age, by the paper it is the year of.
+  const bool may_be_a_year = !query.age_in_ma && is_year(query.age);
+  for (const bool by_paper : {false, true}) {
+    if (by_paper && !may_be_a_year) break;
+    std::vector<std::string_view> found;
+    for (const std::string& entry : entries) {
+      const std::vector<std::string> words = words_of(entry);
+      // The words a name or a paper is found among: by the paper, not the
+      // digits of the entry's age.
+      const std::vector<std::string> cited = by_paper ? words_of(without_listed_age(entry)) : words;
+      if (by_paper ? !has_word(cited, query.age) : listed_age(entry) != query.age) continue;
+      // Another mineral or material is another monitor, whatever else of the
+      // name fits.
+      if (const auto listed = minerals_of(words); !said.empty() && !listed.empty() && said != listed) continue;
+      const auto telling = [](const std::string& word) {
         return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter);
-      });
-      for (const auto& abbreviation : abbreviations_of(entry)) telling = telling || has_run(query.name, abbreviation);
-      named = all && telling;
+      };
+      bool named = false;
+      if (!marks.empty()) {
+        named = has_run(words, marks.front());
+        // By the paper the monitor is not enough: the author must be there,
+        // and nothing said that the entry does not say.
+        if (by_paper) {
+          named = named && std::any_of(beside.begin(), beside.end(), telling) &&
+                  std::all_of(beside.begin(), beside.end(), [&](const std::string& word) { return has_word(cited, word); });
+        }
+      } else {
+        // No name this knows: every word given must be the entry's, and one of
+        // them must be a name and not a year or a conjunction's worth of
+        // letters.
+        const bool all = std::all_of(query.name.begin(), query.name.end(),
+                                     [&](const std::string& word) { return has_word(cited, word); });
+        bool tells = std::any_of(query.name.begin(), query.name.end(), telling);
+        for (const auto& abbreviation : abbreviations_of(entry)) tells = tells || has_run(query.name, abbreviation);
+        named = all && tells;
+      }
+      if (!named) continue;
+      const std::string_view listed = trimmed(entry);
+      if (std::find(found.begin(), found.end(), listed) == found.end()) found.push_back(listed);
     }
-    if (!named) continue;
-    const std::string_view listed = trimmed(entry);
-    if (std::find(found.begin(), found.end(), listed) == found.end()) found.push_back(listed);
+    if (found.size() > 1) return {ListMatch::Kind::Ambiguous, {}};
+    if (found.size() == 1) return {ListMatch::Kind::Respelled, std::string(found.front())};
   }
-  if (found.empty()) return {};
-  if (found.size() > 1) return {ListMatch::Kind::Ambiguous, {}};
-  return {ListMatch::Kind::Respelled, std::string(found.front())};
+  return {};
 }
 
 std::string_view age_type_name(AgeKind kind) {

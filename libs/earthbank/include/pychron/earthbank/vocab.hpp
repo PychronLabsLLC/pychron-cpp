@@ -22,9 +22,15 @@ namespace pychron::earthbank {
 
 // Where one `<term>Name` field is resolved: the field that takes the id and
 // the endpoint listing the vocabulary. An empty endpoint means there is no
-// list to ask: the name is sent as it is.
+// list to ask: the name is sent as it is. `whole` says the list is short
+// enough to be read in one request and kept (the lists the vendor's templates
+// carry as a column to choose from: sixteen flux monitors, two units). A list
+// that is not is only ever asked for a name: the materials are some fifty
+// thousand rows, and how long the stratigraphic units, the fundings and the
+// literature are is not known.
 struct LookupSpec {
   std::string_view name_field, id_field, endpoint;
+  bool whole = false;
 };
 
 // One per name field that is resolved against the service (the legacy
@@ -121,6 +127,13 @@ ListMatch match_list_entry(std::string_view value, std::span<const std::string> 
 //     name that says no mineral is held to none. And a name that holds the designation
 //     of a split the list has not (`FCT-3`, the tuff's biotite) matches
 //     nothing, though part of it is another monitor's name.
+// Then, when that found nothing and no number of the value is said to be in
+// Ma, by name and paper (`FC-2 Kuiper et al. 2008`, as a lab writes the
+// monitor with its reference and no age): the value's last number is then a
+// year (19xx, 20xx) and must be a word of the entry before its age; the name
+// is held as above; and with one of the aliases, every other word that is no
+// mineral must be the entry's too, one of them of three letters or more (the
+// author: `FC-2 2008` is not enough, and `FC-2 Phillips 2008` is no entry).
 // One entry left: Respelled. Several: Ambiguous. None: None.
 ListMatch match_flux_monitor(std::string_view value, std::span<const std::string> entries);
 

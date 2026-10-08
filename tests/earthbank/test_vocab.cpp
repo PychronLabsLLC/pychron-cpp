@@ -440,6 +440,93 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   expect_match(match_flux_monitor("FC-2 28.201 Ma", {}), Kind::None, "", "an empty list");
 }
 
+// A lab that names its monitor by the paper its age is from, and gives no
+// age: the legacy integration found the entry by the first word and the year.
+// Here the monitor, the year and every other word said must be the entry's.
+TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
+  const std::vector<std::string> list = template_monitors();
+  const auto match = [&](std::string_view value) { return match_flux_monitor(value, list); };
+  const char* const kuiper = "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)";
+  const char* const phillips_ac = "Alder Creek Rhyolite Sanidine (ACs) from Phillips et al. 2022 (1.1834 Ma)";
+
+  // The entry the legacy integration quotes, as it composed the query: the
+  // monitor's name and its reference.
+  expect_match(match("Alder Creek Rhyolite Sanidine Phillips et al. 2022"), Kind::Respelled, phillips_ac, "legacy's");
+  expect_match(match("ACs Phillips et al. 2022"), Kind::Respelled, phillips_ac, "by pychron's name");
+  expect_match(match("FC-2 Kuiper et al. 2008"), Kind::Respelled, kuiper, "FC-2");
+  expect_match(match("FC-2 Kuiper et al. (2008)"), Kind::Respelled, kuiper, "the year in parentheses");
+  expect_match(match("Fish Canyon Tuff sanidine Kuiper et al. 2008"), Kind::Respelled, kuiper, "by name");
+  expect_match(match("fc-2 san kuiper 2008"), Kind::Respelled, kuiper, "case, and the mineral in short");
+  expect_match(match("FC-2 Renne et al. 2011"), Kind::Respelled,
+               "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)", "the paper decides");
+  expect_match(match("FC-2 Phillips 2022"), Kind::Respelled,
+               "Fish Canyon Tuff Sanidine (FCTs) from Phillips et al. 2022 (28.175 Ma)", "not Alder Creek's");
+  expect_match(match("GA-1550 Spell and McDougall 2003"), Kind::Respelled,
+               "Mt Domedary Biotite (GA-1550) from Spell and McDougall 2003 (99.18 Ma)", "GA-1550");
+  expect_match(match("MD-2 Jourdan and Renne 2007"), Kind::Respelled,
+               "Mt Domedary Biotite (MD-2) from Jourdan and Renne 2007 (99.44 Ma)", "MD-2, not GA-1550 or Hb3gr");
+  expect_match(match("Hornblende Jourdan and Renne 2007"), Kind::Respelled,
+               "Hornblende (Hb3gr) from Jourdan and Renne 2007 (1081.5 Ma)", "by the entry's words");
+  expect_match(match("WA1ms Jourdan et al. 2014"), Kind::Respelled,
+               "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "the entry's year in parentheses");
+  // With no monitor named, the paper alone, when it is one entry's.
+  expect_match(match("Kuiper et al. 2008"), Kind::Respelled, kuiper, "one entry is of that paper");
+  expect_match(match("Renne et al. 2011"), Kind::Ambiguous, "", "three are of that one");
+  expect_match(match("Phillips et al. 2022"), Kind::Ambiguous, "", "and of that");
+  expect_match(match("Jourdan and Renne 2007"), Kind::Ambiguous, "", "likewise");
+
+  // No match. The legacy rule took the first entry holding the first word
+  // and the year, and so the wrong monitor for some of these.
+  expect_match(match("FC-2 Phillips 2008"), Kind::None, "", "the year of one paper, the author of another");
+  expect_match(match("FC-2 Kuiper et al. 2009"), Kind::None, "", "another year");
+  expect_match(match("FC-2 Kuiper"), Kind::None, "", "no year");
+  expect_match(match("FC-2 2008"), Kind::None, "", "a year and no author");
+  expect_match(match("2008"), Kind::None, "", "a year");
+  expect_match(match("ACs Kuiper et al. 2008"), Kind::None, "", "a paper of another monitor");
+  expect_match(match("FC-2 ACs Phillips et al. 2022"), Kind::None, "", "two monitors named");
+  expect_match(match("FC-2 biotite Kuiper et al. 2008"), Kind::None, "", "another mineral");
+  expect_match(match("FCT-3 Kuiper et al. 2008"), Kind::None, "", "a split the list has not");
+  expect_match(match("Bishop Tuff Kuiper et al. 2008"), Kind::None, "", "a monitor the list has not");
+  expect_match(match("FC-2 Kuiper and Example 2008"), Kind::None, "", "a word the entry has not");
+  // An age said is held to, whatever the paper: the citation is no way round it.
+  expect_match(match("FC-2 Kuiper et al. 2008 28.2 Ma"), Kind::None, "", "an age cut short");
+  expect_match(match("FC-2 Kuiper et al. 2008, 28.294 Ma"), Kind::Respelled,
+               "Fish Canyon Tuff Sanidine (FCTs) from Renne et al. 2011 (28.294 Ma)", "the age decides, as before");
+  // The year is the paper's, not a number of the entry's age; and a number
+  // that is some entry's age is that first, as before.
+  const std::vector<std::string> old = {"Example Monitor Sanidine (EMs) from Alpha et al. 1999 (2008 Ma)",
+                                        "Example Monitor Sanidine (EMs) from Beta et al. 2008 (1999 Ma)"};
+  expect_match(match_flux_monitor("EMs Alpha et al. 1999", old), Kind::Respelled, old[0], "its paper");
+  expect_match(match_flux_monitor("EMs Beta et al. 2008", old), Kind::Respelled, old[1], "the other's");
+  expect_match(match_flux_monitor("EMs 2008", old), Kind::Respelled, old[0], "an age");
+  expect_match(match_flux_monitor("EMs 1999 Ma", old), Kind::Respelled, old[1], "an age, said to be one");
+  expect_match(match_flux_monitor("EMs Alpha et al. 1999 Ma", old), Kind::None, "", "said to be an age: not a year");
+  expect_match(match_flux_monitor("FC-2 Kuiper et al. 2008", {}), Kind::None, "", "an empty list");
+}
+
+// The lists short enough to be read whole and kept: those the vendor's
+// templates carry as a column to choose from. The rest are asked by name; the
+// materials above all, of some fifty thousand rows.
+TEST(Vocab, TheShortListsAreMarked) {
+  std::set<std::string> whole, by_name;
+  for (const LookupSpec& spec : lookup_specs()) {
+    if (spec.endpoint.empty()) {
+      EXPECT_FALSE(spec.whole) << spec.name_field;
+      continue;
+    }
+    (spec.whole ? whole : by_name).insert(std::string(spec.endpoint));
+  }
+  // An endpoint is one or the other, whichever field asks.
+  for (const std::string& endpoint : whole) EXPECT_FALSE(by_name.contains(endpoint)) << endpoint;
+  EXPECT_EQ(by_name, (std::set<std::string>{"/api/core/materials", "/api/core/stratigraphic-units",
+                                             "/api/core/fundings", "/api/core/literature"}));
+  EXPECT_EQ(whole.size(), 13u);
+  EXPECT_TRUE(whole.contains("/api/arar/FluxMonitor"));
+  EXPECT_TRUE(whole.contains("/api/core/l-sample-kinds"));
+  EXPECT_TRUE(whole.contains("/api/core/archives"));
+  for (const LookupSpec& spec : uncertainty_type_specs()) EXPECT_FALSE(spec.whole) << spec.name_field;
+}
+
 // The minerals the rule knows are the list's: every entry names exactly one
 // of them, and each of them is some entry's.
 TEST(Vocab, TheMonitorMineralsAreOfTheTemplatesList) {
