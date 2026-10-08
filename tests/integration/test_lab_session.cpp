@@ -42,6 +42,12 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "virtual_time.hpp"
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+#include "http_client.hpp"
+#include "metrics_text.hpp"
+#include "pychron/core/config/metrics_config.hpp"
+#include "pychron/experiment/metrics/service.hpp"
+#endif
 
 namespace pychron::experiment::lab {
 namespace {
@@ -229,6 +235,106 @@ TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
   EXPECT_EQ(order.front(), "queue");
   EXPECT_EQ(order.size(), 1u + result->runs.size());
 }
+
+// --- the metrics endpoint over a whole queue (observability design, 6) --------
+
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+
+// The session's line with `[metrics]` on, at a loopback port the OS picks.
+class MetricsSessionTest : public LabSessionTest {
+ protected:
+  void SetUp() override {
+    LabSessionTest::SetUp();
+    config::MetricsConfig c;
+    c.enabled = true;
+    c.bind = "127.0.0.1";
+    c.port = 0;
+    metrics_ = metrics::MetricsService::start(c, line_->bus(), line_->scheduler(), clock_, line_->log_hub(), "0.0.0");
+    ASSERT_NE(metrics_, nullptr);
+    ASSERT_TRUE(metrics_->listening());
+    subs_.push_back(line_->bus().subscribe<executor::RunStarted>([this](const executor::RunStarted& e) {
+      std::lock_guard lock(mutex_);
+      named_.push_back(e.run_id);
+      named_.push_back(e.identifier);
+    }));
+  }
+  void TearDown() override {
+    metrics_.reset();  // its heartbeat is a job of the line's scheduler
+    LabSessionTest::TearDown();
+  }
+
+  // What the lab's Prometheus would read now.
+  std::string scrape() { return http_client::body(http_client::get(metrics_->port(), "/metrics")); }
+
+  std::unique_ptr<metrics::MetricsService> metrics_;
+  std::vector<std::string> named_;  // every run id and identifier the queue used
+};
+
+TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  const double runs = static_cast<double>(result->runs.size());
+  ASSERT_GT(runs, 0);
+
+  const std::string body = scrape();
+  using metrics_text::value;
+  EXPECT_DOUBLE_EQ(value(body, "pychron_runs_started_total"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_runs_finished_total{state=\"success\",truncated=\"false\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queues_ended_total{end=\"completed\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_active"), 0.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_executor_state{state=\"idle\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_runs{status=\"total\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_runs{status=\"done\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_run_save_errors_total"), 0.0);
+  // Every run went through each phase once, and the phases took simulated time.
+  for (const char* state : {"preparing", "extracting", "equilibrating", "measuring", "post_measuring", "saving"}) {
+    EXPECT_DOUBLE_EQ(value(body, std::string("pychron_run_state_duration_seconds_count{state=\"") + state + "\"}"), runs)
+        << state;
+  }
+  EXPECT_GT(value(body, "pychron_run_state_duration_seconds_sum{state=\"measuring\"}"), 1.0);
+  EXPECT_GT(value(body, "pychron_measurement_blocks_total{block=\"main\",ok=\"true\"}"), 0.0);
+  EXPECT_TRUE(metrics_text::has(body, "pychron_last_run_finished_timestamp_seconds"));
+  // The line was read while the queue ran.
+  EXPECT_NE(body.find("\npychron_pressure{"), std::string::npos);
+  EXPECT_GT(value(body, "pychron_scheduler_job_runs_total{job=\"metrics.heartbeat\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_metrics_dropped_series_total"), 0.0);
+
+  // No run is named: neither its id nor its sample's identifier.
+  std::lock_guard lock(mutex_);
+  ASSERT_FALSE(named_.empty());
+  for (const std::string& name : named_) {
+    ASSERT_FALSE(name.empty());
+    // As a label's whole value: an identifier may be as short as "bu".
+    EXPECT_EQ(body.find("\"" + name + "\""), std::string::npos) << "the scrape names " << name;
+  }
+}
+
+TEST_F(MetricsSessionTest, ScrapingDuringAQueueDoesNotDisturbIt) {
+  std::atomic<bool> stop{false};
+  std::atomic<int> scrapes{0}, bad{0}, saw_active{0};
+  std::thread scraper([&] {
+    while (!stop) {
+      const std::string response = http_client::get(metrics_->port(), "/metrics");
+      ++scrapes;
+      if (response.rfind("HTTP/1.1 200", 0) != 0) ++bad;
+      if (metrics_text::value(http_client::body(response), "pychron_queue_active") == 1.0) ++saw_active;
+    }
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  stop = true;
+  scraper.join();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier;
+  EXPECT_GT(scrapes.load(), 0);
+  EXPECT_EQ(bad.load(), 0);
+  EXPECT_GT(saw_active.load(), 0) << "no scrape saw the queue running";
+}
+
+#endif  // PYCHRON_EXPERIMENT_HAS_METRICS
 
 // --- lasers shared with whoever else drives them (laser window design, 2) -----
 
