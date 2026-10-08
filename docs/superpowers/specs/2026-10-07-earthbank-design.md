@@ -294,9 +294,12 @@ read from the `Lookup Tables` sheet of the Ar-Ar template.
   `2 sigma` is id 2. Resolved from this table and never from
   `/api/core/l-error-types`, whose ids violate the data point's foreign key.
   The mapping itself only ever writes `1 sigma`.
-- **Flux monitor.** `"<MonitorInfo::name> <age> Ma"`, resolved by the fuzzy
-  rule of section 5.1 on upload and by the rule of section 6 in a workbook;
-  `SampleOptions::flux_monitor` overrides.
+- **Flux monitor.** `"<MonitorInfo::name> <age> Ma"`, resolved by one rule
+  (`match_flux_monitor`, section 6) on upload (5.1) and in a workbook;
+  `SampleOptions::flux_monitor` overrides. The rule finds a monitor by its
+  name and age, or by its name and paper; a value that names no monitor (an
+  author and a year, a mineral and a paper) finds none, and one that gives
+  the paper of one entry and the age of another is refused.
 - **Fixed terms.** `fA`, `abs.`, `1 sigma`, `Yes`, `No` (the sheet's `Yes/No`
   list also has `N/A`, which is never written: a column that does not apply
   is left empty), `mg`, `Pychron`, `Unknown`.
@@ -505,34 +508,102 @@ its tests.
 - One aliquot per loaded piece (`<identifier>-<aliquot>`), its steps told
   apart by `stepNumber`, where legacy named one aliquot per step
   (`<labnumber>-<aliquot><step>`, `_aliquot_name`, `:1941-1949`).
+- A flux monitor is not found by a paper alone (section 6): `Kuiper et al.
+  2008`, `biotite Renne et al. 2011` and `Hornblende Jourdan and Renne 2007`
+  resolve nothing, though one entry only be of that paper. The value must
+  name the monitor, by one of pychron's names for it or by the abbreviation
+  the entry has in parentheses. The alternative (the paper, when one entry
+  is of it) is what legacy did and what the first build of the rule did.
+- A flux monitor that says two things is refused (section 6): `FC-2 Kuiper
+  et al. 2008, 28.294 Ma` is Kuiper's paper and Renne's age. The alternative
+  is to let the age decide.
+- A 5xx answered to a write is in doubt, not refused (5.4): 502, 503, 504 and
+  any 500 that is neither "not writable" nor a constraint. The record is
+  looked for before it is sent again. The alternative, treating every 5xx
+  as "nothing was saved, try again", risks a record made twice behind a
+  gateway that timed out.
+- An entry a short list holds twice, in one spelling under two ids (the
+  archives' `Unknown`), is found under the lowest id, as legacy took the
+  first row, and the pre-flight report says so (5.1, 5.2). The alternative
+  is to call it unknown. Entries that differ in case stay two, and neither.
 
 ## 5. Talking to the service
 
 ### 5.1 Lookup
 
-`LookupResolver(IHttpClient&, base_url, token)` turns a term into its id. The
-endpoint for each `*Name` field is legacy's `LOOKUP_ENDPOINTS` table
-**[legacy]**, copied into `vocab.hpp`. Strategies, in order **[legacy]**:
+`LookupResolver(Session&)` turns a term into its id:
+`resolve(name_field, value) -> LookupResult {outcome, id, matched_name,
+detail}`. The endpoint for each `*Name` field is legacy's `LOOKUP_ENDPOINTS`
+table **[legacy]**, copied into `vocab.hpp` (`lookup_specs`). There are four
+outcomes: `Found`; `Unknown` (the service was asked and has no such term, or
+has two that could be meant); `CouldNotAsk` (any request for the list that
+failed: it wants a login there is not, it did not answer, it answered with a
+fault); `NoList` (the field is sent by its name, or is no term). `detail` is
+a sentence for the user, the session's (5.4) where the service was the cause.
 
-1. the session's cache, case-insensitive;
-2. `?name.equals=<name>`, then the same capitalised, then
-   `?name.contains=<name>&size=200` filtered to a case-insensitive exact match
-   (this is how the 50 000-row `materials` table is searched without loading
-   it);
-3. for flux monitors only: load the vocabulary once and take the first entry
-   whose name or reference contains both the author and the year parsed from
-   the query.
+Nothing guesses: an id written to a published record cannot be corrected.
+The strategies, in order (legacy's, made strict):
 
-A term resolves to an id, to "unknown" or to "could not ask" (the endpoint
-needs a login the caller does not have). The three are distinct results.
+0. An uncertainty type is answered from the fixed table (4.3) and never asked
+   for.
+1. A list short enough to read whole (`LookupSpec::whole`: the nine
+   `/api/arar/*` lists, `l-sample-kinds`, `l-sample-methods`,
+   `l-location-kinds`, `archives`) is read once with `?size=2000` and
+   searched with `match_list_entry`: the entry that is the value but for the
+   case of ASCII letters and the spaces around it. Two entries that differ
+   only in case are `Unknown` unless the value is exactly one of them. One
+   spelling under several ids is the lowest id, and `detail` says so. A value
+   that is exactly one row's `reference` is that row, said in `detail`; not
+   for a flux monitor (a reference is a paper, and a paper names no monitor).
+   A `description` is never read. A list that comes back with 2000 rows, as
+   many as were asked for, is not taken for the whole list: nothing is looked
+   for in it and its terms go to step 2. A smaller cap of the service's
+   cannot be seen.
+2. By name, for a long list (`materials`, `stratigraphic-units`, `fundings`,
+   `literature`: never read whole) and after a miss in step 1:
+   `?name.equals=<value>&size=2`; the same with the first letter in capitals
+   and the rest in lower case (ASCII); then `?name.contains=<value>&size=200`.
+   A row that comes back is the term only if its name is the value but for
+   case; two rows of one name under two ids are `Unknown` here (which is the
+   lowest of all is not known from two rows).
+3. For the flux monitor only: `match_flux_monitor` (section 6) over the
+   names of the list read in step 1, by name and age or by name and paper.
+   This replaces legacy's "first entry containing the author and the year".
+
+An ambiguous name settles the matter at the step that found it. Every result,
+`CouldNotAsk` included, is kept for the resolver's life: after a sign-in, or
+to try a list again, a new resolver is made.
 
 ### 5.2 Pre-flight
 
-`preflight(submission, resolver) -> std::vector<Miss>`, a `Miss` being
-`{record, field, value, endpoint, reason}`. It resolves every controlled term
-of every record and writes nothing. "Could not ask" is reported separately
-from "unknown" so that a run without a login does not show false misses
-**[legacy]**.
+`preflight(const std::vector<Submission>&, LookupResolver&) ->
+PreflightReport`. It resolves every controlled term of every record an upload
+would send, and writes nothing: every request is a GET of a list.
+
+- Which fields are terms is derived from the model's field lists
+  (`term_fields()`): a `<term>Name` field of a record that also has
+  `<term>Id`. Each is `Listed` (looked up), `Fixed` (an uncertainty type),
+  `ByName` (the three step flags, an enumeration on the server), `FreeText`
+  (`locationName`, `lithologyName`) or `Unlisted` (a field added to the model
+  and not yet decided, reported as could-not-ask rather than passed). A name
+  whose id is already set, or that is empty, is skipped.
+- `misses`: `Miss {sample, record, field, value, endpoint, outcome, detail,
+  count}`, `outcome` being `Unknown` or `CouldNotAsk`; the same value in the
+  same field of several records of one kind of a sample is one line with a
+  count. "Could not ask" is reported separately from "unknown"
+  (`unknown()`, `could_not_ask()`) so that a run without a login does not
+  show false misses **[legacy]**. `clean()` is: no miss.
+- `resolved`: `Resolved {sample, record, field, value, matched_name, detail,
+  count}`, one line for each distinct value that was found as something
+  other than itself: the entry is not the value but for case (a flux monitor
+  found by name and age; `SEM` taken as `1 sigma`), or the resolver has a
+  `detail` for it (found by a reference; the lowest of several ids). The
+  user sees what an id will stand for before it is written.
+- `not_checked`: `NotChecked {field, reason}` for `setup_name`,
+  `irradiation_name` (no list of either can be asked) and `lithologyName`
+  (sent by name; whether the service wants an id is not known), each present
+  only when some submission has a value there.
+- `notes`: the mapping's notes for each sample, unchanged.
 
 ### 5.3 Upload
 
@@ -550,7 +621,11 @@ Four rules that differ from legacy, all because there is no sandbox:
 
 - **Check first.** Upload runs pre-flight and stops before the first write if
   any term is unknown, listing them. `allow_unresolved` drops those fields and
-  proceeds, which is what legacy always did.
+  proceeds, which is what legacy always did. A term that could not be asked
+  about stops the upload too, and `allow_unresolved` does not cover it: the
+  service may well know the term, and dropping it would publish a record
+  without a field for want of an answer. The lists are asked again (a new
+  resolver) once there is a login or a network.
 - **Journal.** After each successful POST the id returned is appended to
   `<config>/earthbank/journal/<host>/<package id>/<sample>.json`
   (`sampleId`, `arArDataPointId`, the aliquot names and measurement run ids
@@ -566,7 +641,9 @@ Four rules that differ from legacy, all because there is no sandbox:
 - **Never guess an unanswered write.** Before each POST the journal records
   that record as in doubt; the answer clears it. A POST that times out or
   loses its connection may or may not have been written, and the service
-  offers no way to ask by name for most records. The sample stops there: the
+  offers no way to ask by name for most records. A 5xx that is neither "not
+  writable" nor a constraint is the same (`kInDoubt`, 5.4): a gateway may
+  answer for a service that went on and saved the record. The sample stops there: the
   user is told which record is in doubt, looks on EarthBank, and re-runs
   saying either that it is there (with its id) or that it is not. Only the
   sample record itself is resolved automatically, by the package-scoped
@@ -582,19 +659,66 @@ package links the new data point across packages **[legacy]**.
 
 ### 5.4 Session, packages, errors
 
+`Session(IHttpClient&, base_url)`: `sign_in`, `sign_out`, `signed_in`,
+`account`, `packages`, `create_package`, `send`, `failure`, `set_log`, and
+the sentences that are of this library's own words (`sentence(Error, ...)`,
+`no_package_sentence`, `partial_sentence`).
+
 - `POST /api/authenticate` with username and password gives a JWT; it is sent
-  as a bearer token. One re-authentication on a 401, then the error.
+  as a bearer token. On a 401 while signed in the session signs in once more
+  and sends the request once more. When the new sign-in fails, the original
+  401 is returned (an answer: nothing was written). A new sign-in the service
+  refuses (401, 403) ends the session, so that a wrong password is not offered
+  again; one that got no answer does not, and the 401 is then said to be "the
+  session could not be renewed", not a wrong password.
+- A request is sent only to the service of the profile: its URL must have the
+  base URL's scheme, host and port (compared as such, not as a prefix of the
+  text) and be under its path. Anything else is a `Config` error, unsent.
 - `GET /api/account` is the connection test and names the user.
 - `GET /api/management/data-packages?institutionId.equals=<id>&sort=name,ASC`
-  lists packages; `POST` the same path creates one. The body nests the fields
-  under `dataPackageDTO` and mirrors them at the top level: a flat body is
-  accepted and silently ignores the name **[legacy]**. The creator becomes
-  the package's supervisor, so a new package is always writable.
-- Every failure the user can act on has a plain sentence; the status and body
-  go to the log. The sentences are legacy's table in `UPLOAD_GUIDE.md`
-  **[legacy]**: no write access to the package; no package selected; login
-  rejected; wrong address; a value the service does not recognise (naming the
-  field from the constraint in the body); partly uploaded; unreachable.
+  lists packages, read by pages of 500 until one comes empty (a short page is
+  not the last), 200 pages at most; `POST` the same path creates one. The
+  body nests the fields under `dataPackageDTO` and mirrors them at the top
+  level: a flat body is accepted and silently ignores the name **[legacy]**.
+  An answer that names the new package otherwise than was sent is an error
+  (`kPackageMisnamed`) giving the name and the id. The creator becomes the
+  package's supervisor, so a new package is always writable.
+- Error codes (`Error::code`), which the upload's journal reads:
+
+  | code | means | the request |
+  |---|---|---|
+  | `kNotSignedIn` | a login is needed and there is none | never left |
+  | `kHttpNotSent`, any `Config` | the client's (5.5); a URL not of the service | never left |
+  | `kLoginRejected` | 401 | answered: not done |
+  | `kForbidden` | 403: the account may not do this | answered: not done |
+  | `kRefused` | any other non-2xx, but for the next | answered: not done |
+  | `kInDoubt` | a write (POST, PUT, DELETE) answered 5xx with neither "not writable" nor a constraint in the body | may or may not have been done |
+  | `kPackageMisnamed` | a package made under another name | done, not as asked |
+  | none | no answer, or a 2xx that could not be read | a write is in doubt |
+
+  The order in which an answer is read: "not writable" in the body, then a
+  constraint, then the status. To a GET a 5xx is `kRefused` and may be asked
+  again.
+- Every failure the user can act on has a plain sentence, made by
+  `Session::failure(answer | error, method, path, record)`. The sentences
+  are legacy's table in `UPLOAD_GUIDE.md` **[legacy]** (no write access to
+  the package; no package selected; login rejected; wrong address; a value
+  the service does not recognise, naming the field from the constraint in
+  the body; partly uploaded; unreachable) and, beyond it: not allowed (403);
+  the session could not be renewed; the service's own fault (for a write,
+  "may or may not have been saved", never "try again"); a redirect; no
+  answer; a request that could not be made; anything else with the service's
+  reason. `partial_sentence` takes the records that were not saved and those
+  in doubt, and with any in doubt does not say to send the sample again.
+- Secrets. The service's reason (`detail`, then `message`, then `title`,
+  then the text) is the only part of a sentence that is not ours. The
+  session's tokens and password are struck from the whole of it, in the
+  forms they may be said back in, before it is cut (at `;`, at `nested
+  exception`, at 300 bytes) or read; our own words are never scrubbed.
+  Nothing public returns the service's text unscrubbed.
+- The log (`set_log`) gets one line a request: method, path, status, and for
+  a status that is not 2xx the service's reason, scrubbed and cut; for no
+  answer the client's own words. Never a query, a header or a body.
 
 ### 5.5 `IHttpClient`
 
@@ -606,11 +730,27 @@ class IHttpClient { public: virtual ~IHttpClient() = default;
                     virtual Result<HttpResponse> send(const HttpRequest& request) = 0; };
 ```
 
-Blocking. `QtHttpClient` runs a `QNetworkAccessManager` with a local event
-loop on the calling thread, follows no redirects to another host, and uses
-the system's certificate store. The UI calls the library from a worker
-thread; that thread waits on the outside world and is not a clock
-participant.
+Blocking. The contract:
+
+- One call is at most one request on the wire. An implementation never sends
+  a second time on its own, not after a timeout and not on a connection it
+  had kept open and found closed: a POST sent twice may be a record made
+  twice.
+- An answer of any status is a value, 3xx, 401 and 500 included. A redirect
+  is not followed; the 3xx is returned.
+- An error means no answer: `Timeout`; `Io` (not reached, or the connection
+  lost); `Config` (the request was never formed; nothing was sent). A
+  `Timeout` or `Io` carries the code `kHttpNotSent` when the client knows
+  that nothing of the request left the machine.
+  `request_may_have_arrived(error)` is false for `kHttpNotSent` and `Config`
+  and true otherwise: a write that ended so is in doubt.
+- An implementation puts no header value and nothing of a body into an
+  error's text.
+
+`QtHttpClient` runs a `QNetworkAccessManager` with a local event loop on the
+calling thread and uses the system's certificate store. The UI calls the
+library from a worker thread; that thread waits on the outside world and is
+not a clock participant.
 
 ## 6. Workbooks
 
@@ -736,7 +876,22 @@ Before a value is written under a column that has a list:
   with an `s` after it too (`biotites` is biotite, `sanidines` sanidine); an
   alias has no plural. A name that holds `FCT-3` or `FCT3`, the Fish Canyon
   biotite's designation, matches nothing either, mineral said or not: `FCT`
-  alone would make it the sanidine. One entry left: it is written, and the
+  alone would make it the sanidine. A paper said beside the name and the age
+  must be that entry's: a year the entry has not, or a word that is another
+  entry's of the monitor and not this one's (`FC-2 Kuiper et al. 2008,
+  28.294 Ma`), makes the value say two things, and it matches nothing rather
+  than be settled by the age. When name and age find nothing and no number
+  of the value is said to be in `Ma`, the monitor is looked for by name and
+  paper, as a lab writes it with its reference and no age (`FC-2 Kuiper et
+  al. 2008`): the last number is then a year (19xx, 20xx) and must be a word
+  of the entry before its age; the value must name the monitor, by one of
+  the names of the table or by the abbreviation the entry has in parentheses
+  (`Hb3gr`); and every other word that is no mineral must be the entry's,
+  one of them of three letters or more (the author: `FC-2 2008` is not
+  enough, `FC-2 Phillips 2008` is no entry). A value that names no monitor
+  (`Kuiper et al. 2008`, `biotite Renne et al. 2011`, `Hornblende Jourdan and
+  Renne 2007`) matches nothing, though one entry only be of that paper: it
+  says which paper, not which standard. One entry left: it is written, and the
   note says what became what (`ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma'
   written as 'Fish Canyon ... (28.201 Ma)' (list: Flux Monitor), found by
   its name and age`). Several (`Mt Domedary Biotite 99.44 Ma` is both
