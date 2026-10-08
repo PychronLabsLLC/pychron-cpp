@@ -1270,6 +1270,10 @@ TEST_F(Xlsx, ASampleIsWrittenOnce) {
 
 const char* const kKuiper = "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)";
 
+// How the note on a sheet's Required columns begins, after the sheet's name.
+const char* const kRequiredLead = ": marked Required by the template's colouring; the importer may refuse a row that "
+                                  "leaves one empty: ";
+
 TEST_F(Xlsx, WhatAnExportOfTheFixturesSays) {
   const std::vector<Submission> submissions = fixtures();
   const XlsxResult result = exported(submissions);
@@ -1277,19 +1281,26 @@ TEST_F(Xlsx, WhatAnExportOfTheFixturesSays) {
   // rewritten, then what the template wants and was not given.
   EXPECT_EQ(result.notes,
             (std::vector<std::string>{
-                std::string("ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma' written as the list's '") + kKuiper + "'",
-                "Samples.material: 2 value(s) written in the list's spelling",
-                "ArArDataPoints: Required by the template and empty in at least one row, to be filled in before "
-                "importing: arArSetUp (Analytical Key), irradiationBatchID (Irradiation Batch ID), analysisScale "
-                "(Analysis Scale)",
-                "ArArMeasurement: Required by the template and empty in at least one row, to be filled in before "
-                "importing: stepNumber (Step number), beamSize (Beam size), beamSizeUnits (Beam size units), "
-                "furnaceTemperature (Furnace temperature), Ar39KReleased (39ArK released), cumulative39ArK "
-                "(Cumulative 39ArK released)",
-                "ArArAliquot: Required by the template and empty in at least one row, to be filled in before "
-                "importing: aliquotSize (Aliquot size), aliquotUnits (Aliquot size unit)",
-                "Samples: Required by the template and empty in at least one row, to be filled in before importing: "
-                "latitude (Latitude (WGS84)), longitude (Longitude (WGS84))",
+                std::string("ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma' written as '") + kKuiper +
+                    "' (list: Flux Monitor), found by its name and age",
+                "Samples.material: 'biotite' written as 'Biotite' (list: Lithology)",
+                "Samples.material: 'sanidine' written as 'Sanidine' (list: Lithology)",
+                // S-STEP's analyses name their irradiation; S-FUS's name none.
+                std::string("ArArDataPoints") + kRequiredLead +
+                    "arArSetUp (Analytical Key) empty in every row, irradiationBatchID (Irradiation Batch ID) empty "
+                    "in 1 of 2 rows, analysisScale (Analysis Scale) empty in every row",
+                // No step number or share of the 39Ar is wanted of a fusion, and no
+                // furnace temperature of a row that has a laser power: the steps
+                // have theirs, and every row its power.
+                std::string("ArArMeasurement") + kRequiredLead +
+                    "beamSize (Beam size) empty in every row, beamSizeUnits (Beam size units) empty in every row",
+                std::string("ArArAliquot") + kRequiredLead +
+                    "aliquotSize (Aliquot size) empty in every row, aliquotUnits (Aliquot size unit) empty in every "
+                    "row",
+                // S-STEP has its place; S-FUS has none.
+                std::string("Samples") + kRequiredLead +
+                    "latitude (Latitude (WGS84)) empty in 1 of 2 rows, longitude (Longitude (WGS84)) empty in 1 of 2 "
+                    "rows",
             }));
 
   // The rewrites, in the cells.
@@ -1322,8 +1333,71 @@ TEST_F(Xlsx, WhatAnExportOfTheFixturesSays) {
   ASSERT_TRUE(named.has_value());
   out_ = dir_ / "named";
   EXPECT_EQ(notes_with(exported(*named).notes, "ArArDataPoints"),
-            std::vector<std::string>{"ArArDataPoints: Required by the template and empty in at least one row, to be "
-                                     "filled in before importing: analysisScale (Analysis Scale)"});
+            std::vector<std::string>{std::string("ArArDataPoints") + kRequiredLead +
+                                     "analysisScale (Analysis Scale) empty in every row"});
+}
+
+// A column the template colours Required is not wanted of every row: a
+// fusion has no step number and no share of the 39Ar, and a row is heated by
+// a laser or by a furnace. What is left is said with the number of rows.
+TEST_F(Xlsx, ARequiredColumnIsMissedOnlyWhereItApplies) {
+  const auto measurement_note = [&](const std::vector<Submission>& submissions) {
+    const auto checked = check_against_template(submissions, options_);
+    if (!checked) throw std::runtime_error(to_string(checked.error()));
+    const std::vector<std::string> said = notes_with(*checked, std::string("ArArMeasurement") + kRequiredLead);
+    return said.empty() ? std::string() : said.front().substr(std::string("ArArMeasurement").size() +
+                                                               std::string(kRequiredLead).size());
+  };
+  const std::string beam = "beamSize (Beam size) empty in every row, beamSizeUnits (Beam size units) empty in every row";
+  std::vector<Submission> submissions = fixtures();
+  ASSERT_EQ(submissions[0].data_point.arMethodName, "Total fusion - laser");
+  ASSERT_EQ(submissions[1].data_point.arMethodName, "Step-heating - laser");
+  ASSERT_EQ(submissions[0].measurements.size(), 6u);
+  ASSERT_EQ(submissions[1].measurements.size(), 10u);
+  EXPECT_EQ(measurement_note(submissions), beam);
+
+  // A step without its number or its share of the gas: of the ten rows of
+  // the step-heated data point; the fusion's six do not count.
+  {
+    std::vector<Submission> steps = submissions;
+    steps[1].measurements[2].stepNumber.reset();
+    steps[1].measurements[7].stepNumber.reset();
+    steps[1].measurements[7].ar39KReleased.reset();
+    for (Measurement& m : steps[1].measurements) m.cumulative39ArK.reset();
+    EXPECT_EQ(measurement_note(steps),
+              "stepNumber (Step number) empty in 2 of 10 rows of a step-heating data point, " + beam +
+                  ", Ar39KReleased (39ArK released) empty in 1 of 10 rows of a step-heating data point, "
+                  "cumulative39ArK (Cumulative 39ArK released) empty in every row of a step-heating data point");
+    // The method is what says so: the same rows under a fusion's are not missed,
+    // nor under no method at all (the method is then the thing missing).
+    steps[1].data_point.arMethodName = "Total fusion - laser";
+    EXPECT_EQ(measurement_note(steps), beam);
+    steps[1].data_point.arMethodName.reset();
+    EXPECT_EQ(measurement_note(steps), beam);
+    // Whatever its case, and whatever heats the steps.
+    steps[1].data_point.arMethodName = "step-heating - furnace";
+    EXPECT_NE(measurement_note(steps).find("stepNumber (Step number) empty in 2 of 10 rows"), std::string::npos);
+  }
+
+  // A furnace's row has no laser power, and is not missed one.
+  {
+    std::vector<Submission> heated = submissions;
+    Measurement& furnace = heated[1].measurements[0];
+    furnace.laserPower.reset();
+    furnace.laserPowerUnits.reset();
+    furnace.furnaceTemperature = 750.0;
+    EXPECT_EQ(measurement_note(heated), beam);
+    // A row with neither is missed all three; a power without its units, the
+    // units. Fifteen rows have no furnace temperature; two have no power, the
+    // furnace's and the one with neither.
+    heated[1].measurements[1].laserPower.reset();
+    heated[1].measurements[1].laserPowerUnits.reset();
+    heated[1].measurements[2].laserPowerUnits.reset();
+    EXPECT_EQ(measurement_note(heated),
+              beam + ", laserPower (Laser power) empty in 1 of 15 rows without a furnace temperature, laserPowerUnits "
+                     "(Laser power units) empty in 2 of 15 rows without a furnace temperature, furnaceTemperature "
+                     "(Furnace temperature) empty in 1 of 2 rows without a laser power");
+  }
 }
 
 TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
@@ -1392,23 +1466,33 @@ TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
   }
   EXPECT_EQ(said, (std::vector<std::string>{
                       // As they came up: sheet by sheet, row by row; a value twice is said once.
-                      "ArArAgeSummary.interpretation: 'eruption age' is not in the template's list",
+                      // As they came up: sheet by sheet, row by row. A value twice is said once (thirty
+                      // steps are in or out of the plateau; three data points have the one constant),
+                      // and each note names the list by its heading on the lookup sheet.
+                      "ArArDataPoints.analysisScale: 'single grain' written as 'Single Grain' (list: Analysis Scale)",
+                      "ArArMeasurement.plateauStep: 'no' written as 'No' (list: Yes/No)",
+                      "ArArMeasurement.plateauStep: 'YES' written as 'Yes' (list: Yes/No)",
+                      "ArArAgeSummary.interpretation: 'eruption age' is not in the template's list 'Age "
+                      "Interpretation'; the importer may refuse the value",
                       "ArArAgeSummary: the rows after row 7 are past the template's formatted rows and are plain",
-                      "ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's list",
-                      "ArArAgeCalc.fluxMonitor: 'ACs 1.1851 Ma' written as the list's 'Alder Creek Rhyolite Sanidine "
-                      "(ACs) from Schaen et al. 2020 (1.1851 Ma)'",
-                      "ArArAgeCalc.fluxMonitor: 'Bishop Tuff sanidine 0.7666 Ma' is not in the template's list",
+                      "ArArAgeCalc.decayConstant: 'steiger and jager, 1977' written as 'Steiger and Jager, 1977' "
+                      "(list: Decay Constant)",
+                      "ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's list 'Air Ratio'; the "
+                      "importer may refuse the value",
+                      "ArArAgeCalc.decayConstant: '  Min et al. 2000 ' written as 'Min et al. 2000' (list: Decay "
+                      "Constant)",
+                      "ArArAgeCalc.fluxMonitor: 'ACs 1.1851 Ma' written as 'Alder Creek Rhyolite Sanidine (ACs) "
+                      "from Schaen et al. 2020 (1.1851 Ma)' (list: Flux Monitor), found by its name and age",
+                      "ArArAgeCalc.fluxMonitor: 'Bishop Tuff sanidine 0.7666 Ma' is not in the template's list "
+                      "'Flux Monitor'; the importer may refuse the value",
                       "ArArAgeCalc.fluxMonitor: 'Mt Domedary Biotite 99.44 Ma' could be more than one entry of the "
                       "template's list and was written as given",
-                      "Samples.sampleKind: 'Tephra' is not in the template's list",
-                      "Samples.material: 'biotite separate' is not in the template's list",
-                      // Then how many cells were put in the list's spelling, column by column. The three
-                      // step-heated data points have ten measurements each.
-                      "ArArDataPoints.analysisScale: 1 value(s) written in the list's spelling",
-                      "ArArMeasurement.plateauStep: 30 value(s) written in the list's spelling",
-                      "ArArAgeCalc.decayConstant: 4 value(s) written in the list's spelling",
-                      "Samples.sampleKind: 1 value(s) written in the list's spelling",
-                      "Samples.material: 1 value(s) written in the list's spelling",
+                      "Samples.sampleKind: 'Tephra' is not in the template's list 'Sample Kind'; the importer may "
+                      "refuse the value",
+                      "Samples.material: 'biotite separate' is not in the template's list 'Lithology'; the importer "
+                      "may refuse the value",
+                      "Samples.sampleKind: 'mine waste' written as 'Mine Waste' (list: Sample Kind)",
+                      "Samples.material: 'sanidine' written as 'Sanidine' (list: Lithology)",
                   }));
 }
 
@@ -1461,38 +1545,68 @@ TEST_F(Xlsx, TheRequiredColumnsAreTheOnesTheTemplateColours) {
   bare.measurements.emplace_back();
   const auto checked = check_against_template({bare}, options_);
   ASSERT_TRUE(checked.has_value()) << to_string(checked.error());
-  const std::string lead = ": Required by the template and empty in at least one row, to be filled in before "
-                           "importing: ";
-  EXPECT_EQ(
-      *checked,
-      (std::vector<std::string>{
-          "ArArDataPoints" + lead +
-              "arArSetUp (Analytical Key), arArMethod (Analytical Method), irradiationBatchID (Irradiation Batch "
-              "ID), analysisScale (Analysis Scale), analyticalUncertaintyType (Analytical Uncertainty Type), "
-              "analyticalUncertaintyUnit (Analytical Uncertainty Units), apparentAgeUncertaintyType (Apparent Age "
-              "Uncertainty Type), apparentAgeUncertaintyUnit (Apparent Age Uncertainty Units), jValueUncertaintyType "
-              "(J Value Uncertainty Type), jValueUncertaintyUnit (J Value Uncertainty Units), analysisUnits (Units "
-              "for analyses)",
-          "ArArMeasurement" + lead +
-              "stepNumber (Step number), beamSize (Beam size), beamSizeUnits (Beam size units), laserPower (Laser "
-              "power), laserPowerUnits (Laser power units), furnaceTemperature (Furnace temperature), ar40Corr (40Ar "
-              "(corrected)), ar40CorrUncertainty (Uncertainty), ar39Corr (39Ar (corrected)), ar39CorrUncertainty "
-              "(Uncertainty), ar38Corr (38Ar (corrected)), ar38CorrUncertainty (Uncertainty), ar37Corr (37Ar "
-              "(corrected)), ar37CorrUncertainty (Uncertainty), ar36Corr (36Ar (corrected)), ar36CorrUncertainty "
-              "(Uncertainty), radiogenicArgon (Radiogenic argon proportion (%40Ar*)), ratio40Arx39ArK "
-              "(40Ar*/39ArK), ratio40Arx39ArKUncertainty (Uncertainty), Ar39KReleased (39ArK released), "
-              "cumulative39ArK (Cumulative 39ArK released), jValue (J Value), jValueUncertainty (J Value "
-              "Uncertainty), apparentAge (Apparent age), apparentAgeUncertainty (Uncertainty)",
-          "ArArAliquot" + lead + "aliquotSize (Aliquot size), aliquotUnits (Aliquot size unit)",
-          "ArArAgeSummary" + lead +
-              "age (Age (Ma)), ageUncertainty (Uncertainty of Age (Ma)), calculatedAgeUncertaintyType (Calculated "
-              "Age Uncertainty Type), calculatedAgeUncertaintyTypeUnits (Calculated Age Uncertainty Units)",
-          "ArArAgeCalc" + lead +
-              "decayConstant (Decay Constant Reference), airRatio (Trapped 40Ar/36Ar (Air) Ratio Reference), "
-              "fluxMonitor (Flux Monitor Name and Reference)",
-          "Samples" + lead +
-              "material (Rock/Mineral (search term)), latitude (Latitude (WGS84)), longitude (Longitude (WGS84))",
-      }));
+  // `key (title)` for each, as the note has them: all in the one row there is.
+  const auto every = [](std::initializer_list<const char*> columns, const char* rows = "") {
+    std::string out;
+    for (const char* column : columns) {
+      out += (out.empty() ? "" : ", ") + std::string(column) + " empty in every row" + rows;
+    }
+    return out;
+  };
+  const char* const no_furnace = " without a furnace temperature";
+  const auto expected = [&](bool step_heated) {
+    const char* const of_steps = " of a step-heating data point";
+    return std::vector<std::string>{
+        std::string("ArArDataPoints") + kRequiredLead +
+            every({"arArSetUp (Analytical Key)"}) + ", " +
+            (step_heated ? std::string() : every({"arArMethod (Analytical Method)"}) + ", ") +
+            every({"irradiationBatchID (Irradiation Batch ID)", "analysisScale (Analysis Scale)",
+                   "analyticalUncertaintyType (Analytical Uncertainty Type)",
+                   "analyticalUncertaintyUnit (Analytical Uncertainty Units)",
+                   "apparentAgeUncertaintyType (Apparent Age Uncertainty Type)",
+                   "apparentAgeUncertaintyUnit (Apparent Age Uncertainty Units)",
+                   "jValueUncertaintyType (J Value Uncertainty Type)",
+                   "jValueUncertaintyUnit (J Value Uncertainty Units)", "analysisUnits (Units for analyses)"}),
+        std::string("ArArMeasurement") + kRequiredLead +
+            (step_heated ? every({"stepNumber (Step number)"}, of_steps) + ", " : std::string()) +
+            every({"beamSize (Beam size)", "beamSizeUnits (Beam size units)"}) + ", " +
+            every({"laserPower (Laser power)", "laserPowerUnits (Laser power units)"}, no_furnace) + ", " +
+            every({"furnaceTemperature (Furnace temperature)"}, " without a laser power") + ", " +
+            every({"ar40Corr (40Ar (corrected))", "ar40CorrUncertainty (Uncertainty)", "ar39Corr (39Ar (corrected))",
+                   "ar39CorrUncertainty (Uncertainty)", "ar38Corr (38Ar (corrected))",
+                   "ar38CorrUncertainty (Uncertainty)", "ar37Corr (37Ar (corrected))",
+                   "ar37CorrUncertainty (Uncertainty)", "ar36Corr (36Ar (corrected))",
+                   "ar36CorrUncertainty (Uncertainty)", "radiogenicArgon (Radiogenic argon proportion (%40Ar*))",
+                   "ratio40Arx39ArK (40Ar*/39ArK)", "ratio40Arx39ArKUncertainty (Uncertainty)"}) +
+            ", " +
+            (step_heated ? every({"Ar39KReleased (39ArK released)", "cumulative39ArK (Cumulative 39ArK released)"},
+                                 of_steps) +
+                               ", "
+                         : std::string()) +
+            every({"jValue (J Value)", "jValueUncertainty (J Value Uncertainty)", "apparentAge (Apparent age)",
+                   "apparentAgeUncertainty (Uncertainty)"}),
+        std::string("ArArAliquot") + kRequiredLead +
+            every({"aliquotSize (Aliquot size)", "aliquotUnits (Aliquot size unit)"}),
+        std::string("ArArAgeSummary") + kRequiredLead +
+            every({"age (Age (Ma))", "ageUncertainty (Uncertainty of Age (Ma))",
+                   "calculatedAgeUncertaintyType (Calculated Age Uncertainty Type)",
+                   "calculatedAgeUncertaintyTypeUnits (Calculated Age Uncertainty Units)"}),
+        std::string("ArArAgeCalc") + kRequiredLead +
+            every({"decayConstant (Decay Constant Reference)", "airRatio (Trapped 40Ar/36Ar (Air) Ratio Reference)",
+                   "fluxMonitor (Flux Monitor Name and Reference)"}),
+        std::string("Samples") + kRequiredLead +
+            every({"material (Rock/Mineral (search term))", "latitude (Latitude (WGS84))",
+                   "longitude (Longitude (WGS84))"}),
+    };
+  };
+  // Without a method the three columns of a heating step are not missed (the
+  // method is); with a step-heating one every Required column is there.
+  EXPECT_EQ(*checked, expected(false));
+  bare.data_point.arMethodName = "Step-heating - undefined";
+  const auto stepped = check_against_template({bare}, options_);
+  ASSERT_TRUE(stepped.has_value()) << to_string(stepped.error());
+  EXPECT_EQ(*stepped, expected(true));
+  bare.data_point.arMethodName.reset();
 
   // A sheet that gets no row has nothing left empty.
   bare.aliquots.clear();
@@ -1524,7 +1638,7 @@ TEST_F(Xlsx, ATemplateThatDoesNotSayIsSaidNotTo) {
             std::vector<std::string>{std::string(kArAr) + ": sheet 'Field Definitions' has no cell that says which "
                                                          "colour marks a Required column; columns left empty are "
                                                          "not reported for this workbook"});
-  EXPECT_EQ(notes_with(*checked, "Required by the template").size(), 1u);  // the Sample workbook's
+  EXPECT_EQ(notes_with(*checked, "marked Required by the template's colouring").size(), 1u);  // the Sample workbook's
   EXPECT_EQ(notes_with(*checked, "fluxMonitor").size(), 1u);
 
   // A list that cannot be followed (here a name the workbook does not

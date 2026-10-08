@@ -45,15 +45,18 @@
 // value going into such a column is checked against that list first:
 //   - one the list has is written as it is;
 //   - one that is an entry but for the case of its letters or the spaces
-//     around it is written as the list spells it, and counted
-//     (`Samples.material: 2 value(s) written in the list's spelling`);
+//     around it is written as the list spells it, and what became what is
+//     said, each value once, with the list's heading on the lookup sheet
+//     (`Samples.material: 'sanidine' written as 'Sanidine' (list:
+//     Lithology)`);
 //   - a flux monitor, whose entries are whole citations, is also found by
-//     its name and age (vocab.hpp match_flux_monitor), and what it was
-//     written as is said;
+//     its name and age (vocab.hpp match_flux_monitor), and the same note
+//     ends `, found by its name and age`;
 //   - anything else is written as it was given and said
 //     (`ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's
-//     list`), each value once. Nothing is rewritten on a guess: a value that
-//     could be two entries is left alone and said too.
+//     list 'Air Ratio'; the importer may refuse the value`), each value
+//     once. Nothing is rewritten on a guess: a value that could be two
+//     entries is left alone and said too.
 // A column without a list (the data point's `mineral` and `lithology`, which
 // the template calls search terms) is written as given. The list is the
 // cells the validation names and those that follow them in the lookup sheet
@@ -62,8 +65,17 @@
 // Required columns. The templates colour the title of a column (row 3) by
 // its obligation, with a legend in the sheet of definitions. A column in the
 // colour of the legend's `Required` that a written row leaves empty is named
-// in the notes, once per sheet for the whole export, with its title: what
-// to fill in before importing.
+// in the notes, once per sheet for the whole export, with its title and in
+// how many rows (`ArArDataPoints: marked Required by the template's
+// colouring; the importer may refuse a row that leaves one empty: arArSetUp
+// (Analytical Key) empty in every row, irradiationBatchID (Irradiation Batch
+// ID) empty in 1 of 2 rows`). The colour is per column; a few columns are
+// wanted only of some rows, and are not reported for the others: a row with
+// a furnace temperature is not missed its laser power and units, nor one
+// with a laser power its furnace temperature, and the step number and the
+// two shares of the 39Ar are wanted only of a data point whose method is a
+// step heating. Their counts are of the rows they are wanted in, and say so
+// (`empty in 2 of 10 rows of a step-heating data point`).
 //
 // Nothing is dropped without a word. A field that is set and has no column
 // (the template lacks one, or a newer template dropped it) is named in
@@ -98,9 +110,8 @@ struct XlsxResult {
   std::vector<std::filesystem::path> files;  // the Ar-Ar workbooks in the submissions' order, then the Sample one
   // For the user, each once and in the order it came up: fields without a
   // column, rows past the formatted ones, values that are not in a column's
-  // list or were found in it by name; then how many values of a column were
-  // put in its list's spelling; then, sheet by sheet, the Required columns a
-  // row left empty.
+  // list, or were written in its spelling or found in it by name; then,
+  // sheet by sheet, the Required columns a row left empty.
   std::vector<std::string> notes;
 };
 

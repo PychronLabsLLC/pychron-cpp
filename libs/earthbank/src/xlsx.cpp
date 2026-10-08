@@ -181,6 +181,39 @@ constexpr Restated kRestated[] = {
     {Rec::Sample, "sampleID", Rec::Sample, "name"},
 };
 
+// Columns the template colours Required that are not wanted of every row.
+// The colour is per column and says nothing of when; these are the cases the
+// columns' own meaning settles, and a row they excuse is not reported for the
+// column:
+//   - a row is heated by a laser or in a furnace: one that has
+//     `furnaceTemperature` is not missing `laserPower` and `laserPowerUnits`,
+//     and one that has `laserPower` is not missing `furnaceTemperature`;
+//   - `stepNumber`, `Ar39KReleased` and `cumulative39ArK` are of a heating
+//     step: they are wanted only in the rows of a data point whose method
+//     (`arArMethod`, the data point's `arMethodName`) is one of the list's
+//     `Step-heating - ...`. A fusion has no step and no share of the gas.
+// `unless`: the column of the same sheet that, filled, excuses the row.
+// `rows`: which rows the column is wanted in, as the note says it.
+struct Conditional {
+  std::string_view sheet, key;
+  bool steps_only;
+  std::string_view unless;
+  std::string_view rows;
+};
+
+constexpr std::string_view kStepRows = " of a step-heating data point";
+constexpr Conditional kConditional[] = {
+    {"ArArMeasurement", "laserPower", false, "furnaceTemperature", " without a furnace temperature"},
+    {"ArArMeasurement", "laserPowerUnits", false, "furnaceTemperature", " without a furnace temperature"},
+    {"ArArMeasurement", "furnaceTemperature", false, "laserPower", " without a laser power"},
+    {"ArArMeasurement", "stepNumber", true, "", kStepRows},
+    {"ArArMeasurement", "Ar39KReleased", true, "", kStepRows},
+    {"ArArMeasurement", "cumulative39ArK", true, "", kStepRows},
+};
+
+// How the list's methods of heating in steps begin (`Lookup Tables`, D2:D4).
+constexpr std::string_view kStepHeating = "step-heating";
+
 // ---------------------------------------------------------------- the records
 
 #define PYCHRON_EARTHBANK_FIELD_NAME(kind, name) std::string_view(#name),
@@ -314,8 +347,8 @@ std::string on_one_line(std::string_view text) {
 }
 
 // What the user is told, each thing once, in the order it came up; then,
-// once for the whole export, how many values of a column were put in its
-// list's spelling and which Required columns of a sheet a row left empty.
+// once for the whole export, the Required columns of each sheet that a row
+// left empty, with the number of rows.
 class Notes {
  public:
   void add(std::string note) {
@@ -325,42 +358,52 @@ class Notes {
     const std::string whose = record == Rec::Location ? "the location's " : "";
     add(std::string(sheet_of(record)) + ": no column for " + whose + std::string(field));
   }
-  void respelled(std::string_view sheet, std::string_view key) {
-    const std::string column = std::string(sheet) + "." + std::string(key);
-    const auto found = std::find_if(respelled_.begin(), respelled_.end(), [&](const auto& one) { return one.first == column; });
-    if (found == respelled_.end()) {
-      respelled_.emplace_back(column, 1);
-    } else {
-      ++found->second;
+  // A row of `sheet` in which the Required column at `index` is wanted
+  // (`rows`: of which rows that is, when not of all), and whether it was left
+  // empty there.
+  void required(std::string_view sheet, std::size_t index, std::string_view key, std::string_view title,
+                std::string_view rows, bool empty) {
+    auto found = std::find_if(required_.begin(), required_.end(), [&](const auto& one) { return one.first == sheet; });
+    if (found == required_.end()) found = required_.insert(required_.end(), {std::string(sheet), {}});
+    Wanted& column = found->second[index];
+    if (column.name.empty()) {
+      column.name = std::string(key);
+      if (!title.empty()) column.name += " (" + std::string(title) + ")";
+      column.rows = std::string(rows);
     }
-  }
-  void left_empty(std::string_view sheet, std::size_t index, std::string_view key, std::string_view title) {
-    auto found = std::find_if(empty_.begin(), empty_.end(), [&](const auto& one) { return one.first == sheet; });
-    if (found == empty_.end()) found = empty_.insert(empty_.end(), {std::string(sheet), {}});
-    std::string name(key);
-    if (!title.empty()) name += " (" + std::string(title) + ")";
-    found->second.emplace(index, std::move(name));
+    ++column.wanted;
+    if (empty) ++column.empty;
   }
   std::vector<std::string> take() {
-    for (const auto& [column, count] : respelled_) {
-      add(column + ": " + std::to_string(count) + " value(s) written in the list's spelling");
-    }
-    for (const auto& [sheet, columns] : empty_) {
+    for (const auto& [sheet, columns] : required_) {
       std::string names;
-      for (const auto& [index, name] : columns) names += (names.empty() ? "" : ", ") + name;
-      add(sheet + ": Required by the template and empty in at least one row, to be filled in before importing: " +
-          names);
+      for (const auto& [index, column] : columns) {
+        if (column.empty == 0) continue;
+        names += (names.empty() ? "" : ", ") + column.name + " empty in " +
+                 (column.empty == column.wanted
+                      ? std::string("every row")
+                      : std::to_string(column.empty) + " of " + std::to_string(column.wanted) + " rows") +
+                 column.rows;
+      }
+      // The colour is all the template says: whether the importer holds a row
+      // to it is the importer's to say.
+      if (!names.empty()) {
+        add(sheet + ": marked Required by the template's colouring; the importer may refuse a row that leaves one "
+                    "empty: " + names);
+      }
     }
-    respelled_.clear();
-    empty_.clear();
+    required_.clear();
     return std::move(list_);
   }
 
  private:
+  struct Wanted {
+    std::string name, rows;
+    int wanted = 0, empty = 0;
+  };
   std::vector<std::string> list_;
   std::set<std::string> seen_;
-  std::vector<std::pair<std::string, int>> respelled_;                             // sheet.key, in the order met
-  std::vector<std::pair<std::string, std::map<std::size_t, std::string>>> empty_;  // sheet -> columns, in theirs
+  std::vector<std::pair<std::string, std::map<std::size_t, Wanted>>> required_;  // sheet -> columns, in theirs
 };
 
 // ---------------------------------------------------------------- what goes where
@@ -374,11 +417,13 @@ struct Column {
   // What the template says of the column: its title, whether it is marked
   // Required, and the list its cells are validated against (`listed`), read
   // into `list`, or `unread` saying what the validation names when that
-  // could not be followed.
+  // could not be followed. `heading`: what the list is called where it is
+  // kept, when it is kept under a heading.
   std::string title;
   bool required = false;
   bool listed = false;
   std::vector<std::string> list;
+  std::string heading;
   std::string unread;
 };
 
@@ -437,22 +482,36 @@ std::string required_fill(const ooxml::Workbook& book, std::string_view definiti
   return {};
 }
 
-// The entries of a list kept in a column of a sheet: the cells the validation
-// names, and those that follow them without a gap. The Sample template's
-// lists of sample kinds and archives have grown past the rows their
-// validations name (`Mine Waste` is A17 where the validation says A2:A16); an
-// entry the sheet lists under the same heading is the service's all the same.
-Result<std::vector<std::string>> listed_values(const ooxml::Workbook& book, const ooxml::ListValidation& list) {
+// A list kept in a column of a sheet: its entries, the cells the validation
+// names and those that follow them without a gap, and its heading. The
+// Sample template's lists of sample kinds and archives have grown past the
+// rows their validations name (`Mine Waste` is A17 where the validation says
+// A2:A16); an entry the sheet lists under the same heading is the service's
+// all the same. The heading is row 1 of the column when the list starts
+// below it: both templates' lookup sheets name each list there (`Flux
+// Monitor`, `Lithology`).
+struct Listed {
+  std::string heading;
+  std::vector<std::string> entries;
+};
+
+Result<Listed> listed_values(const ooxml::Workbook& book, const ooxml::ListValidation& list) {
   constexpr int kStride = 256;  // read with the named cells, so that a list that ends there costs one reading
-  std::vector<std::string> out;
-  for (int from = list.first_row, to = list.last_row; from <= ooxml::kMaxRow; from = to + 1) {
+  Listed out;
+  // Row 1 is read with the list when the list is near it.
+  const int first = list.first_row > 1 && list.first_row <= kStride ? 1 : list.first_row;
+  for (int from = first, to = list.last_row; from <= ooxml::kMaxRow; from = to + 1) {
     to = static_cast<int>(std::min<long>(static_cast<long>(to) + kStride, ooxml::kMaxRow));
     auto more = book.column_values(list.sheet, list.column, from, to);
     if (!more) return fail(more.error());
     for (std::size_t i = 0; i < more->size(); ++i) {
-      const bool named = from + static_cast<int>(i) <= list.last_row;
-      if (!named && on_one_line((*more)[i]).empty()) return out;
-      out.push_back(std::move((*more)[i]));
+      const int row = from + static_cast<int>(i);
+      if (row < list.first_row) {
+        if (row == 1) out.heading = on_one_line((*more)[i]);
+        continue;
+      }
+      if (row > list.last_row && on_one_line((*more)[i]).empty()) return out;
+      out.entries.push_back(std::move((*more)[i]));
     }
   }
   return out;
@@ -489,7 +548,10 @@ Result<void> describe(SheetPlan& out, const ooxml::Workbook& book, const std::st
         // A list on a sheet the workbook has not cannot be read either.
         auto values = listed_values(book, validation);
         read = values.has_value();
-        if (read) entries = std::move(*values);
+        if (read) {
+          entries = std::move(values->entries);
+          column.heading = std::move(values->heading);
+        }
       }
       if (!read) {
         column.unread = validation.formula;
@@ -660,23 +722,51 @@ std::string in_list(std::string_view sheet, const Column& column, const std::str
   const bool monitor = is_flux_monitor(column.record, column.field);
   const ListMatch plain = match_list_entry(text, column.list);
   const ListMatch match = monitor && plain.kind == ListMatch::Kind::None ? match_flux_monitor(text, column.list) : plain;
+  // The list by its heading, for a user who goes and looks.
+  const std::string list = column.heading.empty() ? std::string() : " (list: " + column.heading + ")";
   switch (match.kind) {
     case ListMatch::Kind::Exact: return match.entry;
     case ListMatch::Kind::Respelled:
-      if (plain.kind == ListMatch::Kind::Respelled) {
-        notes.respelled(sheet, column.key);
-      } else {
-        // Found by name and age: more than a spelling, so each is shown.
-        notes.add(where + "'" + text + "' written as the list's '" + match.entry + "'");
-      }
+      // What became what, each once; found by name and age is more than a
+      // spelling, and is said to be.
+      notes.add(where + "'" + text + "' written as '" + match.entry + "'" + list +
+                (plain.kind == ListMatch::Kind::Respelled ? "" : ", found by its name and age"));
       return match.entry;
     case ListMatch::Kind::Ambiguous:
       notes.add(where + "'" + text + "' could be more than one entry of the template's list and was written as given");
       return text;
     case ListMatch::Kind::None: break;
   }
-  notes.add(where + "'" + text + "' is not in the template's list");
+  notes.add(where + "'" + text + "' is not in the template's list" +
+            (column.heading.empty() ? std::string() : " '" + column.heading + "'") +
+            "; the importer may refuse the value");
   return text;
+}
+
+// Whether the Required column `column` is wanted in the row `cells` of
+// `sheet` (kConditional), and of which rows it is wanted at all.
+struct Wanted {
+  bool here = true;
+  std::string_view rows;
+};
+
+bool is_empty(const ooxml::Cell& cell) {
+  const auto* text = std::get_if<std::string>(&cell.value);
+  return std::holds_alternative<std::monostate>(cell.value) || (text != nullptr && text->empty());
+}
+
+Wanted wanted(const SheetPlan& sheet, const Column& column, const std::vector<ooxml::Cell>& cells, const Records& r) {
+  for (const Conditional& c : kConditional) {
+    if (c.sheet != sheet.spec.name || c.key != column.key) continue;
+    if (c.steps_only) {
+      const std::string method = folded(r.data_point.value("arMethodName", std::string()));
+      return {method.starts_with(kStepHeating), c.rows};
+    }
+    const auto other = std::find_if(sheet.columns.begin(), sheet.columns.end(),
+                                    [&](const Column& one) { return one.key == c.unless; });
+    return {other == sheet.columns.end() || is_empty(cells[other->index]), c.rows};
+  }
+  return {};
 }
 
 std::vector<ooxml::Cell> row_of(const SheetPlan& sheet, const json& own, const Records& r, Notes& notes) {
@@ -699,8 +789,13 @@ std::vector<ooxml::Cell> row_of(const SheetPlan& sheet, const json& own, const R
 
     auto* text = std::get_if<std::string>(&cell.value);
     if (text != nullptr && !text->empty() && column.listed) *text = in_list(sheet.spec.name, column, *text, notes);
-    const bool empty = std::holds_alternative<std::monostate>(cell.value) || (text != nullptr && text->empty());
-    if (empty && column.required) notes.left_empty(sheet.spec.name, column.index, column.key, column.title);
+  }
+  // Once the row is whole: what a column is excused by is another column.
+  for (const Column& column : sheet.columns) {
+    if (!column.required) continue;
+    const Wanted of = wanted(sheet, column, cells, r);
+    if (!of.here) continue;
+    notes.required(sheet.spec.name, column.index, column.key, column.title, of.rows, is_empty(cells[column.index]));
   }
   return cells;
 }
