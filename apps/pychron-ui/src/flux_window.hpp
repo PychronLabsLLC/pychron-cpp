@@ -6,9 +6,18 @@
 // A level is read from the store on the bridge's worker and fitted here, on the
 // GUI thread; the window computes nothing itself (the scene, the status line
 // and the warnings are libs/processing's).
+//
+// The fit is edited from the plot and the check boxes (decision W9: one change
+// to `Edits`, redrawn from the refit) and from the "Fit" dock on the right: the
+// monitor group, which belongs to the level and reloads it, the presets, and
+// the options editor. Edits pending are asked about before they are left
+// behind (section 5.6).
 
+#include <functional>
 #include <optional>
+#include <set>
 #include <string>
+#include <vector>
 
 #include <QMainWindow>
 #include <QString>
@@ -19,7 +28,12 @@
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
 
+class QAction;
+class QCheckBox;
+class QCloseEvent;
+class QComboBox;
 class QLabel;
+class QLineEdit;
 class QTableView;
 class QTimer;
 class QTreeWidget;
@@ -30,6 +44,8 @@ namespace pychron::ui {
 class FluxAnalysisModel;
 class FluxMonitorModel;
 class FluxUnknownModel;
+class OptionsEditor;
+class PresetBar;
 class SceneView;
 
 class FluxWindow : public QMainWindow {
@@ -42,8 +58,14 @@ class FluxWindow : public QMainWindow {
   FluxWindow(EntryBridge& bridge, processing::IAnalysisSource& source, processing::PresetStore& presets,
              QWidget* parent = nullptr);
 
+  // How the window asks what to do with edits pending (tests answer without a
+  // dialog); a message box with the three buttons by default.
+  enum class Unsaved { Save, Discard, Cancel };
+  void set_ask_unsaved(std::function<Unsaved(const QString&)> ask) { ask_unsaved_ = std::move(ask); }
+
   void reload_tree();                                                  // asynchronous
-  void open_level(const QString& irradiation, const QString& level);  // asynchronous
+  // Asynchronous; asks first when edits are pending.
+  void open_level(const QString& irradiation, const QString& level);
   // A bridge job is running, or a refit is pending.
   bool busy() const noexcept;
   QString status() const;
@@ -58,12 +80,49 @@ class FluxWindow : public QMainWindow {
   QTableView* monitor_table() const noexcept { return monitor_table_; }
   const processing::LevelInputs* inputs() const noexcept { return inputs_ ? &*inputs_ : nullptr; }  // nullptr until a level loaded
   const processing::LevelFit* fit() const noexcept { return fit_ ? &*fit_ : nullptr; }  // nullptr when the fit failed
+  // The options of the last fit asked for; when the editor holds options that
+  // are no fit's (sd with a surface), the last that were.
   const processing::FluxOptions& options() const noexcept { return options_; }
   void select_monitor(int hole);  // as clicking its row
 
+  // Section 5.6: the edits, the options, the monitor group or a Save box
+  // differ from what the load produced.
+  bool edited() const noexcept;
+  const processing::Edits& edits() const noexcept { return edits_; }
+  // As a plot click or a rubber band: each analysis that takes part is left
+  // out and each that is left out takes part again. One that was not reduced
+  // or has no J, and a uuid the level does not know, is passed over.
+  void toggle_analyses(const QStringList& uuids);
+  void set_in_fit(int hole, bool in_fit);                  // as the Fit box
+  void set_options(const processing::Options& options);    // as editing the dock
+  OptionsEditor* options_editor() const noexcept { return editor_; }
+  PresetBar* preset_bar() const noexcept { return preset_bar_; }
+  QComboBox* monitor_set_combo() const noexcept { return set_combo_; }
+  QLineEdit* sample_edit() const noexcept { return sample_edit_; }
+  QCheckBox* all_positions_box() const noexcept { return all_box_; }
+
+  void revert();           // the loaded options, no edits, every Save box ticked; the store is not read
+  void reload();           // asks, then reads the level again with the monitor group in force
+  void reset_omissions();  // Edits::reset_omits, and nothing else of the edits made here
+  QAction* revert_action() const noexcept { return revert_action_; }
+  QAction* reload_action() const noexcept { return reload_action_; }
+  QAction* reset_omissions_action() const noexcept { return reset_action_; }
+
+ protected:
+  void closeEvent(QCloseEvent* event) override;
+
  private:
-  void start_load();                              // of irradiation_ / level_
-  void apply_loaded(processing::LevelInputs inputs);
+  // The monitor group: the set, the sample the monitors are chosen by (the
+  // set's own when the field is empty) and "all positions".
+  struct MonitorGroup {
+    std::string set, sample;
+    bool all_positions = false;
+    friend bool operator==(const MonitorGroup&, const MonitorGroup&) = default;
+  };
+
+  void build_dock();
+  void start_load();                              // of irradiation_ / level_, with chosen_
+  void apply_loaded(processing::LevelInputs inputs, std::vector<processing::MonitorSet> sets, std::string default_set);
   void clear_level();                             // nothing on show; the models let go of inputs_ and fit_
   void request_fit();                             // fit_now() 150 ms after the last request
   void fit_now();
@@ -71,13 +130,36 @@ class FluxWindow : public QMainWindow {
   void update_scene();
   void update_title();
   void set_status(const QString& text, bool error, const QStringList& warnings = {});
+  void refresh_status();                          // the status with what follows it: changed elsewhere, edited
   void set_tables_enabled(bool enabled);
+  void update_actions();
+  void restore_selection();                       // the row of selected_hole_, after a model was reset
+
+  bool pending(bool with_group) const;            // edited(), with or without the monitor group
+  Unsaved ask();
+  // Runs `next` when nothing is pending or the user discards it; otherwise
+  // `stay` (when given) puts back what the user had changed to get here.
+  void leave(bool with_group, std::function<void()> next, const std::function<void()>& stay);
+  void save_then(std::function<void()> next);
+
+  void options_changed();                         // values_ changed: resolve and refit
+  void resolve_options();                         // values_ -> options_ or options_error_
+  void show_preset();                             // the preset bar as the level was loaded
+  void set_save(int hole, bool save);
+  void apply_skip();
+
+  void set_monitor_sets(std::vector<processing::MonitorSet> sets, std::string default_set);
+  const processing::MonitorSet* monitor_set(const QString& name) const;
+  MonitorGroup group_shown() const;               // what the group's widgets say
+  void show_group(const MonitorGroup& group);     // without that being the user's change
+  void update_set_hint();                         // the combo's tooltip and the sample's placeholder
+  void group_changed();
   QTreeWidgetItem* tree_item(const QString& irradiation, const QString& level) const;
   void select_tree_item();                        // the item of irradiation_ / level_, without loading it
 
   EntryBridge& bridge_;
   processing::IAnalysisSource& source_;
-  [[maybe_unused]] processing::PresetStore& presets_;  // the preset bar's; nothing reads it yet
+  processing::PresetStore& presets_;
 
   QTreeWidget* tree_ = nullptr;
   SceneView* view_ = nullptr;
@@ -89,25 +171,57 @@ class FluxWindow : public QMainWindow {
   QTableView* unknown_table_ = nullptr;
   QLabel* status_ = nullptr;
   QTimer* fit_timer_ = nullptr;
+  PresetBar* preset_bar_ = nullptr;
+  OptionsEditor* editor_ = nullptr;
+  QComboBox* set_combo_ = nullptr;
+  QLineEdit* sample_edit_ = nullptr;
+  QCheckBox* all_box_ = nullptr;
+  QAction* revert_action_ = nullptr;
+  QAction* reload_action_ = nullptr;
+  QAction* reset_action_ = nullptr;
+  std::function<Unsaved(const QString&)> ask_unsaved_;
 
   // The level asked for (empty: none yet), and what was read and made of it.
   // The models point into inputs_, fit_ and unfitted_: they are reset before
   // any of the three changes.
   QString irradiation_, level_;
   std::optional<processing::LevelInputs> inputs_;
+  // The options as the editor holds them and as the load left them, and what
+  // they are to fit_level: options_, or options_error_ when they are no fit's.
+  processing::Options values_, loaded_values_;
   processing::FluxOptions options_;
+  std::string options_error_;
   processing::Edits edits_;
+  std::set<int> skip_;  // the holes whose Save box is unticked
   std::optional<processing::LevelFit> fit_;
   std::string fit_error_;
   std::optional<int> selected_hole_;
   // The selected monitor when there is no fit: its analyses as fit_level would have counted them.
   std::optional<processing::FittedPosition> unfitted_;
 
+  // The monitor sets of the store's document, for the combo.
+  std::vector<processing::MonitorSet> sets_;
+  std::string default_set_;
+  // The user's choice for this level (nullopt: as its saved fit chose), and
+  // what the group shows that is not the user's doing: the loaded selection,
+  // or the one being loaded.
+  std::optional<MonitorGroup> chosen_;
+  MonitorGroup shown_;
+  // The preset in use, which a level without a saved fit opens on; and the one
+  // this level opened on (empty: its saved fit).
+  QString preset_name_, loaded_preset_;
+  std::optional<int> reselect_;  // the monitor selected when the level was read again
+
   int busy_ = 0;       // bridge jobs outstanding
   int tree_jobs_ = 0;  // of them, tree reads
   quint64 load_generation_ = 0, tree_generation_ = 0;  // a result of an older request is dropped
   bool resetting_ = false;  // the monitors table is being reset: its selection signals are not the user's
+  bool syncing_ = false;    // the monitor group is being set: its signals are not the user's
+  bool asking_ = false;     // the unsaved question is up (a line edit losing focus to it says "finished" again)
+  bool loading_ = false;    // a level is being read
+  bool changed_elsewhere_ = false;  // the store changed under edits that were kept
   bool status_error_ = false;
+  QString status_text_;     // the status without what refresh_status() adds
   QStringList warnings_;
 };
 

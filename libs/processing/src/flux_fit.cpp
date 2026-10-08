@@ -148,7 +148,7 @@ FittedPosition evaluate_position(const LevelPosition& p, const MonitorSet& monit
     return s.used_in_fit == std::optional<bool>(false) && s.mean_j.has_value();
   };
   const bool carried = saved_applies && saved_excluded(*p.saved);
-  fp.excluded = edits.exclude_positions.contains(p.hole) || carried;
+  fp.excluded = !edits.include_positions.contains(p.hole) && (edits.exclude_positions.contains(p.hole) || carried);
   bool left_out = fp.excluded;
   std::optional<reduction::PositionMean> mean;
   if (any_usable) {
@@ -208,10 +208,11 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
       if (!records.contains(id))
         return fail(ErrorKind::Config, "flux: " + id + " is not an analysis of the monitors of " + where +
                                            " (analyses: " + record_list + ")");
-  for (int hole : edits.exclude_positions)
-    if (!level_holes.contains(hole))
-      return fail(ErrorKind::Config,
-                  "flux: hole " + std::to_string(hole) + " is not a position of " + where + " (holes: " + holes + ")");
+  for (const auto* chosen : {&edits.exclude_positions, &edits.include_positions})
+    for (int hole : *chosen)
+      if (!level_holes.contains(hole))
+        return fail(ErrorKind::Config, "flux: hole " + std::to_string(hole) + " is not a position of " + where +
+                                           " (holes: " + holes + ")");
 
   LevelFit out;
   out.irradiation = in.irradiation;

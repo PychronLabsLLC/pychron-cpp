@@ -93,6 +93,9 @@ struct LevelInputs {
 struct Edits {
   std::set<std::string> omit, include;
   std::set<int> exclude_positions;
+  // Monitors fitted even when the saved fit excluded them, as `include` does
+  // for an omitted analysis; a hole in both sets is included.
+  std::set<int> include_positions;
   bool reset_omits = false;  // ignore the omissions and exclusions of the saved fit
 };
 
@@ -170,6 +173,7 @@ FittedPosition evaluate_position(const LevelPosition& position, const MonitorSet
 // before `excluded` existed is read as excluding a monitor when it says
 // `used_in_fit` false and has a mean J (the monitor had analyses and still
 // was not used). A position that was merely not used is not carried.
+// `edits.include_positions` overrides a carried exclusion.
 Result<LevelFit> fit_level(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);
 
 }  // namespace pychron::processing

@@ -163,6 +163,64 @@ TEST(FluxFitLevel, SavedOmissionsAndExclusionsApplyUnlessReset) {
   EXPECT_FALSE(has(at_hole(*fit, 2), PositionNote::LeftOutOfFit));
 }
 
+// Edits::include_positions: a monitor the saved fit excluded is fitted again,
+// without forgetting the rest of what that fit left out.
+TEST(FluxFitLevel, IncludePositionsOverridesACarriedExclusion) {
+  auto in = level();
+  at_hole(in, 1).saved = SavedFlux{};
+  at_hole(in, 1).saved->omitted = {"M1-01"};
+  at_hole(in, 2).saved = SavedFlux{};
+  at_hole(in, 2).saved->used_in_fit = false;
+  at_hole(in, 2).saved->excluded = true;
+  // Saved before `excluded` existed: read as excluded, and overridden the same way.
+  at_hole(in, 3).saved = SavedFlux{};
+  at_hole(in, 3).saved->used_in_fit = false;
+  at_hole(in, 3).saved->mean_j = 1.0e-3;
+
+  auto carried = fit_level(in, plane(false), {});
+  ASSERT_TRUE(carried) << carried.error().what;
+  EXPECT_TRUE(at_hole(*carried, 2).excluded);
+  EXPECT_TRUE(at_hole(*carried, 3).excluded);
+
+  Edits e;
+  e.include_positions = {2, 3};
+  auto fit = fit_level(in, plane(false), e);
+  ASSERT_TRUE(fit) << fit.error().what;
+  for (int hole : {2, 3}) {
+    EXPECT_TRUE(at_hole(*fit, hole).used_in_fit) << hole;
+    EXPECT_FALSE(at_hole(*fit, hole).excluded) << hole;
+    EXPECT_FALSE(has(at_hole(*fit, hole), PositionNote::LeftOutOfFit)) << hole;
+  }
+  EXPECT_EQ(fit->dof, carried->dof + 2);
+  // The saved omission of hole 1 still applies: this is not reset_omits.
+  EXPECT_EQ(at_hole(*fit, 1).n, 2);
+  EXPECT_TRUE(at_hole(*fit, 1).analyses[0].omitted);
+
+  // A hole in both sets is included, as `include` wins over `omit`.
+  e.exclude_positions = {2, 4};
+  fit = fit_level(in, plane(false), e);
+  ASSERT_TRUE(fit) << fit.error().what;
+  EXPECT_FALSE(at_hole(*fit, 2).excluded);
+  EXPECT_TRUE(at_hole(*fit, 4).excluded);
+
+  // Including a monitor nobody excluded, or an unknown's hole, changes nothing.
+  Edits plain;
+  plain.include_positions = {5, 101};
+  auto same = fit_level(level(), plane(false), plain);
+  auto base = fit_level(level(), plane(false), {});
+  ASSERT_TRUE(same && base);
+  EXPECT_EQ(same->dof, base->dof);
+  EXPECT_EQ(same->parameters, base->parameters);
+
+  // A hole that is not a position of the level is refused, with the holes.
+  Edits wrong;
+  wrong.include_positions = {99};
+  auto bad = fit_level(in, plane(false), wrong);
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("hole 99 is not a position of"), std::string::npos) << bad.error().what;
+  EXPECT_NE(bad.error().what.find("1, 2, 3, 4, 5, 6, 7, 8, 101, 102, 103, 104"), std::string::npos) << bad.error().what;
+}
+
 // R15: `used_in_fit: false` is what a save says of every position that took
 // no part, whoever decided it. Only `excluded` is the user's word.
 TEST(FluxFitLevel, AMonitorSavedUnusedForWantOfAnalysesIsUsedOnceItHasThem) {

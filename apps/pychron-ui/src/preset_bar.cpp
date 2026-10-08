@@ -37,13 +37,29 @@ PresetBar::PresetBar(pp::PresetStore& store, pp::SchemaPtr schema, QWidget* pare
   connect(save_as, &QPushButton::clicked, this, [this] { save(true); });
   connect(remove_button, &QPushButton::clicked, this, [this] { remove(); });
   connect(factory, &QPushButton::clicked, this, [this] { factory_reset(); });
-  connect(combo_, &QComboBox::activated, this, [this](int) { select(combo_->currentText()); });
+  connect(combo_, &QComboBox::activated, this, [this](int) {
+    if (pinned_selected())
+      emit pinned_chosen();
+    else
+      select(combo_->currentText());
+  });
 }
+
+void PresetBar::set_pinned_item(const QString& text) {
+  if (!pinned_.isEmpty()) combo_->removeItem(0);
+  pinned_ = text;
+  if (pinned_.isEmpty()) return;
+  combo_->insertItem(0, pinned_);
+  combo_->setCurrentIndex(0);
+}
+
+bool PresetBar::pinned_selected() const { return !pinned_.isEmpty() && combo_->currentIndex() == 0; }
 
 QString PresetBar::current_name() const { return combo_->currentText(); }
 
 void PresetBar::reload(const QString& select_name) {
   combo_->clear();
+  pinned_.clear();
   for (const auto& p : store_.list(schema_)) {
     combo_->addItem(qs(p.name));
     combo_->setItemData(combo_->count() - 1,
@@ -59,8 +75,10 @@ bool PresetBar::select(const QString& name) {
   auto loaded_options = store_.load(schema_, name.toStdString());
   if (!loaded_options) {
     emit message(tr("Preset: %1").arg(qs(loaded_options.error().what)), {});
+    if (!pinned_.isEmpty()) combo_->setCurrentIndex(0);  // nothing was loaded over it
     return false;
   }
+  set_pinned_item({});
   combo_->setCurrentText(name);
   QStringList warnings;
   for (const auto& w : loaded_options->warnings) warnings << qs(w);
@@ -71,7 +89,7 @@ bool PresetBar::select(const QString& name) {
 
 bool PresetBar::save(bool as) {
   QString name = combo_->currentText();
-  if (as || name.isEmpty()) name = ask_name ? ask_name() : QString();
+  if (as || name.isEmpty() || pinned_selected()) name = ask_name ? ask_name() : QString();
   if (name.isEmpty() || !current) return false;
   if (auto ok = store_.save(name.toStdString(), current()); !ok) {
     emit message(tr("Save failed: %1").arg(qs(ok.error().what)), {});
@@ -84,6 +102,10 @@ bool PresetBar::save(bool as) {
 
 bool PresetBar::remove() {
   const QString name = combo_->currentText();
+  if (pinned_selected()) {
+    emit message(tr("%1 is not a preset").arg(name), {});
+    return false;
+  }
   if (auto ok = store_.remove(schema_, name.toStdString()); !ok) {
     emit message(qs(ok.error().what), {});
     return false;
@@ -94,6 +116,10 @@ bool PresetBar::remove() {
 
 bool PresetBar::factory_reset() {
   const QString name = combo_->currentText();
+  if (pinned_selected()) {
+    emit message(tr("%1 is not a preset").arg(name), {});
+    return false;
+  }
   auto f = store_.factory(schema_, name.toStdString());
   if (!f) {
     emit message(tr("No factory preset named \"%1\"").arg(name), {});
