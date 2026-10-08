@@ -532,25 +532,40 @@ void FluxWindow::reload_tree() {
 void FluxWindow::open_level(const QString& irradiation, const QString& level) {
   // The level on show, or being read: it is left as it is (ruling R18), with
   // its edits. One that could not be read is asked for again.
-  if (irradiation == irradiation_ && level == level_ && (inputs_ || loading_)) return select_tree_item();
-  leave(
-      true,
-      [this, irradiation, level] {
-        irradiation_ = irradiation;
-        level_ = level;
-        chosen_.reset();  // another level: its monitors are as its saved fit chose them
-        baseline_.reset();
-        selected_hole_.reset();
-        select_tree_item();
-        if (tree_->topLevelItemCount() == 0 && tree_jobs_ == 0) reload_tree();
-        start_load(Keep::Nothing);
-      },
-      [this] {
-        // Back on the level that stays; again once the click that asked is
-        // over, which selects the row it landed on after this returns.
-        select_tree_item();
-        QTimer::singleShot(0, this, [this] { select_tree_item(); });
-      });
+  if (irradiation == irradiation_ && level == level_ && (inputs_ || loading_)) {
+    // Asked for while its save runs: another level picked before is given up.
+    if (saving_ && switch_queued_) {
+      after_save_ = {};
+      switch_queued_ = false;
+    }
+    return select_tree_item();
+  }
+  const auto move = [this, irradiation, level] {
+    irradiation_ = irradiation;
+    level_ = level;
+    chosen_.reset();  // another level: its monitors are as its saved fit chose them
+    baseline_.reset();
+    selected_hole_.reset();
+    select_tree_item();
+    if (tree_->topLevelItemCount() == 0 && tree_jobs_ == 0) reload_tree();
+    start_load(Keep::Nothing);
+  };
+  const auto stay = [this] {
+    // Back on the level that stays; again once the click that asked is
+    // over, which selects the row it landed on after this returns.
+    select_tree_item();
+    QTimer::singleShot(0, this, [this] { select_tree_item(); });
+  };
+  if (saving_) {
+    // The edits are being saved, so there is nothing to ask about: the move
+    // follows the save, and is dropped with a save that fails. (Asked, the
+    // answer could come after the save landed, and the move be lost unsaid.)
+    stay();
+    save_then(move);
+    switch_queued_ = true;
+    return;
+  }
+  leave(true, move, stay);
 }
 
 void FluxWindow::reload() {
@@ -1088,7 +1103,10 @@ void FluxWindow::tell(const QString& text, bool error) {
 void FluxWindow::save_then(std::function<void()> next) {
   if (saving_) {
     // The save in flight is the one asked for: what was asked follows it.
-    if (next) after_save_ = std::move(next);
+    if (next) {
+      after_save_ = std::move(next);
+      switch_queued_ = false;
+    }
     return;
   }
   if (loading_ || !inputs_) return;
@@ -1140,6 +1158,7 @@ void FluxWindow::save_then(std::function<void()> next) {
     --w.busy_;
     w.saving_ = false;
     std::function<void()> next = std::exchange(w.after_save_, {});
+    w.switch_queued_ = false;
     w.update_enabled();
     w.update_actions();
     // Another level is on show: the result is not its business, but for the tree.

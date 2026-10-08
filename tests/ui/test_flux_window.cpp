@@ -2769,6 +2769,80 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.edited());
   }
 
+  // While a save runs the edits are being saved: another level picked then
+  // follows the save without a question, and not at all if the save fails.
+  void a_level_picked_during_a_save_follows_it() {
+    auto second = pt::seed_second_flux_level(*store_, actor_, seeded_, "C");
+    QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
+    auto r = rig();
+    QStringList asked;
+    auto answer = FluxWindow::Unsaved::Cancel;  // were it asked, the level would stay
+    auto wp = opened(r, &asked, &answer);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QSignalSpy saved(&w, &FluxWindow::saved);
+    const auto item = [&w](const char* level) {
+      return level_item(w, QStringLiteral("NM-300"), QString::fromLatin1(level));
+    };
+    w.set_in_fit(3, false);
+    QVERIFY(settle(w));
+
+    w.save();
+    QVERIFY(w.busy());
+    w.tree()->setCurrentItem(item("C"));
+    QVERIFY(asked.isEmpty());
+    QCOMPARE(w.status(), QStringLiteral("Saving…"));
+    QCOMPARE(w.inputs()->level, std::string("A"));  // until it is saved
+    QCOMPARE(w.tree()->currentItem(), item("A"));
+    QCOMPARE(w.loads_started(), 1);
+    QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
+    QCOMPARE(saved.count(), 1);
+    QCOMPARE(saved_excluded(3), std::optional<bool>(true));
+    QVERIFY(w.inputs());
+    QCOMPARE(w.inputs()->level, std::string("C"));
+    QCOMPARE(w.windowTitle(), QStringLiteral("Flux — NM-300 C"));
+    QCOMPARE(w.tree()->currentItem(), item("C"));
+    QCOMPARE(w.loads_started(), 2);
+    QVERIFY(!w.edited());
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · Saved 12 positions (0 unchanged)")), qPrintable(w.status()));
+
+    // A save that fails: the level picked meanwhile is not gone to.
+    w.tree()->setCurrentItem(item("A"));
+    QVERIFY(settle(w));
+    QCOMPARE(w.inputs()->level, std::string("A"));
+    w.set_in_fit(4, false);
+    QVERIFY(settle(w));
+    save_fit(7, pp::FluxOptions{}, false, 2.0e-3);  // someone else, meanwhile
+    const int loads = w.loads_started();
+    w.save();
+    w.tree()->setCurrentItem(item("C"));
+    QVERIFY(asked.isEmpty());
+    QVERIFY(settle(w));
+    drain(*r.bridge);
+    QVERIFY(asked.isEmpty());
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: hole 7 was saved by jsmith at ")), qPrintable(w.status()));
+    QCOMPARE(w.inputs()->level, std::string("A"));
+    QCOMPARE(w.tree()->currentItem(), item("A"));
+    QCOMPARE(w.loads_started(), loads);
+    QCOMPARE(w.edits().exclude_positions, std::set<int>{4});
+    QVERIFY(w.edited());
+
+    // The level on show asked for again while its save runs: the level picked before that is given up.
+    w.reload();
+    QVERIFY(settle(w));
+    w.save();
+    w.tree()->setCurrentItem(item("C"));
+    w.open_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+    QVERIFY(settle(w));
+    QVERIFY(asked.isEmpty());
+    QVERIFY2(w.status().startsWith(QStringLiteral("Saved 12 positions")), qPrintable(w.status()));
+    QCOMPARE(w.inputs()->level, std::string("A"));
+    QCOMPARE(saved_excluded(4), std::optional<bool>(true));
+    QVERIFY(!w.edited());
+  }
+
   void a_failed_save_cancels_the_move() {
     auto second = pt::seed_second_flux_level(*store_, actor_, seeded_, "C");
     QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
@@ -2876,15 +2950,20 @@ class FluxWindowTest : public QObject {
     for (int hole = 1; hole <= 12; ++hole) QVERIFY(head(hole).has_value());
     QCOMPARE(changed.count(), 1);  // it was written: the other windows are told all the same
 
-    // The user moved to another level while the save ran: the result is not that level's.
+    // The user picked another level while the save ran: it is gone to once
+    // the save landed, with nothing asked, and its status is its own.
     auto wp = opened(r);
     FluxWindow& w = *wp;
-    w.set_ask_unsaved([](const QString&) { return FluxWindow::Unsaved::Discard; });
+    int asked = 0;
+    w.set_ask_unsaved([&asked](const QString&) {
+      ++asked;
+      return FluxWindow::Unsaved::Discard;
+    });
     QSignalSpy saved(&w, &FluxWindow::saved);
     w.set_in_fit(3, false);
     w.save();
     w.open_level(QStringLiteral("NM-300"), QStringLiteral("C"));
-    QCOMPARE(w.status(), QStringLiteral("Loading NM-300 C…"));
+    QCOMPARE(w.status(), QStringLiteral("Saving…"));
     QVERIFY(settle(w));
     drain(*r.bridge);
     QVERIFY(settle(w));
@@ -2896,13 +2975,15 @@ class FluxWindowTest : public QObject {
     QVERIFY2(w.status().startsWith(QStringLiteral("plane, unweighted · fit MSWD")), qPrintable(w.status()));
     QVERIFY(!w.edited());
     QVERIFY(w.edits().exclude_positions.empty());
-    QCOMPARE(w.loads_started(), 2);  // A, then C: the dropped result read nothing again
+    QCOMPARE(w.loads_started(), 2);  // A, then C: A was not read again
+    QCOMPARE(saved.count(), 1);
+    QCOMPARE(asked, 0);
     QVERIFY(w.save_action()->isEnabled());
     QVERIFY(w.monitor_table()->isEnabled());
     QCOMPARE(level_item(w, QStringLiteral("NM-300"), QStringLiteral("A"))->text(1), QStringLiteral("fitted"));
     QVERIFY(!head(1, "C").has_value());
 
-    // The same with a conflict: C's status is not told of A's.
+    // With a conflict the level is not left: A's failure is said on A, with its edits.
     w.open_level(QStringLiteral("NM-300"), QStringLiteral("A"));
     QVERIFY(settle(w));
     w.set_in_fit(3, true);
@@ -2912,10 +2993,12 @@ class FluxWindowTest : public QObject {
     w.open_level(QStringLiteral("NM-300"), QStringLiteral("C"));
     QVERIFY(settle(w));
     drain(*r.bridge);
-    QVERIFY(!w.status_is_error());
-    QVERIFY2(!w.status().contains(QStringLiteral("Not saved")), qPrintable(w.status()));
-    QCOMPARE(w.inputs()->level, std::string("C"));
+    QVERIFY(w.status_is_error());
+    QVERIFY2(w.status().startsWith(QStringLiteral("Not saved: hole 7 ")), qPrintable(w.status()));
+    QCOMPARE(w.inputs()->level, std::string("A"));
+    QCOMPARE(w.edits().include_positions, std::set<int>{3});
     QCOMPARE(changed.count(), 2);
+    QCOMPARE(asked, 0);
   }
 
   void the_menu_action_opens_the_window() {

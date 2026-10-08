@@ -77,7 +77,9 @@ class FluxWindow : public QMainWindow {
 
   void reload_tree();                                                  // asynchronous
   // Asynchronous; asks first when edits are pending. The level already on
-  // show, or being read, is left as it is: nothing is asked or read.
+  // show, or being read, is left as it is: nothing is asked or read. While a
+  // save runs nothing is asked either: the level is gone to once the save
+  // wrote or had nothing to write, and not when it fails.
   void open_level(const QString& irradiation, const QString& level);
   // A bridge job is running, or a refit is pending.
   bool busy() const noexcept;
@@ -316,6 +318,7 @@ class FluxWindow : public QMainWindow {
   bool note_error_ = false;
   quint64 note_generation_ = 0;
   std::function<void()> after_save_;  // what follows the save in flight when it succeeds
+  bool switch_queued_ = false;        // it is another level, picked while the save ran
   QString tree_error_;      // the last tree read failed with this
   bool changed_elsewhere_ = false;  // the store changed under edits that were kept
   bool stale_ = false;      // the store changed while the window was not on screen: read when it is shown
