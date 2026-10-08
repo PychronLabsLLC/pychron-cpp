@@ -77,6 +77,114 @@ std::optional<reduction::ModelKind> parse_model_kind(std::string_view text) noex
   return std::nullopt;
 }
 
+AnalysisState analysis_omission(const LevelPosition& p, const LevelAnalysis& a, const Edits& edits) {
+  if (edits.include.contains(a.record_id)) return AnalysisState::Used;
+  if (edits.omit.contains(a.record_id)) return AnalysisState::OmittedByEdit;
+  if (p.saved && !edits.reset_omits && p.saved->omitted.contains(a.record_id)) return AnalysisState::OmittedBySavedFit;
+  if (tag_omits(a.tag)) return AnalysisState::OmittedByTag;
+  return AnalysisState::Used;
+}
+
+FittedPosition evaluate_position(const LevelPosition& p, const MonitorSet& monitor_set, const FluxOptions& options,
+                                 const Edits& edits) {
+  const auto constants = monitor_set.constants();
+  FittedPosition fp;
+  fp.hole = p.hole;
+  fp.position_uuid = p.position_uuid;
+  fp.identifier = p.identifier;
+  fp.sample = p.sample;
+  fp.x = p.x;
+  fp.y = p.y;
+  fp.monitor = p.monitor;
+  if (p.saved) {
+    fp.saved_j = p.saved->j;
+    fp.saved_j_err = p.saved->j_err;
+    fp.saved_revision = p.saved->revision;
+  }
+  if (!p.monitor) return fp;
+  {
+    const bool saved_applies = p.saved && !edits.reset_omits;
+    std::vector<reduction::MonitorAnalysis> analyses;
+    bool any_unreduced = false, any_usable = false;
+    for (const auto& a : p.analyses) {
+      const AnalysisState omission = analysis_omission(p, a, edits);
+      const bool omitted = omission != AnalysisState::Used;
+      // Omitted is by rule only: an analysis that did not reduce takes no
+      // part, but a save must not carry it forward as an omission.
+      FittedPosition::UsedAnalysis ua;
+      ua.uuid = a.uuid;
+      ua.record_id = a.record_id;
+      ua.tag = a.tag;
+      ua.omitted = omitted;
+      ua.state = omission;
+      if (a.f) {
+        if (auto j = reduction::j_of(*a.f, constants)) {
+          ua.j = j->nominal();
+          ua.j_err = j->std_dev();
+        } else if (!omitted) {
+          ua.state = AnalysisState::NoJ;
+        }
+      } else if (!omitted) {
+        ua.state = AnalysisState::NotReduced;
+        ua.reduction_error = a.reduction_error;
+      }
+      fp.analyses.push_back(std::move(ua));
+      if (!a.f) {
+        any_unreduced = true;
+        continue;
+      }
+      analyses.push_back({a.record_id, *a.f, omitted});
+      if (!omitted) any_usable = true;
+    }
+    if (any_unreduced) fp.notes.push_back(PositionNote::AnalysisNotReduced);
+
+    // The user's exclusion, now or carried from the saved fit. A revision
+    // saved before `excluded` existed says it by having a mean J and still
+    // not being used; `used_in_fit` false alone is also what a monitor with
+    // no analyses yet was saved with.
+    const auto saved_excluded = [](const SavedFlux& s) {
+      if (s.excluded) return *s.excluded;
+      return s.used_in_fit == std::optional<bool>(false) && s.mean_j.has_value();
+    };
+    const bool carried = saved_applies && saved_excluded(*p.saved);
+    fp.excluded = edits.exclude_positions.contains(p.hole) || carried;
+    bool left_out = fp.excluded;
+    std::optional<reduction::PositionMean> mean;
+    if (any_usable) {
+      auto m = reduction::mean_j(analyses, constants, options.mean, options.mean_error);
+      if (m) mean = std::move(*m);
+      else  // every analysis left gave no J: the position takes no part
+        for (const auto& a : analyses)
+          if (!a.omitted) fp.rejected.push_back(a.record_id);
+    }
+    if (!mean) {
+      fp.notes.push_back(PositionNote::NoUsableAnalysis);
+      left_out = true;
+    } else {
+      fp.n = mean->n;
+      fp.mean_j = mean->j;
+      fp.mean_j_err = mean->j_err;
+      fp.mean_j_mswd = mean->mswd;
+      fp.rejected = mean->rejected;
+      if (!fp.rejected.empty()) fp.notes.push_back(PositionNote::AnalysisRejected);
+      if (mean->n > 1 && !mean->mswd_acceptable) fp.notes.push_back(PositionNote::MeanMswdOutsideLimits);
+      if (!left_out) {
+        fp.used_in_fit = true;
+      }
+    }
+    if (left_out && mean) fp.notes.push_back(PositionNote::LeftOutOfFit);
+    // A rejected analysis gives no usable J: either its F gives none (j
+    // stays absent) or the weighted mean refuses a J with no error (j is
+    // kept, so a plot can still draw it).
+    for (auto& ua : fp.analyses)
+      if (!ua.omitted && std::find(fp.rejected.begin(), fp.rejected.end(), ua.record_id) != fp.rejected.end()) {
+        ua.state = AnalysisState::NoJ;
+      }
+  }
+  return fp;
+}
+
+
 Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, const Edits& edits) {
   const std::string where = level_name(in);
 
@@ -106,8 +214,6 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
       return fail(ErrorKind::Config,
                   "flux: hole " + std::to_string(hole) + " is not a position of " + where + " (holes: " + holes + ")");
 
-  const auto constants = in.monitor_set.constants();
-
   LevelFit out;
   out.irradiation = in.irradiation;
   out.level = in.level;
@@ -118,110 +224,11 @@ Result<LevelFit> fit_level(const LevelInputs& in, const FluxOptions& options, co
 
   std::vector<reduction::Monitor> used;
   std::vector<reduction::Point> points;
-  std::vector<std::size_t> used_index;  // into out.positions
 
   for (const auto& p : in.positions) {
-    FittedPosition fp;
-    fp.hole = p.hole;
-    fp.position_uuid = p.position_uuid;
-    fp.identifier = p.identifier;
-    fp.sample = p.sample;
-    fp.x = p.x;
-    fp.y = p.y;
-    fp.monitor = p.monitor;
-    if (p.saved) {
-      fp.saved_j = p.saved->j;
-      fp.saved_j_err = p.saved->j_err;
-      fp.saved_revision = p.saved->revision;
-    }
+    FittedPosition fp = evaluate_position(p, in.monitor_set, options, edits);
     points.push_back({p.x, p.y});
-
-    if (p.monitor) {
-      const bool saved_applies = p.saved && !edits.reset_omits;
-      std::vector<reduction::MonitorAnalysis> analyses;
-      bool any_unreduced = false, any_usable = false;
-      for (const auto& a : p.analyses) {
-        const bool by_edit = edits.omit.contains(a.record_id);
-        const bool by_saved = saved_applies && p.saved->omitted.contains(a.record_id);
-        const bool by_tag = tag_omits(a.tag);
-        bool omitted = by_tag || by_edit || by_saved;
-        if (edits.include.contains(a.record_id)) omitted = false;
-        // Omitted is by rule only: an analysis that did not reduce takes no
-        // part, but a save must not carry it forward as an omission.
-        FittedPosition::UsedAnalysis ua;
-        ua.uuid = a.uuid;
-        ua.record_id = a.record_id;
-        ua.tag = a.tag;
-        ua.omitted = omitted;
-        if (omitted)
-          ua.state = by_edit    ? AnalysisState::OmittedByEdit
-                     : by_saved ? AnalysisState::OmittedBySavedFit
-                                : AnalysisState::OmittedByTag;
-        if (a.f) {
-          if (auto j = reduction::j_of(*a.f, constants)) {
-            ua.j = j->nominal();
-            ua.j_err = j->std_dev();
-          } else if (!omitted) {
-            ua.state = AnalysisState::NoJ;
-          }
-        } else if (!omitted) {
-          ua.state = AnalysisState::NotReduced;
-          ua.reduction_error = a.reduction_error;
-        }
-        fp.analyses.push_back(std::move(ua));
-        if (!a.f) {
-          any_unreduced = true;
-          continue;
-        }
-        analyses.push_back({a.record_id, *a.f, omitted});
-        if (!omitted) any_usable = true;
-      }
-      if (any_unreduced) fp.notes.push_back(PositionNote::AnalysisNotReduced);
-
-      // The user's exclusion, now or carried from the saved fit. A revision
-      // saved before `excluded` existed says it by having a mean J and still
-      // not being used; `used_in_fit` false alone is also what a monitor with
-      // no analyses yet was saved with.
-      const auto saved_excluded = [](const SavedFlux& s) {
-        if (s.excluded) return *s.excluded;
-        return s.used_in_fit == std::optional<bool>(false) && s.mean_j.has_value();
-      };
-      const bool carried = saved_applies && saved_excluded(*p.saved);
-      fp.excluded = edits.exclude_positions.contains(p.hole) || carried;
-      bool left_out = fp.excluded;
-      std::optional<reduction::PositionMean> mean;
-      if (any_usable) {
-        auto m = reduction::mean_j(analyses, constants, options.mean, options.mean_error);
-        if (m) mean = std::move(*m);
-        else  // every analysis left gave no J: the position takes no part
-          for (const auto& a : analyses)
-            if (!a.omitted) fp.rejected.push_back(a.record_id);
-      }
-      if (!mean) {
-        fp.notes.push_back(PositionNote::NoUsableAnalysis);
-        left_out = true;
-      } else {
-        fp.n = mean->n;
-        fp.mean_j = mean->j;
-        fp.mean_j_err = mean->j_err;
-        fp.mean_j_mswd = mean->mswd;
-        fp.rejected = mean->rejected;
-        if (!fp.rejected.empty()) fp.notes.push_back(PositionNote::AnalysisRejected);
-        if (mean->n > 1 && !mean->mswd_acceptable) fp.notes.push_back(PositionNote::MeanMswdOutsideLimits);
-        if (!left_out) {
-          fp.used_in_fit = true;
-          used.push_back({std::to_string(p.hole), {p.x, p.y}, mean->j, mean->j_err});
-        }
-      }
-      if (left_out && mean) fp.notes.push_back(PositionNote::LeftOutOfFit);
-      // A rejected analysis gives no usable J: either its F gives none (j
-      // stays absent) or the weighted mean refuses a J with no error (j is
-      // kept, so a plot can still draw it).
-      for (auto& ua : fp.analyses)
-        if (!ua.omitted && std::find(fp.rejected.begin(), fp.rejected.end(), ua.record_id) != fp.rejected.end()) {
-          ua.state = AnalysisState::NoJ;
-        }
-    }
+    if (fp.used_in_fit) used.push_back({std::to_string(p.hole), {p.x, p.y}, *fp.mean_j, *fp.mean_j_err});
     out.positions.push_back(std::move(fp));
   }
 

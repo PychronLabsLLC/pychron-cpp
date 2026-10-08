@@ -11,6 +11,7 @@
 
 #include "pychron/processing/flux_fit.hpp"
 #include "pychron/processing/options.hpp"
+#include "pychron/processing/scene.hpp"
 
 namespace pychron::processing {
 
@@ -62,5 +63,28 @@ Options to_options(const FluxOptions& options);
 // A field the chosen model does not use keeps its value and is converted too.
 // Error (Config): sd as the error of a fitted surface, the math layer's text.
 Result<FluxOptions> flux_options_from(const Options& options);
+
+// ---- The scene --------------------------------------------------------------
+// J against the hole angle (or against X or Y for a one-dimensional model): every
+// monitor analysis a clickable point (refs are the analysis uuids), the monitor
+// means, the unknowns' predicted J, and the fitted curve with its error band.
+// kind "flux", one graph, one panel "p0", quantity "J". Layers in order: band,
+// line "Fit", points "Analyses", "Monitor means", "Unknowns", then highlight
+// layers (no label). Qt-free; the window only draws it.
+enum class FluxAbscissa { Angle, X, Y };
+FluxAbscissa flux_abscissa(const FluxOptions& options);
+// Angle: degrees(atan2(x, y)), from the +y axis, in (-180, 180]; X and Y: that coordinate.
+double flux_hole_abscissa(FluxAbscissa kind, double x, double y);
+
+struct FluxSceneOptions {
+  std::optional<int> highlight_hole;  // the hole whose analyses, mean or J are drawn on top
+};
+// The curve exists for the least-squares, weighted-mean and mean1d models, from
+// the monitors used in the fit; none (no band, no line) for matching, nearest,
+// bracketing and bracketing1d, or when the model cannot be evaluated along it.
+ScenePtr flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
+// When the level could not be fitted: the analyses and the monitor means only,
+// worked out under the same omission rules as fit_level.
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits);
 
 }  // namespace pychron::processing

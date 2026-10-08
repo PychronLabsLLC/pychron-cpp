@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "flux_level_inputs.hpp"
 #include "pychron/processing/flux_view.hpp"
 
 namespace pp = pychron::processing;
@@ -303,4 +306,309 @@ TEST(FluxSchema, EnabledWhenNamesOnlyKnownKeysAndValues) {
     ++checked;
   }
   EXPECT_GE(checked, 6);
+}
+
+// ---- The scene ---------------------------------------------------------------
+
+namespace {
+
+using pychron::processing::flux_test::level;
+
+const pp::PointLayer* points_labelled(const pp::Scene& scene, const std::string& label) {
+  for (const auto& layer : scene.graphs.at(0).panels.at(0).layers)
+    if (const auto* p = std::get_if<pp::PointLayer>(&layer))
+      if (p->label == label) return p;
+  return nullptr;
+}
+template <typename L>
+const L* first_of(const pp::Scene& scene) {
+  for (const auto& layer : scene.graphs.at(0).panels.at(0).layers)
+    if (const auto* l = std::get_if<L>(&layer)) return l;
+  return nullptr;
+}
+const std::vector<pp::Layer>& layers_of(const pp::Scene& scene) { return scene.graphs.at(0).panels.at(0).layers; }
+
+pp::LevelFit fit_or_die(const pp::LevelInputs& in, const pp::FluxOptions& o, const pp::Edits& e = {}) {
+  auto fit = pp::fit_level(in, o, e);
+  if (!fit) throw std::runtime_error(fit.error().what);
+  return *fit;
+}
+
+// The curve's y at x, by linear interpolation along the line.
+double along(const std::vector<double>& xs, const std::vector<double>& ys, double x) {
+  for (std::size_t i = 1; i < xs.size(); ++i)
+    if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+  return ys.back();
+}
+
+const pp::FittedPosition& hole_of(const pp::LevelFit& fit, int hole) {
+  return *std::find_if(fit.positions.begin(), fit.positions.end(), [&](auto& p) { return p.hole == hole; });
+}
+
+}  // namespace
+
+TEST(FluxScene, AbscissaPerModel) {
+  using K = r::ModelKind;
+  for (const auto kind : {K::Plane, K::Bowl, K::WeightedMean, K::Matching, K::NearestNeighbors, K::Bracketing})
+    EXPECT_EQ(pp::flux_abscissa(options_of(kind)), pp::FluxAbscissa::Angle);
+  for (const auto kind : {K::LeastSquares1D, K::WeightedMean1D, K::Bracketing1D}) {
+    auto o = options_of(kind);
+    o.fit.axis = r::Axis::X;
+    EXPECT_EQ(pp::flux_abscissa(o), pp::FluxAbscissa::X);
+    o.fit.axis = r::Axis::Y;
+    EXPECT_EQ(pp::flux_abscissa(o), pp::FluxAbscissa::Y);
+  }
+}
+
+TEST(FluxScene, HoleAbscissa) {
+  using A = pp::FluxAbscissa;
+  EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 0, 10), 0, 1e-12);
+  EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 10, 0), 90, 1e-12);
+  EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, 0, -10), 180, 1e-12);
+  EXPECT_NEAR(pp::flux_hole_abscissa(A::Angle, -10, 0), -90, 1e-12);
+  EXPECT_EQ(pp::flux_hole_abscissa(A::X, 3, 4), 3);
+  EXPECT_EQ(pp::flux_hole_abscissa(A::Y, 3, 4), 4);
+}
+
+TEST(FluxScene, SceneShape) {
+  const auto in = level();
+  const auto scene = pp::flux_scene(in, fit_or_die(in, options_of(r::ModelKind::Plane)));
+  ASSERT_TRUE(scene);
+  EXPECT_EQ(scene->kind, "flux");
+  ASSERT_EQ(scene->graphs.size(), 1u);
+  ASSERT_EQ(scene->graphs[0].panels.size(), 1u);
+  EXPECT_EQ(scene->graphs[0].panels[0].id, "p0");
+  EXPECT_EQ(scene->graphs[0].panels[0].quantity, "J");
+  EXPECT_EQ(scene->graphs[0].x.title, "Hole angle (degrees)");
+  // band, line, analyses, means, unknowns
+  ASSERT_EQ(layers_of(*scene).size(), 5u);
+  EXPECT_TRUE(std::holds_alternative<pp::BandLayer>(layers_of(*scene)[0]));
+  EXPECT_TRUE(std::holds_alternative<pp::LineLayer>(layers_of(*scene)[1]));
+  EXPECT_EQ(std::get<pp::LineLayer>(layers_of(*scene)[1]).label, "Fit");
+  EXPECT_EQ(std::get<pp::BandLayer>(layers_of(*scene)[0]).fill, (pp::Color{pp::palette_color(0).r, pp::palette_color(0).g,
+                                                                           pp::palette_color(0).b, 48}));
+  EXPECT_NE(points_labelled(*scene, "Analyses"), nullptr);
+  EXPECT_NE(points_labelled(*scene, "Monitor means"), nullptr);
+  EXPECT_NE(points_labelled(*scene, "Unknowns"), nullptr);
+  auto o = options_of(r::ModelKind::LeastSquares1D);
+  o.fit.axis = r::Axis::Y;
+  const auto s1 = pp::flux_scene(in, fit_or_die(in, o));
+  EXPECT_EQ(s1->graphs[0].x.title, "Y");
+  EXPECT_EQ(s1->graphs[0].panels[0].y.title, "J");
+}
+
+TEST(FluxScene, OneAnalysisPointPerAnalysisWithAJ) {
+  auto in = level();
+  const auto o = options_of(r::ModelKind::Plane);
+  auto scene = pp::flux_scene(in, fit_or_die(in, o));
+  const auto* a = points_labelled(*scene, "Analyses");
+  ASSERT_NE(a, nullptr);
+  ASSERT_EQ(a->x.size(), 24u);
+  ASSERT_EQ(a->refs.size(), 24u);
+  std::vector<std::string> uuids;
+  for (const auto& p : in.positions)
+    for (const auto& an : p.analyses) uuids.push_back(an.uuid);
+  std::vector<std::string> refs;
+  for (const auto& ref : a->refs) refs.push_back(ref.analysis);
+  std::sort(uuids.begin(), uuids.end());
+  std::sort(refs.begin(), refs.end());
+  EXPECT_EQ(refs, uuids);
+  EXPECT_EQ(std::count(a->excluded.begin(), a->excluded.end(), true), 0);
+  EXPECT_FALSE(a->excluded_marker.filled);
+  EXPECT_EQ(a->marker.shape, pp::MarkerShape::Circle);
+  EXPECT_EQ(a->marker.size, 4);
+
+  in.positions[0].analyses[1].f.reset();  // not reduced: no J, not drawn
+  pp::Edits e;
+  e.omit.insert("M2-01");
+  scene = pp::flux_scene(in, fit_or_die(in, o, e));
+  a = points_labelled(*scene, "Analyses");
+  ASSERT_EQ(a->x.size(), 23u);
+  EXPECT_EQ(std::count(a->excluded.begin(), a->excluded.end(), true), 1);
+}
+
+TEST(FluxScene, AnalysesSpreadAboutTheirHole) {
+  const auto in = level();
+  const auto scene = pp::flux_scene(in, fit_or_die(in, options_of(r::ModelKind::Plane)));
+  const auto* a = points_labelled(*scene, "Analyses");
+  std::vector<double> at_hole1;  // (10, 0): 90 degrees
+  for (std::size_t i = 0; i < a->x.size(); ++i)
+    if (a->refs[i].analysis.rfind("u-1-", 0) == 0) at_hole1.push_back(a->x[i]);
+  ASSERT_EQ(at_hole1.size(), 3u);
+  EXPECT_NEAR(at_hole1[0], 88, 1e-9);
+  EXPECT_NEAR(at_hole1[1], 90, 1e-9);
+  EXPECT_NEAR(at_hole1[2], 92, 1e-9);
+}
+
+TEST(FluxScene, MeansAndUnknowns) {
+  const auto in = level();
+  pp::Edits e;
+  e.exclude_positions.insert(3);
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane), e);
+  const auto scene = pp::flux_scene(in, fit);
+  const auto* m = points_labelled(*scene, "Monitor means");
+  ASSERT_EQ(m->x.size(), 8u);
+  ASSERT_EQ(m->y_err.size(), 8u);
+  EXPECT_EQ(m->marker.shape, pp::MarkerShape::Diamond);
+  EXPECT_EQ(m->marker.size, 8);
+  std::size_t excluded = 0;
+  for (std::size_t i = 0; i < 8; ++i) {
+    const auto& p = hole_of(fit, static_cast<int>(i) + 1);
+    EXPECT_EQ(m->y[i], *p.mean_j);
+    EXPECT_EQ(m->y_err[i], *p.mean_j_err);
+    EXPECT_EQ(bool(m->excluded[i]), !p.used_in_fit);
+    excluded += m->excluded[i];
+  }
+  EXPECT_EQ(excluded, 1u);
+  EXPECT_TRUE(m->excluded[2]);
+
+  const auto* u = points_labelled(*scene, "Unknowns");
+  ASSERT_EQ(u->x.size(), 4u);
+  ASSERT_EQ(u->y_err.size(), 4u);
+  EXPECT_EQ(u->marker.shape, pp::MarkerShape::Square);
+  EXPECT_EQ(u->marker.size, 6);
+  for (std::size_t i = 0; i < 4; ++i) {
+    const auto& p = hole_of(fit, 101 + static_cast<int>(i));
+    EXPECT_EQ(u->y[i], p.j);
+    EXPECT_EQ(u->y_err[i], p.j_err);
+  }
+}
+
+TEST(FluxScene, TheCurvePassesThroughThePredictions) {
+  const auto in = level();
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane));
+  const auto scene = pp::flux_scene(in, fit);
+  const auto* line = first_of<pp::LineLayer>(*scene);
+  const auto* band = first_of<pp::BandLayer>(*scene);
+  ASSERT_NE(line, nullptr);
+  ASSERT_NE(band, nullptr);
+  ASSERT_EQ(line->x.size(), 181u);
+  ASSERT_EQ(band->x.size(), 181u);
+  EXPECT_EQ(line->x.front(), -180);
+  EXPECT_EQ(line->x.back(), 180);
+  for (int hole = 1; hole <= 8; ++hole) {
+    const auto& p = hole_of(fit, hole);
+    const double angle = pp::flux_hole_abscissa(pp::FluxAbscissa::Angle, p.x, p.y);
+    // The curve has a point every 2 degrees: exact on those, within the
+    // chord's sag between them.
+    const bool on_grid = std::fabs(angle / 2 - std::round(angle / 2)) < 1e-9;
+    const double tol = on_grid ? 1e-9 : 1e-5;
+    EXPECT_NEAR(along(line->x, line->y, angle), p.j, p.j * tol) << hole;
+    EXPECT_NEAR(along(band->x, band->low, angle), p.j - p.j_err, p.j * tol) << hole;
+    EXPECT_NEAR(along(band->x, band->high, angle), p.j + p.j_err, p.j * tol) << hole;
+  }
+}
+
+TEST(FluxScene, WhichModelsHaveACurve) {
+  using K = r::ModelKind;
+  const auto ring = level();
+  const auto mixed = level(flux_golden::kMixed);
+  const auto has_curve = [](const pp::LevelInputs& in, K kind) {
+    const auto scene = pp::flux_scene(in, fit_or_die(in, options_of(kind)));
+    return std::pair{first_of<pp::LineLayer>(*scene) != nullptr, first_of<pp::BandLayer>(*scene) != nullptr};
+  };
+  for (const auto kind : {K::Plane, K::WeightedMean, K::LeastSquares1D, K::WeightedMean1D})
+    EXPECT_EQ(has_curve(ring, kind), (std::pair{true, true})) << int(kind);
+  EXPECT_EQ(has_curve(mixed, K::Bowl), (std::pair{true, true}));
+  for (const auto kind : {K::Matching, K::NearestNeighbors, K::Bracketing, K::Bracketing1D})
+    EXPECT_EQ(has_curve(ring, kind), (std::pair{false, false})) << int(kind);
+
+  // A one-dimensional curve runs along the coordinate over the whole tray.
+  auto o = options_of(K::LeastSquares1D);
+  o.fit.axis = r::Axis::X;
+  const auto scene = pp::flux_scene(ring, fit_or_die(ring, o));
+  const auto* line = first_of<pp::LineLayer>(*scene);
+  ASSERT_EQ(line->x.size(), 181u);
+  EXPECT_NEAR(line->x.front(), -10, 1e-9);
+  EXPECT_NEAR(line->x.back(), 10, 1e-9);
+}
+
+TEST(FluxScene, Highlight) {
+  const auto in = level();
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane));
+  const auto plain = pp::flux_scene(in, fit);
+  pp::FluxSceneOptions so;
+  so.highlight_hole = 3;
+  const auto scene = pp::flux_scene(in, fit, so);
+  ASSERT_EQ(layers_of(*scene).size(), layers_of(*plain).size() + 2);
+  const auto& a = std::get<pp::PointLayer>(layers_of(*scene)[layers_of(*plain).size()]);
+  const auto& m = std::get<pp::PointLayer>(layers_of(*scene)[layers_of(*plain).size() + 1]);
+  EXPECT_TRUE(a.label.empty());
+  EXPECT_TRUE(m.label.empty());
+  ASSERT_EQ(a.refs.size(), 3u);
+  for (const auto& ref : a.refs) EXPECT_EQ(ref.analysis.rfind("u-3-", 0), 0u);
+  ASSERT_EQ(m.x.size(), 1u);
+  EXPECT_EQ(m.y[0], *hole_of(fit, 3).mean_j);
+  EXPECT_EQ(m.marker.color, pp::palette_color(4));
+}
+
+TEST(FluxScene, WithoutAFitTheDataIsStillThere) {
+  auto in = level();
+  in.positions[3].analyses[0].tag = "outlier";
+  const auto o = options_of(r::ModelKind::Plane);
+  pp::Edits e;
+  e.omit.insert("M2-02");
+  const auto with = pp::flux_scene(in, fit_or_die(in, o, e));
+  const auto without = pp::flux_scene(in, o, e);
+  ASSERT_EQ(layers_of(*without).size(), 2u);
+  for (const char* label : {"Analyses", "Monitor means"}) {
+    const auto* a = points_labelled(*with, label);
+    const auto* b = points_labelled(*without, label);
+    ASSERT_NE(b, nullptr) << label;
+    EXPECT_EQ(a->x, b->x) << label;
+    EXPECT_EQ(a->y, b->y) << label;
+    EXPECT_EQ(a->y_err, b->y_err) << label;
+    EXPECT_EQ(a->excluded, b->excluded) << label;
+    EXPECT_EQ(a->tooltips, b->tooltips) << label;
+    ASSERT_EQ(a->refs.size(), b->refs.size());
+  }
+  EXPECT_EQ(without->graphs[0].x.title, "Hole angle (degrees)");
+}
+
+TEST(FluxScene, TooltipsSayWhy) {
+  auto in = level();
+  in.positions[1].analyses[1].tag = "outlier";  // M2-02
+  in.positions[2].analyses[0].f.reset();
+  pp::Edits e;
+  e.omit.insert("M1-01");
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane), e);
+  const auto scene = pp::flux_scene(in, fit);
+  const auto* a = points_labelled(*scene, "Analyses");
+  const auto tip = [&](const std::string& uuid) {
+    for (std::size_t i = 0; i < a->refs.size(); ++i)
+      if (a->refs[i].analysis == uuid) return a->tooltips[i];
+    return std::string("<none>");
+  };
+  const auto j = pp::flux_j_text(*hole_of(fit, 2).analyses[1].j);
+  const auto err = pp::flux_j_text(*hole_of(fit, 2).analyses[1].j_err);
+  EXPECT_EQ(tip("u-2-2"), "M2-02\nJ " + j + " \xC2\xB1 " + err + "\nomitted (tag outlier)");
+  EXPECT_NE(tip("u-1-1").find("omitted (here)"), std::string::npos);
+  EXPECT_EQ(tip("u-3-1"), "<none>");  // not reduced: no J, not drawn
+  const std::string used = tip("u-2-1");
+  EXPECT_EQ(used.find("omitted"), std::string::npos);
+  EXPECT_EQ(std::count(used.begin(), used.end(), '\n'), 1);
+
+  const auto* m = points_labelled(*scene, "Monitor means");
+  const auto& p1 = hole_of(fit, 1);
+  EXPECT_EQ(m->tooltips[0], "hole 1 \xC2\xB7 61\nn " + std::to_string(p1.n) + " \xC2\xB7 mean J " +
+                                pp::flux_j_text(*p1.mean_j) + " \xC2\xB1 " + pp::flux_j_text(*p1.mean_j_err) +
+                                "\nMSWD " + pp::flux_pct_text(*p1.mean_j_mswd));
+  const auto* u = points_labelled(*scene, "Unknowns");
+  const auto& u0 = hole_of(fit, 101);
+  EXPECT_EQ(u->tooltips[0], "hole 101 \xC2\xB7 7101\npredicted J " + pp::flux_j_text(u0.j) + " \xC2\xB1 " +
+                                pp::flux_j_text(u0.j_err));
+}
+
+TEST(FluxScene, UnknownTooltipShowsTheDeviationFromASavedJ) {
+  auto in = level();
+  in.positions.back().saved = pp::SavedFlux{};
+  in.positions.back().saved->j = 1.0e-3;
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane));
+  const auto& p = fit.positions.back();
+  ASSERT_TRUE(p.dev_percent);
+  const auto scene = pp::flux_scene(in, fit);
+  const auto* u = points_labelled(*scene, "Unknowns");
+  EXPECT_NE(u->tooltips.back().find("\ndev " + pp::flux_pct_text(*p.dev_percent) + " %"), std::string::npos)
+      << u->tooltips.back();
+  EXPECT_EQ(u->tooltips.front().find("dev"), std::string::npos);
 }

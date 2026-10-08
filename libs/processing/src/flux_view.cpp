@@ -1,7 +1,9 @@
 #include "pychron/processing/flux_view.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <sstream>
 
 #include "schema_builder.hpp"
@@ -294,6 +296,231 @@ Result<FluxOptions> flux_options_from(const Options& options) {
   if (r::is_least_squares(o.fit.kind) && o.fit.error == r::MeanErrorKind::Sd)
     return fail(ErrorKind::Config, "flux: sd is not an error kind of a fitted surface");
   return o;
+}
+
+// ---- The scene --------------------------------------------------------------
+
+FluxAbscissa flux_abscissa(const FluxOptions& options) {
+  switch (options.fit.kind) {
+    case r::ModelKind::LeastSquares1D:
+    case r::ModelKind::WeightedMean1D:
+    case r::ModelKind::Bracketing1D: return options.fit.axis == r::Axis::Y ? FluxAbscissa::Y : FluxAbscissa::X;
+    default: return FluxAbscissa::Angle;
+  }
+}
+
+double flux_hole_abscissa(FluxAbscissa kind, double x, double y) {
+  constexpr double kPi = 3.14159265358979323846;
+  switch (kind) {
+    case FluxAbscissa::X: return x;
+    case FluxAbscissa::Y: return y;
+    case FluxAbscissa::Angle: return std::atan2(x, y) * 180.0 / kPi;
+  }
+  return x;
+}
+
+namespace {
+
+constexpr int kCurvePoints = 181;
+
+std::string analysis_tooltip(const FittedPosition::UsedAnalysis& a) {
+  std::string t = a.record_id + "\nJ " + flux_j_text(*a.j) + " \xC2\xB1 " + flux_j_text(a.j_err.value_or(0.0));
+  switch (a.state) {
+    case AnalysisState::Used: break;
+    case AnalysisState::OmittedByTag: t += "\nomitted (tag " + a.tag + ")"; break;
+    case AnalysisState::OmittedBySavedFit: t += "\nomitted (saved fit)"; break;
+    case AnalysisState::OmittedByEdit: t += "\nomitted (here)"; break;
+    case AnalysisState::NotReduced: t += "\nnot reduced"; break;
+    case AnalysisState::NoJ: t += "\nno J"; break;
+  }
+  return t;
+}
+
+std::string hole_head(const FittedPosition& p) { return "hole " + std::to_string(p.hole) + " \xC2\xB7 " + p.identifier; }
+
+MarkerStyle marker(MarkerShape shape, double size, const Color& color) {
+  MarkerStyle m;
+  m.shape = shape;
+  m.size = size;
+  m.color = color;
+  return m;
+}
+
+PointLayer layer_of(std::string label, MarkerStyle style) {
+  PointLayer l;
+  l.label = std::move(label);
+  l.marker = style;
+  l.excluded_marker = style;
+  l.excluded_marker.filled = false;
+  return l;
+}
+
+bool has_curve(r::ModelKind kind) {
+  switch (kind) {
+    case r::ModelKind::Plane:
+    case r::ModelKind::Bowl:
+    case r::ModelKind::WeightedMean:
+    case r::ModelKind::LeastSquares1D:
+    case r::ModelKind::WeightedMean1D: return true;
+    default: return false;
+  }
+}
+
+// The fit's band and line, from the monitors used; nothing when the model has
+// no curve or cannot be evaluated along it.
+void add_curve(Panel& panel, const LevelFit& fit, FluxAbscissa kind, double lo, double hi) {
+  if (!has_curve(fit.options.fit.kind)) return;
+  std::vector<r::Monitor> monitors;
+  double radius = 0;
+  for (const auto& p : fit.positions) {
+    if (!p.monitor || !p.used_in_fit || !p.mean_j || !p.mean_j_err) continue;
+    monitors.push_back({std::to_string(p.hole), {p.x, p.y}, *p.mean_j, *p.mean_j_err});
+    radius += std::hypot(p.x, p.y);
+  }
+  if (monitors.empty()) return;
+  radius /= static_cast<double>(monitors.size());
+
+  std::vector<double> xs;
+  std::vector<r::Point> at;
+  for (int i = 0; i < kCurvePoints; ++i) {
+    const double t = static_cast<double>(i) / (kCurvePoints - 1);
+    if (kind == FluxAbscissa::Angle) {
+      const double a = -180.0 + 360.0 * t;
+      const double rad = a * 3.14159265358979323846 / 180.0;
+      xs.push_back(a);
+      at.push_back({radius * std::sin(rad), radius * std::cos(rad)});
+    } else {
+      const double c = lo + (hi - lo) * t;
+      xs.push_back(c);
+      at.push_back(kind == FluxAbscissa::X ? r::Point{c, 0.0} : r::Point{0.0, c});
+    }
+  }
+  const auto curve = r::fit_flux(monitors, at, fit.options.fit);
+  if (!curve) return;
+
+  const Color base = palette_color(0);
+  BandLayer band;
+  band.fill = {base.r, base.g, base.b, 48};
+  band.x = xs;
+  LineLayer line;
+  line.label = "Fit";
+  line.style.color = base;
+  line.style.width = 2.0;
+  line.x = xs;
+  for (const auto& v : curve->at) {
+    band.low.push_back(v.j - v.j_err);
+    band.high.push_back(v.j + v.j_err);
+    line.y.push_back(v.j);
+  }
+  panel.layers.emplace_back(std::move(band));
+  panel.layers.emplace_back(std::move(line));
+}
+
+ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const LevelFit* fit,
+                          const FluxOptions& options, const FluxSceneOptions& so) {
+  const FluxAbscissa kind = flux_abscissa(options);
+  double lo = 0, hi = 0;
+  bool first = true;
+  for (const auto& p : positions) {
+    const double c = flux_hole_abscissa(kind == FluxAbscissa::Angle ? FluxAbscissa::X : kind, p.x, p.y);
+    lo = first ? c : std::min(lo, c);
+    hi = first ? c : std::max(hi, c);
+    first = false;
+  }
+  const double spread_range = kind == FluxAbscissa::Angle ? 100.0 : (hi - lo);  // 4 % of this
+
+  Scene scene;
+  scene.kind = "flux";
+  Graph graph;
+  graph.x.title = kind == FluxAbscissa::Angle ? "Hole angle (degrees)" : kind == FluxAbscissa::X ? "X" : "Y";
+  Panel panel;
+  panel.id = "p0";
+  panel.quantity = "J";
+  panel.y.title = "J";
+
+  if (fit) add_curve(panel, *fit, kind, lo, hi);
+
+  const Color c_analyses = palette_color(1), c_means = palette_color(2), c_unknowns = palette_color(3),
+              c_highlight = palette_color(4);
+  PointLayer analyses = layer_of("Analyses", marker(MarkerShape::Circle, 4, c_analyses));
+  PointLayer means = layer_of("Monitor means", marker(MarkerShape::Diamond, 8, c_means));
+  PointLayer unknowns = layer_of("Unknowns", marker(MarkerShape::Square, 6, c_unknowns));
+  PointLayer h_analyses = layer_of("", marker(MarkerShape::Circle, 9, c_highlight));
+  PointLayer h_mean = layer_of("", marker(MarkerShape::Diamond, 13, c_highlight));
+  PointLayer h_unknown = layer_of("", marker(MarkerShape::Square, 11, c_highlight));
+  for (auto* l : {&h_analyses, &h_mean, &h_unknown}) {
+    l->marker.filled = false;
+    l->excluded_marker.filled = false;
+  }
+
+  const auto push_point = [](PointLayer& l, double x, double y, double y_err, PointRef ref, bool excluded,
+                             std::string tip) {
+    l.x.push_back(x);
+    l.y.push_back(y);
+    l.y_err.push_back(y_err);
+    l.refs.push_back(std::move(ref));
+    l.excluded.push_back(excluded);
+    l.tooltips.push_back(std::move(tip));
+  };
+
+  for (const auto& p : positions) {
+    const double at = flux_hole_abscissa(kind, p.x, p.y);
+    const bool highlighted = so.highlight_hole && *so.highlight_hole == p.hole;
+    if (!p.monitor) {
+      if (!fit) continue;
+      std::string tip = hole_head(p) + "\npredicted J " + flux_j_text(p.j) + " \xC2\xB1 " + flux_j_text(p.j_err);
+      if (p.dev_percent) tip += "\ndev " + flux_pct_text(*p.dev_percent) + " %";
+      push_point(unknowns, at, p.j, p.j_err, {}, false, tip);
+      if (highlighted) push_point(h_unknown, at, p.j, p.j_err, {}, false, tip);
+      continue;
+    }
+
+    // Every analysis with a J, about the hole in record-id order.
+    std::vector<const FittedPosition::UsedAnalysis*> drawn;
+    for (const auto& a : p.analyses)
+      if (a.j) drawn.push_back(&a);
+    std::sort(drawn.begin(), drawn.end(), [](auto* a, auto* b) { return a->record_id < b->record_id; });
+    const double n = static_cast<double>(drawn.size());
+    const double step = (kind == FluxAbscissa::Angle ? 4.0 : spread_range * 0.04) / std::max(n - 1.0, 1.0);
+    for (std::size_t i = 0; i < drawn.size(); ++i) {
+      const auto& a = *drawn[i];
+      const double x = at + (static_cast<double>(i) - (n - 1.0) / 2.0) * step;
+      const std::string tip = analysis_tooltip(a);
+      const bool out = a.state != AnalysisState::Used;
+      push_point(analyses, x, *a.j, a.j_err.value_or(0.0), PointRef{a.uuid}, out, tip);
+      if (highlighted) push_point(h_analyses, x, *a.j, a.j_err.value_or(0.0), PointRef{a.uuid}, out, tip);
+    }
+
+    if (!p.mean_j) continue;
+    const double err = p.mean_j_err.value_or(0.0);
+    const std::string tip = hole_head(p) + "\nn " + std::to_string(p.n) + " \xC2\xB7 mean J " + flux_j_text(*p.mean_j) +
+                            " \xC2\xB1 " + flux_j_text(err) + "\nMSWD " + flux_pct_text(p.mean_j_mswd);
+    push_point(means, at, *p.mean_j, err, {}, !p.used_in_fit, tip);
+    if (highlighted) push_point(h_mean, at, *p.mean_j, err, {}, !p.used_in_fit, tip);
+  }
+
+  panel.layers.emplace_back(std::move(analyses));
+  panel.layers.emplace_back(std::move(means));
+  if (fit) panel.layers.emplace_back(std::move(unknowns));
+  for (auto* l : {&h_analyses, &h_mean, &h_unknown})
+    if (!l->x.empty()) panel.layers.emplace_back(std::move(*l));
+
+  graph.panels.push_back(std::move(panel));
+  scene.graphs.push_back(std::move(graph));
+  return std::make_shared<const Scene>(std::move(scene));
+}
+
+}  // namespace
+
+ScenePtr flux_scene(const LevelInputs& /*inputs*/, const LevelFit& fit, const FluxSceneOptions& options) {
+  return build_flux_scene(fit.positions, &fit, fit.options, options);
+}
+
+ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits) {
+  std::vector<FittedPosition> positions;
+  positions.reserve(inputs.positions.size());
+  for (const auto& p : inputs.positions) positions.push_back(evaluate_position(p, inputs.monitor_set, options, edits));
+  return build_flux_scene(positions, nullptr, options, {});
 }
 
 }  // namespace pychron::processing
