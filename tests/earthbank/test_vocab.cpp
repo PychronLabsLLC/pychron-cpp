@@ -394,6 +394,32 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   expect_match(match("Hb3gr biotite 1081 Ma"), Kind::None, "", "a biotite, by a hornblende's name");
   expect_match(match("WA1ms sanidine 2613 Ma"), Kind::None, "", "a sanidine, by a muscovite's name");
   expect_match(match("FC-2 sanidine and biotite 28.201 Ma"), Kind::None, "", "two minerals");
+  // A material the list has no monitor of at all, and the short forms a lab
+  // writes: the same.
+  expect_match(match("FC-2 plagioclase 28.201 Ma"), Kind::None, "", "a plagioclase");
+  expect_match(match("Fish Canyon K-feldspar 28.201 Ma"), Kind::None, "", "a feldspar");
+  expect_match(match("Fish Canyon kspar 28.201 Ma"), Kind::None, "", "likewise");
+  expect_match(match("FCT bt 28.201 Ma"), Kind::None, "", "a biotite, in short");
+  expect_match(match("FC-2 bio 28.201 Ma"), Kind::None, "", "likewise");
+  expect_match(match("Fish Canyon biotites 28.201 Ma"), Kind::None, "", "biotites are biotite");
+  expect_match(match("Fish Canyon plagioclases 28.201 Ma"), Kind::None, "", "and a plural of the others");
+  expect_match(match("FC-2 whole rock 28.201 Ma"), Kind::None, "", "two words");
+  expect_match(match("FC-2 Whole-Rock 28.201 Ma"), Kind::None, "", "two words, hyphened");
+  expect_match(match("FC-2 wholerock 28.201 Ma"), Kind::None, "", "or one");
+  expect_match(match("FC-2 groundmass 28.201 Ma"), Kind::None, "", "groundmass");
+  expect_match(match("GA-1550 hbl 99.44 Ma"), Kind::None, "", "a hornblende, by a biotite's name");
+  expect_match(match("Hb3gr ms 1081 Ma"), Kind::None, "", "a muscovite, by a hornblende's name");
+  expect_match(match("FC-2 san plag 28.201 Ma"), Kind::None, "", "two, one of them the entry's");
+  expect_match(match("FC-2 rock 28.201 Ma"), Kind::Respelled, kuiper, "`rock` alone is no material");
+  // A short form or a plural of the entry's own mineral is that mineral.
+  expect_match(match("FC-2 san 28.201 Ma"), Kind::Respelled, kuiper, "san is sanidine");
+  expect_match(match("FCs sanidines 28.201 Ma"), Kind::Respelled, kuiper, "sanidines are sanidine");
+  expect_match(match("GA-1550 bt 99.738 Ma"), Kind::Respelled,
+               "Mt Domedary Biotite (GA-1550) using Renne et al. 2011 (99.738 Ma)", "bt is biotite");
+  expect_match(match("Hb3gr hbl 1081 Ma"), Kind::Respelled, "Hornblende (Hb3gr) using Renne et al. 2011 (1081 Ma)",
+               "hbl is hornblende");
+  expect_match(match("WA1ms musc 2613 Ma"), Kind::Respelled,
+               "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "musc is muscovite");
   // The same mineral is no obstacle, in the list's misspelling either.
   expect_match(match("FC-2 sanidine 28.201 Ma"), Kind::Respelled, kuiper, "the entry's mineral");
   expect_match(match("TCs sanidine 28.447 Ma"), Kind::Respelled,
@@ -449,6 +475,62 @@ TEST(Vocab, TheMonitorMineralsAreOfTheTemplatesList) {
   EXPECT_TRUE(std::any_of(minerals.begin(), minerals.end(), [](const MonitorMineral& m) {
     return m.word == "saniditine" && m.mineral == "sanidine";
   }));
+}
+
+// The words a lab writes for a material that are not the list's own: none of
+// them, nor its plural, is a word of an alias or of an entry, where it would
+// be taken for a material and is none. (The list's own mineral words are held
+// to the list by the test above.)
+TEST(Vocab, TheOtherMaterialWordsAreNoWordOfAnAliasOrAnEntry) {
+  const auto others = flux_monitor_other_materials();
+  ASSERT_FALSE(others.empty());
+  const auto words_of = [](std::string_view text) {
+    std::vector<std::string> out(1);
+    for (const char c : text) {
+      if (std::isalnum(static_cast<unsigned char>(c)) != 0) {
+        out.back() += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      } else if (!out.back().empty()) {
+        out.emplace_back();
+      }
+    }
+    if (out.back().empty()) out.pop_back();
+    return out;
+  };
+  std::set<std::string> taken;
+  for (const MonitorAlias& alias : flux_monitor_aliases()) {
+    for (const std::string& word : words_of(alias.alias)) taken.insert(word);
+    for (const std::string& word : words_of(alias.listed)) taken.insert(word);
+  }
+  for (const std::string& entry : template_monitors()) {
+    for (const std::string& word : words_of(entry)) taken.insert(word);
+  }
+  std::set<std::string> listed;
+  for (const MonitorMineral& mineral : flux_monitor_minerals()) listed.insert(std::string(mineral.mineral));
+  for (const MonitorMineral& other : others) {
+    const std::vector<std::string> words = words_of(other.word);
+    ASSERT_FALSE(words.empty());
+    EXPECT_EQ(other.word.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), std::string_view::npos) << other.word;
+    // A term of one word must not be taken; one of two is told by its run,
+    // and neither `whole` nor `rock` is in an entry all the same.
+    for (const std::string& word : words) {
+      EXPECT_FALSE(taken.contains(word)) << other.word;
+      EXPECT_FALSE(taken.contains(word + "s")) << other.word << ", in the plural";
+    }
+    // A short form of a mineral the list has is that mineral; any other
+    // word is of a material the list has not.
+    const bool of_the_list = listed.contains(std::string(other.mineral));
+    const bool is_short = other.word == "san" || other.word == "bt" || other.word == "bio" || other.word == "hbl" ||
+                          other.word == "ms" || other.word == "musc";
+    EXPECT_EQ(of_the_list, is_short) << other.word << " -> " << other.mineral;
+  }
+  // Every word the lab was said to write.
+  for (const char* word :
+       {"plagioclase", "feldspar", "kfeldspar", "kspar", "orthoclase", "anorthoclase", "adularia", "microcline",
+        "amphibole", "phlogopite", "sericite", "glauconite", "alunite", "jarosite", "glass", "groundmass",
+        "whole rock", "wholerock", "san", "bt", "bio", "hbl", "ms", "musc", "plag", "kfs"}) {
+    EXPECT_TRUE(std::any_of(others.begin(), others.end(), [&](const MonitorMineral& m) { return m.word == word; }))
+        << word;
+  }
 }
 
 // The table of pychron's names for monitors is of this list: each name it

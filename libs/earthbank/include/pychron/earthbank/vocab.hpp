@@ -114,8 +114,11 @@ ListMatch match_list_entry(std::string_view value, std::span<const std::string> 
 //     the entry's abbreviation in parentheses.
 //   - either way, a mineral the name says must be the entry's
 //     (flux_monitor_minerals()): `Fish Canyon biotite 28.201 Ma` is not the
-//     Fish Canyon sanidine of that age, whatever else of it fits. A name that
-//     says no mineral is held to none. And a name that holds the designation
+//     Fish Canyon sanidine of that age, whatever else of it fits. So with a
+//     material the list has no monitor of, and the short forms a lab writes
+//     (flux_monitor_other_materials(): `plagioclase`, `K-feldspar`, `bt`),
+//     and with a plural (`biotites`); `san` and `sanidines` are sanidine. A
+//     name that says no mineral is held to none. And a name that holds the designation
 //     of a split the list has not (`FCT-3`, the tuff's biotite) matches
 //     nothing, though part of it is another monitor's name.
 // One entry left: Respelled. Several: Ambiguous. None: None.
@@ -138,6 +141,11 @@ struct MonitorMineral {
   std::string_view word, mineral;
 };
 std::span<const MonitorMineral> flux_monitor_minerals();
+// Words for a material that are not the list's: the short forms of its
+// minerals (`san`, `bt`, `hbl`, `ms`), each with the mineral it is, and
+// materials no entry is of (`plagioclase`, `feldspar`, `whole rock`). A word
+// here, or its plural, is no word of an alias or an entry; a test holds that.
+std::span<const MonitorMineral> flux_monitor_other_materials();
 
 // Terms the mapping writes that never vary, spelled as the template's lists
 // have them: the unit of every intensity, the unit of every uncertainty

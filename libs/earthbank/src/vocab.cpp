@@ -285,6 +285,26 @@ constexpr MonitorMineral kMonitorMinerals[] = {
     {"hornblende", "hornblende"}, {"muscovite", "muscovite"},
 };
 
+// Words a lab writes for the material of a monitor that are not words of the
+// list: the short forms of the list's four minerals, which are those
+// minerals, and materials the list has no monitor of, which are no entry's.
+// `K-feldspar` is `k`, `feldspar` as words and is told by the second. A
+// term of two words is told by the two together (`whole rock`, `whole-rock`).
+// None of these is a word of an alias or of an entry (a test holds that).
+constexpr MonitorMineral kOtherMaterials[] = {
+    {"san", "sanidine"},          {"bt", "biotite"},         {"bio", "biotite"},
+    {"hbl", "hornblende"},        {"ms", "muscovite"},       {"musc", "muscovite"},
+    {"plagioclase", "plagioclase"}, {"plag", "plagioclase"},
+    {"feldspar", "feldspar"},     {"kfeldspar", "feldspar"}, {"kspar", "feldspar"},   {"kfs", "feldspar"},
+    {"orthoclase", "orthoclase"}, {"anorthoclase", "anorthoclase"},
+    {"adularia", "adularia"},     {"microcline", "microcline"},
+    {"amphibole", "amphibole"},   {"phlogopite", "phlogopite"},
+    {"sericite", "sericite"},     {"glauconite", "glauconite"},
+    {"alunite", "alunite"},       {"jarosite", "jarosite"},
+    {"glass", "glass"},           {"groundmass", "groundmass"},
+    {"whole rock", "whole rock"}, {"wholerock", "whole rock"},
+};
+
 // The words of `text`: runs of ASCII letters and digits (and of other bytes
 // that are not ASCII), lower case. `FC-2` is `fc`, `2`.
 std::vector<std::string> words_of(std::string_view text) {
@@ -312,12 +332,25 @@ bool has_run(const std::vector<std::string>& all, const std::vector<std::string>
   return false;
 }
 
-// The minerals `words` say, each once, sorted.
+// `words` say `term` (one word or a run of them), in the singular or with an
+// `s` after it: `biotites` are biotite.
+bool says(const std::vector<std::string>& words, std::string_view term) {
+  std::vector<std::string> run = words_of(term);
+  if (has_run(words, run)) return true;
+  if (run.empty()) return false;
+  run.back() += 's';
+  return has_run(words, run);
+}
+
+// The minerals and other materials `words` say, each once, sorted.
 std::vector<std::string_view> minerals_of(const std::vector<std::string>& words) {
   std::vector<std::string_view> out;
-  for (const MonitorMineral& mineral : kMonitorMinerals) {
-    if (std::find(words.begin(), words.end(), mineral.word) == words.end()) continue;
-    if (std::find(out.begin(), out.end(), mineral.mineral) == out.end()) out.push_back(mineral.mineral);
+  for (const std::span<const MonitorMineral> table :
+       {std::span<const MonitorMineral>(kMonitorMinerals), std::span<const MonitorMineral>(kOtherMaterials)}) {
+    for (const MonitorMineral& mineral : table) {
+      if (!says(words, mineral.word)) continue;
+      if (std::find(out.begin(), out.end(), mineral.mineral) == out.end()) out.push_back(mineral.mineral);
+    }
   }
   std::sort(out.begin(), out.end());
   return out;
@@ -436,6 +469,7 @@ std::vector<std::vector<std::string>> abbreviations_of(std::string_view entry) {
 std::span<const MonitorAlias> flux_monitor_aliases() { return kMonitorAliases; }
 
 std::span<const MonitorMineral> flux_monitor_minerals() { return kMonitorMinerals; }
+std::span<const MonitorMineral> flux_monitor_other_materials() { return kOtherMaterials; }
 
 ListMatch match_list_entry(std::string_view value, std::span<const std::string> entries) {
   const std::string_view wanted = trimmed(value);
@@ -483,7 +517,8 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
   for (const std::string& entry : entries) {
     if (listed_age(entry) != query.age) continue;
     const std::vector<std::string> words = words_of(entry);
-    // Another mineral is another monitor, whatever else of the name fits.
+    // Another mineral or material is another monitor, whatever else of the
+    // name fits.
     if (const auto listed = minerals_of(words); !said.empty() && !listed.empty() && said != listed) continue;
     bool named = false;
     if (!marks.empty()) {
