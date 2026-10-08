@@ -323,6 +323,20 @@ std::optional<JobStats> Scheduler::stats(JobId id) const {
   return it->second->stats;
 }
 
+std::vector<NamedJobStats> Scheduler::job_stats() const {
+  std::vector<NamedJobStats> out;
+  {
+    std::lock_guard lock(mutex_);
+    out.reserve(jobs_.size());
+    for (const auto& [id, job] : jobs_) {
+      if (job->kind != Kind::OneShot) out.push_back(NamedJobStats{job->name, job->stats});
+    }
+  }
+  std::stable_sort(out.begin(), out.end(),
+                   [](const NamedJobStats& a, const NamedJobStats& b) { return a.name < b.name; });
+  return out;
+}
+
 std::size_t Scheduler::job_count() const {
   std::lock_guard lock(mutex_);
   return jobs_.size();

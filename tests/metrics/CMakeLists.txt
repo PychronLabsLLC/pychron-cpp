@@ -2,6 +2,7 @@ add_executable(pychron_metrics_tests
   test_registry.cpp
   test_render.cpp
   test_server.cpp
+  test_scheduler_metrics.cpp
 )
 
 target_link_libraries(pychron_metrics_tests PRIVATE pychron::metrics asio::asio GTest::gtest_main)

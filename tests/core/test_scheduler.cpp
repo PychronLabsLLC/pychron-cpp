@@ -597,3 +597,58 @@ TEST_F(SchedulerVirtual, RunPendingInlineStillWorks) {
   }
   EXPECT_EQ(runs, 5);
 }
+
+// ---- job_stats(): what the metrics collector reads --------------------------
+
+TEST(Scheduler, JobStatsListsPeriodicJobsByName) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  ASSERT_TRUE(s.every("b", 1s, [] {}).has_value());
+  ASSERT_TRUE(s.scan("a", 1s, [] { return Result<Sample>(Sample{"a", {}, 1.0}); }).has_value());
+  ASSERT_TRUE(s.watchdog("w", 10s, [] {}).has_value());
+  ASSERT_TRUE(s.after("once", 1s, [] {}).has_value());
+  for (int i = 0; i < 3; ++i) {
+    clock.advance(1s);
+    s.run_pending();
+  }
+  const std::vector<NamedJobStats> stats = s.job_stats();
+  ASSERT_EQ(stats.size(), 3u);
+  EXPECT_EQ(stats[0].name, "a");
+  EXPECT_EQ(stats[1].name, "b");
+  EXPECT_EQ(stats[2].name, "w");
+  EXPECT_EQ(stats[0].stats.runs, 3u);
+  EXPECT_EQ(stats[1].stats.runs, 3u);
+}
+
+TEST(Scheduler, JobStatsLeavesOutAOneShotStillWaiting) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  ASSERT_TRUE(s.after("once", 10s, [] {}).has_value());
+  EXPECT_TRUE(s.job_stats().empty());
+}
+
+TEST(Scheduler, JobStatsCountsFailures) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  ASSERT_TRUE(s.scan("ig1", 1s, []() -> Result<Sample> { return fail(ErrorKind::Timeout, "no reply"); }).has_value());
+  for (int i = 0; i < 2; ++i) {
+    clock.advance(1s);
+    s.run_pending();
+  }
+  const std::vector<NamedJobStats> stats = s.job_stats();
+  ASSERT_EQ(stats.size(), 1u);
+  EXPECT_EQ(stats[0].stats.runs, 2u);
+  EXPECT_EQ(stats[0].stats.failures, 2u);
+}
+
+TEST(Scheduler, JobStatsOmitsACancelledJob) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  const auto id = s.every("gone", 1s, [] {});
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(s.every("kept", 1s, [] {}).has_value());
+  EXPECT_TRUE(s.cancel(*id));
+  const std::vector<NamedJobStats> stats = s.job_stats();
+  ASSERT_EQ(stats.size(), 1u);
+  EXPECT_EQ(stats[0].name, "kept");
+}

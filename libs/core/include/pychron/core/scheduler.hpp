@@ -31,6 +31,12 @@ struct JobStats {
   std::uint64_t skipped_overlaps = 0;  // due while the previous run was still going
 };
 
+// One job's statistics under the name it was registered with (job_stats()).
+struct NamedJobStats {
+  std::string name;
+  JobStats stats;
+};
+
 // Owns all periodic work in the process. Drivers and managers own no threads.
 //
 // Job kinds:
@@ -107,6 +113,10 @@ class Scheduler {
   void wait_idle();
 
   std::optional<JobStats> stats(JobId id) const;
+  // Every periodic job, scan and watchdog, in name order: a snapshot for
+  // whoever reports on the scheduler as a whole. One-shot jobs are left out
+  // (they come and go, and their names are not a fixed set).
+  std::vector<NamedJobStats> job_stats() const;
   std::size_t job_count() const;
 
  private:
