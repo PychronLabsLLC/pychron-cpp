@@ -678,7 +678,7 @@ Result<SummaryAge> preferred_age(std::string_view sample, const Group& g, const 
 std::string description_of(const SummaryAge& age, const Group& g, std::size_t published, const PublishOptions& o) {
   std::string out = std::string(age_type_name(age.kind)) + " of " + std::to_string(age.n) + " of " +
                     plural(published, "analysis", "analyses");
-  if (g.heated.size() > 1) out += " of " + std::to_string(g.heated.size()) + " step-heated aliquots";
+  if (g.heated.size() > 1) out += ", pooling " + std::to_string(g.heated.size()) + " step-heated aliquots";
   if (!age.facts.empty()) out += " (" + age.facts + ")";
   out += "; uncertainty " + std::string(kOneSigma);
   if (age.error_kind) {

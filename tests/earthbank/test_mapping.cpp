@@ -932,7 +932,7 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   EXPECT_TRUE(contains(note_with(both, "preferred age"), "chosen in the options") &&
               contains(note_with(both, "preferred age"), "the age pools 2 step-heated aliquots (20001-01, 20001-02)"))
       << note_with(both, "preferred age");
-  EXPECT_TRUE(contains(both.age_summary.description.value_or(""), "of 14 of 14 analyses of 2 step-heated aliquots"))
+  EXPECT_TRUE(contains(both.age_summary.description.value_or(""), "Weighted Mean Age of 14 of 14 analyses, pooling 2 step-heated aliquots; uncertainty 1 sigma"))
       << both.age_summary.description.value_or("");
   EXPECT_TRUE(plateau_flags(both).empty());
 
