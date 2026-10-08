@@ -41,19 +41,23 @@ using Notes = std::vector<std::string>;
 
 std::string in_quotes(std::string_view text) { return "\"" + std::string(text) + "\""; }
 
-// A number in a message: ten significant figures say which it is without the
-// tail a sum of two doubles can carry.
-std::string shown(double value) {
+std::string to_digits(double value, int digits) {
   char buffer[32];
-  std::snprintf(buffer, sizeof buffer, "%.10g", value);
+  std::snprintf(buffer, sizeof buffer, "%.*g", digits, value);
   return buffer;
 }
 
+// A number in a message: ten significant figures say which it is without the
+// tail a sum of two doubles can carry.
+std::string shown(double value) { return to_digits(value, 10); }
+
 // For a note: four significant figures are enough to recognise a number.
-std::string rounded(double value) {
-  char buffer[32];
-  std::snprintf(buffer, sizeof buffer, "%.4g", value);
-  return buffer;
+std::string rounded(double value) { return to_digits(value, 4); }
+
+std::string joined(const std::vector<std::string>& parts) {
+  std::string out;
+  for (const std::string& part : parts) out += (out.empty() ? "" : ", ") + part;
+  return out;
 }
 
 std::string plural(std::size_t n, std::string_view one, std::string_view many) {
@@ -328,14 +332,18 @@ struct Group {
   std::vector<pr::DatasetItem> items;  // one per dated analysis, in time order
   pr::GroupItems all;                  // every one, in step order (as the report orders a group)
   pr::GroupItems schedule;             // the steps of the heated aliquot, in step order; empty unless there is exactly one
-  std::size_t heated_aliquots = 0;
+  std::vector<std::string> heated;     // the names of the aliquots heated in steps, as they first appear
   bool any_step = false, any_fusion = false;
+
+  // "2 step-heated aliquots (20001-01, 20001-02)".
+  std::string heated_aliquots() const {
+    return std::to_string(heated.size()) + " step-heated aliquots (" + joined(heated) + ")";
+  }
 };
 
 Group group_of(const Members& dated) {
   Group g;
   g.items.reserve(dated.size());  // `all` and `schedule` point into it
-  std::vector<std::pair<std::string, int>> heated;
   for (const Member& m : dated) {
     g.items.push_back(pr::DatasetItem{m.reduced, {}, {}});
     if (!m.is_step()) {
@@ -343,12 +351,13 @@ Group group_of(const Members& dated) {
       continue;
     }
     g.any_step = true;
-    if (std::find(heated.begin(), heated.end(), m.aliquot()) == heated.end()) heated.push_back(m.aliquot());
+    if (std::find(g.heated.begin(), g.heated.end(), m.aliquot_name()) == g.heated.end()) {
+      g.heated.push_back(m.aliquot_name());
+    }
   }
-  g.heated_aliquots = heated.size();
   for (std::size_t i = 0; i < dated.size(); ++i) {
     g.all.push_back(&g.items[i]);
-    if (g.heated_aliquots == 1 && dated[i].is_step()) g.schedule.push_back(&g.items[i]);
+    if (g.heated.size() == 1 && dated[i].is_step()) g.schedule.push_back(&g.items[i]);
   }
   g.all = pr::step_ordered(std::move(g.all));
   g.schedule = pr::step_ordered(std::move(g.schedule));
@@ -366,6 +375,11 @@ struct SummaryAge {
   bool error_kind = true;  // the uncertainty is PublishOptions::ages.mean_error's; false: propagated
   pr::GroupItems used;     // the analyses the age is of
   std::string detail;      // for the note
+  std::string facts;       // for the description: a plateau's steps and gas, an isochron's trapped ratio
+  // A mean over analyses that do not share one J: whose relative J uncertainty
+  // `with_j` holds (the largest among them), and how large it is.
+  const pr::ReducedAnalysis* widest_j = nullptr;
+  double j_relative = 0.0;
 };
 
 // A candidate, or why there is none.
@@ -381,10 +395,70 @@ std::string criteria_text(const r::PlateauCriteria& c) {
          rounded(c.gas_fraction) + "% of the 39ArK";
 }
 
-Candidate plateau_age(const Group& g, const PublishOptions& o, double j_relative) {
-  if (g.heated_aliquots == 0) return none("no analysis is a heating step");
-  if (g.heated_aliquots > 1) {
-    return none(std::to_string(g.heated_aliquots) + " aliquots were step heated, and a plateau is of one heating schedule");
+// The J of a set of analyses, each of which has one (it has an age).
+struct GroupJ {
+  const pr::ReducedAnalysis* first = nullptr;   // the first analysis
+  const pr::ReducedAnalysis* other = nullptr;   // the first whose J, value or uncertainty, is not that of `first`
+  const pr::ReducedAnalysis* widest = nullptr;  // the one with the largest sigma(J)/J; the first of equals
+  double relative = 0.0;                        // that sigma(J)/J, as processing::j_relative_error forms it
+};
+
+double relative_error(const r::UFloat& j) { return j.nominal() == 0 ? 0.0 : j.std_dev() / std::abs(j.nominal()); }
+
+GroupJ j_of(const pr::GroupItems& items) {
+  GroupJ out;
+  for (const pr::DatasetItem* item : items) {
+    const pr::ReducedAnalysis& reduced = *item->analysis;
+    if (!reduced.j) continue;
+    if (out.first == nullptr) {
+      out.first = out.widest = &reduced;
+      out.relative = relative_error(*reduced.j);
+      continue;
+    }
+    const bool same = reduced.j->nominal() == out.first->j->nominal() && reduced.j->std_dev() == out.first->j->std_dev();
+    if (!same && out.other == nullptr) out.other = &reduced;
+    if (relative_error(*reduced.j) > out.relative) {
+      out.widest = &reduced;
+      out.relative = relative_error(*reduced.j);
+    }
+  }
+  return out;
+}
+
+std::string j_text(const pr::ReducedAnalysis& reduced) {
+  return shown(reduced.j->nominal()) + " +/- " + shown(reduced.j->std_dev()) + " (" + reduced.analysis->runid + ")";
+}
+
+// The J term of a mean of ages: the relative J uncertainty of the analyses
+// the mean is of, and of no other analysis of the sample. Each of those ages
+// was made with its own J; when they do not share one, the term is the
+// largest relative uncertainty among them, which the J uncertainty of their
+// mean cannot exceed however the positions are weighted or correlated.
+void add_j_term(SummaryAge& age, double mean, double error) {
+  const GroupJ j = j_of(age.used);
+  age.j_relative = j.relative;
+  if (j.other != nullptr) age.widest_j = j.widest;
+  age.with_j = pr::with_external_error(mean, error, j.relative);
+}
+
+// Why an age that is one pass through the age equation cannot be made over
+// `items`: they do not share one J (processing::integrated_age and
+// isochron_age would take the first analysis's for all of them). Empty when
+// they do.
+std::string j_differs(AgeKind kind, const pr::GroupItems& items) {
+  const GroupJ j = j_of(items);
+  if (j.other == nullptr) return {};
+  return "J differs between the analyses a " + std::string(age_type_name(kind)) + " would be of: " +
+         j_text(*j.first) + " and " + j_text(*j.other) +
+         "; such an age is made with one J: choose weighted_mean as the preferred age (a mean of the analyses' "
+         "ages, each made with its own J), or publish the irradiation positions as separate selections";
+}
+
+Candidate plateau_age(const Group& g, const PublishOptions& o) {
+  if (g.heated.empty()) return none("no analysis is a heating step");
+  if (g.heated.size() > 1) {
+    return none(std::to_string(g.heated.size()) + " aliquots were step heated (" + joined(g.heated) +
+                "), and a plateau is of one heating experiment");
   }
   const auto found = pr::group_plateau(g.schedule, o.ages.plateau, o.ages.plateau_weighting, o.ages.mean_error);
   if (!found) return none("no run of steps meets the plateau criteria (" + criteria_text(o.ages.plateau) + ")");
@@ -393,37 +467,39 @@ Candidate plateau_age(const Group& g, const PublishOptions& o, double j_relative
   out.kind = AgeKind::Plateau;
   out.age = mean.value;
   out.analytical = mean.error;
-  out.with_j = pr::with_external_error(mean.value, mean.error, j_relative);
+  out.used = found->used;
+  add_j_term(out, mean.value, mean.error);
   out.n = found->mean.nsteps;
   if (out.n >= 2) {
     out.mswd = mean.mswd;
     out.probability = r::mswd_probability(mean.mswd, static_cast<int>(out.n) - 1);
   }
-  out.used = found->used;
-  out.detail = "steps " + found->steps[found->range.first]->analysis->analysis->step() + "-" +
-               found->steps[found->range.last]->analysis->analysis->step() + ", " +
-               plural(out.n, "step", "steps") + " of " + std::to_string(found->steps.size()) + ", " +
-               rounded(found->mean.gas_fraction) + "% of the 39ArK";
+  const std::string first = found->steps[found->range.first]->analysis->analysis->step();
+  const std::string last = found->steps[found->range.last]->analysis->analysis->step();
+  const std::string gas = rounded(found->mean.gas_fraction) + "% of the 39ArK";
+  out.detail = "steps " + first + "-" + last + ", " + plural(out.n, "step", "steps") + " of " +
+               std::to_string(found->steps.size()) + ", " + gas;
+  out.facts = (first == last ? "step " + first : "steps " + first + " to " + last) + ", " + gas;
   return out;
 }
 
-Candidate weighted_mean_age(const Group& g, const PublishOptions& o, double j_relative) {
+Candidate weighted_mean_age(const Group& g, const PublishOptions& o) {
   const auto mean = pr::group_weighted_mean(g.all, o.ages.mean_error);
   if (!mean) return none(reason(mean.error()));
   SummaryAge out;
   out.kind = AgeKind::WeightedMean;
   out.age = mean->value;
   out.analytical = mean->error;
-  out.with_j = pr::with_external_error(mean->value, mean->error, j_relative);
-  out.n = mean->n;
-  if (out.n >= 2) {
-    out.mswd = mean->mswd;
-    out.probability = r::mswd_probability(mean->mswd, static_cast<int>(out.n) - 1);
-  }
   // The mean passes over an age without a usable error (reduction::weighted_mean).
   for (const pr::DatasetItem* item : g.all) {
     const r::UFloat& age = item->analysis->arar->ages->age;
     if (std::isfinite(age.nominal()) && std::isfinite(age.std_dev()) && age.std_dev() != 0.0) out.used.push_back(item);
+  }
+  add_j_term(out, mean->value, mean->error);
+  out.n = mean->n;
+  if (out.n >= 2) {
+    out.mswd = mean->mswd;
+    out.probability = r::mswd_probability(mean->mswd, static_cast<int>(out.n) - 1);
   }
   out.detail = "of " + plural(out.n, "analysis", "analyses");
   return out;
@@ -431,6 +507,9 @@ Candidate weighted_mean_age(const Group& g, const PublishOptions& o, double j_re
 
 Candidate isochron_age(const Group& g, const PublishOptions& o) {
   const auto points = pr::isochron_points(g.all);
+  pr::GroupItems used;
+  for (const pr::IsochronPoint& point : points) used.push_back(point.item);
+  if (std::string differs = j_differs(AgeKind::Isochron, used); !differs.empty()) return none(std::move(differs));
   const auto plain = pr::isochron_age(points, o.ages.york, false, false);
   if (!plain) return none(reason(plain.error()));
   const auto with_j = pr::isochron_age(points, o.ages.york, false, true);
@@ -444,12 +523,19 @@ Candidate isochron_age(const Group& g, const PublishOptions& o) {
   out.probability = plain->fit.probability;
   out.n = plain->fit.n;
   out.error_kind = false;
-  for (const pr::IsochronPoint& point : points) out.used.push_back(point.item);
+  out.used = std::move(used);
   out.detail = "of " + plural(out.n, "analysis", "analyses");
+  // The trapped ratio is one over the fit's 36Ar/40Ar intercept, and there is
+  // none when that intercept is exactly zero (processing::isochron_age).
+  out.facts = plain->fit.intercept != 0
+                  ? "trapped 40Ar/36Ar " + to_digits(plain->trapped.value, 6) + " +/- " +
+                        to_digits(plain->trapped.error, 2)
+                  : std::string("trapped 40Ar/36Ar not defined");
   return out;
 }
 
 Candidate integrated_age(const Group& g) {
+  if (std::string differs = j_differs(AgeKind::Integrated, g.all); !differs.empty()) return none(std::move(differs));
   const auto plain = pr::integrated_age(g.all, false);
   if (!plain) return none(reason(plain.error()));
   const auto with_j = pr::integrated_age(g.all, true);
@@ -468,10 +554,10 @@ Candidate integrated_age(const Group& g) {
   return out;
 }
 
-Candidate candidate(AgeKind kind, const Group& g, const PublishOptions& o, double j_relative) {
+Candidate candidate(AgeKind kind, const Group& g, const PublishOptions& o) {
   switch (kind) {
-    case AgeKind::Plateau: return plateau_age(g, o, j_relative);
-    case AgeKind::WeightedMean: return weighted_mean_age(g, o, j_relative);
+    case AgeKind::Plateau: return plateau_age(g, o);
+    case AgeKind::WeightedMean: return weighted_mean_age(g, o);
     case AgeKind::Isochron: return isochron_age(g, o);
     case AgeKind::Integrated: return integrated_age(g);
   }
@@ -481,50 +567,75 @@ Candidate candidate(AgeKind kind, const Group& g, const PublishOptions& o, doubl
 // The age the sample reports (spec 4.4) and a note of the choice.
 Result<SummaryAge> preferred_age(std::string_view sample, const Group& g, const PublishOptions& o,
                                  const SampleOptions& so, Notes& notes) {
-  const double j_relative = pr::j_relative_error(g.all);
   const auto name = [](AgeKind kind) { return std::string(age_type_name(kind)); };
   const auto chosen = [&](const SummaryAge& age, const std::string& why) {
     notes.push_back("preferred age: " + name(age.kind) + " (" + age.detail + "): " + why);
     return age;
   };
 
+  // Several heating experiments on one sample: a plateau and an isochron are
+  // of one experiment, and of the two ages that can pool them neither is the
+  // one a reader would take for granted. The lab says which.
+  const bool pooled = g.heated.size() > 1;
+  const std::string pooling = "choose weighted_mean or integrated as its preferred age (either pools the "
+                              "aliquots), or publish the aliquots as separate selections";
+  if (pooled && !so.preferred_age) {
+    return refuse(sample, "it has " + g.heated_aliquots() + " and no summary age is reported for that unasked: " +
+                              pooling);
+  }
+  if (pooled && (*so.preferred_age == AgeKind::Plateau || *so.preferred_age == AgeKind::Isochron)) {
+    return refuse(sample, "the " + name(*so.preferred_age) + " asked for cannot be computed: " +
+                              std::to_string(g.heated.size()) + " aliquots were step heated (" + joined(g.heated) +
+                              "), and a plateau or an isochron is of one heating experiment: " + pooling);
+  }
+
   if (so.preferred_age) {
-    const Candidate asked = candidate(*so.preferred_age, g, o, j_relative);
+    const Candidate asked = candidate(*so.preferred_age, g, o);
     if (!asked) return refuse(sample, "the " + name(*so.preferred_age) + " asked for cannot be computed: " + asked.error());
-    return chosen(*asked, "chosen in the options");
+    return chosen(*asked, pooled ? "chosen in the options; the age pools " + g.heated_aliquots()
+                                 : std::string("chosen in the options"));
   }
   if (g.any_step) {
-    const Candidate plateau = plateau_age(g, o, j_relative);
+    const Candidate plateau = plateau_age(g, o);
     if (plateau) return chosen(*plateau, "the sample was step heated and has a plateau");
     const Candidate integrated = integrated_age(g);
     if (!integrated) return refuse(sample, "no age to report: " + plateau.error() + "; " + integrated.error());
     return chosen(*integrated, "the sample was step heated and has no plateau: " + plateau.error());
   }
-  const Candidate mean = weighted_mean_age(g, o, j_relative);
+  const Candidate mean = weighted_mean_age(g, o);
   if (!mean) return refuse(sample, "no age to report: " + mean.error());
   return chosen(*mean, "the sample's analyses are fusions");
 }
 
-// The group functions take J from the first analysis that has one. When the
-// analyses do not share a J (two irradiation positions), say whose was used.
-void note_mixed_j(const Group& g, const SummaryAge& age, bool with_j, Notes& notes) {
-  const pr::ReducedAnalysis* first = nullptr;
-  bool differs = false;
-  for (const pr::DatasetItem* item : g.all) {
-    const pr::ReducedAnalysis& reduced = *item->analysis;
-    if (!reduced.j) continue;
-    if (first == nullptr) {
-      first = &reduced;
-    } else if (reduced.j->nominal() != first->j->nominal() || reduced.j->std_dev() != first->j->std_dev()) {
-      differs = true;
+// What the reported age is and what its uncertainty holds, in one sentence of
+// facts: it is the age summary's description, the only place the record can
+// say which error a mean carries and whether J is in it (the uncertainty type
+// is the sigma level and nothing more). `published` is the number of
+// analyses sent.
+std::string description_of(const SummaryAge& age, const Group& g, std::size_t published, const PublishOptions& o) {
+  std::string out = std::string(age_type_name(age.kind)) + " of " + std::to_string(age.n) + " of " +
+                    plural(published, "analysis", "analyses");
+  if (g.heated.size() > 1) out += " of " + std::to_string(g.heated.size()) + " step-heated aliquots";
+  if (!age.facts.empty()) out += " (" + age.facts + ")";
+  out += "; uncertainty " + std::string(kOneSigma);
+  if (age.error_kind) {
+    out += " (the mean's " + std::string(r::to_string(o.ages.mean_error)) + ")";
+  } else if (age.kind == AgeKind::Isochron) {
+    out += " (propagated through the regression and the age equation)";
+  } else {
+    out += " (propagated through the age equation)";
+  }
+  if (!o.age_includes_j_error) {
+    out += ", analytical uncertainty only";
+  } else {
+    out += ", J uncertainty included";
+    if (age.widest_j != nullptr) {
+      out += " (the largest relative J uncertainty among its analyses, " + rounded(age.j_relative * 100.0) + "% of " +
+             age.widest_j->analysis->runid + ")";
     }
   }
-  if (!differs) return;
-  const bool in_age = age.kind == AgeKind::Isochron || age.kind == AgeKind::Integrated;
-  if (!in_age && !with_j) return;
-  notes.push_back("the analyses do not share one J; the J of " + first->analysis->runid + " (" +
-                  shown(first->j->nominal()) + ") is the one in the reported " +
-                  (in_age ? "age" : "age's uncertainty"));
+  out += "; reduced with " + (o.software.empty() ? std::string("pychron-cpp") : o.software) + ".";
+  return out;
 }
 
 // ---------------------------------------------------------------- 39ArK released
@@ -800,7 +911,7 @@ std::optional<Location> location_of(const std::string& name, const Facts& facts,
 }
 
 DataPoint data_point_of(const std::string& name, const Members& dated, const Group& g, const Facts& facts,
-                        const PublishOptions& options, Notes& notes) {
+                        Notes& notes) {
   DataPoint out;
   std::optional<Seconds> earliest;
   std::optional<double> hottest;
@@ -817,10 +928,13 @@ DataPoint data_point_of(const std::string& name, const Members& dated, const Gro
   out.arMethodName = ar_method(g.any_step, hottest);
   out.mineralName = facts.material;
   out.lithologyName = facts.lithology;
-  const std::string error_kind(r::to_string(options.ages.mean_error));
-  out.analyticalUncertaintyTypeName = error_kind;
+  // The two types are of the measurements' own numbers (the service: "quoted
+  // for measurements and associated ratios", "quoted for ages"), which are
+  // plain one sigma. The error kind of the sample's mean is said where the
+  // mean is: in the age summary's description.
+  out.analyticalUncertaintyTypeName = std::string(kOneSigma);
   out.analyticalUncertaintyUnitName = std::string(kAbsoluteUncertainty);
-  out.apparentAgeUncertaintyTypeName = error_kind;
+  out.apparentAgeUncertaintyTypeName = std::string(kOneSigma);
   out.apparentAgeUncertaintyUnitName = std::string(kAbsoluteUncertainty);
   out.jvalueUncertaintyUnitName = std::string(kAbsoluteUncertainty);
   return out;
@@ -920,19 +1034,19 @@ Result<AgeCalc> age_calc_of(const std::string& name, const Members& dated, const
   return out;
 }
 
-AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const Constants& constants,
-                          const PublishOptions& options, const SampleOptions& so, Notes& notes) {
+AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const Group& g, std::size_t published,
+                          const Constants& constants, const PublishOptions& options, const SampleOptions& so,
+                          Notes& notes) {
   Numbers numbers(name, notes);
   AgeSummary out;
   PYCHRON_EARTHBANK_SET(numbers, out, age, age.age * constants.to_ma);
   const double sigma = options.age_includes_j_error ? age.with_j : age.analytical;
   PYCHRON_EARTHBANK_SET(numbers, out, ageUncertainty, sigma * constants.to_ma);
   out.ageCalcTypeName = std::string(age_type_name(age.kind));
-  // A mean's uncertainty is of the kind asked for; an age from the age
-  // equation (integrated, isochron) carries a propagated one sigma.
-  const std::string type = age.error_kind ? std::string(r::to_string(options.ages.mean_error)) : std::string(kOneSigma);
-  out.ageUncertaintyTypeName = type;
-  out.calculatedAgeUncertaintyTypeName = type;
+  // The type is the sigma level. What kind of one sigma it is (a mean's error
+  // kind, or propagated; with J or without) is in the description.
+  out.ageUncertaintyTypeName = std::string(kOneSigma);
+  out.calculatedAgeUncertaintyTypeName = std::string(kOneSigma);
   out.calculatedAgeUncertaintyTypeUnitsName = std::string(kAbsoluteUncertainty);
   if (age.mswd) PYCHRON_EARTHBANK_SET(numbers, out, mswd, *age.mswd);
   if (age.probability) PYCHRON_EARTHBANK_SET(numbers, out, agepvalue, *age.probability);
@@ -940,11 +1054,18 @@ AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const 
   out.preferredAge = true;
   out.dataInterpretationToolName = std::string(kInterpretationTool);
   out.interpretationName = so.interpretation.empty() ? std::string(kUnknownInterpretation) : so.interpretation;
+  out.description = description_of(age, g, published, options);
 
   notes.push_back(std::string("the reported age's uncertainty is one sigma ") +
                   (options.age_includes_j_error ? "with the J uncertainty (" : "without the J uncertainty (") +
                   rounded(age.analytical * constants.to_ma) + " Ma analytical, " +
                   rounded(age.with_j * constants.to_ma) + " Ma with J)");
+  if (options.age_includes_j_error && age.widest_j != nullptr) {
+    notes.push_back("the analyses of the reported age do not share one J; the J uncertainty in the age's is the "
+                    "largest relative one among them, " + rounded(age.j_relative * 100.0) + "% of " +
+                    age.widest_j->analysis->runid);
+  }
+  notes.push_back(*out.description);
   return out;
 }
 
@@ -1009,11 +1130,10 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   }
   const auto age = preferred_age(name, group, options, so, notes);
   if (!age) return fail(age.error());
-  note_mixed_j(group, *age, options.age_includes_j_error, notes);
 
   out.sample = sample_of(name, *facts, options, notes);
   out.location = location_of(name, *facts, notes);
-  out.data_point = data_point_of(name, dated, group, *facts, options, notes);
+  out.data_point = data_point_of(name, dated, group, *facts, notes);
   auto aliquots = aliquots_of(name, members, dated, notes);
   if (!aliquots) return fail(aliquots.error());
   out.aliquots = std::move(*aliquots);
@@ -1031,7 +1151,7 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   auto age_calc = age_calc_of(name, dated, *constants, options, so, notes);
   if (!age_calc) return fail(age_calc.error());
   out.age_calc = std::move(*age_calc);
-  out.age_summary = age_summary_of(name, *age, *constants, options, so, notes);
+  out.age_summary = age_summary_of(name, *age, group, dated.size(), *constants, options, so, notes);
 
   if (!so.datapoint_name.empty()) {
     out.datapoint_name = so.datapoint_name;

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -95,6 +96,13 @@ std::optional<double> number(const Record& record, const std::string& field) {
   const nlohmann::json j = to_json(record);
   if (!j.contains(field)) return std::nullopt;
   return j.at(field).template get<double>();
+}
+
+// A number as a sentence of the mapping prints it, to `digits` significant figures.
+std::string printed(double value, int digits) {
+  char buffer[32];
+  std::snprintf(buffer, sizeof buffer, "%.*g", digits, value);
+  return buffer;
 }
 
 // The analyses reduced and put in a dataset, as the report takes them.
@@ -257,9 +265,9 @@ TEST(Mapping, DataPoint) {
   EXPECT_EQ(step.data_point.arMethodName, ar_method(true, 5.0));
   EXPECT_EQ(step.data_point.mineralName, "sanidine");
   EXPECT_EQ(step.data_point.lithologyName, "ash-flow tuff");
-  // The default error kind of the report's means.
-  EXPECT_EQ(step.data_point.analyticalUncertaintyTypeName, "msem");
-  EXPECT_EQ(step.data_point.apparentAgeUncertaintyTypeName, "msem");
+  // The two types say what the measurements' own uncertainties are: one sigma.
+  EXPECT_EQ(step.data_point.analyticalUncertaintyTypeName, "1 sigma");
+  EXPECT_EQ(step.data_point.apparentAgeUncertaintyTypeName, "1 sigma");
   EXPECT_EQ(step.data_point.analyticalUncertaintyUnitName, "abs.");
   EXPECT_EQ(step.data_point.apparentAgeUncertaintyUnitName, "abs.");
   EXPECT_EQ(step.data_point.jvalueUncertaintyUnitName, "abs.");
@@ -273,13 +281,15 @@ TEST(Mapping, DataPoint) {
   for (const r::MeanErrorKind kind : {r::MeanErrorKind::Sd, r::MeanErrorKind::Sem, r::MeanErrorKind::Msem}) {
     PublishOptions options;
     options.ages.mean_error = kind;
+    // Whatever error kind the mean was asked for: that is said in the age
+    // summary's description, and the type is the sigma level.
     const Submission s = build_one(step_sample(), options);
-    const std::string name(r::to_string(kind));
-    EXPECT_EQ(s.data_point.analyticalUncertaintyTypeName, name);
-    EXPECT_EQ(s.data_point.apparentAgeUncertaintyTypeName, name);
-    EXPECT_EQ(s.age_summary.ageUncertaintyTypeName, name);
-    EXPECT_EQ(s.age_summary.calculatedAgeUncertaintyTypeName, name);
-    EXPECT_EQ(uncertainty_type_id(name), 1);
+    EXPECT_EQ(s.data_point.analyticalUncertaintyTypeName, kOneSigma);
+    EXPECT_EQ(s.data_point.apparentAgeUncertaintyTypeName, kOneSigma);
+    EXPECT_EQ(s.age_summary.ageUncertaintyTypeName, kOneSigma);
+    EXPECT_EQ(s.age_summary.calculatedAgeUncertaintyTypeName, kOneSigma);
+    EXPECT_TRUE(contains(s.age_summary.description.value_or(""), "(the mean's " + std::string(r::to_string(kind)) + ")"))
+        << s.age_summary.description.value_or("");
   }
 
   // A furnace: the hottest step decides, and degrees are a temperature.
@@ -658,12 +668,12 @@ TEST(Mapping, PreferredAgeRule) {
     EXPECT_EQ(a.preferredAge, true);
     EXPECT_EQ(a.dataInterpretationToolName, "Pychron");
     EXPECT_EQ(a.interpretationName, "Unknown");
-    EXPECT_EQ(a.ageUncertaintyTypeName, "msem");
-    EXPECT_EQ(a.calculatedAgeUncertaintyTypeName, "msem");
+    EXPECT_EQ(a.ageUncertaintyTypeName, "1 sigma");
+    EXPECT_EQ(a.calculatedAgeUncertaintyTypeName, "1 sigma");
     EXPECT_EQ(a.calculatedAgeUncertaintyTypeUnitsName, "abs.");
     const std::string note = note_with(s, "preferred age");
     EXPECT_TRUE(contains(note, "Plateau Age") && contains(note, "steps C-H") && contains(note, "has a plateau")) << note;
-    EXPECT_TRUE(contains(note_with(s, "uncertainty"), "with the J uncertainty"));
+    EXPECT_TRUE(contains(note_with(s, "reported age's uncertainty"), "with the J uncertainty"));
 
     // And it is the report's plateau, cell for cell.
     const pp::Report report = report_of(steps);
@@ -680,7 +690,7 @@ TEST(Mapping, PreferredAgeRule) {
     EXPECT_REL(plain.age_summary.age, mean.value);
     EXPECT_REL(plain.age_summary.ageUncertainty, mean.error);
     EXPECT_REL(plain.age_summary.ageUncertainty, cell(report, "plateau age ±(1s) analytical"));
-    EXPECT_TRUE(contains(note_with(plain, "uncertainty"), "without the J uncertainty"));
+    EXPECT_TRUE(contains(note_with(plain, "reported age's uncertainty"), "without the J uncertainty"));
   }
 
   // Criteria no run of steps meets: the integrated age, and a note saying why.
@@ -701,7 +711,7 @@ TEST(Mapping, PreferredAgeRule) {
     EXPECT_FALSE(a.mswd.has_value());
     EXPECT_FALSE(a.agepvalue.has_value());
     EXPECT_EQ(a.nAnalysisGrouped, 10);
-    EXPECT_EQ(a.ageUncertaintyTypeName, "1 sigma");  // propagated, not a mean's error kind
+    EXPECT_EQ(a.ageUncertaintyTypeName, "1 sigma");
     const std::string note = note_with(s, "preferred age");
     EXPECT_TRUE(contains(note, "Total Gas Age") && contains(note, "no plateau") && contains(note, "at least 9 steps"))
         << note;
@@ -860,7 +870,18 @@ TEST(Mapping, AliquotsAndMixedSamples) {
     irradiate_for_real(*step);
     two.push_back(step);
   }
-  const Submission both = build_one(two);
+  // Two heating experiments have no one summary age that goes without
+  // saying: the lab chooses, and is told between what.
+  const std::string undecided = refused(two);
+  EXPECT_TRUE(contains(undecided, "earthbank: sample \"S-STEP\"") &&
+              contains(undecided, "2 step-heated aliquots (20001-01, 20001-02)") &&
+              contains(undecided, "weighted_mean") && contains(undecided, "integrated") &&
+              contains(undecided, "separate selections"))
+      << undecided;
+
+  PublishOptions pooled;
+  pooled.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
+  const Submission both = build_one(two, pooled);
   ASSERT_EQ(both.aliquots.size(), 2u);
   ASSERT_EQ(both.measurements.size(), 14u);
   EXPECT_REL(both.measurements[9].cumulative39ArK, 100.0);
@@ -868,13 +889,35 @@ TEST(Mapping, AliquotsAndMixedSamples) {
   EXPECT_LT(*both.measurements[10].cumulative39ArK, 100.0);
   EXPECT_REL(both.measurements[10].cumulative39ArK, *both.measurements[10].ar39KReleased);
   EXPECT_REL(both.measurements[13].cumulative39ArK, 100.0);
-  EXPECT_EQ(both.age_summary.ageCalcTypeName, "Total Gas Age");
+  EXPECT_EQ(both.age_summary.ageCalcTypeName, "Weighted Mean Age");
   EXPECT_EQ(both.age_summary.nAnalysisGrouped, 14);
-  EXPECT_TRUE(contains(note_with(both, "preferred age"), "2 aliquots were step heated"));
+  const pp::Dataset td = dataset_of(two);
+  const auto mean = pp::group_weighted_mean(items_of(td), pooled.ages.mean_error);
+  ASSERT_TRUE(mean.has_value());
+  EXPECT_REL(both.age_summary.age, mean->value);
+  EXPECT_TRUE(contains(note_with(both, "preferred age"), "chosen in the options") &&
+              contains(note_with(both, "preferred age"), "the age pools 2 step-heated aliquots (20001-01, 20001-02)"))
+      << note_with(both, "preferred age");
+  EXPECT_TRUE(contains(both.age_summary.description.value_or(""), "of 14 of 14 analyses of 2 step-heated aliquots"))
+      << both.age_summary.description.value_or("");
   EXPECT_TRUE(plateau_flags(both).empty());
-  PublishOptions plateau;
-  plateau.samples["S-STEP"].preferred_age = PreferredAge::Plateau;
-  EXPECT_TRUE(contains(refused(two, plateau), "2 aliquots were step heated"));
+
+  pooled.samples["S-STEP"].preferred_age = PreferredAge::Integrated;
+  const Submission gas = build_one(two, pooled);
+  EXPECT_EQ(gas.age_summary.ageCalcTypeName, "Total Gas Age");
+  EXPECT_EQ(gas.age_summary.nAnalysisGrouped, 14);
+  EXPECT_REL(gas.age_summary.age, pp::integrated_age(items_of(td), false)->nominal());
+  EXPECT_TRUE(contains(note_with(gas, "preferred age"), "the age pools 2 step-heated aliquots"));
+
+  // A plateau is one heating experiment, and so is the isochron of a sample.
+  for (const PreferredAge kind : {PreferredAge::Plateau, PreferredAge::Isochron}) {
+    pooled.samples["S-STEP"].preferred_age = kind;
+    const std::string what = refused(two, pooled);
+    EXPECT_TRUE(contains(what, "\"S-STEP\"") && contains(what, age_type_name(kind)) &&
+                contains(what, "2 aliquots were step heated (20001-01, 20001-02)") &&
+                contains(what, "weighted_mean") && contains(what, "integrated"))
+        << what;
+  }
 }
 
 // ---------------------------------------------------------------- vocabulary
@@ -1265,7 +1308,8 @@ TEST(Mapping, LeftEmptyFieldsAreAbsent) {
   EXPECT_EQ(summary, (std::set<std::string>{"age", "ageCalcTypeName", "ageUncertainty", "ageUncertaintyTypeName",
                                             "agepvalue", "calculatedAgeUncertaintyTypeName",
                                             "calculatedAgeUncertaintyTypeUnitsName", "dataInterpretationToolName",
-                                            "interpretationName", "mswd", "nAnalysisGrouped", "preferredAge"}));
+                                            "description", "interpretationName", "mswd", "nAnalysisGrouped",
+                                            "preferredAge"}));
 }
 
 // A number that is not finite is not sent, and the notes say which.
@@ -1394,16 +1438,191 @@ TEST(Mapping, AMissingIsotopeIsAbsent) {
       << what;
 }
 
-// Analyses of one sample from two irradiation positions: the group ages take
-// one J, and the notes say whose.
-TEST(Mapping, AMixedJIsNoted) {
+// What the reported age is and what its uncertainty holds is said in words,
+// in the age summary's description and in the notes: the sentence of each kind.
+TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
+  const AnalysisList steps = step_sample();
+  const pp::Dataset sd = dataset_of(steps);
+  const pp::GroupItems step_items = items_of(sd);
+  const auto described = [](const Submission& s) {
+    EXPECT_TRUE(s.age_summary.description.has_value());
+    const std::string sentence = s.age_summary.description.value_or("");
+    // The same sentence is among the notes the user is shown.
+    EXPECT_NE(std::find(s.notes.begin(), s.notes.end(), sentence), s.notes.end()) << sentence;
+    EXPECT_EQ(s.age_summary.ageUncertaintyTypeName, "1 sigma");
+    EXPECT_EQ(s.age_summary.calculatedAgeUncertaintyTypeName, "1 sigma");
+    return sentence;
+  };
+
+  // A plateau: its steps and its share of the gas.
+  PublishOptions options;
+  options.software = "pychron-cpp 9.9.9";
+  const auto found =
+      pp::group_plateau(step_items, options.ages.plateau, options.ages.plateau_weighting, options.ages.mean_error);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(described(build_one(steps, options)),
+            "Plateau Age of 6 of 10 analyses (steps C to H, " + printed(found->mean.gas_fraction, 4) +
+                "% of the 39ArK); uncertainty 1 sigma (the mean's msem), J uncertainty included; reduced with "
+                "pychron-cpp 9.9.9.");
+  EXPECT_GT(found->mean.gas_fraction, 50.0);
+
+  // The same without the J uncertainty, and with another error kind.
+  options.age_includes_j_error = false;
+  options.ages.mean_error = r::MeanErrorKind::Sem;
+  EXPECT_EQ(described(build_one(steps, options)),
+            "Plateau Age of 6 of 10 analyses (steps C to H, " + printed(found->mean.gas_fraction, 4) +
+                "% of the 39ArK); uncertainty 1 sigma (the mean's sem), analytical uncertainty only; reduced with "
+                "pychron-cpp 9.9.9.");
+
+  // A weighted mean.
+  EXPECT_EQ(described(build_one(fusion_sample())),
+            "Weighted Mean Age of 6 of 6 analyses; uncertainty 1 sigma (the mean's msem), J uncertainty included; "
+            "reduced with pychron-cpp.");
+  PublishOptions sd_only;
+  sd_only.ages.mean_error = r::MeanErrorKind::Sd;
+  sd_only.age_includes_j_error = false;
+  EXPECT_EQ(described(build_one({fusion_analysis(0)}, sd_only)),
+            "Weighted Mean Age of 1 of 1 analysis; uncertainty 1 sigma (the mean's sd), analytical uncertainty "
+            "only; reduced with pychron-cpp.");
+
+  // An isochron: the trapped ratio its intercept gives.
+  PublishOptions isochron;
+  isochron.samples["S-STEP"].preferred_age = PreferredAge::Isochron;
+  const auto fit = pp::isochron_age(pp::isochron_points(step_items), isochron.ages.york, false, false);
+  ASSERT_TRUE(fit.has_value());
+  EXPECT_GT(fit->trapped.value, 200.0);
+  EXPECT_GT(fit->trapped.error, 0.0);
+  EXPECT_EQ(described(build_one(steps, isochron)),
+            "Inverse Isochron Age of 10 of 10 analyses (trapped 40Ar/36Ar " + printed(fit->trapped.value, 6) +
+                " +/- " + printed(fit->trapped.error, 2) +
+                "); uncertainty 1 sigma (propagated through the regression and the age equation), J uncertainty "
+                "included; reduced with pychron-cpp.");
+  isochron.age_includes_j_error = false;
+  EXPECT_TRUE(contains(described(build_one(steps, isochron)),
+                       "(propagated through the regression and the age equation), analytical uncertainty only;"));
+
+  // A total gas age; here because no run of steps is a plateau.
+  PublishOptions strict;
+  strict.ages.plateau.nsteps = 9;
+  EXPECT_EQ(described(build_one(steps, strict)),
+            "Total Gas Age of 10 of 10 analyses; uncertainty 1 sigma (propagated through the age equation), J "
+            "uncertainty included; reduced with pychron-cpp.");
+  strict.age_includes_j_error = false;
+  EXPECT_EQ(described(build_one(steps, strict)),
+            "Total Gas Age of 10 of 10 analyses; uncertainty 1 sigma (propagated through the age equation), "
+            "analytical uncertainty only; reduced with pychron-cpp.");
+
+  // An analysis left out is in neither number.
+  const AnalysisList nine = with_edit(steps, 9, [](pp::Analysis& a) { a.context.flux.reset(); });
+  EXPECT_TRUE(contains(described(build_one(nine)), "Plateau Age of 6 of 9 analyses (steps C to H, "))
+      << described(build_one(nine));
+}
+
+// The J uncertainty in a mean is that of the analyses the mean is of.
+TEST(Mapping, TheJOfAMeanIsThatOfItsAnalyses) {
+  const PublishOptions defaults;
+  // Steps A and J, outside the plateau, and a fusion run before the schedule
+  // sit in other irradiation positions, whose J is ten times less well known.
+  const auto elsewhere = [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.0015, 3e-5}; };
+  auto fusion = std::make_shared<pp::Analysis>(*fusion_analysis(0));
+  fusion->identifier = "20001";
+  fusion->aliquot = 2;
+  fusion->runid = pp::make_runid("20001", 2, -1);
+  fusion->sample = "S-STEP";
+  fusion->material = "sanidine";
+  fusion->timestamp = step_analysis(0)->timestamp - 7200.0;
+  irradiate_for_real(*fusion);
+  elsewhere(*fusion);
+  AnalysisList mixed = with_edit(with_edit(step_sample(), 0, elsewhere), 9, elsewhere);
+  mixed.push_back(fusion);
+
+  const pp::Dataset d = dataset_of(step_sample());
+  const auto found = pp::group_plateau(items_of(d), defaults.ages.plateau, defaults.ages.plateau_weighting,
+                                       defaults.ages.mean_error);
+  ASSERT_TRUE(found.has_value());
+  const r::Mean& mean = found->mean.mean;
+  const Submission s = build_one(mixed);
+  ASSERT_EQ(s.age_summary.ageCalcTypeName, "Plateau Age");
+  EXPECT_EQ(plateau_flags(s), (std::vector<std::string>{"C", "D", "E", "F", "G", "H"}));
+  EXPECT_REL(s.age_summary.age, mean.value);
+  // 0.2%, the J of steps C to H; not the 2% of the fusion, which is the first analysis of the sample.
+  EXPECT_REL(s.age_summary.ageUncertainty, pp::with_external_error(mean.value, mean.error, 0.002));
+  EXPECT_LT(*s.age_summary.ageUncertainty, pp::with_external_error(mean.value, mean.error, 0.02) / 2.0);
+  // Its steps share one J: nothing to say about that.
+  EXPECT_EQ(note_with(s, "do not share one J"), "");
+  EXPECT_FALSE(contains(s.age_summary.description.value_or(""), "largest"));
+
+  // A mean over analyses of two positions: each age was made with its own J,
+  // and the J term of the mean is the larger of the two relative
+  // uncertainties, which no weighting of them exceeds. Both are said.
   const AnalysisList fusions =
-      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 3e-6}; });
-  const Submission s = build_one(fusions);
-  const std::string note = note_with(s, "do not share one J");
-  EXPECT_TRUE(contains(note, "20002-01") && contains(note, "0.0015") && contains(note, "uncertainty")) << note;
-  EXPECT_EQ(s.measurements[4].jValue, 0.00151);
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 6.04e-6}; });
+  const pp::Dataset fd = dataset_of(fusions);
+  const auto fmean = pp::group_weighted_mean(items_of(fd), defaults.ages.mean_error);
+  ASSERT_TRUE(fmean.has_value());
+  const Submission f = build_one(fusions);
+  EXPECT_EQ(f.age_summary.ageCalcTypeName, "Weighted Mean Age");
+  EXPECT_EQ(f.measurements[4].jValue, 0.00151);
+  EXPECT_REL(f.age_summary.age, fmean->value);
+  EXPECT_REL(f.age_summary.ageUncertainty, pp::with_external_error(fmean->value, fmean->error, 6.04e-6 / 0.00151));
+  EXPECT_GT(*f.age_summary.ageUncertainty, pp::with_external_error(fmean->value, fmean->error, 0.002) * 1.2);
+  const std::string note = note_with(f, "do not share one J");
+  EXPECT_TRUE(contains(note, "20002-05") && contains(note, "0.4%") && contains(note, "largest")) << note;
+  EXPECT_EQ(f.age_summary.description,
+            "Weighted Mean Age of 6 of 6 analyses; uncertainty 1 sigma (the mean's msem), J uncertainty included "
+            "(the largest relative J uncertainty among its analyses, 0.4% of 20002-05); reduced with pychron-cpp.");
+  // Without the J uncertainty there is no J in the age's uncertainty to speak of.
+  PublishOptions analytical;
+  analytical.age_includes_j_error = false;
+  const Submission plain = build_one(fusions, analytical);
+  EXPECT_REL(plain.age_summary.ageUncertainty, fmean->error);
+  EXPECT_EQ(note_with(plain, "do not share one J"), "");
   EXPECT_EQ(note_with(build_one(fusion_sample()), "do not share one J"), "");
+}
+
+// An age made by one pass through the age equation rests on one J: over
+// analyses of two it is refused, not made with the J of whichever came first.
+TEST(Mapping, AnAgeOfOneJIsRefusedOverTwo) {
+  const auto expect_refused = [](const AnalysisList& analyses, const PublishOptions& options,
+                                 std::initializer_list<std::string_view> parts) {
+    const std::string what = refused(analyses, options);
+    for (const std::string_view part : parts) EXPECT_TRUE(contains(what, part)) << part << " not in: " << what;
+  };
+  const AnalysisList other_j =
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 3e-6}; });
+  const AnalysisList other_error =
+      with_edit(fusion_sample(), 2, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.0015, 4e-6}; });
+
+  for (const PreferredAge kind : {PreferredAge::Integrated, PreferredAge::Isochron}) {
+    PublishOptions options;
+    options.samples["S-FUS"].preferred_age = kind;
+    expect_refused(other_j, options,
+                   {"earthbank: sample \"S-FUS\"", age_type_name(kind), "J differs",
+                    "0.0015 +/- 3e-06 (20002-01)", "0.00151 +/- 3e-06 (20002-05)", "weighted_mean"});
+    // The value the same and its uncertainty another is another J.
+    expect_refused(other_error, options,
+                   {"earthbank: sample \"S-FUS\"", age_type_name(kind), "J differs",
+                    "0.0015 +/- 3e-06 (20002-01)", "0.0015 +/- 4e-06 (20002-03)"});
+    // With or without the J uncertainty in what is reported: the age itself is of J.
+    options.age_includes_j_error = false;
+    expect_refused(other_j, options, {age_type_name(kind), "J differs"});
+    // One J: computed.
+    options.samples["S-STEP"].preferred_age = kind;
+    EXPECT_EQ(build_one(step_sample(), options).age_summary.ageCalcTypeName, age_type_name(kind));
+  }
+
+  // The rule's own fall back, a step-heated sample without a plateau, is
+  // refused the same way.
+  PublishOptions strict;
+  strict.ages.plateau.nsteps = 9;
+  const AnalysisList steps =
+      with_edit(step_sample(), 7, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00152, 3e-6}; });
+  expect_refused(steps, strict,
+                 {"earthbank: sample \"S-STEP\"", "no age to report", "at least 9 steps", "Total Gas Age",
+                  "0.0015 +/- 3e-06 (20001-01A)", "0.00152 +/- 3e-06 (20001-01H)", "weighted_mean"});
+  // The weighted mean it is told of is there for the asking.
+  strict.samples["S-STEP"].preferred_age = PreferredAge::WeightedMean;
+  EXPECT_EQ(build_one(steps, strict).age_summary.ageCalcTypeName, "Weighted Mean Age");
 }
 
 }  // namespace
