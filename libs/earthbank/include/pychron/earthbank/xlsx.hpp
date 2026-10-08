@@ -21,7 +21,10 @@
 //     `lat`), or that nothing fills it (`Tag`);
 //   - `datapointName`, the first column of every Ar-Ar sheet, takes
 //     Submission::datapoint_name on every row: it is what ties a data point's
-//     measurements, aliquots, age summary and age calculation to it.
+//     measurements, aliquots, age summary and age calculation to it;
+//   - `arArSetUp` and `irradiationBatchID` of the data point's sheet take
+//     Submission::setup_name and irradiation_name: the terms the website
+//     finds the lab's set-up and the irradiation batch by.
 //
 // xlsx_columns gives the whole of it for a pair of templates.
 //
@@ -98,7 +101,8 @@ std::filesystem::path default_template_dir(const std::filesystem::path& program_
 // One column of a data sheet and where its value comes from. `record` is
 // `Sample`, `Location`, `DataPoint`, `Aliquot`, `Measurement`, `AgeCalc` or
 // `AgeSummary` and `field` the field's service name; or `Submission` and
-// `datapoint_name`; or both are empty: nothing fills the column.
+// `datapoint_name`, `setup_name` or `irradiation_name`; or both are empty:
+// nothing fills the column.
 struct XlsxColumn {
   std::string sheet;
   std::string key;  // the name in row 4

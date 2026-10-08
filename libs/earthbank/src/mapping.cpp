@@ -1092,6 +1092,27 @@ Result<AgeCalc> age_calc_of(const std::string& name, const Members& dated, const
   return out;
 }
 
+// The irradiation batch the data point refers to: the lab's word for it, else
+// the one irradiation the published analyses name. A sample can span
+// irradiations, and the record has room for one: then none is named, and a
+// note says which two were found.
+std::string irradiation_of(const std::string& name, const Members& dated, const SampleOptions& so, Notes& notes) {
+  if (!so.irradiation.empty()) return so.irradiation;
+  const Member* from = nullptr;
+  for (const Member& m : dated) {
+    if (m.a().irradiation.empty()) continue;
+    if (from == nullptr) {
+      from = &m;
+    } else if (m.a().irradiation != from->a().irradiation) {
+      notes.push_back(name + ": its analyses are of more than one irradiation, " + in_quotes(from->a().irradiation) +
+                      " (" + from->a().runid + ") and " + in_quotes(m.a().irradiation) + " (" + m.a().runid +
+                      "); the irradiation was left out, to be named in the options");
+      return {};
+    }
+  }
+  return from == nullptr ? std::string() : from->a().irradiation;
+}
+
 AgeSummary age_summary_of(const std::string& name, const SummaryAge& age, const Group& g, std::size_t published,
                           const Constants& constants, const PublishOptions& options, const SampleOptions& so,
                           Notes& notes) {
@@ -1215,6 +1236,9 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   if (!age_calc) return fail(age_calc.error());
   out.age_calc = std::move(*age_calc);
   out.age_summary = age_summary_of(name, *age, group, dated.size(), *constants, options, so, notes);
+
+  out.setup_name = options.setup;
+  out.irradiation_name = irradiation_of(name, dated, so, notes);
 
   if (!so.datapoint_name.empty()) {
     out.datapoint_name = so.datapoint_name;

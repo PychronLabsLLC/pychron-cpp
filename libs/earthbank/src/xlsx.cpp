@@ -34,9 +34,9 @@ namespace {
 
 // ---------------------------------------------------------------- the templates
 
-// What a column's value is a field of. `Submission` is the data point's name
-// (the one thing written that is not a field of a record); `None` is a column
-// nothing fills.
+// What a column's value is a field of. `Submission` is what a submission
+// carries beside its records: the data point's name, the set-up's and the
+// irradiation's; `None` is a column nothing fills.
 enum class Rec { None, Submission, Sample, Location, DataPoint, Aliquot, Measurement, AgeCalc, AgeSummary };
 
 // A data sheet: the record its rows are of and the last of the template's
@@ -65,8 +65,12 @@ constexpr std::string_view kSampleTemplate = "Sample_Template_v2025-04-16.xlsx";
 constexpr int kFieldRow = 4;
 constexpr int kFirstDataRow = 5;
 
-// The column every Ar-Ar sheet has for the data point's name.
+// The column every Ar-Ar sheet has for the data point's name, and the three
+// things of a submission a column can take.
 constexpr std::string_view kLinkColumn = "datapointName";
+constexpr std::string_view kDatapointName = "datapoint_name";
+constexpr std::string_view kSetupName = "setup_name";
+constexpr std::string_view kIrradiationName = "irradiation_name";
 
 // How a text value is written where the sheet asks for another form than the
 // record's (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SSZ`):
@@ -82,10 +86,11 @@ enum class Form { Plain, Date, MinuteUtc, DayFirst };
 // own name, or that name plus `Name`. Matching is exact, case included.
 // From the legacy exporter's SHEET_OVERRIDES and from the templates' row 4;
 // what differs from legacy:
-//   - `arArSetUp` and `irradiationBatchID` are left empty. The sheet asks for
-//     a search term that finds the set-up or the batch; legacy wrote the
-//     record's `arArAnalyticalSetUpId` and `irradiationBatchIDId` there,
-//     which are row numbers of the service and not terms.
+//   - `arArSetUp` and `irradiationBatchID` take the names the submission
+//     carries. The sheet asks for a search term that finds the set-up or the
+//     batch; legacy wrote the record's `arArAnalyticalSetUpId` and
+//     `irradiationBatchIDId` there, which are row numbers of the service and
+//     not terms (its upload sent the names, as here).
 //   - `sampleName` of ArArDataPoints takes the sample's name (legacy left the
 //     column empty and the importer had nothing to find the sample by).
 //   - `jValueUncertaintyType` and `jValueUncertaintyUnit` are columns of the
@@ -101,24 +106,24 @@ struct Exception {
 };
 
 constexpr Exception kExceptions[] = {
-    {"ArArDataPoints", kLinkColumn, Rec::Submission, "datapoint_name"},
+    {"ArArDataPoints", kLinkColumn, Rec::Submission, kDatapointName},
     {"ArArDataPoints", "sampleName", Rec::Sample, "name"},
-    {"ArArDataPoints", "arArSetUp", Rec::None, ""},
+    {"ArArDataPoints", "arArSetUp", Rec::Submission, kSetupName},
     {"ArArDataPoints", "arArMethod", Rec::DataPoint, "arMethodName"},
-    {"ArArDataPoints", "irradiationBatchID", Rec::None, ""},
+    {"ArArDataPoints", "irradiationBatchID", Rec::Submission, kIrradiationName},
     {"ArArDataPoints", "analysisDate", Rec::DataPoint, "analysisDate", Form::Date},
     {"ArArDataPoints", "jValueUncertaintyType", Rec::Measurement, "jvalueUncertaintyTypeName"},
     {"ArArDataPoints", "jValueUncertaintyUnit", Rec::DataPoint, "jvalueUncertaintyUnitName"},
     {"ArArDataPoints", "datapoint.literature", Rec::DataPoint, "literatureName"},
     {"ArArDataPoints", "datapoint.funding", Rec::DataPoint, "fundingName"},
 
-    {"ArArMeasurement", kLinkColumn, Rec::Submission, "datapoint_name"},
+    {"ArArMeasurement", kLinkColumn, Rec::Submission, kDatapointName},
     {"ArArMeasurement", "analysisTime", Rec::Measurement, "analysisTime", Form::MinuteUtc},
     {"ArArMeasurement", "Ar39KReleased", Rec::Measurement, "ar39KReleased"},
 
-    {"ArArAliquot", kLinkColumn, Rec::Submission, "datapoint_name"},
-    {"ArArAgeSummary", kLinkColumn, Rec::Submission, "datapoint_name"},
-    {"ArArAgeCalc", kLinkColumn, Rec::Submission, "datapoint_name"},
+    {"ArArAliquot", kLinkColumn, Rec::Submission, kDatapointName},
+    {"ArArAgeSummary", kLinkColumn, Rec::Submission, kDatapointName},
+    {"ArArAgeCalc", kLinkColumn, Rec::Submission, kDatapointName},
 
     {"Samples", "sampleName", Rec::Sample, "name"},
     {"Samples", "sampleComment", Rec::Sample, "description"},
@@ -338,7 +343,7 @@ Result<Plan> plan_of(const ooxml::Workbook& book, std::span<const SheetSpec> she
       if ((*keys)[i].empty()) continue;
       out.columns.push_back(column_of(sheet, i, (*keys)[i]));
       const Column& column = out.columns.back();
-      if (column.record == Rec::Submission) out.linked = true;
+      if (column.record == Rec::Submission && column.field == kDatapointName) out.linked = true;
       if (column.record != Rec::None) plan.held.emplace(column.record, column.field);
     }
     plan.sheets.push_back(std::move(out));
@@ -459,7 +464,10 @@ std::vector<ooxml::Cell> row_of(const SheetPlan& sheet, const json& own, const R
   for (const Column& column : sheet.columns) {
     if (column.record == Rec::None) continue;
     if (column.record == Rec::Submission) {
-      cells[column.index] = {r.submission->datapoint_name};
+      const Submission& s = *r.submission;
+      cells[column.index] = {column.field == kDatapointName ? s.datapoint_name
+                             : column.field == kSetupName   ? s.setup_name
+                                                            : s.irradiation_name};
       continue;
     }
     bool disagree = false;

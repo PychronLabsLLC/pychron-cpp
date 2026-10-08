@@ -299,10 +299,18 @@ struct AgeSummary {
 // uploaded. `datapoint_name` is the data point's own name: not a field of the
 // Ar-Ar record, it goes into the umbrella record an upload wraps it in and is
 // the key that ties the spreadsheet's rows together, so it is unique among
-// the submissions of one build. `notes` are for the user (which age was
-// chosen and why, what was left out); they are not sent.
+// the submissions of one build. `setup_name` and `irradiation_name` say what
+// the service already holds for the laboratory: its analytical set-up and the
+// irradiation batch, each by the name it has on EarthBank. Neither is a field
+// of the Ar-Ar record either (the record has their ids); an upload sends them
+// beside it (`arArSetUpName`, `arArIrradiationName`) and the workbook has a
+// column for each (`arArSetUp`, `irradiationBatchID`). Empty: not known.
+// `notes` are for the user (which age was chosen and why, what was left
+// out); they are not sent.
 struct Submission {
   std::string datapoint_name;
+  std::string setup_name;
+  std::string irradiation_name;
   Sample sample;
   std::optional<Location> location;
   DataPoint data_point;
@@ -329,7 +337,8 @@ nlohmann::json to_json(const AgeCalc& record);
 nlohmann::json to_json(const AgeSummary& record);
 
 // Lower-case hex SHA-256 of what the submission sends: the data point's
-// name, then to_json of the sample, the location (null when there is none),
+// name, the set-up's and the irradiation's (empty strings when not known),
+// then to_json of the sample, the location (null when there is none),
 // the data point, the aliquots, the measurements, the age calculation and the
 // age summary, in that order, as one JSON array dumped without whitespace.
 // `notes` take no part. Two

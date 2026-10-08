@@ -49,6 +49,10 @@
 //                      the reduction used, found from their values, and the
 //                      flux monitor as a query.
 //   AgeSummary         the one age reported for the sample: see PreferredAge.
+//   Submission         beside the records: the analytical set-up, which only
+//                      the lab can name (PublishOptions::setup), and the
+//                      irradiation, the one the published analyses name
+//                      (Analysis::irradiation) or the lab's word for it.
 //
 // Ages are in Ma whatever the reduction's age unit; every uncertainty is one
 // sigma and absolute; intensities are in fA.
@@ -64,7 +68,9 @@
 // trust: analyses of one sample that disagree about what the sample is
 // (material, lithology, place, constants, whether the decay constant's
 // uncertainty is in the ages, monitor, the weight of an aliquot) are refused
-// with both values.
+// with both values. The irradiation is the exception: a sample can be of two,
+// so analyses that name different ones are published with none named and a
+// note.
 //
 // Left unset, for want of anything in pychron-cpp to fill them from: grain
 // size, K content, funding, literature, the sample's kind and collection, the
@@ -130,6 +136,7 @@ struct SampleOptions {
   std::optional<PreferredAge> preferred_age;  // empty: the rule above. One that cannot be computed is an error.
   std::string flux_monitor;                   // replaces the monitor found on the analyses
   std::string datapoint_name;                 // empty: "<sample> <material>", or "<sample>"
+  std::string irradiation;                    // the irradiation batch as EarthBank names it; empty: the analyses'
 };
 
 struct PublishOptions {
@@ -153,6 +160,11 @@ struct PublishOptions {
   // leaves the field unset, with a note.
   std::string decay_constant;
   std::string air_ratio;
+  // The laboratory's analytical set-up (the instrument and how it is run) by
+  // the name it has on EarthBank, where it must already exist: every data
+  // point refers to one. Nothing on an analysis says it, and there is no
+  // default; left empty, Submission::setup_name is empty.
+  std::string setup;
   std::map<std::string, SampleOptions> samples;  // by sample name
   // Name and version, for the sample's description ("Uploaded from ...") and
   // the age summary's ("reduced with ..."); empty reads as `pychron-cpp`.

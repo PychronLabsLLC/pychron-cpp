@@ -75,7 +75,9 @@ const std::vector<std::string> kArArSheets = {"ArArDataPoints", "ArArMeasurement
 const std::map<SheetKey, RecordField> kNamedOtherwise = {
     {{"ArArDataPoints", "datapointName"}, {"Submission", "datapoint_name"}},
     {{"ArArDataPoints", "sampleName"}, {"Sample", "name"}},
+    {{"ArArDataPoints", "arArSetUp"}, {"Submission", "setup_name"}},
     {{"ArArDataPoints", "arArMethod"}, {"DataPoint", "arMethodName"}},
+    {{"ArArDataPoints", "irradiationBatchID"}, {"Submission", "irradiation_name"}},
     {{"ArArDataPoints", "analysisScale"}, {"DataPoint", "analysisScaleName"}},
     {{"ArArDataPoints", "lithology"}, {"DataPoint", "lithologyName"}},
     {{"ArArDataPoints", "mineral"}, {"DataPoint", "mineralName"}},
@@ -131,8 +133,6 @@ const std::map<SheetKey, RecordField> kNamedOtherwise = {
 
 // The columns nothing fills: no record has the thing they ask for.
 const std::set<SheetKey> kNotFilled = {
-    {"ArArDataPoints", "arArSetUp"},           // a search term for the set-up; the record has only its id
-    {"ArArDataPoints", "irradiationBatchID"},  // likewise
     {"ArArDataPoints", "description"},
     {"Samples", "elevationDepthAccuracy"},
     {"Samples", "elevationNote"},
@@ -275,7 +275,11 @@ std::map<std::string, json> expected_row(const std::vector<std::string>& keys, c
     if (!source) continue;
     json value;
     if (source->first == "Submission") {
-      value = submission.datapoint_name;
+      // What a submission carries beside its records; one not known is empty.
+      const std::string& text = source->second == "datapoint_name" ? submission.datapoint_name
+                                : source->second == "setup_name"   ? submission.setup_name
+                                                                   : submission.irradiation_name;
+      if (!text.empty()) value = text;
     } else if (source->first == kOwnRecord.at(sheet)) {
       if (own.contains(source->second)) value = own.at(source->second);
     } else if (source->first == "Sample") {
@@ -423,6 +427,8 @@ class Xlsx : public ::testing::Test {
     Distinct distinct;
     Submission s;
     s.datapoint_name = "all of it";
+    s.setup_name = "the set-up";
+    s.irradiation_name = "the batch";
     s.sample = distinct.all(Sample{});
     s.sample.sampleID = s.sample.name;
     s.sample.collectDateMin = "2019-06-30";
@@ -524,7 +530,11 @@ TEST_F(Xlsx, EveryColumnAndEveryFieldIsAccountedFor) {
     }
     EXPECT_EQ(column.record, expected->first) << column.sheet << "." << column.key;
     EXPECT_EQ(column.field, expected->second) << column.sheet << "." << column.key;
-    if (expected->first != "Submission") {
+    if (expected->first == "Submission") {
+      EXPECT_TRUE(expected->second == "datapoint_name" || expected->second == "setup_name" ||
+                  expected->second == "irradiation_name")
+          << column.sheet << "." << column.key;
+    } else {
       EXPECT_TRUE(fields_of(expected->first).contains(expected->second))
           << column.sheet << "." << column.key << ": " << expected->first << " has no " << expected->second;
       EXPECT_FALSE(is_id(expected->second)) << column.sheet << "." << column.key;
@@ -539,7 +549,7 @@ TEST_F(Xlsx, EveryColumnAndEveryFieldIsAccountedFor) {
   for (const SheetKey& where : kNotFilled) EXPECT_TRUE(seen.contains(where)) << where.first << "." << where.second;
 
   using Counts = std::map<std::string, std::pair<int, int>>;
-  EXPECT_EQ(counts, (Counts{{"ArArDataPoints", {19, 3}},
+  EXPECT_EQ(counts, (Counts{{"ArArDataPoints", {21, 1}},
                             {"ArArMeasurement", {68, 0}},
                             {"ArArAliquot", {5, 0}},
                             {"ArArAgeSummary", {13, 0}},
@@ -594,6 +604,11 @@ TEST_F(Xlsx, EveryRecordLandsInItsSheetUnderItsColumn) {
   EXPECT_EQ(points[1].at("jValueUncertaintyType"), "1 sigma");
   EXPECT_EQ(points[1].at("jValueUncertaintyUnit"), "abs.");
   EXPECT_EQ(points[1].at("analysisDate"), *step.data_point.analysisDate);
+  // The irradiation the analyses name; the fusions name none, and no set-up
+  // was given.
+  EXPECT_EQ(points[1].at("irradiationBatchID"), "NM-900");
+  EXPECT_FALSE(points[0].contains("irradiationBatchID"));
+  EXPECT_FALSE(points[1].contains("arArSetUp"));
 
   const std::vector<Row> measurements = rows_of(result.files[0], "ArArMeasurement");
   ASSERT_EQ(measurements.size(), 16u);
@@ -643,7 +658,7 @@ TEST_F(Xlsx, EveryFieldOfEveryRecordIsWrittenOrNoted) {
     const std::vector<std::string> keys = row_of(open(result.files[0]), sheet, 4);
     for (const Row& row : rows_of(result.files[0], sheet)) EXPECT_EQ(row.size(), keys.size()) << sheet;
   }
-  EXPECT_EQ(rows_of(result.files[0], "ArArDataPoints").at(0).size(), 19u);
+  EXPECT_EQ(rows_of(result.files[0], "ArArDataPoints").at(0).size(), 21u);
   EXPECT_EQ(rows_of(result.files[1], "Samples").at(0).size(), 23u);
 }
 
@@ -760,11 +775,11 @@ TEST_F(Xlsx, SheetOverrides) {
   const Row point = rows_of(result.files[0], "ArArDataPoints").at(0);
   Submission s = everything();
   EXPECT_EQ(point.at("arArMethod"), *s.data_point.arMethodName);
-  // The set-up and the irradiation batch are asked for as search terms; the
-  // record's ids, set here, are not ones.
+  // The set-up and the irradiation batch are asked for as search terms: the
+  // names the submission carries, never the record's ids, set here too.
   ASSERT_TRUE(s.data_point.arArAnalyticalSetUpId.has_value() && s.data_point.irradiationBatchIDId.has_value());
-  EXPECT_FALSE(point.contains("arArSetUp"));
-  EXPECT_FALSE(point.contains("irradiationBatchID"));
+  EXPECT_EQ(point.at("arArSetUp"), "the set-up");
+  EXPECT_EQ(point.at("irradiationBatchID"), "the batch");
   EXPECT_EQ(point.at("datapoint.literature"), *s.data_point.literatureName);
   EXPECT_EQ(point.at("datapoint.funding"), *s.data_point.fundingName);
   EXPECT_EQ(point.at("jValueUncertaintyUnit"), *s.data_point.jvalueUncertaintyUnitName);

@@ -1086,6 +1086,51 @@ TEST(Mapping, OverridesAreNormalized) {
 
 // ---------------------------------------------------------------- what is refused or left out
 
+TEST(Mapping, TheSetUpAndTheIrradiationAreNamed) {
+  // The set-up is the lab's to name: nothing on an analysis says what
+  // EarthBank calls it.
+  EXPECT_EQ(build_one(step_sample()).setup_name, "");
+  PublishOptions options;
+  options.setup = "A Noble Gas Lab, Helix MC";
+  for (const Submission& s : build(both_samples(), options)) EXPECT_EQ(s.setup_name, "A Noble Gas Lab, Helix MC");
+
+  // The irradiation is the one the sample's analyses name.
+  Submission step = build_one(step_sample(), options);
+  EXPECT_EQ(step.irradiation_name, "NM-900");
+  EXPECT_EQ(note_with(step, "irradiation"), "");
+  // An analysis that names none is passed over; a sample none of whose
+  // analyses names one has none.
+  step = build_one(with_edit(step_sample(), 0, [](pp::Analysis& a) { a.irradiation.clear(); }));
+  EXPECT_EQ(step.irradiation_name, "NM-900");
+  EXPECT_EQ(build_one(fusion_sample()).irradiation_name, "");
+
+  // A sample can span irradiations: it is published, the name is left out
+  // and a note names two of them.
+  step = build_one(with_edit(step_sample(), 3, [](pp::Analysis& a) { a.irradiation = "NM-901"; }));
+  EXPECT_EQ(step.irradiation_name, "");
+  EXPECT_EQ(note_with(step, "irradiation"),
+            "S-STEP: its analyses are of more than one irradiation, \"NM-900\" (20001-01A) and \"NM-901\" "
+            "(20001-01D); the irradiation was left out, to be named in the options");
+
+  // The lab's word replaces what the analyses say, and settles a
+  // disagreement.
+  options.samples["S-STEP"].irradiation = "NM-900 (TRIGA, 10 h)";
+  step = build_one(with_edit(step_sample(), 3, [](pp::Analysis& a) { a.irradiation = "NM-901"; }), options);
+  EXPECT_EQ(step.irradiation_name, "NM-900 (TRIGA, 10 h)");
+  EXPECT_EQ(note_with(step, "irradiation"), "");
+  const std::vector<Submission> both = build(both_samples(), options);
+  ASSERT_EQ(both.size(), 2u);
+  EXPECT_EQ(both[0].irradiation_name, "");  // S-FUS: the override is S-STEP's
+  EXPECT_EQ(both[1].irradiation_name, "NM-900 (TRIGA, 10 h)");
+
+  // An analysis left out for want of an age or an isotope has no say.
+  auto undated = with_edit(step_sample(), 3, [](pp::Analysis& a) {
+    a.irradiation = "NM-901";
+    drop_isotope(a, "Ar37");
+  });
+  EXPECT_EQ(build_one(undated).irradiation_name, "NM-900");
+}
+
 TEST(Mapping, DisagreementIsRefusedNamingBothValues) {
   const auto expect_refused = [](const AnalysisList& analyses, std::initializer_list<std::string_view> parts) {
     const std::string what = refused(analyses);

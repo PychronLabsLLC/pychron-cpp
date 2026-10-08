@@ -265,18 +265,22 @@ TEST(Model, ContentHashIgnoresNotesAndFieldOrder) {
   EXPECT_EQ(content_hash(b), hash);
 }
 
-// The hash of submission() above, worked out apart from this code: the
-// SHA-256 of the text below. A platform that writes a number another way
-// (28.2 as 28.199999999999999, 1.0 as 1) fails here.
+// The hash of submission() above with a set-up and an irradiation named,
+// worked out apart from this code: the SHA-256 of the text below. A platform
+// that writes a number another way (28.2 as 28.199999999999999, 1.0 as 1)
+// fails here.
 TEST(Model, ContentHashOfAKnownSubmission) {
   const std::string text =
-      R"(["S-1 Sanidine",{"materialName":"Sanidine","name":"S-1"},{"lat":35.0,"lon":-106.5},)"
+      R"(["S-1 Sanidine","NMGRL Helix","NM-900",{"materialName":"Sanidine","name":"S-1"},{"lat":35.0,"lon":-106.5},)"
       R"({"arMethodName":"Step-heating - laser"},[{"aliquotName":"10001-01"}],)"
       R"([{"aliquotName":"10001-01","ar40Corr":1.5,"stepNumber":1.0},)"
       R"({"aliquotName":"10001-01","ar40Corr":2.5,"stepNumber":2.0}],)"
       R"({"airRatioName":"Lee et al. 2006"},)"
       R"({"age":28.2,"ageUncertainty":0.05,"nAnalysisGrouped":2,"preferredAge":true}])";
-  EXPECT_EQ(content_hash(submission()), "ac663e474a26bdfbab8ca65cd1e4f3546f648b7d6e6276b73b4bacbe5d9a2366") << text;
+  Submission known = submission();
+  known.setup_name = "NMGRL Helix";
+  known.irradiation_name = "NM-900";
+  EXPECT_EQ(content_hash(known), "f261df4c9dea7052e1240e720c92de5570ddea090467efe91b185a28f984579f") << text;
 }
 
 TEST(Model, ContentHashChangesWithAValue) {
@@ -298,6 +302,15 @@ TEST(Model, ContentHashChangesWithAValue) {
   Submission named = a;
   named.datapoint_name = "S-1";
   EXPECT_NE(content_hash(named), hash);
+
+  // The set-up and the irradiation batch are sent with the data point.
+  Submission set_up = a;
+  set_up.setup_name = "NMGRL Helix";
+  EXPECT_NE(content_hash(set_up), hash);
+  Submission irradiated = a;
+  irradiated.irradiation_name = "NMGRL Helix";
+  EXPECT_NE(content_hash(irradiated), hash);
+  EXPECT_NE(content_hash(irradiated), content_hash(set_up));
 
   Submission no_location = a;
   no_location.location.reset();
