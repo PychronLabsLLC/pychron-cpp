@@ -68,9 +68,19 @@ bool names_a_secret(std::string_view key) {
          low.find("secret") != std::string::npos;
 }
 
-std::string read_file(const fs::path& file) {
+// What a file that is there holds, or an `Io` error naming it: never nothing
+// for a file that could not be read.
+Result<std::string> read_file(const fs::path& file) {
+  const std::string where = utf8(file);
+  std::error_code ec;
+  if (!fs::is_regular_file(file, ec)) {
+    return fail(ErrorKind::Io, where + ": cannot be read: " + (ec ? ec.message() : std::string("it is not a file")));
+  }
   std::ifstream in(file, std::ios::binary);
-  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (!in) return fail(ErrorKind::Io, where + ": cannot be read");
+  std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (in.bad()) return fail(ErrorKind::Io, where + ": cannot be read to its end");
+  return text;
 }
 
 // --- the address ---
@@ -302,6 +312,8 @@ std::string words_for(int error_number) { return std::error_code(error_number, s
 // part, for the caller to remove.
 std::optional<std::string> write_new(const fs::path& file, std::string_view text) {
 #ifdef _WIN32
+  // No mode to give here: what keeps the file the owner's is the access
+  // list it inherits from %APPDATA%, which is the user's own.
   std::ofstream out(file, std::ios::binary | std::ios::trunc);
   if (!out) return "cannot be created";
   out.write(text.data(), static_cast<std::streamsize>(text.size()));
@@ -409,9 +421,16 @@ Result<std::string> checked_base_url(std::string_view url) {
 
 Result<Profiles> load_profiles(const fs::path& file) {
   if (file.empty()) return fail(ErrorKind::Config, "no profiles file was named (the user has no home directory?)");
+  // Only a file that is not there is no profiles. One that is there and
+  // cannot be read, or cannot be asked about, is an error: taken for empty,
+  // the next save would replace the user's profiles with nothing.
   std::error_code ec;
-  if (!fs::exists(file, ec)) return Profiles{};
-  return parse_profiles(read_file(file), utf8(file));
+  const bool there = fs::exists(file, ec);
+  if (ec) return fail(ErrorKind::Io, utf8(file) + ": cannot be looked for: " + ec.message());
+  if (!there) return Profiles{};
+  const auto text = read_file(file);
+  if (!text) return fail(text.error());
+  return parse_profiles(*text, utf8(file));
 }
 
 Result<void> save_profiles(const Profiles& profiles, const fs::path& file) {
@@ -454,7 +473,12 @@ Result<void> save_profiles(const Profiles& profiles, const fs::path& file) {
 }
 
 fs::path default_profiles_file() {
+  // The directory libs/setup keeps the site file in (default_site_path).
+#if defined(_WIN32) || defined(__APPLE__)
+  const fs::path tail = fs::path("Pychron") / "earthbank" / "profiles.toml";
+#else
   const fs::path tail = fs::path("pychron") / "earthbank" / "profiles.toml";
+#endif
   const auto set = [](const char* name) -> std::optional<fs::path> {
     auto value = env_var(name);
     if (!value || value->empty()) return std::nullopt;

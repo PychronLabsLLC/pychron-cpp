@@ -73,11 +73,13 @@ bool valid_profile_name(std::string_view name);
 Result<std::string> checked_base_url(std::string_view url);
 
 // The profiles in `file`, in the order the file has them. A file that does
-// not exist is no profiles. A `Config` error, naming the file and the key,
-// for a file that is not TOML, a key this does not know (a `password`,
-// `token` or `secret` key in any spelling of case among them), a value of
-// the wrong type, a name or a `base_url` that is not one, two names that
-// differ only in case, and an `active` that names no profile.
+// not exist is no profiles; one that is there and cannot be read, or a path
+// that is not a file (a directory), is an `Io` error naming it, never no
+// profiles. A `Config` error, naming the file and the key, for a file that
+// is not TOML, a key this does not know (a `password`, `token` or `secret`
+// key in any spelling of case among them), a value of the wrong type, a name
+// or a `base_url` that is not one, two names that differ only in case, and
+// an `active` that names no profile.
 Result<Profiles> load_profiles(const std::filesystem::path& file);
 
 // Writes `profiles` to `file`, making its directory if need be. What
@@ -89,9 +91,10 @@ Result<void> save_profiles(const Profiles& profiles, const std::filesystem::path
 
 // The file both programs use unless told otherwise:
 //   Linux    $XDG_CONFIG_HOME/pychron/earthbank/profiles.toml, or under ~/.config
-//   macOS    ~/Library/Application Support/pychron/earthbank/profiles.toml
-//   Windows  %APPDATA%\pychron\earthbank\profiles.toml
-// This is not what Qt calls the application's config location, which has the
+//   macOS    ~/Library/Application Support/Pychron/earthbank/profiles.toml
+//   Windows  %APPDATA%\Pychron\earthbank\profiles.toml
+// The directory is the one the site file is in (libs/setup,
+// `default_site_path`), hence its capital on macOS and Windows. This is not what Qt calls the application's config location, which has the
 // program's name in it: the UI asks here and does not work out a path of its
 // own. Empty when the user has no home to put it in; load_profiles and
 // save_profiles refuse an empty path.

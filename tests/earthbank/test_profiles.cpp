@@ -247,6 +247,37 @@ TEST_F(Profiles, AMissingFileIsEmpty) {
   EXPECT_FALSE(save_profiles({}, {}).has_value());
 }
 
+// A file that is there and cannot be read is not a file that is missing: read
+// as no profiles, the next save would put nothing where the user's were.
+TEST_F(Profiles, AFileThatCannotBeReadIsAnErrorNotEmpty) {
+  const fs::path folder = dir_ / "a-directory";
+  fs::create_directories(folder);
+  const auto of_folder = load_profiles(folder);
+  ASSERT_FALSE(of_folder.has_value());
+  EXPECT_EQ(of_folder.error().kind, ErrorKind::Io) << of_folder.error().what;
+  EXPECT_TRUE(has(of_folder.error().what, folder.string())) << of_folder.error().what;
+
+  const std::string text = "[profiles.mylab]\nbase_url = \"https://earthbank.test\"\nusername = \"r.fixture\"\n";
+  spit(file(), text);
+  std::error_code ec;
+  fs::permissions(file(), fs::perms::none, fs::perm_options::replace, ec);
+  {
+    std::ifstream probe(file(), std::ios::binary);
+    if (probe.is_open()) {
+      probe.close();
+      fs::permissions(file(), fs::perms::owner_all, fs::perm_options::add, ec);
+      GTEST_SKIP() << "the file cannot be made unreadable here (running as root, or on a file system without "
+                      "permissions), so a failing read cannot be staged";
+    }
+  }
+  const auto closed = load_profiles(file());
+  fs::permissions(file(), fs::perms::owner_all, fs::perm_options::add, ec);
+  ASSERT_FALSE(closed.has_value());
+  EXPECT_EQ(closed.error().kind, ErrorKind::Io) << closed.error().what;
+  EXPECT_TRUE(has(closed.error().what, file().string())) << closed.error().what;
+  EXPECT_EQ(slurp(file()), text);
+}
+
 TEST_F(Profiles, SaveMakesTheDirectory) {
   const fs::path deep = dir_ / "pychron" / "earthbank" / "profiles.toml";
   earthbank::Profiles one;
@@ -435,7 +466,13 @@ TEST_F(Profiles, TheFileIsItsOwnersOnly) {
 #endif
 
 TEST_F(Profiles, DefaultFileIsUnderTheUsersConfigDirectory) {
+  // The directory is the one libs/setup keeps the site file in: `Pychron` on
+  // macOS and Windows, `pychron` on Linux.
+#if defined(_WIN32) || defined(__APPLE__)
+  const fs::path tail = fs::path("Pychron") / "earthbank" / "profiles.toml";
+#else
   const fs::path tail = fs::path("pychron") / "earthbank" / "profiles.toml";
+#endif
 #if defined(_WIN32)
   const ScopedEnv appdata("APPDATA", dir_.string());
   EXPECT_EQ(default_profiles_file(), dir_ / tail);
