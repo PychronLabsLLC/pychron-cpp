@@ -1,6 +1,10 @@
 # One test_<component>.cpp per experiment component. Globbed so parallel units only add files.
 file(GLOB PYCHRON_EXPERIMENT_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
+if(NOT TARGET pychron_metrics)
+  list(FILTER PYCHRON_EXPERIMENT_TESTS EXCLUDE REGEX "test_experiment_metrics\\.cpp$")
+endif()
+
 if(PYCHRON_EXPERIMENT_TESTS)
   add_executable(pychron_experiment_tests ${PYCHRON_EXPERIMENT_TESTS})
   target_link_libraries(pychron_experiment_tests PRIVATE pychron::experiment GTest::gtest_main)

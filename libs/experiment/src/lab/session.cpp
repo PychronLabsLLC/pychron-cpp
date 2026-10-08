@@ -203,6 +203,7 @@ void LabSession::run(QueueSpec spec, std::size_t from_row) {
   const bool paused_here = scan != nullptr && scan->running() && !scan->paused();
   if (paused_here) scan->pause();
 
+  hardware_.line.bus().publish(QueueStarted{spec.runs.size(), from_row});
   ExperimentQueue queue(std::move(spec));
   std::shared_ptr<executor::Executor> ex;
   {

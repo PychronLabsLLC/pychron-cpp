@@ -202,6 +202,34 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_FALSE(scan_->paused());
 }
 
+// A subscriber learns the size of the queue before any of its runs starts
+// (the metrics' queue progress depends on it).
+TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
+  std::mutex m;
+  std::vector<std::string> order;
+  std::vector<QueueStarted> started;
+  auto s1 = line_->bus().subscribe<QueueStarted>([&](const QueueStarted& e) {
+    std::lock_guard lock(m);
+    order.push_back("queue");
+    started.push_back(e);
+  });
+  auto s2 = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted&) {
+    std::lock_guard lock(m);
+    order.push_back("run");
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+
+  std::lock_guard lock(m);
+  ASSERT_EQ(started.size(), 1u);
+  EXPECT_EQ(started.front().rows, queue_.runs.size());
+  EXPECT_EQ(started.front().from_row, 0u);
+  ASSERT_FALSE(order.empty());
+  EXPECT_EQ(order.front(), "queue");
+  EXPECT_EQ(order.size(), 1u + result->runs.size());
+}
+
 // --- lasers shared with whoever else drives them (laser window design, 2) -----
 
 // The session is given the lab's lasers instead of building its own.

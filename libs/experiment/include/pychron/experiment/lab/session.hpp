@@ -67,6 +67,14 @@ struct SessionOptions {
   ProcessRunner notify;                  // runs the notification programs; empty: run_process
 };
 
+// Published on the line's bus when a session starts a queue, before the
+// executor runs. An unedited queue publishes no QueueEdited, so this is how a
+// subscriber learns how much there is to do.
+struct QueueStarted {
+  std::size_t rows = 0;      // QueueSpec::runs.size()
+  std::size_t from_row = 0;  // the row the queue starts at
+};
+
 // Published on the line's bus when a queue started by a session ends, after
 // any paused scan has been resumed.
 struct QueueEnded {
