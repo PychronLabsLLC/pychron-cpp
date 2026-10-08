@@ -96,6 +96,9 @@ struct ListMatch {
   };
   Kind kind = Kind::None;
   std::string entry;
+  // match_flux_monitor, Respelled: the entry was found by the monitor's name
+  // and paper, not by its name and age (and not as another spelling).
+  bool by_paper = false;
 };
 
 // `value` among `entries`. Another spelling is the same text but for the case

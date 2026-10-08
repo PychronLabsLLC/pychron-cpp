@@ -723,8 +723,8 @@ const json* value_of(Rec record, const std::string& field, Rec own_record, const
 // `text`, about to be written under a column that has a list, as the list
 // spells it: as given when the list has it so, the list's entry when it is
 // the same but for case and the spaces around it (for the flux monitor, also
-// when its name and age find one entry). Anything else is written as given
-// and said: nothing is rewritten on a guess.
+// when its name and age, or its name and paper, find one entry). Anything
+// else is written as given and said: nothing is rewritten on a guess.
 std::string in_list(std::string_view sheet, const Column& column, const std::string& text, Notes& notes) {
   const std::string where = std::string(sheet) + "." + column.key + ": ";
   if (!column.unread.empty()) {
@@ -740,10 +740,12 @@ std::string in_list(std::string_view sheet, const Column& column, const std::str
   switch (match.kind) {
     case ListMatch::Kind::Exact: return match.entry;
     case ListMatch::Kind::Respelled:
-      // What became what, each once; found by name and age is more than a
-      // spelling, and is said to be.
+      // What became what, each once; found by name and age, or by name and
+      // paper, is more than a spelling, and is said to be, as it was.
       notes.add(where + "'" + text + "' written as '" + match.entry + "'" + list +
-                (plain.kind == ListMatch::Kind::Respelled ? "" : ", found by its name and age"));
+                (plain.kind == ListMatch::Kind::Respelled ? ""
+                 : match.by_paper ? ", found by its name and paper"
+                                  : ", found by its name and age"));
       return match.entry;
     case ListMatch::Kind::Ambiguous:
       notes.add(where + "'" + text + "' could be more than one entry of the template's list and was written as given");

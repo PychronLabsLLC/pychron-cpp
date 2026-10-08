@@ -456,6 +456,11 @@ TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
   expect_match(match("Alder Creek Rhyolite Sanidine Phillips et al. 2022"), Kind::Respelled, phillips_ac, "legacy's");
   expect_match(match("ACs Phillips et al. 2022"), Kind::Respelled, phillips_ac, "by pychron's name");
   expect_match(match("FC-2 Kuiper et al. 2008"), Kind::Respelled, kuiper, "FC-2");
+  // Which of the two found it is said, for the note a user reads.
+  EXPECT_TRUE(match("FC-2 Kuiper et al. 2008").by_paper);
+  EXPECT_FALSE(match("FC-2 28.201 Ma").by_paper);
+  EXPECT_FALSE(match("FC-2 Kuiper et al. 2008, 28.201 Ma").by_paper);
+  EXPECT_FALSE(match(kuiper).by_paper);
   expect_match(match("FC-2 Kuiper et al. (2008)"), Kind::Respelled, kuiper, "the year in parentheses");
   expect_match(match("Fish Canyon Tuff sanidine Kuiper et al. 2008"), Kind::Respelled, kuiper, "by name");
   expect_match(match("fc-2 san kuiper 2008"), Kind::Respelled, kuiper, "case, and the mineral in short");

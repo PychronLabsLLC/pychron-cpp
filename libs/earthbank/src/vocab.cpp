@@ -632,7 +632,7 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
       if (std::find(found.begin(), found.end(), listed) == found.end()) found.push_back(listed);
     }
     if (found.size() > 1) return {ListMatch::Kind::Ambiguous, {}};
-    if (found.size() == 1) return {ListMatch::Kind::Respelled, std::string(found.front())};
+    if (found.size() == 1) return {ListMatch::Kind::Respelled, std::string(found.front()), by_paper};
   }
   return {};
 }

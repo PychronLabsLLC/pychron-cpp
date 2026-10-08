@@ -50,8 +50,9 @@
 //     (`Samples.material: 'sanidine' written as 'Sanidine' (list:
 //     Lithology)`);
 //   - a flux monitor, whose entries are whole citations, is also found by
-//     its name and age (vocab.hpp match_flux_monitor), and the same note
-//     ends `, found by its name and age`;
+//     its name and age, or its name and paper (vocab.hpp
+//     match_flux_monitor), and the same note ends `, found by its name and
+//     age` or `, found by its name and paper`, whichever it was;
 //   - anything else is written as it was given and said
 //     (`ArArAgeCalc.airRatio: 'Mark et al. 2011' is not in the template's
 //     list 'Air Ratio'; the importer may refuse the value`), each value

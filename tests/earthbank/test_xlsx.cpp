@@ -1337,6 +1337,25 @@ TEST_F(Xlsx, WhatAnExportOfTheFixturesSays) {
                                      "analysisScale (Analysis Scale) empty in every row"});
 }
 
+// A monitor written with its paper and no age is found by that, and the note
+// says so: it does not say an age found what no age was given for.
+TEST_F(Xlsx, AMonitorFoundByItsPaperIsSaidToBe) {
+  std::vector<Submission> submissions = fixtures();
+  submissions[0].age_calc.fluxMonitorName = "FC-2 Kuiper et al. 2008";
+  const XlsxResult result = exported(submissions);
+  const std::vector<Row> calc = rows_of(result.files[0], "ArArAgeCalc");
+  ASSERT_EQ(calc.size(), 2u);
+  EXPECT_EQ(calc[0].at("fluxMonitor"), kKuiper);
+  EXPECT_EQ(calc[1].at("fluxMonitor"), kKuiper);
+  EXPECT_EQ(notes_with(result.notes, "fluxMonitor"),
+            (std::vector<std::string>{
+                std::string("ArArAgeCalc.fluxMonitor: 'FC-2 Kuiper et al. 2008' written as '") + kKuiper +
+                    "' (list: Flux Monitor), found by its name and paper",
+                std::string("ArArAgeCalc.fluxMonitor: 'FC-2 28.201 Ma' written as '") + kKuiper +
+                    "' (list: Flux Monitor), found by its name and age",
+            }));
+}
+
 // A column the template colours Required is not wanted of every row: a
 // fusion has no step number and no share of the 39Ar, and a row is heated by
 // a laser or by a furnace. What is left is said with the number of rows.
