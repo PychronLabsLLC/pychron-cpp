@@ -4,6 +4,7 @@
 
 #include "pychron/core/user_file.hpp"
 
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
@@ -164,10 +165,15 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
   connect(&bridge_, &EntryBridge::changed, this, [this] {
     reload();
     // Someone else's change (a flux saved, a sample renamed): the level is
-    // read again when no edit would be lost with it. After this window's own
-    // change it reads the level itself.
-    // Nor while a level is being read: that read is later than the change.
-    if (!notifying_ && level_jobs_ == 0 && level_ && grid_->has_edit() && !grid_->edit().dirty()) open_level(*level_);
+    // read again only when nothing here is unsaved, in the grid, the Level
+    // tab or the dose table (reading it refills all three), and with the
+    // selection kept. After this window's own change it reads the level
+    // itself; nor while a level is being read: that read is later than the
+    // change.
+    if (notifying_ || level_jobs_ > 0 || !level_ || unsaved()) return;
+    const auto positions = selected_positions();
+    reselect_ = std::set<int>(positions.begin(), positions.end());
+    open_level(*level_);
   });
   resize(1400, 800);
   reload();
@@ -210,7 +216,9 @@ void PackagesWindow::build_docks() {
   holder_ = new QComboBox(level);
   production_ = new QComboBox(level);
   z_ = new QLineEdit(level);
+  z_->setObjectName(QStringLiteral("packages_z"));
   level_note_ = new QLineEdit(level);
+  level_note_->setObjectName(QStringLiteral("packages_level_note"));
   form->addRow(tr("Package kind"), kind_);
   form->addRow(tr("Holder"), holder_);
   form->addRow(tr("z"), z_);
@@ -256,6 +264,7 @@ void PackagesWindow::build_docks() {
   chronology_page_ = new QWidget(this);
   auto* cl = new QVBoxLayout(chronology_page_);
   doses_ = new QTableWidget(0, 3, chronology_page_);
+  doses_->setObjectName(QStringLiteral("packages_doses"));
   doses_->setHorizontalHeaderLabels({tr("Power"), tr("Start (local)"), tr("End (local)")});
   doses_->horizontalHeader()->setStretchLastSection(true);
   hours_ = new QLabel(chronology_page_);
@@ -494,8 +503,10 @@ void PackagesWindow::open_level(ps::Uuid level) {
       [this](Result<LevelData> r) {
         --busy_;
         --level_jobs_;
+        const auto reselect = std::exchange(reselect_, std::nullopt);  // of the read a change elsewhere started
         if (!r) return show_message(QString::fromStdString(to_string(r.error())), true);
         apply_level(std::move(*r));
+        if (reselect) select_positions(*reselect);
       });
 }
 
@@ -549,14 +560,50 @@ void PackagesWindow::fill_level_dock() {
   chronology_page_->setEnabled(irradiation);
 }
 
+QStringList PackagesWindow::dose_texts(const ps::Dose& d) {
+  return {QString::number(d.power), local_text(d.start), local_text(d.end)};
+}
+
+bool PackagesWindow::chronology_edited() const {
+  // A cell being typed in is an edit too.
+  if (const QWidget* focus = QApplication::focusWidget(); focus && focus != doses_ && doses_->isAncestorOf(focus))
+    return true;
+  const auto& doses = chronology_.value.doses;
+  if (doses_->rowCount() != static_cast<int>(doses.size())) return true;
+  for (int row = 0; row < doses_->rowCount(); ++row) {
+    const QStringList stored = dose_texts(doses[static_cast<std::size_t>(row)]);
+    for (int column = 0; column < 3; ++column) {
+      const auto* item = doses_->item(row, column);
+      if ((item ? item->text() : QString()) != stored.at(column)) return true;
+    }
+  }
+  return false;
+}
+
+bool PackagesWindow::level_fields_edited() const {
+  if (!grid_->has_edit()) return false;
+  const auto& e = grid_->edit();
+  // The holder and the production go to the grid's edit when picked; z and
+  // the note only when their field is left.
+  const QString z = z_->text().trimmed();
+  bool ok = true;
+  const double value = z.toDouble(&ok);
+  if (!z.isEmpty() && !ok) return true;
+  if ((z.isEmpty() ? std::nullopt : std::optional<double>(value)) != e.z()) return true;
+  return level_note_->text().trimmed() != (e.level_note() ? QString::fromStdString(*e.level_note()) : QString());
+}
+
+bool PackagesWindow::unsaved() const {
+  return !grid_->has_edit() || grid_->edit().dirty() || level_fields_edited() || chronology_edited();
+}
+
 void PackagesWindow::fill_chronology() {
   doses_->setRowCount(0);
   for (const auto& d : chronology_.value.doses) {
     const int at = doses_->rowCount();
     doses_->insertRow(at);
-    doses_->setItem(at, 0, new QTableWidgetItem(QString::number(d.power)));
-    doses_->setItem(at, 1, new QTableWidgetItem(local_text(d.start)));
-    doses_->setItem(at, 2, new QTableWidgetItem(local_text(d.end)));
+    const QStringList texts = dose_texts(d);
+    for (int column = 0; column < 3; ++column) doses_->setItem(at, column, new QTableWidgetItem(texts.at(column)));
   }
   const double hours = entry::dose_hours(chronology_.value.doses);
   hours_->setText(tr("%1 h, estimated J %2")

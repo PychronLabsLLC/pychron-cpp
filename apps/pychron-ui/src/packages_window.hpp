@@ -13,6 +13,7 @@
 
 #include <QMainWindow>
 #include <QPointer>
+#include <QStringList>
 
 #include "entry_bridge.hpp"
 #include "level_grid_model.hpp"
@@ -82,6 +83,13 @@ class PackagesWindow : public QMainWindow {
 
  private:
   struct LevelData;
+  static QStringList dose_texts(const persistence::Dose& dose);  // a row of the dose table
+  // The dose table differs from the stored chronology (it is written only by
+  // "Save Chronology"), or a cell of it is being typed in.
+  bool chronology_edited() const;
+  bool level_fields_edited() const;              // z or the note is typed and not yet in the grid's edit
+  // Something here would be lost by reading the level again.
+  bool unsaved() const;
   void notify_changed();                         // bridge_.notify_changed(), as this window's own
   bool show_wanted();                            // false when the tree has no such level
   void build_docks();
@@ -125,6 +133,7 @@ class PackagesWindow : public QMainWindow {
   QAction* fit_flux_ = nullptr;
   QString level_name_;                           // of level_
   std::optional<std::pair<QString, QString>> wanted_;  // show_level()'s, until the tree is read
+  std::optional<std::set<int>> reselect_;        // the selection to put back after the read a change elsewhere started
   int tree_jobs_ = 0;                            // tree reads outstanding
   int level_jobs_ = 0;                           // level reads outstanding
   int busy_ = 0;

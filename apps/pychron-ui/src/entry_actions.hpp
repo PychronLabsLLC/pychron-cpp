@@ -46,7 +46,6 @@ class EntryActions : public QObject {
   void closing();
 
  private:
-
   QWidget* owner_;
   std::string url_;
   std::unique_ptr<EntryBridge> bridge_;  // declared before the windows: they are deleted first

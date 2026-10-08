@@ -144,7 +144,7 @@ class TestMenuHub : public QObject {
     QVERIFY(!titles().contains(QStringLiteral("Entry")));
     QVERIFY(!menu_of(main, Menu::Fit)->menuAction()->isVisible());
     QVERIFY(MenuHub::instance().placeholder(Menu::Fit) == nullptr);
-    QCOMPARE(MenuHub::title(Menu::Fit), QStringLiteral("Fit"));
+    QCOMPARE(MenuHub::title(Menu::Fit), QStringLiteral("F&it"));
 
     QAction samples(QStringLiteral("Samples…"));
     QAction flux(QStringLiteral("Flux…"));
@@ -172,6 +172,46 @@ class TestMenuHub : public QObject {
     QCOMPARE(static_cast<int>(Menu::Entry), 8);
     QCOMPARE(static_cast<int>(Menu::Fit), 9);
     QCOMPARE(MenuHub::kMenus, std::size_t{10});
+  }
+
+  void the_shared_bar_has_fit_between_entry_and_window() {
+    MenuHub& hub = MenuHub::reset(MenuHub::Bars::Shared);
+    QMainWindow main;
+    main.show();
+    QMenuBar* bar = hub.bar_for(&main);
+    QVERIFY(bar != nullptr);
+    QVERIFY(bar->parentWidget() == nullptr);  // the one bar
+    const auto titles = [bar](bool hidden) {
+      QStringList out;
+      for (const QAction* a : bar->actions())
+        if (hidden || a->isVisible()) out << a->text().remove(QLatin1Char('&'));
+      return out;
+    };
+    QVERIFY(!titles(false).contains(QStringLiteral("Fit")));  // nothing contributed
+    QVERIFY(!titles(false).contains(QStringLiteral("Entry")));
+
+    QAction samples(QStringLiteral("Samples…"));
+    QAction flux(QStringLiteral("Flux…"));
+    hub.contribute(&main, Menu::Entry, {&samples}, Scope::App);
+    hub.contribute(&main, Menu::Fit, {&flux}, Scope::App);
+    const QStringList now = titles(false);
+    const qsizetype entry = now.indexOf(QStringLiteral("Entry"));
+    QVERIFY(entry >= 0);
+    QCOMPARE(now.indexOf(QStringLiteral("Fit")), entry + 1);
+    QCOMPARE(now.indexOf(QStringLiteral("Window")), entry + 2);
+    QCOMPARE(titles(true).mid(5), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
+                                               QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
+    // Every title's mnemonic is its own.
+    QStringList mnemonics;
+    for (const QAction* a : bar->actions()) {
+      const qsizetype at = a->text().indexOf(QLatin1Char('&'));
+      QVERIFY2(at >= 0, qPrintable(a->text()));
+      const QString letter = a->text().mid(at + 1, 1).toLower();
+      QVERIFY2(!mnemonics.contains(letter), qPrintable(a->text()));
+      mnemonics << letter;
+    }
+    QCOMPARE(mnemonics.size(), 10);
   }
 
   void shared_one_bar_serves_every_window() {

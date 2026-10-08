@@ -124,7 +124,7 @@ QString MenuHub::title(Menu menu) {
     case Menu::Entry:
       return tr("E&ntry");
     case Menu::Fit:
-      return tr("Fit");
+      return tr("F&it");
     case Menu::Window:
       return tr("&Window");
     case Menu::Help:

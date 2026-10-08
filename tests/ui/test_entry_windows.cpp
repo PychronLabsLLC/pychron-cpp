@@ -19,6 +19,7 @@ class EntryWindowsTest : public QObject {
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QTableView>
 #include <QTableWidget>
@@ -389,6 +390,79 @@ class EntryWindowsTest : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
     QVERIFY(w.grid()->edit().dirty());
     QCOMPARE(w.grid()->index(1, pychron::ui::LevelGridModel::Note).data().toString(), QStringLiteral("mine"));
+  }
+
+  // Another client puts `sample` on position `position` of level A.
+  void fill_elsewhere(int position, const std::string& sample) {
+    auto sheet = store_->level_sheet(seeded_.level_a)->value();
+    en::LevelSheetEdit e(sheet, std::nullopt);
+    e.add_row(position);
+    ps::SampleRow row = (*store_->samples({sample, std::nullopt, std::nullopt, std::nullopt, 10})).front();
+    e.assign_sample({position}, row);
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+  }
+
+  void a_change_elsewhere_keeps_unsaved_doses_and_level_fields() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    const auto sample_at = [&](int position) {
+      return w.grid()->index(w.grid()->row_of(position), pychron::ui::LevelGridModel::Sample).data().toString();
+    };
+    auto* doses = w.findChild<QTableWidget*>(QStringLiteral("packages_doses"));
+    auto* z = w.findChild<QLineEdit*>(QStringLiteral("packages_z"));
+    auto* note = w.findChild<QLineEdit*>(QStringLiteral("packages_level_note"));
+    QVERIFY(doses && z && note);
+    QCOMPARE(doses->rowCount(), 0);
+    QCOMPARE(z->text(), QString());
+
+    // A dose row added and not saved (as Add Dose makes it): the level is not read again.
+    doses->insertRow(0);
+    doses->setItem(0, 0, new QTableWidgetItem(QStringLiteral("1.0")));
+    doses->setItem(0, 1, new QTableWidgetItem(QStringLiteral("2026-01-02 08:00")));
+    doses->setItem(0, 2, new QTableWidgetItem(QStringLiteral("2026-01-02 17:00")));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(1, "bt-1");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);  // the tree alone
+    QCoreApplication::processEvents();
+    QCOMPARE(doses->rowCount(), 1);
+    QCOMPARE(doses->item(0, 1)->text(), QStringLiteral("2026-01-02 08:00"));
+    QCOMPARE(sample_at(1), QString());  // the level was left alone
+
+    // The row taken out again: nothing is unsaved, and the next change shows.
+    doses->removeRow(0);
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && sample_at(1) == QStringLiteral("bt-1"), kWaitMs);
+
+    // z typed and the field not left yet: likewise.
+    z->setText(QStringLiteral("1.5"));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(2, "FC-2");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(z->text(), QStringLiteral("1.5"));
+    QCOMPARE(sample_at(2), QString());
+    // And a note.
+    z->clear();
+    note->setText(QStringLiteral("top of the can"));
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(note->text(), QStringLiteral("top of the can"));
+    QCOMPARE(sample_at(2), QString());
+
+    // Nothing unsaved, positions 2 and 3 selected: read again, the selection kept.
+    note->clear();
+    w.select_positions({2, 3});
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && sample_at(2) == QStringLiteral("FC-2"), kWaitMs);
+    QCOMPARE(w.selected_positions(), (std::vector<int>{2, 3}));
+    QCOMPARE(w.holder_view()->selected(), (std::set<int>{2, 3}));
   }
 
   void entry_menu_opens_the_windows() {

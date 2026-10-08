@@ -2509,6 +2509,28 @@ class FluxWindowTest : public QObject {
     QCOMPARE(p->windowTitle(), QStringLiteral("Packages — NM-300 A"));
   }
 
+  void a_j_saved_elsewhere_shows_in_packages_with_the_selection_kept() {
+    auto r = rig();
+    {
+      PackagesWindow p(*r.bridge);
+      p.show_level(QStringLiteral("NM-300"), QStringLiteral("A"));
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && p.grid()->has_edit(), kWaitMs);
+      using Grid = pychron::ui::LevelGridModel;
+      const auto j_of = [&p](int hole) { return p.grid()->index(p.grid()->row_of(hole), Grid::J).data().toString(); };
+      QVERIFY(p.grid()->row_of(9) >= 0);
+      QCOMPARE(j_of(9), QString());
+      p.select_positions({2, 3});
+      QCOMPARE(p.selected_positions(), (std::vector<int>{2, 3}));
+
+      save_fit(9, nearest3(), false, 2.0e-3);  // another client
+      r.bridge->notify_changed();
+      QTRY_VERIFY_WITH_TIMEOUT(!p.busy() && !j_of(9).isEmpty(), kWaitMs);
+      QCOMPARE(j_of(9), QString::number(2.0e-3, 'E', 6));
+      QCOMPARE(p.selected_positions(), (std::vector<int>{2, 3}));
+    }
+    drain(*r.bridge);
+  }
+
   void open_in_packages_shows_the_level() {
     MenuHub::reset(MenuHub::Bars::PerWindow);
     Owners o(url_, dir_.filePath(QStringLiteral("presets")));
