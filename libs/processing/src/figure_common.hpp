@@ -20,7 +20,7 @@ std::string format_sig(double v, int sig);
 std::string format_utc(double t);
 Color with_alpha(Color c, std::uint8_t a);
 
-// title, graph_columns, panel_spacing, font.*, background, plot_background,
+// title, graph_columns, panel_spacing, graph_spacing, font.*, background, plot_background,
 // show_grid, error_bar_nsigma, excluded_style, show_legend, legend_location,
 // statistics_location, statistics_sig_figs.
 std::vector<FieldSpec> common_figure_fields();

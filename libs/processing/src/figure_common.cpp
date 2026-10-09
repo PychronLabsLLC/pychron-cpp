@@ -43,6 +43,7 @@ std::vector<FieldSpec> common_figure_fields() {
       text("title", "Title", "Layout", "", "Placeholders: {graph}"),
       integer("graph_columns", "Graphs per row", "Layout", 1, 1, 6),
       integer("panel_spacing", "Panel spacing (px)", "Layout", 4, 0, 40),
+      integer("graph_spacing", "Graph spacing (px)", "Layout", 5, 0, 80),
       font("font.family", "Font", "Appearance", ""),
       number("font.title", "Title size", "Appearance", 12, 4, 72, 1),
       number("font.axis", "Axis title size", "Appearance", 10, 4, 72, 1),
@@ -73,6 +74,7 @@ void apply_common_style(const Options& o, Scene& scene) {
   scene.style.legend = o.get_bool("show_legend");
   scene.style.legend_corner = parse_corner(o.get_string("legend_location")).value_or(Corner::TopRight);
   scene.style.panel_spacing = static_cast<int>(o.get_int("panel_spacing"));
+  scene.style.graph_spacing = static_cast<int>(o.get_int("graph_spacing"));
 }
 
 SchemaPtr group_row_schema(bool fixed_steps) {

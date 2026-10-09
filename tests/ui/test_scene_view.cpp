@@ -148,6 +148,61 @@ class TestSceneView : public QObject {
     QTest::mouseRelease(view.plot(), Qt::LeftButton, Qt::ShiftModifier, at(5.5, 45.0));
     QVERIFY(banded.isEmpty());
   }
+
+  // Stacked panels are exactly `panel_spacing` apart, zero included: nothing
+  // of a panel's own lies between it and the next. Graphs are `graph_spacing`
+  // apart.
+  void spacingIsWhatTheSceneSays() {
+    const auto scene_with = [](int panel_spacing, int graph_spacing) {
+      pp::Scene scene;
+      scene.columns = 2;
+      scene.style.panel_spacing = panel_spacing;
+      scene.style.graph_spacing = graph_spacing;
+      for (int gi = 0; gi < 2; ++gi) {
+        pp::Graph g;
+        g.x.title = "Age (Ma)";
+        for (int pi = 0; pi < 3; ++pi) {
+          pp::Panel p;
+          p.y.title = "y";
+          pp::PointLayer pts;
+          pts.x = {1.0, 9.0};
+          pts.y = {10.0, 90.0};
+          pts.refs = {pp::PointRef{"a"}, pp::PointRef{"b"}};
+          pts.excluded = {false, false};
+          p.layers = {pts};
+          g.panels.push_back(p);
+        }
+        scene.graphs.push_back(g);
+      }
+      return std::make_shared<const pp::Scene>(scene);
+    };
+    SceneView view;
+    view.resize(800, 600);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    const auto panel_gap = [&](int upper) {
+      const QRect a = view.plot()->axisRect(upper)->rect(), b = view.plot()->axisRect(upper + 1)->rect();
+      return b.y() - (a.y() + a.height());
+    };
+    const auto graph_gap = [&] {
+      const QRect a = view.plot()->plotLayout()->elementAt(0)->outerRect();
+      const QRect b = view.plot()->plotLayout()->elementAt(1)->outerRect();
+      return b.x() - (a.x() + a.width());
+    };
+    for (const int spacing : {0, 10}) {
+      view.set_scene(scene_with(spacing, 5));
+      view.plot()->replot();
+      QCOMPARE(panel_gap(0), spacing);
+      QCOMPARE(panel_gap(1), spacing);
+      QCOMPARE(panel_gap(3), spacing);  // the second graph
+      QCOMPARE(graph_gap(), 5);
+    }
+    for (const int spacing : {0, 30}) {
+      view.set_scene(scene_with(4, spacing));
+      view.plot()->replot();
+      QCOMPARE(graph_gap(), spacing);
+    }
+  }
 };
 
 QTEST_MAIN(TestSceneView)

@@ -192,6 +192,8 @@ void SceneView::rebuild() {
   const pp::Scene& s = *scene_;
   plot_->setBackground(QBrush(qcolor(s.style.background)));
   const int columns = std::max(1, s.columns);
+  plot_->plotLayout()->setRowSpacing(s.style.graph_spacing);
+  plot_->plotLayout()->setColumnSpacing(s.style.graph_spacing);
   int index = 0;
   for (const auto& g : s.graphs) {
     const int row = index / columns, col = index % columns;
@@ -214,6 +216,13 @@ void SceneView::rebuild() {
       sub->setRowStretchFactor(sub_row, std::max(0.05, panel.height));
       ++sub_row;
       rect->setMarginGroup(QCP::msLeft | QCP::msRight, margins);
+      // Between two panels there is the panel spacing and nothing else: the
+      // sides that face another panel have no margin of their own.
+      QCP::MarginSides outer = QCP::msLeft | QCP::msRight;
+      if (pi == 0) outer |= QCP::msTop;
+      if (pi + 1 == g.panels.size()) outer |= QCP::msBottom;
+      rect->setAutoMargins(outer);
+      rect->setMargins(QMargins(0, 0, 0, 0));
       rect->setBackground(QBrush(qcolor(s.style.plot_background)));
       QCPAxis* x = rect->axis(QCPAxis::atBottom);
       QCPAxis* y = rect->axis(QCPAxis::atLeft);

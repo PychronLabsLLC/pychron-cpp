@@ -169,7 +169,8 @@ struct SceneStyle {
   Fonts fonts;
   bool legend = true;
   Corner legend_corner = Corner::TopRight;
-  int panel_spacing = 4;
+  int panel_spacing = 4;  // px between the panels of a graph; 0: they touch
+  int graph_spacing = 5;  // px between graphs
 };
 
 struct Scene {
