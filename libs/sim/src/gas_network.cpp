@@ -112,7 +112,7 @@ Result<GasNetwork> GasNetwork::make(GasTopology topology) {
   for (const GasValve& valve : topology.valves) {
     if (valve.name.empty()) return fail(ErrorKind::Config, "gas network: a valve has no name");
     const std::string where = "gas network: valve " + quoted(valve.name);
-    if (described.find(valve.name) != described.end()) {
+    if (described.contains(valve.name)) {
       return fail(ErrorKind::Config, where + " has the name of a volume");
     }
     // For the lightest species too: that is the largest it is used at.
@@ -128,7 +128,7 @@ Result<GasNetwork> GasNetwork::make(GasTopology topology) {
   }
   for (const GasPump& pump : topology.pumps) {
     const std::string where = "gas network: the pump on " + quoted(pump.volume);
-    if (described.find(pump.volume) == described.end()) {
+    if (!described.contains(pump.volume)) {
       return fail(ErrorKind::Config, where + " is on a volume that is not there");
     }
     if (auto checked = check(pump, pump.volume); !checked) return fail(checked.error());
@@ -215,7 +215,7 @@ Result<GasNetwork> GasNetwork::make(GasTopology topology) {
       const auto valve = network.valve_of_.find(valve_name);
       if (valve == network.valve_of_.end()) continue;
       Beside& beside = neighbours[valve->second];
-      if (network.valve_of_.find(other) != network.valve_of_.end()) {
+      if (network.valve_of_.contains(other)) {
         if (other != valve_name) once(beside.valves, other);
         continue;
       }
@@ -363,10 +363,10 @@ Result<void> GasNetwork::add_volume(GasVolume volume, const std::vector<GasPump>
   for (const GasPump& pump : pumps) {
     if (auto checked = check(pump, volume.name); !checked) return fail(checked.error());
   }
-  if (volume_of_.find(volume.name) != volume_of_.end()) {
+  if (volume_of_.contains(volume.name)) {
     return fail(ErrorKind::Config, "gas network: there is a volume " + quoted(volume.name) + " already");
   }
-  if (valve_of_.find(volume.name) != valve_of_.end()) {
+  if (valve_of_.contains(volume.name)) {
     return fail(ErrorKind::Config, "gas network: volume " + quoted(volume.name) + " has the name of a valve");
   }
   // On a copy, so that a refusal leaves this network as it was.

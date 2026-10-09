@@ -623,7 +623,7 @@ TEST(SimSystem, MaxiGaugeHookReportsGaugeVolumePressure) {
   ManualClock clock;
   auto topo = three_volumes();
   topo.volumes.push_back({"IG1", 1.0});
-  topo.edges.push_back({"IG1", "prep"});
+  topo.edges.emplace_back("IG1", "prep");
   auto settings = quiet();
   settings.initial_pressures = {{"prep", 2e-6}, {"IG1", 2e-6}};
   SimSystem sim(clock, topo, settings);
@@ -657,7 +657,7 @@ TEST(SimSystem, MicroIonHookReportsGaugeVolumePressureAtItsAddress) {
   ManualClock clock;
   auto topo = three_volumes();
   topo.volumes.push_back({"MI1", 1.0});
-  topo.edges.push_back({"MI1", "prep"});
+  topo.edges.emplace_back("MI1", "prep");
   auto settings = quiet();
   settings.initial_pressures = {{"prep", 3e-7}, {"MI1", 3e-7}};
   SimSystem sim(clock, topo, settings);
@@ -930,10 +930,10 @@ TEST(SimSystem, ALooseDescriptionStillBuilds) {
   auto topology = three_volumes();
   topology.volumes.push_back({"bone", 7.0});       // again: the first stands
   topology.volumes.push_back({"unsized", 0.0});    // takes the default size
-  topology.valves.push_back("A");                  // again
-  topology.valves.push_back("prep");               // the name of a volume
-  topology.edges.push_back({"bone", "nowhere"});   // to nothing
-  topology.edges.push_back({"bone", "bone"});      // to itself
+  topology.valves.emplace_back("A");                  // again
+  topology.valves.emplace_back("prep");               // the name of a volume
+  topology.edges.emplace_back("bone", "nowhere");   // to nothing
+  topology.edges.emplace_back("bone", "bone");      // to itself
   SimSystem sim(clock, topology, settings);
   ASSERT_FALSE(sim.build_error()) << sim.build_error()->what;
 
@@ -1328,8 +1328,8 @@ TEST(SimSystem, TwoSpectrometerStagesTakeTheFirstByName) {
 TEST(SimSystem, SaysWhichValvesHaveNoPhysics) {
   ManualClock clock;
   auto topology = three_volumes();
-  topology.valves.push_back("X");
-  topology.valves.push_back("Y");
+  topology.valves.emplace_back("X");
+  topology.valves.emplace_back("Y");
   topology.edges.emplace_back("bone", "X");
   topology.edges.emplace_back("X", "Y");
   topology.edges.emplace_back("Y", "turbo");

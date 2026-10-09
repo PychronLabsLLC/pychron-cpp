@@ -519,7 +519,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       std::lock_guard lock(mutex_);
       advance_locked();
       for (const auto& g : system.gauges) {
-        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(parameters.size()))
+        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, parameters.size()))
           continue;
         by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
         add_gauge_volume_locked(g.name);
@@ -633,7 +633,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       std::lock_guard lock(mutex_);
       advance_locked();
       for (const auto& g : system.gauges) {
-        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(labels.size())) continue;
+        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, labels.size())) continue;
         by_label[labels[static_cast<std::size_t>(g.channel - 1)]] = g.name;
         add_gauge_volume_locked(g.name);
       }

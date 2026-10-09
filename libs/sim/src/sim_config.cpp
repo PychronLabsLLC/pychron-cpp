@@ -70,7 +70,7 @@ std::string described(const Range& range) {
 // candidates, while they are few enough to read, else how many there are.
 template <typename Names>
 std::string known(const Names& names) {
-  const std::size_t count = static_cast<std::size_t>(std::distance(std::begin(names), std::end(names)));
+  const auto count = static_cast<std::size_t>(std::distance(std::begin(names), std::end(names)));
   if (count == 0) return "; there is none";
   if (count > kNamesListed) return "; " + std::to_string(count) + " are known";
   std::string out = "; known: ";
