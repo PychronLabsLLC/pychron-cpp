@@ -4,83 +4,119 @@
 
 Single developer. Two long-lived branches:
 
-- `develop` is the integration branch: all work lands here first.
-- `main` is what has been released or is about to be. Nothing is pushed to
-  it: it changes only by pull request. GitHub does not enforce this yet
-  (branch protection needs a paid plan for a private repository), so the rule
-  is kept by hand.
+- `develop`: integration branch. All work lands here first.
+- `main`: released or about to be. No pushes: changes only by pull request.
+  GitHub does not enforce yet (branch protection needs paid plan for private
+  repository), so rule kept by hand.
 
 Day to day:
 
-- Work on a branch (or worktree) cut from `develop`, named for the kind of
-  change: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>`,
+- Work on branch (or worktree) cut from `develop`, named for kind of change:
+  `feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>`,
   `refactor/<topic>`, `test/<topic>`, `ci/<topic>`.
-- Commit messages follow Conventional Commits, with the component as the
-  scope: `feat(ui): a heaters dock`, `fix(canvas): ...`, `docs: ...`. The
-  release notes and the next version are computed from them: `feat` is a minor
-  bump, `fix` and `perf` a patch, and `feat!:` / `fix!:` or a
-  `BREAKING CHANGE:` footer a breaking change (still a minor bump while the
-  version is 0.x). `chore`, `docs`, `refactor`, `test`, `ci` and `build`
-  release nothing on their own.
-- To land: rebase the branch on `origin/develop`, run the static analysis
-  (`python3 tools/quality_check.py`, below) and the tests on the rebased
-  branch, merge into `develop` and push. No pull request is needed for
-  `develop`. If `origin/develop` moves again before the push, that is another
-  rebase and another run: what is pushed is what was tested.
-- CI does not run on `develop` or on work branches, only on `main` and on pull
-  requests into it. The tests you run locally are the only ones before a
-  release: run them.
-- Never skip or disable a failing test; find the root cause.
-- Never push to `main`, and do not open a pull request into `main` or merge
-  one unless asked to release.
+- Commit messages follow Conventional Commits, component as scope:
+  `feat(ui): a heaters dock`, `fix(canvas): ...`, `docs: ...`. Release notes
+  and next version computed from them: `feat` minor bump, `fix` and `perf`
+  patch, `feat!:` / `fix!:` or `BREAKING CHANGE:` footer breaking change
+  (still minor bump while version is 0.x). `chore`, `docs`, `refactor`,
+  `test`, `ci`, `build` release nothing on their own.
+- To land: rebase branch on `origin/develop`, run static analysis
+  (`python3 tools/quality_check.py`, below) and tests on the rebased branch,
+  merge into `develop`, push. No pull request needed for `develop`. If
+  `origin/develop` moves again before the push, that is another rebase and
+  another run: what is pushed is what was tested.
+- CI does not run on `develop` or work branches, only on `main` and pull
+  requests into it. Local tests are the only ones before a release: run them.
+- Never skip or disable failing test; find root cause.
+- Never push to `main`. Do not open a pull request into `main` or merge one
+  unless asked to release.
 
 Releasing (`.github/workflows/release-please.yml`):
 
-1. Open a pull request from `develop` into `main`. CI runs on it.
-2. Merge it with a merge commit, never a squash: release-please reads the
-   individual commits.
-3. release-please opens (or updates) a release pull request into `main` with
-   the next version, `CHANGELOG.md`, and the version in `version.txt`,
-   `CMakeLists.txt` and `vcpkg.json`. Do not edit those by hand.
-4. Merging the release pull request tags `vX.Y.Z` and publishes the GitHub
-   release; the `release` workflow builds the installers and attaches them.
-5. `main` is merged back into `develop` by the same workflow. If that job
-   fails on a conflict, merge `main` into `develop` by hand.
+1. Open pull request from `develop` into `main`. CI runs on it.
+2. Merge with merge commit, never squash: release-please reads individual
+   commits.
+3. release-please opens (or updates) release pull request into `main` with
+   next version, `CHANGELOG.md`, and version in `version.txt`,
+   `CMakeLists.txt`, `vcpkg.json`. Do not edit those by hand.
+4. Merging release pull request tags `vX.Y.Z` and publishes GitHub release;
+   `release` workflow builds installers and attaches them.
+5. Same workflow merges `main` back into `develop`. If that job fails on a
+   conflict, merge `main` into `develop` by hand.
 
-A hotfix is a `fix/` branch cut from `main` and merged into it by pull
-request; it reaches `develop` through step 5.
+Hotfix: `fix/` branch cut from `main`, merged into it by pull request;
+reaches `develop` through step 5.
+
+## Spec-driven development
+
+Anything larger than small fix starts from written spec, not code:
+
+1. Spec: `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. What is built
+   and why, interfaces, rules that must hold, what is out of scope. Agreed
+   with developer before anything else is written.
+2. Plan: `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`. Spec cut into tasks
+   small enough to test and commit one at a time, each naming its files and
+   tests.
+3. Implement plan task by task, test first. When code has to depart from
+   spec, spec is changed in same branch: the two never disagree on `develop`.
+
+caveman plugin keeps conversation and subagents cheap while this runs:
+
+- Conversation with developer (questions, status, findings): caveman mode, at
+  level session is set to. Warnings, confirmations of anything irreversible,
+  and ordered steps that fragments would make ambiguous are written in full.
+- Specs written compressed, caveman full: no articles, no filler, fragments
+  allowed. Nothing technical dropped: every interface, rule, number, path and
+  out-of-scope item stays; identifiers, code blocks, SQL, commands and quoted
+  errors exact and uncompressed. A rule whose meaning depends on order or on
+  a conjunction ("before", "unless", "only if") is written as a full
+  sentence. Write new spec compressed from start; `caveman:compress` is for
+  an existing one, and the `<file>.original.md` backup it leaves is not
+  committed.
+- Plans, code, comments, user docs, commit messages, pull request
+  descriptions: normal prose.
+- This file kept compressed too, same rules as a spec. Edits to it written
+  compressed.
+- Delegate with cavecrew agents (reports come back compressed):
+  `cavecrew-investigator` to find where something lives while writing spec or
+  plan, `cavecrew-builder` for plan task touching one or two files,
+  `cavecrew-reviewer` to review task's diff against spec before it is merged.
+  Task wider than two files: main thread or general agent.
+- `caveman:caveman-commit` may draft commit message, but result must still
+  meet rules under Workflow: Conventional Commits with component as scope,
+  since release notes are computed from it.
 
 ## Build and test
 
-See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
-`dev`, and `dev-ui` for the UI job). Tests are GoogleTest, one `test_<component>.cpp` per component under
-`tests/`, run with `ctest`.
+Setup: `docs/dev_setup.md`. Presets: `CMakePresets.json` (CI uses `dev`, and
+`dev-ui` for the UI job). Tests are GoogleTest, one `test_<component>.cpp` per
+component under `tests/`, run with `ctest`.
 
 - CI (`.github/workflows/ci.yml`) builds with clang + ASan/UBSan on macOS,
   gcc 14 and clang 18 + ASan/UBSan on Ubuntu 24.04, and MSVC.
 - `-DPYCHRON_SANITIZE=address,undefined` enables ASan/UBSan, and with them
-  the standard library's own checks (an empty optional dereferenced, an index
-  past the end): static analysis does not look for those here, this does.
-- gcc 13 (the Ubuntu 24.04 default `g++`) warns where the CI compilers do not;
-  build it with `-DPYCHRON_WARNINGS_AS_ERRORS=OFF`.
-- `-DPYCHRON_SCRIPTING=OFF` drops the embedded CPython dependency.
-- `-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF` (default `AUTO`) controls the optional
+  standard library's own checks (empty optional dereferenced, index past the
+  end): static analysis does not look for those here, this does.
+- gcc 13 (Ubuntu 24.04 default `g++`) warns where CI compilers do not; build
+  it with `-DPYCHRON_WARNINGS_AS_ERRORS=OFF`.
+- `-DPYCHRON_SCRIPTING=OFF` drops embedded CPython dependency.
+- `-DPYCHRON_VISION_OPENCV=AUTO|ON|OFF` (default `AUTO`) controls optional
   OpenCV in `libs/vision` (`LegacyFinder`, `OpenCvSource`); without it those
   two files compile to stubs. OpenCV headers appear only in those two `.cpp`
-  files. Only the macOS `ui` CI job installs OpenCV (Homebrew's brings TBB,
-  which crashes at exit under the sanitizers).
+  files. Only macOS `ui` CI job installs OpenCV (Homebrew's brings TBB, which
+  crashes at exit under sanitizers).
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
   appear in its public headers or in any other `libs/` library.
 - Persistence tests always run on SQLite. Set
   `PYCHRON_TEST_PG_URL=postgresql://user:pw@host/db` to run them on
-  PostgreSQL as well (each test uses a throwaway schema).
+  PostgreSQL as well (each test uses throwaway schema).
 - `libs/ingest` and `libs/dvc` build only with persistence; their tests (and
-  `elctl`'s import tests) need `git` >= 2.32 on PATH and `tzdata`. The
-  real-data check is `tools/import_fixture_check.sh build/dev` (network, not
-  in CI); user docs are in `docs/legacy_import.md`.
-- Importer rules that are easy to break (spec section 10 of
+  `elctl`'s import tests) need `git` >= 2.32 on PATH and `tzdata`. Real-data
+  check: `tools/import_fixture_check.sh build/dev` (network, not in CI). User
+  docs: `docs/legacy_import.md`.
+- Importer rules easy to break (spec section 10 of
   `docs/superpowers/specs/2026-10-03-legacy-ingestion-design.md`): the store
   must end the same however a walk is cut, stopped, resumed or replayed, so
   an adapter decides from the walk (paths and commits), never from what an
@@ -88,38 +124,38 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   address. Each adapter's `OneHistoryOneResult` test holds one history with
   everything that has gone wrong at a batch boundary; a change to a walk or
   to the writer adds its case there (`same_at_every_cut` in
-  `tests/dvc/verify_support.hpp` does the same for a small history). Ids
-  derive from the normalized source url and from commit and path: changing
-  `normalize_source_url` or an id recipe orphans every existing import. The
-  words that make a conflict a warning live in
+  `tests/dvc/verify_support.hpp` does same for a small history). Ids derive
+  from normalized source url and from commit and path: changing
+  `normalize_source_url` or an id recipe orphans every existing import. Words
+  that make a conflict a warning live in
   `libs/ingest/include/pychron/ingest/conflict_markers.hpp`.
-- `GitFixture` switches the user's and the machine's git configuration off
-  for the test process (`GitReader::mirror` reads it); a test that wants one
-  sets `GIT_CONFIG_GLOBAL` itself. No test may run git against this
-  repository.
+- `GitFixture` switches user's and machine's git configuration off for the
+  test process (`GitReader::mirror` reads it); a test that wants one sets
+  `GIT_CONFIG_GLOBAL` itself. No test may run git against this repository.
 - One importer at a time per database. Windows CI builds without
   persistence, so `libs/ingest`, `libs/dvc` and `elctl import` are not built
   or tested there.
-- The schema source is `libs/persistence/migrations/pg/`. After editing it,
-  run `python3 tools/ddl_sqlite.py` and commit the regenerated SQLite file.
-  Never edit an applied migration; add `NNNN_<name>.sql`. A statement only
+- Schema source: `libs/persistence/migrations/pg/`. After editing it, run
+  `python3 tools/ddl_sqlite.py` and commit regenerated SQLite file. Never
+  edit an applied migration; add `NNNN_<name>.sql`. A statement only
   PostgreSQL understands is preceded by `-- @sqlite skip`; its SQLite
-  counterpart, when one is needed, is given as `-- @sqlite exec <statement>`.
+  counterpart, when one is needed, is given as
+  `-- @sqlite exec <statement>`.
 - Before adding a migration or a query against the store, read "Schema and
-  queries" below: a migration costs every lab a step, and a query's cost is
-  paid once per analysis.
-- A sample's location is one PostGIS `geometry(Point, 4326)` column, `geom`
-  (migration 0004); SQLite keeps the same point as EWKT text. The catalog API
-  still speaks `lat` and `lon` (`SampleFields`, the `lat`/`lon` edit fields):
+  queries" below: migration costs every lab a step, query's cost is paid
+  once per analysis.
+- Sample location: one PostGIS `geometry(Point, 4326)` column, `geom`
+  (migration 0004); SQLite keeps same point as EWKT text. Catalog API still
+  speaks `lat` and `lon` (`SampleFields`, the `lat`/`lon` edit fields):
   `libs/persistence/src/sql/geometry.hpp` converts, and every read of the
   column goes through `geom_read()` (`ST_AsEWKT` on PostgreSQL). Half a point
-  is refused. PostgreSQL needs PostGIS; the tests on it do too.
-- The publication data report (`libs/processing` `report.hpp`, Schaen et al.
+  is refused. PostgreSQL needs PostGIS; tests on it do too.
+- Publication data report (`libs/processing` `report.hpp`, Schaen et al.
   2021) is Qt-free and reads only the `Analysis` model: metadata it needs
-  (sample location and lithology, the flux monitor, the reactor) is carried
-  by `Analysis::sample_info`, `Analysis::monitor` and
+  (sample location and lithology, flux monitor, reactor) is carried by
+  `Analysis::sample_info`, `Analysis::monitor` and
   `ReductionContext::reactor`, filled by the store source. A column added to
-  a table gets a row in `tests/processing/test_report.cpp`; the CSV must stay
+  a table gets a row in `tests/processing/test_report.cpp`; CSV must stay
   RFC 4180 and every row the width of its header. `elctl export` is split
   into `export.cpp` / `export_stub.cpp` like `import`. User guide:
   `docs/export.md`.
@@ -128,52 +164,52 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `IStore::apply_catalog_edits` (field-value compare-and-swap, one
   transaction) and identifiers only through `allocate_identifiers`; never
   through ad hoc UPDATEs. User guide: `docs/entry.md`.
-- Flux fitting: the math is `libs/reduction` `flux.hpp`, the pure fit of a
-  level `libs/processing` `flux_fit.hpp`, the monitor sets and
-  `load_level` / `save_level` the `processing_store` adapter's
-  `flux_store.hpp`. `tests/reduction/flux_golden.hpp` is generated by
-  `tools/flux_reference.py`, never edited by hand. The legacy model strings
-  and the changeset message `fit flux for <irrad><level>` are a file format.
-  A position's hole is `ordinal + 1`, never `hole_id`. `elctl flux` is split
-  into `flux.cpp` / `flux_admin.cpp` / `flux_stub.cpp`. The flux store tests
+- Flux fitting: math is `libs/reduction` `flux.hpp`, pure fit of a level
+  `libs/processing` `flux_fit.hpp`, monitor sets and `load_level` /
+  `save_level` the `processing_store` adapter's `flux_store.hpp`.
+  `tests/reduction/flux_golden.hpp` is generated by
+  `tools/flux_reference.py`, never edited by hand. Legacy model strings and
+  changeset message `fit flux for <irrad><level>` are a file format. A
+  position's hole is `ordinal + 1`, never `hole_id`. `elctl flux` is split
+  into `flux.cpp` / `flux_admin.cpp` / `flux_stub.cpp`. Flux store tests
   (`tests/processing/test_flux_store.cpp`) run on PostgreSQL too when
   `PYCHRON_TEST_PG_URL` is set; `elctl`'s flux tests run on SQLite only. A
   level's saved fit (monitor set, sample, all positions) is one revision's,
   and is repeated only under its own monitor set. User guide: `docs/flux.md`.
-  The flux window (`apps/pychron-ui` `flux_window.cpp`) computes nothing: its
+  Flux window (`apps/pychron-ui` `flux_window.cpp`) computes nothing: its
   scene, options schema and status line are in `libs/processing`
-  `flux_view.hpp` and are the window's own; the warnings and the CSV text
-  there are shared with `elctl flux`.
-- An instrument install has a database and setup seeds it from the install's
+  `flux_view.hpp` and are the window's own; warnings and CSV text there are
+  shared with `elctl flux`.
+- Instrument install has a database, and setup seeds it from the install's
   `seed.toml` (`libs/entry` `seed.hpp`; `elctl entry seed` by hand): the
   `references` project, a sample and special identifier for each kind of
-  reference run, the Triga production ratios (those of the NM-293 fixture).
-  The seed only ensures: it never edits or removes a row or a reactor that
+  reference run, Triga production ratios (those of the NM-293 fixture). The
+  seed only ensures: it never edits or removes a row or a reactor that
   exists, and a failed seed never fails an install. `seed.toml`,
   `defaults.toml` and the example queue name the same samples;
   `tests/setup/test_profiles.cpp` holds them together. `libs/setup` only
-  computes the database url; the apps open the store.
-- A file the application writes for the user to open elsewhere (a report, a
-  figure, a template, a sheet) goes through `pychron::mark_as_user_file`
-  (`libs/core` `user_file.hpp`) after it is written: a downloaded, unsigned
+  computes the database url; apps open the store.
+- A file the application writes for the user to open elsewhere (report,
+  figure, template, sheet) goes through `pychron::mark_as_user_file`
+  (`libs/core` `user_file.hpp`) after it is written: downloaded, unsigned
   macOS application quarantines what it writes, and Gatekeeper then refuses
   the file. Files pychron reads back itself (configs, stores) do not.
-- The macOS `.dmg` is signed (hardened runtime) by `packaging/macos/sign_app.sh`
+- macOS `.dmg` is signed (hardened runtime) by `packaging/macos/sign_app.sh`
   from CPack (`packaging/macos/cpack_sign.cmake`, identity in
   `PYCHRON_CODESIGN_IDENTITY`, `-` for ad hoc), then signed, notarized and
-  stapled in `release.yml` when the signing secrets are set
+  stapled in `release.yml` when signing secrets are set
   (`docs/installation_runbook.md` section 1.4). Something the programs newly
-  need under the hardened runtime (a device, a kind of library) is an
+  need under hardened runtime (a device, a kind of library) is an
   entitlement in `packaging/macos/entitlements.plist`.
-- The simulated lab's physics is `libs/sim` `GasNetwork` on `LinearFlow`: gas
-  by species in volumes, solved exactly between valve events, pure and
+- Simulated lab's physics is `libs/sim` `GasNetwork` on `LinearFlow`: gas by
+  species in volumes, solved exactly between valve events, pure and
   clock-free (standard library and `core/error.hpp` only). `SimSystem` holds
   the clock, the mutex and the device sims and moves the network to
-  `clock.now()` on each query. The noise on a reading is keyed by (seed,
-  name, time) (`keyed_noise.hpp`: `keyed_gauss` for Faradays and gauges,
+  `clock.now()` on each query. Noise on a reading is keyed by (seed, name,
+  time) (`keyed_noise.hpp`: `keyed_gauss` for Faradays and gauges,
   `keyed_poisson` for counters, one key for one of the two), so a simulated
-  run gives the same numbers every time: no code draws simulator noise from
-  a shared generator or a `<random>` distribution. Gas enters through
+  run gives same numbers every time: no code draws simulator noise from a
+  shared generator or a `<random>` distribution. Gas enters through
   `SimSystem::inject` or a volume's source term, never through the beam;
   `feed_beam_from_line` (`libs/systems` bringup) is the one place a beam is
   joined to a line, and the two share a clock that outlives the beam.
@@ -182,26 +218,26 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   `sim.toml` key is read and range-checked in `sim_config.cpp`, listed
   commented out with its default in `configs/examples/sim.toml`
   (`SimConfig.TheExampleFileIsTheDefaults` holds the two together) and given
-  a row in the user guide, `docs/simulator.md`. The example lab's five tuned
-  numbers are pinned by that test too, and a line number of
-  `sim_extract.py` by the script-editor test (`tests/ui/test_script_editor.cpp`),
-  so retuning the example or editing that script means editing those tests.
+  a row in the user guide, `docs/simulator.md`. Example lab's five tuned
+  numbers are pinned by that test too, and a line number of `sim_extract.py`
+  by the script-editor test (`tests/ui/test_script_editor.cpp`), so retuning
+  the example or editing that script means editing those tests.
   `[defaults] seed` is the one seed of the lab: `feed_beam_from_line` gives
   it to the beam when it is not `SimSettings`' default.
-- `libs/metrics` (the Prometheus endpoint, `[metrics]`) is Qt-free and builds
+- `libs/metrics` (Prometheus endpoint, `[metrics]`) is Qt-free and builds
   everywhere; `-DPYCHRON_METRICS=OFF` skips it and the exporters. Metrics come
   from bus events (`CoreExporter`, `ExperimentMetrics` in `libs/experiment`),
-  not from instrumenting the control path. Three rules: a label value is a
-  configured name or an enumeration, never a run id, an identifier or a
-  message, and a counter is created at zero as soon as what it counts is
-  known (one that first appears at 1 shows no increase); a duration is a
-  difference of event `ts` (the line's clock may be simulated) and an age is
-  measured here on `RealClock` and exported as seconds, never as a timestamp
-  for the box to subtract from its own clock; a
-  metric added to an exporter needs a panel in
+  not from instrumenting the control path. Three rules:
+  (1) a label value is a configured name or an enumeration, never a run id,
+  an identifier or a message, and a counter is created at zero as soon as
+  what it counts is known (one that first appears at 1 shows no increase);
+  (2) a duration is a difference of event `ts` (the line's clock may be
+  simulated), and an age is measured here on `RealClock` and exported as
+  seconds, never as a timestamp for the box to subtract from its own clock;
+  (3) a metric added to an exporter needs a panel in
   `packaging/observability/grafana/dashboards`, and a renamed one its panel
-  renamed (`MetricsPackaging` in `tests/integration` fails otherwise). The
-  tests check names, not that a query returns anything or that Grafana
+  renamed (`MetricsPackaging` in `tests/integration` fails otherwise).
+  Tests check names, not that a query returns anything or that Grafana
   accepts a file: after changing a dashboard or the alert, load it in the
   virtual box (`packaging/observability/box`, `docker compose up -d`) and
   look. User guide: `docs/observability.md`.
@@ -209,31 +245,30 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
   line's local override file, not in QSettings: `elctl` must follow them.
   `config::replace_local_table` (`libs/core` `local_file.hpp`) is the only
   thing that writes that file after the setup wizard; it replaces one table
-  and leaves the rest byte for byte. A table read over another (the local
-  file's over the main one's) must leave alone every key it does not name:
-  a new key in `parse_logging` or `parse_metrics` gets a case in
+  and leaves the rest byte for byte. A table read over another (local file's
+  over main one's) must leave alone every key it does not name: a new key in
+  `parse_logging` or `parse_metrics` gets a case in
   `ConfigOverride.Local...KeysWinAndTheRestStay`.
-- Ubuntu 24.04's cmake 3.28 is too old for this tree (`pip install cmake`).
+- Ubuntu 24.04's cmake 3.28 too old for this tree (`pip install cmake`).
 
-Compilers disagree about undefined behaviour: a test that passes under clang
-can abort under gcc, and the reverse. A failure on one compiler only is a real
-bug until shown otherwise.
+Compilers disagree about undefined behaviour: test that passes under clang can
+abort under gcc, and reverse. Failure on one compiler only is real bug until
+shown otherwise.
 
 ## Schema and queries
 
-The store (`libs/persistence`) is read one analysis at a time: a figure of
-2000 analyses runs every per-analysis statement 2000 times. In October 2026
-an ideogram of 24 analyses took 12 s, and none of it was calculation
-(reduction 3 ms, the figure 1 ms): it was four mistakes in how rows were
-found. The rules below are those mistakes, generalised. The commits are
-`57621f0` and `1786fa8`.
+Store (`libs/persistence`) is read one analysis at a time: a figure of 2000
+analyses runs every per-analysis statement 2000 times. October 2026: ideogram
+of 24 analyses took 12 s, none of it calculation (reduction 3 ms, figure
+1 ms): it was four mistakes in how rows were found. Rules below are those
+mistakes, generalised. Commits: `57621f0` and `1786fa8`.
 
 Sizes to think with, from one lab's imported store: 8.7 thousand analyses,
 312 thousand revisions (about 36 an analysis), 21 thousand reference objects,
 19 thousand irradiation positions, 15 thousand identifiers, 6.5 thousand
-samples. A lab that has run for a decade is ten to a hundred times that. A
-test fixture has five rows of each, where every plan is instant: a query
-that passes its test has told you nothing about its cost.
+samples. Lab that has run for a decade is ten to a hundred times that. Test
+fixture has five rows of each, where every plan is instant: a query that
+passes its test has told you nothing about its cost.
 
 ### Before adding a migration
 
@@ -245,21 +280,21 @@ that passes its test has told you nothing about its cost.
   `BREAKING CHANGE:` footer that says to run the command.
 - Prefer a change old builds can live with. A build checks only the
   migrations it carries and ignores later ones, so a migration that only
-  adds (an index, a nullable column, a table) leaves a migrated store usable
-  by the build before it. One that drops, renames or tightens does not:
-  labs then cannot go back.
-- Can the query be written so it needs no schema change? Ask first. The
-  sample counts were going to get two indexes; rewritten to count once
-  instead of per row they needed none, and were quicker than with them.
-- The mechanics: the source is `libs/persistence/migrations/pg/NNNN_<name>.sql`;
+  adds (index, nullable column, table) leaves a migrated store usable by the
+  build before it. One that drops, renames or tightens does not: labs then
+  cannot go back.
+- Can the query be written so it needs no schema change? Ask first. Sample
+  counts were going to get two indexes; rewritten to count once instead of
+  per row they needed none, and were quicker than with them.
+- Mechanics: source is `libs/persistence/migrations/pg/NNNN_<name>.sql`;
   run `python3 tools/ddl_sqlite.py` and commit the SQLite file it writes;
   never edit an applied migration; `-- @sqlite skip` and `-- @sqlite exec`
   for what only one engine understands. `SchemaTest.MigrateIsIdempotentAndRecordsChecksums`
-  lists the migrations by number and name: add yours.
+  lists migrations by number and name: add yours.
 
 ### Indexes
 
-- A foreign key is not an index. Neither PostgreSQL nor SQLite makes one for
+- Foreign key is not an index. Neither PostgreSQL nor SQLite makes one for
   the referring column: `REFERENCES sample` on `identifier.sample_uuid` gives
   no way to find the identifiers of a sample but to read them all.
 - `UNIQUE (a, b)` finds rows by `a`, or by `a` and `b`. Not by `b`.
@@ -269,25 +304,25 @@ that passes its test has told you nothing about its cost.
   analysis or over a listing, needs an index that starts with it. When you
   add a column that will be looked up by, add its index in the same
   migration.
-- A column that is null for most rows gets a partial index
-  (`... (position_uuid) WHERE position_uuid IS NOT NULL`): smaller, and
-  both engines use it for an equality, which implies not null.
-- An index on an expression (`lower(name)`) serves only a query that writes
-  the same expression.
-- An index is not free: each one is written on every insert. Add the ones a
+- Column null for most rows gets a partial index
+  (`... (position_uuid) WHERE position_uuid IS NOT NULL`): smaller, and both
+  engines use it for an equality, which implies not null.
+- Index on an expression (`lower(name)`) serves only a query that writes the
+  same expression.
+- Index is not free: each one is written on every insert. Add the ones a
   query needs and can be shown to use, not one per column.
-- A new index gets a test that reads the plan: `SchemaIndexes` in
+- New index gets a test that reads the plan: `SchemaIndexes` in
   `tests/persistence/test_schema.cpp` runs `EXPLAIN QUERY PLAN` on the real
   statement and requires the index by name and no `SCAN`. That test fails
   when a later rewrite of the query stops using it.
 
 ### Queries
 
-- Fetch a row by its uuid. A name is not a key: a monitor's sample exists
-  once per project (97 times in that store), and matching by name and
-  project name is a guess. If the query that found the analysis already
-  joined the row you want, carry its uuid out (`BrowseRow::sample_uuid`)
-  instead of looking it up again by what it is called.
+- Fetch a row by its uuid. Name is not a key: a monitor's sample exists once
+  per project (97 times in that store), and matching by name and project
+  name is a guess. If the query that found the analysis already joined the
+  row you want, carry its uuid out (`BrowseRow::sample_uuid`) instead of
+  looking it up again by what it is called.
 - Do not use a search to do a lookup. `samples({.text = name})` is
   `LIKE '%name%'`: no index can serve a pattern that starts with `%`, it
   returns every name containing the text, and it stops at its `LIMIT`, so
@@ -296,16 +331,16 @@ that passes its test has told you nothing about its cost.
   (`(SELECT count(*) FROM ... WHERE x = outer.uuid) AS n`). It runs once for
   every row listed. Aggregate once for all rows in a `WITH` clause and
   `LEFT JOIN` it, `coalesce(n, 0)`: `kSampleCounts` in `sql/catalog.hpp` is
-  the model. Listing 500 samples went from 1.3 s to 0.02 s. A count per
-  row that an index answers (one seek each) is bearable for a short
-  listing; `kIrradiations` and `kSheetPositions` in that file are still
-  written that way and have not been measured on a large store. Measure
-  before copying them.
+  the model. Listing 500 samples went from 1.3 s to 0.02 s. A count per row
+  that an index answers (one seek each) is bearable for a short listing;
+  `kIrradiations` and `kSheetPositions` in that file are still written that
+  way and have not been measured on a large store. Measure before copying
+  them.
 - No `OR` between columns of different tables, least of all across an outer
   join (`WHERE ip.sample_uuid = ? OR i.sample_uuid = ?`): no index serves it
   and the tables are read whole. Write the two cases as a `UNION`. An `OR`
-  between columns of one table is fine when each side has its index (the
-  plan says `MULTI-INDEX OR`).
+  between columns of one table is fine when each side has its index (plan
+  says `MULTI-INDEX OR`).
 - What costs and is not always wanted is asked for, not given: a listing's
   counts are behind `SampleQuery::counts`, and the loader, which wants the
   row, turns them off.
@@ -319,21 +354,21 @@ that passes its test has told you nothing about its cost.
   chronology) and should be read once and shared, and whether it can be one
   statement for many analyses (`WHERE analysis_uuid IN (...)`) rather than
   one each. Loading is still one analysis at a time, several small
-  statements each (the row, its heads, a payload per head, its references,
-  a payload per reference); that is the next thing to change, not a pattern
-  to copy.
-- Both engines run every statement. Standard SQL, and where they differ,
-  the `Dialect` switch (`sql::ts`, `geom_read`), not two copies of a query.
-  Times are read as text through `sql::ts`. TinyORM's `return_qdatetime`
-  stays off for SQLite (`tiny/db.cpp`): on, every text value read is tried
-  as a date, which was most of the time of a load and reworded any text
-  that looked like one.
+  statements each (the row, its heads, a payload per head, its references, a
+  payload per reference); that is the next thing to change, not a pattern to
+  copy.
+- Both engines run every statement. Standard SQL, and where they differ, the
+  `Dialect` switch (`sql::ts`, `geom_read`), not two copies of a query. Times
+  are read as text through `sql::ts`. TinyORM's `return_qdatetime` stays off
+  for SQLite (`tiny/db.cpp`): on, every text value read is tried as a date,
+  which was most of the time of a load and reworded any text that looked
+  like one.
 
 ### How to know
 
-Reading a query does not tell you its cost; the plan and a clock do.
+Reading a query does not tell its cost; the plan and a clock do.
 
-- The plan, on a store of real size (ask for a copy of a lab's; work on the
+- Plan, on a store of real size (ask for a copy of a lab's; work on the
   copy):
 
       sqlite3 store.db
@@ -344,80 +379,79 @@ Reading a query does not tell you its cost; the plan and a clock do.
   listing; `USE TEMP B-TREE` over many rows; a `SEARCH` by an index's first
   column only when you filter on more. On PostgreSQL:
   `EXPLAIN (ANALYZE, BUFFERS)`, and look for `Seq Scan` on a large table.
-- The clock: `tests/processing/test_store_load_timing.cpp` runs the pipeline
-  a figure window runs and prints the time of each node. It does nothing
+- Clock: `tests/processing/test_store_load_timing.cpp` runs the pipeline a
+  figure window runs and prints the time of each node. It does nothing
   unless told which store:
 
       PYCHRON_BENCH_DB=sqlite:/path/to/store.db PYCHRON_BENCH_N=400 \
         build/dev/tests/processing/pychron_processing_store_tests --gtest_filter='StoreLoadTiming.*'
 
-  Run it before and after any change to loading, to a query the loader
-  uses, or to the schema, at 24, 400 and 2000 analyses, and put the numbers
-  in the commit message. Time that grows faster than the count is a query
-  that reads a table per analysis.
+  Run it before and after any change to loading, to a query the loader uses,
+  or to the schema, at 24, 400 and 2000 analyses, and put the numbers in the
+  commit message. Time that grows faster than the count is a query that
+  reads a table per analysis.
 - When it is slow and the plan looks right, sample the process (`sample <pid> 5`
-  on macOS, `perf` on Linux) before changing anything. The costliest of the
-  four causes was not in a query: it was the library parsing dates.
+  on macOS, `perf` on Linux) before changing anything. Costliest of the four
+  causes was not in a query: it was the library parsing dates.
 - What goes in CI is the plan test, not the clock: a time limit fails on a
-  loaded runner and passes on a fast one. A slow query has a shape (a scan,
-  a subquery per row); assert the shape.
-- The persistence tests run on SQLite. Set `PYCHRON_TEST_PG_URL` and run
-  them on PostgreSQL as well before a release that changes a query or adds
-  a migration: the two planners do not make the same choices.
+  loaded runner and passes on a fast one. Slow query has a shape (a scan, a
+  subquery per row); assert the shape.
+- Persistence tests run on SQLite. Set `PYCHRON_TEST_PG_URL` and run them on
+  PostgreSQL as well before a release that changes a query or adds a
+  migration: the two planners do not make the same choices.
 
 ## Static analysis
 
 After changing C++ and before running the tests, run
 `python3 tools/quality_check.py` (cppcheck, then clang-tidy, on the lines that
-differ from `origin/develop`; `--json` for a machine-readable result). It
-needs a configured build directory; `docs/dev_setup.md`, "Static analysis",
-has the setup.
+differ from `origin/develop`; `--json` for machine-readable result). Needs a
+configured build directory; setup in `docs/dev_setup.md`, "Static analysis".
 
-- Exit status 1 means findings on lines you changed: fix the code. Status 2
-  means the check did not run (a missing tool, no compile database, a source
-  that does not parse): fix that, do not go on as if it had passed.
+- Exit status 1: findings on lines you changed: fix the code. Status 2: check
+  did not run (missing tool, no compile database, source that does not
+  parse): fix that, do not go on as if it had passed.
 - A finding that is wrong for this code is silenced on its line with
   `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>`, never by taking
   the check out of `.clang-tidy` or adding to `cmake/cppcheck.supp` to get one
   change through.
 - `--fix` applies clang-tidy's fix-its; read the diff it makes and rebuild.
 - A push is refused while it reports anything: `tools/githooks/pre-push` runs
-  it. The hook is switched on once per clone with
+  it. Hook is switched on once per clone with
   `git config core.hooksPath tools/githooks` (every worktree of the clone then
   has it); check `git config --get core.hooksPath` in a fresh clone and set it
-  if it is empty. Do not push with `--no-verify` to get past a finding.
-- It is not in CI, and it does not replace building with
+  if empty. Do not push with `--no-verify` to get past a finding.
+- Not in CI, and does not replace building with
   `-DPYCHRON_SANITIZE=address,undefined` and running the tests.
-- The tree is not at zero: about 670 findings of the performance and C-array
+- Tree is not at zero: about 670 findings of the performance and C-array
   checks are left in old code
   (`docs/superpowers/plans/2026-10-08-static-analysis-backlog.md`, Phase 3).
-  Only lines you change are held to the checks; when you are changing a
-  function anyway, clear what it has.
+  Only lines you change are held to the checks; when changing a function
+  anyway, clear what it has.
+
 ## C++ conventions
 
-C++20 (`CMAKE_CXX_STANDARD` in the top-level `CMakeLists.txt`); do not set a
-standard per target. Follow the C++ Core Guidelines where this file is silent.
+C++20 (`CMAKE_CXX_STANDARD` in top-level `CMakeLists.txt`); do not set a
+standard per target. Follow C++ Core Guidelines where this file is silent.
 
-- Errors are values: a function that can fail returns
-  `pychron::Result<T>` (`libs/core` `error.hpp`). `libs/` throws only for a
-  mistake in the calling code (`Scheduler::stop()` from a job on its own
-  dispatcher) and, in `libs/scripting`, to hand a Python error back to
-  pybind11.
+- Errors are values: a function that can fail returns `pychron::Result<T>`
+  (`libs/core` `error.hpp`). `libs/` throws only for a mistake in the calling
+  code (`Scheduler::stop()` from a job on its own dispatcher) and, in
+  `libs/scripting`, to hand a Python error back to pybind11.
 - Ownership is RAII. Prefer a value or a stack object; `std::unique_ptr` when
-  the heap is needed; `std::shared_ptr` only when ownership really is shared.
-  A `new` goes straight into a smart pointer (a factory with a private
+  heap is needed; `std::shared_ptr` only when ownership really is shared. A
+  `new` goes straight into a smart pointer (a factory with a private
   constructor cannot use `std::make_unique`), with two exceptions: Qt code,
   where a parent owns the child, and an object meant to live for the whole
   process. No `delete` outside Qt code.
 - Rule of zero: a type that manages nothing declares no destructor, copy or
   move. A type that does manage a resource declares all five, or deletes the
   ones it does not support.
-- `const` by default, `constexpr` where the value is known at compile time,
-  and `[[nodiscard]]` on a result that must not be dropped. A mistake the
-  compiler can refuse (a strong type, a `concept`, a `static_assert`) is
-  better than one a test has to find.
-- A standard algorithm or range instead of a hand-written loop when it says
-  the same thing more plainly; not when it does not.
+- `const` by default, `constexpr` where value is known at compile time,
+  `[[nodiscard]]` on a result that must not be dropped. A mistake the
+  compiler can refuse (strong type, `concept`, `static_assert`) is better
+  than one a test has to find.
+- Standard algorithm or range instead of hand-written loop when it says the
+  same thing more plainly; not when it does not.
 - Headers use `#pragma once`.
 - Code that adds a thread, or shares state with one, is run under
   `-DPYCHRON_SANITIZE=thread` before it lands: CI runs ASan and UBSan only.
@@ -428,7 +462,7 @@ standard per target. Follow the C++ Core Guidelines where this file is silent.
 
 Systems components take non-owning references (`Scheduler&`, `SignalBus&`,
 `Clock&`, role pointers such as `IIntensityAcquirer*`). Whatever they point at
-must outlive them. In tests, declare the fakes before the fixture that owns the
+must outlive them. In tests, declare fakes before the fixture that owns the
 component: locals are destroyed in reverse order of declaration.
 
 ## Time
@@ -480,9 +514,9 @@ and time stops; a thread woken any other way is not heard. Hence:
 - On `SteadyClock` all of this is a pass-through: `Participant`, `Hold` and
   `Detached` do nothing and the clock mutexes behave as plain mutexes (each
   is still a flag and a condition variable, not a `std::mutex`). What is left
-  on real time on purpose (the log hub, the camera's live timeouts, a
-  script's `max_wall_time`, the notifier, the UI's own threads) is listed in
-  the spec, sections 4.4 and 4.5; add to that list rather than to the code.
+  on real time on purpose (log hub, camera's live timeouts, a script's
+  `max_wall_time`, the notifier, the UI's own threads) is listed in the spec,
+  sections 4.4 and 4.5; add to that list rather than to the code.
 
 Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
 
