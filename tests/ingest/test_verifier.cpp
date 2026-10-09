@@ -197,11 +197,11 @@ std::string age_document(const std::vector<Member>& members, const std::string& 
   doc += R"("analyses":[)";
   for (std::size_t i = 0; i < members.size(); ++i) {
     const auto& m = members[i];
-    if (i) doc += ",";
-    doc += "{";
-    if (!m.uuid.empty()) doc += "\"uuid\":\"" + m.uuid + "\",";
+    if (i) doc += ',';
+    doc += '{';
+    if (!m.uuid.empty()) doc += R"("uuid":")" + m.uuid + "\",";
     if (!m.age_err_wo_j.empty()) doc += "\"age_err_wo_j\":" + m.age_err_wo_j + ",";
-    doc += "\"record_id\":\"" + m.record_id + "\",\"age\":" + m.age + ",\"age_err\":" + m.age_err + "}";
+    doc += R"("record_id":")" + m.record_id + R"(","age":)" + m.age + ",\"age_err\":" + m.age_err + "}";
   }
   return doc + "]}";
 }
@@ -210,7 +210,7 @@ std::string age_document(const std::vector<Member>& members, const std::string& 
 ImportBatch age_batch(const std::string& commit, const char* iso, const std::vector<Member>& members,
                       const std::string& document = {}) {
   ImportBatch b;
-  b.catalog.push_back(InterpretedAgeItem{kAgePath, "66573 plateau", "66573", "Henry_Hill"});
+  b.catalog.emplace_back(InterpretedAgeItem{kAgePath, "66573 plateau", "66573", "Henry_Hill"});
   P::InterpretedAgeValue value;
   value.age = 28.2;
   value.age_err = 0.05;

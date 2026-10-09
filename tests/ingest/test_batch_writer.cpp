@@ -442,17 +442,17 @@ TEST_P(BatchWriterTest, LoadAndReferenceObjectItems) {
   b.catalog = lab_catalog();
   P::LoadSpec load;
   load.name = "load-7";
-  b.catalog.push_back(LoadItem{load, "221-hole"});
+  b.catalog.emplace_back(LoadItem{load, "221-hole"});
   RefObjectItem flux;
   flux.type = P::RefType::FluxPosition;
   flux.key = "NM-300/A/1";
   flux.irradiation = "NM-300";
   flux.level = "A";
   flux.position = 1;
-  b.catalog.push_back(flux);
-  b.catalog.push_back(SpecialIdentifierItem{"ba-01-J", "blank_air", "jan"});
-  b.catalog.push_back(UserItem{"mheizler"});
-  b.catalog.push_back(ExtractDeviceItem{"fusions_co2"});
+  b.catalog.emplace_back(flux);
+  b.catalog.emplace_back(SpecialIdentifierItem{"ba-01-J", "blank_air", "jan"});
+  b.catalog.emplace_back(UserItem{"mheizler"});
+  b.catalog.emplace_back(ExtractDeviceItem{"fusions_co2"});
   // A reference changeset on the flux object, named by key.
   ChangesetItem c;
   c.commit = "m1";
@@ -600,7 +600,7 @@ TEST_P(BatchWriterTest, MissingExtractDeviceBecomesConflict) {
   EXPECT_EQ((*record)->kind, P::ConflictKind::UnknownAnalysis);
   EXPECT_NE((*record)->detail_json.find("extract device"), std::string::npos);
 
-  b.catalog.push_back(ExtractDeviceItem{"fusions_co2"});
+  b.catalog.emplace_back(ExtractDeviceItem{"fusions_co2"});
   FakeAdapter fixed(description(), {b});
   stats = run_all(*world_, fixed);
   ASSERT_TRUE(stats) << err(stats.error());
@@ -1215,7 +1215,7 @@ TEST_P(BatchWriterTest, TagWithNoStoredAnalysisIsSkippedAndNotPending) {
 TEST_P(BatchWriterTest, InterpretedAgeIsEnsuredAndRevised) {
   const std::string path = "665/ia/73.ia.json";
   ImportBatch b = single_batch();
-  b.catalog.push_back(InterpretedAgeItem{path, "66573 plateau", "66573", "Henry_Hill"});
+  b.catalog.emplace_back(InterpretedAgeItem{path, "66573 plateau", "66573", "Henry_Hill"});
   P::InterpretedAgeValue value;
   value.age = 28.2;
   value.age_err = 0.03;
@@ -1281,7 +1281,7 @@ TEST_P(BatchWriterTest, InterpretedAgeIsEnsuredAndRevised) {
 
 TEST_P(BatchWriterTest, InterpretedAgeOfAnUnusedIdentifierHasNone) {
   ImportBatch b;
-  b.catalog.push_back(InterpretedAgeItem{"999/ia/01.ia.json", "99901", "99901", std::nullopt});
+  b.catalog.emplace_back(InterpretedAgeItem{"999/ia/01.ia.json", "99901", "99901", std::nullopt});
   FakeAdapter adapter(description(), {b});
   ASSERT_TRUE(run_all(*world_, adapter));
   auto row = world_->db->select_one(QStringLiteral("SELECT identifier_uuid FROM interpreted_age"));
@@ -1685,16 +1685,16 @@ TEST_P(BatchWriterTest, StateNeedsAnOpenSource) {
 // What a legacy catalog has beyond the natural keys reaches the store.
 TEST_P(BatchWriterTest, CatalogItemsCarryTheirDescriptiveColumns) {
   ImportBatch b;
-  b.catalog.push_back(PiItem{"Ross", "J", "NMT", std::nullopt});
+  b.catalog.emplace_back(PiItem{"Ross", "J", "NMT", std::nullopt});
   ProjectItem project{"Henry Hill", "Ross", "J"};
   project.checkin_date = "2016-02-29";
   project.comment = "two crates";
   project.lab_contact = "mheizler";
   project.institution = "NMT";
-  b.catalog.push_back(project);
+  b.catalog.emplace_back(project);
   const UtcTime made = *UtcTime::parse("2014-05-06T07:08:09Z");
-  b.catalog.push_back(IrradiationItem{"NM-300", made});
-  b.catalog.push_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
+  b.catalog.emplace_back(IrradiationItem{"NM-300", made});
+  b.catalog.emplace_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
   PositionItem position;
   position.irradiation = "NM-300";
   position.level = "A";
@@ -1703,17 +1703,17 @@ TEST_P(BatchWriterTest, CatalogItemsCarryTheirDescriptiveColumns) {
   position.weight = 12.5;
   position.packet = "p4";
   position.note = "chipped";
-  b.catalog.push_back(position);
-  b.catalog.push_back(UserItem{"mheizler", "m@nmt.edu", "NMT", "staff"});
+  b.catalog.emplace_back(position);
+  b.catalog.emplace_back(UserItem{"mheizler", "m@nmt.edu", "NMT", "staff"});
   LoadItem load;
   load.spec.name = "load-7";
   load.spec.archived = true;
   load.spec.created = made;
   load.created_by = "mheizler";
-  b.catalog.push_back(load);
-  b.catalog.push_back(LoadPositionItem{"load-7", 3, "66573", 1.5, 2, "big"});
+  b.catalog.emplace_back(load);
+  b.catalog.emplace_back(LoadPositionItem{"load-7", 3, "66573", 1.5, 2, "big"});
   // A load position may come first: its load and identifier are made bare.
-  b.catalog.push_back(LoadPositionItem{"load-8", 1, "66600", std::nullopt, std::nullopt, std::nullopt});
+  b.catalog.emplace_back(LoadPositionItem{"load-8", 1, "66600", std::nullopt, std::nullopt, std::nullopt});
   b.resume_token = "c1";
   FakeAdapter adapter(description(), {b});
   ASSERT_TRUE(run_all(*world_, adapter));
@@ -1769,9 +1769,9 @@ namespace {
 // both bare, under a flux object scoped to the position.
 ImportBatch bare_position_batch() {
   ImportBatch b;
-  b.catalog.push_back(IrradiationItem{"NM-300"});
-  b.catalog.push_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
-  b.catalog.push_back(RefObjectItem{P::RefType::FluxPosition, "NM-300/A/1", "NM-300", "A", 1, std::nullopt});
+  b.catalog.emplace_back(IrradiationItem{"NM-300"});
+  b.catalog.emplace_back(LevelItem{"NM-300", "A", std::nullopt, std::nullopt, std::nullopt});
+  b.catalog.emplace_back(RefObjectItem{P::RefType::FluxPosition, "NM-300/A/1", "NM-300", "A", 1, std::nullopt});
   b.resume_token = "m1";
   return b;
 }
@@ -1787,7 +1787,7 @@ ImportBatch sampled_position_batch() {
   position.project = "Henry Hill";
   position.material = "sanidine";
   ImportBatch b;
-  b.catalog.push_back(position);
+  b.catalog.emplace_back(position);
   b.resume_token = "p1";
   return b;
 }
@@ -1865,8 +1865,8 @@ TEST_P(BatchWriterTest, PositionWithItsSampleIsKeptByALaterBareItem) {
 TEST_P(BatchWriterTest, LevelMadeBareIsFilledByALaterLevelItem) {
   ImportBatch first = sampled_position_batch();
   ImportBatch second;
-  second.catalog.push_back(LevelItem{"NM-300", "A", "24-hole", 0.5, "top"});
-  second.catalog.push_back(LevelItem{"NM-300", "A", "48-hole", 9.0, "other"});
+  second.catalog.emplace_back(LevelItem{"NM-300", "A", "24-hole", 0.5, "top"});
+  second.catalog.emplace_back(LevelItem{"NM-300", "A", "48-hole", 9.0, "other"});
   second.resume_token = "p2";
   FakeAdapter adapter(description(), {first, second});
   ASSERT_TRUE(run_all(*world_, adapter));
@@ -1894,14 +1894,14 @@ TEST_P(BatchWriterTest, FillThatCannotBeAppliedIsAConflictAndTheBatchGoesOn) {
     return position;
   };
   ImportBatch b;
-  b.catalog.push_back(at(1, "66573"));
-  b.catalog.push_back(LoadPositionItem{"L-1", 1, "66574", std::nullopt, std::nullopt, std::nullopt});  // 66574, bare
-  b.catalog.push_back(at(1, "66574"));  // the hole 66573 sits in
-  b.catalog.push_back(MassSpecItem{{"jan", "argus", "j", std::nullopt}});
-  b.catalog.push_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
-  b.catalog.push_back(MassSpecItem{{"obama", "argus", "j", std::nullopt}});  // the code jan has
-  b.catalog.push_back(ExtractDeviceItem{"Fusions CO2"});
-  b.catalog.push_back(at(2, "66575"));
+  b.catalog.emplace_back(at(1, "66573"));
+  b.catalog.emplace_back(LoadPositionItem{"L-1", 1, "66574", std::nullopt, std::nullopt, std::nullopt});  // 66574, bare
+  b.catalog.emplace_back(at(1, "66574"));  // the hole 66573 sits in
+  b.catalog.emplace_back(MassSpecItem{{"jan", "argus", "j", std::nullopt}});
+  b.catalog.emplace_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
+  b.catalog.emplace_back(MassSpecItem{{"obama", "argus", "j", std::nullopt}});  // the code jan has
+  b.catalog.emplace_back(ExtractDeviceItem{"Fusions CO2"});
+  b.catalog.emplace_back(at(2, "66575"));
   b.resume_token = "t1";
   b.done = b.total = 1;
 
@@ -1964,14 +1964,14 @@ TEST_P(BatchWriterTest, FillThatCannotBeAppliedIsAConflictAndTheBatchGoesOn) {
 // reason (here: a trigger that cannot run) stops the run, with no conflict.
 TEST_P(BatchWriterTest, FillThatFailsForAnotherReasonStopsTheRun) {
   ImportBatch b;
-  b.catalog.push_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
+  b.catalog.emplace_back(MassSpecItem{{"obama", std::nullopt, std::nullopt, std::nullopt}});
   b.resume_token = "t1";
   FakeAdapter bare(description(), {b});
   ASSERT_TRUE(run_all(*world_, bare));
   auto broken = P::testing::break_updates_of(*world_->db, "mass_spectrometer");
   ASSERT_TRUE(broken) << err(broken.error());
 
-  b.catalog.push_back(MassSpecItem{{"obama", "argus", "o", std::nullopt}});
+  b.catalog.emplace_back(MassSpecItem{{"obama", "argus", "o", std::nullopt}});
   FakeAdapter adapter(description(), {b});
   auto stats = run_all(*world_, adapter, replay_config());
   ASSERT_FALSE(stats);
@@ -1989,8 +1989,8 @@ TEST_P(BatchWriterTest, InsertThatFailsStillStopsTheRun) {
   first.identifier = "66573";
   second.identifier = "66574";  // a new identifier, in the hole 66573 sits in
   ImportBatch b;
-  b.catalog.push_back(first);
-  b.catalog.push_back(second);
+  b.catalog.emplace_back(first);
+  b.catalog.emplace_back(second);
   b.resume_token = "t1";
   FakeAdapter adapter(description(), {b});
   auto stats = run_all(*world_, adapter);

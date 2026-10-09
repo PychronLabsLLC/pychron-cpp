@@ -940,7 +940,7 @@ class BatchWriter::Impl final : public IImportState {
           stored_detail = row.detail_json.value_or("");
         }
       auto merged = detail::with_rewrites(stored_detail, item.detail_json, item.rewrites);
-      if (stored && merged) staged.details.push_back({changeset.uuid, *merged});
+      if (stored && merged) staged.details.emplace_back(changeset.uuid, *merged);
       noted = merged ? std::move(merged) : std::optional<std::string>{std::move(stored_detail)};
     }
     staged.provenance.push_back(
