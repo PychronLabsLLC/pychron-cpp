@@ -201,6 +201,7 @@ Result<void> MeasurementEngine::run_blocks() {
   const auto& p = in_.plan;
   auto step = [&](Block b, auto&& fn) -> Result<void> {
     if (stopping()) return {};
+    if (options_.on_block_started) options_.on_block_started(b);
     if (ctx_.bus != nullptr) ctx_.bus->publish(BlockStarted{in_.run_id, b});
     result_.blocks.push_back(b);
     Result<void> r = fn();

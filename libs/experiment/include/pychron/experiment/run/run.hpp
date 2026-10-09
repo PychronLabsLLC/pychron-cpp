@@ -179,6 +179,7 @@ class Run {
   scripting::ScriptContext script_context() const;
   void end_extraction();
   void record_cryo();
+  void advance(RunEvent e, std::string reason = {});
   void note(std::string message);  // thread-safe: scripts log from their own threads
   void finish(RunControl& control, Result<void> phase_result, RunEvent failure_event);
 

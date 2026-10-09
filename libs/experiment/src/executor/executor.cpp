@@ -59,6 +59,20 @@ std::string_view to_string(ExecutorState s) noexcept {
   return "?";
 }
 
+bool can_transition(ExecutorState from, ExecutorState to) noexcept {
+  using S = ExecutorState;
+  switch (from) {
+    case S::Idle: return to == S::Preparing;
+    case S::Preparing: return to != S::Preparing && to != S::Idle;
+    case S::Running: return to == S::StoppingAtBoundary || to == S::Cancelling || to == S::Aborting || to == S::Finalizing;
+    case S::StoppingAtBoundary: return to == S::Cancelling || to == S::Aborting || to == S::Finalizing;
+    case S::Cancelling: return to == S::Aborting || to == S::Finalizing;
+    case S::Aborting: return to == S::Finalizing;
+    case S::Finalizing: return to == S::Idle;
+  }
+  return false;
+}
+
 std::string_view to_string(QueueEnd e) noexcept {
   switch (e) {
     case QueueEnd::Completed: return "completed";
@@ -153,11 +167,18 @@ void Executor::set_state(ExecutorState to, std::string reason) {
   ExecutorStateChanged ev;
   {
     std::lock_guard lock(mutex_);
-    if (state_ == to) return;
+    if (!can_transition(state_, to)) return;
     ev = {state_, to, std::move(reason)};
     state_ = to;
   }
   if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ev);
+}
+
+std::optional<ExecutorState> Executor::requested_locked() const {
+  if (end_ == QueueEnd::Aborted) return ExecutorState::Aborting;
+  if (end_ == QueueEnd::Cancelled) return ExecutorState::Cancelling;
+  if (stop_) return ExecutorState::StoppingAtBoundary;
+  return std::nullopt;
 }
 
 void Executor::stop() {
@@ -498,6 +519,15 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
   }
   previous_spec_.reset();
   set_state(ExecutorState::Preparing, "queue " + queue.spec().name);
+  {
+    // A request kept from before the queue began shows now that there is one.
+    std::optional<ExecutorState> kept;
+    {
+      std::lock_guard lock(mutex_);
+      kept = requested_locked();
+    }
+    if (kept) set_state(*kept, "requested before the queue began");
+  }
 
   if (ctx_.services.save != nullptr) (void)ctx_.services.save->recover();
   ConditionalSet queue_level;
@@ -506,6 +536,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     if (!set) {
       out.end = QueueEnd::Failed;
       out.reason = "queue conditionals: " + set.error().what;
+      set_state(ExecutorState::Finalizing);
       ended(out, false);
       set_state(ExecutorState::Idle, out.reason);
       return out;

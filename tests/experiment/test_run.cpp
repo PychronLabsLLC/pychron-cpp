@@ -200,6 +200,22 @@ TEST_F(RunTest, TruncateSavesAsTruncatedSuccess) {
   EXPECT_NE(std::find(st.begin(), st.end(), RunState::Truncated), st.end());
 }
 
+// The run's own state does not depend on anyone listening: it is measuring
+// while the main block runs, bus or no bus.
+TEST_F(RunTest, TheRunIsMeasuringDuringTheMainBlockWithoutABus) {
+  auto s = services();
+  s.bus = nullptr;
+  AutomatedRun run(unknown_run("12345"), queue_, std::move(s), {}, 3, 7);
+  std::optional<RunState> during;
+  spec_.on_reading = [&](int n) {
+    if (n == 8) during = run.state();
+  };
+  auto r = run.execute(control_);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(during);
+  EXPECT_EQ(*during, RunState::Measuring);
+}
+
 TEST_F(RunTest, TruncateBeforeMeasurementApplies) {
   control_.truncate(true);  // e.g. requested during extraction
   auto r = go(unknown_run("12345"));

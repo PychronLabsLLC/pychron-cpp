@@ -64,6 +64,16 @@ namespace pychron::experiment::executor {
 
 enum class ExecutorState { Idle, Preparing, Running, StoppingAtBoundary, Cancelling, Aborting, Finalizing };
 std::string_view to_string(ExecutorState s) noexcept;
+// Whether the executor may go from `from` to `to`:
+//
+//   Idle -> Preparing -> Running -> Finalizing -> Idle
+//   Preparing | Running -> StoppingAtBoundary -> Cancelling -> Aborting -> Finalizing
+//
+// A request only ever strengthens (a stop does not replace a cancel, nor a
+// cancel an abort), none is taken back, and none moves an idle executor.
+// Preparing may also go straight to Finalizing (the queue's conditionals did
+// not load), and Idle is reached only from there.
+bool can_transition(ExecutorState from, ExecutorState to) noexcept;
 
 // A pluggable check before every run (managers healthy, disk space, ...).
 class IPreRunCheck {
@@ -180,7 +190,11 @@ class Executor {
   struct Slot;
   class Resource;
 
+  // Moves to `to` and publishes ExecutorStateChanged; an illegal move
+  // (can_transition) is left out, and so is one to the present state.
   void set_state(ExecutorState to, std::string reason = {});
+  // The state the request already made asks for (under mutex_).
+  std::optional<ExecutorState> requested_locked() const;
   bool wait(Duration d, const std::string& reason, const std::string& run_id = {});  // false when cancelled/aborted
   bool ending() const;
   bool overlaps(const ExperimentQueue& queue, std::size_t row) const;

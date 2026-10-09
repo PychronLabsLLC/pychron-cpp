@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -241,6 +242,82 @@ TEST_F(ExecutorTest, ARequestEndsOneQueueOnly) {
   auto r = ex.execute(q2);
   EXPECT_EQ(r.end, QueueEnd::Completed) << r.reason;
   EXPECT_EQ(states(r), std::vector<std::string>{"12346:success"});
+}
+
+TEST(ExecutorStates, OnlyTheTransitionsOfAQueueAreLegal) {
+  using S = ExecutorState;
+  const std::vector<std::pair<S, S>> legal = {
+      {S::Idle, S::Preparing},
+      {S::Preparing, S::Running},
+      {S::Preparing, S::StoppingAtBoundary},
+      {S::Preparing, S::Cancelling},
+      {S::Preparing, S::Aborting},
+      {S::Preparing, S::Finalizing},
+      {S::Running, S::StoppingAtBoundary},
+      {S::Running, S::Cancelling},
+      {S::Running, S::Aborting},
+      {S::Running, S::Finalizing},
+      {S::StoppingAtBoundary, S::Cancelling},
+      {S::StoppingAtBoundary, S::Aborting},
+      {S::StoppingAtBoundary, S::Finalizing},
+      {S::Cancelling, S::Aborting},
+      {S::Cancelling, S::Finalizing},
+      {S::Aborting, S::Finalizing},
+      {S::Finalizing, S::Idle},
+  };
+  const std::array all = {S::Idle,       S::Preparing, S::Running,   S::StoppingAtBoundary,
+                          S::Cancelling, S::Aborting,  S::Finalizing};
+  for (auto from : all) {
+    for (auto to : all) {
+      const bool expected = std::find(legal.begin(), legal.end(), std::pair(from, to)) != legal.end();
+      EXPECT_EQ(can_transition(from, to), expected) << to_string(from) << " -> " << to_string(to);
+    }
+  }
+}
+
+TEST_F(ExecutorTest, TheStatesOfAQueueArePublishedInOrder) {
+  std::vector<std::string> seen;
+  auto sub = bus_.subscribe<ExecutorStateChanged>(
+      [&](const ExecutorStateChanged& e) { seen.emplace_back(to_string(e.to)); });
+  auto q = queue({unknown_run("12345")});
+  Executor ex(context(), options());
+  ASSERT_EQ(ex.execute(q).end, QueueEnd::Completed);
+  EXPECT_EQ(seen, (std::vector<std::string>{"preparing", "running", "finalizing", "idle"}));
+}
+
+// A weaker request never replaces a stronger one: the queue is still being
+// cancelled, whatever is asked for afterwards.
+TEST_F(ExecutorTest, ALaterStopDoesNotHideACancel) {
+  std::vector<std::string> seen;
+  auto sub = bus_.subscribe<ExecutorStateChanged>(
+      [&](const ExecutorStateChanged& e) { seen.emplace_back(to_string(e.to)); });
+  Executor ex(context(), options());
+  spec_.on_reading = [&](int n) {
+    if (n != 3) return;
+    ex.cancel();
+    ex.stop();
+    EXPECT_EQ(ex.state(), ExecutorState::Cancelling);
+  };
+  auto q = queue({unknown_run("12345"), unknown_run("12346")});
+  EXPECT_EQ(ex.execute(q).end, QueueEnd::Cancelled);
+  EXPECT_EQ(seen, (std::vector<std::string>{"preparing", "running", "cancelling", "finalizing", "idle"}));
+}
+
+// A request made with no queue running is kept for the next one, and until
+// then the executor is what it is: idle.
+TEST_F(ExecutorTest, ARequestWithNoQueueRunningLeavesTheExecutorIdle) {
+  std::vector<std::string> seen;
+  auto sub = bus_.subscribe<ExecutorStateChanged>(
+      [&](const ExecutorStateChanged& e) { seen.emplace_back(to_string(e.to)); });
+  Executor ex(context(), options());
+  ex.stop();
+  EXPECT_EQ(ex.state(), ExecutorState::Idle);
+  EXPECT_TRUE(seen.empty());
+  auto q = queue({unknown_run("12345")});
+  auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Stopped);
+  EXPECT_TRUE(r.runs.empty());
+  EXPECT_EQ(seen, (std::vector<std::string>{"preparing", "stopping", "finalizing", "idle"}));
 }
 
 TEST_F(ExecutorTest, CancelAndAbortEndTheQueue) {

@@ -112,7 +112,7 @@ RunResult Run::execute(RunControl& control) {
   auto& token = control.token();
   auto fail_with = [&](RunEvent e, const Error& error) {
     result_.error = error;
-    (void)sm_.advance(e, error.what);
+    advance(e, error.what);
   };
   auto stopped = [&]() -> std::optional<RunEvent> {
     if (token.mode() == scripting::CancelMode::Abort) return RunEvent::Abort;
@@ -120,30 +120,30 @@ RunResult Run::execute(RunControl& control) {
     return std::nullopt;
   };
 
-  (void)sm_.advance(RunEvent::Start);
+  advance(RunEvent::Start);
   if (auto r = prepare(); !r) {
     fail_with(RunEvent::Fail, r.error());
   } else if (auto early = stopped()) {
-    (void)sm_.advance(*early, "before extraction");
+    advance(*early, "before extraction");
   } else {
-    (void)sm_.advance(RunEvent::Prepared);
+    advance(RunEvent::Prepared);
     auto ex = extract(control);
     if (auto s = stopped(); s == RunEvent::Abort) {
-      (void)sm_.advance(RunEvent::Abort, "during extraction");
+      advance(RunEvent::Abort, "during extraction");
     } else if (s == RunEvent::Cancel) {
       (void)post_measure(control);  // cancel still runs post-measurement
-      (void)sm_.advance(RunEvent::Cancel, "during extraction");
+      advance(RunEvent::Cancel, "during extraction");
     } else if (!ex) {
       fail_with(RunEvent::Fail, ex.error());
     } else {
-      (void)sm_.advance(RunEvent::Extracted);
+      advance(RunEvent::Extracted);
       auto me = measure(control);
       const auto outcome = result_.measurement.outcome;
       if (stopped() == RunEvent::Abort || outcome == measurement::MeasurementOutcome::Aborted) {
-        (void)sm_.advance(RunEvent::Abort, "during measurement");
+        advance(RunEvent::Abort, "during measurement");
       } else if (stopped() == RunEvent::Cancel || outcome == measurement::MeasurementOutcome::Cancelled) {
         (void)post_measure(control);
-        (void)sm_.advance(RunEvent::Cancel, "during measurement");
+        advance(RunEvent::Cancel, "during measurement");
       } else if (!me) {
         fail_with(RunEvent::Fail, me.error());
       } else if (outcome == measurement::MeasurementOutcome::Failed) {
@@ -151,20 +151,20 @@ RunResult Run::execute(RunControl& control) {
       } else {
         if (outcome == measurement::MeasurementOutcome::Truncated) {
           result_.truncated = true;
-          if (sm_.state() == RunState::Measuring) (void)sm_.advance(RunEvent::Truncate);
+          if (sm_.state() == RunState::Measuring) advance(RunEvent::Truncate);
         }
-        (void)sm_.advance(RunEvent::Measured, std::string(measurement::to_string(outcome)));
+        advance(RunEvent::Measured, std::string(measurement::to_string(outcome)));
         if (auto pm = post_measure(control); !pm)
           note("post-measurement failed: " + pm.error().what);  // still saves
         if (stopped() == RunEvent::Abort) {
-          (void)sm_.advance(RunEvent::Abort, "during post-measurement");
+          advance(RunEvent::Abort, "during post-measurement");
         } else {
-          (void)sm_.advance(RunEvent::PostMeasured);
+          advance(RunEvent::PostMeasured);
           if (auto sv = save(); !sv) {
             result_.save_error = true;
             fail_with(RunEvent::Fail, sv.error());
           } else {
-            (void)sm_.advance(RunEvent::Saved);
+            advance(RunEvent::Saved);
           }
         }
       }
@@ -297,6 +297,11 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
   return {};
 }
 
+void Run::advance(RunEvent e, std::string reason) {
+  // Never expected: said, so that a run whose states are out of step shows it.
+  if (auto r = sm_.advance(e, std::move(reason)); !r) note(r.error().what);
+}
+
 void Run::note(std::string message) {
   RunNote said{run_id_, row_, std::move(message), s_.clock->now()};
   {
@@ -395,13 +400,11 @@ Result<void> Run::measure(RunControl& control) {
     }
     if (hooks_.on_overlap_ready) hooks_.on_overlap_ready();
   };
-  SignalBus::Subscription started;
-  if (s_.bus != nullptr) {
-    started = s_.bus->subscribe<measurement::BlockStarted>([this](const measurement::BlockStarted& e) {
-      if (e.run_id == run_id_ && e.block == measurement::Block::Main && sm_.state() == RunState::Equilibrating)
-        (void)sm_.advance(RunEvent::Equilibrated);
-    });
-  }
+  // Told by the engine itself, not through the bus: the bus is for those who
+  // watch the run, and the run is measuring whether or not anyone does.
+  options.on_block_started = [this](measurement::Block b) {
+    if (b == measurement::Block::Main && sm_.state() == RunState::Equilibrating) advance(RunEvent::Equilibrated);
+  };
   measurement::MeasurementEngine engine(ctx, std::move(in), std::move(options));
   control.attach(&engine);
   result_.measurement = engine.run(control.token());
@@ -414,11 +417,10 @@ Result<void> Run::measure(RunControl& control) {
     }
     post_eq.join();
   }
-  started.reset();
-  // Without a bus (or before main started) the state still moves on.
+  // A measurement with no main block still moves on.
   if (sm_.state() == RunState::Equilibrating && !result_.measurement.data.series.empty() &&
       result_.measurement.outcome != measurement::MeasurementOutcome::Failed)
-    (void)sm_.advance(RunEvent::Equilibrated);
+    advance(RunEvent::Equilibrated);
   if (hooks_.release_spectrometer) hooks_.release_spectrometer();
   return {};
 }
