@@ -596,7 +596,7 @@ class FakeCryo final : public extraction::ICryo {
     return {};
   }
   Result<bool> cryo_settling() override {
-    calls.push_back("settling");
+    calls.emplace_back("settling");
     if (fail_wait) return fail(ErrorKind::Io, "the cryostat did not reach its setpoint");
     if (left == 0) return false;
     --left;

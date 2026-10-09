@@ -207,7 +207,7 @@ std::vector<std::string> bound_commands() {
   auto& reference = python::runtime().reference;
   for (auto item : reference) {
     auto name = py::str(item.first).cast<std::string>();
-    if (name.starts_with("_") || name == "HardwareError") continue;
+    if (name.starts_with('_') || name == "HardwareError") continue;
     out.push_back(name);
   }
   return out;
