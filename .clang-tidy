@@ -18,7 +18,6 @@ Checks: >
   cppcoreguidelines-no-malloc,
   cppcoreguidelines-no-suspend-with-lock,
   cppcoreguidelines-owning-memory,
-  cppcoreguidelines-prefer-member-initializer,
   cppcoreguidelines-pro-type-const-cast,
   cppcoreguidelines-pro-type-cstyle-cast,
   cppcoreguidelines-pro-type-member-init,
@@ -48,7 +47,6 @@ Checks: >
   readability-container-size-empty,
   readability-delete-null-pointer,
   readability-duplicate-include,
-  readability-inconsistent-declaration-parameter-name,
   readability-misleading-indentation,
   readability-misplaced-array-index,
   readability-non-const-parameter,
@@ -68,9 +66,11 @@ Checks: >
   -modernize-return-braced-init-list,
   -modernize-use-designated-initializers,
   -modernize-use-nodiscard,
+  -modernize-use-std-numbers,
   -modernize-use-ranges,
   -modernize-use-scoped-lock,
   -modernize-use-trailing-return-type,
+  -performance-avoid-endl,
   -performance-enum-size
 # Why each of those is off:
 #   easily-swappable-parameters   fires on any (double x, double y)
@@ -94,6 +94,12 @@ Checks: >
 #       a test stops the test.
 #   return-braced-init-list, use-designated-initializers, use-nodiscard,
 #   use-ranges, use-scoped-lock, use-trailing-return-type   style, not defects
+#   use-std-numbers               not a matter of style here: it takes any literal
+#       near a constant for that constant (its fix made a legacy algorithm's
+#       3.1415 into pi) and std::log(10.0) for std::numbers::ln10, which need
+#       not agree in the last bit, where the golden vectors look
+#   avoid-endl                    where it is written the flush is wanted (a
+#                                 progress line, a message before an abort)
 #   enum-size                     layout is not a concern for these enums
 # Not listed at all, though it is a defect check elsewhere:
 #   cppcoreguidelines-pro-type-vararg   every use is the printf family, whose
@@ -102,6 +108,15 @@ Checks: >
 #
 #   cppcoreguidelines-missing-std-forward   all 27 found were a callable taken
 #       as F&& and called, often more than once: forwarding it would be wrong
+#
+#   cppcoreguidelines-prefer-member-initializer   moving `x_ = new QWidget(this)`
+#       from a constructor's body to its initializer list makes the widgets in
+#       declaration order, not the order written, and Qt's tab order follows
+#       the order they are made; elsewhere it is a matter of style
+#
+#   readability-inconsistent-declaration-parameter-name   its fix renames the
+#       declaration after the definition, and the header had the better name
+#       (`hardware_name` became `n`); which to keep is a matter of style
 #
 # Directories that turn one more check off, each saying why:
 #   apps/pychron-ui, tests/ui   cppcoreguidelines-owning-memory (Qt parents)
@@ -123,6 +138,10 @@ CheckOptions:
   #     operator* and std::function, behind a test the caller has just made
   #     (the 2026-10-08 backlog read all fifteen of these: none can happen).
   bugprone-exception-escape.IgnoredExceptions: 'bad_alloc,bad_array_new_length,length_error,out_of_range,bad_variant_access,bad_optional_access,bad_function_call'
+  # `!(lo <= x && x <= hi)` is not `x < lo || x > hi` when x is a double: the
+  # first refuses a NaN and the second lets it through. Its fix rewrote five
+  # range checks that way.
+  readability-simplify-boolean-expr.SimplifyDeMorgan: false
   misc-unused-parameters.StrictMode: false
   performance-unnecessary-value-param.AllowedTypes: 'QModelIndex;QPoint;QPointF;QSize;QSizeF;QRect;QRectF;QColor'
   bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: true
