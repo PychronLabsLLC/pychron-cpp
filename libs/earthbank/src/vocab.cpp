@@ -502,6 +502,15 @@ std::vector<std::vector<std::string>> abbreviations_of(std::string_view entry) {
   return out;
 }
 
+// The words of an entry's paper: those after its `from` or `using`, which
+// come after the monitor's name; none when it has neither.
+std::vector<std::string> citation_of(const std::vector<std::string>& paper) {
+  const auto at = std::find_if(paper.begin(), paper.end(),
+                               [](const std::string& word) { return word == "from" || word == "using"; });
+  if (at == paper.end()) return {};
+  return {at + 1, paper.end()};
+}
+
 }  // namespace
 
 std::span<const MonitorAlias> flux_monitor_aliases() { return kMonitorAliases; }
@@ -566,8 +575,13 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
       for (std::string& word : words_of(without_listed_age(entry))) of_the_monitor.push_back(std::move(word));
     }
   }
-  const auto telling = [](const std::string& word) {
-    return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter);
+  // A word that tells a paper: three letters or more, no mineral, no
+  // conjunction, and one of the entry's citation (the words after its
+  // `from` or `using`). The words of the monitor's own name (`tuff`) and
+  // the connectives (`from`) are not an author.
+  const auto telling = [](const std::string& word, const std::vector<std::string>& citation) {
+    return word.size() >= 3 && std::all_of(word.begin(), word.end(), ascii_letter) && word != "and" &&
+           !is_material_word(word) && has_word(citation, word);
   };
 
   // By the age, and when no entry is of it and the number was not said to be
@@ -581,6 +595,7 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
       // The words a name or a paper is found among: by the paper, not the
       // digits of the entry's age.
       const std::vector<std::string> paper = words_of(without_listed_age(entry));
+      const std::vector<std::string> citation = citation_of(paper);
       const std::vector<std::string>& cited = by_paper ? paper : words;
       if (by_paper ? !has_word(cited, query.age) : listed_age(entry) != query.age) continue;
       // Another mineral or material is another monitor, whatever else of the
@@ -592,7 +607,8 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
         if (by_paper) {
           // By the paper the monitor is not enough: the author must be there,
           // and nothing said that the entry does not say.
-          named = named && std::any_of(beside.begin(), beside.end(), telling) &&
+          named = named &&
+                  std::any_of(beside.begin(), beside.end(), [&](const std::string& word) { return telling(word, citation); }) &&
                   std::all_of(beside.begin(), beside.end(), [&](const std::string& word) { return has_word(cited, word); });
         } else {
           // By the age, a paper said beside it must be this entry's: a year,
@@ -613,17 +629,21 @@ ListMatch match_flux_monitor(std::string_view value, std::span<const std::string
           if (!has_run(query.name, abbreviation)) continue;
           std::vector<std::string> rest = without_run(query.name, abbreviation);
           std::erase_if(rest, [](const std::string& word) { return is_material_word(word); });
-          named = named || (std::any_of(rest.begin(), rest.end(), telling) &&
+          named = named || (std::any_of(rest.begin(), rest.end(),
+                                        [&](const std::string& word) { return telling(word, citation); }) &&
                             std::all_of(query.name.begin(), query.name.end(),
                                         [&](const std::string& word) { return has_word(cited, word); }));
         }
       } else {
-        // No name this knows: every word given must be the entry's, and one of
-        // them must be a name and not a year or a conjunction's worth of
-        // letters.
+        // No name this knows, and an age: the value must name the monitor by
+        // the abbreviation the entry has in parentheses (`EMs`), as the paper
+        // pass wants, and every word given must be the entry's. A mineral and
+        // an age, or an author, a year and an age, say which standard of that
+        // age and not which monitor: a wrong id in a production database is
+        // worse than a miss.
         const bool all = std::all_of(query.name.begin(), query.name.end(),
                                      [&](const std::string& word) { return has_word(cited, word); });
-        bool tells = std::any_of(query.name.begin(), query.name.end(), telling);
+        bool tells = false;
         for (const auto& abbreviation : abbreviations_of(entry)) tells = tells || has_run(query.name, abbreviation);
         named = all && tells;
       }

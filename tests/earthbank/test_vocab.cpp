@@ -354,11 +354,14 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
                "Taylor Creek Rhyolite Saniditine (TCs) from Fleck et al. 2019 (28.447 Ma)", "Taylor Creek");
   expect_match(match("WA1ms 2613 Ma"), Kind::Respelled,
                "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "WA1ms");
-  // Without one of pychron's names for it: every word of the name must be the
-  // entry's, and one of them a word of three letters or more.
-  expect_match(match("Kuiper 2008 28.201 Ma"), Kind::Respelled, kuiper, "the citation alone");
-  expect_match(match("Western Australia muscovite 2613 Ma"), Kind::Respelled,
-               "WA1ms (Western Australia Muscovite) from Jourdan et al. (2014) (2613 Ma)", "by words");
+  // Without one of pychron's names for it the monitor is not named, and an
+  // age alone does not name it: a paper, a mineral or the words of an entry
+  // say which standard of that age and not which monitor, though one entry
+  // only be of it. Only the abbreviation the entry has in parentheses does.
+  expect_match(match("Kuiper 2008 28.201 Ma"), Kind::None, "", "the citation alone");
+  expect_match(match("Western Australia muscovite 2613 Ma"), Kind::None, "", "words of an entry");
+  expect_match(match("Kuiper et al. 2008, 28.201 Ma"), Kind::None, "", "a paper and an age");
+  expect_match(match("Fish Canyon Tuff Kuiper 28.201 Ma"), Kind::Respelled, kuiper, "by the tuff's name");
 
   // An entry as the list has it needs no age to be found.
   expect_match(match(kuiper), Kind::Exact, kuiper, "the entry itself");
@@ -376,7 +379,8 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
   expect_match(match("ACs 28.201 Ma"), Kind::None, "", "another monitor's age");
   expect_match(match("FC-2 1.1851 Ma"), Kind::None, "", "likewise");
   expect_match(match("BT-1 sanidine 28.201 Ma"), Kind::None, "", "a monitor the list has not, of a listed age");
-  expect_match(match("sanidine 28.201 Ma"), Kind::Respelled, kuiper, "a mineral and an age only one entry has");
+  expect_match(match("sanidine 28.201 Ma"), Kind::None, "", "a mineral and an age only one entry has");
+  expect_match(match("san 28.201 Ma"), Kind::None, "", "likewise, in short");
   expect_match(match("FC-2 or ACs 28.201 Ma"), Kind::None, "", "two monitors named");
   expect_match(match("Bishop Tuff sanidine 0.7666 Ma"), Kind::None, "", "not listed at all");
   expect_match(match("GA-1550 MD-2 99.44 Ma"), Kind::None, "", "two monitors of one age");
@@ -429,8 +433,8 @@ TEST(Vocab, AFluxMonitorIsFoundByItsNameAndItsAge) {
                "Mt Domedary Biotite (GA-1550) from Jourdan and Renne 2007 (99.44 Ma)", "the entry's mineral");
   // Ambiguous, and so not rewritten: the age is two entries' and the name
   // says no more.
-  expect_match(match("Mt Domedary Biotite 99.44 Ma"), Kind::Ambiguous, "", "GA-1550 or MD-2");
-  expect_match(match("Jourdan and Renne 2007 99.44"), Kind::Ambiguous, "", "likewise");
+  expect_match(match("Mt Domedary Biotite 99.44 Ma"), Kind::None, "", "GA-1550 or MD-2: neither is named");
+  expect_match(match("Jourdan and Renne 2007 99.44"), Kind::None, "", "likewise");
   const std::vector<std::string> twins = {"Fish Canyon Tuff Sanidine (FCTs) from A (28.201 Ma)",
                                           "Fish Canyon Tuff Sanidine (FCTs) from B (28.201 Ma)"};
   expect_match(match_flux_monitor("FC-2 28.201 Ma", twins), Kind::Ambiguous, "", "two entries of one age");
@@ -531,6 +535,21 @@ TEST(Vocab, AFluxMonitorIsFoundByItsCitation) {
   expect_match(match_flux_monitor("Example Monitor Alpha et al. 1999", other), Kind::None, "", "words, and no name");
   expect_match(match_flux_monitor("Alpha et al. 1999", other), Kind::None, "", "the paper alone");
   expect_match(match_flux_monitor("FC-2 Kuiper et al. 2008", {}), Kind::None, "", "an empty list");
+
+  // An abbreviation of the entry names it by age as by paper; without a name
+  // or an abbreviation the age finds nothing.
+  expect_match(match_flux_monitor("EMs 27.5 Ma", other), Kind::Respelled, other[0], "abbreviation and age");
+  expect_match(match_flux_monitor("EMs sanidine 27.5 Ma", other), Kind::Respelled, other[0], "and its mineral");
+  expect_match(match_flux_monitor("EMs biotite 27.5 Ma", other), Kind::None, "", "another mineral");
+  expect_match(match_flux_monitor("Alpha 27.5 Ma", other), Kind::None, "", "an author and an age");
+  expect_match(match_flux_monitor("Example Monitor Sanidine 27.5 Ma", other), Kind::None, "", "the entry's name");
+  // What tells a paper is a word of its citation: not a word of the monitor's
+  // name (`tuff`), not a connective (`from`, `and`).
+  expect_match(match("FC-2 Tuff 2008"), Kind::None, "", "the tuff is no author");
+  expect_match(match("FC-2 from 2008"), Kind::None, "", "`from` is no author");
+  expect_match(match("MD-2 and 2007"), Kind::None, "", "`and` is no author");
+  expect_match(match("MD-2 Fish Canyon 2007"), Kind::None, "", "another monitor's name is no author");
+  expect_match(match("EMs Tuff 1999"), Kind::None, "", "the same, by an abbreviation");
 }
 
 // The lists short enough to be read whole and kept: those the vendor's

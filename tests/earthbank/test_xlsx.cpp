@@ -1446,7 +1446,7 @@ TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
   step.sample.sampleKindName = "mine waste";
   step.sample.archiveName = "University of Bergen";
   // Monitors: one of the list as it stands, one found by name and age, one
-  // the list has not, one that could be two entries.
+  // the list has not, one that names no monitor (a biotite of an age two have).
   fusion.age_calc.fluxMonitorName = kKuiper;
   step.age_calc.fluxMonitorName = "ACs 1.1851 Ma";
   Submission third = step;
@@ -1506,8 +1506,8 @@ TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
                       "from Schaen et al. 2020 (1.1851 Ma)' (list: Flux Monitor), found by its name and age",
                       "ArArAgeCalc.fluxMonitor: 'Bishop Tuff sanidine 0.7666 Ma' is not in the template's list "
                       "'Flux Monitor'; the importer may refuse the value",
-                      "ArArAgeCalc.fluxMonitor: 'Mt Domedary Biotite 99.44 Ma' could be more than one entry of the "
-                      "template's list and was written as given",
+                      "ArArAgeCalc.fluxMonitor: 'Mt Domedary Biotite 99.44 Ma' is not in the template's list "
+                      "'Flux Monitor'; the importer may refuse the value",
                       "Samples.sampleKind: 'Tephra' is not in the template's list 'Sample Kind'; the importer may "
                       "refuse the value",
                       "Samples.material: 'biotite separate' is not in the template's list 'Lithology'; the importer "

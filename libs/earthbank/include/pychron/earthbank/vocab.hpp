@@ -118,9 +118,12 @@ ListMatch match_list_entry(std::string_view value, std::span<const std::string> 
 //     entries the age decides, and a value without one matches nothing;
 //   - the name is the rest. If it holds one of flux_monitor_aliases() it
 //     means that monitor, and only that monitor's entries are looked at
-//     (names of two monitors match nothing). If it holds none, every word of
-//     it must be a word of the entry, one of them of three letters or more or
-//     the entry's abbreviation in parentheses.
+//     (names of two monitors match nothing). If it holds none, it must name
+//     the monitor by the abbreviation the entry has in parentheses (`EMs`),
+//     and every word of it must be a word of the entry: a mineral, a paper or
+//     the words of an entry say which standard of that age and not which
+//     monitor (`sanidine 28.201 Ma`, `Kuiper 2008 28.201 Ma` match nothing),
+//     and a wrong id in a production database is worse than a miss.
 //   - either way, a mineral the name says must be the entry's
 //     (flux_monitor_minerals()): `Fish Canyon biotite 28.201 Ma` is not the
 //     Fish Canyon sanidine of that age, whatever else of it fits. So with a
@@ -146,7 +149,9 @@ ListMatch match_list_entry(std::string_view value, std::span<const std::string> 
 // though one entry only be of that paper. Beside the name, every other word
 // that is no mineral must be the entry's too, one of them of three letters or
 // more (the author: `FC-2 2008` is not enough, and `FC-2 Phillips 2008` is no
-// entry).
+// entry). The author is a word of the entry's citation (what follows its
+// `from` or `using`): the words of its monitor's name (`Tuff`) and a
+// connective (`and`) are not one.
 // One entry left: Respelled. Several: Ambiguous. None: None.
 ListMatch match_flux_monitor(std::string_view value, std::span<const std::string> entries);
 
