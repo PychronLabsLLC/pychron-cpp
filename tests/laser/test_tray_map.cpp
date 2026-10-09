@@ -208,7 +208,9 @@ TEST(TrayLibrary, LoadsADirectoryAndReportsWhatDidNot) {
   fs::copy_file(data("small.txt"), dir / "good.txt");
   std::ofstream(dir / "bad.txt") << "circle,1\n\n\n1,x\n";
   std::ofstream(dir / "notes.md") << "not a tray\n";
-  std::ofstream(dir / "._good.txt") << "\x00\x05\x16\x07 macOS resource fork";  // on network and exFAT volumes
+  // On network and exFAT volumes. Written by length: << would stop at the first byte, a NUL.
+  const std::string_view fork("\x00\x05\x16\x07 macOS resource fork", 24);
+  std::ofstream(dir / "._good.txt", std::ios::binary).write(fork.data(), static_cast<std::streamsize>(fork.size()));
   fs::create_directories(dir / "folder.txt");
 
   const auto lib = TrayLibrary::load(dir);

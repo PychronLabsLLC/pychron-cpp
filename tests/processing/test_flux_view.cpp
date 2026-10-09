@@ -289,7 +289,7 @@ TEST(FluxSchema, EnabledWhenNamesOnlyKnownKeysAndValues) {
     ASSERT_TRUE(in != std::string::npos || eq != std::string::npos) << f.enabled_when;
     const auto op = std::min(in, eq);
     const std::string key = f.enabled_when.substr(0, op);
-    const std::string rest = f.enabled_when.substr(op + (op == in ? 4 : 4));
+    const std::string rest = f.enabled_when.substr(op + 4);  // " in " and " == " are both four long
     const auto* target = schema->field(key);
     ASSERT_TRUE(target) << f.enabled_when;
     std::vector<std::string> values;
