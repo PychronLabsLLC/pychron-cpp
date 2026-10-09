@@ -231,6 +231,17 @@ TEST_F(CoreExporterTest, ATransportFirstHeardOfAsDownIsOneOutage) {
   EXPECT_DOUBLE_EQ(value(text(), "pychron_transport_outages_total{transport=\"gauge_net\"}"), 1.0);
 }
 
+// A subscriber that throws is otherwise seen only as something that stopped
+// happening.
+TEST_F(CoreExporterTest, AHandlerThatThrowsIsCountedByItsEvent) {
+  auto bad = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("bad"); });
+  bus.publish(ValveChanged{"A", ValveState::Open, {}});
+  bus.publish(ValveChanged{"A", ValveState::Closed, {}});
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_bus_handler_failures_total{event=\"pychron::ValveChanged\"}"), 2.0);
+  EXPECT_EQ(t.find("bad"), std::string::npos);  // what it said is in the log, never a label
+}
+
 TEST_F(CoreExporterTest, OddNamesRenderValidly) {
   bus.publish(PressureSample{"IG \"bone\"", 1e-8, "torr", {}});
   bus.publish(HeaterSample{"F\xC3\xBCrnace", 20.0, std::nullopt, std::nullopt, std::nullopt, {}});
@@ -252,7 +263,7 @@ TEST_F(CoreExporterTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
        {"pychron_pressure", "pychron_temperature_kelvin", "pychron_heater_readback", "pychron_heater_setpoint",
         "pychron_heater_enabled", "pychron_valve_state", "pychron_valve_transitions_total",
         "pychron_actuation_failures_total", "pychron_last_sample_age_seconds", "pychron_alarms_total",
-        "pychron_build_info", "pychron_process_uptime_seconds", "pychron_log_records_total",
+        "pychron_build_info", "pychron_process_uptime_seconds", "pychron_log_records_total", "pychron_bus_handler_failures_total",
         "pychron_transport_connected", "pychron_transport_outages_total"}) {
     EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
   }

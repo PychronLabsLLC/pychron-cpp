@@ -33,6 +33,9 @@ constexpr const char* kLogRecords = "pychron_log_records_total";
 constexpr const char* kLogRecordsHelp = "Log records, by level and by the first part of the logger's name.";
 constexpr const char* kTransportConnected = "pychron_transport_connected";
 constexpr const char* kTransportConnectedHelp = "1 while a transport is up (working or degraded), 0 while it is down.";
+constexpr const char* kBusFailures = "pychron_bus_handler_failures_total";
+constexpr const char* kBusFailuresHelp =
+    "Subscribers of the event bus that threw, by the event they were handling. The log has what each said.";
 constexpr const char* kTransportOutages = "pychron_transport_outages_total";
 constexpr const char* kTransportOutagesHelp = "Times a transport went down.";
 
@@ -123,6 +126,7 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
   registry.declare(MetricType::Gauge, kLastSampleAge, kLastSampleAgeHelp);
   registry.declare(MetricType::Counter, kAlarms, kAlarmsHelp);
   registry.declare(MetricType::Counter, kLogRecords, kLogRecordsHelp);
+  registry.declare(MetricType::Counter, kBusFailures, kBusFailuresHelp);
   registry.declare(MetricType::Gauge, kTransportConnected, kTransportConnectedHelp);
   registry.declare(MetricType::Counter, kTransportOutages, kTransportOutagesHelp);
 
@@ -185,6 +189,10 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
       }
     }
     registry_.counter(kLogRecords, kLogRecordsHelp, {{"level", level_name(e.level)}, {"component", component}}).inc();
+  }));
+  subscriptions_.push_back(bus.subscribe<HandlerFailed>([this](const HandlerFailed& e) {
+    // The event's type is one of the few this build has; what was thrown is free text.
+    registry_.counter(kBusFailures, kBusFailuresHelp, {{"event", e.event}}).inc();
   }));
   subscriptions_.push_back(bus.subscribe<TransportHealth>([this](const TransportHealth& e) {
     // The event comes when the transport's state changes and carries its

@@ -17,6 +17,7 @@
 #include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/experiment/run/state.hpp"
 #include "pychron/metrics/registry.hpp"
+#include "pychron/systems/jobs/job.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -293,6 +294,41 @@ TEST_F(ExperimentMetricsTest, RunIdsAndIdentifiersAreNeverRendered) {
   EXPECT_EQ(text().find("77777"), std::string::npos);
 }
 
+TEST_F(ExperimentMetricsTest, SpectrometerJobsByKindAndHowTheyEnded) {
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_spectrometer_jobs_total{kind=\"peak_center\",state=\"failed\"}"), 0.0);
+  bus.publish(pychron::jobs::JobStarted{1, "peak_center", {}});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_spectrometer_job_active"), 1.0);
+  bus.publish(pychron::jobs::JobProgress{1, "peak_center", pychron::jobs::ProgressUpdate{5, 20, "", std::nullopt}});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_spectrometer_job_progress_ratio"), 0.25);
+
+  pychron::jobs::Job job;
+  job.id = 1;
+  job.kind = "peak_center";
+  job.state = pychron::jobs::JobState::Succeeded;
+  job.before = pychron::jobs::SpectrometerState{};
+  job.started = at(100);
+  job.finished = at(140);
+  bus.publish(pychron::jobs::JobFinished{job});
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_jobs_total{kind=\"peak_center\",state=\"succeeded\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_job_active"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_job_progress_ratio"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_job_duration_seconds_sum{kind=\"peak_center\"}"), 40.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_job_duration_seconds_count{kind=\"peak_center\"}"), 1.0);
+}
+
+// Cancelled while it waited: it ended, and took no time doing anything.
+TEST_F(ExperimentMetricsTest, AJobThatNeverRanIsCountedAndNotTimed) {
+  pychron::jobs::Job job;
+  job.kind = "sweep";
+  job.state = pychron::jobs::JobState::Cancelled;
+  job.finished = at(140);
+  bus.publish(pychron::jobs::JobFinished{job});
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spectrometer_jobs_total{kind=\"sweep\",state=\"cancelled\"}"), 1.0);
+  EXPECT_FALSE(has(t, "pychron_spectrometer_job_duration_seconds_count{kind=\"sweep\"}"));
+}
+
 TEST_F(ExperimentMetricsTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
   const std::vector<std::string> names = registry.names();
   for (const char* expected :
@@ -300,7 +336,8 @@ TEST_F(ExperimentMetricsTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
         "pychron_runs_started_total", "pychron_runs_finished_total", "pychron_run_save_errors_total",
         "pychron_run_state_duration_seconds", "pychron_measurement_blocks_total", "pychron_conditional_trips_total",
         "pychron_executor_waits_total", "pychron_last_run_finished_age_seconds",
-        "pychron_notifications_total"}) {
+        "pychron_notifications_total", "pychron_spectrometer_jobs_total", "pychron_spectrometer_job_active",
+        "pychron_spectrometer_job_progress_ratio", "pychron_spectrometer_job_duration_seconds"}) {
     EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
   }
 }

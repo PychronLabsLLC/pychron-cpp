@@ -9,6 +9,10 @@
 // ends. Neither the id nor the sample's identifier, nor any message, becomes
 // a label: each would be a new series for every run.
 //
+// The spectrometer's jobs (a sweep, a peak center) are here too, whether a
+// run asked for them or the operator did: how many, how they ended, how long
+// they took, and how far the one now running is.
+//
 // Durations are differences of the events' own times, on the line's clock:
 // in a simulation they are simulated seconds. The one age
 // (pychron_last_run_finished_age_seconds) is real time, worked out at the

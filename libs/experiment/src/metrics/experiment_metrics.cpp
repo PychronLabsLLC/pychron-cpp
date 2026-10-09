@@ -10,6 +10,7 @@
 #include "pychron/experiment/lab/notifier.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
+#include "pychron/systems/jobs/job.hpp"
 
 namespace pychron::experiment::metrics {
 
@@ -48,6 +49,14 @@ constexpr const char* kLastFinished = "pychron_last_run_finished_age_seconds";
 constexpr const char* kLastFinishedHelp = "Real seconds since a run last finished. Absent until one has.";
 constexpr const char* kNotifications = "pychron_notifications_total";
 constexpr const char* kNotificationsHelp = "Notifications handed to a channel, by event and whether it took them.";
+constexpr const char* kJobs = "pychron_spectrometer_jobs_total";
+constexpr const char* kJobsHelp = "Spectrometer jobs (a sweep, a peak center) ended, by kind and how.";
+constexpr const char* kJobActive = "pychron_spectrometer_job_active";
+constexpr const char* kJobActiveHelp = "1 while a spectrometer job is running.";
+constexpr const char* kJobProgress = "pychron_spectrometer_job_progress_ratio";
+constexpr const char* kJobProgressHelp = "How far the running spectrometer job is, 0 to 1; 0 when none is running.";
+constexpr const char* kJobDuration = "pychron_spectrometer_job_duration_seconds";
+constexpr const char* kJobDurationHelp = "How long spectrometer jobs that ran took, by kind.";
 
 // From one second to two hours: an extraction is tens of seconds, a
 // measurement tens of minutes, a save a second or two.
@@ -137,6 +146,33 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
     }
   }
 
+  registry.declare(MetricType::Counter, kJobs, kJobsHelp);
+  registry.declare(MetricType::Histogram, kJobDuration, kJobDurationHelp, duration_buckets());
+  registry.gauge(kJobActive, kJobActiveHelp).set(0);
+  registry.gauge(kJobProgress, kJobProgressHelp).set(0);
+  for (const char* kind : {"sweep", "peak_center"}) {
+    for (const jobs::JobState st : {jobs::JobState::Succeeded, jobs::JobState::Failed, jobs::JobState::Cancelled}) {
+      registry.counter(kJobs, kJobsHelp, {{"kind", kind}, {"state", label_of(jobs::to_string(st))}});
+    }
+  }
+
+  subscriptions_.push_back(bus.subscribe<jobs::JobStarted>([this](const jobs::JobStarted&) {
+    registry_.gauge(kJobActive, kJobActiveHelp).set(1);
+    registry_.gauge(kJobProgress, kJobProgressHelp).set(0);
+  }));
+  subscriptions_.push_back(bus.subscribe<jobs::JobProgress>([this](const jobs::JobProgress& e) {
+    if (e.update.total > 0) registry_.gauge(kJobProgress, kJobProgressHelp).set(e.update.fraction());
+  }));
+  subscriptions_.push_back(bus.subscribe<jobs::JobFinished>([this](const jobs::JobFinished& e) {
+    // One job at a time holds the spectrometer: none is running now.
+    registry_.gauge(kJobActive, kJobActiveHelp).set(0);
+    registry_.gauge(kJobProgress, kJobProgressHelp).set(0);
+    const std::string kind = label_of(e.job.kind);
+    registry_.counter(kJobs, kJobsHelp, {{"kind", kind}, {"state", label_of(jobs::to_string(e.job.state))}}).inc();
+    if (!e.job.before) return;  // cancelled while it waited: it never ran
+    const double seconds = std::max(0.0, std::chrono::duration<double>(e.job.finished - e.job.started).count());
+    registry_.histogram(kJobDuration, kJobDurationHelp, duration_buckets(), {{"kind", kind}}).observe(seconds);
+  }));
   subscriptions_.push_back(bus.subscribe<executor::ExecutorStateChanged>([this](const executor::ExecutorStateChanged& e) {
     for (const ExecutorState s : kExecutorStates) {
       registry_.gauge(kExecutorState, kExecutorStateHelp, {{"state", label_of(to_string(s))}}).set(s == e.to ? 1.0 : 0.0);

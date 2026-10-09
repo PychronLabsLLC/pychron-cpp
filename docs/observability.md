@@ -273,6 +273,10 @@ each.
 | `pychron_executor_waits_total` | `reason` | times the executor waited, by what for |
 | `pychron_last_run_finished_age_seconds` | | seconds since a run last finished; absent until one has |
 | `pychron_notifications_total` | `channel`, `event`, `ok` | notifications handed to a channel |
+| `pychron_spectrometer_jobs_total` | `kind` (`sweep`, `peak_center`), `state` (`succeeded`, `failed`, `cancelled`) | spectrometer jobs ended, whether a run or the operator asked for them |
+| `pychron_spectrometer_job_active` | | 1 while a spectrometer job is running |
+| `pychron_spectrometer_job_progress_ratio` | | how far the running job is, 0 to 1; 0 when none is running |
+| `pychron_spectrometer_job_duration_seconds` | `kind` | a histogram of how long jobs that ran took |
 
 Durations are measured on the line's clock: in a simulation run faster than
 real time they are simulated seconds.
@@ -284,6 +288,7 @@ real time they are simulated seconds.
 | `pychron_build_info` | `version`, `os`, `compiler` | always 1; the labels say what is running |
 | `pychron_process_uptime_seconds` | | seconds since pychron started |
 | `pychron_log_records_total` | `level`, `component` | log records; `component` is the first part of the logger's name |
+| `pychron_bus_handler_failures_total` | `event` | parts of pychron that failed while handling an event, by the event. It should stay at zero: anything else is a bug, and the log (`bus`) has what was said |
 | `pychron_transport_connected` | `transport` | 1 while the transport is up, 0 while it is down |
 | `pychron_transport_outages_total` | `transport` | times the transport went down. Single errors are not counted: the log has them |
 | `pychron_scheduler_job_runs_total`, `_failures_total`, `_skipped_overlaps_total` | `job` | each periodic job's counts |
