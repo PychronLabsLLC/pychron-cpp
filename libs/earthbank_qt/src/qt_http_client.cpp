@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <clocale>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -53,6 +54,10 @@ void ensure_application() {
     static char name[] = "pychron";
     static char* argv[] = {name, nullptr};
     static QCoreApplication application(argc, argv);
+    // Qt takes the locale from the environment, and a comma for a decimal
+    // point would reach every printf and strtod of the program. Numbers stay
+    // as the C library had them.
+    std::setlocale(LC_NUMERIC, "C");
   });
 }
 
@@ -100,7 +105,10 @@ class AnswerReader {
   // The connection closed: an answer that goes on to the end of it is done,
   // any other is cut short.
   State closed() {
-    if (state_ == State::More && phase_ == Phase::UntilClose) state_ = State::Done;
+    if (state_ == State::More && phase_ == Phase::UntilClose) {
+      body_ = buffer_.toStdString();
+      state_ = State::Done;
+    }
     if (state_ == State::More) fault_ = "the connection was closed before the answer was complete";
     if (state_ == State::More) state_ = State::Bad;
     return state_;
@@ -153,8 +161,8 @@ class AnswerReader {
           return done();
         }
         case Phase::UntilClose: {
+          // Kept in the buffer and taken once, when the connection closes.
           if (static_cast<std::size_t>(buffer_.size()) > kMostAnswer) return bad("the answer is too large");
-          body_ = buffer_.toStdString();
           return State::More;
         }
         case Phase::ChunkSize: {
@@ -169,7 +177,7 @@ class AnswerReader {
           if (size == 0) {
             phase_ = Phase::Trailer;
           } else {
-            if (body_.size() + size > kMostAnswer) return bad("the answer is too large");
+            if (size > kMostAnswer - body_.size()) return bad("the answer is too large");
             chunk_ = size;
             phase_ = Phase::ChunkData;
           }
@@ -211,7 +219,8 @@ class AnswerReader {
     if (first.size() < 12 || !first.starts_with("HTTP/1.") || first[8] != ' ') return "the answer is not HTTP";
     int status = 0;
     const auto [end, error] = std::from_chars(first.data() + 9, first.data() + 12, status);
-    if (error != std::errc() || end != first.data() + 12 || status < 100 || status > 599) return "the answer's status is not one";
+    const bool ends_there = first.size() == 12 || first[12] == ' ';
+    if (error != std::errc() || end != first.data() + 12 || !ends_there || status < 100 || status > 599) return "the answer's status is not one";
     status_ = status;
     while (at != std::string::npos) {
       const std::size_t from = at + 2;
@@ -222,9 +231,9 @@ class AnswerReader {
       const std::string_view name = line.substr(0, colon);
       const std::string_view value = trim(line.substr(colon + 1));
       if (same_name(name, "transfer-encoding")) {
-        std::string coding(value);
-        std::transform(coding.begin(), coding.end(), coding.begin(), lower);
-        chunked_ = coding.size() >= 7 && coding.compare(coding.size() - 7, 7, "chunked") == 0;
+        // Exactly `chunked`: a coding stacked under it (`gzip, chunked`) would
+        // hand over bytes that are not the body.
+        chunked_ = same_name(value, "chunked");
         if (!chunked_) return "the answer has a transfer coding this does not read";
       } else if (same_name(name, "content-length")) {
         std::size_t length = 0;
@@ -403,7 +412,7 @@ Result<HttpResponse> QtHttpClient::send(const HttpRequest& request) {
     loop.quit();
   });
 
-  timer.start(static_cast<int>(std::min<std::chrono::milliseconds::rep>(request.timeout.count(), 0x7fffffff)));
+  timer.start(static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(request.timeout.count(), 0, 0x7fffffff)));
   const QString host = url.host();
   const quint16 port = static_cast<quint16>(url.port(secure ? 443 : 80));
   if (secure) {

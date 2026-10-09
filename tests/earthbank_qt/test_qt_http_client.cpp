@@ -5,6 +5,9 @@
 // to a port that speaks no TLS.
 
 #include <cctype>
+#include <clocale>
+#include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <functional>
 #include <future>
@@ -20,8 +23,16 @@
 #include <QCoreApplication>
 #include <QHostAddress>
 #include <QtGlobal>
+#include <QFile>
+#include <QSslCertificate>
+#include <QSslConfiguration>
+#include <QSslKey>
 #include <QTcpServer>
 #include <QTcpSocket>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+#include <QSslServer>
+#define PYCHRON_TEST_HAS_SSL_SERVER 1
+#endif
 
 #include "pychron/core/error.hpp"
 #include "pychron/earthbank/http.hpp"
@@ -162,7 +173,7 @@ bool has(const std::string& text, const std::string& part) { return text.find(pa
 // thread's first call) gets one at the first send. Port 1 on this machine
 // refuses.
 TEST(QtHttpClient, MakesItsOwnApplicationWhenThereIsNone) {
-  ASSERT_EQ(QCoreApplication::instance(), nullptr);
+  if (QCoreApplication::instance() != nullptr) GTEST_SKIP() << "another test made the application first; run alone";
   QtHttpClient client;
   const auto answer = client.send(request("GET", "http://127.0.0.1:1/x"));
   ASSERT_FALSE(answer);
@@ -443,6 +454,185 @@ TEST(QtHttpClient, WorksFromAThreadThatIsNotAQThread) {
   EXPECT_EQ(got->body, "from a worker");
   EXPECT_TRUE(messages.empty()) << messages.front();
 }
+
+// ---- Findings of the first review
+
+// A chunk size that would carry the answer past what is kept is refused, also
+// when the sum of it and what is held would wrap.
+TEST(QtHttpClient, AHugeChunkSizeIsRefusedNotWaitedFor) {
+  Server server([](const Seen&) {
+    return Reply{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nffffffffffffffff\r\n", false};
+  });
+  QtHttpClient client;
+  HttpRequest r = request("GET", server.url("/x"));
+  r.timeout = 3000ms;
+  const auto answer = client.send(r);
+  ASSERT_FALSE(answer);
+  EXPECT_EQ(answer.error().kind, ErrorKind::Io) << answer.error().what;
+  EXPECT_TRUE(has(answer.error().what, "too large")) << answer.error().what;
+}
+
+// Only `chunked`, alone, is a transfer coding this reads. Anything else is an
+// answer that cannot be read: it came, so it is not "never sent".
+TEST(QtHttpClient, ATransferCodingOtherThanChunkedIsAnErrorAnswer) {
+  Server server([](const Seen& seen) {
+    const std::string coding = seen.target == "/stacked" ? "gzip, chunked" : seen.target == "/spaced" ? "  Chunked " : "gzip";
+    return Reply{"HTTP/1.1 200 OK\r\nTransfer-Encoding: " + coding + "\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n", true};
+  });
+  QtHttpClient client;
+  for (const char* target : {"/stacked", "/gzip"}) {
+    const auto answer = client.send(request("GET", server.url(target)));
+    ASSERT_FALSE(answer) << target;
+    EXPECT_EQ(answer.error().kind, ErrorKind::Io) << target;
+    EXPECT_NE(answer.error().code, kHttpNotSent) << target;
+    EXPECT_TRUE(request_may_have_arrived(answer.error())) << target;
+    EXPECT_TRUE(has(answer.error().what, "transfer coding")) << answer.error().what;
+  }
+  const auto spaced = client.send(request("GET", server.url("/spaced")));
+  ASSERT_TRUE(spaced) << spaced.error().what;
+  EXPECT_EQ(spaced->body, "hello");
+}
+
+TEST(QtHttpClient, AStatusOfMoreThanThreeDigitsIsNotAStatus) {
+  Server server([](const Seen& seen) {
+    if (seen.target == "/four") return Reply{"HTTP/1.1 2000 OK\r\nContent-Length: 0\r\n\r\n", true};
+    if (seen.target == "/bare") return Reply{"HTTP/1.1 204\r\n\r\n", true};
+    return Reply{"HTTP/1.1 20x OK\r\nContent-Length: 0\r\n\r\n", true};
+  });
+  QtHttpClient client;
+  EXPECT_FALSE(client.send(request("GET", server.url("/four"))));
+  EXPECT_FALSE(client.send(request("GET", server.url("/x"))));
+  const auto bare = client.send(request("GET", server.url("/bare")));
+  ASSERT_TRUE(bare) << bare.error().what;
+  EXPECT_EQ(bare->status, 204);
+}
+
+// A body that runs to the end of the connection, in many pieces.
+TEST(QtHttpClient, AnAnswerToTheEndOfTheConnectionIsRead) {
+  const std::string big(3 * 1024 * 1024, 'z');
+  Server server([&](const Seen&) { return Reply{"HTTP/1.1 200 OK\r\n\r\n" + big, true}; });
+  QtHttpClient client;
+  const auto answer = client.send(request("GET", server.url("/big")));
+  ASSERT_TRUE(answer) << answer.error().what;
+  EXPECT_EQ(answer->body.size(), big.size());
+}
+
+TEST(QtHttpClient, ANegativeTimeoutIsATimeoutAndNoWarning) {
+  Server server([](const Seen&) { return Reply{}; });
+  std::vector<std::string> messages;
+  g_messages = &messages;
+  const QtMessageHandler before = qInstallMessageHandler(collect);
+  QtHttpClient client;
+  HttpRequest r = request("GET", server.url("/x"));
+  r.timeout = std::chrono::milliseconds(-5);
+  const auto answer = client.send(r);
+  qInstallMessageHandler(before);
+  g_messages = nullptr;
+  ASSERT_FALSE(answer);
+  EXPECT_EQ(answer.error().kind, ErrorKind::Timeout);
+  EXPECT_TRUE(messages.empty()) << messages.front();
+}
+
+// QCoreApplication reads the locale from the environment on Unix; elctl and
+// the reductions format and read numbers with the C library, and a comma for
+// a decimal point must not reach them.
+TEST(QtHttpClient, TheApplicationItMakesLeavesNumbersInTheCLocale) {
+#ifdef _WIN32
+  GTEST_SKIP() << "Unix locales only";
+#else
+  if (QCoreApplication::instance() != nullptr) GTEST_SKIP() << "another test made the application first; run alone";
+  setenv("LC_ALL", "de_DE.UTF-8", 1);
+  if (std::setlocale(LC_ALL, "de_DE.UTF-8") == nullptr) GTEST_SKIP() << "no de_DE.UTF-8 locale here";
+  std::setlocale(LC_ALL, "C");
+  QtHttpClient client;
+  (void)client.send(request("GET", "http://127.0.0.1:1/x"));
+  ASSERT_NE(QCoreApplication::instance(), nullptr);
+  char text[32];
+  std::snprintf(text, sizeof text, "%.1f", 1.5);
+  EXPECT_STREQ(text, "1.5");
+  EXPECT_EQ(std::strtod("1.5", nullptr), 1.5);
+#endif
+}
+
+#if defined(PYCHRON_TEST_HAS_SSL_SERVER) && defined(PYCHRON_TEST_TLS_DIR)
+// A server that speaks TLS with a certificate made for the test (cmake, in the
+// build tree). Nobody trusts it: the client must not either.
+class TlsServer {
+ public:
+  TlsServer(const char* name) {
+    ensure_application();
+    QFile crt(QString::fromStdString(std::string(PYCHRON_TEST_TLS_DIR) + "/" + name + ".crt"));
+    QFile key(QString::fromStdString(std::string(PYCHRON_TEST_TLS_DIR) + "/" + name + ".key"));
+    if (!crt.open(QIODevice::ReadOnly) || !key.open(QIODevice::ReadOnly)) {
+      ADD_FAILURE() << "no test certificate";
+      return;
+    }
+    QSslConfiguration config = QSslConfiguration::defaultConfiguration();
+    config.setLocalCertificate(QSslCertificate(&crt, QSsl::Pem));
+    config.setPrivateKey(QSslKey(&key, QSsl::Rsa, QSsl::Pem));
+    server_.setSslConfiguration(config);
+    QObject::connect(&server_, &QSslServer::pendingConnectionAvailable, &server_, [this] {
+      while (QTcpSocket* socket = server_.nextPendingConnection()) {
+        ++connections_;
+        QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+          socket->readAll();
+          const std::string reply = response(200, "OK", "reached");
+          socket->write(reply.data(), static_cast<qint64>(reply.size()));
+          socket->disconnectFromHost();
+        });
+      }
+    });
+    if (!server_.listen(QHostAddress::LocalHost, 0)) ADD_FAILURE() << server_.errorString().toStdString();
+  }
+  unsigned short port() const { return server_.serverPort(); }
+  int connections() const { return connections_; }
+
+ private:
+  QSslServer server_;
+  int connections_ = 0;
+};
+
+// Certificates are checked: one nobody vouches for is refused, and so is one
+// for another name. Nothing of the request is sent to either.
+TEST(QtHttpClient, ACertificateNobodyVouchesForIsRefused) {
+  TlsServer server("ip");
+  QtHttpClient client;
+  HttpRequest r = request("GET", "https://127.0.0.1:" + std::to_string(server.port()) + "/api/account?size=2");
+  r.headers = {{"Authorization", "Bearer not-a-real-token"}};
+  r.timeout = 5000ms;
+  const auto answer = client.send(r);
+  ASSERT_FALSE(answer) << "a self-signed certificate was accepted";
+  EXPECT_EQ(answer.error().kind, ErrorKind::Io) << answer.error().what;
+  EXPECT_EQ(answer.error().code, kHttpNotSent) << answer.error().what;
+  const std::string what = answer.error().what;
+  EXPECT_TRUE(has(what, "self-signed") || has(what, "self signed") || has(what, "not trusted") || has(what, "untrusted") ||
+              has(what, "issuer") || has(what, "authority"))
+      << what;
+  EXPECT_FALSE(has(what, "size=2")) << what;
+  EXPECT_FALSE(has(what, "not-a-real-token")) << what;
+}
+
+TEST(QtHttpClient, ACertificateForAnotherNameIsRefused) {
+  TlsServer server("name");
+  QtHttpClient client;
+  HttpRequest r = request("GET", "https://127.0.0.1:" + std::to_string(server.port()) + "/x");
+  r.timeout = 5000ms;
+  const auto answer = client.send(r);
+  ASSERT_FALSE(answer) << "a certificate for earthbank.test was accepted for 127.0.0.1";
+  EXPECT_EQ(answer.error().kind, ErrorKind::Io) << answer.error().what;
+  EXPECT_EQ(answer.error().code, kHttpNotSent) << answer.error().what;
+  EXPECT_TRUE(has(answer.error().what, "host name") || has(answer.error().what, "hostname") ||
+              has(answer.error().what, "does not match") || has(answer.error().what, "did not match"))
+      << answer.error().what;
+}
+#else
+TEST(QtHttpClient, ACertificateNobodyVouchesForIsRefused) {
+  GTEST_SKIP() << "no openssl program at configure time (or Qt older than 6.4): no test certificate";
+}
+TEST(QtHttpClient, ACertificateForAnotherNameIsRefused) {
+  GTEST_SKIP() << "no openssl program at configure time (or Qt older than 6.4): no test certificate";
+}
+#endif
 
 TEST(QtHttpClient, MakeHttpClientGivesOne) {
   const std::unique_ptr<IHttpClient> client = make_http_client();
