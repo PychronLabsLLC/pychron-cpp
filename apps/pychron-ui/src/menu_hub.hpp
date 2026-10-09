@@ -7,8 +7,9 @@
 //
 // View holds what windows contribute to it: the actions that open the
 // application's main views. Window is the hub's own, the usual one: Minimize,
-// Zoom, Bring All to Front, then every open window, the one in front ticked;
-// choosing one brings it forward.
+// Zoom, Bring All to Front; then Panels, Arrangements and Reset Layout, for
+// the dock panels of the window in front (dock_layouts.hpp); then every open
+// window, the one in front ticked; choosing one brings it forward.
 //
 // On macOS there is literally one bar: a parentless QMenuBar, which Qt makes
 // the global menu bar for every window (Bars::Shared). Per-window bars there
@@ -35,6 +36,8 @@
 // hidden only when nothing at all has contributed to them (no main window).
 
 #include <array>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include <QList>
@@ -49,6 +52,8 @@ class QMenuBar;
 class QWidget;
 
 namespace pychron::ui {
+
+class DockLayouts;
 
 // NOLINTNEXTLINE(cppcoreguidelines-virtual-class-destructor): one instance, destroyed only by itself
 class MenuHub : public QObject {
@@ -116,6 +121,23 @@ class MenuHub : public QObject {
   QAction* minimize_action() const { return minimize_; }
   QAction* zoom_action() const { return zoom_; }
   QAction* bring_all_action() const { return bring_all_; }
+  // Window > Panels, Arrangements and Reset Layout act on the dock layout of
+  // the window in front (dock_layouts.hpp) and are greyed when it has none.
+  // Panels and Arrangements carry a submenu, filled when it is about to show.
+  QAction* panels_action() const { return panels_; }
+  QAction* arrangements_action() const { return arrangements_; }
+  QAction* reset_layout_action() const { return reset_layout_; }
+  // Arrangements > Save Arrangement As…: greyed for a window that keeps no settings.
+  QAction* save_arrangement_action() const { return save_arrangement_; }
+  // What Save Arrangement As… asks, over the window in front. An empty
+  // function is the dialog it replaces.
+  struct ArrangementAsks {
+    std::function<std::optional<QString>(QWidget* over)> name;             // nullopt: cancelled
+    std::function<bool(QWidget* over, const QString& name)> replace;       // one of that name is there
+    std::function<void(QWidget* over, const QString& why)> refuse;         // the name will not do, or was not saved
+  };
+  void set_arrangement_asks(ArrangementAsks asks);
+
   // One per open window that takes a bar, in the order they were first
   // shown: its title, ticked when it is the active one.
   QList<QAction*> window_actions() const;
@@ -153,6 +175,11 @@ class MenuHub : public QObject {
   void add_window(QWidget* window);
   void refresh_windows();
   QList<QAction*> window_menu() const;  // nullptr: a separator
+  DockLayouts* front_layouts() const;
+  void fill_panels();
+  void fill_arrangements();
+  void apply_arrangement(const QString& name);
+  void save_arrangement();
 
   Bars mode_;
   QPointer<QMenuBar> shared_;
@@ -169,6 +196,14 @@ class MenuHub : public QObject {
   QAction* minimize_ = nullptr;
   QAction* zoom_ = nullptr;
   QAction* bring_all_ = nullptr;
+  QAction* panels_ = nullptr;
+  QAction* arrangements_ = nullptr;
+  QAction* reset_layout_ = nullptr;
+  QAction* save_arrangement_ = nullptr;
+  ArrangementAsks asks_;
+  QPointer<QMenu> panels_menu_;
+  QPointer<QMenu> arrangements_menu_;
+  QPointer<QMenu> delete_menu_;
   bool rebuild_pending_ = false;
 };
 

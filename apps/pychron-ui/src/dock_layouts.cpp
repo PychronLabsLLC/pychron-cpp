@@ -96,14 +96,14 @@ QStringList DockLayouts::names() const {
   return found;
 }
 
-QString DockLayouts::stored_name(const QString& name) const {
-  for (const QString& stored : names()) {
-    if (stored.compare(name, Qt::CaseInsensitive) == 0) return stored;
+QString DockLayouts::stored(const QString& name) const {
+  for (const QString& each : names()) {
+    if (each.compare(name, Qt::CaseInsensitive) == 0) return each;
   }
   return {};
 }
 
-bool DockLayouts::contains(const QString& name) const { return !stored_name(name).isEmpty(); }
+bool DockLayouts::contains(const QString& name) const { return !stored(name).isEmpty(); }
 
 Result<void> DockLayouts::save_as(const QString& name) {
   const Result<QString> valid = valid_name(name);
@@ -126,14 +126,14 @@ Result<void> DockLayouts::save_as(const QString& name) {
 }
 
 Result<void> DockLayouts::apply(const QString& name) {
-  const QString stored = stored_name(name);
-  if (stored.isEmpty()) {
+  const QString saved_as = stored(name);
+  if (saved_as.isEmpty()) {
     return fail(Error{.kind = ErrorKind::Config,
                       .what = "no arrangement “" + name.toStdString() + "”",
                       .device = {},
                       .code = "unknown_name"});
   }
-  const QString at = key(kArrangements) + QLatin1Char('/') + stored;
+  const QString at = key(kArrangements) + QLatin1Char('/') + saved_as;
   if (const QByteArray geometry = settings_->value(at + QStringLiteral("/geometry")).toByteArray(); !geometry.isEmpty()) {
     window_->restoreGeometry(geometry);  // refused: the layout is still worth having
   }
@@ -141,15 +141,15 @@ Result<void> DockLayouts::apply(const QString& name) {
   if (state.isEmpty() || !window_->restoreState(state)) {
     reset();
     const std::string why = "what was saved cannot be read";
-    emit applyFailed(QStringLiteral("arrangement “%1” not applied: %2").arg(stored, QString::fromStdString(why)));
+    emit applyFailed(QStringLiteral("arrangement “%1” not applied: %2").arg(saved_as, QString::fromStdString(why)));
     return fail(Error{.kind = ErrorKind::Config, .what = why, .device = {}, .code = "bad_layout"});
   }
   return {};
 }
 
 void DockLayouts::remove(const QString& name) {
-  const QString stored = stored_name(name);
-  if (!stored.isEmpty()) settings_->remove(key(kArrangements) + QLatin1Char('/') + stored);
+  const QString saved_as = stored(name);
+  if (!saved_as.isEmpty()) settings_->remove(key(kArrangements) + QLatin1Char('/') + saved_as);
 }
 
 }  // namespace pychron::ui

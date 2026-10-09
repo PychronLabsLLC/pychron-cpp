@@ -67,6 +67,8 @@ class DockLayouts : public QObject {
   // Sorted, ignoring case.
   [[nodiscard]] QStringList names() const;
   [[nodiscard]] bool contains(const QString& name) const;
+  // The name as it was saved (`name` may differ from it in case), or empty.
+  [[nodiscard]] QString stored(const QString& name) const;
   // Keeps the layout the window has now, in place of any of that name.
   // Config "bad_name" or "no_settings"; Io "not_saved" when the settings
   // could not be written (nothing is then kept).
@@ -82,8 +84,6 @@ class DockLayouts : public QObject {
 
  private:
   QString key(const QString& name) const { return group_ + QLatin1Char('/') + name; }
-  // The name as it was saved, or empty.
-  QString stored_name(const QString& name) const;
 
   QMainWindow* window_;
   std::function<void()> factory_;

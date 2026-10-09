@@ -5,16 +5,25 @@
 
 #include <QtTest/QtTest>
 
+#include <functional>
+#include <memory>
+#include <optional>
+
 #include <QAction>
 #include <QActionEvent>
 #include <QApplication>
 #include <QDialog>
 #include <QMainWindow>
+#include <QStatusBar>
+#include <QSettings>
+#include <QLabel>
+#include <QDockWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 
+#include "dock_layouts.hpp"
 #include "experiment_bridge.hpp"
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
@@ -65,6 +74,49 @@ bool activate(QWidget& w) {
   return QTest::qWaitForWindowActive(&w);
 }
 
+// A main window with a closable dock per title and the helper that keeps
+// their layout, in `settings` (null: it keeps nothing).
+struct DockedWindow {
+  DockedWindow(const QStringList& titles, QSettings* settings) {
+    w.setCentralWidget(new QLabel(QStringLiteral("center")));
+    for (const QString& title : titles) {
+      auto* dock = new QDockWidget(title, &w);
+      dock->setObjectName(title);
+      dock->setWidget(new QLabel(title));
+      docks.append(dock);
+    }
+    const std::function<void()> factory = [this] {
+      for (QDockWidget* dock : docks) {
+        dock->setFloating(false);
+        w.addDockWidget(Qt::RightDockWidgetArea, dock);
+        dock->show();
+      }
+    };
+    factory();
+    layouts = new pychron::ui::DockLayouts(&w, factory, settings, QStringLiteral("win"));
+    w.setWindowTitle(titles.join(QLatin1Char(' ')));
+    w.resize(600, 400);
+  }
+  Q_DISABLE_COPY_MOVE(DockedWindow)
+  ~DockedWindow() = default;
+
+  QMainWindow w;
+  QList<QDockWidget*> docks;
+  pychron::ui::DockLayouts* layouts = nullptr;
+};
+
+QStringList texts_of(const QList<QAction*>& actions) {
+  QStringList out;
+  for (const QAction* a : actions) out << (a->isSeparator() ? QStringLiteral("|") : a->text());
+  return out;
+}
+
+QAction* named(QMenu* menu, const QString& text) {
+  for (QAction* a : menu->actions())
+    if (a->text() == text) return a;
+  return nullptr;
+}
+
 // A plain window with a layout, like the recall and data browser windows.
 struct PlainWindow : QWidget {
   PlainWindow() { new QVBoxLayout(this); }
@@ -80,6 +132,7 @@ class TestMenuHub : public QObject {
  private slots:
   void init() { QCoreApplication::processEvents(); }  // the last test's windows leave the menus
   void cleanup() {
+    MenuHub::instance().set_arrangement_asks({});  // the dialogs again
     QCoreApplication::processEvents();
     if (MenuHub::instance().bars() != MenuHub::platform_bars()) MenuHub::reset(MenuHub::platform_bars());
   }
@@ -309,7 +362,8 @@ class TestMenuHub : public QObject {
     for (QWidget* w : {static_cast<QWidget*>(&a), static_cast<QWidget*>(&b)}) {
       QCOMPARE(texts(menu_of(*w, Menu::Window)),
                (QStringList{QStringLiteral("Minimize"), QStringLiteral("Zoom"), QStringLiteral("|"),
-                            QStringLiteral("Bring All to Front"), QStringLiteral("|"),
+                            QStringLiteral("Bring All to Front"), QStringLiteral("|"), QStringLiteral("Panels"),
+                            QStringLiteral("Arrangements"), QStringLiteral("Reset Layout"), QStringLiteral("|"),
                             QStringLiteral("Extraction Line"), QStringLiteral("Recall")}));
     }
     QVERIFY(shown(a).contains(QStringLiteral("Window")));
@@ -330,6 +384,257 @@ class TestMenuHub : public QObject {
     QTRY_VERIFY(!a.isMinimized());
 
     QCOMPARE(hub.minimize_action()->shortcut(), pychron::ui::key(pychron::ui::Shortcut::MinimizeWindow));
+  }
+
+  // ---- Window > Panels, Arrangements, Reset Layout: the window in front's ------
+
+  void the_window_menu_has_the_layout_commands() {
+    for (const MenuHub::Bars bars : {MenuHub::Bars::PerWindow, MenuHub::Bars::Shared}) {
+      MenuHub& hub = MenuHub::reset(bars);
+      {
+        QMainWindow w;
+        w.setWindowTitle(QStringLiteral("One"));
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        const QList<QAction*> all = menu_of(w, Menu::Window)->actions();
+        QTRY_COMPARE(texts_of(menu_of(w, Menu::Window)->actions()),
+                     (QStringList{QStringLiteral("Minimize"), QStringLiteral("Zoom"), QStringLiteral("|"),
+                                  QStringLiteral("Bring All to Front"), QStringLiteral("|"), QStringLiteral("Panels"),
+                                  QStringLiteral("Arrangements"), QStringLiteral("Reset Layout"), QStringLiteral("|"),
+                                  QStringLiteral("One")}));
+        QVERIFY(menu_of(w, Menu::Window)->actions().contains(hub.panels_action()));
+        QVERIFY(menu_of(w, Menu::Window)->actions().contains(hub.arrangements_action()));
+        QVERIFY(menu_of(w, Menu::Window)->actions().contains(hub.reset_layout_action()));
+        QVERIFY(hub.panels_action()->menu() != nullptr);
+        QVERIFY(hub.arrangements_action()->menu() != nullptr);
+      }
+      QCoreApplication::processEvents();
+    }
+  }
+
+  void layout_commands_follow_the_window_in_front() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("follow.ini")), QSettings::IniFormat);
+    QMainWindow plain;
+    plain.show();
+    QVERIFY(activate(plain));
+    QTRY_VERIFY(!hub.panels_action()->isEnabled());
+    QVERIFY(!hub.arrangements_action()->isEnabled());
+    QVERIFY(!hub.reset_layout_action()->isEnabled());
+
+    DockedWindow one({QStringLiteral("A"), QStringLiteral("B")}, &settings);
+    one.w.show();
+    QVERIFY(activate(one.w));
+    QTRY_VERIFY(hub.panels_action()->isEnabled());
+    QVERIFY(hub.arrangements_action()->isEnabled());
+    QVERIFY(hub.reset_layout_action()->isEnabled());
+    emit hub.panels_action()->menu()->aboutToShow();
+    QCOMPARE(texts(hub.panels_action()->menu()), (QStringList{QStringLiteral("A"), QStringLiteral("B")}));
+
+    DockedWindow two({QStringLiteral("X")}, &settings);
+    two.w.show();
+    QVERIFY(activate(two.w));
+    QTRY_COMPARE(hub.current_window(), &two.w);
+    emit hub.panels_action()->menu()->aboutToShow();
+    QCOMPARE(texts(hub.panels_action()->menu()), QStringList{QStringLiteral("X")});
+
+    one.docks[0]->close();
+    two.docks[0]->close();
+    hub.reset_layout_action()->trigger();
+    QVERIFY(two.docks[0]->isVisible());
+    QVERIFY(!one.docks[0]->isVisible());  // the other window's stays as it was
+  }
+
+  void save_arrangement_asks_again_after_a_bad_name() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("badname.ini")), QSettings::IniFormat);
+    DockedWindow win({QStringLiteral("A")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QTRY_VERIFY(hub.save_arrangement_action()->isEnabled());
+    QStringList answers{QStringLiteral("a/b"), QStringLiteral("bakeout")};
+    QStringList refused;
+    hub.set_arrangement_asks({.name = [&](QWidget*) -> std::optional<QString> {
+                                if (answers.isEmpty()) return std::nullopt;
+                                return answers.takeFirst();
+                              },
+                              .replace = [](QWidget*, const QString&) { return true; },
+                              .refuse = [&](QWidget*, const QString& why) { refused.append(why); }});
+    hub.save_arrangement_action()->trigger();
+    QCOMPARE(refused.size(), 1);
+    QVERIFY(!refused.first().isEmpty());
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("bakeout")});
+    QVERIFY(answers.isEmpty());
+  }
+
+  void save_arrangement_asks_before_replacing() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("replace.ini")), QSettings::IniFormat);
+    DockedWindow win({QStringLiteral("A")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QVERIFY(win.layouts->save_as(QStringLiteral("bakeout")));
+    int asked = 0;
+    bool replace = false;
+    QStringList asked_about;
+    std::optional<QString> second;
+    hub.set_arrangement_asks({.name = [&](QWidget*) -> std::optional<QString> {
+                                return ++asked == 1 ? std::optional<QString>(QStringLiteral("Bakeout")) : second;
+                              },
+                              .replace = [&](QWidget*, const QString& name) {
+                                asked_about.append(name);
+                                return replace;
+                              },
+                              .refuse = [](QWidget*, const QString&) {}});
+    hub.save_arrangement_action()->trigger();  // refused, then cancelled
+    QCOMPARE(asked, 2);
+    QCOMPARE(asked_about, QStringList{QStringLiteral("bakeout")});  // the one that is there
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("bakeout")});
+
+    asked = 0;
+    replace = true;
+    hub.save_arrangement_action()->trigger();
+    QCOMPARE(asked, 1);
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("Bakeout")});
+  }
+
+  void save_arrangement_is_disabled_without_settings() {
+    MenuHub& hub = MenuHub::instance();
+    DockedWindow win({QStringLiteral("A")}, nullptr);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QTRY_VERIFY(hub.reset_layout_action()->isEnabled());
+    QVERIFY(!hub.save_arrangement_action()->isEnabled());
+    bool asked = false;
+    hub.set_arrangement_asks({.name = [&](QWidget*) -> std::optional<QString> {
+                                asked = true;
+                                return std::nullopt;
+                              },
+                              .replace = [](QWidget*, const QString&) { return true; },
+                              .refuse = [](QWidget*, const QString&) {}});
+    hub.save_arrangement_action()->trigger();
+    QVERIFY(!asked);
+  }
+
+  void the_arrangements_menu_applies_and_deletes() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("menu.ini")), QSettings::IniFormat);
+    DockedWindow win({QStringLiteral("A"), QStringLiteral("B")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QTRY_VERIFY(hub.arrangements_action()->isEnabled());
+    QMenu* menu = hub.arrangements_action()->menu();
+
+    emit menu->aboutToShow();  // none yet
+    QCOMPARE(texts(menu), (QStringList{QString::fromUtf8("Save Arrangement As…"), QStringLiteral("Delete")}));
+    QVERIFY(!named(menu, QStringLiteral("Delete"))->isVisible());
+
+    win.docks[0]->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("bakeout")));
+    win.layouts->reset();
+    QVERIFY(win.layouts->save_as(QStringLiteral("running")));
+    emit menu->aboutToShow();
+    QCOMPARE(texts(menu), (QStringList{QStringLiteral("bakeout"), QStringLiteral("running"), QStringLiteral("|"),
+                                       QString::fromUtf8("Save Arrangement As…"), QStringLiteral("Delete")}));
+    QVERIFY(menu->actions().contains(hub.save_arrangement_action()));
+    QAction* remove = named(menu, QStringLiteral("Delete"));
+    QVERIFY(remove->isVisible());
+    QVERIFY(remove->menu() != nullptr);
+    QCOMPARE(texts(remove->menu()), (QStringList{QStringLiteral("bakeout"), QStringLiteral("running")}));
+
+    named(menu, QStringLiteral("bakeout"))->trigger();
+    QVERIFY(!win.docks[0]->isVisible());
+
+    emit menu->aboutToShow();
+    named(named(menu, QStringLiteral("Delete"))->menu(), QStringLiteral("running"))->trigger();
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("bakeout")});
+  }
+
+  void a_name_with_an_ampersand_is_shown_and_applied_as_typed() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("amp.ini")), QSettings::IniFormat);
+    DockedWindow win({QStringLiteral("A")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    win.docks[0]->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("air & blank")));
+    win.layouts->reset();
+    QMenu* menu = hub.arrangements_action()->menu();
+    emit menu->aboutToShow();
+    QAction* item = menu->actions().first();
+    QCOMPARE(item->text(), QStringLiteral("air && blank"));  // a literal ampersand in a menu
+    item->trigger();
+    QVERIFY(!win.docks[0]->isVisible());
+  }
+
+  void a_failed_apply_is_shown_in_the_status_bar() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("failed.ini")), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("win/arrangements/bad/state"), QByteArray("zz"));
+    DockedWindow win({QStringLiteral("A")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QMenu* menu = hub.arrangements_action()->menu();
+    emit menu->aboutToShow();
+    QVERIFY(named(menu, QStringLiteral("bad")) != nullptr);
+    named(menu, QStringLiteral("bad"))->trigger();
+    QVERIFY2(win.w.statusBar()->currentMessage().startsWith(QString::fromUtf8("arrangement “bad” not applied: ")),
+             qPrintable(win.w.statusBar()->currentMessage()));
+  }
+
+  void the_command_palette_has_reset_and_save() {
+    MenuHub& hub = MenuHub::instance();
+    bool reset = false;
+    bool save = false;
+    for (const MenuHub::Command& c : hub.commands()) {
+      if (c.action == hub.reset_layout_action() && c.menu == Menu::Window) reset = true;
+      if (c.action == hub.save_arrangement_action() && c.menu == Menu::Window) save = true;
+    }
+    QVERIFY(reset);
+    QVERIFY(save);
+  }
+
+  void layout_commands_without_a_front_window_do_nothing() {
+    MenuHub& hub = MenuHub::instance();
+    QSettings settings(tmp_.filePath(QStringLiteral("front.ini")), QSettings::IniFormat);
+    DockedWindow win({QStringLiteral("A")}, &settings);
+    win.w.show();
+    QVERIFY(activate(win.w));
+    QTRY_VERIFY(hub.reset_layout_action()->isEnabled());
+
+    // a popup over the window (the command palette is one): the window under it
+    win.docks[0]->close();
+    {
+      QWidget popup(&win.w, Qt::Popup);
+      popup.resize(50, 50);
+      popup.show();
+      QCoreApplication::processEvents();
+      hub.reset_layout_action()->trigger();
+      QVERIFY(win.docks[0]->isVisible());
+    }
+
+    // a dialog in front: not a window with panels
+    win.docks[0]->close();
+    {
+      QDialog dialog(&win.w);
+      dialog.show();
+      QVERIFY(activate(dialog));
+      QTRY_VERIFY(!hub.reset_layout_action()->isEnabled());
+      QVERIFY(!hub.panels_action()->isEnabled());
+      hub.reset_layout_action()->trigger();
+      hub.save_arrangement_action()->trigger();
+      emit hub.panels_action()->menu()->aboutToShow();
+      emit hub.arrangements_action()->menu()->aboutToShow();
+      QVERIFY(hub.panels_action()->menu()->isEmpty());
+      QVERIFY(!win.docks[0]->isVisible());
+    }
+
+    // no window at all
+    win.w.hide();
+    QTRY_VERIFY(!hub.reset_layout_action()->isEnabled());
+    hub.reset_layout_action()->trigger();
+    hub.save_arrangement_action()->trigger();
+    QVERIFY(win.docks[0]->isHidden());
   }
 
   // The experiment's menus keep their place in the bar: one greyed line

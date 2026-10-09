@@ -65,6 +65,7 @@ class DockLayouts : public QObject {
   [[nodiscard]] Result<void> apply(const QString& name);
   void remove(const QString& name);
   [[nodiscard]] bool contains(const QString& name) const;   // ignoring case
+  [[nodiscard]] QString stored(const QString& name) const;  // name as saved, or empty
   static DockLayouts* of(const QWidget* window); // its helper, or nullptr
   [[nodiscard]] bool can_save() const;           // has settings
   [[nodiscard]] QList<QAction*> panel_actions() const;      // closable docks, by title
@@ -162,7 +163,10 @@ Reset Layout
 "Save Arrangement", label "Name:", prefilled with nothing.
 - Invalid name: `QMessageBox::warning` with reason, dialog asked again.
 - Name exists (case-insensitive): `QMessageBox::question`
-  "Replace arrangement “<name>”?"; No returns to name dialog.
+  "Replace arrangement “<name>”?", `<name>` as saved (the one that will
+  go); No returns to name dialog.
+- `save_as` fails (`"not_saved"`): same warning box with reason, flow ends.
+- Menu shows a name with `&` doubled (literal ampersand, not mnemonic).
 - Hub takes injectable ask functions (name, confirm) so tests do not open
   modal dialogs; pattern as `ExperimentWindow`'s `ask_stop_`.
 

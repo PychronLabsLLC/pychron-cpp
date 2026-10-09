@@ -1,8 +1,12 @@
 #include "menu_hub.hpp"
 
+#include "dock_layouts.hpp"
 #include "shortcuts.hpp"
 
 #include <algorithm>
+#include <optional>
+#include <string>
+#include <utility>
 
 #include <QAction>
 #include <QActionGroup>
@@ -10,10 +14,14 @@
 #include <QGuiApplication>
 #include <QDialog>
 #include <QEvent>
+#include <QInputDialog>
 #include <QLayout>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
+#include <QLineEdit>
+#include <QStatusBar>
 #include <QSplashScreen>
 #include <QWindow>
 
@@ -94,6 +102,25 @@ MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
       if (e.window != nullptr && e.window != front && !e.window->isMinimized()) e.window->raise();
     if (front != nullptr) front->raise();
   });
+  // The dock layout of the window in front: its panels, its named
+  // arrangements, and back to the layout it was installed with. The two
+  // submenus are filled as they open, from whichever window that is then.
+  panels_ = new QAction(tr("Panels"), this);
+  panels_menu_ = new QMenu;
+  panels_->setMenu(panels_menu_);
+  connect(panels_menu_, &QMenu::aboutToShow, this, &MenuHub::fill_panels);
+  arrangements_ = new QAction(tr("Arrangements"), this);
+  arrangements_menu_ = new QMenu;
+  arrangements_->setMenu(arrangements_menu_);
+  delete_menu_ = new QMenu(tr("Delete"), arrangements_menu_);
+  connect(arrangements_menu_, &QMenu::aboutToShow, this, &MenuHub::fill_arrangements);
+  reset_layout_ = new QAction(tr("Reset Layout"), this);
+  connect(reset_layout_, &QAction::triggered, this, [this] {
+    if (DockLayouts* layouts = front_layouts()) layouts->reset();
+  });
+  save_arrangement_ = new QAction(tr("Save Arrangement As…"), this);
+  connect(save_arrangement_, &QAction::triggered, this, &MenuHub::save_arrangement);
+  fill_arrangements();  // Save Arrangement As… is in its menu from the start
   if (mode_ == Bars::Shared) {
     // No parent: on macOS the bar of every window that has none of its own.
     shared_ = new QMenuBar(nullptr);
@@ -104,7 +131,10 @@ MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
 MenuHub::~MenuHub() {
   // At application exit the platform is already gone, and with it any use in
   // tidying the bar; a hub replaced by reset() deletes its own.
-  if (!QCoreApplication::closingDown()) delete shared_.data();
+  if (QCoreApplication::closingDown()) return;
+  delete shared_.data();
+  delete panels_menu_.data();
+  delete arrangements_menu_.data();  // and Delete, its child
 }
 
 QString MenuHub::title(Menu menu) {
@@ -186,6 +216,87 @@ QList<QMenu*> MenuHub::menus(const QMenuBar* bar) const {
   return out;
 }
 
+void MenuHub::set_arrangement_asks(ArrangementAsks asks) { asks_ = std::move(asks); }
+
+// The layout helper of the window in front, or nullptr: read by every layout
+// command as it runs, since a command can be reached (the palette, a menu
+// left open) after the window it was enabled for has gone from the front.
+DockLayouts* MenuHub::front_layouts() const { return DockLayouts::of(current_window()); }
+
+void MenuHub::fill_panels() {
+  panels_menu_->clear();  // the actions are the docks' own and stay theirs
+  if (const DockLayouts* layouts = front_layouts()) panels_menu_->addActions(layouts->panel_actions());
+}
+
+void MenuHub::fill_arrangements() {
+  arrangements_menu_->clear();  // deletes the entries made here, which it owns
+  delete_menu_->clear();
+  const DockLayouts* layouts = front_layouts();
+  const QStringList names = layouts != nullptr ? layouts->names() : QStringList();
+  for (const QString& name : names) {
+    QString shown = name;
+    shown.replace(QLatin1Char('&'), QStringLiteral("&&"));  // a name is not a mnemonic
+    connect(arrangements_menu_->addAction(shown), &QAction::triggered, this, [this, name] { apply_arrangement(name); });
+    connect(delete_menu_->addAction(shown), &QAction::triggered, this, [this, name] {
+      if (DockLayouts* front = front_layouts()) front->remove(name);
+    });
+  }
+  if (!names.isEmpty()) arrangements_menu_->addSeparator();
+  arrangements_menu_->addAction(save_arrangement_);
+  arrangements_menu_->addAction(delete_menu_->menuAction());
+  delete_menu_->menuAction()->setVisible(!names.isEmpty());
+}
+
+void MenuHub::apply_arrangement(const QString& name) {
+  DockLayouts* layouts = front_layouts();
+  if (layouts == nullptr) return;
+  const Result<void> applied = layouts->apply(name);
+  if (applied) return;
+  constexpr int kShownMs = 5000;
+  layouts->window()->statusBar()->showMessage(
+      tr("arrangement “%1” not applied: %2").arg(name, QString::fromStdString(applied.error().what)), kShownMs);
+}
+
+// Asks for a name until one is saved or the user gives up.
+void MenuHub::save_arrangement() {
+  DockLayouts* layouts = front_layouts();
+  if (layouts == nullptr || !layouts->can_save()) return;
+  const QPointer<QWidget> over = layouts->window();
+  const QString title = tr("Save Arrangement");
+  const auto ask_name = [&]() -> std::optional<QString> {
+    if (asks_.name) return asks_.name(over);
+    bool ok = false;
+    const QString typed = QInputDialog::getText(over, title, tr("Name:"), QLineEdit::Normal, QString(), &ok);
+    return ok ? std::optional<QString>(typed) : std::nullopt;
+  };
+  const auto ask_replace = [&](const QString& name) {
+    if (asks_.replace) return asks_.replace(over, name);
+    return QMessageBox::question(over, title, tr("Replace arrangement “%1”?").arg(name)) == QMessageBox::Yes;
+  };
+  const auto refuse = [&](const std::string& why) {
+    const QString text = QString::fromStdString(why);
+    if (asks_.refuse) {
+      asks_.refuse(over, text);
+    } else {
+      QMessageBox::warning(over, title, text);
+    }
+  };
+  while (true) {
+    const std::optional<QString> typed = ask_name();
+    // A dialog ran the event loop: the window may have closed under it.
+    if (!typed || over == nullptr || DockLayouts::of(over) != layouts) return;
+    const Result<QString> name = DockLayouts::valid_name(*typed);
+    if (!name) {
+      refuse(name.error().what);
+      continue;
+    }
+    if (const QString there = layouts->stored(*name); !there.isEmpty() && !ask_replace(there)) continue;
+    if (over == nullptr || DockLayouts::of(over) != layouts) return;
+    if (const Result<void> saved = layouts->save_as(*name); !saved) refuse(saved.error().what);
+    return;
+  }
+}
+
 QList<MenuHub::Command> MenuHub::commands() const {
   QList<Command> out;
   for (const Menu menu : kOrder) {
@@ -193,6 +304,10 @@ QList<MenuHub::Command> MenuHub::commands() const {
       if (g.menu != menu || g.owner == nullptr) continue;
       for (const auto& a : g.actions)
         if (a != nullptr) out.append({a.data(), menu});
+    }
+    if (menu == Menu::Window) {  // the hub's own that are worth finding by name
+      out.append({reset_layout_, menu});
+      out.append({save_arrangement_, menu});
     }
   }
   return out;
@@ -293,10 +408,15 @@ void MenuHub::refresh_windows() {
   minimize_->setEnabled(front != nullptr);
   zoom_->setEnabled(front != nullptr);
   bring_all_->setEnabled(!windows_.empty());
+  const DockLayouts* layouts = front_layouts();
+  panels_->setEnabled(layouts != nullptr);
+  arrangements_->setEnabled(layouts != nullptr);
+  reset_layout_->setEnabled(layouts != nullptr);
+  save_arrangement_->setEnabled(layouts != nullptr && layouts->can_save());
 }
 
 QList<QAction*> MenuHub::window_menu() const {
-  QList<QAction*> want{minimize_, zoom_, nullptr, bring_all_};
+  QList<QAction*> want{minimize_, zoom_, nullptr, bring_all_, nullptr, panels_, arrangements_, reset_layout_};
   const QList<QAction*> open = window_actions();
   if (!open.isEmpty()) {
     want.append(nullptr);
