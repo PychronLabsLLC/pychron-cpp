@@ -179,7 +179,10 @@ void TimelineView::paintEvent(QPaintEvent*) {
   if (step < step_raw) step = std::ceil(step_raw / 3600) * 3600;
   p.setPen(theme().grid);
   const double axis_y = area.bottom();
-  for (double t = 0; t <= span() + 1e-9; t += step) {
+  // Counted, so the last tick does not depend on how the steps added up.
+  const int ticks = static_cast<int>(std::floor((span() + 1e-9) / step));
+  for (int i = 0; i <= ticks; ++i) {
+    const double t = i * step;
     const double x = area.left() + area.width() * t / span();
     p.drawLine(QPointF(x, area.top()), QPointF(x, axis_y + 3));
     p.drawText(QRectF(x - 40, axis_y + 2, 80, kAxisHeight), Qt::AlignHCenter | Qt::AlignTop, clock_text(t));

@@ -726,7 +726,7 @@ class Json {
     do {
       Val v;
       if (!value(v)) return false;
-      std::visit([&](auto&& x) { out.push_back(std::move(x)); }, std::move(v));
+      std::visit([&](auto&& x) { out.push_back(std::forward<decltype(x)>(x)); }, std::move(v));
     } while (eat(','));
     return eat(']') || bad("expected ']'");
   }
@@ -763,7 +763,7 @@ class Json {
   }
 
   static void insert(toml::table& t, const std::string& k, Val v) {
-    std::visit([&](auto&& x) { t.insert_or_assign(k, std::move(x)); }, std::move(v));
+    std::visit([&](auto&& x) { t.insert_or_assign(k, std::forward<decltype(x)>(x)); }, std::move(v));
   }
 
   std::string_view s_;
