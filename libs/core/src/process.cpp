@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <system_error>
 #include <thread>
 
 #if defined(__APPLE__)
@@ -66,7 +67,8 @@ std::string path_text(const std::filesystem::path& p) noexcept {
 
 namespace {
 
-std::string errno_text(int e) { return std::strerror(e); }
+// Not strerror: it may answer from one buffer shared by every thread.
+std::string errno_text(int e) { return std::generic_category().message(e); }
 
 // The input as an unlinked temporary file: the child reads it as stdin, so
 // no pipe can raise SIGPIPE in this process if the child exits early.
