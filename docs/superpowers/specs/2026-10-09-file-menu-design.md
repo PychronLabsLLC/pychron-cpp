@@ -157,10 +157,13 @@ buttons.
 
 - Removed: `OpenQueue`, `SaveQueue`, `NewScript`, `SaveScript`,
   `SaveConditionals`.
-- Added, `ShortcutContext::Everywhere`: `FileNew` "New…", `FileOpen`
-  "Open…", `FileSave` "Save", `FileSaveAs` "Save As…".
-- `ShortcutContext::ConditionalsEditor` has no entries left: removed with
-  its `context_name` case, if nothing else uses it.
+- Added: `FileNew` "New…", `FileOpen` "Open…", `FileSave` "Save",
+  `FileSaveAs` "Save As…", in new `ShortcutContext::FileMenu` ("Experiment
+  window and editors"). Not `Everywhere`: the four are live only where a
+  window registered them, and `RecallNext` (data browser) shares Ctrl+N.
+  For the clash test `FileMenu` overlaps `ExperimentWindow`, `ScriptEditor`,
+  `Everywhere` and itself; not `DataBrowser`.
+- `ShortcutContext::ConditionalsEditor` has no entries left: removed.
 - Catalog is static (no user rebinding), so nothing stored is orphaned.
 - Header comment example `key(Shortcut::SaveQueue)` updated.
 
