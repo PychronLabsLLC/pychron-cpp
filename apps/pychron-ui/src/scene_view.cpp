@@ -251,6 +251,14 @@ void SceneView::rebuild() {
       info.x_max = g.x.max;
       info.y_min = panel.y.min;
       info.y_max = panel.y.max;
+      if (panel.y.pin_min && panel.y.min) {
+        // The wheel and a drag move the top alone: whatever range is asked
+        // for, its size is kept and laid from the pinned minimum.
+        const double pin = *panel.y.min;
+        connect(y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), y, [y, pin](const QCPRange& r) {
+          if (r.lower != pin) y->setRange(pin, pin + r.size());
+        });
+      }
       if (panel.y.scale == pp::AxisScale::Log) {
         info.log = true;
         y->setScaleType(QCPAxis::stLogarithmic);

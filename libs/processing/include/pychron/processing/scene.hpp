@@ -139,6 +139,7 @@ struct Axis {
   AxisFormat format = AxisFormat::Number;
   std::string time_format;  // strftime-like; empty: automatic
   std::optional<double> min, max;
+  bool pin_min = false;  // the view keeps `min` however it is zoomed or dragged
   bool visible = true;
   std::vector<std::string> categories;  // Category: label of value i
 };

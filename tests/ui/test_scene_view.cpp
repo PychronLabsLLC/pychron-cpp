@@ -203,6 +203,73 @@ class TestSceneView : public QObject {
       QCOMPARE(graph_gap(), spacing);
     }
   }
+
+  // A y axis pinned at its minimum keeps it under the wheel and under a drag:
+  // the wheel moves the top alone, wherever the pointer is.
+  void aPinnedAxisKeepsItsMinimum() {
+    pp::Scene scene;
+    pp::Graph g;
+    g.x.min = 0.0;
+    g.x.max = 10.0;
+    for (const bool pinned : {false, true}) {
+      pp::Panel p;
+      if (pinned) {
+        p.y.min = 0.0;
+        p.y.pin_min = true;
+      }
+      pp::LineLayer curve;
+      curve.x = {0.0, 5.0, 10.0};
+      curve.y = {0.0, 1.0, 0.0};
+      p.layers = {curve};
+      g.panels.push_back(p);
+    }
+    scene.graphs.push_back(g);
+
+    SceneView view;
+    view.resize(600, 600);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+
+    QCPAxisRect* free_rect = view.plot()->axisRect(0);
+    QCPAxisRect* rect = view.plot()->axisRect(1);
+    QCPAxis* y = rect->axis(QCPAxis::atLeft);
+    QCOMPARE(y->range().lower, 0.0);
+    const auto wheel = [&](const QPoint& at, int delta) {
+      QWheelEvent e(at, view.plot()->mapToGlobal(at), QPoint(), QPoint(0, delta), Qt::NoButton, Qt::NoModifier,
+                    Qt::NoScrollPhase, false);
+      QApplication::sendEvent(view.plot(), &e);
+    };
+    double upper = y->range().upper;
+    for (const int delta : {120, 120, -120, -120, -120}) {
+      // Near the top of the panel, where a zoom about the pointer would move the bottom most.
+      wheel(QPoint(rect->center().x(), rect->top() + 5), delta);
+      QCOMPARE(y->range().lower, 0.0);
+      if (delta > 0)
+        QVERIFY(y->range().upper < upper);
+      else
+        QVERIFY(y->range().upper > upper);
+      upper = y->range().upper;
+    }
+    const QPoint from = rect->center(), to = from + QPoint(40, 60);
+    const double x_before = rect->axis(QCPAxis::atBottom)->range().lower;
+    QTest::mousePress(view.plot(), Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(view.plot(), to);
+    QTest::mouseRelease(view.plot(), Qt::LeftButton, Qt::NoModifier, to);
+    QCOMPARE(y->range().lower, 0.0);
+    QCOMPARE(y->range().upper, upper);
+    QVERIFY(rect->axis(QCPAxis::atBottom)->range().lower != x_before);  // x still pans
+
+    // An axis that is not pinned zooms about the pointer, as before.
+    QCPAxis* free_y = free_rect->axis(QCPAxis::atLeft);
+    const double free_lower = free_y->range().lower;
+    wheel(QPoint(free_rect->center().x(), free_rect->top() + 5), 120);
+    QVERIFY(free_y->range().lower > free_lower);
+
+    view.reset_view();
+    QCOMPARE(y->range().lower, 0.0);
+  }
 };
 
 QTEST_MAIN(TestSceneView)

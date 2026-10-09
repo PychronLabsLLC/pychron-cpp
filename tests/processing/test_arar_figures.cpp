@@ -168,6 +168,30 @@ TEST(Ideogram, DefaultPanelsCurveAndMean) {
   EXPECT_NE(all_text(g.panels[1]).find("wtd mean"), std::string::npos);
 }
 
+// A probability is never below zero: its axis starts there and stays there
+// (pinned), unless the panel row gives another start. No other panel is held.
+TEST(Ideogram, TheProbabilityAxisIsPinnedAtZero) {
+  auto d = steps();
+  pp::Options o(pp::ideogram_schema());
+  auto s = pp::build_ideogram(d, o);
+  ASSERT_TRUE(s) << s.error().what;
+  const auto& panels = s->graphs[0].panels;
+  ASSERT_EQ(panels.size(), 2u);
+  EXPECT_FALSE(panels[0].y.pin_min);
+  ASSERT_TRUE(panels[1].y.min);
+  EXPECT_EQ(*panels[1].y.min, 0.0);
+  EXPECT_TRUE(panels[1].y.pin_min);
+
+  auto rows = o.rows("panels");
+  ASSERT_EQ(rows.size(), 2u);
+  ASSERT_TRUE(rows[1].set("y_min", -0.5));
+  ASSERT_TRUE(o.set_rows("panels", rows));
+  auto moved = pp::build_ideogram(d, o);
+  ASSERT_TRUE(moved) << moved.error().what;
+  EXPECT_EQ(*moved->graphs[0].panels[1].y.min, -0.5);
+  EXPECT_TRUE(moved->graphs[0].panels[1].y.pin_min);
+}
+
 TEST(Ideogram, ExclusionDashesTheOriginalCurveAndMovesTheMean) {
   auto d = steps();
   // A stray analysis: F = 12.

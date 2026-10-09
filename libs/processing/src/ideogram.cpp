@@ -335,7 +335,9 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
           }
           if (!p.y.max) p.y.max = top * (1.12 + 0.08 * std::max<int>(0, k - 1));
         }
+        // Never below zero: the axis starts there and the view holds it there.
         if (!p.y.min) p.y.min = 0.0;
+        p.y.pin_min = true;
         if (!lines.empty()) {
           TextLayer t;
           t.lines = std::move(lines);
