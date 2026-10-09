@@ -828,6 +828,61 @@ TEST(Session, ASecretIsTakenOutBeforeTheReasonIsCut) {
   }
 }
 
+// The name of a misnamed package is the service's word: on one line, not
+// endless, and with nothing of the session's in it.
+TEST(Session, AMisnamedPackageIsNamedOnOneLineAndWithoutSecrets) {
+  SignedIn s;
+  const std::string password = s.bank.password();
+  s.bank.fail_next("POST", "/api/management/data-packages", 201,
+                   json{{"id", 92}, {"name", "Two\nlines " + password + " " + std::string(400, 'n')}}.dump());
+  const auto made = s.session.create_package("Asked for", std::nullopt);
+  ASSERT_FALSE(made);
+  EXPECT_EQ(made.error().code, kPackageMisnamed);
+  const std::string& what = made.error().what;
+  EXPECT_EQ(what.find('\n'), std::string::npos) << what;
+  EXPECT_FALSE(has(what, password)) << what;
+  EXPECT_TRUE(has(what, "named it 'Two lines <redacted> nnn")) << what;
+  EXPECT_TRUE(has(what, "...' and not 'Asked for' (its id is 92)")) << what;
+  EXPECT_LT(what.size(), 500u);
+}
+
+// A secret is found in what the service says before the words are trimmed:
+// one that begins or ends in a blank is not found in the trimmed text.
+TEST(Session, ASecretWithBlanksAtItsEndsIsTakenOutBeforeTheReasonIsTrimmed) {
+  FakeEarthBank::Options options;
+  options.password = "Zq7blank ";
+  FakeEarthBank bank(options);
+  Session session(bank, bank.base_url());
+  ASSERT_TRUE(session.sign_in(bank.login(), options.password));
+  bank.fail_next("GET", "/api/account", 400, json{{"detail", "bad Zq7blank "}}.dump());
+  EXPECT_EQ(session.account().error().what, "EarthBank refused the account: bad <redacted>");
+  bank.fail_next("GET", "/api/account", 400, "bad Zq7blank \n");
+  EXPECT_EQ(session.account().error().what, "EarthBank refused the account: bad <redacted>");
+}
+
+// The forms a secret may come back in: a URL escapes in either case, a space
+// as `+`, and a long token by one of its dot-separated parts.
+TEST(Session, ASecretIsTakenOutInTheFormsAServiceMayEchoIt) {
+  const std::string part1(20, 'a'), part2(24, 'b'), part3(20, 'c');
+  const std::string token_like = part1 + "." + part2 + "." + part3;
+  for (const std::string& password : {std::string("Zq7 p&w/x"), token_like}) {
+    FakeEarthBank::Options options;
+    options.password = password;
+    FakeEarthBank bank(options);
+    Session session(bank, bank.base_url());
+    ASSERT_TRUE(session.sign_in(bank.login(), password));
+    const std::vector<std::string> echoes =
+        password == token_like
+            ? std::vector<std::string>{part1, part2, part3}
+            : std::vector<std::string>{"Zq7%20p%26w%2Fx", "Zq7%20p%26w%2fx", "Zq7+p%26w%2Fx", "Zq7+p%26w%2fx"};
+    for (const std::string& echo : echoes) {
+      bank.fail_next("GET", "/api/account", 400, json{{"detail", "see ?password=" + echo + "&x=1"}}.dump());
+      const std::string what = session.account().error().what;
+      EXPECT_EQ(what, "EarthBank refused the account: see ?password=<redacted>&x=1") << echo;
+    }
+  }
+}
+
 // What a caller of send() makes an Error of: the sentence, the code, and for
 // no answer the client's own kind, so that a write in doubt stays one.
 TEST(Session, AFailedSendAsAnError) {

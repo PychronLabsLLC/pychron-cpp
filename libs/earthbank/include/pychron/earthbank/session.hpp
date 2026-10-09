@@ -202,7 +202,7 @@ class Session {
   // `title`, then the text as it came, with this session's tokens and
   // password taken out of it (above). The code is by the status: 401
   // kLoginRejected (`NotConnected`), 403 kForbidden, else kInDoubt or
-  // kRefused (all three `Protocol`). A 2xx has no sentence.
+  // kRefused (403 and these two are `Protocol`). A 2xx has no sentence.
   //
   // A 401 that send() returned because the new sign-in got no answer, or a
   // fault, is said to be that, and its code is kNotRenewed (`NotConnected`)

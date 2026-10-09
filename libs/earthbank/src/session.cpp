@@ -31,9 +31,8 @@ constexpr std::string_view kRedacted = "<redacted>";
 // Legacy asks for 500 packages and takes what comes; here every page is read.
 constexpr std::size_t kPackagePage = 500;
 constexpr std::size_t kMostPackagePages = 200;
-// The most of the service's own words that go into a sentence or a log line.
-constexpr std::size_t kMostReason = 300;
 
+using detail::one_line;
 using detail::trimmed;
 
 std::string lowered(std::string_view text) {
@@ -54,15 +53,57 @@ void wipe(std::string& secret) {
   secret.clear();
 }
 
+// A URL-encoded text with the hex digits of its escapes in lower case.
+std::string lower_hex_escapes(std::string text) {
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '%') continue;
+    for (std::size_t k = i + 1; k < text.size() && k <= i + 2; ++k)
+      text[k] = static_cast<char>(std::tolower(static_cast<unsigned char>(text[k])));
+  }
+  return text;
+}
+
+// The shortest dot-separated part of a token that is kept as a secret of its
+// own: a token is three parts, and a service that quotes one back may quote
+// only a part. Short parts are not secrets, and would blot out the words
+// around them.
+constexpr std::size_t kLeastTokenPart = 16;
+
 // `secret` as it may stand in what a service says back: as it is, as it is
-// written inside a JSON string, and as it is written in a URL.
+// written inside a JSON string, and as it is written in a URL (escapes in
+// capitals or in lower case, a space as `%20` or as `+`); and, of a long
+// token, each of its dot-separated parts as it is.
 void add_forms(std::vector<std::string>& out, std::string_view secret) {
   if (secret.empty()) return;
-  out.emplace_back(secret);
+  const auto add = [&out](std::string form) {
+    if (std::find(out.begin(), out.end(), form) == out.end()) out.push_back(std::move(form));
+  };
+  add(std::string(secret));
   std::string quoted = json(secret).dump(-1, ' ', false, json::error_handler_t::replace);
-  if (quoted.size() >= 2) quoted = quoted.substr(1, quoted.size() - 2);
-  if (quoted != secret) out.push_back(std::move(quoted));
-  if (std::string encoded = url_encode(secret); encoded != secret) out.push_back(std::move(encoded));
+  if (quoted.size() >= 2) add(quoted.substr(1, quoted.size() - 2));
+  const std::string encoded = url_encode(secret);
+  add(encoded);
+  add(lower_hex_escapes(encoded));
+  if (secret.find(' ') != std::string_view::npos) {
+    std::string form;
+    for (std::size_t from = 0;;) {
+      const std::size_t space = secret.find(' ', from);
+      form += url_encode(secret.substr(from, space == std::string_view::npos ? space : space - from));
+      if (space == std::string_view::npos) break;
+      form += '+';
+      from = space + 1;
+    }
+    add(lower_hex_escapes(form));
+    add(std::move(form));
+  }
+  if (secret.size() >= 3 * kLeastTokenPart) {
+    for (std::size_t from = 0; from <= secret.size();) {
+      std::size_t dot = secret.find('.', from);
+      if (dot == std::string_view::npos) dot = secret.size();
+      if (dot - from >= kLeastTokenPart && dot - from < secret.size()) add(std::string(secret.substr(from, dot - from)));
+      from = dot + 1;
+    }
+  }
 }
 
 // `text` with every occurrence of each of `secrets` replaced by the mark.
@@ -89,32 +130,19 @@ std::string redacted(std::string_view text, const std::vector<std::string>& secr
 
 // What the service said of a failure: the body's `detail`, else `message`,
 // else `title` (legacy's order), else the body itself when it is not JSON.
+// As it was said, blanks and all: a secret that begins or ends in one is
+// found only in the untrimmed text, so it is taken out before it is trimmed.
 std::string reason_of(std::string_view body) {
   const json parsed = json::parse(body, nullptr, false);
-  if (parsed.is_discarded()) return std::string(trimmed(body));
+  if (parsed.is_discarded()) return std::string(body);
   if (!parsed.is_object()) return {};
   for (const char* key : {"detail", "message", "title"}) {
     const auto it = parsed.find(key);
     if (it == parsed.end() || !it->is_string()) continue;
-    if (const std::string_view text = trimmed(it->get_ref<const std::string&>()); !text.empty()) return std::string(text);
+    const std::string& text = it->get_ref<const std::string&>();
+    if (!trimmed(text).empty()) return text;
   }
   return {};
-}
-
-// A text on one line and not endless.
-std::string one_line(std::string_view text) {
-  std::string out(trimmed(text));
-  for (char& c : out) {
-    if (static_cast<unsigned char>(c) < 0x20) c = ' ';
-  }
-  if (out.size() > kMostReason) {
-    std::size_t cut = kMostReason;
-    // Not in the middle of a UTF-8 sequence.
-    while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80) --cut;
-    out.resize(cut);
-    out += "...";
-  }
-  return out;
 }
 
 // A reason as it may stand in a sentence: cut where the machine's part
@@ -437,7 +465,7 @@ std::string Session::scrubbed(std::string_view text, std::string_view trying) co
 // What the service said of a failure. Scrubbed whole, before any of it is
 // cut or read: a cut could leave the first part of a secret standing.
 std::string Session::said_in(std::string_view body, std::string_view trying) const {
-  return scrubbed(reason_of(body), trying);
+  return std::string(trimmed(scrubbed(reason_of(body), trying)));
 }
 
 // Why `url` may not be sent, when it may not: the token and the password go
@@ -650,7 +678,7 @@ Result<DataPackage> Session::create_package(std::string_view name, std::optional
   // package under a name of its own. An answer with no name does not say.
   if (const std::string_view named = trimmed(made->name); !named.empty() && named != name) {
     Error error{ErrorKind::Protocol,
-                "EarthBank made a data package, but named it '" + std::string(named) + "' and not '" + std::string(name) +
+                "EarthBank made a data package, but named it '" + one_line(scrubbed(named, {})) + "' and not '" + std::string(name) +
                     "' (its id is " + std::to_string(made->id) +
                     "). Rename it on EarthBank or use it as it is; do not make another.",
                 ""};

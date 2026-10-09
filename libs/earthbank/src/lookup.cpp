@@ -32,6 +32,7 @@ constexpr int kContainingRows = 200;
 
 constexpr std::string_view kFluxMonitorField = "fluxMonitorName";
 
+using detail::one_line;
 using detail::trimmed;
 
 // The first letter in capitals and the rest in lower case, of ASCII letters:
@@ -97,7 +98,7 @@ Pick pick(std::string_view value, const std::vector<std::string>& labels, const 
 // `EarthBank's list has 'Unknown' 2 times, under the ids 2401 and 2419; the
 // lowest was taken.`
 std::string listed_more_than_once(std::string_view name, const std::vector<std::int64_t>& ids) {
-  std::string out = "EarthBank's list has '" + std::string(name) + "' " + std::to_string(ids.size()) + " times, under the ids ";
+  std::string out = "EarthBank's list has '" + one_line(name) + "' " + std::to_string(ids.size()) + " times, under the ids ";
   for (std::size_t i = 0; i < ids.size(); ++i) {
     out += (i == 0 ? "" : i + 1 == ids.size() ? " and " : ", ") + std::to_string(ids[i]);
   }
@@ -223,7 +224,7 @@ LookupResult LookupResolver::find(std::string_view endpoint, bool whole_list, bo
       if (picked.kind == Pick::Kind::One) {
         const Row& row = list->rows[picked.row];
         return {LookupOutcome::Found, row.id, std::string(trimmed(row.name)),
-                "Found by the reference of the entry, '" + std::string(trimmed(row.reference)) + "', not by its name."};
+                "Found by the reference of the entry, '" + one_line(row.reference) + "', not by its name."};
       }
     }
   }

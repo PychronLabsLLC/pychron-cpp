@@ -366,6 +366,28 @@ TEST(Lookup, AFluxMonitorIsNotFoundByWhatElseItsRowSays) {
   EXPECT_EQ(std::count(asked.begin(), asked.end(), "size=2000"), 1) << "the list is read once";
 }
 
+// What the service's rows say goes into the detail on one line and not
+// endless, like everything else of the service's that is put into a sentence.
+TEST(Lookup, ARowsWordsInTheDetailAreOnOneLine) {
+  Desk desk;
+  desk.bank.add_lookup_row("/api/arar/AirRatio", {{"id", 1900}, {"name", "Twin\tname\nof two lines"}});
+  desk.bank.add_lookup_row("/api/arar/AirRatio", {{"id", 1910}, {"name", "Twin\tname\nof two lines"}});
+  const LookupResult twice = desk.resolver.resolve("airRatioName", "Twin\tname\nof two lines");
+  expect_found(twice, 1900, "Twin\tname\nof two lines", "twice");
+  EXPECT_EQ(twice.detail,
+            "EarthBank's list has 'Twin name of two lines' 2 times, under the ids 1900 and 1910; the lowest was taken.");
+
+  const std::string reference = "EX-41\nsecond line " + std::string(400, 'r');
+  desk.bank.add_lookup_row("/api/arar/DecayConstant",
+                           {{"id", 1760}, {"name", "Example and Sample 2041"}, {"reference", reference}});
+  const LookupResult by_reference = desk.resolver.resolve("decayConstantName", reference);
+  expect_found(by_reference, 1760, "Example and Sample 2041", "by a long reference");
+  EXPECT_EQ(by_reference.detail.find('\n'), std::string::npos) << by_reference.detail;
+  EXPECT_NE(by_reference.detail.find("EX-41 second line rrr"), std::string::npos) << by_reference.detail;
+  EXPECT_NE(by_reference.detail.find("...'"), std::string::npos) << by_reference.detail;
+  EXPECT_LT(by_reference.detail.size(), 400u);
+}
+
 // On the other short lists a value that is exactly one row's `reference` is
 // that row (legacy read it so); a description is never read.
 TEST(Lookup, AReferenceThatIsOneRowsIsThatRow) {
