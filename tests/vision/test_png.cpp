@@ -89,8 +89,8 @@ std::optional<Png> read(const std::filesystem::path& file, std::string& why) {
     if (at + 5 > zlib.size()) return why = "block header", std::nullopt;
     last = (zlib[at] & 1) != 0;
     if ((zlib[at] >> 1) != 0) return why = "not a stored block", std::nullopt;
-    const std::uint16_t len = static_cast<std::uint16_t>(zlib[at + 1] | (zlib[at + 2] << 8));
-    const std::uint16_t nlen = static_cast<std::uint16_t>(zlib[at + 3] | (zlib[at + 4] << 8));
+    const auto len = static_cast<std::uint16_t>(zlib[at + 1] | (zlib[at + 2] << 8));
+    const auto nlen = static_cast<std::uint16_t>(zlib[at + 3] | (zlib[at + 4] << 8));
     if (static_cast<std::uint16_t>(~len) != nlen) return why = "block length check", std::nullopt;
     at += 5;
     if (at + len > zlib.size()) return why = "block runs off", std::nullopt;
