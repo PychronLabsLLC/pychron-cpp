@@ -15,3 +15,12 @@ uninitMemberVarNoCtor
 // finding about this code.
 unknownMacro
 checkersReport
+
+// A mutex that exists only so a condition variable can be waited on
+// (Clock::sleep_for, and the tests of wait_until): nothing else is meant to
+// lock it.
+localMutex
+
+// `&tokens[i]` then `fields[1]`: a pointer into a vector's elements, which
+// cppcheck takes for the address of one object.
+objectIndex

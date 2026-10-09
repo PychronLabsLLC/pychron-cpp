@@ -4,6 +4,7 @@
     python3 tools/quality_check.py                  # lines changed since origin/develop
     python3 tools/quality_check.py --json           # the same, for a program to read
     python3 tools/quality_check.py libs/core/src/number.cpp   # these files, every line
+    python3 tools/quality_check.py libs/core                  # a directory, every line
     python3 tools/quality_check.py --fix            # let clang-tidy apply its fix-its
 
 Without paths it takes the first-party C++ files that differ from the merge
@@ -11,12 +12,18 @@ base with --base (committed, staged, unstaged and untracked) and reports only
 findings on the lines that differ, so the result is about the change and not
 about the file's history. A new file is checked whole.
 
-clang-tidy needs the compile database a configure writes
-(build/<preset>/compile_commands.json) and, for the UI and its tests, a build
-(the moc files). A changed header is analysed through up to two sources that
-include it. cppcheck reads the files alone, first-party headers only.
+A path may be a directory: every first-party C++ file git knows below it.
 
-Exit status: 0 nothing found, 1 findings, 2 the check could not run.
+clang-tidy needs the compile database a configure writes
+(build/<dir>/compile_commands.json) and, for the UI and its tests, the moc
+files of a build. Every configured directory under build/ is read, the newest
+first, so a source one configuration leaves out (a *_stub.cpp) is analysed
+with another that compiles it. A header is analysed through up to two sources
+that include it, directly or through one other header. cppcheck reads the
+files alone, first-party headers only.
+
+Exit status: 0 nothing found, 1 findings, 2 the check could not run, or could
+not run on every file (the findings it did make are still printed).
 Checks are chosen in .clang-tidy and cmake/cppcheck.supp. To silence one
 finding, `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>` on the
 line, with the reason. Setup: docs/dev_setup.md, "Static analysis".
@@ -37,7 +44,6 @@ ROOT = Path(__file__).resolve().parents[1]
 FIRST_PARTY = ("libs/", "apps/", "tests/")
 SOURCE_SUFFIXES = (".cpp",)
 HEADER_SUFFIXES = (".hpp", ".h")
-PRESET_DIRS = ("dev-ui", "dev", "mac-debug", "mac-release")
 BREW_LLVM = ("/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin")
 HEADER_SOURCES = 2  # sources analysed for one changed header
 
@@ -151,32 +157,39 @@ def find_tool(name: str, env: str, extra_dirs: tuple[str, ...] = ()) -> str:
     raise CannotRun(f"{name} not found (set {env}, or see docs/dev_setup.md, 'Static analysis')")
 
 
-def find_build_dir(given: str | None) -> Path:
+def find_build_dirs(given: str | None) -> list[Path]:
+    """Configured build directories, the one to prefer first."""
     if given:
-        build = Path(given)
+        build = Path(given).resolve()
         if not (build / "compile_commands.json").exists():
-            raise CannotRun(f"no compile_commands.json in {build}: configure it first")
-        return build
-    found = [ROOT / "build" / name for name in PRESET_DIRS
-             if (ROOT / "build" / name / "compile_commands.json").exists()]
+            raise CannotRun(f"no compile_commands.json in {given}: configure it first")
+        return [build]
+    found = [database.parent for database in (ROOT / "build").glob("*/compile_commands.json")]
     if not found:
-        raise CannotRun("no build/<preset>/compile_commands.json: run `cmake --preset dev-ui` "
+        raise CannotRun("no build/<dir>/compile_commands.json: run `cmake --preset dev-ui` "
                         "(or dev), or pass --build-dir")
-    return max(found, key=lambda build: (build / "compile_commands.json").stat().st_mtime)
+    return sorted(found, key=lambda build: (build / "compile_commands.json").stat().st_mtime, reverse=True)
 
 
-def database_sources(build: Path) -> list[str]:
-    """First-party sources the build compiles, relative to the repository."""
-    sources = []
-    for entry in json.loads((build / "compile_commands.json").read_text()):
-        path = Path(entry["directory"], entry["file"]).resolve()
-        try:
-            relative = path.relative_to(ROOT).as_posix()
-        except ValueError:
-            continue
-        if relative.startswith(FIRST_PARTY):
-            sources.append(relative)
-    return sorted(set(sources))
+def database_sources(builds: list[Path]) -> dict[str, Path]:
+    """First-party sources and the build that compiles each (the first that does)."""
+    sources: dict[str, Path] = {}
+    for build in builds:
+        for entry in json.loads((build / "compile_commands.json").read_text()):
+            path = Path(entry["directory"], entry["file"]).resolve()
+            try:
+                relative = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                continue
+            if relative.startswith(FIRST_PARTY):
+                sources.setdefault(relative, build)
+    return dict(sorted(sources.items()))
+
+
+def first_party_headers() -> list[str]:
+    return sorted(path.relative_to(ROOT).as_posix()
+                  for top in FIRST_PARTY for suffix in HEADER_SUFFIXES
+                  for path in (ROOT / top).rglob(f"*{suffix}"))
 
 
 def include_spelling(header: str) -> str:
@@ -187,20 +200,30 @@ def include_spelling(header: str) -> str:
     return Path(header).name
 
 
-def sources_including(header: str, sources: list[str], texts: dict[str, str]) -> list[str]:
+def files_including(header: str, candidates: list[str], texts: dict[str, str]) -> list[str]:
     pattern = re.compile(r'#\s*include\s*[<"](?:[^">]*/)?' + re.escape(include_spelling(header)) + r'[">]')
-    component = "/".join(header.split("/")[:2])
     users = []
-    for source in sources:
-        if source not in texts:
+    for candidate in candidates:
+        if candidate not in texts:
             try:
-                texts[source] = (ROOT / source).read_text(errors="replace")
+                texts[candidate] = (ROOT / candidate).read_text(errors="replace")
             except OSError:
-                texts[source] = ""
-        if pattern.search(texts[source]):
-            users.append(source)
-    # The header's own component first: its own source is the likeliest to use all of it.
-    users.sort(key=lambda source: (not source.startswith(component + "/"), source))
+                texts[candidate] = ""
+        if candidate != header and pattern.search(texts[candidate]):
+            users.append(candidate)
+    return users
+
+
+def sources_including(header: str, sources: list[str], headers: list[str],
+                      texts: dict[str, str]) -> list[str]:
+    """Up to HEADER_SOURCES sources that see the header, the header's own component first."""
+    users = files_including(header, sources, texts)
+    if not users:  # reached only through another header: one level, no further
+        for via in files_including(header, headers, texts):
+            users += files_including(via, sources, texts)
+    component = "/".join(header.split("/")[:2])
+    # Its own component's source is the likeliest to use all of it.
+    users = sorted(set(users), key=lambda source: (not source.startswith(component + "/"), source))
     return users[:HEADER_SOURCES]
 
 
@@ -233,34 +256,50 @@ def sysroot_args() -> list[str]:
     return [f"--extra-arg=-isysroot{sdk}"] if done.returncode == 0 and sdk else []
 
 
-def run_clang_tidy(sources: list[str], line_filter: list[dict], build: Path, jobs: int,
-                   fix: bool) -> list[Finding]:
+def run_clang_tidy(sources: dict[str, Path], line_filter: list[dict], jobs: int,
+                   fix: bool) -> tuple[list[Finding], list[str]]:
+    """Findings, and what stopped a source from being analysed."""
     if not sources:
-        return []
+        return [], []
     clang_tidy = find_tool("clang-tidy", "CLANG_TIDY", BREW_LLVM)
-    command = [clang_tidy, "-p", str(build), "--quiet", f"--line-filter={json.dumps(line_filter)}"]
-    command += sysroot_args()
+    common = ["--quiet", f"--line-filter={json.dumps(line_filter)}"] + sysroot_args()
     if fix:
-        command.append("--fix")
+        common.append("--fix")
 
-    def one(source: str) -> str:
-        done = subprocess.run(command + [source], cwd=ROOT, capture_output=True, text=True)
-        if done.returncode != 0 and not FINDING_RE.search(done.stdout + done.stderr):
-            raise CannotRun(f"clang-tidy failed on {source}:\n{done.stderr.strip() or done.stdout.strip()}")
-        return done.stdout
+    def one(item: tuple[str, Path]) -> tuple[str, str]:
+        source, build = item
+        done = subprocess.run([clang_tidy, "-p", str(build), *common, source],
+                              cwd=ROOT, capture_output=True, text=True)
+        said = (done.stdout + done.stderr).splitlines()
+        if done.returncode != 0 and not any(FINDING_RE.match(line) for line in said):
+            return "", f"clang-tidy failed on {source}: {(done.stderr.strip() or done.stdout.strip())[:400]}"
+        return done.stdout, ""
 
     # Two fixes to one header from two processes would collide.
     with ThreadPoolExecutor(max_workers=1 if fix else jobs) as pool:
-        outputs = list(pool.map(one, sources))
-    return [finding for output in outputs for finding in parse_findings(output, "clang-tidy")]
+        results = list(pool.map(one, sources.items()))
+    findings: list[Finding] = []
+    errors = [error for _, error in results if error]
+    for output, _ in results:
+        for finding in parse_findings(output, "clang-tidy"):
+            if finding.check == "clang-diagnostic-error":
+                # Not a finding about the code: the source did not parse, so
+                # nothing else clang-tidy said about it can be trusted.
+                errors.append(f"{finding.text()} (did not parse: build first for generated "
+                              "files, and fix any compile error)")
+            else:
+                findings.append(finding)
+    return findings, sorted(set(errors))
 
 
 def check(files: dict[str, list[tuple[int, int]] | None], build_dir: str | None, stages: set[str],
-          jobs: int, fix: bool) -> tuple[list[Finding], list[str]]:
+          jobs: int, fix: bool) -> tuple[list[Finding], list[str], list[str]]:
+    """Findings, notes, and errors (what could not be checked)."""
     findings: list[Finding] = []
     notes: list[str] = []
+    errors: list[str] = []
     if not files:
-        return findings, notes
+        return findings, notes, errors
 
     if "cppcheck" in stages:
         for finding in run_cppcheck(sorted(files), jobs):
@@ -268,45 +307,48 @@ def check(files: dict[str, list[tuple[int, int]] | None], build_dir: str | None,
                 findings.append(finding)
 
     if "clang-tidy" in stages:
-        build = find_build_dir(build_dir)
-        compiled = database_sources(build)
+        compiled = database_sources(find_build_dirs(build_dir))
+        headers = first_party_headers()
         texts: dict[str, str] = {}
-        sources: set[str] = set()
+        sources: dict[str, Path] = {}
         for path in sorted(files):
             if path.endswith(SOURCE_SUFFIXES):
                 if path in compiled:
-                    sources.add(path)
+                    sources[path] = compiled[path]
                 else:
-                    notes.append(f"{path}: not compiled by {build.relative_to(ROOT)} (new file: "
-                                 "configure again; otherwise an option leaves it out): clang-tidy skipped")
+                    notes.append(f"{path}: no configured build compiles it (new file: configure "
+                                 "again; otherwise an option leaves it out): clang-tidy skipped")
             else:
-                users = sources_including(path, compiled, texts)
-                if users:
-                    sources.update(users)
-                else:
+                users = sources_including(path, list(compiled), headers, texts)
+                if not users:
                     notes.append(f"{path}: no compiled source includes it: clang-tidy skipped")
+                for user in users:
+                    sources[user] = compiled[user]
         line_filter = []
         for path, ranges in sorted(files.items()):
             entry: dict = {"name": str(ROOT / path)}
             if ranges is not None:
                 entry["lines"] = [list(pair) for pair in ranges]
             line_filter.append(entry)
-        for finding in run_clang_tidy(sorted(sources), line_filter, build, jobs, fix):
-            if finding.check == "clang-diagnostic-error":
-                # Not a finding about the change: the source did not parse, so
-                # nothing else clang-tidy said about it can be trusted.
-                raise CannotRun(f"{finding.text()}\nclang-tidy could not parse the source. Build "
-                                f"{build.relative_to(ROOT)} first (generated files), and fix any compile error.")
-            findings.append(finding)
+        found, errors = run_clang_tidy(dict(sorted(sources.items())), line_filter, jobs, fix)
+        findings += found
 
-    return sorted(set(findings)), notes
+    return sorted(set(findings)), notes, errors
+
+
+def files_below(directory: Path) -> list[str]:
+    """First-party C++ files git knows below a directory, tracked or not yet."""
+    relative = directory.relative_to(ROOT).as_posix()
+    listed = git("ls-files", "--cached", "--others", "--exclude-standard", "--", relative).splitlines()
+    return [path for path in listed if is_first_party(path) and (ROOT / path).is_file()]
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("paths", nargs="*", help="files to check whole (default: what differs from --base)")
+    parser.add_argument("paths", nargs="*",
+                        help="files or directories to check whole (default: what differs from --base)")
     parser.add_argument("--base", default="origin/develop", help="branch the change is measured from")
-    parser.add_argument("--build-dir", help="directory holding compile_commands.json")
+    parser.add_argument("--build-dir", help="the one directory to read compile_commands.json from")
     parser.add_argument("--stage", action="append", choices=("cppcheck", "clang-tidy"),
                         help="run only this stage (repeatable)")
     parser.add_argument("--fix", action="store_true", help="apply clang-tidy's fix-its, then report what is left")
@@ -319,29 +361,37 @@ def main(argv: list[str]) -> int:
             files: dict[str, list[tuple[int, int]] | None] = {}
             for given in args.paths:
                 path = Path(given).resolve()
-                if not path.is_file():
-                    raise CannotRun(f"{given}: no such file")
-                files[path.relative_to(ROOT).as_posix()] = None
+                if path.is_dir():
+                    files.update(dict.fromkeys(files_below(path)))
+                elif path.is_file():
+                    files[path.relative_to(ROOT).as_posix()] = None
+                else:
+                    raise CannotRun(f"{given}: no such file or directory")
         else:
             files = changed_since(args.base)
         stages = set(args.stage or ("cppcheck", "clang-tidy"))
-        findings, notes = check(files, args.build_dir, stages, max(1, args.jobs), args.fix)
+        findings, notes, errors = check(files, args.build_dir, stages, max(1, args.jobs), args.fix)
     except CannotRun as error:
         if args.json:
-            print(json.dumps({"ok": False, "error": str(error), "findings": []}, indent=2))
+            print(json.dumps({"ok": False, "errors": [str(error)], "findings": []}, indent=2))
         else:
             print(f"quality_check: {error}", file=sys.stderr)
         return 2
 
     if args.json:
-        print(json.dumps({"ok": not findings, "files": sorted(files), "notes": notes,
-                          "findings": [asdict(finding) for finding in findings]}, indent=2))
+        print(json.dumps({"ok": not findings and not errors, "files": sorted(files), "notes": notes,
+                          "errors": errors, "findings": [asdict(finding) for finding in findings]}, indent=2))
     else:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
         for finding in findings:
             print(finding.text())
-        print(f"quality_check: {len(files)} file(s), {len(findings)} finding(s)", file=sys.stderr)
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        print(f"quality_check: {len(files)} file(s), {len(findings)} finding(s), "
+              f"{len(errors)} not checked", file=sys.stderr)
+    if errors:
+        return 2
     return 1 if findings else 0
 
 

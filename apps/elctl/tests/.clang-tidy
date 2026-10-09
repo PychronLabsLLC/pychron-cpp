@@ -1,0 +1,4 @@
+# A test that dereferences an empty optional fails, loudly, which is what a
+# test is for: `*UtcTime::parse("2015-01-01T00:00:00Z")` needs no guard.
+InheritParentConfig: true
+Checks: '-bugprone-unchecked-optional-access'

@@ -182,21 +182,33 @@ cmake --preset dev-ui               # writes build/dev-ui/compile_commands.json
 python3 tools/quality_check.py
 ```
 
-- Exit status 0 is clean, 1 is findings, 2 means the check could not run (a
-  tool or the compile database is missing, or a source did not parse).
-  `--json` prints one object (`ok`, `files`, `notes`, `findings`) for a
-  program or an agent to read.
-- clang-tidy reads the newest of `build/dev-ui`, `build/dev`, `build/mac-debug`
-  and `build/mac-release` (or `--build-dir`). A file added since the last
-  configure is not in it: configure again. The UI and its tests include moc
-  files, so they need a build as well.
-- A changed header is analysed through up to two sources that include it.
-- `python3 tools/quality_check.py <files>` checks those files on every line.
-  Old code has findings; that is a way to look at them, not a gate.
+- Exit status 0 is clean, 1 is findings, 2 means the check could not run, or
+  not on every file (a tool or the compile database is missing, or a source
+  did not parse; what it did find is still printed). `--json` prints one
+  object (`ok`, `files`, `notes`, `errors`, `findings`) for a program or an
+  agent to read.
+- clang-tidy reads every `build/*/compile_commands.json`, the newest first
+  (or only `--build-dir`). A file added since the last configure is in none:
+  configure again. The UI and its tests include moc files, so they need a
+  build as well, or only its moc step:
+  `cmake --build build/dev-ui --target $(cmake --build build/dev-ui --target help | grep -oE '[A-Za-z0-9_-]+_autogen$')`.
+- The `*_stub.cpp` files are compiled only when persistence or scripting is
+  off. To have them analysed too, configure such a build beside the other:
+  `cmake -S . -B build/dev-min -DCMAKE_BUILD_TYPE=Debug -DPYCHRON_PERSISTENCE=OFF -DPYCHRON_SCRIPTING=OFF`.
+- A changed header is analysed through up to two sources that include it,
+  directly or through one other header.
+- `python3 tools/quality_check.py <files or directories>` checks those on
+  every line (`libs/core`, or `libs apps tests` for the whole tree, about a
+  quarter of an hour). Old code has findings
+  (`docs/superpowers/plans/2026-10-08-static-analysis-backlog.md`); until
+  that plan is done this is a way to look at them, not a gate.
 - `--fix` applies clang-tidy's fix-its to the changed lines and reports what
   is left. Read the diff: a fix-it is a suggestion that compiles, not a proof.
 - The checks are listed in `.clang-tidy`, each one that is off with its
-  reason, and cppcheck's suppressions in `cmake/cppcheck.supp`. One finding
+  reason, and cppcheck's suppressions in `cmake/cppcheck.supp`. A directory
+  whose code makes one check meaningless has its own `.clang-tidy` that
+  inherits the rest (`apps/pychron-ui` and `tests/ui`: Qt's parents own what
+  is `new`'d; `tests`: a test may dereference an optional unguarded). One finding
   that is wrong is silenced on its line, with the reason:
   `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>`.
 - `CLANG_TIDY` and `CPPCHECK` name the programs when they are not on `PATH`.

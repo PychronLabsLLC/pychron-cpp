@@ -93,24 +93,37 @@ class Findings(unittest.TestCase):
 
 class HeaderSources(unittest.TestCase):
     SOURCES = ["libs/core/src/b.cpp", "libs/devices/src/uses_b.cpp", "tests/core/test_b.cpp", "tests/core/other.cpp"]
+    HEADERS = ["libs/core/include/pychron/core/b.hpp", "libs/core/include/pychron/core/inner.hpp", "tests/core/fake.hpp"]
     TEXTS = {
         "libs/core/src/b.cpp": '#include "pychron/core/b.hpp"\n',
         "libs/devices/src/uses_b.cpp": '#include <pychron/core/b.hpp>\n',
         "tests/core/test_b.cpp": '#  include "pychron/core/b.hpp"\n#include "fake.hpp"\n',
         "tests/core/other.cpp": '#include "pychron/core/bb.hpp"\n#include "not_fake.hpp"\n',
+        "libs/core/include/pychron/core/b.hpp": '#include "pychron/core/inner.hpp"\n',
+        "libs/core/include/pychron/core/inner.hpp": "",
+        "tests/core/fake.hpp": "",
     }
+
+    def users(self, header):
+        return qc.sources_including(header, self.SOURCES, self.HEADERS, dict(self.TEXTS))
 
     def test_a_public_header_is_named_from_below_include(self):
         self.assertEqual(qc.include_spelling("libs/core/include/pychron/core/b.hpp"), "pychron/core/b.hpp")
         self.assertEqual(qc.include_spelling("tests/core/fake.hpp"), "fake.hpp")
 
     def test_the_headers_own_component_comes_first(self):
-        users = qc.sources_including("libs/core/include/pychron/core/b.hpp", self.SOURCES, dict(self.TEXTS))
-        self.assertEqual(users, ["libs/core/src/b.cpp", "libs/devices/src/uses_b.cpp"])
+        self.assertEqual(self.users("libs/core/include/pychron/core/b.hpp"),
+                         ["libs/core/src/b.cpp", "libs/devices/src/uses_b.cpp"])
 
     def test_a_longer_name_ending_the_same_is_not_a_match(self):
-        users = qc.sources_including("tests/core/fake.hpp", self.SOURCES, dict(self.TEXTS))
-        self.assertEqual(users, ["tests/core/test_b.cpp"])
+        self.assertEqual(self.users("tests/core/fake.hpp"), ["tests/core/test_b.cpp"])
+
+    def test_a_header_only_another_header_includes_is_reached_through_it(self):
+        self.assertEqual(self.users("libs/core/include/pychron/core/inner.hpp"),
+                         ["libs/core/src/b.cpp", "libs/devices/src/uses_b.cpp"])
+
+    def test_a_header_nothing_includes_has_no_source(self):
+        self.assertEqual(self.users("libs/core/include/pychron/core/orphan.hpp"), [])
 
 
 if __name__ == "__main__":
