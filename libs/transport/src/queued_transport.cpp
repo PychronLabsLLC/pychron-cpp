@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -35,7 +36,7 @@ bool retryable(const Error& e) { return e.kind == ErrorKind::Timeout || e.kind =
 
 struct QueuedTransport::Impl {
   explicit Impl(TransportOptions o) : options(std::move(o)), clock(options.clock ? options.clock : &steady) {
-    if (options.retries < 0) options.retries = 0;
+    options.retries = std::max(options.retries, 0);
   }
 
   TransportOptions options;

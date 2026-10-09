@@ -101,7 +101,7 @@ TEST(QueuedTransport, ExchangeDiscardsWritesThenReads) {
   o.clock = &clock;
   FakeChannel t(o);
   ASSERT_TRUE(t.open());
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   auto r = t.exchange(to_bytes("PR1\r"), kCr);
   ASSERT_TRUE(r) << to_string(r.error());
   EXPECT_EQ(to_string(*r), "OK\r");
@@ -116,10 +116,10 @@ TEST(QueuedTransport, ExchangeDiscardsWritesThenReads) {
 TEST(QueuedTransport, ZeroTimeoutUsesConfiguredDefault) {
   FakeChannel t(opts());
   ASSERT_TRUE(t.open());
-  t.reads.push_back(Bytes{});
+  t.reads.emplace_back(Bytes{});
   ASSERT_TRUE(t.exchange(to_bytes("a"), kCr));
   EXPECT_EQ(t.last_timeout, Duration(250ms));
-  t.reads.push_back(Bytes{});
+  t.reads.emplace_back(Bytes{});
   ASSERT_TRUE(t.exchange(to_bytes("a"), kCr, 40ms));
   EXPECT_EQ(t.last_timeout, Duration(40ms));
 }
@@ -127,9 +127,9 @@ TEST(QueuedTransport, ZeroTimeoutUsesConfiguredDefault) {
 TEST(QueuedTransport, RetriesTimeoutThenSucceeds) {
   FakeChannel t(opts(/*retries=*/2));
   ASSERT_TRUE(t.open());
-  t.reads.push_back(fail(ErrorKind::Timeout, "t1"));
-  t.reads.push_back(fail(ErrorKind::Io, "glitch"));
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(fail(ErrorKind::Timeout, "t1"));
+  t.reads.emplace_back(fail(ErrorKind::Io, "glitch"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   auto r = t.exchange(to_bytes("q"), kCr);
   ASSERT_TRUE(r);
   EXPECT_EQ(t.write_calls, 3);
@@ -154,7 +154,7 @@ TEST(QueuedTransport, RetriesExhaustedReportsLastErrorOnce) {
 TEST(QueuedTransport, ProtocolErrorsAreNotRetried) {
   FakeChannel t(opts(/*retries=*/3));
   ASSERT_TRUE(t.open());
-  t.writes.push_back(fail(ErrorKind::Protocol, "rejected"));
+  t.writes.emplace_back(fail(ErrorKind::Protocol, "rejected"));
   auto r = t.exchange(to_bytes("q"), kCr);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
@@ -165,7 +165,7 @@ TEST(QueuedTransport, ProtocolErrorsAreNotRetried) {
 TEST(QueuedTransport, WriteIsRetriedOnIo) {
   FakeChannel t(opts(/*retries=*/1));
   ASSERT_TRUE(t.open());
-  t.writes.push_back(fail(ErrorKind::Io, "EAGAIN"));
+  t.writes.emplace_back(fail(ErrorKind::Io, "EAGAIN"));
   EXPECT_TRUE(t.write(to_bytes("w")));
   EXPECT_EQ(t.write_calls, 2);
 }
@@ -178,7 +178,7 @@ TEST(QueuedTransport, GoesDownAfterThresholdAndRecovers) {
   EXPECT_FALSE(t.exchange(to_bytes("q"), kCr));
   EXPECT_EQ(t.health().state, HealthState::Down);
   EXPECT_EQ(t.health().consecutive_failures, 2u);
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   EXPECT_TRUE(t.exchange(to_bytes("q"), kCr));
   EXPECT_EQ(t.health().state, HealthState::Connected);
   EXPECT_EQ(t.health().consecutive_failures, 0u);
@@ -233,7 +233,7 @@ TEST(QueuedTransport, ConcurrentExchangesAreSerialized) {
   FakeChannel t(opts());
   ASSERT_TRUE(t.open());
   constexpr int kThreads = 8, kEach = 50;
-  for (int i = 0; i < kThreads * kEach; ++i) t.reads.push_back(to_bytes("OK\r"));
+  for (int i = 0; i < kThreads * kEach; ++i) t.reads.emplace_back(to_bytes("OK\r"));
   t.on_read = [] { std::this_thread::yield(); };
   std::atomic<int> ok{0};
   std::vector<std::thread> threads;
@@ -259,7 +259,7 @@ TEST(QueuedTransport, ShutdownCancelsQueuedAndLaterCalls) {
     entered.set_value();
     release_f.wait();
   };
-  t.reads.push_back(to_bytes("first\r"));
+  t.reads.emplace_back(to_bytes("first\r"));
 
   auto first = std::async(std::launch::async, [&] { return t.exchange(to_bytes("1"), kCr); });
   entered.get_future().wait();  // worker is now busy with the first call
