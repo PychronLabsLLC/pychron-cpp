@@ -1,4 +1,5 @@
+# NewDeleteLeaks is off for the same reason as owning-memory.
 # Qt hands a new'd child to its parent: that is the ownership model here, and
 # the check cannot see it (it wants gsl::owner on every `new QLabel(this)`).
 InheritParentConfig: true
-Checks: '-cppcoreguidelines-owning-memory'
+Checks: '-cppcoreguidelines-owning-memory,-clang-analyzer-cplusplus.NewDeleteLeaks'

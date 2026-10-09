@@ -237,6 +237,7 @@ bool ScriptEditorWindow::open(const ScriptFile& file) {
     update_tab_title(*d);
   });
   connect(doc->editor, &QPlainTextEdit::textChanged, this, [this, d] {
+    // NOLINTNEXTLINE(clang-analyzer-core.NullDereference): `d` is doc.get(), never null
     if (current() == d && d->editor->toPlainText() != d->checked_text) check_timer_.start();
   });
   connect(doc->editor, &CodeEditor::gosubActivated, this, [this](const QString& name) { follow_gosub(name); });

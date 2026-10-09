@@ -249,6 +249,7 @@ struct Rig {
       }
       return d;
     };
+    // NOLINTNEXTLINE(clang-analyzer-core.StackAddressEscape): returned by value; nothing of this frame is captured
     return o;
   }
 };

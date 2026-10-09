@@ -339,6 +339,7 @@ class Exp {
           if (handled == 0) {
             say("interrupt: stopping after the current run (again to cancel it)");
             session.stop();
+          // cppcheck-suppress oppositeInnerCondition ; `handled` is another number each time round the loop
           } else if (handled == 1) {
             say("interrupt: cancelling (again to abort)");
             session.cancel();

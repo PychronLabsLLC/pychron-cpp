@@ -13,6 +13,7 @@ double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 
 const Clock& clock_of(const DriverArgs& args) {
   static const SteadyClock steady;
+  // cppcheck-suppress returnTempReference ; the caller's clock or a static: neither is a temporary
   return args.clock != nullptr ? *args.clock : steady;
 }
 

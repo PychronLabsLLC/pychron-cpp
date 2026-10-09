@@ -24,3 +24,16 @@ localMutex
 // `&tokens[i]` then `fields[1]`: a pointer into a vector's elements, which
 // cppcheck takes for the address of one object.
 objectIndex
+
+// In tests: `ASSERT_TRUE(v.empty()) << v.front()` builds its message only
+// when the assertion fails, and QCOMPARE and QVERIFY return when they fail.
+// cppcheck sees neither, and reports what follows as reached regardless.
+containerOutOfBounds:tests/*
+nullPointer:tests/ui/*
+
+// Valid C++ that cppcheck 2.22 cannot parse (a reverse iterator in a for
+// statement; pointers to members in an initializer). It checks NOTHING in
+// these two files past that line: they are clang-tidy's alone. Try again
+// with each new cppcheck and take the line out when it parses.
+syntaxError:libs/experiment/src/model/experiment_queue.cpp
+syntaxError:libs/ingest/src/writer.cpp

@@ -142,6 +142,7 @@ struct Owners {
 
   Owners(const std::string& url, const QString& presets_dir)
       : presets(presets_dir.toStdString()),
+        // cppcheck-suppress[noCopyConstructor,noOperatorEq] ; `main` is their Qt parent and makes this uncopyable
         entry(new EntryActions(&main, url)),
         fit(new FitActions(&main, url, *entry, presets, [this](const QString& uuid) { recalled.append(uuid); })) {
     fit->set_report_error([this](const QString& text) { errors.append(text); });

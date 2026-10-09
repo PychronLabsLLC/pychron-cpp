@@ -241,6 +241,7 @@ TEST_F(ReconnectTest, ConcurrentRunsReconnectOnce) {
     if (!reopened) {
       ++started;
       while (started < kThreads && !reopened) std::this_thread::yield();
+      // cppcheck-suppress identicalInnerCondition ; another thread sets `reopened` during the wait above
       if (!reopened) return fail(ErrorKind::Io, "dropped", "dev");
     }
     return 7;

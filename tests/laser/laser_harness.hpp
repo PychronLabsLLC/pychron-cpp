@@ -135,6 +135,7 @@ struct CameraHarness : LaserHarness {
     EXPECT_TRUE(system.attach_camera(seen, std::move(frames), clock));
     EXPECT_TRUE(system.set_tray("small"));
   }
+  // cppcheck-suppress duplInheritedMember ; on purpose: a camera frame is 100 ms
   void advance() { clock.advance(100ms); }
   // Polls moving() until it says false or fails; the last answer.
   Result<bool> drive(int limit = 3000) {
@@ -158,6 +159,7 @@ struct CameraHarness : LaserHarness {
     }
     return out;
   }
+  // cppcheck-suppress duplInheritedMember ; on purpose: this harness's own system
   IExtractionDevice& device() { return system; }
 };
 

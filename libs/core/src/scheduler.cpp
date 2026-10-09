@@ -52,6 +52,9 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
 }
 
 Scheduler::~Scheduler() {
+  // stop() throws only when a job destroys its own scheduler, which cannot be
+  // carried out: terminating says so.
+  // cppcheck-suppress throwInNoexceptFunction
   stop();
   {
     std::unique_lock lock(mutex_);

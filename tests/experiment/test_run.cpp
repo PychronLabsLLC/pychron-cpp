@@ -389,6 +389,7 @@ class RunDeviceTest : public RunTest {
       if (name == "diode") return &diode_;
       return nullptr;
     };
+    // NOLINTNEXTLINE(clang-analyzer-core.StackAddressEscape): returned by value; the function captures `this` only
     return s;
   }
   void extract_on_the_bound_device() {

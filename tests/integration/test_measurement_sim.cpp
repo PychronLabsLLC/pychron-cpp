@@ -668,6 +668,7 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
       std::lock_guard lock(self->mutex_);
       self->stalls_.push_back(std::move(what));
     };
+    // NOLINTNEXTLINE(clang-analyzer-core.StackAddressEscape): returned by value; the function captures `self` only
     return o;
   }
 

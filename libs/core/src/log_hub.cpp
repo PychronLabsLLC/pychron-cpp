@@ -444,6 +444,7 @@ std::string terminate_text() {
   const auto active = std::current_exception();
   if (!active) return "terminate called without an active exception";
   try {
+    // cppcheck-suppress missingReturn ; std::rethrow_exception does not return
     std::rethrow_exception(active);
   } catch (const std::exception& e) {
     return std::string("terminate called after throwing: ") + e.what();

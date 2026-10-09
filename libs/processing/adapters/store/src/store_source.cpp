@@ -585,6 +585,7 @@ struct StoreSource::Impl {
     {
       std::lock_guard lock(queue_mutex);
       if (stopping) return fail(ErrorKind::Cancelled, "store source is closing");
+      // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): std::function's own storage, freed with the queue
       queue.push_back([promise, fn = std::move(fn)](ps::IStore& s) { promise->set_value(fn(s)); });
     }
     queue_cv.notify_one();

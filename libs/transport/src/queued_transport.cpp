@@ -134,6 +134,7 @@ struct QueuedTransport::Impl {
       lock.unlock();
       return fn();
     }
+    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): std::function's own storage, freed with the queue
     queue.push_back(Job{[this, pending, fn = std::move(fn)] {
                           auto r = fn();
                           {

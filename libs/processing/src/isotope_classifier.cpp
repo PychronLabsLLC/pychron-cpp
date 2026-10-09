@@ -71,6 +71,7 @@ std::optional<Classification> IsotopeClassifier::classify(const IsotopeSample& s
                    [](const auto& x, const auto& y) { return x.first < y.first; });
   std::map<int, int> votes;
   for (std::size_t i = 0; i < k; ++i) ++votes[by_distance[i].second];
+  // cppcheck-suppress containerOutOfBounds ; samples_ is not empty here, so k >= 1 and there is a vote
   int best = votes.begin()->first, count = 0;
   for (const auto& [klass, n] : votes)  // ascending klass: a tie keeps the smaller
     if (n > count) {

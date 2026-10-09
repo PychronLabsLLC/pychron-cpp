@@ -177,6 +177,7 @@ class Walk {
 
   // Notes every change apply() is given in `ledger` (null: stop). The ledger
   // outlives the walk or is taken away first.
+  // cppcheck-suppress danglingLifetime ; the caller keeps the ledger alive, as said above
   void observe(Ledger* ledger) { ledger_ = ledger; }
 
   // Applies the changes of commit `index`, all of them at once (git lists the

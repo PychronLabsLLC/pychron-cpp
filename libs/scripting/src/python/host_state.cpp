@@ -249,6 +249,7 @@ void HostState::wait_while(const std::function<Result<bool>()>& busy, const std:
   }
 }
 
+// cppcheck-suppress returnTempReference ; the environment's clock or a member: neither is a temporary
 const Clock& HostState::clock() const { return env_.clock ? *env_.clock : steady_; }
 
 extraction::IValveService& HostState::valves() {

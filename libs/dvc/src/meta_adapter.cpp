@@ -89,6 +89,7 @@ class Walk {
       const bool deleted = entry.status == 'D';
       if (deleted && !versions_.contains(entry.path)) continue;
       auto& had = versions_[entry.path];
+      // cppcheck-suppress containerOutOfBounds ; a path in versions_ has a version: one is pushed when it is added
       if (deleted ? had.back().empty() : (!had.empty() && had.back() == entry.blob_sha)) continue;
       had.push_back(deleted ? std::string() : entry.blob_sha);
       places_[entry.path].push_back(index);

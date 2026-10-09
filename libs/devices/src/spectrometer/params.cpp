@@ -79,6 +79,7 @@ std::string_view to_string(Unit unit) noexcept {
 
 const ParamSpec* find_spec(std::span<const ParamSpec> specs, const ParamId& id) noexcept {
   for (const auto& spec : specs) {
+    // cppcheck-suppress returnDanglingLifetime ; into the caller's span, not a local
     if (spec.id == id) return &spec;
   }
   return nullptr;
@@ -87,6 +88,7 @@ const ParamSpec* find_spec(std::span<const ParamSpec> specs, const ParamId& id) 
 const ParamSpec* find_vendor(std::span<const ParamSpec> specs,
                              std::string_view vendor_name) noexcept {
   for (const auto& spec : specs) {
+    // cppcheck-suppress returnDanglingLifetime ; into the caller's span, not a local
     if (spec.vendor_name == vendor_name) return &spec;
   }
   return nullptr;

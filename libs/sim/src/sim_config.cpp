@@ -283,6 +283,9 @@ class Reader {
       return;
     }
     const Composition proportions = ratios ? *ratios : air_ratios();
+    // A number that was read has its node, and with neither number `named` is
+    // not null (returned above otherwise).
+    // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
     const toml::node& where = ar40 ? *ar40_node : pressure ? *pressure_node : *named;
     const std::string_view key = ar40 ? "argon40" : pressure ? "pressure" : "composition";
     Composition held{};

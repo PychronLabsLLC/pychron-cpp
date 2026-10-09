@@ -284,7 +284,9 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view a(argv[i]);
     if ((a == "--version" || a == "--self-test" || a == "--write-icons") && AttachConsole(ATTACH_PARENT_PROCESS)) {
+      // cppcheck-suppress ignoredReturnValue ; no console after all: nowhere to say so
       std::freopen("CONOUT$", "w", stdout);
+      // cppcheck-suppress ignoredReturnValue ; as above
       std::freopen("CONOUT$", "w", stderr);
     }
   }

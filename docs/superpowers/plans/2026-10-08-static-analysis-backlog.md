@@ -107,29 +107,33 @@ means something.
 ## Phase 1: defects (about 570 findings, each one read)
 
 Read the code for every finding; the tool is right about the pattern and
-often wrong about the consequence. From a first look at the 53 in bucket 1a:
+often wrong about the consequence.
 
-Likely real, fix first:
+- [x] **1a, the path and lifetime findings: done.** 58 with the dead stores
+  and the loops counted in `double`, which the first count had elsewhere.
+  Every one was read.
+  None was a defect that can happen. What they were:
 
-| Where | Finding |
-|---|---|
-| `libs/processing/src/isotope_classifier.cpp:74` | `votes.begin()->first` when there are no training samples (`k == 0`) |
-| `libs/core/src/scheduler.cpp:55` | something reachable from `~Scheduler()` can throw |
-| `libs/core/src/log_hub.cpp:447` | `terminate_text()` has a path with no `return` |
-| `libs/sim/src/sim_config.cpp:286` | `*ar40_node` / `*pressure_node` / `*named` dereferenced on a path where one is null |
-| `apps/pychron-ui/src/script_editor_window.cpp:240` | `d->editor` through a null `Document*` |
-| `apps/pychron-ui/src/flow_layout.cpp:15` | virtual `takeAt` called from the destructor |
-| `apps/pychron-ui/src/main.cpp:287-288` | `std::freopen` result ignored |
-| `libs/dvc/src/meta_adapter.cpp:92`, `libs/codecs/.../codec.hpp:73` | `back()` / `s[i]` reached with the emptiness check after it |
-| `apps/elctl/src/exp.cpp:342` | opposite inner condition: a dead block |
-| `tests/ui/test_setup_wizard.cpp:164`, `test_data_windows.cpp:826` | a test indexes an empty container or a null pointer instead of asserting first |
+  | Outcome | Count | Which |
+  |---|---:|---|
+  | Check off where it cannot work | 21 | `NewDeleteLeaks` in Qt code (6, parent-owned); `CallAndMessage` after `QVERIFY` (4); cppcheck `containerOutOfBounds` and `nullPointer` in tests (11: `ASSERT_TRUE(v.empty()) << v.front()`, `QCOMPARE` then index) |
+  | Silenced on the line, with the invariant that makes it safe | 26 | `isotope_classifier.cpp` (samples not empty, so a vote exists), `meta_adapter.cpp`, `codec.hpp`, `log_hub.cpp` (`rethrow_exception` does not return), `sim_config.cpp`, `params.cpp`, `sim_drivers.cpp`, `host_state.cpp`, `project_import.hpp`, three `std::function` "leaks" and three "stack escapes", and others |
+  | Code changed | 3 | `flow_layout.cpp` (the destructor names `FlowLayout::takeAt`), a dead store in `script_highlighter.cpp` and one in `test_number.cpp` |
+  | cppcheck cannot parse the file | 2 | `experiment_queue.cpp`, `ingest/src/writer.cpp`: suppressed per file in `cmake/cppcheck.supp`, which says cppcheck checks nothing past that line there |
+  | Left open | 6 | below |
 
-Looked at and probably not defects (confirm, then `NOLINT` with the reason):
-`params.cpp:82,90` (a pointer into the caller's span, not into a local),
-`sim_drivers.cpp:16` and `host_state.cpp:252` (a static or a member, not a
-temporary), `project_import.hpp:180` (the comment states the lifetime rule),
-`types.cpp:23` (`from_chars` is given the end), the eight `NewDeleteLeaks` in
-Qt code (parent-owned) and in `std::function` internals.
+  Left open, for a decision rather than a comment:
+  - `libs/systems/.../canvas/canvas.hpp:160`: `Image : Located` declares a
+    `path` (the picture's file) that hides `Located::path` (where in the TOML
+    the element is, used in messages). Both work today because each reader
+    names the type it means; a message written through `Image` would print
+    the file. Renaming one is a change to the canvas model and its readers.
+  - `libs/core/src/scheduler.cpp`: `~Scheduler()` calls `stop()`, which throws
+    when a job destroys its own scheduler. From a destructor that is
+    `std::terminate`. Silenced with that said beside it; whether it should
+    log first is a design question.
+  - Five loops counted in `double` (`brand.cpp` three, `timeline.cpp:182`,
+    `test_sim_legacy_config.cpp:248`): with 1b task 4.
 
 Then bucket 1b, in this order:
 
@@ -166,8 +170,7 @@ Then bucket 1b, in this order:
   `serialize.cpp:729,766`), `misleading-capture-default-by-value` (9, all in
   `options_editor.cpp`: `[=]` capturing `this`).
 - [ ] **8. The rest of 1b** (about 60 across a dozen checks): read each.
-- [ ] **9. cppcheck's two `syntaxError`s** (Phase 0, task 4): rewrite so it
-  parses, or suppress per file.
+- [x] **9. cppcheck's two `syntaxError`s**: suppressed per file (1a above).
 
 Order of components within Phase 1, by what a defect costs: `libs/core`,
 `libs/persistence`, `libs/ingest`, `libs/dvc`, `libs/reduction`,

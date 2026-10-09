@@ -45,6 +45,7 @@ void ensure_qt_application() {
     static char name[] = "pychron";
     static char* argv[] = {name, nullptr};
     new QCoreApplication(argc, argv);
+  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): the application object lives as long as the process
   });
 }
 

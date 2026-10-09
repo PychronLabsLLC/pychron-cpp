@@ -32,8 +32,7 @@ TEST(Number, WholeTextOnlyAndFinite) {
 
 TEST(Number, IgnoresTheProcessLocale) {
   // A locale with a comma for the decimal point, when the machine has one.
-  const char* set = std::setlocale(LC_NUMERIC, "de_DE.UTF-8");
-  if (set == nullptr) set = std::setlocale(LC_NUMERIC, "de_DE");
+  if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") == nullptr) std::setlocale(LC_NUMERIC, "de_DE");
   EXPECT_EQ(parse_double("2.5"), 2.5);
   EXPECT_FALSE(parse_double("2,5"));
   std::setlocale(LC_NUMERIC, "C");
