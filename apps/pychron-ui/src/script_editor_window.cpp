@@ -396,7 +396,7 @@ void ScriptEditorWindow::show_check() {
   Document* d = current();
   save_->setEnabled(d != nullptr);
   if (d == nullptr) {
-    status_->setText(tr("Open a script from the list, or Script > New."));
+    status_->setText(tr("Open a script from the list or with File > Open, or start one with File > New."));
     style::set_tone(status_, style::Tone::Normal);
     return;
   }

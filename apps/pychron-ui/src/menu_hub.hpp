@@ -1,9 +1,10 @@
 #pragma once
 
 // MenuHub: one menu bar for the whole application. Every top-level window
-// shows the same menus in the same order (File, Queue, Rows, Executor,
-// Scripts, View, Entry, Fit, Window, Help). Entry and Fit are there only when
-// a store is.
+// shows the same menus in the same order (File, Experiment, View, Entry, Fit,
+// Window, Help). Entry and Fit are there only when a store is. Experiment
+// holds Queue, Rows, Executor and Scripts as submenus: they are menus like
+// the others (Menu, contribute, menus()), only one level down.
 //
 // View holds what windows contribute to it: the actions that open the
 // application's main views. Window is the hub's own, the usual one: Minimize,
@@ -37,9 +38,9 @@
 // "pychron_no_menubar" property. Menus are updated in place: an action that
 // stays is never taken out and put back.
 //
-// The bar is the same from launch: Queue, Rows, Executor and Scripts, which
-// the experiment window fills, are there before it is, each holding one
-// greyed line saying where its commands come from. File, View and Help are
+// The bar is the same from launch: Experiment's Queue, Rows, Executor and
+// Scripts, which the experiment window fills, are there before it is, each
+// holding one greyed line saying where its commands come from. File, View and Help are
 // hidden only when nothing at all has contributed to them (no main window).
 
 #include <array>
@@ -160,7 +161,10 @@ class MenuHub : public QObject {
   QList<QAction*> window_actions() const;
   // The menus of `bar`, indexed by Menu (hidden ones included; the order they
   // are shown in is the bar's own); empty if `bar` is not one of the hub's.
+  // Queue, Rows, Executor and Scripts are submenus of experiment_menu(bar).
   QList<QMenu*> menus(const QMenuBar* bar) const;
+  // `bar`'s Experiment menu, or nullptr if `bar` is not one of the hub's.
+  QMenu* experiment_menu(const QMenuBar* bar) const;
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -176,6 +180,7 @@ class MenuHub : public QObject {
   };
   struct Bar {
     QPointer<QMenuBar> bar;
+    QPointer<QMenu> experiment;  // holds Queue, Rows, Executor and Scripts
     std::array<QPointer<QMenu>, kMenus> menus;
   };
   struct Gate {

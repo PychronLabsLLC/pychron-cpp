@@ -131,7 +131,7 @@ run per hole), check the preview, then Add (Ctrl+Return); new runs start from
 the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
 Measurement tab beside it edits the selected row's plan and its exposed
 parameters (overridden values are bold with a ● badge; Advanced allows any
-value of the plan). Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
+value of the plan). Experiment > Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
 scripts with highlighting, completion, the static check and estimate as you
 type, and Ctrl+click on a gosub to open it. With `--sim`,
 `--sim-speed <x>` runs the whole app on simulated time x times faster than
@@ -382,7 +382,7 @@ message when a run fails and when the queue ends. Email and webhooks need the
 `curl` program; an SMTP password comes from the environment variable named by
 `password_env`, a mail service's key (`provider = "brevo"`, `"resend"` or
 `"postmark"`) from the one named by `api_key_env`. `elctl exp notify --lab .`
-sends a test message on each channel (the experiment window: Executor > Send
+sends a test message on each channel (the experiment window: Experiment > Executor > Send
 Test Notification). The setup guide is `notifications.md`.
 
 ### A Chromium laser

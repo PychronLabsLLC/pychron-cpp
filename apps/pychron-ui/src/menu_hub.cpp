@@ -36,6 +36,12 @@ constexpr std::array<MenuHub::Menu, MenuHub::kMenus> kOrder{
 
 std::size_t slot(MenuHub::Menu menu) { return static_cast<std::size_t>(menu); }
 
+// The menus that are submenus of Experiment (adjacent in kOrder).
+bool under_experiment(MenuHub::Menu menu) {
+  using Menu = MenuHub::Menu;
+  return menu == Menu::Queue || menu == Menu::Rows || menu == Menu::Executor || menu == Menu::Scripts;
+}
+
 constexpr std::array<MenuHub::FileRole, MenuHub::kFileRoles> kFileRoleOrder{
     MenuHub::FileRole::New, MenuHub::FileRole::Open, MenuHub::FileRole::Save, MenuHub::FileRole::SaveAs};
 
@@ -249,9 +255,21 @@ QMenuBar* MenuHub::bar_for(const QWidget* window) const {
 MenuHub::Bar MenuHub::make_bar(QMenuBar* bar) {
   Bar b;
   b.bar = bar;
-  for (const Menu menu : kOrder) b.menus[slot(menu)] = bar->addMenu(title(menu));
+  for (const Menu menu : kOrder) {
+    if (!under_experiment(menu)) {
+      b.menus[slot(menu)] = bar->addMenu(title(menu));
+      continue;
+    }
+    if (b.experiment == nullptr) b.experiment = bar->addMenu(tr("&Experiment"));  // where the first of them comes
+    b.menus[slot(menu)] = b.experiment->addMenu(title(menu));
+  }
   rebuild(b);
   return b;
+}
+
+QMenu* MenuHub::experiment_menu(const QMenuBar* bar) const {
+  const auto it = std::find_if(bars_.begin(), bars_.end(), [&](const Bar& b) { return b.bar == bar; });
+  return it == bars_.end() ? nullptr : it->experiment.data();
 }
 
 QList<QMenu*> MenuHub::menus(const QMenuBar* bar) const {

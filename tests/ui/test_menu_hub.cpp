@@ -55,13 +55,13 @@ struct RemovalWatch : QObject {
   }
 };
 
-// The titles of the menus `w` shows, without mnemonics.
+// The titles of the menus `w`'s bar shows, without mnemonics.
 QStringList shown(QWidget& w) {
   QStringList out;
   QMenuBar* bar = bar_of(w);
   if (bar == nullptr) return out;
-  for (QMenu* m : MenuHub::instance().menus(bar))
-    if (m->menuAction()->isVisible()) out << m->title().remove(QLatin1Char('&'));
+  for (const QAction* a : bar->actions())
+    if (a->isVisible()) out << a->text().remove(QLatin1Char('&'));
   return out;
 }
 
@@ -155,8 +155,7 @@ class TestMenuHub : public QObject {
 
     // The whole bar, from launch: the experiment's menus are there before
     // the experiment window is.
-    const QStringList expected{QStringLiteral("File"), QStringLiteral("Queue"), QStringLiteral("Rows"),
-                               QStringLiteral("Executor"), QStringLiteral("Scripts"), QStringLiteral("View"),
+    const QStringList expected{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("View"),
                                QStringLiteral("Window"), QStringLiteral("Help")};
     QCOMPARE(shown(main), expected);
     QCOMPARE(shown(figure), expected);
@@ -210,20 +209,20 @@ class TestMenuHub : public QObject {
     QStringList shown_now = titles();
     QVERIFY(!shown_now.contains(QStringLiteral("Entry")));  // Fit alone
     QCOMPARE(shown_now.indexOf(QStringLiteral("Window")), shown_now.indexOf(QStringLiteral("Fit")) + 1);
-    QVERIFY(shown_now.indexOf(QStringLiteral("Fit")) > shown_now.indexOf(QStringLiteral("Scripts")));
+    QVERIFY(shown_now.indexOf(QStringLiteral("Fit")) > shown_now.indexOf(QStringLiteral("Experiment")));
 
     MenuHub::instance().contribute(&main, Menu::Entry, {&samples}, Scope::App);
     shown_now = titles();
     const qsizetype entry = shown_now.indexOf(QStringLiteral("Entry"));
     QVERIFY(entry >= 0);
-    QCOMPARE(shown_now.indexOf(QStringLiteral("Scripts")), entry - 1);  // View has nothing without a main window
+    QCOMPARE(shown_now.indexOf(QStringLiteral("Experiment")), entry - 1);  // View has nothing without a main window
     QCOMPARE(shown_now.indexOf(QStringLiteral("Fit")), entry + 1);
     QCOMPARE(shown_now.indexOf(QStringLiteral("Window")), entry + 2);
     QCOMPARE(shown_now.size(), entry + 3);  // nor Help
-    // Among all ten, hidden ones included: ..., View, Entry, Fit, Window, Help.
+    // Among all seven in the bar, hidden ones included: ..., View, Entry, Fit, Window, Help.
     QStringList all;
     for (const QAction* a : bar_of(main)->actions()) all << a->text().remove(QLatin1Char('&'));
-    QCOMPARE(all.mid(5), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
+    QCOMPARE(all.mid(2), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
                                       QStringLiteral("Window"), QStringLiteral("Help")}));
     QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
     // The existing slots keep their values.
@@ -257,7 +256,7 @@ class TestMenuHub : public QObject {
     QVERIFY(entry >= 0);
     QCOMPARE(now.indexOf(QStringLiteral("Fit")), entry + 1);
     QCOMPARE(now.indexOf(QStringLiteral("Window")), entry + 2);
-    QCOMPARE(titles(true).mid(5), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
+    QCOMPARE(titles(true).mid(2), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
                                                QStringLiteral("Window"), QStringLiteral("Help")}));
     QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
     // Every title's mnemonic is its own.
@@ -269,7 +268,7 @@ class TestMenuHub : public QObject {
       QVERIFY2(!mnemonics.contains(letter), qPrintable(a->text()));
       mnemonics << letter;
     }
-    QCOMPARE(mnemonics.size(), 10);
+    QCOMPARE(mnemonics.size(), 7);  // File, Experiment, View, Entry, Fit, Window, Help
   }
 
   void shared_one_bar_serves_every_window() {
@@ -294,8 +293,7 @@ class TestMenuHub : public QObject {
     QVERIFY(main.menuWidget() == nullptr);
     QVERIFY(figure.menuWidget() == nullptr);
     QVERIFY(recall.layout()->menuBar() == nullptr);
-    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Queue"), QStringLiteral("Rows"),
-                               QStringLiteral("Executor"), QStringLiteral("Scripts"), QStringLiteral("View"),
+    QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("View"),
                                QStringLiteral("Window"), QStringLiteral("Help")}));
     QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
     QVERIFY(menu_of(main, Menu::Help)->actions().contains(main.about_action()));
@@ -655,7 +653,7 @@ class TestMenuHub : public QObject {
       QCOMPARE(menu_of(a, menu)->actions(), QList<QAction*>{hub.placeholder(menu)});
     }
     QVERIFY(hub.placeholder(Menu::File) == nullptr);  // only those four
-    QVERIFY(shown(a).contains(QStringLiteral("Queue")));
+    QVERIFY(shown(a).contains(QStringLiteral("Experiment")));
 
     auto* owner = new QMainWindow;
     auto* save = new QAction(QStringLiteral("Save"), owner);
@@ -664,7 +662,7 @@ class TestMenuHub : public QObject {
     QCOMPARE(texts(menu_of(a, Menu::Queue)), QStringList{QStringLiteral("Save")});
     delete owner;
     QTRY_COMPARE(menu_of(a, Menu::Queue)->actions(), QList<QAction*>{hub.placeholder(Menu::Queue)});
-    QVERIFY(shown(a).contains(QStringLiteral("Queue")));
+    QVERIFY(shown(a).contains(QStringLiteral("Experiment")));
     // the greyed line is no command for the palette
     for (const MenuHub::Command& c : hub.commands()) QVERIFY(c.action != hub.placeholder(c.menu));
   }
@@ -739,6 +737,45 @@ class TestMenuHub : public QObject {
     QVERIFY(activate(other));
     save->setEnabled(true);  // and inactive wins over the window's own say-so
     QVERIFY(!save->isEnabled());
+  }
+
+  // Queue, Rows, Executor and Scripts are one level down, under Experiment,
+  // in every bar; what a window contributes to one of them lands there.
+  void experiment_holds_queue_rows_executor_and_scripts_data() {
+    QTest::addColumn<bool>("shared");
+    QTest::newRow("a bar per window") << false;
+    QTest::newRow("one shared bar") << true;
+  }
+  void experiment_holds_queue_rows_executor_and_scripts() {
+    QFETCH(bool, shared);
+    MenuHub& hub = MenuHub::reset(shared ? MenuHub::Bars::Shared : MenuHub::Bars::PerWindow);
+    QMainWindow a;
+    PlainWindow plain;
+    a.show();
+    plain.show();
+    for (QWidget* w : {static_cast<QWidget*>(&a), static_cast<QWidget*>(&plain)}) {
+      QMenuBar* bar = bar_of(*w);
+      QVERIFY(bar != nullptr);
+      QMenu* experiment = hub.experiment_menu(bar);
+      QVERIFY(experiment != nullptr);
+      QCOMPARE(experiment->title(), QStringLiteral("&Experiment"));
+      QCOMPARE(bar->actions().indexOf(experiment->menuAction()), 1);  // after File
+      QCOMPARE(texts(experiment), (QStringList{QStringLiteral("&Queue"), QStringLiteral("&Rows"),
+                                               QStringLiteral("&Executor"), QStringLiteral("S&cripts")}));
+      for (const Menu menu : {Menu::Queue, Menu::Rows, Menu::Executor, Menu::Scripts}) {
+        QVERIFY(experiment->actions().contains(menu_of(*w, menu)->menuAction()));
+        QVERIFY(!bar->actions().contains(menu_of(*w, menu)->menuAction()));  // not in the bar itself
+      }
+      for (const Menu menu : {Menu::File, Menu::View, Menu::Window, Menu::Help})
+        QVERIFY(bar->actions().contains(menu_of(*w, menu)->menuAction()));
+    }
+    QMenuBar foreign;
+    QVERIFY(hub.experiment_menu(&foreign) == nullptr);
+
+    auto* start = new QAction(QStringLiteral("Start"), &a);
+    hub.contribute(&a, Menu::Executor, {start}, Scope::Window);
+    QCOMPARE(texts(menu_of(plain, Menu::Executor)), QStringList{QStringLiteral("Start")});
+    QVERIFY(hub.experiment_menu(bar_of(plain))->actions().at(2)->menu()->actions().contains(start));
   }
 
   // File begins with New, Open, Save and Save As, the hub's own: once,
@@ -910,8 +947,7 @@ class TestMenuHub : public QObject {
         bridge, true, std::make_unique<QSettings>(tmp_.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
     window.show();
     // Window is the hub's own and always there.
-    QCOMPARE(shown(window), (QStringList{QStringLiteral("File"), QStringLiteral("Queue"), QStringLiteral("Rows"),
-                                         QStringLiteral("Executor"), QStringLiteral("Scripts"), QStringLiteral("Window")}));
+    QCOMPARE(shown(window), (QStringList{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("Window")}));
     // Open, Save and Save As are File's, and say what they act on here.
     QCOMPARE(texts(menu_of(window, Menu::Queue)), QStringList{QStringLiteral("&Revalidate")});
     if (activate(window)) {

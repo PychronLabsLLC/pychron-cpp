@@ -149,7 +149,7 @@ With more than one install, name it: `elctl --install argus exp notify`.
 - `failed: email: ...`: find the text in [Troubleshooting](#troubleshooting).
 
 Then test from the program people actually use: in the experiment window,
-**Executor > Send Test Notification**. The result appears in the event list
+**Experiment > Executor > Send Test Notification**. The result appears in the event list
 of the executor pane. This matters because the window may have been started
 without the variable (step 4).
 
@@ -295,7 +295,7 @@ Run `elctl exp notify` and match what follows `failed:`.
 | `cannot run curl` or `curl: option --fail-with-body: is unknown` | curl is missing, or older than 7.76 (2021) | Install a current curl, or set `curl = "<path>"` at the top of the file |
 | `no recipients (the queue has no email)` | `to` is empty and the queue has no `email` | Add `to = [...]` |
 | `sent: email` but nothing arrives | Spam filtering, or a mistyped address | Look in spam. In Brevo, **Transactional > Logs** shows each message and what became of it |
-| Works from `elctl`, not from the window | The window was started without the variable | Step 4. Confirm with **Executor > Send Test Notification** |
+| Works from `elctl`, not from the window | The window was started without the variable | Step 4. Confirm with **Experiment > Executor > Send Test Notification** |
 
 ## Looking after it
 
