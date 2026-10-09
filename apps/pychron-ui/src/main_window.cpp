@@ -148,8 +148,9 @@ QIcon MainWindow::view_icon(View view) {
   return icon;
 }
 
-MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
+MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings> settings, QWidget* parent)
     : QMainWindow(parent),
+      settings_(std::move(settings)),
       bridge_(line),
       canvas_(new CanvasView(bridge_, this)),
       log_(new LogDock(this)),
@@ -166,20 +167,23 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       log_hub_(line.log_hub()) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   setCentralWidget(canvas_);
-  addDockWidget(Qt::BottomDockWidgetArea, log_);
-  addDockWidget(Qt::RightDockWidgetArea, alarms_);
   if (bridge_.cryo_outputs() > 0 || !bridge_.cryo_inputs().empty()) {
     cryo_ = new CryoDock(bridge_, this);
-    addDockWidget(Qt::RightDockWidgetArea, cryo_);
     connect(cryo_, &CryoDock::cryoFailed, log_,
             [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [cryo] ") + message); });
   }
   if (!line.config().heaters.empty()) {
     heaters_ = new HeaterDock(bridge_, this);
-    addDockWidget(Qt::RightDockWidgetArea, heaters_);
     connect(heaters_, &HeaterDock::heaterFailed, log_,
             [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [heater] ") + message); });
   }
+  default_layout();
+  // Per line: which panels there are depends on it.
+  layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(),
+                             QStringLiteral("main_window/%1").arg(QString::fromStdString(line.config().system.name)));
+  layouts_->restore_last();
+  connect(layouts_, &DockLayouts::applyFailed, log_,
+          [this](const QString& message) { log_->append_line(QStringLiteral("WARN [ui] ") + message); });
   statusBar()->addPermanentWidget(health_, 1);
 
   spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));
@@ -291,6 +295,21 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
       log_->append_line(QStringLiteral("ERROR [ui] %1 rejected: %2").arg(name, QString::fromStdString(to_string(r.error()))));
     }
   });
+}
+
+// The panels as installed: the log along the bottom, the rest down the right.
+// Run again by Reset Layout, so it undoes whatever was done to a panel.
+void MainWindow::default_layout() {
+  const auto place = [this](QDockWidget* dock, Qt::DockWidgetArea area) {
+    if (dock == nullptr) return;
+    dock->setFloating(false);
+    addDockWidget(area, dock);
+    dock->show();
+  };
+  place(log_, Qt::BottomDockWidgetArea);
+  place(alarms_, Qt::RightDockWidgetArea);
+  place(cryo_, Qt::RightDockWidgetArea);
+  place(heaters_, Qt::RightDockWidgetArea);
 }
 
 std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
@@ -499,6 +518,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   }
   for (auto& [device, window] : laser_windows_) window->close();
   if (pattern_maker_ != nullptr) pattern_maker_->close();
+  layouts_->save_last();
   QMainWindow::closeEvent(event);
 }
 

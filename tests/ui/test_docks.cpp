@@ -33,6 +33,15 @@ using pychron::ui::LogRecord;
 class TestDocks : public QObject {
   Q_OBJECT
 
+ private:
+  // Log, Alarms, then the cryostat's and the heaters' when the line has them.
+  static QList<QDockWidget*> main_docks(const ui::MainWindow& window) {
+    QList<QDockWidget*> docks{window.log_dock(), window.alarm_dock()};
+    if (window.cryo_dock() != nullptr) docks.append(window.cryo_dock());
+    if (window.heater_dock() != nullptr) docks.append(window.heater_dock());
+    return docks;
+  }
+
  private slots:
   void logDockAppendsFormattedLines() {
     LogDock dock;
@@ -378,6 +387,93 @@ class TestDocks : public QObject {
       QTRY_VERIFY(window.log_dock()->text().contains(QStringLiteral("A rejected")));
       line->stop();
     }
+  }
+
+  // ---- the main window's panel layout ---------------------------------------
+
+  void mainWindowResetShowsClosedPanelsAgain() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const QList<QDockWidget*> docks = main_docks(window);
+    QVERIFY(docks.size() >= 2);
+    window.log_dock()->close();
+    window.alarm_dock()->setFloating(true);
+    for (QDockWidget* dock : docks.mid(2)) dock->close();
+
+    window.dock_layouts()->reset();
+    for (const QDockWidget* dock : docks) {
+      QVERIFY2(dock->isVisible(), qPrintable(dock->objectName()));
+      QVERIFY2(!dock->isFloating(), qPrintable(dock->objectName()));
+    }
+    QCOMPARE(window.dockWidgetArea(window.log_dock()), Qt::BottomDockWidgetArea);
+    for (QDockWidget* dock : docks.mid(1)) QCOMPARE(window.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+  }
+
+  void mainWindowKeepsItsLayoutAcrossInstances() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    const QString group = QStringLiteral("main_window/%1").arg(QString::fromStdString(line->config().system.name));
+    {
+      ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.log_dock()->close();
+      window.close();
+    }
+    {
+      const QSettings settings(file, QSettings::IniFormat);
+      QVERIFY(settings.contains(group + QStringLiteral("/state")));
+      QVERIFY(settings.contains(group + QStringLiteral("/geometry")));
+    }
+    ui::MainWindow again(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(!again.log_dock()->isVisible());
+    QVERIFY(again.alarm_dock()->isVisible());
+  }
+
+  void mainWindowWithoutSettingsKeepsNothing() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    QVERIFY(!window.dock_layouts()->can_save());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.log_dock()->close();
+    window.close();
+    ui::MainWindow again(*line);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(again.log_dock()->isVisible());
+  }
+
+  void mainWindowLogsAnArrangementThatCannotBeApplied() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    {
+      QSettings settings(file, QSettings::IniFormat);
+      settings.setValue(QStringLiteral("main_window/%1/arrangements/bad/state")
+                            .arg(QString::fromStdString(line->config().system.name)),
+                        QByteArray("zz"));
+    }
+    ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    QVERIFY(!window.dock_layouts()->apply(QStringLiteral("bad")));
+    window.log_dock()->set_min_level(LogLevel::Warn);
+    QTRY_VERIFY(window.log_dock()->text().contains(QString::fromUtf8("arrangement “bad” not applied")));
+  }
+
+  void mainWindowPanelsListItsClosableDocks() {
+    auto line = ui::test::make_example_line();
+    const ui::MainWindow window(*line);
+    QStringList want;
+    for (const QDockWidget* dock : main_docks(window)) want.append(dock->windowTitle());
+    QStringList got;
+    for (const QAction* action : window.dock_layouts()->panel_actions()) got.append(action->text());
+    QCOMPARE(got, want);
+    QVERIFY(got.size() >= 2);
   }
 
   void spectrometerActionDisabledWithoutSpectrometer() {

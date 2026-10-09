@@ -471,7 +471,7 @@ int main(int argc, char** argv) {
   {
     // The window (and its CoreBridge) subscribes before start() so the
     // start-up Snapshot paints the canvas before the first scan.
-    pychron::ui::MainWindow window(**line);
+    pychron::ui::MainWindow window(**line, std::make_unique<QSettings>());
     window.resize(1200, 850);
     window.apply_preferences(pychron::ui::load_preferences(QSettings()));
     // Preferences keeps the line's logging and metrics beside this file. Not

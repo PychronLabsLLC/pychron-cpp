@@ -1,8 +1,10 @@
 #pragma once
 
 // M1 status/control window (spec section 10.3): canvas in the center, log and
-// alarm docks, per-transport health chips in the status bar. Owns the
-// CoreBridge; the ExtractionLine must outlive the window.
+// alarm docks (and the cryostat's and the heaters', when the line has them),
+// per-transport health chips in the status bar. Owns the CoreBridge; the
+// ExtractionLine must outlive the window. Where the docks are is kept per
+// line (dock_layouts.hpp).
 
 #include <filesystem>
 #include <functional>
@@ -23,6 +25,7 @@
 #include "brand.hpp"
 #include "data_browser_window.hpp"
 #include "data_workspace.hpp"
+#include "dock_layouts.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
 #include "cryo_dock.hpp"
@@ -46,7 +49,10 @@ class MainWindow : public QMainWindow {
   Q_OBJECT
 
  public:
-  explicit MainWindow(systems::ExtractionLine& line, QWidget* parent = nullptr);
+  // `settings` keeps the panel layout between sessions, per line, and the
+  // layouts saved under a name; with none (the default) nothing is kept.
+  explicit MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings> settings = nullptr,
+                      QWidget* parent = nullptr);
 
   // The glyph beside each View menu item: a line drawing, a mask icon the
   // platform colours to suit its menus.
@@ -64,6 +70,8 @@ class MainWindow : public QMainWindow {
   // Null unless the line has [[heaters]].
   HeaterDock* heater_dock() const noexcept { return heaters_; }
   HealthBar* health_bar() const noexcept { return health_; }
+  // Where the panels are: the factory layout, the last one, the named ones.
+  DockLayouts* dock_layouts() const noexcept { return layouts_; }
 
   // Enables View > Spectrometer for `bridge` (null disables it and closes
   // the window). The bridge must outlive the main window or be cleared first.
@@ -144,7 +152,9 @@ class MainWindow : public QMainWindow {
   // this window when none of the application's is active.
   QWidget* preferences_parent();
   std::unique_ptr<QSettings> spectrometer_settings() const;
+  void default_layout();
 
+  std::unique_ptr<QSettings> settings_;  // null: the layout is not kept
   CoreBridge bridge_;
   CanvasView* canvas_;
   LogDock* log_;
@@ -152,6 +162,7 @@ class MainWindow : public QMainWindow {
   CryoDock* cryo_ = nullptr;
   HeaterDock* heaters_ = nullptr;
   HealthBar* health_;
+  DockLayouts* layouts_ = nullptr;
   QAction* spectrometer_action_;
   SpectrometerBridge* spectrometer_ = nullptr;
   bool simulation_ = false;
