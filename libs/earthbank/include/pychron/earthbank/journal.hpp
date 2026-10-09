@@ -34,7 +34,21 @@
 // four digits): a measurement has no field that tells it from the others of
 // its aliquot, and the hash fixes the order. File names are the host and the
 // sample percent-encoded (journal_file), so that a name never reaches outside
-// the directory or collides with another name.
+// the directory or collides with another name. ASCII upper-case letters are
+// escaped too, so that `abc` and `ABC` are two files on a file system that
+// ignores case; every other letter outside ASCII is escaped byte by byte, so a
+// file name is pure ASCII and a file system's own Unicode normalisation or
+// case folding cannot merge two names (the encoding is injective even under
+// case folding: the only upper case in it is the hex of an escape). If two
+// names were ever to share a file, the hash in it differs and the second is
+// refused, never mixed in.
+//
+// One upload works on a sample's journal at a time. lock_journal takes an
+// exclusive advisory lock on `<journal>.lock` (a name no journal has) before
+// the journal is read and holds it until the sample's run ends; the operating
+// system lets it go if the process dies, so a lock file left behind blocks
+// nobody. A second upload (another process, or another call) is told the
+// sample is busy and sends nothing for it.
 //
 // A file is replaced whole (written beside, flushed to the disk, renamed,
 // the directory flushed), so a reader finds the journal as it was before the
@@ -49,6 +63,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "pychron/core/error.hpp"
 
@@ -83,5 +98,31 @@ Result<std::optional<Journal>> load_journal(const std::filesystem::path& file);
 
 // Atomic: the file is the old journal or the new one. Makes the directory.
 Result<void> save_journal(const Journal& journal, const std::filesystem::path& file);
+
+// The `code` of the error lock_journal gives when another holder has the lock.
+inline constexpr std::string_view kJournalBusy = "earthbank_journal_busy";
+
+// Held while it lives; move-only. Releasing it (or the process ending) frees
+// the lock; the lock file stays, empty.
+class JournalLock {
+ public:
+  JournalLock() = default;
+  JournalLock(JournalLock&& other) noexcept : handle_(std::exchange(other.handle_, -1)) {}
+  JournalLock& operator=(JournalLock&& other) noexcept;
+  JournalLock(const JournalLock&) = delete;
+  JournalLock& operator=(const JournalLock&) = delete;
+  ~JournalLock() { release(); }
+
+  bool held() const { return handle_ != -1; }
+  void release();
+
+ private:
+  friend Result<JournalLock> lock_journal(const std::filesystem::path&);
+  std::intptr_t handle_ = -1;
+};
+
+// Without waiting. Held by someone else: a `Protocol` error with code
+// kJournalBusy. Makes the directory.
+Result<JournalLock> lock_journal(const std::filesystem::path& journal);
 
 }  // namespace pychron::earthbank

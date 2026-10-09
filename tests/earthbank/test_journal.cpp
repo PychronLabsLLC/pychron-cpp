@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -69,7 +70,7 @@ TEST(Journal, RoundTripAndAtomicSave) {
   EXPECT_EQ(**back, second);
   std::set<std::string> names;
   for (const auto& entry : fs::directory_iterator(file.parent_path())) names.insert(entry.path().filename().string());
-  EXPECT_EQ(names, std::set<std::string>{"S-1.json"});
+  EXPECT_EQ(names, std::set<std::string>{"%53-1.json"});
 }
 
 TEST(Journal, TheFileIsTheDocumentedJson) {
@@ -91,16 +92,17 @@ TEST(Journal, TheFileIsTheDocumentedJson) {
 TEST(Journal, FileNameEncodesTheSample) {
   const fs::path dir = "journals";
   const auto name = [&](std::string_view sample) { return journal_file(dir, "earthbank.test", 7, sample).filename().string(); };
-  EXPECT_EQ(name("S-1_a.b"), "S-1_a.b.json");
-  EXPECT_EQ(name("A/B"), "A%2FB.json");
-  EXPECT_EQ(name("Caf\xC3\xA9"), "Caf%C3%A9.json");
+  EXPECT_EQ(name("s-1_a.b"), "s-1_a.b.json");
+  EXPECT_EQ(name("S-1"), "%53-1.json") << "upper case is escaped";
+  EXPECT_EQ(name("A/B"), "%41%2F%42.json");
+  EXPECT_EQ(name("Caf\xC3\xA9"), "%43af%C3%A9.json");
   EXPECT_EQ(name(".."), "%2E..json");
   EXPECT_EQ(name("."), "%2E.json");
   EXPECT_EQ(name("a b&c<d>\"e'f%g+h\\i:j"), "a%20b%26c%3Cd%3E%22e%27f%25g%2Bh%5Ci%3Aj.json");
   EXPECT_EQ(name(""), "%.json");
 
   // Where it goes: <dir>/<host>/<package>/<sample>.json, and never outside.
-  EXPECT_EQ(journal_file(dir, "127.0.0.1:8080", 7, "S").generic_string(), "journals/127.0.0.1%3A8080/7/S.json");
+  EXPECT_EQ(journal_file(dir, "127.0.0.1:8080", 7, "S").generic_string(), "journals/127.0.0.1%3A8080/7/%53.json");
   for (const std::string_view hostile : {"../../x", "/etc/passwd", "..", "a/../../b", "C:\\x"}) {
     const fs::path file = journal_file(dir, hostile, 7, hostile);
     EXPECT_EQ(file.lexically_normal().lexically_relative(dir).begin()->string() != "..", true) << file;
@@ -110,6 +112,22 @@ TEST(Journal, FileNameEncodesTheSample) {
   // Different names are different files, and a name that looks encoded is not
   // taken for the name it would encode.
   EXPECT_NE(name("A/B"), name("A%2FB"));
+}
+
+TEST(Journal, NamesThatDifferOnlyByCaseAreDifferentFilesEvenWhereCaseIsIgnored) {
+  const fs::path dir = "journals";
+  const auto folded = [&](std::string_view sample) {
+    std::string name = journal_file(dir, "h", 1, sample).filename().string();
+    for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return name;
+  };
+  EXPECT_NE(folded("abc"), folded("ABC"));
+  EXPECT_NE(folded("Abc"), folded("aBc"));
+  // Outside ASCII a name is escaped byte by byte, so the file name is ASCII and neither case folding nor
+  // a normalisation of Unicode by the file system can join e-acute and E-acute, or NFC and NFD.
+  EXPECT_NE(folded("\xC3\xA9"), folded("\xC3\x89"));
+  EXPECT_NE(folded("\xC3\xA9"), folded("e\xCC\x81"));
+  for (const unsigned char c : journal_file(dir, "h", 1, "\xC3\x89 e\xCC\x81").filename().string()) EXPECT_LT(c, 0x80);
 }
 
 TEST(Journal, ALongNameIsCutAndKeepsItsOwnHash) {
@@ -166,6 +184,48 @@ TEST(Journal, AFileLeftByACrashedSaveIsIgnored) {
   Journal next = sample_journal();
   next.in_doubt.reset();
   ASSERT_TRUE(save_journal(next, file).has_value());
+}
+
+TEST(Journal, OnlyOneHolderHasTheLock) {
+  TempDir dir;
+  const fs::path file = journal_file(dir.path(), "earthbank.test", 1, "S-1");
+  auto first = lock_journal(file);
+  ASSERT_TRUE(first.has_value()) << to_string(first.error());
+  EXPECT_TRUE(first->held());
+  const auto second = lock_journal(file);
+  ASSERT_FALSE(second.has_value());
+  EXPECT_EQ(second.error().code, std::string(kJournalBusy));
+  // Another sample is not in its way.
+  EXPECT_TRUE(lock_journal(journal_file(dir.path(), "earthbank.test", 1, "S-2")).has_value());
+  // Let go, and it is free: by release, by destruction, by moving over.
+  first->release();
+  EXPECT_FALSE(first->held());
+  {
+    auto again = lock_journal(file);
+    ASSERT_TRUE(again.has_value());
+    EXPECT_FALSE(lock_journal(file).has_value());
+  }
+  auto last = lock_journal(file);
+  ASSERT_TRUE(last.has_value());
+  JournalLock moved = std::move(*last);
+  EXPECT_FALSE(lock_journal(file).has_value()) << "a moved lock is still held";
+}
+
+TEST(Journal, TheLockFileCannotBeAJournalAndAStaleOneBlocksNobody) {
+  TempDir dir;
+  const fs::path file = journal_file(dir.path(), "earthbank.test", 1, "S-1");
+  fs::path lock_file = file;
+  lock_file += ".lock";
+  EXPECT_NE(lock_file.extension(), ".json");
+  // What a process that died holding it leaves: the file, and no lock.
+  spit(lock_file, "left by a dead process");
+  const auto lock = lock_journal(file);
+  EXPECT_TRUE(lock.has_value()) << (lock ? "" : to_string(lock.error()));
+  // And holding it changes nothing about reading and saving the journal.
+  Journal j = sample_journal();
+  ASSERT_TRUE(save_journal(j, file).has_value());
+  const auto back = load_journal(file);
+  ASSERT_TRUE(back.has_value() && back->has_value());
 }
 
 TEST(Journal, EmptyMeansNothingIsRecorded) {

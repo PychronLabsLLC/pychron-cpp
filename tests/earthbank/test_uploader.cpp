@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -399,7 +400,7 @@ TEST(Uploader, SamplesWithAwkwardNamesGetJournalsInsideTheDirectory) {
   ASSERT_EQ(rig.run_one(good_submission(name)).status, SampleStatus::Complete);
   std::size_t found = 0;
   for (const auto& entry : fs::recursive_directory_iterator(rig.dir.path())) {
-    if (!entry.is_regular_file()) continue;
+    if (!entry.is_regular_file() || entry.path().extension() == ".lock") continue;
     ++found;
     EXPECT_EQ(entry.path().extension(), ".json");
     const fs::path relative = entry.path().lexically_relative(rig.dir.path());
@@ -848,7 +849,7 @@ TEST(Uploader, NewDatapointStartsAfresh) {
     if (name.ends_with(".superseded.json")) aside.push_back(entry.path());
   }
   ASSERT_EQ(aside.size(), 1u);
-  EXPECT_TRUE(aside[0].filename().string().starts_with("S-1.")) << aside[0];
+  EXPECT_TRUE(aside[0].filename().string().starts_with(rig.journal_path("S-1").stem().string() + ".")) << aside[0];
   std::ifstream in(aside[0], std::ios::binary);
   EXPECT_EQ(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()), old_text);
   EXPECT_TRUE(any_has(report.messages, "superseded")) << ::testing::PrintToString(report.messages);
@@ -898,9 +899,133 @@ TEST(Uploader, AJournalThatCannotBeReadRefusesTheSample) {
   EXPECT_EQ(report.status, SampleStatus::Refused);
   EXPECT_EQ(rig.posts(), sent) << "a journal that cannot be read is not an empty one";
   ASSERT_FALSE(report.messages.empty());
-  EXPECT_TRUE(has(report.messages.front(), "S-1.json")) << report.messages.front();
+  EXPECT_TRUE(has(report.messages.front(), rig.journal_path("S-1").filename().string())) << report.messages.front();
   rig.options.new_datapoint = true;
   EXPECT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Refused) << "new_datapoint does not paper over it";
+}
+
+// ---- Two uploads at once, and names that differ by case ---------------------
+
+TEST(Uploader, ASampleAnotherUploadHoldsIsRefusedAndNothingIsSentForIt) {
+  Rig rig;
+  auto held = lock_journal(rig.journal_path("S-1"));
+  ASSERT_TRUE(held.has_value());
+  const auto report = rig.run({good_submission("S-1"), good_submission("S-2")});
+  ASSERT_TRUE(report.has_value());
+  EXPECT_EQ(report->samples[0].status, SampleStatus::Refused);
+  ASSERT_FALSE(report->samples[0].messages.empty());
+  EXPECT_TRUE(has(report->samples[0].messages.front(), "S-1")) << report->samples[0].messages.front();
+  EXPECT_TRUE(has(report->samples[0].messages.front(), "another upload")) << report->samples[0].messages.front();
+  EXPECT_EQ(report->samples[1].status, SampleStatus::Complete) << "the other samples go on";
+  const Store store = rig.bank.store();
+  ASSERT_EQ(store.samples.size(), 1u);
+  EXPECT_EQ(store.samples[0].body["sampleDTO"]["name"], "S-2");
+  EXPECT_EQ(rig.bank.count("GET", "/api/core/sample-with-locations"), 1u) << "only S-2 was searched for";
+
+  // A second uploader in the same directory while the first is mid-run: asked
+  // from inside the first's progress callback.
+  held->release();
+  Rig second_service;
+  second_service.options.journal_dir = rig.options.journal_dir;
+  std::optional<SampleStatus> inner;
+  std::size_t inner_requests = 0;
+  rig.options.on_event = [&](const UploadEvent& e) {
+    if (e.record != "sample" || inner) return;
+    const std::size_t before = second_service.bank.requests().size();
+    inner = second_service.run_one(good_submission("S-1")).status;
+    inner_requests = second_service.bank.requests().size() - before;
+  };
+  EXPECT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
+  EXPECT_EQ(inner, SampleStatus::Refused);
+  EXPECT_EQ(second_service.bank.count("POST", "/api/core/"), 0u);
+  EXPECT_EQ(second_service.posts(), 0u);
+  EXPECT_EQ(second_service.bank.count("GET", "/api/core/sample-with-locations"), 0u);
+  (void)inner_requests;
+  EXPECT_EQ(rig.bank.store().samples.size(), 2u) << "S-2 earlier, S-1 now: never two of one";
+}
+
+TEST(Uploader, TheLockIsReleasedWhenTheRunEnds) {
+  const auto free = [](Rig& rig, std::string_view sample) {
+    return lock_journal(rig.journal_path(sample)).has_value();
+  };
+  {
+    Rig rig;
+    ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
+    EXPECT_TRUE(free(rig, "S-1")) << "after a normal run";
+  }
+  {
+    Rig rig;
+    rig.bank.fail_next("POST", "/api/core/sample-with-locations", 400, std::string(kRefusal));
+    ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Stopped);
+    EXPECT_TRUE(free(rig, "S-1")) << "after a failure";
+  }
+  {
+    Rig rig;
+    rig.bank.drop_next("POST", "/api/arar/ArArAliquot");
+    ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::InDoubt);
+    EXPECT_TRUE(free(rig, "S-1")) << "after a doubt";
+  }
+  {
+    Rig rig;
+    rig.options.cancelled = [] { return true; };
+    ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Stopped);
+    EXPECT_TRUE(free(rig, "S-1")) << "after a cancel";
+  }
+  {
+    Rig rig;
+    ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
+    Submission changed = good_submission("S-1");
+    changed.age_summary.age = 31.0;
+    ASSERT_EQ(rig.run_one(changed).status, SampleStatus::Refused);
+    EXPECT_TRUE(free(rig, "S-1")) << "after a refusal";
+  }
+  {
+    Rig rig;
+    const auto bad = rig.run({good_submission("S-1")});
+    ASSERT_TRUE(bad.has_value());
+    rig.options.data_package_id = 0;
+    EXPECT_FALSE(rig.run({good_submission("S-1")}).has_value());
+    EXPECT_TRUE(free(rig, "S-1")) << "after an error that sent nothing";
+  }
+}
+
+TEST(Uploader, ALockFileLeftByADeadProcessBlocksNothing) {
+  Rig rig;
+  fs::path stale = rig.journal_path("S-1");
+  stale += ".lock";
+  fs::create_directories(stale.parent_path());
+  std::ofstream(stale) << "pid 99999";
+  EXPECT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
+}
+
+TEST(Uploader, SamplesDifferingOnlyByCaseHaveTheirOwnJournals) {
+  Rig rig;
+  const auto report = rig.run({good_submission("abc"), good_submission("ABC")});
+  ASSERT_TRUE(report.has_value());
+  EXPECT_EQ(report->samples[0].status, SampleStatus::Complete);
+  EXPECT_EQ(report->samples[1].status, SampleStatus::Complete);
+  EXPECT_EQ(rig.bank.store().samples.size(), 2u);
+  std::set<std::string> folded;
+  for (const auto& entry : fs::directory_iterator(rig.journal_path("abc").parent_path())) {
+    std::string name = entry.path().filename().string();
+    if (!name.ends_with(".json")) continue;
+    for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    folded.insert(name);
+  }
+  EXPECT_EQ(folded.size(), 2u);
+  EXPECT_NE(rig.journal_path("abc"), rig.journal_path("ABC"));
+}
+
+TEST(Uploader, AResolutionNotNeededForTheSampleIsSaidSo) {
+  Rig rig;
+  rig.bank.drop_next("POST", "/api/core/sample-with-locations");
+  ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::InDoubt);
+  rig.options.resolve_in_doubt = "not-written";
+  const SampleReport report = rig.run_one(good_submission("S-1"));
+  EXPECT_EQ(report.status, SampleStatus::Complete);
+  EXPECT_TRUE(any_has(report.messages, "resolve_in_doubt was not used")) << ::testing::PrintToString(report.messages);
+  EXPECT_TRUE(any_has(report.messages, "searching")) << ::testing::PrintToString(report.messages);
+  EXPECT_EQ(rig.bank.store().samples.size(), 1u) << "and the search, not the value, settled it";
 }
 
 // ---- Cancel and progress -----------------------------------------------------

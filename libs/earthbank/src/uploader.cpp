@@ -264,12 +264,12 @@ class SampleRun {
   std::optional<SampleStatus> forced_;
   std::size_t done_ = 0, total_ = 0;
   bool stopped_ = false;
+  JournalLock lock_;  // released with the run, on every path
 };
 
 // Opens the sample's journal: this one's, a fresh one, or a refusal.
 std::optional<SampleReport> SampleRun::open_journal() {
   const std::string hash = content_hash(sub_);
-  path_ = journal_file(env_.options.journal_dir, env_.host, env_.options.data_package_id, name_);
   auto loaded = load_journal(path_);
   if (!loaded) return refused(loaded.error().what);
   journal_ = Journal{};
@@ -319,6 +319,11 @@ bool SampleRun::settle_doubt() {
     // The search that comes next is how a sample is settled; whatever it finds
     // or does not is recorded then.
     journal_.in_doubt.reset();
+    if (env_.resolution) {
+      report_.messages.push_back("The value given for resolve_in_doubt was not used for the sample " + name_ +
+                                 ": it is the sample that is in doubt, and that is settled by searching the data package "
+                                 "for a sample of that name.");
+    }
     return true;
   }
   const auto step = std::find_if(steps_.begin(), steps_.end(), [&](const Step& s) { return s.label == label; });
@@ -600,6 +605,16 @@ SampleReport SampleRun::run() {
       }
     }
   }
+  // Alone with the journal from before it is read until this run ends.
+  path_ = journal_file(env_.options.journal_dir, env_.host, env_.options.data_package_id, name_);
+  Result<JournalLock> lock = lock_journal(path_);
+  if (!lock) {
+    return refused(lock.error().code == kJournalBusy
+                       ? name_ + ": another upload is working on this sample (its journal is locked), so nothing was sent for it. "
+                                 "Wait for that upload to end, then run this one again."
+                       : name_ + ": " + lock.error().what + "; nothing was sent for it.");
+  }
+  lock_ = std::move(*lock);
   if (auto refusal = open_journal()) return std::move(*refusal);
   steps_ = plan(sub_);
   if (env_.options.allow_unresolved) {

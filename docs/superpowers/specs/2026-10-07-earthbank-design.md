@@ -628,8 +628,9 @@ Four rules that differ from legacy, all because there is no sandbox:
   resolver) once there is a login or a network.
 - **Journal.** One file per host, package and sample,
   `<config>/earthbank/journal/<host>/<package id>/<sample>.json`, the host and
-  the sample percent-encoded (anything but ASCII letters, digits, `-`, `_`,
-  `.`; a name too long for a file system is cut and ends in a hash). It holds
+  the sample percent-encoded (anything but ASCII lower-case letters, digits, `-`,
+  `_`, `.`: upper case is escaped too, so names that differ by case are two
+  files on any file system; a name too long for a file system is cut and ends in a hash). It holds
   the ids the service returned (`sampleId`, `arArDataPointId`, aliquots by
   name, measurements by their place in the submission, `ageCalcId`,
   `ageSummaryId`), a hash of the submission and `inDoubt`. The file is
@@ -641,6 +642,16 @@ Four rules that differ from legacy, all because there is no sandbox:
   since the service offers no update; a journal that records nothing has
   nothing to protect and is replaced without that. Legacy re-posted every
   sub-record on a retry.
+- **One upload per sample at a time.** Before a sample's journal is read, the
+  upload takes an exclusive advisory lock on `<journal>.lock` (`flock` on
+  POSIX, `LockFileEx` on Windows) and holds it until that sample's run ends,
+  on every path. The operating system drops it if the process dies, so a lock
+  file left behind blocks nobody. If another upload (another process, the UI
+  and the CLI, or another call) holds it, that sample is refused with a
+  sentence saying so and nothing is sent or searched for it; the other
+  samples go on. Without this, two runs would both read "not done", both
+  POST, and a record would exist twice.
+
 - **Say who and where.** Before the first write the caller is given the
   account's login, the package's name and the count of records, and must
   confirm (`--yes` on the command line, a prompt in the UI).

@@ -18,8 +18,10 @@
 
 #ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -37,8 +39,10 @@ constexpr int kVersion = 1;
 constexpr std::size_t kLongest = 150;  // of an encoded name, under any file system's limit
 constexpr std::size_t kKept = 100;     // of a longer one, before its hash
 
+// Upper case is not plain: names that differ only by case are different files
+// on a file system that ignores it.
 bool plain(char c) {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+  return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
 }
 
 std::string encoded(std::string_view text) {
@@ -212,6 +216,79 @@ Result<std::optional<Journal>> load_journal(const fs::path& file) {
   if (!versioned) return fail(bad(where, "it has no 'version'"));
   if (out.hash.empty()) return fail(bad(where, "it has no 'hash'"));
   return std::optional<Journal>(std::move(out));
+}
+
+void JournalLock::release() {
+  if (handle_ == -1) return;
+#ifdef _WIN32
+  // Closing the handle drops the lock.
+  CloseHandle(reinterpret_cast<HANDLE>(handle_));
+#else
+  ::close(static_cast<int>(handle_));  // closing the descriptor drops the flock
+#endif
+  handle_ = -1;
+}
+
+JournalLock& JournalLock::operator=(JournalLock&& other) noexcept {
+  if (this != &other) {
+    release();
+    handle_ = std::exchange(other.handle_, -1);
+  }
+  return *this;
+}
+
+Result<JournalLock> lock_journal(const fs::path& journal) {
+  if (journal.empty()) return fail(ErrorKind::Config, "earthbank journal: no file was named");
+  fs::path file = journal;
+  file += ".lock";
+  const std::string where = utf8(file);
+  std::error_code ec;
+  if (file.has_parent_path()) {
+    fs::create_directories(file.parent_path(), ec);
+    if (ec) return fail(ErrorKind::Io, "earthbank journal " + where + ": cannot make its directory: " + ec.message());
+  }
+  const auto busy = [&] {
+    Error error{ErrorKind::Protocol, "earthbank journal " + where + ": another upload holds it", ""};
+    error.code = std::string(kJournalBusy);
+    return fail(std::move(error));
+  };
+  JournalLock lock;
+#ifdef _WIN32
+  // Not built or run by the authors of this code; written from the Win32
+  // documentation. Shared read/write so that another opener reaches LockFileEx
+  // and is refused there, not at CreateFile.
+  HANDLE handle = CreateFileW(file.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (handle == INVALID_HANDLE_VALUE) {
+    return fail(ErrorKind::Io, "earthbank journal " + where + ": the lock file cannot be opened (error " +
+                                   std::to_string(GetLastError()) + ")");
+  }
+  OVERLAPPED region{};
+  if (!LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &region)) {
+    const DWORD why = GetLastError();
+    CloseHandle(handle);
+    if (why == ERROR_LOCK_VIOLATION || why == ERROR_IO_PENDING) return busy();
+    return fail(ErrorKind::Io, "earthbank journal " + where + ": the lock failed (error " + std::to_string(why) + ")");
+  }
+  lock.handle_ = reinterpret_cast<std::intptr_t>(handle);
+#else
+  const int fd = ::open(file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (fd < 0) {
+    return fail(ErrorKind::Io, "earthbank journal " + where + ": the lock file cannot be opened: " +
+                                   std::error_code(errno, std::generic_category()).message());
+  }
+  // flock belongs to the open file description, so a second open in this
+  // process is refused as well as one in another process.
+  if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    const int why = errno;
+    ::close(fd);
+    if (why == EWOULDBLOCK || why == EAGAIN) return busy();
+    return fail(ErrorKind::Io, "earthbank journal " + where + ": the lock failed: " +
+                                   std::error_code(why, std::generic_category()).message());
+  }
+  lock.handle_ = fd;
+#endif
+  return lock;
 }
 
 Result<void> save_journal(const Journal& journal, const fs::path& file) {
