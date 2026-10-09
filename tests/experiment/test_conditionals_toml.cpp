@@ -29,6 +29,7 @@ void expect_same(const ConditionalSet& a, const ConditionalSet& b) {
     EXPECT_EQ(x.window, y.window);
     EXPECT_EQ(x.mapper, y.mapper);
     EXPECT_EQ(x.analysis_types, y.analysis_types);
+    // NOLINTNEXTLINE(bugprone-suspicious-memory-comparison): bit for bit is the point: a NaN must come back the same NaN
     EXPECT_EQ(std::memcmp(&x.abbreviated_count_ratio, &y.abbreviated_count_ratio, sizeof(double)), 0);
     EXPECT_EQ(x.action, y.action);
     EXPECT_EQ(x.resume, y.resume);

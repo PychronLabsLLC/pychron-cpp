@@ -139,6 +139,7 @@ Result<Bytes> base64_decode(std::string_view text) {
         v[k] = 0;
         continue;
       }
+      // NOLINTNEXTLINE(bugprone-assignment-in-if-condition): decoded and tested in one step, on purpose
       if (pad > 0 || (v[k] = b64_value(c)) < 0) return fail(ErrorKind::Protocol, "base64: invalid character");
     }
     const std::uint32_t n = std::uint32_t(v[0]) << 18 | std::uint32_t(v[1]) << 12 | std::uint32_t(v[2]) << 6 |

@@ -177,6 +177,7 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   }
   // A labelled manual valve keeps its label clear of the wheel in the corner.
   const bool under_wheel = kind_ == canvas::ValveKind::Manual && !label_.isEmpty();
+  // NOLINTNEXTLINE(bugprone-narrowing-conversions): Qt's alignment flags, which drawText takes as an int
   painter->drawText(body.adjusted(0, 0, 0, -1), under_wheel ? Qt::AlignHCenter | Qt::AlignBottom : Qt::AlignCenter,
                     shown_name(QFontMetricsF(painter->font())));
 

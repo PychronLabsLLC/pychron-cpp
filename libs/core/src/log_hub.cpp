@@ -343,6 +343,7 @@ struct CrashState {
   bool installed = false;
 };
 CrashState& crash_state() {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): never freed, on purpose: it must outlive every static
   static auto* state = new CrashState;
   return *state;
 }

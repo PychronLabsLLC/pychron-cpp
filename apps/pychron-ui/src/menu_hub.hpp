@@ -50,6 +50,7 @@ class QWidget;
 
 namespace pychron::ui {
 
+// NOLINTNEXTLINE(cppcoreguidelines-virtual-class-destructor): one instance, destroyed only by itself
 class MenuHub : public QObject {
   Q_OBJECT
 

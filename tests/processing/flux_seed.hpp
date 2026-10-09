@@ -164,9 +164,11 @@ inline Result<void> seed_monitor_analyses(persistence::IStore& store, SeededLeve
 inline Result<SeededLevel> seed_flux_level(persistence::IStore& store, const persistence::Actor& actor,
                                            const std::string& monitor_sample = "FC-2", int analysed = 8) {
   namespace ps = persistence;
+// NOLINTBEGIN(bugprone-macro-parentheses): `var` is the name being declared
 #define PYCHRON_SEED_TRY(var, expr) \
   auto var = (expr);                \
   if (!var) return fail(var.error())
+// NOLINTEND(bugprone-macro-parentheses)
 
   SeededLevel out;
   PYCHRON_SEED_TRY(acq, store.register_client({"acq-1", "acquisition", std::nullopt, "test"}));

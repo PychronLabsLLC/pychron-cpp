@@ -153,31 +153,43 @@ Then bucket 1b, in this order:
   the one that is real, and says so. Off in tests.
 - [x] **3. `bugprone-empty-catch` (20).** Each swallows on purpose and says so
   on its line.
-- [ ] **4. Number handling (56).** Done but for the loops:
-  `unchecked-string-to-number-conversion` (13). Three were defects, fixed with
-  tests: `elctl export` options and `elctl flux history`'s hole took a number
-  too large for an `int` as another number (`4294967305` was hole 9), and the
-  legacy line importer made a window of 0 from a size that is not a number.
-  The other seven say on their line why they are safe. The two widening
-  checks (25) are off: every product found was of small constants or a small
-  matrix index. `init-variables` and `pro-type-member-init` (26): every local
-  and member found starts with a value now. Still to do: `float-loop-counter`
-  (6, and the five from 1a) counts in integers.
+- [x] **4. Number handling (56).** `unchecked-string-to-number-conversion`
+  (13): three were defects, fixed with tests. `elctl export` options and
+  `elctl flux history`'s hole took a number too large for an `int` as another
+  number (`4294967305` was hole 9), and the legacy line importer made a
+  window of the wrong size from a size that is not a number. The other seven
+  say on their line why they are safe. The two widening checks (25) are off:
+  every product found was of small constants or a small matrix index.
+  `init-variables` and `pro-type-member-init` (26): every local and member
+  found starts with a value now. Loops counted in `double` (11): four count in
+  whole numbers now, one is a ratio and says so.
 - [x] **5. `bugprone-nondeterministic-pointer-iteration-order` (7).** One
   defect, fixed with a test: `switch_manager.cpp` removed duplicate interlock
   partners by sorting their addresses, so which open partner a refusal named
   could differ from run to run. The other six sort by a field through a
   comparator and say so on their line.
-- [ ] **6. `concurrency-mt-unsafe` (30, 21 in tests).** `getenv`, `localtime`,
-  `strerror` and the like. `libs/core/.../env.hpp` is the one place that
-  should call `getenv`; route the rest through it or use the `_r` forms.
-- [ ] **7. Casts and forwarding (71).** `pro-type-static-cast-downcast` (15),
-  `pro-type-reinterpret-cast` (13), `pro-type-const-cast` (4),
-  `missing-std-forward` (27), `move-forwarding-reference` (2,
-  `serialize.cpp:729,766`), `misleading-capture-default-by-value` (9, all in
-  `options_editor.cpp`: `[=]` capturing `this`).
-- [ ] **8. The rest of 1b** (about 60 across a dozen checks): read each.
+- [x] **6. `concurrency-mt-unsafe` (30).** One fixed: `process.cpp` built a
+  message with `strerror`, which may share a buffer between threads. Five
+  say why they are safe (`lgamma`'s unread global, the one read of the
+  environment, `PYTHONHOME` before the interpreter exists). Off in tests.
+- [x] **7. Casts and forwarding (71).** Views of bytes and the const-overload
+  idiom say so on their line; two visitors forward instead of move; Qt's
+  event downcasts and `[=, this]` are off in the Qt directories;
+  `missing-std-forward` is off (27 of 27 were a callable taken as `F&&` and
+  called).
+- [x] **8. The rest of 1b (56).** `optional-value-conversion` off (19 of 19
+  wanted an assignment that means something else); fixed seeds and narrowing
+  off in tests; the rest say why on their line. Two tests were wrong and are
+  fixed: `test_tray_map.cpp` wrote a macOS resource fork with `<<`, which
+  stops at its first byte (a NUL), so the file was empty; `test_flux_view.cpp`
+  had `op == in ? 4 : 4`.
 - [x] **9. cppcheck's two `syntaxError`s**: suppressed per file (1a above).
+
+**Phase 1 is done** but for the one decision left open in 1a: `Image::path`
+hiding `Located::path` (`canvas.hpp:160`, the last finding of its kind in the
+tree). Five defects were found and fixed with tests, of about 570 findings
+read. The whole tree stood at 1,528 when last measured, before tasks 6 to 8;
+about 1,400 are left, all of them Phase 2 and Phase 3.
 
 Order of components within Phase 1, by what a defect costs: `libs/core`,
 `libs/persistence`, `libs/ingest`, `libs/dvc`, `libs/reduction`,

@@ -304,6 +304,7 @@ TEST(Scheduler, ThrowingTaskDoesNotKillScheduler) {
   ManualClock clock;
   Scheduler s(clock, nullptr, inline_pool());
   int after = 0;
+  // NOLINTNEXTLINE(bugprone-std-exception-baseclass): a job that throws what is not an exception is the case
   auto bad = s.every("bad", 1s, [] { throw 42; });
   ASSERT_TRUE(s.every("good", 1s, [&] { ++after; }));
   clock.advance(1s);

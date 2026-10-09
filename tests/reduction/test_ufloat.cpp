@@ -49,11 +49,13 @@ TEST(UFloat, SelfCancellation) {
   const double sigma = 0.1;
   const UFloat x = UFloat::variable(2.0, sigma);
 
+  // NOLINTNEXTLINE(misc-redundant-expression): a value against itself is the case: the correlation must cancel
   const UFloat diff = x - x;
   EXPECT_EQ(diff.nominal(), 0.0);
   EXPECT_TRUE(diff.is_exact());
   EXPECT_TRUE(diff.terms().empty());
 
+  // NOLINTNEXTLINE(misc-redundant-expression): as above
   const UFloat ratio = x / x;
   EXPECT_EQ(ratio.nominal(), 1.0);
   EXPECT_EQ(ratio.std_dev(), 0.0);

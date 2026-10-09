@@ -232,6 +232,7 @@ LiveFeed::Latest LiveFeed::latest() const {
   // longer than it is given.
   const auto allowed = s.warm ? s.options.timeout : s.options.open_timeout;
   const bool hung = Steady::now() - s.progress >= allowed;
+  // NOLINTNEXTLINE(bugprone-branch-clone): in order of precedence; two of the cases say the same
   if (s.lost || s.stalled) out.error = s.error.what;
   else if (hung && s.opening) out.error = "the camera has not opened in " + std::to_string(allowed.count()) + " ms";
   else if (hung && !s.error.what.empty()) out.error = s.error.what;  // its reads are coming back empty

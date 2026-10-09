@@ -1,4 +1,9 @@
-# A fixture's destructor that throws ends the test program, and so fails it.
-# A test sets the environment and the locale before the threads it starts.
+# Tests. Off here:
+#   exception-escape        a fixture's destructor that throws ends the test
+#                           program, and so fails it
+#   concurrency-mt-unsafe   a test sets the environment and the locale before
+#                           the threads it starts
+#   random-generator-seed   a fixed seed is what makes a failure repeat
+#   narrowing-conversions   an index or a count of the test's own making
 InheritParentConfig: true
-Checks: '-bugprone-exception-escape,-concurrency-mt-unsafe'
+Checks: '-bugprone-exception-escape,-concurrency-mt-unsafe,-bugprone-random-generator-seed,-bugprone-narrowing-conversions,-cppcoreguidelines-narrowing-conversions'

@@ -188,6 +188,7 @@ struct JsonScan {
         ++i;
         return true;
       }
+      // NOLINTNEXTLINE(bugprone-inc-dec-in-conditions): past the backslash, and it must not be the last character
       if (s[i] == '\\' && ++i >= s.size()) return false;
       if (into) into->push_back(s[i]);
     }

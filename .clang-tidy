@@ -15,7 +15,6 @@ Checks: >
   cppcoreguidelines-init-variables,
   cppcoreguidelines-interfaces-global-init,
   cppcoreguidelines-misleading-capture-default-by-value,
-  cppcoreguidelines-missing-std-forward,
   cppcoreguidelines-no-malloc,
   cppcoreguidelines-no-suspend-with-lock,
   cppcoreguidelines-owning-memory,
@@ -62,6 +61,7 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -bugprone-implicit-widening-of-multiplication-result,
   -bugprone-misplaced-widening-cast,
+  -bugprone-optional-value-conversion,
   -bugprone-signed-bitwise,
   -bugprone-unchecked-optional-access,
   -bugprone-throwing-static-initialization,
@@ -78,6 +78,9 @@ Checks: >
 #                                 `64 * 1024`, `4 * i`, `r * p + c` for a small
 #                                 matrix: all 25 found were products that
 #                                 cannot leave int
+#   optional-value-conversion     `a.step = *number` where both are optionals:
+#                                 it asks for `a.step = number`, which is not
+#                                 the same when number is tested first (19 of 19)
 #   signed-bitwise                the codecs mask and shift bytes held in int
 #   throwing-static-initialization  every namespace-scope std::string constant
 #   unchecked-optional-access     it follows a test only within one function
@@ -96,6 +99,9 @@ Checks: >
 #   cppcoreguidelines-pro-type-vararg   every use is the printf family, whose
 #       arguments -Wformat already checks under -Werror; the conversions that
 #       lose errors are bugprone-unchecked-string-to-number-conversion's
+#
+#   cppcoreguidelines-missing-std-forward   all 27 found were a callable taken
+#       as F&& and called, often more than once: forwarding it would be wrong
 #
 # Directories that turn one more check off, each saying why:
 #   apps/pychron-ui, tests/ui   cppcoreguidelines-owning-memory (Qt parents)

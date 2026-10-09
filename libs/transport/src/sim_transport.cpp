@@ -265,6 +265,7 @@ Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
         chunk.garble = false;
       }
       buf.insert(buf.end(), chunk.data.begin(), chunk.data.end());
+      // NOLINTNEXTLINE(bugprone-assignment-in-if-condition): the length is kept when there is one
       if ((n = frame_length(rs, buf))) break;
     }
     // A simulated peer has said all it will once its reply is queued: for

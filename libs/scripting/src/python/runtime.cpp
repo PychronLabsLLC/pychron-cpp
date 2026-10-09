@@ -131,6 +131,7 @@ void bind_classes(py::module_ scope) {
 }
 
 void create_runtime() {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): see the line
   auto* rt = new Runtime();  // lives for the process, like the interpreter
   auto types = py::module_::import("types");
   rt->module = types.attr("ModuleType")("_pychron_runtime");
