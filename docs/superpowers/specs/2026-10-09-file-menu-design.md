@@ -1,7 +1,6 @@
 # File menu: New, Open, Save, Save As in one place: design
 
-Date: 2026-10-09. Status: design approved in conversation 2026-10-09; spec
-awaiting review.
+Date: 2026-10-09. Status: approved 2026-10-09; implemented on this branch.
 
 ## 1. Problem
 
