@@ -547,6 +547,18 @@ TEST(SwitchManager, NegativeInterlockBlocksOpeningEitherSide) {
   EXPECT_EQ(rb.error().kind, ErrorKind::Interlock);
 }
 
+// Which of two open partners is named is the one listed first, every run: not
+// whichever the allocator happened to put at the lower address.
+TEST(SwitchManager, TheInterlockNamedIsTheFirstListed) {
+  Fixture f({valve("A", "1", {"C", "B"}), valve("B", "2"), valve("C", "3")});
+  ASSERT_TRUE(f.mgr->actuate("B", SwitchOp::Open, "op"));
+  ASSERT_TRUE(f.mgr->actuate("C", SwitchOp::Open, "op"));
+  auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
+  EXPECT_NE(r.error().what.find("interlocked with 'C'"), std::string::npos) << r.error().what;
+}
+
 TEST(SwitchManager, UnknownPartnerBlocksOpening) {
   Fixture f({valve("A", "1", {"B"}), valve("B", "2")}, /*refresh=*/false);
   auto r = f.mgr->actuate("A", SwitchOp::Open, "op");

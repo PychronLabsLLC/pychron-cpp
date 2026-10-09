@@ -189,9 +189,14 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
   }
   if (!problems.empty()) return fail(ErrorKind::Config, join(problems));
 
+  // Each partner once, in the order the configuration gave them: the first
+  // one found open is the one a refusal names, so the order must not be the
+  // addresses' (which differ from run to run).
   for (auto& e : entries) {
-    std::sort(e->exclusive.begin(), e->exclusive.end());
-    e->exclusive.erase(std::unique(e->exclusive.begin(), e->exclusive.end()), e->exclusive.end());
+    std::vector<Entry*> once;
+    for (Entry* o : e->exclusive)
+      if (std::find(once.begin(), once.end(), o) == once.end()) once.push_back(o);
+    e->exclusive = std::move(once);
   }
   return std::unique_ptr<SwitchManager>(new SwitchManager(std::move(entries), options));
 }
