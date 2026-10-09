@@ -97,7 +97,7 @@ Result<void> DriverRegistry::add(std::string kind, DriverSchema schema, DriverFa
   return {};
 }
 
-bool DriverRegistry::contains(std::string_view kind) const { return entries_.find(kind) != entries_.end(); }
+bool DriverRegistry::contains(std::string_view kind) const { return entries_.contains(kind); }
 
 std::vector<std::string> DriverRegistry::kinds() const {
   std::vector<std::string> out;

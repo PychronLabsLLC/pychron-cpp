@@ -204,7 +204,7 @@ Result<std::vector<std::string>> ChromiumLaser::tripped_interlocks() {
     auto names = cr::decode_interlocks(*listed);
     if (!names) return fail(std::move(names).error());
     // Tripped, and Chromium names none: still not nothing.
-    if (names->empty()) names->push_back("unknown");
+    if (names->empty()) names->emplace_back("unknown");
     return std::move(*names);
   };
   return observe(run());

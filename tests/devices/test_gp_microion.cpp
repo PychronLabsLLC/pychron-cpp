@@ -316,13 +316,13 @@ TEST(PressureGaugeCapability, IsVendorBlind) {
     auto d = DriverRegistry::global().create(c.kind, *c.wire, t, {"gauge", nullptr});
     ASSERT_TRUE(d) << c.kind << ": " << to_string(d.error());
 
-    IPressureGauge* gauge = capability<IPressureGauge>(**d);
+    auto* gauge = capability<IPressureGauge>(**d);
     ASSERT_NE(gauge, nullptr) << c.kind;
     auto p = gauge->read_pressure();
     ASSERT_TRUE(p) << c.kind << ": " << to_string(p.error());
     EXPECT_DOUBLE_EQ(*p, 3e-9) << c.kind;
 
-    IScannable* scan = capability<IScannable>(**d);
+    auto* scan = capability<IScannable>(**d);
     ASSERT_NE(scan, nullptr) << c.kind;
     auto s = scan->sample();
     ASSERT_TRUE(s) << c.kind;

@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 
 #include <cstdio>
+#include <ranges>
 #include <sstream>
 
 #include "pychron/codecs/isotopx_ngx.hpp"
@@ -34,7 +35,7 @@ std::string clock_text(TimePoint t) {
 
 std::string event_line(const NgxSimModel& m, bool baseline, TimePoint at) {
   std::string line = std::string("#EVENT:") + (baseline ? "ACQ.B," : "ACQ,") + m.run->rcs_id + ",SIM,SIM," + clock_text(at);
-  for (auto it = m.values.rbegin(); it != m.values.rend(); ++it) line += "," + ngx::format_float(*it);
+  for (double value : std::views::reverse(m.values)) line += "," + ngx::format_float(value);
   return line + "#\r\n";
 }
 
@@ -92,7 +93,7 @@ std::string reply_for(NgxSimModel& m, const std::string& cmd) {
     return "E00";
   }
   if (verb == "GSO") {
-    const double v = m.params.count(args) ? m.params[args] : 0.0;
+    const double v = m.params.contains(args) ? m.params[args] : 0.0;
     return ngx::format_float(v) + "," + ngx::format_float(v);
   }
   if (verb == "OpenValve" || verb == "CloseValve") {

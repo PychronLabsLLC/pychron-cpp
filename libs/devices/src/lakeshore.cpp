@@ -33,7 +33,7 @@ DriverSchema Lakeshore::schema() {
           "Lake Shore 325/331/335/336 temperature controller (legacy Model335TemperatureController); kelvin at the "
           "interface",
           {{"model", KeyType::String, false, "325, 331, 335 (default) or 336"},
-           {"inputs", KeyType::StringArray, false, "sensor inputs in use; default [\"A\", \"B\"] (C and D on a 336)"},
+           {"inputs", KeyType::StringArray, false, R"(sensor inputs in use; default ["A", "B"] (C and D on a 336))"},
            {"units", KeyType::String, false, "K (default) or C: what the unit reports and takes"},
            {"setpoint_tolerance", KeyType::Float, false, "kelvin a setpoint may read back off by; default 0.01"},
            {"verify_retries", KeyType::Integer, false, "times a setpoint that reads back wrong is resent; default 3"},

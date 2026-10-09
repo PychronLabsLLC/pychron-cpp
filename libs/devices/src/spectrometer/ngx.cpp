@@ -104,7 +104,7 @@ Result<NgxLinkOptions> session_options(const toml::table& o) {
 const std::vector<ConfigKey>& session_keys() {
   static const std::vector<ConfigKey> keys{
       {"link", KeyType::String, false, "name of the shared NGX link; default: the driver name"},
-      {"send_terminator", KeyType::String, false, "appended to every command; default \"\\r\" (bring-up item)"},
+      {"send_terminator", KeyType::String, false, R"(appended to every command; default "\r" (bring-up item))"},
       {"user", KeyType::String, false, "NGX login user; no Login is sent when empty"},
       {"password_env", KeyType::String, false, "environment variable holding the login password"},
       {"password", KeyType::String, false, "login password; put it in the machine's *.local.toml only"},
@@ -223,7 +223,7 @@ void NgxSpectrometer::abort_locked(const std::string& why) {
   if (state_ == State::Idle || state_ == State::Stopping) return;
   state_ = State::Stopping;
   ++stats_.aborted;
-  if (!why.empty()) ready_.push_back(fail(ErrorKind::Cancelled, why));
+  if (!why.empty()) ready_.emplace_back(fail(ErrorKind::Cancelled, why));
   clock_.notify_all(acq_cv_);
 }
 
@@ -251,7 +251,7 @@ void NgxSpectrometer::on_event(const ngx::AcqFrame& frame, TimePoint at, std::ui
   if (!complete) return;
   state_ = State::Idle;
   if (frame.values.size() != options_.channels.size()) {
-    ready_.push_back(fail(ErrorKind::Protocol, "NGX ACQ event has " + std::to_string(frame.values.size()) +
+    ready_.emplace_back(fail(ErrorKind::Protocol, "NGX ACQ event has " + std::to_string(frame.values.size()) +
                                                    " values for " + std::to_string(options_.channels.size()) +
                                                    " configured channels"));
   } else {
@@ -261,7 +261,7 @@ void NgxSpectrometer::on_event(const ngx::AcqFrame& frame, TimePoint at, std::ui
     out.integrated = true;
     out.span = std::chrono::seconds(seconds_);
     for (std::size_t i = 0; i < options_.channels.size(); ++i) out.values.emplace_back(options_.channels[i], frame.values[i]);
-    ready_.push_back(std::move(out));
+    ready_.emplace_back(std::move(out));
     ++stats_.completed;
   }
   clock_.notify_all(acq_cv_);

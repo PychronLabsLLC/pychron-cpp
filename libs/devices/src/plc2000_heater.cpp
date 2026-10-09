@@ -214,7 +214,7 @@ ModbusDeviceSim Plc2000HeaterSim::device() {
     const auto base = wire(*options_.setpoint);
     if (a != base && a != base + 1) return false;
     held_[a] = value;
-    if (a == base + 1 && held_.count(base)) {
+    if (a == base + 1 && held_.contains(base)) {
       advance_locked();
       const double v = options_.setpoint_write_format == SetpointWriteFormat::Int32
                            ? static_cast<double>(mb::decode_int32(held_[base], held_[a], options_.word_order))

@@ -214,7 +214,7 @@ TEST(AdcBank, CreateFromConfig) {
   ASSERT_NE(acq, nullptr);
   EXPECT_EQ(acq->channels(), (std::vector<ChannelId>{"AX", "H1", "L1"}));
 
-  for (const char* bad : {"channels = []", "channels = [\"A\", \"A\"]", "channels = [\"A\"]\nsample_hz = 0",
+  for (const char* bad : {"channels = []", R"(channels = ["A", "A"])", "channels = [\"A\"]\nsample_hz = 0",
                           "channels = [\"A\"]\nunit = 300", "channels = [\"A\"]\nstart_register = 65535",
                           "channels = [\"A\"]\nscale = 0.0", ""}) {
     const auto table = table_of(bad);
