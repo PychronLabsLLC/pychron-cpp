@@ -147,20 +147,21 @@ Then bucket 1b, in this order:
   A logger swallowing its own failure is deliberate; each gets a comment
   saying so, or a counter. The others (`ingest/late_revision.cpp:455`,
   `persistence/tiny/db.cpp`, `metrics`) are read one by one.
-- [ ] **4. Number handling (56).** `unchecked-string-to-number-conversion`
-  (13: `sscanf`/`atoi`/`atof` in `elctl`, the NGX and Qtegra codecs,
-  `legacy_line.cpp`, `store.cpp:801`) becomes `std::from_chars` with the error
-  reported; `implicit-widening-of-multiplication-result` and
-  `misplaced-widening-cast` (25) widen before the multiply;
-  `init-variables` and `pro-type-member-init` (26) get initialisers;
-  `float-loop-counter` (6) counts in integers.
-- [ ] **5. `bugprone-nondeterministic-pointer-iteration-order` (7).**
-  `flux_admin.cpp:201`, `flux_view.cpp:477`, `source.cpp:149`,
-  `spectrum.cpp:157`, `time_series.cpp:278`, `switch_manager.cpp:193`,
-  `reference_fit_window.cpp:247`. Sorting by address makes output order
-  differ between runs. None is in the importer, where it is forbidden
-  outright, but a report or a figure ordered this way is still wrong: sort by
-  a stable key.
+- [ ] **4. Number handling (56).** Done:
+  `unchecked-string-to-number-conversion` (13). Three were defects, fixed with
+  tests: `elctl export` options and `elctl flux history`'s hole took a number
+  too large for an `int` as another number (`4294967305` was hole 9), and the
+  legacy line importer made a window of 0 from a size that is not a number.
+  The other seven say on their line why they are safe. Still to do:
+  `implicit-widening-of-multiplication-result` and `misplaced-widening-cast`
+  (25) widen before the multiply; `init-variables` and `pro-type-member-init`
+  (26) get initialisers; `float-loop-counter` (6, and the five from 1a) counts
+  in integers.
+- [x] **5. `bugprone-nondeterministic-pointer-iteration-order` (7).** One
+  defect, fixed with a test: `switch_manager.cpp` removed duplicate interlock
+  partners by sorting their addresses, so which open partner a refusal named
+  could differ from run to run. The other six sort by a field through a
+  comparator and say so on their line.
 - [ ] **6. `concurrency-mt-unsafe` (30, 21 in tests).** `getenv`, `localtime`,
   `strerror` and the like. `libs/core/.../env.hpp` is the one place that
   should call `getenv`; route the rest through it or use the `_r` forms.
