@@ -529,6 +529,18 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   EXPECT_TRUE(has_note(*made, "devices/furnace.cfg not found")) << notes;
 }
 
+// A window size that is not a number leaves the default, not a window of 0.
+TEST(LegacyLineValves2D, AWindowSizeThatIsNotANumberKeepsTheDefault) {
+  Tmp t;
+  t.write("extractionline/valves.yaml", "- name: V1\n  address: 1\n");
+  t.write("canvas2D/valves2D.cfg", "[General]\nwindow_width = wide\nwindow_height = 300\n[Valve-V1]\npos = 100,200\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto drawing = canvas::load_canvas_from_string(made->canvas_toml, "canvas.toml");
+  ASSERT_TRUE(drawing) << drawing.error().what;
+  EXPECT_EQ(drawing->canvas.size, (canvas::Size{800, 300}));
+}
+
 // The oldest drawing: pixel positions in valves2D.cfg, y up.
 TEST(LegacyLineValves2D, PixelPositionsFlipped) {
   Tmp t;

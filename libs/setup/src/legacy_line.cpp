@@ -15,6 +15,7 @@
 
 #include "legacy/lite.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/number.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 
@@ -314,8 +315,12 @@ LCanvas canvas_from_valves2d(const Ini& ini) {
   LCanvas out;
   out.pixels = true;
   if (auto g = ini.find("General"); g != ini.end()) {
-    if (auto w = g->second.find("window_width"); w != g->second.end()) out.window_w = std::atof(w->second.c_str());
-    if (auto h = g->second.find("window_height"); h != g->second.end()) out.window_h = std::atof(h->second.c_str());
+    // A size that is not a number leaves the default (atof would make it 0).
+    for (const auto& [key, size] : {std::pair{"window_width", &out.window_w}, std::pair{"window_height", &out.window_h}}) {
+      if (auto found = g->second.find(key); found != g->second.end()) {
+        if (const auto v = parse_double(trim(found->second))) *size = *v;
+      }
+    }
   }
   for (const auto& [section, keys] : ini) {
     if (section.rfind("Valve-", 0) != 0) continue;
