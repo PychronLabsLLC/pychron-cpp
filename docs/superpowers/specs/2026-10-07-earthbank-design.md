@@ -626,28 +626,41 @@ Four rules that differ from legacy, all because there is no sandbox:
   service may well know the term, and dropping it would publish a record
   without a field for want of an answer. The lists are asked again (a new
   resolver) once there is a login or a network.
-- **Journal.** After each successful POST the id returned is appended to
-  `<config>/earthbank/journal/<host>/<package id>/<sample>.json`
-  (`sampleId`, `arArDataPointId`, the aliquot names and measurement run ids
-  done, `ageCalc`, `ageSummary`, and a hash of the submission). A run that
-  finds a journal for the same sample, package and hash posts only what is
-  missing. A different hash (the data changed) is refused with the reason and
-  a way to start afresh (`--new-datapoint`), since the service offers no
-  update. Legacy re-posted every sub-record on a retry.
+- **Journal.** One file per host, package and sample,
+  `<config>/earthbank/journal/<host>/<package id>/<sample>.json`, the host and
+  the sample percent-encoded (anything but ASCII letters, digits, `-`, `_`,
+  `.`; a name too long for a file system is cut and ends in a hash). It holds
+  the ids the service returned (`sampleId`, `arArDataPointId`, aliquots by
+  name, measurements by their place in the submission, `ageCalcId`,
+  `ageSummaryId`), a hash of the submission and `inDoubt`. The file is
+  replaced whole (written beside, flushed, renamed), and a file that cannot be
+  read back is an error, never "no journal". A run that finds a journal for
+  the same sample, package and hash posts only what is missing. A different
+  hash (the data changed) is refused with the reason and a way to start afresh
+  (`--new-datapoint`; the old journal is kept as `<name>.<UTC time>.superseded.json`),
+  since the service offers no update; a journal that records nothing has
+  nothing to protect and is replaced without that. Legacy re-posted every
+  sub-record on a retry.
 - **Say who and where.** Before the first write the caller is given the
   account's login, the package's name and the count of records, and must
   confirm (`--yes` on the command line, a prompt in the UI).
 
-- **Never guess an unanswered write.** Before each POST the journal records
-  that record as in doubt; the answer clears it. A POST that times out or
-  loses its connection may or may not have been written, and the service
-  offers no way to ask by name for most records. A 5xx that is neither "not
-  writable" nor a constraint is the same (`kInDoubt`, 5.4): a gateway may
-  answer for a service that went on and saved the record. The sample stops there: the
-  user is told which record is in doubt, looks on EarthBank, and re-runs
-  saying either that it is there (with its id) or that it is not. Only the
-  sample record itself is resolved automatically, by the package-scoped
-  search.
+- **Never guess an unanswered write.** Before each POST the journal is saved
+  with that record as `inDoubt`; the answer clears it and the id is recorded.
+  A POST that times out or loses its connection may or may not have been
+  written, and the service offers no way to ask by name for most records. A
+  5xx that is neither "not writable" nor a constraint is the same (`kInDoubt`,
+  5.4): a gateway may answer for a service that went on and saved the record.
+  So is a 2xx whose answer carries no readable id. The sample stops there
+  (`InDoubt`, nothing more is sent for it): the user is told which record,
+  looks on EarthBank, and re-runs saying either that it is there (with its id,
+  `written:<id>`) or that it is not (`not-written`). A re-run that finds the
+  record still in doubt and no word from the user stops with the same
+  message, sending and asking nothing. The word names no sample, so it is used
+  only when one sample is in doubt. Only the sample record itself is resolved
+  automatically, by the package-scoped search that precedes creating it. A
+  request the client says never left (`kHttpNotSent`), and any answer other
+  than the faults above, clear the doubt: the record was not written.
 
 A failure before the data point exists stops the submission. A failure after
 it is recorded and the remaining sub-records are still attempted; the result
