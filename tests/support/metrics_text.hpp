@@ -22,7 +22,7 @@ inline std::vector<std::string> lines(const std::string& text) {
 // The text after `series` and one space, on the line that starts with it.
 inline std::optional<std::string> raw(const std::string& text, std::string_view series) {
   for (const std::string& line : lines(text)) {
-    if (line.size() > series.size() + 1 && line.compare(0, series.size(), series) == 0 && line[series.size()] == ' ') {
+    if (line.size() > series.size() + 1 && line.starts_with(series) && line[series.size()] == ' ') {
       return line.substr(series.size() + 1);
     }
   }
