@@ -121,7 +121,7 @@ error goes to the log dock). Window layout and graph settings are saved per
 spectrometer under the `PychronLabs` organization in `QSettings`.
 
 View > Experiment (Ctrl+Shift+E) runs experiment queues against a lab
-directory, as `elctl exp run` does: open a queue (Queue > Open, or
+directory, as `elctl exp run` does: open a queue (File > Open, or
 `--queue <file>`), edit it (rows revalidate as you type; red rows have
 errors, see their tooltips), then Start (F5) from the selected row. The lab
 is `--lab <dir>` (default: the extraction line config's directory) and
