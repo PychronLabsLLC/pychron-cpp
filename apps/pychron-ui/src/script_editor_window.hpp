@@ -13,6 +13,7 @@
 // Closing a tab or the window with unsaved edits asks first.
 
 #include <functional>
+#include <optional>
 #include <memory>
 #include <vector>
 
@@ -50,6 +51,14 @@ class ScriptEditorWindow : public QMainWindow {
   // Creates <kind>/<name>.py with a main() skeleton and opens it. false (with
   // `error`) for a bad name or an existing file.
   bool new_script(scripting::ScriptKind kind, const QString& name, QString* error = nullptr);
+  // File > Open: asks which of the lab's scripts, then opens it or switches
+  // to its tab. false on cancel, with no scripts, or for a file that cannot
+  // be read.
+  bool open_picked();
+  // Which of `names` (script_names()) to open; nullopt: cancelled. A dialog
+  // by default.
+  using PickScript = std::function<std::optional<QString>(const QStringList& names)>;
+  void set_pick_script(PickScript pick) { pick_script_ = std::move(pick); }
 
   int document_count() const;
   QString current_name() const;  // "extraction/sim_extract"; empty without a tab
@@ -101,8 +110,10 @@ class ScriptEditorWindow : public QMainWindow {
   QTabWidget* tabs_;
   QListWidget* problems_;
   QLabel* status_;
-  QAction* new_ = nullptr;   // what File > New and Save do here
-  QAction* save_ = nullptr;
+  QAction* new_ = nullptr;   // what File > New, Open and Save do here
+  QAction* open_ = nullptr;  // enabled while the lab has a script
+  QAction* save_ = nullptr;  // enabled while a tab is open
+  PickScript pick_script_;
   QTimer check_timer_;
   std::function<Unsaved(const QString&)> ask_unsaved_;
 };

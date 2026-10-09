@@ -10,9 +10,12 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <optional>
+
 #include "code_editor.hpp"
 #include "experiment_fixture.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "menu_hub.hpp"
 #include "script_editor_window.hpp"
 #include "script_highlighter.hpp"
 #include "settings_guard.hpp"
@@ -171,6 +174,57 @@ class TestScriptEditor : public QObject {
       QVERIFY2(w.estimate_text().startsWith(QStringLiteral("Estimate 0:00:06")), qPrintable(w.estimate_text()));
     }
     fs::remove_all(dir_ / "scripts" / "extraction" / "co2");
+  }
+
+  // File > Open: one of the lab's scripts, by the name the tree gives it.
+  void fileOpenPicksOneOfTheLabsScripts() {
+    using pychron::ui::MenuHub;
+    ScriptEditorWindow w(*lab_, settings());
+    QStringList offered;
+    std::optional<QString> answer;
+    w.set_pick_script([&](const QStringList& names) {
+      offered = names;
+      return answer;
+    });
+    QVERIFY(!w.open_picked());  // cancelled
+    QCOMPARE(offered, w.script_names());
+    QCOMPARE(w.document_count(), 0);
+
+    answer = QStringLiteral("extraction/with_gosub");
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/with_gosub"));
+    answer = QStringLiteral("lib/pump");  // as the tree has it, not as a gosub names it
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/lib:pump"));
+    QCOMPARE(w.document_count(), 2);
+    answer = QStringLiteral("extraction/with_gosub");  // open already: its tab, not a second
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.document_count(), 2);
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/with_gosub"));
+    answer = QStringLiteral("extraction/no_such_script");
+    QVERIFY(!w.open_picked());
+    QCOMPARE(w.document_count(), 2);
+
+    // In front, the File menu's commands are this window's; Save only with a tab.
+    w.set_ask_unsaved([](const QString&) { return ScriptEditorWindow::Unsaved::Discard; });
+    w.show();
+    w.activateWindow();
+    if (!QTest::qWaitForWindowActive(&w)) QSKIP("this platform does not activate windows");
+    MenuHub& hub = MenuHub::instance();
+    QCOMPARE(hub.file_action(MenuHub::FileRole::New)->text(), QStringLiteral("&New Script…"));
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Open)->text(), QStringLiteral("&Open Script…"));
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Script"));
+    QVERIFY(hub.file_action(MenuHub::FileRole::Open)->isEnabled());
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
+    QVERIFY(!hub.file_action(MenuHub::FileRole::SaveAs)->isEnabled());
+    QVERIFY(w.close_current());
+    QVERIFY(w.close_current());
+    QCOMPARE(w.document_count(), 0);
+    QVERIFY(!hub.file_action(MenuHub::FileRole::Save)->isEnabled());  // nothing to save
+    answer = QStringLiteral("lib/pump");
+    hub.file_action(MenuHub::FileRole::Open)->trigger();
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/lib:pump"));
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
   }
 
   void unsavedEditsAsk() {

@@ -129,6 +129,7 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
       QMessageBox::warning(this, tr("New script"), error);
   });
+  open_ = add(of_file, tr("&Open..."), {}, [this] { open_picked(); });
   save_ = add(of_file, tr("&Save"), {}, [this] {
     QString error;
     if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
@@ -140,10 +141,16 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::New, new_, tr("Script"));
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Open, open_, tr("Script"));
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_, tr("Script"));
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, file, MenuHub::Scope::Window);
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, code, MenuHub::Scope::Window);
 
+  pick_script_ = [this](const QStringList& names) -> std::optional<QString> {
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, tr("Open script"), tr("Script"), names, 0, false, &ok);
+    return ok ? std::optional<QString>(name) : std::nullopt;
+  };
   ask_unsaved_ = [this](const QString& name) {
     const auto b = QMessageBox::question(this, tr("Unsaved script"), tr("%1 has unsaved changes. Save them?").arg(name),
                                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
@@ -175,6 +182,26 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
 
 ScriptEditorWindow::~ScriptEditorWindow() = default;
 
+namespace {
+
+// A script as the tree lists it: under its kind, or under lib.
+QString tree_name(const ScriptFile& file) {
+  if (file.name.starts_with("lib:")) return QStringLiteral("lib/") + q(file.name.substr(4));
+  return q(scripting::to_string(file.kind)) + QLatin1Char('/') + q(file.name);
+}
+
+}  // namespace
+
+bool ScriptEditorWindow::open_picked() {
+  const QStringList names = script_names();
+  if (names.isEmpty()) return false;
+  const std::optional<QString> picked = pick_script_(names);
+  if (!picked) return false;
+  const auto scripts = experiment::lab::lab_scripts(lab_);
+  const auto it = std::find_if(scripts.begin(), scripts.end(), [&](const ScriptFile& f) { return tree_name(f) == *picked; });
+  return it != scripts.end() && open(*it);
+}
+
 QString ScriptEditorWindow::label(const ScriptFile& file) { return q(scripting::to_string(file.kind)) + QLatin1Char('/') + q(file.name); }
 
 void ScriptEditorWindow::fill_tree() {
@@ -193,6 +220,7 @@ void ScriptEditorWindow::fill_tree() {
     item->setToolTip(0, q(f.path.string()));
   }
   tree_->expandAll();
+  open_->setEnabled(!script_names().isEmpty());
 }
 
 QStringList ScriptEditorWindow::script_names() const {
@@ -366,6 +394,7 @@ void ScriptEditorWindow::check_now() {
 void ScriptEditorWindow::show_check() {
   problems_->clear();
   Document* d = current();
+  save_->setEnabled(d != nullptr);
   if (d == nullptr) {
     status_->setText(tr("Open a script from the list, or Script > New."));
     style::set_tone(status_, style::Tone::Normal);
