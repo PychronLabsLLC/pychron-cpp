@@ -1,6 +1,8 @@
-// elctl earthbank export-xlsx: select analyses from the store as `export`
-// does, build one submission per sample (pychron::earthbank mapping.hpp) and
-// write them into the service's import workbooks (xlsx.hpp).
+// elctl earthbank export-xlsx and preflight: select analyses from the store as
+// `export` does, build one submission per sample (pychron::earthbank
+// mapping.hpp) and write them into the service's import workbooks (xlsx.hpp),
+// or ask the service whether it knows every term they hold (preflight.hpp).
+// The account subcommands are in earthbank_account.cpp.
 
 #include "earthbank.hpp"
 
@@ -17,9 +19,12 @@
 
 #include <toml++/toml.hpp>
 
+#include "earthbank_impl.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/earthbank/lookup.hpp"
 #include "pychron/earthbank/mapping.hpp"
 #include "pychron/earthbank/model.hpp"
+#include "pychron/earthbank/preflight.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/earthbank/xlsx.hpp"
 #include "pychron/processing/model.hpp"
@@ -34,6 +39,7 @@ using pychron::Error;
 using pychron::ErrorKind;
 using pychron::fail;
 using pychron::Result;
+using earthbank_cli::fatal;
 
 namespace {
 
@@ -104,7 +110,36 @@ constexpr const char* kUsageText =
     "cannot be published stops the export: nothing is written for any sample.\n"
     "\n"
     "Exit codes: 0 wrote the files (--check: there was something to write);\n"
-    "1 no analysis matched; 2 usage or fatal error.\n";
+    "1 no analysis matched; 2 usage or fatal error.\n"
+    "\n"
+    "The account the workbooks, and later the records, are published as. These\n"
+    "are the commands that contact the service (by HTTPS, to the server of the\n"
+    "profile); every one takes --profiles <file> (default: the file the UI uses),\n"
+    "and those that sign in --profile <name> (default: the active profile):\n"
+    "\n"
+    "  elctl earthbank login [--profile <name>] [--username <u>] [--base-url <url>]\n"
+    "                        [--institution <id>]\n"
+    "      Signs in, prints the account's name, keeps the password in the\n"
+    "      operating system's store, saves the profile (without the password) and\n"
+    "      makes it the active one. The password is asked for without echo, or\n"
+    "      taken from $EARTHBANK_PASSWORD; with neither (no terminal) it exits 2.\n"
+    "  elctl earthbank account\n"
+    "      Signs in with the stored password and says who the account is.\n"
+    "  elctl earthbank packages [--create <name>] [--institution <id>]\n"
+    "      Lists the data packages (those of the institution when one is given or\n"
+    "      the profile has one), or makes a private one and sets the profile's\n"
+    "      data package to it.\n"
+    "  elctl earthbank preflight --db <url> [selection] [ages] [--overrides <file>]\n"
+    "      Asks the service whether it knows every controlled term the selected\n"
+    "      analyses would send, and writes nothing. Without a login it asks what\n"
+    "      needs none and says which it could not ask. Misses are grouped by\n"
+    "      sample. Exit 0: nothing unknown or unasked; 1: some; 2: could not run.\n"
+    "  elctl earthbank import-profiles <preferences.ini>\n"
+    "      Takes the profiles of legacy pychron's preferences file, without\n"
+    "      passwords, into the profiles file; one already there is left alone.\n"
+    "\n"
+    "No password or token is ever printed. The login exits 1 when the service\n"
+    "refuses it or does not answer, 2 when it could not try.\n";
 
 // What is published: the store, the analyses, how their ages are made and
 // what the lab adds. Every subcommand that builds submissions has these.
@@ -126,16 +161,6 @@ int usage(Io io, const std::string& message) {
   io.err << "elctl earthbank: " << message << '\n' << kShortUsage;
   return kUsage;
 }
-
-// The library says `earthbank: ...`; under this command's name that is said once.
-int fatal(Io io, std::string_view message) {
-  constexpr std::string_view kLibrary = "earthbank: ";
-  if (message.starts_with(kLibrary)) message.remove_prefix(kLibrary.size());
-  io.err << "elctl earthbank: " << message << '\n';
-  return kUsage;
-}
-
-int fatal(Io io, const Error& error) { return fatal(io, error.what); }
 
 Result<Args> parse(const std::vector<std::string>& args) {
   Args a;
@@ -397,23 +422,154 @@ int export_xlsx(const Args& a, Io io) {
   return kOk;
 }
 
+// ---------------------------------------------------------------- preflight
+
+struct PreflightArgs {
+  Source source;
+  earthbank_cli::ConnectFlags connect;
+};
+
+Result<PreflightArgs> parse_preflight(const std::vector<std::string>& args) {
+  PreflightArgs a;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const std::string& flag = args[i];
+    auto shared = take_selection_flag(a.source.selection, args, i);
+    if (shared && !*shared) shared = take_age_flag(a.source.ages, args, i);
+    if (shared && !*shared) shared = earthbank_cli::take_connect_flag(a.connect, args, i);
+    if (!shared) return fail(shared.error());
+    if (*shared) continue;
+    if (flag.rfind("--", 0) != 0) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
+    if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
+    const std::string& value = args[++i];
+    if (flag == "--db") {
+      a.source.db = value;
+    } else if (flag == "--overrides") {
+      if (value.empty()) return fail(ErrorKind::Config, "--overrides needs a file");
+      a.source.overrides = value;
+    } else {
+      return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
+    }
+  }
+  if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
+  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
+  return a;
+}
+
+// A value as the report quotes it: on one line.
+std::string in_quotes(std::string_view value) {
+  std::string out = "'";
+  for (const char c : value) out += static_cast<unsigned char>(c) < 0x20 ? ' ' : c;
+  return out + "'";
+}
+
+std::string where(const std::string& record, const std::string& field) { return record + "." + field; }
+
+std::string times(std::size_t count) { return count > 1 ? " (" + std::to_string(count) + " records)" : std::string(); }
+
+// The report, by sample: what the service does not know or could not be asked
+// about, and what the mapping noted; then what was found as something other
+// than it was written, and what this did not check.
+void print_preflight(std::ostream& out, const std::vector<eb::Submission>& submissions, const eb::PreflightReport& report) {
+  for (const auto& submission : submissions) {
+    const std::string sample = submission.sample.name.value_or(submission.datapoint_name);
+    bool named = false;
+    const auto heading = [&] {
+      if (!named) out << sample << '\n';
+      named = true;
+    };
+    for (const auto& miss : report.misses) {
+      if (miss.sample != sample) continue;
+      heading();
+      const std::string what = where(miss.record, miss.field) + ": " + in_quotes(miss.value);
+      if (miss.outcome == eb::LookupOutcome::CouldNotAsk) {
+        out << "  " << what << " could not be asked" << (miss.endpoint.empty() ? "" : " (" + miss.endpoint + ")")
+            << times(miss.count) << (miss.detail.empty() ? "" : ": " + miss.detail) << '\n';
+      } else {
+        out << "  " << what << " is not known to EarthBank" << (miss.endpoint.empty() ? "" : " (" + miss.endpoint + ")")
+            << times(miss.count) << (miss.detail.empty() ? "" : ": " + miss.detail) << '\n';
+      }
+    }
+    for (const auto& notes : report.notes) {
+      if (notes.sample != sample) continue;
+      for (const auto& note : notes.notes) {
+        heading();
+        out << "  note: " << note << '\n';
+      }
+    }
+  }
+  if (!report.resolved.empty()) {
+    out << "found as something other than what is written (an id that is written cannot be corrected):\n";
+    for (const auto& r : report.resolved) {
+      out << "  " << r.sample << ": " << where(r.record, r.field) << ": " << in_quotes(r.value) << " is " << in_quotes(r.matched_name)
+          << times(r.count) << (r.detail.empty() ? "" : "; " + r.detail) << '\n';
+    }
+  }
+  if (!report.not_checked.empty()) {
+    out << "not checked:\n";
+    for (const auto& n : report.not_checked) out << "  " << n.field << ": " << n.reason << '\n';
+  }
+  const std::size_t unknown = report.unknown().size(), unasked = report.could_not_ask().size();
+  if (report.clean()) {
+    out << "every term the upload would send is known to EarthBank\n";
+  } else {
+    out << unknown << (unknown == 1 ? " term is" : " terms are") << " not known to EarthBank; " << unasked
+        << (unasked == 1 ? " term" : " terms") << " could not be asked about\n";
+  }
+}
+
+int preflight(const PreflightArgs& a, Io io, const EarthbankDeps& deps) {
+  earthbank_cli::Online online;
+  if (const int code = earthbank_cli::go_online(a.connect, false, io, deps, online); code != kOk) return code;
+  const Built built = build(a.source, io);
+  if (built.code != kOk) return built.code;
+
+  if (online.session->signed_in()) {
+    io.out << "signed in to " << online.session->base_url() << " as profile '" << online.profile->name << "'\n";
+  } else {
+    io.out << "not signed in to " << online.session->base_url() << ": " << online.not_signed_in
+           << "\nthe lists that need a login will be reported as not asked\n";
+  }
+  eb::LookupResolver resolver(*online.session);
+  const eb::PreflightReport report = eb::preflight(built.submissions, resolver);
+  print_preflight(io.out, built.submissions, report);
+  return report.clean() ? kOk : kFailed;
+}
+
 bool is_help(const std::string& word) { return word == "help" || word == "--help"; }
 
 }  // namespace
 
-int earthbank_command(const std::vector<std::string>& args, Io io) {
+int earthbank_command(const std::vector<std::string>& args, Io io, EarthbankDeps deps) {
   if (args.empty()) return usage(io, "a subcommand is required");
-  const bool known = args[0] == "export-xlsx";
-  if (is_help(args[0]) || (known && args.size() > 1 && is_help(args[1]))) {
+  const std::string& sub = args[0];
+  const bool known = sub == "export-xlsx" || sub == "preflight" || sub == "login" || sub == "account" ||
+                     sub == "packages" || sub == "import-profiles";
+  if (is_help(sub) || (known && args.size() > 1 && is_help(args[1]))) {
     io.out << kUsageText;
     return kOk;
   }
-  if (!known) return usage(io, "unknown subcommand '" + args[0] + "'");
-  auto parsed = parse({args.begin() + 1, args.end()});
-  if (!parsed) return usage(io, parsed.error().what);
+  if (!known) return usage(io, "unknown subcommand '" + sub + "'");
+  const std::vector<std::string> rest(args.begin() + 1, args.end());
+  // What needs the network says so before it looks at a flag or opens a file.
+  const bool online = sub == "login" || sub == "account" || sub == "packages" || sub == "preflight";
+  if (online && deps.http == nullptr && pychron::earthbank::make_http_client() == nullptr) {
+    io.err << earthbank_cli::kNoNetwork << '\n';
+    return kUsage;
+  }
   // No exception leaves a library, but std::filesystem can throw: a fatal
   // error like any other.
   try {
+    if (sub == "login") return earthbank_cli::login_command(rest, io, deps);
+    if (sub == "account") return earthbank_cli::account_command(rest, io, deps);
+    if (sub == "packages") return earthbank_cli::packages_command(rest, io, deps);
+    if (sub == "import-profiles") return earthbank_cli::import_profiles_command(rest, io);
+    if (sub == "preflight") {
+      auto parsed = parse_preflight(rest);
+      if (!parsed) return usage(io, parsed.error().what);
+      return preflight(*parsed, io, deps);
+    }
+    auto parsed = parse(rest);
+    if (!parsed) return usage(io, parsed.error().what);
     return export_xlsx(*parsed, io);
   } catch (const std::exception& e) {
     return fatal(io, e.what());

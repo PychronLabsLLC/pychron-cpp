@@ -24,7 +24,10 @@ if(TARGET pychron_persistence)
     PYCHRON_EARTHBANK_SOURCE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/src"
     $<TARGET_PROPERTY:TinyOrm::TinyOrm,INTERFACE_COMPILE_DEFINITIONS>)
   # dvc, ingest and persistence come with pychron_elctl_lib.
-  target_link_libraries(pychron_elctl_tests PRIVATE nlohmann_json::nlohmann_json Qt6::Core Qt6::Sql)
+  # earthbank_fake: EarthBank in memory (tests/earthbank), which the account
+  # commands are tested against; nothing here reaches the service.
+  target_link_libraries(pychron_elctl_tests PRIVATE nlohmann_json::nlohmann_json Qt6::Core Qt6::Sql
+    pychron::earthbank_fake)
 endif()
 pychron_set_warnings(pychron_elctl_tests)
 # The import tests build git repositories and stores; under sanitizers on a

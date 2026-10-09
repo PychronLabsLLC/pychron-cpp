@@ -22,10 +22,18 @@ set(PYCHRON_ELCTL_FLUX_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/flux_stub.cpp")
 set(PYCHRON_ELCTL_DB_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/db_stub.cpp")
 # `exp run`'s database (src/exp_store.cpp) is split the same way.
 set(PYCHRON_ELCTL_EXP_STORE_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/exp_store_stub.cpp")
+# `elctl earthbank login|account|packages|preflight` talk to the service through
+# libs/earthbank_qt (Qt6 Network). Without it src/earthbank_no_network.cpp
+# gives make_http_client() as null and those commands say so and exit 2.
+set(PYCHRON_ELCTL_NO_NETWORK "${CMAKE_CURRENT_SOURCE_DIR}/src/earthbank_no_network.cpp")
+list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_NO_NETWORK}")
 if(TARGET pychron_persistence)
   list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
     "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_EARTHBANK_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}"
     "${PYCHRON_ELCTL_DB_STUB}" "${PYCHRON_ELCTL_EXP_STORE_STUB}")
+  if(NOT TARGET pychron_earthbank_qt)
+    list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_NO_NETWORK}")
+  endif()
 else()
   list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|earthbank|flux|db|exp_store|selection)[^/]*\\.cpp$")
   list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
@@ -48,6 +56,10 @@ if(TARGET pychron_persistence)
     PRIVATE nlohmann_json::nlohmann_json)
   target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1 PYCHRON_ELCTL_IMPORT
     PRIVATE PYCHRON_ELCTL_VERSION="${PROJECT_VERSION}")
+endif()
+if(TARGET pychron_earthbank_qt)
+  target_link_libraries(pychron_elctl_lib PUBLIC pychron::earthbank_qt)
+  target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_NETWORK=1)
 endif()
 pychron_set_warnings(pychron_elctl_lib)
 

@@ -185,6 +185,22 @@ if(PYCHRON_PERSISTENCE)
   endif()
 endif()
 
+# HTTPS to EarthBank (libs/earthbank_qt) on Qt6 Network: the one place in the
+# tree that opens a socket for a program of ours. libs/earthbank is Qt-free and
+# only says what to ask through IHttpClient. Built when Qt6 Core and Network are
+# found; elsewhere elctl's `earthbank` commands that need the network say so
+# and the UI's upload is off (PYCHRON_EARTHBANK_NETWORK_ENABLED is OFF).
+option(PYCHRON_EARTHBANK_NETWORK "Build libs/earthbank_qt (HTTPS to EarthBank; needs Qt6 Core + Network)" ON)
+set(PYCHRON_EARTHBANK_NETWORK_ENABLED OFF)
+if(PYCHRON_EARTHBANK_NETWORK)
+  find_package(Qt6 6.2 QUIET COMPONENTS Core Network)
+  if(Qt6Network_FOUND)
+    set(PYCHRON_EARTHBANK_NETWORK_ENABLED ON)
+  else()
+    message(STATUS "PYCHRON_EARTHBANK_NETWORK: Qt6 Core/Network not found; libs/earthbank_qt is not built")
+  endif()
+endif()
+
 # Time zone conversion for libs/ingest. C++20 std::chrono::locate_zone where
 # the standard library ships the tzdb (libstdc++ 13+, MSVC); Apple's libc++
 # does not, so Howard Hinnant's date (same API, the library the C++20 one came

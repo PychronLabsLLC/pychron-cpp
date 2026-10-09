@@ -310,6 +310,15 @@ Inner loop (keep waits short):
 - ctest lists `pg` cases only when `PYCHRON_TEST_PG_URL` was set when the
   tests were built (`gtest_discover_tests` runs at build time): set it,
   rebuild, then run.
+- `libs/earthbank_qt` (`QtHttpClient`, the HTTPS side of `libs/earthbank`)
+  builds only when Qt6 Core and Network are found (`-DPYCHRON_EARTHBANK_NETWORK=OFF`
+  skips it); `libs/earthbank` has no network code and goes through `IHttpClient`.
+  `QtHttpClient` is an HTTP/1.1 client over `QSslSocket`, not
+  `QNetworkAccessManager`, because the manager re-sends a request whose connection
+  closes, which the seam forbids. Without it `make_http_client()` is null
+  (`apps/elctl/src/earthbank_no_network.cpp`) and `elctl earthbank login|account|
+  packages|preflight` say so and exit 2. Tests talk to a `QTcpServer` on 127.0.0.1
+  or to `FakeEarthBank`, never to the service.
 - A file the application writes for the user to open elsewhere (report,
   figure, template, sheet) goes through `pychron::mark_as_user_file`
   (`libs/core` `user_file.hpp`) after it is written: downloaded, unsigned

@@ -27,8 +27,9 @@ include(PychronDependencies)
 # persistence depends on core only (DVC schema spec, section 12.1).
 # sim depends on transport and devices only. A library is added once its
 # directory exists so each unit can land independently. earthbank (records for
-# the EarthBank data platform) sits on processing.
-set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing earthbank setup)
+# the EarthBank data platform) sits on processing; earthbank_qt is its HTTPS
+# client (Qt Network), built only when Qt6 Network is found.
+set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing earthbank earthbank_qt setup)
 
 if(NOT PYCHRON_METRICS)
   list(REMOVE_ITEM PYCHRON_LIBS metrics)

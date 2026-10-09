@@ -32,7 +32,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Legacy data](#legacy-data): `import ...`
 - [The store's schema](#the-stores-schema): `db status`, `db migrate`
 - [Publication data](#publication-data): `export`
-- [EarthBank workbooks](#earthbank-workbooks): `earthbank export-xlsx`
+- [EarthBank workbooks and account](#earthbank-workbooks): `earthbank export-xlsx`, `login`, `account`, `packages`, `preflight`, `import-profiles`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
 - [Not yet implemented / unverified](#not-yet-implemented--unverified)
 
@@ -87,7 +87,7 @@ by `-c` / `--install`.
 |---|---|
 | 0 | Success. |
 | 1 | The command ran but failed: a config error, a hardware error, a check that did not pass, a queue that did not complete. |
-| 2 | Usage error (a bad or missing argument, an unknown command), **and also** the fatal errors of `import`, `export`, `earthbank` and `entry` (a database that cannot be opened, a bad file), and `elctl was built without persistence`. |
+| 2 | Usage error (a bad or missing argument, an unknown command), **and also** the fatal errors of `import`, `export`, `earthbank` and `entry` (a database that cannot be opened, a bad file), and `elctl was built without persistence`. `earthbank login`, `account`, `packages` and `preflight` also exit 2 in a build without network support. |
 
 Command-specific details are given under each command. Errors are written to
 standard error as `error: ...`; usage errors as `elctl: ...` followed by the
@@ -900,6 +900,50 @@ elctl earthbank export-xlsx --db sqlite:$HOME/pychron/data.db --out earthbank/ \
 
 The workbooks are marked as user files after they are written so macOS
 Gatekeeper lets you open them.
+
+### The EarthBank account
+
+These are the only `elctl` commands that contact EarthBank, and they contact
+the server of your profile and nothing else. They need Qt6 Network in the
+build (the released programs have it); without it they print `this build has
+no network support (Qt6 Network was not found)` and exit 2. Like the rest of `elctl earthbank`, they are built with
+persistence.
+
+A **profile** names an account: the server, your login, and the institution
+and data package uploads go to. Profiles live in one file (the one the
+Pychron window uses, so a login made here is a login there):
+`~/Library/Application Support/Pychron/earthbank/profiles.toml` on macOS,
+`%APPDATA%\Pychron\earthbank\profiles.toml` on Windows,
+`~/.config/pychron/earthbank/profiles.toml` on Linux. Every subcommand takes
+`--profiles FILE` for another. The file never holds a password: it is kept by
+the operating system (the login keychain on macOS, the Credential Manager on
+Windows, the secret service on Linux; where there is none, until the program
+ends, and `login` says so).
+
+| Command | What it does |
+|---|---|
+| `earthbank login [--profile NAME] [--username U] [--base-url URL] [--institution ID]` | Signs in, prints the account's name, keeps the password, saves the profile and makes it the active one. `--profile` defaults to the active profile, else `default`. The user name is needed the first time. The password is asked for without echo, or taken from `$EARTHBANK_PASSWORD`; with neither (no terminal, as in a script) it exits 2 and says so, and never waits for input. |
+| `earthbank account [--profile NAME]` | Signs in with the kept password (or `$EARTHBANK_PASSWORD`) and prints the profile and who the account is. |
+| `earthbank packages [--institution ID] [--profile NAME]` | Lists the data packages, of one institution when given or when the profile has one. `*` marks the one the profile uploads to. |
+| `earthbank packages --create NAME [--institution ID]` | Makes a private data package in progress and sets the profile's data package to it. |
+| `earthbank preflight --db URL [selection] [ages] [--overrides FILE] [--base-url URL]` | Builds what an upload would send for the selected analyses and asks EarthBank whether it knows every controlled term in it. Writes nothing to the service. Without a login it asks what needs none and lists the rest as not asked. |
+| `earthbank import-profiles FILE` | Takes the profiles of a legacy Pychron preferences file into the profiles file, without passwords (sign in once per profile with `login`). A profile whose name is already there is left alone. |
+
+`preflight` prints, for each sample, the terms EarthBank does not know (or
+could not be asked about) and the notes the mapping made, then the terms it
+found as something other than what is written (an id written to EarthBank
+cannot be corrected, so read these) and the fields it does not check. Exit
+codes: 0 nothing unknown and nothing unasked; 1 some terms unknown or unasked;
+2 could not run. `login`, `account` and `packages` exit 1 when EarthBank
+refuses or does not answer, and 2 when they could not try (no profile, no
+password, a bad flag). No command prints a password or a token.
+
+```bash
+elctl earthbank login --profile mylab --username a.user --institution 1001
+EARTHBANK_PASSWORD=... elctl earthbank account            # in a script
+elctl earthbank packages --create "Ar-Ar results 2031"
+elctl earthbank preflight --db sqlite:$HOME/pychron/data.db --project examples
+```
 
 ## Sample and package entry
 

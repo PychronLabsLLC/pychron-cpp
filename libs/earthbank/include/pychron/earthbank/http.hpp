@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <initializer_list>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -70,6 +71,12 @@ class IHttpClient {
   virtual ~IHttpClient() = default;
   virtual Result<HttpResponse> send(const HttpRequest& request) = 0;
 };
+
+// The client a program talks to the service through: the one over HTTPS of
+// `libs/earthbank_qt` when this build has it, else null (a program says so and
+// does not go on). Defined by that library, or, where it is not built, by the
+// program itself (elctl's earthbank_no_network.cpp).
+std::unique_ptr<IHttpClient> make_http_client();
 
 // The `code` of a `Timeout` or `Io` error from `send` when the request never
 // left. What such a request asked for was not done.

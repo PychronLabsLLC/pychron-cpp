@@ -20,6 +20,21 @@ TEST(ElctlEarthbank, StubWithoutPersistence) {
   EXPECT_EQ(o.out, "");
 }
 
+// The commands that talk to the service say what is missing: the network
+// first, when this build has none either.
+TEST(ElctlEarthbank, TheNetworkCommandsWithoutPersistence) {
+  for (const char* sub : {"login", "account", "packages", "preflight"}) {
+    const Outcome o = run_raw({"earthbank", sub});
+    EXPECT_EQ(o.code, elctl::kUsage) << sub;
+    EXPECT_EQ(o.out, "") << sub;
+#ifdef PYCHRON_ELCTL_HAS_NETWORK
+    EXPECT_TRUE(contains(o.err, "elctl was built without persistence")) << o.err;
+#else
+    EXPECT_TRUE(contains(o.err, "this build has no network support (Qt6 Network was not found)")) << o.err;
+#endif
+  }
+}
+
 #else
 
 #include <algorithm>
@@ -37,7 +52,12 @@ TEST(ElctlEarthbank, StubWithoutPersistence) {
 
 #include <nlohmann/json.hpp>
 
+#include "earthbank.hpp"
+#include "fake_earthbank.hpp"
 #include "ooxml.hpp"
+#include "pychron/earthbank/profiles.hpp"
+#include "pychron/earthbank/secret_store.hpp"
+#include "session_support.hpp"
 #include "store_fixture.hpp"
 
 namespace {
@@ -647,6 +667,349 @@ TEST_F(ElctlEarthbank, TheAgesAreThoseExportReports) {
   ASSERT_EQ(four.ages.size(), 1u);
   EXPECT_EQ(at(four.ages[0], "ageCalcType"), "Total Gas Age") << four.said;
 }
+
+// ---------------------------------------------------------------- the account
+
+// A password is never in what a command prints, and nothing here talks to the
+// service but the fake: `earthbank_command` is given an EarthBank in memory
+// and the memory store, and the profiles are a file of the test's own.
+class ElctlEarthbankAccount : public ElctlEarthbank {
+ protected:
+  void SetUp() override {
+    ElctlEarthbank::SetUp();
+    if (const char* was = std::getenv(kPasswordVariable)) password_was_ = was;
+    set_variable(std::nullopt);
+    profiles_ = path("profiles.toml");
+  }
+  void TearDown() override {
+    set_variable(password_was_);
+    ElctlEarthbank::TearDown();
+  }
+
+  static void set_variable(const std::optional<std::string>& value) {
+#ifdef _WIN32
+    _putenv_s(kPasswordVariable, value ? value->c_str() : "");
+#else
+    if (value) {
+      setenv(kPasswordVariable, value->c_str(), 1);
+    } else {
+      unsetenv(kPasswordVariable);
+    }
+#endif
+  }
+
+  // `elctl earthbank <args>` against the fake and the memory store.
+  Outcome eb(std::vector<std::string> args, const std::string& input = "") {
+    std::istringstream in(input);
+    std::ostringstream out, err;
+    Outcome o;
+    o.code = elctl::earthbank_command(args, elctl::Io{in, out, err}, elctl::EarthbankDeps{&spy_, secrets_.get()});
+    o.out = out.str();
+    o.err = err.str();
+    outputs_.push_back(o.out);
+    outputs_.push_back(o.err);
+    return o;
+  }
+
+  // The same with the profiles file of this test.
+  Outcome with_profiles(std::vector<std::string> args, const std::string& input = "") {
+    args.insert(args.end(), {"--profiles", profiles_.string()});
+    return eb(std::move(args), input);
+  }
+
+  Outcome log_in(const std::string& extra_profile = "mylab") {
+    set_variable(bank_.password());
+    const Outcome o = with_profiles({"login", "--profile", extra_profile, "--username", bank_.login(), "--base-url",
+                                     bank_.base_url(), "--institution", "9301"});
+    set_variable(std::nullopt);
+    return o;
+  }
+
+  std::string kept_password(const std::string& name) {
+    const auto profiles = pychron::earthbank::load_profiles(profiles_);
+    if (!profiles || profiles->find(name) == nullptr) return "(no profile)";
+    const auto kept = secrets_->get(pychron::earthbank::secret_account(*profiles->find(name)));
+    return kept && *kept ? **kept : "(none)";
+  }
+
+  static constexpr const char* kPasswordVariable = "EARTHBANK_PASSWORD";
+  pychron::earthbank::testing::FakeEarthBank bank_;
+  pychron::earthbank::testing::Spy spy_{bank_};
+  std::unique_ptr<pychron::earthbank::ISecretStore> secrets_ = pychron::earthbank::make_memory_secret_store();
+  fs::path profiles_;
+  std::optional<std::string> password_was_;
+  std::vector<std::string> outputs_;  // everything every command printed
+};
+
+TEST_F(ElctlEarthbankAccount, LoginStoresThePasswordAndTheProfile) {
+  const Outcome o = log_in();
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "signed in to https://earthbank.test as Robin Example (robin.example)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "profile 'mylab' saved")) << o.out;
+  EXPECT_EQ(o.err, "");
+
+  const auto profiles = pychron::earthbank::load_profiles(profiles_);
+  ASSERT_TRUE(profiles) << profiles.error().what;
+  EXPECT_EQ(profiles->active, "mylab");
+  ASSERT_EQ(profiles->profiles.size(), 1u);
+  const auto& p = profiles->profiles[0];
+  EXPECT_EQ(p.name, "mylab");
+  EXPECT_EQ(p.username, bank_.login());
+  EXPECT_EQ(p.base_url, "https://earthbank.test");
+  EXPECT_EQ(p.institution_id, std::optional<std::int64_t>(9301));
+  // The password is kept by the store, under the profile's account, and in
+  // no file.
+  EXPECT_EQ(kept_password("mylab"), bank_.password());
+  EXPECT_FALSE(contains(slurp(profiles_), bank_.password()));
+  // The memory store lasts as long as the program, and the user is told.
+  EXPECT_TRUE(contains(o.out, "note: this store lasts as long as the program")) << o.out;
+
+  // A second login for the same profile keeps what the first said.
+  set_variable(bank_.password());
+  const Outcome again = with_profiles({"login", "--profile", "mylab"});
+  set_variable(std::nullopt);
+  ASSERT_EQ(again.code, elctl::kOk) << again.err;
+  const auto reread = pychron::earthbank::load_profiles(profiles_);
+  ASSERT_TRUE(reread);
+  ASSERT_EQ(reread->profiles.size(), 1u);
+  EXPECT_EQ(reread->profiles[0], p);
+}
+
+TEST_F(ElctlEarthbankAccount, LoginWithAWrongPasswordStoresNothing) {
+  const std::string wrong = "a-wrong-password-4417";
+  set_variable(wrong);
+  const Outcome o = with_profiles({"login", "--profile", "mylab", "--username", bank_.login(), "--base-url",
+                                   bank_.base_url()});
+  EXPECT_EQ(o.code, elctl::kFailed) << o.err;
+  EXPECT_EQ(o.out, "");
+  EXPECT_FALSE(o.err.empty());
+  EXPECT_FALSE(contains(o.err, wrong)) << o.err;
+  EXPECT_FALSE(fs::exists(profiles_)) << "a profile was saved";
+  const pychron::earthbank::Profile mine = [&] {
+    pychron::earthbank::Profile p;
+    p.name = "mylab";
+    p.base_url = bank_.base_url();
+    return p;
+  }();
+  const auto kept = secrets_->get(pychron::earthbank::secret_account(mine));
+  ASSERT_TRUE(kept);
+  EXPECT_FALSE(kept->has_value());
+}
+
+// Review focus 4: a script with no terminal and no variable is told, once,
+// and never waits on its input: a password on the stream given is not read.
+TEST_F(ElctlEarthbankAccount, LoginWithoutATerminalOrVariableExitsTwo) {
+  const Outcome o = with_profiles({"login", "--profile", "mylab", "--username", bank_.login(), "--base-url",
+                                   bank_.base_url()},
+                                  bank_.password() + "\n");
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "no terminal")) << o.err;
+  EXPECT_TRUE(contains(o.err, "$EARTHBANK_PASSWORD")) << o.err;
+  EXPECT_EQ(o.out, "");
+  EXPECT_TRUE(bank_.requests().empty()) << "something was sent";
+  EXPECT_FALSE(fs::exists(profiles_));
+  // An empty variable is not a password.
+  set_variable("");
+  EXPECT_EQ(with_profiles({"login", "--profile", "mylab", "--username", bank_.login(), "--base-url", bank_.base_url()})
+                .code,
+            elctl::kUsage);
+  EXPECT_TRUE(bank_.requests().empty());
+}
+
+TEST_F(ElctlEarthbankAccount, LoginNeedsAUserNameAndAGoodAddress) {
+  set_variable(bank_.password());
+  const Outcome none = with_profiles({"login", "--profile", "mylab", "--base-url", bank_.base_url()});
+  EXPECT_EQ(none.code, elctl::kUsage);
+  EXPECT_TRUE(contains(none.err, "--username")) << none.err;
+  const Outcome bad = with_profiles({"login", "--username", "u", "--base-url", "ftp://nowhere.test"});
+  EXPECT_EQ(bad.code, elctl::kUsage);
+  EXPECT_TRUE(contains(bad.err, "address")) << bad.err;
+  const Outcome name = with_profiles({"login", "--profile", "my lab", "--username", "u"});
+  EXPECT_EQ(name.code, elctl::kUsage);
+  EXPECT_TRUE(bank_.requests().empty());
+}
+
+TEST_F(ElctlEarthbankAccount, AccountPrintsTheName) {
+  ASSERT_EQ(log_in().code, elctl::kOk);
+  const Outcome o = with_profiles({"account"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "account: Robin Example (robin.example), id 4107")) << o.out;
+  EXPECT_TRUE(contains(o.out, "profile: mylab (https://earthbank.test)")) << o.out;
+  // Without a login there is nothing to ask as.
+  secrets_ = pychron::earthbank::make_memory_secret_store();
+  const Outcome none = with_profiles({"account"});
+  EXPECT_EQ(none.code, elctl::kUsage);
+  EXPECT_TRUE(contains(none.err, "no password is kept")) << none.err;
+  EXPECT_TRUE(contains(none.err, "elctl earthbank login")) << none.err;
+  // The variable stands in for the store.
+  set_variable(bank_.password());
+  EXPECT_EQ(with_profiles({"account"}).code, elctl::kOk);
+  // A profile that is not there is said.
+  const Outcome missing = with_profiles({"account", "--profile", "other"});
+  EXPECT_EQ(missing.code, elctl::kUsage);
+  EXPECT_TRUE(contains(missing.err, "no profile 'other'")) << missing.err;
+}
+
+TEST_F(ElctlEarthbankAccount, PackagesListsAndCreates) {
+  ASSERT_EQ(log_in().code, elctl::kOk);
+  const Outcome list = with_profiles({"packages"});
+  ASSERT_EQ(list.code, elctl::kOk) << list.err;
+  EXPECT_TRUE(contains(list.out, "610001  Example Lab Ar-Ar 2026")) << list.out;
+  EXPECT_TRUE(contains(list.out, "data packages")) << list.out;
+  EXPECT_TRUE(contains(list.out, "institution 9301")) << list.out;  // the profile's
+
+  const Outcome made = with_profiles({"packages", "--create", "Ar-Ar results 2031", "--institution", "9301"});
+  ASSERT_EQ(made.code, elctl::kOk) << made.err;
+  EXPECT_TRUE(contains(made.out, "created data package ")) << made.out;
+  EXPECT_TRUE(contains(made.out, "'Ar-Ar results 2031'")) << made.out;
+  const auto store = bank_.store();
+  ASSERT_FALSE(store.packages.empty());
+  const auto& row = store.packages.back().at("dataPackageDTO");
+  EXPECT_EQ(row.at("name"), "Ar-Ar results 2031");
+  const std::int64_t id = row.at("id").get<std::int64_t>();
+  EXPECT_TRUE(contains(made.out, std::to_string(id))) << made.out;
+
+  // The profile uploads to it from now on, and the list marks it.
+  const auto profiles = pychron::earthbank::load_profiles(profiles_);
+  ASSERT_TRUE(profiles);
+  EXPECT_EQ(profiles->find("mylab")->data_package_id, std::optional<std::int64_t>(id));
+  EXPECT_EQ(profiles->find("mylab")->institution_id, std::optional<std::int64_t>(9301));
+  const Outcome marked = with_profiles({"packages"});
+  EXPECT_TRUE(contains(marked.out, "* " + std::to_string(id) + "  Ar-Ar results 2031")) << marked.out;
+
+  // A package the service made under another name is the service's word.
+  bank_.fail_next("POST", "/api/management/data-packages", 201,
+                  R"({"id":9999,"name":"Another name"})");
+  const Outcome misnamed = with_profiles({"packages", "--create", "Asked for"});
+  EXPECT_EQ(misnamed.code, elctl::kFailed);
+  EXPECT_TRUE(contains(misnamed.err, "Another name")) << misnamed.err;
+  EXPECT_EQ(pychron::earthbank::load_profiles(profiles_)->find("mylab")->data_package_id, std::optional<std::int64_t>(id));
+  EXPECT_EQ(with_profiles({"packages", "--institution", "x"}).code, elctl::kUsage);
+}
+
+TEST_F(ElctlEarthbankAccount, PreflightListsMissesAndExitsOne) {
+  ASSERT_EQ(log_in().code, elctl::kOk);
+  const std::string file = overrides("[samples.\"FC-2\"]\ninterpretation = \"No Such Interpretation\"\n");
+  const Outcome o = with_profiles({"preflight", "--db", db_, "--overrides", file});
+  EXPECT_EQ(o.code, elctl::kFailed) << o.err << o.out;
+  EXPECT_TRUE(contains(o.out, "signed in to https://earthbank.test as profile 'mylab'")) << o.out;
+  // The sample is a heading, and what is wrong with it is under it.
+  EXPECT_TRUE(contains(o.out, "\nFC-2\n  ArArAgeSummary.interpretationName: 'No Such Interpretation' is not known to EarthBank"))
+      << o.out;
+  EXPECT_FALSE(contains(o.out, "\nS-FUS\n  ArArAgeSummary.interpretationName")) << o.out;
+  EXPECT_TRUE(contains(o.out, " not known to EarthBank; ")) << o.out;
+  // Nothing was written to the service: a pre-flight only reads.
+  for (const auto& r : bank_.requests()) {
+    if (r.path == "/api/authenticate") continue;
+    EXPECT_EQ(r.method, "GET") << r;
+  }
+  // A problem in the selection is as for the workbooks.
+  EXPECT_EQ(with_profiles({"preflight", "--db", db_, "--sample", "nobody"}).code, elctl::kFailed);
+  EXPECT_EQ(with_profiles({"preflight"}).code, elctl::kUsage);
+  EXPECT_EQ(with_profiles({"preflight", "--db", db_, "--frob", "x"}).code, elctl::kUsage);
+}
+
+TEST_F(ElctlEarthbankAccount, PreflightWithoutALoginSaysWhatItCouldNotAsk) {
+  // No profile, no password: the lists are asked as they open to anyone, and
+  // those that answer that they want a login are said not to have been asked
+  // (here the flux monitors do: no list of the fixture wants a login for the
+  // terms the seeded samples have).
+  bank_.fail_next("GET", "/api/arar/FluxMonitor", 401,
+                  R"({"title":"Unauthorized","status":401,"detail":"Full authentication is required"})");
+  const Outcome o = with_profiles({"preflight", "--db", db_, "--base-url", bank_.base_url()});
+  EXPECT_EQ(o.code, elctl::kFailed) << o.err << o.out;
+  EXPECT_TRUE(contains(o.out, "not signed in to https://earthbank.test: there is no profile to sign in with")) << o.out;
+  EXPECT_TRUE(contains(o.out, "\nFC-2\n  ArArAgeCalc.fluxMonitorName: 'FC-2 28.201 Ma' could not be asked (/api/arar/FluxMonitor)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "0 terms are not known to EarthBank; 2 terms could not be asked about")) << o.out;
+  EXPECT_FALSE(bank_.requests().empty());
+  for (const auto& r : bank_.requests()) {
+    EXPECT_EQ(r.method, "GET") << r;
+    EXPECT_FALSE(r.authenticated) << r;
+  }
+}
+
+TEST_F(ElctlEarthbankAccount, ImportProfiles) {
+  const fs::path ini = path("pychron.ausgeochem.ini");
+  std::ofstream(ini) << "[pychron.ausgeochem]\n"
+                        "profiles_json = '[{\"name\": \"default\", \"base_url\": \"https://earthbank.test\", "
+                        "\"username\": \"r.fixture\", \"data_package_id\": \"4321\", \"institution_id\": \"1001\", "
+                        "\"password\": \"not-a-real-password\"}, "
+                        "{\"name\": \"other\", \"base_url\": \"https://earthbank.test\", \"username\": \"s.sample\"}]'\n"
+                        "active_profile = other\n";
+  const Outcome o = with_profiles({"import-profiles", ini.string()});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "imported 2 profiles")) << o.out;
+  EXPECT_TRUE(contains(o.out, "passwords are not imported")) << o.out;
+  const auto profiles = pychron::earthbank::load_profiles(profiles_);
+  ASSERT_TRUE(profiles) << profiles.error().what;
+  ASSERT_EQ(profiles->profiles.size(), 2u);
+  EXPECT_EQ(profiles->active, "other");
+  EXPECT_EQ(profiles->find("default")->data_package_id, std::optional<std::int64_t>(4321));
+  EXPECT_FALSE(contains(slurp(profiles_), "not-a-real-password"));
+  EXPECT_FALSE(contains(o.out + o.err, "not-a-real-password"));
+
+  // Again: what is there is the user's, and is said.
+  const Outcome twice = with_profiles({"import-profiles", ini.string()});
+  ASSERT_EQ(twice.code, elctl::kOk) << twice.err;
+  EXPECT_TRUE(contains(twice.out, "imported 0 profiles")) << twice.out;
+  EXPECT_TRUE(contains(twice.out, "profile 'default' is already in")) << twice.out;
+  EXPECT_EQ(with_profiles({"import-profiles", path("nothing.ini").string()}).code, elctl::kUsage);
+  EXPECT_EQ(with_profiles({"import-profiles"}).code, elctl::kUsage);
+}
+
+// Whatever a command printed, a password and a token are not in it: not on a
+// success, not on a failure.
+TEST_F(ElctlEarthbankAccount, NoPasswordOrTokenInAnyOutput) {
+  ASSERT_EQ(log_in().code, elctl::kOk);
+  with_profiles({"account"});
+  with_profiles({"packages"});
+  with_profiles({"packages", "--create", "Another one"});
+  with_profiles({"preflight", "--db", db_});
+  bank_.expire_tokens();
+  with_profiles({"account"});  // a 401, and a new login
+  bank_.fail_next("GET", "/api/account", 500, R"({"detail":"said of )" + bank_.password() + R"("})");
+  with_profiles({"account"});
+  bank_.set_password("a-changed-password-8812");
+  with_profiles({"account"});  // the stored password is refused
+  set_variable("a-wrong-password-4417");
+  with_profiles({"login", "--profile", "mylab"});
+  set_variable("a-changed-password-8812");
+  with_profiles({"login", "--profile", "mylab"});
+
+  ASSERT_FALSE(spy_.secrets().empty());
+  std::vector<std::string> secrets = spy_.secrets();
+  secrets.insert(secrets.end(), {"not-a-real-password", "a-wrong-password-4417", "a-changed-password-8812", "Bearer"});
+  for (const std::string& output : outputs_) {
+    for (const std::string& secret : secrets) EXPECT_FALSE(contains(output, secret)) << secret << " in " << output;
+  }
+  // Nor in the profiles file.
+  for (const std::string& secret : secrets) EXPECT_FALSE(contains(slurp(profiles_), secret)) << secret;
+}
+
+TEST_F(ElctlEarthbankAccount, HelpListsTheAccountCommands) {
+  for (const char* sub : {"login", "account", "packages", "preflight", "import-profiles"}) {
+    const Outcome help = run_raw({"earthbank", sub, "--help"});
+    EXPECT_EQ(help.code, elctl::kOk) << sub;
+    EXPECT_TRUE(contains(help.out, std::string("elctl earthbank ") + sub)) << sub << help.out;
+    EXPECT_TRUE(contains(help.out, "EARTHBANK_PASSWORD")) << help.out;
+  }
+  EXPECT_TRUE(contains(run_raw({"help"}).out, "earthbank login|account|packages|preflight|import-profiles"));
+}
+
+#ifndef PYCHRON_ELCTL_HAS_NETWORK
+// A build with persistence and no Qt6 Network: the commands that need the
+// network say so and exit 2, before they ask for anything.
+TEST_F(ElctlEarthbankAccount, WithoutNetworkSupportTheNetworkCommandsSayNo) {
+  for (const char* sub : {"login", "account", "packages", "preflight"}) {
+    std::istringstream in;
+    std::ostringstream out, err;
+    const int code = elctl::earthbank_command({sub, "--profiles", profiles_.string()}, elctl::Io{in, out, err});
+    EXPECT_EQ(code, elctl::kUsage) << sub;
+    EXPECT_TRUE(contains(err.str(), "this build has no network support (Qt6 Network was not found)")) << err.str();
+    EXPECT_EQ(out.str(), "");
+  }
+}
+#endif
 
 }  // namespace
 
