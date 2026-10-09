@@ -177,7 +177,7 @@ OptionValue Options::get(std::string_view key) const {
   return f->default_value;
 }
 
-bool Options::is_set(std::string_view key) const { return values_.count(std::string(key)) != 0; }
+bool Options::is_set(std::string_view key) const { return values_.contains(std::string(key)); }
 
 bool Options::get_bool(std::string_view key) const {
   const auto v = get(key);
@@ -535,7 +535,7 @@ std::vector<PresetInfo> PresetStore::list(const SchemaPtr& schema) const {
     for (const auto& e : fs::directory_iterator(d, ec)) {
       if (!e.is_regular_file() || e.path().extension() != ".toml") continue;
       const std::string stem = e.path().stem().string();
-      const bool shadows = by_stem.count(stem) != 0;
+      const bool shadows = by_stem.contains(stem);
       by_stem[stem] = PresetInfo{name_in_file(e.path()), origin, e.path(), shadows};
     }
   };

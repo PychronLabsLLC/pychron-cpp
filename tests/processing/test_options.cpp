@@ -160,7 +160,7 @@ TEST(Options, MigrationsRunFromTheFileVersion) {
   s->migrations = {
       [](pp::Options& o) {  // 1 -> 2: "w" renamed to "width"
         auto& v = o.raw_values();
-        if (o.extra.count("w")) {
+        if (o.extra.contains("w")) {
           v["width"] = o.extra["w"];
           o.extra.erase("w");
         }

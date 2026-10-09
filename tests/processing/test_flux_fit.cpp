@@ -16,10 +16,7 @@ namespace {
 
 namespace pr = pychron::reduction;
 
-using flux_test::analysis;
-using flux_test::fc2;
 using flux_test::level;
-using flux_test::three;
 
 FluxOptions plane(bool weighted, pr::MeanErrorKind error = pr::MeanErrorKind::Msem) {
   FluxOptions o;

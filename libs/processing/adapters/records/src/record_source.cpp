@@ -22,7 +22,7 @@ namespace {
 long long days_from_civil(long long y, unsigned m, unsigned d) {
   y -= m <= 2;
   const long long era = (y >= 0 ? y : y - 399) / 400;
-  const unsigned yoe = static_cast<unsigned>(y - era * 400);
+  const auto yoe = static_cast<unsigned>(y - era * 400);
   const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
   const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + static_cast<long long>(doe) - 719468;
@@ -118,13 +118,13 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
   // Detector of each isotope from its signal series.
   std::map<std::string, std::string> detector_of;
   for (const auto& s : r.data.series)
-    if (s.kind == "signal" && !s.iso.empty() && !detector_of.count(s.iso)) detector_of[s.iso] = s.det;
+    if (s.kind == "signal" && !s.iso.empty() && !detector_of.contains(s.iso)) detector_of[s.iso] = s.det;
 
   for (const auto& [iso, ir] : r.results.intercepts) {
     IsotopeData d;
     d.key = iso;
     d.isotope = iso.substr(iso.find(':') == std::string::npos ? 0 : iso.find(':') + 1);
-    d.detector = detector_of.count(iso) ? detector_of[iso] : "";
+    d.detector = detector_of.contains(iso) ? detector_of[iso] : "";
     d.intercept = v(ir.intercept.value, ir.intercept.error);
     d.fit = ir.fit;
     d.n = static_cast<int>(ir.intercept.n_used);

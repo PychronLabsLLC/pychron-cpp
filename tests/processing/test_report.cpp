@@ -27,7 +27,7 @@ pp::Dataset steps(int n = 8, std::map<int, double> f_of_step = {}) {
   const double ar36[] = {0.5, 0.3, 0.2, 0.1, 0.08, 0.06, 0.1, 0.2, 0.3, 0.4};
   for (int i = 0; i < n; ++i) {
     pp::DatasetItem item;
-    const double f = f_of_step.count(i) ? f_of_step[i] : 10.0;
+    const double f = f_of_step.contains(i) ? f_of_step[i] : 10.0;
     auto a = make_step(i, ar39[i], ar36[i], f);
     a->material = "sanidine";
     a->project = "Fish Canyon";
@@ -342,7 +342,7 @@ TEST(Report, CsvIsWellFormedAndQuotesSpecialText) {
   std::vector<std::string> order;
   bool saw_sample = false;
   while (std::getline(in, line)) {
-    if (line.rfind("# ", 0) == 0) {
+    if (line.starts_with("# ")) {
       ++header_lines;
       continue;
     }

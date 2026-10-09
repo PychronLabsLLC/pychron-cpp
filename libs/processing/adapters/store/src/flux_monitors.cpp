@@ -33,7 +33,7 @@ Result<void> validate(const MonitorSets& sets) {
         return bad(std::string("'") + key + "' of '" + s.name + "' has a negative sigma");
     }
   }
-  if (!names.count(sets.default_name)) return bad("'default' names no set: '" + sets.default_name + "'");
+  if (!names.contains(sets.default_name)) return bad("'default' names no set: '" + sets.default_name + "'");
   return {};
 }
 

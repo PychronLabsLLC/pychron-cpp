@@ -12,6 +12,7 @@
 #include <future>
 #include <limits>
 #include <mutex>
+#include <ranges>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -383,7 +384,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
       const auto colon = ir.isotope.find(':');
       iso.isotope = colon == std::string::npos ? ir.isotope : ir.isotope.substr(colon + 1);
       iso.detector = !ir.detector.empty() ? ir.detector
-                     : detector_of.count(ir.isotope) ? detector_of[ir.isotope]
+                     : detector_of.contains(ir.isotope) ? detector_of[ir.isotope]
                                                      : (colon == std::string::npos ? "" : ir.isotope.substr(0, colon));
       iso.intercept = value_of(ir.value, ir.error, ir.manual);
       iso.fit = fit_spec(ir.fit, ir.error_type, ir.filter_outliers_json);
@@ -769,7 +770,7 @@ std::string references(const std::vector<ps::ReferenceRow>& refs) {
   std::string out;
   for (const auto& r : refs) {
     if (!out.empty()) out += ", ";
-    if (r.exclude) out += "!";
+    if (r.exclude) out += '!';
     out += r.record_id ? *r.record_id : r.ref_analysis ? r.ref_analysis->str().substr(0, 8) : "?";
   }
   return out;
@@ -841,7 +842,7 @@ std::string describe_conflict(const ps::Conflict& c) {
   if (c.actual_by) {
     out += " (" + c.actual_by->created.iso().substr(0, 19) + "Z";
     if (!c.actual_by->message.empty()) out += ": " + c.actual_by->message;
-    out += ")";
+    out += ')';
   }
   return out + "; reload to see their change";
 }
@@ -926,18 +927,18 @@ Result<std::vector<RevisionSummary>> StoreSource::history(const std::string& ana
         auto head = s.head(id, k);
         if (!head) return fail(head.error());
         std::vector<RevisionSummary> out;
-        for (auto it = revs->rbegin(); it != revs->rend(); ++it) {
+        for (auto& it : std::views::reverse(*revs)) {
           RevisionSummary r;
-          r.id = it->uuid.str();
-          if (it->parent) r.parent = it->parent->str();
+          r.id = it.uuid.str();
+          if (it.parent) r.parent = it.parent->str();
           r.kind = kind;
-          r.changeset_kind = std::string(ps::to_string(it->changeset.kind));
-          r.author = it->author_name;
-          r.host = it->client_hostname;
-          r.message = it->changeset.message;
-          r.created = seconds(it->changeset.created);
-          r.seq = it->change_seq;
-          r.head = *head && **head == it->uuid;
+          r.changeset_kind = std::string(ps::to_string(it.changeset.kind));
+          r.author = it.author_name;
+          r.host = it.client_hostname;
+          r.message = it.changeset.message;
+          r.created = seconds(it.changeset.created);
+          r.seq = it.change_seq;
+          r.head = *head && **head == it.uuid;
           out.push_back(std::move(r));
         }
         return out;

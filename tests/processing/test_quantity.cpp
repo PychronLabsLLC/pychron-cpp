@@ -7,7 +7,6 @@
 #include "fixtures.hpp"
 
 namespace pp = pychron::processing;
-namespace r = pychron::reduction;
 using pp::test::make_air;
 using pp::test::make_unknown;
 

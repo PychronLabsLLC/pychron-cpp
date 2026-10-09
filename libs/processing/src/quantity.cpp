@@ -395,7 +395,7 @@ std::vector<std::string> available_quantities(const std::vector<ReducedPtr>& ana
   const char* kArgon[] = {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"};
   for (std::size_t i = 0; i < 5; ++i)
     for (std::size_t j = i + 1; j < 5; ++j)
-      if (isotopes.count(kArgon[i]) && isotopes.count(kArgon[j]))
+      if (isotopes.contains(kArgon[i]) && isotopes.contains(kArgon[j]))
         out.push_back(std::string(kArgon[i]) + "/" + kArgon[j]);
   for (const auto& i : isotopes)
     for (const char* st : {"intercept", "baseline", "blank", "ic_factor", "bs_corrected", "bk_corrected"})

@@ -435,7 +435,7 @@ TEST(FluxScene, AnalysesSpreadAboutTheirHole) {
   const auto* a = points_labelled(*scene, "Analyses");
   std::vector<double> at_hole1;  // (10, 0): 90 degrees
   for (std::size_t i = 0; i < a->x.size(); ++i)
-    if (a->refs[i].analysis.rfind("u-1-", 0) == 0) at_hole1.push_back(a->x[i]);
+    if (a->refs[i].analysis.starts_with("u-1-")) at_hole1.push_back(a->x[i]);
   ASSERT_EQ(at_hole1.size(), 3u);
   EXPECT_NEAR(at_hole1[0], 88, 1e-9);
   EXPECT_NEAR(at_hole1[1], 90, 1e-9);
@@ -507,10 +507,10 @@ TEST(FluxScene, WhichModelsHaveACurve) {
     return std::pair{first_of<pp::LineLayer>(*scene) != nullptr, first_of<pp::BandLayer>(*scene) != nullptr};
   };
   for (const auto kind : {K::Plane, K::WeightedMean, K::LeastSquares1D, K::WeightedMean1D})
-    EXPECT_EQ(has_curve(ring, kind), (std::pair{true, true})) << int(kind);
+    EXPECT_EQ(has_curve(ring, kind), (std::pair{true, true})) << static_cast<int>(kind);
   EXPECT_EQ(has_curve(mixed, K::Bowl), (std::pair{true, true}));
   for (const auto kind : {K::Matching, K::NearestNeighbors, K::Bracketing, K::Bracketing1D})
-    EXPECT_EQ(has_curve(ring, kind), (std::pair{false, false})) << int(kind);
+    EXPECT_EQ(has_curve(ring, kind), (std::pair{false, false})) << static_cast<int>(kind);
 
   // A one-dimensional curve runs along the coordinate over the whole tray.
   auto o = options_of(K::LeastSquares1D);

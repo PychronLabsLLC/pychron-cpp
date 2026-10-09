@@ -454,7 +454,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
     }
     scene.graphs.push_back(std::move(g));
   }
-  if (scene.graphs.empty()) scene.warnings.push_back("no analyses");
+  if (scene.graphs.empty()) scene.warnings.emplace_back("no analyses");
   return scene;
 }
 

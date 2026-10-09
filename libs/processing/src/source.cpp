@@ -19,7 +19,7 @@ bool in(const std::vector<std::string>& set, const std::string& v) {
 }
 
 bool starts_with_ci(const std::string& s, const std::string& prefix_lower) {
-  return lower(s).rfind(prefix_lower, 0) == 0;
+  return lower(s).starts_with(prefix_lower);
 }
 
 // Newest first; ties by uuid descending so the order is total.

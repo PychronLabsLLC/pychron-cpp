@@ -248,7 +248,7 @@ Result<Scene> detail::build_isochron_scene(const Dataset& d, const Options& o, c
     g.panels.push_back(std::move(p));
     scene.graphs.push_back(std::move(g));
   }
-  if (scene.graphs.empty()) scene.warnings.push_back("no analyses");
+  if (scene.graphs.empty()) scene.warnings.emplace_back("no analyses");
   return scene;
 }
 

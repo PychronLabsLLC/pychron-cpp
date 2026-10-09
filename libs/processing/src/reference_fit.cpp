@@ -6,7 +6,9 @@
 #include <cstdio>
 #include <numbers>
 #include <random>
+#include <ranges>
 #include <set>
+#include <utility>
 
 #include "pychron/processing/units.hpp"
 #include "pychron/reduction/fits.hpp"
@@ -189,7 +191,7 @@ std::optional<Wls> wls(const std::vector<double>& x, const std::vector<double>& 
 
 double poly(const std::vector<double>& c, double x) {
   double v = 0.0;
-  for (auto it = c.rbegin(); it != c.rend(); ++it) v = v * x + *it;
+  for (double it : std::views::reverse(c)) v = v * x + it;
   return v;
 }
 
@@ -523,7 +525,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
   ReferenceFigure fig;
   fig.fits.target = target;
   fig.scene.kind = target == ReferenceFitTarget::Blanks ? "blank_fit" : "icfactor_fit";
-  const double nsigma = static_cast<double>(o.get_int("nsigma"));
+  const auto nsigma = static_cast<double>(o.get_int("nsigma"));
   const bool show_current = o.get_bool("show_current");
   const bool skip_reviewed = o.get_bool("skip_reviewed");
   const bool blanks = target == ReferenceFitTarget::Blanks;
@@ -619,7 +621,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
         current.x.push_back(x);
         current.y.push_back(keys.front().second.value);
         current.y_err.push_back(keys.front().second.error * nsigma);
-        current.refs.push_back(PointRef{});
+        current.refs.emplace_back();
         current.tooltips.push_back(a.runid + " current");
       }
       if (!model) continue;
@@ -631,7 +633,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
       predicted.x.push_back(x);
       predicted.y.push_back(v->value);
       predicted.y_err.push_back(v->error * nsigma);
-      predicted.refs.push_back(PointRef{});
+      predicted.refs.emplace_back();
       predicted.tooltips.push_back(a.runid + " predicted");
       // The rows to store: blanks per isotope key; IC factors for the
       // denominator, or per Ar36..Ar39 detector from a source correction.
@@ -711,12 +713,12 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
       std::snprintf(buf, sizeof buf, "%s %s  n %zu of %zu", std::string(to_string(spec.fit)).c_str(),
                     is_interpolation(spec.fit) ? "" : std::string(to_string(spec.error)).c_str(),
                     model->included().size(), points.size());
-      t.lines.push_back(buf);
+      t.lines.emplace_back(buf);
       if (model->mswd()) {
         std::snprintf(buf, sizeof buf, "MSWD %.3g%s", *model->mswd(), model->weighted() ? "  weighted" : "");
-        t.lines.push_back(buf);
+        t.lines.emplace_back(buf);
       }
-      if (spec.source_correction) t.lines.push_back("source correction (Ar36..Ar39)");
+      if (spec.source_correction) t.lines.emplace_back("source correction (Ar36..Ar39)");
       if (reviewed_kept > 0) t.lines.push_back(std::to_string(reviewed_kept) + " reviewed value(s) kept");
       t.corner = Corner::TopLeft;
       p.layers.emplace_back(std::move(t));
@@ -732,7 +734,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
   g.x.max = pad;
   fig.scene.graphs.push_back(std::move(g));
   fig.scene.style.legend = true;
-  if (references.empty()) fig.scene.warnings.push_back("no references");
+  if (references.empty()) fig.scene.warnings.emplace_back("no references");
   for (const DatasetItem* item : fitted)
     if (auto it = by_uuid.find(item->analysis->analysis->uuid); it != by_uuid.end())
       fig.fits.analyses.push_back(std::move(it->second));
@@ -783,15 +785,15 @@ Result<std::vector<std::string>> find_references(IAnalysisSource& source, const 
       auto page = source.browse(q);
       if (!page) return fail(page.error());
       for (auto& row : page->rows)
-        if (!skip.count(row.uuid) && seen.insert(row.uuid).second) found.push_back(std::move(row));
-      if (!page->next || static_cast<int>(found.size()) >= query.limit) break;
+        if (!skip.contains(row.uuid) && seen.insert(row.uuid).second) found.push_back(std::move(row));
+      if (!page->next || std::cmp_greater_equal(found.size(), query.limit)) break;
       q.after = page->next;
     }
-    if (static_cast<int>(found.size()) >= query.limit) break;
+    if (std::cmp_greater_equal(found.size(), query.limit)) break;
   }
   std::stable_sort(found.begin(), found.end(),
                    [](const AnalysisSummary& a, const AnalysisSummary& b) { return a.timestamp > b.timestamp; });
-  if (static_cast<int>(found.size()) > query.limit) found.resize(static_cast<std::size_t>(query.limit));
+  if (std::cmp_greater(found.size(), query.limit)) found.resize(static_cast<std::size_t>(query.limit));
   std::vector<std::string> out;
   for (const auto& s : found) out.push_back(s.uuid);
   return out;

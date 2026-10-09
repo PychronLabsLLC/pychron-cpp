@@ -161,7 +161,7 @@ std::vector<std::string> flux_warnings(const LevelInputs& inputs, const LevelFit
     }
   if (inputs.saved_options && inputs.saved_sd_replaced && !context.fit_error_given &&
       r::is_least_squares(fit.options.fit.kind))
-    out.push_back("saved fit used SD, which a fitted surface does not have: using msem");
+    out.emplace_back("saved fit used SD, which a fitted surface does not have: using msem");
   // The standard is not changed silently; with a monitor set named the user chose it.
   if (inputs.saved_monitor_set_missing && !context.monitor_set_given)
     out.push_back("saved fit used monitor set '" + inputs.saved_monitor_set +
@@ -476,7 +476,7 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
       if (a.j) drawn.push_back(&a);
     // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by record id, not by address
     std::sort(drawn.begin(), drawn.end(), [](auto* a, auto* b) { return a->record_id < b->record_id; });
-    const double n = static_cast<double>(drawn.size());
+    const auto n = static_cast<double>(drawn.size());
     const double step = (kind == FluxAbscissa::Angle ? 4.0 : (hi - lo) * 0.04) / std::max(n - 1.0, 1.0);
     for (std::size_t i = 0; i < drawn.size(); ++i) {
       const auto& a = *drawn[i];

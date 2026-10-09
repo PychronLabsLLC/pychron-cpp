@@ -88,7 +88,7 @@ RevisionDiff diff_revisions(const RevisionTable& before, const RevisionTable& af
     d.rows.push_back(std::move(row));
   }
   for (const auto& r : after.rows) {
-    if (seen.count(r.key)) continue;
+    if (seen.contains(r.key)) continue;
     DiffRow row;
     row.key = r.key;
     row.state = DiffState::Added;

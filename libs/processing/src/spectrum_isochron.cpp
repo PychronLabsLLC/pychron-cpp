@@ -138,7 +138,7 @@ Result<Scene> build_spectrum_isochron(const Dataset& d, const Options& o) {
     if (i < isochron->graphs.size()) scene.graphs.push_back(std::move(isochron->graphs[i]));
   }
   if (from_plateau && !age_panel)
-    scene.warnings.push_back("the spectrum has no age panel: the isochron looks for the plateau itself");
+    scene.warnings.emplace_back("the spectrum has no age panel: the isochron looks for the plateau itself");
   for (auto& w : isochron->warnings)
     if (std::find(scene.warnings.begin(), scene.warnings.end(), w) == scene.warnings.end())
       scene.warnings.push_back(std::move(w));

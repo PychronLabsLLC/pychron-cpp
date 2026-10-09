@@ -52,7 +52,7 @@ RecallRow value_row(std::string name, std::optional<Value> v, std::string units 
 std::string fit_name(const std::optional<r::FitSpec>& f) {
   if (!f) return {};
   std::string s(r::to_string(f->kind));
-  if (f->outliers.enabled) s += "*";
+  if (f->outliers.enabled) s += '*';
   return s;
 }
 
@@ -146,8 +146,7 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
   for (const auto& pc : a.peak_centers) m.spectrometer.rows.push_back(value_row(pc.detector + " peak center", Value{pc.center, 0}));
   for (const auto& [k, v] : a.environmentals) m.spectrometer.rows.push_back(value_row(k, Value{v, 0}));
 
-  for (std::size_t i = 0; i < a.isotopes.size(); ++i) {
-    const auto& d = a.isotopes[i];
+  for (const auto& d : a.isotopes) {
     RecallIsotope iso;
     iso.key = d.key;
     iso.isotope = d.isotope;
@@ -260,14 +259,14 @@ Scene make_evolution_scene(const Analysis& a, const RawData& raw, SeriesKind kin
         std::snprintf(buf, sizeof buf, "%s %s  %s = %.6g ± %.3g  n %zu", std::string(r::to_string(spec.kind)).c_str(),
                       spec.error == r::ErrorType::Sd ? "SD" : "SEM", kind == SeriesKind::Baseline ? "Bs" : "I(0)",
                       fit->intercept.value, fit->intercept.error, fit->intercept.n_used);
-        t.lines.push_back(buf);
+        t.lines.emplace_back(buf);
         if (!user_excluded.empty() || !fit->outliers.empty()) {
           std::snprintf(buf, sizeof buf, "%zu left out, %zu outliers", user_excluded.size(), fit->outliers.size());
-          t.lines.push_back(buf);
+          t.lines.emplace_back(buf);
         }
         if (std::abs(fit->intercept.value - stored->value.value) > 1e-6 * std::max(1.0, std::abs(stored->value.value))) {
           std::snprintf(buf, sizeof buf, "stored %.6g ± %.3g", stored->value.value, stored->value.error);
-          t.lines.push_back(buf);
+          t.lines.emplace_back(buf);
         }
         t.corner = Corner::TopRight;  // signals decay from the left: keep t = 0 clear
         p.layers.emplace_back(std::move(t));

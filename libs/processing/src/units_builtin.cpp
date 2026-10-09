@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <utility>
 
 #include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
@@ -369,7 +370,7 @@ class EditsUnit final : public Unit {
         max_group = std::max(max_group, g->second);
       }
     }
-    while (static_cast<int>(d.group_names.size()) <= max_group && !groups.empty())
+    while (std::cmp_less_equal(d.group_names.size(), max_group) && !groups.empty())
       d.group_names.push_back("Group " + std::to_string(d.group_names.size() + 1));
     return one(make_dataset(std::move(d)));
   }

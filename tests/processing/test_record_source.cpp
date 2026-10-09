@@ -40,7 +40,7 @@ rec::AnalysisRecord record(const std::string& uuid, const std::string& identifie
   r.spectrometer.gains = {{"H1", 1.002}};
   r.spectrometer.deflections = {{"H1", 10.0}};
   auto add = [&](const char* iso, const char* det, double v, double e) {
-    rec::DataSeries s{iso, det, "signal", {{0.f, 1.f, 2.f}, {float(v), float(v), float(v)}, {}}};
+    rec::DataSeries s{iso, det, "signal", {{0.f, 1.f, 2.f}, {static_cast<float>(v), static_cast<float>(v), static_cast<float>(v)}, {}}};
     r.data.series.push_back(s);
     rec::InterceptResult ir;
     ir.intercept.value = v;
