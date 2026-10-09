@@ -64,6 +64,8 @@ class DockLayouts : public QObject {
   [[nodiscard]] Result<void> save_as(const QString& name);  // overwrites
   [[nodiscard]] Result<void> apply(const QString& name);
   void remove(const QString& name);
+  [[nodiscard]] bool contains(const QString& name) const;   // ignoring case
+  static DockLayouts* of(const QWidget* window); // its helper, or nullptr
   [[nodiscard]] bool can_save() const;           // has settings
   [[nodiscard]] QList<QAction*> panel_actions() const;      // closable docks, in creation order
   static Result<QString> valid_name(const QString& raw);    // trimmed name or why not
@@ -207,9 +209,18 @@ QSettings, per user, application's (`PychronLabs` / `pychron-ui`).
 9. Every dock a helper manages must have a non-empty `objectName`; helper
    constructor asserts it (`Q_ASSERT`), since Qt silently drops unnamed
    docks from `saveState()`.
-10. `apply` failure is reported in the window's status bar
+10. Helper emits `applyFailed(QString message)`, message
+    `arrangement “<name>” not applied: <why>`, on `"bad_layout"` only.
+    `apply` failure is reported in the window's status bar
     (`statusBar()->showMessage`, 5 s); Extraction Line also writes
     `WARN [ui] arrangement “<name>” not applied: <why>` to its log dock.
+11. `save_as` syncs settings. If `QSettings::status()` is then not
+    `NoError`, what it wrote is removed and it returns `ErrorKind::Io`,
+    `code` `"not_saved"`: an arrangement never listed now and gone at next
+    start.
+12. Layout command with no usable front window: front is a dialog or
+    nothing → commands disabled, triggering does nothing; front is a popup
+    (command palette) → acts on window under it (`MenuHub::active_window()`).
 
 ## 7. Tests
 
