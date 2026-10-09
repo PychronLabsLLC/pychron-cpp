@@ -5,9 +5,10 @@ Status: design only, not implemented.
 The cryo dock and the heater dock exist (plan 2026-10-05, tasks C6 and E3).
 Set against the legacy panels they port (`BaseLakeShoreController`'s control
 group, `HeaterMixin.heater_view`) the heater dock is level and the cryo dock
-is short of three things: a setpoint field bounded by the output's limits, the
-named setpoints of `cryotemps.yaml`, and an input shown beside the loop it
-feeds. This closes those, and gives the heater dock limits and units on its
+is short of four things: a setpoint field bounded by the output's limits, the
+named setpoints of `cryotemps.yaml`, an input shown beside the loop it feeds,
+and the segmented display legacy read an input on (`LCDEditor`), which the
+heater dock already uses for its readback. This closes those, and gives the heater dock limits and units on its
 chart, which legacy did not have.
 
 Showing temperatures in Celsius is not part of this: the interface stays in
@@ -104,6 +105,18 @@ now fails where it used to send. Only a line that configures limits sees it.
   input i, as legacy paired them and `LineCryoService` waits on them. Inputs
   with no loop follow as plain rows; a loop with no input has an empty
   temperature.
+- An input's temperature is read on the display the heater dock's readback
+  uses: a `QLCDNumber` of 7 digits, flat segments, two decimals, `-` before
+  the first reading. The unit is not on the display (it has no K): a `K`
+  label follows it, and the tooltip names the input. This holds for every
+  input, paired or not. The setpoint the controller reports stays a text
+  label, so a row's one large number is the temperature.
+- The two docks build the display from one helper, so they cannot drift
+  apart: `lcd_readout(parent)` in the UI sources, which the heater dock's
+  readback moves to with no change in what it shows.
+- `CryoDock::temperature_text(input)` gives way to
+  `CryoDock::temperature(input)`, the input's `QLCDNumber*`, as
+  `HeaterDock::readback(heater)` is.
 - The field's range is `cryo_limits(output)`, and its tooltip says the range.
   An absent end falls back to today's 0 and 1000 K.
 - Under the rows, one button per `[cryo.setpoints]` name, in name order. The
@@ -133,8 +146,8 @@ Written first, one layer at a time.
 | `tests/devices/test_lakeshore.cpp` | `setpoint_limits` is the envelope of the bands; `nullopt` without bands |
 | `tests/systems/test_line_cryo_service.cpp` | out of range refused and nothing reaches the sim, for one output, for a named set (none written when one of several is out), and with config and driver limits narrowing each other |
 | `tests/systems/test_line_heaters.cpp` | out of range refused, nothing written |
-| `tests/ui/test_cryo_dock.cpp` | paired rows and leftover inputs; the field's range; a named button per name, its set, the readbacks after; buttons disabled until the answer |
-| `tests/ui/test_heater_dock.cpp` | an out-of-range Enter sends nothing and sets the status; the axis label with shared and mixed units |
+| `tests/ui/test_cryo_dock.cpp` | paired rows and leftover inputs; each input's display shows `-` and then the reading to two decimals; the field's range; a named button per name, its set, the readbacks after; buttons disabled until the answer |
+| `tests/ui/test_heater_dock.cpp` | the readback display is unchanged by the shared helper; an out-of-range Enter sends nothing and sets the status; the axis label with shared and mixed units |
 
 ## 8. Commits
 
