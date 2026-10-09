@@ -112,14 +112,14 @@ LValves valves_from_yaml(const YNode& root, std::vector<std::string>& notes) {
                                            "kind", "actuator", "inner",   "outer"};
   LValves out;
   if (!root.is_seq()) {
-    notes.push_back("valves.yaml: not a list of valves; nothing read");
+    notes.emplace_back("valves.yaml: not a list of valves; nothing read");
     return out;
   }
   for (const auto& item : root.seq) {
     if (!item.is_map()) continue;
     const std::string name = item.text("name");
     if (name.empty()) {
-      notes.push_back("valves.yaml: an entry without a name was skipped");
+      notes.emplace_back("valves.yaml: an entry without a name was skipped");
       continue;
     }
     for (const auto& k : item.keys)
@@ -247,7 +247,7 @@ LCanvas canvas_from_yaml(const YNode& root, std::vector<std::string>& notes) {
 // Legacy finds connections with //connection: at any depth, so one written
 // inside the element it belongs to (NMGRL's <tank>) counts too.
 void xml_connection(const XNode& c, std::vector<LConnection>& connections, std::vector<std::string>& notes) {
-  auto orientation = c.attrs.count("orientation") ? c.attrs.at("orientation") : std::string{};
+  auto orientation = c.attrs.contains("orientation") ? c.attrs.at("orientation") : std::string{};
   // legacy reads the <corner> child, never a corner= attribute
   connections.push_back({conn_kind(c.tag, orientation), c.child_text("start"), c.child_text("end"),
                          c.child_text("left"), c.child_text("mid"), c.child_text("right"), c.child_text("corner"),
@@ -255,7 +255,7 @@ void xml_connection(const XNode& c, std::vector<LConnection>& connections, std::
   LConnection& made = connections.back();
   bool tee_noted = false;
   for (const auto& end : c.children) {
-    if (!end.attrs.count("offset")) continue;
+    if (!end.attrs.contains("offset")) continue;
     if (end.tag == "start") made.start_offset = pair_of(end.attrs.at("offset"));
     else if (end.tag == "end") made.end_offset = pair_of(end.attrs.at("offset"));
     else if (!std::exchange(tee_noted, true))
@@ -295,10 +295,10 @@ LCanvas canvas_from_xml(const XNode& root, std::vector<std::string>& notes) {
       e.kind = element_kind(c.tag);
       e.name = c.text;
       // legacy reads the attribute; a child is accepted as well
-      if (c.attrs.count("display_name")) e.display_name = c.attrs.at("display_name");
+      if (c.attrs.contains("display_name")) e.display_name = c.attrs.at("display_name");
       else if (c.child("display_name")) e.display_name = c.child_text("display_name");
       e.use_symbol = c.child_text("use_symbol") == "True";
-      if (c.attrs.count("use_symbol")) {
+      if (c.attrs.contains("use_symbol")) {
         e.use_symbol = c.attrs.at("use_symbol") == "True";
         e.no_symbol = !e.use_symbol;
       }
@@ -323,7 +323,7 @@ LCanvas canvas_from_valves2d(const Ini& ini) {
     }
   }
   for (const auto& [section, keys] : ini) {
-    if (section.rfind("Valve-", 0) != 0) continue;
+    if (!section.starts_with("Valve-")) continue;
     LElement e;
     e.kind = e.legacy_kind = "valve";
     e.name = section.substr(6);
@@ -388,7 +388,7 @@ struct Actuator {
 
 // Legacy pychron opened "/dev/tty.<port>" for a bare serial port name.
 std::string serial_path(const std::string& port) {
-  if (port.starts_with("/") || port.starts_with("COM")) return port;
+  if (port.starts_with('/') || port.starts_with("COM")) return port;
   return "/dev/tty." + port;
 }
 
@@ -417,9 +417,9 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
     return a;
   }
   auto general = own["General"];
-  a.legacy_class = general.count("type") ? general["type"] : general.count("klass") ? general["klass"] : std::string{};
+  a.legacy_class = general.contains("type") ? general["type"] : general.contains("klass") ? general["klass"] : std::string{};
   Ini comms_from = own;
-  if (!own.count("Communications") && !a.legacy_class.empty() && is_file(*devices / (a.legacy_class + ".cfg"))) {
+  if (!own.contains("Communications") && !a.legacy_class.empty() && is_file(*devices / (a.legacy_class + ".cfg"))) {
     comms_from = parse_ini(read_text(*devices / (a.legacy_class + ".cfg")).value_or(""));
     read.push_back("devices/" + a.legacy_class + ".cfg");
   }
@@ -504,7 +504,7 @@ Actuator resolve_actuator(const std::string& name, const std::optional<fs::path>
     a.transport_kind = kind;
     a.comment = "legacy " + what + " at " + a.endpoint + " (" + kind + ")";
     notes.push_back("actuator " + name + ": Qtegra takes one client; if the spectrometer's thermo_qtegra uses " +
-                    a.endpoint + ", make this transport kind = \"link\", link = \"<that driver's link name>\"");
+                    a.endpoint + R"(, make this transport kind = "link", link = "<that driver's link name>")");
     return a;
   }
   if (a.legacy_class == "PLC2000GPActuator") {
@@ -603,9 +603,9 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
   } else if (valves2d) {
     canvas = canvas_from_valves2d(parse_ini(read_text(*valves2d).value_or("")));
     out.read.push_back(rel(*valves2d));
-    out.notes.push_back("valves2D.cfg has positions only: connections and the other elements must be drawn again");
+    out.notes.emplace_back("valves2D.cfg has positions only: connections and the other elements must be drawn again");
   } else {
-    out.notes.push_back("no canvas file: the canvas holds the valves in a row");
+    out.notes.emplace_back("no canvas file: the canvas holds the valves in a row");
   }
   for (const auto& s : skipped) out.notes.push_back("canvas file: skipped " + s);
   if (canvas_config) {
@@ -759,7 +759,7 @@ Result<LegacyLine> import_legacy_line(const fs::path& folder) {
           elements.push_back(std::move(e));
         }
       }
-      out.notes.push_back("canvas: valves the drawing does not show were placed in a row at the bottom");
+      out.notes.emplace_back("canvas: valves the drawing does not show were placed in a row at the bottom");
     }
   }
 

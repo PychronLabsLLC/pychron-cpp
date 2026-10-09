@@ -147,7 +147,7 @@ class YamlParser {
     return mapping(indent);
   }
 
-  static bool is_item(const std::string& t) { return t == "-" || t.rfind("- ", 0) == 0; }
+  static bool is_item(const std::string& t) { return t == "-" || t.starts_with("- "); }
 
   YNode sequence(int indent) {
     YNode n;
@@ -253,7 +253,7 @@ class XmlParser {
     XNode n;
     const auto end = s_.find('>', at_);
     if (end == std::string_view::npos) {
-      skipped_.push_back("unterminated tag at the end of the file");
+      skipped_.emplace_back("unterminated tag at the end of the file");
       at_ = s_.size();
       return n;
     }

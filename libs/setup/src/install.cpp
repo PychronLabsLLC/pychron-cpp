@@ -207,7 +207,7 @@ Result<InstallPlan> plan_install(const ProfileLibrary& library, const ResolvedPr
       for (const auto& file : files) {
         const auto rel = fs::relative(file, src);
         const std::string name = rel.filename().string();
-        if (name.starts_with(".") || name.ends_with("~") || name.ends_with(".state.toml")) continue;
+        if (name.starts_with('.') || name.ends_with('~') || name.ends_with(".state.toml")) continue;
         auto content = read_file(file);
         if (!content) {
           errors.push_back(content.error().what);
