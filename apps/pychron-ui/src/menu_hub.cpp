@@ -42,37 +42,15 @@ bool under_experiment(MenuHub::Menu menu) {
   return menu == Menu::Queue || menu == Menu::Rows || menu == Menu::Executor || menu == Menu::Scripts;
 }
 
-constexpr std::array<MenuHub::FileRole, MenuHub::kFileRoles> kFileRoleOrder{
-    MenuHub::FileRole::New, MenuHub::FileRole::Open, MenuHub::FileRole::Save, MenuHub::FileRole::SaveAs};
-
-// Save As has none: the platform's is View > Spectrometer's.
-QKeySequence file_key(MenuHub::FileRole role) {
-  switch (role) {
-    case MenuHub::FileRole::New:
-      return key(Shortcut::FileNew);
-    case MenuHub::FileRole::Open:
-      return key(Shortcut::FileOpen);
-    case MenuHub::FileRole::Save:
-      return key(Shortcut::FileSave);
-    case MenuHub::FileRole::SaveAs:
-      break;
-  }
-  return {};
-}
+constexpr std::array<MenuHub::FileRole, MenuHub::kFileRoles> kFileRoleOrder{MenuHub::FileRole::Save,
+                                                                           MenuHub::FileRole::SaveAs};
+constexpr std::array<MenuHub::FileList, MenuHub::kFileLists> kFileListOrder{MenuHub::FileList::New,
+                                                                           MenuHub::FileList::Open};
 
 // "Save Queue" for a window that saves queues, "Save" for one that saves nothing.
 QString file_text(MenuHub::FileRole role, const QString& noun) {
   const bool plain = noun.isEmpty();
-  switch (role) {
-    case MenuHub::FileRole::New:
-      return plain ? MenuHub::tr("&New…") : MenuHub::tr("&New %1…").arg(noun);
-    case MenuHub::FileRole::Open:
-      return plain ? MenuHub::tr("&Open…") : MenuHub::tr("&Open %1…").arg(noun);
-    case MenuHub::FileRole::Save:
-      return plain ? MenuHub::tr("&Save") : MenuHub::tr("&Save %1").arg(noun);
-    case MenuHub::FileRole::SaveAs:
-      break;
-  }
+  if (role == MenuHub::FileRole::Save) return plain ? MenuHub::tr("&Save") : MenuHub::tr("&Save %1").arg(noun);
   return plain ? MenuHub::tr("Save &As…") : MenuHub::tr("Save %1 &As…").arg(noun);
 }
 
@@ -130,12 +108,23 @@ MenuHub::MenuHub(Bars bars, QObject* parent) : QObject(parent), mode_(bars) {
     if (w->isMaximized()) w->showNormal();
     else w->showMaximized();
   });
-  // File's own four, shared by every bar: each does what the window in front
-  // gave for it, looked up as it runs (it can be reached, from the palette or
-  // a menu left open, after the window it was enabled for left the front).
+  // File's own, shared by every bar. New and Open carry a submenu of what
+  // windows gave them (contribute_file).
+  for (const FileList list : kFileListOrder) {
+    const auto at = static_cast<std::size_t>(list);
+    auto* action = new QAction(list == FileList::New ? tr("&New") : tr("&Open"), this);
+    file_list_menus_[at] = new QMenu;
+    action->setMenu(file_list_menus_[at]);
+    action->setEnabled(false);
+    file_lists_[at] = action;
+  }
+  // Save and Save As each do what the window in front gave for it, looked up
+  // as it runs (it can be reached, from the palette or a menu left open,
+  // after the window it was enabled for left the front). Save As has no key:
+  // the platform's is View > Spectrometer's.
   for (const FileRole role : kFileRoleOrder) {
     auto* action = new QAction(file_text(role, QString()), this);
-    action->setShortcut(file_key(role));
+    if (role == FileRole::Save) action->setShortcut(key(Shortcut::FileSave));
     action->setEnabled(false);
     connect(action, &QAction::triggered, this, [this, role] {
       if (const FileTarget* target = file_target(role); target != nullptr && target->action->isEnabled())
@@ -188,6 +177,7 @@ MenuHub::~MenuHub() {
   delete shared_.data();
   delete panels_menu_.data();
   delete arrangements_menu_.data();  // and Delete, its child
+  for (const auto& menu : file_list_menus_) delete menu.data();
 }
 
 QString MenuHub::title(Menu menu) {
@@ -365,8 +355,11 @@ void MenuHub::save_arrangement() {
 QList<MenuHub::Command> MenuHub::commands() const {
   QList<Command> out;
   for (const Menu menu : kOrder) {
-    if (menu == Menu::File)
+    if (menu == Menu::File) {
+      for (const FileList list : kFileListOrder)
+        for (QAction* a : file_entries(list)) out.append({a, menu});
       for (QAction* a : file_) out.append({a, menu});
+    }
     for (const Group& g : groups_) {
       if (g.menu != menu || g.owner == nullptr) continue;
       for (const auto& a : g.actions)
@@ -413,6 +406,33 @@ void MenuHub::set_file_action(QWidget* owner, FileRole role, QAction* action, co
   update_file_actions();
 }
 
+void MenuHub::contribute_file(QWidget* owner, FileList list, const QList<FileEntry>& entries) {
+  for (const FileEntry& e : entries) file_items_.push_back({owner, list, e.action, e.home});
+  connect(owner, &QObject::destroyed, this, &MenuHub::schedule_rebuild, Qt::UniqueConnection);
+  fill_file_lists();
+  update_file_actions();
+}
+
+QList<QAction*> MenuHub::file_entries(FileList list) const {
+  QList<QAction*> out;
+  for (const FileItem& item : file_items_)
+    if (item.list == list && item.owner != nullptr && item.action != nullptr) out.append(item.action.data());
+  return out;
+}
+
+// The submenus of File > New and File > Open, from the entries that are left.
+void MenuHub::fill_file_lists() {
+  std::erase_if(file_items_, [](const FileItem& item) { return item.owner == nullptr || item.action == nullptr; });
+  for (const FileList list : kFileListOrder) {
+    QMenu* menu = file_list_menus_[static_cast<std::size_t>(list)];
+    const QList<QAction*> want = file_entries(list);
+    const QList<QAction*> have = menu->actions();
+    if (std::equal(have.begin(), have.end(), want.begin(), want.end())) continue;
+    menu->clear();  // the entries are their windows' and stay theirs
+    menu->addActions(want);
+  }
+}
+
 const MenuHub::FileTarget* MenuHub::file_target(FileRole role) const {
   const QWidget* active = active_window();
   if (active == nullptr) return nullptr;
@@ -429,6 +449,24 @@ void MenuHub::update_file_actions() {
     QAction* item = file_action(role);
     item->setText(file_text(role, target != nullptr ? target->noun : QString()));
     item->setEnabled(target != nullptr && target->action->isEnabled());
+  }
+  // New's and Open's key is on the entry whose window is in front, and on
+  // none when no entry's is: a key that is on no enabled action is the
+  // window's own to use.
+  const QWidget* active = active_window();
+  for (const FileList list : kFileListOrder) {
+    const QKeySequence keys = key(list == FileList::New ? Shortcut::FileNew : Shortcut::FileOpen);
+    bool given = false;
+    bool any = false;
+    for (const FileItem& item : file_items_) {
+      if (item.list != list || item.owner == nullptr || item.action == nullptr) continue;
+      any = true;
+      const bool here = !given && active != nullptr && item.home && item.home(active);
+      given = given || here;
+      if (const QKeySequence want = here ? keys : QKeySequence(); item.action->shortcut() != want)
+        item.action->setShortcut(want);
+    }
+    file_list_action(list)->setEnabled(any);
   }
 }
 
@@ -539,6 +577,8 @@ void MenuHub::rebuild() {
   std::erase_if(groups_, [](const Group& g) { return g.owner == nullptr; });
   std::erase_if(bars_, [](const Bar& b) { return b.bar == nullptr; });
   std::erase_if(gates_, [](const Gate& g) { return g.owner == nullptr || g.group == nullptr; });
+  fill_file_lists();
+  update_file_actions();
   refresh_windows();
   for (Bar& b : bars_) rebuild(b);
 }
@@ -588,7 +628,10 @@ void MenuHub::rebuild(Bar& b) {
     if (m == nullptr) continue;
     QList<QAction*> want;  // the actions belong to their windows
     if (menu == Menu::Window) want = window_menu();  // the hub's own, first
-    if (menu == Menu::File) want = QList<QAction*>(file_.begin(), file_.end());
+    if (menu == Menu::File) {
+      want = QList<QAction*>(file_lists_.begin(), file_lists_.end());
+      want.append(QList<QAction*>(file_.begin(), file_.end()));
+    }
     for (const Group& g : groups_) {
       if (g.menu != menu || g.owner == nullptr) continue;
       QList<QAction*> live;

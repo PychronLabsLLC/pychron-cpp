@@ -28,6 +28,7 @@
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
 #include "main_window.hpp"
+#include "shortcuts.hpp"
 #include "menu_hub.hpp"
 #include "preferences_dialog.hpp"
 #include "script_editor_window.hpp"
@@ -487,29 +488,14 @@ class TestExperimentWindow : public QObject {
     QVERIFY(window.model().queue().runs.empty());
     QVERIFY(!window.path());
 
-    // The File menu's New is this window's while it is in front.
-    window.show();
-    window.activateWindow();
-    if (QTest::qWaitForWindowActive(&window)) {
-      QAction* file_new = MenuHub::instance().file_action(MenuHub::FileRole::New);
-      QCOMPARE(file_new->text(), QStringLiteral("&New Queue…"));
-      QVERIFY(file_new->isEnabled());
-      QVERIFY(window.load_queue(queue_file(sim)));
-      file_new->trigger();
-      QVERIFY(window.model().queue().runs.empty());
-    }
   }
 
   void aQueueCannotBeReplacedByANewOneWhileItRuns() {
-    using pychron::ui::MenuHub;
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());
     ExperimentWindow window(bridge, true, settings());
     QVERIFY(window.load_queue(queue_file(sim)));
     const std::size_t rows = window.model().queue().runs.size();
-    window.show();
-    window.activateWindow();
-    const bool active = QTest::qWaitForWindowActive(&window);
     window.executor()->request_start();
     QVERIFY(window.executor()->running());
     QString error;
@@ -517,9 +503,88 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(error, QStringLiteral("a queue is running"));
     QCOMPARE(window.model().queue().runs.size(), rows);
     QVERIFY(window.path().has_value());
-    if (active) QTRY_VERIFY(!MenuHub::instance().file_action(MenuHub::FileRole::New)->isEnabled());
     QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
-    if (active) QTRY_VERIFY(MenuHub::instance().file_action(MenuHub::FileRole::New)->isEnabled());
+  }
+
+  // File > New and File > Open are the main window's, from any window: each
+  // brings up the window it acts in, and has the key while that one is in front.
+  void fileNewAndOpenBringUpTheWindowTheyActIn() {
+    using pychron::ui::MenuHub;
+    using pychron::ui::Shortcut;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    main.show();
+    const QList<QAction*>& entries = main.file_entries();
+    QStringList texts;
+    for (const QAction* a : entries) texts << a->text();
+    QCOMPARE(texts, (QStringList{QStringLiteral("New &Queue"), QStringLiteral("New &Script…"),
+                                 QStringLiteral("New &Conditionals…"), QStringLiteral("Open &Queue…"),
+                                 QStringLiteral("Open &Script…"), QStringLiteral("Open &Conditionals…")}));
+    MenuHub& hub = MenuHub::instance();
+    QCOMPARE(hub.file_entries(MenuHub::FileList::New), entries.mid(0, 3));
+    QCOMPARE(hub.file_entries(MenuHub::FileList::Open), entries.mid(3, 3));
+    for (const QAction* a : entries) QVERIFY2(!a->isEnabled(), qPrintable(a->text()));  // no session yet
+    entries.at(0)->trigger();  // and nothing to bring up
+    QVERIFY(main.experiment_window() == nullptr);
+
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    for (const QAction* a : entries) QVERIFY2(a->isEnabled(), qPrintable(a->text()));
+
+    // Open Script…: the script editor alone, made with the experiment window, which stays down.
+    // (the picker is a dialog until the editor is there to be told otherwise: dismissed)
+    QTimer::singleShot(0, this, [] {
+      if (QWidget* dialog = QApplication::activeModalWidget()) dialog->close();
+    });
+    entries.at(4)->trigger();
+    ExperimentWindow* experiment = main.experiment_window();
+    QVERIFY(experiment != nullptr);
+    QVERIFY(!experiment->isVisible());
+    QVERIFY(experiment->model().rowCount() > 0);  // with the queue it was to start with
+    auto* scripts = experiment->script_editor();
+    QVERIFY(scripts != nullptr);
+    QVERIFY(scripts->isVisible());
+    QCOMPARE(scripts->document_count(), 0);
+    scripts->set_pick_script([](const QStringList& names) { return std::optional<QString>(names.first()); });
+    entries.at(4)->trigger();
+    QCOMPARE(scripts->document_count(), 1);
+
+    // Open Conditionals…: its editor.
+    auto* conditionals = experiment->open_conditionals_editor();
+    conditionals->hide();
+    conditionals->set_pick_file([](const QStringList& names) { return std::optional<QString>(names.last()); });
+    entries.at(5)->trigger();
+    QVERIFY(conditionals->isVisible());
+    QCOMPARE(conditionals->current_name(), conditionals->file_names().last());
+
+    // New Queue: the experiment window, emptied.
+    entries.at(0)->trigger();
+    QVERIFY(experiment->isVisible());
+    QVERIFY(experiment->model().queue().runs.empty());
+    QVERIFY(!experiment->path());
+
+    // The keys follow the window in front.
+    experiment->activateWindow();
+    if (!QTest::qWaitForWindowActive(experiment)) QSKIP("this platform does not activate windows");
+    QCOMPARE(entries.at(0)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(3)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    QVERIFY(entries.at(4)->shortcut().isEmpty());
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Queue"));
+    scripts->activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(scripts));
+    QCOMPARE(entries.at(1)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(4)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    QVERIFY(entries.at(3)->shortcut().isEmpty());
+    conditionals->activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(conditionals));
+    QCOMPARE(entries.at(2)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(5)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    main.activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(&main));
+    for (const QAction* a : entries) QVERIFY2(a->shortcut().isEmpty(), qPrintable(a->text()));
+
+    main.set_experiment(nullptr, false);
+    for (const QAction* a : entries) QVERIFY2(!a->isEnabled(), qPrintable(a->text()));
   }
 
   void rowsOpenTheirScriptsInTheEditor() {

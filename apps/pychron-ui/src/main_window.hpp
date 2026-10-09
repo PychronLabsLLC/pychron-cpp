@@ -94,6 +94,9 @@ class MainWindow : public QMainWindow {
                       std::function<std::unique_ptr<QSettings>()> settings = {});
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
+  // File > New and File > Open, in menu order (New Queue, New Script…, New
+  // Conditionals…, Open Queue…, Open Script…, Open Conditionals…).
+  const QList<QAction*>& file_entries() const noexcept { return file_entries_; }
 
   // Enables View > Laser for `bridges`, one laser window each (a submenu when
   // there are several); none disables it and closes the laser windows and
@@ -152,6 +155,9 @@ class MainWindow : public QMainWindow {
   void closeEvent(QCloseEvent* event) override;
 
  private:
+  ExperimentWindow* ensure_experiment_window();  // made on first use; nullptr without a session
+  ExperimentWindow* show_experiment_window();    // and brought to the front
+  void build_file_entries();
   // The window in front, to open a dialog over: not a dialog itself, and
   // this window when none of the application's is active.
   QWidget* preferences_parent();
@@ -178,6 +184,7 @@ class MainWindow : public QMainWindow {
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  QList<QAction*> file_entries_;  // File > New and File > Open: live while there is a session
   QAction* data_action_;
   QAction* laser_action_;
   std::vector<LaserBridge*> lasers_;

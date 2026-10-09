@@ -26,11 +26,15 @@
 // enabled state still applies on top.
 //
 // File begins with the hub's own New, Open, Save and Save As, once, whatever
-// windows there are. Each stands for the action the window in front gave for
-// it (set_file_action): Save saves the queue in the experiment window and the
-// script in the script editor, says which ("Save Queue"), and is greyed in
-// a window that gave none. The keys are the hub's (Save As has none); a
-// window's own action has none.
+// windows there are. New and Open are submenus of what there is to start or
+// open (New Queue, Open Script…): entries given with contribute_file, which
+// work from every window and bring up the window they act in. Save and Save
+// As each stand for the action the window in front gave (set_file_action):
+// Save saves the queue in the experiment window and the script in the script
+// editor, says which ("Save Queue"), and is greyed in a window that gave
+// none. The keys are the hub's: Save's on Save, and New's and Open's on the
+// entry whose window is in front (Open Queue in the experiment window), on
+// none elsewhere.
 //
 // Per-window bars are installed when a window is first shown: every
 // QMainWindow, and any other top-level widget with a layout. Dialogs, popups
@@ -80,8 +84,17 @@ class MenuHub : public QObject {
     Shared,     // one parentless bar for every window (macOS)
   };
   static constexpr std::size_t kMenus = 10;
-  enum class FileRole { New, Open, Save, SaveAs };
-  static constexpr std::size_t kFileRoles = 4;
+  enum class FileRole { Save, SaveAs };
+  static constexpr std::size_t kFileRoles = 2;
+  enum class FileList { New, Open };
+  static constexpr std::size_t kFileLists = 2;
+  // An entry of File > New or File > Open. `home` says whether `window` is
+  // the one the entry acts in: while that window is in front the entry has
+  // the list's key.
+  struct FileEntry {
+    QAction* action = nullptr;
+    std::function<bool(const QWidget* window)> home;
+  };
 
   // The application's hub (created on first use; needs a QApplication).
   static MenuHub& instance();
@@ -105,6 +118,16 @@ class MenuHub : public QObject {
   void set_file_action(QWidget* owner, FileRole role, QAction* action, const QString& noun);
   // The hub's own File item for `role` (the same in every bar).
   QAction* file_action(FileRole role) const { return file_[static_cast<std::size_t>(role)]; }
+
+  // Adds `entries` to File > New or File > Open, in contribution order, for
+  // as long as `owner` lives. They work from every window (their own enabled
+  // state is all that greys them) and must have no shortcut.
+  void contribute_file(QWidget* owner, FileList list, const QList<FileEntry>& entries);
+  // File > New and File > Open themselves (the same in every bar): each
+  // carries the submenu, and is greyed while it has no entry.
+  QAction* file_list_action(FileList list) const { return file_lists_[static_cast<std::size_t>(list)]; }
+  // The entries of a list, as its submenu shows them.
+  QList<QAction*> file_entries(FileList list) const;
 
   // Gives `window` the unified bar now, if it is a window that takes one and
   // has none yet (normally done when it is first shown). Returns the bar it
@@ -187,6 +210,12 @@ class MenuHub : public QObject {
     QPointer<QWidget> owner;
     QPointer<QActionGroup> group;
   };
+  struct FileItem {
+    QPointer<QWidget> owner;
+    FileList list{};
+    QPointer<QAction> action;
+    std::function<bool(const QWidget*)> home;
+  };
   struct FileTarget {
     QPointer<QWidget> owner;
     FileRole role{};
@@ -202,6 +231,7 @@ class MenuHub : public QObject {
   void update_gates();
   const FileTarget* file_target(FileRole role) const;  // of the window in front, or nullptr
   void update_file_actions();
+  void fill_file_lists();
   void add_window(QWidget* window);
   void refresh_windows();
   QList<QAction*> window_menu() const;  // nullptr: a separator
@@ -219,6 +249,9 @@ class MenuHub : public QObject {
   std::vector<Gate> gates_;
   std::vector<FileTarget> file_targets_;
   std::array<QAction*, kFileRoles> file_{};
+  std::vector<FileItem> file_items_;
+  std::array<QAction*, kFileLists> file_lists_{};
+  std::array<QPointer<QMenu>, kFileLists> file_list_menus_;
   struct Entry {
     QPointer<QWidget> window;
     QPointer<QAction> action;

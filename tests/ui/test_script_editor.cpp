@@ -205,16 +205,13 @@ class TestScriptEditor : public QObject {
     QVERIFY(!w.open_picked());
     QCOMPARE(w.document_count(), 2);
 
-    // In front, the File menu's commands are this window's; Save only with a tab.
+    // In front, File > Save is this window's, and only with a tab.
     w.set_ask_unsaved([](const QString&) { return ScriptEditorWindow::Unsaved::Discard; });
     w.show();
     w.activateWindow();
     if (!QTest::qWaitForWindowActive(&w)) QSKIP("this platform does not activate windows");
     MenuHub& hub = MenuHub::instance();
-    QCOMPARE(hub.file_action(MenuHub::FileRole::New)->text(), QStringLiteral("&New Script…"));
-    QCOMPARE(hub.file_action(MenuHub::FileRole::Open)->text(), QStringLiteral("&Open Script…"));
     QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Script"));
-    QVERIFY(hub.file_action(MenuHub::FileRole::Open)->isEnabled());
     QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
     QVERIFY(!hub.file_action(MenuHub::FileRole::SaveAs)->isEnabled());
     QVERIFY(w.close_current());
@@ -222,7 +219,7 @@ class TestScriptEditor : public QObject {
     QCOMPARE(w.document_count(), 0);
     QVERIFY(!hub.file_action(MenuHub::FileRole::Save)->isEnabled());  // nothing to save
     answer = QStringLiteral("lib/pump");
-    hub.file_action(MenuHub::FileRole::Open)->trigger();
+    QVERIFY(w.open_picked());
     QCOMPARE(w.current_name(), QStringLiteral("extraction/lib:pump"));
     QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
   }

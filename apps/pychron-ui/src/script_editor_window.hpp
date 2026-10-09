@@ -51,7 +51,9 @@ class ScriptEditorWindow : public QMainWindow {
   // Creates <kind>/<name>.py with a main() skeleton and opens it. false (with
   // `error`) for a bad name or an existing file.
   bool new_script(scripting::ScriptKind kind, const QString& name, QString* error = nullptr);
-  // File > Open: asks which of the lab's scripts, then opens it or switches
+  // File > New Script…: asks for the kind and the name, then new_script().
+  void new_dialog();
+  // File > Open Script…: asks which of the lab's scripts, then opens it or switches
   // to its tab. false on cancel, with no scripts, or for a file that cannot
   // be read.
   bool open_picked();
@@ -110,9 +112,7 @@ class ScriptEditorWindow : public QMainWindow {
   QTabWidget* tabs_;
   QListWidget* problems_;
   QLabel* status_;
-  QAction* new_ = nullptr;   // what File > New, Open and Save do here
-  QAction* open_ = nullptr;  // enabled while the lab has a script
-  QAction* save_ = nullptr;  // enabled while a tab is open
+  QAction* save_ = nullptr;  // what File > Save does here; enabled while a tab is open
   PickScript pick_script_;
   QTimer check_timer_;
   std::function<Unsaved(const QString&)> ask_unsaved_;

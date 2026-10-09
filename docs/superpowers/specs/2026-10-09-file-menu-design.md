@@ -1,151 +1,154 @@
 # File menu: New, Open, Save, Save As in one place: design
 
-Date: 2026-10-09. Status: approved 2026-10-09; implemented on this branch.
+Date: 2026-10-09. Status: approved 2026-10-09; implemented. Revised same day:
+New and Open are submenus that work from any window (section 3.2), not
+single items following the window in front.
 
 ## 1. Problem
 
-- Same four commands, three places, three names:
-  - Experiment window: Open, Save, Save As in **Queue** menu
-    (`experiment_window.cpp` `build_actions`).
-  - Script editor: New, Save in **Scripts** menu
-    (`script_editor_window.cpp`).
-  - Conditionals editor: Save Conditionals in **Scripts** menu; New only a
-    toolbar `+` (`conditionals_editor_window.cpp`).
-- File menu holds only Installations, Preferences, Quit.
-- Shortcut already follows active window (hub gates window-scoped actions);
-  menu placement does not. Operator looks under File, finds nothing.
-- Holes: no New queue; no Open command in script or conditionals editor
-  (list click only, no keyboard path, not in command palette).
+- Same four commands were in three places under three names: Open, Save,
+  Save As in **Queue**; New, Save in **Scripts** (script editor); Save
+  Conditionals in **Scripts** (conditionals editor), its New a toolbar `+`
+  only.
+- File held only Installations, Preferences, Quit.
+- No New queue; no Open command in script or conditionals editor.
+- Opening a script meant: open Experiment window, open script editor from
+  its menu, then pick. No way to say "open a script" from where you are.
 
 ## 2. Goal
 
-File > New, Open…, Save, Save As… act on what the window in front edits:
+File menu, every window, both `Bars` modes:
 
-| Window in front | New | Open… | Save | Save As… |
-|---|---|---|---|---|
-| Experiment | empty queue | queue file dialog | queue | queue file dialog |
-| Script editor | kind + name prompt | pick lab script | current tab | greyed |
-| Conditionals editor | name prompt | pick lab file | current file | greyed |
-| any other | greyed | greyed | greyed | greyed |
+    New  ▸  New Queue / New Script… / New Conditionals…
+    Open ▸  Open Queue… / Open Script… / Open Conditionals…
+    Save
+    Save As…
+    ─────
+    (contributed groups: Installations, Preferences; Quit)
 
-Success: Cmd+S in script editor saves script, in experiment window saves
-queue; File menu shows one Save, labelled for what it will save; Queue and
-Scripts menus no longer carry copies.
+- New and Open entries work from any window and decide which window comes
+  to the front:
 
-## 3. Hub
+  | Entry | Brings up | Then |
+  |---|---|---|
+  | New Queue | Experiment window | empty queue, no file |
+  | Open Queue… | Experiment window | queue file dialog |
+  | New Script… | script editor | kind + name prompt |
+  | Open Script… | script editor | pick one of lab's scripts |
+  | New Conditionals… | conditionals editor | name prompt |
+  | Open Conditionals… | conditionals editor | pick one of lab's files |
 
-`MenuHub` (`apps/pychron-ui/src/menu_hub.hpp`) owns four actions, created in
-constructor before any bar, shared by every bar (as `minimize_` is):
+  Script and conditionals entries create the Experiment window if needed
+  (the editors are its children) but do not show it.
+- Save and Save As act on what the window in front edits and say so:
+  "Save Queue", "Save Script", "Save Conditionals", "Save Queue As…". Greyed
+  and plain ("Save", "Save As…") in a window that edits no file. Save As:
+  Experiment window only.
+- Keys: Ctrl+S is File > Save. Ctrl+N and Ctrl+O act on the window in
+  front: New Queue / Open Queue in Experiment window, New Script / Open
+  Script in script editor, New / Open Conditionals in conditionals editor,
+  nothing elsewhere. Save As has no key.
+
+## 3. Hub (`apps/pychron-ui/src/menu_hub.hpp`)
+
+### 3.1 Save, Save As: proxies for the window in front
 
 ```cpp
-enum class FileRole { New, Open, Save, SaveAs };
-static constexpr std::size_t kFileRoles = 4;
-
-// `action` is what File > <role> does while `owner`'s window is in front,
-// for as long as both live. `noun` names what it acts on ("Queue").
+enum class FileRole { Save, SaveAs };
 void set_file_action(QWidget* owner, FileRole role, QAction* action, const QString& noun);
-// The hub's own File item for `role` (the same in every bar).
 QAction* file_action(FileRole role) const;
 ```
 
-- Placement: first group of File, order New, Open…, Save, Save As…, then
-  separator, then contributed groups (Installations/Preferences, Quit).
-  File is therefore never hidden.
-- Hub item is proxy. Target = action registered for the role by a window
-  whose `window()` is `active_window()`. At most one target per role per
-  window; registering again for same owner and role replaces.
-- State, recomputed on `focusWindowChanged`, on target's `QAction::changed`,
-  on registration, on owner or target destroyed:
-  - enabled = target exists and `target->isEnabled()`;
-  - text = role text with noun when target exists, plain otherwise:
+- Hub owns one item per role, shared by every bar. Target = action
+  registered for the role by a window whose `window()` is
+  `active_window()`. Registering again for same owner and role replaces.
+- Recomputed on `focusWindowChanged`, target's `QAction::changed`,
+  registration, owner or target destroyed: enabled = target exists and is
+  enabled; text = `&Save <noun>` / `Save <noun> &As…` with target, `&Save` /
+  `Save &As…` without.
+- Target is resolved again when the hub item is triggered, from the window
+  then in front; nothing happens without one. (Palette or a menu left open
+  can outlive the window the item was enabled for.)
+- Registered window action carries no shortcut and sits in no menu.
+- `Shortcut::FileSave` (`QKeySequence::Save`) on hub's Save. No key on Save
+  As: `QKeySequence::SaveAs` is Ctrl+Shift+S, which is View > Spectrometer.
 
-    | Role | With noun | Plain |
-    |---|---|---|
-    | New | `&New <noun>…` | `&New…` |
-    | Open | `&Open <noun>…` | `&Open…` |
-    | Save | `&Save <noun>` | `&Save` |
-    | SaveAs | `Save <noun> &As…` | `Save &As…` |
+### 3.2 New, Open: submenus of contributed entries
 
-- Trigger: target is resolved again when the hub item is triggered, from
-  the window then in front, and `target->trigger()` is called; nothing
-  happens without one. (Palette or a menu left open can outlive the window
-  the item was enabled for; same rule as Reset Layout.)
-- Shortcuts on hub items: `Shortcut::FileNew`, `FileOpen`, `FileSave` =
-  `QKeySequence::New`, `Open`, `Save`. Save As has no key, as before:
-  `QKeySequence::SaveAs` is Ctrl+Shift+S, which is View > Spectrometer.
-- A registered window action carries no shortcut: hub item has it, two
-  would be ambiguous.
-- Hub item with no target is disabled, and a disabled action's shortcut is
-  inactive. This matters: `Shortcut::RecallNext` is Ctrl+N in data browser,
-  same key as File > New. Data browser registers no New, so its Ctrl+N
-  keeps working. A window must not both register a role and bind that
-  role's key to something else.
-- `commands()` (command palette) lists the four hub items under
-  `Menu::File`, first. Registered targets are not contributed to any menu,
-  so each command appears once.
-- No change to `contribute`, gates, `Bars` modes, or other menus.
+```cpp
+enum class FileList { New, Open };
+struct FileEntry {
+  QAction* action = nullptr;
+  std::function<bool(const QWidget* window)> home;  // is `window` where the entry acts?
+};
+void contribute_file(QWidget* owner, FileList list, const QList<FileEntry>& entries);
+QAction* file_list_action(FileList list) const;   // File > New, File > Open
+QList<QAction*> file_entries(FileList list) const;
+```
+
+- Hub owns File > New and File > Open: one action each carrying one hub-owned
+  `QMenu`, shared by every bar. Greyed while list has no entry.
+- Entries: contribution order, for as long as `owner` lives. Not gated by
+  active window; only entry's own enabled state greys it.
+- Key: on each focus change, the first entry of a list whose `home(active)`
+  is true gets the list's key (`Shortcut::FileNew`, `FileOpen`); every other
+  entry of the list gets none. A contributed action sets no shortcut itself.
+- A key that is on no entry is free for the window in front. This matters:
+  `Shortcut::RecallNext` is Ctrl+N in data browser, where no New is at home.
+- `commands()` (palette) lists, under `Menu::File`: New entries, Open
+  entries, Save, Save As, then contributed File commands. The two submenu
+  actions are not commands.
 
 ## 4. Windows
 
-### 4.1 Experiment window
+### 4.1 Main window (`main_window.cpp` `build_file_entries`)
 
-- `open_`, `save_`, `save_as_` no longer added to `Menu::Queue`, lose their
-  shortcuts, and are registered: Open, Save, SaveAs, noun `Queue`. Toolbar
-  keeps `open_`, `save_`.
-- New action `new_`, registered as New, calls new method:
+- Contributes the six entries (it alone can create the Experiment window).
+  `file_entries()` returns them in menu order.
+- Enabled iff there is an experiment session (`set_experiment(bridge)`),
+  same rule as View > Experiment.
+- `ensure_experiment_window()` creates it on first use (loading the queue
+  named at launch); `show_experiment_window()` also shows and raises. Queue
+  entries use the second; script and conditionals entries use the first,
+  then `open_script_editor()` / `open_conditionals_editor()`.
+- `home`: queue entries, the Experiment window; script entries, its script
+  editor; conditionals entries, its conditionals editor.
+- Data-only main window (`data_main_window.cpp`) contributes none: New and
+  Open greyed there.
 
-  ```cpp
-  // Empties the queue and forgets its file. Refused (false, with `error`)
-  // while a queue runs. Asks about unsaved edits first.
-  bool new_queue(QString* error = nullptr);
-  ```
+### 4.2 Experiment window
 
-  - running: false, `error` = "a queue is running"; action shows the same
-    information box Open shows.
-  - `resolve_unsaved()` false: false, `error` = "cancelled", queue untouched,
-    no box.
-  - else `model_.set_queue({})`, `path_.reset()`, `set_modified(false)`.
-    `experiment_window/last_queue` setting left as is (it seeds Open's
-    dialog).
-- Queue menu keeps Revalidate and whatever else it has.
+- `save_`, `save_as_`: registered Save, SaveAs, noun `Queue`; not in
+  `Menu::Queue`; no shortcut. `open_` kept as plain action for the toolbar.
+- Public: `bool new_queue(QString* error = nullptr)`, `void new_dialog()`,
+  `void open_dialog()`.
+- `new_queue`: running → false, "a queue is running"; `resolve_unsaved()`
+  false → false, "cancelled", queue untouched; else empty queue, no path,
+  not modified. `new_dialog` shows the "A queue is running." box, as
+  `open_dialog` does.
+- Queue submenu keeps Revalidate.
 
-### 4.2 Script editor
+### 4.3 Script editor
 
-- New and Save actions leave `Menu::Scripts`, lose shortcuts, registered as
-  New and Save, noun `Script`. Close Tab, Check Now, Go to Gosub stay in
-  Scripts with their keys.
-- Save's action is enabled only with a tab open (today it is always enabled
-  and does nothing without one), so File > Save greys with no tab.
-- New action Open, registered as Open: asks which script, opens it.
+- Save: registered, noun `Script`; enabled only with a tab open. Close Tab,
+  Check Now, Go to Gosub stay in Scripts with their keys.
+- Public: `void new_dialog()` (kind + name prompt, then `new_script`),
+  `bool open_picked()`, `set_pick_script(PickScript)`.
+- `open_picked`: no scripts → false, says so in status line, asks nothing;
+  pick cancelled → false; else opens or switches to the tab. Names are the
+  tree's (`script_names()`: `kind/name`, `lib/name`). Default pick:
+  `QInputDialog::getItem`, not editable. Not a file dialog: a script
+  outside the lab's script directories is not a `ScriptFile`.
 
-  ```cpp
-  // Which of `names` ("kind/name", as the tree lists them) to open; nullopt:
-  // cancelled. A dialog by default.
-  using PickScript = std::function<std::optional<QString>(const QStringList& names)>;
-  void set_pick_script(PickScript pick);
-  // File > Open: asks, then opens or switches to the tab. false on cancel,
-  // no scripts, or a file that cannot be read.
-  bool open_picked();
-  ```
+### 4.4 Conditionals editor
 
-  Default dialog: `QInputDialog::getItem`, not editable, over
-  `script_names()`. Not a file dialog: a script outside the lab's script
-  directories is not a `ScriptFile`. Open's action disabled when
-  `script_names()` is empty.
-- No SaveAs registered.
+- Save: registered, noun `Conditionals`.
+- Public: `void new_dialog()` (name prompt, then `new_file`; toolbar `+`
+  calls it), `bool open_picked()`, `set_pick_file(PickFile)`.
+- `open_picked`: no files → false, asks nothing; else existing `open(name)`,
+  so the unsaved question applies.
 
-### 4.3 Conditionals editor
-
-- Save Conditionals leaves `Menu::Scripts`, loses shortcut, registered as
-  Save, noun `Conditionals`. Enabled state as today.
-- New action New, registered: same name prompt and `new_file` the toolbar
-  `+` uses; `+` triggers this action.
-- New action Open, registered: `set_pick_file` / `open_picked()`, same shape
-  as 4.2 over `file_names()`, then existing `open(name)` (so unsaved
-  question applies). Disabled when no files.
-- No SaveAs registered.
-
-### 4.4 Everything else
+### 4.5 Everything else
 
 Registers nothing. Store-backed windows (Samples, Packages, Flux, Recall,
 Isotope Evolution, Reference Fit, Pattern Maker) keep their own Save
@@ -153,66 +156,53 @@ buttons.
 
 ## 5. Shortcut catalog
 
-`shortcuts.hpp` / `shortcuts.cpp`:
-
 - Removed: `OpenQueue`, `SaveQueue`, `NewScript`, `SaveScript`,
-  `SaveConditionals`.
-- Added: `FileNew` "New…", `FileOpen` "Open…", `FileSave` "Save", in new `ShortcutContext::FileMenu` ("Experiment
-  window and editors"). Not `Everywhere`: the four are live only where a
-  window registered them, and `RecallNext` (data browser) shares Ctrl+N.
-  For the clash test `FileMenu` overlaps `ExperimentWindow`, `ScriptEditor`,
-  `Everywhere` and itself; not `DataBrowser`.
-- `ShortcutContext::ConditionalsEditor` has no entries left: removed.
+  `SaveConditionals`; `ShortcutContext::ConditionalsEditor`.
+- Added: `FileNew` "New…", `FileOpen` "Open…", `FileSave` "Save", in
+  `ShortcutContext::FileMenu` ("Experiment window and editors"). For the
+  clash test (`overlap()`), `FileMenu` overlaps `ExperimentWindow`,
+  `ScriptEditor`, `Everywhere` and itself; not `DataBrowser`.
 - Catalog is static (no user rebinding), so nothing stored is orphaned.
-- Header comment example `key(Shortcut::SaveQueue)` updated.
 
 ## 6. Rules that must hold
 
-1. File shows exactly one item per role, in every bar, in both `Bars`
-   modes, whatever windows exist.
-2. A File item is enabled only if the window in front registered that role
-   and its action is enabled.
-3. A File item never acts on a window other than the one in front at the
-   moment it is triggered.
-4. Destroying a window or its action removes its registration; hub holds
+1. File shows exactly one New, Open, Save, Save As, in every bar, in both
+   `Bars` modes, whatever windows exist.
+2. Save and Save As are enabled only if the window in front registered the
+   role and its action is enabled, and never act on a window other than the
+   one in front at the moment they are triggered.
+3. A New or Open entry works from every window in which it is enabled.
+4. At most one entry per list has the list's key at a time, and only while
+   its home window is in front.
+5. Destroying a window or its action removes what it gave; hub holds
    `QPointer`s only.
-5. No two enabled actions share a File key in one window.
 
 ## 7. Tests
 
-- `tests/ui/test_menu_hub.cpp`, both `Bars::Shared` and `PerWindow` where
-  the mode matters:
-  - File starts with the four items, once, with no window registered; all
-    disabled, plain text.
-  - Two windows register Save with different nouns: item text, enabled
-    state and trigger follow the active window; triggering reaches only the
-    active window's action.
-  - Target disabled → item disabled; re-enabled → enabled (via `changed`).
-  - Window in front with no registration → disabled, plain text.
-  - Owner destroyed → role gone, item disabled.
-  - Disabled item's key reaches another action bound to it in the window in
-    front (the Ctrl+N case).
-  - `commands()` lists the four once, under File.
-- `tests/ui/test_experiment_window.cpp`: `new_queue` clean; modified +
-  Cancel leaves queue and path; modified + Discard empties; running
-  refused. Queue menu no longer has Open/Save/Save As; registered actions
-  have no shortcut.
-- `tests/ui/test_script_editor.cpp`: `open_picked` opens the picked script;
-  picks an open one → switches, no second tab; cancel → nothing; Save
-  action disabled with no tab.
-- `tests/ui/test_conditionals_editor.cpp`: `open_picked` opens; with
-  unsaved changes and Cancel stays; New through the action.
-- `tests/ui/test_shortcuts.cpp`: new ids and keys; removed ids gone.
-- `tests/ui/test_command_palette.cpp`: adjust for the moved commands.
+- `tests/ui/test_menu_hub.cpp`: `file_has_the_four_commands_once`,
+  `new_and_open_list_entries_that_work_from_any_window` (both bar modes),
+  `file_commands_follow_the_window_in_front` (both bar modes),
+  `a_file_command_is_as_enabled_as_its_target`,
+  `a_closed_windows_file_commands_go`,
+  `a_file_key_with_no_entry_at_home_is_the_windows`,
+  `the_command_palette_has_the_file_commands`.
+- `tests/ui/test_experiment_window.cpp`: `aNewQueueIsEmptyAndHasNoFile`,
+  `aQueueCannotBeReplacedByANewOneWhileItRuns`,
+  `fileNewAndOpenBringUpTheWindowTheyActIn` (the six entries through the
+  main window, and the keys by window in front).
+- `tests/ui/test_script_editor.cpp`: `fileOpenPicksOneOfTheLabsScripts`.
+- `tests/ui/test_conditionals_editor.cpp`:
+  `windowFileOpenPicksOneOfTheLabsFiles`, empty lab in `windowEmptyLab`.
+- `tests/ui/test_shortcuts.cpp`: catalog, `overlap()`, dialog groups.
+- Not covered by a test: Open Queue…'s file dialog through the entry (the
+  dialog has no hook); keys on the macOS shared bar (a parentless bar's
+  keys fire only as the platform's global bar).
 
 ## 8. Docs
 
-- `docs/dev_setup.md`: "Queue > Open" → "File > Open".
-- `menu_hub.hpp` header comment: File's fixed items and proxy rule; example
-  "Save queue / Save script" reworded.
-- User guide: `docs/user/01-getting-started.md` (section 6 File, the
-  shortcut tables), `04-experiments.md` (3.1 Files, 7.6), `09-scripting.md`
-  (section 6).
+`docs/user/01-getting-started.md` (section 6 File, shortcut tables),
+`04-experiments.md` (3.1, 7.6), `09-scripting.md` (section 6),
+`docs/dev_setup.md`.
 
 ## 9. Out of scope
 
@@ -220,4 +210,4 @@ buttons.
 - Save As for scripts and conditionals.
 - Recent files, File > Close, File > Revert.
 - User-rebindable shortcuts.
-- Any change to Rows, Executor, View, Window, Help menus.
+- Open Queue… or New entries in the data-only application.

@@ -105,7 +105,8 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
   setCentralWidget(split);
 
   // Two groups in the unified Scripts menu (MenuHub), enabled while this
-  // window is active. New and Save are the File menu's, which has their keys.
+  // window is active. Save is the File menu's, which has its key; File > New
+  // and File > Open are the main window's, and call new_dialog() and open_picked().
   QList<QAction*> file;
   QList<QAction*> code;
   auto add = [this](QList<QAction*>& group, const QString& text, const QKeySequence& key, std::function<void()> f) {
@@ -116,20 +117,6 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     return a;
   };
   QList<QAction*> of_file;
-  new_ = add(of_file, tr("&New..."), {}, [this] {
-    QStringList kinds;
-    for (auto k : kKinds) kinds.append(q(scripting::to_string(k)));
-    bool ok = false;
-    const QString kind = QInputDialog::getItem(this, tr("New script"), tr("Kind"), kinds, 0, false, &ok);
-    if (!ok) return;
-    const QString name = QInputDialog::getText(this, tr("New script"), tr("Name (e.g. co2_degas or co2:degas)"),
-                                               QLineEdit::Normal, QString(), &ok);
-    if (!ok || name.trimmed().isEmpty()) return;
-    QString error;
-    if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
-      QMessageBox::warning(this, tr("New script"), error);
-  });
-  open_ = add(of_file, tr("&Open..."), {}, [this] { open_picked(); });
   save_ = add(of_file, tr("&Save"), {}, [this] {
     QString error;
     if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
@@ -140,8 +127,6 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (Document* d = current())
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });
-  MenuHub::instance().set_file_action(this, MenuHub::FileRole::New, new_, tr("Script"));
-  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Open, open_, tr("Script"));
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_, tr("Script"));
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, file, MenuHub::Scope::Window);
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, code, MenuHub::Scope::Window);
@@ -192,9 +177,26 @@ QString tree_name(const ScriptFile& file) {
 
 }  // namespace
 
+void ScriptEditorWindow::new_dialog() {
+  QStringList kinds;
+  for (auto k : kKinds) kinds.append(q(scripting::to_string(k)));
+  bool ok = false;
+  const QString kind = QInputDialog::getItem(this, tr("New script"), tr("Kind"), kinds, 0, false, &ok);
+  if (!ok) return;
+  const QString name = QInputDialog::getText(this, tr("New script"), tr("Name (e.g. co2_degas or co2:degas)"),
+                                             QLineEdit::Normal, QString(), &ok);
+  if (!ok || name.trimmed().isEmpty()) return;
+  QString error;
+  if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
+    QMessageBox::warning(this, tr("New script"), error);
+}
+
 bool ScriptEditorWindow::open_picked() {
   const QStringList names = script_names();
-  if (names.isEmpty()) return false;
+  if (names.isEmpty()) {
+    status_->setText(tr("The lab has no scripts yet: start one with File > New."));
+    return false;
+  }
   const std::optional<QString> picked = pick_script_(names);
   if (!picked) return false;
   const auto scripts = experiment::lab::lab_scripts(lab_);
@@ -220,7 +222,6 @@ void ScriptEditorWindow::fill_tree() {
     item->setToolTip(0, q(f.path.string()));
   }
   tree_->expandAll();
-  open_->setEnabled(!script_names().isEmpty());
 }
 
 QStringList ScriptEditorWindow::script_names() const {

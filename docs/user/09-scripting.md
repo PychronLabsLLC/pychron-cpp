@@ -402,9 +402,10 @@ Extraction Script** or
 the script that row names.
 
 * **Left:** the lab's scripts by kind. Double-click to open, or choose one
-  with **File > Open Script…** (Ctrl+O). Every open script
+  with **File > Open > Open Script…** (Ctrl+O), which also opens the editor
+  from any other window. Every open script
   is a tab with highlighting and completion of the commands that kind may call.
-* **File > New Script…** (Ctrl+N) asks for the **Kind** and the **Name**
+* **File > New > New Script…** (Ctrl+N) asks for the **Kind** and the **Name**
   (`co2_degas` or `co2:degas`) and makes `<lab>/scripts/<kind>/<name>.py` with
   a starting `main()`. **File > Save Script** is Ctrl+S; **Close Tab**
   (Ctrl+W) is under **Experiment > Scripts**. Closing a tab or the

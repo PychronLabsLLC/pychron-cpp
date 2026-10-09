@@ -268,20 +268,33 @@ front. A menu with nothing to offer yet shows a greyed hint,
 
 | Item | What it does |
 |---|---|
-| **New…**, **Open…**, **Save**, **Save As…** | Act on what the window in front edits, and say so: **Save Queue** in the Experiment window, **Save Script** in the script editor, **Save Conditionals** in the conditionals editor. Greyed in a window that edits no file. See the table below. |
+| **New ▸** | **New Queue**, **New Script…**, **New Conditionals…**. Each works from any window and brings up the window it acts in: the Experiment window, the script editor, the conditionals editor. |
+| **Open ▸** | **Open Queue…**, **Open Script…**, **Open Conditionals…**, in the same way. |
+| **Save**, **Save As…** | Act on what the window in front edits, and say so: **Save Queue** in the Experiment window, **Save Script** in the script editor, **Save Conditionals** in the conditionals editor. Greyed in a window that edits no file. **Save As…** is for queues only. |
 | **Installations…** | Opens the Installations dialog (section 10). Shown only when the window was started from an install or can switch installs. Choosing another install closes this window (asking about unsaved queue edits) and starts Pychron again on it. |
 | **Preferences…** | Opens the Preferences dialog (section 9). On macOS it appears in the application menu. |
 | **Quit** | Closes the window. In the main window this asks about unsaved queue edits. |
 
-What the four file commands do, by the window in front:
+What New and Open do:
 
-| Window | New… (Ctrl+N) | Open… (Ctrl+O) | Save (Ctrl+S) | Save As… |
-|---|---|---|---|---|
-| **Experiment** | An empty queue with no file. Not while a queue is running. | A queue file. Not while a queue is running. | The queue, to its file (asks for one the first time). | The queue, to a file you choose. |
-| **Script editor** | Asks for the kind and the name, and starts the script. | One of the lab's scripts, chosen from a list. | The script in the current tab. | (greyed) |
-| **Conditionals editor** | Asks for a name and starts the file. | One of the lab's files, chosen from a list. | The open file. | (greyed) |
+| Entry | Brings up | Then |
+|---|---|---|
+| **New Queue** | the Experiment window | An empty queue with no file. Not while a queue is running. |
+| **Open Queue…** | the Experiment window | Asks for a queue file. Not while a queue is running. |
+| **New Script…** | the script editor | Asks for the kind and the name, and starts the script. |
+| **Open Script…** | the script editor | One of the lab's scripts, chosen from a list. |
+| **New Conditionals…** | the conditionals editor | Asks for a name and starts the file. |
+| **Open Conditionals…** | the conditionals editor | One of the lab's files, chosen from a list. |
 
-New and Open ask about unsaved changes first, where they would replace them.
+They ask about unsaved changes first, where they would replace them. They
+are greyed when there is no experiment session (the extraction line did not
+start, or Pychron was opened for data only).
+
+**Ctrl+N** and **Ctrl+O** are New and Open for the window in front: a queue
+in the Experiment window, a script in the script editor, a conditionals file
+in the conditionals editor. In other windows use the menu (in the data
+browser Ctrl+N recalls the next analysis). **Ctrl+S** saves what the window
+in front edits.
 
 ### Experiment
 
@@ -381,8 +394,9 @@ work in every window."
 
 ### Experiment window and editors
 
-File > New, Open and Save, in the Experiment window, the script editor and
-the conditionals editor (each acts on what that window edits).
+File > New, Open and Save for what the window in front edits: the queue in
+the Experiment window, a script in the script editor, a conditionals file in
+the conditionals editor.
 
 | Command | Shortcut |
 |---|---|

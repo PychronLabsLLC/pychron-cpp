@@ -210,22 +210,18 @@ void ExperimentWindow::build_actions() {
   toolbar_ = addToolBar(tr("Queue"));
   QToolBar* bar = toolbar_;
   bar->setObjectName(QStringLiteral("ExperimentToolBar"));
-  // New, Open, Save and Save As are the File menu's (MenuHub), which has
-  // their keys: these are what it does while this window is in front.
+  // Save and Save As are the File menu's (MenuHub), which has their keys:
+  // these are what it does while this window is in front. File > New and
+  // File > Open are the main window's, and call new_dialog() and
+  // open_dialog(); Open is here too for the toolbar.
   auto file_action = [this](MenuHub::FileRole role, const QString& text, std::function<void()> f) {
     auto* a = new QAction(text, this);
     connect(a, &QAction::triggered, this, [f = std::move(f)] { f(); });
     MenuHub::instance().set_file_action(this, role, a, tr("Queue"));
     return a;
   };
-  new_ = file_action(MenuHub::FileRole::New, tr("&New..."), [this] {
-    if (bridge_.running()) {
-      QMessageBox::information(this, tr("New"), tr("A queue is running."));
-      return;
-    }
-    new_queue();
-  });
-  open_ = file_action(MenuHub::FileRole::Open, tr("&Open..."), [this] { open_dialog(); });
+  open_ = new QAction(tr("&Open..."), this);
+  connect(open_, &QAction::triggered, this, [this] { open_dialog(); });
   save_ = file_action(MenuHub::FileRole::Save, tr("&Save"), [this] {
     if (!path_) {
       save_as_dialog();
@@ -526,6 +522,14 @@ bool ExperimentWindow::save_as(const std::filesystem::path& path, QString* error
   return true;
 }
 
+void ExperimentWindow::new_dialog() {
+  if (bridge_.running()) {
+    QMessageBox::information(this, tr("New"), tr("A queue is running."));
+    return;
+  }
+  new_queue();
+}
+
 void ExperimentWindow::open_dialog() {
   if (bridge_.running()) {
     QMessageBox::information(this, tr("Open"), tr("A queue is running."));
@@ -588,7 +592,6 @@ void ExperimentWindow::update_state() {
   for (const auto& r : model_.queue().runs) runnable_rows += r.skip ? 0 : 1;
   pane_->set_runnable(model_.runnable(), runnable_rows);
   const bool running = bridge_.running() || pane_->running();
-  new_->setEnabled(!running);
   open_->setEnabled(!running);
   sync_queue_conditionals();
 }

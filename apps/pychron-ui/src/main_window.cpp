@@ -225,6 +225,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     action->setIconVisibleInMenu(true);
   }
   auto& menus = MenuHub::instance();
+  build_file_entries();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::View,
@@ -246,25 +247,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     w->raise();
     w->activateWindow();
   });
-  connect(experiment_action_, &QAction::triggered, this, [this] {
-    if (experiment_ == nullptr) {
-      return;
-    }
-    if (experiment_window_ == nullptr) {
-      experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
-                                                experiment_settings_ ? experiment_settings_() : nullptr, this);
-      experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
-      if (experiment_queue_) {
-        QString error;
-        if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
-          log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
-        }
-      }
-    }
-    experiment_window_->show();
-    experiment_window_->raise();
-    experiment_window_->activateWindow();
-  });
+  connect(experiment_action_, &QAction::triggered, this, [this] { show_experiment_window(); });
   connect(spectrometer_action_, &QAction::triggered, this, [this] {
     if (spectrometer_ == nullptr) {
       return;
@@ -358,6 +341,75 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
   experiment_queue_ = std::move(queue);
   experiment_settings_ = std::move(settings);
   experiment_action_->setEnabled(bridge != nullptr);
+  for (QAction* entry : file_entries_) entry->setEnabled(bridge != nullptr);
+}
+
+// The experiment window, made on first use; nullptr without a session.
+ExperimentWindow* MainWindow::ensure_experiment_window() {
+  if (experiment_ == nullptr) return nullptr;
+  if (experiment_window_ == nullptr) {
+    experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
+                                              experiment_settings_ ? experiment_settings_() : nullptr, this);
+    experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    if (experiment_queue_) {
+      QString error;
+      if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
+        log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
+      }
+    }
+  }
+  return experiment_window_;
+}
+
+ExperimentWindow* MainWindow::show_experiment_window() {
+  ExperimentWindow* window = ensure_experiment_window();
+  if (window == nullptr) return nullptr;
+  window->show();
+  window->raise();
+  window->activateWindow();
+  return window;
+}
+
+// File > New and File > Open: what there is to start or open, from any
+// window. Each brings up the window it acts in (the experiment window, or
+// one of its editors alone) and then asks what that window asks. The key of
+// New and of Open goes to the entry whose window is in front (MenuHub).
+void MainWindow::build_file_entries() {
+  using List = MenuHub::FileList;
+  const auto entry = [this](const QString& text, std::function<void()> run,
+                            std::function<bool(const QWidget*)> home) {
+    auto* action = new QAction(text, this);
+    action->setEnabled(false);  // until there is a session (set_experiment)
+    connect(action, &QAction::triggered, this, [run = std::move(run)] { run(); });
+    file_entries_.append(action);
+    return MenuHub::FileEntry{action, std::move(home)};
+  };
+  const auto in_experiment = [this](const QWidget* w) { return experiment_window_ != nullptr && w == experiment_window_; };
+  const auto in_scripts = [this](const QWidget* w) {
+    return experiment_window_ != nullptr && experiment_window_->script_editor() != nullptr &&
+           w == experiment_window_->script_editor();
+  };
+  const auto in_conditionals = [this](const QWidget* w) {
+    return experiment_window_ != nullptr && experiment_window_->conditionals_editor() != nullptr &&
+           w == experiment_window_->conditionals_editor();
+  };
+  auto& menus = MenuHub::instance();
+  menus.contribute_file(
+      this, List::New,
+      {entry(tr("New &Queue"), [this] { if (auto* w = show_experiment_window()) w->new_dialog(); }, in_experiment),
+       entry(tr("New &Script…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_script_editor()->new_dialog(); }, in_scripts),
+       entry(tr("New &Conditionals…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_conditionals_editor()->new_dialog(); },
+             in_conditionals)});
+  menus.contribute_file(
+      this, List::Open,
+      {entry(tr("Open &Queue…"), [this] { if (auto* w = show_experiment_window()) w->open_dialog(); }, in_experiment),
+       entry(tr("Open &Script…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_script_editor()->open_picked(); }, in_scripts),
+       entry(tr("Open &Conditionals…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_conditionals_editor()->open_picked(); },
+             in_conditionals)});
 }
 
 void MainWindow::set_lasers(std::vector<LaserBridge*> bridges, bool simulation, laser::PatternLibrary* patterns,

@@ -38,6 +38,7 @@ using pychron::ui::MenuHub;
 using Menu = MenuHub::Menu;
 using Scope = MenuHub::Scope;
 using FileRole = MenuHub::FileRole;
+using FileList = MenuHub::FileList;
 using pychron::ui::Shortcut;
 
 namespace {
@@ -786,19 +787,105 @@ class TestMenuHub : public QObject {
     QMainWindow figure;
     plain.show();
     figure.show();
-    const QList<QAction*> four{hub.file_action(FileRole::New), hub.file_action(FileRole::Open),
+    const QList<QAction*> four{hub.file_list_action(FileList::New), hub.file_list_action(FileList::Open),
                                hub.file_action(FileRole::Save), hub.file_action(FileRole::SaveAs)};
     for (QWidget* w : {static_cast<QWidget*>(&plain), static_cast<QWidget*>(&figure)}) {
       QVERIFY(shown(*w).contains(QStringLiteral("File")));
       QCOMPARE(menu_of(*w, Menu::File)->actions().mid(0, 4), four);
     }
-    QCOMPARE(texts_of(four), (QStringList{QStringLiteral("&New…"), QStringLiteral("&Open…"), QStringLiteral("&Save"),
+    QCOMPARE(texts_of(four), (QStringList{QStringLiteral("&New"), QStringLiteral("&Open"), QStringLiteral("&Save"),
                                           QStringLiteral("Save &As…")}));
     for (const QAction* a : four) QVERIFY2(!a->isEnabled(), qPrintable(a->text()));
-    QCOMPARE(four.at(0)->shortcut(), pychron::ui::key(Shortcut::FileNew));
-    QCOMPARE(four.at(1)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    // New and Open are submenus, with nothing in them yet; the keys are their entries'.
+    for (const FileList list : {FileList::New, FileList::Open}) {
+      QVERIFY(hub.file_list_action(list)->menu() != nullptr);
+      QVERIFY(hub.file_list_action(list)->menu()->actions().isEmpty());
+      QVERIFY(hub.file_list_action(list)->shortcut().isEmpty());
+      QVERIFY(hub.file_entries(list).isEmpty());
+    }
     QCOMPARE(four.at(2)->shortcut(), pychron::ui::key(Shortcut::FileSave));
     QVERIFY(four.at(3)->shortcut().isEmpty());  // the platform's Save As key is View > Spectrometer's
+  }
+
+  // File > New and File > Open list what there is to start or open. An entry
+  // works from every window; the list's key is on the entry whose window is
+  // in front, and on none elsewhere.
+  void new_and_open_list_entries_that_work_from_any_window_data() {
+    QTest::addColumn<bool>("shared");
+    QTest::newRow("a bar per window") << false;
+    QTest::newRow("one shared bar") << true;
+  }
+  void new_and_open_list_entries_that_work_from_any_window() {
+    QFETCH(bool, shared);
+    MenuHub& hub = MenuHub::reset(shared ? MenuHub::Bars::Shared : MenuHub::Bars::PerWindow);
+    auto owner = std::make_unique<QMainWindow>();
+    QMainWindow queues;   // where a queue is edited
+    QMainWindow scripts;  // where a script is
+    QMainWindow other;
+    auto* open_queue = new QAction(QStringLiteral("Open Queue…"), owner.get());
+    auto* open_script = new QAction(QStringLiteral("Open Script…"), owner.get());
+    auto* new_queue = new QAction(QStringLiteral("New Queue"), owner.get());
+    int queue_opened = 0, script_opened = 0;
+    connect(open_queue, &QAction::triggered, this, [&] { ++queue_opened; });
+    connect(open_script, &QAction::triggered, this, [&] { ++script_opened; });
+    hub.contribute_file(owner.get(), FileList::Open,
+                        {{open_queue, [&](const QWidget* w) { return w == &queues; }},
+                         {open_script, [&](const QWidget* w) { return w == &scripts; }}});
+    hub.contribute_file(owner.get(), FileList::New, {{new_queue, [&](const QWidget* w) { return w == &queues; }}});
+    for (QMainWindow* w : {&queues, &scripts, &other}) w->show();
+
+    QAction* open = hub.file_list_action(FileList::Open);
+    QCOMPARE(hub.file_entries(FileList::Open), (QList<QAction*>{open_queue, open_script}));
+    QCOMPARE(open->menu()->actions(), (QList<QAction*>{open_queue, open_script}));
+    QCOMPARE(hub.file_list_action(FileList::New)->menu()->actions(), QList<QAction*>{new_queue});
+    QVERIFY(open->isEnabled());
+    // The one Open, with its submenu, in every window's File.
+    for (QMainWindow* w : {&queues, &scripts, &other}) QCOMPARE(menu_of(*w, Menu::File)->actions().at(1), open);
+
+    const QKeySequence open_key = pychron::ui::key(Shortcut::FileOpen);
+    if (!activate(other)) QSKIP("this platform does not activate windows");
+    // From a window that is neither's: both work, neither has the key.
+    QVERIFY(open_queue->isEnabled());
+    QVERIFY(open_script->isEnabled());
+    QVERIFY(open_queue->shortcut().isEmpty());
+    QVERIFY(open_script->shortcut().isEmpty());
+    open_script->trigger();
+    QCOMPARE(script_opened, 1);
+
+    QVERIFY(activate(queues));
+    QCOMPARE(open_queue->shortcut(), open_key);
+    QVERIFY(open_script->shortcut().isEmpty());
+    QCOMPARE(new_queue->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QVERIFY(open_script->isEnabled());  // and still to be had from here
+    if (!shared) {  // a parentless bar's keys fire only as the platform's global bar
+      QTest::keySequence(&queues, open_key);
+      QCOMPARE(queue_opened, 1);
+      QCOMPARE(script_opened, 1);
+    }
+
+    QVERIFY(activate(scripts));
+    QVERIFY(open_queue->shortcut().isEmpty());
+    QCOMPARE(open_script->shortcut(), open_key);
+    QVERIFY(new_queue->shortcut().isEmpty());  // no New is at home here
+    if (!shared) {
+      QTest::keySequence(&scripts, open_key);
+      QCOMPARE(script_opened, 2);
+      QCOMPARE(queue_opened, 1);
+    }
+
+    // The palette has them, under File, before Save.
+    QList<QAction*> of_file;
+    for (const MenuHub::Command& c : hub.commands())
+      if (c.menu == Menu::File) of_file.append(c.action);
+    QCOMPARE(of_file.mid(0, 5), (QList<QAction*>{new_queue, open_queue, open_script, hub.file_action(FileRole::Save),
+                                                 hub.file_action(FileRole::SaveAs)}));
+
+    // They go with the window that gave them.
+    owner.reset();
+    QTRY_VERIFY(hub.file_entries(FileList::Open).isEmpty());
+    QTRY_VERIFY(open->menu()->actions().isEmpty());
+    QTRY_VERIFY(!open->isEnabled());
+    QVERIFY(!hub.file_list_action(FileList::New)->isEnabled());
   }
 
   void file_commands_follow_the_window_in_front_data() {
@@ -814,26 +901,25 @@ class TestMenuHub : public QObject {
     QMainWindow other;  // answers no File command
     auto* save_a = new QAction(QStringLiteral("save a"), &a);
     auto* save_b = new QAction(QStringLiteral("save b"), &b);
-    auto* open_a = new QAction(QStringLiteral("open a"), &a);
+    auto* save_as_a = new QAction(QStringLiteral("save a as"), &a);
     int saved_a = 0, saved_b = 0;
     connect(save_a, &QAction::triggered, this, [&] { ++saved_a; });
     connect(save_b, &QAction::triggered, this, [&] { ++saved_b; });
     hub.set_file_action(&a, FileRole::Save, save_a, QStringLiteral("Queue"));
-    hub.set_file_action(&a, FileRole::Open, open_a, QStringLiteral("Queue"));
+    hub.set_file_action(&a, FileRole::SaveAs, save_as_a, QStringLiteral("Queue"));
     hub.set_file_action(&b, FileRole::Save, save_b, QStringLiteral("Script"));
     for (QMainWindow* w : {&a, &b, &other}) w->show();
     QAction* save = hub.file_action(FileRole::Save);
-    QAction* open = hub.file_action(FileRole::Open);
+    QAction* save_as = hub.file_action(FileRole::SaveAs);
     // A window's own action is in no menu: File has the one Save.
     QVERIFY(!menu_of(a, Menu::File)->actions().contains(save_a));
     QCOMPARE(menu_of(a, Menu::File)->actions().count(save), 1);
 
     if (!activate(a)) QSKIP("this platform does not activate windows");
     QCOMPARE(save->text(), QStringLiteral("&Save Queue"));
-    QCOMPARE(open->text(), QStringLiteral("&Open Queue…"));
+    QCOMPARE(save_as->text(), QStringLiteral("Save Queue &As…"));
     QVERIFY(save->isEnabled());
-    QVERIFY(!hub.file_action(FileRole::New)->isEnabled());  // `a` has no New
-    QCOMPARE(hub.file_action(FileRole::SaveAs)->text(), QStringLiteral("Save &As…"));
+    QVERIFY(save_as->isEnabled());
     save->trigger();
     QCOMPARE(saved_a, 1);
     QCOMPARE(saved_b, 0);
@@ -841,8 +927,8 @@ class TestMenuHub : public QObject {
     QVERIFY(activate(b));
     QCOMPARE(save->text(), QStringLiteral("&Save Script"));
     QVERIFY(save->isEnabled());
-    QVERIFY(!open->isEnabled());  // `b` opens nothing
-    QCOMPARE(open->text(), QStringLiteral("&Open…"));
+    QVERIFY(!save_as->isEnabled());  // `b` has no Save As
+    QCOMPARE(save_as->text(), QStringLiteral("Save &As…"));
     save->trigger();
     QCOMPARE(saved_a, 1);
     QCOMPARE(saved_b, 1);
@@ -894,16 +980,16 @@ class TestMenuHub : public QObject {
     auto a = std::make_unique<QMainWindow>();
     QMainWindow b;
     auto* save = new QAction(QStringLiteral("save"), a.get());
-    auto* open = new QAction(QStringLiteral("open"), a.get());
+    auto* save_as = new QAction(QStringLiteral("save as"), a.get());
     hub.set_file_action(a.get(), FileRole::Save, save, QStringLiteral("Queue"));
-    hub.set_file_action(a.get(), FileRole::Open, open, QStringLiteral("Queue"));
+    hub.set_file_action(a.get(), FileRole::SaveAs, save_as, QStringLiteral("Queue"));
     a->show();
     b.show();
     if (!activate(*a)) QSKIP("this platform does not activate windows");
     QVERIFY(hub.file_action(FileRole::Save)->isEnabled());
-    delete open;  // the action alone
-    QTRY_VERIFY(!hub.file_action(FileRole::Open)->isEnabled());
-    QCOMPARE(hub.file_action(FileRole::Open)->text(), QStringLiteral("&Open…"));
+    delete save_as;  // the action alone
+    QTRY_VERIFY(!hub.file_action(FileRole::SaveAs)->isEnabled());
+    QCOMPARE(hub.file_action(FileRole::SaveAs)->text(), QStringLiteral("Save &As…"));
     QVERIFY(hub.file_action(FileRole::Save)->isEnabled());
     a.reset();
     QTRY_VERIFY(!hub.file_action(FileRole::Save)->isEnabled());
@@ -911,19 +997,27 @@ class TestMenuHub : public QObject {
     hub.file_action(FileRole::Save)->trigger();  // nothing to reach, nothing done
   }
 
-  // The data browser's Recall Next has the key of File > New, and answers no
-  // File command: a greyed item's key is the window's to use.
-  void a_greyed_file_command_leaves_its_key_to_the_window() {
+  // The data browser's Recall Next has the key of File > New, and no New is
+  // at home there: a key that is on no entry is the window's to use.
+  void a_file_key_with_no_entry_at_home_is_the_windows() {
     if (MenuHub::instance().bars() != MenuHub::Bars::PerWindow) QSKIP("keys are sent to a window's own bar");
     PlainWindow browser;
     int recalled = 0;
     auto* next = new QShortcut(pychron::ui::key(Shortcut::FileNew), &browser);
     connect(next, &QShortcut::activated, this, [&] { ++recalled; });
+    QMainWindow owner;
+    auto* new_queue = new QAction(QStringLiteral("New Queue"), &owner);
+    int started = 0;
+    connect(new_queue, &QAction::triggered, this, [&] { ++started; });
+    MenuHub::instance().contribute_file(&owner, FileList::New, {{new_queue, [&](const QWidget* w) { return w == &owner; }}});
     browser.show();
+    owner.show();
     if (!activate(browser)) QSKIP("this platform does not activate windows");
-    QVERIFY(!MenuHub::instance().file_action(FileRole::New)->isEnabled());
+    QVERIFY(new_queue->isEnabled());  // to be had from the menu
+    QVERIFY(new_queue->shortcut().isEmpty());
     QTest::keySequence(&browser, pychron::ui::key(Shortcut::FileNew));
     QCOMPARE(recalled, 1);
+    QCOMPARE(started, 0);
   }
 
   void the_command_palette_has_the_file_commands() {
@@ -933,11 +1027,15 @@ class TestMenuHub : public QObject {
     QList<QAction*> of_file;
     for (const MenuHub::Command& c : hub.commands())
       if (c.menu == Menu::File) of_file.append(c.action);
-    QVERIFY(of_file.size() > 4);
-    QCOMPARE(of_file.mid(0, 4), (QList<QAction*>{hub.file_action(FileRole::New), hub.file_action(FileRole::Open),
-                                                 hub.file_action(FileRole::Save), hub.file_action(FileRole::SaveAs)}));
-    for (const FileRole role : {FileRole::New, FileRole::Open, FileRole::Save, FileRole::SaveAs})
-      QCOMPARE(of_file.count(hub.file_action(role)), 1);
+    // The main window's New and Open entries, then Save and Save As, then the rest.
+    QCOMPARE(main.file_entries().size(), 6);
+    QCOMPARE(of_file.mid(0, 6), main.file_entries());
+    QCOMPARE(of_file.mid(6, 2), (QList<QAction*>{hub.file_action(FileRole::Save), hub.file_action(FileRole::SaveAs)}));
+    QVERIFY(of_file.size() > 8);
+    for (const FileRole role : {FileRole::Save, FileRole::SaveAs}) QCOMPARE(of_file.count(hub.file_action(role)), 1);
+    // The submenus themselves are no commands.
+    QVERIFY(!of_file.contains(hub.file_list_action(FileList::New)));
+    QVERIFY(!of_file.contains(hub.file_list_action(FileList::Open)));
   }
 
   void the_experiment_window_fills_the_queue_rows_executor_and_scripts_menus() {
@@ -948,10 +1046,9 @@ class TestMenuHub : public QObject {
     window.show();
     // Window is the hub's own and always there.
     QCOMPARE(shown(window), (QStringList{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("Window")}));
-    // Open, Save and Save As are File's, and say what they act on here.
+    // Save and Save As are File's, and say what they act on here.
     QCOMPARE(texts(menu_of(window, Menu::Queue)), QStringList{QStringLiteral("&Revalidate")});
     if (activate(window)) {
-      QCOMPARE(MenuHub::instance().file_action(FileRole::Open)->text(), QStringLiteral("&Open Queue…"));
       QCOMPARE(MenuHub::instance().file_action(FileRole::Save)->text(), QStringLiteral("&Save Queue"));
       QCOMPARE(MenuHub::instance().file_action(FileRole::SaveAs)->text(), QStringLiteral("Save Queue &As…"));
       QVERIFY(MenuHub::instance().file_action(FileRole::Save)->isEnabled());

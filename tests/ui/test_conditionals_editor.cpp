@@ -596,17 +596,15 @@ class TestConditionalsEditor : public QObject {
     QVERIFY(w->modified());
     w->set_ask_unsaved([](const QString&) { return ConditionalsEditorWindow::Unsaved::Discard; });
 
-    // In front, the File menu's commands are this window's.
+    // In front, File > Save is this window's.
     w->show();
     w->activateWindow();
     if (!QTest::qWaitForWindowActive(w.get())) QSKIP("this platform does not activate windows");
     MenuHub& hub = MenuHub::instance();
-    QCOMPARE(hub.file_action(MenuHub::FileRole::New)->text(), QStringLiteral("&New Conditionals…"));
-    QCOMPARE(hub.file_action(MenuHub::FileRole::Open)->text(), QStringLiteral("&Open Conditionals…"));
     QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Conditionals"));
-    QVERIFY(hub.file_action(MenuHub::FileRole::New)->isEnabled());
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
     QVERIFY(!hub.file_action(MenuHub::FileRole::SaveAs)->isEnabled());
-    hub.file_action(MenuHub::FileRole::Open)->trigger();
+    QVERIFY(w->open_picked());
     QCOMPARE(w->current_name(), QStringLiteral("system"));
   }
 

@@ -219,9 +219,10 @@ Comment.
 
 ### 3.1 Files
 
-**File > Open Queue…** (Ctrl+O) loads a queue; **Save Queue** (Ctrl+S) and
-**Save Queue As…** write it; **New Queue…** (Ctrl+N) starts an empty one with
-no file. **Experiment > Queue > Revalidate** checks the queue again. You
+**File > Open > Open Queue…** (Ctrl+O) loads a queue; **File > Save Queue**
+(Ctrl+S) and **Save Queue As…** write it; **File > New > New Queue** (Ctrl+N)
+starts an empty one with no file. Open and New work from any window and
+bring the Experiment window up. **Experiment > Queue > Revalidate** checks the queue again. You
 cannot open or start another queue while one is running. Closing the window asks about unsaved changes and,
 if a queue is running, whether to stop it after the current run. If you
 simply hide the window the queue keeps running.
@@ -591,13 +592,14 @@ Events list ("queue: ...") and in the run's summary.
 
 ### 7.6 The Conditionals Editor
 
-**Experiment > Scripts > Conditionals Editor...** (or the **Edit...** button beside the
+**Experiment > Scripts > Conditionals Editor...** (or **File > Open > Open
+Conditionals…** from any window, or the **Edit...** button beside the
 queue conditionals box) edits the files in `<lab>/conditionals` without
 touching TOML by hand.
 
 * **Left:** the lab's files, `system` first. Click one to open it, or use
-  **File > Open Conditionals…** (Ctrl+O). **+** (also **File > New
-  Conditionals…**, Ctrl+N) creates a file (a plain
+  **File > Open > Open Conditionals…** (Ctrl+O). **+** (also **File > New >
+  New Conditionals…**, Ctrl+N) creates a file (a plain
   name: no folders, no leading dot, no `.toml`), **-** deletes the selected
   file (asking first, and telling you if the open queue uses it).
 * **Right:** the open file's conditionals grouped by kind. **Add**,

@@ -158,8 +158,9 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   edit_controls_ = {add_button, remove_button, duplicate_button, up_button, down_button,
                     disable_add, disable_remove, form_,          disable_};
 
-  // What the File menu (MenuHub) does while this window is in front; the
-  // keys are the menu's.
+  // What File > Save (MenuHub) does while this window is in front; the key
+  // is the menu's. File > New and File > Open are the main window's, and
+  // call new_dialog() and open_picked().
   auto* save_action = new QAction(tr("&Save"), this);
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_action, tr("Conditionals"));
   connect(save_action, &QAction::triggered, this, [this] {
@@ -186,25 +187,13 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
     if (name != current_ && !open(name)) fill_files();  // put the highlight back
   });
   connect(files_, &QListWidget::itemClicked, files_, &QListWidget::itemActivated);
-  auto* new_action = new QAction(tr("&New..."), this);
-  open_ = new QAction(tr("&Open..."), this);
-  MenuHub::instance().set_file_action(this, MenuHub::FileRole::New, new_action, tr("Conditionals"));
-  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Open, open_, tr("Conditionals"));
-  connect(open_, &QAction::triggered, this, [this] { open_picked(); });
   pick_file_ = [this](const QStringList& names) -> std::optional<QString> {
     bool ok = false;
     const QString name = QInputDialog::getItem(this, tr("Open conditionals"), tr("File"), names,
                                                std::max(0, static_cast<int>(names.indexOf(current_))), false, &ok);
     return ok ? std::optional<QString>(name) : std::nullopt;
   };
-  connect(new_button, &QToolButton::clicked, new_action, &QAction::trigger);
-  connect(new_action, &QAction::triggered, this, [this] {
-    bool ok = false;
-    const QString name =
-        QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
-    QString error;
-    if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) QMessageBox::warning(this, tr("New file"), error);
-  });
+  connect(new_button, &QToolButton::clicked, this, [this] { new_dialog(); });
   connect(delete_button, &QToolButton::clicked, this, [this] {
     QString error;
     if (!current_.isEmpty() && !delete_file(current_, &error) && !error.isEmpty())
@@ -285,7 +274,6 @@ void ConditionalsEditorWindow::fill_files() {
     item->setData(Qt::UserRole, name);
     if (name == current_) files_->setCurrentItem(item);
   }
-  open_->setEnabled(files_->count() > 0);
 }
 
 void ConditionalsEditorWindow::fill_disable() {
@@ -378,6 +366,14 @@ bool ConditionalsEditorWindow::open(const QString& name) {
   if (!resolve_unsaved()) return false;
   load(name);
   return true;
+}
+
+void ConditionalsEditorWindow::new_dialog() {
+  bool ok = false;
+  const QString name =
+      QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
+  QString error;
+  if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) QMessageBox::warning(this, tr("New file"), error);
 }
 
 bool ConditionalsEditorWindow::open_picked() {
