@@ -818,7 +818,7 @@ TEST_P(ProjectImportTest, LateFileOfAnAnalysisFoldedAtTheEndSurvivesAReplay) {
 
 TEST_P(ProjectImportTest, UnparseableFileIsConflictAndImportContinues) {
   legacy_.collect(kRunE, kE.str(), kCollected);
-  const std::string garbage = "{\"Ar40\": {\"value\": 1.0,";
+  const std::string garbage = R"({"Ar40": {"value": 1.0,)";
   legacy_.write(kRunE, FileKind::Intercepts, garbage);
   const std::string bad = legacy_.commit("<ISOEVO> fits=Ar40(Parabolic)", kDay2);
   legacy_.collect("66052-02A", kF.str(), kRefit);

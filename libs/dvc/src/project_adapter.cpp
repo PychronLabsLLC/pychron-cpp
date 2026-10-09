@@ -44,7 +44,7 @@ class ProjectRepoAdapter::Impl {
  public:
   Impl(ProjectAdapterConfig config, GitReader reader)
       : config_(std::move(config)), reader_(std::move(reader)), url_(ingest::normalize_source_url(config_.url)) {
-    if (config_.batch_commits < 1) config_.batch_commits = 1;
+    config_.batch_commits = std::max(config_.batch_commits, 1);
   }
 
   Result<ingest::SourceDescription> describe() const {

@@ -65,7 +65,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
         case FileKind::Spectrometer:
         case FileKind::InterpretedAge:
         case FileKind::FrozenProduction:
-          if (out) out->push_back(Gone{std::move(gone), std::move(at), nullptr});
+          if (out) out->emplace_back(Gone{std::move(gone), std::move(at), nullptr});
           continue;
         default:
           break;
@@ -73,7 +73,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
       const auto owner = tracks_.find(gone.key);
       if (owner == tracks_.end()) continue;
       if (owner->second.flushed) {
-        if (out) out->push_back(Gone{std::move(gone), std::move(at), &owner->second});
+        if (out) out->emplace_back(Gone{std::move(gone), std::move(at), &owner->second});
       } else {
         owner->second.later.push_back({gone.kind, std::move(at)});  // with the collection, in walk order
       }
@@ -115,7 +115,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
       case FileKind::Unknown:
       case FileKind::InterpretedAge:
       case FileKind::FrozenProduction:
-        if (out) out->push_back(Change{std::move(info), std::move(ref), nullptr, std::nullopt, false, restored});
+        if (out) out->emplace_back(Change{std::move(info), std::move(ref), nullptr, std::nullopt, false, restored});
         continue;
       default:
         break;
@@ -132,7 +132,7 @@ bool Walk::apply(int index, std::span<const GitChange> changes, std::vector<Work
     if (track.flushed) {
       if (kind == FileKind::Record) record_rewritten = true;
       if (out)
-        out->push_back(Change{std::move(info), std::move(ref), &track, std::move(previous), false, restored});
+        out->emplace_back(Change{std::move(info), std::move(ref), &track, std::move(previous), false, restored});
       continue;
     }
     if (auto* slot = track.root_slot(kind)) {
@@ -172,14 +172,13 @@ void Walk::flush(Track& track, std::vector<Work>* out) {
     for (const auto& file : track.latest)
       if (file.kind == FileKind::Record && track.record && file.ref.blob_sha != track.record->blob_sha)
         fold.record_now = file.ref;
-    out->push_back(std::move(fold));
+    out->emplace_back(std::move(fold));
     for (auto& file : track.later) {
       PathInfo info = classify_path(file.ref.path);
       if (file.ref.blob_sha.empty())
-        out->push_back(Gone{std::move(info), std::move(file.ref), &track});
+        out->emplace_back(Gone{std::move(info), std::move(file.ref), &track});
       else
-        out->push_back(
-            Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true, file.restored});
+        out->emplace_back(Change{std::move(info), std::move(file.ref), &track, std::move(file.previous), true, file.restored});
     }
   }
   track.later.clear();
@@ -210,7 +209,7 @@ void Walk::orphans(std::vector<Work>& out) {
       info.kind = kind;
       info.key = track.key;
       info.key_is_uuid = track.key_is_uuid;
-      out.push_back(Change{std::move(info), ref, owner, std::nullopt, false, false});
+      out.emplace_back(Change{std::move(info), ref, owner, std::nullopt, false, false});
     };
     if (track.data) add(FileKind::Data, *track.data);
     if (track.intercepts) add(FileKind::Intercepts, *track.intercepts);

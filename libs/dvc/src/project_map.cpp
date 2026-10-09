@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <new>
+#include <ranges>
 
 #include "legacy_json.hpp"
 #include "project_import.hpp"
@@ -175,9 +176,9 @@ Mapper::Mapper(const ProjectAdapterConfig& config, std::string url, GitReader& r
 void Mapper::judge(const FileRef& ref, bool readable) {
   auto* versions = walk_.versions(ref.path);
   if (!versions) return;
-  for (auto version = versions->rbegin(); version != versions->rend(); ++version)
-    if (version->index == ref.index) {
-      version->read = readable ? Version::Read::Yes : Version::Read::No;
+  for (auto& version : std::views::reverse(*versions))
+    if (version.index == ref.index) {
+      version.read = readable ? Version::Read::Yes : Version::Read::No;
       return;
     }
 }
@@ -782,10 +783,10 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
   if (once("mass_spectrometer\n" + analysis.mass_spectrometer)) {
     ps::MassSpectrometerSpec spec;
     spec.name = analysis.mass_spectrometer;
-    catalog.push_back(ingest::MassSpecItem{std::move(spec)});
+    catalog.emplace_back(ingest::MassSpecItem{std::move(spec)});
   }
   if (analysis.extract_device && once("extract_device\n" + *analysis.extract_device))
-    catalog.push_back(ingest::ExtractDeviceItem{*analysis.extract_device});
+    catalog.emplace_back(ingest::ExtractDeviceItem{*analysis.extract_device});
   if (!once("identifier\n" + analysis.identifier)) return {};
 
   const auto& names = record.catalog;
@@ -822,7 +823,7 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
         position.material = names.material.value_or(ingest::kPlaceholderMaterial);
         if (!names.material) detail["placeholder_material"] = ingest::kPlaceholderMaterial;
       }
-      catalog.push_back(std::move(position));
+      catalog.emplace_back(std::move(position));
       detail["irradiation"] = *names.irradiation;
       detail["level"] = *names.irradiation_level;
       detail["position"] = *names.irradiation_position;
@@ -836,7 +837,7 @@ Result<void> Mapper::synthesize_catalog(const ParsedRecord& record, const ps::An
     special.identifier = analysis.identifier;
     special.analysis_type = analysis.analysis_type;
     special.mass_spectrometer = analysis.mass_spectrometer;
-    catalog.push_back(std::move(special));
+    catalog.emplace_back(std::move(special));
     detail["special"] = true;
   }
   out.batch.conflicts.push_back({{"", "catalog/identifier/" + analysis.identifier, ""},
@@ -945,7 +946,7 @@ Result<void> Mapper::change(const Change& item, Output& out) {
       ingest::RefObjectItem object;
       object.type = ps::RefType::Production;
       object.key = name;
-      out.batch.catalog.push_back(std::move(object));
+      out.batch.catalog.emplace_back(std::move(object));
       Json detail = Json::object();
       if (parsed->name) detail["name"] = *parsed->name;
       if (parsed->extra_json) detail["extra"] = embedded(*parsed->extra_json);
@@ -968,7 +969,7 @@ Result<void> Mapper::change(const Change& item, Output& out) {
       age.name = parsed->name;
       if (!parsed->identifier.empty()) age.identifier = parsed->identifier;
       age.repository = config_.repository_name;
-      out.batch.catalog.push_back(std::move(age));
+      out.batch.catalog.emplace_back(std::move(age));
       Json detail = Json::object();
       detail["format"] = parsed->nested ? "nested" : "flat";
       if (parsed->uuid) detail["legacy_uuid"] = parsed->uuid->str();

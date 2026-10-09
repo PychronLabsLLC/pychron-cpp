@@ -560,7 +560,7 @@ TEST_P(MetaImportTest, GainsAndHolders) {
 }
 
 TEST_P(MetaImportTest, UnparseableLevelIsConflict) {
-  const std::string garbage = "{\"positions\": [{\"position\": 1, \"j\": 0.001";
+  const std::string garbage = R"({"positions": [{"position": 1, "j": 0.001)";
   repo_.write(kLevel, garbage);
   repo_.write("NM-293/chronology.txt", fixture("meta/NM-293/chronology.txt"));
   const std::string bad = repo_.commit("truncated by a crash", kDay1);
