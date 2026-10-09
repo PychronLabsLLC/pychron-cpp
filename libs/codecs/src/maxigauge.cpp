@@ -164,7 +164,7 @@ Result<Request> decode_request(const Bytes& tx) {
   std::string text = pychron::to_string(tx);
   if (text.ends_with("\r\n")) {
     text.resize(text.size() - 2);
-  } else if (text.ends_with("\r")) {
+  } else if (text.ends_with('\r')) {
     text.resize(text.size() - 1);
   } else {
     return protocol_error("unterminated mnemonic", tx);

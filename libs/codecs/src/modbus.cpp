@@ -72,7 +72,7 @@ Result<Bytes> reply_pdu(std::uint16_t tid, std::uint8_t unit, Function f, const 
 }
 
 std::uint32_t bits_of(std::uint16_t first, std::uint16_t second, WordOrder order) noexcept {
-  auto swap_bytes = [](std::uint16_t w) { return static_cast<std::uint16_t>((w << 8) | (w >> 8)); };
+  auto swap_bytes = [](std::uint16_t w) { return static_cast<std::uint16_t>(std::rotl(w, 8)); };
   switch (order) {
     case WordOrder::ABCD:
       return (static_cast<std::uint32_t>(first) << 16) | second;
@@ -87,7 +87,7 @@ std::uint32_t bits_of(std::uint16_t first, std::uint16_t second, WordOrder order
 }
 
 std::array<std::uint16_t, 2> words_of(std::uint32_t bits, WordOrder order) noexcept {
-  auto swap_bytes = [](std::uint16_t w) { return static_cast<std::uint16_t>((w << 8) | (w >> 8)); };
+  auto swap_bytes = [](std::uint16_t w) { return static_cast<std::uint16_t>(std::rotl(w, 8)); };
   const auto high = static_cast<std::uint16_t>(bits >> 16);
   const auto low = static_cast<std::uint16_t>(bits & 0xFFFF);
   switch (order) {

@@ -103,7 +103,7 @@ std::string lower(std::string s) {
 Result<std::string> body(const Bytes& reply) {
   const std::string raw = to_string(reply);
   std::string text(trim(raw));
-  if (text.rfind("ERROR", 0) == 0) return protocol_error("device error: " + text, reply);
+  if (text.starts_with("ERROR")) return protocol_error("device error: " + text, reply);
   return text;
 }
 

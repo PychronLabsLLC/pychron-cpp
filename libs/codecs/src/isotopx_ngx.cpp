@@ -197,7 +197,7 @@ std::string format_float(double v) {
     if (n > 1) out += "." + digits.substr(1);
     out += exp < 0 ? "e-" : "e+";
     int a = std::abs(exp);
-    if (a < 10) out += "0";
+    if (a < 10) out += '0';
     out += std::to_string(a);
   }
   return out;
