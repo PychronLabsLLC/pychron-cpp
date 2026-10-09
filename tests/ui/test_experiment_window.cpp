@@ -451,6 +451,77 @@ class TestExperimentWindow : public QObject {
     window.reset();
   }
 
+  // File > New: an empty queue with no file, after the usual question.
+  void aNewQueueIsEmptyAndHasNoFile() {
+    using pychron::ui::MenuHub;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const std::size_t rows = window.model().queue().runs.size();
+    QVERIFY(rows > 0);
+    QString error;
+    QVERIFY2(window.new_queue(&error), qPrintable(error));
+    QVERIFY(window.model().queue().runs.empty());
+    QVERIFY(!window.path());
+    QVERIFY(!window.modified());
+    QVERIFY(!window.save(&error));  // no file to save to
+
+    // Unsaved edits: Cancel keeps the queue and its file, Discard lets go.
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().toggle_skip({0}));
+    int asked = 0;
+    auto answer = ExperimentWindow::Unsaved::Cancel;
+    window.set_ask_unsaved([&] {
+      ++asked;
+      return answer;
+    });
+    QVERIFY(!window.new_queue(&error));
+    QCOMPARE(error, QStringLiteral("cancelled"));
+    QCOMPARE(asked, 1);
+    QCOMPARE(window.model().queue().runs.size(), rows);
+    QVERIFY(window.path().has_value());
+    QVERIFY(window.modified());
+    answer = ExperimentWindow::Unsaved::Discard;
+    QVERIFY(window.new_queue(&error));
+    QVERIFY(window.model().queue().runs.empty());
+    QVERIFY(!window.path());
+
+    // The File menu's New is this window's while it is in front.
+    window.show();
+    window.activateWindow();
+    if (QTest::qWaitForWindowActive(&window)) {
+      QAction* file_new = MenuHub::instance().file_action(MenuHub::FileRole::New);
+      QCOMPARE(file_new->text(), QStringLiteral("&New Queue…"));
+      QVERIFY(file_new->isEnabled());
+      QVERIFY(window.load_queue(queue_file(sim)));
+      file_new->trigger();
+      QVERIFY(window.model().queue().runs.empty());
+    }
+  }
+
+  void aQueueCannotBeReplacedByANewOneWhileItRuns() {
+    using pychron::ui::MenuHub;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const std::size_t rows = window.model().queue().runs.size();
+    window.show();
+    window.activateWindow();
+    const bool active = QTest::qWaitForWindowActive(&window);
+    window.executor()->request_start();
+    QVERIFY(window.executor()->running());
+    QString error;
+    QVERIFY(!window.new_queue(&error));
+    QCOMPARE(error, QStringLiteral("a queue is running"));
+    QCOMPARE(window.model().queue().runs.size(), rows);
+    QVERIFY(window.path().has_value());
+    if (active) QTRY_VERIFY(!MenuHub::instance().file_action(MenuHub::FileRole::New)->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    if (active) QTRY_VERIFY(MenuHub::instance().file_action(MenuHub::FileRole::New)->isEnabled());
+  }
+
   void rowsOpenTheirScriptsInTheEditor() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

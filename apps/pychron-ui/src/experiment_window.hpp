@@ -87,6 +87,9 @@ class ExperimentWindow : public QMainWindow {
   // Replaces the queue; refused (false, with `error`) while running or when
   // the file does not parse. Asks about unsaved edits first.
   bool load_queue(const std::filesystem::path& path, QString* error = nullptr);
+  // Empties the queue and forgets its file. Refused (false, with `error`)
+  // while a queue runs. Asks about unsaved edits first.
+  bool new_queue(QString* error = nullptr);
   bool save(QString* error = nullptr);  // to the current path; false if none
   bool save_as(const std::filesystem::path& path, QString* error = nullptr);
   const std::optional<std::filesystem::path>& path() const noexcept { return path_; }
@@ -145,6 +148,7 @@ class ExperimentWindow : public QMainWindow {
   std::function<Unsaved()> ask_unsaved_;
   std::function<bool()> ask_stop_;
 
+  QAction* new_ = nullptr;
   QAction* open_ = nullptr;
   QAction* save_ = nullptr;
   QAction* save_as_ = nullptr;
