@@ -94,6 +94,56 @@ TEST(SignalBus, ThrowingHandlerDoesNotStopOthers) {
   EXPECT_EQ(count, 1);
 }
 
+TEST(SignalBus, AThrowingHandlerIsReported) {
+  SignalBus bus;
+  std::vector<HandlerFailed> seen;
+  auto watch = bus.subscribe<HandlerFailed>([&](const HandlerFailed& e) { seen.push_back(e); });
+  auto a = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("bad"); });
+  // NOLINTNEXTLINE(bugprone-std-exception-baseclass): what is not an exception is caught too
+  auto b = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw 7; });
+  EXPECT_EQ(bus.handler_failures(), 0u);
+  bus.publish(ValveChanged{});
+  ASSERT_EQ(seen.size(), 2u);
+  EXPECT_NE(seen[0].event.find("ValveChanged"), std::string::npos) << seen[0].event;
+  EXPECT_EQ(seen[0].event.find("struct "), std::string::npos) << seen[0].event;
+  EXPECT_EQ(seen[0].what, "bad");
+  EXPECT_EQ(seen[0].count, 1u);
+  EXPECT_EQ(seen[1].what, "unknown exception");
+  EXPECT_EQ(seen[1].count, 2u);
+  EXPECT_EQ(bus.handler_failures(), 2u);
+}
+
+// A failure is counted for its own event: one noisy handler does not hide
+// the first failure of another.
+TEST(SignalBus, FailuresAreCountedByEvent) {
+  SignalBus bus;
+  std::vector<HandlerFailed> seen;
+  auto watch = bus.subscribe<HandlerFailed>([&](const HandlerFailed& e) { seen.push_back(e); });
+  auto a = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("v"); });
+  auto b = bus.subscribe<Alarm>([](const Alarm&) { throw std::runtime_error("a"); });
+  bus.publish(ValveChanged{});
+  bus.publish(ValveChanged{});
+  bus.publish(Alarm{});
+  ASSERT_EQ(seen.size(), 3u);
+  EXPECT_EQ(seen[1].count, 2u);
+  EXPECT_EQ(seen[2].count, 1u);
+}
+
+// The report of a failure is not itself reported: a watcher that throws is
+// counted, and that is the end of it.
+TEST(SignalBus, AThrowingWatcherOfFailuresDoesNotRecurse) {
+  SignalBus bus;
+  int reports = 0;
+  auto watch = bus.subscribe<HandlerFailed>([&](const HandlerFailed&) {
+    ++reports;
+    throw std::runtime_error("watcher");
+  });
+  auto a = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("bad"); });
+  bus.publish(ValveChanged{});
+  EXPECT_EQ(reports, 1);
+  EXPECT_EQ(bus.handler_failures(), 2u);
+}
+
 TEST(SignalBus, ConcurrentPublishAndSubscribe) {
   SignalBus bus;
   std::atomic<int> received{0};

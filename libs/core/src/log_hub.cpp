@@ -138,6 +138,7 @@ void refresh_crash_output(const LogHub::Impl& impl) noexcept;
 struct LogHub::Impl {
   const Clock* clock = nullptr;
   SignalBus* bus = nullptr;
+  SignalBus::Subscription bus_failures;  // handlers of the bus that threw
   bool echo_stderr = false;
   std::mutex echo_mutex;
 
@@ -556,6 +557,21 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   auto impl = std::make_shared<Impl>();
   impl->clock = &clock;
   impl->bus = bus;
+  if (bus != nullptr) {
+    // A subscriber that throws is otherwise silent. Its first failure is
+    // written, then the 10th, the 100th...: one that throws at every reading
+    // must not fill the log, and this record is itself an event on the bus.
+    impl->bus_failures = bus->subscribe<HandlerFailed>([weak = std::weak_ptr<Impl>(impl)](const HandlerFailed& e) {
+      std::uint64_t power = 1;
+      while (power < e.count && power <= e.count / 10) power *= 10;
+      if (e.count != power) return;
+      const auto self = weak.lock();
+      if (!self) return;
+      std::string message = "a handler of " + e.event + " threw: " + e.what;
+      if (e.count > 1) message += " (" + std::to_string(e.count) + " times so far)";
+      self->write(LogLevel::Error, "bus", message);
+    });
+  }
   impl->echo_stderr = config.echo_stderr;
   impl->default_level = config.default_level;
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
@@ -623,6 +639,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
 LogHub::LogHub(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 LogHub::~LogHub() {
+  impl_->bus_failures.reset();
   // Hub loggers may still hold impl_: stop accepting writes and let the ones
   // in progress finish before the back end goes away.
   impl_->alive.store(false);

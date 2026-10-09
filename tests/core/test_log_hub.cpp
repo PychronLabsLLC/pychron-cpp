@@ -227,6 +227,48 @@ TEST(LogHub, UnwritableDirDegrades) {
   EXPECT_FALSE(fs::exists(bad));
 }
 
+// A subscriber of the bus that throws says so in the log: once, then at the
+// 10th failure, the 100th...
+TEST(LogHub, ABusHandlerThatThrowsIsLoggedAndNotAtEveryFailure) {
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &bus);
+  ASSERT_TRUE(hub.has_value());
+
+  auto bad = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("no such valve"); });
+  for (int i = 0; i < 12; ++i) bus.publish(ValveChanged{});
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].level, LogLevel::Error);
+  EXPECT_EQ(got[0].logger, "bus");
+  EXPECT_EQ(got[0].message, "a handler of pychron::ValveChanged threw: no such valve");
+  EXPECT_EQ(got[1].message, "a handler of pychron::ValveChanged threw: no such valve (10 times so far)");
+
+  // The hub is gone: the bus goes on, and nothing is written.
+  hub->reset();
+  bus.publish(ValveChanged{});
+  EXPECT_EQ(got.size(), 2u);
+}
+
+// The record of a failure is a Log on the same bus: a Log handler that
+// throws does not make the two feed each other.
+TEST(LogHub, AThrowingLogHandlerDoesNotLoop) {
+  SteadyClock clock;
+  SignalBus bus;
+  int logs = 0;
+  auto sub = bus.subscribe<Log>([&](const Log&) {
+    ++logs;
+    throw std::runtime_error("log handler");
+  });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &bus);
+  ASSERT_TRUE(hub.has_value());
+  (*hub)->write(LogLevel::Info, "core", "hello");
+  // "hello", then the one record of its handler's first failure.
+  EXPECT_EQ(logs, 2);
+  EXPECT_EQ(bus.handler_failures(), 2u);
+}
+
 TEST(LogHub, EmptyDirMeansNoFileSink) {
   SteadyClock clock;
   SignalBus bus;

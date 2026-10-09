@@ -1,10 +1,40 @@
 #include "pychron/core/signal_bus.hpp"
 
+#include <cstdlib>
+#include <exception>
 #include <mutex>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#if __has_include(<cxxabi.h>)
+#include <cxxabi.h>
+#define PYCHRON_HAVE_CXXABI 1
+#endif
+
 namespace pychron {
+
+namespace {
+
+// "pychron::ValveChanged" on every compiler.
+std::string event_name(std::type_index type) {
+  std::string name = type.name();
+#ifdef PYCHRON_HAVE_CXXABI
+  int status = 0;
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): __cxa_demangle allocates with malloc
+  if (char* readable = abi::__cxa_demangle(type.name(), nullptr, nullptr, &status); readable != nullptr) {
+    if (status == 0) name = readable;
+    std::free(readable);  // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+  }
+#endif
+  // MSVC says "struct pychron::ValveChanged".
+  for (const std::string_view prefix : {"struct ", "class "}) {
+    if (name.starts_with(prefix)) name.erase(0, prefix.size());
+  }
+  return name;
+}
+
+}  // namespace
 
 struct SignalBus::Impl {
   struct Entry {
@@ -17,6 +47,8 @@ struct SignalBus::Impl {
   mutable std::mutex mutex;
   std::unordered_map<std::type_index, std::shared_ptr<const List>> handlers;
   std::uint64_t next_id = 1;
+  std::unordered_map<std::type_index, std::uint64_t> failures;  // by the event whose handler threw
+  std::uint64_t failed = 0;
 
   void remove(std::type_index type, std::uint64_t id) {
     std::lock_guard lock(mutex);
@@ -59,10 +91,32 @@ void SignalBus::dispatch(std::type_index type, const void* event) const {
   for (const auto& e : *snapshot) {
     try {
       e.handler(event);
-    } catch (...) {  // NOLINT(bugprone-empty-catch): see below
+    } catch (const std::exception& ex) {
       // A faulty subscriber must not take down the publishing thread.
+      failed(type, ex.what());
+    } catch (...) {
+      failed(type, "unknown exception");
     }
   }
+}
+
+void SignalBus::failed(std::type_index type, const char* what) const noexcept {
+  try {
+    HandlerFailed report{event_name(type), what, 0};
+    {
+      const std::lock_guard lock(impl_->mutex);
+      ++impl_->failed;
+      report.count = ++impl_->failures[type];
+    }
+    // Its own handlers' failures stop here: counted above, not reported.
+    if (type != std::type_index(typeid(HandlerFailed))) dispatch(typeid(HandlerFailed), &report);
+  } catch (...) {  // NOLINT(bugprone-empty-catch): out of memory while reporting; the publisher still goes on
+  }
+}
+
+std::uint64_t SignalBus::handler_failures() const {
+  const std::lock_guard lock(impl_->mutex);
+  return impl_->failed;
 }
 
 std::size_t SignalBus::count(std::type_index type) const {
