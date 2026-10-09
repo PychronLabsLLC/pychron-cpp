@@ -166,7 +166,7 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
     bool known = false;
     {
       const std::lock_guard lock(mutex_);
-      known = valves_.count(e.valve) != 0;
+      known = valves_.contains(e.valve);
     }
     registry_.counter(kActuationFailures, kActuationFailuresHelp, {{"valve", known ? e.valve : std::string("unknown")}})
         .inc();

@@ -128,7 +128,7 @@ TEST(Registry, AFamilyStopsAtItsCap) {
   const std::string text = r.render();
   std::size_t series = 0;
   for (const std::string& line : metrics_text::lines(text)) {
-    if (line.rfind("pychron_g{", 0) == 0) ++series;
+    if (line.starts_with("pychron_g{")) ++series;
   }
   EXPECT_EQ(series, Registry::kMaxSeriesPerFamily);
   EXPECT_DOUBLE_EQ(value(text, kDropped), 5.0);
