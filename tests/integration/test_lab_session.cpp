@@ -216,12 +216,12 @@ TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
   std::vector<QueueStarted> started;
   auto s1 = line_->bus().subscribe<QueueStarted>([&](const QueueStarted& e) {
     std::lock_guard lock(m);
-    order.push_back("queue");
+    order.emplace_back("queue");
     started.push_back(e);
   });
   auto s2 = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted&) {
     std::lock_guard lock(m);
-    order.push_back("run");
+    order.emplace_back("run");
   });
   ASSERT_TRUE(session_->start(queue_));
   const auto result = session_->wait();
@@ -281,7 +281,7 @@ TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
   const auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
-  const double runs = static_cast<double>(result->runs.size());
+  const auto runs = static_cast<double>(result->runs.size());
   ASSERT_GT(runs, 0);
 
   const std::string body = scrape();
@@ -326,7 +326,7 @@ TEST_F(MetricsSessionTest, ScrapingDuringAQueueDoesNotDisturbIt) {
     while (!stop) {
       const std::string response = http_client::get(metrics_->port(), "/metrics");
       ++scrapes;
-      if (response.rfind("HTTP/1.1 200", 0) != 0) ++bad;
+      if (!response.starts_with("HTTP/1.1 200")) ++bad;
     }
   });
   ASSERT_TRUE(session_->start(queue_));

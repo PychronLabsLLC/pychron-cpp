@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <ranges>
 #include <string>
 #include <thread>
 #include <vector>
@@ -136,8 +137,8 @@ class ExampleLineSim : public ::testing::Test {
 
   double latest(const std::string& gauge) {
     std::lock_guard lock(events->mutex);
-    for (auto it = events->samples.rbegin(); it != events->samples.rend(); ++it) {
-      if (it->gauge == gauge) return it->value;
+    for (auto& sample : std::views::reverse(events->samples)) {
+      if (sample.gauge == gauge) return sample.value;
     }
     ADD_FAILURE() << "no sample for " << gauge;
     return -1;

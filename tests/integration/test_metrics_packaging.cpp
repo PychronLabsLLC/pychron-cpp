@@ -74,12 +74,12 @@ std::set<std::string> exported() {
 // The metric a query token names: a histogram's _bucket, _sum and _count are
 // its family's.
 std::string family_of(const std::string& token, const std::set<std::string>& known) {
-  if (known.count(token) != 0) return token;
+  if (known.contains(token)) return token;
   for (const char* suffix : {"_bucket", "_sum", "_count"}) {
     const std::string s(suffix);
-    if (token.size() > s.size() && token.compare(token.size() - s.size(), s.size(), s) == 0) {
+    if (token.size() > s.size() && token.ends_with(s)) {
       const std::string base = token.substr(0, token.size() - s.size());
-      if (known.count(base) != 0) return base;
+      if (known.contains(base)) return base;
     }
   }
   return token;
@@ -122,12 +122,12 @@ TEST(MetricsPackaging, EveryExportedMetricIsOnSomeDashboard) {
   const std::set<std::string> known = exported();
   std::set<std::string> shown;
   for (const auto& [file, names] : used(known)) {
-    if (file.size() > 5 && file.compare(file.size() - 5, 5, ".json") == 0) shown.insert(names.begin(), names.end());
+    if (file.size() > 5 && file.ends_with(".json")) shown.insert(names.begin(), names.end());
   }
   // The endpoint's own bookkeeping is for whoever debugs the endpoint.
   const std::set<std::string> exempt{"pychron_metrics_dropped_series_total", "pychron_metrics_bad_requests_total"};
   for (const std::string& n : known) {
-    if (exempt.count(n) != 0) continue;
+    if (exempt.contains(n)) continue;
     EXPECT_EQ(shown.count(n), 1u) << n << " is exported and on no dashboard";
   }
 }
@@ -199,7 +199,7 @@ TEST(MetricsPackaging, TheScrapeJobIsNamedAsTheAlertExpects) {
 
 TEST(MetricsPackaging, EveryQueryIsForOneInstrument) {
   // A dashboard for one instrument must not add up two.
-  static const std::regex expr("\"expr\": \"((?:[^\"\\\\]|\\\\.)*)\"");
+  static const std::regex expr(R"lit("expr": "((?:[^"\\]|\\.)*)")lit");
   for (const fs::path& p : dashboards()) {
     const std::string text = slurp(p);
     int queries = 0;
